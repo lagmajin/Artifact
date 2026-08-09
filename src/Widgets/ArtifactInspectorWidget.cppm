@@ -2477,6 +2477,10 @@ class InspectorChromeLabel final : public QLabel {
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     const QPalette pal = palette();
+    // This label is translucent, so Qt does not erase the previous glyphs
+    // when its text changes. Clear the backing area before owner-drawing to
+    // prevent the visible text trails during inspector refreshes.
+    painter.fillRect(rect(), pal.color(QPalette::Window));
     QRect contentRect = rect();
     if (role_ == Role::Active) {
       const QColor accent = pal.color(QPalette::Highlight);

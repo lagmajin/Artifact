@@ -29,7 +29,9 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
                                   const ArtifactCompositionPtr &comp);
 
 void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
-                             const ArtifactAbstractLayerPtr &layer);
+                             const ArtifactAbstractLayerPtr &layer,
+                             const QMatrix4x4 *cameraView = nullptr,
+                             const QMatrix4x4 *cameraProj = nullptr);
 
 void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const ArtifactAbstractLayerPtr &layer,
@@ -41,12 +43,20 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                const FloatColor &color,
                                float thickness,
                                const QMatrix4x4 *cameraView = nullptr,
-                               const QMatrix4x4 *cameraProj = nullptr);
+                               const QMatrix4x4 *cameraProj = nullptr,
+                               bool showScaleHandles = true,
+                               bool showRotationHandle = true,
+                               float projectedHandleSize = 0.0f);
 
 void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
                                      const ArtifactAbstractLayerPtr &layer,
                                      const QMatrix4x4 *cameraView,
                                      const QMatrix4x4 *cameraProj);
+
+void draw3DSelectionBoundsOverlay(ArtifactIRenderer *renderer,
+                                  const ArtifactAbstractLayerPtr &layer,
+                                  const QMatrix4x4 *cameraView,
+                                  const QMatrix4x4 *cameraProj);
 
 void drawTrackerPinOverlay(ArtifactIRenderer *renderer,
                           float x,

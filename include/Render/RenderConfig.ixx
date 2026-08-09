@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <atomic>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/GraphicsTypes.h>
 
 export module Artifact.Render.Config;
@@ -10,6 +11,8 @@ export namespace Artifact {
 
 // Global render configuration constants
 struct RenderConfig {
+    static bool hdrDisplayEnabled() noexcept { return HDRDisplayEnabled.load(std::memory_order_relaxed); }
+    static void setHDRDisplayEnabled(bool enabled) noexcept { HDRDisplayEnabled.store(enabled, std::memory_order_relaxed); }
     // Swapchain-facing and immediate graphics RTV format.
     static constexpr Diligent::TEXTURE_FORMAT MainRTVFormat = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
     // Composite intermediates stay in float so GPU blending is not forced down to
@@ -23,6 +26,9 @@ struct RenderConfig {
         ArtifactCore::SurfaceColorDescriptor::encodedSrgbRgba8Premultiplied();
     static constexpr ArtifactCore::SurfaceColorDescriptor PipelineColor =
         ArtifactCore::SurfaceColorDescriptor::canonicalLinearPremultiplied();
+
+private:
+    static inline std::atomic_bool HDRDisplayEnabled{false};
 };
 
 } // namespace Artifact

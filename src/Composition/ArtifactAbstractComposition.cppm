@@ -912,7 +912,7 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
     if (pobj.contains(QStringLiteral("keyframes")) ||
         pobj.contains(QStringLiteral("expression")) ||
         pobj.contains(QStringLiteral("envelopes"))) {
-      if (const auto editable = effect->editableProperty(name)) {
+      if (auto editable = effect->editableProperty(name)) {
         ArtifactCore::SerializedProperty serialized;
         serialized.name = name;
         serialized.type = static_cast<int>(type);
@@ -1207,8 +1207,15 @@ void ArtifactAbstractComposition::changed()
       impl_->revision_ = 1;
     }
   }
-  ArtifactCore::globalEventBus().publish<CompositionChangedEvent>(
-      CompositionChangedEvent{ id().toString(), revision() });
+  // Deserialized render snapshots are built on a worker thread. They must not
+  // synchronously notify the application's global event bus: GUI subscribers
+  // may rebuild QAction/QWidget state from that event. The snapshot loader
+  // already suppresses layer notifications and the owning project publishes
+  // its authoritative change on the UI thread.
+  if (impl_ && !impl_->suppressLayerChangedEvents_) {
+    ArtifactCore::globalEventBus().publish<CompositionChangedEvent>(
+        CompositionChangedEvent{ id().toString(), revision() });
+  }
 }
 
 void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()

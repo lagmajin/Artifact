@@ -48,6 +48,26 @@ bool reduceHoverDependency() {
     return s()->accessibilityReduceHoverDependency();
 }
 
+bool stickyKeysEnabled() {
+    return s()->accessibilityStickyKeysEnabled();
+}
+
+QString stickyKeysMode() {
+    return s()->accessibilityStickyKeysMode();
+}
+
+bool singleHandModeEnabled() {
+    return s()->accessibilitySingleHandModeEnabled();
+}
+
+bool viewportMagnifierEnabled() {
+    return s()->accessibilityViewportMagnifierEnabled();
+}
+
+int viewportMagnifierScale() {
+    return s()->accessibilityViewportMagnifierScale();
+}
+
 float targetScale() {
     return preferLargeTargets() ? 1.35f : 1.0f;
 }

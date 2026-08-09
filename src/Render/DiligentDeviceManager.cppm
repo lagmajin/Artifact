@@ -24,6 +24,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/CommandQueueD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/SwapChainD3D12.h>
 #include <DiligentCore/Graphics/ShaderTools/include/DXCompiler.hpp>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <d3d12sdklayers.h>
@@ -40,6 +41,35 @@ using namespace Diligent;
 using Microsoft::WRL::ComPtr;
 
 namespace {
+    void configureHdrColorSpace(ISwapChain* swapChain, bool hdrEnabled)
+    {
+        if (!swapChain) {
+            return;
+        }
+        RefCntAutoPtr<ISwapChainD3D12> d3d12SwapChain{
+            swapChain, IID_SwapChainD3D12};
+        if (!d3d12SwapChain) {
+            return;
+        }
+        IDXGISwapChain* nativeSwapChain = d3d12SwapChain->GetDXGISwapChain();
+        if (!nativeSwapChain) {
+            return;
+        }
+        ComPtr<IDXGISwapChain3> swapChain3;
+        if (FAILED(nativeSwapChain->QueryInterface(
+                IID_PPV_ARGS(&swapChain3))) || !swapChain3) {
+            return;
+        }
+        const DXGI_COLOR_SPACE_TYPE colorSpace =
+            hdrEnabled ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+                       : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+        const HRESULT result = swapChain3->SetColorSpace1(colorSpace);
+        if (FAILED(result)) {
+            qWarning() << "[DiligentDeviceManager] SetColorSpace1 failed"
+                       << Qt::hex << static_cast<unsigned long>(result);
+        }
+    }
+
     D3D12AgilityCapabilitySnapshot queryD3D12AgilityCapabilitiesInternal(
         IRenderDevice* device)
     {
@@ -1311,7 +1341,14 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
     SwapChainDesc SCDesc;
     SCDesc.Width = width;
     SCDesc.Height = height;
-    SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM_SRGB;
+    // Keep the swap-chain format aligned with the active display mode.  The
+    // composition renderer already works in linear float textures; using an
+    // sRGB UNORM back buffer for HDR silently clamps scene values above 1.0.
+    // HDR modes therefore use a float16 target and leave the display transform
+    // to the final post-process/OS display pipeline.
+    const bool hdrEnabled = RenderConfig::hdrDisplayEnabled();
+    SCDesc.ColorBufferFormat =
+        hdrEnabled ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM_SRGB;
     SCDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
     SCDesc.BufferCount = 2;
     SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
@@ -1341,6 +1378,7 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
     FullScreenModeDesc fullScreenDesc;
     fullScreenDesc.Fullscreen = false;
     pFactoryD3D12->CreateSwapChainD3D12(device_, immediateContext_, SCDesc, fullScreenDesc, swapChainWindow, &swapChain_);
+    configureHdrColorSpace(swapChain_, hdrEnabled);
     return swapChain_ != nullptr;
 }
 
@@ -1439,7 +1477,9 @@ bool DiligentDeviceManager::createSwapChainForCurrentBackend(QWidget* widget, HW
     SwapChainDesc SCDesc;
     SCDesc.Width = width;
     SCDesc.Height = height;
-    SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM_SRGB;
+    SCDesc.ColorBufferFormat =
+        RenderConfig::hdrDisplayEnabled() ? TEX_FORMAT_RGBA16_FLOAT
+                                          : TEX_FORMAT_RGBA8_UNORM_SRGB;
     SCDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
     SCDesc.BufferCount = 2;
     SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
@@ -1465,6 +1505,7 @@ bool DiligentDeviceManager::createSwapChainForCurrentBackend(QWidget* widget, HW
     FullScreenModeDesc fullScreenDesc;
     fullScreenDesc.Fullscreen = false;
     pFactoryD3D12->CreateSwapChainD3D12(device, impl_->immediateContext_, SCDesc, fullScreenDesc, swapChainWindow, &outSwapChain);
+    configureHdrColorSpace(outSwapChain, RenderConfig::hdrDisplayEnabled());
     return outSwapChain != nullptr;
 }
 

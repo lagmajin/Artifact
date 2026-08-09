@@ -950,6 +950,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
  RefCntAutoPtr<ITexture> m_layerRT;
  RefCntAutoPtr<IFence> m_layer_fence;
   LayerBackgroundMode backgroundMode_ = LayerBackgroundMode::Alpha;
+  bool showGrid_ = false;
   LayerSurfaceMode surfaceMode_ = LayerSurfaceMode::Edit;
   EditMode editModeBeforeSurface_ = EditMode::View;
   EditMode editMode_ = EditMode::View;
@@ -1090,6 +1091,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   void drawShapeParamHandles(const ArtifactAbstractLayerPtr& layer);
   void drawTransformHUD(const ArtifactAbstractLayerPtr& layer);
   void drawSurfaceOverlay(const ArtifactAbstractLayerPtr& layer);
+  void drawCompositionGuideOverlay();
   void drawViewportChrome(const ArtifactAbstractLayerPtr& layer);
   void refreshSurfaceInfo(const ArtifactAbstractLayerPtr& layer);
   bool handleViewportChromePress(const QPointF& viewportPos);
@@ -2295,6 +2297,48 @@ void ArtifactLayerEditorWidgetV2::Impl::drawSurfaceOverlay(
                        4.0f / zoom, accent, 1.0f, false);
 }
 
+void ArtifactLayerEditorWidgetV2::Impl::drawCompositionGuideOverlay()
+{
+ if (!renderer_ || !showGrid_) return;
+
+ auto* service = ArtifactProjectService::instance();
+ if (!service) return;
+ const auto composition = service->currentComposition().lock();
+ if (!composition) return;
+ const QSize compositionSize = composition->settings().compositionSize();
+ if (compositionSize.width() <= 0 || compositionSize.height() <= 0) return;
+
+ const float width = static_cast<float>(compositionSize.width());
+ const float height = static_cast<float>(compositionSize.height());
+ const float zoom = std::max(0.001f, renderer_->getZoom());
+ const auto niceInterval = [](float raw) {
+  const float safeRaw = std::max(1.0f, raw);
+  const float exponent = std::floor(std::log10(safeRaw));
+  const float scale = std::pow(10.0f, exponent);
+  const float normalized = safeRaw / scale;
+  const float nice = normalized <= 1.0f ? 1.0f
+      : normalized <= 2.0f ? 2.0f
+      : normalized <= 5.0f ? 5.0f : 10.0f;
+  return nice * scale;
+ };
+ const float majorSpacing = niceInterval(64.0f / zoom);
+ const float minorSpacing = majorSpacing / 4.0f;
+ const FloatColor minorColor{0.48f, 0.58f, 0.72f, 0.16f};
+ const FloatColor majorColor{0.48f, 0.66f, 0.92f, 0.36f};
+ const FloatColor frameColor{0.30f, 0.68f, 1.0f, 0.86f};
+
+ renderer_->setUseExternalMatrices(false);
+ if (minorSpacing * zoom >= 8.0f) {
+  renderer_->drawGrid(0.0f, 0.0f, width, height, minorSpacing,
+                      0.65f / zoom, minorColor);
+ }
+ renderer_->drawGrid(0.0f, 0.0f, width, height, majorSpacing,
+                     1.0f / zoom, majorColor);
+ renderer_->drawDashedRectOutline(0.0f, 0.0f, width, height,
+                                  frameColor, 1.25f / zoom,
+                                  9.0f / zoom, 5.0f / zoom);
+}
+
 void ArtifactLayerEditorWidgetV2::Impl::refreshSurfaceInfo(
     const ArtifactAbstractLayerPtr& layer)
 {
@@ -2405,13 +2449,14 @@ void ArtifactLayerEditorWidgetV2::Impl::refreshSurfaceInfo(
       : layer->isDirty() ? QStringLiteral("Dirty")
                          : QStringLiteral("Ready");
   surfaceInfoBody_ = QStringLiteral(
-      "%1  ·  Stage Final  ·  Source %2 × %3\n"
-      "Bounds X %4 Y %5 W %6 H %7  ·  Pivot %8, %9\n"
-      "%10\n"
-      "Opacity %11%  ·  %12  ·  Matte %13  ·  Cache %14\n"
-      "Mask %15\n"
-      "FX %16: %17")
+      "%1  ·  Stage %2  ·  Source %3 × %4\n"
+      "Bounds X %5 Y %6 W %7 H %8  ·  Pivot %9, %10\n"
+      "%11\n"
+      "Opacity %12%  ·  %13  ·  Matte %14  ·  Cache %15\n"
+      "Mask %16\n"
+      "FX %17: %18")
       .arg(layerTypeLabel(layer))
+      .arg(displayModeLabel(displayMode_))
       .arg(source.width)
       .arg(source.height)
       .arg(bounds.x(), 0, 'f', 0)
@@ -2626,7 +2671,7 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
    renderer_->drawText(
        QRectF(dividerX + 10.0f, surfacePanelY + 3.0f,
               48.0f, surfacePanelH - 6.0f),
-       QStringLiteral("Final"), compactFont, textColor,
+       displayModeLabel(displayMode_), compactFont, textColor,
        Qt::AlignLeft | Qt::AlignVCenter);
    renderer_->drawCircle(dividerX + 57.0f,
                          surfacePanelY + surfacePanelH * 0.5f,
@@ -4060,6 +4105,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
     }
    }
   }
+ drawCompositionGuideOverlay();
  if (!targetLayerId_.isNil()) {
   if (auto layer = targetLayer()) {
    syncTransformGizmo(layer);
@@ -5530,6 +5576,10 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    }
   }
   QMenu bgMenu(this);
+ QAction* showGridAct = bgMenu.addAction(QStringLiteral("Show Composition Grid"));
+ showGridAct->setCheckable(true);
+ showGridAct->setChecked(impl_->showGrid_);
+ bgMenu.addSeparator();
  QAction* alphaAct = bgMenu.addAction(QStringLiteral("Alpha"));
  QAction* solidAct = bgMenu.addAction(QStringLiteral("Solid"));
  QAction* mayaAct = bgMenu.addAction(QStringLiteral("Maya Gradient"));
@@ -5557,7 +5607,9 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
   event->accept();
   return;
  }
- if (chosen == alphaAct) {
+ if (chosen == showGridAct) {
+  impl_->showGrid_ = showGridAct->isChecked();
+ } else if (chosen == alphaAct) {
   impl_->backgroundMode_ = LayerBackgroundMode::Alpha;
  } else if (chosen == solidAct) {
   impl_->backgroundMode_ = LayerBackgroundMode::Solid;

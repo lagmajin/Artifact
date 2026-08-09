@@ -61,6 +61,8 @@ public:
     GizmoSpace space() const { return space_; }
 
     void setTransform(const QVector3D& position, const QVector3D& rotation);
+    void setLocalBasis(const QVector3D& xAxis, const QVector3D& yAxis,
+                       const QVector3D& zAxis);
     QVector3D position() const;
     QVector3D rotation() const;
     void setScale(const QVector3D& scale);
@@ -76,7 +78,11 @@ public:
     GizmoAxis hitTest(const Ray& ray, const QMatrix4x4& view, const QMatrix4x4& proj);
     
     // Interaction
-    void beginDrag(GizmoAxis axis, const Ray& ray);
+    void beginDrag(GizmoAxis axis, const Ray& ray, float axisDirectionSign = 1.0f);
+    void constrainDrag(GizmoAxis axis, const Ray& currentRay);
+    void setNumericInput(float value);
+    void setNumericPlanarScaleInput(float factor);
+    void clearNumericInput();
     void updateDrag(const Ray& ray);
     void endDrag();
     bool isDragging() const { return activeAxis_ != GizmoAxis::None; }

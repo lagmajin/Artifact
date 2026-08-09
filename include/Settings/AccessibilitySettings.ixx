@@ -1,5 +1,6 @@
 module;
 #include <QColor>
+#include <QString>
 
 export module Settings.Accessibility;
 
@@ -15,6 +16,11 @@ bool        preferHighContrastHints();
 int         fontScalePercent();
 ColorDeficiencyMode colorDeficiencyMode();
 bool        reduceHoverDependency();
+bool        stickyKeysEnabled();
+QString     stickyKeysMode();
+bool        singleHandModeEnabled();
+bool        viewportMagnifierEnabled();
+int         viewportMagnifierScale();
 
 // scaling helpers — multiply base pixel sizes by these factors
 float targetScale();   // ≥1.0 when preferLargeTargets

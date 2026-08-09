@@ -32,6 +32,7 @@ module Artifact.Service.Project;
 import std;
 
 import Utils.String.UniString;
+import Artifact.Layer.InitParams;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Abstract;
 import Artifact.Project.Manager;
@@ -1683,11 +1684,27 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
     }
   }
 
+  // Quick-create entry points can only supply the base init params.  A solid
+  // created that way must still use the active composition's dimensions;
+  // otherwise the factory's legacy 1920x1080 fallback also becomes the
+  // transform-gizmo rectangle.
+  ArtifactSolidLayerInitParams compositionSizedSolid(QStringLiteral("Solid"));
+  const ArtifactLayerInitParams *effectiveParams = &params;
+  const auto targetComposition = currentComposition().lock();
+  if (targetComposition && params.layerType() == LayerType::Solid &&
+      !dynamic_cast<const ArtifactSolidLayerInitParams *>(&params)) {
+    const QSize compositionSize = targetComposition->settings().compositionSize();
+    compositionSizedSolid.setName(params.name());
+    compositionSizedSolid.setWidth(std::max(1, compositionSize.width()));
+    compositionSizedSolid.setHeight(std::max(1, compositionSize.height()));
+    effectiveParams = &compositionSizedSolid;
+  }
+
   ArtifactLayerResult result;
   bool targetedCurrentComposition = false;
-  if (auto comp = currentComposition().lock()) {
-    if (params.layerType() == LayerType::CompositionBackground) {
-      const auto allLayers = comp->allLayer();
+  if (targetComposition) {
+    if (effectiveParams->layerType() == LayerType::CompositionBackground) {
+      const auto allLayers = targetComposition->allLayer();
       const bool alreadyHasBackground = std::any_of(
           allLayers.cbegin(), allLayers.cend(), [](const auto& layer) {
             return layer && layer->isCompositionBackgroundLayer();
@@ -1699,11 +1716,12 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
       }
     }
     result = manager.addLayerToComposition(
-        comp->id(), const_cast<ArtifactLayerInitParams &>(params));
+        targetComposition->id(),
+        const_cast<ArtifactLayerInitParams &>(*effectiveParams));
     targetedCurrentComposition = true;
   } else {
     result = manager.addLayerToCurrentComposition(
-        const_cast<ArtifactLayerInitParams &>(params));
+        const_cast<ArtifactLayerInitParams &>(*effectiveParams));
   }
   if (result.success && result.layer) {
     if (startHidden) {
@@ -1751,7 +1769,7 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
     }
 
     if (auto project = manager.getCurrentProjectSharedPtr()) {
-      updateLastUsedCreationDefaults(project, params);
+      updateLastUsedCreationDefaults(project, *effectiveParams);
     }
 
     if (targetedCurrentComposition) {

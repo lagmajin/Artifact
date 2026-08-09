@@ -135,6 +135,11 @@ public:
   QSpinBox *accessibilityFontScaleSpinBox_;
   QComboBox *colorDeficiencyCombo_;
   QCheckBox *reduceHoverDependencyCheckBox_;
+  QCheckBox *stickyKeysCheckBox_;
+  QComboBox *stickyKeysModeCombo_;
+  QCheckBox *singleHandModeCheckBox_;
+  QCheckBox *viewportMagnifierCheckBox_;
+  QSpinBox *viewportMagnifierScaleSpinBox_;
 };
 
 GeneralSettingPage::Impl::Impl() {}
@@ -274,6 +279,54 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   accessibilityLayout->addWidget(impl_->highContrastHintsCheckBox_);
   accessibilityLayout->addWidget(impl_->reduceHoverDependencyCheckBox_);
 
+  impl_->stickyKeysCheckBox_ = new QCheckBox("Enable sticky modifier keys", this);
+  impl_->stickyKeysCheckBox_->setAccessibleName(QStringLiteral("Enable sticky modifier keys"));
+  impl_->stickyKeysCheckBox_->setAccessibleDescription(
+      QStringLiteral("Toggle Ctrl, Shift, Alt, and Meta with a single key press."));
+  impl_->stickyKeysCheckBox_->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
+  accessibilityLayout->addWidget(impl_->stickyKeysCheckBox_);
+
+  auto *stickyModeLayout = new QHBoxLayout();
+  stickyModeLayout->addWidget(new QLabel("Sticky key release mode:", this));
+  impl_->stickyKeysModeCombo_ = new QComboBox(this);
+  impl_->stickyKeysModeCombo_->addItem("Latch (release after next key)", "latch");
+  impl_->stickyKeysModeCombo_->addItem("Lock (release manually)", "lock");
+  impl_->stickyKeysModeCombo_->addItem("Latch and lock", "both");
+  impl_->stickyKeysModeCombo_->setAccessibleName(QStringLiteral("Sticky key release mode"));
+  impl_->stickyKeysModeCombo_->setAccessibleDescription(
+      QStringLiteral("Choose whether sticky modifiers release after the next key."));
+  impl_->stickyKeysModeCombo_->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
+  stickyModeLayout->addWidget(impl_->stickyKeysModeCombo_);
+  stickyModeLayout->addStretch();
+  accessibilityLayout->addLayout(stickyModeLayout);
+
+  impl_->singleHandModeCheckBox_ = new QCheckBox("Enable single-hand mouse modifiers", this);
+  impl_->singleHandModeCheckBox_->setAccessibleName(QStringLiteral("Enable single-hand mouse modifiers"));
+  impl_->singleHandModeCheckBox_->setAccessibleDescription(
+      QStringLiteral("Use mouse side buttons as Shift and Ctrl while editing."));
+  impl_->singleHandModeCheckBox_->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
+  accessibilityLayout->addWidget(impl_->singleHandModeCheckBox_);
+
+  impl_->viewportMagnifierCheckBox_ = new QCheckBox("Enable viewport magnifier", this);
+  impl_->viewportMagnifierCheckBox_->setAccessibleName(QStringLiteral("Enable viewport magnifier"));
+  impl_->viewportMagnifierCheckBox_->setAccessibleDescription(
+      QStringLiteral("Show an enlarged view around the pointer in the composition viewport."));
+  impl_->viewportMagnifierCheckBox_->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
+  accessibilityLayout->addWidget(impl_->viewportMagnifierCheckBox_);
+
+  auto *magnifierScaleLayout = new QHBoxLayout();
+  magnifierScaleLayout->addWidget(new QLabel("Viewport magnifier scale:", this));
+  impl_->viewportMagnifierScaleSpinBox_ = new QSpinBox(this);
+  impl_->viewportMagnifierScaleSpinBox_->setRange(2, 8);
+  impl_->viewportMagnifierScaleSpinBox_->setSuffix("x");
+  impl_->viewportMagnifierScaleSpinBox_->setAccessibleName(QStringLiteral("Viewport magnifier scale"));
+  impl_->viewportMagnifierScaleSpinBox_->setAccessibleDescription(
+      QStringLiteral("Choose a viewport magnification from 2 to 8 times."));
+  impl_->viewportMagnifierScaleSpinBox_->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
+  magnifierScaleLayout->addWidget(impl_->viewportMagnifierScaleSpinBox_);
+  magnifierScaleLayout->addStretch();
+  accessibilityLayout->addLayout(magnifierScaleLayout);
+
   auto *accessibilityFontLayout = new QHBoxLayout();
   accessibilityFontLayout->addWidget(new QLabel("Accessibility font scale:", this));
   impl_->accessibilityFontScaleSpinBox_ = new QSpinBox(this);
@@ -352,6 +405,12 @@ void GeneralSettingPage::loadSettings() {
   impl_->colorDeficiencyCombo_->setCurrentIndex(
       impl_->colorDeficiencyCombo_->findData(settings->accessibilityColorDeficiencyMode()));
   impl_->reduceHoverDependencyCheckBox_->setChecked(settings->accessibilityReduceHoverDependency());
+  impl_->stickyKeysCheckBox_->setChecked(settings->accessibilityStickyKeysEnabled());
+  impl_->stickyKeysModeCombo_->setCurrentIndex(
+      impl_->stickyKeysModeCombo_->findData(settings->accessibilityStickyKeysMode()));
+  impl_->singleHandModeCheckBox_->setChecked(settings->accessibilitySingleHandModeEnabled());
+  impl_->viewportMagnifierCheckBox_->setChecked(settings->accessibilityViewportMagnifierEnabled());
+  impl_->viewportMagnifierScaleSpinBox_->setValue(settings->accessibilityViewportMagnifierScale());
   // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
 }
 
@@ -383,6 +442,15 @@ void GeneralSettingPage::saveSettings() {
       impl_->colorDeficiencyCombo_->currentData().toString());
   settings->setAccessibilityReduceHoverDependency(
       impl_->reduceHoverDependencyCheckBox_->isChecked());
+  settings->setAccessibilityStickyKeysEnabled(impl_->stickyKeysCheckBox_->isChecked());
+  settings->setAccessibilityStickyKeysMode(
+      impl_->stickyKeysModeCombo_->currentData().toString());
+  settings->setAccessibilitySingleHandModeEnabled(
+      impl_->singleHandModeCheckBox_->isChecked());
+  settings->setAccessibilityViewportMagnifierEnabled(
+      impl_->viewportMagnifierCheckBox_->isChecked());
+  settings->setAccessibilityViewportMagnifierScale(
+      impl_->viewportMagnifierScaleSpinBox_->value());
 }
 
 QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {

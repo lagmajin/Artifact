@@ -1,6 +1,7 @@
 ﻿module;
 #include <utility>
 #include <atomic>
+#include <cstdint>
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -311,11 +312,25 @@ public:
         
         const double fps = frameRate_.framerate();
         appliedPlaybackSpeed_ = playbackSpeed_.load();
+        std::uint64_t loopIterations = 0;
+        std::uint64_t emittedFrames = 0;
+        QElapsedTimer progressTimer;
+        progressTimer.start();
+        int64_t lastProgressFrame = currentFrame_.load();
         
-        qDebug() << "[PlaybackEngine] Starting high-precision playback loop at"
-                 << (fps * std::abs(appliedPlaybackSpeed_)) << "fps";
+        qInfo() << "[PlaybackEngine][Loop] enter"
+                << "state=" << static_cast<int>(state_.load())
+                << "currentFrame=" << currentFrame_.load()
+                << "lastEmitted=" << lastEmittedFrame_.load()
+                << "range=" << effectiveStartFrame().framePosition()
+                << "-" << effectiveEndFrame().framePosition()
+                << "sourceFps=" << fps
+                << "speed=" << appliedPlaybackSpeed_
+                << "effectiveFps="
+                << (fps * std::abs(appliedPlaybackSpeed_));
         
         while (state_ != PlaybackState::Stopped) {
+            ++loopIterations;
             if (state_ == PlaybackState::Paused) {
                 ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactPlaybackEngine::mutex_"));
                 std::unique_lock<std::mutex> lock(mutex_);
@@ -439,6 +454,31 @@ public:
                 updateFrame(targetFrame);
                 lastEmittedFrame_ = targetFrame;
                 emittedFrame = true;
+                ++emittedFrames;
+                lastProgressFrame = targetFrame;
+                progressTimer.restart();
+                if (emittedFrames == 1 || emittedFrames % 120 == 0) {
+                    qDebug() << "[PlaybackEngine][Tick]"
+                             << "targetFrame=" << targetFrame
+                             << "previousFrame=" << previousFrame
+                             << "elapsedSeconds=" << elapsedSeconds
+                             << "speed=" << appliedPlaybackSpeed_
+                             << "skipStep=" << skipStep
+                             << "event=EMIT"
+                             << "emittedTotal=" << emittedFrames;
+                }
+            } else if (progressTimer.elapsed() >= 2000) {
+                qWarning() << "[PlaybackEngine][Stall] no frame progress"
+                           << "durationMs=" << progressTimer.elapsed()
+                           << "frame=" << lastProgressFrame
+                           << "targetFrame=" << targetFrame
+                           << "state=" << static_cast<int>(state_.load())
+                           << "speed=" << appliedPlaybackSpeed_
+                           << "fps=" << fps
+                           << "elapsedSeconds=" << elapsedSeconds
+                           << "range=" << startPos.framePosition()
+                           << "-" << endPos.framePosition();
+                progressTimer.restart();
             }
             
             // オーディオパケットの供給
@@ -484,6 +524,13 @@ public:
         if (audioRenderer_ && !audioRenderer_->isActive()) {
             audioRenderer_->clearBuffer();
         }
+        qInfo() << "[PlaybackEngine][Loop] exit"
+                << "state=" << static_cast<int>(state_.load())
+                << "finalFrame=" << currentFrame_.load()
+                << "lastEmitted=" << lastEmittedFrame_.load()
+                << "iterations=" << loopIterations
+                << "emitted=" << emittedFrames
+                << "droppedTotal=" << droppedFrameCount_;
         // workerThread_ は stop() で既に quit() されているため不要
     }
     

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <vector>
@@ -67,6 +67,10 @@ export namespace Artifact {
 
   TransformGizmo();
   ~TransformGizmo();
+  TransformGizmo(const TransformGizmo&) = delete;
+  TransformGizmo& operator=(const TransformGizmo&) = delete;
+  TransformGizmo(TransformGizmo&&) = delete;
+  TransformGizmo& operator=(TransformGizmo&&) = delete;
 
   void setMode(Mode mode);
   Mode mode() const;
@@ -85,6 +89,7 @@ export namespace Artifact {
                        ArtifactIRenderer* renderer);
   bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);
   void handleMouseRelease();
+  bool cancelInteraction();
 
   bool isDragging() const { return isDragging_; }
   HandleType activeHandle() const { return activeHandle_; }
@@ -92,7 +97,8 @@ export namespace Artifact {
   const std::vector<SnapLabel>& activeSnapLabels() const { return activeSnapLabels_; }
   QRectF currentCanvasBoundingRect() const;
 
- private:
+private:
+  struct MultiDragState;
   HandleType hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
   bool allowsHandle(HandleType handle) const;
   
@@ -113,6 +119,7 @@ export namespace Artifact {
   std::vector<float> cachedSpacingVLines_;
   std::vector<float> cachedSpacingHLines_;
   std::vector<QPointF> dragStartTargetLayerPositions_;
+  MultiDragState* multiDragState_ = nullptr;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLocalMousePos_;
   QPointF dragStartLayerPos_;

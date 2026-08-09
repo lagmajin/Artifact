@@ -1,10 +1,11 @@
-﻿module;
+module;
 #include <QFont>
 #include <QString>
 #include <utility>
 #include <QPointF>
 #include <QRectF>
 #include <QTransform>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -18,6 +19,39 @@ import Artifact.Render.IRenderer;
 import Color.Float;
 
 namespace Artifact {
+
+namespace {
+
+float animatorPropertyValue(const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer,
+                            const QString& suffix,
+                            const float fallback = 0.0f) {
+    if (!layer) return fallback;
+    auto property = layer->getProperty(
+        QStringLiteral("text.animators.0.%1").arg(suffix));
+    if (!property) {
+        (void)layer->getLayerPropertyGroups();
+        property = layer->getProperty(
+            QStringLiteral("text.animators.0.%1").arg(suffix));
+    }
+    if (!property) return fallback;
+    const float value = static_cast<float>(property->getValue().toDouble());
+    return std::isfinite(value) ? value : fallback;
+}
+
+bool hasEditablePercentageSelector(
+    const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer) {
+    return layer && layer->animatorCount() > 0 &&
+           static_cast<int>(animatorPropertyValue(
+               layer, QStringLiteral("units"), 0.0f)) == 0;
+}
+
+float selectorHandleX(const QRectF& bounds, const float percentage) {
+    return static_cast<float>(bounds.left()) +
+           static_cast<float>(bounds.width()) *
+               std::clamp(percentage, 0.0f, 100.0f) / 100.0f;
+}
+
+} // namespace
 
 TextGizmo::TextGizmo() {}
 TextGizmo::~TextGizmo() {}
@@ -62,6 +96,37 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.top() - handleSize/2, handleSize, handleSize, handleColor);
     renderer->drawSolidRect(bbox.left() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
+
+    if (hasEditablePercentageSelector(textLayer)) {
+        const float start = animatorPropertyValue(textLayer, QStringLiteral("start"));
+        const float end = animatorPropertyValue(textLayer, QStringLiteral("end"), 100.0f);
+        const float offset = animatorPropertyValue(textLayer, QStringLiteral("offset"));
+        const float selectorY = static_cast<float>(bbox.top()) - 12.0f * invZoom;
+        const float selectorHeight = 10.0f * invZoom;
+        const float selectorHandleWidth = std::max(2.0f * invZoom, handleWidth);
+        const float startX = selectorHandleX(bbox, start);
+        const float endX = selectorHandleX(bbox, end);
+        const float offsetX = selectorHandleX(
+            bbox, (start + end) * 0.5f + offset);
+        const FloatColor startColor{0.20f, 0.82f, 1.0f, 0.98f};
+        const FloatColor endColor{1.0f, 0.42f, 0.24f, 0.98f};
+        const FloatColor offsetColor{1.0f, 0.86f, 0.20f, 0.98f};
+        renderer->drawSolidRect(startX - selectorHandleWidth * 0.5f,
+                                selectorY, selectorHandleWidth,
+                                selectorHeight, startColor);
+        renderer->drawSolidRect(endX - selectorHandleWidth * 0.5f,
+                                selectorY, selectorHandleWidth,
+                                selectorHeight, endColor);
+        renderer->drawSolidRect(offsetX - selectorHandleWidth,
+                                selectorY + selectorHeight * 0.25f,
+                                selectorHandleWidth * 2.0f,
+                                selectorHeight * 0.5f, offsetColor);
+        renderer->drawRectOutline(std::min(startX, endX),
+                                  selectorY + selectorHeight * 0.45f,
+                                  std::abs(endX - startX),
+                                  std::max(invZoom, selectorHeight * 0.1f),
+                                  FloatColor{0.65f, 0.78f, 0.92f, 0.85f});
+    }
 
     const auto weightPreview = textLayer->selectorWeightPreview(24);
     if (!weightPreview.isEmpty()) {
@@ -155,8 +220,6 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
 
     // Side handles (optional, for now just corners)
 
-    // If text animator is present, draw range selectors (legacy)
-    // ... existing code for range selectors if needed
 }
 
 TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {
@@ -177,6 +240,30 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
     const float zoom = renderer->getZoom();
     const float hitThreshold = std::isfinite(zoom) && zoom > 0.0001f
         ? 10.0f / zoom : 10.0f;
+
+    if (hasEditablePercentageSelector(textLayer)) {
+        const float start = animatorPropertyValue(textLayer, QStringLiteral("start"));
+        const float end = animatorPropertyValue(textLayer, QStringLiteral("end"), 100.0f);
+        const float offset = animatorPropertyValue(textLayer, QStringLiteral("offset"));
+        const float selectorY = static_cast<float>(bbox.top()) - 7.0f / std::max(zoom, 0.0001f);
+        const bool selectorYHit =
+            std::abs(canvasMouse.y - selectorY) < hitThreshold;
+        if (selectorYHit) {
+            const float startX = selectorHandleX(bbox, start);
+            const float endX = selectorHandleX(bbox, end);
+            const float offsetX = selectorHandleX(
+                bbox, (start + end) * 0.5f + offset);
+            if (std::abs(canvasMouse.x - offsetX) < hitThreshold) {
+                return HandleType::RangeOffset;
+            }
+            if (std::abs(canvasMouse.x - startX) < hitThreshold) {
+                return HandleType::RangeStart;
+            }
+            if (std::abs(canvasMouse.x - endX) < hitThreshold) {
+                return HandleType::RangeEnd;
+            }
+        }
+    }
 
     // Check corner handles
     if (std::abs(canvasMouse.x - bbox.left()) < hitThreshold && std::abs(canvasMouse.y - bbox.top()) < hitThreshold) {
@@ -213,9 +300,6 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         return HandleType::Offset;
     }
 
-    // Legacy range selector hits if no bounds hit
-    // ... existing code for range selectors if needed
-
     return HandleType::None;
 }
 
@@ -236,6 +320,7 @@ Qt::CursorShape TextGizmo::cursorShapeForViewportPos(const QPointF& viewportPos,
             return Qt::SizeBDiagCursor;
         case HandleType::RangeStart:
         case HandleType::RangeEnd:
+        case HandleType::RangeOffset:
             return Qt::SizeHorCursor;
         case HandleType::Offset:
             return isDragging_ ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
@@ -256,7 +341,19 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
         if (dragStartBounds_.isEmpty()) {
             dragStartBounds_ = QRectF(0, 0, 400, 100);
         }
-        // 現在のセレクター値を保存
+        if (activeHandle_ == HandleType::RangeStart) {
+            dragStartValue_ = animatorPropertyValue(
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_),
+                QStringLiteral("start"));
+        } else if (activeHandle_ == HandleType::RangeEnd) {
+            dragStartValue_ = animatorPropertyValue(
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_),
+                QStringLiteral("end"), 100.0f);
+        } else if (activeHandle_ == HandleType::RangeOffset) {
+            dragStartValue_ = animatorPropertyValue(
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_),
+                QStringLiteral("offset"));
+        }
         return true;
     }
     return false;
@@ -278,6 +375,29 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     }
 
     QRectF bbox = dragStartBounds_;
+
+    if (activeHandle_ == HandleType::RangeStart ||
+        activeHandle_ == HandleType::RangeEnd ||
+        activeHandle_ == HandleType::RangeOffset) {
+        if (bbox.width() <= 0.0001) return false;
+        const float deltaPercent =
+            deltaX / static_cast<float>(bbox.width()) * 100.0f;
+        QString suffix;
+        if (activeHandle_ == HandleType::RangeStart) {
+            suffix = QStringLiteral("start");
+        } else if (activeHandle_ == HandleType::RangeEnd) {
+            suffix = QStringLiteral("end");
+        } else {
+            suffix = QStringLiteral("offset");
+        }
+        textLayer->setLayerPropertyValue(
+            QStringLiteral("text.animators.0.%1").arg(suffix),
+            std::clamp(dragStartValue_ + deltaPercent, -100000.0f,
+                       100000.0f));
+        textLayer->updateImage();
+        textLayer->changed();
+        return true;
+    }
 
     switch (activeHandle_) {
         case HandleType::Offset: {

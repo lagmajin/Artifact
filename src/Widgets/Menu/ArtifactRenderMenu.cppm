@@ -9,6 +9,8 @@ module;
 #include <QStringList>
 #include <QDockWidget>
 #include <QWidget>
+#include <QMetaObject>
+#include <QPointer>
 #include <wobjectimpl.h>
 
 module Menu.Render;
@@ -205,14 +207,23 @@ renderSettingsAction = new QAction("レンダー出力設定(&S)...");
  QObject::connect(scrollPoCAction, &QAction::triggered, menu, [this]() { showScrollPoC(); });
 
  auto& eventBus = ArtifactCore::globalEventBus();
-eventBusSubscriptions_.push_back(eventBus.subscribe<ProjectChangedEvent>(
-     [this](const ProjectChangedEvent&) { menu_->rebuildMenu(); }));
-eventBusSubscriptions_.push_back(eventBus.subscribe<CompositionCreatedEvent>(
-     [this](const CompositionCreatedEvent&) { menu_->rebuildMenu(); }));
-eventBusSubscriptions_.push_back(eventBus.subscribe<CurrentCompositionChangedEvent>(
-     [this](const CurrentCompositionChangedEvent&) { menu_->rebuildMenu(); }));
-eventBusSubscriptions_.push_back(eventBus.subscribe<RenderQueueChangedEvent>(
-     [this](const RenderQueueChangedEvent&) { menu_->rebuildMenu(); }));
+ auto refreshOnGuiThread = [this](auto const&) {
+   const QPointer<ArtifactRenderMenu> guard(menu_);
+   QMetaObject::invokeMethod(
+       menu_, [guard]() {
+         if (guard) {
+           guard->rebuildMenu();
+         }
+       }, Qt::QueuedConnection);
+ };
+ eventBusSubscriptions_.push_back(eventBus.subscribe<ProjectChangedEvent>(
+      refreshOnGuiThread));
+ eventBusSubscriptions_.push_back(eventBus.subscribe<CompositionCreatedEvent>(
+      refreshOnGuiThread));
+ eventBusSubscriptions_.push_back(eventBus.subscribe<CurrentCompositionChangedEvent>(
+      refreshOnGuiThread));
+ eventBusSubscriptions_.push_back(eventBus.subscribe<RenderQueueChangedEvent>(
+      refreshOnGuiThread));
 }
 
 void ArtifactRenderMenu::Impl::showScrollPoC()

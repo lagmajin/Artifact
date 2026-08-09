@@ -60,6 +60,7 @@
 module ArtifactDiligentEngineRenderWindow;
 
 import Graphics;
+import Artifact.Render.Config;
 import IO.ImageImporter;
 import Image.Raw;
 import Mesh;
@@ -448,6 +449,10 @@ bool ArtifactDiligentEngineRenderWindow::initialize()
   Win32NativeWindow nativeWindow;
   nativeWindow.hWnd = reinterpret_cast<HWND>(winId());
   SwapChainDesc swapChainDesc;
+  swapChainDesc.ColorBufferFormat =
+      Artifact::RenderConfig::hdrDisplayEnabled()
+          ? TEX_FORMAT_RGBA16_FLOAT
+          : TEX_FORMAT_RGBA8_UNORM_SRGB;
   FullScreenModeDesc fullScreenDesc;
   fullScreenDesc.Fullscreen = false;
 
@@ -657,7 +662,9 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
    auto& gp = psoCI.GraphicsPipeline;
    gp.NumRenderTargets = 1;
-   gp.RTVFormats[0] = TEX_FORMAT_RGBA8_UNORM_SRGB;
+   gp.RTVFormats[0] = Artifact::RenderConfig::hdrDisplayEnabled()
+                          ? TEX_FORMAT_RGBA16_FLOAT
+                          : TEX_FORMAT_RGBA8_UNORM_SRGB;
    gp.DSVFormat = TEX_FORMAT_D32_FLOAT;
    gp.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
    gp.RasterizerDesc.FillMode = fillMode;

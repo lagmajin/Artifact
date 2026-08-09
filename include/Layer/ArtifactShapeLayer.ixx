@@ -14,6 +14,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Shape.Operator;
+import Shape.Path;
 import Memory.SharedPtr;
 
 export namespace Artifact {
@@ -132,6 +133,9 @@ public:
   void clearCustomPath();
   std::vector<CustomPathVertex> customPathVertices() const;
   bool customPathClosed() const;
+
+  // Backend-neutral geometry after applying the current operator stack.
+  std::vector<ArtifactCore::ShapePath> nativeShapePaths() const;
 
   // Shape operators (AE-style path operators)
   void addShapeOperator(ArtifactCore::ShapeOperatorType type);

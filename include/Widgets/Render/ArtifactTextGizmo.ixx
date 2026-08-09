@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <vector>
 #include <memory>
@@ -22,6 +22,7 @@ public:
         None,
         RangeStart,
         RangeEnd,
+        RangeOffset,
         Offset,
         CharacterSelect,
         AnchorPoint,

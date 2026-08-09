@@ -76,6 +76,7 @@ import Frame.Range;
 import Frame.Debug;
 import Core.Diagnostics.Trace;
 import Core.Diagnostics.ProjectDiagnostic;
+import Diagnostics.Logger;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Core.Defaults;
@@ -1701,7 +1702,7 @@ namespace Artifact
         virtual ~IVideoEncodeBackend() = default;
         virtual bool open(const ArtifactRenderJob& job, QString* errorMessage) = 0;
         virtual bool addFrame(const QImage& frame, int frameIndex, QString* errorMessage) = 0;
-        virtual void close() = 0;
+        virtual bool close(QString* errorMessage) = 0;
     };
 
     class PipeFFmpegExeBackend final : public IVideoEncodeBackend {
@@ -1714,7 +1715,7 @@ namespace Artifact
 
         bool open(const ArtifactRenderJob& job, QString* errorMessage) override
         {
-            close();
+            close(nullptr);
 
             process_ = std::make_unique<QProcess>();
             process_->setProcessChannelMode(QProcess::MergedChannels);
@@ -1769,24 +1770,32 @@ namespace Artifact
                         *errorMessage = QStringLiteral("ffmpeg.exe does not advertise %1").arg(hwEncoder);
                     }
                     lastError_ = QStringLiteral("Missing hardware encoder: %1").arg(hwEncoder);
-                    close();
+                    close(nullptr);
                     return false;
                 }
             }
             process_->start(ffmpegPath, args);
             if (!process_->waitForStarted()) {
                 if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to start ffmpeg.exe bridge: %1").arg(ffmpegPath);
+                    *errorMessage = QStringLiteral(
+                        "Failed to start ffmpeg.exe bridge: %1 (%2)")
+                        .arg(ffmpegPath, process_->errorString());
                 }
-                close();
+                lastError_ = errorMessage ? *errorMessage
+                                          : process_->errorString();
+                close(nullptr);
                 return false;
             }
 
+            qInfo() << "[Encode][Pipe] started"
+                    << "program=" << ffmpegPath
+                    << "arguments=" << args
+                    << "output=" << job.outputPath;
             lastError_.clear();
             return true;
         }
 
-        bool addFrame(const QImage& frame, int /*frameIndex*/, QString* errorMessage) override
+        bool addFrame(const QImage& frame, int frameIndex, QString* errorMessage) override
         {
             if (!process_) {
                 const QString message = QStringLiteral("ffmpeg.exe bridge is not open");
@@ -1802,14 +1811,25 @@ namespace Artifact
             const qint64 expectedBytes = static_cast<qint64>(rgba.width()) * rgba.height() * 4;
             const qint64 written = process_->write(reinterpret_cast<const char*>(rgba.constBits()), expectedBytes);
             if (written != expectedBytes) {
-                const QString message = QStringLiteral("Failed to write video frame to ffmpeg.exe");
+                const QString processOutput = QString::fromUtf8(process_->readAll());
+                const QString message = QStringLiteral(
+                    "Failed to write frame %1 to ffmpeg.exe: expected=%2 written=%3 "
+                    "processState=%4 output=%5")
+                    .arg(frameIndex)
+                    .arg(expectedBytes)
+                    .arg(written)
+                    .arg(static_cast<int>(process_->state()))
+                    .arg(processOutput.right(2048));
                 lastError_ = message;
                 if (errorMessage) *errorMessage = message;
                 return false;
             }
 
             if (!process_->waitForBytesWritten(30000)) {
-                const QString message = QStringLiteral("Timed out while writing frame to ffmpeg.exe");
+                const QString message = QStringLiteral(
+                    "Timed out while writing frame %1 to ffmpeg.exe: %2")
+                    .arg(frameIndex)
+                    .arg(QString::fromUtf8(process_->readAll()).right(2048));
                 lastError_ = message;
                 if (errorMessage) *errorMessage = message;
                 return false;
@@ -1818,21 +1838,49 @@ namespace Artifact
             return true;
         }
 
-        void close() override
+        bool close(QString* errorMessage) override
         {
             if (!process_) {
-                return;
+                return lastError_.isEmpty();
             }
 
             process_->closeWriteChannel();
-            if (!process_->waitForFinished(30000)) {
+            bool finished = process_->state() == QProcess::NotRunning ||
+                            process_->waitForFinished(30000);
+            if (!finished) {
                 process_->terminate();
                 if (!process_->waitForFinished(5000)) {
                     process_->kill();
-                    process_->waitForFinished(5000);
+                    finished = process_->waitForFinished(5000);
+                } else {
+                    finished = true;
                 }
             }
+            const int exitCode = process_->exitCode();
+            const QProcess::ExitStatus exitStatus = process_->exitStatus();
+            const QString processOutput =
+                QString::fromUtf8(process_->readAll()).right(4096);
+            const bool success = finished &&
+                                 exitStatus == QProcess::NormalExit &&
+                                 exitCode == 0;
+            if (!success) {
+                lastError_ = QStringLiteral(
+                    "ffmpeg.exe finalization failed: finished=%1 exitStatus=%2 "
+                    "exitCode=%3 processError=%4 output=%5")
+                    .arg(finished)
+                    .arg(static_cast<int>(exitStatus))
+                    .arg(exitCode)
+                    .arg(process_->errorString())
+                    .arg(processOutput);
+                if (errorMessage) *errorMessage = lastError_;
+                qWarning() << "[Encode][Pipe] finalize failed" << lastError_;
+            } else {
+                qInfo() << "[Encode][Pipe] finalized"
+                        << "exitCode=" << exitCode
+                        << "output=" << processOutput;
+            }
             process_.reset();
+            return success;
         }
 
         QString lastError() const { return lastError_; }
@@ -1864,9 +1912,27 @@ namespace Artifact
             if (!encoder_.open(job.outputPath, settings)) {
                 lastError_ = encoder_.lastError();
                 if (errorMessage) *errorMessage = lastError_;
+                qWarning() << "[Encode][Native] open failed"
+                           << "output=" << job.outputPath
+                           << "codec=" << settings.videoCodec
+                           << "encoder=" << settings.encoderName
+                           << "container=" << settings.container
+                           << "resolution=" << settings.width << "x"
+                           << settings.height
+                           << "fps=" << settings.fps
+                           << "error=" << lastError_;
                 return false;
             }
 
+            qInfo() << "[Encode][Native] opened"
+                    << "output=" << job.outputPath
+                    << "codec=" << settings.videoCodec
+                    << "encoder=" << settings.encoderName
+                    << "container=" << settings.container
+                    << "resolution=" << settings.width << "x"
+                    << settings.height
+                    << "fps=" << settings.fps
+                    << "bitrateKbps=" << settings.bitrateKbps;
             lastError_.clear();
             return true;
         }
@@ -1884,9 +1950,17 @@ namespace Artifact
             return true;
         }
 
-        void close() override
+        bool close(QString* errorMessage) override
         {
             encoder_.close();
+            lastError_ = encoder_.lastError();
+            if (!lastError_.isEmpty()) {
+                if (errorMessage) *errorMessage = lastError_;
+                qWarning() << "[Encode][Native] finalize failed" << lastError_;
+                return false;
+            }
+            qInfo() << "[Encode][Native] finalized";
+            return true;
         }
 
         QString lastError() const { return lastError_; }
@@ -1930,6 +2004,10 @@ namespace Artifact
                 if (errorMessage) errorMessage->clear();
                 return backend;
             }
+            qWarning() << "[Encode][Native] backend attempt failed"
+                       << "jobId=" << job.compositionId.toString()
+                       << "codec=" << job.codec
+                       << "error=" << localError;
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
@@ -1941,6 +2019,10 @@ namespace Artifact
                 if (errorMessage) errorMessage->clear();
                 return backend;
             }
+            qWarning() << "[Encode][Pipe] backend attempt failed"
+                       << "jobId=" << job.compositionId.toString()
+                       << "codec=" << job.codec
+                       << "error=" << localError;
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
@@ -2234,6 +2316,9 @@ namespace Artifact
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].progress = 100;
             jobs[index].status = ArtifactRenderJob::Status::Completed;
+            qInfo() << "[EncodeSession][Job] status=completed"
+                    << "index=" << index
+                    << "output=" << jobs[index].outputPath;
             if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);
             if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
             if (jobUpdated) jobUpdated(index);
@@ -2244,6 +2329,13 @@ namespace Artifact
             jobs[index].status = ArtifactRenderJob::Status::Failed;
             jobs[index].progress = 0;  // 失敗時に進捗率をリセット（再実行時に分かりやすくする）
             jobs[index].errorMessage = message;
+            qWarning() << "[EncodeSession][Job] status=failed"
+                       << "index=" << index
+                       << "output=" << jobs[index].outputPath
+                       << "format=" << jobs[index].outputFormat
+                       << "codec=" << jobs[index].codec
+                       << "encoderBackend=" << jobs[index].encoderBackend
+                       << "reason=" << message;
             if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
             if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);  // 進捗更新も発火
             if (jobUpdated) jobUpdated(index);
@@ -2883,6 +2975,7 @@ namespace Artifact
             if (workerThread_.joinable()) {
                 workerThread_.join();
             }
+            finishEncodeSessionCapture(QStringLiteral("service-destroyed"));
             if (gpuRenderer_ && gpuRenderer_->isInitialized()) {
                 gpuRenderer_->destroy();
             }
@@ -2902,6 +2995,188 @@ namespace Artifact
         std::set<int> selectiveJobIndices_;
         bool selectiveRun_ = false;
         std::thread workerThread_;
+        bool encodeSessionActive_ = false;
+        QDateTime encodeSessionStartedAt_;
+
+        void beginEncodeSessionCapture() {
+            if (encodeSessionActive_) {
+                return;
+            }
+            ArtifactCore::Logger::instance()->install();
+            encodeSessionActive_ = true;
+            encodeSessionStartedAt_ = QDateTime::currentDateTime();
+            qInfo() << "[EncodeSession] begin"
+                    << "jobs=" << queueManager.jobCount()
+                    << "selective=" << selectiveRun_;
+            for (int index = 0; index < queueManager.jobCount(); ++index) {
+                const auto job = queueManager.getJob(index);
+                if (selectiveRun_ && !selectiveJobIndices_.contains(index)) {
+                    continue;
+                }
+                qInfo() << "[EncodeSession][Job] configuration"
+                        << "index=" << index
+                        << "name=" << job.jobName
+                        << "composition=" << job.compositionId.toString()
+                        << "output=" << job.outputPath
+                        << "format=" << job.outputFormat
+                        << "codec=" << job.codec
+                        << "profile=" << job.codecProfile
+                        << "encoderBackend=" << job.encoderBackend
+                        << "renderBackend=" << job.renderBackend
+                        << "resolution=" << job.resolutionWidth << "x"
+                        << job.resolutionHeight
+                        << "fps=" << job.frameRate
+                        << "bitrateKbps=" << job.bitrate
+                        << "frames=" << job.startFrame << "-" << job.endFrame
+                        << "integratedAudio=" << job.integratedRenderEnabled
+                        << "audioSource=" << job.audioSourcePath
+                        << "audioCodec=" << job.audioCodec;
+            }
+        }
+
+        void finishEncodeSessionCapture(const QString& endReason) {
+            if (!encodeSessionActive_) {
+                return;
+            }
+            encodeSessionActive_ = false;
+            qInfo() << "[EncodeSession] end" << "reason=" << endReason;
+            const QDateTime finishedAt = QDateTime::currentDateTime();
+            const auto allLogs = ArtifactCore::Logger::instance()->getLogs();
+            std::vector<ArtifactCore::LogMessage> logs;
+            logs.reserve(allLogs.size());
+            QStringList failureEvidence;
+            for (const auto& log : allLogs) {
+                if (log.timestamp < encodeSessionStartedAt_ ||
+                    log.timestamp > finishedAt) {
+                    continue;
+                }
+                logs.push_back(log);
+                const bool severe = log.level == ArtifactCore::LogLevel::Error ||
+                                    log.level == ArtifactCore::LogLevel::Fatal;
+                const bool encodingRelated =
+                    log.message.contains(QStringLiteral("[Encode"), Qt::CaseInsensitive) ||
+                    log.message.contains(QStringLiteral("[Render"), Qt::CaseInsensitive) ||
+                    log.message.contains(QStringLiteral("[FFmpeg"), Qt::CaseInsensitive) ||
+                    log.message.contains(QStringLiteral("encoder"), Qt::CaseInsensitive) ||
+                    log.message.contains(QStringLiteral("mux"), Qt::CaseInsensitive);
+                const bool diagnosticWarning =
+                    log.level == ArtifactCore::LogLevel::Warning &&
+                    encodingRelated &&
+                    (log.message.contains(QStringLiteral("fail"), Qt::CaseInsensitive) ||
+                     log.message.contains(QStringLiteral("error"), Qt::CaseInsensitive) ||
+                     log.message.contains(QStringLiteral("timeout"), Qt::CaseInsensitive));
+                if (severe || diagnosticWarning) {
+                    failureEvidence.push_back(log.message);
+                }
+            }
+
+            QString appData =
+                QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            if (appData.isEmpty()) {
+                appData = QDir::homePath();
+            }
+            QDir outputDir(
+                QDir(appData).filePath(QStringLiteral("Logs/EncodeSessions")));
+            if (!outputDir.mkpath(QStringLiteral("."))) {
+                qWarning() << "[EncodeSession] failed to create log directory"
+                           << outputDir.absolutePath();
+                return;
+            }
+            const QFileInfoList oldLogs = outputDir.entryInfoList(
+                {QStringLiteral("encode_session_*.log")},
+                QDir::Files, QDir::Time);
+            const QDateTime retentionCutoff = finishedAt.addDays(-7);
+            for (int index = 0; index < oldLogs.size(); ++index) {
+                if (index >= 99 || oldLogs[index].lastModified() < retentionCutoff) {
+                    QFile::remove(oldLogs[index].absoluteFilePath());
+                }
+            }
+
+            QSaveFile file(outputDir.filePath(
+                QStringLiteral("encode_session_%1.log")
+                    .arg(encodeSessionStartedAt_.toString(
+                        QStringLiteral("yyyyMMdd_HHmmss_zzz")))));
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                qWarning() << "[EncodeSession] failed to open log" << file.fileName();
+                return;
+            }
+
+            QString output;
+            output += QStringLiteral("Artifact render/encode diagnostic session\n");
+            output += QStringLiteral("Started: %1\nFinished: %2\nDuration: %3 ms\nEnd reason: %4\n")
+                .arg(encodeSessionStartedAt_.toString(Qt::ISODateWithMs),
+                     finishedAt.toString(Qt::ISODateWithMs))
+                .arg(encodeSessionStartedAt_.msecsTo(finishedAt))
+                .arg(endReason);
+            output += QStringLiteral("\n=== Job results ===\n");
+            int completed = 0;
+            int failed = 0;
+            const auto statusName = [](ArtifactRenderJob::Status status) {
+                switch (status) {
+                case ArtifactRenderJob::Status::Pending: return QStringLiteral("pending");
+                case ArtifactRenderJob::Status::Rendering: return QStringLiteral("rendering");
+                case ArtifactRenderJob::Status::Completed: return QStringLiteral("completed");
+                case ArtifactRenderJob::Status::Failed: return QStringLiteral("failed");
+                case ArtifactRenderJob::Status::Canceled: return QStringLiteral("cancelled");
+                }
+                return QStringLiteral("unknown");
+            };
+            for (int index = 0; index < queueManager.jobCount(); ++index) {
+                const auto job = queueManager.getJob(index);
+                if (selectiveRun_ && !selectiveJobIndices_.contains(index)) {
+                    continue;
+                }
+                completed += job.status == ArtifactRenderJob::Status::Completed ? 1 : 0;
+                failed += job.status == ArtifactRenderJob::Status::Failed ? 1 : 0;
+                output += QStringLiteral(
+                    "Job %1: status=%2 progress=%3 output=%4 format=%5 codec=%6 "
+                    "encoderBackend=%7 renderBackend=%8 error=%9\n")
+                    .arg(index)
+                    .arg(statusName(job.status))
+                    .arg(job.progress)
+                    .arg(job.outputPath, job.outputFormat, job.codec,
+                         job.encoderBackend, job.renderBackend,
+                         job.errorMessage);
+            }
+            output += QStringLiteral("Completed: %1  Failed: %2\n")
+                .arg(completed).arg(failed);
+            output += QStringLiteral("\n=== Automatic diagnosis ===\n");
+            if (!failureEvidence.isEmpty()) {
+                output += failureEvidence.join(QLatin1Char('\n'));
+                output += QLatin1Char('\n');
+            } else if (endReason != QStringLiteral("completed")) {
+                output += QStringLiteral(
+                    "Encoding did not complete normally. Inspect the final stage and "
+                    "job status records below.\n");
+            } else {
+                output += QStringLiteral(
+                    "No explicit encoder failure was captured.\n");
+            }
+            output += QStringLiteral("\n=== Session log ===\n");
+            for (const auto& log : logs) {
+                const char* level = "INFO";
+                switch (log.level) {
+                case ArtifactCore::LogLevel::Debug: level = "DEBUG"; break;
+                case ArtifactCore::LogLevel::Info: level = "INFO"; break;
+                case ArtifactCore::LogLevel::Warning: level = "WARNING"; break;
+                case ArtifactCore::LogLevel::Error: level = "ERROR"; break;
+                case ArtifactCore::LogLevel::Fatal: level = "FATAL"; break;
+                }
+                output += QStringLiteral("[%1][%2] %3")
+                    .arg(log.timestamp.toString(
+                             QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz")),
+                         QString::fromLatin1(level), log.message);
+                if (!log.context.isEmpty()) {
+                    output += QStringLiteral(" (%1)").arg(log.context);
+                }
+                output += QLatin1Char('\n');
+            }
+            if (file.write(output.toUtf8()) < 0 || !file.commit()) {
+                qWarning() << "[EncodeSession] failed to save log" << file.fileName();
+                return;
+            }
+            qInfo() << "[EncodeSession] log saved" << file.fileName();
+        }
 
         // Live preview
         QImage lastPreviewFrame_;
@@ -6012,11 +6287,12 @@ namespace Artifact
 
             {
                 std::unique_lock<std::mutex> lock(outputBufferMutex);
-                bufferSpaceCv.wait(lock, [&]() {
-                    return shutdownRequested_.load(std::memory_order_acquire) ||
-                        (static_cast<int>(outputBuffer.size()) < maxOutputBufferFrames_ &&
-                         outputBufferMemory.load(std::memory_order_relaxed) < maxOutputBufferMemoryBytes_);
-                });
+                while (!shutdownRequested_.load(std::memory_order_acquire) &&
+                       (static_cast<int>(outputBuffer.size()) >= maxOutputBufferFrames_ ||
+                        outputBufferMemory.load(std::memory_order_relaxed) >=
+                            maxOutputBufferMemoryBytes_)) {
+                    bufferSpaceCv.wait_for(lock, std::chrono::milliseconds(50));
+                }
             }
             if (shutdownRequested_)
                 return false;
@@ -6051,6 +6327,12 @@ namespace Artifact
                     // First failure for this frame — log it
                     workerFailureReasons.push_back(
                         QStringLiteral("Frame %1: %2").arg(f).arg(frameError));
+                    qWarning() << "[EncodeSession][Frame] render failed"
+                               << "job=" << jobIndex
+                               << "frame=" << f
+                               << "renderBackend="
+                               << (useGpuBackend ? "gpu" : "cpu")
+                               << "reason=" << frameError;
                 }
             }
             outputBufferCv.notify_one();
@@ -6248,9 +6530,10 @@ namespace Artifact
             FrameRenderOutput frameOutput;
             {
                 std::unique_lock<std::mutex> lock(outputBufferMutex);
-                outputBufferCv.wait(lock, [&]() {
-                    return outputBuffer.count(f) > 0 || anyWorkerFailed.load();
-                });
+                while (outputBuffer.count(f) == 0 && !anyWorkerFailed.load() &&
+                       !shutdownRequested_.load(std::memory_order_acquire)) {
+                    outputBufferCv.wait_for(lock, std::chrono::milliseconds(50));
+                }
                 if (!success.load(std::memory_order_relaxed)) {
                     break;
                 }
@@ -6340,6 +6623,12 @@ namespace Artifact
 
             if (isVideo) {
                 if (!videoBackend->addFrame(qimg, f, &failureReason)) {
+                    qWarning() << "[EncodeSession][Frame] encoder rejected frame"
+                               << "job=" << jobIndex
+                               << "frame=" << f
+                               << "size=" << qimg.size()
+                               << "format=" << static_cast<int>(qimg.format())
+                               << "reason=" << failureReason;
                     success.store(false, std::memory_order_relaxed);
                     break;
                 }
@@ -6490,6 +6779,7 @@ namespace Artifact
         if (impl_->workerThread_.joinable()) {
             impl_->workerThread_.join();
         }
+        impl_->beginEncodeSessionCapture();
 
         // UI スレッドをブロックしないよう、ワーカースレッドで実行
         impl_->workerThread_ = std::thread([this]() {
@@ -6925,7 +7215,14 @@ namespace Artifact
 
                 // 終了処理
                 if (videoBackend) {
-                    videoBackend->close();
+                    QString finalizeError;
+                    if (!videoBackend->close(&finalizeError) &&
+                        success.load(std::memory_order_relaxed)) {
+                        success.store(false, std::memory_order_relaxed);
+                        failureReason = finalizeError.trimmed().isEmpty()
+                            ? QStringLiteral("Video encoder finalization failed")
+                            : finalizeError;
+                    }
                 }
 
                 if (success.load(std::memory_order_relaxed) && isHtmlPlayer) {
@@ -6968,7 +7265,19 @@ namespace Artifact
                             outputAudioChannels,
                             job.audioSampleRate)) {
                         success.store(false, std::memory_order_relaxed);
-                        failureReason = QStringLiteral("Audio mux failed");
+                        ArtifactCore::FFmpegAudioEncoder audioDiagnostics;
+                        const QString muxError = audioDiagnostics.lastError();
+                        failureReason = muxError.trimmed().isEmpty()
+                            ? QStringLiteral("Audio mux failed")
+                            : QStringLiteral("Audio mux failed: %1").arg(muxError);
+                        qWarning() << "[EncodeSession][AudioMux] failed"
+                                   << "video=" << videoRenderPath
+                                   << "audio=" << audioSourcePathForMux
+                                   << "output=" << outputPath
+                                   << "codec=" << audioCodec
+                                   << "channels=" << outputAudioChannels
+                                   << "sampleRate=" << job.audioSampleRate
+                                   << "reason=" << failureReason;
                     } else {
                         QFile::remove(videoRenderPath);
                     }
@@ -6980,12 +7289,17 @@ namespace Artifact
 
                 QMetaObject::invokeMethod(this, [this, i, success_val = success.load(), failureReason, anyFailure]() {
                     if (success_val) {
+                        qInfo() << "[EncodeSession][Job] completed"
+                                << "index=" << i;
                         impl_->queueManager.setJobProgress(i, 100);
                         impl_->queueManager.setJobCompleted(i);
                     } else {
                         const QString reason = failureReason.trimmed().isEmpty()
                             ? QStringLiteral("Render interrupted or failed")
                             : failureReason;
+                        qWarning() << "[EncodeSession][Job] failed"
+                                   << "index=" << i
+                                   << "reason=" << reason;
                         anyFailure->store(true, std::memory_order_release);
                         impl_->queueManager.markJobFailed(i, reason);
                     }
@@ -6999,6 +7313,12 @@ namespace Artifact
 
             QMetaObject::invokeMethod(this, [this, anyFailure]() {
                 impl_->isRendering_.store(false, std::memory_order_release);
+                impl_->finishEncodeSessionCapture(
+                    anyFailure->load(std::memory_order_acquire)
+                        ? QStringLiteral("completed-with-failures")
+                        : (impl_->shutdownRequested_.load(std::memory_order_acquire)
+                               ? QStringLiteral("cancelled")
+                               : QStringLiteral("completed")));
                 impl_->selectiveJobIndices_.clear();
                 impl_->selectiveRun_ = false;
                 if (impl_->allJobsCompleted) impl_->allJobsCompleted();
@@ -7007,13 +7327,18 @@ namespace Artifact
 
             } catch (const std::exception& ex) {
                 qCritical() << "[RenderService] Worker thread exception:" << ex.what();
-                QMetaObject::invokeMethod(this, [this]() {
+                const QString exceptionText = QString::fromUtf8(ex.what());
+                QMetaObject::invokeMethod(this, [this, exceptionText]() {
                     impl_->isRendering_.store(false, std::memory_order_release);
+                    impl_->finishEncodeSessionCapture(
+                        QStringLiteral("worker-exception: %1").arg(exceptionText));
                 }, Qt::QueuedConnection);
             } catch (...) {
                 qCritical() << "[RenderService] Worker thread unknown exception";
                 QMetaObject::invokeMethod(this, [this]() {
                     impl_->isRendering_.store(false, std::memory_order_release);
+                    impl_->finishEncodeSessionCapture(
+                        QStringLiteral("worker-unknown-exception"));
                 }, Qt::QueuedConnection);
             }
         });

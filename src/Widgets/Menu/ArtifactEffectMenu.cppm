@@ -26,6 +26,7 @@ import Artifact.Service.Effect;
 import Artifact.Service.Project;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Ofx.Host;
+import Artifact.Widgets.FxStudio.Dialog;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Utils.Id;
@@ -155,6 +156,7 @@ class ArtifactEffectMenu::Impl
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   QAction* inspectorAction_ = nullptr;
+  QAction* fxStudioAction_ = nullptr;
   QAction* removeAllAction_ = nullptr;
   QAction* ofxManagerAction_ = nullptr;
   std::vector<QMenu*> effectMenus_;
@@ -175,6 +177,7 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   inspectorAction_->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::EffectShowInspector));
   inspectorAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_control.svg")));
+  fxStudioAction_ = new QAction(QStringLiteral("FX Studio…"), menu);
 
   removeAllAction_ = new QAction(QStringLiteral("選択レイヤーのエフェクトをすべて削除"), menu);
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
@@ -183,6 +186,7 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   ofxManagerAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_ofx.svg")));
 
   menu->addAction(inspectorAction_);
+  menu->addAction(fxStudioAction_);
   menu->addSeparator();
   menu->addAction(removeAllAction_);
   menu->addAction(ofxManagerAction_);
@@ -193,6 +197,7 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   QObject::connect(inspectorAction_, &QAction::triggered, menu, [this]() {
       ArtifactCore::globalEventBus().publish(ShowEffectInspectorRequested{});
   });
+  QObject::connect(fxStudioAction_, &QAction::triggered, menu, [this]() { ArtifactFxStudioDialog dialog(menu_); dialog.exec(); });
 
   QObject::connect(removeAllAction_, &QAction::triggered, menu, [this]() {
       handleRemoveAllEffects();
@@ -397,6 +402,7 @@ void ArtifactEffectMenu::Impl::refreshEnabledState()
       !currentTargetLayerId().isNil();
 
   inspectorAction_->setEnabled(hasLayer);
+  fxStudioAction_->setEnabled(hasLayer);
   removeAllAction_->setEnabled(hasLayer);
   for (QMenu* effectMenu : effectMenus_) {
     if (effectMenu) {

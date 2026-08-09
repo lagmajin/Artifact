@@ -6190,8 +6190,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       continue;
     }
     QColor gridColor = theme.border;
-    gridColor.setAlpha(major ? 76 : 30);
-    p.setPen(QPen(gridColor, 1));
+    const float contrastScale = Accessibility::contrastScale();
+    gridColor.setAlpha(std::max(40, static_cast<int>((major ? 76 : 30) * contrastScale)));
+    p.setPen(QPen(gridColor, major ? contrastScale : std::max(1.0f, contrastScale * 0.8f)));
     p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
   }
 
@@ -6536,7 +6537,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (targetX >= dirtyRect.left() - 12 && targetX <= dirtyRect.right() + 12) {
       QColor guideColor = theme.accent.lighter(135);
       guideColor.setAlpha(180);
-      p.setPen(QPen(guideColor, 1.25, Qt::DashLine));
+      p.setPen(QPen(guideColor, 1.25 * Accessibility::contrastScale(), Qt::DashLine));
       p.drawLine(QPointF(targetX, 0.0), QPointF(targetX, static_cast<qreal>(height())));
       if (!impl_->dragMarkerSnapLabel_.isEmpty()) {
         const QString label = impl_->dragMarkerSnapLabel_;
@@ -6548,7 +6549,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         const QRect labelRect(labelX, 6, labelW, fm.height() + 6);
         QColor labelBg = theme.background;
         labelBg.setAlpha(200);
-        p.setPen(QPen(guideColor.darker(120), 1.0));
+        p.setPen(QPen(guideColor.darker(120), Accessibility::contrastScale()));
         p.setBrush(labelBg);
         p.drawRoundedRect(labelRect, 4, 4);
         p.setPen(guideColor.lighter(145));

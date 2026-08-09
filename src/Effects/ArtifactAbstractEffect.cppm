@@ -60,6 +60,7 @@ using namespace ArtifactCore;
 class ArtifactAbstractEffect::Impl {
 public:
     bool enabled = true;
+    bool allowOverscan = false;
     ComputeMode mode = ComputeMode::AUTO;
     UniString id;
     UniString name;
@@ -146,6 +147,14 @@ bool ArtifactAbstractEffect::isEnabled() const { return impl_->enabled; }
 ComputeMode ArtifactAbstractEffect::computeMode() const { return impl_->mode; }
 
 void ArtifactAbstractEffect::setComputeMode(ComputeMode mode) { impl_->mode = mode; }
+
+void ArtifactAbstractEffect::setAllowOverscan(bool enabled) {
+    impl_->allowOverscan = enabled;
+}
+
+bool ArtifactAbstractEffect::allowOverscan() const {
+    return impl_->allowOverscan;
+}
 
 UniString ArtifactAbstractEffect::effectID() const { return impl_->id; }
 

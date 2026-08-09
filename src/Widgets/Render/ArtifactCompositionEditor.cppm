@@ -112,6 +112,7 @@ import UI.ShortcutBindings;
 import UI.View.Orientation.Navigator;
 import Math.Interpolate;
 import Color.Float;
+import Artifact.Render.Config;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
@@ -373,15 +374,32 @@ QString ensureScreenshotSuffix(QString path, const QString& selectedFilter)
 
 QImage captureCompositionScreenshot(CompositionRenderController* controller, QWidget* fallbackWidget)
 {
+  const auto hasVisiblePixels = [](const QImage& image) {
+    if (image.isNull()) return false;
+    const int stepX = std::max(1, image.width() / 8);
+    const int stepY = std::max(1, image.height() / 8);
+    for (int y = 0; y < image.height(); y += stepY) {
+      for (int x = 0; x < image.width(); x += stepX) {
+        const QColor pixel = image.pixelColor(x, y);
+        if (pixel.red() != 0 || pixel.green() != 0 || pixel.blue() != 0 || pixel.alpha() != 255) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
   if (controller) {
     const QImage frame = controller->captureCurrentFrameImage();
-    if (!frame.isNull()) {
+    if (hasVisiblePixels(frame)) {
       return frame;
     }
   }
 
   if (fallbackWidget) {
-    return fallbackWidget->grab().toImage();
+    const QImage grabbed = fallbackWidget->grab().toImage();
+    if (hasVisiblePixels(grabbed)) {
+      return grabbed;
+    }
   }
 
   return QImage();
@@ -1246,7 +1264,6 @@ public:
     rootLayout_ = new QVBoxLayout(this);
     rootLayout_->setContentsMargins(24, 24, 24, 24);
     rootLayout_->setSpacing(0);
-    rootLayout_->addStretch(1);
 
     card_ = new QFrame(this);
     card_->setObjectName(QStringLiteral("compositionCardFrame"));
@@ -1316,8 +1333,6 @@ public:
     cardLayout_->addSpacing(8);
     cardLayout_->addWidget(createButton_, 0, Qt::AlignHCenter);
 
-    rootLayout_->addWidget(card_, 0, Qt::AlignHCenter);
-    rootLayout_->addStretch(1);
 
     updateResponsiveLayout();
 
@@ -1340,21 +1355,21 @@ public:
     if (hasComposition) {
       hasComposition_ = true;
       setAttribute(Qt::WA_TransparentForMouseEvents, true);
-      card_->setMaximumWidth(420);
       titleLabel_->setText(QStringLiteral("レイヤーがありません"));
       bodyLabel_->setText(QStringLiteral("平面やテキストなどのレイヤーを追加すると、ここに表示されます。"));
       helperLabel_->setText(QStringLiteral("Layer メニューからレイヤーを追加してください。"));
       createButton_->hide();
+      updateResponsiveLayout();
       update();
       return;
     }
     hasComposition_ = false;
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    card_->setMaximumWidth(640);
     titleLabel_->setText(QStringLiteral("まだコンポジションがありません"));
     bodyLabel_->setText(QStringLiteral("新規コンポジションを作成して、編集を始めましょう。"));
     helperLabel_->setText(QStringLiteral("ボタンを押すと、コンポジション設定ダイアログを開きます。"));
     createButton_->show();
+    updateResponsiveLayout();
     update();
   }
 
@@ -1432,16 +1447,34 @@ private:
     if (!rootLayout_ || !card_ || !cardLayout_ || !createButton_) {
       return;
     }
-    const bool compact = width() < 420;
-    const int outerMargin = compact ? 12 : 24;
-    const int innerHorizontalMargin = compact ? 18 : 32;
-    rootLayout_->setContentsMargins(outerMargin, 24, outerMargin, 24);
-    cardLayout_->setContentsMargins(innerHorizontalMargin, 28,
-                                    innerHorizontalMargin, 28);
-    card_->setMaximumWidth(
-        std::max(0, std::min(640, width() - outerMargin * 2)));
-    createButton_->setMaximumWidth(std::max(
-        0, std::min(240, width() - outerMargin * 2 - innerHorizontalMargin * 2)));
+    const bool compactWidth = width() < 420;
+    const bool compactHeight = height() < 300;
+    const bool veryCompactHeight = height() < 210;
+    const int outerMargin = compactWidth || compactHeight ? 10 : 24;
+    const int innerHorizontalMargin = compactWidth ? 14 : 32;
+    const int innerVerticalMargin = compactHeight ? 12 : 28;
+    rootLayout_->setContentsMargins(0, 0, 0, 0);
+    cardLayout_->setContentsMargins(innerHorizontalMargin, innerVerticalMargin,
+                                    innerHorizontalMargin, innerVerticalMargin);
+    cardLayout_->setSpacing(compactHeight ? 7 : 14);
+    bodyLabel_->setVisible(!veryCompactHeight);
+    helperLabel_->setVisible(!compactHeight);
+    createButton_->setMinimumHeight(compactHeight ? 34 : 46);
+    const int preferredCardWidth = hasComposition_ ? 420 : 640;
+    const int cardWidth = std::max(
+        0, std::min(preferredCardWidth, width() - outerMargin * 2));
+    card_->setFixedWidth(cardWidth);
+    const int buttonWidth = std::max(
+        0, std::min(240, cardWidth - innerHorizontalMargin * 2));
+    createButton_->setMaximumWidth(buttonWidth);
+    cardLayout_->invalidate();
+    cardLayout_->activate();
+    card_->adjustSize();
+    const int availableHeight = std::max(0, height() - outerMargin * 2);
+    const int cardHeight = std::min(card_->sizeHint().height(), availableHeight);
+    card_->setGeometry((width() - cardWidth) / 2,
+                       (height() - cardHeight) / 2,
+                       cardWidth, cardHeight);
   }
 
   std::function<void()> createRequested_;
@@ -4170,6 +4203,18 @@ public:
                                        LayerType::Light);
         service->addLayerToCurrentComposition(params);
       });
+      add(QStringLiteral("New 3D Plane Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Plane 1"),
+                                                      FixedGeometry3D::Plane);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
       add(QStringLiteral("New 3D Box Layer"), [this]() {
         auto *service = ArtifactProjectService::instance();
         if (!service) {
@@ -4626,6 +4671,46 @@ protected:
   }
 
   bool event(QEvent *event) override {
+    if (event &&
+        (event->type() == QEvent::WindowDeactivate ||
+         event->type() == QEvent::ApplicationDeactivate ||
+         event->type() == QEvent::Hide ||
+         event->type() == QEvent::UngrabMouse) &&
+        (isPanning_ || isAltOrbiting_ || isAltZooming_ ||
+         isSpatialGizmoDragging() || nativePointerCaptureActive_ ||
+         nativeControllerDragActive_)) {
+      const bool controllerDragActive =
+          isSpatialGizmoDragging() || nativeControllerDragActive_;
+      isPanning_ = false;
+      isPanningWithMiddle_ = false;
+      isAltOrbiting_ = false;
+      isAltZooming_ = false;
+      nativePointerCaptureActive_ = false;
+      nativeControllerDragActive_ = false;
+      panMomentumActive_ = false;
+      panVelocityPerMs_ = {};
+      clearNavigationFeedback();
+      if (didSpacePan_) {
+        ArtifactAudioScrubController::instance().stopScrub();
+        didSpacePan_ = false;
+      }
+      if (controllerDragActive && controller_) {
+        controller_->handleMouseRelease();
+      }
+      if (controller_) {
+        controller_->finishViewportInteraction();
+      }
+      if (event->type() != QEvent::UngrabMouse &&
+          QWidget::mouseGrabber() == this) {
+        releaseMouse();
+      }
+#ifdef Q_OS_WIN
+      if (GetCapture() == reinterpret_cast<HWND>(winId())) {
+        ReleaseCapture();
+      }
+#endif
+      unsetCursor();
+    }
     const bool handled = QWidget::event(event);
 
     if (!controller_ || !event) {
@@ -4923,6 +5008,37 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    if (event && event->button() == Qt::LeftButton && controller_ &&
+        !controller_->isModalGizmoInteractionActive()) {
+      const int frameDimension =
+          controller_->beginFrameSizeBadgeInput(event->position());
+      if (frameDimension >= 0) {
+        modalTransformNumericInput_ =
+            frameDimension == 0 ? QStringLiteral("w") : QStringLiteral("h");
+        updateViewportCursor(event->position());
+        event->accept();
+        return;
+      }
+    }
+    if (event && event->button() == Qt::LeftButton && controller_ &&
+        controller_->isModalGizmoInteractionActive()) {
+      controller_->handleMouseMove(event->position());
+      controller_->commitModalGizmoInteraction();
+      modalTransformNumericInput_.clear();
+      updateViewportCursor(event->position());
+      event->accept();
+      return;
+    }
+    if (event && event->button() == Qt::RightButton && controller_ &&
+        controller_->cancelGizmoInteraction()) {
+      modalTransformNumericInput_.clear();
+      if (QWidget::mouseGrabber() == this) {
+        releaseMouse();
+      }
+      updateViewportCursor(event->position());
+      event->accept();
+      return;
+    }
     if (activatedCallback_) {
       activatedCallback_();
     }
@@ -5335,6 +5451,15 @@ protected:
 
     switch (msg->message) {
     case WM_RBUTTONDOWN:
+      if (controller_ && controller_->cancelGizmoInteraction()) {
+        nativePointerCaptureActive_ = false;
+        nativeControllerDragActive_ = false;
+        if (GetCapture() == msg->hwnd) {
+          ReleaseCapture();
+        }
+        updateViewportCursor(logPos);
+        return true;
+      }
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
         controller_->cancelPieMenuOverlay();
         return true;
@@ -5565,6 +5690,147 @@ protected:
         return;
       }
     }
+    // Blender-style transform semantics: Esc restores the drag-start
+    // transform instead of committing the in-progress frame gizmo edit.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->cancelGizmoInteraction()) {
+      modalTransformNumericInput_.clear();
+      nativePointerCaptureActive_ = false;
+      nativeControllerDragActive_ = false;
+      if (QWidget::mouseGrabber() == this) {
+        releaseMouse();
+      }
+#ifdef Q_OS_WIN
+      if (GetCapture() == reinterpret_cast<HWND>(winId())) {
+        ReleaseCapture();
+      }
+#endif
+      updateViewportCursor(mapFromGlobal(QCursor::pos()));
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        controller_->isModalGizmoInteractionActive()) {
+      const auto applyModalNumericInput = [&]() {
+        QString numericToken = modalTransformNumericInput_;
+        int frameDimension = -1;
+        if (numericToken.startsWith(QLatin1Char('w'), Qt::CaseInsensitive)) {
+          frameDimension = 0;
+          numericToken.remove(0, 1);
+        } else if (numericToken.startsWith(QLatin1Char('h'),
+                                           Qt::CaseInsensitive)) {
+          frameDimension = 1;
+          numericToken.remove(0, 1);
+        }
+        bool numericOk = false;
+        const float numericValue = numericToken.toFloat(&numericOk);
+        if (!numericOk) return false;
+        const QPointF pointer = mapFromGlobal(QCursor::pos());
+        return frameDimension >= 0
+            ? controller_->setModalGizmoFrameDimension(
+                  frameDimension, numericValue, pointer)
+            : controller_->setModalGizmoNumericInput(numericValue, pointer);
+      };
+      if ((event->key() == Qt::Key_Return ||
+           event->key() == Qt::Key_Enter) &&
+          event->modifiers() == Qt::NoModifier) {
+        controller_->commitModalGizmoInteraction();
+        modalTransformNumericInput_.clear();
+        updateViewportCursor(mapFromGlobal(QCursor::pos()));
+        event->accept();
+        return;
+      }
+      int constraintAxis = -1;
+      if (event->modifiers() == Qt::NoModifier &&
+          controller_->gizmoMode() == TransformGizmo::Mode::Scale &&
+          modalTransformNumericInput_.isEmpty() &&
+          (event->key() == Qt::Key_W || event->key() == Qt::Key_H)) {
+        modalTransformNumericInput_ =
+            event->key() == Qt::Key_W ? QStringLiteral("w")
+                                      : QStringLiteral("h");
+        event->accept();
+        return;
+      }
+      if (event->key() == Qt::Key_X) constraintAxis = 0;
+      if (event->key() == Qt::Key_Y) constraintAxis = 1;
+      if (event->key() == Qt::Key_Z) constraintAxis = 2;
+      if (constraintAxis >= 0 && event->modifiers() == Qt::NoModifier &&
+          controller_->constrainModalGizmoInteraction(
+              constraintAxis, mapFromGlobal(QCursor::pos()))) {
+        if (!modalTransformNumericInput_.isEmpty() &&
+            modalTransformNumericInput_ != QStringLiteral("-")) {
+          applyModalNumericInput();
+        }
+        event->accept();
+        return;
+      }
+      if (event->key() == Qt::Key_Backspace &&
+          event->modifiers() == Qt::NoModifier) {
+        if (!modalTransformNumericInput_.isEmpty()) {
+          modalTransformNumericInput_.chop(1);
+        }
+        if (modalTransformNumericInput_.isEmpty() ||
+            modalTransformNumericInput_ == QStringLiteral("-") ||
+            modalTransformNumericInput_.compare(QStringLiteral("w"),
+                                                Qt::CaseInsensitive) == 0 ||
+            modalTransformNumericInput_.compare(QStringLiteral("h"),
+                                                Qt::CaseInsensitive) == 0) {
+          controller_->clearModalGizmoNumericInput();
+          controller_->handleMouseMove(mapFromGlobal(QCursor::pos()));
+        } else {
+          applyModalNumericInput();
+        }
+        event->accept();
+        return;
+      }
+      const QString typed = event->text();
+      const bool plainNumericModifier =
+          event->modifiers() == Qt::NoModifier ||
+          event->modifiers() == Qt::KeypadModifier;
+      if (plainNumericModifier && typed.size() == 1) {
+        const QChar character = typed.front();
+        bool acceptedNumericCharacter = character.isDigit();
+        if ((character == QLatin1Char('.') || character == QLatin1Char(',')) &&
+            !modalTransformNumericInput_.contains(QLatin1Char('.'))) {
+          if (modalTransformNumericInput_.isEmpty() ||
+              modalTransformNumericInput_ == QStringLiteral("-") ||
+              modalTransformNumericInput_.compare(QStringLiteral("w"),
+                                                  Qt::CaseInsensitive) == 0 ||
+              modalTransformNumericInput_.compare(QStringLiteral("h"),
+                                                  Qt::CaseInsensitive) == 0) {
+            modalTransformNumericInput_ += QLatin1Char('0');
+          }
+          modalTransformNumericInput_ += QLatin1Char('.');
+          acceptedNumericCharacter = true;
+        } else if (character == QLatin1Char('-') &&
+                   !modalTransformNumericInput_.startsWith(
+                       QLatin1Char('w'), Qt::CaseInsensitive) &&
+                   !modalTransformNumericInput_.startsWith(
+                       QLatin1Char('h'), Qt::CaseInsensitive)) {
+          if (modalTransformNumericInput_.startsWith(QLatin1Char('-'))) {
+            modalTransformNumericInput_.remove(0, 1);
+          } else {
+            modalTransformNumericInput_.prepend(QLatin1Char('-'));
+          }
+          acceptedNumericCharacter = true;
+        } else if (character.isDigit()) {
+          modalTransformNumericInput_ += character;
+        }
+        if (acceptedNumericCharacter) {
+          applyModalNumericInput();
+          event->accept();
+          return;
+        }
+      }
+      if (event->modifiers() == Qt::NoModifier &&
+          (event->key() == Qt::Key_G || event->key() == Qt::Key_R ||
+           event->key() == Qt::Key_S)) {
+        // Switching modal operation starts again from the pre-transform
+        // snapshot, matching Blender's non-destructive mode switch behavior.
+        controller_->cancelGizmoInteraction();
+        modalTransformNumericInput_.clear();
+      }
+    }
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         controller_ && controller_->hasPendingMaskEdit()) {
       controller_->cancelMaskInteraction();
@@ -5682,6 +5948,90 @@ protected:
     auto *toolManager = ArtifactApplicationManager::instance()
                             ? ArtifactApplicationManager::instance()->toolManager()
                             : nullptr;
+    // Blender-compatible duplicate-and-move. This lives in the focused
+    // viewport so it does not shadow Ctrl+D (the application's ordinary
+    // duplicate command) in other panels.
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_D &&
+        event->modifiers() == Qt::ShiftModifier && controller_) {
+      const auto comp = currentComposition();
+      QVector<LayerID> sourceIds;
+      if (auto *selection = ArtifactApplicationManager::instance()
+                                ? ArtifactApplicationManager::instance()
+                                      ->layerSelectionManager()
+                                : nullptr) {
+        for (const auto &layer : selection->selectedLayers()) {
+          if (layer && !layer->isLocked() && !layer->isSelectionLocked()) {
+            sourceIds.push_back(layer->id());
+          }
+        }
+      }
+      if (sourceIds.isEmpty() && !controller_->selectedLayerId().isNil()) {
+        sourceIds.push_back(controller_->selectedLayerId());
+      }
+      if (comp && !sourceIds.isEmpty()) {
+        QSet<LayerID> beforeIds;
+        for (const auto &layer : comp->allLayer()) {
+          if (layer) beforeIds.insert(layer->id());
+        }
+        if (auto *service = ArtifactProjectService::instance(); service) {
+          bool duplicatedAny = false;
+          for (const LayerID &sourceId : sourceIds) {
+            duplicatedAny =
+                service->duplicateLayerInCurrentComposition(sourceId) ||
+                duplicatedAny;
+          }
+          QVector<ArtifactAbstractLayerPtr> duplicates;
+          for (const auto &layer : comp->allLayer()) {
+            if (layer && !beforeIds.contains(layer->id())) {
+              duplicates.push_back(layer);
+            }
+          }
+          if (duplicatedAny && !duplicates.isEmpty()) {
+            if (auto *selection = ArtifactApplicationManager::instance()
+                                      ? ArtifactApplicationManager::instance()
+                                            ->layerSelectionManager()
+                                      : nullptr) {
+              selection->clearSelection();
+              for (const auto &duplicate : duplicates) {
+                selection->addToSelection(duplicate);
+              }
+            }
+            controller_->setSelectedLayerId(duplicates.front()->id());
+            if (toolManager) toolManager->setActiveTool(ToolType::Move);
+            QPointF modalStart = mapFromGlobal(QCursor::pos());
+            if (!rect().contains(modalStart.toPoint())) {
+              modalStart = QPointF(rect().center()) + QPointF(80.0, 0.0);
+            }
+            controller_->beginModalGizmoInteraction(
+                TransformGizmo::Mode::Move, modalStart);
+            modalTransformNumericInput_.clear();
+            controller_->setInfoOverlayText(
+                QStringLiteral("Duplicate"),
+                QStringLiteral("Duplicate created — move, then Enter to confirm"));
+            event->accept();
+            return;
+          }
+        }
+      }
+    }
+    // Preserve Blender's clear-transform grammar without claiming the plain
+    // G/R/S keys from the active transform modal.
+    if (!event->isAutoRepeat() && controller_ &&
+        event->modifiers() == Qt::AltModifier &&
+        (event->key() == Qt::Key_G || event->key() == Qt::Key_R ||
+         event->key() == Qt::Key_S)) {
+      const int component = event->key() == Qt::Key_G
+          ? 0 : event->key() == Qt::Key_R ? 1 : 2;
+      if (controller_->resetSelectedTransformComponent(component)) {
+        controller_->setInfoOverlayText(
+            QStringLiteral("Clear Transform"),
+            component == 0 ? QStringLiteral("Location reset")
+                           : component == 1 ? QStringLiteral("Rotation reset")
+                                            : QStringLiteral("Scale reset"));
+        event->accept();
+        return;
+      }
+    }
     if (!event->isAutoRepeat() && controller_ &&
         (event->modifiers() == Qt::ShiftModifier ||
          event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) &&
@@ -6203,17 +6553,36 @@ protected:
       event->accept();
       return;
     }
-    if (!event->isAutoRepeat() &&
-        (event->key() == Qt::Key_W || event->key() == Qt::Key_E ||
-         event->key() == Qt::Key_R)) {
+    // Viewport.Composition owns Blender-style transform bindings. Keep these
+    // out of toolbar QAction shortcuts so G/R/S are resolved by the focused
+    // viewport instead of shadowing other panels and modal tools.
+    if (!event->isAutoRepeat() && event->modifiers() == Qt::NoModifier &&
+        (event->key() == Qt::Key_G || event->key() == Qt::Key_R ||
+         event->key() == Qt::Key_S)) {
       if (controller_) {
-        if (event->key() == Qt::Key_W) {
+        ToolType transformTool = ToolType::Move;
+        if (event->key() == Qt::Key_G) {
           controller_->setGizmoMode(TransformGizmo::Mode::Move);
-        } else if (event->key() == Qt::Key_E) {
+        } else if (event->key() == Qt::Key_R) {
+          transformTool = ToolType::Rotation;
           controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
         } else {
+          transformTool = ToolType::Scale;
           controller_->setGizmoMode(TransformGizmo::Mode::Scale);
         }
+        if (auto *toolManager = ArtifactApplicationManager::instance()
+                                    ? ArtifactApplicationManager::instance()
+                                          ->toolManager()
+                                    : nullptr) {
+          toolManager->setActiveTool(transformTool);
+        }
+        QPointF modalStart = mapFromGlobal(QCursor::pos());
+        if (!rect().contains(modalStart.toPoint())) {
+          modalStart = QPointF(rect().center()) + QPointF(80.0, 0.0);
+        }
+        controller_->beginModalGizmoInteraction(controller_->gizmoMode(),
+                                                modalStart);
+        modalTransformNumericInput_.clear();
       }
       event->accept();
       return;
@@ -6428,8 +6797,18 @@ protected:
   void togglePlaybackPreview() {
     auto *playback = ArtifactPlaybackService::instance();
     if (!playback) {
+      qWarning() << "[PlaybackUI] toggle rejected: playback service unavailable";
       return;
     }
+    const auto composition = currentComposition();
+    qInfo() << "[PlaybackUI] togglePlaybackPreview"
+            << "isPlaying=" << playback->isPlaying()
+            << "state=" << static_cast<int>(playback->state())
+            << "currentFrame=" << playback->currentFrame().framePosition()
+            << "composition="
+            << (composition ? composition->id().toString()
+                            : QStringLiteral("null"))
+            << "controller=" << (controller_ ? "available" : "null");
     if (playback->isPlaying()) {
       playback->pause();
       return;
@@ -6748,6 +7127,7 @@ protected:
   quint64 navigationFeedbackGeneration_ = 0;
   std::chrono::steady_clock::time_point lastMaskShortcutPressTime_{};
   bool lastMaskShortcutPressValid_ = false;
+  QString modalTransformNumericInput_;
   bool pendingInitialFit_ = true;
   QTimer *resizeDebounceTimer_ = nullptr;
   QSize pendingResizeSize_;
@@ -8965,11 +9345,24 @@ public:
   QWidget *bottomBar_ = nullptr;
   QComboBox *resolutionCombo_ = nullptr;
   QToolButton *fastPreviewBtn_ = nullptr;
+  QToolButton *hdrDisplayBtn_ = nullptr;
   QToolButton *displayOptionsBtn_ = nullptr;
   bool compactViewportControls_ = false;
   bool layerChromeVisible_ = true;
   bool lockViewToSelection_ = false;
   bool autoAssignFourUpViews_ = true;
+
+  void refreshHDRDisplayState() {
+    if (!hdrDisplayBtn_) {
+      return;
+    }
+    const bool hdr = Artifact::RenderConfig::hdrDisplayEnabled();
+    hdrDisplayBtn_->setText(hdr ? QStringLiteral("HDR")
+                               : QStringLiteral("SDR"));
+    hdrDisplayBtn_->setToolTip(
+        hdr ? QStringLiteral("HDR display (scRGB)")
+            : QStringLiteral("SDR display (sRGB)"));
+  }
 
   bool selectionSyncQueued_ = false;
   bool toolLabelSyncQueued_ = false;
@@ -9735,7 +10128,26 @@ public:
 
   QString gizmoButtonLabel() const {
     const bool visible = !gizmoVisibleAction_ || gizmoVisibleAction_->isChecked();
-    return visible ? QStringLiteral("Gizmo: ON") : QStringLiteral("Gizmo: OFF");
+    if (!visible) {
+      return QStringLiteral("Gizmo: OFF");
+    }
+    QString modeLabel = QStringLiteral("All");
+    if (renderController_) {
+      switch (renderController_->gizmoMode()) {
+      case TransformGizmo::Mode::Translation:
+        modeLabel = QStringLiteral("Move");
+        break;
+      case TransformGizmo::Mode::Rotation:
+        modeLabel = QStringLiteral("Rotate");
+        break;
+      case TransformGizmo::Mode::Scale:
+        modeLabel = QStringLiteral("Scale");
+        break;
+      default:
+        break;
+      }
+    }
+    return QStringLiteral("Gizmo: %1").arg(modeLabel);
   }
 
   QString shadingButtonTooltip() const {
@@ -9748,9 +10160,10 @@ public:
 
   QString gizmoButtonTooltip() const {
     QStringList lines;
-    lines << QStringLiteral("Transform gizmo visibility");
+    lines << QStringLiteral("Transform gizmo mode and visibility");
     lines << QStringLiteral("Current: %1").arg(gizmoButtonLabel());
     lines << QStringLiteral("W = Move, R = Rotate, S = Scale");
+    lines << QStringLiteral("All = Move + Rotate + Scale");
     return lines.join(QChar::LineFeed);
   }
 
@@ -11076,6 +11489,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       if (impl_->renderController_) {
         impl_->renderController_->setGizmoMode(mode);
       }
+      impl_->refreshViewportStateLabels();
     });
   };
   addGizmoAction(QStringLiteral("Gizmo: All (W/R/S)"),
@@ -11429,6 +11843,41 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   });
 
   impl_->fastPreviewBtn_->setMenu(fastPreviewMenu);
+
+  // HDR / SDR display mode.  The renderer reads this setting when the swap
+  // chain is created; changing it here recreates the active VP target.
+  impl_->hdrDisplayBtn_ = new QToolButton(impl_->bottomBar_);
+  impl_->hdrDisplayBtn_->setPopupMode(QToolButton::InstantPopup);
+  impl_->hdrDisplayBtn_->setAccessibleName(QStringLiteral("HDR display mode"));
+  auto *hdrMenu = new QMenu(this);
+  polishEditorMenu(hdrMenu, this);
+  QAction *sdrAct = hdrMenu->addAction(QStringLiteral("SDR (sRGB)"));
+  QAction *hdrAct = hdrMenu->addAction(QStringLiteral("HDR (scRGB)"));
+  sdrAct->setCheckable(true);
+  hdrAct->setCheckable(true);
+  auto *hdrGroup = new QActionGroup(hdrMenu);
+  hdrGroup->setExclusive(true);
+  hdrGroup->addAction(sdrAct);
+  hdrGroup->addAction(hdrAct);
+  QObject::connect(sdrAct, &QAction::triggered, this, [this]() {
+    Artifact::RenderConfig::setHDRDisplayEnabled(false);
+    impl_->refreshHDRDisplayState();
+    if (impl_->renderController_) {
+      impl_->renderController_->recreateSwapChain(this);
+    }
+  });
+  QObject::connect(hdrAct, &QAction::triggered, this, [this]() {
+    Artifact::RenderConfig::setHDRDisplayEnabled(true);
+    impl_->refreshHDRDisplayState();
+    if (impl_->renderController_) {
+      impl_->renderController_->recreateSwapChain(this);
+    }
+  });
+  impl_->hdrDisplayBtn_->setMenu(hdrMenu);
+  const bool hdrInitiallyEnabled = Artifact::RenderConfig::hdrDisplayEnabled();
+  sdrAct->setChecked(!hdrInitiallyEnabled);
+  hdrAct->setChecked(hdrInitiallyEnabled);
+  impl_->refreshHDRDisplayState();
 
   // Display Options Button (Background / Grid / Guides)
   impl_->displayOptionsBtn_ = new QToolButton(impl_->bottomBar_);
@@ -12237,6 +12686,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   bottomLayout->addWidget(impl_->resolutionCombo_);
   bottomLayout->addWidget(impl_->fastPreviewBtn_);
+  bottomLayout->addWidget(impl_->hdrDisplayBtn_);
   bottomLayout->addWidget(impl_->shadingButton_);
   bottomLayout->addWidget(impl_->displayOptionsBtn_);
   bottomLayout->addStretch();

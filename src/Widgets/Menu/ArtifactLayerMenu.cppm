@@ -884,6 +884,7 @@ public:
     QMenu* switchMenu = nullptr;
     QMenu* selectMenu = nullptr;
     QMenu* proxyMenu = nullptr;
+    QMenu* maskMenu = nullptr;
     QMenu* debugMenu = nullptr;
     QActionGroup* proxyQualityGroup = nullptr;
 
@@ -950,6 +951,8 @@ public:
     QAction* saveMaskPresetAction = nullptr;
     QAction* loadMaskPresetAction = nullptr;
     QAction* createMaskFromTextAction = nullptr;
+    QAction* convertShapeToMaskAction = nullptr;
+    QAction* convertMaskToShapeAction = nullptr;
 
     QAction* selectParentAction = nullptr;
     QAction* clearParentAction = nullptr;
@@ -1052,6 +1055,8 @@ public:
     void handleSaveMaskPreset();
     void handleLoadMaskPreset();
     void handleCreateMaskFromText();
+    void handleConvertShapeToMask();
+    void handleConvertMaskToShape();
 
     void handleSelectParent();
     void handleClearParent();
@@ -1353,14 +1358,20 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     clearProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
     clearSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを削除");
     clearSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
-    proxyMenu->addSeparator();
-    saveMaskPresetAction = proxyMenu->addAction("マスクをプリセットとして保存...");
+
+    maskMenu = new QMenu(QStringLiteral("マスクとシェイプ"), menu);
+    maskMenu->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    saveMaskPresetAction = maskMenu->addAction("マスクをプリセットとして保存...");
     saveMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_save.svg")));
-    loadMaskPresetAction = proxyMenu->addAction("マスクプリセットを適用...");
+    loadMaskPresetAction = maskMenu->addAction("マスクプリセットを適用...");
     loadMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
-    proxyMenu->addSeparator();
-    createMaskFromTextAction = proxyMenu->addAction(QStringLiteral("テキストからマスクパスを作成"));
+    maskMenu->addSeparator();
+    createMaskFromTextAction = maskMenu->addAction(QStringLiteral("テキストからマスクパスを作成"));
     createMaskFromTextAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    convertShapeToMaskAction = maskMenu->addAction(QStringLiteral("シェイプをマスクに変換"));
+    convertShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    convertMaskToShapeAction = maskMenu->addAction(QStringLiteral("マスクをシェイプに変換"));
+    convertMaskToShapeAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
@@ -1556,6 +1567,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addMenu(switchMenu);
     menu->addMenu(selectMenu);
     menu->addMenu(proxyMenu);
+    menu->addMenu(maskMenu);
     menu->addMenu(debugMenu);
     menu->addSeparator();
     menu->addMenu(arrangeMenu);
@@ -1657,6 +1669,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == saveMaskPresetAction) { handleSaveMaskPreset(); return; }
         if (action == loadMaskPresetAction) { handleLoadMaskPreset(); return; }
         if (action == createMaskFromTextAction) { handleCreateMaskFromText(); return; }
+        if (action == convertShapeToMaskAction) { handleConvertShapeToMask(); return; }
+        if (action == convertMaskToShapeAction) { handleConvertMaskToShape(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
         if (action == applyLipSyncAction) { handleApplyLipSyncToSwitchLayer(); return; }
@@ -2110,6 +2124,15 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         }
     }
     createMaskFromTextAction->setEnabled(isTextLayerSelected);
+    bool isShapeLayerSelected = false;
+    if (hasLayer && service) {
+        if (auto comp = service->currentComposition().lock()) {
+            isShapeLayerSelected = static_cast<bool>(
+                ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+                    comp->layerById(selectedLayerId_)));
+        }
+    }
+    convertShapeToMaskAction->setEnabled(isShapeLayerSelected);
     cacheDefaultAction->setEnabled(hasLayer);
     cacheEnabledAction->setEnabled(hasLayer);
     cacheDisabledAction->setEnabled(hasLayer);
@@ -2342,6 +2365,8 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     clearSelectedProxyAction->setEnabled(selectedVideoCount > 1 && selectedVideoProxyCount > 0);
     saveMaskPresetAction->setEnabled(hasMask);
     loadMaskPresetAction->setEnabled(hasLayer);
+    convertMaskToShapeAction->setEnabled(hasMask);
+    maskMenu->setEnabled(hasLayer);
     if (isVideoSelected) {
         proxyNoneAction->setChecked(proxyQuality == ProxyQuality::None);
         proxyQuarterAction->setChecked(proxyQuality == ProxyQuality::Quarter);
@@ -3451,6 +3476,107 @@ void ArtifactLayerMenu::Impl::handleCreateMaskFromText()
         textLayer->setDirty(LayerDirtyFlag::Mask);
         textLayer->changed();
     }
+}
+
+void ArtifactLayerMenu::Impl::handleConvertShapeToMask()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto shapeLayer = composition
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              composition->layerById(selectedLayerId_))
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!shapeLayer) {
+        return;
+    }
+
+    LayerMask convertedMask;
+    for (const auto& shapePath : shapeLayer->nativeShapePaths()) {
+        for (const auto& maskPath : MaskPath::fromShapePath(shapePath)) {
+            if (maskPath.vertexCount() > 0) {
+                convertedMask.addMaskPath(maskPath);
+            }
+        }
+    }
+    if (convertedMask.maskPathCount() == 0) {
+        QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクに変換"),
+                                 QStringLiteral("変換可能なパスがありません。"));
+        return;
+    }
+
+    const int maskIndex = shapeLayer->maskCount();
+    if (auto* undo = UndoManager::instance()) {
+        undo->push(std::make_unique<AddLayerMaskCommand>(
+            shapeLayer, convertedMask, maskIndex));
+    } else {
+        shapeLayer->addMask(convertedMask);
+        shapeLayer->setDirty(LayerDirtyFlag::Mask);
+        shapeLayer->changed();
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleConvertMaskToShape()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto sourceLayer = composition
+        ? composition->layerById(selectedLayerId_)
+        : ArtifactAbstractLayerPtr{};
+    if (!composition || !sourceLayer || !sourceLayer->hasMasks()) {
+        return;
+    }
+
+    auto transaction = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Convert Mask To Shape"));
+    int createdCount = 0;
+    for (int maskIndex = 0; maskIndex < sourceLayer->maskCount(); ++maskIndex) {
+        const LayerMask layerMask = sourceLayer->mask(maskIndex);
+        for (int pathIndex = 0; pathIndex < layerMask.maskPathCount(); ++pathIndex) {
+            const MaskPath maskPath = layerMask.maskPath(pathIndex);
+            if (maskPath.vertexCount() < 2) {
+                continue;
+            }
+
+            std::vector<CustomPathVertex> vertices;
+            vertices.reserve(static_cast<size_t>(maskPath.vertexCount()));
+            for (int vertexIndex = 0; vertexIndex < maskPath.vertexCount(); ++vertexIndex) {
+                const MaskVertex maskVertex = maskPath.vertex(vertexIndex);
+                CustomPathVertex vertex;
+                vertex.pos = maskVertex.position;
+                vertex.inTangent = maskVertex.inTangent;
+                vertex.outTangent = maskVertex.outTangent;
+                vertex.smooth = !maskVertex.inTangent.isNull() ||
+                                !maskVertex.outTangent.isNull();
+                vertices.push_back(vertex);
+            }
+
+            auto shapeLayer = ArtifactCore::makeShared<ArtifactShapeLayer>();
+            shapeLayer->setLayerName(uniqueLayerName(QStringLiteral("Mask Shape 1")));
+            const auto sourceSize = sourceLayer->sourceSize();
+            shapeLayer->setSize(std::max(1, sourceSize.width),
+                                std::max(1, sourceSize.height));
+            shapeLayer->setCustomPathVertices(vertices, maskPath.isClosed());
+            shapeLayer->setFillEnabled(maskPath.isClosed());
+            shapeLayer->setStrokeEnabled(!maskPath.isClosed());
+            shapeLayer->transform2D() = sourceLayer->transform2D();
+            transaction->addChild(
+                std::make_unique<AddLayerCommand>(composition, shapeLayer));
+            ++createdCount;
+        }
+    }
+
+    if (createdCount == 0) {
+        QMessageBox::information(menu_->window(), QStringLiteral("マスクをシェイプに変換"),
+                                 QStringLiteral("変換可能なマスクパスがありません。"));
+        return;
+    }
+    UndoManager::instance()->push(std::move(transaction));
 }
 
 void ArtifactLayerMenu::Impl::handleLoadMaskPreset()

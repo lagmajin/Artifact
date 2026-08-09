@@ -126,7 +126,7 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
     out << (projectPaths.isEmpty() ? QStringLiteral("No project is open.\n")
                                    : QStringLiteral("Project: %1\n").arg(projectPaths.constFirst()));
   });
-  commands.emplace(QStringLiteral("project.open"), [](const QString& line, QTextStream& out, QTextStream& err) {
+  commands.emplace(QStringLiteral("project.open"), [scriptFailed](const QString& line, QTextStream& out, QTextStream& err) {
     const int separator = line.indexOf(QRegularExpression(QStringLiteral("\\s")));
     const QString arguments = separator < 0 ? QString() : line.mid(separator).trimmed();
     const QString path = arguments.section(QRegularExpression(QStringLiteral("\\s+")), 0, 0);
@@ -145,7 +145,11 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
       return;
     }
     out << "Opening nested project session: " << QFileInfo(path).absoluteFilePath() << "\n";
-    runInteractiveShell(QStringList{QFileInfo(path).absoluteFilePath()});
+    const InteractiveShellResult nestedSession =
+        runInteractiveShell(QStringList{QFileInfo(path).absoluteFilePath()});
+    if (nestedSession.exitCode != 0) {
+      *scriptFailed = true;
+    }
   });
   commands.emplace(QStringLiteral("project.json"), [projectPaths](const QString&, QTextStream& out,
                                                                      QTextStream& err) {
@@ -620,7 +624,7 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
       }
     }
   });
-  *dispatch = [commandStore](const QString& line, QTextStream& out, QTextStream& err) {
+  *dispatch = [commandStore, scriptFailed](const QString& line, QTextStream& out, QTextStream& err) {
     const QString name = commandName(line);
     if (name == QStringLiteral("quit") || name == QStringLiteral("exit")) {
       return;

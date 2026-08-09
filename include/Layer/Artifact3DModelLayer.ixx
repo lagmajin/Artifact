@@ -57,6 +57,8 @@ export namespace Artifact {
     // ArtifactIRenderer interface
     void draw(ArtifactIRenderer* renderer) override;
     void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod) override;
+    // Draw the selected-model wire outline over the shaded result.
+    void drawSelectionOutline(ArtifactIRenderer* renderer) const;
     QRectF localBounds() const override;
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;

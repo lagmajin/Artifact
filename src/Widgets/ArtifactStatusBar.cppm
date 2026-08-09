@@ -42,6 +42,8 @@ namespace Artifact
    return QStringLiteral("READY");
   case ArtifactStatusBar::Item::Console:
    return QStringLiteral("LOGS: 0E 0W");
+  case ArtifactStatusBar::Item::Accessibility:
+   return QStringLiteral("A11Y: OFF");
   }
   return QString();
  }
@@ -60,6 +62,7 @@ namespace Artifact
   case ArtifactStatusBar::Item::Drops: return QStringLiteral("Dropped frames status");
   case ArtifactStatusBar::Item::TimelineDebug: return QStringLiteral("Timeline debug status");
   case ArtifactStatusBar::Item::Console: return QStringLiteral("Console status");
+  case ArtifactStatusBar::Item::Accessibility: return QStringLiteral("Accessibility status");
   }
   return QStringLiteral("Application status");
  }
@@ -137,6 +140,7 @@ namespace Artifact
   addPermanentWidget(labels_[itemIndex(Item::FPS)]);
   addPermanentWidget(labels_[itemIndex(Item::Memory)]);
   addPermanentWidget(labels_[itemIndex(Item::Drops)]);
+  addPermanentWidget(labels_[itemIndex(Item::Accessibility)]);
  }
 
  ArtifactStatusBar::~ArtifactStatusBar() = default;
@@ -225,6 +229,15 @@ namespace Artifact
   }
  }
 
+ void ArtifactStatusBar::setAccessibilityText(const QString& text)
+ {
+  if (auto* label = itemLabel(Item::Accessibility))
+  {
+   label->setText(QStringLiteral("A11Y: %1").arg(text));
+   label->setToolTip(QStringLiteral("Accessibility modifier state: %1").arg(text));
+  }
+ }
+
  void ArtifactStatusBar::setCompositionInfo(const QString& name, const int width, const int height, const double fps)
  {
   if (auto* label = itemLabel(Item::Project))
@@ -257,7 +270,7 @@ namespace Artifact
 
  void ArtifactStatusBar::setAllItemsVisible(const bool visible)
  {
-  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Layer, Item::Drops, Item::TimelineDebug, Item::Console })
+  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Layer, Item::Drops, Item::TimelineDebug, Item::Console, Item::Accessibility })
   {
    setItemVisible(item, visible);
   }
@@ -303,6 +316,7 @@ namespace Artifact
   case Item::Drops: return 7;
   case Item::TimelineDebug: return 8;
   case Item::Console: return 9;
+  case Item::Accessibility: return 10;
   }
   return -1;
  }
@@ -321,6 +335,7 @@ namespace Artifact
   case Item::Drops: return QStringLiteral("Drops");
   case Item::TimelineDebug: return QStringLiteral("Timeline Debug");
   case Item::Console: return QStringLiteral("Console");
+  case Item::Accessibility: return QStringLiteral("Accessibility");
   }
   return QStringLiteral("Unknown");
  }

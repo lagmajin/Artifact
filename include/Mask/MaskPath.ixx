@@ -38,6 +38,7 @@ export module Artifact.Mask.Path;
 
 
 import Utils.String.UniString;
+import Shape.Path;
 
 export namespace Artifact {
 
@@ -147,6 +148,13 @@ public:
     static std::vector<MaskPath> fromQPainterPath(
         const QPainterPath& path,
         const QString& text = QString());
+
+    /// ShapePath の各サブパスを編集可能な MaskPath に変換する。
+    /// Cubic tangent は相対座標のまま保持し、Quadratic は等価な Cubic へ変換する。
+    static std::vector<MaskPath> fromShapePath(const ShapePath& path);
+
+    /// このマスク輪郭を backend-neutral ShapePath へ変換する。
+    ShapePath toShapePath() const;
 
     /// CV_32FC1 または CV_8UC1 のアルファマスクを編集可能な輪郭へ変換する。
     /// outMat は cv::Mat* として渡し、閾値は 0..1 のアルファ値で指定する。

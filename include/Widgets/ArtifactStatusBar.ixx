@@ -27,7 +27,8 @@ export namespace Artifact
    Layer,
    Drops,
    TimelineDebug,
-   Console
+   Console,
+   Accessibility
   };
 
   explicit ArtifactStatusBar(QWidget* parent = nullptr);
@@ -43,6 +44,7 @@ export namespace Artifact
   void setDropSummaryText(const QString& text);
   void setTimelineDebugText(const QString& text);
   void setConsoleSummary(int errors, int warnings);
+  void setAccessibilityText(const QString& text);
   void setCompositionInfo(const QString& name, int width, int height, double fps);
 
   void setItemVisible(Item item, bool visible);
@@ -55,7 +57,7 @@ export namespace Artifact
   void contextMenuEvent(QContextMenuEvent* event) override;
 
  private:
-  static constexpr int kItemCount = 10;
+  static constexpr int kItemCount = 11;
   static int itemIndex(Item item);
   QLabel* itemLabel(Item item) const;
   QString itemTitle(Item item) const;

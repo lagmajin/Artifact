@@ -64,6 +64,7 @@ import Frame.Range;
 import Frame.Debug;
 import Frame.SkipTracker;
 import Core.Diagnostics.Trace;
+import Diagnostics.Logger;
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
@@ -238,6 +239,216 @@ public:
   QString previewDiskRenderContract_{QStringLiteral("unbound")};
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+  bool playbackSessionCaptureActive_ = false;
+  QDateTime playbackSessionStartedAt_;
+  int64_t playbackSessionStartFrame_ = 0;
+  int64_t playbackSessionStartDroppedFrames_ = 0;
+  std::atomic_uint64_t playbackSessionSyncRequests_{0};
+  std::atomic_uint64_t playbackSessionSyncApplied_{0};
+  std::atomic_uint64_t playbackSessionSyncCoalesced_{0};
+  std::atomic_uint64_t playbackSessionPublishedFrames_{0};
+  std::atomic_uint64_t playbackSessionConcreteFrames_{0};
+
+  void beginPlaybackSessionCapture() {
+    if (playbackSessionCaptureActive_) {
+      return;
+    }
+    ArtifactCore::Logger::instance()->install();
+    playbackSessionCaptureActive_ = true;
+    playbackSessionStartedAt_ = QDateTime::currentDateTime();
+    playbackSessionStartFrame_ =
+        engine_ ? engine_->currentFrame().framePosition() : 0;
+    playbackSessionStartDroppedFrames_ = droppedFrameCount_;
+    playbackSessionSyncRequests_.store(0, std::memory_order_relaxed);
+    playbackSessionSyncApplied_.store(0, std::memory_order_relaxed);
+    playbackSessionSyncCoalesced_.store(0, std::memory_order_relaxed);
+    playbackSessionPublishedFrames_.store(0, std::memory_order_relaxed);
+    playbackSessionConcreteFrames_.store(0, std::memory_order_relaxed);
+    qInfo() << "[PlaybackSession] begin"
+            << "startFrame=" << playbackSessionStartFrame_
+            << "composition="
+            << (currentComposition_ ? currentComposition_->id().toString()
+                                    : QStringLiteral("null"));
+  }
+
+  void finishPlaybackSessionCapture(const QString &endReason) {
+    if (!playbackSessionCaptureActive_) {
+      return;
+    }
+    playbackSessionCaptureActive_ = false;
+
+    const int64_t endFrame =
+        engine_ ? engine_->currentFrame().framePosition()
+                : playbackSessionStartFrame_;
+    qInfo() << "[PlaybackSession] end"
+            << "reason=" << endReason
+            << "endFrame=" << endFrame;
+    const QDateTime finishedAt = QDateTime::currentDateTime();
+    const auto logs = ArtifactCore::Logger::instance()->getLogs();
+    std::vector<ArtifactCore::LogMessage> sessionLogs;
+    sessionLogs.reserve(logs.size());
+    bool hasError = false;
+    for (const auto &log : logs) {
+      if (log.timestamp < playbackSessionStartedAt_ ||
+          log.timestamp > finishedAt) {
+        continue;
+      }
+      sessionLogs.push_back(log);
+      hasError = hasError || log.level == ArtifactCore::LogLevel::Error ||
+                 log.level == ArtifactCore::LogLevel::Fatal;
+    }
+    QString appData =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (appData.isEmpty()) {
+      appData = QDir::homePath();
+    }
+    QDir outputDir(
+        QDir(appData).filePath(QStringLiteral("Logs/PlaybackSessions")));
+    if (!outputDir.mkpath(QStringLiteral("."))) {
+      qWarning() << "[PlaybackService] Failed to create playback session log directory:"
+                 << outputDir.absolutePath();
+      return;
+    }
+
+    const QFileInfoList oldLogs = outputDir.entryInfoList(
+        {QStringLiteral("playback_session_*.log")}, QDir::Files, QDir::Time);
+    const QDateTime retentionCutoff = finishedAt.addDays(-7);
+    for (int index = 0; index < oldLogs.size(); ++index) {
+      if (index >= 99 || oldLogs[index].lastModified() < retentionCutoff) {
+        QFile::remove(oldLogs[index].absoluteFilePath());
+      }
+    }
+
+    const QString fileName = QStringLiteral("playback_session_%1.log")
+                                 .arg(playbackSessionStartedAt_.toString(
+                                     QStringLiteral("yyyyMMdd_HHmmss_zzz")));
+    QSaveFile file(outputDir.filePath(fileName));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      qWarning() << "[PlaybackService] Failed to open playback session log:"
+                 << file.fileName();
+      return;
+    }
+
+    QString output;
+    output.reserve(static_cast<qsizetype>(sessionLogs.size() * 160 + 512));
+    output += QStringLiteral("Artifact playback diagnostic session\n");
+    output += QStringLiteral("Started: %1\n")
+                  .arg(playbackSessionStartedAt_.toString(Qt::ISODateWithMs));
+    output += QStringLiteral("Finished: %1\n")
+                  .arg(finishedAt.toString(Qt::ISODateWithMs));
+    output += QStringLiteral("Duration: %1 ms\n")
+                  .arg(playbackSessionStartedAt_.msecsTo(finishedAt));
+    output += QStringLiteral("End reason: %1\n").arg(endReason);
+    output += QStringLiteral("Start frame: %1  End frame: %2  Advanced: %3\n")
+                  .arg(playbackSessionStartFrame_)
+                  .arg(endFrame)
+                  .arg(endFrame - playbackSessionStartFrame_);
+    if (currentComposition_) {
+      output += QStringLiteral("Composition: %1 (%2)\n")
+                    .arg(currentComposition_->settings().compositionName().toQString(),
+                         currentComposition_->id().toString());
+      const FrameRange range = currentComposition_->frameRange();
+      output += QStringLiteral("Composition frame range: %1 - %2\n")
+                    .arg(range.startPosition().framePosition())
+                    .arg(range.endPosition().framePosition());
+      output += QStringLiteral("Composition current frame: %1\n")
+                    .arg(currentComposition_->framePosition().framePosition());
+    } else {
+      output += QStringLiteral("Composition: null\n");
+    }
+    const int engineState =
+        !engine_ ? -1
+                 : static_cast<int>(engine_->isPlaying()
+                                        ? PlaybackState::Playing
+                                        : (engine_->isPaused()
+                                               ? PlaybackState::Paused
+                                               : PlaybackState::Stopped));
+    output += QStringLiteral("Engine state: %1\n").arg(engineState);
+    output += QStringLiteral("Dropped frames this session: %1  total: %2\n")
+                  .arg(droppedFrameCount_ - playbackSessionStartDroppedFrames_)
+                  .arg(droppedFrameCount_);
+    output += QStringLiteral("Frame sync: requested=%1 applied=%2 coalesced=%3\n")
+                  .arg(playbackSessionSyncRequests_.load())
+                  .arg(playbackSessionSyncApplied_.load())
+                  .arg(playbackSessionSyncCoalesced_.load());
+    output += QStringLiteral("Published ticks: %1  concrete images: %2\n")
+                  .arg(playbackSessionPublishedFrames_.load())
+                  .arg(playbackSessionConcreteFrames_.load());
+    output += QStringLiteral("RAM preview: enabled=%1 requested=%2 ready=%3 "
+                             "failed=%4 inRam=%5 onDisk=%6 hitRate=%7%%\n")
+                  .arg(ramPreviewEnabled_)
+                  .arg(ramPreviewRequestedFrameCount())
+                  .arg(ramPreviewReadyFrameCountInRange())
+                  .arg(ramPreviewFailedFrameCountInRange())
+                  .arg(ramPreviewCachedFrameCount())
+                  .arg(ramPreviewDiskFrameCountInRange())
+                  .arg(ramPreviewHitRate() * 100.0f, 0, 'f', 2);
+    output += QStringLiteral("Captured errors: %1\n\n=== Session log ===\n")
+                  .arg(hasError);
+
+    QString diagnosis;
+    const auto published = playbackSessionPublishedFrames_.load();
+    const auto syncApplied = playbackSessionSyncApplied_.load();
+    const qint64 durationMs = playbackSessionStartedAt_.msecsTo(finishedAt);
+    if (endReason == QStringLiteral("rejected-no-composition")) {
+      diagnosis = QStringLiteral(
+          "Playback was rejected because no current composition could be bound.");
+    } else if (hasError) {
+      diagnosis = QStringLiteral(
+          "One or more ERROR/FATAL records occurred; inspect the session log below.");
+    } else if (published == 0 && durationMs >= 100) {
+      diagnosis = QStringLiteral(
+          "The playback engine published no frame ticks. Inspect [PlaybackEngine][Loop] "
+          "and [PlaybackEngine][Stall] records.");
+    } else if (published > 0 && syncApplied == 0) {
+      diagnosis = QStringLiteral(
+          "Frame ticks were published, but none reached composition goToFrame(). "
+          "The composition-thread dispatch path is stalled or shutting down.");
+    } else if (ramPreviewFailedFrameCountInRange() > 0) {
+      diagnosis = QStringLiteral(
+          "RAM preview contains failed frames; inspect [PlaybackRender] fallbackReason "
+          "and previewState.reason.");
+    } else if (endFrame == playbackSessionStartFrame_ && durationMs < 100) {
+      diagnosis = QStringLiteral(
+          "Playback ended before one frame interval could reliably elapse.");
+    } else if (endFrame == playbackSessionStartFrame_) {
+      diagnosis = QStringLiteral(
+          "Playback ran but the visible frame did not advance. Compare engine ticks, "
+          "frame-sync counts, and [PlaybackRender] records below.");
+    } else {
+      diagnosis = QStringLiteral(
+          "Playback advanced. Inspect dropped-frame and render-fallback records for "
+          "visual stutter or stale presentation.");
+    }
+    output.insert(output.indexOf(QStringLiteral("=== Session log ===")),
+                  QStringLiteral("=== Automatic diagnosis ===\n%1\n\n")
+                      .arg(diagnosis));
+    for (const auto &log : sessionLogs) {
+      QString level;
+      switch (log.level) {
+      case ArtifactCore::LogLevel::Debug: level = QStringLiteral("DEBUG"); break;
+      case ArtifactCore::LogLevel::Info: level = QStringLiteral("INFO"); break;
+      case ArtifactCore::LogLevel::Warning: level = QStringLiteral("WARNING"); break;
+      case ArtifactCore::LogLevel::Error: level = QStringLiteral("ERROR"); break;
+      case ArtifactCore::LogLevel::Fatal: level = QStringLiteral("FATAL"); break;
+      }
+      output += QStringLiteral("[%1][%2] %3")
+                    .arg(log.timestamp.toString(
+                             QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz")),
+                         level, log.message);
+      if (!log.context.isEmpty()) {
+        output += QStringLiteral(" (%1)").arg(log.context);
+      }
+      output += QLatin1Char('\n');
+    }
+
+    if (file.write(output.toUtf8()) < 0 || !file.commit()) {
+      qWarning() << "[PlaybackService] Failed to save playback session log:"
+                 << file.fileName();
+      return;
+    }
+    qInfo() << "[PlaybackService] Playback session log saved:" << file.fileName();
+  }
 
   void applyCurrentPlaybackFrameRangeToEngine() {
     if (!engine_ || !currentComposition_) {
@@ -354,6 +565,13 @@ public:
         engine_, &ArtifactPlaybackEngine::playbackStateChanged, owner_,
         [this](PlaybackState state) {
           const auto publishState = [this, state]() {
+            if (state == PlaybackState::Playing) {
+              beginPlaybackSessionCapture();
+            } else if (state == PlaybackState::Paused) {
+              finishPlaybackSessionCapture(QStringLiteral("paused"));
+            } else if (state == PlaybackState::Stopped) {
+              finishPlaybackSessionCapture(QStringLiteral("stopped"));
+            }
             if (state == PlaybackState::Paused) {
               pauseAudioClock();
             } else if (state == PlaybackState::Stopped) {
@@ -395,16 +613,39 @@ public:
                         currentCompositionDiskCacheNamespace(), frameNumber)
                   : QString();
 
-          syncCurrentCompositionFrame(position);
           const auto publishFrame = [this, position, compositionId, frameNumber,
                                      frameBuffer, hasConcreteFrame,
                                      diskCacheFramePath]() {
+            // The engine emits from its worker thread. Keep all composition
+            // mutation on the PlaybackService/GUI thread together with the
+            // cache publication instead of calling into the composition from
+            // the DirectConnection callback.
+            syncCurrentCompositionFrame(position);
+            playbackSessionPublishedFrames_.fetch_add(
+                1, std::memory_order_relaxed);
+            if (hasConcreteFrame) {
+              playbackSessionConcreteFrames_.fetch_add(
+                  1, std::memory_order_relaxed);
+            }
             const QString currentCompositionId =
                 currentComposition_ ? currentComposition_->id().toString()
                                     : QString();
             if (compositionId.isEmpty() ||
                 currentCompositionId != compositionId) {
+              qWarning() << "[PlaybackService][PublishFrame] dropped"
+                         << "frame=" << frameNumber
+                         << "reason=composition-mismatch"
+                         << "capturedComposition=" << compositionId
+                         << "currentComposition=" << currentCompositionId;
               return;
+            }
+            if (frameNumber == playbackSessionStartFrame_ ||
+                playbackSessionPublishedFrames_.load(
+                    std::memory_order_relaxed) % 120 == 0) {
+              qDebug() << "[PlaybackService][PublishFrame]"
+                       << "frame=" << frameNumber
+                       << "hasImage=" << hasConcreteFrame
+                       << "composition=" << compositionId;
             }
             if (hasConcreteFrame) {
               FrameSkipTracker::instance()->commitFrame(frameNumber);
@@ -555,6 +796,7 @@ public:
       engine_->stop();
       engine_->waitForStop();
     }
+    finishPlaybackSessionCapture(QStringLiteral("service-destroyed"));
     {
       std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
       previewDiskWriterStop_ = true;
@@ -598,20 +840,27 @@ public:
   }
 
   void syncCurrentCompositionFrame(const FramePosition &position) {
+    playbackSessionSyncRequests_.fetch_add(1, std::memory_order_relaxed);
     if (!currentComposition_) {
+      qWarning() << "[PlaybackService][SyncFrame] rejected"
+                 << "frame=" << position.framePosition()
+                 << "reason=no-composition";
       return;
     }
 
     const auto composition = currentComposition_;
+    const bool sameThread = composition->thread() == QThread::currentThread();
     pendingCompositionFrame_.store(position.framePosition(),
                                    std::memory_order_relaxed);
 
-    if (composition->thread() == QThread::currentThread()) {
+    if (sameThread) {
       composition->goToFrame(position.framePosition());
+      playbackSessionSyncApplied_.fetch_add(1, std::memory_order_relaxed);
       return;
     }
 
     if (compositionFrameSyncQueued_.exchange(true, std::memory_order_acq_rel)) {
+      playbackSessionSyncCoalesced_.fetch_add(1, std::memory_order_relaxed);
       return;
     }
 
@@ -628,6 +877,18 @@ public:
           compositionFrameSyncQueued_.store(false, std::memory_order_release);
           if (composition) {
             composition->goToFrame(latestFrame);
+            const auto applied = playbackSessionSyncApplied_.fetch_add(
+                                     1, std::memory_order_relaxed) +
+                                 1;
+            if (latestFrame == playbackSessionStartFrame_ || applied % 120 == 0) {
+              qDebug() << "[PlaybackService][SyncFrame]"
+                       << "frame=" << latestFrame
+                       << "sameThread=false"
+                       << "composition=" << composition->id().toString()
+                       << "coalescedTotal="
+                       << playbackSessionSyncCoalesced_.load(
+                              std::memory_order_relaxed);
+            }
           }
         },
         Qt::QueuedConnection);
@@ -1536,14 +1797,11 @@ public:
     state.requested = true;
     const bool hasRamImage = hasFrameImageInRam(frame);
     state.inRam = hasRamImage;
-    if (!hasRamImage) {
-      state.ready = false;
-      cacheBitmap_[static_cast<size_t>(frame)] = false;
-    } else if (state.failed) {
-      cacheBitmap_[static_cast<size_t>(frame)] = false;
-    } else if (state.ready) {
-      cacheBitmap_[static_cast<size_t>(frame)] = true;
-    }
+    // The image map is the source of truth for RAM residency. Keep the
+    // state table and bitmap in the same invariant so a stale `ready` bit
+    // cannot survive a playback tick.
+    state.ready = hasRamImage && !state.failed;
+    cacheBitmap_[static_cast<size_t>(frame)] = state.ready;
     if (state.failed && reason.trimmed().isEmpty()) {
       return;
     }
@@ -2139,25 +2397,45 @@ PlaybackSkipMode ArtifactPlaybackService::playbackSkipMode() const {
 }
 
 void ArtifactPlaybackService::play() {
+  impl_->beginPlaybackSessionCapture();
   if (!impl_->ensureCurrentCompositionBound()) {
     qWarning() << "[PlaybackService] play ignored: no current composition bound";
+    impl_->finishPlaybackSessionCapture(QStringLiteral("rejected-no-composition"));
     return;
   }
 
-  // AE-like RAM preview: build the active playback range first, then start
-  // playback automatically when every frame is resident and playable.
+  qInfo() << "[PlaybackService] play requested"
+          << "frame=" << impl_->engine_->currentFrame().framePosition()
+          << "state="
+          << static_cast<int>(impl_->engine_->isPlaying()
+                                  ? PlaybackState::Playing
+                                  : (impl_->engine_->isPaused()
+                                         ? PlaybackState::Paused
+                                         : PlaybackState::Stopped))
+          << "composition=" << impl_->currentComposition_->id().toString()
+          << "range="
+          << impl_->currentComposition_->frameRange().startPosition().framePosition()
+          << "-"
+          << impl_->currentComposition_->frameRange().endPosition().framePosition()
+          << "fps=" << impl_->currentComposition_->frameRate().framerate()
+          << "ramPreviewEnabled=" << impl_->ramPreviewEnabled_
+          << "ramReady=" << impl_->ramPreviewPlaybackStartReady();
+
+  // Request a RAM preview build, but do not gate transport on cache readiness.
+  // The previous gate made Play appear inert when the asynchronous build could
+  // not receive a frame-completion callback (for example during a GPU/readback
+  // fallback). Playback must remain responsive while the cache warms up.
   if (impl_->ramPreviewEnabled_ && !impl_->ramPreviewPlaybackStartReady()) {
     FrameRange previewRange = impl_->currentComposition_->frameRange();
     if (impl_->playbackRangeMode_ == PlaybackRangeMode::WorkArea) {
       previewRange = impl_->currentComposition_->workAreaRange();
     }
-    impl_->ramPreviewAutoPlayPending_ = true;
+    impl_->ramPreviewAutoPlayPending_ = false;
     impl_->ramPreviewRange_ = previewRange;
     impl_->requestRamPreviewBuild(previewRange,
                                   QStringLiteral("playback-auto-preview"));
     impl_->emitRamPreviewStats();
     Q_EMIT ramPreviewStateChanged(true, previewRange);
-    return;
   }
 
   impl_->startAudioClock();
@@ -2175,12 +2453,42 @@ void ArtifactPlaybackService::play() {
   if (impl_->engine_) {
     impl_->engine_->play();
   }
+  if (!impl_->engine_ || !impl_->engine_->isPlaying()) {
+    qCritical() << "[PlaybackService] playback start failed"
+                << "reason=engine-rejected-play"
+                << "composition=" << impl_->currentComposition_->id().toString();
+    impl_->stopAudioClock();
+    impl_->finishPlaybackSessionCapture(
+        QStringLiteral("rejected-engine-start"));
+    return;
+  }
   if (impl_->ramPreviewEnabled_) {
     impl_->prewarmRamPreviewAround(currentFrame());
   }
+  QTimer::singleShot(500, this, [this]() {
+    if (!impl_->playbackSessionCaptureActive_ || !impl_->engine_ ||
+        !impl_->engine_->isPlaying() ||
+        impl_->playbackSessionPublishedFrames_.load(std::memory_order_relaxed) > 0) {
+      return;
+    }
+    qCritical() << "[PlaybackService] playback start stalled"
+                << "reason=no-frame-tick-within-500ms"
+                << "composition="
+                << (impl_->currentComposition_
+                        ? impl_->currentComposition_->id().toString()
+                        : QStringLiteral("null"));
+    impl_->finishPlaybackSessionCapture(
+        QStringLiteral("startup-no-frame-tick"));
+  });
 }
 
 void ArtifactPlaybackService::pause() {
+  qInfo() << "[PlaybackService] pause requested"
+          << "frame="
+          << (impl_->engine_ ? impl_->engine_->currentFrame().framePosition()
+                             : -1)
+          << "enginePlaying="
+          << (impl_->engine_ && impl_->engine_->isPlaying());
   impl_->pauseAudioClock();
   if (impl_->engine_) {
     impl_->engine_->pause();
@@ -2196,6 +2504,12 @@ void ArtifactPlaybackService::pause() {
 }
 
 void ArtifactPlaybackService::stop() {
+  qInfo() << "[PlaybackService] stop requested"
+          << "frame="
+          << (impl_->engine_ ? impl_->engine_->currentFrame().framePosition()
+                             : -1)
+          << "enginePlaying="
+          << (impl_->engine_ && impl_->engine_->isPlaying());
   impl_->stopAudioClock();
   impl_->ramPreviewAutoPlaybackActive_ = false;
   impl_->cancelRamPreviewBuild(QStringLiteral("playback-stopped"));

@@ -568,12 +568,15 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
-    key += QStringLiteral("|image|src=%1|rev=%2|fit=%3|size=%4x%5")
+    key += QStringLiteral(
+               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7")
                .arg(imageLayer->sourcePath())
                .arg(imageLayer->sourceVersion())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
                .arg(surface.width())
-               .arg(surface.height());
+               .arg(surface.height())
+               .arg(imageLayer->inputColorSpace())
+               .arg(imageLayer->inputTransferFunction());
     return key;
   }
 
@@ -1208,7 +1211,11 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         if (version > 0) {
           gpuOwnerId = QStringLiteral("asset:%1").arg(
               imageLayer->sourceAssetId().toString(QUuid::WithoutBraces));
-          gpuCacheSignature = QStringLiteral("image-f32:v%1").arg(version);
+          gpuCacheSignature =
+              QStringLiteral("image-f32:v%1|cs=%2|tf=%3")
+                  .arg(version)
+                  .arg(imageLayer->inputColorSpace())
+                  .arg(imageLayer->inputTransferFunction());
         }
       }
     }
@@ -1549,8 +1556,11 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             ? layer->id().toString()
             : QStringLiteral("asset:%1").arg(
                   sourceAssetId.toString(QUuid::WithoutBraces));
-        const QString cacheKey = QStringLiteral("image-f32:v%1")
-                                     .arg(imageLayer->sourceVersion());
+        const QString cacheKey =
+            QStringLiteral("image-f32:v%1|cs=%2|tf=%3")
+                .arg(imageLayer->sourceVersion())
+                .arg(imageLayer->inputColorSpace())
+                .arg(imageLayer->inputTransferFunction());
         auto handle = gpuTextureCacheManager->findExisting(ownerId, cacheKey);
         if (!handle.isValid()) {
           handle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheKey, buffer);

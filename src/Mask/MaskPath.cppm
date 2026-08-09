@@ -48,6 +48,7 @@ module Artifact.Mask.Path;
 
 
 import Utils.String.UniString;
+import Shape.Path;
 
 namespace Artifact {
 
@@ -344,6 +345,116 @@ MaskPath MaskPath::sampleAtFrame(int64_t frame) const
     MaskPath sampled;
     applySnapshotToPath(sampled, interpolateSnapshot(before, after, frame));
     return sampled;
+}
+
+std::vector<MaskPath> MaskPath::fromShapePath(const ShapePath& path)
+{
+    std::vector<MaskPath> result;
+    MaskPath currentMask;
+    bool hasSubpath = false;
+    QPointF currentPoint;
+
+    const auto flushSubpath = [&]() {
+        if (hasSubpath && currentMask.vertexCount() > 0) {
+            result.push_back(currentMask);
+        }
+        currentMask = MaskPath();
+        hasSubpath = false;
+        currentPoint = QPointF();
+    };
+
+    const auto appendSegment = [&](const QPointF& control1,
+                                   const QPointF& control2,
+                                   const QPointF& end) {
+        if (!hasSubpath || currentMask.vertexCount() == 0) {
+            return;
+        }
+        MaskVertex previous = currentMask.vertex(currentMask.vertexCount() - 1);
+        previous.outTangent = control1 - previous.position;
+        currentMask.setVertex(currentMask.vertexCount() - 1, previous);
+
+        MaskVertex next;
+        next.position = end;
+        next.inTangent = control2 - end;
+        next.outTangent = QPointF();
+        currentMask.addVertex(next);
+        currentPoint = end;
+    };
+
+    for (const auto& command : path.commands()) {
+        switch (command.type) {
+        case PathCommandType::MoveTo: {
+            flushSubpath();
+            MaskVertex vertex;
+            vertex.position = command.points[0];
+            currentMask.addVertex(vertex);
+            currentMask.setClosed(false);
+            currentMask.setOpacity(static_cast<float>(path.opacity()));
+            currentMask.setMode(MaskMode::Add);
+            currentPoint = command.points[0];
+            hasSubpath = true;
+            break;
+        }
+        case PathCommandType::LineTo:
+            appendSegment(currentPoint, command.points[0], command.points[0]);
+            break;
+        case PathCommandType::CubicTo:
+            appendSegment(command.points[0], command.points[1], command.points[2]);
+            break;
+        case PathCommandType::QuadTo: {
+            const QPointF end = command.points[1];
+            const QPointF control = command.points[0];
+            const QPointF cubic1 = currentPoint + (control - currentPoint) * (2.0 / 3.0);
+            const QPointF cubic2 = end + (control - end) * (2.0 / 3.0);
+            appendSegment(cubic1, cubic2, end);
+            break;
+        }
+        case PathCommandType::Close:
+            if (hasSubpath) {
+                const int vertexCount = currentMask.vertexCount();
+                if (vertexCount > 1) {
+                    const MaskVertex first = currentMask.vertex(0);
+                    const MaskVertex last = currentMask.vertex(vertexCount - 1);
+                    const QPointF delta = last.position - first.position;
+                    if (std::hypot(delta.x(), delta.y()) <= 1.0e-9) {
+                        MaskVertex mergedFirst = first;
+                        mergedFirst.inTangent = last.inTangent;
+                        currentMask.setVertex(0, mergedFirst);
+                        currentMask.removeVertex(vertexCount - 1);
+                    }
+                }
+                currentMask.setClosed(true);
+            }
+            break;
+        }
+    }
+    flushSubpath();
+    return result;
+}
+
+ShapePath MaskPath::toShapePath() const
+{
+    ShapePath path;
+    const int count = vertexCount();
+    if (count <= 0) {
+        return path;
+    }
+
+    const MaskVertex first = vertex(0);
+    path.moveTo(first.position);
+    const int segmentCount = isClosed() ? count : count - 1;
+    for (int index = 0; index < segmentCount; ++index) {
+        const MaskVertex from = vertex(index);
+        const MaskVertex to = vertex((index + 1) % count);
+        path.cubicTo(from.position + from.outTangent,
+                     to.position + to.inTangent,
+                     to.position);
+    }
+    if (isClosed()) {
+        path.close();
+    }
+    path.setOpacity(opacity());
+    return path;
 }
 
 void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,

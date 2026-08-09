@@ -90,7 +90,7 @@ QString detectSiblingBaseColorTexture(const QString& modelPath)
 
 class Artifact3DLayer::Impl {
 public:
-  RenderMode renderMode_ = RenderMode::Wireframe;
+  RenderMode renderMode_ = RenderMode::Solid;
   FixedGeometry3D fixedGeometry_ = FixedGeometry3D::Auto;
   float geometryWidth_ = 200.0f;
   float geometryHeight_ = 200.0f;
@@ -261,6 +261,7 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
   obj["renderMode"] = static_cast<int>(impl_->renderMode_);
+  obj["render.affectedByLights"] = impl_->affectedByLights_;
   obj["render.useTextureInSolid"] = impl_->useTextureInSolid_;
   obj["render.wireOverlay"] = impl_->wireOverlay_;
   obj["fixedGeometry"] = static_cast<int>(impl_->fixedGeometry_);
@@ -318,7 +319,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     const int geometry = obj.value("fixedGeometry").toInt(
         static_cast<int>(FixedGeometry3D::Auto));
     if (geometry >= static_cast<int>(FixedGeometry3D::Auto) &&
-        geometry <= static_cast<int>(FixedGeometry3D::Cone)) {
+        geometry <= static_cast<int>(FixedGeometry3D::Cone) &&
+        (geometry != static_cast<int>(FixedGeometry3D::Auto) ||
+         sourcePath.isEmpty())) {
       setFixedGeometry(static_cast<FixedGeometry3D>(geometry));
     }
   }
@@ -331,6 +334,8 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       setRenderMode(static_cast<RenderMode>(mode));
     }
   }
+  impl_->affectedByLights_ =
+      obj.value("render.affectedByLights").toBool(impl_->affectedByLights_);
   impl_->useTextureInSolid_ =
       obj.value("render.useTextureInSolid").toBool(impl_->useTextureInSolid_);
   impl_->wireOverlay_ =
@@ -885,6 +890,36 @@ void Artifact3DLayer::drawLOD(ArtifactIRenderer *renderer, DetailLevel lod) {
   draw(renderer);
 }
 
+void Artifact3DLayer::drawSelectionOutline(ArtifactIRenderer *renderer) const {
+  if (!renderer || !impl_->meshLoaded_) {
+    return;
+  }
+  const auto positions = impl_->mesh_.vertexAttributes().get<QVector3D>("position");
+  if (!positions || positions->data().isEmpty()) {
+    return;
+  }
+  const RationalTime frameTime(currentFrame(), 30);
+  const auto snapshot = transform3D().snapshotAt(frameTime);
+  QMatrix4x4 modelMatrix;
+  modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+  modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+  const FloatColor outlineColor{0.30f, 0.86f, 1.0f, 0.98f};
+  for (int polygon = 0; polygon < impl_->mesh_.polygonCount(); ++polygon) {
+    const auto indices = impl_->mesh_.getPolygonVertices(polygon);
+    for (size_t i = 0; i < indices.size(); ++i) {
+      const auto &a = positions->data()[indices[i]];
+      const auto &b = positions->data()[indices[(i + 1) % indices.size()]];
+      const QVector3D worldA = modelMatrix.map(a);
+      const QVector3D worldB = modelMatrix.map(b);
+      renderer->draw3DLine({worldA.x(), worldA.y(), worldA.z()},
+                            {worldB.x(), worldB.y(), worldB.z()},
+                            outlineColor, 1.8f);
+    }
+  }
+}
+
 QRectF Artifact3DLayer::localBounds() const
 {
   const auto size = sourceSize();
@@ -910,38 +945,57 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       QStringLiteral("geometry.type"), PropertyType::Integer,
       static_cast<int>(fixedGeometry()), -60);
   geometryTypeProp->setDisplayLabel(QStringLiteral("Primitive Type"));
-  geometryTypeProp->setTooltip(QStringLiteral("0=Auto, 1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone"));
+  geometryTypeProp->setTooltip(
+      fixedGeometry() == FixedGeometry3D::Auto
+          ? QStringLiteral("0=Imported Model, 1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone")
+          : QStringLiteral("1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone"));
   geometryGroup.addProperty(geometryTypeProp);
 
-  auto geometryWidthProp = persistentLayerProperty(
-      QStringLiteral("geometry.width"), PropertyType::Float,
-      impl_->geometryWidth_, -59);
-  geometryWidthProp->setDisplayLabel(QStringLiteral("Width"));
-  geometryGroup.addProperty(geometryWidthProp);
+  const FixedGeometry3D geometry = fixedGeometry();
+  if (geometry != FixedGeometry3D::Auto) {
+    auto geometryWidthProp = persistentLayerProperty(
+        QStringLiteral("geometry.width"), PropertyType::Float,
+        impl_->geometryWidth_, -59);
+    geometryWidthProp->setDisplayLabel(QStringLiteral("Width"));
+    geometryWidthProp->setSoftRange(1.0, 2000.0);
+    geometryGroup.addProperty(geometryWidthProp);
 
-  auto geometryHeightProp = persistentLayerProperty(
-      QStringLiteral("geometry.height"), PropertyType::Float,
-      impl_->geometryHeight_, -58);
-  geometryHeightProp->setDisplayLabel(QStringLiteral("Height"));
-  geometryGroup.addProperty(geometryHeightProp);
+    auto geometryHeightProp = persistentLayerProperty(
+        QStringLiteral("geometry.height"), PropertyType::Float,
+        impl_->geometryHeight_, -58);
+    geometryHeightProp->setDisplayLabel(QStringLiteral("Height"));
+    geometryHeightProp->setSoftRange(1.0, 2000.0);
+    geometryGroup.addProperty(geometryHeightProp);
 
-  auto geometryDepthProp = persistentLayerProperty(
-      QStringLiteral("geometry.depth"), PropertyType::Float,
-      impl_->geometryDepth_, -57);
-  geometryDepthProp->setDisplayLabel(QStringLiteral("Depth"));
-  geometryGroup.addProperty(geometryDepthProp);
+    if (geometry != FixedGeometry3D::Plane) {
+      auto geometryDepthProp = persistentLayerProperty(
+          QStringLiteral("geometry.depth"), PropertyType::Float,
+          impl_->geometryDepth_, -57);
+      geometryDepthProp->setDisplayLabel(QStringLiteral("Depth"));
+      geometryDepthProp->setSoftRange(1.0, 2000.0);
+      geometryGroup.addProperty(geometryDepthProp);
+    }
 
-  auto geometrySegmentsProp = persistentLayerProperty(
-      QStringLiteral("geometry.segments"), PropertyType::Integer,
-      impl_->geometrySegments_, -56);
-  geometrySegmentsProp->setDisplayLabel(QStringLiteral("Segments"));
-  geometryGroup.addProperty(geometrySegmentsProp);
+    if (geometry == FixedGeometry3D::Sphere ||
+        geometry == FixedGeometry3D::Cylinder ||
+        geometry == FixedGeometry3D::Cone) {
+      auto geometrySegmentsProp = persistentLayerProperty(
+          QStringLiteral("geometry.segments"), PropertyType::Integer,
+          impl_->geometrySegments_, -56);
+      geometrySegmentsProp->setDisplayLabel(QStringLiteral("Segments"));
+      geometrySegmentsProp->setSoftRange(3, 64);
+      geometryGroup.addProperty(geometrySegmentsProp);
+    }
 
-  auto geometryRingsProp = persistentLayerProperty(
-      QStringLiteral("geometry.rings"), PropertyType::Integer,
-      impl_->geometryRings_, -55);
-  geometryRingsProp->setDisplayLabel(QStringLiteral("Rings"));
-  geometryGroup.addProperty(geometryRingsProp);
+    if (geometry == FixedGeometry3D::Sphere) {
+      auto geometryRingsProp = persistentLayerProperty(
+          QStringLiteral("geometry.rings"), PropertyType::Integer,
+          impl_->geometryRings_, -55);
+      geometryRingsProp->setDisplayLabel(QStringLiteral("Rings"));
+      geometryRingsProp->setSoftRange(2, 64);
+      geometryGroup.addProperty(geometryRingsProp);
+    }
+  }
 
   PropertyGroup renderGroup(QStringLiteral("3D Render"));
 
@@ -952,12 +1006,14 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   renderModeProp->setTooltip(QStringLiteral("0=Wireframe, 1=Solid"));
   renderGroup.addProperty(renderModeProp);
 
-  auto sourcePathProp = persistentLayerProperty(
-      QStringLiteral("model.sourcePath"), PropertyType::String,
-      sourcePath(), -55);
-  sourcePathProp->setDisplayLabel(QStringLiteral("Source Path"));
-  sourcePathProp->setTooltip(QStringLiteral("3D model source file path"));
-  renderGroup.addProperty(sourcePathProp);
+  if (fixedGeometry() == FixedGeometry3D::Auto) {
+    auto sourcePathProp = persistentLayerProperty(
+        QStringLiteral("model.sourcePath"), PropertyType::String,
+        sourcePath(), -55);
+    sourcePathProp->setDisplayLabel(QStringLiteral("Source Path"));
+    sourcePathProp->setTooltip(QStringLiteral("3D model source file path"));
+    renderGroup.addProperty(sourcePathProp);
+  }
 
   auto affectedByLightsProp = persistentLayerProperty(
       QStringLiteral("render.affectedByLights"), PropertyType::Boolean,
@@ -985,81 +1041,84 @@ Artifact3DLayer::getLayerPropertyGroups() const {
 
   auto baseColorProp = persistentLayerProperty(
       QStringLiteral("material.base.color"), PropertyType::Color,
-      impl_->material_.baseColor(), -40);
+      impl_->material_.baseColor(), -50);
   baseColorProp->setDisplayLabel(QStringLiteral("Base Color"));
   materialGroup.addProperty(baseColorProp);
 
+  auto metallicProp = persistentLayerProperty(
+      QStringLiteral("material.metallic"), PropertyType::Float,
+      impl_->material_.metallic(), -49);
+  metallicProp->setDisplayLabel(QStringLiteral("Metallic"));
+  metallicProp->setHardRange(0.0, 1.0);
+  metallicProp->setSoftRange(0.0, 1.0);
+  materialGroup.addProperty(metallicProp);
+
+  auto roughnessProp = persistentLayerProperty(
+      QStringLiteral("material.roughness"), PropertyType::Float,
+      impl_->material_.roughness(), -48);
+  roughnessProp->setDisplayLabel(QStringLiteral("Roughness"));
+  roughnessProp->setHardRange(0.0, 1.0);
+  roughnessProp->setSoftRange(0.0, 1.0);
+  materialGroup.addProperty(roughnessProp);
+
+  auto opacityProp = persistentLayerProperty(
+      QStringLiteral("material.opacity"), PropertyType::Float,
+      impl_->material_.opacity(), -47);
+  opacityProp->setDisplayLabel(QStringLiteral("Opacity"));
+  opacityProp->setTooltip(QStringLiteral("Material opacity (0=transparent, 1=opaque)"));
+  opacityProp->setHardRange(0.0, 1.0);
+  opacityProp->setSoftRange(0.0, 1.0);
+  materialGroup.addProperty(opacityProp);
+
   auto baseColorTextureProp = persistentLayerProperty(
       QStringLiteral("material.baseColorTexture"), PropertyType::String,
-      impl_->material_.baseColorTexture().toQString(), -41);
+      impl_->material_.baseColorTexture().toQString(), -40);
   baseColorTextureProp->setDisplayLabel(QStringLiteral("Base Color Texture"));
   baseColorTextureProp->setTooltip(QStringLiteral("Texture path for the base color"));
   materialGroup.addProperty(baseColorTextureProp);
 
   auto metallicRoughnessTextureProp = persistentLayerProperty(
       QStringLiteral("material.metallicRoughnessTexture"), PropertyType::String,
-      impl_->material_.metallicRoughnessTexture().toQString(), -40);
+      impl_->material_.metallicRoughnessTexture().toQString(), -39);
   metallicRoughnessTextureProp->setDisplayLabel(QStringLiteral("Metallic Roughness Texture"));
   materialGroup.addProperty(metallicRoughnessTextureProp);
 
   auto normalTextureProp = persistentLayerProperty(
       QStringLiteral("material.normalTexture"), PropertyType::String,
-      impl_->material_.normalTexture().toQString(), -39);
+      impl_->material_.normalTexture().toQString(), -38);
   normalTextureProp->setDisplayLabel(QStringLiteral("Normal Texture"));
   materialGroup.addProperty(normalTextureProp);
 
   auto emissionTextureProp = persistentLayerProperty(
       QStringLiteral("material.emissionTexture"), PropertyType::String,
-      impl_->material_.emissionTexture().toQString(), -38);
+      impl_->material_.emissionTexture().toQString(), -37);
   emissionTextureProp->setDisplayLabel(QStringLiteral("Emission Texture"));
   materialGroup.addProperty(emissionTextureProp);
 
   auto occlusionTextureProp = persistentLayerProperty(
       QStringLiteral("material.occlusionTexture"), PropertyType::String,
-      impl_->material_.occlusionTexture().toQString(), -37);
+      impl_->material_.occlusionTexture().toQString(), -36);
   occlusionTextureProp->setDisplayLabel(QStringLiteral("Occlusion Texture"));
   materialGroup.addProperty(occlusionTextureProp);
 
   auto opacityTextureProp = persistentLayerProperty(
       QStringLiteral("material.opacityTexture"), PropertyType::String,
-      impl_->material_.opacityTexture().toQString(), -36);
+      impl_->material_.opacityTexture().toQString(), -35);
   opacityTextureProp->setDisplayLabel(QStringLiteral("Opacity Texture"));
   materialGroup.addProperty(opacityTextureProp);
 
   auto emissionColorProp = persistentLayerProperty(
       QStringLiteral("material.emission.color"), PropertyType::Color,
-      impl_->material_.emissionColor(), -35);
+      impl_->material_.emissionColor(), -34);
   emissionColorProp->setDisplayLabel(QStringLiteral("Emission Color"));
   materialGroup.addProperty(emissionColorProp);
 
-  auto metallicProp = persistentLayerProperty(
-      QStringLiteral("material.metallic"), PropertyType::Float,
-      impl_->material_.metallic(), -34);
-  metallicProp->setDisplayLabel(QStringLiteral("Metallic"));
-  metallicProp->setHardRange(0.0, 1.0);
-  materialGroup.addProperty(metallicProp);
-
-  auto roughnessProp = persistentLayerProperty(
-      QStringLiteral("material.roughness"), PropertyType::Float,
-      impl_->material_.roughness(), -33);
-  roughnessProp->setDisplayLabel(QStringLiteral("Roughness"));
-  roughnessProp->setHardRange(0.0, 1.0);
-  materialGroup.addProperty(roughnessProp);
-
   auto emissionStrengthProp = persistentLayerProperty(
       QStringLiteral("material.emissionStrength"), PropertyType::Float,
-      impl_->material_.emissionStrength(), -32);
+      impl_->material_.emissionStrength(), -33);
   emissionStrengthProp->setDisplayLabel(QStringLiteral("Emission Strength"));
   emissionStrengthProp->setTooltip(QStringLiteral("Emission intensity multiplier"));
   materialGroup.addProperty(emissionStrengthProp);
-
-  auto opacityProp = persistentLayerProperty(
-      QStringLiteral("material.opacity"), PropertyType::Float,
-      impl_->material_.opacity(), -31);
-  opacityProp->setDisplayLabel(QStringLiteral("Opacity"));
-  opacityProp->setTooltip(QStringLiteral("Material opacity (0=transparent, 1=opaque)"));
-  opacityProp->setHardRange(0.0, 1.0);
-  materialGroup.addProperty(opacityProp);
 
   auto normalStrengthProp = persistentLayerProperty(
       QStringLiteral("material.normalStrength"), PropertyType::Float,

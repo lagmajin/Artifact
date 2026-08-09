@@ -128,19 +128,20 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
     QVector3D tip = pos + forward * (s * 2.5f);
     renderer->drawGizmoArrow(p, float3{ tip.x(), tip.y(), tip.z() }, camColor, s * 0.8f);
 
-    // 3. Draw Frustum / Ortho frame
-    const float dist = std::max(10.0f, zoom * 0.75f);
-    float frameHalfH = 0.0f;
-    float frameHalfW = 0.0f;
-    if (type == ProjectionMode::Orthographic) {
-        frameHalfW = std::max(20.0f, camImpl_->orthoWidth_ * 0.02f);
-        frameHalfH = std::max(20.0f, camImpl_->orthoHeight_ * 0.02f);
-    } else {
-        const float fovV = fov();
-        const float tanHalfV = std::tan(fovV * 0.5f * kDegreesToRadians);
-        frameHalfH = std::max(20.0f, dist * tanHalfV);
-        frameHalfW = frameHalfH * 1.777f;
-    }
+    // 3. Draw Frustum / Ortho frame.  Keep the guide tied to the authored
+    // clip planes so it also explains the actual camera range in the VP.
+    const float nearDist = std::max(0.01f, nearClipPlane());
+    const float farDist = std::max(nearDist + 0.01f, farClipPlane());
+    const float fovV = fov();
+    const float tanHalfV = std::tan(fovV * 0.5f * kDegreesToRadians);
+    const auto halfExtentsAt = [&](float distance) {
+        if (type == ProjectionMode::Orthographic) {
+            return QVector2D(std::max(20.0f, camImpl_->orthoWidth_ * 0.02f),
+                             std::max(20.0f, camImpl_->orthoHeight_ * 0.02f));
+        }
+        const float halfH = std::max(0.1f, distance * tanHalfV);
+        return QVector2D(halfH * 1.777f, halfH);
+    };
     if (depthOfField()) {
         renderer->drawGizmoRing(p, float3{0, 1, 0}, s * 1.6f,
                                 ArtifactCore::FloatColor{camColor.r(), camColor.g(),
@@ -148,22 +149,40 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
                                 1.0f);
     }
 
-    auto drawCorner = [&](float x, float y) {
-        QVector3D cp = pos + forward * dist + right * x + up * y;
-        renderer->drawGizmoLine(p, float3{ cp.x(), cp.y(), cp.z() }, camColor, 0.5f);
-        return cp;
+    const auto drawPlane = [&](float distance, const ArtifactCore::FloatColor &color,
+                               float thickness, bool spokes) {
+        const QVector2D half = halfExtentsAt(distance);
+        const QVector3D c1 = pos + forward * distance + right * -half.x() + up * -half.y();
+        const QVector3D c2 = pos + forward * distance + right * half.x() + up * -half.y();
+        const QVector3D c3 = pos + forward * distance + right * half.x() + up * half.y();
+        const QVector3D c4 = pos + forward * distance + right * -half.x() + up * half.y();
+        renderer->drawGizmoLine({c1.x(), c1.y(), c1.z()}, {c2.x(), c2.y(), c2.z()}, color, thickness);
+        renderer->drawGizmoLine({c2.x(), c2.y(), c2.z()}, {c3.x(), c3.y(), c3.z()}, color, thickness);
+        renderer->drawGizmoLine({c3.x(), c3.y(), c3.z()}, {c4.x(), c4.y(), c4.z()}, color, thickness);
+        renderer->drawGizmoLine({c4.x(), c4.y(), c4.z()}, {c1.x(), c1.y(), c1.z()}, color, thickness);
+        if (spokes) {
+            renderer->drawGizmoLine(p, {c1.x(), c1.y(), c1.z()}, color, thickness);
+            renderer->drawGizmoLine(p, {c2.x(), c2.y(), c2.z()}, color, thickness);
+            renderer->drawGizmoLine(p, {c3.x(), c3.y(), c3.z()}, color, thickness);
+            renderer->drawGizmoLine(p, {c4.x(), c4.y(), c4.z()}, color, thickness);
+        }
     };
-    
-    auto c1 = drawCorner(-frameHalfW, -frameHalfH);
-    auto c2 = drawCorner(frameHalfW, -frameHalfH);
-    auto c3 = drawCorner(frameHalfW, frameHalfH);
-    auto c4 = drawCorner(-frameHalfW, frameHalfH);
-    
-    // Connect corners
-    renderer->drawGizmoLine(float3{c1.x(), c1.y(), c1.z()}, float3{c2.x(), c2.y(), c2.z()}, camColor, 0.5f);
-    renderer->drawGizmoLine(float3{c2.x(), c2.y(), c2.z()}, float3{c3.x(), c3.y(), c3.z()}, camColor, 0.5f);
-    renderer->drawGizmoLine(float3{c3.x(), c3.y(), c3.z()}, float3{c4.x(), c4.y(), c4.z()}, camColor, 0.5f);
-    renderer->drawGizmoLine(float3{c4.x(), c4.y(), c4.z()}, float3{c1.x(), c1.y(), c1.z()}, camColor, 0.5f);
+    drawPlane(nearDist, camColor, 0.7f, true);
+    drawPlane(farDist, ArtifactCore::FloatColor{camColor.r(), camColor.g(), camColor.b(), 0.40f}, 0.5f, false);
+    if (depthOfField()) {
+        const float focusDist = std::clamp(focusDistance(), nearDist, farDist);
+        drawPlane(focusDist, ArtifactCore::FloatColor{0.35f, 1.0f, 0.72f, 0.95f}, 1.4f, false);
+    }
+    if (motionBlur()) {
+        const auto previousTime = RationalTime(std::max<int64_t>(0, currentFrame() - 1), cameraTimelineFps(this));
+        const auto &previousTransform = transform3D();
+        const QVector3D previousPos(previousTransform.positionXAt(previousTime),
+                                     previousTransform.positionYAt(previousTime),
+                                     previousTransform.positionZAt(previousTime));
+        renderer->drawGizmoLine({previousPos.x(), previousPos.y(), previousPos.z()},
+                                p, ArtifactCore::FloatColor{1.0f, 0.45f, 0.18f, 0.80f},
+                                std::clamp(0.8f + blurAmount() / 100.0f, 0.8f, 2.0f));
+    }
 }
 
 float ArtifactCameraLayer::zoom() const { return camImpl_->zoom_; }

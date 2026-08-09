@@ -15,6 +15,7 @@ module;
 #include <QPainterPath>
 #include <QRect>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSize>
 #include <QSizeF>
 #include <QString>
@@ -304,6 +305,16 @@ QString selectorShapeTooltip() {
       "0=Square, 1=Ramp Up, 2=Ramp Down, 3=Triangle, 4=Round, 5=Smooth");
 }
 
+QString selectorOrderTooltip() {
+  return QStringLiteral(
+      "0=Natural, 1=Reverse, 2=Random Stable, 3=Center Out, 4=Edge In, 5=Left to Right, 6=Right to Left");
+}
+
+QString anchorGroupingTooltip() {
+  return QStringLiteral(
+      "0=Character, 1=Cluster, 2=Word, 3=Line, 4=Paragraph, 5=Span, 6=All");
+}
+
 QVector<float> selectorWeightPreviewForAnimators(
     const std::vector<TextAnimatorState> &animators,
     int sampleCount,
@@ -329,9 +340,16 @@ QVector<float> selectorWeightPreviewForAnimators(
       if (!animator.enabled) {
         continue;
       }
+      const auto orderMap = TextAnimatorEngine::createOrderMap(
+          std::max(textLength, 1), animator.range.order);
+      int orderedIndex = index;
+      const auto orderIt = std::find(orderMap.cbegin(), orderMap.cend(), index);
+      if (orderIt != orderMap.cend()) {
+        orderedIndex = static_cast<int>(std::distance(orderMap.cbegin(), orderIt));
+      }
       maxWeight = std::max(
           maxWeight,
-          TextAnimatorEngine::calculateWeight(index, std::max(textLength, 1),
+          TextAnimatorEngine::calculateWeight(orderedIndex, std::max(textLength, 1),
                                               animator.range));
     }
     preview[sample] = std::clamp(maxWeight, 0.0f, 1.0f);
@@ -1002,6 +1020,8 @@ bool sameTextAnimatorState(const TextAnimatorState &a,
          fuzzyEqual(a.range.end, b.range.end) &&
          fuzzyEqual(a.range.offset, b.range.offset) &&
          a.range.units == b.range.units && a.range.shape == b.range.shape &&
+         a.range.order == b.range.order &&
+         a.range.anchorGrouping == b.range.anchorGrouping &&
          a.range.regexEnabled == b.range.regexEnabled &&
          a.range.selectorPattern == b.range.selectorPattern &&
          fuzzyEqual(a.range.easeHigh, b.range.easeHigh) &&
@@ -1154,6 +1174,8 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
   rangeObj["offset"] = animator.range.offset;
   rangeObj["units"] = static_cast<int>(animator.range.units);
   rangeObj["shape"] = static_cast<int>(animator.range.shape);
+  rangeObj["order"] = static_cast<int>(animator.range.order);
+  rangeObj["anchorGrouping"] = static_cast<int>(animator.range.anchorGrouping);
   rangeObj["regexEnabled"] = animator.range.regexEnabled;
   rangeObj["selectorPattern"] = animator.range.selectorPattern;
   rangeObj["easeHigh"] = animator.range.easeHigh;
@@ -1212,6 +1234,12 @@ TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) 
     animator.range.units = static_cast<SelectorUnits>(std::clamp(units, 0, 4));
     const int shape = rangeObj.value("shape").toInt(static_cast<int>(animator.range.shape));
     animator.range.shape = static_cast<SelectorShape>(std::clamp(shape, 0, 5));
+    const int order = rangeObj.value("order").toInt(static_cast<int>(animator.range.order));
+    animator.range.order = static_cast<SelectorOrder>(std::clamp(order, 0, 6));
+    const int anchorGrouping = rangeObj.value("anchorGrouping").toInt(
+        static_cast<int>(animator.range.anchorGrouping));
+    animator.range.anchorGrouping =
+        static_cast<AnchorPointGrouping>(std::clamp(anchorGrouping, 0, 6));
     animator.range.regexEnabled = rangeObj.value("regexEnabled").toBool(animator.range.regexEnabled);
     animator.range.selectorPattern = rangeObj.value("selectorPattern").toString(animator.range.selectorPattern);
     if (animator.range.selectorPattern.size() > 4096) {
@@ -3397,6 +3425,26 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     shapeProp->setTooltip(selectorShapeTooltip());
     animatorGroup.addProperty(shapeProp);
 
+    auto orderProp = makeAnimatorProp(QStringLiteral("order"),
+                                      ArtifactCore::PropertyType::Integer,
+                                      static_cast<int>(animator.range.order), -113);
+    orderProp->setDisplayLabel(QStringLiteral("Order"));
+    orderProp->setHardRange(0, 6);
+    orderProp->setSoftRange(0, 6);
+    orderProp->setStep(1);
+    orderProp->setTooltip(selectorOrderTooltip());
+    animatorGroup.addProperty(orderProp);
+
+    auto anchorGroupingProp = makeAnimatorProp(
+        QStringLiteral("anchorGrouping"), ArtifactCore::PropertyType::Integer,
+        static_cast<int>(animator.range.anchorGrouping), -112);
+    anchorGroupingProp->setDisplayLabel(QStringLiteral("Anchor Grouping"));
+    anchorGroupingProp->setHardRange(0, 6);
+    anchorGroupingProp->setSoftRange(0, 6);
+    anchorGroupingProp->setStep(1);
+    anchorGroupingProp->setTooltip(anchorGroupingTooltip());
+    animatorGroup.addProperty(anchorGroupingProp);
+
     auto regexEnabledProp =
         makeAnimatorProp(QStringLiteral("regexEnabled"),
                          ArtifactCore::PropertyType::Boolean,
@@ -3591,6 +3639,17 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       presetProperty->setValue(0);
     }
   };
+  bool notifyTextPropertyChange = propertyPath.startsWith(QStringLiteral("text."));
+  const auto textPropertyChangeGuard = qScopeGuard([this, &notifyTextPropertyChange]() {
+    if (!notifyTextPropertyChange) {
+      return;
+    }
+    setDirty(LayerDirtyFlag::Property);
+    addDirtyReason(LayerDirtyReason::PropertyChanged);
+    if (!impl_->applyingAnimatedTextProperties_) {
+      Q_EMIT changed();
+    }
+  });
 
   if (propertyPath == QStringLiteral("source.width")) {
     const auto current = sourceSize();
@@ -3621,10 +3680,6 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
 
   if (propertyPath == QStringLiteral("text.value")) {
     setText(UniString(value.toString()));
-    setDirty(LayerDirtyFlag::Property);
-    addDirtyReason(LayerDirtyReason::PropertyChanged);
-    markDirty();
-    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("text.fontFamily")) {
@@ -3825,10 +3880,12 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
   if (propertyPath == QStringLiteral("text.animatorPreset")) {
     const int presetId = value.toInt();
     if (presetId == 0) {
+      notifyTextPropertyChange = false;
       return true;
     }
     const auto animators = buildTextAnimatorPreset(presetId);
     if (animators.empty()) {
+      notifyTextPropertyChange = false;
       return false;
     }
     impl_->animators_ = animators;
@@ -3840,6 +3897,7 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     const int index = animatorPath->first;
     const QString field = animatorPath->second;
     if (index < 0 || index >= animatorCount()) {
+      notifyTextPropertyChange = false;
       return false;
     }
 
@@ -3870,6 +3928,12 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     } else if (field == QStringLiteral("shape")) {
       animator.range.shape =
           static_cast<SelectorShape>(std::clamp(value.toInt(), 0, 5));
+    } else if (field == QStringLiteral("order")) {
+      animator.range.order =
+          static_cast<SelectorOrder>(std::clamp(value.toInt(), 0, 6));
+    } else if (field == QStringLiteral("anchorGrouping")) {
+      animator.range.anchorGrouping = static_cast<AnchorPointGrouping>(
+          std::clamp(value.toInt(), 0, 6));
     } else if (field == QStringLiteral("regexEnabled")) {
       animator.range.regexEnabled = value.toBool();
       if (animator.range.regexEnabled && !animator.range.selectorPattern.isEmpty()) {
@@ -3958,6 +4022,7 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       return true;
     }
   }
+  notifyTextPropertyChange = false;
   return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
 }
 

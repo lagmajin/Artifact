@@ -1231,8 +1231,23 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                               << "frames=" << layer->impl_->streamInfo_.frameCount
                               << "thread=" << threadIdTag();
 
-        layer->setInPoint(0);
-        layer->setOutPoint(result.defaultOutPoint);
+        // The layer may already have been placed at the current timeline frame
+        // while this asynchronous open was pending.  Do not reset that
+        // placement to frame zero when stream metadata arrives.
+        const int64_t timelineIn = layer->inPoint();
+        const int64_t timelineOut = layer->outPoint();
+        const bool hasDefaultTimelineDuration = timelineOut - timelineIn == 300;
+        if (hasDefaultTimelineDuration) {
+            layer->setOutPoint(
+                FramePosition(timelineIn + std::max<int64_t>(1, result.defaultOutPoint)));
+        }
+
+        // startTime is the source-frame offset used by the video mapping.
+        // Generic creation places it at the timeline in-point; normalize that
+        // untrimmed placement so the first source frame is shown at in-point.
+        if (layer->startTime().framePosition() == timelineIn) {
+            layer->setStartTime(FramePosition(0));
+        }
 
         qCInfo(videoLayerLog) << "[VideoLayer] stream info"
                               << "size=" << layer->impl_->streamInfo_.width << "x" << layer->impl_->streamInfo_.height

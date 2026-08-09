@@ -16,6 +16,8 @@ module;
 #include <vector>
 #include <clocale>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <io.h>
 #include <iostream>
@@ -37,6 +39,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -45,11 +48,14 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QFileInfoList>
 #include <QFont>
 #include <QIcon>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QImage>
 #include <QImageReader>
 #include <QJsonDocument>
 #include <QLoggingCategory>
 #include <QMessageBox>
+#include <QMainWindow>
 #include <QMetaType>
 #include <QPointer>
 #include <QPainter>
@@ -82,6 +88,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QSet>
+#include <QStringList>
 #include <QVariant>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <opencv2/opencv.hpp>
@@ -95,6 +102,7 @@ import Core.AI.Context;
 import Core.AI.McpBridge;
 
 import Application.AppSettings;
+import Settings.Accessibility;
 import Configuration.ConfigLayer;
 import Configuration.LayeredConfigStore;
 import Thread.PreciseTicker;
@@ -597,6 +605,124 @@ private:
 
   QStringList pendingProjectPaths_;
   std::function<void(const QString&)> projectOpenHandler_;
+};
+
+class AccessibilityInputEventFilter final : public QObject {
+public:
+  explicit AccessibilityInputEventFilter(QObject* parent = nullptr)
+      : QObject(parent) {}
+
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    Q_UNUSED(watched);
+    if (!event) {
+      return false;
+    }
+    if (dispatchingSyntheticEvent_) {
+      return false;
+    }
+
+    if (event->type() == QEvent::KeyPress ||
+        event->type() == QEvent::KeyRelease) {
+      auto* keyEvent = static_cast<QKeyEvent*>(event);
+      if (!keyEvent) {
+        return false;
+      }
+      const int key = keyEvent->key();
+      const Qt::KeyboardModifier modifier = modifierForKey(key);
+      if (modifier != Qt::NoModifier &&
+          Artifact::Accessibility::stickyKeysEnabled()) {
+        if (event->type() == QEvent::KeyPress && !keyEvent->isAutoRepeat()) {
+          if ((stickyModifiers_ & modifier) != 0) {
+            stickyModifiers_ &= ~modifier;
+          } else {
+            stickyModifiers_ |= modifier;
+          }
+          updateAccessibilityStatus();
+        }
+        return true;
+      }
+
+      if (event->type() == QEvent::KeyPress && !keyEvent->isAutoRepeat()) {
+        const Qt::KeyboardModifiers effectiveModifiers =
+            keyEvent->modifiers() | stickyModifiers_;
+        if (effectiveModifiers != keyEvent->modifiers()) {
+          QKeyEvent syntheticKeyEvent(
+              QEvent::KeyPress, keyEvent->key(), effectiveModifiers,
+              keyEvent->nativeScanCode(), keyEvent->nativeVirtualKey(),
+              keyEvent->nativeModifiers(), keyEvent->text(),
+              keyEvent->isAutoRepeat(), keyEvent->count());
+          dispatchingSyntheticEvent_ = true;
+          QCoreApplication::sendEvent(watched, &syntheticKeyEvent);
+          dispatchingSyntheticEvent_ = false;
+          if (Artifact::Accessibility::stickyKeysMode() == QStringLiteral("latch") ||
+              Artifact::Accessibility::stickyKeysMode() == QStringLiteral("both")) {
+            stickyModifiers_ = Qt::NoModifier;
+          }
+          updateAccessibilityStatus();
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if (Artifact::Accessibility::singleHandModeEnabled() &&
+        (event->type() == QEvent::MouseButtonPress ||
+         event->type() == QEvent::MouseButtonRelease ||
+         event->type() == QEvent::MouseMove)) {
+      auto* mouseEvent = static_cast<QMouseEvent*>(event);
+      if (!mouseEvent) {
+        return false;
+      }
+      if (event->type() == QEvent::MouseButtonPress) {
+        if (mouseEvent->button() == Qt::XButton1) {
+          mouseModifiers_ |= Qt::ShiftModifier;
+        } else if (mouseEvent->button() == Qt::XButton2) {
+          mouseModifiers_ |= Qt::ControlModifier;
+        }
+      }
+      if (event->type() == QEvent::MouseButtonRelease) {
+        if (mouseEvent->button() == Qt::XButton1) {
+          mouseModifiers_ &= ~Qt::ShiftModifier;
+        } else if (mouseEvent->button() == Qt::XButton2) {
+          mouseModifiers_ &= ~Qt::ControlModifier;
+        }
+      }
+    }
+    return false;
+  }
+
+private:
+  void updateAccessibilityStatus() const {
+    auto *window = QApplication::activeWindow();
+    auto *mainWindow = dynamic_cast<QMainWindow*>(window);
+    auto *status = mainWindow
+        ? dynamic_cast<ArtifactStatusBar*>(mainWindow->statusBar())
+        : nullptr;
+    if (!status) {
+      return;
+    }
+    QStringList active;
+    if (stickyModifiers_.testFlag(Qt::ControlModifier)) active << QStringLiteral("Ctrl");
+    if (stickyModifiers_.testFlag(Qt::ShiftModifier)) active << QStringLiteral("Shift");
+    if (stickyModifiers_.testFlag(Qt::AltModifier)) active << QStringLiteral("Alt");
+    if (stickyModifiers_.testFlag(Qt::MetaModifier)) active << QStringLiteral("Meta");
+    status->setAccessibilityText(active.isEmpty() ? QStringLiteral("OFF") : active.join(QStringLiteral(" + ")));
+  }
+
+  static Qt::KeyboardModifier modifierForKey(const int key) {
+    switch (key) {
+      case Qt::Key_Control: return Qt::ControlModifier;
+      case Qt::Key_Shift: return Qt::ShiftModifier;
+      case Qt::Key_Alt: return Qt::AltModifier;
+      case Qt::Key_Meta: return Qt::MetaModifier;
+      default: return Qt::NoModifier;
+    }
+  }
+
+  Qt::KeyboardModifiers stickyModifiers_ = Qt::NoModifier;
+  Qt::KeyboardModifiers mouseModifiers_ = Qt::NoModifier;
+  bool dispatchingSyntheticEvent_ = false;
 };
 
 ArtifactCore::TraceCrashRecord traceCrashFromReportPath(const QString& crashReportPath)
@@ -1796,6 +1922,31 @@ void markSessionEndClean() {
   sessionStore.sync();
 }
 
+char shutdownDiagnosticPathForExit[4096]{};
+
+void recordFinalProcessExitReached() {
+  if (shutdownDiagnosticPathForExit[0] == '\0') {
+    return;
+  }
+  if (FILE *file = std::fopen(shutdownDiagnosticPathForExit, "ab")) {
+    static constexpr char message[] =
+        "FINAL process exit handler reached\r\n";
+    std::fwrite(message, 1, sizeof(message) - 1, file);
+    std::fflush(file);
+    std::fclose(file);
+  }
+}
+
+void setShutdownDiagnosticPathForExit(const QString &path) {
+  const QByteArray encodedPath = QFile::encodeName(path);
+  const size_t copyLength = std::min(
+      static_cast<size_t>(encodedPath.size()),
+      sizeof(shutdownDiagnosticPathForExit) - 1);
+  std::memcpy(shutdownDiagnosticPathForExit, encodedPath.constData(),
+              copyLength);
+  shutdownDiagnosticPathForExit[copyLength] = '\0';
+}
+
 void showUncleanExitNoticeIfNeeded(bool hadUncleanExit, QWidget *parent) {
   if (!hadUncleanExit) {
     return;
@@ -2135,6 +2286,10 @@ static int runMcpServerMode(int argc, char *argv[], quint16 tcpPort = 0) {
 }
 
 int main(int argc, char *argv[]) {
+  // Registered before function-local services are constructed, so this runs
+  // after their exit handlers. Its marker distinguishes a completed process
+  // exit from a shutdown that stalled during late static destruction.
+  std::atexit(recordFinalProcessExitReached);
   configureWindowsUtf8Console();
   ArtifactCore::CrashHandler::install();
   ArtifactCore::CrashHandler::setCrashCallback([](const QString& crashReportPath) {
@@ -2362,6 +2517,8 @@ int main(int argc, char *argv[]) {
   Artifact::WorkspaceAutomation::ensureRegistered();
   auto* launchOpenFilter = new LaunchOpenRequestFilter(&a);
   a.installEventFilter(launchOpenFilter);
+  auto* accessibilityInputFilter = new AccessibilityInputEventFilter(&a);
+  a.installEventFilter(accessibilityInputFilter);
 
   // ============================================================
   // 翻訳システムの初期化 (LocalizationManager へ統合)
@@ -3993,7 +4150,53 @@ int main(int argc, char *argv[]) {
             << startupLayoutTimer.elapsed();
   });
 
-  QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw, &workspaceManager]() {
+  QFile shutdownDiagnosticFile;
+  QElapsedTimer shutdownDiagnosticTimer;
+  const auto appendShutdownDiagnostic =
+      [&shutdownDiagnosticFile, &shutdownDiagnosticTimer](const QString &stage) {
+        if (!shutdownDiagnosticFile.isOpen()) {
+          const QString appDataDir =
+              QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+          QDir logDir(appDataDir);
+          if (!logDir.mkpath(QStringLiteral("Logs/ShutdownSessions")) ||
+              !logDir.cd(QStringLiteral("Logs/ShutdownSessions"))) {
+            qWarning() << "[AppMain][Shutdown] failed to create diagnostic directory";
+            return;
+          }
+          const QString fileName =
+              QStringLiteral("shutdown_%1.log")
+                  .arg(QDateTime::currentDateTime().toString(
+                      QStringLiteral("yyyyMMdd_HHmmss_zzz")));
+          shutdownDiagnosticFile.setFileName(logDir.filePath(fileName));
+          if (!shutdownDiagnosticFile.open(QIODevice::WriteOnly |
+                                           QIODevice::Append)) {
+            qWarning() << "[AppMain][Shutdown] failed to open diagnostic log"
+                       << shutdownDiagnosticFile.fileName();
+            return;
+          }
+          setShutdownDiagnosticPathForExit(shutdownDiagnosticFile.fileName());
+          shutdownDiagnosticTimer.start();
+          shutdownDiagnosticFile.write(
+              QByteArrayLiteral("Artifact shutdown diagnostic session\r\n"));
+        }
+        const qint64 elapsedMs = shutdownDiagnosticTimer.isValid()
+                                     ? shutdownDiagnosticTimer.elapsed()
+                                     : 0;
+        const QByteArray line =
+            QStringLiteral("[%1][+%2 ms] %3\r\n")
+                .arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs))
+                .arg(elapsedMs)
+                .arg(stage)
+                .toUtf8();
+        shutdownDiagnosticFile.write(line);
+        shutdownDiagnosticFile.flush();
+      };
+
+  QObject::connect(
+      &a, &QCoreApplication::aboutToQuit,
+      [mw, &workspaceManager, &appendShutdownDiagnostic]() {
+    appendShutdownDiagnostic(QStringLiteral("BEGIN aboutToQuit"));
+    appendShutdownDiagnostic(QStringLiteral("workspace save begin"));
     const QString appDataDir =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir dataDir(appDataDir);
@@ -4011,22 +4214,42 @@ int main(int argc, char *argv[]) {
     layoutState.saveToStore(layoutStore, "MainWindow");
     layoutStore.sync();
     workspaceManager.saveSession(mw);
+    appendShutdownDiagnostic(QStringLiteral("workspace save complete"));
   });
   QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
     QElapsedTimer shutdownTimer;
     shutdownTimer.start();
+    appendShutdownDiagnostic(QStringLiteral("service shutdown begin"));
+    // RenderQueueService owns a joinable worker whose destructor waits for it.
+    // Request cancellation before tearing down the UI/render controllers;
+    // otherwise an active encode can keep Artifact.exe alive after the main
+    // window has already disappeared.
+    if (auto *renderQueueService = ArtifactRenderQueueService::instance()) {
+      renderQueueService->pauseAllJobs();
+      qInfo() << "[AppMain][Shutdown] render queue stop requested";
+    }
+    appendShutdownDiagnostic(QStringLiteral("render-queue stop requested"));
+    // Do not start queued background previews while shutdown is in progress.
+    // Running work observes its owner/generation guards and may finish normally.
+    QThreadPool::globalInstance()->clear();
+    appendShutdownDiagnostic(QStringLiteral("background queue cleared"));
     if (frameDebugTimer) {
       frameDebugTimer->stop();
       frameDebugTimer.reset();
     }
     if (compositionEditor) {
+      appendShutdownDiagnostic(QStringLiteral("composition-editor stop begin"));
       compositionEditor->stop();
+      appendShutdownDiagnostic(QStringLiteral("composition-editor stop complete"));
     }
     if (playbackService) {
+      appendShutdownDiagnostic(QStringLiteral("playback stop begin"));
       playbackService->stop();
       playbackService->waitForStop();
+      appendShutdownDiagnostic(QStringLiteral("playback stop complete"));
     }
     if (autoSaveManager) {
+      appendShutdownDiagnostic(QStringLiteral("autosave shutdown begin"));
       if (autoSaveManager->isDirty()) {
         const QByteArray snapshot = currentProjectSnapshotJson();
         if (!snapshot.isEmpty()) {
@@ -4035,8 +4258,11 @@ int main(int argc, char *argv[]) {
       }
       autoSaveManager->stop();
       delete autoSaveManager;
+      autoSaveManager = nullptr;
+      appendShutdownDiagnostic(QStringLiteral("autosave shutdown complete"));
     }
     markSessionEndClean();
+    appendShutdownDiagnostic(QStringLiteral("foreground services complete"));
     qInfo() << "[AppMain][Shutdown] foreground services stopped ms="
             << shutdownTimer.elapsed();
   });
@@ -4053,6 +4279,8 @@ int main(int argc, char *argv[]) {
     mw->show();
   });
   const int exitCode = a.exec();
+  appendShutdownDiagnostic(
+      QStringLiteral("event loop returned exitCode=%1").arg(exitCode));
   // Explicitly stop playback while all application services are still alive.
   // Function-local singleton destruction order must not own shutdown ordering.
   if (playbackService) {
@@ -4067,6 +4295,7 @@ int main(int argc, char *argv[]) {
   QElapsedTimer uiTeardownTimer;
   uiTeardownTimer.start();
   qInfo() << "[AppMain][Shutdown] top-level UI teardown begin";
+  appendShutdownDiagnostic(QStringLiteral("top-level UI teardown begin"));
   if (renderCenterWindow) {
     delete renderCenterWindow.data();
   }
@@ -4075,5 +4304,9 @@ int main(int argc, char *argv[]) {
   }
   qInfo() << "[AppMain][Shutdown] top-level UI teardown complete ms="
           << uiTeardownTimer.elapsed();
+  appendShutdownDiagnostic(
+      QStringLiteral("COMPLETE top-level UI teardown elapsedMs=%1")
+          .arg(uiTeardownTimer.elapsed()));
+  shutdownDiagnosticFile.close();
   return exitCode;
 }

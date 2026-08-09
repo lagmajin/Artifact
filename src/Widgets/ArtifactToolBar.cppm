@@ -294,6 +294,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
     action->setText(text);
     // Use rich tooltip with shortcut visualization
     action->setToolTip(createRichTooltip(tooltip, shortcut));
+    // Keep the action description available through the main window status bar
+    // so the operation is discoverable without relying on hover-only tooltips.
+    action->setStatusTip(tooltip);
     action->setShortcut(shortcut);
     action->setCheckable(true);
     impl_->toolsGroup_->addAction(action);
@@ -314,6 +317,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                   QStringLiteral("MaterialVS/neutral/start.svg"),
                   QStringLiteral("Png/home.png")}));
   impl_->homeAction_->setToolTip("ホーム");
+  impl_->homeAction_->setStatusTip(QStringLiteral("ホームに戻る"));
   addAction(impl_->homeAction_);
 
   addSeparator();
@@ -337,17 +341,17 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
              QStringList{QString::fromLatin1(kToolbarIconMove),
                          QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
                          QStringLiteral("Material/arrow_right.svg")},
-             "移動", "移動ツール (W)", QKeySequence(Qt::Key_W));
+             "移動", "移動ツール (Viewport: G)", QKeySequence());
   createTool(impl_->rotationTool_,
              QStringList{QString::fromLatin1(kToolbarIconRotate),
                          QStringLiteral("MaterialVS/neutral/transform.svg"),
                          QStringLiteral("Material/transform.svg")},
-             "回転", "回転ツール (E)", QKeySequence(Qt::Key_E));
+             "回転", "回転ツール (Viewport: R)", QKeySequence());
   createTool(impl_->scaleTool_,
              QStringList{QString::fromLatin1(kToolbarIconScale),
                          QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
                          QStringLiteral("Material/zoom_in.svg")},
-             "スケール", "スケールツール (R)", QKeySequence(Qt::Key_R));
+             "スケール", "スケールツール (Viewport: S)", QKeySequence());
   createTool(impl_->cameraTool_,
              QStringList{QString::fromLatin1(kToolbarIconCamera),
                          QStringLiteral("MaterialVS/neutral/camera_alt.svg"),
@@ -376,7 +380,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
              QStringList{QString::fromLatin1(kToolbarIconPen),
                          QStringLiteral("MaterialVS/neutral/draw.svg"),
                          QStringLiteral("Material/draw.svg")},
-             "ペン", "ペンツール (G)", QKeySequence(Qt::Key_G));
+             "ペン", "ペンツール", QKeySequence());
   createTool(impl_->textTool_,
              QStringList{QString::fromLatin1(kToolbarIconText),
                          QStringLiteral("MaterialVS/neutral/title.svg"),

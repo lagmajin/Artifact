@@ -149,43 +149,49 @@ set(ARTIFACT_VERSION_MINOR 9)
 set(ARTIFACT_VERSION_PATCH 0)
 set(ARTIFACT_VERSION "${ARTIFACT_VERSION_MAJOR}.${ARTIFACT_VERSION_MINOR}.${ARTIFACT_VERSION_PATCH}")
 
-find_program(ARTIFACT_GIT_EXECUTABLE git)
-set(ARTIFACT_BUILD_GIT_HASH "unknown")
-set(ARTIFACT_BUILD_DIRTY "unknown")
-if(ARTIFACT_GIT_EXECUTABLE)
-    execute_process(
-        COMMAND "${ARTIFACT_GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --short=12 HEAD
-        OUTPUT_VARIABLE ARTIFACT_BUILD_GIT_HASH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    if(NOT ARTIFACT_BUILD_GIT_HASH)
-        set(ARTIFACT_BUILD_GIT_HASH "unknown")
-    endif()
+option(ARTIFACT_EMBED_BUILD_METADATA
+    "Embed current Git revision, dirty state, and configuration timestamp" OFF)
 
-    execute_process(
-        COMMAND "${ARTIFACT_GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" status --porcelain --untracked-files=no
-        OUTPUT_VARIABLE ARTIFACT_GIT_STATUS
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    if(ARTIFACT_GIT_STATUS)
-        set(ARTIFACT_BUILD_DIRTY "dirty")
-    else()
-        set(ARTIFACT_BUILD_DIRTY "clean")
+# Do not invoke Git or churn AppMain's compile definitions for ordinary
+# developer builds.  Release/diagnostic builds can opt in when provenance is
+# required in the window title and --version output.
+set(ARTIFACT_BUILD_GIT_HASH "dev")
+set(ARTIFACT_BUILD_DIRTY "not-checked")
+set(ARTIFACT_BUILD_TIMESTAMP "local")
+if(ARTIFACT_EMBED_BUILD_METADATA)
+    find_program(ARTIFACT_GIT_EXECUTABLE git)
+    if(ARTIFACT_GIT_EXECUTABLE)
+        execute_process(
+            COMMAND "${ARTIFACT_GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --short=12 HEAD
+            OUTPUT_VARIABLE ARTIFACT_BUILD_GIT_HASH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(NOT ARTIFACT_BUILD_GIT_HASH)
+            set(ARTIFACT_BUILD_GIT_HASH "unknown")
+        endif()
+
+        execute_process(
+            COMMAND "${ARTIFACT_GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" status --porcelain --untracked-files=no
+            OUTPUT_VARIABLE ARTIFACT_GIT_STATUS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(ARTIFACT_GIT_STATUS)
+            set(ARTIFACT_BUILD_DIRTY "dirty")
+        else()
+            set(ARTIFACT_BUILD_DIRTY "clean")
+        endif()
     endif()
+    string(TIMESTAMP ARTIFACT_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 endif()
-
-string(TIMESTAMP ARTIFACT_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 
 # ---------------------------------------------------------------------------
 # ソース収集とモジュール分類
 # ---------------------------------------------------------------------------
-file(GLOB_RECURSE POTENTIAL_SOURCES 
+file(GLOB_RECURSE POTENTIAL_SOURCES
     "src/*.cpp" "src/*.cppm" "src/*.ixx"
-    "src/**/*.cpp" "src/**/*.cppm" "src/**/*.ixx"
     "include/*.ixx" "include/*.cppm"
-    "include/**/*.ixx" "include/**/*.cppm"
 )
 
 if(NOT ARTIFACT_FEATURE_COMMAND_PALETTE)
@@ -196,7 +202,6 @@ list(FILTER POTENTIAL_SOURCES EXCLUDE REGEX "/src/Worker/")
 
 set(APP_MODULES "")
 set(APP_IMPL "")
-set(_PROVIDED_MODULES "")
 
 foreach(file_path ${POTENTIAL_SOURCES})
     if(file_path MATCHES "\\.bak$" OR
@@ -215,85 +220,55 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "include/Color/ArtifactColorWheels\\.ixx" OR
        file_path MATCHES "src/Color/ArtifactColorWheels\\.cppm" OR
        file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR
-       file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm"
+       file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm" OR
+       # These legacy .ixx compatibility shims deliberately provide no module.
+       # Their canonical interfaces now live in ArtifactCore.
+       file_path MATCHES "include/Image/ImageF32x4_RGBA\\.ixx" OR
+       file_path MATCHES "include/Test/ArtifactTestProjectService\\.ixx"
        )
         continue()
     endif()
 
-    # 以前の 4096 バイト制限では、大量の include の後に export module がある場合に
-    # 検出に失敗することがあったため、制限を 32KB に拡大します。
-    file(READ "${file_path}" raw_content LIMIT 32768)
-    
-    # コメントを除去して誤判定を防ぐ
-    string(REGEX REPLACE "//[^\n]*" "" content "${raw_content}")
-    string(REGEX REPLACE "/\\*.*\\*/" "" content "${content}")
-    
-    set(is_mod_interface_or_partition FALSE)
-    set(found_mod_name "")
-
-    # 1. インターフェース判定: export module M;
-    if(content MATCHES "export[ \t\r\n]+module[ \t\r\n]+([a-zA-Z0-9\\._:]+)[ \t\r\n]*;")
-        set(is_mod_interface_or_partition TRUE)
-        set(found_mod_name "${CMAKE_MATCH_1}")
-    # 2. パーティション判定: module M:P; (コロンを含む)
-    elseif(content MATCHES "module[ \t\r\n]+([a-zA-Z0-9\\._]+:[a-zA-Z0-9\\._:]+)[ \t\r\n]*;")
-        set(is_mod_interface_or_partition TRUE)
-        set(found_mod_name "${CMAKE_MATCH_1}")
-    endif()
-
-    if(is_mod_interface_or_partition)
-        list(FIND _PROVIDED_MODULES "${found_mod_name}" _mod_idx)
-        if(_mod_idx EQUAL -1)
-            list(APPEND APP_MODULES "${file_path}")
-            list(APPEND _PROVIDED_MODULES "${found_mod_name}")
-        else()
-            list(APPEND APP_IMPL "${file_path}")
-            message(WARNING "Duplicate module name detected: ${found_mod_name} in ${file_path}")
-        endif()
+    # Extensions are the authoritative classification rule.  Source-only .cppm
+    # module interfaces are listed explicitly below, so configuration never
+    # needs to read every source file to infer its target role.
+    if(file_path MATCHES "\\.ixx$")
+        list(APPEND APP_MODULES "${file_path}")
     else()
         list(APPEND APP_IMPL "${file_path}")
     endif()
 endforeach()
 
-# A .ixx file is the authoritative interface provider for its named module.
-# Some implementation .cppm files still use `export module` for historical
-# reasons.  Their classification must not depend on GLOB_RECURSE ordering:
-# when an .ixx provider exists, always compile the matching .cppm as a private
-# implementation unit.  Source-only .cppm interfaces and module partitions
-# remain in APP_MODULES.
-set(_artifact_ixx_module_names "")
-foreach(_artifact_module_source IN LISTS APP_MODULES)
-    if(_artifact_module_source MATCHES "\\.ixx$")
-        file(READ "${_artifact_module_source}" _artifact_module_content LIMIT 32768)
-        string(REGEX REPLACE "//[^\n]*" "" _artifact_module_content "${_artifact_module_content}")
-        string(REGEX REPLACE "/\\*.*\\*/" "" _artifact_module_content "${_artifact_module_content}")
-        if(_artifact_module_content MATCHES "export[ \t\r\n]+module[ \t\r\n]+([a-zA-Z0-9\\._:]+)[ \t\r\n]*;")
-            list(APPEND _artifact_ixx_module_names "${CMAKE_MATCH_1}")
-        endif()
-    endif()
+# Source-only .cppm interfaces and partitions must be registered explicitly.
+# New entries belong here rather than reintroducing content-based scanning.
+set(ARTIFACT_SOURCE_CPPM_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Application/ArtifactProjectBundleIpc.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/AI/CommandIRExecutor.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ActiveQt/qax_instantiate.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Tool/ArtifactPointTrackerTool.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Tool/ArtifactCameraTrackerTool.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Tool/AIDSL/src/DSLParser.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Ofx/ArtifactOfxHost.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Ofx/ArtifactOfxEffectImpl.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactCompositionViewDrawing.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactProjectHealthSummary.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactProjectHealthDashboard.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactPerformanceProfilerWidget.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestTimingEventView.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestPropertyKeyframe.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestPreCompose.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestLayerGroup.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestCommandLine.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestAIToolBridge.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Test/ArtifactTestAdjustmentLayer.cppm"
+)
+foreach(_artifact_source_cppm_module IN LISTS ARTIFACT_SOURCE_CPPM_MODULES)
+    list(REMOVE_ITEM APP_IMPL "${_artifact_source_cppm_module}")
+    list(APPEND APP_MODULES "${_artifact_source_cppm_module}")
 endforeach()
-list(REMOVE_DUPLICATES _artifact_ixx_module_names)
-
-set(_artifact_cppm_implementation_units "")
-foreach(_artifact_module_source IN LISTS APP_MODULES)
-    if(_artifact_module_source MATCHES "\\.cppm$")
-        file(READ "${_artifact_module_source}" _artifact_module_content LIMIT 32768)
-        string(REGEX REPLACE "//[^\n]*" "" _artifact_module_content "${_artifact_module_content}")
-        string(REGEX REPLACE "/\\*.*\\*/" "" _artifact_module_content "${_artifact_module_content}")
-        if(_artifact_module_content MATCHES "export[ \t\r\n]+module[ \t\r\n]+([a-zA-Z0-9\\._]+)[ \t\r\n]*;")
-            list(FIND _artifact_ixx_module_names "${CMAKE_MATCH_1}" _artifact_ixx_provider_idx)
-            if(NOT _artifact_ixx_provider_idx EQUAL -1)
-                list(APPEND _artifact_cppm_implementation_units "${_artifact_module_source}")
-            endif()
-        endif()
-    endif()
-endforeach()
-
-if(_artifact_cppm_implementation_units)
-    list(REMOVE_ITEM APP_MODULES ${_artifact_cppm_implementation_units})
-    list(APPEND APP_IMPL ${_artifact_cppm_implementation_units})
-    list(REMOVE_DUPLICATES APP_IMPL)
-endif()
+list(REMOVE_DUPLICATES APP_MODULES)
 
 # CMake の module 自動分類で AppDebuggerWidget.cppm が link 対象から漏れるケースがあるため、
 # 明示的に private source として固定する。
@@ -505,6 +480,18 @@ endforeach()
 # ---------------------------------------------------------------------------
 # ターゲット定義
 # ---------------------------------------------------------------------------
+# ViewportColorPipeline is imported by the composition controller; pin both
+# units explicitly so the module mapper sees the interface before the
+# controller BMI is scanned.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportColorPipeline.ixx" _viewport_color_module_idx)
+if(_viewport_color_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportColorPipeline.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cppm" _viewport_color_impl_idx)
+if(_viewport_color_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cppm")
+endif()
+
 set(ARTIFACT_RENDER_SUPPORT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactHDRMonitor.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRamPreviewController.ixx"
@@ -555,6 +542,9 @@ target_link_libraries(ArtifactRenderSupport PUBLIC ArtifactCore)
 
 set(ARTIFACT_ASSET_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Asset/AssetMenuModel.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Asset/ArtifactAssetResult.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Asset/ArtifactAssetReference.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Asset/ArtifactAssetIntegrationSettings.ixx"
 )
 set(ARTIFACT_ASSET_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Asset/AssetMenuModel.cppm"
@@ -587,6 +577,55 @@ target_include_directories(ArtifactAsset PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
 )
 target_link_libraries(ArtifactAsset PUBLIC ArtifactCore)
+
+set(ARTIFACT_COLOR_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ColorPaletteManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorSettings.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorScienceManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorNodeGraph.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorNode.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorManagement.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorGradingEngine.ixx"
+)
+set(ARTIFACT_COLOR_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ColorPaletteManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorSettings.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorScienceManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNodeGraph.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNode.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorManagement.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorGradingEngine.cppm"
+)
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_COLOR_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_COLOR_IMPL})
+
+add_library(ArtifactColor STATIC)
+set_target_properties(ArtifactColor PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactColor
+    PRIVATE ${ARTIFACT_COLOR_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactColor PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactColor PROPERTY CXX_MODULE_STD OFF)
+endif()
+if(ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactColor PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+elseif(ARTIFACT_FRONTEND_MSVC)
+    target_compile_options(ArtifactColor PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
+endif()
+target_include_directories(ArtifactColor PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+)
+target_link_libraries(ArtifactColor PUBLIC ArtifactCore)
 
 set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderConfig.ixx"
@@ -973,18 +1012,25 @@ set_target_properties(Artifact PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
 
-# Version compile definitions
+# Build metadata is consumed only by the startup and application-service units.
+# Keeping it target-wide turns every CMake reconfigure (and its timestamp) into
+# an avoidable full rebuild of Artifact.
 option(ARTIFACT_FEATURE_COMMAND_PALETTE "Enable experimental command palette widget (shell only, no real action registration yet)" OFF)
 option(ARTIFACT_FEATURE_FARM_WORKER "Build out-of-process render farm worker binary (Phase 4)" OFF)
 
-target_compile_definitions(Artifact PRIVATE
+set(ARTIFACT_APPMAIN_BUILD_METADATA_DEFINITIONS
     ARTIFACT_VERSION_STRING="${ARTIFACT_VERSION}"
-    ARTIFACT_VERSION_MAJOR=${ARTIFACT_VERSION_MAJOR}
-    ARTIFACT_VERSION_MINOR=${ARTIFACT_VERSION_MINOR}
-    ARTIFACT_VERSION_PATCH=${ARTIFACT_VERSION_PATCH}
     ARTIFACT_BUILD_GIT_HASH="${ARTIFACT_BUILD_GIT_HASH}"
     ARTIFACT_BUILD_TIMESTAMP="${ARTIFACT_BUILD_TIMESTAMP}"
     ARTIFACT_BUILD_DIRTY="${ARTIFACT_BUILD_DIRTY}"
+)
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/AppMain.cppm"
+    PROPERTIES COMPILE_DEFINITIONS "${ARTIFACT_APPMAIN_BUILD_METADATA_DEFINITIONS}"
+)
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Service/ApplicationService.cppm"
+    PROPERTIES COMPILE_DEFINITIONS "ARTIFACT_VERSION_STRING=\"${ARTIFACT_VERSION}\""
 )
 
 if(ARTIFACT_FEATURE_COMMAND_PALETTE)
@@ -1025,12 +1071,14 @@ elseif(ARTIFACT_FRONTEND_MSVC)
     )
 endif()
 
-# MSVC-style linker diagnostics
-set(ARTIFACT_LINK_VERBOSE_LIB ON CACHE BOOL "Enable MSVC linker library-resolution diagnostics" FORCE)
-if(ARTIFACT_LINK_VERBOSE_LIB)
+# MSVC library-resolution tracing is useful for link diagnosis but adds noisy
+# linker work to every ordinary incremental build. Keep it opt-in.
+option(ARTIFACT_ENABLE_LINK_LIBRARY_TRACE "Enable MSVC linker library-resolution diagnostics" OFF)
+option(ARTIFACT_ENABLE_LTCG "Enable link-time code generation for shipping builds" OFF)
+if(ARTIFACT_ENABLE_LINK_LIBRARY_TRACE)
     target_link_options(Artifact PRIVATE "$<$<BOOL:${ARTIFACT_FRONTEND_MSVC}>:/VERBOSE:LIB>")
 endif()
-if(ARTIFACT_FRONTEND_MSVC)
+if(ARTIFACT_FRONTEND_MSVC AND ARTIFACT_ENABLE_LTCG)
     target_link_options(Artifact PRIVATE
         "$<$<NOT:$<CONFIG:Debug>>:/LTCG>"
     )
@@ -1057,7 +1105,7 @@ target_include_directories(Artifact
 # ---------------------------------------------------------------------------
 
 # 内部ライブラリ
-target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactWidgets ArtifactAsset ArtifactRenderSupport ArtifactRender ArtifactEffectContract ArtifactEffects)
+target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactWidgets ArtifactAsset ArtifactColor ArtifactRenderSupport ArtifactRender ArtifactEffectContract ArtifactEffects)
 
 # DiligentEngine
 set(DILIGENT_LIBS "")

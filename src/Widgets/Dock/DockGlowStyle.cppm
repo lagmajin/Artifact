@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QProxyStyle>
 #include <QPainter>
+#include <QPalette>
 #include <QPoint>
 #include <QRect>
 #include <QStyleOption>
@@ -62,6 +63,15 @@ void DockGlowStyle::drawControl(ControlElement element, const QStyleOption* opti
             drawDockWidgetGlow(option, painter, widget);
         }
     }
+
+    // QADS tabs are painted through drawControl on the active dock area.
+    // Draw their three-sided segment here as well so it joins the content
+    // frame into one continuous raised-tab outline.
+    if (qobject_cast<const ads::CDockWidgetTab*>(widget)) {
+        if (isDockTabActive(widget)) {
+            drawDockTabGlow(option, painter, widget);
+        }
+    }
 }
 
 void DockGlowStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* option,
@@ -76,6 +86,14 @@ void DockGlowStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* 
         if (isDockWidgetActive(widget)) {
             drawDockWidgetGlow(option, painter, widget);
         }
+    }
+
+    // CDockWidgetTab is a styled QWidget/QFrame. Its normal paint path reaches
+    // PE_Widget rather than a tab-specific complex control.
+    if (element == PE_Widget &&
+        qobject_cast<const ads::CDockWidgetTab*>(widget) &&
+        isDockTabActive(widget)) {
+        drawDockTabGlow(option, painter, widget);
     }
 }
 
@@ -153,6 +171,9 @@ void DockGlowStyle::drawDockTabGlow(const QStyleOption* option, QPainter* painte
 
     // The content frame supplies the baseline. Omitting the tab's bottom edge
     // avoids a seam and completes the single-stroke raised-tab silhouette.
+    painter->fillRect(QRect(rect.left(), rect.bottom() - w + 1,
+                            rect.width(), w),
+                      widget->palette().color(QPalette::Window));
     painter->fillRect(QRect(rect.left(), rect.top(), rect.width(), w), glowColor);
     painter->fillRect(QRect(rect.left(), rect.top(), w, rect.height()), glowColor);
     painter->fillRect(QRect(rect.right() - w + 1, rect.top(), w, rect.height()), glowColor);

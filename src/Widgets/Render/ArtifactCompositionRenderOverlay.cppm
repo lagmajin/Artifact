@@ -29,6 +29,7 @@ module;
 module Artifact.Widgets.CompositionRenderOverlay;
 
 import Color.Float;
+import Settings.Accessibility;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Video;
 import Artifact.Layer.Shape;
@@ -39,6 +40,7 @@ import Mesh;
 import Layer.Blend;
 import Artifact.Widgets.PieMenu;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Configuration.LayeredConfigStore;
 import Tracking.MotionTracker;
 import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
@@ -163,7 +165,8 @@ void drawLabelBox(QPainter &p, const QRectF &boxRect, const QColor &fill,
 
   const QRectF outer = boxRect.normalized();
   const QRectF inner = outer.adjusted(6.0, 6.0, -6.0, -6.0);
-  p.setPen(QPen(border, 2.0, Qt::DashLine));
+  const float contrastScale = Accessibility::contrastScale();
+  p.setPen(QPen(border, 2.0 * contrastScale, Qt::DashLine));
   p.setBrush(fill);
   p.drawRoundedRect(outer, 8.0, 8.0);
   p.setPen(Qt::NoPen);
@@ -334,6 +337,51 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   renderer->reset3DCameraMatrices();
 }
 
+void draw3DSelectionBoundsOverlayImpl(ArtifactIRenderer *renderer,
+                                      const ArtifactAbstractLayerPtr &layer,
+                                      const QMatrix4x4 *cameraView,
+                                      const QMatrix4x4 *cameraProj)
+{
+  if (!renderer || !layer || !cameraView || !cameraProj) {
+    return;
+  }
+  const auto modelLayer = ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer);
+  if (!modelLayer || modelLayer->fixedGeometry() == FixedGeometry3D::Plane) {
+    return;
+  }
+
+  const auto &mesh = modelLayer->mesh();
+  const QVector3D minB = mesh.boundingBoxMin();
+  const QVector3D maxB = mesh.boundingBoxMax();
+  if (!std::isfinite(minB.x()) || !std::isfinite(maxB.x()) ||
+      maxB.x() <= minB.x() || maxB.y() <= minB.y() || maxB.z() <= minB.z()) {
+    return;
+  }
+
+  const std::array<QVector3D, 8> corners = {
+      QVector3D(minB.x(), minB.y(), minB.z()), QVector3D(maxB.x(), minB.y(), minB.z()),
+      QVector3D(maxB.x(), maxB.y(), minB.z()), QVector3D(minB.x(), maxB.y(), minB.z()),
+      QVector3D(minB.x(), minB.y(), maxB.z()), QVector3D(maxB.x(), minB.y(), maxB.z()),
+      QVector3D(maxB.x(), maxB.y(), maxB.z()), QVector3D(minB.x(), maxB.y(), maxB.z())};
+  const QMatrix4x4 modelMatrix = modelLayer->getGlobalTransform4x4();
+  std::array<QVector3D, 8> world{};
+  for (int i = 0; i < 8; ++i) {
+    world[i] = modelMatrix.map(corners[i]);
+  }
+  static constexpr int edges[][2] = {
+      {0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+  renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+  const FloatColor shadow{0.02f, 0.03f, 0.04f, 0.9f};
+  const FloatColor color{1.0f, 0.56f, 0.18f, 0.98f};
+  for (const auto &edge : edges) {
+    const auto &a = world[edge[0]];
+    const auto &b = world[edge[1]];
+    renderer->draw3DLine({a.x(), a.y(), a.z()}, {b.x(), b.y(), b.z()}, shadow, 3.6f);
+    renderer->draw3DLine({a.x(), a.y(), a.z()}, {b.x(), b.y(), b.z()}, color, 1.9f);
+  }
+  renderer->reset3DCameraMatrices();
+}
+
 } // namespace
 
 void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
@@ -342,6 +390,14 @@ void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
                                      const QMatrix4x4 *cameraProj)
 {
   draw3DSelectionWireframeOverlayImpl(renderer, layer, cameraView, cameraProj);
+}
+
+void draw3DSelectionBoundsOverlay(ArtifactIRenderer *renderer,
+                                  const ArtifactAbstractLayerPtr &layer,
+                                  const QMatrix4x4 *cameraView,
+                                  const QMatrix4x4 *cameraProj)
+{
+  draw3DSelectionBoundsOverlayImpl(renderer, layer, cameraView, cameraProj);
 }
 
 #if 0
@@ -635,9 +691,17 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
 }
 
 void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
-                             const ArtifactAbstractLayerPtr &layer)
+                             const ArtifactAbstractLayerPtr &layer,
+                             const QMatrix4x4 *cameraView,
+                             const QMatrix4x4 *cameraProj)
 {
   if (!renderer || !layer) {
+    return;
+  }
+
+  if (const auto modelLayer = ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer);
+      modelLayer && modelLayer->fixedGeometry() != FixedGeometry3D::Plane) {
+    draw3DSelectionBoundsOverlayImpl(renderer, layer, cameraView, cameraProj);
     return;
   }
 
@@ -884,10 +948,6 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
                           innerColor, 0.8f);
 
-  if (layer->is3D()) {
-    draw3DSelectionWireframeOverlayImpl(renderer, layer, cameraView, cameraProj);
-  }
-
   const float zoom = std::max(0.001f, renderer->getZoom());
   const float nodeSize = std::max(4.5f, 7.5f / zoom);
   const FloatColor nodeColor{1.0f, 0.94f, 0.32f, 0.98f};
@@ -1016,7 +1076,10 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                const FloatColor &color,
                                float thickness,
                                const QMatrix4x4 *cameraView,
-                               const QMatrix4x4 *cameraProj)
+                               const QMatrix4x4 *cameraProj,
+                               bool showScaleHandles,
+                               bool showRotationHandle,
+                               float projectedHandleSize)
 {
   if (!renderer || !layer) {
     return;
@@ -1112,18 +1175,28 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     edge(br, bl);
     edge(bl, tl);
 
-    // 投影空間でのコーナーリサイズ時に対角方向を読み取りやすくする
-    // リファレンスマーク。枠線より薄く描き、通常の選択表示を圧迫しない。
-    const FloatColor diagonalColor{color.r(), color.g(), color.b(),
-                                   color.a() * 0.28f};
-    renderer->draw3DLine(tl, br, diagonalColor, 1.0f);
-    renderer->draw3DLine(tr, bl, diagonalColor, 1.0f);
+    // Keep the optional reference-mark path, but leave it disabled by default:
+    // an interactive-looking X inside the frame is easily mistaken for a
+    // draggable handle. It can still be enabled for diagnostics/configuration.
+    static const bool showDiagonals =
+        ArtifactCore::LayeredConfigStore::instance()
+            .value(QStringLiteral("Viewport/ProjectedFrame/ShowDiagonals"))
+            .toBool();
+    if (showDiagonals) {
+      const FloatColor diagonalColor{color.r(), color.g(), color.b(),
+                                     color.a() * 0.28f};
+      renderer->draw3DLine(tl, br, diagonalColor, 1.0f);
+      renderer->draw3DLine(tr, bl, diagonalColor, 1.0f);
+    }
 
     // A projected border alone is easy to confuse with the composition outline.
     // Add plane-aligned corner handles so the 3D frame remains identifiable and
     // readable at oblique view angles.
-    const qreal handleSize = std::clamp(
-        std::min(localBounds.width(), localBounds.height()) * 0.035, 20.0, 48.0);
+    const qreal handleSize = projectedHandleSize > 0.0f
+        ? std::clamp(static_cast<qreal>(projectedHandleSize), 4.0, 96.0)
+        : std::clamp(std::min(localBounds.width(), localBounds.height()) *
+                         0.035,
+                     20.0, 48.0);
     const qreal handleHalf = handleSize * 0.5;
     const qreal shadowHalf = handleHalf + std::max<qreal>(2.0, handleSize * 0.12);
     const auto handle = [&](qreal x, qreal y) {
@@ -1141,10 +1214,12 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
       quad(shadowHalf, shadow);
       quad(handleHalf, clippedFrameColor);
     };
-    handle(bounds.left(), bounds.top());
-    handle(bounds.right(), bounds.top());
-    handle(bounds.right(), bounds.bottom());
-    handle(bounds.left(), bounds.bottom());
+    if (showScaleHandles) {
+      handle(bounds.left(), bounds.top());
+      handle(bounds.right(), bounds.top());
+      handle(bounds.right(), bounds.bottom());
+      handle(bounds.left(), bounds.bottom());
+    }
     const qreal edgeHandleHalf = handleHalf * 0.85;
     const auto edgeHandle = [&](qreal x, qreal y) {
       if (!isVisibleInCamera(x, y)) {
@@ -1161,10 +1236,12 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
       quad(edgeHandleHalf + 2.0, shadow);
       quad(edgeHandleHalf, clippedFrameColor);
     };
-    edgeHandle(bounds.center().x(), bounds.top());
-    edgeHandle(bounds.center().x(), bounds.bottom());
-    edgeHandle(bounds.left(), bounds.center().y());
-    edgeHandle(bounds.right(), bounds.center().y());
+    if (showScaleHandles) {
+      edgeHandle(bounds.center().x(), bounds.top());
+      edgeHandle(bounds.center().x(), bounds.bottom());
+      edgeHandle(bounds.left(), bounds.center().y());
+      edgeHandle(bounds.right(), bounds.center().y());
+    }
 
     // Rotation handle: keep it above the top edge with a stable local-space
     // offset so it stays separated from the top resize handle after projection.
@@ -1193,7 +1270,9 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
           point(static_cast<float>(rotationX), static_cast<float>(rotationY)),
           clippedFrameColor, std::max(1.0f, safeThickness));
     };
-    rotationHandle(rotationX, rotationY);
+    if (showRotationHandle) {
+      rotationHandle(rotationX, rotationY);
+    }
     renderer->flushGizmo3D();
     if (cameraView && cameraProj) {
       renderer->reset3DCameraMatrices();

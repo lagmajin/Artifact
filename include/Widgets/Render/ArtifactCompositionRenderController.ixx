@@ -293,6 +293,8 @@ void zoomFill();
   bool resetProjectedFrameHandleAt(const QPointF& viewportPos);
   bool resetSelected3DAnchorToCenter();
   bool resetSelected3DTransform();
+  // 0: location, 1: rotation, 2: scale (Blender Alt+G/R/S semantics).
+  bool resetSelectedTransformComponent(int component);
   bool setSelected3DTransform(const QVector3D& position,
                               const QVector3D& rotation,
                               const QVector3D& scale);
@@ -306,6 +308,19 @@ void zoomFill();
 void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
+  bool beginModalGizmoInteraction(TransformGizmo::Mode mode,
+                                  const QPointF& viewportPos);
+  // Returns 0 (width) or 1 (height) when a visible frame-size badge begins
+  // a Scale modal interaction; otherwise returns -1.
+  int beginFrameSizeBadgeInput(const QPointF& viewportPos);
+  bool constrainModalGizmoInteraction(int axis, const QPointF& viewportPos);
+  bool setModalGizmoNumericInput(float value, const QPointF& viewportPos);
+  bool setModalGizmoFrameDimension(int dimension, float pixels,
+                                   const QPointF& viewportPos);
+  void clearModalGizmoNumericInput();
+  bool commitModalGizmoInteraction();
+  bool isModalGizmoInteractionActive() const;
+  bool cancelGizmoInteraction();
   void setPointerPressure(float pressure);
   void setPointerTilt(float tiltX, float tiltY);
   bool hasPendingMaskEdit() const;

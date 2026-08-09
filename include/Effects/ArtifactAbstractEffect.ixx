@@ -108,6 +108,11 @@ public:
     void setComputeMode(ComputeMode mode);
     virtual bool supportsGPU() const { return false; }
 
+    // Opt-in: spatial effects may render beyond the source layer bounds.
+    // Defaulting to false preserves legacy clipping behavior.
+    void setAllowOverscan(bool enabled);
+    bool allowOverscan() const;
+
     // Per-effect mask metadata.
     // Runtime blending can hook into this later without changing the preset format.
     bool hasMask() const;
