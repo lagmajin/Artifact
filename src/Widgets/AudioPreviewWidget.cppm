@@ -471,6 +471,10 @@ private slots:
     void onTimerTick() {
         if (!isPlaying_ || preloadedSegments_.empty()) return;
         if (eosReached_) {
+            if (renderer_->isActive() && renderer_->bufferedFrames() > 0) {
+                emit positionChanged(currentSample_);
+                return;
+            }
             stop();
             emit playbackStopped();
             return;
@@ -534,9 +538,10 @@ private slots:
         emit positionChanged(currentSample_);
 
         if (currentSample_ >= totalSamples_) {
+            // All segments have been queued, but the renderer may still have
+            // the tail of the audio in its hardware buffer. Mark EOS here and
+            // let the next timer ticks drain it before stopping.
             eosReached_ = true;
-            stop();
-            emit playbackStopped();
         }
     }
 
