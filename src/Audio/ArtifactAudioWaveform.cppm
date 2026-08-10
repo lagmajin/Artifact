@@ -18,7 +18,12 @@ namespace Artifact {
 
 namespace {
 
-	
+float sanitizeWaveformSample(float sample)
+{
+    if (std::isfinite(sample)) return sample;
+    if (std::isnan(sample)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), sample);
+}
 
 QVector<float> monoSamples(const AudioSegment& segment)
 {
@@ -26,7 +31,11 @@ QVector<float> monoSamples(const AudioSegment& segment)
         return {};
     }
     if (segment.channelData.size() == 1) {
-        return segment.channelData[0];
+        QVector<float> mono = segment.channelData[0];
+        for (float& sample : mono) {
+            sample = sanitizeWaveformSample(sample);
+        }
+        return mono;
     }
 
     const int frames = segment.frameCount();
@@ -36,7 +45,8 @@ QVector<float> monoSamples(const AudioSegment& segment)
         const auto& data = segment.channelData[ch];
         const int n = std::min(frames, static_cast<int>(data.size()));
         for (int i = 0; i < n; ++i) {
-            mono[i] += data[i];
+            mono[i] = sanitizeWaveformSample(
+                mono[i] + sanitizeWaveformSample(data[i]));
         }
     }
     const float inv = 1.0f / static_cast<float>(channels);
@@ -57,13 +67,15 @@ AudioAnalyzer::LevelInfo computeLevelFromVector(const QVector<float>& samples)
     float sumSquares = 0.0f;
 
     for (int i = 0; i < samples.size(); ++i) {
-        const float s = samples[i];
+        const float s = sanitizeWaveformSample(samples[i]);
         const float absVal = std::abs(s);
         if (absVal > peak) {
             peak = absVal;
             info.peakSample = i;
         }
-        sumSquares += s * s;
+        sumSquares = std::isfinite(sumSquares + static_cast<float>(s * s))
+            ? sumSquares + static_cast<float>(s * s)
+            : std::numeric_limits<float>::max();
     }
 
     info.rms = std::sqrt(sumSquares / static_cast<float>(samples.size()));
@@ -738,7 +750,8 @@ AudioSegment AudioSyncTools::normalize(const AudioSegment& segment, float target
 
     for (auto& channel : result.channelData) {
         for (auto& sample : channel) {
-            sample *= gain;
+            sample = sanitizeWaveformSample(
+                sanitizeWaveformSample(sample) * gain);
         }
     }
 
@@ -759,7 +772,8 @@ AudioSegment AudioSyncTools::fadeIn(const AudioSegment& segment, qint64 samples)
     for (auto& channel : result.channelData) {
         for (qint64 i = 0; i < fadeSamples && i < channel.size(); ++i) {
             const float gain = static_cast<float>(i) / static_cast<float>(fadeSamples);
-            channel[static_cast<int>(i)] *= gain;
+            channel[static_cast<int>(i)] = sanitizeWaveformSample(
+                sanitizeWaveformSample(channel[static_cast<int>(i)]) * gain);
         }
     }
 
@@ -787,7 +801,8 @@ AudioSegment AudioSyncTools::fadeOut(const AudioSegment& segment, qint64 samples
         for (qint64 index = channelStart; index < channelEnd; ++index) {
             const qint64 i = index - startIdx;
             const float gain = 1.0f - static_cast<float>(i) / static_cast<float>(fadeSamples);
-            channel[static_cast<int>(index)] *= gain;
+            channel[static_cast<int>(index)] = sanitizeWaveformSample(
+                sanitizeWaveformSample(channel[static_cast<int>(index)]) * gain);
         }
     }
 
