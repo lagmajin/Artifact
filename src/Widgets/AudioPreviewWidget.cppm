@@ -509,6 +509,7 @@ private slots:
         }
 
         // Feed segments to AudioRenderer at half the buffer rate (~10ms chunks)
+        int queuedFrames = 0;
         feedCounter_ = (feedCounter_ + 1) % 4;
         if (feedCounter_ == 0 || renderer_->bufferedFrames() < 1024) {
             const auto& seg = preloadedSegments_[currentSegmentIndex_];
@@ -539,16 +540,18 @@ private slots:
                     }
                     chunk.channelData[ch] = std::move(samples);
                 }
-                renderer_->enqueue(chunk);
+                if (renderer_->enqueue(chunk)) {
+                    queuedFrames = chunkSize;
+                }
             }
         }
 
-        // Advance position based on actual hardware playback
-        size_t bufferedBefore = renderer_->bufferedFrames();
-        if (bufferedBefore < 4096) {
+        // Advance only after the renderer accepted the chunk.  This keeps the
+        // preview position aligned with data actually present in the ring.
+        if (queuedFrames > 0) {
             const auto& seg = preloadedSegments_[currentSegmentIndex_];
             int remaining = seg.frameCount() - currentSegmentOffset_;
-            int advance = std::min(remaining, 256);
+            int advance = std::min(remaining, queuedFrames);
             currentSegmentOffset_ += advance;
             currentSample_ = currentSample_ >
                     std::numeric_limits<int>::max() - advance
