@@ -309,12 +309,12 @@ AudioAnalyzer::AudioAnalyzer(QObject* parent)
 AudioAnalyzer::~AudioAnalyzer() = default;
 
 void AudioAnalyzer::setFFTSize(int size) {
-    fftSize_ = std::max(2, size);
+    fftSize_ = std::clamp(size, 2, 1 << 20);
     setWindow(WindowType::Hann);
 }
 
 void AudioAnalyzer::setHopSize(int size) {
-    hopSize_ = std::max(1, size);
+    hopSize_ = std::clamp(size, 1, 1 << 20);
 }
 
 void AudioAnalyzer::setWindow(WindowType type) {
