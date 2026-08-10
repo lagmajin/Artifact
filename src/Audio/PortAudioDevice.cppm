@@ -4,6 +4,7 @@ module;
 #include <portaudio.h>
 #endif
 #include <cstdint>
+#include <limits>
 
 module Audio.PortAudioDevice;
 
@@ -96,9 +97,15 @@ void PortAudioDevice::stop() {
 
 void PortAudioDevice::write(const float* interleaved, size_t frames) {
 #ifdef USE_PORTAUDIO
-    if (!impl_->stream_) return;
-    Pa_WriteStream(impl_->stream_, interleaved, static_cast<unsigned long>(frames));
-    impl_->framesWritten_ += frames;
+    if (!impl_->stream_ || !interleaved || frames == 0 ||
+        frames > std::numeric_limits<unsigned long>::max()) {
+        return;
+    }
+    const PaError err = Pa_WriteStream(
+        impl_->stream_, interleaved, static_cast<unsigned long>(frames));
+    if (err == paNoError) {
+        impl_->framesWritten_ += frames;
+    }
 #else
     (void)interleaved; (void)frames;
 #endif

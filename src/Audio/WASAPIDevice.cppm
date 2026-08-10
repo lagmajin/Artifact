@@ -2,7 +2,10 @@ module;
 #include <utility>
 #include <Audioclient.h>
 #include <Mmdeviceapi.h>
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 
 module Audio.WASAPIDevice;
 
@@ -88,15 +91,36 @@ void WASAPIDevice::stop() {
 
 void WASAPIDevice::write(const float* interleaved, size_t frames) {
     if (!impl_ || !impl_->renderClient_ || !impl_->audioClient_) return;
-    UINT32 numFramesAvailable = 0;
-    HRESULT hr = impl_->audioClient_->GetBufferSize(&numFramesAvailable);
+    if (frames == 0) return;
+    UINT32 bufferSize = 0;
+    HRESULT hr = impl_->audioClient_->GetBufferSize(&bufferSize);
     if (FAILED(hr)) return;
+    UINT32 currentPadding = 0;
+    hr = impl_->audioClient_->GetCurrentPadding(&currentPadding);
+    if (FAILED(hr) || currentPadding >= bufferSize) return;
+    const size_t boundedFrames = std::min(
+        frames, static_cast<size_t>(std::numeric_limits<UINT32>::max()));
+    const UINT32 framesToWrite = std::min(
+        static_cast<UINT32>(boundedFrames), bufferSize - currentPadding);
+    if (framesToWrite == 0 ||
+        static_cast<size_t>(framesToWrite) >
+            std::numeric_limits<size_t>::max() /
+                (static_cast<size_t>(impl_->channels_) * sizeof(float))) {
+        return;
+    }
     BYTE* data = nullptr;
-    hr = impl_->renderClient_->GetBuffer(static_cast<UINT32>(frames), &data);
+    hr = impl_->renderClient_->GetBuffer(framesToWrite, &data);
     if (FAILED(hr)) return;
-    memcpy(data, interleaved, frames * impl_->channels_ * sizeof(float));
-    impl_->renderClient_->ReleaseBuffer(static_cast<UINT32>(frames), 0);
-    impl_->framesWritten_ += frames;
+    const size_t bytes = static_cast<size_t>(framesToWrite) *
+                         static_cast<size_t>(impl_->channels_) * sizeof(float);
+    if (interleaved) {
+        std::memcpy(data, interleaved, bytes);
+    } else {
+        std::memset(data, 0, bytes);
+    }
+    if (SUCCEEDED(impl_->renderClient_->ReleaseBuffer(framesToWrite, 0))) {
+        impl_->framesWritten_ += framesToWrite;
+    }
 }
 
 std::uint64_t WASAPIDevice::position() const { return impl_ ? impl_->framesWritten_ : 0; }
