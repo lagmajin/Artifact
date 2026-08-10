@@ -716,6 +716,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
 
         QObject::connect(strip, &AudioMixerChannelStrip::volumeChanged, this,
             [this, layer, strip](const float volume) {
+                const auto current = impl_->channelStrips_.find(layer->id());
+                if (current == impl_->channelStrips_.end() || current->second.get() != strip) {
+                    return;
+                }
                 applyLayerVolume(layer, volume);
                 if (strip->coreBus()) {
                     strip->coreBus()->setVolume(volumeToCoreDb(volume));
@@ -724,6 +728,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             });
         QObject::connect(strip, &AudioMixerChannelStrip::panChanged, this,
             [this, layer, strip](const float pan) {
+                const auto current = impl_->channelStrips_.find(layer->id());
+                if (current == impl_->channelStrips_.end() || current->second.get() != strip) {
+                    return;
+                }
                 applyLayerPan(layer, pan);
                 if (strip->coreBus()) {
                     strip->coreBus()->setPan(pan);
@@ -732,6 +740,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             });
         QObject::connect(strip, &AudioMixerChannelStrip::muteChanged, this,
             [this, layer, strip](const bool muted) {
+                const auto current = impl_->channelStrips_.find(layer->id());
+                if (current == impl_->channelStrips_.end() || current->second.get() != strip) {
+                    return;
+                }
                 impl_->manualMuted_[layer->id()] = muted;
                 applyLayerMuted(layer, muted);
                 if (strip->coreBus()) {
@@ -741,6 +753,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             });
         QObject::connect(strip, &AudioMixerChannelStrip::soloChanged, this,
             [this, layer, strip](const bool solo) {
+                const auto current = impl_->channelStrips_.find(layer->id());
+                if (current == impl_->channelStrips_.end() || current->second.get() != strip) {
+                    return;
+                }
                 applyLayerSolo(layer, solo);
                 if (strip->coreBus()) {
                     strip->coreBus()->setSolo(solo);
