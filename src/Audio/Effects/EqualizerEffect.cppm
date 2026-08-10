@@ -1,5 +1,6 @@
 module;
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -16,6 +17,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeEqualizerSample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -51,7 +59,8 @@ void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const Artifac
                 float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
                 for (int i = 0; i < samples; ++i) {
                     float x0 = finiteOr(channelData[i], 0.0f);
-                    float y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                    float y0 = sanitizeEqualizerSample(
+                        b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2);
                     channelData[i] = y0;
                     x2 = x1; x1 = x0;
                     y2 = y1; y1 = y0;

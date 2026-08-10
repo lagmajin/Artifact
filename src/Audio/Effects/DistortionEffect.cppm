@@ -1,5 +1,6 @@
 module;
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include <QList>
@@ -13,6 +14,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeDistortionSample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -37,11 +45,13 @@ float DistortionEffect::tubeSaturate(float x) {
 }
 
 float DistortionEffect::foldback(float x) {
-    while (x > 1.0f || x < -1.0f) {
-        if (x > 1.0f) { x = 2.0f - x; }
-        if (x < -1.0f) { x = -2.0f - x; }
+    if (!std::isfinite(x)) {
+        return std::isnan(x) ? 0.0f : std::copysign(1.0f, x);
     }
-    return x;
+    float folded = std::fmod(x + 1.0f, 4.0f);
+    if (folded < 0.0f) folded += 4.0f;
+    if (folded > 2.0f) folded = 4.0f - folded;
+    return folded - 1.0f;
 }
 
 float DistortionEffect::bitcrush(float x, float& /*holdState*/) {
@@ -68,7 +78,7 @@ void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
         for (int ch = 0; ch < numChannels; ++ch) {
             float dry = segment.channelData[ch][i];
             dry = finiteOr(dry, 0.0f);
-            float driven = dry * drive_;
+            float driven = sanitizeDistortionSample(dry * drive_);
             float shaped;
 
             switch (mode_) {
@@ -90,10 +100,13 @@ void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
             }
 
             float& toneState = (ch == 0) ? toneStateL_ : toneStateR_;
-            toneState = toneState + toneCoeff * (shaped - toneState);
-            float filtered = shaped * (1.0f - tone_) + toneState * tone_;
+            toneState = sanitizeDistortionSample(
+                toneState + toneCoeff * (shaped - toneState));
+            float filtered = sanitizeDistortionSample(
+                shaped * (1.0f - tone_) + toneState * tone_);
 
-            segment.channelData[ch][i] = (dry * (1.0f - mix_) + filtered * mix_) * outputGainLinear;
+            segment.channelData[ch][i] = sanitizeDistortionSample(
+                (dry * (1.0f - mix_) + filtered * mix_) * outputGainLinear);
         }
     }
 }
