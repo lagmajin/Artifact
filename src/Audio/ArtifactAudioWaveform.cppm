@@ -483,13 +483,25 @@ std::vector<AudioAnalyzer::BandInfo> AudioAnalyzer::computeBands(const AudioSegm
     if (!std::isfinite(binWidth) || binWidth <= 0.0f) {
         return bands;
     }
+    const int spectrumBinCount = static_cast<int>(spectrum.size());
+    const auto frequencyToBin = [binWidth, spectrumBinCount](int frequency) {
+        const double rawBin = static_cast<double>(frequency) /
+                              static_cast<double>(binWidth);
+        if (!std::isfinite(rawBin) || rawBin >= spectrumBinCount) {
+            return spectrumBinCount;
+        }
+        if (rawBin <= 0.0) {
+            return 0;
+        }
+        return static_cast<int>(rawBin);
+    };
 
     for (auto& band : bands) {
-        const int lowBin = static_cast<int>(band.lowFreq / binWidth);
-        const int highBin = static_cast<int>(band.highFreq / binWidth);
+        const int lowBin = frequencyToBin(band.lowFreq);
+        const int highBin = frequencyToBin(band.highFreq);
 
         double energy = 0.0;
-        for (int b = lowBin; b < highBin && b < static_cast<int>(spectrum.size()); ++b) {
+        for (int b = lowBin; b < highBin; ++b) {
             energy += static_cast<double>(spectrum[b]) * spectrum[b];
         }
         band.energy = clampAnalysisValue(std::sqrt(energy));
