@@ -679,7 +679,13 @@ public:
             if (!audioRenderer_->openDevice(audioOutputDeviceName_)) {
                 return;
             }
+            const int previousSampleRate = audioSampleRate_;
             audioSampleRate_ = std::max(1, audioRenderer_->sampleRate());
+            if (audioSampleRate_ != previousSampleRate) {
+                // Buffer targets are expressed in frames but represent a
+                // time budget derived from the active device sample rate.
+                audioTargetBufferedFrames_ = 0;
+            }
         }
 
         const float targetDb = std::clamp(audioMasterVolume_, 0.0f, 2.0f) <= 0.0001f
