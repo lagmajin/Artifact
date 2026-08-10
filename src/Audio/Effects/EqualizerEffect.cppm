@@ -12,6 +12,13 @@ import Artifact.Audio.Effects.Base;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 EqualizerEffect::EqualizerEffect() : sampleRate_(44100.0f) {
     bands_ = {
         {60.0f, 0.0f, 1.0f},
@@ -43,7 +50,7 @@ void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const Artifac
 
                 float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
                 for (int i = 0; i < samples; ++i) {
-                    float x0 = channelData[i];
+                    float x0 = finiteOr(channelData[i], 0.0f);
                     float y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
                     channelData[i] = y0;
                     x2 = x1; x1 = x0;
@@ -69,11 +76,12 @@ std::vector<AudioEffectParameter> EqualizerEffect::getUiParameters() const {
 }
 
 void EqualizerEffect::setParameter(const String& name, float value) {
-    if (name == "gain_Low" && bands_.size() > 0) bands_[0].gain = value;
-    else if (name == "gain_LowMid" && bands_.size() > 1) bands_[1].gain = value;
-    else if (name == "gain_Mid" && bands_.size() > 2) bands_[2].gain = value;
-    else if (name == "gain_HighMid" && bands_.size() > 3) bands_[3].gain = value;
-    else if (name == "gain_High" && bands_.size() > 4) bands_[4].gain = value;
+    const float safeGain = std::clamp(finiteOr(value, 0.0f), -12.0f, 12.0f);
+    if (name == "gain_Low" && bands_.size() > 0) bands_[0].gain = safeGain;
+    else if (name == "gain_LowMid" && bands_.size() > 1) bands_[1].gain = safeGain;
+    else if (name == "gain_Mid" && bands_.size() > 2) bands_[2].gain = safeGain;
+    else if (name == "gain_HighMid" && bands_.size() > 3) bands_[3].gain = safeGain;
+    else if (name == "gain_High" && bands_.size() > 4) bands_[4].gain = safeGain;
 }
 
 float EqualizerEffect::getParameter(const String& name) const {
@@ -89,13 +97,16 @@ void EqualizerEffect::calculateBiquadCoefficients(float frequency, float gain, f
                                                   float& a0, float& a1, float& a2,
                                                   float& b0, float& b1, float& b2)
 {
-    const float sr = std::max(1.0f, sampleRate_);
-    const float nyquistSafeFreq = std::clamp(frequency, 1.0f, sr * 0.49f);
-    const float A = std::pow(10.0f, gain / 40.0f);
+    const float sr = std::max(1.0f, finiteOr(sampleRate_, 44100.0f));
+    const float safeFrequency = finiteOr(frequency, 1000.0f);
+    const float safeGain = finiteOr(gain, 0.0f);
+    const float safeQ = std::max(0.001f, finiteOr(q, 1.0f));
+    const float nyquistSafeFreq = std::clamp(safeFrequency, 1.0f, sr * 0.49f);
+    const float A = std::pow(10.0f, safeGain / 40.0f);
     const float omega = 2.0f * static_cast<float>(M_PI) * (nyquistSafeFreq / sr);
     const float sn = std::sin(omega);
     const float cs = std::cos(omega);
-    const float alpha = sn / (2.0f * std::max(0.001f, q));
+    const float alpha = sn / (2.0f * safeQ);
 
     b0 = 1.0f + alpha * A;
     b1 = -2.0f * cs;
