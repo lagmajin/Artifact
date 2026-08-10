@@ -151,6 +151,14 @@ float volumeToMeterDb(const float volume, const bool muted)
     return std::clamp(20.0f * std::log10(volume), -60.0f, 6.02f);
 }
 
+float volumeToCoreDb(const float volume)
+{
+    const float safeVolume = std::isfinite(volume)
+        ? std::clamp(volume, 0.0f, 2.0f)
+        : 1.0f;
+    return 20.0f * std::log10(std::max(0.001f, safeVolume));
+}
+
 float safeMeterDb(const float db)
 {
     return std::isfinite(db) ? std::clamp(db, -60.0f, 6.02f) : -60.0f;
@@ -396,7 +404,7 @@ void AudioMixerMasterBus::setVolume(float volume)
     }
     impl_->volume_ = clamped;
     if (impl_->coreBus_) {
-        impl_->coreBus_->setVolume(20.0f * std::log10(std::max(0.001f, clamped)));
+        impl_->coreBus_->setVolume(volumeToCoreDb(clamped));
     }
     Q_EMIT volumeChanged(impl_->volume_);
 }
@@ -692,7 +700,7 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
                 } else {
                     strip->setRoutingTargetName(QStringLiteral("Master"));
                 }
-                bus->setVolume(20.0f * std::log10(std::max(0.001f, readLayerVolume(layer))));
+                bus->setVolume(volumeToCoreDb(strip->volume()));
                 bus->setPan(readLayerPan(layer));
                 bus->setMute(readLayerMuted(layer));
                 bus->setSolo(layer->isSolo());
@@ -706,7 +714,7 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             [this, layer, strip](const float volume) {
                 applyLayerVolume(layer, volume);
                 if (strip->coreBus()) {
-                    strip->coreBus()->setVolume(20.0f * std::log10(std::max(0.001f, volume)));
+                    strip->coreBus()->setVolume(volumeToCoreDb(volume));
                 }
                 impl_->refreshDerivedLevels();
             });
