@@ -86,7 +86,9 @@ public:
     virtual bool isEnabled() const { return enabled_; }
 
     // サンプルレート設定
-    virtual void setSampleRate(int sampleRate) { sampleRate_ = sampleRate; }
+    virtual void setSampleRate(int sampleRate) {
+        sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
+    }
     virtual int getSampleRate() const { return sampleRate_; }
 
 protected:
