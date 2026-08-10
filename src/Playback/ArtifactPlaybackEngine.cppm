@@ -848,9 +848,14 @@ public:
         if (composition_ && !composition_->hasAudio()) return;
         
         double audioTime = provider();
-        if (audioTime <= 0.001) return;
+        if (!std::isfinite(audioTime) || audioTime <= 0.001) return;
 
-        const double safeFrameRate = std::max(1e-6, static_cast<double>(frameRate_.framerate()));
+        const double safeFrameRate = static_cast<double>(frameRate_.framerate());
+        if (!std::isfinite(safeFrameRate) || safeFrameRate <= 0.0) {
+            qWarning() << "[PlaybackEngine][AudioClock] invalid frame rate"
+                       << "frameRate=" << safeFrameRate;
+            return;
+        }
         const int64_t currentFrame = currentFrame_.load();
         const int64_t endFrame = effectiveEndFrame().framePosition();
         if (endFrame > 0 && currentFrame >= endFrame - 2) {
@@ -859,6 +864,7 @@ public:
 
         double currentEngineTime = static_cast<double>(currentFrame) / safeFrameRate;
         double diff = audioTime - currentEngineTime;
+        if (!std::isfinite(currentEngineTime) || !std::isfinite(diff)) return;
 
         // Small drift (1–33 ms): shift playbackStartFrame_ gradually so the engine
         // timeline converges to audio time without audible jumps.
@@ -874,14 +880,24 @@ public:
                            << "currentFrame=" << currentFrame;
                 auto now = std::chrono::steady_clock::now();
                 playbackStartTime_ = now;
-                playbackStartFrame_ = static_cast<int64_t>(std::round(audioTime * safeFrameRate));
+                const double targetFrame = audioTime * safeFrameRate;
+                if (std::isfinite(targetFrame) &&
+                    std::abs(targetFrame) <= static_cast<double>(
+                        std::numeric_limits<int64_t>::max())) {
+                    playbackStartFrame_ = static_cast<int64_t>(std::round(targetFrame));
+                }
             } else {
                 // Gradual correction: shift start frame by a fraction of the drift
                 // to converge over ~10 refresh cycles (≈100 ms).
                 constexpr double correctionGain = 0.1;
-                int64_t shift = static_cast<int64_t>(std::round(diff * safeFrameRate * correctionGain));
-                if (shift != 0) {
-                    playbackStartFrame_ += shift;
+                const double shiftValue = diff * safeFrameRate * correctionGain;
+                if (std::isfinite(shiftValue) &&
+                    std::abs(shiftValue) <= static_cast<double>(
+                        std::numeric_limits<int64_t>::max())) {
+                    const int64_t shift = static_cast<int64_t>(std::round(shiftValue));
+                    if (shift != 0) {
+                        playbackStartFrame_ += shift;
+                    }
                 }
             }
         }
