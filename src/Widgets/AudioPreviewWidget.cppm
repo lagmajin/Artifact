@@ -458,9 +458,18 @@ private slots:
                 chunk.channelData.resize(seg.channelData.size());
                 for (int ch = 0; ch < static_cast<int>(seg.channelData.size()); ++ch) {
                     const auto& srcVec = seg.channelData[ch];
-                chunk.channelData[ch] = QVector<float>(
-                    srcVec.constData() + currentSegmentOffset_,
-                    srcVec.constData() + currentSegmentOffset_ + chunkSize);
+                    QVector<float> samples(chunkSize, 0.0f);
+                    if (currentSegmentOffset_ < srcVec.size()) {
+                        const int copyFrames = std::min(
+                            chunkSize,
+                            static_cast<int>(srcVec.size()) - currentSegmentOffset_);
+                        if (copyFrames > 0) {
+                            std::copy_n(srcVec.constData() + currentSegmentOffset_,
+                                        copyFrames,
+                                        samples.data());
+                        }
+                    }
+                    chunk.channelData[ch] = std::move(samples);
                 }
                 renderer_->enqueue(chunk);
             }
