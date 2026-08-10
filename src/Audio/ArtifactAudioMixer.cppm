@@ -145,10 +145,15 @@ bool supportsMixerLayer(const ArtifactAbstractLayerPtr& layer)
 
 float volumeToMeterDb(const float volume, const bool muted)
 {
-    if (muted || volume <= 0.0001f) {
+    if (muted || !std::isfinite(volume) || volume <= 0.0001f) {
         return -60.0f;
     }
     return std::clamp(20.0f * std::log10(volume), -60.0f, 6.02f);
+}
+
+float safeMeterDb(const float db)
+{
+    return std::isfinite(db) ? std::clamp(db, -60.0f, 6.02f) : -60.0f;
 }
 }
 
@@ -210,7 +215,8 @@ QString AudioMixerChannelStrip::layerName() const
 
 void AudioMixerChannelStrip::setVolume(float volume)
 {
-    const float clamped = std::clamp(volume, 0.0f, 2.0f);
+    const float clamped = std::isfinite(volume)
+        ? std::clamp(volume, 0.0f, 2.0f) : 1.0f;
     if (std::abs(impl_->volume_ - clamped) <= 0.0001f) {
         return;
     }
@@ -225,7 +231,8 @@ float AudioMixerChannelStrip::volume() const
 
 void AudioMixerChannelStrip::setPan(float pan)
 {
-    const float clamped = std::clamp(pan, -1.0f, 1.0f);
+    const float clamped = std::isfinite(pan)
+        ? std::clamp(pan, -1.0f, 1.0f) : 0.0f;
     if (std::abs(impl_->pan_ - clamped) <= 0.0001f) {
         return;
     }
@@ -323,11 +330,13 @@ float AudioMixerChannelStrip::peakRight() const
 
 void AudioMixerChannelStrip::updateLevels(float left, float right)
 {
-    impl_->leftLevel_ = left;
-    impl_->rightLevel_ = right;
-    impl_->peakLeft_ = std::max(impl_->peakLeft_, left);
-    impl_->peakRight_ = std::max(impl_->peakRight_, right);
-    Q_EMIT levelChanged(left, right);
+    const float safeLeft = safeMeterDb(left);
+    const float safeRight = safeMeterDb(right);
+    impl_->leftLevel_ = safeLeft;
+    impl_->rightLevel_ = safeRight;
+    impl_->peakLeft_ = std::max(impl_->peakLeft_, safeLeft);
+    impl_->peakRight_ = std::max(impl_->peakRight_, safeRight);
+    Q_EMIT levelChanged(safeLeft, safeRight);
 }
 
 void AudioMixerChannelStrip::resetPeak()
@@ -380,7 +389,8 @@ AudioMixerMasterBus::~AudioMixerMasterBus()
 
 void AudioMixerMasterBus::setVolume(float volume)
 {
-    const float clamped = std::clamp(volume, 0.0f, 2.0f);
+    const float clamped = std::isfinite(volume)
+        ? std::clamp(volume, 0.0f, 2.0f) : 1.0f;
     if (std::abs(impl_->volume_ - clamped) <= 0.0001f) {
         return;
     }
@@ -425,9 +435,11 @@ float AudioMixerMasterBus::rightLevel() const
 
 void AudioMixerMasterBus::updateLevels(float left, float right)
 {
-    impl_->leftLevel_ = left;
-    impl_->rightLevel_ = right;
-    Q_EMIT levelChanged(left, right);
+    const float safeLeft = safeMeterDb(left);
+    const float safeRight = safeMeterDb(right);
+    impl_->leftLevel_ = safeLeft;
+    impl_->rightLevel_ = safeRight;
+    Q_EMIT levelChanged(safeLeft, safeRight);
 }
 
 void AudioMixerMasterBus::connectToCoreBus(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus)
