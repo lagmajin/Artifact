@@ -495,7 +495,11 @@ private slots:
                 ArtifactCore::AudioSegment chunk;
                 chunk.sampleRate = seg.sampleRate;
                 chunk.layout = seg.layout;
-                chunk.startFrame = seg.startFrame + currentSegmentOffset_;
+                const qint64 offset = static_cast<qint64>(currentSegmentOffset_);
+                chunk.startFrame = seg.startFrame >
+                        std::numeric_limits<qint64>::max() - offset
+                    ? std::numeric_limits<qint64>::max()
+                    : seg.startFrame + offset;
                 int available = seg.frameCount() - currentSegmentOffset_;
                 int chunkSize = std::min(available, 512);
                 chunk.channelData.resize(seg.channelData.size());
@@ -823,9 +827,15 @@ void ArtifactAudioPreviewWidget::updateDurationLabel() {
 }
 
 int ArtifactAudioPreviewWidget::sampleIndexToMs(int sampleIndex) const {
-    if (impl_->engine_->sampleRate() <= 0) return 0;
-    return static_cast<int>(
-        static_cast<double>(sampleIndex) / impl_->engine_->sampleRate() * 1000.0);
+    const int sampleRate = impl_->engine_->sampleRate();
+    if (sampleRate <= 0 || sampleIndex <= 0) return 0;
+    const double milliseconds =
+        static_cast<double>(sampleIndex) / sampleRate * 1000.0;
+    if (!std::isfinite(milliseconds) || milliseconds >=
+            static_cast<double>(std::numeric_limits<int>::max())) {
+        return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(milliseconds);
 }
 
 } // namespace Artifact
