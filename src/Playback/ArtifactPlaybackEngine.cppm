@@ -58,13 +58,19 @@ AudioSegment resampleAudioSegment(const AudioSegment& source,
         const auto& input = source.channelData[channel];
         auto& output = result.channelData[channel];
         output.resize(targetFrames);
+        const int inputFrames = std::min(
+            sourceFrames, static_cast<int>(input.size()));
+        if (inputFrames <= 0) {
+            std::fill(output.begin(), output.end(), 0.0f);
+            continue;
+        }
         for (int frame = 0; frame < targetFrames; ++frame) {
             const double sourcePosition =
                 static_cast<double>(frame) * source.sampleRate /
                 targetSampleRate;
             const int first = std::min(
-                sourceFrames - 1, static_cast<int>(std::floor(sourcePosition)));
-            const int second = std::min(sourceFrames - 1, first + 1);
+                inputFrames - 1, static_cast<int>(std::floor(sourcePosition)));
+            const int second = std::min(inputFrames - 1, first + 1);
             const float fraction = static_cast<float>(sourcePosition - first);
             output[frame] = input[first] * (1.0f - fraction) +
                             input[second] * fraction;
@@ -88,16 +94,22 @@ AudioSegment timeScaleAudioSegment(const AudioSegment& source,
         const auto& input = source.channelData[channel];
         auto& output = result.channelData[channel];
         output.resize(targetFrames);
+        const int inputFrames = std::min(
+            sourceFrames, static_cast<int>(input.size()));
+        if (inputFrames <= 0) {
+            std::fill(output.begin(), output.end(), 0.0f);
+            continue;
+        }
         for (int frame = 0; frame < targetFrames; ++frame) {
             const double normalized = targetFrames > 1
                 ? static_cast<double>(frame) / (targetFrames - 1)
                 : 0.0;
             const double sourcePosition = playbackSpeed > 0.0f
-                ? normalized * (sourceFrames - 1)
-                : (1.0 - normalized) * (sourceFrames - 1);
+                ? normalized * (inputFrames - 1)
+                : (1.0 - normalized) * (inputFrames - 1);
             const int first = std::clamp(static_cast<int>(std::floor(sourcePosition)),
-                                         0, sourceFrames - 1);
-            const int second = std::min(sourceFrames - 1, first + 1);
+                                         0, inputFrames - 1);
+            const int second = std::min(inputFrames - 1, first + 1);
             const float fraction = static_cast<float>(sourcePosition - first);
             output[frame] = input[first] * (1.0f - fraction) +
                             input[second] * fraction;
