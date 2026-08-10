@@ -193,6 +193,7 @@ static QDialog* createParameterEditor(const ArtifactCore::String& effectName,
 
 void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) return;
+    if (!bus_) return;
 
     QMenu menu(this);
     bool hasEffect = (bus_ && slotIndex_ < bus_->getEffectCount());
