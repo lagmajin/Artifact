@@ -1,6 +1,7 @@
 module;
 #include <QList>
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 module Artifact.Audio.Effects.Limiter;
@@ -13,6 +14,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeLimiterSample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -94,7 +102,8 @@ void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactC
 
         float totalGain = inputGainLinear * currentGain_;
         for (int ch = 0; ch < numChannels; ++ch) {
-            segment.channelData[ch][i] *= totalGain;
+            segment.channelData[ch][i] = sanitizeLimiterSample(
+                segment.channelData[ch][i] * totalGain);
         }
     }
 }

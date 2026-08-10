@@ -1,5 +1,6 @@
 module;
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include <QList>
@@ -13,6 +14,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeCompressorSample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -81,7 +89,8 @@ void CompressorEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
         float gainLinear = dbToLinear(gainDb) * makeupLinear;
 
         for (int ch = 0; ch < numChannels; ++ch) {
-            segment.channelData[ch][i] *= gainLinear;
+            segment.channelData[ch][i] = sanitizeCompressorSample(
+                segment.channelData[ch][i] * gainLinear);
         }
     }
 }
