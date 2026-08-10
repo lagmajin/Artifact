@@ -9,6 +9,13 @@ import Audio.Segment;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 static inline float linearToDb(float linear) {
     if (linear <= 0.0f) return -96.0f;
     return 20.0f * std::log10(linear);
@@ -45,7 +52,9 @@ void CompressorEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
     for (int i = 0; i < numSamples; ++i) {
         float peak = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch) {
-            float absSample = std::fabs(segment.channelData[ch][i]);
+            const float sample = finiteOr(segment.channelData[ch][i], 0.0f);
+            segment.channelData[ch][i] = sample;
+            float absSample = std::fabs(sample);
             if (absSample > peak) peak = absSample;
         }
 
@@ -89,12 +98,15 @@ std::vector<AudioEffectParameter> CompressorEffect::getUiParameters() const {
 }
 
 void CompressorEffect::setParameter(const String& name, float value) {
-    if      (name == "threshold") threshold_  = value;
-    else if (name == "ratio")     ratio_      = value;
-    else if (name == "attack")    attackMs_   = value;
-    else if (name == "release")   releaseMs_  = value;
-    else if (name == "knee")      kneeWidth_  = value;
-    else if (name == "makeup")  { makeupGain_ = value; autoMakeup_ = (value == 0.0f); }
+    if      (name == "threshold") threshold_  = std::clamp(finiteOr(value, -20.0f), -60.0f, 0.0f);
+    else if (name == "ratio")     ratio_      = std::clamp(finiteOr(value, 4.0f), 1.0f, 20.0f);
+    else if (name == "attack")    attackMs_   = std::clamp(finiteOr(value, 10.0f), 0.1f, 100.0f);
+    else if (name == "release")   releaseMs_  = std::clamp(finiteOr(value, 100.0f), 10.0f, 1000.0f);
+    else if (name == "knee")      kneeWidth_  = std::clamp(finiteOr(value, 6.0f), 0.0f, 24.0f);
+    else if (name == "makeup")  {
+        makeupGain_ = std::clamp(finiteOr(value, 0.0f), 0.0f, 24.0f);
+        autoMakeup_ = (makeupGain_ == 0.0f);
+    }
 }
 
 float CompressorEffect::getParameter(const String& name) const {

@@ -9,6 +9,13 @@ import Audio.Segment;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 static inline float linearToDb(float linear) {
     if (linear <= 0.0f) return -96.0f;
     return 20.0f * std::log10(linear);
@@ -52,7 +59,9 @@ void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactC
     for (int i = 0; i < numSamples; ++i) {
         float peak = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch) {
-            float val = std::fabs(segment.channelData[ch][i] * inputGainLinear);
+            const float sample = finiteOr(segment.channelData[ch][i], 0.0f);
+            segment.channelData[ch][i] = sample;
+            float val = std::fabs(sample * inputGainLinear);
             if (val > peak) peak = val;
         }
         peakLevels[i] = peak;
@@ -99,9 +108,9 @@ std::vector<AudioEffectParameter> LimiterEffect::getUiParameters() const {
 }
 
 void LimiterEffect::setParameter(const String& name, float value) {
-    if      (name == "ceiling")    ceiling_   = value;
-    else if (name == "release")    releaseMs_ = value;
-    else if (name == "input_gain") inputGain_ = value;
+    if      (name == "ceiling")    ceiling_   = std::clamp(finiteOr(value, -0.3f), -6.0f, 0.0f);
+    else if (name == "release")    releaseMs_ = std::clamp(finiteOr(value, 50.0f), 5.0f, 500.0f);
+    else if (name == "input_gain") inputGain_ = std::clamp(finiteOr(value, 0.0f), 0.0f, 24.0f);
 }
 
 float LimiterEffect::getParameter(const String& name) const {
@@ -112,7 +121,7 @@ float LimiterEffect::getParameter(const String& name) const {
 }
 
 void LimiterEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate;
+    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
     initializeEngine();
 }
 
