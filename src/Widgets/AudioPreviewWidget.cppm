@@ -359,8 +359,16 @@ public:
         if (!decoder_ || preloadedSegments_.empty()) return;
 
         if (!renderer_->isDeviceOpen()) {
-            renderer_->openDevice(ArtifactCore::AudioBackendType::WASAPI);
-            renderer_->start();
+            if (!renderer_->openDevice(ArtifactCore::AudioBackendType::WASAPI)) {
+                emit levelUpdated(-96.0f, -96.0f, -96.0f, -96.0f);
+                return;
+            }
+        }
+        renderer_->start();
+        if (!renderer_->isActive()) {
+            renderer_->closeDevice();
+            emit levelUpdated(-96.0f, -96.0f, -96.0f, -96.0f);
+            return;
         }
         renderer_->setMasterVolume(volumeToDb(volume_));
         eosReached_ = false;
@@ -403,6 +411,13 @@ public:
     int sampleRate() const { return sampleRate_; }
 
     void setPosition(int sampleIndex) {
+        if (totalSamples_ <= 0) {
+            currentSample_ = 0;
+            currentSegmentIndex_ = 0;
+            currentSegmentOffset_ = 0;
+            emit positionChanged(0);
+            return;
+        }
         currentSample_ = std::clamp(sampleIndex, 0, totalSamples_ - 1);
         int pos = 0;
         for (size_t i = 0; i < preloadedSegments_.size(); ++i) {
