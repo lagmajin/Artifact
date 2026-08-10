@@ -31,6 +31,52 @@ namespace Artifact
     static constexpr int kScrubFrameCount = 2400;
     static constexpr int kScrubSampleRate = 48000;
 
+    AudioSegment resampleScrubSegment(const AudioSegment& source,
+                                       const int targetSampleRate)
+    {
+        if (targetSampleRate <= 0 || source.sampleRate <= 0 ||
+            source.sampleRate == targetSampleRate || source.frameCount() <= 0) {
+            return source;
+        }
+
+        const int sourceFrames = source.frameCount();
+        const double requestedFrames = static_cast<double>(sourceFrames) *
+            static_cast<double>(targetSampleRate) / source.sampleRate;
+        if (!std::isfinite(requestedFrames) ||
+            requestedFrames > std::numeric_limits<int>::max()) {
+            return {};
+        }
+
+        const int targetFrames = std::max(
+            1, static_cast<int>(std::llround(requestedFrames)));
+        AudioSegment result = source;
+        result.sampleRate = targetSampleRate;
+        for (int channel = 0; channel < source.channelCount(); ++channel) {
+            const auto& input = source.channelData[channel];
+            auto& output = result.channelData[channel];
+            output.resize(targetFrames);
+            const int inputFrames = std::min(
+                sourceFrames, static_cast<int>(input.size()));
+            if (inputFrames <= 0) {
+                std::fill(output.begin(), output.end(), 0.0f);
+                continue;
+            }
+            for (int frame = 0; frame < targetFrames; ++frame) {
+                const double sourcePosition = static_cast<double>(frame) *
+                    source.sampleRate / targetSampleRate;
+                const double clampedPosition = std::clamp(
+                    sourcePosition, 0.0, static_cast<double>(inputFrames - 1));
+                const int first = static_cast<int>(std::floor(clampedPosition));
+                const int second = std::min(inputFrames - 1, first + 1);
+                const float fraction = static_cast<float>(
+                    clampedPosition - first);
+                output[frame] = input[first] * (1.0f - fraction) +
+                    input[second] * fraction;
+            }
+        }
+        return result;
+    }
+
     // ──────────────────────────────────────────
     // ScrubWorker — runs on dedicated worker thread
     // Pure data access only (no QObject APIs beyond Qt core)
@@ -123,10 +169,13 @@ namespace Artifact
                 }
             }
 
+            const AudioSegment outputSegment = resampleScrubSegment(
+                segment, audioRenderer_->sampleRate());
+
             if (!audioRenderer_->isActive()) {
                 bool queued = false;
                 if (audioRenderer_->bufferedFrames() <= kScrubFrameCount * 2) {
-                    queued = audioRenderer_->enqueue(segment);
+                    queued = audioRenderer_->enqueue(outputSegment);
                 }
                 // Do not start an empty renderer when enqueue rejected the
                 // first scrub segment.  An existing buffer may still be
@@ -135,7 +184,7 @@ namespace Artifact
                     audioRenderer_->start();
                 }
             } else {
-                audioRenderer_->enqueue(segment);
+                audioRenderer_->enqueue(outputSegment);
             }
         }
 
