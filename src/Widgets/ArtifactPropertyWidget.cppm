@@ -669,6 +669,11 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   setAccessibleDescription(QStringLiteral("Edit properties for the selected layer or effect"));
   auto *focusFrame = new QFocusFrame(this);
   focusFrame->setWidget(this);
+  QPalette focusPalette = focusFrame->palette();
+  const QColor focusColor(120, 175, 235, 165);
+  focusPalette.setColor(QPalette::Active, QPalette::Highlight, focusColor);
+  focusPalette.setColor(QPalette::Inactive, QPalette::Highlight, focusColor);
+  focusFrame->setPalette(focusPalette);
   setMinimumWidth(360);
   setWidgetResizable(true);
   setFrameShape(QFrame::NoFrame);

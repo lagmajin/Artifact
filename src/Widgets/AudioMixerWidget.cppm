@@ -23,6 +23,7 @@ module;
 #include <QComboBox>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QToolTip>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <cmath>
@@ -372,7 +373,13 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                 for (const auto& target : buses) {
                     if (!target || target == bus_) continue;
                     if (routeIndex++ == index) {
-                        mixer_->connect(bus_, target);
+                        const auto result = mixer_->connect(bus_, target);
+                        if (result != ArtifactCore::AudioRoutingResult::Applied) {
+                            QToolTip::showText(mapToGlobal(rect().center()),
+                                ArtifactCore::AudioMixer::routingResultDescription(result), this);
+                        } else if (onChanged_) {
+                            onChanged_();
+                        }
                         return;
                     }
                 }
@@ -404,8 +411,15 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                     sidechainButton->mapToGlobal(QPoint(0, sidechainButton->height())));
                 if (!chosen) return;
                 if (chosen == clearAction) {
+                    bool removedAny = false;
                     for (const auto& send : mixer_->getSideChainSends(bus_)) {
-                        if (send.first) mixer_->removeSideChainSend(bus_, send.first);
+                        if (send.first && mixer_->removeSideChainSend(bus_, send.first) ==
+                            ArtifactCore::AudioRoutingResult::Applied) {
+                            removedAny = true;
+                        }
+                    }
+                    if (removedAny && onChanged_) {
+                        onChanged_();
                     }
                     return;
                 }
@@ -418,8 +432,14 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                     QStringLiteral("Amount for %1 → %2")
                         .arg(busName, targetName), 1.0, 0.0, 1.0, 2, &accepted);
                 if (accepted) {
-                    mixer_->addSideChainSend(
+                    const auto result = mixer_->addSideChainSend(
                         bus_, target, static_cast<float>(amount));
+                    if (result != ArtifactCore::AudioRoutingResult::Applied) {
+                        QToolTip::showText(sidechainButton->mapToGlobal(QPoint(0, sidechainButton->height())),
+                            ArtifactCore::AudioMixer::routingResultDescription(result), sidechainButton);
+                    } else if (onChanged_) {
+                        onChanged_();
+                    }
                 }
             };
             layout->addWidget(sidechainButton);
@@ -661,8 +681,18 @@ void AudioMixerWidget::refreshBuses() {
         const QString name = QInputDialog::getText(
             this, QStringLiteral("Add audio bus"), QStringLiteral("Name"),
             QLineEdit::Normal, QStringLiteral("Bus"), &accepted).trimmed();
-        if (accepted && !name.isEmpty() && !mixer_->findBusByName(name)) {
-            mixer_->createBus(ArtifactCore::ZeroString(name.toUtf8().constData()));
+        if (!accepted || name.isEmpty() || mixer_->findBusByName(name)) {
+            return;
+        }
+        const QStringList kinds{QStringLiteral("Group"), QStringLiteral("Return")};
+        const QString selectedKind = QInputDialog::getItem(
+            this, QStringLiteral("Add audio bus"), QStringLiteral("Type"),
+            kinds, 0, false, &accepted);
+        if (!accepted) return;
+        const auto kind = selectedKind == QStringLiteral("Return")
+            ? ArtifactCore::AudioBusKind::Return : ArtifactCore::AudioBusKind::Group;
+        if (mixer_->createBus(
+                ArtifactCore::String(name.toUtf8().constData()), kind)) {
             refreshBuses();
         }
     };

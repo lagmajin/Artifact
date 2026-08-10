@@ -18,6 +18,7 @@ module;
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPalette>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QShowEvent>
@@ -5519,6 +5520,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   setAccessibleDescription(QStringLiteral("Edit layers and keyframes over time"));
   auto *focusFrame = new QFocusFrame(this);
   focusFrame->setWidget(this);
+  QPalette focusPalette = focusFrame->palette();
+  const QColor focusColor(120, 175, 235, 165);
+  focusPalette.setColor(QPalette::Active, QPalette::Highlight, focusColor);
+  focusPalette.setColor(QPalette::Inactive, QPalette::Highlight, focusColor);
+  focusFrame->setPalette(focusPalette);
   setMinimumHeight(500);
   setBaseSize(1200, 500);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);

@@ -36,6 +36,7 @@ module;
 module Artifact.Widgets.CompositionAudioMixer;
 
 import Artifact.Audio.Mixer;
+import Artifact.Widgets.AudioMixer;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
@@ -1303,6 +1304,33 @@ private:
   QColor accentColor_ = QColor(211, 170, 66);
 };
 
+class AudioRoutingButton final : public QPushButton {
+public:
+  explicit AudioRoutingButton(QWidget *parent = nullptr) : QPushButton(parent) {}
+
+  std::function<void()> invoked;
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (event->button() == Qt::LeftButton && invoked) {
+      invoked();
+      event->accept();
+      return;
+    }
+    QPushButton::mouseReleaseEvent(event);
+  }
+
+  void keyReleaseEvent(QKeyEvent *event) override {
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
+         event->key() == Qt::Key_Space) && invoked) {
+      invoked();
+      event->accept();
+      return;
+    }
+    QPushButton::keyReleaseEvent(event);
+  }
+};
+
 class AudioFaderSlider final : public QSlider {
 public:
   explicit AudioFaderSlider(QWidget *parent = nullptr)
@@ -1688,8 +1716,12 @@ private:
       }
     }
     if (outputSlot_) {
-      outputSlot_->setText(QStringLiteral("Master"));
-      outputSlot_->setSlotColor(QColor(75, 78, 82));
+      const QString routeTarget = strip_->routingTargetName();
+      outputSlot_->setText(routeTarget);
+      outputSlot_->setSlotColor(routeTarget == QStringLiteral("Master")
+          ? QColor(75, 78, 82) : QColor(75, 117, 142));
+      outputSlot_->setAccessibleDescription(
+          QStringLiteral("Output route: %1").arg(routeTarget));
     }
     if (panKnob_) {
       panKnob_->setPanFromStrip(strip_->pan());
@@ -2181,6 +2213,42 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     impl_->summaryLabel_->setFont(summaryFont);
   }
   headerLayout->addWidget(impl_->summaryLabel_, 0, Qt::AlignRight);
+
+  auto *routingButton = new AudioRoutingButton(header);
+  routingButton->setText(QStringLiteral("Advanced Routing…"));
+  routingButton->setAccessibleName(QStringLiteral("Open advanced audio routing"));
+  routingButton->setAccessibleDescription(
+      QStringLiteral("Edit bus output routes and sidechain sends for the current composition."));
+  routingButton->invoked = [this]() {
+    ArtifactCompositionPtr composition;
+    if (auto *projectService = ArtifactProjectService::instance()) {
+      composition = projectService->currentComposition().lock();
+    }
+    const auto coreMixer = composition ? composition->getAudioMixer() : nullptr;
+    if (!composition || !coreMixer) {
+      QMessageBox::information(
+          this, QStringLiteral("Audio routing unavailable"),
+          QStringLiteral("Add an audio-capable layer before editing audio routing."));
+      return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Advanced Audio Routing"));
+    dialog.setModal(true);
+    dialog.resize(760, 540);
+    auto *dialogLayout = new QVBoxLayout(&dialog);
+    dialogLayout->setContentsMargins(10, 10, 10, 10);
+    auto *routingWidget = new Artifact::AudioMixerWidget(coreMixer.get(), &dialog);
+    dialogLayout->addWidget(routingWidget, 1);
+    dialog.exec();
+
+    // Routing lives in the composition mixer serialization. Mark the owning
+    // composition changed after the existing editor closes, then rebuild the
+    // compact surface from the same Core graph.
+    composition->changed();
+    refreshFromCurrentComposition();
+  };
+  headerLayout->addWidget(routingButton, 0, Qt::AlignRight);
 
   auto *scrollArea = new QScrollArea(this);
   scrollArea->setObjectName(QStringLiteral("audioMixerScrollArea"));

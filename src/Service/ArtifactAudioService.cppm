@@ -26,7 +26,8 @@ namespace Artifact {
 namespace {
 QString layerBusName(const ArtifactCore::LayerID& layerId)
 {
- return QStringLiteral("layer_") + layerId.toString();
+ const auto name = ArtifactCore::AudioMixer::layerBusName(layerId);
+ return QString::fromUtf8(name.data(), static_cast<int>(name.length()));
 }
 
 float linearToDecibels(const float volume)
@@ -107,10 +108,7 @@ bool ArtifactAudioService::syncCurrentComposition()
   }
   const QString name = layerBusName(layer->id());
   activeLayerBuses.insert(name);
-  auto bus = mixer->findBusByName(name);
-  if (!bus) {
-   bus = mixer->createBus(name);
-  }
+  auto bus = mixer->ensureLayerBus(layer->id());
   if (!bus) {
    continue;
   }
@@ -128,7 +126,8 @@ bool ArtifactAudioService::syncCurrentComposition()
  for (const auto& rawName : mixer->busNames()) {
   const QString name = QString::fromUtf8(rawName.data(),
                                          static_cast<int>(rawName.length()));
-  if (!name.startsWith(QStringLiteral("layer_")) ||
+  if (mixer->busKind(mixer->findBusByName(name)) !=
+          ArtifactCore::AudioBusKind::Layer ||
       activeLayerBuses.contains(name)) {
    continue;
   }

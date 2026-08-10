@@ -3079,11 +3079,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
         AudioMixer& mixer = *impl_->audioMixer_;
         for (auto &layer : impl_->layerMultiIndex_) {
             if (layer && shouldEvaluateLayer(layer->id()) && layer->hasAudio()) {
-                const ArtifactCore::String busName =
-                    "layer_" + layer->id().toString().toStdString();
-                if (!mixer.findBusByName(busName)) {
-                    mixer.createBus(busName);
-                }
+                mixer.ensureLayerBus(layer->id());
             }
         }
         struct PendingAudioInput {
@@ -3097,9 +3093,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
             if (layer && shouldEvaluateLayer(layer->id()) &&
                 layer->isActiveAt(start) && layer->hasAudio()) {
                 ++activeAudioLayerCount;
-                const ArtifactCore::String busName =
-                    "layer_" + layer->id().toString().toStdString();
-                auto bus = mixer.findBusByName(busName);
+                auto bus = mixer.ensureLayerBus(layer->id());
                 if (!bus) continue;
                 AudioSegment layerSegment;
                 if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {

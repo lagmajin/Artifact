@@ -162,6 +162,7 @@ import Image.ExportOptions;
 import VectorScopeWidget;
 import WaveformScopeWidget;
 import ParadeScopeWidget;
+import HistgramWidget;
 import Codec.Thumbnail.FFmpeg;
 import UI.ShortcutBindings;
 import Undo.UndoManager;
@@ -11407,15 +11408,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      waveformScope->setMode(ArtifactWidgets::WaveformMode::Luma);
                      auto *paradeScope = new ArtifactWidgets::ParadeScopeWidget(tabs);
                      paradeScope->setMode(ArtifactWidgets::ParadeMode::RGB);
+                     auto *histogramWidget = new ArtifactWidgets::HistgramWidget(tabs);
+                     histogramWidget->setMode(ArtifactWidgets::HistogramMode::Combined);
+                     histogramWidget->setLogScale(true);
                      tabs->addTab(vectorScope, QStringLiteral("Vectorscope"));
                      tabs->addTab(waveformScope, QStringLiteral("Waveform"));
                      tabs->addTab(paradeScope, QStringLiteral("RGB Parade"));
+                     tabs->addTab(histogramWidget, QStringLiteral("Histogram"));
                      layout->addWidget(tabs);
                      auto *timer = new QTimer(dialog);
                      QObject::connect(timer, &QTimer::timeout, dialog,
-                                      [this, vectorScope, waveformScope, paradeScope]() {
+                                      [this, vectorScope, waveformScope, paradeScope,
+                                       histogramWidget]() {
                                         if (!impl_ || !impl_->renderController_ || !vectorScope ||
-                                            !waveformScope || !paradeScope) {
+                                            !waveformScope || !paradeScope || !histogramWidget) {
                                           return;
                                         }
                                         const auto frame =
@@ -11423,6 +11429,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                                         vectorScope->updateFrame(frame);
                                         waveformScope->updateFrame(frame);
                                         paradeScope->updateFrame(frame);
+                                        histogramWidget->updateFrame(frame);
                                       });
                      QObject::connect(dialog, &QDialog::finished, this,
                                       [this]() {
@@ -11434,14 +11441,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      dialog->show();
                      timer->start(150);
                      QTimer::singleShot(0, dialog,
-                                        [this, vectorScope, waveformScope, paradeScope]() {
+                                        [this, vectorScope, waveformScope, paradeScope,
+                                         histogramWidget]() {
                        if (impl_ && impl_->renderController_ && vectorScope && waveformScope &&
-                           paradeScope) {
+                           paradeScope && histogramWidget) {
                          const auto frame =
                              impl_->renderController_->captureCurrentFrameImage();
                          vectorScope->updateFrame(frame);
                          waveformScope->updateFrame(frame);
                          paradeScope->updateFrame(frame);
+                         histogramWidget->updateFrame(frame);
                        }
                      });
                    });

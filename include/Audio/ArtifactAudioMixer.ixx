@@ -75,6 +75,11 @@ public:
     void setCoreBus(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus);
     ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus() const;
 
+    // Presentation-only snapshot of the Core routing destination. The Core
+    // mixer remains the owner of the graph and is refreshed by composition sync.
+    void setRoutingTargetName(const QString& name);
+    QString routingTargetName() const;
+
 
     void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
     void panChanged(float pan) W_SIGNAL(panChanged, pan);

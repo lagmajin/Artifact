@@ -174,6 +174,7 @@ public:
     float peakLeft_ = -60.0f;
     float peakRight_ = -60.0f;
     ArtifactCore::SharedPtr<AudioBus> coreBus_;
+    QString routingTargetName_ = QStringLiteral("Master");
 };
 
 AudioMixerChannelStrip::AudioMixerChannelStrip(QObject* parent)
@@ -343,6 +344,17 @@ void AudioMixerChannelStrip::setCoreBus(ArtifactCore::SharedPtr<ArtifactCore::Au
 ArtifactCore::SharedPtr<ArtifactCore::AudioBus> AudioMixerChannelStrip::coreBus() const
 {
     return impl_->coreBus_;
+}
+
+void AudioMixerChannelStrip::setRoutingTargetName(const QString& name)
+{
+    impl_->routingTargetName_ = name.trimmed().isEmpty()
+        ? QStringLiteral("Master") : name;
+}
+
+QString AudioMixerChannelStrip::routingTargetName() const
+{
+    return impl_->routingTargetName_;
 }
 
 class AudioMixerMasterBus::Impl
@@ -643,18 +655,23 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             strip->setSolo(layer->isSolo());
 
             if (impl_->coreMixer_) {
-                const std::string busName = "layer_" + layer->id().toString().toStdString();
-                auto bus = impl_->coreMixer_->findBusByName(ArtifactCore::String(busName));
-                if (!bus) {
-                    bus = impl_->coreMixer_->createBus(ArtifactCore::String(busName));
-                }
+                auto bus = impl_->coreMixer_->ensureLayerBus(layer->id());
                 strip->setCoreBus(bus);
+                const auto routeTarget = impl_->coreMixer_->getRoutingTarget(bus);
+                if (routeTarget) {
+                    const auto targetName = routeTarget->getName();
+                    strip->setRoutingTargetName(QString::fromUtf8(
+                        targetName.data(), static_cast<qsizetype>(targetName.length())));
+                } else {
+                    strip->setRoutingTargetName(QStringLiteral("Master"));
+                }
                 bus->setVolume(20.0f * std::log10(std::max(0.001f, readLayerVolume(layer))));
                 bus->setPan(readLayerPan(layer));
                 bus->setMute(readLayerMuted(layer));
                 bus->setSolo(layer->isSolo());
             } else {
                 strip->setCoreBus(nullptr);
+                strip->setRoutingTargetName(QStringLiteral("Master"));
             }
         }
 
