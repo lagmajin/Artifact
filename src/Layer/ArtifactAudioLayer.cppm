@@ -591,13 +591,20 @@ bool ArtifactAudioLayer::decodeFrameToCache(qint64 frameNumber)
 {
   impl_->refreshSourceVersionIfNeeded();
   ArtifactCore::ScopedPerformanceTimer timer("Audio/Layer/decodeFrameToCache");
-  if (frameNumber < 0 || frameNumber >= impl_->totalFrames_) {
+  const int channelCount = std::max(1, impl_->sourceChannelCount_);
+  const qint64 pcmFrameCount = impl_->pcm().size() / channelCount;
+  const qint64 availableFrameCount = std::min(impl_->totalFrames_, pcmFrameCount);
+  if (frameNumber < 0 || frameNumber >= availableFrameCount ||
+      impl_->sourceSampleRate_ <= 0) {
     return false;
   }
 
   // フレームのサンプル範囲を計算
   const qint64 startSample = frameNumber;
-  const qint64 endSample = std::min(startSample + impl_->sourceSampleRate_, impl_->totalFrames_);
+  const qint64 requestedFrameCount = std::min<qint64>(
+      static_cast<qint64>(impl_->sourceSampleRate_),
+      availableFrameCount - startSample);
+  const qint64 endSample = startSample + requestedFrameCount;
   const int frameSampleCount = static_cast<int>(endSample - startSample);
 
   if (frameSampleCount <= 0) return false;
@@ -610,10 +617,10 @@ bool ArtifactAudioLayer::decodeFrameToCache(qint64 frameNumber)
   segment.setFrameCount(frameSampleCount);
 
   // PCMデータをコピー
-  const int baseIndex = static_cast<int>(startSample * impl_->sourceChannelCount_);
-  for (int ch = 0; ch < impl_->sourceChannelCount_; ++ch) {
+  const qsizetype baseIndex = static_cast<qsizetype>(startSample) * channelCount;
+  for (int ch = 0; ch < channelCount; ++ch) {
     for (int s = 0; s < segment.frameCount(); ++s) {
-      const int pcmIndex = baseIndex + s * impl_->sourceChannelCount_ + ch;
+      const qsizetype pcmIndex = baseIndex + static_cast<qsizetype>(s) * channelCount + ch;
       if (pcmIndex < impl_->pcm().size()) {
         segment.channelData[ch][s] = impl_->pcm()[pcmIndex];
       } else {
