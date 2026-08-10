@@ -2,6 +2,7 @@
 
 #include <QRandomGenerator>
 #include <QDebug>
+#include <limits>
 #include <wobjectimpl.h>
 
 
@@ -566,13 +567,18 @@ AudioSegment AudioSyncTools::timeStretch(const AudioSegment& segment, float rate
     result.startFrame = segment.startFrame;
     result.layout = segment.layout;
 
-    if (segment.channelData.isEmpty() || rate <= 0.0f) {
+    if (segment.channelData.isEmpty() || !std::isfinite(rate) || rate <= 0.0f) {
         return result;
     }
 
     const int channels = segment.channelCount();
     const int oldFrames = segment.frameCount();
-    const int newFrames = static_cast<int>(oldFrames / rate);
+    const double requestedFrames = static_cast<double>(oldFrames) / rate;
+    if (!std::isfinite(requestedFrames) ||
+        requestedFrames > std::numeric_limits<int>::max()) {
+        return result;
+    }
+    const int newFrames = static_cast<int>(requestedFrames);
 
     result.channelData.resize(channels);
     for (int ch = 0; ch < channels; ++ch) {
@@ -670,6 +676,9 @@ std::vector<qint64> AudioSyncTools::detectBeats(const AudioSegment& segment) {
 }
 
 float AudioSyncTools::detectTempo(const AudioSegment& segment) {
+    if (segment.sampleRate <= 0) {
+        return 120.0f;
+    }
     const auto beats = detectBeats(segment);
     if (beats.size() < 2) {
         return 120.0f;
@@ -693,7 +702,9 @@ AudioSegment AudioSyncTools::normalize(const AudioSegment& segment, float target
 
     const auto level = computeLevelFromVector(monoSamples(segment));
     const float currentDb = linearToDbValue(level.rms);
-    const float gainDb = targetDb - currentDb;
+    const float safeTargetDb = std::clamp(
+        std::isfinite(targetDb) ? targetDb : -60.0f, -144.0f, 24.0f);
+    const float gainDb = safeTargetDb - currentDb;
     const float gain = dbToLinearValue(gainDb);
 
     for (auto& channel : result.channelData) {
