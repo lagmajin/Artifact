@@ -102,18 +102,19 @@ bool deviceCanUseBindless(IRenderDevice* device)
            info.Features.BindlessResources != DEVICE_FEATURE_STATE_DISABLED;
 }
 
-void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size)
+bool mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size)
 {
     if (!ctx || !buf || !data || size == 0) {
-        return;
+        return false;
     }
     void* mapped = nullptr;
     ctx->MapBuffer(buf, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
     if (!mapped) {
-        return;
+        return false;
     }
     std::memcpy(mapped, data, size);
     ctx->UnmapBuffer(buf, MAP_WRITE);
+    return true;
 }
 } // namespace
 
@@ -408,7 +409,14 @@ bool DiligentBindlessSubmitter::submitSprite(const SpritePkt& pkt, IDeviceContex
         batchXform.offset = {0.0f, 0.0f};
         batchXform.scale = {1.0f, 1.0f};
         batchXform.screenSize = spriteBatchScreenSize_;
-        mapWriteDiscard(ctx, spriteTransformBuffer_, &batchXform, sizeof(batchXform));
+        if (!mapWriteDiscard(ctx, spriteTransformBuffer_, &batchXform,
+                             sizeof(batchXform))) {
+            spriteVertices_.clear();
+            spriteBatchScreenSize_ = {0.0f, 0.0f};
+            spriteBatchUsesNdc_ = false;
+            resetTextureTable();
+            return false;
+        }
         if (frameCostStats_) {
             ++frameCostStats_->bufferUpdates;
         }
@@ -470,7 +478,14 @@ bool DiligentBindlessSubmitter::submitSpriteXform(const SpriteXformPkt& pkt, IDe
         batchXform.offset = {0.0f, 0.0f};
         batchXform.scale = {1.0f, 1.0f};
         batchXform.screenSize = spriteBatchScreenSize_;
-        mapWriteDiscard(ctx, spriteTransformBuffer_, &batchXform, sizeof(batchXform));
+        if (!mapWriteDiscard(ctx, spriteTransformBuffer_, &batchXform,
+                             sizeof(batchXform))) {
+            spriteVertices_.clear();
+            spriteBatchScreenSize_ = {0.0f, 0.0f};
+            spriteBatchUsesNdc_ = false;
+            resetTextureTable();
+            return false;
+        }
         if (frameCostStats_) {
             ++frameCostStats_->bufferUpdates;
         }
@@ -488,8 +503,14 @@ void DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureVi
         return;
     }
 
-    mapWriteDiscard(ctx, spriteVertexBuffer_, spriteVertices_.data(),
-                    sizeof(BindlessSpriteVertex) * spriteVertices_.size());
+    if (!mapWriteDiscard(ctx, spriteVertexBuffer_, spriteVertices_.data(),
+                         sizeof(BindlessSpriteVertex) * spriteVertices_.size())) {
+        spriteVertices_.clear();
+        spriteBatchScreenSize_ = {0.0f, 0.0f};
+        spriteBatchUsesNdc_ = false;
+        resetTextureTable();
+        return;
+    }
     if (frameCostStats_) {
         ++frameCostStats_->bufferUpdates;
     }
