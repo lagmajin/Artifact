@@ -3051,6 +3051,13 @@ bool ArtifactAbstractComposition::hasAudio() const
 bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const FramePosition &start,
                                             int frameCount, int sampleRate)
 {
+    if (frameCount <= 0 || sampleRate <= 0) {
+        outSegment.clear();
+        outSegment.sampleRate = sampleRate;
+        outSegment.layout = AudioChannelLayout::Stereo;
+        return false;
+    }
+
     bool hasAnyAudio = false;
     int activeAudioLayerCount = 0;
     int producedAudioLayerCount = 0;
