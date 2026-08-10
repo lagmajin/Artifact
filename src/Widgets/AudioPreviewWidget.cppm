@@ -339,6 +339,11 @@ public:
 
     bool loadFile(const QString& filePath) {
         stop();
+        // A failed open must not leave the previous asset playable through
+        // the now-unbound preview controls.
+        preloadedSegments_.clear();
+        waveformSamples_.clear();
+        totalSamples_ = 0;
         if (!decoder_->openFile(filePath)) {
             return false;
         }
@@ -348,9 +353,6 @@ public:
             return false;
         }
         numChannels_ = decoder_->channelCount();
-        totalSamples_ = 0;
-        preloadedSegments_.clear();
-
         ArtifactCore::AudioSegment seg;
         while (decoder_->decodeNextSegment(seg)) {
             const int segmentFrames = seg.frameCount();
