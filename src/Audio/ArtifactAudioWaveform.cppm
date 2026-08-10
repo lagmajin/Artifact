@@ -197,8 +197,12 @@ WaveformData AudioWaveformGenerator::generateRange(const AudioSegment& segment,
         return data;
     }
 
-    const int start = static_cast<int>(std::min<qint64>(startSample, mono.size()));
-    const int end = static_cast<int>(std::min<qint64>(startSample + sampleCount, mono.size()));
+    const qint64 availableSamples = mono.size();
+    const qint64 safeStart = std::min(startSample, availableSamples);
+    const qint64 remainingSamples = availableSamples - safeStart;
+    const qint64 safeCount = std::min(sampleCount, remainingSamples);
+    const int start = static_cast<int>(safeStart);
+    const int end = static_cast<int>(safeStart + safeCount);
     if (start >= end) {
         return data;
     }
