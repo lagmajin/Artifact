@@ -47,7 +47,8 @@ private:
     float toneStateR_ = 0.0f;
     float holdL_ = 0.0f;
     float holdR_ = 0.0f;
-    float holdCounter_ = 0.0f;
+    float holdCounterL_ = 0.0f;
+    float holdCounterR_ = 0.0f;
 
     static float softClip(float x);
     static float hardClip(float x);

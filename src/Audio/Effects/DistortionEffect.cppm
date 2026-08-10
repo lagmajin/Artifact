@@ -87,9 +87,10 @@ void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
                 case Mode::Tube:     shaped = tubeSaturate(driven); break;
                 case Mode::Foldback: shaped = foldback(driven); break;
                 case Mode::Bitcrush: {
-                    holdCounter_ += 1.0f;
-                    if (holdCounter_ >= downsample_) {
-                        holdCounter_ = 0.0f;
+                    float& holdCounter = (ch == 0) ? holdCounterL_ : holdCounterR_;
+                    holdCounter += 1.0f;
+                    if (holdCounter >= downsample_) {
+                        holdCounter = 0.0f;
                         if (ch == 0) holdL_ = bitcrush(driven, holdL_);
                         else         holdR_ = bitcrush(driven, holdR_);
                     }
