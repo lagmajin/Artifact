@@ -436,21 +436,21 @@ float AudioAnalyzer::computeCorrelation(const AudioSegment& left,
         return 0.0f;
     }
 
-    float sumXY = 0.0f;
-    float sumX2 = 0.0f;
-    float sumY2 = 0.0f;
+    double sumXY = 0.0;
+    double sumX2 = 0.0;
+    double sumY2 = 0.0;
 
     for (int i = 0; i < n; ++i) {
-        sumXY += l[i] * r[i];
-        sumX2 += l[i] * l[i];
-        sumY2 += r[i] * r[i];
+        sumXY += static_cast<double>(l[i]) * r[i];
+        sumX2 += static_cast<double>(l[i]) * l[i];
+        sumY2 += static_cast<double>(r[i]) * r[i];
     }
 
     if (sumX2 == 0.0f || sumY2 == 0.0f) {
         return 0.0f;
     }
 
-    return sumXY / std::sqrt(sumX2 * sumY2);
+    return clampAnalysisValue(sumXY / std::sqrt(sumX2 * sumY2));
 }
 
 std::vector<AudioAnalyzer::BandInfo> AudioAnalyzer::computeBands(const AudioSegment& segment) {
@@ -481,11 +481,11 @@ std::vector<AudioAnalyzer::BandInfo> AudioAnalyzer::computeBands(const AudioSegm
         const int lowBin = static_cast<int>(band.lowFreq / binWidth);
         const int highBin = static_cast<int>(band.highFreq / binWidth);
 
-        float energy = 0.0f;
+        double energy = 0.0;
         for (int b = lowBin; b < highBin && b < static_cast<int>(spectrum.size()); ++b) {
-            energy += spectrum[b] * spectrum[b];
+            energy += static_cast<double>(spectrum[b]) * spectrum[b];
         }
-        band.energy = std::sqrt(energy);
+        band.energy = clampAnalysisValue(std::sqrt(energy));
     }
 
     return bands;
@@ -657,7 +657,9 @@ AudioSegment AudioSyncTools::timeStretch(const AudioSegment& segment, float rate
                                         static_cast<int>(src.size() - 1));
             const int idx1 = std::min(idx0 + 1, std::max(0, static_cast<int>(src.size()) - 1));
             const float frac = srcIdxF - static_cast<float>(idx0);
-            dst[i] = src[idx0] * (1.0f - frac) + src[idx1] * frac;
+            dst[i] = sanitizeWaveformSample(
+                sanitizeWaveformSample(src[idx0]) * (1.0f - frac) +
+                sanitizeWaveformSample(src[idx1]) * frac);
         }
     }
 
@@ -686,19 +688,20 @@ AudioSyncTools::AlignmentResult AudioSyncTools::align(const AudioSegment& refere
     const int maxLag = std::min(refN, trgN) / 4;
 
     for (int lag = -maxLag; lag <= maxLag; ++lag) {
-        float corr = 0.0f;
+        double corr = 0.0;
         int count = 0;
 
         for (int i = 0; i < refN; ++i) {
             const int j = i + lag;
             if (j >= 0 && j < trgN) {
-                corr += ref[i] * trg[j];
+                corr += static_cast<double>(ref[i]) * trg[j];
                 ++count;
             }
         }
 
-        if (count > 0 && corr > result.correlation) {
-            result.correlation = corr;
+        const float safeCorr = clampAnalysisValue(corr);
+        if (count > 0 && safeCorr > result.correlation) {
+            result.correlation = safeCorr;
             result.offset = lag;
         }
     }
@@ -716,14 +719,14 @@ std::vector<qint64> AudioSyncTools::detectBeats(const AudioSegment& segment) {
     const int windowSize = std::max(1, segment.sampleRate / 10);
     const float threshold = 0.5f;
 
-    float prevEnergy = 0.0f;
+    double prevEnergy = 0.0;
 
     for (int i = 0; i + windowSize < mono.size(); i += std::max(1, windowSize / 2)) {
-        float energy = 0.0f;
+        double energy = 0.0;
         for (int j = i; j < i + windowSize && j < mono.size(); ++j) {
-            energy += mono[j] * mono[j];
+            energy += static_cast<double>(mono[j]) * mono[j];
         }
-        energy /= static_cast<float>(windowSize);
+        energy /= static_cast<double>(windowSize);
 
         if (energy > prevEnergy * 1.5f && energy > threshold) {
             beats.push_back(static_cast<qint64>(i));
