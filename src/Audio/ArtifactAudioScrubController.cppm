@@ -124,10 +124,16 @@ namespace Artifact
             }
 
             if (!audioRenderer_->isActive()) {
+                bool queued = false;
                 if (audioRenderer_->bufferedFrames() <= kScrubFrameCount * 2) {
-                    audioRenderer_->enqueue(segment);
+                    queued = audioRenderer_->enqueue(segment);
                 }
-                audioRenderer_->start();
+                // Do not start an empty renderer when enqueue rejected the
+                // first scrub segment.  An existing buffer may still be
+                // drained, so preserve startup for that case.
+                if (queued || audioRenderer_->bufferedFrames() > 0) {
+                    audioRenderer_->start();
+                }
             } else {
                 audioRenderer_->enqueue(segment);
             }
