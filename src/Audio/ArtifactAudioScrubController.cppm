@@ -228,6 +228,9 @@ namespace Artifact
 
     void ArtifactAudioScrubController::setComposition(ArtifactCompositionPtr comp)
     {
+        if (impl_->scrubActive) {
+            stopScrub();
+        }
         impl_->composition_ = std::move(comp);
     }
 
