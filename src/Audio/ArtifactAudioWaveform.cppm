@@ -699,7 +699,7 @@ AudioSyncTools::AlignmentResult AudioSyncTools::align(const AudioSegment& refere
         int count = 0;
 
         for (int i = 0; i < refN; ++i) {
-            const int j = i + lag;
+            const qint64 j = static_cast<qint64>(i) + lag;
             if (j >= 0 && j < trgN) {
                 corr += static_cast<double>(ref[i]) * trg[j];
                 ++count;
