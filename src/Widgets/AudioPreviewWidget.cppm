@@ -424,6 +424,11 @@ public:
     int sampleRate() const { return sampleRate_; }
 
     void setPosition(int sampleIndex) {
+        if (renderer_) {
+            renderer_->clearBuffer();
+        }
+        feedCounter_ = 0;
+        eosReached_ = false;
         if (totalSamples_ <= 0) {
             currentSample_ = 0;
             currentSegmentIndex_ = 0;
