@@ -9,6 +9,9 @@ module;
 #include <QDebug>
 #include <cstdlib>
 #include <cmath>
+#include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 module Artifact.Audio.ScrubController;
@@ -141,9 +144,17 @@ namespace Artifact
         {
             if (lastFrame_ >= 0 && lastFrameTime_ > 0) {
                 const qint64 dt = nowMs - lastFrameTime_;
-                const int64_t df = std::abs(currentFrame - lastFrame_);
                 if (dt > 0) {
-                    currentSpeedFps_ = static_cast<float>(df) * 1000.0f / static_cast<float>(dt);
+                    const auto current = static_cast<std::uint64_t>(currentFrame);
+                    const auto previous = static_cast<std::uint64_t>(lastFrame_);
+                    const std::uint64_t df = currentFrame >= lastFrame_
+                        ? current - previous : previous - current;
+                    const double speed = static_cast<double>(df) * 1000.0 / dt;
+                    currentSpeedFps_ = std::isfinite(speed)
+                        ? static_cast<float>(std::min(
+                            speed,
+                            static_cast<double>(std::numeric_limits<float>::max())))
+                        : 0.0f;
                 }
             } else {
                 currentSpeedFps_ = 0.0f;
@@ -240,7 +251,8 @@ namespace Artifact
 
     void ArtifactAudioScrubController::setVolumeScale(float scale)
     {
-        impl_->volumeScale_ = qBound(0.0f, scale, 1.0f);
+        impl_->volumeScale_ = std::isfinite(scale)
+            ? qBound(0.0f, scale, 1.0f) : 0.5f;
     }
 
     float ArtifactAudioScrubController::volumeScale() const
@@ -288,7 +300,9 @@ namespace Artifact
         impl_->updateSpeed(f, now);
 
         if (impl_->lastFrame_ >= 0 && impl_->lastFrameTime_ > 0) {
-            impl_->measureLatencyMs_ = static_cast<int>(now - impl_->lastFrameTime_);
+            const qint64 elapsed = now - impl_->lastFrameTime_;
+            impl_->measureLatencyMs_ = static_cast<int>(std::clamp<qint64>(
+                elapsed, 0, std::numeric_limits<int>::max()));
             Q_EMIT latencyUpdated(impl_->measureLatencyMs_);
         }
         impl_->lastFrame_ = f;
