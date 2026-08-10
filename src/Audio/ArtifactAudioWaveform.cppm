@@ -222,7 +222,6 @@ WaveformData AudioWaveformGenerator::generateRange(const AudioSegment& segment,
     WaveformData data;
     data.width = displayWidth;
     data.sampleRate = segment.sampleRate;
-    data.startFrame = segment.startFrame + startSample;
 
     const QVector<float> mono = monoSamples(segment);
     if (mono.isEmpty() || displayWidth <= 0 || startSample < 0 || sampleCount <= 0) {
@@ -238,6 +237,11 @@ WaveformData AudioWaveformGenerator::generateRange(const AudioSegment& segment,
     if (start >= end) {
         return data;
     }
+
+    data.startFrame = segment.startFrame >
+        std::numeric_limits<qint64>::max() - startSample
+        ? std::numeric_limits<qint64>::max()
+        : segment.startFrame + startSample;
 
     AudioSegment sub;
     sub.sampleRate = segment.sampleRate;
@@ -719,12 +723,14 @@ std::vector<qint64> AudioSyncTools::detectBeats(const AudioSegment& segment) {
         return beats;
     }
 
-    const int windowSize = std::max(1, segment.sampleRate / 10);
+    const int windowSize = std::min(
+        mono.size(), std::max(1, segment.sampleRate / 10));
     const float threshold = 0.5f;
 
     double prevEnergy = 0.0;
 
-    for (int i = 0; i + windowSize < mono.size(); i += std::max(1, windowSize / 2)) {
+    const int hopSize = std::max(1, windowSize / 2);
+    for (int i = 0; i <= mono.size() - windowSize; ) {
         double energy = 0.0;
         for (int j = i; j < i + windowSize && j < mono.size(); ++j) {
             energy += static_cast<double>(mono[j]) * mono[j];
@@ -735,6 +741,11 @@ std::vector<qint64> AudioSyncTools::detectBeats(const AudioSegment& segment) {
             beats.push_back(static_cast<qint64>(i));
         }
         prevEnergy = energy;
+
+        if (i > mono.size() - windowSize - hopSize) {
+            break;
+        }
+        i += hopSize;
     }
 
     return beats;
