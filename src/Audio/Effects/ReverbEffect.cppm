@@ -431,7 +431,21 @@ void ReverbEffect::setParameter(const String& name, float value) {
     else if (name == "density")      density_     = std::clamp(finiteOr(value, 0.7f), 0.0f, 1.0f);
     else if (name == "mod_depth")    modDepth_    = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
     else if (name == "mod_rate")     modRate_     = std::clamp(finiteOr(value, 0.8f), 0.1f, 20.0f);
-    else if (name == "size")         size_        = std::clamp(finiteOr(value, 1.0f), 0.5f, 2.0f);
+    else if (name == "size") {
+        const float nextSize = std::clamp(finiteOr(value, 1.0f), 0.5f, 2.0f);
+        if (nextSize != size_) {
+            size_ = nextSize;
+            inputDiff1_[0].setParametersSamples(scaleDelay(kInDiff1a), diffusion_ * 0.75f);
+            inputDiff1_[1].setParametersSamples(scaleDelay(kInDiff1b), diffusion_ * 0.75f);
+            inputDiff2_[0].setParametersSamples(scaleDelay(kInDiff2a), diffusion_ * 0.625f);
+            inputDiff2_[1].setParametersSamples(scaleDelay(kInDiff2b), diffusion_ * 0.625f);
+            tankAP_[0].setParametersSamples(scaleDelay(kTankAP1), -decay_ * 0.7f);
+            tankAP_[1].setParametersSamples(scaleDelay(kTankAP2), -decay_ * 0.7f);
+            // FDN delay lengths are allocated from size_, so rebuild only
+            // that tail network. The Dattorro delay state remains intact.
+            initFDN();
+        }
+    }
     else if (name == "stereo_width") stereoWidth_ = std::clamp(finiteOr(value, 1.0f), 0.0f, 1.0f);
     else if (name == "er_level")     erLevel_     = std::clamp(finiteOr(value, 0.3f), 0.0f, 1.0f);
     else if (name == "er_delay")     erDelay_     = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
