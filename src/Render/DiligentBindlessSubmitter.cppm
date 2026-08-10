@@ -104,8 +104,14 @@ bool deviceCanUseBindless(IRenderDevice* device)
 
 void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size)
 {
+    if (!ctx || !buf || !data || size == 0) {
+        return;
+    }
     void* mapped = nullptr;
     ctx->MapBuffer(buf, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+    if (!mapped) {
+        return;
+    }
     std::memcpy(mapped, data, size);
     ctx->UnmapBuffer(buf, MAP_WRITE);
 }

@@ -44,8 +44,14 @@ using namespace ArtifactCore;
 static void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size,
                             ArtifactCore::RenderCostStats* stats = nullptr)
 {
+    if (!ctx || !buf || !data || size == 0) {
+        return;
+    }
     void* pData = nullptr;
     ctx->MapBuffer(buf, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    if (!pData) {
+        return;
+    }
     std::memcpy(pData, data, size);
     ctx->UnmapBuffer(buf, MAP_WRITE);
     if (stats) {
