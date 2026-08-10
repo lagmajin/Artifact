@@ -760,17 +760,23 @@ float AudioSyncTools::detectTempo(const AudioSegment& segment) {
         return 120.0f;
     }
 
-    float avgInterval = 0.0f;
+    double avgInterval = 0.0;
     for (size_t i = 1; i < beats.size(); ++i) {
-        avgInterval += static_cast<float>(beats[i] - beats[i - 1]);
+        avgInterval += static_cast<double>(beats[i] - beats[i - 1]);
     }
-    avgInterval /= static_cast<float>(beats.size() - 1);
+    avgInterval /= static_cast<double>(beats.size() - 1);
+    if (!std::isfinite(avgInterval) || avgInterval <= 0.0) {
+        return 120.0f;
+    }
 
-    float bpm = static_cast<float>(segment.sampleRate) * 60.0f / std::max(1.0f, avgInterval);
-    while (bpm < 60.0f) bpm *= 2.0f;
-    while (bpm > 180.0f) bpm /= 2.0f;
+    double bpm = static_cast<double>(segment.sampleRate) * 60.0 / avgInterval;
+    if (!std::isfinite(bpm) || bpm <= 0.0) {
+        return 120.0f;
+    }
+    while (bpm < 60.0) bpm *= 2.0;
+    while (bpm > 180.0) bpm /= 2.0;
 
-    return bpm;
+    return std::isfinite(bpm) ? static_cast<float>(bpm) : 120.0f;
 }
 
 AudioSegment AudioSyncTools::normalize(const AudioSegment& segment, float targetDb) {
