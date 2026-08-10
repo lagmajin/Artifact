@@ -2310,6 +2310,18 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
   impl_->mixer_->connectToCoreMixer(
       composition ? composition->getAudioMixer() : nullptr);
 
+  // The advanced routing editor edits the Core master bus directly. Mirror
+  // that value into the playback service after the Core binding is refreshed,
+  // otherwise the compact UI and the actual output gain/mute can diverge.
+  if (const auto coreMixer = composition ? composition->getAudioMixer() : nullptr) {
+    if (const auto masterBus = coreMixer->getMasterBus()) {
+      const float masterVolume = std::pow(
+          10.0f, masterBus->getVolume() / 20.0f);
+      ArtifactAudioService::instance()->setMasterVolume(masterVolume);
+      ArtifactAudioService::instance()->setMasterMuted(masterBus->isMute());
+    }
+  }
+
   impl_->mixer_->syncFromComposition(composition);
   impl_->clearRows();
   const auto strips = impl_->mixer_->allChannelStrips();
