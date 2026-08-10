@@ -135,7 +135,9 @@ namespace Artifact
 
         float calcScrubVolume() const
         {
-            if (lastFrame_ < 0 || lastFrameTime_ <= 0) return 0.0f;
+            if (!scrubActive || lastFrame_ < 0 || lastFrameTime_ <= 0) {
+                return 0.0f;
+            }
             const float v = std::max(0.0f, currentSpeedFps_);
             if (v < 0.35f) return 0.0f;
             const float normalized = std::clamp(v / 18.0f, 0.0f, 1.0f);
@@ -287,6 +289,9 @@ namespace Artifact
         impl_->scrubActive = false;
         impl_->debounceTimer->stop();
         impl_->pendingFrame_ = -1;
+        impl_->lastFrame_ = -1;
+        impl_->lastFrameTime_ = 0;
+        impl_->currentSpeedFps_ = 0.0f;
         if (impl_->audioRenderer_) {
             impl_->audioRenderer_->clearBuffer();
         }
