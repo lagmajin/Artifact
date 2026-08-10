@@ -534,6 +534,13 @@ void AudioChannelStripWidget::updateMeters() {
 
 void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
     QWidget::paintEvent(event);
+
+    // The strip can outlive its bus briefly while the mixer is rebuilding its
+    // rows.  updateMeters() already treats that state as inactive; keep the
+    // paint path consistent and avoid dereferencing a detached bus.
+    if (!bus_) {
+        return;
+    }
     
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
