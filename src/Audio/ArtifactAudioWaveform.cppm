@@ -273,32 +273,33 @@ AudioAnalyzer::AudioAnalyzer(QObject* parent)
 AudioAnalyzer::~AudioAnalyzer() = default;
 
 void AudioAnalyzer::setFFTSize(int size) {
-    fftSize_ = size;
+    fftSize_ = std::max(2, size);
     setWindow(WindowType::Hann);
 }
 
 void AudioAnalyzer::setHopSize(int size) {
-    hopSize_ = size;
+    hopSize_ = std::max(1, size);
 }
 
 void AudioAnalyzer::setWindow(WindowType type) {
     window_.resize(fftSize_);
+    const float denominator = static_cast<float>(std::max(1, fftSize_ - 1));
 
     switch (type) {
         case WindowType::Hann:
             for (int i = 0; i < fftSize_; ++i) {
-                window_[i] = 0.5f * (1.0f - std::cos(2.0f * 3.14159f * i / (fftSize_ - 1)));
+                window_[i] = 0.5f * (1.0f - std::cos(2.0f * 3.14159f * i / denominator));
             }
             break;
         case WindowType::Hamming:
             for (int i = 0; i < fftSize_; ++i) {
-                window_[i] = 0.54f - 0.46f * std::cos(2.0f * 3.14159f * i / (fftSize_ - 1));
+                window_[i] = 0.54f - 0.46f * std::cos(2.0f * 3.14159f * i / denominator);
             }
             break;
         case WindowType::Blackman:
             for (int i = 0; i < fftSize_; ++i) {
-                window_[i] = 0.42f - 0.5f * std::cos(2.0f * 3.14159f * i / (fftSize_ - 1))
-                          + 0.08f * std::cos(4.0f * 3.14159f * i / (fftSize_ - 1));
+                window_[i] = 0.42f - 0.5f * std::cos(2.0f * 3.14159f * i / denominator)
+                          + 0.08f * std::cos(4.0f * 3.14159f * i / denominator);
             }
             break;
         default:
@@ -369,7 +370,7 @@ std::vector<std::vector<float>> AudioAnalyzer::computeSpectrogram(const AudioSeg
     }
 
     for (int t = 0; t < timeSteps; ++t) {
-        const int start = t * stepSize;
+        const qint64 start = static_cast<qint64>(t) * stepSize;
         if (start + fftSize_ > mono.size()) {
             break;
         }
@@ -378,7 +379,7 @@ std::vector<std::vector<float>> AudioAnalyzer::computeSpectrogram(const AudioSeg
         frame.sampleRate = segment.sampleRate;
         frame.layout = AudioChannelLayout::Mono;
         frame.channelData.resize(1);
-        frame.channelData[0] = mono.sliced(start, fftSize_);
+        frame.channelData[0] = mono.sliced(static_cast<int>(start), fftSize_);
 
         auto spec = computeSpectrum(frame);
         spectrogram.push_back(std::move(spec));
@@ -433,7 +434,13 @@ std::vector<AudioAnalyzer::BandInfo> AudioAnalyzer::computeBands(const AudioSegm
         return bands;
     }
 
+    if (segment.sampleRate <= 0 || fftSize_ <= 0) {
+        return bands;
+    }
     const float binWidth = static_cast<float>(segment.sampleRate) / static_cast<float>(fftSize_);
+    if (!std::isfinite(binWidth) || binWidth <= 0.0f) {
+        return bands;
+    }
 
     for (auto& band : bands) {
         const int lowBin = static_cast<int>(band.lowFreq / binWidth);
