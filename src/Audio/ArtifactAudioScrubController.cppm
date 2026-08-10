@@ -115,7 +115,11 @@ namespace Artifact
 
             for (auto& ch : segment.channelData) {
                 for (auto& s : ch) {
-                    s *= vol;
+                    const float input = std::isfinite(s) ? s : 0.0f;
+                    const float scaled = input * vol;
+                    s = std::isfinite(scaled)
+                        ? scaled
+                        : std::copysign(std::numeric_limits<float>::max(), scaled);
                 }
             }
 
