@@ -28,6 +28,11 @@ WASAPIDevice::WASAPIDevice() : impl_(new Impl()) {}
 WASAPIDevice::~WASAPIDevice() { close(); delete impl_; impl_ = nullptr; }
 
 bool WASAPIDevice::open(int sampleRate, int channels, int framesPerBuffer) {
+    if (sampleRate <= 0 || sampleRate > 384000 ||
+        channels <= 0 || channels > 64 ||
+        framesPerBuffer <= 0 || framesPerBuffer > (1 << 20)) {
+        return false;
+    }
     impl_->sampleRate_ = sampleRate; impl_->channels_ = channels; impl_->framesPerBuffer_ = framesPerBuffer;
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) return false;

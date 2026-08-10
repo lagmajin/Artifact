@@ -30,6 +30,11 @@ PortAudioDevice::PortAudioDevice() : impl_(new Impl()) {}
 PortAudioDevice::~PortAudioDevice() { close(); delete impl_; impl_ = nullptr; }
 
 bool PortAudioDevice::open(int sampleRate, int channels, int framesPerBuffer) {
+    if (sampleRate <= 0 || sampleRate > 384000 ||
+        channels <= 0 || channels > 64 ||
+        framesPerBuffer <= 0 || framesPerBuffer > (1 << 20)) {
+        return false;
+    }
     impl_->sampleRate_ = sampleRate; impl_->channels_ = channels; impl_->framesPerBuffer_ = framesPerBuffer;
 #ifdef USE_PORTAUDIO
     PaError err = Pa_Initialize();
@@ -37,9 +42,11 @@ bool PortAudioDevice::open(int sampleRate, int channels, int framesPerBuffer) {
     PaStreamParameters outParams;
     outParams.device = Pa_GetDefaultOutputDevice();
     if (outParams.device == paNoDevice) return false;
+    const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(outParams.device);
+    if (!deviceInfo) return false;
     outParams.channelCount = impl_->channels_;
     outParams.sampleFormat = paFloat32;
-    outParams.suggestedLatency = Pa_GetDeviceInfo(outParams.device)->defaultLowOutputLatency;
+    outParams.suggestedLatency = deviceInfo->defaultLowOutputLatency;
     outParams.hostApiSpecificStreamInfo = nullptr;
 
     err = Pa_OpenStream(&impl_->stream_, nullptr, &outParams, impl_->sampleRate_, impl_->framesPerBuffer_, paNoFlag, nullptr, nullptr);
