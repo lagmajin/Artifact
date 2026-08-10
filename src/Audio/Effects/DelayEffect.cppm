@@ -1,5 +1,6 @@
 module;
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include <QList>
@@ -14,6 +15,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeDelaySample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -52,28 +60,33 @@ void DelayEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCor
         inL = finiteOr(inL, 0.0f);
         inR = finiteOr(inR, inL);
 
-        float delayedL = delayL_.read(delaySamplesL);
-        float delayedR = delayR_.read(delaySamplesR);
+        float delayedL = sanitizeDelaySample(delayL_.read(delaySamplesL));
+        float delayedR = sanitizeDelaySample(delayR_.read(delaySamplesR));
 
-        fbFilterStateL_ = fbFilterStateL_ + dampCoeff * (delayedL - fbFilterStateL_);
-        fbFilterStateR_ = fbFilterStateR_ + dampCoeff * (delayedR - fbFilterStateR_);
+        fbFilterStateL_ = sanitizeDelaySample(
+            fbFilterStateL_ + dampCoeff * (delayedL - fbFilterStateL_));
+        fbFilterStateR_ = sanitizeDelaySample(
+            fbFilterStateR_ + dampCoeff * (delayedR - fbFilterStateR_));
 
-        float filteredFbL = delayedL - fbFilterStateL_ * dampCoeff;
-        float filteredFbR = delayedR - fbFilterStateR_ * dampCoeff;
+        float filteredFbL = sanitizeDelaySample(delayedL - fbFilterStateL_ * dampCoeff);
+        float filteredFbR = sanitizeDelaySample(delayedR - fbFilterStateR_ * dampCoeff);
 
         if (pingPong_) {
-            delayL_.write(inL + filteredFbR * feedback_);
-            delayR_.write(inR + filteredFbL * feedback_);
+            delayL_.write(sanitizeDelaySample(inL + filteredFbR * feedback_));
+            delayR_.write(sanitizeDelaySample(inR + filteredFbL * feedback_));
         } else {
-            delayL_.write(inL + filteredFbL * feedback_);
-            delayR_.write(inR + filteredFbR * feedback_);
+            delayL_.write(sanitizeDelaySample(inL + filteredFbL * feedback_));
+            delayR_.write(sanitizeDelaySample(inR + filteredFbR * feedback_));
         }
 
         if (numChannels >= 2) {
-            segment.channelData[0][i] = inL * dryLevel_ + delayedL * wetLevel_;
-            segment.channelData[1][i] = inR * dryLevel_ + delayedR * wetLevel_;
+            segment.channelData[0][i] = sanitizeDelaySample(
+                inL * dryLevel_ + delayedL * wetLevel_);
+            segment.channelData[1][i] = sanitizeDelaySample(
+                inR * dryLevel_ + delayedR * wetLevel_);
         } else {
-            segment.channelData[0][i] = inL * dryLevel_ + (delayedL + delayedR) * 0.5f * wetLevel_;
+            segment.channelData[0][i] = sanitizeDelaySample(
+                inL * dryLevel_ + (delayedL + delayedR) * 0.5f * wetLevel_);
         }
     }
 }

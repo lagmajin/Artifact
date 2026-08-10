@@ -1,6 +1,7 @@
 module;
 #include <QList>
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 module Artifact.Audio.Effects.Chorus;
@@ -15,6 +16,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeChorusSample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -73,14 +81,14 @@ void ChorusEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
             if (readDelayL < 1.0f) readDelayL = 1.0f;
             if (readDelayR < 1.0f) readDelayR = 1.0f;
 
-            float delL = delayL_[v].read(readDelayL);
-            float delR = delayR_[v].read(readDelayR);
+            float delL = sanitizeChorusSample(delayL_[v].read(readDelayL));
+            float delR = sanitizeChorusSample(delayR_[v].read(readDelayR));
 
-            chorusL += delL;
-            chorusR += delR;
+            chorusL = sanitizeChorusSample(chorusL + delL);
+            chorusR = sanitizeChorusSample(chorusR + delR);
 
-            delayL_[v].write(inL + delL * feedback_);
-            delayR_[v].write(inR + delR * feedback_);
+            delayL_[v].write(sanitizeChorusSample(inL + delL * feedback_));
+            delayR_[v].write(sanitizeChorusSample(inR + delR * feedback_));
         }
 
         float voiceScale = 1.0f / static_cast<float>(kNumVoices);
@@ -88,10 +96,13 @@ void ChorusEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
         chorusR *= voiceScale;
 
         if (numChannels >= 2) {
-            segment.channelData[0][i] = inL * dryLevel_ + chorusL * wetLevel_;
-            segment.channelData[1][i] = inR * dryLevel_ + chorusR * wetLevel_;
+            segment.channelData[0][i] = sanitizeChorusSample(
+                inL * dryLevel_ + chorusL * wetLevel_);
+            segment.channelData[1][i] = sanitizeChorusSample(
+                inR * dryLevel_ + chorusR * wetLevel_);
         } else {
-            segment.channelData[0][i] = inL * dryLevel_ + (chorusL + chorusR) * 0.5f * wetLevel_;
+            segment.channelData[0][i] = sanitizeChorusSample(
+                inL * dryLevel_ + (chorusL + chorusR) * 0.5f * wetLevel_);
         }
     }
 }
