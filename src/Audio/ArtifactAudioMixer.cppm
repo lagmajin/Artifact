@@ -435,6 +435,10 @@ void AudioMixerMasterBus::connectToCoreBus(ArtifactCore::SharedPtr<ArtifactCore:
     impl_->coreBus_ = coreBus;
     if (coreBus) {
         impl_->volume_ = std::pow(10.0f, coreBus->getVolume() / 20.0f);
+        impl_->muted_ = coreBus->isMute();
+    } else {
+        impl_->volume_ = 1.0f;
+        impl_->muted_ = false;
     }
 }
 
@@ -614,6 +618,8 @@ void AudioMixer::clearChannelStrips()
 void AudioMixer::connectToCoreMixer(ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> coreMixer)
 {
     impl_->coreMixer_ = coreMixer;
+    impl_->masterBus_->connectToCoreBus(
+        coreMixer ? coreMixer->getMasterBus() : nullptr);
     if (impl_->composition_) {
         syncFromComposition(impl_->composition_);
     }
