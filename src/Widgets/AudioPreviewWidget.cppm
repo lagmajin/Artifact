@@ -29,6 +29,7 @@ module;
 #include <wobjectimpl.h>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 module Artifact.Widgets.AudioPreview;
 
@@ -334,7 +335,13 @@ public:
 
         ArtifactCore::AudioSegment seg;
         while (decoder_->decodeNextSegment(seg)) {
-            totalSamples_ += seg.frameCount();
+            const int segmentFrames = seg.frameCount();
+            if (segmentFrames > 0) {
+                totalSamples_ = totalSamples_ >
+                        std::numeric_limits<int>::max() - segmentFrames
+                    ? std::numeric_limits<int>::max()
+                    : totalSamples_ + segmentFrames;
+            }
             preloadedSegments_.push_back(seg);
         }
 
@@ -346,6 +353,7 @@ public:
         currentSample_ = 0;
         currentSegmentIndex_ = 0;
         currentSegmentOffset_ = 0;
+        feedCounter_ = 0;
         eosReached_ = false;
 
         levelTickCounter_ = 0;
@@ -396,6 +404,7 @@ public:
         currentSegmentIndex_ = 0;
         currentSegmentOffset_ = 0;
         currentSample_ = 0;
+        feedCounter_ = 0;
         eosReached_ = false;
         emit positionChanged(0);
         emit levelUpdated(-96.0f, -96.0f, -96.0f, -96.0f);
@@ -419,16 +428,17 @@ public:
             return;
         }
         currentSample_ = std::clamp(sampleIndex, 0, totalSamples_ - 1);
-        int pos = 0;
+        qint64 pos = 0;
         for (size_t i = 0; i < preloadedSegments_.size(); ++i) {
             int frames = preloadedSegments_[i].frameCount();
-            if (pos + frames > currentSample_) {
+            if (pos + static_cast<qint64>(frames) > currentSample_) {
                 currentSegmentIndex_ = i;
-                currentSegmentOffset_ = currentSample_ - pos;
+                currentSegmentOffset_ = static_cast<int>(
+                    static_cast<qint64>(currentSample_) - pos);
                 emit positionChanged(currentSample_);
                 return;
             }
-            pos += frames;
+            pos += static_cast<qint64>(frames);
         }
         emit positionChanged(currentSample_);
     }
@@ -468,9 +478,8 @@ private slots:
         }
 
         // Feed segments to AudioRenderer at half the buffer rate (~10ms chunks)
-        static int feedCounter = 0;
-        feedCounter++;
-        if (feedCounter % 4 == 0 || renderer_->bufferedFrames() < 1024) {
+        feedCounter_ = (feedCounter_ + 1) % 4;
+        if (feedCounter_ == 0 || renderer_->bufferedFrames() < 1024) {
             const auto& seg = preloadedSegments_[currentSegmentIndex_];
             if (currentSegmentOffset_ < seg.frameCount()) {
                 ArtifactCore::AudioSegment chunk;
@@ -506,7 +515,10 @@ private slots:
             int remaining = seg.frameCount() - currentSegmentOffset_;
             int advance = std::min(remaining, 256);
             currentSegmentOffset_ += advance;
-            currentSample_ += advance;
+            currentSample_ = currentSample_ >
+                    std::numeric_limits<int>::max() - advance
+                ? std::numeric_limits<int>::max()
+                : currentSample_ + advance;
             if (currentSegmentOffset_ >= seg.frameCount()) {
                 currentSegmentOffset_ = 0;
                 ++currentSegmentIndex_;
@@ -568,6 +580,7 @@ private:
     int currentSample_ = 0;
     size_t currentSegmentIndex_ = 0;
     int currentSegmentOffset_ = 0;
+    int feedCounter_ = 0;
     bool isPlaying_ = false;
     bool eosReached_ = false;
     float volume_ = 1.0f;
