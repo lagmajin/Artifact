@@ -647,11 +647,20 @@ public:
                            << "bufferedFrames=" << audioRenderer_->bufferedFrames()
                            << "targetBufferedFrames=" << audioTargetBufferedFrames_;
             }
-            const double probeFrameRate = std::max<double>(
-                1e-6, static_cast<double>(frameRate_.framerate()));
+            const double probeFrameRate = static_cast<double>(frameRate_.framerate());
+            const double probeSampleCount =
+                static_cast<double>(audioSampleRate_) / probeFrameRate;
+            constexpr double maxSamplesPerFrame = static_cast<double>(
+                std::numeric_limits<int>::max() / 16);
+            if (!std::isfinite(probeFrameRate) || probeFrameRate <= 0.0 ||
+                !std::isfinite(probeSampleCount) || probeSampleCount < 1.0 ||
+                probeSampleCount > maxSamplesPerFrame) {
+                qWarning() << "[PlaybackEngine][Audio] invalid frame rate for audio probe"
+                           << "frameRate=" << probeFrameRate;
+                return;
+            }
             const int probeFrames = std::max(
-                1, static_cast<int>(std::round(
-                       static_cast<double>(audioSampleRate_) / probeFrameRate)));
+                1, static_cast<int>(std::round(probeSampleCount)));
             AudioSegment probeSegment;
             if (composition_->getAudio(
                     probeSegment, FramePosition(audioNextFrame_), probeFrames,
@@ -678,14 +687,25 @@ public:
             audioLastSentMuted_ = audioMasterMuted_;
         }
 
-        const double safeFrameRate = std::max<double>(1e-6, static_cast<double>(frameRate_.framerate()));
-        const int samplesPerFrame = static_cast<int>(std::round(static_cast<double>(audioSampleRate_) / safeFrameRate));
+        const double safeFrameRate = static_cast<double>(frameRate_.framerate());
+        const double exactSamplesPerFrame =
+            static_cast<double>(audioSampleRate_) / safeFrameRate;
+        constexpr double maxSamplesPerFrame = static_cast<double>(
+            std::numeric_limits<int>::max() / 16);
+        if (!std::isfinite(safeFrameRate) || safeFrameRate <= 0.0 ||
+            !std::isfinite(exactSamplesPerFrame) ||
+            exactSamplesPerFrame < 1.0 ||
+            exactSamplesPerFrame > maxSamplesPerFrame) {
+            qWarning() << "[PlaybackEngine][Audio] invalid frame rate for audio fill"
+                       << "frameRate=" << safeFrameRate;
+            return;
+        }
+        const int samplesPerFrame = static_cast<int>(
+            std::round(exactSamplesPerFrame));
         if (samplesPerFrame <= 0) return;
 
         // Exact (fractional) samples-per-frame used by the accumulator to eliminate
         // integer rounding drift at non-integer frame rates (e.g. 29.97, 23.976 fps).
-        const double exactSamplesPerFrame = static_cast<double>(audioSampleRate_) / safeFrameRate;
-
         if (audioTargetBufferedFrames_ == 0) {
             // 先読みは16フレーム分程度に抑える（48フレームは重すぎる）
             audioTargetBufferedFrames_ = static_cast<size_t>(
@@ -1149,7 +1169,9 @@ void ArtifactPlaybackEngine::setAudioClockProvider(const std::function<double()>
 }
 
 void ArtifactPlaybackEngine::setAudioMasterVolume(float volume) {
-    impl_->audioMasterVolume_ = std::clamp(volume, 0.0f, 2.0f);
+    impl_->audioMasterVolume_ = std::isfinite(volume)
+        ? std::clamp(volume, 0.0f, 2.0f)
+        : 1.0f;
 }
 
 float ArtifactPlaybackEngine::audioMasterVolume() const {
