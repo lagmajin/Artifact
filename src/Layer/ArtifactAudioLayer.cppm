@@ -436,27 +436,37 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
   }
 
   auto *composition = static_cast<ArtifactAbstractComposition *>(this->composition());
+  const double requestedFps = composition ? composition->frameRate().framerate() : 0.0;
   const double compositionFps =
-      (composition && composition->frameRate().framerate() > 0.0)
-          ? composition->frameRate().framerate()
-          : 30.0;
+      (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
 
   const qint64 sourceStartFrame =
       std::max<qint64>(0, startTime().framePosition());
-  const qint64 sourceDurationFrames =
-      std::max<qint64>(1, outPoint().framePosition() - inPoint().framePosition());
   const qint64 sourceFrameCount =
       static_cast<qint64>(impl_->pcm().size() /
                           std::max(1, impl_->sourceChannelCount_));
 
-  const qint64 startSample = std::clamp<qint64>(
-      std::llround((static_cast<double>(sourceStartFrame) / compositionFps) *
-                   impl_->sourceSampleRate_),
-      0, std::max<qint64>(0, sourceFrameCount - 1));
-  const qint64 sampleCount = std::clamp<qint64>(
-      std::llround((static_cast<double>(sourceDurationFrames) / compositionFps) *
-                   impl_->sourceSampleRate_),
-      1, std::max<qint64>(1, sourceFrameCount - startSample));
+  const long double sourceStartSamples =
+      static_cast<long double>(sourceStartFrame) /
+      static_cast<long double>(compositionFps) * impl_->sourceSampleRate_;
+  const long double durationFrames = std::max<long double>(
+      1.0L,
+      static_cast<long double>(outPoint().framePosition()) -
+      static_cast<long double>(inPoint().framePosition()));
+  const long double sourceDurationSamples =
+      durationFrames / static_cast<long double>(compositionFps) *
+      impl_->sourceSampleRate_;
+  const auto clampRounded = [](long double value, qint64 lower, qint64 upper) {
+    if (!std::isfinite(value)) return lower;
+    const long double rounded = std::round(value);
+    if (rounded <= static_cast<long double>(lower)) return lower;
+    if (rounded >= static_cast<long double>(upper)) return upper;
+    return static_cast<qint64>(rounded);
+  };
+  const qint64 startSample = clampRounded(
+      sourceStartSamples, 0, std::max<qint64>(0, sourceFrameCount - 1));
+  const qint64 sampleCount = clampRounded(
+      sourceDurationSamples, 1, std::max<qint64>(1, sourceFrameCount - startSample));
 
   const int firstSample = static_cast<int>(std::clamp<qint64>(startSample, 0, sourceFrameCount));
   const int lastSample = static_cast<int>(std::clamp<qint64>(startSample + sampleCount, firstSample, sourceFrameCount));
