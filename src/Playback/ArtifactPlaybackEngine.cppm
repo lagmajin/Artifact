@@ -799,7 +799,9 @@ public:
                 const size_t silenceFrames = audioTargetBufferedFrames_ - buffered;
                 const int channels = std::max(1, audioRenderer_->channelCount());
                 AudioSegment silence;
-                silence.sampleRate = audioSampleRate_;
+                silence.sampleRate = audioRenderer_->sampleRate() > 0
+                    ? audioRenderer_->sampleRate()
+                    : audioSampleRate_;
                 silence.channelData.resize(channels);
                 for (int ch = 0; ch < channels; ++ch) {
                     silence.channelData[ch].resize(silenceFrames, 0.0f);
