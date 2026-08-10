@@ -11,6 +11,13 @@ import Audio.DSP.LFO;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 ChorusEffect::ChorusEffect() {
     initializeEngine();
 }
@@ -50,6 +57,8 @@ void ChorusEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
     for (int i = 0; i < numSamples; ++i) {
         float inL = segment.channelData[0][i];
         float inR = (numChannels > 1) ? segment.channelData[1][i] : inL;
+        inL = finiteOr(inL, 0.0f);
+        inR = finiteOr(inR, inL);
 
         float chorusL = 0.0f;
         float chorusR = 0.0f;
@@ -99,12 +108,12 @@ std::vector<AudioEffectParameter> ChorusEffect::getUiParameters() const {
 }
 
 void ChorusEffect::setParameter(const String& name, float value) {
-    if      (name == "rate")      rate_     = value;
-    else if (name == "depth")     depth_    = value;
-    else if (name == "delay")     delayMs_  = value;
-    else if (name == "feedback")  feedback_ = std::min(value, 0.7f);
-    else if (name == "wet_level") wetLevel_ = value;
-    else if (name == "dry_level") dryLevel_ = value;
+    if      (name == "rate")      rate_     = std::clamp(finiteOr(value, 0.8f), 0.1f, 5.0f);
+    else if (name == "depth")     depth_    = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
+    else if (name == "delay")     delayMs_  = std::clamp(finiteOr(value, 7.0f), 1.0f, 30.0f);
+    else if (name == "feedback")  feedback_ = std::clamp(finiteOr(value, 0.1f), 0.0f, 0.7f);
+    else if (name == "wet_level") wetLevel_ = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
+    else if (name == "dry_level") dryLevel_ = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
 
     initializeEngine();
 }
@@ -120,7 +129,7 @@ float ChorusEffect::getParameter(const String& name) const {
 }
 
 void ChorusEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate;
+    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
     initializeEngine();
 }
 

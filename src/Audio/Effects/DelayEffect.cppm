@@ -10,6 +10,13 @@ import Audio.DSP.DelayLine;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 DelayEffect::DelayEffect() {
     initializeDelays();
 }
@@ -42,6 +49,8 @@ void DelayEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCor
     for (int i = 0; i < numSamples; ++i) {
         float inL = segment.channelData[0][i];
         float inR = (numChannels > 1) ? segment.channelData[1][i] : inL;
+        inL = finiteOr(inL, 0.0f);
+        inR = finiteOr(inR, inL);
 
         float delayedL = delayL_.read(delaySamplesL);
         float delayedR = delayR_.read(delaySamplesR);
@@ -82,12 +91,12 @@ std::vector<AudioEffectParameter> DelayEffect::getUiParameters() const {
 }
 
 void DelayEffect::setParameter(const String& name, float value) {
-    if      (name == "delay_l")   delayTimeL_ = value;
-    else if (name == "delay_r")   delayTimeR_ = value;
-    else if (name == "feedback")  feedback_   = std::min(value, 0.95f);
-    else if (name == "high_cut")  highCut_    = value;
-    else if (name == "wet_level") wetLevel_   = value;
-    else if (name == "dry_level") dryLevel_   = value;
+    if      (name == "delay_l")   delayTimeL_ = std::clamp(finiteOr(value, 375.0f), 1.0f, 2000.0f);
+    else if (name == "delay_r")   delayTimeR_ = std::clamp(finiteOr(value, 375.0f), 1.0f, 2000.0f);
+    else if (name == "feedback")  feedback_   = std::clamp(finiteOr(value, 0.4f), 0.0f, 0.95f);
+    else if (name == "high_cut")  highCut_    = std::clamp(finiteOr(value, 0.3f), 0.0f, 1.0f);
+    else if (name == "wet_level") wetLevel_   = std::clamp(finiteOr(value, 0.3f), 0.0f, 1.0f);
+    else if (name == "dry_level") dryLevel_   = std::clamp(finiteOr(value, 0.7f), 0.0f, 1.0f);
     else if (name == "ping_pong") pingPong_   = (value > 0.5f);
 }
 
@@ -103,7 +112,7 @@ float DelayEffect::getParameter(const String& name) const {
 }
 
 void DelayEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate;
+    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
     initializeDelays();
 }
 
