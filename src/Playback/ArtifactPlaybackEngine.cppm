@@ -631,11 +631,18 @@ public:
         const auto fillStart = std::chrono::high_resolution_clock::now();
 
         if (!composition_->hasAudio()) {
-            if (audioRenderer_->isActive()) {
+            if (audioRenderer_->isActive() || audioRenderer_->bufferedFrames() > 0) {
                 qDebug() << "[PlaybackEngine][Audio] composition has no audio. Stopping output.";
                 audioRenderer_->stop();
+                audioRenderer_->clearBuffer();
+            }
+            if (audioRenderer_->isDeviceOpen()) {
                 audioRenderer_->closeDevice();
             }
+            audioTargetBufferedFrames_ = 0;
+            audioSampleAccumulator_ = 0.0;
+            audioSeekPending_ = true;
+            audioExhausted_ = false;
             return;
         }
 
@@ -1211,11 +1218,13 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     diagnostics.targetBufferedFrames = impl_->audioTargetBufferedFrames_;
     diagnostics.openRetryCount = impl_->audioOpenRetryCount_;
     diagnostics.resyncClearCount = impl_->audioResyncClearCount_;
-        diagnostics.clockCorrectionCount = impl_->audioClockCorrectionCount_;
-    diagnostics.underflowCount = impl_->audioRenderer_->underflowCount();
-    diagnostics.overflowCount = impl_->audioRenderer_->overflowCount();
+    diagnostics.clockCorrectionCount = impl_->audioClockCorrectionCount_;
+    if (impl_->audioRenderer_) {
+        diagnostics.underflowCount = impl_->audioRenderer_->underflowCount();
+        diagnostics.overflowCount = impl_->audioRenderer_->overflowCount();
+        diagnostics.channelCount = impl_->audioRenderer_->channelCount();
+    }
     diagnostics.sampleRate = impl_->audioSampleRate_;
-    diagnostics.channelCount = impl_->audioRenderer_->channelCount();
     diagnostics.formatMismatchCount = impl_->audioFormatMismatchCount_;
     return diagnostics;
 }
