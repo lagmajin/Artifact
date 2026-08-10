@@ -25,6 +25,7 @@ public:
     int framesPerBuffer_ = 512;
     std::uint64_t framesWritten_ = 0;
     AudioDeviceState state_ = AudioDeviceState::Closed;
+    bool portAudioInitialized_ = false;
 };
 
 PortAudioDevice::PortAudioDevice() : impl_(new Impl()) {}
@@ -36,22 +37,28 @@ bool PortAudioDevice::open(int sampleRate, int channels, int framesPerBuffer) {
         framesPerBuffer <= 0 || framesPerBuffer > (1 << 20)) {
         return false;
     }
+    close();
     impl_->sampleRate_ = sampleRate; impl_->channels_ = channels; impl_->framesPerBuffer_ = framesPerBuffer;
 #ifdef USE_PORTAUDIO
     PaError err = Pa_Initialize();
     if (err != paNoError) return false;
+    impl_->portAudioInitialized_ = true;
+    const auto fail = [this]() {
+        close();
+        return false;
+    };
     PaStreamParameters outParams;
     outParams.device = Pa_GetDefaultOutputDevice();
-    if (outParams.device == paNoDevice) return false;
+    if (outParams.device == paNoDevice) return fail();
     const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(outParams.device);
-    if (!deviceInfo) return false;
+    if (!deviceInfo) return fail();
     outParams.channelCount = impl_->channels_;
     outParams.sampleFormat = paFloat32;
     outParams.suggestedLatency = deviceInfo->defaultLowOutputLatency;
     outParams.hostApiSpecificStreamInfo = nullptr;
 
     err = Pa_OpenStream(&impl_->stream_, nullptr, &outParams, impl_->sampleRate_, impl_->framesPerBuffer_, paNoFlag, nullptr, nullptr);
-    if (err != paNoError) return false;
+    if (err != paNoError) return fail();
     impl_->state_ = AudioDeviceState::Opened;
     return true;
 #else
@@ -66,7 +73,10 @@ void PortAudioDevice::close() {
         Pa_CloseStream(impl_->stream_);
         impl_->stream_ = nullptr;
     }
-    Pa_Terminate();
+    if (impl_->portAudioInitialized_) {
+        Pa_Terminate();
+        impl_->portAudioInitialized_ = false;
+    }
     impl_->state_ = AudioDeviceState::Closed;
 #else
     impl_->state_ = AudioDeviceState::Closed;

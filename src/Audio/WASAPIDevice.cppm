@@ -25,6 +25,7 @@ public:
     int channels_ = 2;
     int framesPerBuffer_ = 512;
     AudioDeviceState state_ = AudioDeviceState::Closed;
+    bool comInitialized_ = false;
 };
 
 WASAPIDevice::WASAPIDevice() : impl_(new Impl()) {}
@@ -36,30 +37,36 @@ bool WASAPIDevice::open(int sampleRate, int channels, int framesPerBuffer) {
         framesPerBuffer <= 0 || framesPerBuffer > (1 << 20)) {
         return false;
     }
+    close();
     impl_->sampleRate_ = sampleRate; impl_->channels_ = channels; impl_->framesPerBuffer_ = framesPerBuffer;
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) return false;
+    impl_->comInitialized_ = true;
+    const auto fail = [this]() {
+        close();
+        return false;
+    };
 
     IMMDeviceEnumerator* enumerator = nullptr;
     hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-    if (FAILED(hr) || !enumerator) return false;
+    if (FAILED(hr) || !enumerator) return fail();
 
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device_);
     enumerator->Release();
-    if (FAILED(hr) || !impl_->device_) return false;
+    if (FAILED(hr) || !impl_->device_) return fail();
 
     hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&impl_->audioClient_);
-    if (FAILED(hr) || !impl_->audioClient_) return false;
+    if (FAILED(hr) || !impl_->audioClient_) return fail();
 
     hr = impl_->audioClient_->GetMixFormat(&impl_->mixFormat_);
-    if (FAILED(hr) || !impl_->mixFormat_) return false;
+    if (FAILED(hr) || !impl_->mixFormat_) return fail();
 
     const REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((impl_->framesPerBuffer_ * 10000000LL) / impl_->sampleRate_);
     hr = impl_->audioClient_->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, bufferDuration, 0, impl_->mixFormat_, nullptr);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) return fail();
 
     hr = impl_->audioClient_->GetService(__uuidof(IAudioRenderClient), (void**)&impl_->renderClient_);
-    if (FAILED(hr) || !impl_->renderClient_) return false;
+    if (FAILED(hr) || !impl_->renderClient_) return fail();
 
     impl_->state_ = AudioDeviceState::Opened;
     return true;
@@ -71,7 +78,10 @@ void WASAPIDevice::close() {
     if (impl_->audioClient_) { impl_->audioClient_->Release(); impl_->audioClient_ = nullptr; }
     if (impl_->device_) { impl_->device_->Release(); impl_->device_ = nullptr; }
     if (impl_->mixFormat_) { CoTaskMemFree(impl_->mixFormat_); impl_->mixFormat_ = nullptr; }
-    CoUninitialize();
+    if (impl_->comInitialized_) {
+        CoUninitialize();
+        impl_->comInitialized_ = false;
+    }
     impl_->state_ = AudioDeviceState::Closed;
 }
 
