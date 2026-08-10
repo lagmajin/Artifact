@@ -9,6 +9,33 @@ import std;
 
 namespace Artifact {
 
+namespace {
+
+int64_t saturatingDifference(int64_t left, int64_t right)
+{
+    const auto limits = std::numeric_limits<int64_t>{};
+    if (right < 0 && left > limits.max() + right) return limits.max();
+    if (right > 0 && left < limits.min() + right) return limits.min();
+    return left - right;
+}
+
+int64_t saturatingAdd(int64_t left, int64_t right)
+{
+    const auto limits = std::numeric_limits<int64_t>{};
+    if (right > 0 && left > limits.max() - right) return limits.max();
+    if (right < 0 && left < limits.min() - right) return limits.min();
+    return left + right;
+}
+
+uint64_t unsignedMagnitude(int64_t value)
+{
+    return value < 0
+        ? static_cast<uint64_t>(-(value + 1)) + 1u
+        : static_cast<uint64_t>(value);
+}
+
+}
+
 class AudioClockProvider::Impl {
 public:
     mutable QMutex mutex_;
@@ -126,6 +153,12 @@ void AudioClockProvider::reportVideoTime(std::chrono::microseconds videoTimeUs) 
 void AudioClockProvider::setDriftCompensation(const AudioDriftCompensation& config) {
     QMutexLocker locker(&impl_->mutex_);
     impl_->driftConfig_ = config;
+    impl_->driftConfig_.smoothingFactor =
+        std::isfinite(config.smoothingFactor)
+            ? std::clamp(config.smoothingFactor, 0.0, 1.0) : 0.1;
+    impl_->driftConfig_.thresholdUs = std::max<int64_t>(0, config.thresholdUs);
+    impl_->driftConfig_.maxCorrectionUs =
+        std::max<int64_t>(0, config.maxCorrectionUs);
 }
 
 AudioDriftCompensation AudioClockProvider::driftCompensation() const {
@@ -143,17 +176,25 @@ std::chrono::microseconds AudioClockProvider::computeDriftCompensation(
     }
 
     // Calculate raw drift
-    const int64_t rawDrift = impl_->audioTime_.count() - currentVideoTime.count();
+    const int64_t rawDrift = saturatingDifference(
+        impl_->audioTime_.count(), currentVideoTime.count());
 
     // Apply exponential moving average filter
     const double alpha = impl_->driftConfig_.smoothingFactor;
     const int64_t prevSmoothed = impl_->smoothedDrift_.count();
-    const int64_t newSmoothed = static_cast<int64_t>(
-        alpha * rawDrift + (1.0 - alpha) * prevSmoothed);
+    const long double blended =
+        static_cast<long double>(alpha) * rawDrift +
+        static_cast<long double>(1.0 - alpha) * prevSmoothed;
+    const long double minInt64 = static_cast<long double>(
+        std::numeric_limits<int64_t>::min());
+    const long double maxInt64 = static_cast<long double>(
+        std::numeric_limits<int64_t>::max());
+    const int64_t newSmoothed = static_cast<int64_t>(std::clamp(
+        blended, minInt64, maxInt64));
     impl_->smoothedDrift_ = std::chrono::microseconds(newSmoothed);
 
     // Only correct if drift exceeds threshold
-    const int64_t absSmoothed = std::abs(newSmoothed);
+    const uint64_t absSmoothed = unsignedMagnitude(newSmoothed);
     if (absSmoothed < impl_->driftConfig_.thresholdUs) {
         return currentVideoTime;
     }
@@ -168,7 +209,8 @@ std::chrono::microseconds AudioClockProvider::computeDriftCompensation(
     impl_->driftCorrectionCount_++;
 
     // Return adjusted video time (move toward audio time)
-    return currentVideoTime + std::chrono::microseconds(correction);
+    return std::chrono::microseconds(saturatingAdd(
+        currentVideoTime.count(), correction));
 }
 
 AudioClockState AudioClockProvider::state() const {
