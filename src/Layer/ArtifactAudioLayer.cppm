@@ -701,7 +701,7 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       // Mono source: interpolate and distribute to all output channels
       const float s0 = impl_->pcm()[base0];
       const float s1 = (srcFrame1 < sourceFrameCount)
-          ? impl_->pcm()[base0]
+          ? impl_->pcm()[base1]
           : 0.0f;
       const float sample = (s0 + t * (s1 - s0)) * volume;
       for (int ch = 0; ch < outChannels; ++ch) {
