@@ -710,6 +710,11 @@ void AudioMixerWidget::refreshBuses() {
     };
     layout()->addWidget(addButton);
 
+    if (!mixer_) {
+        addButton->setEnabled(false);
+        return;
+    }
+
     auto allBuses = mixer_->getAllBuses();
     bool hasMaster = false;
 
