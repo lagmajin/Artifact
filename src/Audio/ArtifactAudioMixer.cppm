@@ -616,6 +616,11 @@ void AudioMixer::updatePlaybackLevels(float leftRms, float rightRms)
 void AudioMixer::clearChannelStrips()
 {
     for (auto& pair : impl_->channelStrips_) {
+        if (impl_->coreMixer_) {
+            if (auto coreBus = pair.second->coreBus()) {
+                impl_->coreMixer_->removeBus(coreBus);
+            }
+        }
         pair.second->setCoreBus(nullptr);
     }
     std::vector<LayerID> removedIds;
