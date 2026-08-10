@@ -169,7 +169,7 @@ AudioWaveformWidget::AudioWaveformWidget(QWidget* parent)
 void AudioWaveformWidget::setSamples(const QVector<float>& samples, int sampleRate) {
     peaks_ = samples;
     rms_.clear();
-    sampleRate_ = sampleRate;
+    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
     totalSamples_ = samples.size();
     currentPosition_ = 0;
     update();
@@ -178,7 +178,7 @@ void AudioWaveformWidget::setSamples(const QVector<float>& samples, int sampleRa
 void AudioWaveformWidget::setWaveformData(const WaveformData& data) {
     peaks_ = data.peaks;
     rms_ = data.rms;
-    sampleRate_ = data.sampleRate;
+    sampleRate_ = data.sampleRate > 0 ? data.sampleRate : 44100;
     totalSamples_ = peaks_.size();
     currentPosition_ = 0;
     update();
@@ -329,6 +329,10 @@ public:
             return false;
         }
         sampleRate_ = decoder_->sampleRate();
+        if (sampleRate_ <= 0) {
+            decoder_->closeFile();
+            return false;
+        }
         numChannels_ = decoder_->channelCount();
         totalSamples_ = 0;
         preloadedSegments_.clear();
@@ -686,8 +690,10 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
             impl_->playButton_->setText("▶ Play");
         } else {
             impl_->engine_->play();
-            impl_->playButton_->setText("⏸ Pause");
-            emit playbackStarted();
+            if (impl_->engine_->isPlaying()) {
+                impl_->playButton_->setText("⏸ Pause");
+                emit playbackStarted();
+            }
         }
     });
 
@@ -755,8 +761,10 @@ void ArtifactAudioPreviewWidget::loadAudioFile(const QString& filePath) {
 void ArtifactAudioPreviewWidget::play() {
     if (!impl_->engine_->isPlaying()) {
         impl_->engine_->play();
-        impl_->playButton_->setText("⏸ Pause");
-        emit playbackStarted();
+        if (impl_->engine_->isPlaying()) {
+            impl_->playButton_->setText("⏸ Pause");
+            emit playbackStarted();
+        }
     }
 }
 
@@ -780,8 +788,11 @@ bool ArtifactAudioPreviewWidget::isPlaying() const {
 }
 
 void ArtifactAudioPreviewWidget::setVolume(float volume) {
-    impl_->engine_->setVolume(volume);
-    impl_->volumeSlider_->setValue(static_cast<int>(volume * 100));
+    const float sanitized = std::isfinite(volume)
+        ? std::clamp(volume, 0.0f, 1.0f)
+        : 1.0f;
+    impl_->engine_->setVolume(sanitized);
+    impl_->volumeSlider_->setValue(static_cast<int>(sanitized * 100.0f));
 }
 
 float ArtifactAudioPreviewWidget::volume() const {
