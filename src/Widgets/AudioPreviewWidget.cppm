@@ -228,6 +228,15 @@ void AudioWaveformWidget::paintEvent(QPaintEvent* event) {
 
     // Calculate samples per pixel
     const int samplesPerPixel = std::max(1, totalSamples_ / w);
+    const auto sampleToPixels = [centerY](float sample, double scale) {
+        if (!std::isfinite(sample) || sample <= 0.0f) {
+            return 0;
+        }
+        const double pixels = std::clamp(
+            static_cast<double>(sample) * centerY * scale,
+            0.0, static_cast<double>(centerY));
+        return static_cast<int>(pixels);
+    };
 
     // Draw RMS body first so the peak line can sit on top.
     for (int x = 0; x < w; ++x) {
@@ -239,16 +248,18 @@ void AudioWaveformWidget::paintEvent(QPaintEvent* event) {
             if (peaks_[s] > peakMax) peakMax = peaks_[s];
         }
 
-        const int yMin = centerY - static_cast<int>(peakMax * centerY * 0.9f);
-        const int yMax = centerY + static_cast<int>(peakMax * centerY * 0.9f);
+        const int peakHeight = sampleToPixels(peakMax, 0.9);
+        const int yMin = centerY - peakHeight;
+        const int yMax = centerY + peakHeight;
 
         if (!rms_.isEmpty()) {
             float rmsPeak = 0.0f;
             for (int s = startSample; s < endSample && s < rms_.size(); ++s) {
                 rmsPeak = std::max(rmsPeak, rms_[s]);
             }
-            const int rmsTop = centerY - static_cast<int>(rmsPeak * centerY * 0.75f);
-            const int rmsBottom = centerY + static_cast<int>(rmsPeak * centerY * 0.75f);
+            const int rmsHeight = sampleToPixels(rmsPeak, 0.75);
+            const int rmsTop = centerY - rmsHeight;
+            const int rmsBottom = centerY + rmsHeight;
             painter.setPen(QPen(QColor(82, 130, 220, 120), 1.0));
             painter.drawLine(x, rmsTop, x, rmsBottom);
         }
