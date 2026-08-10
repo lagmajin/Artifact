@@ -810,7 +810,7 @@ void AudioMixer::resetAllPeaks()
 
 void AudioMixer::setSampleRate(int rate)
 {
-    impl_->sampleRate_ = rate;
+    impl_->sampleRate_ = rate > 0 ? rate : 44100;
 }
 
 int AudioMixer::sampleRate() const
@@ -820,7 +820,7 @@ int AudioMixer::sampleRate() const
 
 void AudioMixer::setBufferSize(int size)
 {
-    impl_->bufferSize_ = size;
+    impl_->bufferSize_ = std::clamp(size, 1, 1 << 20);
 }
 
 int AudioMixer::bufferSize() const
