@@ -33,6 +33,8 @@ private:
 
     std::vector<Band> bands_;
     float sampleRate_ = 44100.0f;
+    std::vector<float> filterStates_;
+    int stateSampleRate_ = 0;
 
     void applyBandFilter(std::vector<float>& channelData, const Band& band);
     void calculateBiquadCoefficients(float frequency, float gain, float q,

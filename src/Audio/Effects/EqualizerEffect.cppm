@@ -44,19 +44,34 @@ void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const Artifac
     int frames = segment.frameCount();
     if (frames <= 0 || channels <= 0) return;
 
+    const float safeSampleRate = std::max(1.0f, finiteOr(sampleRate_, 44100.0f));
+    const int stateSampleRate = static_cast<int>(safeSampleRate);
+    const size_t stateCount = static_cast<size_t>(channels) * bands_.size() * 4;
+    if (stateSampleRate_ != stateSampleRate || filterStates_.size() != stateCount) {
+        stateSampleRate_ = stateSampleRate;
+        filterStates_.assign(stateCount, 0.0f);
+    }
+
     for (int ch = 0; ch < channels; ++ch) {
         if (ch >= static_cast<int>(segment.channelData.size())) break;
         auto& channelData = segment.channelData[ch];
         const int samples = std::min(frames, static_cast<int>(channelData.size()));
         if (samples <= 0) continue;
 
-        for (const auto& band : bands_) {
+        for (size_t bandIndex = 0; bandIndex < bands_.size(); ++bandIndex) {
+            const auto& band = bands_[bandIndex];
             if (std::abs(band.gain) > 0.001f) {
                 float a0, a1, a2, b0, b1, b2;
                 calculateBiquadCoefficients(band.frequency, band.gain, band.q,
                                            a0, a1, a2, b0, b1, b2);
 
-                float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+                const size_t state =
+                    (static_cast<size_t>(ch) * bands_.size() +
+                     bandIndex) * 4;
+                float& x1 = filterStates_[state];
+                float& x2 = filterStates_[state + 1];
+                float& y1 = filterStates_[state + 2];
+                float& y2 = filterStates_[state + 3];
                 for (int i = 0; i < samples; ++i) {
                     float x0 = finiteOr(channelData[i], 0.0f);
                     float y0 = sanitizeEqualizerSample(
