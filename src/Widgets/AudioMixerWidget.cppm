@@ -458,6 +458,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     panSlider->setAccessibleName(QStringLiteral("Pan: %1").arg(busName));
     panSlider->setAccessibleDescription(QStringLiteral("Adjust stereo pan for %1").arg(busName));
     connect(panSlider, &QSlider::valueChanged, this, [this](int val) {
+        if (!bus_) return;
         bus_->setPan(val / 100.0f);
     });
     layout->addWidget(panSlider);
@@ -472,6 +473,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     fader->setAccessibleName(QStringLiteral("Volume: %1").arg(busName));
     fader->setAccessibleDescription(QStringLiteral("Adjust volume for %1 in decibels").arg(busName));
     connect(fader, &QSlider::valueChanged, this, [this](int val) {
+        if (!bus_) return;
         bus_->setVolume(val / 10.0f);
     });
     faderArea->addWidget(fader);
@@ -487,6 +489,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     muteBtn->setAccessibleName(QStringLiteral("Mute: %1").arg(busName));
     muteBtn->setAccessibleDescription(QStringLiteral("Mute or unmute %1").arg(busName));
     connect(muteBtn, &QPushButton::toggled, this, [this](bool checked) {
+        if (!bus_) return;
         bus_->setMute(checked);
     });
 
@@ -497,6 +500,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     soloBtn->setAccessibleName(QStringLiteral("Solo: %1").arg(busName));
     soloBtn->setAccessibleDescription(QStringLiteral("Solo or unsolo %1").arg(busName));
     connect(soloBtn, &QPushButton::toggled, this, [this](bool checked) {
+        if (!bus_) return;
         bus_->setSolo(checked);
     });
 
