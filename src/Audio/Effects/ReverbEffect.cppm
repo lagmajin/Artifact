@@ -409,11 +409,25 @@ std::vector<AudioEffectParameter> ReverbEffect::getUiParameters() const {
 void ReverbEffect::setParameter(const String& name, float value) {
     if      (name == "algorithm")    algorithm_   = static_cast<ReverbAlgorithm>(static_cast<int>(std::clamp(finiteOr(value, 0.0f), 0.0f, 2.0f) + 0.5f));
     else if (name == "pre_delay")    preDelayMs_  = std::clamp(finiteOr(value, 20.0f), 0.0f, 200.0f);
-    else if (name == "decay")        decay_       = std::clamp(finiteOr(value, 0.75f), 0.0f, 0.99f);
+    else if (name == "decay") {
+        decay_ = std::clamp(finiteOr(value, 0.75f), 0.0f, 0.99f);
+        // Keep the existing tank delay state while applying the new
+        // all-pass feedback immediately to subsequent samples.
+        tankAP_[0].setParametersSamples(scaleDelay(kTankAP1), -decay_ * 0.7f);
+        tankAP_[1].setParametersSamples(scaleDelay(kTankAP2), -decay_ * 0.7f);
+    }
     else if (name == "decay_lf_mult")decayLFMult_ = std::clamp(finiteOr(value, 1.0f), 0.2f, 2.0f);
     else if (name == "decay_hf")     decayHF_     = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
     else if (name == "damping_freq") dampingFreq_ = std::clamp(finiteOr(value, 8000.0f), 200.0f, 20000.0f);
-    else if (name == "diffusion")    diffusion_   = std::clamp(finiteOr(value, 0.75f), 0.0f, 1.0f);
+    else if (name == "diffusion") {
+        diffusion_ = std::clamp(finiteOr(value, 0.75f), 0.0f, 1.0f);
+        // Update the diffuser coefficients without reinitializing their
+        // delay lines, so automation does not discard the current tail.
+        inputDiff1_[0].setParametersSamples(scaleDelay(kInDiff1a), diffusion_ * 0.75f);
+        inputDiff1_[1].setParametersSamples(scaleDelay(kInDiff1b), diffusion_ * 0.75f);
+        inputDiff2_[0].setParametersSamples(scaleDelay(kInDiff2a), diffusion_ * 0.625f);
+        inputDiff2_[1].setParametersSamples(scaleDelay(kInDiff2b), diffusion_ * 0.625f);
+    }
     else if (name == "density")      density_     = std::clamp(finiteOr(value, 0.7f), 0.0f, 1.0f);
     else if (name == "mod_depth")    modDepth_    = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
     else if (name == "mod_rate")     modRate_     = std::clamp(finiteOr(value, 0.8f), 0.1f, 20.0f);
