@@ -16,6 +16,13 @@ import Audio.DSP.LFO;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 // FDN delay line lengths (coprime primes ~41-77ms at 44.1kHz)
 static constexpr int kFDNDelays[] = { 1811, 1931, 2111, 2237, 2399, 2521, 2689, 2803 };
 
@@ -38,7 +45,7 @@ ReverbEffect::ReverbEffect() {
 }
 
 void ReverbEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate;
+    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
     initEngine();
 }
 
@@ -136,6 +143,8 @@ void ReverbEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
     for (int i = 0; i < frames; ++i) {
         float inL = ch0[i];
         float inR = ch1 ? ch1[i] : inL;
+        inL = finiteOr(inL, 0.0f);
+        inR = finiteOr(inR, inL);
 
         float wetL = 0.0f, wetR = 0.0f;
         switch (algorithm_) {
@@ -376,22 +385,22 @@ std::vector<AudioEffectParameter> ReverbEffect::getUiParameters() const {
 }
 
 void ReverbEffect::setParameter(const String& name, float value) {
-    if      (name == "algorithm")    algorithm_   = static_cast<ReverbAlgorithm>(static_cast<int>(value + 0.5f));
-    else if (name == "pre_delay")    preDelayMs_  = value;
-    else if (name == "decay")        decay_       = value;
-    else if (name == "decay_lf_mult")decayLFMult_ = value;
-    else if (name == "decay_hf")     decayHF_     = value;
-    else if (name == "damping_freq") dampingFreq_ = value;
-    else if (name == "diffusion")    diffusion_   = value;
-    else if (name == "density")      density_     = value;
-    else if (name == "mod_depth")    modDepth_    = value;
-    else if (name == "mod_rate")     modRate_     = value;
-    else if (name == "size")         size_        = value;
-    else if (name == "stereo_width") stereoWidth_ = value;
-    else if (name == "er_level")     erLevel_     = value;
-    else if (name == "er_delay")     erDelay_     = value;
-    else if (name == "wet_level")    wetLevel_    = value;
-    else if (name == "dry_level")    dryLevel_    = value;
+    if      (name == "algorithm")    algorithm_   = static_cast<ReverbAlgorithm>(static_cast<int>(std::clamp(finiteOr(value, 0.0f), 0.0f, 2.0f) + 0.5f));
+    else if (name == "pre_delay")    preDelayMs_  = std::clamp(finiteOr(value, 20.0f), 0.0f, 200.0f);
+    else if (name == "decay")        decay_       = std::clamp(finiteOr(value, 0.75f), 0.0f, 0.99f);
+    else if (name == "decay_lf_mult")decayLFMult_ = std::clamp(finiteOr(value, 1.0f), 0.2f, 2.0f);
+    else if (name == "decay_hf")     decayHF_     = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
+    else if (name == "damping_freq") dampingFreq_ = std::clamp(finiteOr(value, 8000.0f), 200.0f, 20000.0f);
+    else if (name == "diffusion")    diffusion_   = std::clamp(finiteOr(value, 0.75f), 0.0f, 1.0f);
+    else if (name == "density")      density_     = std::clamp(finiteOr(value, 0.7f), 0.0f, 1.0f);
+    else if (name == "mod_depth")    modDepth_    = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
+    else if (name == "mod_rate")     modRate_     = std::clamp(finiteOr(value, 0.8f), 0.1f, 20.0f);
+    else if (name == "size")         size_        = std::clamp(finiteOr(value, 1.0f), 0.5f, 2.0f);
+    else if (name == "stereo_width") stereoWidth_ = std::clamp(finiteOr(value, 1.0f), 0.0f, 1.0f);
+    else if (name == "er_level")     erLevel_     = std::clamp(finiteOr(value, 0.3f), 0.0f, 1.0f);
+    else if (name == "er_delay")     erDelay_     = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
+    else if (name == "wet_level")    wetLevel_    = std::clamp(finiteOr(value, 0.35f), 0.0f, 1.0f);
+    else if (name == "dry_level")    dryLevel_    = std::clamp(finiteOr(value, 0.65f), 0.0f, 1.0f);
 }
 
 float ReverbEffect::getParameter(const String& name) const {

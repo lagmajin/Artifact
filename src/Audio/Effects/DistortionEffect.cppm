@@ -9,6 +9,13 @@ import Audio.Segment;
 
 namespace Artifact {
 
+namespace {
+float finiteOr(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
+}
+
 float DistortionEffect::softClip(float x) {
     return std::tanh(x);
 }
@@ -60,6 +67,7 @@ void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
     for (int i = 0; i < numSamples; ++i) {
         for (int ch = 0; ch < numChannels; ++ch) {
             float dry = segment.channelData[ch][i];
+            dry = finiteOr(dry, 0.0f);
             float driven = dry * drive_;
             float shaped;
 
@@ -104,13 +112,13 @@ std::vector<AudioEffectParameter> DistortionEffect::getUiParameters() const {
 }
 
 void DistortionEffect::setParameter(const String& name, float value) {
-    if      (name == "mode")        mode_ = static_cast<Mode>(static_cast<int>(value));
-    else if (name == "drive")       drive_ = value;
-    else if (name == "tone")        tone_ = value;
-    else if (name == "mix")         mix_ = value;
-    else if (name == "output_gain") outputGain_ = value;
-    else if (name == "bit_depth")   bitDepth_ = value;
-    else if (name == "downsample")  downsample_ = std::max(1.0f, value);
+    if      (name == "mode")        mode_ = static_cast<Mode>(static_cast<int>(std::clamp(finiteOr(value, 0.0f), 0.0f, 4.0f)));
+    else if (name == "drive")       drive_ = std::clamp(finiteOr(value, 1.0f), 1.0f, 50.0f);
+    else if (name == "tone")        tone_ = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
+    else if (name == "mix")         mix_ = std::clamp(finiteOr(value, 1.0f), 0.0f, 1.0f);
+    else if (name == "output_gain") outputGain_ = std::clamp(finiteOr(value, 0.0f), -24.0f, 6.0f);
+    else if (name == "bit_depth")   bitDepth_ = std::clamp(finiteOr(value, 8.0f), 1.0f, 16.0f);
+    else if (name == "downsample")  downsample_ = std::clamp(finiteOr(value, 4.0f), 1.0f, 32.0f);
 }
 
 float DistortionEffect::getParameter(const String& name) const {
