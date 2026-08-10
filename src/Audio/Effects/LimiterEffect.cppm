@@ -36,8 +36,13 @@ void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactC
 
     float sr = static_cast<float>(sampleRate_);
     int numChannels = static_cast<int>(segment.channelData.size());
-    int numSamples  = (numChannels > 0) ? static_cast<int>(segment.channelData[0].size()) : 0;
-    if (numSamples == 0) return;
+    int numSamples = (numChannels > 0)
+        ? static_cast<int>(segment.channelData[0].size()) : 0;
+    for (int ch = 1; ch < numChannels; ++ch) {
+        numSamples = std::min(numSamples,
+                              static_cast<int>(segment.channelData[ch].size()));
+    }
+    if (numSamples == 0 || sr <= 0.0f) return;
 
     float ceilingLinear = dbToLinear(ceiling_);
     float inputGainLinear = dbToLinear(inputGain_);

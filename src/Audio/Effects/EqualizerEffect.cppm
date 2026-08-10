@@ -32,6 +32,8 @@ void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const Artifac
     for (int ch = 0; ch < channels; ++ch) {
         if (ch >= static_cast<int>(segment.channelData.size())) break;
         auto& channelData = segment.channelData[ch];
+        const int samples = std::min(frames, static_cast<int>(channelData.size()));
+        if (samples <= 0) continue;
 
         for (const auto& band : bands_) {
             if (std::abs(band.gain) > 0.001f) {
@@ -40,7 +42,7 @@ void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const Artifac
                                            a0, a1, a2, b0, b1, b2);
 
                 float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
-                for (int i = 0; i < frames; ++i) {
+                for (int i = 0; i < samples; ++i) {
                     float x0 = channelData[i];
                     float y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
                     channelData[i] = y0;

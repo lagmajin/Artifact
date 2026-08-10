@@ -46,7 +46,12 @@ void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
     if (!enabled_ || segment.channelData.isEmpty()) return;
 
     int numChannels = static_cast<int>(segment.channelData.size());
-    int numSamples  = (numChannels > 0) ? static_cast<int>(segment.channelData[0].size()) : 0;
+    int numSamples = (numChannels > 0)
+        ? static_cast<int>(segment.channelData[0].size()) : 0;
+    for (int ch = 1; ch < numChannels; ++ch) {
+        numSamples = std::min(numSamples,
+                              static_cast<int>(segment.channelData[ch].size()));
+    }
     if (numSamples == 0) return;
 
     float outputGainLinear = std::pow(10.0f, outputGain_ / 20.0f);

@@ -122,7 +122,10 @@ void ReverbEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
 
     int channels = segment.channelCount();
     int frames = segment.frameCount();
-    if (frames <= 0) return;
+    if (channels > 1) {
+        frames = std::min(frames, static_cast<int>(segment.channelData[1].size()));
+    }
+    if (frames <= 0 || channels <= 0) return;
 
     float* ch0 = segment.channelData[0].data();
     float* ch1 = (channels > 1) ? segment.channelData[1].data() : nullptr;

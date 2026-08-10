@@ -27,8 +27,13 @@ void DelayEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCor
 
     float sr = static_cast<float>(sampleRate_);
     int numChannels = static_cast<int>(segment.channelData.size());
-    int numSamples  = (numChannels > 0) ? static_cast<int>(segment.channelData[0].size()) : 0;
-    if (numSamples == 0) return;
+    int numSamples = (numChannels > 0)
+        ? static_cast<int>(segment.channelData[0].size()) : 0;
+    if (numChannels > 1) {
+        numSamples = std::min(numSamples,
+                              static_cast<int>(segment.channelData[1].size()));
+    }
+    if (numSamples == 0 || sr <= 0.0f) return;
 
     float delaySamplesL = delayTimeL_ * 0.001f * sr;
     float delaySamplesR = delayTimeR_ * 0.001f * sr;
