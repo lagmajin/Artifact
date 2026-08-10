@@ -139,16 +139,20 @@ WaveformData AudioWaveformGenerator::generate(const AudioSegment& segment, int d
     }
 
     const int numSamples = mono.size();
-    const int samplesPerPixel = std::max(1, numSamples / displayWidth);
+    // A width larger than the available samples cannot produce additional
+    // waveform bins. Cap it before sizing the output vectors so an external
+    // viewport value cannot trigger an unnecessarily large allocation.
+    const int outputWidth = std::min(displayWidth, numSamples);
+    const int samplesPerPixel = std::max(1, numSamples / outputWidth);
 
-    data.peaks.resize(displayWidth);
-    data.rms.resize(displayWidth);
-    data.displayPoints.reserve(displayWidth * 2);
+    data.peaks.resize(outputWidth);
+    data.rms.resize(outputWidth);
+    data.displayPoints.reserve(outputWidth * 2);
 
     float minVal = 0.0f;
     float maxVal = 0.0f;
 
-    for (int i = 0; i < displayWidth; ++i) {
+    for (int i = 0; i < outputWidth; ++i) {
         const int start = i * samplesPerPixel;
         const int end = std::min(start + samplesPerPixel, numSamples);
 
@@ -495,16 +499,19 @@ void AudioLevelMeter::process(const AudioSegment& segment) {
     impl_->leftLevel_ = db;
     impl_->rightLevel_ = db;
 
-    if (peakDb > impl_->leftPeak_) {
-        impl_->leftPeak_ = peakDb;
-        impl_->leftPeakHoldCounter_ = impl_->peakHoldFrames_;
-    }
-
-    if (impl_->leftPeakHoldCounter_ > 0) {
-        impl_->leftPeakHoldCounter_--;
-    } else {
-        impl_->leftPeak_ = db;
-    }
+    auto updatePeak = [this](float peakDb, float& heldPeak, int& holdCounter) {
+        if (peakDb > heldPeak) {
+            heldPeak = peakDb;
+            holdCounter = impl_->peakHoldFrames_;
+        }
+        if (holdCounter > 0) {
+            --holdCounter;
+        } else {
+            heldPeak = peakDb;
+        }
+    };
+    updatePeak(peakDb, impl_->leftPeak_, impl_->leftPeakHoldCounter_);
+    updatePeak(peakDb, impl_->rightPeak_, impl_->rightPeakHoldCounter_);
 
     emit levelsChanged(impl_->leftLevel_, impl_->rightLevel_);
 
@@ -523,7 +530,27 @@ void AudioLevelMeter::processStereo(const AudioSegment& left, const AudioSegment
     impl_->leftLevel_ = leftDb;
     impl_->rightLevel_ = rightDb;
 
+    auto updatePeak = [this](float peakDb, float& heldPeak, int& holdCounter) {
+        if (peakDb > heldPeak) {
+            heldPeak = peakDb;
+            holdCounter = impl_->peakHoldFrames_;
+        }
+        if (holdCounter > 0) {
+            --holdCounter;
+        } else {
+            heldPeak = peakDb;
+        }
+    };
+    updatePeak(linearToDbValue(leftLevel.peak),
+               impl_->leftPeak_, impl_->leftPeakHoldCounter_);
+    updatePeak(linearToDbValue(rightLevel.peak),
+               impl_->rightPeak_, impl_->rightPeakHoldCounter_);
+
     emit levelsChanged(leftDb, rightDb);
+
+    if (leftLevel.peak >= 1.0f || rightLevel.peak >= 1.0f) {
+        emit clipDetected();
+    }
 }
 
 float AudioLevelMeter::leftLevel() const { return impl_->leftLevel_; }
@@ -536,6 +563,8 @@ void AudioLevelMeter::reset() {
     impl_->rightLevel_ = -60.0f;
     impl_->leftPeak_ = -60.0f;
     impl_->rightPeak_ = -60.0f;
+    impl_->leftPeakHoldCounter_ = 0;
+    impl_->rightPeakHoldCounter_ = 0;
 }
 
 float AudioLevelMeter::linearToDb(float linear) {
