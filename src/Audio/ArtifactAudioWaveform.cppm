@@ -56,6 +56,18 @@ QVector<float> monoSamples(const AudioSegment& segment)
     return mono;
 }
 
+float clampAnalysisValue(double value)
+{
+    if (std::isfinite(value)) {
+        return static_cast<float>(std::clamp(
+            value,
+            -static_cast<double>(std::numeric_limits<float>::max()),
+            static_cast<double>(std::numeric_limits<float>::max())));
+    }
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
+}
+
 AudioAnalyzer::LevelInfo computeLevelFromVector(const QVector<float>& samples)
 {
     AudioAnalyzer::LevelInfo info;
@@ -248,7 +260,8 @@ WaveformData AudioWaveformGenerator::generateStereo(const AudioSegment& left,
     const int n = std::min(leftMono.size(), rightMono.size());
     combined.channelData[0].resize(n);
     for (int i = 0; i < n; ++i) {
-        combined.channelData[0][i] = (leftMono[i] + rightMono[i]) * 0.5f;
+        combined.channelData[0][i] = sanitizeWaveformSample(
+            (leftMono[i] + rightMono[i]) * 0.5f);
     }
 
     return generate(combined, displayWidth);
@@ -268,12 +281,15 @@ public:
         std::vector<std::complex<float>> output(n);
 
         for (int k = 0; k < n; ++k) {
-            std::complex<float> sum = 0;
+            std::complex<double> sum = 0;
             for (int t = 0; t < n; ++t) {
                 const float angle = -2.0f * 3.14159f * k * t / std::max(1, n);
-                sum += input[t] * std::complex<float>(std::cos(angle), std::sin(angle));
+                const double sample = sanitizeWaveformSample(input[t]);
+                sum += sample * std::complex<double>(std::cos(angle), std::sin(angle));
             }
-            output[k] = sum;
+            output[k] = {
+                clampAnalysisValue(sum.real()),
+                clampAnalysisValue(sum.imag())};
         }
 
         return output;
@@ -342,7 +358,9 @@ std::vector<float> AudioAnalyzer::computeSpectrum(const AudioSegment& segment) {
 
     std::vector<float> magnitude(fftSize_ / 2);
     for (int i = 0; i < fftSize_ / 2; ++i) {
-        magnitude[i] = std::abs(spectrum[i]) / static_cast<float>(fftSize_);
+        magnitude[i] = clampAnalysisValue(
+            static_cast<double>(std::abs(spectrum[i])) /
+            static_cast<float>(fftSize_));
     }
 
     return magnitude;
