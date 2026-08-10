@@ -114,9 +114,12 @@ void AudioLevelBarWidget::paintEvent(QPaintEvent* event)
     painter.fillRect(rect(), QColor(20, 20, 30));
 
     const int barHeight = (h - 4) / 2;
-    const int barWidth = w - 8;
+    const int barWidth = std::max(0, w - 8);
 
     auto paintBar = [&](int y, float rms, float peak, float peakHold) {
+        if (barWidth <= 0 || barHeight <= 0) {
+            return;
+        }
         const int x = 4;
         const int rmsW = static_cast<int>(dbToRatio(rms) * barWidth);
         const int peakW = static_cast<int>(dbToRatio(peak) * barWidth);
