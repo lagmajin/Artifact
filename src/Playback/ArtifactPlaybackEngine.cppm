@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMetaObject>
@@ -83,13 +84,18 @@ AudioSegment resampleAudioSegment(const AudioSegment& source,
 AudioSegment timeScaleAudioSegment(const AudioSegment& source,
                                    const float playbackSpeed) {
     if (source.frameCount() <= 0 || !std::isfinite(playbackSpeed) ||
-        std::abs(playbackSpeed) < 0.0001f) {
+        std::abs(playbackSpeed) <= 0.0001f) {
         return {};
     }
     const int sourceFrames = source.frameCount();
+    const double requestedTargetFrames =
+        static_cast<double>(sourceFrames) / std::abs(playbackSpeed);
+    if (!std::isfinite(requestedTargetFrames) ||
+        requestedTargetFrames > std::numeric_limits<int>::max()) {
+        return {};
+    }
     const int targetFrames = std::max(
-        1, static_cast<int>(std::llround(
-               static_cast<double>(sourceFrames) / std::abs(playbackSpeed))));
+        1, static_cast<int>(std::llround(requestedTargetFrames)));
     AudioSegment result = source;
     for (int channel = 0; channel < source.channelCount(); ++channel) {
         const auto& input = source.channelData[channel];
@@ -612,7 +618,7 @@ public:
         if (!composition_ || !audioRenderer_) return;
 
         if (!std::isfinite(appliedPlaybackSpeed_) ||
-            std::abs(appliedPlaybackSpeed_) < 0.0001f) {
+            std::abs(appliedPlaybackSpeed_) <= 0.0001f) {
             if (audioRenderer_->isActive() || audioRenderer_->bufferedFrames() > 0) {
                 audioRenderer_->stop();
                 audioRenderer_->clearBuffer();
