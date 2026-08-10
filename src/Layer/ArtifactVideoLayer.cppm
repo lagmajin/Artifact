@@ -520,6 +520,7 @@ public:
     std::deque<float> audioBufferR_;
     std::mutex audioMutex_;
     int64_t lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
+    int audioOutputSampleRate_ = 0;
     
     QString sourcePath_;
     QUuid sourceAssetId_;
@@ -1121,6 +1122,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->opening_ = true;
     impl_->isLoaded_ = false;
     impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
+    impl_->audioOutputSampleRate_ = 0;
     impl_->frameCache_.clear();
     impl_->clearSharedFrames();
     setSourceSize(Size_2D(0, 0));
@@ -2717,10 +2719,20 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
         return false;
     }
 
+    bool audioFormatChanged = false;
+    if (impl_->playbackController_ && impl_->audioOutputSampleRate_ != sampleRate) {
+        if (!impl_->playbackController_->setAudioOutputSampleRate(sampleRate)) {
+            return false;
+        }
+        impl_->audioOutputSampleRate_ = sampleRate;
+        audioFormatChanged = true;
+    }
+
     bool shouldSeek = false;
     {
         std::lock_guard<std::mutex> lock(impl_->audioMutex_);
-        if (impl_->lastAudioRequestTimelineFrame_ == std::numeric_limits<int64_t>::min() ||
+        if (audioFormatChanged ||
+            impl_->lastAudioRequestTimelineFrame_ == std::numeric_limits<int64_t>::min() ||
             requestedTimelineFrame != impl_->lastAudioRequestTimelineFrame_) {
             impl_->audioBufferL_.clear();
             impl_->audioBufferR_.clear();
