@@ -68,10 +68,11 @@ AudioSegment resampleAudioSegment(const AudioSegment& source,
             const double sourcePosition =
                 static_cast<double>(frame) * source.sampleRate /
                 targetSampleRate;
-            const int first = std::min(
-                inputFrames - 1, static_cast<int>(std::floor(sourcePosition)));
+            const double clampedPosition = std::clamp(
+                sourcePosition, 0.0, static_cast<double>(inputFrames - 1));
+            const int first = static_cast<int>(std::floor(clampedPosition));
             const int second = std::min(inputFrames - 1, first + 1);
-            const float fraction = static_cast<float>(sourcePosition - first);
+            const float fraction = static_cast<float>(clampedPosition - first);
             output[frame] = input[first] * (1.0f - fraction) +
                             input[second] * fraction;
         }
