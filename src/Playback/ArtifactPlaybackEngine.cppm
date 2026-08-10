@@ -781,7 +781,13 @@ public:
                 rendererSampleRate > 0 && segment.sampleRate != rendererSampleRate
                     ? resampleAudioSegment(speedAdjustedSegment, rendererSampleRate)
                     : speedAdjustedSegment;
-            audioRenderer_->enqueue(enqueueSegment);
+            if (!audioRenderer_->enqueue(enqueueSegment)) {
+                qWarning() << "[PlaybackEngine][Audio] renderer rejected segment"
+                           << "requestFrame=" << audioNextFrame_
+                           << "samplesThisFrame=" << samplesThisFrame
+                           << "bufferedFrames=" << audioRenderer_->bufferedFrames();
+                break;
+            }
             ++audioNextFrame_;
         }
 
