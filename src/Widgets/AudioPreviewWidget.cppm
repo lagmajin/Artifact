@@ -42,6 +42,14 @@ namespace Artifact {
 namespace {
 constexpr float kAudioPreviewMinDb = -60.0f;
 constexpr float kAudioPreviewMaxDb = 0.0f;
+
+float clampLevelDb(float db)
+{
+    if (!std::isfinite(db)) {
+        return db > 0.0f ? kAudioPreviewMaxDb : kAudioPreviewMinDb;
+    }
+    return std::clamp(db, kAudioPreviewMinDb, kAudioPreviewMaxDb);
+}
 }
 
 W_OBJECT_IMPL(AudioLevelBarWidget)
@@ -62,10 +70,10 @@ AudioLevelBarWidget::AudioLevelBarWidget(QWidget* parent)
 
 void AudioLevelBarWidget::setLevels(float leftPeak, float leftRms, float rightPeak, float rightRms)
 {
-    leftPeak_ = std::max(-96.0f, leftPeak);
-    leftRms_ = std::max(-96.0f, leftRms);
-    rightPeak_ = std::max(-96.0f, rightPeak);
-    rightRms_ = std::max(-96.0f, rightRms);
+    leftPeak_ = clampLevelDb(leftPeak);
+    leftRms_ = clampLevelDb(leftRms);
+    rightPeak_ = clampLevelDb(rightPeak);
+    rightRms_ = clampLevelDb(rightRms);
 
     if (leftPeak_ > leftPeakHold_) {
         leftPeakHold_ = leftPeak_;
@@ -86,8 +94,9 @@ void AudioLevelBarWidget::setLevels(float leftPeak, float leftRms, float rightPe
 
 static float dbToRatio(float db)
 {
-    if (db <= kAudioPreviewMinDb) return 0.0f;
-    return (db - kAudioPreviewMinDb) / (kAudioPreviewMaxDb - kAudioPreviewMinDb);
+    const float safeDb = clampLevelDb(db);
+    return (safeDb - kAudioPreviewMinDb) /
+           (kAudioPreviewMaxDb - kAudioPreviewMinDb);
 }
 
 void AudioLevelBarWidget::paintEvent(QPaintEvent* event)
