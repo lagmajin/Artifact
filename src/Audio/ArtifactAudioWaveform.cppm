@@ -569,9 +569,16 @@ AudioSegment AudioSyncTools::timeStretch(const AudioSegment& segment, float rate
         auto& dst = result.channelData[ch];
         dst.resize(newFrames);
 
+        if (src.isEmpty()) {
+            dst.fill(0.0f);
+            continue;
+        }
+
         for (int i = 0; i < newFrames; ++i) {
-            const float srcIdxF = i * rate;
-            const int idx0 = static_cast<int>(srcIdxF);
+            const float srcIdxF = std::min(
+                i * rate, static_cast<float>(src.size() - 1));
+            const int idx0 = std::clamp(static_cast<int>(srcIdxF), 0,
+                                        static_cast<int>(src.size() - 1));
             const int idx1 = std::min(idx0 + 1, std::max(0, static_cast<int>(src.size()) - 1));
             const float frac = srcIdxF - static_cast<float>(idx0);
             dst[i] = src[idx0] * (1.0f - frac) + src[idx1] * frac;
@@ -722,9 +729,14 @@ AudioSegment AudioSyncTools::fadeOut(const AudioSegment& segment, qint64 samples
     const qint64 startIdx = static_cast<qint64>(result.frameCount()) - fadeSamples;
 
     for (auto& channel : result.channelData) {
-        for (qint64 i = 0; i < fadeSamples; ++i) {
+        const qint64 channelStart = std::max<qint64>(
+            0, std::min(startIdx, static_cast<qint64>(channel.size())));
+        const qint64 channelEnd = std::min(
+            startIdx + fadeSamples, static_cast<qint64>(channel.size()));
+        for (qint64 index = channelStart; index < channelEnd; ++index) {
+            const qint64 i = index - startIdx;
             const float gain = 1.0f - static_cast<float>(i) / static_cast<float>(fadeSamples);
-            channel[static_cast<int>(startIdx + i)] *= gain;
+            channel[static_cast<int>(index)] *= gain;
         }
     }
 
