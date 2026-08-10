@@ -646,17 +646,18 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   }
 
   auto* composition = static_cast<ArtifactAbstractComposition*>(this->composition());
+  const double requestedFps = composition ? composition->frameRate().framerate() : 0.0;
   const double compositionFps =
-      (composition && composition->frameRate().framerate() > 0.0)
-          ? composition->frameRate().framerate()
-          : 30.0;
+      (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
 
-  const qint64 localFrame =
-      start.framePosition() - inPoint().framePosition() + startTime().framePosition();
-  const double startSeconds = static_cast<double>(localFrame) / compositionFps;
-  const qint64 startSample =
-      static_cast<qint64>(std::floor(startSeconds * impl_->sourceSampleRate_));
   const qint64 sourceFrameCount = impl_->pcm().size() / std::max(1, impl_->sourceChannelCount_);
+  const long double localFrame =
+      static_cast<long double>(start.framePosition()) -
+      static_cast<long double>(inPoint().framePosition()) +
+      static_cast<long double>(startTime().framePosition());
+  const long double samplePosition =
+      localFrame / static_cast<long double>(compositionFps) *
+      static_cast<long double>(impl_->sourceSampleRate_);
 
   const int outChannels = std::max(1, impl_->sourceChannelCount_);
   AudioChannelLayout outLayout = AudioChannelLayout::Stereo;
@@ -670,9 +671,11 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   outSegment.setFrameCount(frameCount);
   outSegment.zero();
 
-  if (startSample >= sourceFrameCount) {
+  if (!std::isfinite(samplePosition) || samplePosition < 0.0L ||
+      samplePosition >= static_cast<long double>(sourceFrameCount)) {
     return false;
   }
+  const qint64 startSample = static_cast<qint64>(std::floor(samplePosition));
 
   // リサンプリング結果キャッシュを確認（チャンネル数も一致するか検証）
   auto& rc = impl_->resampledCache_;
