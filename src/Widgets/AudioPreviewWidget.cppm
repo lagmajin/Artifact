@@ -444,7 +444,9 @@ public:
     }
 
     void setVolume(float volume) {
-        volume_ = std::clamp(volume, 0.0f, 1.0f);
+        volume_ = std::isfinite(volume)
+            ? std::clamp(volume, 0.0f, 1.0f)
+            : 1.0f;
         if (renderer_ && renderer_->isDeviceOpen()) {
             renderer_->setMasterVolume(volumeToDb(volume_));
         }
@@ -536,7 +538,7 @@ private slots:
 
 private:
     static float volumeToDb(float linear) {
-        if (linear < 1e-6f) return -144.0f;
+        if (!std::isfinite(linear) || linear < 1e-6f) return -144.0f;
         return 20.0f * std::log10(linear);
     }
 
