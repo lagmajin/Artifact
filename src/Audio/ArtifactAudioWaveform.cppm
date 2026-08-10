@@ -171,7 +171,10 @@ WaveformData AudioWaveformGenerator::generate(const AudioSegment& segment, int d
 
     data.peaks.resize(outputWidth);
     data.rms.resize(outputWidth);
-    data.displayPoints.reserve(outputWidth * 2);
+    const int pointCapacity = outputWidth > std::numeric_limits<int>::max() / 2
+        ? std::numeric_limits<int>::max()
+        : outputWidth * 2;
+    data.displayPoints.reserve(pointCapacity);
 
     float minVal = 0.0f;
     float maxVal = 0.0f;
