@@ -446,7 +446,11 @@ void AudioMixerMasterBus::connectToCoreBus(ArtifactCore::SharedPtr<ArtifactCore:
 {
     impl_->coreBus_ = coreBus;
     if (coreBus) {
-        impl_->volume_ = std::pow(10.0f, coreBus->getVolume() / 20.0f);
+        const float coreVolume = coreBus->getVolume();
+        const float linear = std::pow(10.0f, coreVolume / 20.0f);
+        impl_->volume_ = std::isfinite(linear)
+            ? std::clamp(linear, 0.0f, 2.0f)
+            : 1.0f;
         impl_->muted_ = coreBus->isMute();
     } else {
         impl_->volume_ = 1.0f;
