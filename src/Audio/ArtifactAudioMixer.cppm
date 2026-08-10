@@ -692,18 +692,22 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             if (impl_->coreMixer_) {
                 auto bus = impl_->coreMixer_->ensureLayerBus(layer->id());
                 strip->setCoreBus(bus);
-                const auto routeTarget = impl_->coreMixer_->getRoutingTarget(bus);
-                if (routeTarget) {
-                    const auto targetName = routeTarget->getName();
-                    strip->setRoutingTargetName(QString::fromUtf8(
-                        targetName.data(), static_cast<qsizetype>(targetName.length())));
+                if (bus) {
+                    const auto routeTarget = impl_->coreMixer_->getRoutingTarget(bus);
+                    if (routeTarget) {
+                        const auto targetName = routeTarget->getName();
+                        strip->setRoutingTargetName(QString::fromUtf8(
+                            targetName.data(), static_cast<qsizetype>(targetName.length())));
+                    } else {
+                        strip->setRoutingTargetName(QStringLiteral("Master"));
+                    }
+                    bus->setVolume(volumeToCoreDb(strip->volume()));
+                    bus->setPan(readLayerPan(layer));
+                    bus->setMute(readLayerMuted(layer));
+                    bus->setSolo(layer->isSolo());
                 } else {
                     strip->setRoutingTargetName(QStringLiteral("Master"));
                 }
-                bus->setVolume(volumeToCoreDb(strip->volume()));
-                bus->setPan(readLayerPan(layer));
-                bus->setMute(readLayerMuted(layer));
-                bus->setSolo(layer->isSolo());
             } else {
                 strip->setCoreBus(nullptr);
                 strip->setRoutingTargetName(QStringLiteral("Master"));
