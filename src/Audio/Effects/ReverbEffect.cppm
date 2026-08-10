@@ -1,5 +1,6 @@
 module;
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include <string>
@@ -20,6 +21,13 @@ namespace {
 float finiteOr(float value, float fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+float sanitizeReverbSample(float value)
+{
+    if (std::isfinite(value)) return value;
+    if (std::isnan(value)) return 0.0f;
+    return std::copysign(std::numeric_limits<float>::max(), value);
 }
 }
 
@@ -159,19 +167,19 @@ void ReverbEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
                 break;
         }
 
-        ch0[i] = inL * dryLevel_ + wetL * wetLevel_;
-        if (ch1) ch1[i] = inR * dryLevel_ + wetR * wetLevel_;
+        ch0[i] = sanitizeReverbSample(inL * dryLevel_ + wetL * wetLevel_);
+        if (ch1) ch1[i] = sanitizeReverbSample(inR * dryLevel_ + wetR * wetLevel_);
     }
 }
 
 // ── Dattorro Plate per-sample ──────────────────────────────────────
 void ReverbEffect::processDattorroSample(float inL, float inR, float& outL, float& outR) {
     float sr = static_cast<float>(sampleRate_);
-    float monoIn = (inL + inR) * 0.5f;
+    float monoIn = sanitizeReverbSample((inL + inR) * 0.5f);
 
     // Pre-delay
     preDelay_.write(monoIn);
-    float pre = preDelay_.read(preDelayMs_ * 0.001f * sr);
+    float pre = sanitizeReverbSample(preDelay_.read(preDelayMs_ * 0.001f * sr));
 
     // LFO (sinusoidal)
     float lfo0 = std::sin(lfoPhase_[0]);
@@ -187,40 +195,40 @@ void ReverbEffect::processDattorroSample(float inL, float inR, float& outL, floa
 
     // Input diffusion (4 all-pass series)
     float d = pre;
-    d = inputDiff1_[0].process(d, lfo0 * modAmt);
-    d = inputDiff1_[1].process(d, lfo1 * modAmt);
-    d = inputDiff2_[0].process(d, lfo0 * modAmt * 0.5f);
-    d = inputDiff2_[1].process(d, lfo1 * modAmt * 0.5f);
+    d = sanitizeReverbSample(inputDiff1_[0].process(d, lfo0 * modAmt));
+    d = sanitizeReverbSample(inputDiff1_[1].process(d, lfo1 * modAmt));
+    d = sanitizeReverbSample(inputDiff2_[0].process(d, lfo0 * modAmt * 0.5f));
+    d = sanitizeReverbSample(inputDiff2_[1].process(d, lfo1 * modAmt * 0.5f));
 
     // Cross-coupled tank
-    float tankInL = d + tankAccum_[1] * decay_;
-    float tankInR = d + tankAccum_[0] * decay_;
+    float tankInL = sanitizeReverbSample(d + tankAccum_[1] * decay_);
+    float tankInR = sanitizeReverbSample(d + tankAccum_[0] * decay_);
 
     // --- Left tank path ---
     float tdL = scaleDelay(kTankDelay1);
     tankDelay_[0].write(tankInL);
-    float delL = tankDelay_[0].read(tdL + lfo0 * modAmt * 2.0f);
+    float delL = sanitizeReverbSample(tankDelay_[0].read(tdL + lfo0 * modAmt * 2.0f));
     // One-pole LPF + wet/dry mix for damping
     constexpr float kDampCoeff = 0.4f;
-    dampState_[0] += kDampCoeff * (delL - dampState_[0]);
-    float apInL = delL * (1.0f - decayHF_) + dampState_[0] * decayHF_;
-    float apL = tankAP_[0].process(apInL, lfo0 * modAmt);
+    dampState_[0] = sanitizeReverbSample(dampState_[0] + kDampCoeff * (delL - dampState_[0]));
+    float apInL = sanitizeReverbSample(delL * (1.0f - decayHF_) + dampState_[0] * decayHF_);
+    float apL = sanitizeReverbSample(tankAP_[0].process(apInL, lfo0 * modAmt));
 
     // --- Right tank path ---
     float tdR = scaleDelay(kTankDelay2);
     tankDelay_[1].write(tankInR);
-    float delR = tankDelay_[1].read(tdR + lfo1 * modAmt * 2.0f);
-    dampState_[1] += kDampCoeff * (delR - dampState_[1]);
-    float apInR = delR * (1.0f - decayHF_) + dampState_[1] * decayHF_;
-    float apR = tankAP_[1].process(apInR, lfo1 * modAmt);
+    float delR = sanitizeReverbSample(tankDelay_[1].read(tdR + lfo1 * modAmt * 2.0f));
+    dampState_[1] = sanitizeReverbSample(dampState_[1] + kDampCoeff * (delR - dampState_[1]));
+    float apInR = sanitizeReverbSample(delR * (1.0f - decayHF_) + dampState_[1] * decayHF_);
+    float apR = sanitizeReverbSample(tankAP_[1].process(apInR, lfo1 * modAmt));
 
-    tankAccum_[0] = apL;
-    tankAccum_[1] = apR;
+    tankAccum_[0] = sanitizeReverbSample(apL);
+    tankAccum_[1] = sanitizeReverbSample(apR);
 
     // Stereo output with width control
     float w = stereoWidth_;
-    outL = apL * (1.0f - w * 0.5f) + apR * w * 0.5f;
-    outR = apR * (1.0f - w * 0.5f) + apL * w * 0.5f;
+    outL = sanitizeReverbSample(apL * (1.0f - w * 0.5f) + apR * w * 0.5f);
+    outR = sanitizeReverbSample(apR * (1.0f - w * 0.5f) + apL * w * 0.5f);
 }
 
 // ── FDN Hall per-sample ────────────────────────────────────────────
@@ -234,7 +242,8 @@ void ReverbEffect::processFDNSample(float inL, float inR, float& outL, float& ou
     // 1. Read delay-line outputs (stored at writeIndex = oldest sample)
     float outputs[kNumFDNLines];
     for (int i = 0; i < kNumFDNLines; ++i) {
-        outputs[i] = fdnLines_[i].buffer[fdnLines_[i].writeIndex];
+        outputs[i] = sanitizeReverbSample(
+            fdnLines_[i].buffer[fdnLines_[i].writeIndex]);
     }
 
     // 2. Compute feedback via Hadamard mix of outputs
@@ -242,19 +251,23 @@ void ReverbEffect::processFDNSample(float inL, float inR, float& outL, float& ou
     for (int i = 0; i < kNumFDNLines; ++i) feedback[i] = outputs[i];
     fwht8(feedback);
     constexpr float kInv8 = 0.125f;
-    for (int i = 0; i < kNumFDNLines; ++i) feedback[i] *= kInv8;
+    for (int i = 0; i < kNumFDNLines; ++i) {
+        feedback[i] = sanitizeReverbSample(feedback[i] * kInv8);
+    }
 
     // 3. Write to each delay line: input + damped feedback
     for (int i = 0; i < kNumFDNLines; ++i) {
         auto& line = fdnLines_[i];
         float inSig = (i % 2 == 0 ? inL : inR) * fdnInputMix_[i];
 
-        float fbSig = feedback[i] * line.fbGain;
-        line.state += line.dampCoeff * (fbSig - line.state);
-        float dampFb = fbSig * (1.0f - decayHF_) + line.state * decayHF_;
+        float fbSig = sanitizeReverbSample(feedback[i] * line.fbGain);
+        line.state = sanitizeReverbSample(
+            line.state + line.dampCoeff * (fbSig - line.state));
+        float dampFb = sanitizeReverbSample(
+            fbSig * (1.0f - decayHF_) + line.state * decayHF_);
 
         // Write and advance
-        line.buffer[line.writeIndex] = inSig + dampFb;
+        line.buffer[line.writeIndex] = sanitizeReverbSample(inSig + dampFb);
         line.writeIndex = (line.writeIndex + 1) % line.length;
     }
 
@@ -264,8 +277,9 @@ void ReverbEffect::processFDNSample(float inL, float inR, float& outL, float& ou
     outL = 0.0f;
     outR = 0.0f;
     for (int i = 0; i < kNumFDNLines; ++i) {
-        outL += outputs[i] * fdnOutputMix_[i];
-        outR += outputs[i] * fdnOutputMix_[kNumFDNLines - 1 - i];
+        outL = sanitizeReverbSample(outL + outputs[i] * fdnOutputMix_[i]);
+        outR = sanitizeReverbSample(
+            outR + outputs[i] * fdnOutputMix_[kNumFDNLines - 1 - i]);
 
         // Early reflection tap: read from near the write head
         auto& line = fdnLines_[i];
@@ -274,25 +288,26 @@ void ReverbEffect::processFDNSample(float inL, float inR, float& outL, float& ou
         if (erOffset >= line.length) erOffset = line.length - 1;
         int erIdx = line.writeIndex - erOffset;
         if (erIdx < 0) erIdx += line.length;
-        float erTap = line.buffer[erIdx] * erLevel_;
-        if (i % 2 == 0) erL += erTap; else erR += erTap;
+        float erTap = sanitizeReverbSample(line.buffer[erIdx] * erLevel_);
+        if (i % 2 == 0) erL = sanitizeReverbSample(erL + erTap);
+        else erR = sanitizeReverbSample(erR + erTap);
     }
-    outL += erL;
-    outR += erR;
+    outL = sanitizeReverbSample(outL + erL);
+    outR = sanitizeReverbSample(outR + erR);
 
     // Normalize output level
     constexpr float kOutScale = 0.5f;
-    outL *= kOutScale;
-    outR *= kOutScale;
+    outL = sanitizeReverbSample(outL * kOutScale);
+    outR = sanitizeReverbSample(outR * kOutScale);
 }
 
 // ── Hybrid: Dattorro diffusers → FDN tail per-sample ──────────────
 void ReverbEffect::processHybridSample(float inL, float inR, float& outL, float& outR) {
     float sr = static_cast<float>(sampleRate_);
-    float monoIn = (inL + inR) * 0.5f;
+    float monoIn = sanitizeReverbSample((inL + inR) * 0.5f);
 
     preDelay_.write(monoIn);
-    float pre = preDelay_.read(preDelayMs_ * 0.001f * sr);
+    float pre = sanitizeReverbSample(preDelay_.read(preDelayMs_ * 0.001f * sr));
 
     float lfo0 = std::sin(lfoPhase_[0]);
     float lfo1 = std::sin(lfoPhase_[1]);
@@ -307,32 +322,37 @@ void ReverbEffect::processHybridSample(float inL, float inR, float& outL, float&
 
     // Dattorro input diffusion
     float d = pre;
-    d = inputDiff1_[0].process(d, lfo0 * modAmt);
-    d = inputDiff1_[1].process(d, lfo1 * modAmt);
-    d = inputDiff2_[0].process(d, lfo0 * modAmt * 0.5f);
-    d = inputDiff2_[1].process(d, lfo1 * modAmt * 0.5f);
+    d = sanitizeReverbSample(inputDiff1_[0].process(d, lfo0 * modAmt));
+    d = sanitizeReverbSample(inputDiff1_[1].process(d, lfo1 * modAmt));
+    d = sanitizeReverbSample(inputDiff2_[0].process(d, lfo0 * modAmt * 0.5f));
+    d = sanitizeReverbSample(inputDiff2_[1].process(d, lfo1 * modAmt * 0.5f));
 
     // Feed into FDN tank
     float outputs[kNumFDNLines];
     for (int i = 0; i < kNumFDNLines; ++i) {
-        outputs[i] = fdnLines_[i].buffer[fdnLines_[i].writeIndex];
+        outputs[i] = sanitizeReverbSample(
+            fdnLines_[i].buffer[fdnLines_[i].writeIndex]);
     }
 
     float feedback[kNumFDNLines];
     for (int i = 0; i < kNumFDNLines; ++i) feedback[i] = outputs[i];
     fwht8(feedback);
     constexpr float kInv8 = 0.125f;
-    for (int i = 0; i < kNumFDNLines; ++i) feedback[i] *= kInv8;
+    for (int i = 0; i < kNumFDNLines; ++i) {
+        feedback[i] = sanitizeReverbSample(feedback[i] * kInv8);
+    }
 
     for (int i = 0; i < kNumFDNLines; ++i) {
         auto& line = fdnLines_[i];
         float inSig = d * fdnInputMix_[i];
 
-        float fbSig = feedback[i] * line.fbGain;
-        line.state += line.dampCoeff * (fbSig - line.state);
-        float dampFb = fbSig * (1.0f - decayHF_) + line.state * decayHF_;
+        float fbSig = sanitizeReverbSample(feedback[i] * line.fbGain);
+        line.state = sanitizeReverbSample(
+            line.state + line.dampCoeff * (fbSig - line.state));
+        float dampFb = sanitizeReverbSample(
+            fbSig * (1.0f - decayHF_) + line.state * decayHF_);
 
-        line.buffer[line.writeIndex] = inSig + dampFb;
+        line.buffer[line.writeIndex] = sanitizeReverbSample(inSig + dampFb);
         line.writeIndex = (line.writeIndex + 1) % line.length;
     }
 
@@ -341,8 +361,9 @@ void ReverbEffect::processHybridSample(float inL, float inR, float& outL, float&
     outL = 0.0f;
     outR = 0.0f;
     for (int i = 0; i < kNumFDNLines; ++i) {
-        outL += outputs[i] * fdnOutputMix_[i];
-        outR += outputs[i] * fdnOutputMix_[kNumFDNLines - 1 - i];
+        outL = sanitizeReverbSample(outL + outputs[i] * fdnOutputMix_[i]);
+        outR = sanitizeReverbSample(
+            outR + outputs[i] * fdnOutputMix_[kNumFDNLines - 1 - i]);
 
         auto& line = fdnLines_[i];
         int erOffset = static_cast<int>(line.length * erTaps_[i] * erDelay_);
@@ -350,15 +371,16 @@ void ReverbEffect::processHybridSample(float inL, float inR, float& outL, float&
         if (erOffset >= line.length) erOffset = line.length - 1;
         int erIdx = line.writeIndex - erOffset;
         if (erIdx < 0) erIdx += line.length;
-        float erTap = line.buffer[erIdx] * erLevel_;
-        if (i % 2 == 0) erL += erTap; else erR += erTap;
+        float erTap = sanitizeReverbSample(line.buffer[erIdx] * erLevel_);
+        if (i % 2 == 0) erL = sanitizeReverbSample(erL + erTap);
+        else erR = sanitizeReverbSample(erR + erTap);
     }
-    outL += erL;
-    outR += erR;
+    outL = sanitizeReverbSample(outL + erL);
+    outR = sanitizeReverbSample(outR + erR);
 
     constexpr float kOutScale = 0.5f;
-    outL *= kOutScale;
-    outR *= kOutScale;
+    outL = sanitizeReverbSample(outL * kOutScale);
+    outR = sanitizeReverbSample(outR * kOutScale);
 }
 
 // ── Parameter system ───────────────────────────────────────────────
