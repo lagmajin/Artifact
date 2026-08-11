@@ -233,7 +233,7 @@ QColor propertySurfaceColor(const bool elevated) {
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
   const QColor surface = themeColor(theme.secondaryBackgroundColor,
                                     QColor(QStringLiteral("#2B3038")));
-  return blendColor(background, surface, elevated ? 0.64 : 0.54);
+  return blendColor(background, surface, elevated ? 0.52 : 0.38);
 }
 
 QString formatNumericSliderText(const double value, const QString &unit,
@@ -298,7 +298,9 @@ void applyPropertyFieldPalette(QWidget *widget, const bool elevated) {
   pal.setColor(QPalette::WindowText, text);
   pal.setColor(QPalette::Base, window);
   pal.setColor(QPalette::AlternateBase, blendColor(window, text, 0.05));
-  pal.setColor(QPalette::Text, text);
+  // Editable values carry the restrained blue cue used by animation-centric
+  // DCC property panels; labels and surrounding chrome remain neutral.
+  pal.setColor(QPalette::Text, blendColor(text, accent, 0.62));
   pal.setColor(QPalette::Button, window);
   pal.setColor(QPalette::ButtonText, text);
   pal.setColor(QPalette::Highlight, selection);

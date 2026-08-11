@@ -4733,13 +4733,6 @@ bool layerUsesProjectedFrameGizmo(const ArtifactAbstractLayerPtr &layer) {
   return false;
 }
 
-bool layerUsesVolumeBoundingBoxGizmo(const ArtifactAbstractLayerPtr &layer) {
-  const auto *model = layer ? dynamic_cast<const Artifact3DLayer *>(layer.get()) : nullptr;
-  return model && model->fixedGeometry() != FixedGeometry3D::Plane;
-}
-
-
-
 void setMaskVertexHandle(MaskVertex &vertex, MaskHandleType handleType,
 
                          const QPointF &handleDelta, bool breakTangents) {
@@ -5083,6 +5076,12 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
     break;
 
+  case LightType::Area:
+
+    light.setType(ArtifactCore::LightType::Area);
+
+    break;
+
   }
 
 
@@ -5125,7 +5124,7 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
   if (layer->lightType() == LightType::Point) {
 
-    light.setRange(std::max(10.0f, layer->shadowRadius() * 10.0f));
+    light.setRange(layer->range());
 
   }
 
@@ -5140,6 +5139,18 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
         std::max(0.0f, layer->coneAngle() - layer->coneFeather()) * 0.5f;
 
     light.setCutoff(innerHalfAngle, outerHalfAngle);
+    light.setGoboTexturePath(layer->goboTexturePath().toStdString());
+    light.setGoboIntensity(layer->goboIntensity());
+    light.setGoboRotation(layer->goboRotation());
+    light.setGoboInvert(layer->goboInvert());
+
+  }
+
+  if (layer->lightType() == LightType::Area) {
+
+    light.setRange(layer->range());
+    light.setAreaSize(layer->areaWidth(), layer->areaHeight());
+    light.setAreaShape(static_cast<int>(layer->areaShape()));
 
   }
 
@@ -6358,6 +6369,9 @@ void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
 
   drawLine(camPos, center, outerColor, 1.0f);
 
+  // Frustum lines are queued by PrimitiveRenderer3D and must be submitted
+  // before their camera matrices are reset.
+  renderer->flushGizmo3D();
   renderer->reset3DCameraMatrices();
 
   renderer->setUseExternalMatrices(false);
@@ -6522,14 +6536,20 @@ buildMotionPathSamples(const ArtifactAbstractLayerPtr &layer,
 
   samples.reserve(static_cast<int>(keyTimes.size()) + 1);
 
-  for (const auto &time : keyTimes) {
-    const int64_t frame = time.rescaledTo(fps);
+  // A motion path follows the layer's anchor point, not its local origin or
+  // the geometric centre of its bounds.  This also makes a changed anchor
+  // immediately visible as the path's pivot, matching the transform gizmo.
+  const auto anchorAt = [&layer](const RationalTime &time, int64_t frame) {
     const auto &transform = layer->transform3D();
     const QTransform globalTransform = layer->getGlobalTransformAt(frame);
-    const QPointF anchor = globalTransform.map(
+    return globalTransform.map(
         QPointF(transform.anchorXAt(time), transform.anchorYAt(time)));
-    samples.push_back(
-        {anchor, MotionPathSampleKind::Keyframe, frame});
+  };
+
+  for (const auto &time : keyTimes) {
+    const int64_t frame = time.rescaledTo(fps);
+    samples.push_back({anchorAt(time, frame), MotionPathSampleKind::Keyframe,
+                       frame});
 
   }
 
@@ -6539,12 +6559,8 @@ buildMotionPathSamples(const ArtifactAbstractLayerPtr &layer,
 
   const RationalTime currentTime(currentFrame.framePosition(), fps);
 
-  const auto &transform = layer->transform3D();
-  const QTransform currentGlobalTransform =
-      layer->getGlobalTransformAt(currentFrame.framePosition());
-  const QPointF currentAnchor = currentGlobalTransform.map(
-      QPointF(transform.anchorXAt(currentTime),
-              transform.anchorYAt(currentTime)));
+  const QPointF currentAnchor =
+      anchorAt(currentTime, currentFrame.framePosition());
   samples.push_back({currentAnchor, MotionPathSampleKind::Current,
                      currentFrame.framePosition()});
 
@@ -6714,30 +6730,9 @@ TransformGizmo::HandleType hitTestProjectedFrameCorner(
     }
   }
 
-  // Keep the rotation target outside the projected frame so it remains
-  // distinct from the top edge handle at oblique camera angles.
-  const qreal rotationOffset = std::clamp(
-      std::min(localBounds.width(), localBounds.height()) * 0.08, 28.0, 64.0);
-  const QPointF rotationPoint(frameBounds.center().x(),
-                              frameBounds.top() - rotationOffset);
-  const QVector3D rotationWorld = world.map(
-      QVector3D(static_cast<float>(rotationPoint.x()),
-                static_cast<float>(rotationPoint.y()), 0.0f));
-  const QVector3D rotationProjected = ViewportMath::projectToTopDown(
-      rotationWorld, view, projection, viewport);
-  if (std::isfinite(rotationProjected.x()) &&
-      std::isfinite(rotationProjected.y()) && rotationProjected.z() >= 0.0f &&
-      rotationProjected.z() <= 1.0f) {
-    const float rotationDiameter = std::max(20.0f, safeHitDiameter * 0.9f);
-    const QRectF rotationRect(
-        rotationProjected.x() - rotationDiameter * 0.5f,
-        rotationProjected.y() - rotationDiameter * 0.5f, rotationDiameter,
-        rotationDiameter);
-    if (rotationRect.contains(viewportPos)) {
-      return TransformGizmo::HandleType::Rotate;
-    }
-  }
-
+  // The projected frame is strictly for move and resize.  Rotation belongs
+  // to the dedicated 3D rotation rings, which avoids an ambiguous target
+  // collapsing into the frame centre in oblique camera views.
   return TransformGizmo::HandleType::None;
 }
 
@@ -6967,12 +6962,6 @@ TransformGizmo::HandleType hitTestProjectedSelectionFrame(
                diameter, diameter).contains(viewportPos)) {
       return handle;
     }
-  }
-  const QPointF rotationPoint(bounds.center().x(), bounds.top() - 36.0);
-  if (QRectF(rotationPoint.x() - diameter * 0.5,
-             rotationPoint.y() - diameter * 0.5, diameter, diameter)
-          .contains(viewportPos)) {
-    return TransformGizmo::HandleType::Rotate;
   }
   return TransformGizmo::HandleType::None;
 }
@@ -7458,6 +7447,17 @@ ArtifactCompositionPtr
 
 resolvePreferredComposition(ArtifactProjectService *service) {
 
+  // A project with no current composition is authoritative.  The active and
+  // playback contexts may still retain the composition from a project that
+  // was just closed, and must not repopulate an intentionally empty viewport.
+  ArtifactCompositionPtr projectComposition;
+  if (service) {
+    projectComposition = service->currentComposition().lock();
+    if (!projectComposition) {
+      return ArtifactCompositionPtr();
+    }
+  }
+
   // The editor is bound to ActiveContextService. Use the same authority here;
   // otherwise the render loop can replace the editor's composition every frame
   // with a stale ProjectService selection and render an unrelated empty comp.
@@ -7480,13 +7480,9 @@ resolvePreferredComposition(ArtifactProjectService *service) {
 
   // フォールバック: ProjectService
 
-  if (service) {
+  if (projectComposition) {
 
-    if (auto comp = service->currentComposition().lock()) {
-
-      return comp;
-
-    }
+    return projectComposition;
 
   }
 
@@ -8098,6 +8094,47 @@ void drawLayerForCompositionView(
   const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
 
 
+  // Keep a queued 3D overlay bound to the camera that produced it. The scope
+  // centralizes the required set -> draw -> optional flush -> reset order.
+  struct Scoped3DLayerCamera final {
+    ArtifactIRenderer *renderer = nullptr;
+    bool active = false;
+    bool flushOnExit = false;
+
+    Scoped3DLayerCamera(ArtifactIRenderer *target,
+                        const QMatrix4x4 *view,
+                        const QMatrix4x4 *projection,
+                        bool flush = false)
+        : renderer(target),
+          active(target && view && projection),
+          flushOnExit(flush) {
+      if (active) {
+        renderer->set3DCameraMatrices(*view, *projection);
+      }
+    }
+
+    Scoped3DLayerCamera(const Scoped3DLayerCamera &) = delete;
+    Scoped3DLayerCamera &operator=(const Scoped3DLayerCamera &) = delete;
+
+    void setPrevious(const QMatrix4x4 *view, const QMatrix4x4 *projection) {
+      if (active && view && projection) {
+        renderer->setPrevious3DCameraMatrices(*view, *projection);
+      }
+    }
+
+    ~Scoped3DLayerCamera() {
+      if (!renderer) {
+        return;
+      }
+      if (flushOnExit) {
+        renderer->flushGizmo3D();
+      }
+      if (active) {
+        renderer->reset3DCameraMatrices();
+      }
+    }
+  };
+
   FloatColor cardColor;
 
   if (solid3DCardColor(layer, cardColor)) {
@@ -8108,21 +8145,9 @@ void drawLayerForCompositionView(
 
     const bool writeDepth = cardOpacity * cardColor.a() >= 0.9999f;
 
-    if (cameraView && cameraProj) {
-
-      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
-
-    }
-
+    Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
     renderer->draw3DCard(localRect, globalTransform4x4, cardColor,
-
                          cardOpacity, writeDepth);
-
-    if (cameraView && cameraProj) {
-
-      renderer->reset3DCameraMatrices();
-
-    }
 
     return;
 
@@ -8144,11 +8169,7 @@ void drawLayerForCompositionView(
 
         cardOpacity * shapeCard.strokeColor.a() >= 0.9999f;
 
-    if (cameraView && cameraProj) {
-
-      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
-
-    }
+    Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
 
     if (shapeCard.fillPoints.size() >= 3) {
 
@@ -8193,12 +8214,6 @@ void drawLayerForCompositionView(
         }
 
       }
-
-    }
-
-    if (cameraView && cameraProj) {
-
-      renderer->reset3DCameraMatrices();
 
     }
 
@@ -8258,21 +8273,9 @@ void drawLayerForCompositionView(
 
           opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
 
-      if (cameraView && cameraProj) {
-
-        renderer->set3DCameraMatrices(*cameraView, *cameraProj);
-
-      }
-
+      Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
       renderer->draw3DTexturedCard(localRect, globalTransform4x4,
-
                                    binding.srv, cardOpacity);
-
-      if (cameraView && cameraProj) {
-
-        renderer->reset3DCameraMatrices();
-
-      }
 
       return;
 
@@ -8312,21 +8315,11 @@ void drawLayerForCompositionView(
 
         videoCard->markFrameRenderQueued(cacheFrameNumber);
 
-        if (cameraView && cameraProj) {
-
-          renderer->set3DCameraMatrices(*cameraView, *cameraProj);
-
-        }
-
+        // This is an existing video-card path; use the same local camera
+        // lifetime as the other immediate 3D cards without changing decoding.
+        Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
         renderer->draw3DTexturedCard(localRect, globalTransform4x4,
-
                                      binding.srv, cardOpacity);
-
-        if (cameraView && cameraProj) {
-
-          renderer->reset3DCameraMatrices();
-
-        }
 
         return;
 
@@ -8354,21 +8347,13 @@ void drawLayerForCompositionView(
 
     }
 
-    if (cameraView && cameraProj) {
-
-      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
-      if (previousCameraView && previousCameraProj) {
-        renderer->setPrevious3DCameraMatrices(*previousCameraView,
-                                              *previousCameraProj);
-      }
-    }
-
-    layer->draw(renderer);
-
-    if (cameraView && cameraProj) {
-
-      renderer->reset3DCameraMatrices();
-
+    const bool isLightLayer =
+        dynamic_cast<ArtifactLightLayer *>(layer) != nullptr;
+    {
+      Scoped3DLayerCamera layerCamera(
+          renderer, cameraView, cameraProj, isLightLayer);
+      layerCamera.setPrevious(previousCameraView, previousCameraProj);
+      layer->draw(renderer);
     }
 
     if (modelLayer && sceneLights) {
@@ -10013,6 +9998,12 @@ public:
 
     void* depthTargetView = nullptr;
 
+    void* msaaColorTargetView = nullptr;
+
+    void* msaaDepthTargetView = nullptr;
+
+    QSize msaaTargetSize;
+
     QSize depthTargetSize;
 
     quint64 lastSubmittedFrame = 0;
@@ -10697,7 +10688,8 @@ public:
 
       int& blendDispatchCount, int& blendFailureCount, float cw, float ch,
 
-      FloatColor layerBgColor, CompositionBackgroundMode backgroundMode) {
+      FloatColor layerBgColor, CompositionBackgroundMode backgroundMode,
+      const ArtifactCompositionPtr& composition) {
 
     renderer_->pushRenderTarget(layerRTV);
 
@@ -10714,6 +10706,11 @@ public:
                                     viewportOrientationMatricesValid_
                                         ? &viewportOrientationProjectionForOverlay_
                                         : nullptr);
+
+    if (showCompositionRegionOverlay_ && composition &&
+        !viewportOrientationMatricesValid_) {
+      ::Artifact::drawCompositionRegionOverlay(renderer_.get(), composition);
+    }
 
     renderer_->flush();
 
@@ -10795,13 +10792,17 @@ public:
 
       const QMatrix4x4& cameraViewMatrix, const QMatrix4x4& cameraProjMatrix,
 
-      bool preserveSceneDepth, RenderPipeline* renderPipeline) {
+      bool preserveSceneDepth, RenderPipeline* renderPipeline,
+      Diligent::ITextureView* msaaColorRTV = nullptr,
+      Diligent::ITextureView* msaaDepthDSV = nullptr) {
 
     // Mesh draws require color/depth attachments with the same dimensions.
     // Without this explicit depth target, the layer RTV is paired with the
     // swap-chain depth texture and the 3D pass corrupts after a transform.
-    renderer_->setOverrideRTV(layerRTV);
-    renderer_->setOverrideDSV(layerDepthDSV);
+    auto* activeColorRTV = msaaColorRTV ? msaaColorRTV : layerRTV;
+    auto* activeDepthDSV = msaaDepthDSV ? msaaDepthDSV : layerDepthDSV;
+    renderer_->setOverrideRTV(activeColorRTV);
+    renderer_->setOverrideDSV(activeDepthDSV);
 
     renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
 
@@ -10947,6 +10948,11 @@ public:
         &precompGpuResolver);
 
     renderer_->flush();
+
+    if (msaaColorRTV &&
+        !renderer_->resolveOffscreenMultisampleTexture(msaaColorRTV, layerRTV)) {
+      qWarning() << "[CompositionView] MSAA resolve failed; using unresolved layer target";
+    }
 
     renderer_->setOverrideDSV(nullptr);
     renderer_->setOverrideRTV(nullptr);
@@ -11776,6 +11782,10 @@ public:
 
 
   LayerID selectedLayerId_;
+
+  // A newly created layer should enter the viewport with the complete
+  // transform affordance, regardless of the mode left by the previous layer.
+  LayerID pendingFullGizmoLayerId_;
 
   bool isDraggingLayer_ = false;
 
@@ -12721,6 +12731,23 @@ public:
 
     return true;
 
+  }
+
+  bool ensurePreviewRenderPipelineMsaaSlot(
+      PreviewRenderPipelineSlot& slot, const int width, const int height) {
+    if (!renderer_ || width <= 0 || height <= 0) return false;
+    const QSize targetSize(width, height);
+    if (slot.msaaColorTargetView && slot.msaaDepthTargetView &&
+        slot.msaaTargetSize == targetSize) return true;
+    if (slot.msaaColorTargetView) renderer_->destroyOffscreenTexture(slot.msaaColorTargetView);
+    if (slot.msaaDepthTargetView) renderer_->destroyOffscreenTexture(slot.msaaDepthTargetView);
+    slot.msaaColorTargetView = renderer_->createOffscreenMultisampleTexture(
+        width, height, RenderConfig::MainRTVFormat, 4);
+    slot.msaaDepthTargetView = renderer_->createOffscreenMultisampleDepthTexture(
+        width, height, 4);
+    slot.msaaTargetSize = slot.msaaColorTargetView && slot.msaaDepthTargetView
+        ? targetSize : QSize();
+    return !slot.msaaTargetSize.isEmpty();
   }
 
 
@@ -14003,10 +14030,38 @@ public:
       gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), t3.scaleZ()));
 
       const auto *modelLayer = dynamic_cast<const Artifact3DLayer *>(layer.get());
-      if (modelLayer && modelLayer->fixedGeometry() != FixedGeometry3D::Plane) {
+      if (modelLayer &&
+          modelLayer->fixedGeometry() != FixedGeometry3D::Plane) {
         const auto &mesh = modelLayer->mesh();
-        gizmo3D_->setBoundingBox(mesh.boundingBoxMin(), mesh.boundingBoxMax());
+        QVector3D minBounds = mesh.boundingBoxMin();
+        QVector3D maxBounds = mesh.boundingBoxMax();
+        const auto finite = [](float value) { return std::isfinite(value); };
+        const bool meshBoundsValid = finite(minBounds.x()) &&
+            finite(minBounds.y()) && finite(minBounds.z()) &&
+            finite(maxBounds.x()) && finite(maxBounds.y()) &&
+            finite(maxBounds.z()) && maxBounds.x() > minBounds.x() &&
+            maxBounds.y() > minBounds.y() && maxBounds.z() > minBounds.z();
+        if (!meshBoundsValid) {
+          // Procedural volumes may not populate Mesh::boundingBox* until
+          // their first render.  Fall back to the layer extent so selection
+          // still immediately receives a usable enclosing box.
+          const QRectF localBounds = layer->localBounds().normalized();
+          const float width = std::max(
+              1.0f, static_cast<float>(localBounds.width()));
+          const float height = std::max(
+              1.0f, static_cast<float>(localBounds.height()));
+          const float halfDepth = std::max(1.0f, std::min(width, height) * 0.1f);
+          minBounds = QVector3D(static_cast<float>(localBounds.left()),
+                                 static_cast<float>(localBounds.top()),
+                                 -halfDepth);
+          maxBounds = QVector3D(static_cast<float>(localBounds.left()) + width,
+                                 static_cast<float>(localBounds.top()) + height,
+                                 halfDepth);
+        }
+        gizmo3D_->setBoundingBox(minBounds, maxBounds);
       } else {
+        // A plane uses the camera-projected 2D frame; do not give it an
+        // artificial thickness merely to satisfy the box gizmo.
         gizmo3D_->clearBoundingBox();
       }
 
@@ -14490,7 +14545,8 @@ public:
       const ArtifactCompositionPtr &composition) const;
   void queueOnionSkinCapture(CompositionRenderController *owner,
                              const ArtifactCompositionPtr &composition,
-                             const FramePosition &currentFrame);
+                             const FramePosition &currentFrame,
+                             float canvasWidth, float canvasHeight);
 
   bool updateColorSamplerOverlay(CompositionRenderController *owner,
                                  const QPointF &viewportPos);
@@ -14668,6 +14724,19 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                 impl_->clearPendingMaskCreation();
 
+                // Most viewport selections arrive through this EventBus path
+                // rather than setSelectedLayerId().  Keep the universal gizmo
+                // mode in sync here as well, otherwise planes/images retain
+                // the previous tool's None/partial mode and nothing is drawn.
+                if (comp && !incomingId.isNil()) {
+                  const auto incomingLayer = comp->layerById(incomingId);
+                  if (incomingLayer &&
+                      (incomingLayer->is3D() ||
+                       layerUsesProjectedFrameGizmo(incomingLayer))) {
+                    setGizmoMode(TransformGizmo::Mode::All);
+                  }
+                }
+
                 impl_->selectedLayerId_ = incomingId;
 
                 impl_->projectedFrameHoverHandle_ =
@@ -14722,6 +14791,14 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
               }
 
               const auto layerId = LayerID(event.layerId);
+
+              if (event.changeType == LayerChangedEvent::ChangeType::Created) {
+                impl_->pendingFullGizmoLayerId_ = layerId;
+                if (layerId == impl_->selectedLayerId_) {
+                  impl_->pendingFullGizmoLayerId_ = LayerID();
+                  setGizmoMode(TransformGizmo::Mode::All);
+                }
+              }
 
               bool invalidatesFinalPreview = false;
               if (event.changeType == LayerChangedEvent::ChangeType::Created ||
@@ -15376,6 +15453,18 @@ void CompositionRenderController::destroy() {
         slot.depthTargetSize = QSize();
 
       }
+
+      if (slot.msaaColorTargetView) {
+        impl_->renderer_->destroyOffscreenTexture(slot.msaaColorTargetView);
+        slot.msaaColorTargetView = nullptr;
+      }
+
+      if (slot.msaaDepthTargetView) {
+        impl_->renderer_->destroyOffscreenTexture(slot.msaaDepthTargetView);
+        slot.msaaDepthTargetView = nullptr;
+      }
+
+      slot.msaaTargetSize = QSize();
 
     }
 
@@ -16094,6 +16183,25 @@ int CompositionRenderController::referenceFrame() const {
 
 void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
 
+  // A newly selected spatial layer must always enter the viewport in the
+  // complete transform mode.  Otherwise a mode left by the previous tool can
+  // leave volume models with no visible universal gizmo at all.
+  if (const auto composition = impl_->previewPipeline_.composition();
+      composition && !id.isNil()) {
+    const auto selectedLayer = composition->layerById(id);
+    if (selectedLayer &&
+        (selectedLayer->is3D() || layerUsesProjectedFrameGizmo(selectedLayer))) {
+      setGizmoMode(TransformGizmo::Mode::All);
+    }
+  }
+
+  if (!impl_->pendingFullGizmoLayerId_.isNil()) {
+    if (id == impl_->pendingFullGizmoLayerId_) {
+      setGizmoMode(TransformGizmo::Mode::All);
+      impl_->pendingFullGizmoLayerId_ = LayerID();
+    }
+  }
+
   if (impl_->selectedLayerId_ == id) {
     impl_->invalidateOverlayComposite();
     impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
@@ -16109,6 +16217,18 @@ void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
   impl_->invalidateOverlayComposite();
 
   impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+
+  // A freshly inserted plane can acquire its final local bounds while the
+  // first base composite is prepared.  Rebuild that base together with the
+  // selection overlay so its projected frame is valid on the first draw,
+  // without requiring a later camera/view-cube change to wake it up.
+  if (const auto composition = impl_->previewPipeline_.composition();
+      composition && !id.isNil()) {
+    const auto selectedLayer = composition->layerById(id);
+    if (layerUsesProjectedFrameGizmo(selectedLayer)) {
+      impl_->invalidateBaseComposite();
+    }
+  }
 
 
 
@@ -22014,6 +22134,12 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       impl_->clearPendingMaskCreation();
 
+      if (primaryLayer &&
+          (primaryLayer->is3D() ||
+           layerUsesProjectedFrameGizmo(primaryLayer))) {
+        setGizmoMode(TransformGizmo::Mode::All);
+      }
+
       impl_->selectedLayerId_ = primaryId;
 
       impl_->invalidateOverlayComposite();
@@ -22932,6 +23058,13 @@ if (event->button() == Qt::LeftButton &&
       impl_->gizmo3D_ &&
       activeTool != ToolType::Pen && activeTool != ToolType::AnchorPoint) {
 
+    // Qt mouse events are in logical pixels, while the composition render
+    // target, projected frame and 3D picking viewport are physical pixels.
+    // Keeping this conversion at the interaction boundary prevents the
+    // centre move handle from starting on a displaced camera ray on HiDPI.
+    const QPointF physicalViewportPos =
+        viewportPos * impl_->devicePixelRatio_;
+
     const QMatrix4x4 &frameView = impl_->viewportOrientationMatricesValid_
                                       ? impl_->viewportOrientationViewForOverlay_
                                       : impl_->gizmo3DCameraMatricesValid_
@@ -23049,13 +23182,22 @@ if (event->button() == Qt::LeftButton &&
       impl_->gizmo3D_->setLocalBasis(basisX, basisY, basisZ);
     };
 
-    // Corner and edge handles are the most explicit targets. Axis/ring handles
-    // still take priority over the broad frame-interior move target.
-    const Ray priorityRay = createPickingRay(viewportPos);
+    // Projected-frame geometry is drawn in physical pixels. Keep the hit test
+    // in that same space so an interior drag cannot fall through to a 3D axis
+    // or rotation ring on HiDPI displays.
+    const bool frameInteriorHit = combinedProjectedFrame
+        ? combinedFrameBounds.contains(physicalViewportPos)
+        : hitTestProjectedFrameInterior(selectedLayer, physicalViewportPos,
+                                        frameView, frameProjection,
+                                        frameViewport);
+
+    // Corner and edge handles remain the most explicit targets. Outside the
+    // frame interior, 3D axis/ring handles retain their existing priority.
+    const Ray priorityRay = createPickingRay(physicalViewportPos);
     const GizmoAxis priorityAxis =
         impl_->gizmo3D_->hitTest(priorityRay, frameView, frameProjection);
     if (frameHandle == TransformGizmo::HandleType::None &&
-        priorityAxis != GizmoAxis::None) {
+        !frameInteriorHit && priorityAxis != GizmoAxis::None) {
       beginGizmoUndoSnapshot();
       configureCombinedGroupBasis();
       impl_->gizmo3D_->beginDrag(
@@ -23167,7 +23309,8 @@ if (event->button() == Qt::LeftButton &&
           break;
         }
       }
-      impl_->gizmo3D_->beginDrag(frameAxis, createPickingRay(viewportPos),
+      impl_->gizmo3D_->beginDrag(frameAxis,
+                                 createPickingRay(physicalViewportPos),
                                  frameAxisDirectionSign);
 
       impl_->projectedFrameHandle_ = frameHandle;
@@ -23184,10 +23327,6 @@ if (event->button() == Qt::LeftButton &&
 
     }
 
-    const bool frameInteriorHit = combinedProjectedFrame
-        ? combinedFrameBounds.contains(viewportPos)
-        : hitTestProjectedFrameInterior(selectedLayer, viewportPos, frameView,
-                                        frameProjection, frameViewport);
     if (frameInteriorHit) {
       beginGizmoUndoSnapshot();
       if (combinedProjectedFrame && impl_->gizmoGroupTransformActive_) {
@@ -23204,7 +23343,7 @@ if (event->button() == Qt::LeftButton &&
       impl_->gizmo3D_->setMode(GizmoMode::Move);
       impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
       impl_->gizmo3D_->beginDrag(GizmoAxis::Screen,
-                                 createPickingRay(viewportPos));
+                                 createPickingRay(physicalViewportPos));
       impl_->projectedFrameHandle_ = TransformGizmo::HandleType::None;
       impl_->projectedFrameMove_ = true;
       impl_->projectedFrameScalePointerBasisValid_ = false;
@@ -24965,7 +25104,10 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
         impl_->projectedFrameSnapHorizontal_ = snapResult.horizontalGuide;
         impl_->invalidateOverlayComposite();
       }
-      Ray ray = createPickingRay(dragViewportPos);
+      // The drag ray shares the physical-pixel viewport used to draw the
+      // projected frame.  Passing logical coordinates here made the active
+      // centre handle jump once movement began on scaled displays.
+      Ray ray = createPickingRay(dragViewportPos * impl_->devicePixelRatio_);
 
       if (impl_->gizmo3D_->isDragging()) {
 
@@ -25020,7 +25162,6 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
             projectedHandle == TransformGizmo::HandleType::Scale_B ||
             projectedHandle == TransformGizmo::HandleType::Scale_L ||
             projectedHandle == TransformGizmo::HandleType::Scale_R;
-        const auto modifiers = QGuiApplication::keyboardModifiers();
 
         // Resolve projected-frame resizing in viewport space. The generic 3D
         // axis solver is correct for axis handles, but its ray/axis sign can
@@ -26251,6 +26392,12 @@ void CompositionRenderController::handleMouseRelease() {
     if (impl_->selectedLayerId_ != primaryId) {
 
       impl_->clearPendingMaskCreation();
+
+      if (primaryLayer &&
+          (primaryLayer->is3D() ||
+           layerUsesProjectedFrameGizmo(primaryLayer))) {
+        setGizmoMode(TransformGizmo::Mode::All);
+      }
 
       impl_->selectedLayerId_ = primaryId;
 
@@ -29817,6 +29964,54 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   renderer_->setSceneLights(rendererSceneLights);
 
+  // Shadow maps currently support the two single-projection light types.  A
+  // point light needs six faces and an area light needs an approximation, so
+  // those lights continue to illuminate without being selected as casters.
+  QMatrix4x4 shadowLightViewProjection;
+  const ArtifactCore::Light* shadowMapLight = nullptr;
+  for (const auto& entry : sceneLights) {
+    if (!entry.source || !entry.source->castsShadows() ||
+        !entry.light.enabled()) {
+      continue;
+    }
+    const auto type = entry.light.type();
+    if (type != ArtifactCore::LightType::Directional &&
+        type != ArtifactCore::LightType::Spot) {
+      continue;
+    }
+    const auto directionValue = entry.light.direction();
+    QVector3D direction(directionValue.x, directionValue.y, directionValue.z);
+    if (direction.lengthSquared() < 1.0e-6f) {
+      continue;
+    }
+    direction.normalize();
+    QVector3D up = std::abs(QVector3D::dotProduct(direction, QVector3D(0, 1, 0)))
+        > 0.98f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
+    QMatrix4x4 shadowView;
+    QMatrix4x4 shadowProjection;
+    if (type == ArtifactCore::LightType::Directional) {
+      constexpr float shadowExtent = 2048.0f;
+      shadowView.lookAt(-direction * shadowExtent, QVector3D(), up);
+      shadowProjection.ortho(-shadowExtent, shadowExtent, -shadowExtent,
+                             shadowExtent, 0.1f, shadowExtent * 4.0f);
+    } else {
+      const auto positionValue = entry.light.position();
+      const QVector3D position(positionValue.x, positionValue.y, positionValue.z);
+      shadowView.lookAt(position, position + direction, up);
+      const float farPlane = std::max(1.0f, entry.source->range());
+      shadowProjection.perspective(
+          std::clamp(entry.light.spotOuterCutoff() * 2.0f, 1.0f, 175.0f),
+          1.0f, 0.05f, farPlane);
+    }
+    // Keep the light projection in the same top-down viewport convention as
+    // the active 3D camera matrices used by MeshRenderer.
+    shadowProjection(1, 1) = -shadowProjection(1, 1);
+    shadowLightViewProjection = shadowProjection * shadowView;
+    shadowMapLight = &entry.light;
+    break;
+  }
+  renderer_->beginShadowMapFrame(shadowLightViewProjection, shadowMapLight);
+
 
 
   // Resolve each matte source at most once per rendered frame. Multiple matte
@@ -29847,7 +30042,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (l && l->id() == layerId) {
 
-              l->goToFrame(currentFrame);
+              l->goToFrame(currentFrame.framePosition());
 
               if (auto *imgLayer = dynamic_cast<ArtifactImageLayer *>(l.get())) {
 
@@ -29911,11 +30106,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     if (auto cam = dynamic_cast<ArtifactCameraLayer *>(layerCopy.get())) {
 
-      if (isLayerEffectivelyVisible(layerCopy) && cam->isActiveAt(currentFrame)) {
+      if (isLayerEffectivelyVisible(layerCopy) && cam->isActiveAt(currentFrame) &&
+          cam->isActiveCamera() &&
+          (!activeCamera || cam->cameraPriority() > activeCamera->cameraPriority())) {
 
+        // Higher priority wins; composition order intentionally keeps the
+        // existing first-match behavior when priorities are equal.
         activeCamera = cam;
-
-        break; // Use first visible camera
 
       }
 
@@ -30404,6 +30601,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   {
 
+    const bool hasVisible3DLayer =
+        std::any_of(layers.begin(), layers.end(),
+                    [&](const ArtifactAbstractLayerPtr &layer) {
+                      return layer && layer->is3D() &&
+                             isLayerEffectivelyVisible(layer) &&
+                             layer->isActiveAt(currentFrame);
+                    });
+
 
 
     const bool hasGpuBlendJustification =
@@ -30453,7 +30658,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->isMultiChannelEnabled();
 
     if (gpuBlendEnabled_ &&
-        (hasGpuBlendJustification ||
+        (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
          viewportMultiChannelRequested) &&
         !blendPipelineReady_) {
@@ -30469,7 +30674,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool gpuBlendPathRequested =
 
         gpuBlendRequested &&
-        (hasGpuBlendJustification ||
+        (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
          viewportMultiChannelRequested);
 
@@ -31220,6 +31425,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     ? &viewportOrientationProjectionForOverlay_
                     : nullptr);
 
+            if (showCompositionRegionOverlay_ && comp &&
+                !viewportOrientationMatricesValid_) {
+              ::Artifact::drawCompositionRegionOverlay(context.renderer, comp);
+            }
+
             basePassMs = markPhaseMs();
 
             return true;
@@ -31384,7 +31594,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 layerToFloatConvertCount, blendDispatchCount,
 
-                blendFailureCount, cw, ch, layerBgColor, backgroundMode);
+                blendFailureCount, cw, ch, layerBgColor, backgroundMode, comp);
 
             accumSRV = resources.accumSRV;
 
@@ -31707,12 +31917,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               !layer->isAdjustmentLayer() &&
               blendMode == ArtifactCore::BlendMode::Normal &&
               opacity >= 0.9999f && layerMaskCount == 0 &&
-              !layerHasEnabledMatteReferences(layer);
+              !layerHasEnabledMatteReferences(layer.get());
           const bool preserveSceneDepth =
               shared3DSceneDepthMember && shared3DSceneDepthOpen;
           if (!shared3DSceneDepthMember) {
             shared3DSceneDepthOpen = false;
           }
+
+          // MSAA is isolated per 3D layer.  A shared-depth scene and AOV
+          // capture stay on the established single-sample path because their
+          // depth/color attachments must remain mutually compatible.
+          const bool useLayerMsaa = layer->is3D() && !preserveSceneDepth &&
+              !auxiliary3DChannelRequested &&
+              ensurePreviewRenderPipelineMsaaSlot(
+                  previewRenderSlot, previewRenderWidth, previewRenderHeight);
 
 
 
@@ -31750,7 +31968,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     has3DCamera, cameraViewMatrix, cameraProjMatrix,
 
-                    preserveSceneDepth, resources.pipeline);
+                    preserveSceneDepth, resources.pipeline,
+                    useLayerMsaa
+                        ? static_cast<Diligent::ITextureView*>(
+                              previewRenderSlot.msaaColorTargetView)
+                        : nullptr,
+                    useLayerMsaa
+                        ? static_cast<Diligent::ITextureView*>(
+                              previewRenderSlot.msaaDepthTargetView)
+                        : nullptr);
                 // applyPointwise() may swap the accumulation ping-pong
                 // textures. Keep the following mask/blend passes on the
                 // resulting resource rather than the pre-effect SRV.
@@ -31992,6 +32218,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 globalIlluminationSettings.denoise);
         if (dispatched) {
           ++giDispatchedCount_;
+          auto* aoMask = renderPipeline.screenSpaceGlobalIlluminationSRV();
+          if (aoMask && renderPipeline.applyScreenSpaceAmbientOcclusion(
+                            context.RawPtr(), accumSRV, tempUAV, aoMask)) {
+            renderPipeline.swapAccumAndTemp();
+            accumSRV = renderPipeline.accumSRV();
+            tempUAV = renderPipeline.tempUAV();
+          }
         }
         if (!dispatched && compositionViewLog().isDebugEnabled()) {
           qCDebug(compositionViewLog)
@@ -32025,7 +32258,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           [&](RenderPassContext&, RenderPassResources& resources) {
 
-            if (resources.pipeline && resources.accumSRV &&
+              if (resources.pipeline && resources.accumSRV &&
                 resources.pipeline->hasVelocityTarget() &&
                 renderer_ && renderer_->device() &&
                 renderer_->immediateContext()) {
@@ -32062,6 +32295,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 accumSRV = resources.accumSRV;
                 tempUAV = resources.tempUAV;
               }
+              }
+
+            // Geometry resolves into a single-sample composition target.
+            // Apply FXAA only when the frame contains visible 3D, after AO and
+            // motion blur, so 2D/text content keeps its exact pixels.
+            if (hasVisible3DLayer && resources.pipeline && renderer_ &&
+                renderer_->immediateContext() &&
+                resources.pipeline->applyFastApproximateAntiAliasing(
+                    renderer_->immediateContext(), resources.accumSRV,
+                    resources.pipeline->tempUAV())) {
+              resources.pipeline->swapAccumAndTemp();
+              resources.accumSRV = resources.pipeline->accumSRV();
+              resources.tempUAV = resources.pipeline->tempUAV();
+              accumSRV = resources.accumSRV;
+              tempUAV = resources.tempUAV;
             }
 
             ramPreviewReadbackSRV = finalizeGpuRenderToViewport(
@@ -32181,6 +32429,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                       viewportOrientationMatricesValid_
                                           ? &viewportOrientationProjectionForOverlay_
                                           : nullptr);
+
+      if (showCompositionRegionOverlay_ && comp &&
+          !viewportOrientationMatricesValid_) {
+        ::Artifact::drawCompositionRegionOverlay(renderer_.get(), comp);
+      }
 
       lastPresentedReadbackSRV_ = nullptr;
 
@@ -32603,6 +32856,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // also submits queued draws, but by then later passes may have reset the
       // shared command buffer. Re-arm the swap-chain target for overlays after
       // this barrier.
+      renderer_->renderShadowMapFrame();
       renderer_->flush();
       renderer_->setOverrideRTV(nullptr);
 
@@ -34350,7 +34604,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
       if (showOnionSkin_ && !hasCalculatedOnionSkinSource(comp)) {
-        queueOnionSkinCapture(owner, comp, currentFrame);
+         queueOnionSkinCapture(owner, comp, currentFrame,
+                               lastCanvasWidth_, lastCanvasHeight_);
       }
 
       renderCrashTrace("render-present-end", renderFrameCounter_);
@@ -35359,10 +35614,6 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   drawOnionSkinOverlay(comp, currentFrame, cw, ch);
 
-  if (showCompositionRegionOverlay_ &&
-      !viewportOrientationMatricesValid_) {
-    ::Artifact::drawCompositionRegionOverlay(renderer_.get(), comp);
-  }
   if (viewportOrientationMatricesValid_) {
     const float borderThickness =
         std::max(1.0f, 2.0f / std::max(0.001f, renderer_->getZoom()));
@@ -35568,13 +35819,15 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
   if (selectedLayer) {
 
     if (auto *selectedModel = dynamic_cast<Artifact3DLayer *>(selectedLayer.get());
-        selectedModel && has3DCamera) {
+        selectedModel) {
+      const QMatrix4x4 selectionView = viewportOrientationMatricesValid_
+          ? viewportOrientationViewForOverlay_
+          : has3DCamera ? cameraViewMatrix : renderer_->getViewMatrix();
+      const QMatrix4x4 selectionProjection = viewportOrientationMatricesValid_
+          ? viewportOrientationProjectionForOverlay_
+          : has3DCamera ? cameraProjMatrix : renderer_->getProjectionMatrix();
       ::Artifact::draw3DSelectionWireframeOverlay(
-          renderer_.get(), selectedLayer, &cameraViewMatrix, &cameraProjMatrix);
-      if (layerUsesVolumeBoundingBoxGizmo(selectedLayer)) {
-        ::Artifact::draw3DSelectionBoundsOverlay(
-            renderer_.get(), selectedLayer, &cameraViewMatrix, &cameraProjMatrix);
-      }
+          renderer_.get(), selectedLayer, &selectionView, &selectionProjection);
     }
 
     if (!showGizmoOverlay_) {
@@ -36029,7 +36282,8 @@ bool CompositionRenderController::Impl::hasCalculatedOnionSkinSource(
 void CompositionRenderController::Impl::queueOnionSkinCapture(
     CompositionRenderController *owner,
     const ArtifactCompositionPtr &composition,
-    const FramePosition &currentFrame) {
+    const FramePosition &currentFrame,
+    float canvasWidth, float canvasHeight) {
 
   if (!renderer_ || !showOnionSkin_ || !owner || !composition) {
     return;
@@ -37976,9 +38230,30 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
   }
 
+  // With no active 3D camera, the renderer's generic view/projection matrices
+  // are not a canvas-space camera.  Use the same orthographic matrices as the
+  // 3D axis gizmo so a newly added plane gets its projected frame immediately.
+  QMatrix4x4 fallbackFrameView;
+  QMatrix4x4 fallbackFrameProjection;
+  if (renderer_ && !viewportOrientationMatricesValid_ && !has3DCamera) {
+    float panX = 0.0f;
+    float panY = 0.0f;
+    renderer_->getPan(panX, panY);
+    const float zoom = std::max(0.001f, renderer_->getZoom());
+    const float viewportW = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+    const float viewportH = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+    fallbackFrameView.translate(panX, panY, 0.0f);
+    fallbackFrameView.scale(zoom, zoom, 1.0f);
+    fallbackFrameProjection.ortho(0.0f, std::max(1.0f, viewportW),
+                                  std::max(1.0f, viewportH), 0.0f,
+                                  -1000.0f, 1000.0f);
+  }
 
 
-  if (showGizmoOverlay_ && gizmo_) {
+
+  // The projected-frame/3D gizmo has its own lifetime.  Do not make its
+  // first draw depend on the legacy 2D gizmo having been initialized yet.
+  if (showGizmoOverlay_ && (gizmo_ || gizmo3D_)) {
 
     ArtifactCore::ProfileScope _profGizmo("GizmoMask",
 
@@ -37992,9 +38267,17 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
     if (selectedLayer && isLayerEffectivelyVisible(selectedLayer)) {
 
-      gizmo_->setMode(gizmoMode_);
+      if (gizmo_) {
+        gizmo_->setMode(gizmoMode_);
+      }
 
-      if (layerUsesTextGizmo(selectedLayer) && !viewportOrientationActive_) {
+      // Projected plane/image frames need the same readily visible 2D
+      // transform controls in the default view as text does.  The 3D gizmo
+      // remains active below for oriented views and depth-aware operations.
+      const bool use2DTransformGizmo = !viewportOrientationActive_ &&
+          (layerUsesTextGizmo(selectedLayer) ||
+           layerUsesProjectedFrameGizmo(selectedLayer));
+      if (use2DTransformGizmo) {
 
         ArtifactCore::ProfileScope _profG2D(
 
@@ -38056,8 +38339,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
             "Gizmo3D", ArtifactCore::ProfileCategory::Render);
 
-        const QMatrix4x4& viewForGizmoSpace =
-            gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_ : cameraViewMatrix;
+        const QMatrix4x4& viewForGizmoSpace = gizmo3DCameraMatricesValid_
+            ? gizmo3DViewMatrix_
+            : (has3DCamera ? cameraViewMatrix : fallbackFrameView);
         bool viewBasisInvertible = false;
         const QMatrix4x4 inverseGizmoView =
             viewForGizmoSpace.inverted(&viewBasisInvertible);
@@ -38322,6 +38606,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           if (candidate && isLayerEffectivelyVisible(candidate) &&
               candidate->isActiveAt(currentFrame) &&
               !dynamic_cast<ArtifactVideoLayer *>(candidate.get()) &&
+              // A volume is edited with the 3D axis gizmo and its mesh
+              // outline; a projected 2D frame would misrepresent its depth.
+              (!candidate->is3D() || layerUsesProjectedFrameGizmo(candidate)) &&
               isLayerSelected(selectedIds, candidate)) {
             combinedSelectionLayers.push_back(candidate);
             combinedSelectionUsesProjectedFrame =
@@ -38359,6 +38646,12 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
           }
 
+          // Only planes have an unambiguous 2D frame. Keep volume objects on
+          // the 3D transform-gizmo/mesh-outline path even in oriented views.
+          if (layer->is3D() && !layerUsesProjectedFrameGizmo(layer)) {
+            continue;
+          }
+
           if (drawCombinedProjectedFrame) {
             continue;
           }
@@ -38372,14 +38665,14 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             continue;
           }
 
-          const QMatrix4x4 frameView = viewportOrientationMatricesValid_
+          const QMatrix4x4 &frameView = viewportOrientationMatricesValid_
               ? viewportOrientationViewForOverlay_
               : has3DCamera ? cameraViewMatrix
-                            : renderer_->getViewMatrix();
-          const QMatrix4x4 frameProjection = viewportOrientationMatricesValid_
+                            : fallbackFrameView;
+          const QMatrix4x4 &frameProjection = viewportOrientationMatricesValid_
               ? viewportOrientationProjectionForOverlay_
               : has3DCamera ? cameraProjMatrix
-                            : renderer_->getProjectionMatrix();
+                            : fallbackFrameProjection;
           const bool projectedFrame = layerUsesProjectedFrameGizmo(layer) ||
               viewportOrientationMatricesValid_;
           const bool projectedFrameHovered =
@@ -38435,14 +38728,14 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
         }
 
         if (drawCombinedProjectedFrame) {
-          const QMatrix4x4 frameView = viewportOrientationMatricesValid_
+          const QMatrix4x4 &frameView = viewportOrientationMatricesValid_
               ? viewportOrientationViewForOverlay_
               : has3DCamera ? cameraViewMatrix
-                            : renderer_->getViewMatrix();
-          const QMatrix4x4 frameProjection = viewportOrientationMatricesValid_
+                            : fallbackFrameView;
+          const QMatrix4x4 &frameProjection = viewportOrientationMatricesValid_
               ? viewportOrientationProjectionForOverlay_
               : has3DCamera ? cameraProjMatrix
-                            : renderer_->getProjectionMatrix();
+                            : fallbackFrameProjection;
           const QRect frameViewport(
               0, 0, std::max(1, static_cast<int>(hostWidth_)),
               std::max(1, static_cast<int>(hostHeight_)));
@@ -38534,30 +38827,6 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                     combinedColor, 1.0f);
               }
             }
-            const QPointF rotationPoint(combinedBounds.center().x(),
-                                        combinedBounds.top() - 36.0);
-            const bool showRotationHandle =
-                gizmoMode_ == TransformGizmo::Mode::All ||
-                gizmoMode_ == TransformGizmo::Mode::Rotate;
-            if (showRotationHandle) {
-              QPointF rotationStart(combinedBounds.center().x(),
-                                    combinedBounds.top());
-              QPointF clippedRotationPoint = rotationPoint;
-              if (clipProjectedFrameEdge(visibleFrameArea, rotationStart,
-                                         clippedRotationPoint)) {
-                renderer_->drawSolidLine(
-                    {static_cast<float>(rotationStart.x()),
-                     static_cast<float>(rotationStart.y())},
-                    {static_cast<float>(clippedRotationPoint.x()),
-                     static_cast<float>(clippedRotationPoint.y())},
-                    combinedColor, 1.6f);
-              }
-              if (visibleFrameArea.contains(rotationPoint)) {
-                renderer_->drawCircle(static_cast<float>(rotationPoint.x()),
-                                      static_cast<float>(rotationPoint.y()),
-                                      5.0f, combinedColor, 1.0f, true);
-              }
-            }
             renderer_->setZoom(previousZoom);
             renderer_->setPan(previousPanX, previousPanY);
             if (lastCanvasWidth_ > 0.0f && lastCanvasHeight_ > 0.0f) {
@@ -38591,11 +38860,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
       const QMatrix4x4 &view = viewportOrientationMatricesValid_
           ? viewportOrientationViewForOverlay_
           : gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
-                                         : renderer_->getViewMatrix();
+                                         : fallbackFrameView;
       const QMatrix4x4 &projection = viewportOrientationMatricesValid_
           ? viewportOrientationProjectionForOverlay_
           : gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
-                                         : renderer_->getProjectionMatrix();
+                                         : fallbackFrameProjection;
       const QVector3D worldCenter = layer->getGlobalTransform4x4().map(
           QVector3D(static_cast<float>(bounds.center().x()),
                     static_cast<float>(bounds.center().y()), 0.0f));

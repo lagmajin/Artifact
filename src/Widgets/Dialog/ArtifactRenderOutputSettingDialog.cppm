@@ -230,14 +230,14 @@ namespace Artifact
                .arg((nvencH264 || nvencHevc) ? QStringLiteral("NVENC available") : QStringLiteral("NVENC unavailable, will fallback"));
    lines << QStringLiteral("Vulkan encode: %1")
                .arg((vulkanH264 || vulkanHevc) ? QStringLiteral("available") : QStringLiteral("unavailable"));
-   lines << QStringLiteral("Fallback order: pipe-hw -> pipe-vulkan -> native -> pipe");
+   lines << QStringLiteral("Auto order: native GPU -> pipe-hw -> pipe-vulkan -> native -> pipe");
    if (visibleCodecs.isEmpty()) {
      lines << QStringLiteral("FFmpeg codecs: unavailable");
    } else {
      lines << QStringLiteral("FFmpeg codecs: %1").arg(visibleCodecs.join(QStringLiteral(", ")));
    }
    backendInfoLabel->setText(lines.join(QStringLiteral(" | ")));
-   backendInfoLabel->setToolTip(QStringLiteral("pipe-hw tries NVENC through FFmpeg.exe. pipe-vulkan tries h264_vulkan/hevc_vulkan. If they fail, Render Queue falls back in order to native FFmpeg, then pipe."));
+   backendInfoLabel->setToolTip(QStringLiteral("Auto first probes native hardware encoding, then NVENC through FFmpeg.exe and Vulkan encoding. If those are unavailable, it falls back to native software FFmpeg and finally the pipe backend."));
  }
 
  QString ArtifactRenderOutputSettingDialog::Impl::resolveFfmpegExePath()
@@ -893,6 +893,10 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString&
       || value == QStringLiteral("ffmpeg-hw") || value == QStringLiteral("hardware")
       || value == QStringLiteral("hw")) {
     return QStringLiteral("pipe-hw");
+  }
+  if (value == QStringLiteral("pipe-vulkan") || value == QStringLiteral("ffmpeg-vulkan")
+      || value == QStringLiteral("vulkan-hw") || value == QStringLiteral("vulkan")) {
+    return QStringLiteral("pipe-vulkan");
   }
   if (value == QStringLiteral("native") || value == QStringLiteral("api") || value == QStringLiteral("ffmpegapi")) {
     return QStringLiteral("native");

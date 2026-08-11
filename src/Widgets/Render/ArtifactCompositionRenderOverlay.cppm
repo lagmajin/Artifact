@@ -238,7 +238,6 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
 
   const ArtifactCore::Mesh &mesh = modelLayer->mesh();
   const auto positions = mesh.vertexAttributes().get<QVector3D>("position");
-  const auto normals = mesh.vertexAttributes().get<QVector3D>("normal");
   if (!positions || positions->data().isEmpty() || mesh.polygonCount() <= 0) {
     return;
   }
@@ -253,13 +252,25 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   const FloatColor wireColor{1.0f, 0.56f, 0.18f, 0.98f};
   const float shadowThickness = 3.4f;
   const float thickness = 1.9f;
-  const FloatColor normalShadow{0.02f, 0.04f, 0.02f, 0.92f};
-  const FloatColor normalColor{0.30f, 1.0f, 0.38f, 0.96f};
-  const float normalLength = std::max(4.0f, static_cast<float>(modelLayer->localBounds().width()) * 0.08f);
+  const FloatColor vertexShadow{0.02f, 0.03f, 0.04f, 0.94f};
+  const FloatColor vertexColor{1.0f, 0.68f, 0.22f, 1.0f};
 
   renderer->set3DCameraMatrices(*cameraView, *cameraProj);
 
+  // Match Maya's default component display: only the visible side of the
+  // source topology is drawn. The optional backface mode deliberately keeps
+  // the same polygon-boundary path, so quads never gain render triangulation.
+  const bool showBackfaces =
+      ArtifactCore::LayeredConfigStore::instance().valueBool(
+          QStringLiteral("Viewport/SelectionWireframe/ShowBackfaces"), false);
+  bool inverseViewValid = false;
+  const QMatrix4x4 inverseView = cameraView->inverted(&inverseViewValid);
+  const QVector3D cameraPosition = inverseViewValid
+      ? inverseView.map(QVector3D(0.0f, 0.0f, 0.0f))
+      : QVector3D();
+
   std::unordered_set<quint64> visitedEdges;
+  std::unordered_set<int> visibleVertices;
   const int kMaxOverlayPolygons = [&] {
     switch (renderer->detailLevel()) {
     case LODManager::DetailLevel::Low:
@@ -276,6 +287,7 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   const int sampledPolygonCount =
       (mesh.polygonCount() + polygonStride - 1) / polygonStride;
   visitedEdges.reserve(static_cast<size_t>(sampledPolygonCount) * 3u);
+  visibleVertices.reserve(static_cast<size_t>(sampledPolygonCount) * 4u);
 
   auto drawEdge = [&](int a, int b) {
     if (a < 0 || b < 0 || a >= vertexPositions.size() || b >= vertexPositions.size()) {
@@ -303,37 +315,98 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
       continue;
     }
 
-    for (int i = 0; i < polygon.size(); ++i) {
-      drawEdge(polygon[i], polygon[(i + 1) % polygon.size()]);
+    bool hasValidIndices = true;
+    for (const int vertexIndex : polygon) {
+      if (vertexIndex < 0 || vertexIndex >= vertexPositions.size()) {
+        hasValidIndices = false;
+        break;
+      }
+    }
+    if (!hasValidIndices) {
+      continue;
     }
 
-    if (polygon.size() == 4) {
-      drawEdge(polygon[0], polygon[2]);
-    }
-  }
-
-  if (normals && normals->data().size() == vertexPositions.size() &&
-      renderer->detailLevel() != LODManager::DetailLevel::Low) {
-    const int normalStride = std::max<int>(
-        1, static_cast<int>((vertexPositions.size() + kMaxOverlayPolygons - 1) /
-                            kMaxOverlayPolygons));
-    for (int i = 0; i < vertexPositions.size(); i += normalStride) {
-      QVector3D normal = normals->data()[i];
-      if (normal.lengthSquared() < 1.0e-8f) {
+    if (!showBackfaces && inverseViewValid && polygon.size() >= 3) {
+      const QVector3D origin = modelMatrix.map(vertexPositions[polygon[0]]);
+      QVector3D faceNormal;
+      for (int i = 1; i + 1 < polygon.size(); ++i) {
+        const QVector3D edgeA =
+            modelMatrix.map(vertexPositions[polygon[i]]) - origin;
+        const QVector3D edgeB =
+            modelMatrix.map(vertexPositions[polygon[i + 1]]) - origin;
+        faceNormal = QVector3D::crossProduct(edgeA, edgeB);
+        if (faceNormal.lengthSquared() > 1.0e-8f) {
+          break;
+        }
+      }
+      if (faceNormal.lengthSquared() > 1.0e-8f &&
+          QVector3D::dotProduct(faceNormal, cameraPosition - origin) <= 0.0f) {
         continue;
       }
-      normal.normalize();
-      const QVector3D start = modelMatrix.map(vertexPositions[i]);
-      const QVector3D end = modelMatrix.map(vertexPositions[i] + normal * normalLength);
-      renderer->draw3DLine({start.x(), start.y(), start.z()},
-                           {end.x(), end.y(), end.z()},
-                           normalShadow, 2.6f);
-      renderer->draw3DLine({start.x(), start.y(), start.z()},
-                           {end.x(), end.y(), end.z()},
-                           normalColor, 1.25f);
+    }
+
+    for (int i = 0; i < polygon.size(); ++i) {
+      visibleVertices.insert(polygon[i]);
+      drawEdge(polygon[i], polygon[(i + 1) % polygon.size()]);
     }
   }
 
+  // Maya-style component cue: selected model vertices are small filled cards
+  // facing the camera. They remain readable over the shaded surface without
+  // introducing normal spikes or fake triangulation inside quad faces.
+  if (inverseViewValid && !visibleVertices.empty()) {
+    QVector3D cameraRight = inverseView.mapVector(QVector3D(1.0f, 0.0f, 0.0f));
+    QVector3D cameraUp = inverseView.mapVector(QVector3D(0.0f, 1.0f, 0.0f));
+    if (cameraRight.lengthSquared() > 1.0e-8f &&
+        cameraUp.lengthSquared() > 1.0e-8f) {
+      cameraRight.normalize();
+      cameraUp.normalize();
+      const QVector3D localBoundsExtent =
+          mesh.boundingBoxMax() - mesh.boundingBoxMin();
+      const float markerRadius = std::max(
+          0.004f, modelMatrix.mapVector(localBoundsExtent).length() * 0.0045f);
+      QVector3D towardCamera =
+          inverseView.mapVector(QVector3D(0.0f, 0.0f, 1.0f));
+      if (towardCamera.lengthSquared() > 1.0e-8f) {
+        towardCamera.normalize();
+      }
+      const int maxVertexMarkers = renderer->detailLevel() == LODManager::DetailLevel::Low
+          ? 1500
+          : renderer->detailLevel() == LODManager::DetailLevel::Medium ? 5000 : 12000;
+      const int markerStride = std::max(
+          1, (static_cast<int>(visibleVertices.size()) + maxVertexMarkers - 1) /
+                 maxVertexMarkers);
+      int markerIndex = 0;
+      for (const int vertexIndex : visibleVertices) {
+        if ((markerIndex++ % markerStride) != 0 || vertexIndex < 0 ||
+            vertexIndex >= vertexPositions.size()) {
+          continue;
+        }
+        const QVector3D center =
+            modelMatrix.map(vertexPositions[vertexIndex]) +
+            towardCamera * (markerRadius * 0.12f);
+        const auto drawMarker = [&](float radius, const FloatColor &color) {
+          const QVector3D right = cameraRight * radius;
+          const QVector3D up = cameraUp * radius;
+          const QVector3D p0 = center - right - up;
+          const QVector3D p1 = center + right - up;
+          const QVector3D p2 = center + right + up;
+          const QVector3D p3 = center - right + up;
+          renderer->draw3DQuad({p0.x(), p0.y(), p0.z()},
+                               {p1.x(), p1.y(), p1.z()},
+                               {p2.x(), p2.y(), p2.z()},
+                               {p3.x(), p3.y(), p3.z()}, color);
+        };
+        drawMarker(markerRadius * 1.45f, vertexShadow);
+        drawMarker(markerRadius, vertexColor);
+      }
+    }
+  }
+
+  // Lines and vertex cards are buffered. Submit them while the selection
+  // camera is still active; resetting first projects the queued geometry with
+  // the default matrices instead of the composition camera.
+  renderer->flushGizmo3D();
   renderer->reset3DCameraMatrices();
 }
 
@@ -379,6 +452,9 @@ void draw3DSelectionBoundsOverlayImpl(ArtifactIRenderer *renderer,
     renderer->draw3DLine({a.x(), a.y(), a.z()}, {b.x(), b.y(), b.z()}, shadow, 3.6f);
     renderer->draw3DLine({a.x(), a.y(), a.z()}, {b.x(), b.y(), b.z()}, color, 1.9f);
   }
+  // Bounds lines are buffered by PrimitiveRenderer3D. Keep the selection
+  // camera active until they have been submitted.
+  renderer->flushGizmo3D();
   renderer->reset3DCameraMatrices();
 }
 

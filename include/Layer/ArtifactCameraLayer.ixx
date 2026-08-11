@@ -103,6 +103,14 @@ export namespace Artifact {
   float ipd() const;
   void setIpd(float ipd);
 
+  // Composition camera selection.  Several cameras may be visible for
+  // editing, while only the enabled camera with the highest priority drives
+  // the composition render.
+  bool isActiveCamera() const;
+  void setActiveCamera(bool active);
+  int cameraPriority() const;
+  void setCameraPriority(int priority);
+
   // Projection / View
   QMatrix4x4 viewMatrix() const;
   QMatrix4x4 projectionMatrix(float aspect) const;

@@ -389,7 +389,7 @@ public:
   QTimer *rebuildTimer = nullptr;
   QTimer *updateValuesTimer = nullptr;
   int rebuildDebounceMs = 80;
-  int updateValuesDebounceMs = 16;
+  int updateValuesDebounceMs = 0;
   QString filterText;
   QString focusedEffectId;
   bool rebuilding = false;
@@ -740,7 +740,13 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
               // High-frequency UI updates during playback can cause
               // significant lag.
               if (!impl_->isPlaying) {
-                impl_->updatePropertyValues();
+                // Timeline scrubbing may publish many frame changes in one
+                // gesture. Preserve immediate local property edits, but
+                // coalesce evaluated-value refreshes to roughly one UI frame.
+                impl_->invalidatePropertyValueCache();
+                if (impl_->updateValuesTimer && !impl_->rebuilding) {
+                  impl_->updateValuesTimer->start(16);
+                }
               }
             } else {
               impl_->needsRebuildWhenVisible = true;
@@ -797,8 +803,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
                   if (impl_->localPropertyEditDepth > 0) {
                     return;
                   }
-                  impl_->invalidatePropertyValueCache();
-                  impl_->scheduleRebuild();
+                  impl_->scheduleUpdateValues();
                 });
   }
 
@@ -843,8 +848,7 @@ void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& lay
                   if (impl_->localPropertyEditDepth > 0) {
                     return;
                   }
-                  impl_->invalidatePropertyValueCache();
-                  impl_->scheduleRebuild();
+                  impl_->scheduleUpdateValues();
                 });
   }
 
@@ -1789,8 +1793,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       auto *channelBox = new QGroupBox(QStringLiteral("Channel Box"),
                                        containerWidget);
       auto *channelLayout = new QVBoxLayout(channelBox);
-      channelLayout->setContentsMargins(10, 8, 10, 8);
-      channelLayout->setSpacing(4);
+      channelLayout->setContentsMargins(8, 6, 8, 6);
+      channelLayout->setSpacing(2);
       applyPropertySectionBox(channelBox);
       const QString lockSettingsKey =
           QStringLiteral("UI/ChannelBox/Locked/") +
@@ -1938,8 +1942,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             ? QString()
             : (isSourceReframe ? QStringLiteral("Crop / Pan") : groupName));
     auto *groupLayout = new QVBoxLayout(group);
-    groupLayout->setContentsMargins(10, 8, 10, 8);
-    groupLayout->setSpacing(5);
+    groupLayout->setContentsMargins(8, 6, 8, 6);
+    groupLayout->setSpacing(3);
     applyPropertySectionBox(group);
     applyThemeTextPalette(group, 120);
 
@@ -2053,6 +2057,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         for (const auto &tl : this->targetLayers) {
           if (!tl) { continue; }
           tl->setOpacity(newOpacity);
+          notifyLayerPropertyPreviewChanged(tl);
         }
       } else if (name.compare(QStringLiteral("source.localized"),
                               Qt::CaseInsensitive) == 0) {
@@ -2062,6 +2067,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         for (const auto &tl : targetLayers) {
           if (!tl) { continue; }
           tl->setLayerPropertyValue(name, value);
+          notifyLayerPropertyPreviewChanged(tl);
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
             name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||

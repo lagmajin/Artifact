@@ -113,6 +113,16 @@ export namespace Artifact
       float depthThickness = 0.01f,
       bool temporalAccumulation = true,
       bool denoise = true);
+  // Multiplies the resolved screen-space AO mask into a full-resolution
+  // composition color target. Source and destination must not alias.
+  bool applyScreenSpaceAmbientOcclusion(
+      IDeviceContext* ctx, ITextureView* sourceColor,
+      ITextureView* destinationColor, ITextureView* aoMask);
+  // Lightweight post-resolve anti-aliasing for geometry rendered into the
+  // single-sample composition targets.
+  bool applyFastApproximateAntiAliasing(
+      IDeviceContext* ctx, ITextureView* sourceColor,
+      ITextureView* destinationColor);
   void resetScreenSpaceGlobalIlluminationHistory();
   ITextureView* screenSpaceGlobalIlluminationSRV() const;
   Uint32 screenSpaceGlobalIlluminationWidth() const;

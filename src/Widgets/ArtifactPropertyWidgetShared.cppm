@@ -595,12 +595,14 @@ void applyPropertySectionBox(QGroupBox *box) {
   if (!box) {
     return;
   }
-  applyPropertyPanelPalette(box, true);
+  applyPropertyPanelPalette(box, false);
   QFont font = box->font();
   font.setPointSize(10);
   font.setWeight(QFont::DemiBold);
   box->setFont(font);
-  box->setFlat(false);
+  // Sections are hierarchy bands, not individual cards. The property rows
+  // provide their own quiet separators and interaction feedback.
+  box->setFlat(true);
 }
 
 bool isExpandedInspectorSection(const QString &groupName) {
@@ -922,8 +924,13 @@ void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
     return;
   }
+  auto *composition =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
   layer->setDirty(LayerDirtyFlag::Effect);
   layer->changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      composition ? composition->id().toString() : QString{},
+      layer->id().toString(), LayerChangedEvent::ChangeType::Modified});
 }
 
 void launchExpressionCopilot(

@@ -95,6 +95,9 @@ export enum class GlobalIlluminationQuality {
 };
 
 export struct GlobalIlluminationSettings {
+  // AO remains opt-in until the full 3D AOV path has runtime acceptance
+  // coverage. This prevents auxiliary-target state from affecting the normal
+  // viewport when no explicit lighting-quality mode has been selected.
   bool enabled = false;
   GlobalIlluminationMode mode = GlobalIlluminationMode::Auto;
   GlobalIlluminationQuality quality = GlobalIlluminationQuality::Balanced;
@@ -456,6 +459,13 @@ public:
   // Floating-point offscreen target intended for compute post-processing.
   void *createOffscreenComputeTexture(int width, int height);
   void *createOffscreenDepthTexture(int width, int height);
+  void *createOffscreenMultisampleTexture(int width, int height,
+                                          Diligent::TEXTURE_FORMAT format,
+                                          Diligent::Uint32 sampleCount = 4);
+  void *createOffscreenMultisampleDepthTexture(
+      int width, int height, Diligent::Uint32 sampleCount = 4);
+  bool resolveOffscreenMultisampleTexture(void *sourceTextureView,
+                                          void *destinationTextureView);
   // Returns the shader-resource view owned by an offscreen color RTV. The
   // caller must keep the source RTV alive and must not Release this view.
   Diligent::ITextureView *offscreenTextureShaderResourceView(
@@ -508,6 +518,9 @@ public:
 
   void setSceneLights(const std::vector<ArtifactCore::Light> &lights);
   const std::vector<ArtifactCore::Light> &getSceneLights() const;
+  void beginShadowMapFrame(const QMatrix4x4 &lightViewProjection,
+                           const ArtifactCore::Light *shadowLight);
+  void renderShadowMapFrame();
 
 private:
   std::unique_ptr<Impl> impl_;

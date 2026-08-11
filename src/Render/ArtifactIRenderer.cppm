@@ -12,6 +12,7 @@ module;
 #include <atomic>
 #include <numeric>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <functional>
 #include <span>
@@ -465,6 +466,15 @@ namespace {
   RefCntAutoPtr<ITexture> m_layerDepthTex;
   RefCntAutoPtr<ITextureView> m_layerDepthDSV;
   RefCntAutoPtr<ITextureView> m_layerDepthSRV;
+  RefCntAutoPtr<ITexture> m_shadowMapTex;
+  RefCntAutoPtr<ITextureView> m_shadowMapDSV;
+  RefCntAutoPtr<ITextureView> m_shadowMapSRV;
+  QMatrix4x4 m_shadowLightViewProjection;
+  std::optional<ArtifactCore::Light> m_shadowLight;
+  std::vector<ArtifactCore::MeshRenderer*> m_shadowCasters;
+  bool m_shadowMapEnabled = false;
+  bool m_shadowMapReady = false;
+  static constexpr Uint32 kShadowMapResolution = 1024;
   ITextureView* m_overrideColorRTV = nullptr;
   ITextureView* m_overrideDepthDSV = nullptr;
   struct RenderTargetStackEntry {
@@ -617,6 +627,90 @@ namespace {
     auto* raw = renderer.get();
     meshRenderers_.emplace(key, std::move(renderer));
     return raw;
+  }
+
+  void beginShadowMapFrame(const QMatrix4x4& lightViewProjection,
+                           const ArtifactCore::Light* shadowLight)
+  {
+    m_shadowLightViewProjection = lightViewProjection;
+    m_shadowLight = shadowLight ? std::optional<ArtifactCore::Light>(*shadowLight)
+                                : std::nullopt;
+    m_shadowMapEnabled = m_shadowLight.has_value();
+    m_shadowCasters.clear();
+  }
+
+  void renderShadowMapFrame()
+  {
+    if (!m_shadowMapEnabled || m_shadowCasters.empty()) {
+      return;
+    }
+    auto device = deviceManager_.device();
+    auto context = deviceManager_.immediateContext();
+    if (!device || !context) {
+      return;
+    }
+    if (!m_shadowMapTex) {
+      TextureDesc desc;
+      desc.Name = "Composition Shadow Map";
+      desc.Type = RESOURCE_DIM_TEX_2D;
+      desc.Width = kShadowMapResolution;
+      desc.Height = kShadowMapResolution;
+      desc.MipLevels = 1;
+      desc.Format = TEX_FORMAT_D32_FLOAT;
+      desc.Usage = USAGE_DEFAULT;
+      desc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
+      device->CreateTexture(desc, nullptr, &m_shadowMapTex);
+      if (m_shadowMapTex) {
+        TextureViewDesc dsvDesc{"Composition Shadow Map DSV",
+                                TEXTURE_VIEW_DEPTH_STENCIL,
+                                RESOURCE_DIM_TEX_2D, TEX_FORMAT_D32_FLOAT};
+        TextureViewDesc srvDesc{"Composition Shadow Map SRV",
+                                TEXTURE_VIEW_SHADER_RESOURCE,
+                                RESOURCE_DIM_TEX_2D, TEX_FORMAT_R32_FLOAT};
+        m_shadowMapTex->CreateView(dsvDesc, &m_shadowMapDSV);
+        m_shadowMapTex->CreateView(srvDesc, &m_shadowMapSRV);
+      }
+    }
+    if (!m_shadowMapDSV || !m_shadowMapSRV) {
+      return;
+    }
+    context->SetRenderTargets(0, nullptr, m_shadowMapDSV,
+                              RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    context->ClearDepthStencil(m_shadowMapDSV, CLEAR_DEPTH_FLAG, 1.0f, 0,
+                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    Viewport viewport;
+    viewport.TopLeftX = 0.0f;
+    viewport.TopLeftY = 0.0f;
+    viewport.Width = static_cast<float>(kShadowMapResolution);
+    viewport.Height = static_cast<float>(kShadowMapResolution);
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+    context->SetViewports(1, &viewport, kShadowMapResolution,
+                          kShadowMapResolution);
+    for (auto* caster : m_shadowCasters) {
+      if (!caster) {
+        continue;
+      }
+      caster->prepareShadow(context, m_shadowLightViewProjection.constData());
+      caster->drawShadow(context, 1);
+    }
+    m_shadowMapReady = true;
+    bindActiveRenderTargets(context);
+    // Restore the logical viewport used by this renderer, not the backing
+    // texture extent. Preview/MSAA targets may be larger or shared; restoring
+    // their full extent makes the next light update render as tiled quadrants.
+    const auto restoreWidth = static_cast<Uint32>(
+        std::max(1.0f, std::round(m_viewportWidth)));
+    const auto restoreHeight = static_cast<Uint32>(
+        std::max(1.0f, std::round(m_viewportHeight)));
+    Viewport restoreViewport;
+    restoreViewport.TopLeftX = 0.0f;
+    restoreViewport.TopLeftY = 0.0f;
+    restoreViewport.Width = static_cast<float>(restoreWidth);
+    restoreViewport.Height = static_cast<float>(restoreHeight);
+    restoreViewport.MinDepth = 0.0f;
+    restoreViewport.MaxDepth = 1.0f;
+    context->SetViewports(1, &restoreViewport, restoreWidth, restoreHeight);
   }
 
   void drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
@@ -826,6 +920,38 @@ namespace {
                             : std::clamp(shadingMode, 1, 8);
     instance.timeOffset = static_cast<float>(effectiveShadingMode);
     renderer->updateInstanceData(&instance, 1);
+    int shadowLightIndex = -1;
+    if (m_shadowMapEnabled && m_shadowLight) {
+      const auto targetPosition = m_shadowLight->position();
+      const auto targetDirection = m_shadowLight->direction();
+      for (size_t lightIndex = 0; lightIndex < m_sceneLights.size(); ++lightIndex) {
+        const auto& candidate = m_sceneLights[lightIndex];
+        const auto candidatePosition = candidate.position();
+        const auto candidateDirection = candidate.direction();
+        const float positionDelta = std::abs(candidatePosition.x - targetPosition.x) +
+            std::abs(candidatePosition.y - targetPosition.y) +
+            std::abs(candidatePosition.z - targetPosition.z);
+        const float directionDelta = std::abs(candidateDirection.x - targetDirection.x) +
+            std::abs(candidateDirection.y - targetDirection.y) +
+            std::abs(candidateDirection.z - targetDirection.z);
+        if (candidate.type() == m_shadowLight->type() &&
+            positionDelta < 1.0e-4f && directionDelta < 1.0e-4f) {
+          shadowLightIndex = static_cast<int>(lightIndex);
+          break;
+        }
+      }
+    }
+    renderer->setShadowMap(m_shadowMapSRV.RawPtr(),
+                           m_shadowLightViewProjection.constData(),
+                           m_shadowMapEnabled && m_shadowMapReady &&
+                               shadowLightIndex >= 0,
+                           shadowLightIndex);
+    if (m_shadowMapEnabled && shadowLightIndex >= 0 && alpha >= 0.9999f &&
+        !material.hasOpacityTexture() &&
+        std::find(m_shadowCasters.begin(), m_shadowCasters.end(), renderer) ==
+            m_shadowCasters.end()) {
+      m_shadowCasters.push_back(renderer);
+    }
 
     auto ctx = deviceManager_.immediateContext();
     if (!ctx) {
@@ -3491,6 +3617,12 @@ void ArtifactIRenderer::setSceneLights(const std::vector<ArtifactCore::Light>& l
 { impl_->m_sceneLights = lights; }
 const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() const
 { return impl_->m_sceneLights; }
+void ArtifactIRenderer::beginShadowMapFrame(
+    const QMatrix4x4& lightViewProjection,
+    const ArtifactCore::Light* shadowLight)
+{ impl_->beginShadowMapFrame(lightViewProjection, shadowLight); }
+void ArtifactIRenderer::renderShadowMapFrame()
+{ impl_->renderShadowMapFrame(); }
 
  QMatrix4x4 ArtifactIRenderer::getViewMatrix() const { return impl_->primitiveRenderer_.getViewMatrix(); }
  QMatrix4x4 ArtifactIRenderer::getProjectionMatrix() const { return impl_->primitiveRenderer_.getProjectionMatrix(); }
@@ -4394,6 +4526,68 @@ bool ArtifactIRenderer::applyTrackMatte(
   if (!view) return nullptr;
   view->AddRef();
   return static_cast<void*>(view.RawPtr());
+ }
+
+ void* ArtifactIRenderer::createOffscreenMultisampleTexture(
+     int width, int height, Diligent::TEXTURE_FORMAT format,
+     Diligent::Uint32 sampleCount)
+ {
+  if (!impl_->deviceManager_.device() || width <= 0 || height <= 0 ||
+      sampleCount < 2) return nullptr;
+  Diligent::TextureDesc desc;
+  desc.Name = "CompositionMSAAColor";
+  desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+  desc.Width = static_cast<Diligent::Uint32>(width);
+  desc.Height = static_cast<Diligent::Uint32>(height);
+  desc.MipLevels = 1;
+  desc.Format = format;
+  desc.SampleCount = sampleCount;
+  desc.Usage = Diligent::USAGE_DEFAULT;
+  desc.BindFlags = Diligent::BIND_RENDER_TARGET;
+  Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
+  impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
+  auto* view = texture ? texture->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET) : nullptr;
+  if (!view) return nullptr;
+  view->AddRef();
+  return static_cast<void*>(view);
+ }
+
+ void* ArtifactIRenderer::createOffscreenMultisampleDepthTexture(
+     int width, int height, Diligent::Uint32 sampleCount)
+ {
+  if (!impl_->deviceManager_.device() || width <= 0 || height <= 0 ||
+      sampleCount < 2) return nullptr;
+  Diligent::TextureDesc desc;
+  desc.Name = "CompositionMSAADepth";
+  desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+  desc.Width = static_cast<Diligent::Uint32>(width);
+  desc.Height = static_cast<Diligent::Uint32>(height);
+  desc.MipLevels = 1;
+  desc.Format = Diligent::TEX_FORMAT_D32_FLOAT;
+  desc.SampleCount = sampleCount;
+  desc.Usage = Diligent::USAGE_DEFAULT;
+  desc.BindFlags = Diligent::BIND_DEPTH_STENCIL;
+  Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
+  impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
+  auto* view = texture ? texture->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL) : nullptr;
+  if (!view) return nullptr;
+  view->AddRef();
+  return static_cast<void*>(view);
+ }
+
+ bool ArtifactIRenderer::resolveOffscreenMultisampleTexture(
+     void* sourceTextureView, void* destinationTextureView)
+ {
+  auto* source = static_cast<Diligent::ITextureView*>(sourceTextureView);
+  auto* destination = static_cast<Diligent::ITextureView*>(destinationTextureView);
+  auto context = impl_->deviceManager_.immediateContext();
+  if (!source || !destination || !context || !source->GetTexture() ||
+      !destination->GetTexture()) return false;
+  Diligent::ResolveTextureSubresourceAttribs attribs;
+  attribs.SrcTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  attribs.DstTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  context->ResolveTextureSubresource(source->GetTexture(), destination->GetTexture(), attribs);
+  return true;
  }
 
  Diligent::ITextureView* ArtifactIRenderer::offscreenTextureShaderResourceView(

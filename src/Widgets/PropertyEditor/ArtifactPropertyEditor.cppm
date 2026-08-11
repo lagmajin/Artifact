@@ -75,12 +75,12 @@ QString propertyUiText(const QString& key, const QString& fallback) {
 }
 
 namespace {
-constexpr int kPropertyRowMinHeight = 34;
-constexpr int kPropertyRowLabelMinHeight = 24;
-constexpr int kPropertyRowLabelWidth = 132;
-constexpr int kPropertyRowMarginH = 10;
-constexpr int kPropertyRowMarginV = 4;
-constexpr int kPropertyRowSpacing = 8;
+constexpr int kPropertyRowMinHeight = 30;
+constexpr int kPropertyRowLabelMinHeight = 22;
+constexpr int kPropertyRowLabelWidth = 124;
+constexpr int kPropertyRowMarginH = 8;
+constexpr int kPropertyRowMarginV = 3;
+constexpr int kPropertyRowSpacing = 6;
 constexpr int kPropertyActionSpacing = 4;
 constexpr int kPropertyNavButtonWidth = 14;
 constexpr int kPropertyNavButtonHeight = 22;
@@ -1010,22 +1010,29 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
       themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+  const QColor border =
+      themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
 
   if (hovered || focused) {
     const QColor selection =
         themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
-    const QColor border =
-        themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
     QColor fill = propertySurfaceColor(false);
-    fill = focused ? blendColor(fill, selection, 0.18)
-                   : blendColor(fill, accent, 0.025);
+    fill = focused ? blendColor(fill, selection, 0.14)
+                   : blendColor(fill, accent, 0.035);
     painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.setPen(QPen(focused ? blendColor(border, selection, 0.40)
-                                : blendColor(border, accent, 0.10),
-                        1.0));
+    painter.setPen(Qt::NoPen);
     painter.setBrush(fill);
-    painter.drawRoundedRect(rect().adjusted(0.5, 0.5, -0.5, -0.5), 7.0, 7.0);
+    painter.drawRect(rect());
+    if (focused) {
+      painter.fillRect(QRect(0, 0, 2, height()),
+                       blendColor(accent, selection, 0.22));
+    }
   }
+
+  // AE-like rows read as one continuous property list. A quiet baseline keeps
+  // rows scannable without turning every property into a separate card.
+  painter.fillRect(QRect(8, height() - 1, std::max(0, width() - 16), 1),
+                   blendColor(background, border, 0.30));
 
   if (currentFrameKeyframed_) {
     painter.setPen(Qt::NoPen);
@@ -1037,7 +1044,8 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   const int labelWidth = std::clamp(label_->minimumWidth(), 96, 240);
   QRect labelRect(margin, kPropertyRowMarginV, labelWidth,
                   height() - 2 * kPropertyRowMarginV);
-  painter.setPen(isEnabled() ? text : blendColor(text, background, 0.55));
+  painter.setPen(isEnabled() ? blendColor(text, background, 0.10)
+                             : blendColor(text, background, 0.55));
   QString labelText = label_->text();
   if (supplementaryLabel_ && !supplementaryLabel_->text().trimmed().isEmpty()) {
     labelText += QStringLiteral(" · %1").arg(supplementaryLabel_->text().trimmed());

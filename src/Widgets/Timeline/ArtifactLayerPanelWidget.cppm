@@ -1369,7 +1369,15 @@ LayerPresentationBadgeTone summarizeLayerStateTone(const ArtifactAbstractLayerPt
  if (layer->isSolo()) {
   return LayerPresentationBadgeTone::Motion;
  }
- if (layer->hasMasks() || hasMattes) {
+  bool hasMattes = false;
+  const auto layerId = layer->id();
+  for (const auto& ref : layer->matteReferences()) {
+   if (ref.enabled && !ref.sourceLayerId.isNil() && ref.sourceLayerId != layerId) {
+    hasMattes = true;
+    break;
+   }
+  }
+  if (layer->hasMasks() || hasMattes) {
   return LayerPresentationBadgeTone::Special;
  }
  if (layer->hasParent()) {

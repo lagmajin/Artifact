@@ -512,6 +512,18 @@ QString shapeSelectionDetail(const ArtifactCore::SharedPtr<ArtifactShapeLayer> &
 }
 
 ArtifactCompositionPtr resolvePreferredComposition() {
+  // A project with no current composition is authoritative.  ActiveContext and
+  // PlaybackService can retain a composition from the previous project during
+  // a project transition, but that stale pointer must not turn the empty
+  // viewport state into the "no layers" state.
+  ArtifactCompositionPtr projectComposition;
+  if (auto *service = ArtifactProjectService::instance()) {
+    projectComposition = service->currentComposition().lock();
+    if (!projectComposition) {
+      return {};
+    }
+  }
+
   if (auto *active = ArtifactActiveContextService::instance()) {
     if (auto comp = active->activeComposition()) {
       return comp;
@@ -524,11 +536,7 @@ ArtifactCompositionPtr resolvePreferredComposition() {
     }
   }
 
-  if (auto *service = ArtifactProjectService::instance()) {
-    return service->currentComposition().lock();
-  }
-
-  return {};
+  return projectComposition;
 }
 
 qint64 textEditFrame(const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer) {
@@ -688,6 +696,7 @@ public:
 
     const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     const auto theme = ArtifactCore::currentDCCTheme();
+    captureInitialState(textLayer);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(12, 12, 12, 12);
@@ -814,18 +823,22 @@ public:
       italicCheck_ = new QCheckBox(QStringLiteral("Italic"), this);
       allCapsCheck_ = new QCheckBox(QStringLiteral("All Caps"), this);
       underlineCheck_ = new QCheckBox(QStringLiteral("Underline"), this);
+      strikethroughCheck_ = new QCheckBox(QStringLiteral("Strike"), this);
       boldCheck_->setChecked(textLayer->isBold());
       italicCheck_->setChecked(textLayer->isItalic());
       boldCheck_->installEventFilter(this);
       italicCheck_->installEventFilter(this);
       allCapsCheck_->installEventFilter(this);
       underlineCheck_->installEventFilter(this);
+      strikethroughCheck_->installEventFilter(this);
       allCapsCheck_->setChecked(textLayer->isAllCaps());
       underlineCheck_->setChecked(textLayer->isUnderline());
+      strikethroughCheck_->setChecked(textLayer->isStrikethrough());
       flagsRow->addWidget(boldCheck_);
       flagsRow->addWidget(italicCheck_);
       flagsRow->addWidget(allCapsCheck_);
       flagsRow->addWidget(underlineCheck_);
+      flagsRow->addWidget(strikethroughCheck_);
       flagsRow->addStretch(1);
       root->addLayout(flagsRow);
 
@@ -857,6 +870,72 @@ public:
       effectsRow->addStretch(1);
       root->addLayout(effectsRow);
 
+      auto *layoutRow = new QHBoxLayout();
+      layoutRow->addWidget(new QLabel(QStringLiteral("Layout"), this));
+      layoutModeCombo_ = new QComboBox(this);
+      layoutModeCombo_->addItem(QStringLiteral("Point"), 0);
+      layoutModeCombo_->addItem(QStringLiteral("Box"), 1);
+      layoutModeCombo_->addItem(QStringLiteral("Path"), 2);
+      layoutModeCombo_->setCurrentIndex(static_cast<int>(textLayer->layoutMode()));
+      layoutModeCombo_->installEventFilter(this);
+      layoutRow->addWidget(layoutModeCombo_);
+      layoutRow->addWidget(new QLabel(QStringLiteral("Wrap"), this));
+      wrapModeCombo_ = new QComboBox(this);
+      wrapModeCombo_->addItem(QStringLiteral("None"), 0);
+      wrapModeCombo_->addItem(QStringLiteral("Words"), 1);
+      wrapModeCombo_->addItem(QStringLiteral("Anywhere"), 2);
+      wrapModeCombo_->addItem(QStringLiteral("Manual"), 3);
+      wrapModeCombo_->setCurrentIndex(static_cast<int>(textLayer->wrapMode()));
+      wrapModeCombo_->installEventFilter(this);
+      layoutRow->addWidget(wrapModeCombo_);
+      layoutRow->addWidget(new QLabel(QStringLiteral("V Align"), this));
+      verticalAlignmentCombo_ = new QComboBox(this);
+      verticalAlignmentCombo_->addItem(QStringLiteral("Top"), 0);
+      verticalAlignmentCombo_->addItem(QStringLiteral("Middle"), 1);
+      verticalAlignmentCombo_->addItem(QStringLiteral("Bottom"), 2);
+      verticalAlignmentCombo_->setCurrentIndex(
+          static_cast<int>(textLayer->verticalAlignment()));
+      verticalAlignmentCombo_->installEventFilter(this);
+      layoutRow->addWidget(verticalAlignmentCombo_);
+      layoutRow->addWidget(new QLabel(QStringLiteral("Direction"), this));
+      writingModeCombo_ = new QComboBox(this);
+      writingModeCombo_->addItem(QStringLiteral("Horizontal"), 0);
+      writingModeCombo_->addItem(QStringLiteral("Vertical"), 1);
+      writingModeCombo_->setCurrentIndex(static_cast<int>(textLayer->writingMode()));
+      writingModeCombo_->installEventFilter(this);
+      layoutRow->addWidget(writingModeCombo_);
+      layoutRow->addStretch(1);
+      root->addLayout(layoutRow);
+
+      auto *paragraphRow = new QHBoxLayout();
+      auto addParagraphMetric = [this, paragraphRow](const QString& label,
+                                                       double value,
+                                                       double minimum,
+                                                       double maximum,
+                                                       QDoubleSpinBox** out) {
+        paragraphRow->addWidget(new QLabel(label, this));
+        auto* spin = new QDoubleSpinBox(this);
+        spin->setRange(minimum, maximum);
+        spin->setSingleStep(1.0);
+        spin->setDecimals(1);
+        spin->setValue(value);
+        spin->installEventFilter(this);
+        paragraphRow->addWidget(spin);
+        *out = spin;
+      };
+      addParagraphMetric(QStringLiteral("Width"), textLayer->maxWidth(), 0.0,
+                         100000.0, &boxWidthSpin_);
+      addParagraphMetric(QStringLiteral("Height"), textLayer->boxHeight(), 0.0,
+                         100000.0, &boxHeightSpin_);
+      addParagraphMetric(QStringLiteral("Paragraph"), textLayer->paragraphSpacing(),
+                         -1000.0, 1000.0, &paragraphSpacingSpin_);
+      addParagraphMetric(QStringLiteral("Shadow X"), textLayer->shadowOffsetX(),
+                         -10000.0, 10000.0, &shadowOffsetXSpin_);
+      addParagraphMetric(QStringLiteral("Y"), textLayer->shadowOffsetY(),
+                         -10000.0, 10000.0, &shadowOffsetYSpin_);
+      paragraphRow->addStretch(1);
+      root->addLayout(paragraphRow);
+
       auto *animatorRow = new QHBoxLayout();
       animatorRow->addWidget(new QLabel(QStringLiteral("Text Animators"), this));
       animatorCountSpin_ = new QSpinBox(this);
@@ -867,6 +946,7 @@ public:
           QStringLiteral("Set the number of text animator stacks on this layer"));
       animatorCountSpin_->setToolTip(
           QStringLiteral("Number of character animator stacks attached to this text layer"));
+      animatorCountSpin_->installEventFilter(this);
       animatorRow->addWidget(animatorCountSpin_);
       animatorRow->addWidget(new QLabel(QStringLiteral("Preset"), this));
       animatorPresetCombo_ = new QComboBox(this);
@@ -884,6 +964,7 @@ public:
           QStringLiteral("Choose a text animator preset to apply when accepted"));
       animatorPresetCombo_->setToolTip(
           QStringLiteral("Apply a text animator preset when the dialog is accepted"));
+      animatorPresetCombo_->installEventFilter(this);
       animatorRow->addWidget(animatorPresetCombo_, 1);
       animatorRow->addStretch(1);
       root->addLayout(animatorRow);
@@ -898,16 +979,20 @@ protected:
     if ((obj == fontFamilyCombo_ || obj == fontSizeSpin_ ||
          obj == trackingSpin_ || obj == stretchSpin_ ||
          obj == boldCheck_ || obj == italicCheck_ || obj == allCapsCheck_ ||
-         obj == underlineCheck_ || obj == alignmentCombo_ ||
+         obj == underlineCheck_ || obj == strikethroughCheck_ ||
+         obj == alignmentCombo_ || obj == layoutModeCombo_ ||
+         obj == wrapModeCombo_ || obj == verticalAlignmentCombo_ ||
+         obj == writingModeCombo_ || obj == boxWidthSpin_ ||
+         obj == boxHeightSpin_ || obj == paragraphSpacingSpin_ ||
+         obj == shadowOffsetXSpin_ || obj == shadowOffsetYSpin_ ||
          obj == strokeCheck_ || obj == strokeWidthSpin_ ||
-         obj == shadowCheck_ || obj == shadowBlurSpin_) &&
+         obj == shadowCheck_ || obj == shadowBlurSpin_ ||
+         obj == animatorCountSpin_ || obj == animatorPresetCombo_) &&
         (event->type() == QEvent::KeyRelease ||
          event->type() == QEvent::MouseButtonRelease ||
          event->type() == QEvent::Wheel ||
          event->type() == QEvent::FocusIn)) {
-      if (preview_) {
-        preview_->update();
-      }
+      queueLivePreview();
       return QDialog::eventFilter(obj, event);
     }
     if (obj == editor_) {
@@ -931,6 +1016,8 @@ protected:
             return true;
           }
         }
+      } else if (event->type() == QEvent::KeyRelease) {
+        applyLivePreview();
       } else if (event->type() == QEvent::FocusOut) {
         accept();
         return false;
@@ -943,15 +1030,197 @@ protected:
   }
 
   void accept() override {
+    restoreInitialState();
     commit();
     QDialog::accept();
   }
 
   void reject() override {
+    restoreInitialState();
     QDialog::reject();
   }
 
 private:
+  struct TextEditorState {
+    QString text;
+    std::vector<ArtifactCore::KeyFrame> sourceKeyframes;
+    float fontSize = 12.0f;
+    float tracking = 0.0f;
+    float leading = 0.0f;
+    float stretch = 100.0f;
+    QString family;
+    ArtifactCore::TextHorizontalAlignment alignment =
+        ArtifactCore::TextHorizontalAlignment::Left;
+    bool bold = false;
+    bool italic = false;
+    bool allCaps = false;
+    bool underline = false;
+    bool strikethrough = false;
+    bool stroke = false;
+    float strokeWidth = 0.0f;
+    bool shadow = false;
+    float shadowBlur = 0.0f;
+    float shadowOffsetX = 0.0f;
+    float shadowOffsetY = 0.0f;
+    float boxWidth = 1.0f;
+    float boxHeight = 1.0f;
+    float paragraphSpacing = 0.0f;
+    TextLayoutMode layoutMode = TextLayoutMode::Point;
+    ArtifactCore::TextWrapMode wrapMode = ArtifactCore::TextWrapMode::WordWrap;
+    ArtifactCore::TextVerticalAlignment verticalAlignment =
+        ArtifactCore::TextVerticalAlignment::Top;
+    ArtifactCore::TextWritingMode writingMode =
+        ArtifactCore::TextWritingMode::Horizontal;
+    int animatorCount = 0;
+  };
+
+  void captureInitialState(
+      const ArtifactCore::SharedPtr<ArtifactTextLayer>& textLayer) {
+    if (!textLayer) {
+      return;
+    }
+    initialState_.text = textLayer->text().toQString();
+    if (const auto property = textLayer->getProperty(QStringLiteral("text.value"))) {
+      initialState_.sourceKeyframes = property->getKeyFrames();
+    }
+    initialState_.fontSize = textLayer->fontSize();
+    initialState_.tracking = textLayer->tracking();
+    initialState_.leading = textLayer->leading();
+    initialState_.stretch = textLayer->fontStretch();
+    initialState_.family = textLayer->fontFamily().toQString();
+    initialState_.alignment = textLayer->horizontalAlignment();
+    initialState_.bold = textLayer->isBold();
+    initialState_.italic = textLayer->isItalic();
+    initialState_.allCaps = textLayer->isAllCaps();
+    initialState_.underline = textLayer->isUnderline();
+    initialState_.strikethrough = textLayer->isStrikethrough();
+    initialState_.stroke = textLayer->isStrokeEnabled();
+    initialState_.strokeWidth = textLayer->strokeWidth();
+    initialState_.shadow = textLayer->isShadowEnabled();
+    initialState_.shadowBlur = textLayer->shadowBlur();
+    initialState_.shadowOffsetX = textLayer->shadowOffsetX();
+    initialState_.shadowOffsetY = textLayer->shadowOffsetY();
+    initialState_.boxWidth = textLayer->maxWidth();
+    initialState_.boxHeight = textLayer->boxHeight();
+    initialState_.paragraphSpacing = textLayer->paragraphSpacing();
+    initialState_.layoutMode = textLayer->layoutMode();
+    initialState_.wrapMode = textLayer->wrapMode();
+    initialState_.verticalAlignment = textLayer->verticalAlignment();
+    initialState_.writingMode = textLayer->writingMode();
+    initialState_.animatorCount = textLayer->animatorCount();
+  }
+
+  void restoreInitialState() {
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
+    if (!textLayer) {
+      return;
+    }
+    textLayer->setText(UniString(initialState_.text));
+    if (const auto property = textLayer->getProperty(QStringLiteral("text.value"))) {
+      property->clearKeyFrames();
+      for (const auto& keyframe : initialState_.sourceKeyframes) {
+        property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation);
+      }
+    }
+    textLayer->setFontSize(initialState_.fontSize);
+    textLayer->setTracking(initialState_.tracking);
+    textLayer->setLeading(initialState_.leading);
+    textLayer->setFontStretch(initialState_.stretch);
+    textLayer->setFontFamily(UniString(initialState_.family));
+    textLayer->setHorizontalAlignment(initialState_.alignment);
+    textLayer->setBold(initialState_.bold);
+    textLayer->setItalic(initialState_.italic);
+    textLayer->setAllCaps(initialState_.allCaps);
+    textLayer->setUnderline(initialState_.underline);
+    textLayer->setStrikethrough(initialState_.strikethrough);
+    textLayer->setStrokeEnabled(initialState_.stroke);
+    textLayer->setStrokeWidth(initialState_.strokeWidth);
+    textLayer->setShadowEnabled(initialState_.shadow);
+    textLayer->setShadowBlur(initialState_.shadowBlur);
+    textLayer->setShadowOffset(initialState_.shadowOffsetX,
+                               initialState_.shadowOffsetY);
+    textLayer->setMaxWidth(initialState_.boxWidth);
+    textLayer->setBoxHeight(initialState_.boxHeight);
+    textLayer->setParagraphSpacing(initialState_.paragraphSpacing);
+    textLayer->setLayoutMode(initialState_.layoutMode);
+    textLayer->setWrapMode(initialState_.wrapMode);
+    textLayer->setVerticalAlignment(initialState_.verticalAlignment);
+    textLayer->setWritingMode(initialState_.writingMode);
+    textLayer->setAnimatorCount(initialState_.animatorCount);
+    textLayer->setDirty();
+    textLayer->changed();
+    if (controller_) {
+      controller_->markRenderDirty();
+    }
+  }
+
+  void applyLivePreview() {
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
+    if (!textLayer || !editor_) {
+      return;
+    }
+    if (initialState_.sourceKeyframes.empty()) {
+      textLayer->setText(UniString(richText_ ? editor_->toHtml()
+                                              : editor_->toPlainText()));
+    } else if (const auto property = textLayer->getProperty(QStringLiteral("text.value"))) {
+      property->clearKeyFrames();
+      for (const auto& keyframe : initialState_.sourceKeyframes) {
+        property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation);
+      }
+      textLayer->setSourceTextAtFrame(
+          textEditFrame(textLayer), richText_ ? editor_->toHtml()
+                                               : editor_->toPlainText());
+    }
+    if (fontSizeSpin_) textLayer->setFontSize(static_cast<float>(fontSizeSpin_->value()));
+    if (trackingSpin_) textLayer->setTracking(static_cast<float>(trackingSpin_->value()));
+    if (leadingSpin_) textLayer->setLeading(static_cast<float>(leadingSpin_->value()));
+    if (stretchSpin_) textLayer->setFontStretch(static_cast<float>(stretchSpin_->value()));
+    if (fontFamilyCombo_) textLayer->setFontFamily(UniString(fontFamilyCombo_->currentText()));
+    if (alignmentCombo_) textLayer->setHorizontalAlignment(
+        static_cast<ArtifactCore::TextHorizontalAlignment>(alignmentCombo_->currentData().toInt()));
+    if (boldCheck_) textLayer->setBold(boldCheck_->isChecked());
+    if (italicCheck_) textLayer->setItalic(italicCheck_->isChecked());
+    if (allCapsCheck_) textLayer->setAllCaps(allCapsCheck_->isChecked());
+    if (underlineCheck_) textLayer->setUnderline(underlineCheck_->isChecked());
+    if (strikethroughCheck_) textLayer->setStrikethrough(strikethroughCheck_->isChecked());
+    if (strokeCheck_) textLayer->setStrokeEnabled(strokeCheck_->isChecked());
+    if (strokeWidthSpin_) textLayer->setStrokeWidth(static_cast<float>(strokeWidthSpin_->value()));
+    if (shadowCheck_) textLayer->setShadowEnabled(shadowCheck_->isChecked());
+    if (shadowBlurSpin_) textLayer->setShadowBlur(static_cast<float>(shadowBlurSpin_->value()));
+    if (shadowOffsetXSpin_ || shadowOffsetYSpin_) {
+      textLayer->setShadowOffset(
+          shadowOffsetXSpin_ ? static_cast<float>(shadowOffsetXSpin_->value())
+                             : textLayer->shadowOffsetX(),
+          shadowOffsetYSpin_ ? static_cast<float>(shadowOffsetYSpin_->value())
+                             : textLayer->shadowOffsetY());
+    }
+    if (boxWidthSpin_) textLayer->setMaxWidth(static_cast<float>(boxWidthSpin_->value()));
+    if (boxHeightSpin_) textLayer->setBoxHeight(static_cast<float>(boxHeightSpin_->value()));
+    if (paragraphSpacingSpin_) textLayer->setParagraphSpacing(
+        static_cast<float>(paragraphSpacingSpin_->value()));
+    if (layoutModeCombo_) textLayer->setLayoutMode(
+        static_cast<TextLayoutMode>(layoutModeCombo_->currentData().toInt()));
+    if (wrapModeCombo_) textLayer->setWrapMode(
+        static_cast<ArtifactCore::TextWrapMode>(wrapModeCombo_->currentData().toInt()));
+    if (verticalAlignmentCombo_) textLayer->setVerticalAlignment(
+        static_cast<ArtifactCore::TextVerticalAlignment>(
+            verticalAlignmentCombo_->currentData().toInt()));
+    if (writingModeCombo_) textLayer->setWritingMode(
+        static_cast<ArtifactCore::TextWritingMode>(writingModeCombo_->currentData().toInt()));
+    textLayer->setDirty();
+    textLayer->changed();
+    if (preview_) {
+      preview_->update();
+    }
+    if (controller_) {
+      controller_->markRenderDirty();
+    }
+  }
+
+  void queueLivePreview() {
+    QTimer::singleShot(0, this, [this]() { applyLivePreview(); });
+  }
+
   static QString editorSummaryText(const ArtifactCore::SharedPtr<ArtifactTextLayer> &textLayer) {
     if (!textLayer) {
       return QStringLiteral("No text layer selected.");
@@ -1096,10 +1365,20 @@ private:
     const bool beforeItalic = textLayer->isItalic();
     const bool beforeAllCaps = textLayer->isAllCaps();
     const bool beforeUnderline = textLayer->isUnderline();
+    const bool beforeStrikethrough = textLayer->isStrikethrough();
     const bool beforeStroke = textLayer->isStrokeEnabled();
     const float beforeStrokeWidth = textLayer->strokeWidth();
     const bool beforeShadow = textLayer->isShadowEnabled();
     const float beforeShadowBlur = textLayer->shadowBlur();
+    const float beforeShadowOffsetX = textLayer->shadowOffsetX();
+    const float beforeShadowOffsetY = textLayer->shadowOffsetY();
+    const float beforeBoxWidth = textLayer->maxWidth();
+    const float beforeBoxHeight = textLayer->boxHeight();
+    const float beforeParagraphSpacing = textLayer->paragraphSpacing();
+    const auto beforeLayoutMode = textLayer->layoutMode();
+    const auto beforeWrapMode = textLayer->wrapMode();
+    const auto beforeVerticalAlignment = textLayer->verticalAlignment();
+    const auto beforeWritingMode = textLayer->writingMode();
     const int beforeAnimatorCount = textLayer->animatorCount();
     bool animatorPresetChanged = false;
     if (fontSizeSpin_) textLayer->setFontSize(static_cast<float>(fontSizeSpin_->value()));
@@ -1118,6 +1397,7 @@ private:
     if (italicCheck_) textLayer->setItalic(italicCheck_->isChecked());
     if (allCapsCheck_) textLayer->setAllCaps(allCapsCheck_->isChecked());
     if (underlineCheck_) textLayer->setUnderline(underlineCheck_->isChecked());
+    if (strikethroughCheck_) textLayer->setStrikethrough(strikethroughCheck_->isChecked());
     if (strokeCheck_) textLayer->setStrokeEnabled(strokeCheck_->isChecked());
     if (strokeWidthSpin_) {
       textLayer->setStrokeWidth(static_cast<float>(strokeWidthSpin_->value()));
@@ -1126,6 +1406,26 @@ private:
     if (shadowBlurSpin_) {
       textLayer->setShadowBlur(static_cast<float>(shadowBlurSpin_->value()));
     }
+    if (shadowOffsetXSpin_ || shadowOffsetYSpin_) {
+      textLayer->setShadowOffset(
+          shadowOffsetXSpin_ ? static_cast<float>(shadowOffsetXSpin_->value())
+                             : beforeShadowOffsetX,
+          shadowOffsetYSpin_ ? static_cast<float>(shadowOffsetYSpin_->value())
+                             : beforeShadowOffsetY);
+    }
+    if (boxWidthSpin_) textLayer->setMaxWidth(static_cast<float>(boxWidthSpin_->value()));
+    if (boxHeightSpin_) textLayer->setBoxHeight(static_cast<float>(boxHeightSpin_->value()));
+    if (paragraphSpacingSpin_) textLayer->setParagraphSpacing(
+        static_cast<float>(paragraphSpacingSpin_->value()));
+    if (layoutModeCombo_) textLayer->setLayoutMode(
+        static_cast<TextLayoutMode>(layoutModeCombo_->currentData().toInt()));
+    if (wrapModeCombo_) textLayer->setWrapMode(
+        static_cast<ArtifactCore::TextWrapMode>(wrapModeCombo_->currentData().toInt()));
+    if (verticalAlignmentCombo_) textLayer->setVerticalAlignment(
+        static_cast<ArtifactCore::TextVerticalAlignment>(
+            verticalAlignmentCombo_->currentData().toInt()));
+    if (writingModeCombo_) textLayer->setWritingMode(
+        static_cast<ArtifactCore::TextWritingMode>(writingModeCombo_->currentData().toInt()));
     if (animatorCountSpin_) {
       textLayer->setAnimatorCount(animatorCountSpin_->value());
     }
@@ -1147,10 +1447,20 @@ private:
                               beforeItalic != textLayer->isItalic() ||
                               beforeAllCaps != textLayer->isAllCaps() ||
                               beforeUnderline != textLayer->isUnderline() ||
+                              beforeStrikethrough != textLayer->isStrikethrough() ||
                               beforeStroke != textLayer->isStrokeEnabled() ||
                               beforeStrokeWidth != textLayer->strokeWidth() ||
                               beforeShadow != textLayer->isShadowEnabled() ||
                               beforeShadowBlur != textLayer->shadowBlur() ||
+                              beforeShadowOffsetX != textLayer->shadowOffsetX() ||
+                              beforeShadowOffsetY != textLayer->shadowOffsetY() ||
+                              beforeBoxWidth != textLayer->maxWidth() ||
+                              beforeBoxHeight != textLayer->boxHeight() ||
+                              beforeParagraphSpacing != textLayer->paragraphSpacing() ||
+                              beforeLayoutMode != textLayer->layoutMode() ||
+                              beforeWrapMode != textLayer->wrapMode() ||
+                              beforeVerticalAlignment != textLayer->verticalAlignment() ||
+                              beforeWritingMode != textLayer->writingMode() ||
                               beforeAnimatorCount != textLayer->animatorCount();
 
     const QString nextText = richText_ ? editor_->toHtml() : editor_->toPlainText();
@@ -1180,12 +1490,23 @@ private:
   QCheckBox *italicCheck_ = nullptr;
   QCheckBox *allCapsCheck_ = nullptr;
   QCheckBox *underlineCheck_ = nullptr;
+  QCheckBox *strikethroughCheck_ = nullptr;
   QCheckBox *strokeCheck_ = nullptr;
   QDoubleSpinBox *strokeWidthSpin_ = nullptr;
   QCheckBox *shadowCheck_ = nullptr;
   QDoubleSpinBox *shadowBlurSpin_ = nullptr;
+  QDoubleSpinBox *shadowOffsetXSpin_ = nullptr;
+  QDoubleSpinBox *shadowOffsetYSpin_ = nullptr;
+  QDoubleSpinBox *boxWidthSpin_ = nullptr;
+  QDoubleSpinBox *boxHeightSpin_ = nullptr;
+  QDoubleSpinBox *paragraphSpacingSpin_ = nullptr;
+  QComboBox *layoutModeCombo_ = nullptr;
+  QComboBox *wrapModeCombo_ = nullptr;
+  QComboBox *verticalAlignmentCombo_ = nullptr;
+  QComboBox *writingModeCombo_ = nullptr;
   QSpinBox *animatorCountSpin_ = nullptr;
   QComboBox *animatorPresetCombo_ = nullptr;
+  TextEditorState initialState_;
   bool richText_ = false;
   QWidget *preview_ = nullptr;
 };
@@ -1376,6 +1697,13 @@ public:
     update();
   }
 
+  QSize preferredOverlaySize(const QSize &available) const {
+    const int preferredWidth = hasComposition_ ? 480 : 600;
+    const int preferredHeight = hasComposition_ ? 190 : 250;
+    return QSize(std::max(1, std::min(preferredWidth, available.width())),
+                 std::max(1, std::min(preferredHeight, available.height())));
+  }
+
 protected:
   void resizeEvent(QResizeEvent *event) override {
     QWidget::resizeEvent(event);
@@ -1428,21 +1756,6 @@ protected:
     }
     filesDropped_(paths);
     event->acceptProposedAction();
-  }
-
-  void paintEvent(QPaintEvent *) override {
-    if (hasComposition_) {
-      return;
-    }
-    QPainter painter(this);
-    painter.fillRect(rect(), QColor(10, 12, 16, 148));
-
-    QPen borderPen(QColor(255, 255, 255, 26));
-    borderPen.setWidthF(1.0);
-    painter.setPen(borderPen);
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-                            18.0, 18.0);
   }
 
 private:
@@ -10099,8 +10412,11 @@ public:
     for (int i = 0; i < kViewportPaneCount; ++i) {
       auto *emptyStateOverlay = emptyStateOverlays_[i];
       const auto *paneState = pane(i);
+      // Empty-state guidance belongs to the primary viewport only. Secondary
+      // panes remain unobstructed so their native viewport background stays
+      // visible in two-up and four-up layouts.
       const bool showInPane =
-          showEmptyState && i < activeViewportPaneCount() && paneState &&
+          showEmptyState && i == 0 && i < activeViewportPaneCount() && paneState &&
           paneState->view && paneState->view->isVisible();
       if (!emptyStateOverlay) {
         continue;
@@ -10108,9 +10424,15 @@ public:
       if (showInPane) {
         const QPoint paneTopLeft =
             paneState->view->mapTo(owner, QPoint(0, 0));
-        emptyStateOverlay->setGeometry(
-            QRect(paneTopLeft, paneState->view->size()));
         emptyStateOverlay->setCompositionAvailable(hasComposition);
+        const QSize overlaySize =
+            emptyStateOverlay->preferredOverlaySize(paneState->view->size());
+        const QPoint overlayTopLeft(
+            paneTopLeft.x() + (paneState->view->width() - overlaySize.width()) / 2,
+            paneTopLeft.y() + (paneState->view->height() - overlaySize.height()) / 2);
+        // Keep the transparent native-window overlap limited to the message
+        // card itself. The rest of the pane remains the real GPU viewport.
+        emptyStateOverlay->setGeometry(QRect(overlayTopLeft, overlaySize));
         if (!emptyStateOverlay->isVisible()) {
           emptyStateOverlay->show();
         }
@@ -11408,7 +11730,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      waveformScope->setMode(ArtifactWidgets::WaveformMode::Luma);
                      auto *paradeScope = new ArtifactWidgets::ParadeScopeWidget(tabs);
                      paradeScope->setMode(ArtifactWidgets::ParadeMode::RGB);
-                     auto *histogramWidget = new ArtifactWidgets::HistgramWidget(tabs);
+                     auto *histogramWidget = new ArtifactWidgets::HistogramWidget(tabs);
                      histogramWidget->setMode(ArtifactWidgets::HistogramMode::Combined);
                      histogramWidget->setLogScale(true);
                      tabs->addTab(vectorScope, QStringLiteral("Vectorscope"));
@@ -12105,6 +12427,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   safeMarginsAct->setCheckable(true);
   anchorCenterAct->setCheckable(true);
   cameraOverlayAct->setCheckable(true);
+  cameraOverlayAct->setShortcut(
+      ArtifactCore::ShortcutBindings::instance().shortcut(
+          ArtifactCore::ShortcutId::ViewToggleCameraFrustum));
+  cameraOverlayAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  cameraOverlayAct->setToolTip(
+      QStringLiteral("Toggle the camera frustum overlay (%1)")
+          .arg(ArtifactCore::ShortcutBindings::instance().shortcutText(
+              ArtifactCore::ShortcutId::ViewToggleCameraFrustum)));
   densityHeatmapAct->setCheckable(true);
   layerChromeAct->setCheckable(true);
   layerChromeAct->setChecked(impl_->layerChromeVisible_);

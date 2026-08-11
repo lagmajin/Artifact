@@ -78,6 +78,9 @@ struct Artifact3DGizmo::Impl {
     bool numericInputActive = false;
     float numericInput = 0.0f;
     bool numericPlanarScale = false;
+    // Full mode recursively draws the three transform modes.  Keep shared
+    // bounding geometry to the Scale pass rather than emitting it three times.
+    bool drawingFullOverlay = false;
     
     // Intersection helpers
     float rayLineDistance(const QVector3D& rayOrigin, const QVector3D& rayDir, 
@@ -1508,12 +1511,15 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
 
     if (mode_ == GizmoMode::Full) {
         const GizmoMode savedMode = mode_;
+        const bool savedDrawingFullOverlay = impl_->drawingFullOverlay;
+        impl_->drawingFullOverlay = true;
         const GizmoMode modes[] = {GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale};
         for (const GizmoMode mode : modes) {
             mode_ = mode;
             draw(renderer, view, proj);
         }
         mode_ = savedMode;
+        impl_->drawingFullOverlay = savedDrawingFullOverlay;
         return;
     }
 
@@ -1580,6 +1586,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     const QVector3D axisY = axisDirectionFor(GizmoAxis::Y, basis);
     const QVector3D axisZ = axisDirectionFor(GizmoAxis::Z, basis);
     const QVector3D cameraForward = cameraForwardForView(view);
+    const auto [cameraRight, cameraUp] = ringBasisForNormal(cameraForward);
 
     auto toFloat3 = [](const QVector3D& v) -> Detail::float3 {
         return {v.x(), v.y(), v.z()};
@@ -1659,7 +1666,8 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         renderer->drawGizmoTorus(centerPos, normal, radius, tubeRadius, coreColor);
     };
 
-    if (boundingBoxEnabled_) {
+    if (boundingBoxEnabled_ &&
+        (!impl_->drawingFullOverlay || mode_ == GizmoMode::Scale)) {
         const BoundingBoxGeometry geometry = boundingBoxGeometryFor(
             boundingBoxMin_, boundingBoxMax_, impl_->position, impl_->scale,
             basis);
@@ -1703,9 +1711,24 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                         : (activeAxis_ != GizmoAxis::None
                                ? tintColor(baseColor, 0.58f, 0.42f)
                                : tintColor(baseColor, 0.96f, 0.96f));
-                renderer->drawGizmoCube(toFloat3(point), handleHalf * 1.18f,
-                                        shadowColor);
-                renderer->drawGizmoCube(toFloat3(point), handleHalf, coreColor);
+                // A world-aligned cube becomes a ragged diamond at oblique
+                // camera angles.  A camera-facing quad remains a crisp square
+                // and reduces each two-pass handle from 72 to 12 vertices.
+                const auto drawBillboardSquare = [&](float halfExtent,
+                                                      const FloatColor& color) {
+                    const QVector3D p0 = point - cameraRight * halfExtent -
+                                         cameraUp * halfExtent;
+                    const QVector3D p1 = point + cameraRight * halfExtent -
+                                         cameraUp * halfExtent;
+                    const QVector3D p2 = point + cameraRight * halfExtent +
+                                         cameraUp * halfExtent;
+                    const QVector3D p3 = point - cameraRight * halfExtent +
+                                         cameraUp * halfExtent;
+                    renderer->draw3DQuad(toFloat3(p0), toFloat3(p1),
+                                         toFloat3(p2), toFloat3(p3), color);
+                };
+                drawBillboardSquare(handleHalf * 1.18f, shadowColor);
+                drawBillboardSquare(handleHalf, coreColor);
             };
 
             const float cornerSigns[][3] = {

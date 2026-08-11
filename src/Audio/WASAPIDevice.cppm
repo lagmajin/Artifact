@@ -1,4 +1,7 @@
 module;
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <utility>
 #include <Audioclient.h>
 #include <Mmdeviceapi.h>

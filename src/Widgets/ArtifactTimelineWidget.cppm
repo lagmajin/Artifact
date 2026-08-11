@@ -4691,6 +4691,7 @@ public:
   QTimer* audioPreviewStopTimer_ = nullptr;
   QElapsedTimer playbackVisualClock_;
   int audioPreviewFrame_ = 0;
+  qint64 lastInteractiveSeekFrame_ = std::numeric_limits<qint64>::min();
   double playbackVisualBaseFrame_ = 0.0;
   double playbackVisualRateFps_ = 1.0;
   double playbackVisualSpeed_ = 1.0;
@@ -6696,6 +6697,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     setCurrentFrameForAll(clamped);
     syncPlayheadOverlay();
 
+    // Pointer movement is sub-frame, while composition evaluation is frame
+    // based. Keep the visual playhead smooth but do not repeat the expensive
+    // seek/cache/property/render path inside the same integer frame.
+    if (impl_->lastInteractiveSeekFrame_ == clampedFrame) {
+      return;
+    }
+    impl_->lastInteractiveSeekFrame_ = clampedFrame;
+
     if (auto *app = ArtifactApplicationManager::instance()) {
       if (auto *ctx = app->activeContextService()) {
         ctx->seekToFrame(clampedFrame);
@@ -7379,6 +7388,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             }
 
             const FramePosition frame(event.frame);
+            impl_->lastInteractiveSeekFrame_ = frame.framePosition();
             const bool isPlaying = ArtifactPlaybackService::instance() &&
                                    ArtifactPlaybackService::instance()->isPlaying();
             if (impl_->curveEditor_ && !isPlaying) {

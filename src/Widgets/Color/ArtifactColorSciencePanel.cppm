@@ -100,7 +100,7 @@ public:
   QLabel *snapResultLabel_ = nullptr;
   QTabWidget *scopeTabs_ = nullptr;
   QLabel *scopeStatusLabel_ = nullptr;
-  ArtifactWidgets::HistgramWidget *histogramWidget_ = nullptr;
+  ArtifactWidgets::HistogramWidget *histogramWidget_ = nullptr;
   ArtifactWidgets::VectorScopeWidget *vectorScopeWidget_ = nullptr;
   ArtifactWidgets::WaveformScopeWidget *waveformScopeWidget_ = nullptr;
   ArtifactWidgets::ParadeScopeWidget *paradeScopeWidget_ = nullptr;
@@ -346,7 +346,7 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
 
   scopeTabs_ = new QTabWidget(scopeGroup);
 
-  histogramWidget_ = new ArtifactWidgets::HistgramWidget(scopeTabs_);
+  histogramWidget_ = new ArtifactWidgets::HistogramWidget(scopeTabs_);
   histogramWidget_->setMode(ArtifactWidgets::HistogramMode::Combined);
   histogramWidget_->setLogScale(true);
   scopeTabs_->addTab(histogramWidget_, QStringLiteral("Histogram"));

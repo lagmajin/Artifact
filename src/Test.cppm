@@ -29,13 +29,19 @@ import Artifact.Test.PreCompose;
 import Artifact.Test.PropertyKeyframe;
 import Artifact.Test.TimingEventView;
 import Artifact.Test.CommandLine;
+import Artifact.Service.Playback;
+import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
 import Graphics.GPUcomputeContext;
 import Graphics.LayerBlendPipeline;
 import Layer.Blend;
 import Color.Float;
+import FloatRGBA;
+import Frame.Range;
 import Graphics.SurfaceColorContract;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
+import Utils.Id;
 
 namespace {
 
@@ -264,6 +270,70 @@ bool gradientNoOpEffectContractTest()
     return true;
 }
 
+bool ramPreviewCacheContractTest()
+{
+    Artifact::ArtifactCompositionInitParams params;
+    params.setDurationFrames(8);
+    auto composition = ArtifactCore::makeShared<Artifact::ArtifactAbstractComposition>(
+        ArtifactCore::CompositionID(), params);
+    if (!composition) {
+        return false;
+    }
+    composition->setFrameRange(ArtifactCore::FrameRange(0, 8));
+
+    // Keep this deterministic: the contract test exercises only in-memory
+    // cache state and must neither enqueue disk writes nor start a prewarm.
+    Artifact::ArtifactPlaybackService playback;
+    const bool diskCacheWasEnabled = playback.isDiskPreviewCacheEnabled();
+    const bool ramPreviewWasEnabled = playback.isRamPreviewEnabled();
+    playback.setRamPreviewEnabled(false);
+    playback.setDiskPreviewCacheEnabled(false);
+    playback.setCurrentComposition(composition);
+    playback.setRamPreviewRange(ArtifactCore::FrameRange(0, 8));
+
+    ArtifactCore::ImageF32x4_RGBA source;
+    source.resize(2, 2);
+    source.fill(ArtifactCore::FloatRGBA(0.25f, 0.5f, 0.75f, 1.0f));
+
+    bool passed =
+        playback.storeRamPreviewFrameImage(2, source, QStringLiteral("cache-test"), false) &&
+        playback.storeRamPreviewFrameImage(5, source, QStringLiteral("cache-test"), false) &&
+        !playback.storeRamPreviewFrameImage(8, source, QStringLiteral("out-of-range"), false);
+
+    ArtifactCore::ImageF32x4_RGBA firstHit;
+    ArtifactCore::ImageF32x4_RGBA secondHit;
+    const auto cachedState = playback.ramPreviewFrameState(2);
+    passed = passed && playback.ramPreviewCachedFrameCount() == 2 &&
+             cachedState.ready && cachedState.inRam && cachedState.imageAvailable &&
+             cachedState.playable && playback.tryGetRamPreviewFrameImage(2, firstHit) &&
+             playback.tryGetRamPreviewFrameImage(2, secondHit) &&
+             firstHit.width() == 2 && firstHit.height() == 2 &&
+             secondHit.width() == 2 && secondHit.height() == 2;
+
+    // A local edit must evict only its affected frame interval, leaving other
+    // cached playback frames reusable.
+    playback.invalidateRamPreviewRange(ArtifactCore::FrameRange(2, 2),
+                                      QStringLiteral("cache-test-edit"));
+    ArtifactCore::ImageF32x4_RGBA invalidatedHit;
+    ArtifactCore::ImageF32x4_RGBA retainedHit;
+    const auto invalidatedState = playback.ramPreviewFrameState(2);
+    const auto retainedState = playback.ramPreviewFrameState(5);
+    passed = passed && !invalidatedState.ready && !invalidatedState.inRam &&
+             !playback.tryGetRamPreviewFrameImage(2, invalidatedHit) &&
+             retainedState.ready && retainedState.playable &&
+             playback.tryGetRamPreviewFrameImage(5, retainedHit);
+
+    playback.invalidateRamPreviewCache(QStringLiteral("cache-test-clear"));
+    ArtifactCore::ImageF32x4_RGBA clearedHit;
+    passed = passed && playback.ramPreviewCachedFrameCount() == 0 &&
+             !playback.tryGetRamPreviewFrameImage(5, clearedHit);
+
+    playback.setCurrentComposition({});
+    playback.setDiskPreviewCacheEnabled(diskCacheWasEnabled);
+    playback.setRamPreviewEnabled(ramPreviewWasEnabled);
+    return passed;
+}
+
 } // namespace
 
 export namespace Artifact {
@@ -286,6 +356,10 @@ int runAllTests()
     }
     if (!gradientNoOpEffectContractTest()) {
         qWarning().noquote() << "[Test] Gradient no-op effect contract failed";
+        ++failures;
+    }
+    if (!ramPreviewCacheContractTest()) {
+        qWarning().noquote() << "[Test] RAM preview cache contract failed";
         ++failures;
     }
 

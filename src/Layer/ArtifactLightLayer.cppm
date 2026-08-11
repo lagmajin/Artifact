@@ -59,6 +59,10 @@ struct ArtifactLightLayer::Impl {
     float coneAngle_ = 45.0f;
     float coneFeather_ = 10.0f;
     float coneLength_ = 300.0f;
+    QString goboTexturePath_;
+    float goboIntensity_ = 1.0f;
+    float goboRotation_ = 0.0f;
+    bool goboInvert_ = false;
     float shadowRadius_ = 10.0f;
     bool castsShadows_ = true;
     LightLinkMode linkMode_ = LightLinkMode::All;
@@ -95,6 +99,10 @@ QJsonObject ArtifactLightLayer::toJson() const
   obj[QStringLiteral("light.coneAngle")] = lightImpl_->coneAngle_;
   obj[QStringLiteral("light.coneFeather")] = lightImpl_->coneFeather_;
   obj[QStringLiteral("light.coneLength")] = lightImpl_->coneLength_;
+  obj[QStringLiteral("light.goboTexturePath")] = lightImpl_->goboTexturePath_;
+  obj[QStringLiteral("light.goboIntensity")] = lightImpl_->goboIntensity_;
+  obj[QStringLiteral("light.goboRotation")] = lightImpl_->goboRotation_;
+  obj[QStringLiteral("light.goboInvert")] = lightImpl_->goboInvert_;
   obj[QStringLiteral("light.shadowRadius")] = lightImpl_->shadowRadius_;
   obj[QStringLiteral("light.castsShadows")] = lightImpl_->castsShadows_;
   obj[QStringLiteral("light.linkMode")] = static_cast<int>(lightImpl_->linkMode_);
@@ -139,6 +147,14 @@ void ArtifactLightLayer::fromJsonProperties(const QJsonObject& obj)
       static_cast<float>(obj.value(QStringLiteral("light.coneFeather")).toDouble()));
   if (obj.contains(QStringLiteral("light.coneLength"))) setConeLength(
       static_cast<float>(obj.value(QStringLiteral("light.coneLength")).toDouble()));
+  if (obj.contains(QStringLiteral("light.goboTexturePath"))) setGoboTexturePath(
+      obj.value(QStringLiteral("light.goboTexturePath")).toString());
+  if (obj.contains(QStringLiteral("light.goboIntensity"))) setGoboIntensity(
+      static_cast<float>(obj.value(QStringLiteral("light.goboIntensity")).toDouble(1.0)));
+  if (obj.contains(QStringLiteral("light.goboRotation"))) setGoboRotation(
+      static_cast<float>(obj.value(QStringLiteral("light.goboRotation")).toDouble()));
+  if (obj.contains(QStringLiteral("light.goboInvert"))) setGoboInvert(
+      obj.value(QStringLiteral("light.goboInvert")).toBool());
   if (obj.contains(QStringLiteral("light.shadowRadius"))) setShadowRadius(
       static_cast<float>(obj.value(QStringLiteral("light.shadowRadius")).toDouble()));
   if (obj.contains(QStringLiteral("light.castsShadows"))) setCastsShadows(
@@ -356,6 +372,31 @@ void ArtifactLightLayer::setConeLength(float length)
   changed();
 }
 
+QString ArtifactLightLayer::goboTexturePath() const { return lightImpl_->goboTexturePath_; }
+void ArtifactLightLayer::setGoboTexturePath(const QString& path)
+{
+  lightImpl_->goboTexturePath_ = path.trimmed();
+  changed();
+}
+float ArtifactLightLayer::goboIntensity() const { return lightImpl_->goboIntensity_; }
+void ArtifactLightLayer::setGoboIntensity(float intensity)
+{
+  lightImpl_->goboIntensity_ = std::clamp(intensity, 0.0f, 1.0f);
+  changed();
+}
+float ArtifactLightLayer::goboRotation() const { return lightImpl_->goboRotation_; }
+void ArtifactLightLayer::setGoboRotation(float degrees)
+{
+  lightImpl_->goboRotation_ = std::fmod(degrees, 360.0f);
+  changed();
+}
+bool ArtifactLightLayer::goboInvert() const { return lightImpl_->goboInvert_; }
+void ArtifactLightLayer::setGoboInvert(bool enabled)
+{
+  lightImpl_->goboInvert_ = enabled;
+  changed();
+}
+
 float ArtifactLightLayer::shadowRadius() const { return lightImpl_->shadowRadius_; }
 void ArtifactLightLayer::setShadowRadius(float r) { lightImpl_->shadowRadius_ = r; changed(); }
 
@@ -470,6 +511,28 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     coneLengthProp->setUnit(QStringLiteral("px"));
     coneLengthProp->setTooltip(QStringLiteral("Spot-light cone range in composition space"));
     lightOptions.addProperty(coneLengthProp);
+
+    auto goboPathProp = persistentLayerProperty(
+        QStringLiteral("Light/GOBO Texture"), ArtifactCore::PropertyType::String,
+        lightImpl_->goboTexturePath_, -135);
+    goboPathProp->setTooltip(QStringLiteral("Image projected by this Spot light; empty disables GOBO"));
+    lightOptions.addProperty(goboPathProp);
+    auto goboIntensityProp = persistentLayerProperty(
+        QStringLiteral("Light/GOBO Intensity"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(lightImpl_->goboIntensity_), -134);
+    goboIntensityProp->setHardRange(0.0, 1.0);
+    goboIntensityProp->setSoftRange(0.0, 1.0);
+    lightOptions.addProperty(goboIntensityProp);
+    auto goboRotationProp = persistentLayerProperty(
+        QStringLiteral("Light/GOBO Rotation"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(lightImpl_->goboRotation_), -133);
+    goboRotationProp->setHardRange(-360.0, 360.0);
+    goboRotationProp->setUnit(QStringLiteral("deg"));
+    lightOptions.addProperty(goboRotationProp);
+    auto goboInvertProp = persistentLayerProperty(
+        QStringLiteral("Light/GOBO Invert"), ArtifactCore::PropertyType::Boolean,
+        lightImpl_->goboInvert_, -132);
+    lightOptions.addProperty(goboInvertProp);
     }
 
     auto shadowProp = persistentLayerProperty(
@@ -553,6 +616,18 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         return true;
     } else if (propertyPath == "Light/Cone Length") {
         setConeLength(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/GOBO Texture") {
+        setGoboTexturePath(value.toString());
+        return true;
+    } else if (propertyPath == "Light/GOBO Intensity") {
+        setGoboIntensity(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/GOBO Rotation") {
+        setGoboRotation(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/GOBO Invert") {
+        setGoboInvert(value.toBool());
         return true;
     } else if (propertyPath == "Light/Shadows") {
         setCastsShadows(value.toBool());

@@ -55,6 +55,7 @@ import CvUtils;
 import Color.Float;
 import FloatRGBA;
 import Frame.Position;
+import Utils.Id;
 
 namespace Artifact {
 

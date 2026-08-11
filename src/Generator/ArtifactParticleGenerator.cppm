@@ -732,7 +732,8 @@ void ParticleEmitter::initializeParticle(Particle& p)
         const float safeMinimum = std::clamp(minimum, -1000000.0f, 1000000.0f);
         const float safeMaximum = std::clamp(maximum, safeMinimum, 1000000.0f);
         if (safeMaximum <= safeMinimum) return safeMinimum;
-        return safeMinimum + impl_->rng.bounded(safeMaximum - safeMinimum);
+        return safeMinimum + static_cast<float>(
+            impl_->rng.bounded(safeMaximum - safeMinimum));
     };
 
     // Position

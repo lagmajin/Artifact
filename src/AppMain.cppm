@@ -71,6 +71,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QTimer>
 #include <QTimerEvent>
 #include <QThread>
+#include <QTabWidget>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QHostAddress>
@@ -3447,10 +3448,21 @@ int main(int argc, char *argv[]) {
     inspectorWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         inspectorWidget);
+    const auto detachInspectorTab = [](QWidget *panel) {
+      if (!panel) return;
+      for (QWidget *ancestor = panel->parentWidget(); ancestor;
+           ancestor = ancestor->parentWidget()) {
+        auto *sourceTabs = qobject_cast<QTabWidget *>(ancestor);
+        if (!sourceTabs) continue;
+        const int sourceIndex = sourceTabs->indexOf(panel);
+        if (sourceIndex >= 0) sourceTabs->removeTab(sourceIndex);
+        return;
+      }
+    };
     auto *componentsPanel = inspectorWidget->findChild<QWidget *>(
-        QStringLiteral("inspectorComponentsSurface"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("inspectorComponentsSurface"));
     if (componentsPanel) {
+      detachInspectorTab(componentsPanel);
       // Keep the editing responsibilities independent while grouping the
       // related surfaces in the Inspector's right-side tab area.
       mw->addDockedWidgetTabbed(QStringLiteral("Components"),
@@ -3458,15 +3470,16 @@ int main(int argc, char *argv[]) {
                                 QStringLiteral("Inspector"));
     }
     auto *effectsPanel = inspectorWidget->findChild<QWidget *>(
-        QStringLiteral("inspectorEffectsScrollArea"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("inspectorEffectsScrollArea"));
     if (effectsPanel) {
+      detachInspectorTab(effectsPanel);
       effectsPanel->setMinimumWidth(280);
-      // Effects is a peer editing surface to Inspector. Keep it in its own
-      // dock so the effect rack and layer properties can remain visible
-      // together instead of competing for one tab strip.
-      mw->addDockedWidget(QStringLiteral("Effects"),
-                          ads::RightDockWidgetArea, effectsPanel);
+      // Effects is a peer editor, but belongs to the same right-side tab
+      // group as Inspector so it is immediately discoverable alongside the
+      // current-layer editing surfaces.
+      mw->addDockedWidgetTabbed(QStringLiteral("Effects"),
+                                ads::RightDockWidgetArea, effectsPanel,
+                                QStringLiteral("Inspector"));
     }
     auto *propertyPanel = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Properties"), QStringLiteral("eager-widget"),

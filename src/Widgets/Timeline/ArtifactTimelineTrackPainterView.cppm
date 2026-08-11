@@ -7337,17 +7337,14 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     const double frame = (mouseX + impl_->horizontalOffset_) / ppf;
     const double clamped = std::clamp(
         frame, 0.0, std::max(0.0, impl_->durationFrames_ - 1.0));
-    if (std::abs(clamped - impl_->scrubLastFrame_) >= 0.0001) {
-      impl_->scrubLastFrame_ = clamped;
-      if (auto *app = Artifact::ApplicationService::instance()) {
-        if (auto *projectService = app->projectService()) {
-          if (auto comp = projectService->currentComposition().lock()) {
-            ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
-                FrameChangedEvent{comp->id().toString(),
-                                  static_cast<qint64>(std::llround(clamped))});
-          }
-        }
-      }
+    const double evaluatedFrame = std::round(clamped);
+    if (std::abs(evaluatedFrame - impl_->scrubLastFrame_) >= 0.5) {
+      impl_->scrubLastFrame_ = evaluatedFrame;
+      setCurrentFrame(evaluatedFrame);
+      // Use the same authoritative seek path as the ruler/playhead overlay.
+      // Publishing FrameChanged directly used to redraw subscribers without
+      // first advancing the composition and duplicated work at sub-frame rate.
+      seekRequested(evaluatedFrame);
     }
     event->accept();
     return;

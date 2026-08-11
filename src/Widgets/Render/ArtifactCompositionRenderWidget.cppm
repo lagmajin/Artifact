@@ -1448,7 +1448,14 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   }
   if (auto* input = ArtifactCore::InputOperator::instance()) {
     input->setActiveContext(QStringLiteral("Viewport.Composition"));
-    if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
+    // Space is resolved by the composition editor on key release so it can
+    // distinguish a click (playback) from a held viewport pan.  Letting the
+    // global input operator execute it on key press starts playback here and
+    // immediately toggles it off again on release.
+    const bool deferredPlaybackToggle =
+        event && shortcuts.matches(event, ShortcutId::PlaybackToggle);
+    if (event && !deferredPlaybackToggle &&
+        input->processKeyPress(this, event->key(), event->modifiers())) {
       event->accept();
       return;
     }

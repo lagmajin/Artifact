@@ -71,6 +71,16 @@ export namespace Artifact {
   float coneLength() const;
   void setConeLength(float length);
 
+  // Spot-light GOBO / cookie projection.
+  QString goboTexturePath() const;
+  void setGoboTexturePath(const QString& path);
+  float goboIntensity() const;
+  void setGoboIntensity(float intensity);
+  float goboRotation() const;
+  void setGoboRotation(float degrees);
+  bool goboInvert() const;
+  void setGoboInvert(bool enabled);
+
   // RT Shadow specific: Larger radius = Softer shadows
   float shadowRadius() const;
   void setShadowRadius(float radius);

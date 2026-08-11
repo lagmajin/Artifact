@@ -5,6 +5,7 @@ module;
 #include <QAbstractButton>
 #include <QColor>
 #include <QEvent>
+#include <QFrame>
 #include <QLabel>
 #include <QPointer>
 #include <QStyle>
@@ -12,6 +13,7 @@ module;
 #include <QWidget>
 #include <wobjectimpl.h>
 #include "DockManager.h"
+#include "DockAreaWidget.h"
 #include "DockWidget.h"
 #include "DockWidgetTab.h"
 #include "FloatingDockContainer.h"
@@ -33,8 +35,8 @@ public:
     QPointer<ads::CDockWidget> focusedDockWidget_;
     bool glowEnabled_ = true;
     QColor glowColor_ = QColor(86, 156, 214);
-    int glowWidth_ = 3;
-    float glowIntensity_ = 0.82f;
+    int glowWidth_ = 1;
+    float glowIntensity_ = 0.58f;
     bool refreshScheduled_ = false;
 };
 
@@ -88,15 +90,16 @@ ads::CDockWidget* dockFromObject(QObject* object) {
 ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWidget* rememberedDock) {
     if (!dockManager) return nullptr;
 
-    // rememberedDock はユーザーのクリックまたは focusedDockWidgetChanged シグナルで
-    // 設定される。タブクリック直後はまだ isVisible() == false の場合があるため、
-    // ここでは可視性チェックを行わない。
-    if (rememberedDock) {
-        return rememberedDock;
+    // Emphasis is a real focus cue, not a persistent "last used" marker.
+    // A child editor owns focus on behalf of its containing dock.
+    if (auto* focused = QApplication::focusWidget()) {
+        if (auto* focusedDock = dockFromObject(focused)) {
+            return focusedDock;
+        }
     }
 
-    // フォールバック: QAds が内部的に追跡しているフォーカスドックを使用
-    return dockManager->focusedDockWidget();
+    Q_UNUSED(rememberedDock);
+    return nullptr;
 }
 
 // Returns the tab label color based only on whether this tab is the currently
@@ -196,6 +199,7 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);
+    impl_->dockManager_->setFrameShape(QFrame::NoFrame);
     // Clear QADS's built-in light-theme stylesheet so QPalette-based styling wins.
     // QADS owns an internal stylesheet. Keep this one documented exception
     // while the application surfaces themselves remain token/palette driven.
@@ -331,6 +335,14 @@ void DockStyleManager::refreshDockDecorations() {
     for (auto* dock : docks) {
         if (!dock) continue;
 
+        // Do not rely on a platform style honoring PE_Frame suppression.
+        // QADS surfaces are explicitly frameless; DockGlowStyle owns the only
+        // focus outline that may be painted around them.
+        dock->setFrameShape(QFrame::NoFrame);
+        if (auto* area = dock->dockAreaWidget()) {
+            area->setFrameShape(QFrame::NoFrame);
+        }
+
         const bool isActiveDock = (dock == activeDock);
         const bool isFloating = dock->isInFloatingContainer();
 
@@ -342,11 +354,15 @@ void DockStyleManager::refreshDockDecorations() {
             dock->setProperty("artifactActiveDock", isActiveDock);
             dock->setProperty("artifactFloatingDock", isFloating);
             repolishWidget(dock);
+            if (auto* area = dock->dockAreaWidget()) {
+                area->update();
+            }
             anyChanged = true;
         }
 
         auto* tab = dock->tabWidget();
         if (!tab) continue;
+        tab->setFrameShape(QFrame::NoFrame);
 
         const bool isCurrentTab = tab->isActiveTab();
         const bool isActiveTab = isActiveDock && isCurrentTab;

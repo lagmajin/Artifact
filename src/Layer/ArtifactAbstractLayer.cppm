@@ -9118,6 +9118,22 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                               LayerDirtyReason::PropertyChanged);
           return true;
         };
+        auto setFiniteOnlySetting = [&](const QString& key, double raw,
+                                       double fallback) {
+          const double existing =
+              descriptor->settings.value(key).toDouble(fallback);
+          const double safeExisting =
+              std::isfinite(existing) ? existing : fallback;
+          return setSetting(key, std::isfinite(raw) ? raw : safeExisting);
+        };
+        auto setFiniteSetting = [&](const QString& key, double raw,
+                                   double fallback, double minimum,
+                                   double maximum) {
+          return setSetting(
+              key, finiteClampedValue(
+                      raw, descriptor->settings.value(key).toDouble(fallback),
+                      minimum, maximum));
+        };
         if (field == QStringLiteral("enabled")) {
           descriptor->enabled = value.toBool();
           notifyLayerMutation(this, LayerDirtyFlag::Effect,

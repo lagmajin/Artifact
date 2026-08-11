@@ -54,6 +54,8 @@ struct ArtifactCameraLayer::Impl {
     ProjectionMode projectionMode_ = ProjectionMode::Perspective;
     StereoMode stereoMode_ = StereoMode::Mono;
     float ipd_ = 0.064f;
+    bool activeCamera_ = true;
+    int cameraPriority_ = 0;
 
     // Perspective-specific
     float fov_ = 0.0f; // 0 = auto from zoom, >0 = manual FOV
@@ -289,6 +291,8 @@ void ArtifactCameraLayer::setOrthoHeight(float h) { camImpl_->orthoHeight_ = std
 float ArtifactCameraLayer::nearClipPlane() const { return camImpl_->nearClipPlane_; }
 void ArtifactCameraLayer::setNearClipPlane(float d) {
     camImpl_->nearClipPlane_ = std::isfinite(d) ? std::clamp(d, 0.01f, 100000.0f) : 0.1f;
+    camImpl_->farClipPlane_ = std::max(camImpl_->farClipPlane_,
+                                       camImpl_->nearClipPlane_ + 0.01f);
     changed();
 }
 
@@ -303,6 +307,23 @@ void ArtifactCameraLayer::setFarClipPlane(float d) {
 float ArtifactCameraLayer::ipd() const { return camImpl_->ipd_; }
 void ArtifactCameraLayer::setIpd(float ipd) {
     camImpl_->ipd_ = std::isfinite(ipd) ? std::clamp(ipd, 0.0f, 1.0f) : 0.064f;
+    changed();
+}
+
+bool ArtifactCameraLayer::isActiveCamera() const { return camImpl_->activeCamera_; }
+void ArtifactCameraLayer::setActiveCamera(bool active)
+{
+    if (camImpl_->activeCamera_ == active) return;
+    camImpl_->activeCamera_ = active;
+    changed();
+}
+
+int ArtifactCameraLayer::cameraPriority() const { return camImpl_->cameraPriority_; }
+void ArtifactCameraLayer::setCameraPriority(int priority)
+{
+    const int clamped = std::clamp(priority, -1000, 1000);
+    if (camImpl_->cameraPriority_ == clamped) return;
+    camImpl_->cameraPriority_ = clamped;
     changed();
 }
 
@@ -499,6 +520,19 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     stereoModeProp->setTooltip(QStringLiteral("0 = Mono, 1 = TopBottom, 2 = SideBySide"));
     projectionOptions.addProperty(stereoModeProp);
 
+    auto activeCameraProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Active Camera"),
+        ArtifactCore::PropertyType::Boolean, camImpl_->activeCamera_, -148);
+    activeCameraProp->setTooltip(QStringLiteral("Use this camera for composition rendering"));
+    projectionOptions.addProperty(activeCameraProp);
+
+    auto cameraPriorityProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Priority"), ArtifactCore::PropertyType::Integer,
+        camImpl_->cameraPriority_, -147);
+    cameraPriorityProp->setHardRange(-1000, 1000);
+    cameraPriorityProp->setTooltip(QStringLiteral("Higher active-camera priority wins; layer order breaks ties"));
+    projectionOptions.addProperty(cameraPriorityProp);
+
     auto manualFovProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Manual FOV"),
         ArtifactCore::PropertyType::Boolean,
@@ -660,6 +694,12 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
     } else if (propertyPath == "Camera Options/Stereo Mode") {
         setStereoMode(static_cast<StereoMode>(value.toInt()));
         return true;
+    } else if (propertyPath == "Camera Options/Active Camera") {
+        setActiveCamera(value.toBool());
+        return true;
+    } else if (propertyPath == "Camera Options/Priority") {
+        setCameraPriority(value.toInt());
+        return true;
     } else if (propertyPath == "Camera Options/Manual FOV") {
         setUseManualFov(value.toBool());
         return true;
@@ -744,6 +784,8 @@ QJsonObject ArtifactCameraLayer::toJson() const
     obj["cameraNearClip"] = static_cast<double>(camImpl_->nearClipPlane_);
     obj["cameraFarClip"] = static_cast<double>(camImpl_->farClipPlane_);
     obj["cameraIpd"] = static_cast<double>(camImpl_->ipd_);
+    obj["cameraActive"] = camImpl_->activeCamera_;
+    obj["cameraPriority"] = camImpl_->cameraPriority_;
     obj["cameraShakeTrauma"] = static_cast<double>(camImpl_->trauma_);
     obj["cameraShakeTraumaDecay"] = static_cast<double>(camImpl_->traumaDecay_);
     obj["cameraShakeFrequency"] = static_cast<double>(camImpl_->shakeFrequency_);
@@ -801,6 +843,12 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     }
     if (obj.contains("cameraIpd")) {
         setIpd(static_cast<float>(obj.value("cameraIpd").toDouble(camImpl_->ipd_)));
+    }
+    if (obj.contains("cameraActive")) {
+        setActiveCamera(obj.value("cameraActive").toBool());
+    }
+    if (obj.contains("cameraPriority")) {
+        setCameraPriority(obj.value("cameraPriority").toInt());
     }
     if (obj.contains("cameraShakeTrauma")) {
         const float trauma = static_cast<float>(obj.value("cameraShakeTrauma").toDouble(camImpl_->trauma_));

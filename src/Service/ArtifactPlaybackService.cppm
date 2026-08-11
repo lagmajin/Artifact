@@ -248,6 +248,8 @@ public:
   std::atomic_uint64_t playbackSessionSyncCoalesced_{0};
   std::atomic_uint64_t playbackSessionPublishedFrames_{0};
   std::atomic_uint64_t playbackSessionConcreteFrames_{0};
+  QElapsedTimer seekPreviewMaintenanceClock_;
+  uint64_t seekPreviewMaintenanceGeneration_ = 0;
 
   void beginPlaybackSessionCapture() {
     if (playbackSessionCaptureActive_) {
@@ -329,6 +331,77 @@ public:
       return;
     }
 
+    // The raw session log remains below, but make the route actually selected
+    // by preview immediately visible. PlaybackRender is deliberately emitted
+    // on a route change and periodically, so these are decision samples rather
+    // than a claim of an exact per-frame counter.
+    const auto valueAfterToken = [](const QString &message,
+                                    const QString &token) -> QString {
+      const int tokenOffset = message.indexOf(token);
+      if (tokenOffset < 0) {
+        return {};
+      }
+      const int valueStart = tokenOffset + token.size();
+      const int valueEnd = message.indexOf(QLatin1Char(' '), valueStart);
+      return message.mid(valueStart,
+                         valueEnd < 0 ? -1 : valueEnd - valueStart).trimmed();
+    };
+    std::map<QString, int> playbackFallbackReasons;
+    std::map<QString, int> presentationPaths;
+    std::map<QString, int> videoBranches;
+    int playbackRenderSamples = 0;
+    int ramPreviewSamples = 0;
+    int liveRenderSamples = 0;
+    QString lastPlaybackRender;
+    QString lastVideoPresentation;
+    QString lastVideoDecode;
+    for (const auto &log : sessionLogs) {
+      const QString &message = log.message;
+      if (message.contains(QStringLiteral("[PlaybackRender]"))) {
+        ++playbackRenderSamples;
+        lastPlaybackRender = message;
+        const QString fallback = valueAfterToken(
+            message, QStringLiteral("ramPreviewFallback="));
+        if (fallback == QStringLiteral("true")) {
+          ++ramPreviewSamples;
+        } else if (fallback == QStringLiteral("false")) {
+          ++liveRenderSamples;
+        }
+        const QString reason = valueAfterToken(
+            message, QStringLiteral("fallbackReason="));
+        if (!reason.isEmpty()) {
+          ++playbackFallbackReasons[reason];
+        }
+      }
+      if (message.contains(QStringLiteral("[Video] phase=present"))) {
+        lastVideoPresentation = message;
+        const QString path = valueAfterToken(
+            message, QStringLiteral("compositionCache="));
+        if (!path.isEmpty()) {
+          ++presentationPaths[path];
+        }
+        lastVideoDecode = message;
+      }
+      if (message.contains(QStringLiteral("[Video] branch="))) {
+        const QString branch = valueAfterToken(
+            message, QStringLiteral("branch="));
+        if (!branch.isEmpty()) {
+          ++videoBranches[branch];
+        }
+        lastVideoDecode = message;
+      }
+    }
+    const auto formatBreakdown = [](const std::map<QString, int> &values) {
+      if (values.empty()) {
+        return QStringLiteral("none");
+      }
+      QStringList parts;
+      for (const auto &[name, count] : values) {
+        parts.push_back(QStringLiteral("%1=%2").arg(name).arg(count));
+      }
+      return parts.join(QStringLiteral(", "));
+    };
+
     QString output;
     output.reserve(static_cast<qsizetype>(sessionLogs.size() * 160 + 512));
     output += QStringLiteral("Artifact playback diagnostic session\n");
@@ -383,6 +456,30 @@ public:
                   .arg(ramPreviewCachedFrameCount())
                   .arg(ramPreviewDiskFrameCountInRange())
                   .arg(ramPreviewHitRate() * 100.0f, 0, 'f', 2);
+    output += QStringLiteral("\n=== Preview route summary ===\n");
+    output += QStringLiteral("Route decision samples: total=%1 ram-cache=%2 live-render=%3\n")
+                  .arg(playbackRenderSamples)
+                  .arg(ramPreviewSamples)
+                  .arg(liveRenderSamples);
+    output += QStringLiteral("Fallback reasons: %1\n")
+                  .arg(formatBreakdown(playbackFallbackReasons));
+    output += QStringLiteral("Video presentation paths: %1\n")
+                  .arg(formatBreakdown(presentationPaths));
+    output += QStringLiteral("Video branches: %1\n")
+                  .arg(formatBreakdown(videoBranches));
+    if (!lastPlaybackRender.isEmpty()) {
+      output += QStringLiteral("Last route decision: %1\n").arg(lastPlaybackRender);
+    }
+    if (!lastVideoPresentation.isEmpty()) {
+      output += QStringLiteral("Last video presentation: %1\n")
+                    .arg(lastVideoPresentation);
+    }
+    if (!lastVideoDecode.isEmpty()) {
+      output += QStringLiteral("Last video decode state: %1\n")
+                    .arg(lastVideoDecode);
+    }
+    output += QStringLiteral(
+        "Route decisions are sampled when the route changes and every 120 frames.\n");
     output += QStringLiteral("Captured errors: %1\n\n=== Session log ===\n")
                   .arg(hasError);
 
@@ -1999,12 +2096,33 @@ public:
     ramPreviewRange_ = range;
     requestRamPreviewBuild(ramPreviewRange_,
                            QStringLiteral("prewarm-around-current"));
-    const int maxHydrationFrames =
-        std::max(1, std::min(ramPreviewRadiusFrames_ * 2 + 1, 9));
-    hydrateFramesFromDiskNear(position.framePosition(), ramPreviewRange_,
-                              maxHydrationFrames);
-    emitRamPreviewStats();
-    Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+
+    // Interactive timeline seeking can arrive hundreds of times per second.
+    // Queue priority immediately, but coalesce disk probes, whole-cache stats
+    // scans and cache-strip repaint signals to one maintenance pass per 40 ms.
+    const uint64_t generation = ++seekPreviewMaintenanceGeneration_;
+    const auto runMaintenance = [this, generation, position, range]() {
+      if (generation != seekPreviewMaintenanceGeneration_ || !owner_) {
+        return;
+      }
+      const int maxHydrationFrames =
+          std::max(1, std::min(ramPreviewRadiusFrames_ * 2 + 1, 9));
+      hydrateFramesFromDiskNear(position.framePosition(), range,
+                                maxHydrationFrames);
+      emitRamPreviewStats();
+      Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, range);
+      seekPreviewMaintenanceClock_.restart();
+    };
+    constexpr int kSeekMaintenanceIntervalMs = 40;
+    if (!seekPreviewMaintenanceClock_.isValid() ||
+        seekPreviewMaintenanceClock_.elapsed() >= kSeekMaintenanceIntervalMs) {
+      runMaintenance();
+    } else {
+      const int delay = std::max(
+          1, kSeekMaintenanceIntervalMs -
+                 static_cast<int>(seekPreviewMaintenanceClock_.elapsed()));
+      QTimer::singleShot(delay, owner_, runMaintenance);
+    }
   }
 
   // Accessors for ram preview statistics

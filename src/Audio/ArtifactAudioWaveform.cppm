@@ -735,8 +735,8 @@ std::vector<qint64> AudioSyncTools::detectBeats(const AudioSegment& segment) {
         return beats;
     }
 
-    const int windowSize = std::min(
-        mono.size(), std::max(1, segment.sampleRate / 10));
+    const int windowSize = std::min<int>(
+        static_cast<int>(mono.size()), std::max(1, segment.sampleRate / 10));
     const float threshold = 0.5f;
 
     double prevEnergy = 0.0;

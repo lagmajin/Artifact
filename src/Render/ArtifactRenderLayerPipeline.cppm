@@ -81,7 +81,7 @@ void ScreenSpaceGICS(uint3 dispatchId : SV_DispatchThreadID)
 
     const float3 centerNormal = normalize(
         g_Normal.Load(int3(centerPixel, 0)).xyz * 2.0 - 1.0);
-    float3 indirect = float3(0.0, 0.0, 0.0);
+    float occlusion = 0.0;
     float totalWeight = 0.0;
     const uint stepCount = clamp(g_RaySteps, 1u, 24u);
 
@@ -101,24 +101,79 @@ void ScreenSpaceGICS(uint3 dispatchId : SV_DispatchThreadID)
             const float sampleDepth = g_Depth.Load(int3(samplePixel, 0));
             if (sampleDepth >= 0.999999) continue;
 
-            const float depthDelta = abs(sampleDepth - centerDepth);
-            const float depthWeight = saturate(
-                1.0 - depthDelta / max(g_DepthThickness, 0.000001));
-            if (depthWeight <= 0.0) continue;
+            // D3D depth increases away from the camera. Only a sample that
+            // is meaningfully closer than the shaded point can occlude it.
+            const float occluder = saturate(
+                (centerDepth - sampleDepth - g_DepthThickness) /
+                max(g_DepthThickness * 4.0, 0.000001));
+            if (occluder <= 0.0) continue;
 
             const float3 sampleNormal = normalize(
                 g_Normal.Load(int3(samplePixel, 0)).xyz * 2.0 - 1.0);
             const float normalWeight = saturate(dot(centerNormal, sampleNormal));
-            const float weight = depthWeight * normalWeight * distanceWeight;
-            indirect += g_Albedo.Load(int3(samplePixel, 0)).rgb * weight;
+            const float weight = normalWeight * distanceWeight;
+            occlusion += occluder * weight;
             totalWeight += weight;
         }
     }
 
-    indirect = totalWeight > 0.0
-        ? indirect / totalWeight
-        : float3(0.0, 0.0, 0.0);
-    g_Output[dispatchId.xy] = float4(indirect * g_Intensity, 1.0);
+    const float ao = 1.0 - saturate(
+        (totalWeight > 0.0 ? occlusion / totalWeight : 0.0) * g_Intensity);
+    g_Output[dispatchId.xy] = float4(ao, ao, ao, 1.0);
+}
+)";
+
+  inline constexpr const char* kScreenSpaceAOCompositeShader = R"(
+Texture2D<float4> g_SourceColor : register(t0);
+Texture2D<float4> g_AOMask : register(t1);
+RWTexture2D<float4> g_DestinationColor : register(u0);
+
+[numthreads(8, 8, 1)]
+void ScreenSpaceAOCompositeCS(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_DestinationColor.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+    uint aoWidth, aoHeight;
+    g_AOMask.GetDimensions(aoWidth, aoHeight);
+    const uint2 aoPixel = min(dispatchId.xy * uint2(aoWidth, aoHeight) /
+                              uint2(width, height),
+                              uint2(aoWidth - 1, aoHeight - 1));
+    const float4 source = g_SourceColor.Load(int3(dispatchId.xy, 0));
+    const float ao = saturate(g_AOMask.Load(int3(aoPixel, 0)).r);
+    g_DestinationColor[dispatchId.xy] = float4(source.rgb * ao, source.a);
+}
+)";
+
+  inline constexpr const char* kFastApproximateAntiAliasingShader = R"(
+Texture2D<float4> g_SourceColor : register(t0);
+RWTexture2D<float4> g_DestinationColor : register(u0);
+
+float luma(float3 rgb) { return dot(rgb, float3(0.299, 0.587, 0.114)); }
+
+[numthreads(8, 8, 1)]
+void FastApproximateAntiAliasingCS(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_DestinationColor.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+
+    const int2 p = int2(dispatchId.xy);
+    const int2 maxP = int2(width - 1, height - 1);
+    const float4 center = g_SourceColor.Load(int3(p, 0));
+    const float3 north = g_SourceColor.Load(int3(clamp(p + int2(0, -1), int2(0, 0), maxP), 0)).rgb;
+    const float3 south = g_SourceColor.Load(int3(clamp(p + int2(0,  1), int2(0, 0), maxP), 0)).rgb;
+    const float3 west  = g_SourceColor.Load(int3(clamp(p + int2(-1, 0), int2(0, 0), maxP), 0)).rgb;
+    const float3 east  = g_SourceColor.Load(int3(clamp(p + int2( 1, 0), int2(0, 0), maxP), 0)).rgb;
+    const float centerLuma = luma(center.rgb);
+    const float minLuma = min(centerLuma, min(min(luma(north), luma(south)), min(luma(west), luma(east))));
+    const float maxLuma = max(centerLuma, max(max(luma(north), luma(south)), max(luma(west), luma(east))));
+    const float contrast = maxLuma - minLuma;
+    // Preserve flat color and text/UI-like areas; only soften true high-contrast
+    // raster edges. The cross filter is intentionally bounded to avoid blur.
+    const float edge = saturate((contrast - 0.0312) / max(maxLuma * 0.125, 0.001));
+    const float3 filtered = (north + south + west + east + center.rgb * 2.0) / 6.0;
+    g_DestinationColor[dispatchId.xy] = float4(lerp(center.rgb, filtered, edge * 0.55), center.a);
 }
 )";
 
@@ -327,6 +382,8 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   RefCntAutoPtr<IBuffer> screenSpaceGIParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIResolveExecutor_;
   RefCntAutoPtr<IBuffer> screenSpaceGIResolveParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceAOCompositeExecutor_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> fastApproximateAntiAliasingExecutor_;
   TextureBundle screenSpaceGIHistory_[2];
   Uint32 screenSpaceGIHistoryWriteIndex_ = 0;
   bool screenSpaceGIHistoryValid_ = false;
@@ -431,6 +488,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->screenSpaceGIParams_.Release();
   impl_->screenSpaceGIResolveExecutor_.reset();
   impl_->screenSpaceGIResolveParams_.Release();
+  impl_->screenSpaceAOCompositeExecutor_.reset();
+  impl_->fastApproximateAntiAliasingExecutor_.reset();
   impl_->screenSpaceGIHistory_[0] = {};
   impl_->screenSpaceGIHistory_[1] = {};
   impl_->screenSpaceGIHistoryWriteIndex_ = 0;
@@ -806,6 +865,92 @@ bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
                           RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  impl_->screenSpaceGIHistoryWriteIndex_ = readIndex;
  impl_->screenSpaceGIHistoryValid_ = true;
+ return true;
+}
+bool RenderPipeline::applyScreenSpaceAmbientOcclusion(
+    IDeviceContext* ctx, ITextureView* sourceColor,
+    ITextureView* destinationColor, ITextureView* aoMask)
+{
+ if (!ctx || !impl_->device_ || !sourceColor || !destinationColor || !aoMask ||
+     sourceColor == destinationColor || impl_->width_ == 0 || impl_->height_ == 0) {
+  return false;
+ }
+ if (!impl_->screenSpaceAOCompositeExecutor_) {
+  impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+      ? impl_->screenSpaceGIContext_
+      : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+  impl_->screenSpaceAOCompositeExecutor_ =
+      std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+  static const ShaderResourceVariableDesc variables[] = {
+      {SHADER_TYPE_COMPUTE, "g_SourceColor", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_AOMask", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_DestinationColor", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+  };
+  ArtifactCore::ComputePipelineDesc desc;
+  desc.name = "ScreenSpace AO Composite PSO";
+  desc.shaderSource = kScreenSpaceAOCompositeShader;
+  desc.entryPoint = "ScreenSpaceAOCompositeCS";
+  desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+  desc.variables = variables;
+  desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+  desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  if (!impl_->screenSpaceAOCompositeExecutor_->build(desc) ||
+      !impl_->screenSpaceAOCompositeExecutor_->createShaderResourceBinding(true)) {
+   impl_->screenSpaceAOCompositeExecutor_.reset();
+   return false;
+  }
+ }
+ auto& executor = *impl_->screenSpaceAOCompositeExecutor_;
+ if (!executor.setTextureView("g_SourceColor", sourceColor) ||
+     !executor.setTextureView("g_AOMask", aoMask) ||
+     !executor.setTextureView("g_DestinationColor", destinationColor)) {
+  return false;
+ }
+ executor.dispatch(ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+     impl_->width_, impl_->height_, 1, 8, 8, 1),
+     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ return true;
+}
+bool RenderPipeline::applyFastApproximateAntiAliasing(
+    IDeviceContext* ctx, ITextureView* sourceColor,
+    ITextureView* destinationColor)
+{
+ if (!ctx || !impl_->device_ || !sourceColor || !destinationColor ||
+     sourceColor == destinationColor || impl_->width_ == 0 || impl_->height_ == 0) {
+  return false;
+ }
+ if (!impl_->fastApproximateAntiAliasingExecutor_) {
+  impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+      ? impl_->screenSpaceGIContext_
+      : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+  impl_->fastApproximateAntiAliasingExecutor_ =
+      std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+  static const ShaderResourceVariableDesc variables[] = {
+      {SHADER_TYPE_COMPUTE, "g_SourceColor", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_DestinationColor", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+  };
+  ArtifactCore::ComputePipelineDesc desc;
+  desc.name = "Composition FXAA PSO";
+  desc.shaderSource = kFastApproximateAntiAliasingShader;
+  desc.entryPoint = "FastApproximateAntiAliasingCS";
+  desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+  desc.variables = variables;
+  desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+  desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  if (!impl_->fastApproximateAntiAliasingExecutor_->build(desc) ||
+      !impl_->fastApproximateAntiAliasingExecutor_->createShaderResourceBinding(true)) {
+   impl_->fastApproximateAntiAliasingExecutor_.reset();
+   return false;
+  }
+ }
+ auto& executor = *impl_->fastApproximateAntiAliasingExecutor_;
+ if (!executor.setTextureView("g_SourceColor", sourceColor) ||
+     !executor.setTextureView("g_DestinationColor", destinationColor)) {
+  return false;
+ }
+ executor.dispatch(ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+     impl_->width_, impl_->height_, 1, 8, 8, 1),
+     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  return true;
 }
 ITextureView* RenderPipeline::screenSpaceGlobalIlluminationSRV() const

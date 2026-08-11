@@ -2205,6 +2205,12 @@ namespace Artifact
             if (auto gpuBackend = tryGpu()) {
                 return gpuBackend;
             }
+            if (auto hardwarePipeBackend = tryPipeHardware()) {
+                return hardwarePipeBackend;
+            }
+            if (auto vulkanPipeBackend = tryPipeVulkan()) {
+                return vulkanPipeBackend;
+            }
             if (auto nativeBackend = tryNative()) {
                 if (backendName) *backendName = QStringLiteral("native-fallback");
                 if (errorMessage) {
@@ -2220,6 +2226,12 @@ namespace Artifact
         default:
             if (auto gpuBackend = tryGpu()) {
                 return gpuBackend;
+            }
+            if (auto hardwarePipeBackend = tryPipeHardware()) {
+                return hardwarePipeBackend;
+            }
+            if (auto vulkanPipeBackend = tryPipeVulkan()) {
+                return vulkanPipeBackend;
             }
             if (auto nativeBackend = tryNative()) {
                 return nativeBackend;
@@ -3131,7 +3143,11 @@ namespace Artifact
             if (encodeSessionActive_) {
                 return;
             }
-            ArtifactCore::Logger::instance()->install();
+            auto* logger = ArtifactCore::Logger::instance();
+            logger->install();
+            // A render that stalls never reaches finishEncodeSessionCapture(). Keep
+            // the live application log enabled so its last completed stage survives.
+            logger->setFileLoggingEnabled(true);
             encodeSessionActive_ = true;
             encodeSessionStartedAt_ = QDateTime::currentDateTime();
             qInfo() << "[EncodeSession] begin"
@@ -6563,13 +6579,29 @@ namespace Artifact
             FrameRenderOutput frameOutput;
             QString frameError;
             bool ok = false;
+            qInfo() << "[EncodeSession][Frame] render begin"
+                    << "job=" << jobIndex
+                    << "frame=" << f
+                    << "renderBackend=" << (useGpuBackend ? "gpu" : "cpu");
+            ArtifactCore::Logger::instance()->flushFile();
             try {
+                // gpuSurfaceCache belongs to the GPU render worker. Clearing it in
+                // the consumer races the worker as soon as the next frame starts.
+                if (useGpuBackend) {
+                    gpuSurfaceCache.clear();
+                }
                 ok = renderSingleFrame(snap, frameOutput, frameError);
             } catch (const std::exception& e) {
                 frameError = QString::fromUtf8(e.what());
             } catch (...) {
                 frameError = QStringLiteral("Unknown exception during frame render");
             }
+            qInfo() << "[EncodeSession][Frame] render end"
+                    << "job=" << jobIndex
+                    << "frame=" << f
+                    << "success=" << ok
+                    << "reason=" << frameError;
+            ArtifactCore::Logger::instance()->flushFile();
 
             {
                 std::lock_guard<std::mutex> lock(outputBufferMutex);
@@ -6826,10 +6858,6 @@ namespace Artifact
             }
             bufferSpaceCv.notify_all();
 
-            if (useGpuBackend) {
-                gpuSurfaceCache.clear();
-            }
-
             if (!frameOutput.isValid(job.multiChannelExportEnabled)) {
                 if (useFarm) {
                     // Farm path: retries might be in progress.
@@ -6883,6 +6911,11 @@ namespace Artifact
             }, Qt::QueuedConnection);
 
             if (isVideo) {
+                qInfo() << "[EncodeSession][Frame] encode begin"
+                        << "job=" << jobIndex
+                        << "frame=" << f
+                        << "size=" << qimg.size();
+                ArtifactCore::Logger::instance()->flushFile();
                 if (!videoBackend->addFrame(qimg, f, &failureReason)) {
                     qWarning() << "[EncodeSession][Frame] encoder rejected frame"
                                << "job=" << jobIndex
@@ -6893,6 +6926,10 @@ namespace Artifact
                     success.store(false, std::memory_order_relaxed);
                     break;
                 }
+                qInfo() << "[EncodeSession][Frame] encode end"
+                        << "job=" << jobIndex
+                        << "frame=" << f;
+                ArtifactCore::Logger::instance()->flushFile();
             } else if (isHtmlPlayer) {
                 const QString frameExt = QStringLiteral("png");
                 QString baseName = outInfo.completeBaseName();

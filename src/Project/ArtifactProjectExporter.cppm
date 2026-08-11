@@ -147,7 +147,8 @@ namespace Artifact
          QJsonArray relativeSequencePaths;
          for (const auto& value : sequencePaths) {
           const QString relative = relativePathFor(value.toString());
-          relativeSequencePaths.append(relative.isEmpty() ? value : relative);
+           relativeSequencePaths.append(
+               relative.isEmpty() ? value : QJsonValue(relative));
          }
          item.insert(QStringLiteral("sequencePathsRelative"),
                      relativeSequencePaths);
@@ -197,7 +198,8 @@ namespace Artifact
          QJsonArray relativePaths;
          for (const auto& entry : value.toArray()) {
           const QString relative = relativePathFor(entry.toString());
-          relativePaths.append(relative.isEmpty() ? entry : relative);
+           relativePaths.append(
+               relative.isEmpty() ? entry : QJsonValue(relative));
          }
          if (!relativePaths.isEmpty()) {
           object.insert(key + QStringLiteral("Relative"), relativePaths);
