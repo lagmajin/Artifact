@@ -45,4 +45,21 @@ private:
     void syncImpls();
 };
 
+class PixelSortProEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
+
+protected:
+    void apply(const ImageF32x4RGBAWithCache& src,
+               ImageF32x4RGBAWithCache& dst) override;
+
+public:
+    PixelSortProEffect();
+    ~PixelSortProEffect() override;
+    std::vector<AbstractProperty> getProperties() const override;
+    void setPropertyValue(const UniString& name, const QVariant& value) override;
+    EffectROIHint roiHint() const override;
+};
+
 } // namespace Artifact

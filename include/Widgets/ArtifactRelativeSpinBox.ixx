@@ -4,6 +4,7 @@ module;
 #include <QLineEdit>
 #include <QWheelEvent>
 #include <QMouseEvent>
+#include <QFocusEvent>
 #include <QString>
 #include <QChar>
 #include <cmath>
@@ -25,6 +26,15 @@ protected:
     event->ignore();
   }
 
+  void focusInEvent(QFocusEvent *event) override {
+    QDoubleSpinBox::focusInEvent(event);
+    // QAbstractSpinBox selects only the numeric portion (not its suffix) on
+    // focus. Keep a caret, but reserve selection for an explicit gesture.
+    if (auto *edit = lineEdit()) {
+      edit->deselect();
+    }
+  }
+
   void mousePressEvent(QMouseEvent *event) override {
     if (event->button() == Qt::LeftButton &&
         (event->modifiers() & Qt::AltModifier)) {
@@ -33,6 +43,12 @@ protected:
       return;
     }
     QDoubleSpinBox::mousePressEvent(event);
+    if (event->button() == Qt::LeftButton &&
+        event->modifiers() == Qt::NoModifier) {
+      if (auto *edit = lineEdit()) {
+        edit->deselect();
+      }
+    }
   }
 
   QValidator::State validate(QString &input, int &pos) const override {
@@ -82,6 +98,25 @@ public:
 protected:
   void wheelEvent(QWheelEvent *event) override {
     event->ignore();
+  }
+
+  void focusInEvent(QFocusEvent *event) override {
+    QSpinBox::focusInEvent(event);
+    // Match the floating-point editor: focus places a caret without leaving
+    // Qt's automatic numeric-only selection visible.
+    if (auto *edit = lineEdit()) {
+      edit->deselect();
+    }
+  }
+
+  void mousePressEvent(QMouseEvent *event) override {
+    QSpinBox::mousePressEvent(event);
+    if (event->button() == Qt::LeftButton &&
+        event->modifiers() == Qt::NoModifier) {
+      if (auto *edit = lineEdit()) {
+        edit->deselect();
+      }
+    }
   }
 
   QValidator::State validate(QString &input, int &pos) const override {

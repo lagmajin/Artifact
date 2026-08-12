@@ -9,6 +9,7 @@ module;
 #include <QLabel>
 #include <QPaintEvent>
 #include <QPoint>
+#include <QPointF>
 #include <QPushButton>
 #include <QVariant>
 #include <QColor>
@@ -22,6 +23,7 @@ module;
 #include <QResizeEvent>
 #include <QLineEdit>
 #include <QSlider>
+#include <QSize>
 #include <QSpinBox>
 #include <QTextEdit>
 #include <QWheelEvent>
@@ -414,6 +416,64 @@ public:
 private:
     QDoubleSpinBox* xSpinBox_ = nullptr;
     QDoubleSpinBox* ySpinBox_ = nullptr;
+};
+
+class ArtifactCurvesPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactCurvesPropertyEditor(
+        const ArtifactCore::AbstractProperty& property,
+        QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+
+private:
+    struct Point { double x = 0.0; double y = 0.0; };
+    QString serializedPoints() const;
+    void normalizePoints();
+    int pointAt(const QPointF& position) const;
+    QPointF widgetPosition(const Point& point) const;
+    Point curvePosition(const QPointF& position) const;
+
+    std::vector<Point> points_;
+    int activePoint_ = -1;
+    bool dragging_ = false;
+};
+
+class ArtifactLevelsPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactLevelsPropertyEditor(
+        const ArtifactCore::AbstractProperty& property,
+        QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+
+private:
+    enum Handle { None = -1, InputBlack, InputGamma, InputWhite,
+                  OutputBlack, OutputWhite };
+    QString serializedLevels() const;
+    int handleAt(const QPointF& position) const;
+    void updateHandle(const QPointF& position, bool preview);
+    double inputGammaPosition() const;
+
+    std::array<double, 5> values_{{0.0, 1.0, 255.0, 0.0, 255.0}};
+    Handle activeHandle_ = None;
 };
 
 class ArtifactPropertyEditorRowWidget final : public QWidget {

@@ -9,6 +9,7 @@ module;
 #include <vector>
 #include <QVariant>
 #include <QString>
+#include <QStringList>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -328,6 +329,40 @@ std::vector<ArtifactCore::CurvePoint> makeSCurvePoints(float strength) {
         {1.0f, 1.0f},
     };
 }
+
+QString serializeCurvePoints(const std::vector<ArtifactCore::CurvePoint>& points) {
+    QStringList entries;
+    entries.reserve(static_cast<qsizetype>(points.size()));
+    for (const auto& point : points) {
+        entries.push_back(QStringLiteral("%1:%2")
+                              .arg(point.x, 0, 'g', 9)
+                              .arg(point.y, 0, 'g', 9));
+    }
+    return entries.join(QLatin1Char(';'));
+}
+
+std::vector<ArtifactCore::CurvePoint> parseCurvePoints(const QString& serialized) {
+    std::vector<ArtifactCore::CurvePoint> points;
+    for (const QString& entry : serialized.split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
+        const auto coordinates = entry.split(QLatin1Char(':'));
+        if (coordinates.size() != 2) continue;
+        bool xOk = false;
+        bool yOk = false;
+        const float x = coordinates[0].toFloat(&xOk);
+        const float y = coordinates[1].toFloat(&yOk);
+        if (xOk && yOk && std::isfinite(x) && std::isfinite(y)) {
+            points.push_back({std::clamp(x, 0.0f, 1.0f),
+                              std::clamp(y, 0.0f, 1.0f)});
+        }
+    }
+    std::sort(points.begin(), points.end(),
+              [](const auto& a, const auto& b) { return a.x < b.x; });
+    if (points.size() < 2) return {};
+    points.front().x = 0.0f;
+    points.back().x = 1.0f;
+    if (points.size() > 16) points.resize(16);
+    return points;
+}
 }
 
 CurvesEffect::CurvesEffect() {
@@ -337,13 +372,14 @@ CurvesEffect::CurvesEffect() {
     setCPUImpl(ArtifactCore::makeShared<CurvesEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<CurvesEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    customPoints_ = makeSCurvePoints(strength_);
     syncImpls();
 }
 
 CurvesEffect::~CurvesEffect() = default;
 
 void CurvesEffect::setPreset(int preset) {
-    const int clamped = std::clamp(preset, 0, 5);
+    const int clamped = std::clamp(preset, 0, 6);
     preset_ = static_cast<Preset>(clamped);
     syncImpls();
 }
@@ -378,6 +414,9 @@ void CurvesEffect::applyPreset(ArtifactCore::ColorCurves& curves) const {
     case Preset::Posterize:
         curves.applyPosterize(std::max(2, posterizeLevels_));
         break;
+    case Preset::Custom:
+        curves.setMasterCurve(customPoints_);
+        break;
     }
 }
 
@@ -398,18 +437,46 @@ std::vector<AbstractProperty> CurvesEffect::getProperties() const {
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(static_cast<int>(Preset::SCurve));
+    presetProp.setTooltip(QStringLiteral(
+        "0=Identity,1=S-Curve,2=Fade In,3=Fade Out,4=Invert,5=Posterize,6=Custom"));
+    presetProp.setDisplayPriority(-30);
     props.push_back(presetProp);
+
+    AbstractProperty curveProp;
+    curveProp.setName(QStringLiteral("curve.master"));
+    curveProp.setDisplayLabel(QStringLiteral("Custom Curve"));
+    curveProp.setType(PropertyType::String);
+    curveProp.setValue(serializeCurvePoints(customPoints_));
+    curveProp.setDefaultValue(QStringLiteral("0:0;0.25:0.175;0.5:0.5;0.75:0.825;1:1"));
+    curveProp.setTooltip(QStringLiteral(
+        "Drag points to shape the master tone curve. Double-click to add a point; editing switches Preset to Custom."));
+    curveProp.setDisplayPriority(-20);
+    curveProp.setAnimatable(false);
+    props.push_back(curveProp);
 
     AbstractProperty strengthProp;
     strengthProp.setName("Strength");
     strengthProp.setType(PropertyType::Float);
     strengthProp.setValue(QVariant(static_cast<double>(strength_)));
+    strengthProp.setDefaultValue(0.5);
+    strengthProp.setHardRange(0.0, 1.0);
+    strengthProp.setSoftRange(0.0, 1.0);
+    strengthProp.setStep(0.01);
+    strengthProp.setDisplayLabel(QStringLiteral("S-Curve Strength"));
+    strengthProp.setTooltip(QStringLiteral("Controls the contrast of the S-Curve preset."));
+    strengthProp.setDisplayPriority(-10);
     props.push_back(strengthProp);
 
     AbstractProperty posterizeProp;
     posterizeProp.setName("Posterize Levels");
     posterizeProp.setType(PropertyType::Integer);
     posterizeProp.setValue(posterizeLevels_);
+    posterizeProp.setDefaultValue(4);
+    posterizeProp.setHardRange(2, 256);
+    posterizeProp.setSoftRange(2, 32);
+    posterizeProp.setStep(1);
+    posterizeProp.setTooltip(QStringLiteral("Number of tonal steps used by the Posterize preset."));
     props.push_back(posterizeProp);
 
     return props;
@@ -419,6 +486,13 @@ void CurvesEffect::setPropertyValue(const UniString& name, const QVariant& value
     const QString key = name.toQString();
     if (key == QString("Preset")) {
         setPreset(value.toInt());
+    } else if (key == QStringLiteral("curve.master")) {
+        auto points = parseCurvePoints(value.toString());
+        if (!points.empty()) {
+            customPoints_ = std::move(points);
+            preset_ = Preset::Custom;
+            syncImpls();
+        }
     } else if (key == QString("Strength")) {
         setStrength(value.toFloat());
     } else if (key == QString("Posterize Levels")) {

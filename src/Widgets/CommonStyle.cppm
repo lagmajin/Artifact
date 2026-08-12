@@ -20,6 +20,7 @@ module;
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QTabBar>
 #include <QTableView>
 #include <QToolBar>
@@ -433,6 +434,11 @@ void ArtifactCommonStyle::polish(QWidget* widget)
   }
 
   widget->setAttribute(Qt::WA_StyledBackground, true);
+  // Avoid relaying out and repainting heavyweight viewport/timeline children
+  // on every handle pixel while a splitter is dragged.
+  if (auto* splitter = qobject_cast<QSplitter*>(widget)) {
+    splitter->setOpaqueResize(false);
+  }
   const auto& theme = ArtifactCore::currentDCCTheme();
   const QColor background(theme.backgroundColor);
   const QColor surface(theme.secondaryBackgroundColor);

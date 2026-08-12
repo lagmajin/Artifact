@@ -7,6 +7,7 @@ module;
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <QVariant>
+#include <QStringList>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -27,6 +28,35 @@ import Property.Abstract;
 import Utils.String.UniString;
 
 namespace Artifact {
+
+namespace {
+QString serializeMasterLevels(const ArtifactCore::LevelsSettings& settings) {
+    return QStringLiteral("%1,%2,%3,%4,%5")
+        .arg(settings.inputBlack, 0, 'g', 9)
+        .arg(settings.inputGamma, 0, 'g', 9)
+        .arg(settings.inputWhite, 0, 'g', 9)
+        .arg(settings.outputBlack, 0, 'g', 9)
+        .arg(settings.outputWhite, 0, 'g', 9);
+}
+
+bool parseMasterLevels(const QString& serialized,
+                       ArtifactCore::LevelsSettings& settings) {
+    const auto entries = serialized.split(QLatin1Char(','));
+    if (entries.size() != 5) return false;
+    std::array<double, 5> values{};
+    for (int i = 0; i < 5; ++i) {
+        bool ok = false;
+        values[static_cast<std::size_t>(i)] = entries[i].toDouble(&ok);
+        if (!ok || !std::isfinite(values[static_cast<std::size_t>(i)])) return false;
+    }
+    settings.inputBlack = std::clamp(values[0], 0.0, 254.0);
+    settings.inputGamma = std::clamp(values[1], 0.01, 10.0);
+    settings.inputWhite = std::clamp(values[2], settings.inputBlack + 1.0, 255.0);
+    settings.outputBlack = std::clamp(values[3], 0.0, 255.0);
+    settings.outputWhite = std::clamp(values[4], settings.outputBlack, 255.0);
+    return true;
+}
+}  // namespace
 
 class LevelsEffectCPUImpl : public ArtifactEffectImplBase {
 public:
@@ -443,14 +473,45 @@ std::vector<AbstractProperty> LevelsEffect::getProperties() const {
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(static_cast<int>(Preset::Normal));
+    presetProp.setTooltip(QStringLiteral(
+        "0=Custom,1=Normal,2=High Contrast,3=Low Contrast,4=Brighten,5=Darken"));
     presetProp.setDisplayPriority(-30);
     props.push_back(presetProp);
+
+    AbstractProperty masterProp;
+    masterProp.setName(QStringLiteral("levels.master"));
+    masterProp.setDisplayLabel(QStringLiteral("Master Levels"));
+    masterProp.setType(PropertyType::String);
+    masterProp.setValue(serializeMasterLevels(settings_));
+    masterProp.setDefaultValue(QStringLiteral("0,1,255,0,255"));
+    masterProp.setTooltip(QStringLiteral(
+        "Drag the upper handles for input black, gamma, and input white; use the lower handles for output range."));
+    masterProp.setDisplayPriority(-25);
+    masterProp.setAnimatable(false);
+    props.push_back(masterProp);
 
     auto addFloat = [&props](const char* name, double value, int priority) {
         AbstractProperty prop;
         prop.setName(name);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(value));
+        const QString propertyName = QString::fromLatin1(name);
+        const bool gamma = propertyName.contains(
+            QStringLiteral("Gamma"), Qt::CaseInsensitive);
+        const bool white = propertyName.contains(
+            QStringLiteral("White"), Qt::CaseInsensitive);
+        prop.setDefaultValue(gamma ? QVariant(1.0)
+                                   : white ? QVariant(255.0) : QVariant(0.0));
+        prop.setHardRange(gamma ? QVariant(0.01) : QVariant(0.0),
+                          gamma ? QVariant(10.0) : QVariant(255.0));
+        prop.setSoftRange(gamma ? QVariant(0.1) : QVariant(0.0),
+                          gamma ? QVariant(4.0) : QVariant(255.0));
+        prop.setStep(gamma ? QVariant(0.01) : QVariant(1.0));
+        prop.setTooltip(gamma
+            ? QStringLiteral("Midtone gamma; 1.0 is neutral.")
+            : QStringLiteral("Level value in the 0–255 signal range."));
+        prop.setAnimatable(true);
         prop.setDisplayPriority(priority);
         props.push_back(prop);
     };
@@ -465,6 +526,9 @@ std::vector<AbstractProperty> LevelsEffect::getProperties() const {
     perChannelProp.setName("Per Channel");
     perChannelProp.setType(PropertyType::Boolean);
     perChannelProp.setValue(settings_.perChannel);
+    perChannelProp.setDefaultValue(false);
+    perChannelProp.setTooltip(QStringLiteral(
+        "Enable independent red, green, and blue channel level controls."));
     perChannelProp.setDisplayPriority(0);
     props.push_back(perChannelProp);
 
@@ -493,6 +557,13 @@ void LevelsEffect::setPropertyValue(const UniString& name, const QVariant& value
     const QString key = name.toQString();
     if (key == QString("Preset")) {
         setPreset(value.toInt());
+    } else if (key == QStringLiteral("levels.master")) {
+        auto updated = settings_;
+        if (parseMasterLevels(value.toString(), updated)) {
+            settings_ = updated;
+            preset_ = Preset::Custom;
+            syncImpls();
+        }
     } else if (key == QString("Input Black")) {
         setInputBlack(static_cast<float>(value.toDouble()));
     } else if (key == QString("Input White")) {

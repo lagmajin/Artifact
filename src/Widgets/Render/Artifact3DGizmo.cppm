@@ -78,9 +78,10 @@ struct Artifact3DGizmo::Impl {
     bool numericInputActive = false;
     float numericInput = 0.0f;
     bool numericPlanarScale = false;
-    // Full mode recursively draws the three transform modes.  Keep shared
+    // Full mode recursively draws the three transform modes. Keep shared
     // bounding geometry to the Scale pass rather than emitting it three times.
     bool drawingFullOverlay = false;
+    bool testingFullOverlay = false;
     
     // Intersection helpers
     float rayLineDistance(const QVector3D& rayOrigin, const QVector3D& rayDir, 
@@ -666,8 +667,12 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
     (void)proj;
     if (mode_ == GizmoMode::Full) {
         // Rings are visually distinct and get priority, followed by scale
-        // handles and finally translation handles.
+        // handles and finally translation handles. The screen-rotation ring
+        // is deliberately omitted from Full because the axis rings already
+        // provide rotation handles there.
         const GizmoMode savedMode = mode_;
+        const bool savedTestingFullOverlay = impl_->testingFullOverlay;
+        impl_->testingFullOverlay = true;
         const GizmoMode candidates[] = {GizmoMode::Rotate, GizmoMode::Scale, GizmoMode::Move};
         for (const GizmoMode candidate : candidates) {
             mode_ = candidate;
@@ -675,12 +680,14 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
             if (hit != GizmoAxis::None) {
                 const GizmoOperation operation = operationForMode(candidate);
                 mode_ = savedMode;
+                impl_->testingFullOverlay = savedTestingFullOverlay;
                 hoverAxis_ = hit;
                 hoverOperation_ = operation;
                 return hit;
             }
         }
         mode_ = savedMode;
+        impl_->testingFullOverlay = savedTestingFullOverlay;
         hoverAxis_ = GizmoAxis::None;
         hoverOperation_ = GizmoOperation::None;
         return GizmoAxis::None;
@@ -851,7 +858,9 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
         checkRing(axisDirectionFor(GizmoAxis::X, basis), GizmoAxis::X);
         checkRing(axisDirectionFor(GizmoAxis::Y, basis), GizmoAxis::Y);
         checkRing(axisDirectionFor(GizmoAxis::Z, basis), GizmoAxis::Z);
-        checkRing(cameraForwardForView(view), GizmoAxis::Screen);
+        if (!impl_->testingFullOverlay) {
+            checkRing(cameraForwardForView(view), GizmoAxis::Screen);
+        }
     }
 
     hoverAxis_ = result;
@@ -1528,9 +1537,12 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     const bool orthographic = std::abs(proj(3, 3) - 1.0f) < 0.001f;
     const float zoom = std::max(renderer->getZoom(), 0.001f);
     const float contrastScale = Accessibility::contrastScale();
+    // Keep the manipulator compact while preserving its existing world-space
+    // hit-test contract. Orthographic view compensates for viewport zoom;
+    // perspective view already derives its screen-space size from distance.
     impl_->currentScale = orthographic
-        ? 92.0f / zoom
-        : std::max(distance * 0.18f, 0.1f);
+        ? 72.0f / zoom
+        : std::max(distance * 0.14f, 0.1f);
 
     const float s = impl_->currentScale;
 
@@ -1812,9 +1824,11 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         }
         drawRotateRing(GizmoAxis::Z, center, toFloat3(axisZ),
                        s * kRotateAxisRadiusScale, axisBaseColorFor(GizmoAxis::Z));
-        drawAxisRing(GizmoAxis::Screen, center, toFloat3(cameraForward),
-                     s * kRotateScreenRadiusScale,
-                     FloatColor{0.92f, 0.92f, 0.92f, 0.86f}, 1.4f);
+        if (!impl_->drawingFullOverlay) {
+            drawAxisRing(GizmoAxis::Screen, center, toFloat3(cameraForward),
+                         s * kRotateScreenRadiusScale,
+                         FloatColor{0.92f, 0.92f, 0.92f, 0.86f}, 1.4f);
+        }
     } else if (mode_ == GizmoMode::Scale) {
       if (!boundingBoxEnabled_) {
         drawPlaneHandle(GizmoAxis::XY);
@@ -1860,6 +1874,10 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
       }
     }
 
+    // PrimitiveRenderer3D submits its queued vertices with the camera matrices
+    // that are active at flush time. Flush before restoring them; otherwise
+    // the whole gizmo is projected with identity matrices and disappears.
+    renderer->flushGizmo3D();
     renderer->setUseExternalMatrices(false);
     renderer->resetGizmoCameraMatrices();
 }

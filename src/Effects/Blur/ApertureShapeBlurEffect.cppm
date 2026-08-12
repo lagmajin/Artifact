@@ -4,6 +4,8 @@ module;
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
+#include <cstdint>
 #include <opencv2/opencv.hpp>
 #include <QString>
 #include <QVariant>
@@ -199,6 +201,176 @@ void ApertureShapeBlurEffect::setPropertyValue(const UniString& name,
     }
     else if (key == QStringLiteral("PSF Image Path")) psfImagePath_ = value.toString();
     syncImpl();
+}
+
+class DepthBokehEffect::Impl {
+public:
+    float focusDistance = 0.5f;
+    float focusRange = 0.08f;
+    float foregroundBlur = 0.85f;
+    float backgroundBlur = 1.0f;
+    float maxRadius = 32.0f;
+    int apertureShape = 2;
+    float apertureRotation = 0.0f;
+    float highlightBoost = 0.5f;
+    QString depthInput = QStringLiteral("depth");
+    bool useLumaFallback = true;
+    IEffectFrameSampler* sampler = nullptr;
+    std::int64_t frame = 0;
+};
+
+DepthBokehEffect::DepthBokehEffect() : impl_(new Impl()) {
+    setEffectID(UniString("builtin.depth_bokeh"));
+    setDisplayName(UniString("Depth Bokeh / Rack Defocus"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setAllowOverscan(true);
+}
+
+DepthBokehEffect::~DepthBokehEffect() {
+    delete impl_; impl_ = nullptr;
+}
+
+void DepthBokehEffect::onContextUpdated(const EffectContext& context) {
+    impl_->sampler = context.sampler;
+    impl_->frame = context.compositionFrame;
+}
+
+void DepthBokehEffect::apply(const ImageF32x4RGBAWithCache& src,
+                             ImageF32x4RGBAWithCache& dst) {
+    const auto& image = src.image();
+    const int width = image.width(), height = image.height();
+    const float* source = image.rgba32fData();
+    if (!source || width <= 0 || height <= 0) { dst = src; return; }
+
+    cv::Mat depth(height, width, CV_32F);
+    bool hasDepth = false;
+    ImageF32x4RGBAWithCache depthImage;
+    if (impl_->sampler && !impl_->depthInput.trimmed().isEmpty() &&
+        impl_->sampler->sampleNamedInput(impl_->depthInput, impl_->frame, depthImage) &&
+        depthImage.width() == width && depthImage.height() == height) {
+        const float* depthPixels = depthImage.image().rgba32fData();
+        if (depthPixels) {
+            for (int y = 0; y < height; ++y) {
+                float* row = depth.ptr<float>(y);
+                for (int x = 0; x < width; ++x) {
+                    const std::size_t offset = (static_cast<std::size_t>(y) * width + x) * 4u;
+                    row[x] = std::clamp(depthPixels[offset], 0.0f, 1.0f);
+                }
+            }
+            hasDepth = true;
+        }
+    }
+    if (!hasDepth && impl_->useLumaFallback) {
+        for (int y = 0; y < height; ++y) {
+            float* row = depth.ptr<float>(y);
+            for (int x = 0; x < width; ++x) {
+                const std::size_t offset = (static_cast<std::size_t>(y) * width + x) * 4u;
+                row[x] = std::clamp(source[offset] * 0.2126f +
+                    source[offset + 1] * 0.7152f + source[offset + 2] * 0.0722f,
+                    0.0f, 1.0f);
+            }
+        }
+        hasDepth = true;
+    }
+    if (!hasDepth) { dst = src; return; }
+
+    cv::Mat input(height, width, CV_32FC4, const_cast<float*>(source));
+    std::vector<cv::Mat> inputChannels; cv::split(input, inputChannels);
+    constexpr int levelCount = 4;
+    std::array<cv::Mat, levelCount + 1> levels;
+    levels[0] = input.clone();
+    for (int level = 1; level <= levelCount; ++level) {
+        const float radius = impl_->maxRadius * level / levelCount;
+        const int kernelSize = std::clamp(static_cast<int>(std::round(radius * 2.0f)) | 1,
+                                          3, 129);
+        const cv::Mat psf = loadAndNormalizePsf(
+            QString(), kernelSize, impl_->apertureShape,
+            impl_->apertureRotation, 0.25f);
+        std::vector<cv::Mat> blurredChannels(4);
+        for (int channel = 0; channel < 3; ++channel) {
+            cv::Mat boosted = inputChannels[channel].clone();
+            if (impl_->highlightBoost > 0.0f) {
+                cv::Mat highlights = inputChannels[channel] - 0.7f;
+                cv::max(highlights, 0.0f, highlights);
+                boosted += highlights * impl_->highlightBoost;
+            }
+            cv::filter2D(boosted, blurredChannels[channel], -1, psf,
+                         cv::Point(-1, -1), 0.0, cv::BORDER_REFLECT_101);
+        }
+        blurredChannels[3] = inputChannels[3];
+        cv::merge(blurredChannels, levels[level]);
+    }
+
+    auto result = image.DeepCopy(); float* output = result.rgba32fData();
+    for (int y = 0; y < height; ++y) {
+        const float* depthRow = depth.ptr<float>(y);
+        std::array<const cv::Vec4f*, levelCount + 1> rows;
+        for (int level = 0; level <= levelCount; ++level) rows[level] = levels[level].ptr<cv::Vec4f>(y);
+        for (int x = 0; x < width; ++x) {
+            const float signedDistance = depthRow[x] - impl_->focusDistance;
+            const float outsideFocus = std::max(0.0f, std::abs(signedDistance) - impl_->focusRange);
+            const float sideAmount = signedDistance < 0.0f ? impl_->foregroundBlur : impl_->backgroundBlur;
+            const float blur = std::clamp(outsideFocus /
+                std::max(0.0001f, 1.0f - impl_->focusRange) * sideAmount, 0.0f, 1.0f);
+            const float levelPosition = blur * levelCount;
+            const int lower = std::clamp(static_cast<int>(std::floor(levelPosition)), 0, levelCount);
+            const int upper = std::min(lower + 1, levelCount);
+            const float t = levelPosition - lower;
+            const cv::Vec4f pixel = rows[lower][x] * (1.0f - t) + rows[upper][x] * t;
+            const std::size_t offset = (static_cast<std::size_t>(y) * width + x) * 4u;
+            output[offset] = pixel[0]; output[offset + 1] = pixel[1];
+            output[offset + 2] = pixel[2]; output[offset + 3] = source[offset + 3];
+        }
+    }
+    result.setColorDescriptor(image.colorDescriptor()); dst = ImageF32x4RGBAWithCache(result);
+}
+
+std::vector<AbstractProperty> DepthBokehEffect::getProperties() const {
+    std::vector<AbstractProperty> properties;
+    auto add = [&](const char* name, const char* label, float value, float lo, float hi) {
+        auto& p = properties.emplace_back(); p.setName(name); p.setDisplayLabel(label);
+        p.setType(PropertyType::Float); p.setValue(value); p.setDefaultValue(value);
+        p.setHardRange(lo, hi); p.setAnimatable(true);
+    };
+    add("focusDistance", "Focus Distance", impl_->focusDistance, 0.0f, 1.0f);
+    add("focusRange", "Focus Range", impl_->focusRange, 0.0f, 1.0f);
+    add("foregroundBlur", "Foreground Blur", impl_->foregroundBlur, 0.0f, 2.0f);
+    add("backgroundBlur", "Background Blur", impl_->backgroundBlur, 0.0f, 2.0f);
+    add("maxRadius", "Maximum Radius", impl_->maxRadius, 1.0f, 64.0f);
+    auto& shape = properties.emplace_back(); shape.setName("apertureShape");
+    shape.setDisplayLabel("Aperture Shape"); shape.setType(PropertyType::Integer);
+    shape.setValue(impl_->apertureShape); shape.setDefaultValue(2); shape.setHardRange(0, 3);
+    add("apertureRotation", "Aperture Rotation", impl_->apertureRotation, -180.0f, 180.0f);
+    add("highlightBoost", "Highlight Boost", impl_->highlightBoost, 0.0f, 4.0f);
+    auto& input = properties.emplace_back(); input.setName("depthInput");
+    input.setDisplayLabel("Depth Input"); input.setType(PropertyType::String);
+    input.setValue(impl_->depthInput); input.setDefaultValue(QStringLiteral("depth"));
+    auto& fallback = properties.emplace_back(); fallback.setName("useLumaFallback");
+    fallback.setDisplayLabel("Use Luma Fallback"); fallback.setType(PropertyType::Boolean);
+    fallback.setValue(impl_->useLumaFallback); fallback.setDefaultValue(true);
+    return properties;
+}
+
+void DepthBokehEffect::setPropertyValue(const UniString& name, const QVariant& value) {
+    const QString key = name.toQString(); const float raw = value.toFloat();
+    const float n = std::isfinite(raw) ? raw : 0.0f;
+    if (key == "focusDistance") impl_->focusDistance = std::clamp(n, 0.0f, 1.0f);
+    else if (key == "focusRange") impl_->focusRange = std::clamp(n, 0.0f, 1.0f);
+    else if (key == "foregroundBlur") impl_->foregroundBlur = std::clamp(n, 0.0f, 2.0f);
+    else if (key == "backgroundBlur") impl_->backgroundBlur = std::clamp(n, 0.0f, 2.0f);
+    else if (key == "maxRadius") impl_->maxRadius = std::clamp(n, 1.0f, 64.0f);
+    else if (key == "apertureShape") impl_->apertureShape = std::clamp(value.toInt(), 0, 3);
+    else if (key == "apertureRotation") impl_->apertureRotation = std::clamp(n, -180.0f, 180.0f);
+    else if (key == "highlightBoost") impl_->highlightBoost = std::clamp(n, 0.0f, 4.0f);
+    else if (key == "depthInput") impl_->depthInput = value.toString();
+    else if (key == "useLumaFallback") impl_->useLumaFallback = value.toBool();
+    else ArtifactAbstractEffect::setPropertyValue(name, value);
+}
+
+EffectROIHint DepthBokehEffect::roiHint() const {
+    return EffectROIHint{.kind = EffectROIHintKind::Blur,
+                         .expansionPixels = impl_->maxRadius * 2.0f,
+                         .requiresFullFrame = true};
 }
 
 }

@@ -651,6 +651,101 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Old TV"));
    return effect;
   }
+  if (effectId == QStringLiteral("builtin.pixel_sort_pro")) {
+   return std::make_unique<PixelSortProEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.optical_glow")) {
+   return std::make_unique<OpticalGlowEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.film_grunge")) {
+   return std::make_unique<ArtifactFilmGrungeEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.heatwave")) {
+   return std::make_unique<ArtifactHeatwaveEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.cinematic_lens_flare")) {
+   return std::make_unique<ArtifactCinematicLensFlareEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.volumetric_shine")) {
+   return std::make_unique<VolumetricShineEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.glint_star_filter")) {
+   return std::make_unique<GlintStarFilterEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.magic_sharp")) {
+   return std::make_unique<MagicSharpEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.depth_bokeh")) {
+   return std::make_unique<DepthBokehEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.texturize_motion")) {
+   return std::make_unique<ArtifactTexturizeMotionEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.deband")) {
+   return std::make_unique<ArtifactDebandEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.deblock")) {
+   return std::make_unique<ArtifactDeblockEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.beauty_studio")) {
+   return std::make_unique<ArtifactBeautyStudioEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.energy_zap")) {
+   return std::make_unique<ArtifactEnergyZapEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.light_wrap_pro")) {
+   return std::make_unique<ArtifactLightWrapProEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.match_grain")) {
+   return std::make_unique<ArtifactMatchGrainEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.wire_object_remover")) {
+   return std::make_unique<ArtifactWireObjectRemoverEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.depth_relight")) {
+   return std::make_unique<ArtifactDepthRelightEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.matte_refine")) {
+   return std::make_unique<ArtifactMatteRefineEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.spill_killer_pro")) {
+   return std::make_unique<ArtifactSpillKillerProEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.pixel_dust_fixer")) {
+   return std::make_unique<ArtifactPixelDustFixerEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.reflection_composer")) {
+   return std::make_unique<ArtifactReflectionComposerEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.lens_profile_matcher")) {
+   return std::make_unique<ArtifactLensProfileMatcherEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.atmospheric_depth")) {
+   return std::make_unique<ArtifactAtmosphericDepthEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.edge_color_composite")) {
+   return std::make_unique<ArtifactEdgeColorCompositeEffect>();
+  }
+  if (effectId == QStringLiteral("builtin.edge_echo")) {
+   return std::make_unique<ArtifactCoreCreativeEffect>(
+       "EdgeEcho", "builtin.edge_echo", "Edge Echo");
+  }
+  if (effectId == QStringLiteral("builtin.pigment_separation")) {
+   return std::make_unique<ArtifactCoreCreativeEffect>(
+       "PigmentSeparation", "builtin.pigment_separation", "Pigment Separation");
+  }
+  if (effectId == QStringLiteral("builtin.light_pressure")) {
+   return std::make_unique<ArtifactCoreCreativeEffect>(
+       "LightPressure", "builtin.light_pressure", "Light Pressure");
+  }
+  if (effectId == QStringLiteral("builtin.surface_memory")) {
+   return std::make_unique<ArtifactCoreCreativeEffect>(
+       "SurfaceMemory", "builtin.surface_memory", "Surface Memory");
+  }
+  if (effectId == QStringLiteral("builtin.depth_melt")) {
+   return std::make_unique<ArtifactCoreCreativeEffect>(
+       "DepthMelt", "builtin.depth_melt", "Depth Melt");
+  }
   if (effectId == QStringLiteral("sharpen")) {
    auto effect = std::make_unique<SharpenEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -991,6 +1086,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("motion_trail"), "Motion Trail"});
   effects.push_back({EffectID("optical_flow_blur"), "Optical Flow Blur"});
   effects.push_back({EffectID("pixel_sort"), "Pixel Sort"});
+  effects.push_back({EffectID("builtin.pixel_sort_pro"), "Pixel Sort Pro"});
   effects.push_back({EffectID("posterize_time"), "Posterize Time"});
   effects.push_back({EffectID("slit_scan"), "Slit Scan"});
   effects.push_back({EffectID("strobe"), "Strobe"});
@@ -998,6 +1094,30 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("vector_blur"), "Vector Blur"});
   effects.push_back({EffectID("directional_glow"), "Directional Glow / Streaks"});
   effects.push_back({EffectID("glow"), "Glow"});
+  effects.push_back({EffectID("builtin.optical_glow"), "Optical Glow"});
+  effects.push_back({EffectID("builtin.film_grunge"), "Film Grunge"});
+  effects.push_back({EffectID("builtin.heatwave"), "Heatwave"});
+  effects.push_back({EffectID("builtin.cinematic_lens_flare"), "Cinematic Lens Flare"});
+  effects.push_back({EffectID("builtin.volumetric_shine"), "Volumetric Shine"});
+  effects.push_back({EffectID("builtin.glint_star_filter"), "Glint / Star Filter"});
+  effects.push_back({EffectID("builtin.magic_sharp"), "Magic Sharp"});
+  effects.push_back({EffectID("builtin.depth_bokeh"), "Depth Bokeh / Rack Defocus"});
+  effects.push_back({EffectID("builtin.texturize_motion"), "Texturize Motion"});
+  effects.push_back({EffectID("builtin.deband"), "Deband"});
+  effects.push_back({EffectID("builtin.deblock"), "Deblock"});
+  effects.push_back({EffectID("builtin.beauty_studio"), "Beauty Studio"});
+  effects.push_back({EffectID("builtin.energy_zap"), "Energy Zap / Lightning"});
+  effects.push_back({EffectID("builtin.light_wrap_pro"), "Light Wrap Pro"});
+  effects.push_back({EffectID("builtin.match_grain"), "Match Grain"});
+  effects.push_back({EffectID("builtin.wire_object_remover"), "Wire / Object Remover"});
+  effects.push_back({EffectID("builtin.depth_relight"), "Depth Relight"});
+  effects.push_back({EffectID("builtin.matte_refine"), "Matte Refine"});
+  effects.push_back({EffectID("builtin.spill_killer_pro"), "Spill Killer Pro"});
+  effects.push_back({EffectID("builtin.pixel_dust_fixer"), "Pixel / Dust Fixer"});
+  effects.push_back({EffectID("builtin.reflection_composer"), "Reflection Composer"});
+  effects.push_back({EffectID("builtin.lens_profile_matcher"), "Lens Profile Matcher"});
+  effects.push_back({EffectID("builtin.atmospheric_depth"), "Atmospheric Depth"});
+  effects.push_back({EffectID("builtin.edge_color_composite"), "Edge Color Composite"});
   effects.push_back({EffectID("edge_bloom"), "Edge Bloom"});
   effects.push_back({EffectID("chromatic_glow"), "Chromatic Glow"});
   effects.push_back({EffectID("reactive_glow"), "Reactive Glow"});
@@ -1015,6 +1135,11 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("builtin.glitch"), "Glitch"});
   effects.push_back({EffectID("halftone"), "Halftone"});
   effects.push_back({EffectID("builtin.old_tv"), "Old TV"});
+  effects.push_back({EffectID("builtin.edge_echo"), "Edge Echo"});
+  effects.push_back({EffectID("builtin.pigment_separation"), "Pigment Separation"});
+  effects.push_back({EffectID("builtin.light_pressure"), "Light Pressure"});
+  effects.push_back({EffectID("builtin.surface_memory"), "Surface Memory"});
+  effects.push_back({EffectID("builtin.depth_melt"), "Depth Melt"});
   effects.push_back({EffectID("sharpen"), "Sharpen"});
   effects.push_back({EffectID("find_edges"), "Find Edges"});
   effects.push_back({EffectID("rim_light"), "Rim Light / Edge Light"});

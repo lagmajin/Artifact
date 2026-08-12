@@ -41,6 +41,8 @@ import Artifact.Layer.SandSim2D;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.EnvironmentMap;
 import Artifact.Layer.EnvironmentMapInitParams;
+import Animation.Transform3D;
+import Time.Rational;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -99,6 +101,20 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
     solidLayer->setGradientCenterY(solidParams->gradientCenterY());
     solidLayer->setGradientScale(solidParams->gradientScale());
     solidLayer->setGradientOffset(solidParams->gradientOffset());
+
+    // Match an AE solid's initial transform: its Anchor Point is centred,
+    // while Position is offset by the same amount so the new layer keeps its
+    // existing top-left placement in the composition.
+    const float anchorX = static_cast<float>(solidParams->width()) * 0.5f;
+    const float anchorY = static_cast<float>(solidParams->height()) * 0.5f;
+    auto &transform = solidLayer->transform3D();
+    transform.setInitialPosition(ArtifactCore::RationalTime(0, 1), anchorX,
+                                 anchorY);
+    // Keep random-access transform evaluation (used by motion paths) in sync
+    // with the initial transform state.
+    transform.setCurrentPosition(anchorX, anchorY);
+    transform.setAnchor(ArtifactCore::RationalTime(0, 1), anchorX, anchorY);
+    transform.setCurrentAnchor(anchorX, anchorY);
    } else {
     solidLayer->setSize(1920, 1080);
    }

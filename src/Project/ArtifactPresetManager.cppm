@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QJsonObject>
 #include <QJsonArray>
@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QByteArray>
+#include <QColor>
 
 #include <iostream>
 #include <vector>
@@ -112,6 +113,7 @@ QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffe
     if (!effect) return {};
 
     QJsonObject root;
+    root["schema_version"] = 2;
     root["effect_id"] = effect->effectID().toQString();
     root["display_name"] = effect->displayName().toQString();
     root["mask_enabled"] = effect->maskEnabled();
@@ -134,8 +136,36 @@ QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffe
     for (const auto& p : props) {
         QJsonObject propObj;
         propObj["name"] = p.getName();
+        propObj["parameter_id"] = p.getName();
         propObj["type"] = static_cast<int>(p.getType());
-        propObj["value"] = QJsonValue::fromVariant(p.getValue());
+        switch (p.getType()) {
+        case ArtifactCore::PropertyType::Float:
+            propObj["value_type"] = QStringLiteral("double");
+            break;
+        case ArtifactCore::PropertyType::Integer:
+            propObj["value_type"] = QStringLiteral("integer");
+            break;
+        case ArtifactCore::PropertyType::Boolean:
+            propObj["value_type"] = QStringLiteral("boolean");
+            break;
+        case ArtifactCore::PropertyType::Color:
+            propObj["value_type"] = QStringLiteral("color");
+            break;
+        case ArtifactCore::PropertyType::String:
+            propObj["value_type"] = QStringLiteral("string");
+            break;
+        case ArtifactCore::PropertyType::ObjectReference:
+            propObj["value_type"] = QStringLiteral("object_reference");
+            break;
+        case ArtifactCore::PropertyType::Point2D:
+            propObj["value_type"] = QStringLiteral("point2d");
+            break;
+        }
+        if (p.getType() == ArtifactCore::PropertyType::Color) {
+            propObj["value"] = p.getValue().value<QColor>().name(QColor::HexArgb);
+        } else {
+            propObj["value"] = QJsonValue::fromVariant(p.getValue());
+        }
         propsArray.append(propObj);
     }
     root["properties"] = propsArray;
@@ -144,6 +174,8 @@ QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffe
 
 bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& effect, const QJsonObject& json) {
     if (!effect || json.isEmpty()) return false;
+    const int schemaVersion = json.value(QStringLiteral("schema_version")).toInt(1);
+    if (schemaVersion < 1 || schemaVersion > 2) return false;
 
     if (json.contains("mask_enabled")) {
         effect->setMaskEnabled(json["mask_enabled"].toBool());
@@ -185,8 +217,18 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
     QJsonArray propsArray = json["properties"].toArray();
     for (int i = 0; i < propsArray.size(); ++i) {
         QJsonObject propObj = propsArray[i].toObject();
-        QString name = propObj["name"].toString();
-        QVariant value = propObj["value"].toVariant();
+        QString name = propObj.value(QStringLiteral("parameter_id")).toString(
+            propObj.value(QStringLiteral("name")).toString());
+        if (name.isEmpty()) continue;
+        const QJsonValue jsonValue = propObj.value(QStringLiteral("value"));
+        const QString valueType = propObj.value(QStringLiteral("value_type")).toString();
+        QVariant value;
+        if (valueType == QStringLiteral("integer")) value = jsonValue.toInt();
+        else if (valueType == QStringLiteral("boolean")) value = jsonValue.toBool();
+        else if (valueType == QStringLiteral("double")) value = jsonValue.toDouble();
+        else if (valueType == QStringLiteral("string")) value = jsonValue.toString();
+        else if (valueType == QStringLiteral("color")) value = QColor(jsonValue.toString());
+        else value = jsonValue.toVariant();
         
         effect->setPropertyValue(UniString(name.toStdString()), value);
     }

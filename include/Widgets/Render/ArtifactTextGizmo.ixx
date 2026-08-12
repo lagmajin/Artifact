@@ -5,6 +5,7 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
+#include <QString>
 export module Artifact.Widgets.TextGizmo;
 
 
@@ -13,6 +14,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Text;
 import Text.GlyphLayout;
 import Text.Animator;
+import Property.Abstract;
 
 namespace Artifact {
 
@@ -62,6 +64,11 @@ private:
     QPointF dragStartLayerPosition_;
     QRectF dragStartBounds_;
     float dragStartValue_ = 0.0f;
+    float dragCurrentValue_ = 0.0f;
+    int dragAnimatorIndex_ = -1;
+    QString dragPropertyPath_;
+    std::vector<ArtifactCore::KeyFrame> dragBeforeKeyframes_;
+    bool dragValueChanged_ = false;
 
     // 定数
     static constexpr float HANDLE_WIDTH = 4.0f;

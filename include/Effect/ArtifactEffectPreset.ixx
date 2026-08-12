@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <vector>
@@ -61,6 +61,10 @@ public:
     ArtifactEffectPreset();
     explicit ArtifactEffectPreset(const QString& name);
     ~ArtifactEffectPreset();
+    ArtifactEffectPreset(const ArtifactEffectPreset& other);
+    ArtifactEffectPreset& operator=(const ArtifactEffectPreset& other);
+    ArtifactEffectPreset(ArtifactEffectPreset&& other);
+    ArtifactEffectPreset& operator=(ArtifactEffectPreset&& other);
 
     // プリセットID（UUID）
     PresetID id() const;
@@ -80,22 +84,36 @@ public:
 
     // 保存されたエフェクトパラメータ
     void addParameter(const QString& paramName, float value);
+    void addParameter(const QString& paramName, double value);
+    void addParameter(const QString& paramName, int value);
+    void addParameter(const QString& paramName, bool value);
     void addParameter(const QString& paramName, const QColor& color);
     void addParameter(const QString& paramName, const QString& value);
 
     float getFloatParameter(const QString& paramName) const;
+    double getDoubleParameter(const QString& paramName) const;
+    int getIntegerParameter(const QString& paramName) const;
+    bool getBooleanParameter(const QString& paramName) const;
     QColor getColorParameter(const QString& paramName) const;
     QString getStringParameter(const QString& paramName) const;
 
     // すべてのパラメータ
     struct Parameter
     {
-        enum Type { Float, Color, String };
+        enum Type {
+            Float = 0,
+            Color = 1,
+            String = 2,
+            Integer = 3,
+            Boolean = 4,
+            Double = 5
+        };
         Type type;
         QString name;
-        union {
-            float floatValue;
-        };
+        float floatValue = 0.0f;
+        double doubleValue = 0.0;
+        int integerValue = 0;
+        bool booleanValue = false;
         QColor colorValue;
         QString stringValue;
     };
@@ -107,7 +125,7 @@ public:
     QJsonObject serialize() const override { return toJson(); }
     bool deserialize(const QJsonObject& json) override;
     QString typeName() const override { return QStringLiteral("ArtifactEffectPreset"); }
-    int schemaVersion() const override { return 1; }
+    int schemaVersion() const override { return 2; }
 
     // 適用（既存のArtifactAbstractEffectにパラメータを適用）
     void applyTo(ArtifactAbstractEffect* effect) const;

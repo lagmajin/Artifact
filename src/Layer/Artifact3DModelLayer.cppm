@@ -420,8 +420,9 @@ void Artifact3DLayer::createCubeMesh() {
     normals << normal << normal << normal << normal;
     uvs << QVector2D(0.0f, 0.0f) << QVector2D(1.0f, 0.0f)
         << QVector2D(1.0f, 1.0f) << QVector2D(0.0f, 1.0f);
-    impl_->mesh_.addPolygon({first, first + 1, first + 2});
-    impl_->mesh_.addPolygon({first, first + 2, first + 3});
+    // Preserve the authored box face as a quad. RenderData triangulates this
+    // later for the GPU, while edit overlays retain the quad boundary.
+    impl_->mesh_.addPolygon({first, first + 1, first + 2, first + 3});
   };
 
   addFace(QVector3D(0.0f, 0.0f, 1.0f),
@@ -492,10 +493,10 @@ void Artifact3DLayer::createPlaneMesh()
     (*uvAttr)[i] = uv;
     (*uvAttr)[i + 4] = uv;
   }
-  impl_->mesh_.addPolygon({0, 1, 2});
-  impl_->mesh_.addPolygon({0, 2, 3});
-  impl_->mesh_.addPolygon({4, 6, 5});
-  impl_->mesh_.addPolygon({4, 7, 6});
+  // Keep each side as one source quad; GPU render data is triangulated only
+  // at submission time, so the selection overlay does not show a fake diagonal.
+  impl_->mesh_.addPolygon({0, 1, 2, 3});
+  impl_->mesh_.addPolygon({4, 7, 6, 5});
 }
 
 void Artifact3DLayer::createSphereMesh()
@@ -546,8 +547,15 @@ void Artifact3DLayer::createSphereMesh()
       const int b = a + 1;
       const int c = a + stride;
       const int d = c + 1;
-      impl_->mesh_.addPolygon({a, c, b});
-      impl_->mesh_.addPolygon({b, c, d});
+      // The pole fans are genuinely triangular. Everywhere else preserve the
+      // latitude/longitude cell as an editable quad; RenderData triangulates
+      // it only at GPU submission time.
+      if (ring == 0 || ring + 1 == kRings) {
+        impl_->mesh_.addPolygon({a, c, b});
+        impl_->mesh_.addPolygon({b, c, d});
+      } else {
+        impl_->mesh_.addPolygon({a, c, d, b});
+      }
     }
   }
 }
@@ -594,8 +602,9 @@ void Artifact3DLayer::createCylinderMesh()
     const int b1 = bottomRing[next];
     const int t0 = topRing[segment];
     const int t1 = topRing[next];
-    impl_->mesh_.addPolygon({b0, t0, b1});
-    impl_->mesh_.addPolygon({b1, t0, t1});
+    // Keep the authored side panel as a quad for editing/selection. The GPU
+    // render path performs its own fan triangulation at submission time.
+    impl_->mesh_.addPolygon({b0, t0, t1, b1});
   }
 
   const int bottomCenter = appendVertex(QVector3D(0.0f, -kHalfHeight, 0.0f),

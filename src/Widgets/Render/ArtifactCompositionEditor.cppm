@@ -939,7 +939,7 @@ public:
       auto *animatorRow = new QHBoxLayout();
       animatorRow->addWidget(new QLabel(QStringLiteral("Text Animators"), this));
       animatorCountSpin_ = new QSpinBox(this);
-      animatorCountSpin_->setRange(0, 32);
+      animatorCountSpin_->setRange(0, 16);
       animatorCountSpin_->setValue(textLayer->animatorCount());
       animatorCountSpin_->setAccessibleName(QStringLiteral("Text animator count"));
       animatorCountSpin_->setAccessibleDescription(
@@ -7070,8 +7070,12 @@ protected:
       if (!event->isAutoRepeat() &&
           ArtifactCore::ShortcutBindings::instance().matches(
               event, ArtifactCore::ShortcutId::PlaybackToggle)) {
+        const bool receivedPlaybackPress = spacePressed_;
         spacePressed_ = false;
-        const bool shouldTogglePlayback = !didSpacePan_;
+        // A global shortcut may consume Space press before this widget sees it.
+        // In that case this release must not issue a second toggle and pause
+        // playback that the global action just started.
+        const bool shouldTogglePlayback = receivedPlaybackPress && !didSpacePan_;
         didSpacePan_ = false;
         if (!isPanningWithMiddle_) {
           isPanning_ = false;

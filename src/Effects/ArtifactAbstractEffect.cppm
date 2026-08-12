@@ -371,6 +371,7 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
 
 void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     impl_->context_ = context;
+    onContextUpdated(context);
     const auto frameRate = std::max<std::int64_t>(
         1, static_cast<std::int64_t>(std::llround(context.frameRate)));
     const RationalTime time(context.compositionFrame, frameRate);

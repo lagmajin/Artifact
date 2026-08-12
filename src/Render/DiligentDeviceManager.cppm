@@ -920,6 +920,25 @@ bool acquireSharedRenderDeviceForCurrentBackend(
     return true;
 }
 
+SharedRenderDeviceLease::~SharedRenderDeviceLease()
+{
+    if (active_) {
+        releaseSharedRenderDevice();
+    }
+}
+
+bool SharedRenderDeviceLease::acquire(
+    RefCntAutoPtr<IRenderDevice>& outDevice,
+    RefCntAutoPtr<IDeviceContext>& outImmediateContext)
+{
+    if (active_) {
+        return false;
+    }
+    active_ = acquireSharedRenderDeviceForCurrentBackend(
+        outDevice, outImmediateContext);
+    return active_;
+}
+
 void releaseSharedRenderDevice()
 {
     auto& shared = sharedRenderDeviceState();

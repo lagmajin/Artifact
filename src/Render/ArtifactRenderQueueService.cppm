@@ -6523,10 +6523,10 @@ namespace Artifact
                 }
             }
         }
-        // Component simulation mutates a frame-to-frame session. Keep that
-        // path ordered; independent compositions and stateless jobs retain MFR.
-        const bool useMfr = !useGpuBackend && totalFrames > 1 &&
-            !usesComponentSimulation;
+        // A frame render mutates the shared composition and layer state. Do not
+        // dispatch this queue path through MFR/Farm until each worker owns an
+        // isolated composition snapshot and renderer.
+        const bool useMfr = false;
         const int numWorkers = useMfr
             ? std::max(1, std::min(maxInFlightFrames_, totalFrames))
             : 1;

@@ -773,7 +773,16 @@ public:
                                   position.framePosition()});
             emitRamPreviewStats();
           };
-          QMetaObject::invokeMethod(owner_, publishFrame, Qt::QueuedConnection);
+          // The every-frame engine policy dispatches this signal through a
+          // blocking GUI invocation. Publish inline in that case so the
+          // worker receives real composition-sync backpressure instead of
+          // enqueueing a second, coalescible GUI event.
+          if (engine_ && engine_->isPlaying() &&
+              QThread::currentThread() == owner_->thread()) {
+            publishFrame();
+          } else {
+            QMetaObject::invokeMethod(owner_, publishFrame, Qt::QueuedConnection);
+          }
         },
         Qt::DirectConnection);
 

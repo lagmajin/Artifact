@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <utility>
 #include <opencv2/opencv.hpp>
@@ -156,6 +157,117 @@ void SharpenEffect::setPropertyValue(const UniString& n, const QVariant& v) {
     if (k == "Amount") setAmount(v.toFloat());
     else if (k == "Sigma") setSigma(v.toFloat());
     else if (k == "Threshold") setThreshold(v.toFloat());
+}
+
+class MagicSharpEffect::Impl {
+public:
+    float amount = 1.0f;
+    float fine = 0.75f;
+    float small = 0.62f;
+    float medium = 0.42f;
+    float coarse = 0.24f;
+    float threshold = 0.018f;
+    float edgeProtection = 0.62f;
+    float shadowProtection = 0.45f;
+    float mix = 1.0f;
+};
+
+MagicSharpEffect::MagicSharpEffect() : impl_(new Impl()) {
+    setEffectID(UniString("builtin.magic_sharp"));
+    setDisplayName(UniString("Magic Sharp"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+}
+
+MagicSharpEffect::~MagicSharpEffect() {
+    delete impl_; impl_ = nullptr;
+}
+
+void MagicSharpEffect::apply(const ImageF32x4RGBAWithCache& src,
+                             ImageF32x4RGBAWithCache& dst) {
+    const auto& image = src.image();
+    const int width = image.width(), height = image.height();
+    const float* source = image.rgba32fData();
+    if (!source || width <= 0 || height <= 0) { dst = src; return; }
+    cv::Mat rgba(height, width, CV_32FC4, const_cast<float*>(source));
+    std::vector<cv::Mat> channels; cv::split(rgba, channels);
+    cv::Mat luma = channels[0] * 0.2126f + channels[1] * 0.7152f + channels[2] * 0.0722f;
+    cv::Mat blurFine, blurSmall, blurMedium, blurCoarse;
+    cv::GaussianBlur(luma, blurFine, cv::Size(), 0.65, 0.65, cv::BORDER_REFLECT_101);
+    cv::GaussianBlur(luma, blurSmall, cv::Size(), 1.35, 1.35, cv::BORDER_REFLECT_101);
+    cv::GaussianBlur(luma, blurMedium, cv::Size(), 2.8, 2.8, cv::BORDER_REFLECT_101);
+    cv::GaussianBlur(luma, blurCoarse, cv::Size(), 5.8, 5.8, cv::BORDER_REFLECT_101);
+    auto result = image.DeepCopy(); float* output = result.rgba32fData();
+    for (int y = 0; y < height; ++y) {
+        const float* lumaRow = luma.ptr<float>(y);
+        const float* fineRow = blurFine.ptr<float>(y);
+        const float* smallRow = blurSmall.ptr<float>(y);
+        const float* mediumRow = blurMedium.ptr<float>(y);
+        const float* coarseRow = blurCoarse.ptr<float>(y);
+        for (int x = 0; x < width; ++x) {
+            const float base = lumaRow[x];
+            const float fineDetail = base - fineRow[x];
+            const float smallDetail = fineRow[x] - smallRow[x];
+            const float mediumDetail = smallRow[x] - mediumRow[x];
+            const float coarseDetail = mediumRow[x] - coarseRow[x];
+            float detail = fineDetail * impl_->fine + smallDetail * impl_->small +
+                           mediumDetail * impl_->medium + coarseDetail * impl_->coarse;
+            const float edgeMagnitude = std::abs(base - coarseRow[x]);
+            const float highContrastProtection = 1.0f - impl_->edgeProtection *
+                std::clamp(edgeMagnitude * 2.5f, 0.0f, 1.0f);
+            const float shadowWeight = std::lerp(
+                std::clamp(base / 0.18f, 0.0f, 1.0f), 1.0f,
+                1.0f - impl_->shadowProtection);
+            if (std::abs(detail) < impl_->threshold) detail = 0.0f;
+            const float sharpenedLuma = base + detail * impl_->amount *
+                highContrastProtection * shadowWeight;
+            const float delta = (sharpenedLuma - base) * impl_->mix;
+            const std::size_t offset = (static_cast<std::size_t>(y) * width + x) * 4u;
+            output[offset] = std::max(0.0f, source[offset] + delta);
+            output[offset + 1] = std::max(0.0f, source[offset + 1] + delta);
+            output[offset + 2] = std::max(0.0f, source[offset + 2] + delta);
+            output[offset + 3] = source[offset + 3];
+        }
+    }
+    result.setColorDescriptor(image.colorDescriptor()); dst = ImageF32x4RGBAWithCache(result);
+}
+
+std::vector<AbstractProperty> MagicSharpEffect::getProperties() const {
+    std::vector<AbstractProperty> properties;
+    auto add = [&](const char* name, const char* label, float value, float lo, float hi) {
+        auto& p = properties.emplace_back(); p.setName(name); p.setDisplayLabel(label);
+        p.setType(PropertyType::Float); p.setValue(value); p.setDefaultValue(value);
+        p.setHardRange(lo, hi); p.setAnimatable(true);
+    };
+    add("amount", "Master Amount", impl_->amount, 0.0f, 5.0f);
+    add("fine", "Fine Detail", impl_->fine, 0.0f, 2.0f);
+    add("small", "Small Detail", impl_->small, 0.0f, 2.0f);
+    add("medium", "Medium Detail", impl_->medium, 0.0f, 2.0f);
+    add("coarse", "Coarse Detail", impl_->coarse, 0.0f, 2.0f);
+    add("threshold", "Noise Threshold", impl_->threshold, 0.0f, 0.25f);
+    add("edgeProtection", "Edge Protection", impl_->edgeProtection, 0.0f, 1.0f);
+    add("shadowProtection", "Shadow Protection", impl_->shadowProtection, 0.0f, 1.0f);
+    add("mix", "Mix", impl_->mix, 0.0f, 1.0f);
+    return properties;
+}
+
+void MagicSharpEffect::setPropertyValue(const UniString& name, const QVariant& value) {
+    const QString key = name.toQString(); const float raw = value.toFloat();
+    const float n = std::isfinite(raw) ? raw : 0.0f;
+    if (key == "amount") impl_->amount = std::clamp(n, 0.0f, 5.0f);
+    else if (key == "fine") impl_->fine = std::clamp(n, 0.0f, 2.0f);
+    else if (key == "small") impl_->small = std::clamp(n, 0.0f, 2.0f);
+    else if (key == "medium") impl_->medium = std::clamp(n, 0.0f, 2.0f);
+    else if (key == "coarse") impl_->coarse = std::clamp(n, 0.0f, 2.0f);
+    else if (key == "threshold") impl_->threshold = std::clamp(n, 0.0f, 0.25f);
+    else if (key == "edgeProtection") impl_->edgeProtection = std::clamp(n, 0.0f, 1.0f);
+    else if (key == "shadowProtection") impl_->shadowProtection = std::clamp(n, 0.0f, 1.0f);
+    else if (key == "mix") impl_->mix = std::clamp(n, 0.0f, 1.0f);
+    else ArtifactAbstractEffect::setPropertyValue(name, value);
+}
+
+EffectROIHint MagicSharpEffect::roiHint() const {
+    return EffectROIHint{.kind = EffectROIHintKind::Blur,
+                         .expansionPixels = 18.0f};
 }
 
 } // namespace Artifact

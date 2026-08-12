@@ -35,4 +35,19 @@ public:
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 };
 
+class MagicSharpEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
+protected:
+    void apply(const ImageF32x4RGBAWithCache& src,
+               ImageF32x4RGBAWithCache& dst) override;
+public:
+    MagicSharpEffect();
+    ~MagicSharpEffect() override;
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const UniString& name, const QVariant& value) override;
+    EffectROIHint roiHint() const override;
+};
+
 }

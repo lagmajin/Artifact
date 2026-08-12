@@ -91,6 +91,9 @@ private:
 protected:
     // apply single-frame image processing: src -> dst
     virtual void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
+    // Hook for adapters that need the host's frame/time context while keeping
+    // the public context API non-breaking for existing effects.
+    virtual void onContextUpdated(const EffectContext& context) { (void)context; }
 
 public:
     ArtifactAbstractEffect();

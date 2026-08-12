@@ -61,9 +61,30 @@ namespace Artifact
 namespace {
 const bool registeredArtifactEffectPreset = [] {
     ArtifactCore::Serialization::registerSerializableType<ArtifactEffectPreset>();
-    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+    auto& migrations = ArtifactCore::Serialization::SchemaMigrationRegistry::instance();
+    migrations.registerMigration(
         QStringLiteral("ArtifactEffectPreset"), 0, 1,
         [](const QJsonObject& legacy) { return legacy; });
+    migrations.registerMigration(
+        QStringLiteral("ArtifactEffectPreset"), 1, 2,
+        [](const QJsonObject& legacy) {
+            QJsonObject migrated = legacy;
+            migrated[QStringLiteral("schema_version")] = 2;
+            QJsonArray parameters;
+            for (const auto& value : legacy.value(QStringLiteral("parameters")).toArray()) {
+                QJsonObject parameter = value.toObject();
+                const int type = parameter.value(QStringLiteral("type")).toInt();
+                static const std::array<const char*, 3> legacyTypes{
+                    "float", "color", "string"};
+                if (type >= 0 && type < static_cast<int>(legacyTypes.size())) {
+                    parameter[QStringLiteral("value_type")] =
+                        QString::fromLatin1(legacyTypes[static_cast<std::size_t>(type)]);
+                }
+                parameters.append(parameter);
+            }
+            migrated[QStringLiteral("parameters")] = parameters;
+            return migrated;
+        });
     return true;
 }();
 }
@@ -89,6 +110,9 @@ public:
         Parameter::Type type;
         QString name;
         float floatValue = 0.0f;
+        double doubleValue = 0.0;
+        int integerValue = 0;
+        bool booleanValue = false;
         QColor colorValue;
         QString stringValue;
     };
@@ -115,6 +139,37 @@ ArtifactEffectPreset::ArtifactEffectPreset(const QString& name)
 ArtifactEffectPreset::~ArtifactEffectPreset()
 {
     delete impl_;
+}
+
+ArtifactEffectPreset::ArtifactEffectPreset(const ArtifactEffectPreset& other)
+    : impl_(new Impl(*other.impl_))
+{
+}
+
+ArtifactEffectPreset& ArtifactEffectPreset::operator=(const ArtifactEffectPreset& other)
+{
+    if (this != &other) {
+        auto* replacement = new Impl(*other.impl_);
+        delete impl_;
+        impl_ = replacement;
+    }
+    return *this;
+}
+
+ArtifactEffectPreset::ArtifactEffectPreset(ArtifactEffectPreset&& other)
+    : impl_(other.impl_)
+{
+    other.impl_ = new Impl();
+}
+
+ArtifactEffectPreset& ArtifactEffectPreset::operator=(ArtifactEffectPreset&& other)
+{
+    if (this != &other) {
+        delete impl_;
+        impl_ = other.impl_;
+        other.impl_ = new Impl();
+    }
+    return *this;
 }
 
 ArtifactEffectPreset::PresetID ArtifactEffectPreset::id() const
@@ -159,17 +214,56 @@ void ArtifactEffectPreset::setDescription(const QString& desc)
 
 void ArtifactEffectPreset::addParameter(const QString& paramName, float value)
 {
-    impl_->parameters_.push_back({Parameter::Float, paramName, value, QColor(), QString()});
+    Impl::ParameterData p;
+    p.type = Parameter::Float;
+    p.name = paramName;
+    p.floatValue = value;
+    impl_->parameters_.push_back(p);
+}
+
+void ArtifactEffectPreset::addParameter(const QString& paramName, double value)
+{
+    Impl::ParameterData p;
+    p.type = Parameter::Double;
+    p.name = paramName;
+    p.doubleValue = value;
+    impl_->parameters_.push_back(p);
+}
+
+void ArtifactEffectPreset::addParameter(const QString& paramName, int value)
+{
+    Impl::ParameterData p;
+    p.type = Parameter::Integer;
+    p.name = paramName;
+    p.integerValue = value;
+    impl_->parameters_.push_back(p);
+}
+
+void ArtifactEffectPreset::addParameter(const QString& paramName, bool value)
+{
+    Impl::ParameterData p;
+    p.type = Parameter::Boolean;
+    p.name = paramName;
+    p.booleanValue = value;
+    impl_->parameters_.push_back(p);
 }
 
 void ArtifactEffectPreset::addParameter(const QString& paramName, const QColor& color)
 {
-    impl_->parameters_.push_back({Parameter::Color, paramName, 0.0f, color, QString()});
+    Impl::ParameterData p;
+    p.type = Parameter::Color;
+    p.name = paramName;
+    p.colorValue = color;
+    impl_->parameters_.push_back(p);
 }
 
 void ArtifactEffectPreset::addParameter(const QString& paramName, const QString& value)
 {
-    impl_->parameters_.push_back({Parameter::String, paramName, 0.0f, QColor(), value});
+    Impl::ParameterData p;
+    p.type = Parameter::String;
+    p.name = paramName;
+    p.stringValue = value;
+    impl_->parameters_.push_back(p);
 }
 
 float ArtifactEffectPreset::getFloatParameter(const QString& paramName) const
@@ -180,6 +274,30 @@ float ArtifactEffectPreset::getFloatParameter(const QString& paramName) const
         }
     }
     return 0.0f;
+}
+
+double ArtifactEffectPreset::getDoubleParameter(const QString& paramName) const
+{
+    for (const auto& p : impl_->parameters_) {
+        if (p.name == paramName && p.type == Parameter::Double) return p.doubleValue;
+    }
+    return 0.0;
+}
+
+int ArtifactEffectPreset::getIntegerParameter(const QString& paramName) const
+{
+    for (const auto& p : impl_->parameters_) {
+        if (p.name == paramName && p.type == Parameter::Integer) return p.integerValue;
+    }
+    return 0;
+}
+
+bool ArtifactEffectPreset::getBooleanParameter(const QString& paramName) const
+{
+    for (const auto& p : impl_->parameters_) {
+        if (p.name == paramName && p.type == Parameter::Boolean) return p.booleanValue;
+    }
+    return false;
 }
 
 QColor ArtifactEffectPreset::getColorParameter(const QString& paramName) const
@@ -211,6 +329,12 @@ QVector<ArtifactEffectPreset::Parameter> ArtifactEffectPreset::allParameters() c
         outParam.name = p.name;
         if (p.type == Parameter::Float) {
             outParam.floatValue = p.floatValue;
+        } else if (p.type == Parameter::Double) {
+            outParam.doubleValue = p.doubleValue;
+        } else if (p.type == Parameter::Integer) {
+            outParam.integerValue = p.integerValue;
+        } else if (p.type == Parameter::Boolean) {
+            outParam.booleanValue = p.booleanValue;
         } else if (p.type == Parameter::Color) {
             outParam.colorValue = p.colorValue;
         } else {
@@ -228,6 +352,7 @@ QJsonObject ArtifactEffectPreset::toJson() const
     obj["name"] = impl_->name_;
     obj["category"] = impl_->category_;
     obj["description"] = impl_->description_;
+    obj["schema_version"] = schemaVersion();
 
     QJsonArray params;
     for (const auto& p : impl_->parameters_) {
@@ -237,13 +362,28 @@ QJsonObject ArtifactEffectPreset::toJson() const
 
         switch (p.type) {
         case Parameter::Float:
+            paramObj["value_type"] = QStringLiteral("float");
             paramObj["value"] = static_cast<double>(p.floatValue);
             break;
         case Parameter::Color:
-            paramObj["value"] = p.colorValue.name();
+            paramObj["value_type"] = QStringLiteral("color");
+            paramObj["value"] = p.colorValue.name(QColor::HexArgb);
             break;
         case Parameter::String:
+            paramObj["value_type"] = QStringLiteral("string");
             paramObj["value"] = p.stringValue;
+            break;
+        case Parameter::Integer:
+            paramObj["value_type"] = QStringLiteral("integer");
+            paramObj["value"] = p.integerValue;
+            break;
+        case Parameter::Boolean:
+            paramObj["value_type"] = QStringLiteral("boolean");
+            paramObj["value"] = p.booleanValue;
+            break;
+        case Parameter::Double:
+            paramObj["value_type"] = QStringLiteral("double");
+            paramObj["value"] = p.doubleValue;
             break;
         }
         params.append(paramObj);
@@ -266,6 +406,13 @@ ArtifactEffectPreset ArtifactEffectPreset::fromJson(const QJsonObject& json)
         QJsonObject p = v.toObject();
         QString name = p["name"].toString();
         auto type = static_cast<Parameter::Type>(p["type"].toInt());
+        const QString valueType = p.value(QStringLiteral("value_type")).toString();
+        if (valueType == QStringLiteral("integer")) type = Parameter::Integer;
+        else if (valueType == QStringLiteral("boolean")) type = Parameter::Boolean;
+        else if (valueType == QStringLiteral("double")) type = Parameter::Double;
+        else if (valueType == QStringLiteral("color")) type = Parameter::Color;
+        else if (valueType == QStringLiteral("string")) type = Parameter::String;
+        else if (valueType == QStringLiteral("float")) type = Parameter::Float;
 
         switch (type) {
         case Parameter::Float:
@@ -276,6 +423,15 @@ ArtifactEffectPreset ArtifactEffectPreset::fromJson(const QJsonObject& json)
             break;
         case Parameter::String:
             preset.addParameter(name, p["value"].toString());
+            break;
+        case Parameter::Integer:
+            preset.addParameter(name, p["value"].toInt());
+            break;
+        case Parameter::Boolean:
+            preset.addParameter(name, p["value"].toBool());
+            break;
+        case Parameter::Double:
+            preset.addParameter(name, p["value"].toDouble());
             break;
         }
     }
@@ -303,6 +459,15 @@ bool ArtifactEffectPreset::deserialize(const QJsonObject& json)
         case Parameter::String:
             addParameter(parameter.name, parameter.stringValue);
             break;
+        case Parameter::Integer:
+            addParameter(parameter.name, parameter.integerValue);
+            break;
+        case Parameter::Boolean:
+            addParameter(parameter.name, parameter.booleanValue);
+            break;
+        case Parameter::Double:
+            addParameter(parameter.name, parameter.doubleValue);
+            break;
         }
     }
     return !id().isEmpty();
@@ -322,6 +487,15 @@ void ArtifactEffectPreset::applyTo(ArtifactAbstractEffect* effect) const
             break;
         case Parameter::String:
             effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.stringValue));
+            break;
+        case Parameter::Integer:
+            effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.integerValue));
+            break;
+        case Parameter::Boolean:
+            effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.booleanValue));
+            break;
+        case Parameter::Double:
+            effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.doubleValue));
             break;
         }
     }

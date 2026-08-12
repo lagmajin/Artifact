@@ -22,7 +22,6 @@ module;
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QDir>
-#include <QFocusFrame>
 #include <QMultiHash>
 #include <QPalette>
 #include <QPushButton>
@@ -317,6 +316,29 @@ propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
     return {QStringLiteral("solid"),
             {QStringLiteral("Initial"), QStringLiteral("Transform"),
              QStringLiteral("Solid")}};
+  }
+  // Crop / Pan is opt-in: before activation its only affordance is the
+  // Transform group's Add Crop / Pan button. After activation its group is
+  // inserted as though the user had added a new property block.
+  if (layer && layer->getProperty(QStringLiteral("image.sourcePath"))) {
+    QStringList visibleGroups{QStringLiteral("Transform"),
+                              QStringLiteral("Initial"),
+                              QStringLiteral("Image")};
+    const auto cropEnabled =
+        layer->getProperty(QStringLiteral("sourceCrop.enabled"));
+    if (cropEnabled && cropEnabled->getValue().toBool()) {
+      visibleGroups.append(QStringLiteral("Source Reframe"));
+    }
+    return {QStringLiteral("image"), std::move(visibleGroups)};
+  }
+  // A fixed plane has width and height but no depth. Its geometry controls
+  // remain available after the transform, without widening the profile for
+  // every 3D-model subtype yet.
+  if (layer && layer->getProperty(QStringLiteral("geometry.width")) &&
+      !layer->getProperty(QStringLiteral("geometry.depth"))) {
+    return {QStringLiteral("plane"),
+            {QStringLiteral("Transform"), QStringLiteral("Initial"),
+             QStringLiteral("Geometry")}};
   }
   return {QStringLiteral("basic"),
           {QStringLiteral("Initial"), QStringLiteral("Transform")}};
@@ -667,13 +689,6 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   setFocusPolicy(Qt::StrongFocus);
   setAccessibleName(QStringLiteral("Property Editor"));
   setAccessibleDescription(QStringLiteral("Edit properties for the selected layer or effect"));
-  auto *focusFrame = new QFocusFrame(this);
-  focusFrame->setWidget(this);
-  QPalette focusPalette = focusFrame->palette();
-  const QColor focusColor(120, 175, 235, 165);
-  focusPalette.setColor(QPalette::Active, QPalette::Highlight, focusColor);
-  focusPalette.setColor(QPalette::Inactive, QPalette::Highlight, focusColor);
-  focusFrame->setPalette(focusPalette);
   setMinimumWidth(360);
   setWidgetResizable(true);
   setFrameShape(QFrame::NoFrame);
@@ -1909,8 +1924,27 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           ? PropertyPresentationProfile{QStringLiteral("components"), {}}
           : propertyPresentationProfile(layer);
 
+  auto orderedLayerGroups = layerGroups;
+  if (!presentationProfile.visibleGroups.isEmpty()) {
+    const auto groupOrder = [&presentationProfile](const QString &groupName) {
+      for (int index = 0;
+           index < presentationProfile.visibleGroups.size(); ++index) {
+        if (presentationProfile.visibleGroups.at(index).compare(
+                groupName.trimmed(), Qt::CaseInsensitive) == 0) {
+          return index;
+        }
+      }
+      return std::numeric_limits<int>::max();
+    };
+    std::stable_sort(
+        orderedLayerGroups.begin(), orderedLayerGroups.end(),
+        [&groupOrder](const auto &left, const auto &right) {
+          return groupOrder(left.name()) < groupOrder(right.name());
+        });
+  }
+
   if (!hasFocusedEffect) {
-    for (const auto &groupDef : layerGroups) {
+    for (const auto &groupDef : orderedLayerGroups) {
     const QString groupName =
         groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
     if (shouldHideInspectorPropertyGroup(groupName)) {

@@ -2101,6 +2101,27 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
     const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
 
+    // Source Crop reframes content inside the layer's fixed output frame.
+    // Its source-window parameters must never become the layer/gizmo bounds.
+    const QRectF outputDrawRect = impl_->displayRectForPixels(
+        QRectF(0.0, 0.0, size.width, size.height));
+    const auto cropOutputRect = [&]() {
+        if (!useCrop || !impl_->sourceCrop_.preserveAspect()) {
+            return outputDrawRect;
+        }
+        const QRectF cropDisplayRect =
+            impl_->displayRectForPixels(QRectF(cropRect));
+        if (cropDisplayRect.width() <= 0.0 || cropDisplayRect.height() <= 0.0) {
+            return outputDrawRect;
+        }
+        const qreal scale = std::min(outputDrawRect.width() / cropDisplayRect.width(),
+                                     outputDrawRect.height() / cropDisplayRect.height());
+        const QSizeF fittedSize(cropDisplayRect.width() * scale,
+                                cropDisplayRect.height() * scale);
+        return QRectF(outputDrawRect.center() - QPointF(fittedSize.width() * 0.5,
+                                                        fittedSize.height() * 0.5),
+                      fittedSize);
+    };
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
     if (hasCurrentFrameBuffer()) {
         const ArtifactCore::ImageF32x4_RGBA& buffer = currentFrameBuffer();
@@ -2110,10 +2131,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                      static_cast<qreal>(cropRect.width()) / buffer.width(),
                      static_cast<qreal>(cropRect.height()) / buffer.height())
             : QRectF(0.0, 0.0, 1.0, 1.0);
-        const QRectF pixelDrawRect = useCrop
-            ? QRectF(cropRect)
-            : QRectF(0.0, 0.0, size.width, size.height);
-        const QRectF drawRect = impl_->displayRectForPixels(pixelDrawRect);
+        const QRectF drawRect = cropOutputRect();
         QMatrix4x4 cropTransform = baseTransform;
         if (useCrop && std::abs(impl_->sourceCrop_.rotation()) > 1e-6) {
             const QPointF anchor = impl_->sourceCrop_.anchor();
@@ -2138,16 +2156,20 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         return;
     }
 
-    QImage img = toQImage();
+    // Prefer the raw cache so the fallback follows the same UV reframe path
+    // as the buffer renderer. toQImage() remains the compatibility fallback.
+    const bool fallbackHasRawSource = static_cast<bool>(impl_->cache_);
+    QImage img = fallbackHasRawSource ? *impl_->cache_ : toQImage();
     if (img.isNull()) return;
-    // toQImage() returns the crop canvas for this fallback path. Keep the
-    // draw rectangle in layer pixel space, but sample the already-cropped
-    // image as a whole to avoid applying the source crop twice.
-    const QRectF uvRect(0.0, 0.0, 1.0, 1.0);
-    const QRectF pixelDrawRect = useCrop
-        ? QRectF(cropRect)
-        : QRectF(0.0, 0.0, size.width, size.height);
-    const QRectF drawRect = impl_->displayRectForPixels(pixelDrawRect);
+    const bool fallbackCanSampleCrop = fallbackHasRawSource && useCrop &&
+        img.width() > 0 && img.height() > 0;
+    const QRectF uvRect = fallbackCanSampleCrop
+        ? QRectF(static_cast<qreal>(cropRect.x()) / img.width(),
+                 static_cast<qreal>(cropRect.y()) / img.height(),
+                 static_cast<qreal>(cropRect.width()) / img.width(),
+                 static_cast<qreal>(cropRect.height()) / img.height())
+        : QRectF(0.0, 0.0, 1.0, 1.0);
+    const QRectF drawRect = cropOutputRect();
     QMatrix4x4 cropTransform = baseTransform;
     if (useCrop && std::abs(impl_->sourceCrop_.rotation()) > 1e-6) {
         const QPointF anchor = impl_->sourceCrop_.anchor();
@@ -2197,11 +2219,18 @@ QImage ArtifactImageLayer::toQImage() const
         (void)impl_->adoptPrefetchResult(result);
     }
 
-    // Cached source data still needs the same crop boundary as the draw path.
-    // Render Queue and thumbnail consumers use toQImage() directly, so an
-    // early raw-cache return would make them disagree with viewport rendering.
-    if (impl_->cache_) {
-        const QImage& base = *impl_->cache_;
+    // The viewport path consumes cacheBuffer_, which may contain the OCIO
+    // input interpretation applied by applyInputInterpretation(). Convert
+    // that working-space buffer at this explicit Qt compatibility boundary so
+    // thumbnails and software/export consumers use the same color source.
+    QImage compatibleImage;
+    if (impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) {
+        compatibleImage = impl_->cacheBuffer_->toQImage();
+    } else if (impl_->cache_) {
+        compatibleImage = *impl_->cache_;
+    }
+    if (!compatibleImage.isNull()) {
+        const QImage& base = compatibleImage;
         const QRect cropRect =
             sourceCropToRect(impl_->sourceCrop_, QSize(base.width(), base.height()));
         if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
@@ -2465,28 +2494,11 @@ QRectF ArtifactImageLayer::localBounds() const
         return QRectF();
     }
 
-    QRectF pixelBounds(0.0, 0.0, static_cast<qreal>(size.width),
-                       static_cast<qreal>(size.height));
-    if (impl_->sourceCrop_.enabled()) {
-        const QRectF crop = impl_->sourceCrop_.effectiveCropRect(
-            QSizeF(size.width, size.height));
-        if (crop.isValid() && crop.width() > 0.0 && crop.height() > 0.0) {
-            const QRectF displayCrop = impl_->displayRectForPixels(crop);
-            if (std::abs(impl_->sourceCrop_.rotation()) <= 1e-6) {
-                return displayCrop;
-            }
-            const QPointF anchor = impl_->sourceCrop_.anchor();
-            const QPointF pivot(
-                displayCrop.left() + displayCrop.width() * anchor.x(),
-                displayCrop.top() + displayCrop.height() * anchor.y());
-            QTransform transform;
-            transform.translate(pivot.x(), pivot.y());
-            transform.rotate(impl_->sourceCrop_.rotation());
-            transform.translate(-pivot.x(), -pivot.y());
-            return transform.map(QPolygonF(displayCrop)).boundingRect();
-        }
-    }
-    return impl_->displayRectForPixels(pixelBounds);
+    // Crop/Pan reframes source pixels within this fixed layer frame. Keeping
+    // localBounds independent of sourceCrop prevents transform/gizmo jumps.
+    return impl_->displayRectForPixels(
+        QRectF(0.0, 0.0, static_cast<qreal>(size.width),
+               static_cast<qreal>(size.height)));
 }
 
 } // namespace Artifact

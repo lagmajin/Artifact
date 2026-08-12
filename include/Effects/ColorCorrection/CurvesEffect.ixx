@@ -23,12 +23,14 @@ private:
         FadeIn = 2,
         FadeOut = 3,
         Invert = 4,
-        Posterize = 5
+        Posterize = 5,
+        Custom = 6
     };
 
     Preset preset_ = Preset::SCurve;
     float strength_ = 0.5f;
     int posterizeLevels_ = 4;
+    std::vector<ArtifactCore::CurvePoint> customPoints_;
 
     void syncImpls();
     void applyPreset(ArtifactCore::ColorCurves& curves) const;

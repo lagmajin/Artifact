@@ -101,8 +101,9 @@ void DockGlowStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* 
         QProxyStyle::drawPrimitive(element, option, painter, widget);
     }
 
-    if (impl_->glowEnabled_ && element == PE_Widget &&
-        qobject_cast<const ads::CDockWidgetTab*>(widget) &&
+    // The current-tab underline is a selection indicator, not a dock-focus
+    // glow. Keep it available while the outer dock glow is disabled.
+    if (element == PE_Widget && qobject_cast<const ads::CDockWidgetTab*>(widget) &&
         isDockTabActive(widget)) {
         drawDockTabGlow(option, painter, widget);
     }

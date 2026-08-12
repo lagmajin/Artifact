@@ -149,10 +149,8 @@ public:
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
         Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
-        if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { applyCPU(src, dst); return; }
-        struct SharedDeviceLease {
-            ~SharedDeviceLease() { releaseSharedRenderDevice(); }
-        } sharedDeviceLease;
+        SharedRenderDeviceLease sharedDeviceLease;
+        if (!sharedDeviceLease.acquire(device, context)) { applyCPU(src, dst); return; }
         const auto& image = src.image();
         const float* pixels = image.rgba32fData();
         if (!pixels || image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }

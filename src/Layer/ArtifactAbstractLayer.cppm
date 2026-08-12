@@ -8039,6 +8039,20 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
   return property;
 }
 
+void ArtifactAbstractLayer::removePersistentLayerPropertiesWithPrefix(
+    const QString &propertyPathPrefix) const {
+  if (propertyPathPrefix.isEmpty()) return;
+  std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
+  auto &cache = impl_->propertyCache_;
+  for (auto it = cache.begin(); it != cache.end();) {
+    if (it.key().startsWith(propertyPathPrefix)) {
+      it = cache.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                                                   const QVariant &value) {
   const QStringList animationParts = propertyPath.split(QLatin1Char('.'));

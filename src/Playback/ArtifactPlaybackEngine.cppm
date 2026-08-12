@@ -171,6 +171,9 @@ public:
     int audioSampleRate_ = 48000;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
+    // A non-realtime preview must not let audio run ahead of the sequential
+    // frame transport. This is intentionally separate from the user's mute.
+    bool audioMutedForSlowPreview_ = false;
     // PERF: setMasterVolume/setMute は std::pow 計算 + atomic store を伴うため、
     // 変化時のみ呼び出す。sentinel 値 (-999.0f) で初回の強制送信を保証。
     float audioLastSentVolume_ = -999.0f;
@@ -336,6 +339,8 @@ public:
         QElapsedTimer progressTimer;
         progressTimer.start();
         int64_t lastProgressFrame = currentFrame_.load();
+        auto nextSequentialFrameTime = std::chrono::steady_clock::now();
+        int sequentialFramesOnTime = 0;
         
         qInfo() << "[PlaybackEngine][Loop] enter"
                 << "state=" << static_cast<int>(state_.load())
@@ -358,6 +363,8 @@ public:
                 // 再開時にベース時間を再調整（現在のフレーム位置から再開）
                 playbackStartTime_ = std::chrono::steady_clock::now();
                 playbackStartFrame_ = currentFrame_.load();
+                nextSequentialFrameTime = std::chrono::steady_clock::now();
+                sequentialFramesOnTime = 0;
                 continue;
             }
             
@@ -371,29 +378,72 @@ public:
                 playbackStartTime_ = now;
                 appliedPlaybackSpeed_ = requestedSpeed;
                 audioSeekPending_ = true;
+                nextSequentialFrameTime = now;
+                sequentialFramesOnTime = 0;
             }
-            
+
+            // `None` means every composition frame, not merely no explicit
+            // skip multiplier. Keep it on a sequential transport clock so a
+            // slow GUI/render path cannot turn elapsed wall-clock time into a
+            // jump over undispatched frames. Explicit skip modes retain the
+            // realtime wall-clock policy below.
+            const PlaybackSkipMode skipMode = skipMode_.load();
+            const bool playEveryFrame = skipMode == PlaybackSkipMode::None;
+            const double speedMagnitude = std::abs(appliedPlaybackSpeed_);
+            if (playEveryFrame && speedMagnitude > 0.0001 && fps > 0.0) {
+                const auto frameInterval = std::chrono::duration_cast<
+                    std::chrono::steady_clock::duration>(
+                    std::chrono::duration<double>(1.0 / (fps * speedMagnitude)));
+                if (now < nextSequentialFrameTime) {
+                    std::this_thread::sleep_until(nextSequentialFrameTime);
+                    continue;
+                }
+
+                const bool fellBehind =
+                    now - nextSequentialFrameTime > frameInterval;
+                if (fellBehind) {
+                    sequentialFramesOnTime = 0;
+                    audioMutedForSlowPreview_ = true;
+                } else if (audioMutedForSlowPreview_ &&
+                           ++sequentialFramesOnTime >= 6) {
+                    // Do not unmute on one transient fast frame; a short
+                    // stable interval indicates that realtime playback has
+                    // recovered (for example after cache warm-up).
+                    audioMutedForSlowPreview_ = false;
+                }
+                nextSequentialFrameTime += frameInterval;
+            } else {
+                audioMutedForSlowPreview_ = false;
+                sequentialFramesOnTime = 0;
+            }
+
             // 経過時間から現在の論理的なターゲットフレームを計算
             auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - playbackStartTime_);
             double elapsedSeconds = elapsed.count() / 1000000.0;
-            
-            // 重要：フレーム = 開始フレーム + (経過秒 * fps * 再生速度)
-            const double rawFrameOffset =
-                elapsedSeconds * fps * appliedPlaybackSpeed_;
-            int64_t frameOffset = rawFrameOffset >= 0.0
-                ? static_cast<int64_t>(std::floor(rawFrameOffset))
-                : static_cast<int64_t>(std::ceil(rawFrameOffset));
-            int64_t targetFrame = playbackStartFrame_ + frameOffset;
-            
+            int64_t frameOffset = 0;
+            int64_t targetFrame = lastEmittedFrame_.load();
+
             // スキップモードに応じた補正
             int skipStep = 1;
-            switch (skipMode_.load()) {
+            switch (skipMode) {
                 case PlaybackSkipMode::Skip1: skipStep = 2; break;
                 case PlaybackSkipMode::Skip3: skipStep = 4; break;
                 default: skipStep = 1; break;
             }
-            if (skipStep > 1) {
-                targetFrame = playbackStartFrame_ + (frameOffset / skipStep) * skipStep;
+            if (playEveryFrame) {
+                targetFrame += appliedPlaybackSpeed_ >= 0.0f ? 1 : -1;
+            } else {
+                // Explicit skip modes remain realtime and may select the
+                // latest eligible frame from the wall clock.
+                const double rawFrameOffset =
+                    elapsedSeconds * fps * appliedPlaybackSpeed_;
+                frameOffset = rawFrameOffset >= 0.0
+                    ? static_cast<int64_t>(std::floor(rawFrameOffset))
+                    : static_cast<int64_t>(std::ceil(rawFrameOffset));
+                targetFrame = playbackStartFrame_ + frameOffset;
+                if (skipStep > 1) {
+                    targetFrame = playbackStartFrame_ + (frameOffset / skipStep) * skipStep;
+                }
             }
 
             // ループ・範囲チェック
@@ -456,7 +506,7 @@ public:
                 const bool normalRealtimeRate =
                     std::abs(appliedPlaybackSpeed_) > 0.0001f &&
                     std::abs(appliedPlaybackSpeed_) <= 1.0001f;
-                if (!crossedPlaybackBoundary && skipStep == 1 &&
+                if (!playEveryFrame && !crossedPlaybackBoundary && skipStep == 1 &&
                     normalRealtimeRate &&
                     previousFrame >= startPos.framePosition() &&
                     previousFrame <= endPos.framePosition()) {
@@ -483,6 +533,8 @@ public:
                              << "elapsedSeconds=" << elapsedSeconds
                              << "speed=" << appliedPlaybackSpeed_
                              << "skipStep=" << skipStep
+                             << "playEveryFrame=" << playEveryFrame
+                             << "slowPreviewAudioMuted=" << audioMutedForSlowPreview_
                              << "event=EMIT"
                              << "emittedTotal=" << emittedFrames;
                 }
@@ -558,9 +610,18 @@ public:
         FrameSkipTracker::instance()->beginDispatch(targetFrame);
         // PlaybackService owns composition-frame sync and viewport rendering.
         // Do not render a QImage here: playback ticks must stay lightweight.
+        // A sequential preview needs backpressure at the composition-sync
+        // boundary. The service executes its frame publication inline on the
+        // GUI thread, so the worker cannot enqueue a newer frame until this
+        // frame has been applied to the composition. Explicit skip modes
+        // retain asynchronous realtime dispatch.
+        const Qt::ConnectionType dispatchType =
+            skipMode_.load() == PlaybackSkipMode::None
+                ? Qt::BlockingQueuedConnection
+                : Qt::QueuedConnection;
         QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
             Q_EMIT owner_->frameChanged(pos, QImage());
-        }, Qt::QueuedConnection);
+        }, dispatchType);
     }
 
     /// フレーム描画
@@ -695,9 +756,11 @@ public:
             audioRenderer_->setMasterVolume(targetDb);
             audioLastSentVolume_ = targetDb;
         }
-        if (audioMasterMuted_ != audioLastSentMuted_) {
-            audioRenderer_->setMute(audioMasterMuted_);
-            audioLastSentMuted_ = audioMasterMuted_;
+        const bool effectiveAudioMuted =
+            audioMasterMuted_ || audioMutedForSlowPreview_;
+        if (effectiveAudioMuted != audioLastSentMuted_) {
+            audioRenderer_->setMute(effectiveAudioMuted);
+            audioLastSentMuted_ = effectiveAudioMuted;
         }
 
         const double safeFrameRate = static_cast<double>(frameRate_.framerate());

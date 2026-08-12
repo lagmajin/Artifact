@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -76,6 +76,9 @@ public:
     void setAlphaFalloff(float falloff);
     float alphaFalloff() const;
 
+    void setContributionPreview(bool enabled);
+    bool contributionPreview() const;
+
     bool supportsGPU() const override {
         return true;
     }
@@ -87,6 +90,57 @@ public:
      * 最大 sigma = baseSigma * sigmaGrowth^(layerCount-1)。
      * その 3σ 分を ROI 拡張量とする。
      */
+    EffectROIHint roiHint() const override;
+};
+
+class OpticalGlowEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
+
+protected:
+    void apply(const ImageF32x4RGBAWithCache& src,
+               ImageF32x4RGBAWithCache& dst) override;
+
+public:
+    OpticalGlowEffect();
+    ~OpticalGlowEffect() override;
+
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString& name,
+                          const QVariant& value) override;
+    EffectROIHint roiHint() const override;
+};
+
+class VolumetricShineEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
+protected:
+    void apply(const ImageF32x4RGBAWithCache& src,
+               ImageF32x4RGBAWithCache& dst) override;
+public:
+    VolumetricShineEffect();
+    ~VolumetricShineEffect() override;
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString& name,
+                          const QVariant& value) override;
+    EffectROIHint roiHint() const override;
+};
+
+class GlintStarFilterEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
+protected:
+    void apply(const ImageF32x4RGBAWithCache& src,
+               ImageF32x4RGBAWithCache& dst) override;
+public:
+    GlintStarFilterEffect();
+    ~GlintStarFilterEffect() override;
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString& name,
+                          const QVariant& value) override;
     EffectROIHint roiHint() const override;
 };
 

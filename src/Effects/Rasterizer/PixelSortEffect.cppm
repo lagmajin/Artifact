@@ -6,6 +6,7 @@
 #include <vector>
 #include <QString>
 #include <QVariant>
+#include <opencv2/opencv.hpp>
 
 module Artifact.Effect.Rasterizer.PixelSort;
 
@@ -148,5 +149,178 @@ void PixelSortEffect::setPropertyValue(const UniString& n,const QVariant& v){
 void PixelSortEffect::syncImpls(){
     auto c=ArtifactCore::makeShared<PixelSortCPUImpl>();
     c->sortLen_=sortLen_;c->sortKey_=sortKey_;c->sortOrder_=sortOrder_;c->blend_=blend_;setCPUImpl(c);
+}
+
+class PixelSortProEffect::Impl {
+public:
+    float angle = 0.0f;
+    int maxSegment = 180;
+    float lowThreshold = 0.18f;
+    float highThreshold = 0.92f;
+    float keyMode = 0.0f;
+    float descending = 0.0f;
+    float edgeProtection = 0.35f;
+    float mix = 1.0f;
+};
+
+namespace {
+
+float pixelSortProKey(const cv::Vec4f& pixel, float mode) {
+    if (mode < 0.5f) {
+        return pixel[0] * 0.2126f + pixel[1] * 0.7152f + pixel[2] * 0.0722f;
+    }
+    const float maximum = std::max({pixel[0], pixel[1], pixel[2]});
+    const float minimum = std::min({pixel[0], pixel[1], pixel[2]});
+    const float delta = maximum - minimum;
+    if (delta <= 0.00001f) return 0.0f;
+    float hue = 0.0f;
+    if (maximum == pixel[0]) hue = (pixel[1] - pixel[2]) / delta;
+    else if (maximum == pixel[1]) hue = 2.0f + (pixel[2] - pixel[0]) / delta;
+    else hue = 4.0f + (pixel[0] - pixel[1]) / delta;
+    hue /= 6.0f;
+    if (hue < 0.0f) hue += 1.0f;
+    return hue;
+}
+
+} // namespace
+
+PixelSortProEffect::PixelSortProEffect() : impl_(new Impl()) {
+    setEffectID(ArtifactCore::UniString("builtin.pixel_sort_pro"));
+    setDisplayName(ArtifactCore::UniString("Pixel Sort Pro"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setAllowOverscan(true);
+}
+
+PixelSortProEffect::~PixelSortProEffect() {
+    delete impl_;
+    impl_ = nullptr;
+}
+
+void PixelSortProEffect::apply(const ImageF32x4RGBAWithCache& src,
+                               ImageF32x4RGBAWithCache& dst) {
+    const auto& image = src.image();
+    const int width = image.width();
+    const int height = image.height();
+    const float* pixels = image.rgba32fData();
+    if (!pixels || width <= 0 || height <= 0) {
+        dst = src;
+        return;
+    }
+
+    cv::Mat source(height, width, CV_32FC4, const_cast<float*>(pixels));
+    const cv::Point2f center(width * 0.5f, height * 0.5f);
+    const cv::Mat rotation = cv::getRotationMatrix2D(center, -impl_->angle, 1.0);
+    cv::Mat aligned;
+    cv::warpAffine(source, aligned, rotation, source.size(), cv::INTER_LINEAR,
+                   cv::BORDER_REFLECT_101);
+    cv::Mat sorted = aligned.clone();
+
+    for (int y = 0; y < height; ++y) {
+        const cv::Vec4f* inputRow = aligned.ptr<cv::Vec4f>(y);
+        cv::Vec4f* outputRow = sorted.ptr<cv::Vec4f>(y);
+        int x = 0;
+        while (x < width) {
+            const float key = pixelSortProKey(inputRow[x], impl_->keyMode);
+            if (key < impl_->lowThreshold || key > impl_->highThreshold) {
+                ++x;
+                continue;
+            }
+            const int start = x;
+            while (x < width && x - start < impl_->maxSegment) {
+                const float runKey = pixelSortProKey(inputRow[x], impl_->keyMode);
+                if (runKey < impl_->lowThreshold || runKey > impl_->highThreshold) break;
+                ++x;
+            }
+            const int end = x;
+            if (end - start < 2) continue;
+            std::vector<cv::Vec4f> segment(inputRow + start, inputRow + end);
+            const bool descending = impl_->descending >= 0.5f;
+            std::stable_sort(segment.begin(), segment.end(), [&](const auto& a, const auto& b) {
+                const float aKey = pixelSortProKey(a, impl_->keyMode);
+                const float bKey = pixelSortProKey(b, impl_->keyMode);
+                return descending ? aKey > bKey : aKey < bKey;
+            });
+            for (int i = start; i < end; ++i) {
+                const cv::Vec4f original = inputRow[i];
+                const cv::Vec4f sortedPixel = segment[static_cast<std::size_t>(i - start)];
+                const float leftKey = pixelSortProKey(inputRow[std::max(0, i - 1)], 0.0f);
+                const float rightKey = pixelSortProKey(inputRow[std::min(width - 1, i + 1)], 0.0f);
+                const float edge = std::clamp(std::abs(rightKey - leftKey) * 4.0f, 0.0f, 1.0f);
+                const float amount = impl_->mix *
+                    (1.0f - edge * impl_->edgeProtection);
+                outputRow[i] = original * (1.0f - amount) + sortedPixel * amount;
+            }
+        }
+    }
+
+    cv::Mat restored;
+    const cv::Mat inverse = cv::getRotationMatrix2D(center, impl_->angle, 1.0);
+    cv::warpAffine(sorted, restored, inverse, source.size(), cv::INTER_LINEAR,
+                   cv::BORDER_REFLECT_101);
+    auto result = image.DeepCopy();
+    result.setFromRGBA32F(restored.ptr<float>(), width, height);
+    float* resultPixels = result.rgba32fData();
+    if (resultPixels) {
+        for (std::size_t pixel = 0; pixel < image.totalPixels(); ++pixel) {
+            resultPixels[pixel * 4u + 3u] = pixels[pixel * 4u + 3u];
+        }
+    }
+    result.setColorDescriptor(image.colorDescriptor());
+    dst = ImageF32x4RGBAWithCache(result);
+}
+
+std::vector<AbstractProperty> PixelSortProEffect::getProperties() const {
+    std::vector<AbstractProperty> properties;
+    properties.reserve(8);
+    auto addFloat = [&](const char* name, const char* label, float value,
+                        float minimum, float maximum) {
+        auto& property = properties.emplace_back();
+        property.setName(QString::fromUtf8(name));
+        property.setDisplayLabel(QString::fromUtf8(label));
+        property.setType(PropertyType::Float);
+        property.setValue(value);
+        property.setDefaultValue(value);
+        property.setHardRange(minimum, maximum);
+        property.setAnimatable(true);
+    };
+    addFloat("angle", "Direction", impl_->angle, -180.0f, 180.0f);
+    auto& segment = properties.emplace_back();
+    segment.setName(QStringLiteral("maxSegment"));
+    segment.setDisplayLabel(QStringLiteral("Maximum Segment"));
+    segment.setType(PropertyType::Integer);
+    segment.setValue(impl_->maxSegment);
+    segment.setDefaultValue(180);
+    segment.setHardRange(2, 2048);
+    addFloat("lowThreshold", "Low Threshold", impl_->lowThreshold, 0.0f, 4.0f);
+    addFloat("highThreshold", "High Threshold", impl_->highThreshold, 0.0f, 4.0f);
+    addFloat("keyMode", "Sort Key (Luma / Hue)", impl_->keyMode, 0.0f, 1.0f);
+    addFloat("descending", "Sort Order", impl_->descending, 0.0f, 1.0f);
+    addFloat("edgeProtection", "Edge Protection", impl_->edgeProtection, 0.0f, 1.0f);
+    addFloat("mix", "Mix", impl_->mix, 0.0f, 1.0f);
+    return properties;
+}
+
+void PixelSortProEffect::setPropertyValue(const UniString& name,
+                                          const QVariant& value) {
+    const QString key = name.toQString();
+    const float raw = value.toFloat();
+    const float number = std::isfinite(raw) ? raw : 0.0f;
+    if (key == QStringLiteral("angle")) impl_->angle = std::clamp(number, -180.0f, 180.0f);
+    else if (key == QStringLiteral("maxSegment")) impl_->maxSegment = std::clamp(value.toInt(), 2, 2048);
+    else if (key == QStringLiteral("lowThreshold")) impl_->lowThreshold = std::clamp(number, 0.0f, 4.0f);
+    else if (key == QStringLiteral("highThreshold")) impl_->highThreshold = std::clamp(number, impl_->lowThreshold, 4.0f);
+    else if (key == QStringLiteral("keyMode")) impl_->keyMode = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("descending")) impl_->descending = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("edgeProtection")) impl_->edgeProtection = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("mix")) impl_->mix = std::clamp(number, 0.0f, 1.0f);
+    else ArtifactAbstractEffect::setPropertyValue(name, value);
+}
+
+EffectROIHint PixelSortProEffect::roiHint() const {
+    return EffectROIHint{
+        .kind = EffectROIHintKind::Displacement,
+        .expansionPixels = static_cast<float>(impl_->maxSegment),
+        .requiresFullFrame = true
+    };
 }
 } // namespace Artifact

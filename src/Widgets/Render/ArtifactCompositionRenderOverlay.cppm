@@ -248,12 +248,12 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   }
 
   const QMatrix4x4 modelMatrix = modelLayer->getGlobalTransform4x4();
-  const FloatColor wireShadow{0.02f, 0.03f, 0.04f, 0.88f};
-  const FloatColor wireColor{1.0f, 0.56f, 0.18f, 0.98f};
-  const float shadowThickness = 3.4f;
+  // Selection edges use one unambiguous, topology-colored line. A shadow
+  // pass makes each edge look doubled and obscures the quad boundary.
+  const FloatColor wireColor{1.0f, 0.42f, 0.0f, 0.98f};
   const float thickness = 1.9f;
   const FloatColor vertexShadow{0.02f, 0.03f, 0.04f, 0.94f};
-  const FloatColor vertexColor{1.0f, 0.68f, 0.22f, 1.0f};
+  const FloatColor vertexColor{1.0f, 0.52f, 0.0f, 1.0f};
 
   renderer->set3DCameraMatrices(*cameraView, *cameraProj);
 
@@ -301,9 +301,6 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
 
     const QVector3D start = modelMatrix.map(vertexPositions[a]);
     const QVector3D end = modelMatrix.map(vertexPositions[b]);
-    renderer->draw3DLine({start.x(), start.y(), start.z()},
-                         {end.x(), end.y(), end.z()},
-                         wireShadow, shadowThickness);
     renderer->draw3DLine({start.x(), start.y(), start.z()},
                          {end.x(), end.y(), end.z()},
                          wireColor, thickness);

@@ -311,6 +311,8 @@ protected:
                           ArtifactCore::PropertyType type,
                           const QVariant &value,
                           int priority = 0) const;
+  void removePersistentLayerPropertiesWithPrefix(
+      const QString &propertyPathPrefix) const;
 
 public:
     ArtifactAbstractLayer();

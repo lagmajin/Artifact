@@ -6291,11 +6291,11 @@ buildDefaultCameraFrustumVisual(const QMatrix4x4 &view,
   return visual;
 }
 
-void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
-
-                              const CompositionRenderController::CameraFrustumVisual &visual,
-
-                              bool activeCamera) {
+void drawCameraFrustumOverlay(
+    ArtifactIRenderer *renderer,
+    const CompositionRenderController::CameraFrustumVisual &visual,
+    const QMatrix4x4 &viewportView, const QMatrix4x4 &viewportProjection,
+    bool activeCamera) {
 
   if (!renderer || !visual.valid || visual.nearPlaneCorners.size() < 4 ||
 
@@ -6335,7 +6335,10 @@ void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
 
   renderer->setUseExternalMatrices(true);
 
-  renderer->set3DCameraMatrices(visual.viewMatrix, visual.projectionMatrix);
+  // The frustum is geometry belonging to `visual`, but it must be viewed by
+  // the current viewport camera. Rendering it with visual.viewMatrix places
+  // the viewer at the represented camera's apex and clips the guide itself.
+  renderer->set3DCameraMatrices(viewportView, viewportProjection);
 
   for (int i = 0; i < 4; ++i) {
 
@@ -6884,6 +6887,156 @@ bool clipProjectedFrameEdge(const QRectF &clipRect, QPointF &start,
   start = originalStart + QPointF(dx * enter, dy * enter);
   end = originalStart + QPointF(dx * leave, dy * leave);
   return true;
+}
+
+bool projectedFixedPlaneFrameCornersAt(
+    const Artifact3DLayer &plane, int frame, const QMatrix4x4 &view,
+    const QMatrix4x4 &projection, const QRect &viewport,
+    std::array<QPointF, 4> &projectedPoints) {
+  const QRectF localBounds = plane.localBounds();
+  if (viewport.width() <= 0 || viewport.height() <= 0 ||
+      !localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return false;
+  }
+
+  // Match Artifact3DLayer::draw() so each historical frame has the same
+  // position, rotation, scale, and anchor transform as the rendered plane.
+  const auto snapshot = plane.transform3D().snapshotAt(
+      ArtifactCore::RationalTime(frame, 30));
+  QMatrix4x4 world;
+  world.setToIdentity();
+  world.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+  world.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  world.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+  world.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+
+  const std::array<QPointF, 4> localPoints{
+      localBounds.topLeft(), localBounds.topRight(),
+      localBounds.bottomRight(), localBounds.bottomLeft()};
+  for (size_t index = 0; index < localPoints.size(); ++index) {
+    const QPointF &point = localPoints[index];
+    const QVector3D worldPoint = world.map(
+        QVector3D(static_cast<float>(point.x()), static_cast<float>(point.y()),
+                  0.0f));
+    const QVector4D clip = projection * view * QVector4D(worldPoint, 1.0f);
+    if (!std::isfinite(clip.w()) || clip.w() <= 0.0f) {
+      return false;
+    }
+    const QVector3D projected = ViewportMath::projectToTopDown(
+        worldPoint, view, projection, viewport);
+    if (!std::isfinite(projected.x()) || !std::isfinite(projected.y()) ||
+        projected.z() < 0.0f || projected.z() > 1.0f) {
+      return false;
+    }
+    projectedPoints[index] = QPointF(projected.x(), projected.y());
+  }
+  return true;
+}
+
+bool intersectPickingRayFixedPlaneAt(const Artifact3DLayer &plane, int frame,
+                                     const Ray &ray, QVector3D &hit) {
+  const auto snapshot = plane.transform3D().snapshotAt(
+      ArtifactCore::RationalTime(frame, 30));
+  QMatrix4x4 world;
+  world.setToIdentity();
+  world.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+  world.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  world.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+  world.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+  const QVector3D planePoint = world.map(QVector3D());
+  const QVector3D normal = world.mapVector(QVector3D(0.0f, 0.0f, 1.0f))
+                               .normalized();
+  const float denominator = QVector3D::dotProduct(ray.direction, normal);
+  if (std::abs(denominator) <= 0.000001f) return false;
+  const float distance = QVector3D::dotProduct(planePoint - ray.origin, normal) /
+                         denominator;
+  if (distance <= 0.0f) return false;
+  hit = ray.origin + ray.direction * distance;
+  return true;
+}
+
+bool hitTestPastFixedPlaneFrameCenter(
+    const ArtifactAbstractLayerPtr &layer, int currentFrame, int fps,
+    const QMatrix4x4 &view, const QMatrix4x4 &projection,
+    const QRect &viewport, const QPointF &viewportPos, float threshold,
+    int &outFrame) {
+  const auto *plane = layer ? dynamic_cast<const Artifact3DLayer *>(layer.get())
+                            : nullptr;
+  if (!plane || plane->fixedGeometry() != FixedGeometry3D::Plane) return false;
+  float bestDistance = threshold * threshold;
+  bool hit = false;
+  const auto keyTimes = motionPathPositionKeyTimes(layer, fps);
+  for (auto it = keyTimes.rbegin(); it != keyTimes.rend(); ++it) {
+    const int frame = static_cast<int>(it->value());
+    if (frame >= currentFrame) continue;
+    std::array<QPointF, 4> corners;
+    if (!projectedFixedPlaneFrameCornersAt(*plane, frame, view, projection,
+                                           viewport, corners)) continue;
+    QPointF center;
+    for (const QPointF &corner : corners) center += corner;
+    center /= static_cast<qreal>(corners.size());
+    const QPointF delta = center - viewportPos;
+    const float distance = static_cast<float>(QPointF::dotProduct(delta, delta));
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      outFrame = frame;
+      hit = true;
+    }
+  }
+  return hit;
+}
+
+void drawPastFixedPlaneMotionFrames(
+    ArtifactIRenderer *renderer, const ArtifactAbstractLayerPtr &layer,
+    int currentFrame, int fps, const QMatrix4x4 &view,
+    const QMatrix4x4 &projection, const QRect &viewport) {
+  const auto *plane = layer ? dynamic_cast<const Artifact3DLayer *>(layer.get())
+                            : nullptr;
+  if (!renderer || !plane ||
+      plane->fixedGeometry() != FixedGeometry3D::Plane) {
+    return;
+  }
+
+  const auto keyTimes = motionPathPositionKeyTimes(layer, fps);
+  constexpr int kMaxPastFrames = 6;
+  const QRectF visibleArea(0.0, 0.0, std::max(1, viewport.width()) - 1.0,
+                           std::max(1, viewport.height()) - 1.0);
+  int drawnFrames = 0;
+  for (auto it = keyTimes.rbegin(); it != keyTimes.rend() &&
+                                    drawnFrames < kMaxPastFrames;
+       ++it) {
+    const int frame = static_cast<int>(it->value());
+    if (frame >= currentFrame) {
+      continue;
+    }
+    std::array<QPointF, 4> corners;
+    if (!projectedFixedPlaneFrameCornersAt(*plane, frame, view, projection,
+                                           viewport, corners)) {
+      continue;
+    }
+
+    const float age = static_cast<float>(drawnFrames) /
+                      static_cast<float>(kMaxPastFrames);
+    const FloatColor color{0.42f, 0.76f, 1.0f, 0.50f * (1.0f - age)};
+    for (size_t index = 0; index < corners.size(); ++index) {
+      QPointF start = corners[index];
+      QPointF end = corners[(index + 1) % corners.size()];
+      if (!clipProjectedFrameEdge(visibleArea, start, end)) {
+        continue;
+      }
+      renderer->drawDashedLineLocal(
+          {static_cast<float>(start.x()), static_cast<float>(start.y())},
+          {static_cast<float>(end.x()), static_cast<float>(end.y())}, 1.15f,
+          6.0f, 4.0f, color);
+    }
+    QPointF center;
+    for (const QPointF &corner : corners) center += corner;
+    center /= static_cast<qreal>(corners.size());
+    renderer->drawPoint(static_cast<float>(center.x()),
+                        static_cast<float>(center.y()), 3.5f, color);
+    ++drawnFrames;
+  }
 }
 
 bool projectedFrameHandleEnabled(TransformGizmo::Mode mode,
@@ -7572,7 +7725,11 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
 
     }
 
-
+    // 3D model layers are picked by their mesh and camera ray below. Their
+    // projected 2D bounds cannot represent depth or the actual silhouette.
+    if (ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer)) {
+      continue;
+    }
 
     const QTransform globalTransform = layer->getGlobalTransform();
 
@@ -7614,7 +7771,109 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
 
 }
 
+static bool intersectPickingRayTriangle(const Ray &ray, const QVector3D &a,
+                                        const QVector3D &b, const QVector3D &c,
+                                        float &distance) {
+  constexpr float kParallelEpsilon = 1.0e-7f;
+  const QVector3D edgeAB = b - a;
+  const QVector3D edgeAC = c - a;
+  const QVector3D p = QVector3D::crossProduct(ray.direction, edgeAC);
+  const float determinant = QVector3D::dotProduct(edgeAB, p);
+  if (std::abs(determinant) <= kParallelEpsilon) {
+    return false;
+  }
+  const float inverseDeterminant = 1.0f / determinant;
+  const QVector3D originToA = ray.origin - a;
+  const float u = QVector3D::dotProduct(originToA, p) * inverseDeterminant;
+  if (u < 0.0f || u > 1.0f) {
+    return false;
+  }
+  const QVector3D q = QVector3D::crossProduct(originToA, edgeAB);
+  const float v = QVector3D::dotProduct(ray.direction, q) * inverseDeterminant;
+  if (v < 0.0f || u + v > 1.0f) {
+    return false;
+  }
+  const float t = QVector3D::dotProduct(edgeAC, q) * inverseDeterminant;
+  if (t <= kParallelEpsilon) {
+    return false;
+  }
+  distance = t;
+  return true;
+}
 
+static bool intersectModelLayerPickingRay(const Artifact3DLayer &layer,
+                                          const Ray &ray, float &distance) {
+  const auto positions = layer.mesh().vertexAttributes().get<QVector3D>("position");
+  if (!positions || positions->data().isEmpty()) {
+    return false;
+  }
+
+  const auto snapshot = layer.transform3D().snapshotAt(
+      RationalTime(layer.currentFrame(), 30));
+  QMatrix4x4 modelMatrix;
+  modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+  modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+
+  bool hit = false;
+  float nearestDistance = std::numeric_limits<float>::max();
+  const auto &mesh = layer.mesh();
+  for (int polygonIndex = 0; polygonIndex < mesh.polygonCount(); ++polygonIndex) {
+    const QVector<int> polygon = mesh.getPolygonVertices(polygonIndex);
+    if (polygon.size() < 3) {
+      continue;
+    }
+    const int rootIndex = polygon.front();
+    if (rootIndex < 0 || rootIndex >= positions->data().size()) {
+      continue;
+    }
+    const QVector3D root = modelMatrix.map(positions->data().at(rootIndex));
+    for (int vertexIndex = 1; vertexIndex + 1 < polygon.size(); ++vertexIndex) {
+      const int bIndex = polygon.at(vertexIndex);
+      const int cIndex = polygon.at(vertexIndex + 1);
+      if (bIndex < 0 || cIndex < 0 || bIndex >= positions->data().size() ||
+          cIndex >= positions->data().size()) {
+        continue;
+      }
+      float triangleDistance = 0.0f;
+      if (intersectPickingRayTriangle(
+              ray, root, modelMatrix.map(positions->data().at(bIndex)),
+              modelMatrix.map(positions->data().at(cIndex)), triangleDistance) &&
+          triangleDistance < nearestDistance) {
+        nearestDistance = triangleDistance;
+        hit = true;
+      }
+    }
+  }
+  if (hit) {
+    distance = nearestDistance;
+  }
+  return hit;
+}
+
+static ArtifactAbstractLayerPtr hitNearest3DModelLayerAtPickingRay(
+    const ArtifactCompositionPtr &comp, const Ray &ray) {
+  if (!comp) {
+    return {};
+  }
+  const auto currentFrame = currentFrameForComposition(comp);
+  ArtifactAbstractLayerPtr nearestLayer;
+  float nearestDistance = std::numeric_limits<float>::max();
+  for (const auto &layer : comp->allLayerRef()) {
+    if (!isLayerEffectivelyVisible(layer) || !layer->isActiveAt(currentFrame)) {
+      continue;
+    }
+    const auto modelLayer = ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer);
+    float distance = 0.0f;
+    if (modelLayer && intersectModelLayerPickingRay(*modelLayer, ray, distance) &&
+        distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestLayer = layer;
+    }
+  }
+  return nearestLayer;
+}
 
 static QImage fitMatteSourceToTarget(const QImage& source,
                                      const QSize& targetSize,
@@ -9296,6 +9555,20 @@ void drawLayerForCompositionView(
 
 
   if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
+    // Prefer the layer's glyph-atlas path when the controller does not need to
+    // flatten the layer for a raster-only operation. The former surface-first
+    // branch called hasCurrentFrameBuffer() unconditionally, which forced
+    // QPainter rasterization before ArtifactTextLayer::draw() could emit GPU
+    // glyph packets.
+    const bool canUseDirectGpuText =
+        !layerHasRasterizerEffectsOrMasks(layer) && !layer->hasModifiers() &&
+        !layerHasEnabledMatteReferences(layer) &&
+        std::abs(opacityOverride - layer->opacity()) <= 0.0001f;
+    if (canUseDirectGpuText) {
+      textLayer->draw(renderer);
+      return;
+    }
+
     if (textLayer->hasCurrentFrameBuffer()) {
       const auto &sourceBuffer = textLayer->currentFrameBuffer();
       const float baseOpacity =
@@ -13002,6 +13275,13 @@ public:
 
   bool isDraggingMotionPathKeyframe_ = false;
 
+  // A historical fixed-Plane frame is edited without moving the playhead.
+  bool isDraggingPastPlaneFrame_ = false;
+  ArtifactAbstractLayerWeak draggingPastPlaneLayer_;
+  int64_t draggingPastPlaneFrame_ = 0;
+  MotionPathPositionSnapshot draggingPastPlaneBefore_;
+  QVector3D draggingPastPlaneStartHit_;
+
   ArtifactAbstractLayerWeak draggingMotionPathLayer_;
 
   int64_t draggingMotionPathFrame_ = 0;
@@ -13789,6 +14069,45 @@ public:
 
 
 
+  void beginPastPlaneFrameDrag(const ArtifactAbstractLayerPtr &layer,
+                               int64_t frame, const QVector3D &startHit,
+                               const MotionPathPositionSnapshot &before) {
+    draggingPastPlaneLayer_ = layer;
+    draggingPastPlaneFrame_ = frame;
+    draggingPastPlaneStartHit_ = startHit;
+    draggingPastPlaneBefore_ = before;
+    isDraggingPastPlaneFrame_ = true;
+  }
+
+  void clearPastPlaneFrameDrag() {
+    isDraggingPastPlaneFrame_ = false;
+    draggingPastPlaneLayer_.reset();
+    draggingPastPlaneFrame_ = 0;
+    draggingPastPlaneBefore_ = {};
+    draggingPastPlaneStartHit_ = {};
+  }
+
+  bool applyPastPlaneFrameDrag(const Ray &ray) {
+    auto layer = draggingPastPlaneLayer_.lock();
+    auto *plane = layer ? dynamic_cast<Artifact3DLayer *>(layer.get()) : nullptr;
+    if (!isDraggingPastPlaneFrame_ || !plane) return false;
+    QVector3D hit;
+    if (!intersectPickingRayFixedPlaneAt(*plane, draggingPastPlaneFrame_, ray,
+                                         hit)) return false;
+    const QVector3D delta = hit - draggingPastPlaneStartHit_;
+    const auto time = ArtifactCore::RationalTime(draggingPastPlaneFrame_, 24);
+    auto &transform = layer->transform3D();
+    transform.setPositionKeyFrameValueAt(
+        time, draggingPastPlaneBefore_.x + delta.x(),
+        draggingPastPlaneBefore_.y + delta.y());
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    publishLayerModified(layer, true);
+    motionPathCache_.valid = false;
+    invalidateOverlayComposite();
+    return true;
+  }
+
   bool applyMotionPathDrag(const ArtifactAbstractLayerPtr &layer,
 
                            const QPointF &canvasPos) {
@@ -14492,11 +14811,11 @@ public:
 
                                 const FramePosition &currentFrame);
 
-  void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
-
-                                const CompositionRenderController::CameraFrustumVisual &visual,
-
-                                bool activeCamera);
+  void drawCameraFrustumOverlay(
+      ArtifactIRenderer *renderer,
+      const CompositionRenderController::CameraFrustumVisual &visual,
+      const QMatrix4x4 &viewportView, const QMatrix4x4 &viewportProjection,
+      bool activeCamera);
 
   QRectF commandPaletteRect() const;
 
@@ -20923,10 +21242,13 @@ LayerID CompositionRenderController::layerAtViewportPos(
 
   const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
 
+  if (const auto modelLayer = hitNearest3DModelLayerAtPickingRay(
+          comp, createPickingRay(physPos))) {
+    return modelLayer->id();
+  }
+
   const auto layer =
-
       hitTopmostLayerAtViewportPos(comp, impl_->renderer_.get(), physPos);
-
   return layer ? layer->id() : LayerID::Nil();
 
 }
@@ -22903,6 +23225,51 @@ if (event->button() == Qt::LeftButton &&
 
 
 
+    const QPointF physicalViewportPos =
+        viewportPos * impl_->devicePixelRatio_;
+    const QMatrix4x4 &motionFrameView = impl_->viewportOrientationMatricesValid_
+        ? impl_->viewportOrientationViewForOverlay_
+        : impl_->gizmo3DCameraMatricesValid_ ? impl_->gizmo3DViewMatrix_
+                                              : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4 &motionFrameProjection =
+        impl_->viewportOrientationMatricesValid_
+            ? impl_->viewportOrientationProjectionForOverlay_
+            : impl_->gizmo3DCameraMatricesValid_
+                  ? impl_->gizmo3DProjectionMatrix_
+                  : impl_->renderer_->getProjectionMatrix();
+    const QRect motionFrameViewport(
+        0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
+        std::max(1, static_cast<int>(impl_->hostHeight_)));
+    int pastPlaneFrame = 0;
+    const int motionFrameFps = std::max(
+        1, static_cast<int>(std::round(comp->frameRate().framerate())));
+    if (hitTestPastFixedPlaneFrameCenter(
+            selectedLayer, static_cast<int>(selectedLayer->currentFrame()),
+            motionFrameFps,
+            motionFrameView, motionFrameProjection, motionFrameViewport,
+            physicalViewportPos,
+            14.0f * std::max(1.0f, impl_->devicePixelRatio_),
+            pastPlaneFrame)) {
+      auto *plane = dynamic_cast<Artifact3DLayer *>(selectedLayer.get());
+      QVector3D startHit;
+      const Ray ray = createPickingRay(physicalViewportPos);
+      if (plane && intersectPickingRayFixedPlaneAt(*plane, pastPlaneFrame, ray,
+                                                   startHit)) {
+        const auto time = ArtifactCore::RationalTime(pastPlaneFrame, 24);
+        const auto &transform = selectedLayer->transform3D();
+        MotionPathPositionSnapshot before;
+        before.hasPositionKey = transform.hasPositionKeyFrameAt(time);
+        before.x = transform.positionXAt(time);
+        before.y = transform.positionYAt(time);
+        if (before.hasPositionKey) {
+          impl_->beginPastPlaneFrameDrag(selectedLayer, pastPlaneFrame,
+                                         startHit, before);
+          event->accept();
+          return;
+        }
+      }
+    }
+
     const auto cPos = impl_->renderer_->viewportToCanvas(
 
         {(float)viewportPos.x(), (float)viewportPos.y()});
@@ -23098,10 +23465,10 @@ if (event->button() == Qt::LeftButton &&
         : QRectF{};
     auto frameHandle = combinedProjectedFrame
         ? hitTestProjectedSelectionFrame(
-              combinedFrameBounds, viewportPos,
+              combinedFrameBounds, physicalViewportPos,
               32.0f * std::max(1.0f, impl_->devicePixelRatio_))
         : hitTestProjectedFrameCorner(
-              selectedLayer, viewportPos, frameView, frameProjection,
+              selectedLayer, physicalViewportPos, frameView, frameProjection,
               frameViewport,
               32.0f * std::max(1.0f, impl_->devicePixelRatio_));
     if (!projectedFrameHandleEnabled(impl_->gizmoMode_, frameHandle)) {
@@ -23191,11 +23558,15 @@ if (event->button() == Qt::LeftButton &&
                                         frameView, frameProjection,
                                         frameViewport);
 
+    // The projected frame owns the default plane viewport. Keep the 3D axis
+    // gizmo for oriented views, where its depth-aware handles are visible.
+    const bool showProjected3DGizmo = impl_->viewportOrientationActive_;
     // Corner and edge handles remain the most explicit targets. Outside the
-    // frame interior, 3D axis/ring handles retain their existing priority.
+    // frame interior, visible 3D axis/ring handles retain their priority.
     const Ray priorityRay = createPickingRay(physicalViewportPos);
-    const GizmoAxis priorityAxis =
-        impl_->gizmo3D_->hitTest(priorityRay, frameView, frameProjection);
+    const GizmoAxis priorityAxis = showProjected3DGizmo
+        ? impl_->gizmo3D_->hitTest(priorityRay, frameView, frameProjection)
+        : GizmoAxis::None;
     if (frameHandle == TransformGizmo::HandleType::None &&
         !frameInteriorHit && priorityAxis != GizmoAxis::None) {
       beginGizmoUndoSnapshot();
@@ -23364,7 +23735,8 @@ if (event->button() == Qt::LeftButton &&
 
   if (selectedLayer && impl_->gizmo3D_ &&
       !layerUsesTextGizmo(selectedLayer) &&
-
+      !(layerUsesProjectedFrameGizmo(selectedLayer) &&
+        !impl_->viewportOrientationActive_) &&
       activeTool != ToolType::Pen) {
 
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
@@ -24266,6 +24638,14 @@ void CompositionRenderController::handleMouseMove(
   }
 
 
+
+  if (impl_->isDraggingPastPlaneFrame_) {
+    const Ray ray = createPickingRay(viewportPos * impl_->devicePixelRatio_);
+    if (impl_->applyPastPlaneFrameDrag(ray)) {
+      markRenderDirty();
+      return;
+    }
+  }
 
   if (impl_->isDraggingMotionPathTangent_) {
     if (impl_->renderer_) {
@@ -26258,6 +26638,29 @@ void CompositionRenderController::handleMouseRelease() {
     impl_->motionPathCache_.valid = false;
     impl_->invalidateOverlayComposite();
     markRenderDirty();
+  }
+
+  if (impl_->isDraggingPastPlaneFrame_) {
+    auto layer = impl_->draggingPastPlaneLayer_.lock();
+    if (layer) {
+      const auto time = ArtifactCore::RationalTime(
+          impl_->draggingPastPlaneFrame_, 24);
+      const auto &transform = layer->transform3D();
+      MotionPathPositionSnapshot after;
+      after.hasPositionKey = transform.hasPositionKeyFrameAt(time);
+      after.x = transform.positionXAt(time);
+      after.y = transform.positionYAt(time);
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<MotionPathUndoCommand>(
+            layer, impl_->draggingPastPlaneFrame_,
+            impl_->draggingPastPlaneBefore_, after));
+      }
+    }
+    impl_->clearPastPlaneFrameDrag();
+    impl_->motionPathCache_.valid = false;
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
   }
 
   if (impl_->isDraggingMotionPathKeyframe_) {
@@ -29098,8 +29501,10 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
                                            frameView, frameProjection,
                                            frameViewport);
     }
-    const GizmoAxis axis = impl_->gizmo3D_->hitTest(
-        createPickingRay(physPos), frameView, frameProjection);
+    const GizmoAxis axis = impl_->viewportOrientationActive_
+        ? impl_->gizmo3D_->hitTest(createPickingRay(physPos), frameView,
+                                    frameProjection)
+        : GizmoAxis::None;
     if (axis != GizmoAxis::None) {
       return impl_->gizmoDragActive_ ? Qt::ClosedHandCursor
                                     : Qt::OpenHandCursor;
@@ -31740,7 +32145,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // Skip rendering layers that are too small to be visible on screen.
 
-          if (layerBounds.isValid()) {
+          // Text remains useful as an orientation cue at every zoom level.
+          // Do not let the generic tiny-layer optimization cull it before its
+          // sprite/GPU-buffer draw path can run.
+          const bool preserveTextAtAnyZoom =
+              dynamic_cast<const ArtifactTextLayer *>(layer.get()) != nullptr;
+          if (layerBounds.isValid() && !preserveTextAtAnyZoom) {
 
             float screenW =
 
@@ -32599,7 +33009,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // Skip rendering layers that are too small to be visible on screen.
 
-          if (layerBounds.isValid()) {
+          // Keep Text Layer visible while zoomed out; unlike raster footage,
+          // its small on-screen footprint is still meaningful to the editor.
+          const bool preserveTextAtAnyZoom =
+              dynamic_cast<const ArtifactTextLayer *>(layer.get()) != nullptr;
+          if (layerBounds.isValid() && !preserveTextAtAnyZoom) {
 
             const auto tl = renderer_->canvasToViewport(
 
@@ -35787,10 +36201,10 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
         ? buildCameraFrustumVisual(activeCamera, comp)
         : buildDefaultCameraFrustumVisual(cameraViewMatrix, cameraProjMatrix);
 
-    ::Artifact::drawCameraFrustumOverlay(renderer_.get(), cameraOverlayVisual,
-
-                                         activeCamera &&
-                                             activeCamera->id() == selectedLayerId_);
+    ::Artifact::drawCameraFrustumOverlay(
+        renderer_.get(), cameraOverlayVisual, cameraViewMatrix,
+        cameraProjMatrix,
+        activeCamera && activeCamera->id() == selectedLayerId_);
 
     if (activeCamera) {
       const QString cameraHud =
@@ -37531,10 +37945,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     if (rulerCacheDirty) {
       viewportRulerHorizontalTicks_ = ViewportRulerData::generateTicks(
           safeZoom, viewportOrigin, viewportSize, QSizeF(cw, ch), true,
-          80.0f, QStringLiteral("px"));
+          100.0f, QStringLiteral("px"));
       viewportRulerVerticalTicks_ = ViewportRulerData::generateTicks(
           safeZoom, viewportOrigin, viewportSize, QSizeF(cw, ch), false,
-          80.0f, QStringLiteral("px"));
+          100.0f, QStringLiteral("px"));
       viewportRulerCacheZoom_ = safeZoom;
       viewportRulerCachePanX_ = panX;
       viewportRulerCachePanY_ = panY;
@@ -37545,7 +37959,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     }
     const FloatColor tickColor = {0.65f, 0.70f, 0.78f, 0.72f};
     const FloatColor labelColor = {0.86f, 0.89f, 0.95f, 0.9f};
-    const QFont rulerFont(QStringLiteral("Segoe UI"), 10);
+    const QFont rulerFont(QStringLiteral("Segoe UI"), 11);
     // The ruler belongs to the viewport edge, not to the transformed canvas
     // edge. This keeps it visible while the canvas is panned or zoomed out.
     const float left = 12.0f;
@@ -37555,13 +37969,13 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     for (const auto& tick : viewportRulerHorizontalTicks_) {
       const auto point = renderer_->canvasToViewport({tick.canvasPos, ch});
       const float length = tick.level == ViewportRulerTickLevel::Major
-                               ? 14.0f
-                               : tick.level == ViewportRulerTickLevel::Minor ? 9.0f
-                                                                             : 5.0f;
+                               ? 20.0f
+                               : tick.level == ViewportRulerTickLevel::Minor ? 12.0f
+                                                                             : 6.0f;
       renderer_->drawSolidLine({point.x, top}, {point.x, top + length},
-                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 2.0f : 1.25f);
+                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 2.25f : 1.5f);
       if (!tick.label.isEmpty()) {
-        renderer_->drawText(QRectF(point.x + 4.0f, top + 16.0f, 90.0f, 18.0f),
+        renderer_->drawText(QRectF(point.x + 4.0f, top + 22.0f, 100.0f, 20.0f),
                             tick.label, rulerFont, labelColor,
                             Qt::AlignLeft | Qt::AlignVCenter);
       }
@@ -37569,25 +37983,26 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     for (const auto& tick : viewportRulerVerticalTicks_) {
       const auto point = renderer_->canvasToViewport({0.0f, tick.canvasPos});
       const float length = tick.level == ViewportRulerTickLevel::Major
-                               ? 14.0f
-                               : tick.level == ViewportRulerTickLevel::Minor ? 9.0f
-                                                                             : 5.0f;
+                               ? 20.0f
+                               : tick.level == ViewportRulerTickLevel::Minor ? 12.0f
+                                                                             : 6.0f;
       renderer_->drawSolidLine({right, point.y}, {right - length, point.y},
-                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 2.0f : 1.25f);
+                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 2.25f : 1.5f);
       if (!tick.label.isEmpty()) {
-        renderer_->drawText(QRectF(right - 104.0f, point.y + 2.0f, 92.0f, 18.0f),
+        renderer_->drawText(QRectF(right - 116.0f, point.y + 2.0f, 104.0f, 20.0f),
                             tick.label, rulerFont, labelColor,
                             Qt::AlignLeft | Qt::AlignVCenter);
       }
     }
     const auto scaleBar = ViewportScaleBarDataFactory::generate(
-        safeZoom, QSizeF(std::max(1.0f, right - left), std::max(1.0f, bottom - top)));
+        safeZoom, QSizeF(std::max(1.0f, right - left), std::max(1.0f, bottom - top)),
+        140.0f);
     const float scaleBarX = right - scaleBar.barWidthPx - 96.0f;
     renderer_->drawSolidLine({scaleBarX, bottom},
                              {scaleBarX + scaleBar.barWidthPx, bottom},
                              tickColor, 4.0f);
     renderer_->drawText(QRectF(scaleBarX,
-                               bottom - 29.0f, 104.0f, 18.0f),
+                               bottom - 33.0f, 116.0f, 20.0f),
                         scaleBar.label, rulerFont, labelColor,
                         Qt::AlignLeft | Qt::AlignVCenter);
   }
@@ -37599,22 +38014,22 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     const auto scaleBar = ViewportScaleBarDataFactory::generate(
         pixelsPerWorldUnit,
         QSizeF(std::max(1.0f, hostWidth_), std::max(1.0f, hostHeight_)),
-        100.0f, QStringLiteral("units"));
+        140.0f, QStringLiteral("units"));
     const float scaleBarX = right - scaleBar.barWidthPx;
     const FloatColor worldTickColor{0.68f, 0.76f, 0.88f, 0.88f};
     const FloatColor worldLabelColor{0.90f, 0.93f, 0.98f, 0.96f};
-    const QFont worldScaleFont(QStringLiteral("Segoe UI"), 10);
+    const QFont worldScaleFont(QStringLiteral("Segoe UI"), 11);
     renderer_->drawSolidLine({scaleBarX, bottom}, {right, bottom},
-                             worldTickColor, 3.0f);
-    renderer_->drawSolidLine({scaleBarX, bottom - 5.0f},
-                             {scaleBarX, bottom + 5.0f},
-                             worldTickColor, 1.5f);
-    renderer_->drawSolidLine({right, bottom - 5.0f},
-                             {right, bottom + 5.0f},
-                             worldTickColor, 1.5f);
+                             worldTickColor, 4.0f);
+    renderer_->drawSolidLine({scaleBarX, bottom - 7.0f},
+                             {scaleBarX, bottom + 7.0f},
+                             worldTickColor, 2.0f);
+    renderer_->drawSolidLine({right, bottom - 7.0f},
+                             {right, bottom + 7.0f},
+                             worldTickColor, 2.0f);
     renderer_->drawText(
-        QRectF(scaleBarX, bottom - 27.0f,
-               std::max(112.0f, scaleBar.barWidthPx), 18.0f),
+        QRectF(scaleBarX, bottom - 33.0f,
+               std::max(140.0f, scaleBar.barWidthPx), 20.0f),
         scaleBar.label, worldScaleFont, worldLabelColor,
         Qt::AlignLeft | Qt::AlignVCenter);
   }
@@ -38333,7 +38748,13 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
 
 
-      if (gizmo3D_) {
+      // In the default composition view, a Plane is edited through its
+      // projected frame. Do not add a detached 3D Full Gizmo; it is retained
+      // in orientation views where the depth-aware axes are meaningful.
+      const bool showProjected3DGizmo =
+          !layerUsesProjectedFrameGizmo(selectedLayer) ||
+          viewportOrientationActive_;
+      if (gizmo3D_ && showProjected3DGizmo) {
 
         ArtifactCore::ProfileScope _profG3D(
 
@@ -38582,6 +39003,47 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             overlayInvalidationSerial_, true);
 
       }
+
+      // Historical Plane frames are a transform-only motion aid, not an
+      // onion-skin of rendered pixels. Draw them in viewport pixel space so
+      // their dotted outline follows the same camera projection as the frame.
+      const QMatrix4x4 &motionFrameView = viewportOrientationMatricesValid_
+          ? viewportOrientationViewForOverlay_
+          : gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
+                                        : fallbackFrameView;
+      const QMatrix4x4 &motionFrameProjection =
+          viewportOrientationMatricesValid_
+              ? viewportOrientationProjectionForOverlay_
+              : gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
+                                            : fallbackFrameProjection;
+      const QRect motionFrameViewport(
+          0, 0, std::max(1, static_cast<int>(hostWidth_)),
+          std::max(1, static_cast<int>(hostHeight_)));
+      const int motionFrameFps = std::max(
+          1, static_cast<int>(std::round(comp->frameRate().framerate())));
+      const float previousZoom = renderer_->getZoom();
+      float previousPanX = 0.0f;
+      float previousPanY = 0.0f;
+      renderer_->getPan(previousPanX, previousPanY);
+      renderer_->setUseExternalMatrices(false);
+      renderer_->setCanvasSize(std::max(1.0f, hostWidth_),
+                               std::max(1.0f, hostHeight_));
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
+      for (const auto &layer : layersForOverlay) {
+        if (!layer ||
+            (!selectedLayerIds.isEmpty()
+                 ? !selectedLayerIds.contains(layer->id())
+                 : selectedLayerId_.isNil() ||
+                       layer->id() != selectedLayerId_)) {
+          continue;
+        }
+        drawPastFixedPlaneMotionFrames(
+            renderer_.get(), layer, currentFrame.framePosition(), motionFrameFps,
+            motionFrameView, motionFrameProjection, motionFrameViewport);
+      }
+      renderer_->setZoom(previousZoom);
+      renderer_->setPan(previousPanX, previousPanY);
 
     }
 

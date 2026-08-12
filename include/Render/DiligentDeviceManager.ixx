@@ -20,6 +20,24 @@ bool acquireSharedRenderDeviceForCurrentBackend(
     RefCntAutoPtr<IRenderDevice>& outDevice,
     RefCntAutoPtr<IDeviceContext>& outImmediateContext);
 void releaseSharedRenderDevice();
+
+// Owns exactly one acquireSharedRenderDeviceForCurrentBackend() reference.
+// Effects must use this instead of pairing the raw acquire/release calls by hand.
+class SharedRenderDeviceLease final {
+public:
+    SharedRenderDeviceLease() = default;
+    ~SharedRenderDeviceLease();
+    SharedRenderDeviceLease(const SharedRenderDeviceLease&) = delete;
+    SharedRenderDeviceLease& operator=(const SharedRenderDeviceLease&) = delete;
+
+    bool acquire(RefCntAutoPtr<IRenderDevice>& outDevice,
+                 RefCntAutoPtr<IDeviceContext>& outImmediateContext);
+    bool isActive() const { return active_; }
+
+private:
+    bool active_ = false;
+};
+
 bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice);
 RENDER_DEVICE_TYPE sharedRenderDeviceType();
 
