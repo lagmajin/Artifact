@@ -34,6 +34,17 @@ struct DockBackendCapabilities {
   bool supportsMultipleTabGroups = false;
 };
 
+inline QString dockBackendKindToString(DockBackendKind kind) {
+  return kind == DockBackendKind::Native ? QStringLiteral("native")
+                                         : QStringLiteral("qads");
+}
+
+inline DockBackendKind dockBackendKindFromString(const QString &value) {
+  return value.compare(QStringLiteral("native"), Qt::CaseInsensitive) == 0
+             ? DockBackendKind::Native
+             : DockBackendKind::QadsAdapter;
+}
+
 struct DockLayoutEntry {
   QString dockId;
   DockArea area = DockArea::Center;
