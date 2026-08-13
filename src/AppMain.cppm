@@ -78,7 +78,6 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QUrl>
 #include <QWidget>
 #include <QtCore/QtGlobal>
-#include <ads_globals.h>
 #include <filesystem>
 #include <qthreadpool.h>
 
@@ -3048,7 +3047,7 @@ int main(int argc, char *argv[]) {
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
-        ads::RightDockWidgetArea,
+        DockArea::Right,
         [mw]() -> QWidget * {
           return new ArtifactSoftwareCompositionTestWidget(mw);
         },
@@ -3061,11 +3060,11 @@ int main(int argc, char *argv[]) {
                                    QSizePolicy::Expanding);
     suppressScrollBarsForViewportWidget(layerViewEditor);
     mw->addDockedWidgetTabbed(QStringLiteral("Layer Solo View"),
-                              ads::RightDockWidgetArea, layerViewEditor,
+                              DockArea::Right, layerViewEditor,
                               QString());
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Layer View (Software)"),
-        QStringLiteral("Layer View (Software)"), ads::RightDockWidgetArea,
+        QStringLiteral("Layer View (Software)"), DockArea::Right,
         [mw]() -> QWidget * {
           return new ArtifactSoftwareLayerTestWidget(mw);
         },
@@ -3075,42 +3074,42 @@ int main(int argc, char *argv[]) {
         QStringLiteral("startup-default-workspace"),
         [mw]() { return new ArtifactProjectManagerWidget(mw); });
     projectManagerWidget->setMinimumWidth(240);
-    mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
+    mw->addDockedWidget(QStringLiteral("Project"), DockArea::Left,
                         projectManagerWidget);
     auto *compositionGraphWidget = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Composition Graph"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-registered-left-tool"),
         [mw]() { return new ArtifactCompositionGraphWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Composition Graph"),
-                              ads::LeftDockWidgetArea, compositionGraphWidget,
+                              DockArea::Left, compositionGraphWidget,
                               QStringLiteral("Project"));
     auto *assetBrowser = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Asset Browser"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-default-workspace"),
         [mw]() { return new ArtifactAssetBrowser(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"),
-                              ads::LeftDockWidgetArea, assetBrowser,
+                              DockArea::Left, assetBrowser,
                               QStringLiteral("Project"));
     auto *clipBufferWidget = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Clip Buffer"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-registered-left-tool"),
         [mw]() { return new ArtifactClipBufferWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Clip Buffer"),
-                              ads::LeftDockWidgetArea, clipBufferWidget,
+                              DockArea::Left, clipBufferWidget,
                               QStringLiteral("Project"));
     auto *shortcutHelperWidget = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Shortcut Helper"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-registered-left-tool"),
         [mw]() { return new ArtifactContextShortcutHelperWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Shortcut Helper"),
-                              ads::LeftDockWidgetArea, shortcutHelperWidget,
+                              DockArea::Left, shortcutHelperWidget,
                               QStringLiteral("Project"));
     auto *contentsViewer = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Contents Viewer"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-registered-file-preview"),
         [mw]() { return new ArtifactContentsViewer(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
-                              ads::RightDockWidgetArea, contentsViewer,
+                              DockArea::Right, contentsViewer,
                               QString());
     mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
     QObject::connect(assetBrowser, &ArtifactAssetBrowser::itemDoubleClicked, mw,
@@ -3446,7 +3445,7 @@ int main(int argc, char *argv[]) {
         QStringLiteral("startup-default-right-editing-surface"),
         [mw]() { return new ArtifactInspectorWidget(mw); });
     inspectorWidget->setMinimumWidth(240);
-    mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
+    mw->addDockedWidget(QStringLiteral("Inspector"), DockArea::Right,
                         inspectorWidget);
     const auto detachInspectorTab = [](QWidget *panel) {
       if (!panel) return;
@@ -3466,7 +3465,7 @@ int main(int argc, char *argv[]) {
       // Keep the editing responsibilities independent while grouping the
       // related surfaces in the Inspector's right-side tab area.
       mw->addDockedWidgetTabbed(QStringLiteral("Components"),
-                                ads::RightDockWidgetArea, componentsPanel,
+                                DockArea::Right, componentsPanel,
                                 QStringLiteral("Inspector"));
     }
     auto *effectsPanel = inspectorWidget->findChild<QWidget *>(
@@ -3478,7 +3477,7 @@ int main(int argc, char *argv[]) {
       // group as Inspector so it is immediately discoverable alongside the
       // current-layer editing surfaces.
       mw->addDockedWidgetTabbed(QStringLiteral("Effects"),
-                                ads::RightDockWidgetArea, effectsPanel,
+                                DockArea::Right, effectsPanel,
                                 QStringLiteral("Inspector"));
     }
     auto *propertyPanel = WidgetCreationDiagnostics::createMeasured(
@@ -3486,18 +3485,18 @@ int main(int argc, char *argv[]) {
         QStringLiteral("startup-default-right-editing-surface"),
         [mw]() { return new ArtifactPropertyWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
-                              ads::RightDockWidgetArea, propertyPanel,
+                              DockArea::Right, propertyPanel,
                               QStringLiteral("Inspector"));
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Audio Mixer"), QStringLiteral("Audio Mixer"),
-        ads::RightDockWidgetArea,
+        DockArea::Right,
         [mw]() -> QWidget * {
           return new ArtifactCompositionAudioMixerWidget(mw);
         },
         QStringLiteral("Inspector"));
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("AI Cloud"), QStringLiteral("AI Cloud"),
-        ads::RightDockWidgetArea,
+        DockArea::Right,
         [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
         QString());
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
@@ -3897,7 +3896,7 @@ int main(int argc, char *argv[]) {
                       mw->addLazyDockedWidgetTabbedWithId(
                           dopeSheetDockTitle(compId),
                           dopeSheetDockObjectId(compId),
-                          ads::BottomDockWidgetArea,
+                          DockArea::Bottom,
                           [mw, compId, dopeSheetDockTitle]() -> QWidget * {
                             auto *panel = new ArtifactDopeSheetWidget(mw);
                             panel->setMinimumHeight(180);
@@ -3956,7 +3955,7 @@ int main(int argc, char *argv[]) {
                                 &ArtifactStatusBar::setTimelineDebugText);
                             phaseTimer.restart();
                             mw->addDockedWidgetTabbedWithId(
-                                dockTitle, dockId, ads::BottomDockWidgetArea,
+                                dockTitle, dockId, DockArea::Bottom,
                                 panel, QStringLiteral("timeline::"));
                             const double dockAttachMs =
                                 static_cast<double>(phaseTimer.nsecsElapsed()) /
@@ -4160,6 +4159,7 @@ int main(int argc, char *argv[]) {
       layoutStore.remove("MainWindow/geometry");
       layoutStore.remove("MainWindow/state");
       layoutStore.remove("MainWindow/dockState");
+      layoutStore.remove("MainWindow/portableDockLayout");
       layoutStore.sync();
       layoutState = UiLayoutState("ArtifactMainWindow");
     }
@@ -4187,6 +4187,7 @@ int main(int argc, char *argv[]) {
       layoutStore.remove("MainWindow/geometry");
       layoutStore.remove("MainWindow/state");
       layoutStore.remove("MainWindow/dockState");
+      layoutStore.remove("MainWindow/portableDockLayout");
       layoutStore.sync();
       mw->resize(1600, 900);
       resetApplied = true;
@@ -4210,6 +4211,38 @@ int main(int argc, char *argv[]) {
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     startupLayoutTimer.restart();
     mw->setStartupLayoutFrozen(false);
+    // Migrate an existing QADS-only session into the backend-neutral model
+    // after the legacy state has been applied.  The old blob remains intact
+    // as the compatibility fallback while the portable representation is
+    // generated once for future backend restoration.
+    if (layoutStore.value(QStringLiteral("MainWindow/portableDockLayout"))
+            .toByteArray()
+            .isEmpty()) {
+      const QByteArray migratedPortableLayout =
+          mw->savePortableDockLayoutState();
+      if (!migratedPortableLayout.isEmpty()) {
+        layoutStore.setValue(QStringLiteral("MainWindow/portableDockLayout"),
+                             migratedPortableLayout);
+        layoutStore.sync();
+        qInfo() << "[AppMain][Startup] migrated ADS dock state to portable"
+                << "bytes=" << migratedPortableLayout.size();
+      }
+    }
+    const QByteArray usePortableDockLayout =
+        qgetenv("ARTIFACT_USE_PORTABLE_DOCK_LAYOUT").trimmed().toLower();
+    if (usePortableDockLayout == QByteArrayLiteral("1") ||
+        usePortableDockLayout == QByteArrayLiteral("true") ||
+        usePortableDockLayout == QByteArrayLiteral("on")) {
+      const QByteArray portableDockLayout =
+          layoutStore.value(QStringLiteral("MainWindow/portableDockLayout"))
+              .toByteArray();
+      const bool portableRestored =
+          !portableDockLayout.isEmpty() &&
+          mw->restorePortableDockLayoutState(portableDockLayout);
+      qInfo() << "[AppMain][Startup] portable dock layout restore"
+              << "requested=" << !portableDockLayout.isEmpty()
+              << "restored=" << portableRestored;
+    }
     qInfo() << "[AppMain][Startup] layout finalize ms="
             << startupLayoutTimer.elapsed();
   });
@@ -4276,6 +4309,8 @@ int main(int argc, char *argv[]) {
     // workspace 配置の正本として保存する。QMainWindow state は保存しない。
     layoutState.dockState = mw->saveDockManagerState();
     layoutState.saveToStore(layoutStore, "MainWindow");
+    layoutStore.setValue(QStringLiteral("MainWindow/portableDockLayout"),
+                         mw->savePortableDockLayoutState());
     layoutStore.sync();
     workspaceManager.saveSession(mw);
     appendShutdownDiagnostic(QStringLiteral("workspace save complete"));

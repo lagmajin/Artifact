@@ -4,6 +4,7 @@ module;
 #include <QApplication>
 #include <QAbstractButton>
 #include <QColor>
+#include <QDebug>
 #include <QEvent>
 #include <QFrame>
 #include <QLabel>
@@ -192,10 +193,16 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
 
 }
 
-DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
+DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
+    auto* dockManager = qobject_cast<ads::CDockManager*>(dockSurface);
     impl_->dockManager_ = dockManager;
     impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().borderColor);
+
+    if (!impl_->dockManager_) {
+        qWarning() << "[DockStyleManager] unsupported dock surface backend";
+        return;
+    }
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);

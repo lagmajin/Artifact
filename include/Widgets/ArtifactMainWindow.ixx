@@ -5,13 +5,13 @@ module;
 #include <QVBoxLayout>
 #include <QStatusBar>
 #include <QString>
-#include <ads_globals.h>
 #include <functional>
 #include <memory> // Added for std::unique_ptr if used in Impl
 #include <wobjectcpp.h>
 
 export module Artifact.MainWindow;
 
+export import Artifact.DockManager;
 import Artifact.Widgets.AudioMixer;               // Added
 import Audio.Mixer;                               // Added
 import Artifact.Widgets.AI.ArtifactAICloudWidget; // Added
@@ -52,16 +52,16 @@ public:
 public /*slots*/:
   void addWidget();
   void setCentralWorkspace(const QString &title, QWidget *widget);
-  void addDockedWidget(const QString &title, ads::DockWidgetArea area,
+  void addDockedWidget(const QString &title, DockArea area,
                        QWidget *widget);
-  void addDockedWidgetTabbed(const QString &title, ads::DockWidgetArea area,
+  void addDockedWidgetTabbed(const QString &title, DockArea area,
                              QWidget *widget, const QString &tabGroupPrefix);
   void addDockedWidgetTabbedWithId(const QString &title, const QString &dockId,
-                                   ads::DockWidgetArea area, QWidget *widget,
+                                   DockArea area, QWidget *widget,
                                    const QString &tabGroupPrefix);
   void addLazyDockedWidgetTabbedWithId(const QString &title,
                                        const QString &dockId,
-                                       ads::DockWidgetArea area,
+                                       DockArea area,
                                        std::function<QWidget *()> factory,
                                        const QString &tabGroupPrefix);
   void addLazyDockedWidgetFloating(const QString &title, const QString &dockId,
@@ -109,6 +109,8 @@ public /*slots*/:
   // 保存はアプリ終了時、復元は起動時のレイアウト構築後に呼ぶ。
   // restore は「全ての dock が登録された後」でなければならない（ADS の制約）。
   QByteArray saveDockManagerState() const;
+  QByteArray savePortableDockLayoutState() const;
+  bool restorePortableDockLayoutState(const QByteArray &state);
   bool restoreDockManagerState(const QByteArray &state);
   void captureDefaultDockManagerState();
   bool resetDockManagerStateToDefault();

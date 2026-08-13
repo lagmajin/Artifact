@@ -1,6 +1,4 @@
 ﻿module;
-#include "DockManager.h"
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,7 @@
 #include <QObject>
 #include <QColor>
 #include <QEvent>
+#include <QWidget>
 
 export module Widgets.Dock.StyleManager;
 
@@ -54,7 +53,8 @@ private:
     void refreshDockDecorations();
     
 public:
-    explicit DockStyleManager(ads::CDockManager* dockManager, QObject* parent = nullptr);
+    // QADS types remain an implementation detail of the current adapter.
+    explicit DockStyleManager(QWidget* dockSurface, QObject* parent = nullptr);
     ~DockStyleManager();
     
     void setGlowEnabled(bool enabled);

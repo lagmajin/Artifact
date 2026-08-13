@@ -416,6 +416,8 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactInspectorWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactLayerHierarchyWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactLooksPresetBrowser.ixx"
+"${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactDockManager.ixx"
+"${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactNativeDockSurface.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactMainWindow.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactMarkdownNoteEditorWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactMessageBox.ixx"
@@ -1056,4 +1058,3 @@ set(ARTIFACT_APP_IMPL_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/WebUI/ArtifactWebBridge.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/WebUI/ArtifactWebUIHost.cppm"
 )
-
