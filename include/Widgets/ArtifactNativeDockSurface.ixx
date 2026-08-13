@@ -239,7 +239,11 @@ public:
     return docks_.value(dockId, nullptr);
   }
 
-  QStringList dockIds() const { return docks_.keys(); }
+  QStringList dockIds() const {
+    auto ids = docks_.keys();
+    ids.sort();
+    return ids;
+  }
 
   DockArea dockArea(const QString &dockId) const {
     return areas_.value(dockId, DockArea::Center);
