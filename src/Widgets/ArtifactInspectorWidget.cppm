@@ -161,6 +161,7 @@ import ColorWheelsEffect;
 import CurvesEffect;
 import Artifact.Effect.WhiteBalance;
 import Artifact.Effect.Distort.DisplacementMap;
+import Artifact.Effect.Distort.ImageMorph;
 import Artifact.Effect.Distort.TimeDisplacement;
 import PhotoFilterEffect;
 import GradientRampEffect;
@@ -635,6 +636,10 @@ std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
        QStringLiteral("Displacement Map"), QStringLiteral("Distort"),
        QStringLiteral("Warp using displacement textures."),
        QStringLiteral("displacement map distort")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("image_morph"),
+       QStringLiteral("Image Morph"), QStringLiteral("Distort"),
+       QStringLiteral("Morph toward a target image using corresponding control points."),
+       QStringLiteral("image morph warp control points blend")},
       {EffectPipelineStage::Rasterizer,
        QStringLiteral("turbulent_displace"),
        QStringLiteral("Turbulent Displace"), QStringLiteral("Distort"),

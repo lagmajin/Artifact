@@ -103,6 +103,7 @@ import SelectiveColorEffect;
 import ColorWheelsEffect;
 import CurvesEffect;
 import Artifact.Effect.Distort.DisplacementMap;
+import Artifact.Effect.Distort.ImageMorph;
 import Artifact.Effect.Distort.TimeDisplacement;
 import Artifact.Effect.Generate.RadioWaves;
 import Artifact.Effect.Liquify;
@@ -842,6 +843,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Displacement Map"));
    return effect;
   }
+  if (effectId == QStringLiteral("image_morph") ||
+      effectId == QStringLiteral("effect.distort.imagemorph")) {
+   auto effect = std::make_unique<ImageMorphEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Image Morph"));
+   return effect;
+  }
   if (effectId == QStringLiteral("screen_shake") ||
       effectId == QStringLiteral("effect.distort.screenshake")) {
    auto effect = std::make_unique<ScreenShakeEffect>();
@@ -1156,6 +1164,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
   effects.push_back({EffectID("displacement_map"), "Displacement Map"});
+  effects.push_back({EffectID("image_morph"), "Image Morph"});
   effects.push_back({EffectID("screen_shake"), "Screen Shake"});
   effects.push_back({EffectID("time_displacement"), "Time Displacement"});
   effects.push_back({EffectID("liquify"), "Liquify"});
