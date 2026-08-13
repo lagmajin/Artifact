@@ -206,7 +206,12 @@ void ArtifactProjectModel::Impl::refreshTree()
     return QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
                        QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
                        QStringLiteral("tga"), QStringLiteral("hdr"), QStringLiteral("exr"), QStringLiteral("ico"),
-                       QStringLiteral("dds"), QStringLiteral("ktx"), QStringLiteral("psd"), QStringLiteral("psb")}.contains(suffix);
+                       QStringLiteral("dds"), QStringLiteral("ktx"), QStringLiteral("ktx2"),
+                       QStringLiteral("avif"), QStringLiteral("heic"), QStringLiteral("heif"),
+                       QStringLiteral("jxl"), QStringLiteral("jp2"), QStringLiteral("j2k"),
+                       QStringLiteral("ppm"), QStringLiteral("pgm"), QStringLiteral("pbm"),
+                       QStringLiteral("pam"), QStringLiteral("pfm"),
+                       QStringLiteral("psd"), QStringLiteral("psb")}.contains(suffix);
   };
   auto isVideoFile = [](const QString& suffix) {
     return QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
