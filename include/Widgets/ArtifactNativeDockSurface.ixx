@@ -70,7 +70,7 @@ public:
       if (!isValidDockLayoutEntry(entry) || seen.contains(entry.dockId)) {
         continue;
       }
-      if (entry.floating && !capabilities().supportsFloating) {
+      if (!canApplyDockLayoutEntry(capabilities(), entry)) {
         qWarning() << "[NativeDockSurface] skipping unsupported floating dock"
                    << entry.dockId;
         continue;

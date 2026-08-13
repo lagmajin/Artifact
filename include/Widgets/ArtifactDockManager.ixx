@@ -105,6 +105,12 @@ inline bool isValidDockLayoutEntry(const DockLayoutEntry &entry) {
   return true;
 }
 
+inline bool canApplyDockLayoutEntry(const DockBackendCapabilities &capabilities,
+                                    const DockLayoutEntry &entry) {
+  return isValidDockLayoutEntry(entry) &&
+         (!entry.floating || capabilities.supportsFloating);
+}
+
 inline QString dockAreaToString(DockArea area) {
   switch (area) {
   case DockArea::Left: return QStringLiteral("left");
