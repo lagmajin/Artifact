@@ -239,6 +239,12 @@ public:
     return docks_.value(dockId, nullptr);
   }
 
+  QStringList dockIds() const { return docks_.keys(); }
+
+  DockArea dockArea(const QString &dockId) const {
+    return areas_.value(dockId, DockArea::Center);
+  }
+
   DockBackendKind backendKind() const { return DockBackendKind::Native; }
 
   DockBackendCapabilities capabilities() const {
