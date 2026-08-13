@@ -47,6 +47,7 @@ public:
     tabs->addTab(widget, title);
     docks_.insert(dockId, widget);
     areas_.insert(dockId, area);
+    titles_.insert(dockId, title);
     return true;
   }
 
@@ -57,13 +58,7 @@ public:
       if (!widget) {
         continue;
       }
-      QString title = entry.dockId;
-      if (auto *tabs = qobject_cast<QTabWidget *>(widget->parentWidget())) {
-        const int index = tabs->indexOf(widget);
-        if (index >= 0) {
-          title = tabs->tabText(index);
-        }
-      }
+      const QString title = titles_.value(entry.dockId, entry.dockId);
       const bool removed = removeDockWidget(entry.dockId);
       if (!removed ||
           !addDockWidget(entry.dockId, title, widget, entry.area)) {
@@ -133,6 +128,7 @@ public:
     }
     widget->setParent(nullptr);
     areas_.remove(dockId);
+    titles_.remove(dockId);
     return true;
   }
 
@@ -179,6 +175,7 @@ private:
   QTabWidget *rightTabs_ = nullptr;
   QHash<QString, QWidget *> docks_;
   QHash<QString, DockArea> areas_;
+  QHash<QString, QString> titles_;
 };
 
 } // namespace Artifact
