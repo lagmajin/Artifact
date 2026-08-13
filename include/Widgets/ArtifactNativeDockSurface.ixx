@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <QHash>
 #include <QByteArray>
+#include <QDebug>
 #include <QJsonDocument>
 #include <QSplitter>
 #include <QTabWidget>
@@ -66,9 +67,12 @@ public:
     QList<DockLayoutEntry> normalized;
     QHash<QString, bool> seen;
     for (const auto &entry : entries) {
-      if (!isValidDockLayoutEntry(entry) ||
-          (entry.floating && !capabilities().supportsFloating) ||
-          seen.contains(entry.dockId)) {
+      if (!isValidDockLayoutEntry(entry) || seen.contains(entry.dockId)) {
+        continue;
+      }
+      if (entry.floating && !capabilities().supportsFloating) {
+        qWarning() << "[NativeDockSurface] skipping unsupported floating dock"
+                   << entry.dockId;
         continue;
       }
       seen.insert(entry.dockId, true);
