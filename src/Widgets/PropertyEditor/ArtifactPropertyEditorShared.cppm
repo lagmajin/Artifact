@@ -421,7 +421,7 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
   if (propertyName.contains(QStringLiteral("model"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("3d"), Qt::CaseInsensitive)) {
     return QStringLiteral(
-        "3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd *.pmx);;All Files (*.*)");
+        "3D Models (*.obj *.fbx *.gltf *.glb *.stl *.ply *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd *.pmx);;All Files (*.*)");
   }
   if (propertyName.contains(QStringLiteral("video"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("media"), Qt::CaseInsensitive)) {

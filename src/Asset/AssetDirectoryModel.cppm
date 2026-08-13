@@ -105,7 +105,7 @@ namespace Artifact {
   }
   static bool is3DFile(const QString& fileName) {
     const QString ext = QFileInfo(fileName).suffix().toLower();
-    return ext == "obj" || ext == "fbx" || ext == "glb" || ext == "gltf" || ext == "abc" || ext == "stl";
+    return ext == "obj" || ext == "fbx" || ext == "glb" || ext == "gltf" || ext == "abc" || ext == "stl" || ext == "ply";
   }
  };
 
