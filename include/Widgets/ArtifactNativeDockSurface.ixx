@@ -66,7 +66,9 @@ public:
     QList<DockLayoutEntry> normalized;
     QHash<QString, bool> seen;
     for (const auto &entry : entries) {
-      if (!isValidDockLayoutEntry(entry) || seen.contains(entry.dockId)) {
+      if (!isValidDockLayoutEntry(entry) ||
+          (entry.floating && !capabilities().supportsFloating) ||
+          seen.contains(entry.dockId)) {
         continue;
       }
       seen.insert(entry.dockId, true);
