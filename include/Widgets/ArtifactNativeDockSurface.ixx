@@ -74,9 +74,14 @@ public:
         continue;
       }
       const QString title = titles_.value(entry.dockId, entry.dockId);
+      const DockArea previousArea =
+          areas_.value(entry.dockId, DockArea::Center);
       const bool removed = removeDockWidget(entry.dockId);
       if (!removed ||
           !addDockWidget(entry.dockId, title, widget, entry.area)) {
+        if (removed) {
+          addDockWidget(entry.dockId, title, widget, previousArea);
+        }
         continue;
       }
       widget->setVisible(entry.visible);
