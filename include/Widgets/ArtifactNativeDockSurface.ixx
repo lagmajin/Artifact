@@ -159,6 +159,29 @@ public:
     return true;
   }
 
+  bool moveDockWidget(const QString &dockId, DockArea area) {
+    auto *widget = docks_.value(dockId);
+    if (!widget || areas_.value(dockId, DockArea::Center) == area) {
+      return widget != nullptr;
+    }
+    const QString title = titles_.value(dockId, dockId);
+    const bool visible = widget->isVisible();
+    const bool pinned = pinned_.value(dockId, false);
+    const DockArea previousArea = areas_.value(dockId, DockArea::Center);
+    if (!removeDockWidget(dockId) ||
+        !addDockWidget(dockId, title, widget, area)) {
+      if (!docks_.contains(dockId)) {
+        addDockWidget(dockId, title, widget, previousArea);
+        pinned_.insert(dockId, pinned);
+        widget->setVisible(visible);
+      }
+      return false;
+    }
+    pinned_.insert(dockId, pinned);
+    widget->setVisible(visible);
+    return true;
+  }
+
   bool setDockVisible(const QString &dockId, bool visible) {
     auto *widget = docks_.value(dockId);
     if (!widget) {
