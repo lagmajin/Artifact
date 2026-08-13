@@ -49,6 +49,7 @@ public:
     docks_.insert(dockId, widget);
     areas_.insert(dockId, area);
     titles_.insert(dockId, title);
+    pinned_.insert(dockId, false);
     return true;
   }
 
@@ -76,15 +77,19 @@ public:
       const QString title = titles_.value(entry.dockId, entry.dockId);
       const DockArea previousArea =
           areas_.value(entry.dockId, DockArea::Center);
+      const bool previousPinned = pinned_.value(entry.dockId, false);
       const bool removed = removeDockWidget(entry.dockId);
       if (!removed ||
           !addDockWidget(entry.dockId, title, widget, entry.area)) {
         if (removed) {
-          addDockWidget(entry.dockId, title, widget, previousArea);
+          if (addDockWidget(entry.dockId, title, widget, previousArea)) {
+            pinned_.insert(entry.dockId, previousPinned);
+          }
         }
         continue;
       }
       widget->setVisible(entry.visible);
+      pinned_.insert(entry.dockId, entry.pinned);
       restoredAny = true;
     }
     return restoredAny;
@@ -98,6 +103,7 @@ public:
       entry.dockId = it.key();
       entry.area = areas_.value(it.key(), DockArea::Center);
       entry.visible = it.value() && it.value()->isVisible();
+      entry.pinned = pinned_.value(it.key(), false);
       areaIds[static_cast<int>(entry.area)].push_back(entry.dockId);
       document.entries.push_back(entry);
     }
@@ -149,6 +155,7 @@ public:
     widget->setParent(nullptr);
     areas_.remove(dockId);
     titles_.remove(dockId);
+    pinned_.remove(dockId);
     return true;
   }
 
@@ -158,6 +165,14 @@ public:
       return false;
     }
     widget->setVisible(visible);
+    return true;
+  }
+
+  bool setDockPinned(const QString &dockId, bool pinned) {
+    if (!docks_.contains(dockId)) {
+      return false;
+    }
+    pinned_.insert(dockId, pinned);
     return true;
   }
 
@@ -223,6 +238,7 @@ private:
   QHash<QString, QWidget *> docks_;
   QHash<QString, DockArea> areas_;
   QHash<QString, QString> titles_;
+  QHash<QString, bool> pinned_;
 };
 
 } // namespace Artifact
