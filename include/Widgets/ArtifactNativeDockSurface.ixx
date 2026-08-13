@@ -245,6 +245,15 @@ public:
     return areas_.value(dockId, DockArea::Center);
   }
 
+  bool dockVisible(const QString &dockId) const {
+    const auto *widget = docks_.value(dockId, nullptr);
+    return widget && widget->isVisible();
+  }
+
+  bool dockPinned(const QString &dockId) const {
+    return pinned_.value(dockId, false);
+  }
+
   DockBackendKind backendKind() const { return DockBackendKind::Native; }
 
   DockBackendCapabilities capabilities() const {
