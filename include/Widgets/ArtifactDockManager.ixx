@@ -23,6 +23,17 @@ enum class DockArea {
   Center,
 };
 
+enum class DockBackendKind {
+  QadsAdapter,
+  Native,
+};
+
+struct DockBackendCapabilities {
+  bool supportsFloating = false;
+  bool supportsDragDrop = false;
+  bool supportsMultipleTabGroups = false;
+};
+
 struct DockLayoutEntry {
   QString dockId;
   DockArea area = DockArea::Center;

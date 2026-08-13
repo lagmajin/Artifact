@@ -233,8 +233,11 @@ public:
     return docks_.value(dockId, nullptr);
   }
 
-  bool supportsFloating() const { return false; }
-  bool supportsDragDrop() const { return false; }
+  DockBackendKind backendKind() const { return DockBackendKind::Native; }
+
+  DockBackendCapabilities capabilities() const {
+    return DockBackendCapabilities{};
+  }
 
 private:
   static QTabWidget *createTabSurface(QWidget *parent) {

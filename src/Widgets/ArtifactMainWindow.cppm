@@ -650,6 +650,12 @@ class ArtifactDockManager {
 public:
   ArtifactDockManager() = default;
 
+  DockBackendKind backendKind() const { return DockBackendKind::QadsAdapter; }
+
+  DockBackendCapabilities capabilities() const {
+    return DockBackendCapabilities{true, true, true};
+  }
+
   CDockManager *createManager(QWidget *parent) {
     if (!manager_) {
       manager_ = new CDockManager(parent);
