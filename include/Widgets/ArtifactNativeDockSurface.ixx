@@ -97,14 +97,27 @@ public:
 
   bool restoreLayoutState(const QByteArray &state) {
     const auto json = QJsonDocument::fromJson(state);
-    if (!json.isObject()) {
-      return false;
+    if (json.isObject()) {
+      const auto document = DockLayoutDocument::fromJson(json.object());
+      if (document.version != kDockLayoutDocumentVersion) {
+        return false;
+      }
+      return restoreLayout(document.entries);
     }
-    const auto document = DockLayoutDocument::fromJson(json.object());
-    if (document.version != kDockLayoutDocumentVersion) {
-      return false;
+    if (json.isArray()) {
+      QList<DockLayoutEntry> entries;
+      for (const auto &value : json.array()) {
+        if (!value.isObject()) {
+          continue;
+        }
+        const auto entry = dockLayoutEntryFromJson(value.toObject());
+        if (isValidDockLayoutEntry(entry)) {
+          entries.push_back(entry);
+        }
+      }
+      return restoreLayout(entries);
     }
-    return restoreLayout(document.entries);
+    return false;
   }
 
   bool removeDockWidget(const QString &dockId) {
