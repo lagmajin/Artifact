@@ -141,6 +141,24 @@ public:
     return true;
   }
 
+  bool activateDock(const QString &dockId) {
+    auto *widget = docks_.value(dockId);
+    if (!widget) {
+      return false;
+    }
+    auto *tabs = tabsForWidget(widget);
+    if (!tabs) {
+      return false;
+    }
+    const int index = tabs->indexOf(widget);
+    if (index < 0) {
+      return false;
+    }
+    tabs->setCurrentIndex(index);
+    widget->show();
+    return true;
+  }
+
   QWidget *dockWidget(const QString &dockId) const {
     return docks_.value(dockId, nullptr);
   }
@@ -168,6 +186,15 @@ private:
       return centerTabs_;
     }
     return centerTabs_;
+  }
+
+  QTabWidget *tabsForWidget(QWidget *widget) const {
+    for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_}) {
+      if (tabs && tabs->indexOf(widget) >= 0) {
+        return tabs;
+      }
+    }
+    return nullptr;
   }
 
   QTabWidget *leftTabs_ = nullptr;
