@@ -135,7 +135,7 @@ public:
     if (!widget) {
       return false;
     }
-    if (auto *tabs = qobject_cast<QTabWidget *>(widget->parentWidget())) {
+    if (auto *tabs = tabsForWidget(widget)) {
       const int index = tabs->indexOf(widget);
       if (index >= 0) {
         tabs->removeTab(index);
