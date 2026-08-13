@@ -25,6 +25,10 @@ public:
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
+    topTabs_ = createTabSurface(this);
+    topTabs_->hide();
+    rootLayout->addWidget(topTabs_);
+
     auto *splitter = new QSplitter(Qt::Horizontal, this);
     leftTabs_ = createTabSurface(splitter);
     centerTabs_ = createTabSurface(splitter);
@@ -33,6 +37,10 @@ public:
     splitter->setStretchFactor(1, 3);
     splitter->setStretchFactor(2, 1);
     rootLayout->addWidget(splitter);
+
+    bottomTabs_ = createTabSurface(this);
+    bottomTabs_->hide();
+    rootLayout->addWidget(bottomTabs_);
   }
 
   bool addDockWidget(const QString &dockId, const QString &title,
@@ -46,6 +54,7 @@ public:
     }
     widget->setParent(tabs);
     tabs->addTab(widget, title);
+    tabs->show();
     docks_.insert(dockId, widget);
     areas_.insert(dockId, area);
     titles_.insert(dockId, title);
@@ -150,6 +159,9 @@ public:
       const int index = tabs->indexOf(widget);
       if (index >= 0) {
         tabs->removeTab(index);
+        if (tabs->count() == 0) {
+          tabs->hide();
+        }
       }
     }
     widget->setParent(nullptr);
@@ -239,7 +251,9 @@ private:
     case DockArea::Right:
       return rightTabs_;
     case DockArea::Top:
+      return topTabs_;
     case DockArea::Bottom:
+      return bottomTabs_;
     case DockArea::Center:
       return centerTabs_;
     }
@@ -247,7 +261,8 @@ private:
   }
 
   QTabWidget *tabsForWidget(QWidget *widget) const {
-    for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_}) {
+    for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_, topTabs_,
+                       bottomTabs_}) {
       if (tabs && tabs->indexOf(widget) >= 0) {
         return tabs;
       }
@@ -255,9 +270,11 @@ private:
     return nullptr;
   }
 
+  QTabWidget *topTabs_ = nullptr;
   QTabWidget *leftTabs_ = nullptr;
   QTabWidget *centerTabs_ = nullptr;
   QTabWidget *rightTabs_ = nullptr;
+  QTabWidget *bottomTabs_ = nullptr;
   QHash<QString, QWidget *> docks_;
   QHash<QString, DockArea> areas_;
   QHash<QString, QString> titles_;
