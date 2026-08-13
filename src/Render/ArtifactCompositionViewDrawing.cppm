@@ -26,6 +26,7 @@ export module Artifact.Render.CompositionViewDrawing;
 import Artifact.Layer.CloneEffectSupport;
 
 import Artifact.Render.IRenderer;
+import Core.Parallel;
 import Artifact.Render.Context;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Layer.Abstract;
@@ -281,7 +282,8 @@ export QImage makeVersionedSolidGradientImage(
     }
   };
 
-  renderGradientRows(0, size.height());
+  ArtifactCore::Parallel::For(0, size.height(), size.width() * size.height(),
+                               [&](int y) { renderGradientRows(y, y + 1); });
   return image;
 }
 
@@ -978,7 +980,8 @@ QImage applyMatteStackToSurface(
         }
       }
     };
-    buildMatteRows(0, h);
+    ArtifactCore::Parallel::For(0, h, w * h,
+                                 [&](int y) { buildMatteRows(y, y + 1); });
 
     if (!hasCurrent) {
       combinedMask = std::move(matteMask);
@@ -987,7 +990,9 @@ QImage applyMatteStackToSurface(
     }
 
     const ArtifactCore::MatteStackMode stackMode = matteStack.stackMode();
-    for (size_t i = 0; i < pixelCount; ++i) {
+    ArtifactCore::Parallel::For(0, static_cast<int>(pixelCount),
+                                 static_cast<int>(pixelCount), [&](int index) {
+        const size_t i = static_cast<size_t>(index);
         switch (stackMode) {
         case ArtifactCore::MatteStackMode::Add:
           combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
@@ -999,7 +1004,7 @@ QImage applyMatteStackToSurface(
           combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
           break;
         }
-    }
+    });
   }
 
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -1023,7 +1028,8 @@ QImage applyMatteStackToSurface(
       }
     }
   };
-  applyMatteRows(0, h);
+  ArtifactCore::Parallel::For(0, h, w * h,
+                               [&](int y) { applyMatteRows(y, y + 1); });
   return result;
 }
 
@@ -1070,11 +1076,11 @@ static QImage fitMatteSourceToTarget(const QImage& source,
   const int sourceY = std::max(0, (scaled.height() - copyHeight) / 2);
   const int targetX = std::max(0, (targetSize.width() - copyWidth) / 2);
   const int targetY = std::max(0, (targetSize.height() - copyHeight) / 2);
-  for (int y = 0; y < copyHeight; ++y) {
+  ArtifactCore::Parallel::For(0, copyHeight, copyWidth * copyHeight, [&](int y) {
     const auto* sourceBits = scaled.constScanLine(sourceY + y) + sourceX * 4;
     auto* targetBits = result.scanLine(targetY + y) + targetX * 4;
     std::memcpy(targetBits, sourceBits, static_cast<size_t>(copyWidth) * 4u);
-  }
+  });
   return result;
 }
 
@@ -1130,7 +1136,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
     const bool useLuma = ref.type == MatteType::Luma ||
                          ref.type == MatteType::InverseLuma;
     const float opacity = std::clamp(ref.opacity, 0.0f, 1.0f);
-    for (int y = 0; y < height; ++y) {
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
       const auto* row = fitted.constScanLine(y);
       for (int x = 0; x < width; ++x) {
         const auto* pixel = row + x * 4;
@@ -1162,7 +1168,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
           }
         }
       }
-    }
+    });
     hasCombined = true;
     hasSource = true;
   }
@@ -1173,7 +1179,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  for (int y = 0; y < height; ++y) {
+  ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
     auto* row = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
     for (int x = 0; x < width; ++x) {
       const float factor = combined[static_cast<size_t>(y) * width + x];
@@ -1184,7 +1190,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
           std::clamp(static_cast<int>(qBlue(pixel) * factor + 0.5f), 0, 255),
           std::clamp(static_cast<int>(qAlpha(pixel) * factor + 0.5f), 0, 255));
     }
-  }
+  });
   return result;
 }
 
@@ -1597,9 +1603,13 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             static_cast<std::size_t>(lit.width()) *
             static_cast<std::size_t>(lit.height());
         if (lightPixelCount >= 256u * 1024u) {
-          applyLightRows(0, lit.height());
+          ArtifactCore::Parallel::For(
+              0, lit.height(), lit.width() * lit.height(),
+              [&](int y) { applyLightRows(y, y + 1); });
         } else {
-          applyLightRows(0, lit.height());
+          ArtifactCore::Parallel::For(
+              0, lit.height(), lit.width() * lit.height(),
+              [&](int y) { applyLightRows(y, y + 1); });
         }
         surface = std::move(lit);
         directProcessedBuffer.reset();

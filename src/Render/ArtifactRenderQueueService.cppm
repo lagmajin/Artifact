@@ -82,6 +82,7 @@ import Diagnostics.Logger;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Core.Defaults;
+import Core.Parallel;
 import Image.ImageF32x4_RGBA;
 import Image.MultiChannelImage;
 import CvUtils;
@@ -1222,9 +1223,13 @@ namespace Artifact
             };
             if (static_cast<std::size_t>(preview.width()) * previewHeight >=
                 256u * 1024u) {
-                buildPreviewRows(0, previewHeight);
+                ArtifactCore::Parallel::For(
+                    0, previewHeight, preview.width() * previewHeight,
+                    [&](int y) { buildPreviewRows(y, y + 1); });
             } else {
-                buildPreviewRows(0, previewHeight);
+                ArtifactCore::Parallel::For(
+                    0, previewHeight, preview.width() * previewHeight,
+                    [&](int y) { buildPreviewRows(y, y + 1); });
             }
             return preview;
         }

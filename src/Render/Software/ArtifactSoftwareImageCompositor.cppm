@@ -11,6 +11,7 @@ module;
 module Artifact.Render.SoftwareCompositor;
 
 import Layer.Blend;
+import Core.Parallel;
 import Color.Float;
 import Color.Conversion;
 import Color.Luminance;
@@ -459,7 +460,8 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
   }
  };
 
- blendRows(0, dstF.rows);
+ ArtifactCore::Parallel::For(0, dstF.rows, dstF.cols * dstF.rows,
+                              [&](int y) { blendRows(y, y + 1); });
 
  cv::Mat mixed = dstF * (1.0f - a) + blended * a;
  mixed.convertTo(dstBgr, CV_8UC3, 255.0);

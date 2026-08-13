@@ -54,14 +54,21 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
 
   // Pre-calculate luminance values
   impl_->luminanceCache_.resize(frameData.size());
-  ArtifactCore::Parallel::For(0, static_cast<int>(frameData.size()),
-                              static_cast<int>(frameData.size()),
-                              [&](int index) {
+  ArtifactCore::Parallel::ForTiles(width, height, 32, 32,
+                                   [&](int x0, int y0, int x1, int y1) {
+    for (int y = y0; y < y1; ++y) {
+      for (int x = x0; x < x1; ++x) {
+        const int index = y * width + x;
+        if (index >= static_cast<int>(frameData.size())) {
+          continue;
+        }
     const auto &color = frameData[static_cast<size_t>(index)];
     impl_->luminanceCache_[static_cast<size_t>(index)] =
         ArtifactCore::ColorLuminance::calculate(
             color.r(), color.g(), color.b(),
             ArtifactCore::LuminanceStandard::Rec709);
+      }
+    }
   });
 
   // Calculate statistics
@@ -119,8 +126,10 @@ ArtifactHDRMonitor::generateFalseColorOverlay(const HDRAnalysisResult &result,
     return overlay;
 
   // Create false color mapping
-ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
-    for (int x = 0; x < width; ++x) {
+  ArtifactCore::Parallel::ForTiles(width, height, 32, 32,
+                                   [&](int x0, int y0, int x1, int y1) {
+    for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x) {
       int index = y * width + x;
       if (index >= static_cast<int>(impl_->luminanceCache_.size()))
         continue;
@@ -129,6 +138,7 @@ ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
       FloatColor falseColor = getFalseColorForLuminance(luminance);
       overlay[index] = FloatColor(falseColor.r(), falseColor.g(),
                                   falseColor.b(), 0.7f); // Semi-transparent
+    }
     }
   });
 
@@ -148,7 +158,8 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
   const int samplesPerColumn =
       std::max(1, (cacheSize + waveformWidth - 1) / waveformWidth);
 
-  for (int x = 0; x < waveformWidth; ++x) {
+  ArtifactCore::Parallel::For(0, waveformWidth,
+                              waveformWidth * waveformHeight, [&](int x) {
     int startIdx = x * samplesPerColumn;
     int endIdx = std::min(startIdx + samplesPerColumn, cacheSize);
 
@@ -157,17 +168,16 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
     for (int i = startIdx; i < endIdx; ++i) {
       avgLuminance += impl_->luminanceCache_[i];
     }
-    if (endIdx <= startIdx) {
-      continue;
+    if (endIdx > startIdx) {
+      avgLuminance /= static_cast<float>(endIdx - startIdx);
+
+      // Draw vertical line at luminance level
+      int yPos = static_cast<int>((1.0f - avgLuminance) * (waveformHeight - 1));
+      yPos = std::clamp(yPos, 0, waveformHeight - 1);
+
+      waveform[yPos * waveformWidth + x] = FloatColor(1, 1, 1, 1); // White line
     }
-    avgLuminance /= static_cast<float>(endIdx - startIdx);
-
-    // Draw vertical line at luminance level
-    int yPos = static_cast<int>((1.0f - avgLuminance) * (waveformHeight - 1));
-    yPos = std::clamp(yPos, 0, waveformHeight - 1);
-
-    waveform[yPos * waveformWidth + x] = FloatColor(1, 1, 1, 1); // White line
-  }
+  });
 
   return waveform;
 }
