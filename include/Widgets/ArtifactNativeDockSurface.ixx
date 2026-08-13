@@ -1,9 +1,12 @@
 module;
 
 #include <QHash>
+#include <QByteArray>
+#include <QJsonDocument>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QVBoxLayout>
+#include <QStringList>
 #include <QWidget>
 
 export module Artifact.NativeDockSurface;
@@ -70,6 +73,38 @@ public:
       restoredAny = true;
     }
     return restoredAny;
+  }
+
+  QByteArray saveLayoutState() const {
+    DockLayoutDocument document;
+    QHash<int, QStringList> areaIds;
+    for (auto it = docks_.cbegin(); it != docks_.cend(); ++it) {
+      DockLayoutEntry entry;
+      entry.dockId = it.key();
+      entry.area = areas_.value(it.key(), DockArea::Center);
+      entry.visible = it.value() && it.value()->isVisible();
+      areaIds[static_cast<int>(entry.area)].push_back(entry.dockId);
+      document.entries.push_back(entry);
+    }
+    for (auto &entry : document.entries) {
+      auto ids = areaIds.value(static_cast<int>(entry.area));
+      ids.removeDuplicates();
+      ids.sort();
+      entry.tabGroup = QStringLiteral("tabs:") + ids.join(QStringLiteral("|"));
+    }
+    return QJsonDocument(document.toJson()).toJson(QJsonDocument::Compact);
+  }
+
+  bool restoreLayoutState(const QByteArray &state) {
+    const auto json = QJsonDocument::fromJson(state);
+    if (!json.isObject()) {
+      return false;
+    }
+    const auto document = DockLayoutDocument::fromJson(json.object());
+    if (document.version != kDockLayoutDocumentVersion) {
+      return false;
+    }
+    return restoreLayout(document.entries);
   }
 
   bool removeDockWidget(const QString &dockId) {
