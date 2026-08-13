@@ -1,5 +1,6 @@
 module;
 
+#include <algorithm>
 #include <QHash>
 #include <QByteArray>
 #include <QJsonDocument>
@@ -52,8 +53,22 @@ public:
   }
 
   bool restoreLayout(const QList<DockLayoutEntry> &entries) {
-    bool restoredAny = false;
+    QList<DockLayoutEntry> normalized;
+    QHash<QString, bool> seen;
     for (const auto &entry : entries) {
+      if (!isValidDockLayoutEntry(entry) || seen.contains(entry.dockId)) {
+        continue;
+      }
+      seen.insert(entry.dockId, true);
+      normalized.push_back(entry);
+    }
+    std::sort(normalized.begin(), normalized.end(),
+              [](const DockLayoutEntry &left, const DockLayoutEntry &right) {
+                return left.dockId < right.dockId;
+              });
+
+    bool restoredAny = false;
+    for (const auto &entry : normalized) {
       auto *widget = docks_.value(entry.dockId);
       if (!widget) {
         continue;
