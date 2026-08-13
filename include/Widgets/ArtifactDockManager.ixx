@@ -1,5 +1,6 @@
 module;
 
+#include <algorithm>
 #include <QRect>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -77,7 +78,14 @@ public:
 
   void remove(const QString &dockId) { entries_.remove(dockId); }
 
-  QList<DockLayoutEntry> values() const { return entries_.values(); }
+  QList<DockLayoutEntry> values() const {
+    auto values = entries_.values();
+    std::sort(values.begin(), values.end(),
+              [](const DockLayoutEntry &left, const DockLayoutEntry &right) {
+                return left.dockId < right.dockId;
+              });
+    return values;
+  }
 
   void clear() { entries_.clear(); }
 
