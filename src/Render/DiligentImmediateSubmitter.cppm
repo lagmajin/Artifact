@@ -662,9 +662,22 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     if (!ctx || buf.empty()) { buf.reset(); return; }
     auto* pRTV = buf.targetRTV;
     if (!pRTV) { buf.reset(); return; }
+
+    // ParticleRenderer::updateBuffer() updates the context-owned particle
+    // buffer, while prepare()/draw() operate on the submit context.  Keeping
+    // a particle packet on a deferred context therefore makes the upload and
+    // draw ordering/visibility dependent on backend scheduling.  Submit a
+    // particle-containing buffer directly on the immediate context so the
+    // upload and draw share one command stream.
+    const bool containsParticles = std::any_of(
+        buf.packets().begin(), buf.packets().end(), [](const auto& packet) {
+            return std::holds_alternative<ParticlePkt>(packet);
+        });
+    const bool useDeferredCtx = m_deferredCtx_ && !containsParticles;
+
     // Phase 7a: record into deferred context, then execute on immediate
     IDeviceContext* recordCtx = ctx;
-    if (m_deferredCtx_) {
+    if (useDeferredCtx) {
         m_deferredCtx_->Begin(ctx->GetDesc().ContextId);
         recordCtx = m_deferredCtx_.RawPtr();
     }
@@ -806,7 +819,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     }
     flushSolidRectBatch(); // flush any remaining
     recordCtx->EndDebugGroup();
-    if (m_deferredCtx_) {
+    if (useDeferredCtx) {
         RefCntAutoPtr<ICommandList> pCmdList;
         m_deferredCtx_->FinishCommandList(&pCmdList);
         ICommandList* raw = pCmdList.RawPtr();
@@ -1528,7 +1541,8 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
             style.fontSize,
             static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                                   (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
-            resolvedFont.family().toStdString()
+            resolvedFont.family().toStdString(),
+            glyph.renderMode
         };
         const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
         if (glyphRect.valid) {
@@ -1583,18 +1597,31 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
             const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
             const float4 oc  = { p.outlineColor.x * alpha, p.outlineColor.y * alpha,
                                   p.outlineColor.z * alpha, p.outlineColor.w * alpha };
+            const float angle = glyph.item.offsetRotation * 0.017453292519943295f;
+            const float c = std::cos(angle);
+            const float s = std::sin(angle);
+            const auto rotated = [c, s](const float x, const float y) {
+                const float dx = x - 0.5f;
+                const float dy = y - 0.5f;
+                return float2{0.5f + c * dx - s * dy, 0.5f + s * dx + c * dy};
+            };
+            const float2 p00 = rotated(0.0f, 0.0f);
+            const float2 p10 = rotated(1.0f, 0.0f);
+            const float2 p01 = rotated(0.0f, 1.0f);
+            const float2 p11 = rotated(1.0f, 1.0f);
             SpriteVertex ov[4] = {
-                {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
-                {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
-                {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
-                {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
+                {p00, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
+                {p10, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
+                {p01, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
+                {p11, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
             };
             mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov), m_frameCostStats_);
             for (const auto& d : dirs) {
                 RenderSolidTransform2D ox{};
                 ox.offset = { (left + d.x) * zoom + p.xform.offset.x,
                                (top  + d.y) * zoom + p.xform.offset.y };
-                ox.scale     = { w * zoom, h * zoom };
+                const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+                ox.scale     = { w * zoom * glyphScale, h * zoom * glyphScale };
                 ox.screenSize = p.xform.screenSize;
                 mapWriteDiscard(ctx, m_draw_sprite_cb, &ox, sizeof(ox), m_frameCostStats_);
                 recordDrawCall(m_frameCostStats_, true);
@@ -1613,17 +1640,32 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         }
 
         const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
-        const float4 color = { p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha };
+        const float4 color = glyph.rect.colorPreserved
+            ? float4{1.0f, 1.0f, 1.0f, -alpha}
+            : float4{p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha};
+        const float angle = glyph.item.offsetRotation * 0.017453292519943295f;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        const auto rotated = [c, s](const float x, const float y) {
+            const float dx = x - 0.5f;
+            const float dy = y - 0.5f;
+            return float2{0.5f + c * dx - s * dy, 0.5f + s * dx + c * dy};
+        };
+        const float2 p00 = rotated(0.0f, 0.0f);
+        const float2 p10 = rotated(1.0f, 0.0f);
+        const float2 p01 = rotated(0.0f, 1.0f);
+        const float2 p11 = rotated(1.0f, 1.0f);
         SpriteVertex vertices[4] = {
-            {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
-            {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
-            {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
-            {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
+            {p00, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
+            {p10, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
+            {p01, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
+            {p11, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
         };
 
         RenderSolidTransform2D glyphXform{};
         glyphXform.offset = { left * zoom + p.xform.offset.x, top * zoom + p.xform.offset.y };
-        glyphXform.scale = { w * zoom, h * zoom };
+        const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+        glyphXform.scale = { w * zoom * glyphScale, h * zoom * glyphScale };
         glyphXform.screenSize = p.xform.screenSize;
 
         mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
@@ -1686,7 +1728,8 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
             style.fontSize,
             static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                                   (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
-            resolvedFont.family().toStdString()
+            resolvedFont.family().toStdString(),
+            glyph.renderMode
         };
         const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
         if (glyphRect.valid) {
@@ -1750,8 +1793,11 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
             mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov), m_frameCostStats_);
             for (const auto& d : dirs) {
                 QMatrix4x4 om = p.transform;
-                om.translate(left + d.x, top + d.y, 0.0f);
-                om.scale(w, h, 1.0f);
+                const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+                om.translate(left + d.x + w * 0.5f, top + d.y + h * 0.5f, 0.0f);
+                om.rotate(glyph.item.offsetRotation, 0.0f, 0.0f, 1.0f);
+                om.scale(w * glyphScale, h * glyphScale, 1.0f);
+                om.translate(-0.5f, -0.5f, 0.0f);
                 RenderSolidRectTransform2D omat;
                 omat.row0 = { om.row(0).x(), om.row(0).y(), om.row(0).z(), om.row(0).w() };
                 omat.row1 = { om.row(1).x(), om.row(1).y(), om.row(1).z(), om.row(1).w() };
@@ -1774,7 +1820,9 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         }
 
         const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
-        const float4 color = { p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha };
+        const float4 color = glyph.rect.colorPreserved
+            ? float4{1.0f, 1.0f, 1.0f, -alpha}
+            : float4{p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha};
         SpriteVertex vertices[4] = {
             {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
             {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
@@ -1783,8 +1831,11 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         };
 
         QMatrix4x4 glyphMat = p.transform;
-        glyphMat.translate(left, top, 0.0f);
-        glyphMat.scale(w, h, 1.0f);
+        const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+        glyphMat.translate(left + w * 0.5f, top + h * 0.5f, 0.0f);
+        glyphMat.rotate(glyph.item.offsetRotation, 0.0f, 0.0f, 1.0f);
+        glyphMat.scale(w * glyphScale, h * glyphScale, 1.0f);
+        glyphMat.translate(-0.5f, -0.5f, 0.0f);
 
         // Pack rows explicitly: QMatrix4x4 data() is column-major, shader expects row-major
         RenderSolidRectTransform2D mat;

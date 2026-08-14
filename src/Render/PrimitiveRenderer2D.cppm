@@ -50,6 +50,12 @@ import Image.UploadConversion;
 namespace Artifact {
 
 namespace {
+GlyphRenderMode renderModeForCodePoint(char32_t codePoint) noexcept {
+    return (codePoint >= 0x1F000 && codePoint <= 0x1FAFF)
+        ? GlyphRenderMode::ColorBitmap
+        : GlyphRenderMode::MonochromeCoverage;
+}
+
 // Compute a stable cache key from image content (dimensions + pixel hash).
 // QImage::cacheKey() changes on every new instance even with identical data,
 // so we hash the actual bits instead.
@@ -1358,6 +1364,7 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
         key.fontFamily = resolvedFont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          static_cast<uint32_t>(style.fontStyle);
+        key.renderMode = renderModeForCodePoint(codePoint);
         impl_->pGlyphAtlas_->acquire(key, resolvedFont);
     }
     
@@ -1408,6 +1415,7 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
         key.fontFamily = qfont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          (static_cast<uint32_t>(style.fontStyle) << 0);
+        key.renderMode = renderModeForCodePoint(codePoint);
         
         GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
         if (!rect.valid) continue;
@@ -1416,7 +1424,9 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
         pkt.pSRV = pSRV;
         pkt.uvRect = { rect.u0(static_cast<int>(atlasW)), rect.v0(static_cast<int>(atlasH)), 
                        rect.u1(static_cast<int>(atlasW)), rect.v1(static_cast<int>(atlasH)) };
-        pkt.color = { color.r(), color.g(), color.b(), opacity };
+        pkt.color = rect.colorPreserved
+                        ? float4{1.0f, 1.0f, 1.0f, -opacity}
+                        : float4{color.r(), color.g(), color.b(), opacity};
 
         // Position & Scale setup
         const float gw = static_cast<float>(rect.width);
@@ -1495,6 +1505,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
         key.fontFamily = resolvedFont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          static_cast<uint32_t>(style.fontStyle);
+        key.renderMode = renderModeForCodePoint(glyph.charCode);
         impl_->pGlyphAtlas_->acquire(key, resolvedFont);
     }
 
@@ -1546,6 +1557,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
         key.fontFamily = qfont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          (static_cast<uint32_t>(style.fontStyle) << 0);
+        key.renderMode = renderModeForCodePoint(glyph.charCode);
 
         const GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
         if (!rect.valid) continue;
@@ -1565,7 +1577,9 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
                        rect.u1(static_cast<int>(atlasW)), rect.v1(static_cast<int>(atlasH)) };
         // Per-glyph opacity animation folds into alpha; color comes from the run.
         const float a = std::clamp(opacity * static_cast<float>(glyph.offsetOpacity), 0.0f, 1.0f);
-        pkt.color = { color.r(), color.g(), color.b(), a };
+        pkt.color = rect.colorPreserved
+                        ? float4{1.0f, 1.0f, 1.0f, -a}
+                        : float4{color.r(), color.g(), color.b(), a};
 
         if (impl_->useExternalMatrices_) {
             pkt.xform.offset    = { gx, gy };
@@ -1619,6 +1633,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
         key.fontFamily = resolvedFont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          static_cast<uint32_t>(style.fontStyle);
+        key.renderMode = renderModeForCodePoint(glyph.charCode);
         const GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, resolvedFont);
         if (rect.valid) {
             resolvedGlyphs.push_back({&glyph, rect});
