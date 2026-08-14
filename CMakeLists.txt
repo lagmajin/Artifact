@@ -933,6 +933,14 @@ endif()
 target_include_directories(ArtifactEffectContract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
 )
 target_compile_definitions(ArtifactEffectContract PRIVATE LIBRARY_DLL_MODE=1)
 target_link_libraries(ArtifactEffectContract PUBLIC ArtifactCore ArtifactCoreAudio ArtifactRender ArtifactRenderSupport ArtifactRenderSupportContracts)
