@@ -148,7 +148,7 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
   const int samplesPerColumn =
       std::max(1, (cacheSize + waveformWidth - 1) / waveformWidth);
 
-  for (int x = 0; x < waveformWidth; ++x) {
+  ArtifactCore::Parallel::For(0, waveformWidth, cacheSize, [&](int x) {
     int startIdx = x * samplesPerColumn;
     int endIdx = std::min(startIdx + samplesPerColumn, cacheSize);
 
@@ -167,7 +167,7 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
     yPos = std::clamp(yPos, 0, waveformHeight - 1);
 
     waveform[yPos * waveformWidth + x] = FloatColor(1, 1, 1, 1); // White line
-  }
+  });
 
   return waveform;
 }
