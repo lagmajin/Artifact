@@ -428,7 +428,9 @@ void RenderScheduler::processNextTask() {
     if (!threadPool) {
         return;
     }
-    const int maxConcurrent = threadPool->maxThreadCount();
+    const int maxConcurrent = impl_->strategy_ == ParallelStrategy::Sequential
+                                  ? 1
+                                  : threadPool->maxThreadCount();
 
     while (impl_->executing_ && !impl_->paused_ && !impl_->stopRequested_) {
         RenderTask* task = nullptr;
