@@ -14,7 +14,6 @@
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
-#include <DiligentCore/Graphics/GraphicsTools/interface/TextureUploader.hpp>
 #include "../../include/Render/DiligentUploadCoordinator.hpp"
 
 namespace Artifact {
@@ -32,7 +31,6 @@ struct DiligentUploadCoordinator::Impl {
     mutable std::mutex mutex;
     RefCntAutoPtr<IRenderDevice> device;
     RefCntAutoPtr<IDeviceContext> context;
-    RefCntAutoPtr<ITextureUploader> uploader;
     std::deque<std::shared_ptr<Job>> pending;
     QHash<QString, std::shared_ptr<Job>> pendingByKey;
     QHash<std::uint64_t, DiligentTextureUploadResult> completed;
@@ -78,12 +76,6 @@ void DiligentUploadCoordinator::setDevice(
     impl_->clearLocked();
     impl_->device = std::move(device);
     impl_->context = std::move(context);
-    impl_->uploader.Release();
-    if (impl_->device && impl_->context) {
-        TextureUploaderDesc desc;
-        desc.Mode = TEXTURE_UPLOADER_MODE_STAGING_RESOURCE;
-        CreateTextureUploader(impl_->device, desc, &impl_->uploader);
-    }
     impl_->minimumGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -92,7 +84,6 @@ void DiligentUploadCoordinator::clearDevice()
     if (!impl_) return;
     const std::scoped_lock lock(impl_->mutex);
     impl_->clearLocked();
-    impl_->uploader.Release();
     impl_->context.Release();
     impl_->device.Release();
     impl_->minimumGeneration.fetch_add(1, std::memory_order_acq_rel);
@@ -121,7 +112,7 @@ DiligentUploadTicket DiligentUploadCoordinator::enqueue(
         return {};
     }
     const std::scoped_lock lock(impl_->mutex);
-    if (!impl_->device || !impl_->context || !impl_->uploader ||
+    if (!impl_->device || !impl_->context ||
         request.generation <
             impl_->minimumGeneration.load(std::memory_order_acquire)) {
         ++impl_->stats.rejected;
@@ -163,14 +154,11 @@ std::size_t DiligentUploadCoordinator::processPending(std::size_t maxJobs,
     if (!impl_ || maxJobs == 0 || maxBytes == 0) return 0;
     {
         RefCntAutoPtr<IDeviceContext> context;
-        RefCntAutoPtr<ITextureUploader> uploader;
         {
             const std::scoped_lock lock(impl_->mutex);
             context = impl_->context;
-            uploader = impl_->uploader;
         }
-        if (!context || !uploader) return 0;
-        uploader->RenderThreadUpdate(context);
+        if (!context) return 0;
     }
     std::size_t processed = 0;
     std::size_t processedBytes = 0;
@@ -178,11 +166,10 @@ std::size_t DiligentUploadCoordinator::processPending(std::size_t maxJobs,
         std::shared_ptr<Impl::Job> job;
         RefCntAutoPtr<IRenderDevice> device;
         RefCntAutoPtr<IDeviceContext> context;
-        RefCntAutoPtr<ITextureUploader> uploader;
         {
             const std::scoped_lock lock(impl_->mutex);
             if (impl_->pending.empty() || !impl_->device ||
-                !impl_->context || !impl_->uploader) break;
+                !impl_->context) break;
             const auto candidate = impl_->pending.front();
             const std::size_t candidateBytes =
                 static_cast<std::size_t>(candidate->request.bytes.size());
@@ -194,7 +181,6 @@ std::size_t DiligentUploadCoordinator::processPending(std::size_t maxJobs,
             job = candidate;
             device = impl_->device;
             context = impl_->context;
-            uploader = impl_->uploader;
             impl_->stats.pendingJobs -=
                 std::min<std::size_t>(impl_->stats.pendingJobs, 1);
             impl_->stats.pendingBytes -= std::min(
@@ -222,40 +208,24 @@ std::size_t DiligentUploadCoordinator::processPending(std::size_t maxJobs,
             desc.CPUAccessFlags = CPU_ACCESS_NONE;
 
             device->CreateTexture(desc, nullptr, &result.texture);
-            RefCntAutoPtr<IUploadBuffer> uploadBuffer;
             if (result.texture) {
-                UploadBufferDesc uploadDesc;
-                uploadDesc.Width = job->request.width;
-                uploadDesc.Height = job->request.height;
-                uploadDesc.Format = job->request.format;
-                uploader->AllocateUploadBuffer(
-                    context, uploadDesc, &uploadBuffer);
-            }
-            if (result.texture && uploadBuffer) {
-                const MappedTextureSubresource mapped =
-                    uploadBuffer->GetMappedData(0, 0);
                 const std::size_t sourceStride =
                     static_cast<std::size_t>(job->request.stride);
-                const std::size_t destinationStride =
-                    static_cast<std::size_t>(mapped.Stride);
                 const std::size_t requiredBytes = sourceStride *
                     static_cast<std::size_t>(job->request.height);
-                if (!mapped.pData || sourceStride > destinationStride ||
-                    requiredBytes > static_cast<std::size_t>(
+                if (requiredBytes > static_cast<std::size_t>(
                         job->request.bytes.size())) {
                     result.error = QStringLiteral(
-                        "Invalid Diligent upload buffer layout.");
+                        "Invalid Diligent texture upload layout.");
                 } else {
-                    const auto* source = reinterpret_cast<const std::byte*>(
-                        job->request.bytes.constData());
-                    auto* destination = static_cast<std::byte*>(mapped.pData);
-                    for (Uint32 row = 0; row < job->request.height; ++row) {
-                        std::memcpy(destination + destinationStride * row,
-                                    source + sourceStride * row,
-                                    sourceStride);
-                    }
-                    uploader->ScheduleGPUCopy(
-                        context, result.texture, 0, 0, uploadBuffer, true);
+                    TextureSubResData subres;
+                    subres.pData = job->request.bytes.constData();
+                    subres.Stride = job->request.stride;
+                    subres.DepthStride = requiredBytes;
+                    Box box{0, job->request.width, 0, job->request.height, 0, 1};
+                    context->UpdateTexture(result.texture, 0, 0, box, subres,
+                                            RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
                 }
             }
             if (result.texture && result.error.isEmpty()) {
@@ -343,9 +313,6 @@ DiligentUploadCoordinatorStats DiligentUploadCoordinator::stats() const
     if (!impl_) return {};
     const std::scoped_lock lock(impl_->mutex);
     auto stats = impl_->stats;
-    if (impl_->uploader) {
-        stats.gpuOperations = impl_->uploader->GetStats().NumPendingOperations;
-    }
     return stats;
 }
 

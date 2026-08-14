@@ -143,20 +143,21 @@ public:
     {
         using ArtifactCore::IDescribable;
         return {
-            {"workspaceSnapshot", IDescribable::loc("Return a combined project, composition, selection, and render queue snapshot.", "Return a combined project, composition, selection, and render queue snapshot.", {}), "QVariantMap"},
+            {"workspaceSnapshot", IDescribable::loc("Return a combined workspace snapshot with schemaVersion, capturedAt, project, currentComposition, selection, renderQueue, activeIds, counts, warnings, and machine-readable warningCodes.", "Return a combined workspace snapshot with schemaVersion, capturedAt, project, currentComposition, selection, renderQueue, activeIds, counts, warnings, and machine-readable warningCodes.", {}), "QVariantMap"},
             {"safeWriteAuditLogSnapshot", IDescribable::loc("Return the in-memory audit entries for confirmed safe-write operations.", "Return the in-memory audit entries for confirmed safe-write operations.", {}), "QVariantList"},
             {"saveSafeWriteAuditLog", IDescribable::loc("Persist the safe-write audit log as JSON.", "Persist the safe-write audit log as JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"loadSafeWriteAuditLog", IDescribable::loc("Load a safe-write audit log from JSON.", "Load a safe-write audit log from JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
-            {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
+            {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary with snapshotType=workspaceDiagnostics, schemaVersion, capturedAt, warnings, and machine-readable warningCodes.", "Return a compact workspace diagnostics summary with snapshotType=workspaceDiagnostics, schemaVersion, capturedAt, warnings, and machine-readable warningCodes.", {}), "QVariantMap"},
             {"commandVocabulary", IDescribable::loc("List the supported command IR vocabulary and required fields.", "List the supported command IR vocabulary and required fields.", {}), "QVariantList"},
-            {"validateCommand", IDescribable::loc("Validate a command IR request without executing it.", "Validate a command IR request without executing it.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
-            {"executeCommand", IDescribable::loc("Execute a validated command IR request through the automation facade.", "Execute a validated command IR request through the automation facade.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
+            {"validateCommand", IDescribable::loc("Validate a command IR request without executing it; returns ok equal to valid, errorCode COMMAND_INVALID or UNSUPPORTED_COMMAND, and retryable for validation failures.", "Validate a command IR request without executing it; returns ok equal to valid, errorCode COMMAND_INVALID or UNSUPPORTED_COMMAND, and retryable for validation failures.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
+            {"executeCommand", IDescribable::loc("Execute a validated command IR request through the automation facade; returns ok equal to success, an errorCode when unsuccessful, and retryable when the failure policy is known.", "Execute a validated command IR request through the automation facade; returns ok equal to success, an errorCode when unsuccessful, and retryable when the failure policy is known.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
             {"projectSnapshot", IDescribable::loc("Return the current project JSON snapshot.", "Return the current project JSON snapshot.", {}), "QVariantMap"},
             {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
             {"currentCompositionThumbnailAtFrame", IDescribable::loc("Return a PNG thumbnail for the active composition at a frame.", "Return a PNG thumbnail for the active composition at a frame.", {}), "QVariantMap", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameNumber"), QStringLiteral("width"), QStringLiteral("height")}},
             {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
-            {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot.", "Return the render queue snapshot.", {}), "QVariantMap"},
-            {"renderQueueJobByIndex", IDescribable::loc("Return a render queue job snapshot by index.", "Return a render queue job snapshot by index.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot; each job exposes id copied from stable jobId for identity and index for lookup compatibility. Use renderQueueJobById to re-fetch a job by id.", "Return the render queue snapshot; each job exposes id copied from stable jobId for identity and index for lookup compatibility. Use renderQueueJobById to re-fetch a job by id.", {}), "QVariantMap"},
+            {"renderQueueJobByIndex", IDescribable::loc("Return a render queue job snapshot by index with schemaVersion=1, resultType=renderQueueJob, and id copied from the stable jobId; use id for identity and index only for lookup compatibility. Unavailable indexes return ok=false with errorCode RENDER_QUEUE_JOB_NOT_FOUND.", "Return a render queue job snapshot by index with schemaVersion=1, resultType=renderQueueJob, and id copied from the stable jobId; use id for identity and index only for lookup compatibility. Unavailable indexes return ok=false with errorCode RENDER_QUEUE_JOB_NOT_FOUND.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"renderQueueJobById", IDescribable::loc("Return a render queue job snapshot by stable job id.", "Return a render queue job snapshot by stable job id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("jobId")}},
             {"renderQueueJobStatusAt", IDescribable::loc("Return the status text for a render queue job by index.", "Return the status text for a render queue job by index.", {}), "QString", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"renderQueueJobProgressAt", IDescribable::loc("Return the progress for a render queue job by index.", "Return the progress for a render queue job by index.", {}), "int", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"renderQueueJobErrorMessageAt", IDescribable::loc("Return the error message for a render queue job by index.", "Return the error message for a render queue job by index.", {}), "QString", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
@@ -382,6 +383,9 @@ public:
         }
         if (name == QStringLiteral("renderQueueJobByIndex")) {
             return renderQueueJobByIndex(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("renderQueueJobById")) {
+            return renderQueueJobById(stringArg(args, 0));
         }
         if (name == QStringLiteral("renderQueueJobStatusAt")) {
             return renderQueueJobStatusAt(intArg(args, 0, -1));
@@ -961,7 +965,13 @@ public:
         if (name == QStringLiteral("queueExportMatrixForCurrentComposition")) {
             return queueExportMatrixForCurrentComposition(stringArg(args, 0), stringArg(args, 1));
         }
-        return {};
+        return QVariantMap{
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("errorCode"), QStringLiteral("UNKNOWN_OPERATION")},
+            {QStringLiteral("message"),
+             QStringLiteral("WorkspaceAutomation does not expose operation '%1'.").arg(name.toString())},
+            {QStringLiteral("retryable"), false}
+        };
     }
 
 private:
@@ -1159,6 +1169,9 @@ private:
         auto* service = app ? app->projectService() : nullptr;
         if (!project) {
             obj[QStringLiteral("available")] = false;
+            obj[QStringLiteral("errorCode")] = QStringLiteral("NO_OPEN_PROJECT");
+            obj[QStringLiteral("message")] = QStringLiteral("No project is currently open.");
+            obj[QStringLiteral("retryable")] = true;
             obj[QStringLiteral("projectPath")] = projectManager().currentProjectPath();
             obj[QStringLiteral("assetsPath")] = projectManager().currentProjectAssetsPath();
             return obj;
@@ -1185,6 +1198,9 @@ private:
         QJsonObject obj;
         if (!comp) {
             obj[QStringLiteral("available")] = false;
+            obj[QStringLiteral("errorCode")] = QStringLiteral("NO_ACTIVE_COMPOSITION");
+            obj[QStringLiteral("message")] = QStringLiteral("No active composition is selected.");
+            obj[QStringLiteral("retryable")] = true;
             return toVariantMap(obj);
         }
 
@@ -1230,6 +1246,9 @@ private:
         const auto comp = currentComposition();
         if (!selection) {
             obj[QStringLiteral("available")] = false;
+            obj[QStringLiteral("errorCode")] = QStringLiteral("SELECTION_UNAVAILABLE");
+            obj[QStringLiteral("message")] = QStringLiteral("Layer selection is currently unavailable.");
+            obj[QStringLiteral("retryable")] = true;
             return toVariantMap(obj);
         }
 
@@ -1264,6 +1283,9 @@ private:
         auto* service = ArtifactRenderQueueService::instance();
         if (!service) {
             obj[QStringLiteral("available")] = false;
+            obj[QStringLiteral("errorCode")] = QStringLiteral("RENDER_QUEUE_UNAVAILABLE");
+            obj[QStringLiteral("message")] = QStringLiteral("Render queue service is currently unavailable.");
+            obj[QStringLiteral("retryable")] = true;
             return toVariantMap(obj);
         }
 
@@ -1277,6 +1299,9 @@ private:
                 continue;
             }
             QJsonObject job = rawJobs.at(i).toObject();
+            if (job.contains(QStringLiteral("jobId"))) {
+                job[QStringLiteral("id")] = job.value(QStringLiteral("jobId"));
+            }
             job[QStringLiteral("index")] = i;
             job[QStringLiteral("status")] = service->jobStatusAt(i);
             job[QStringLiteral("progress")] = service->jobProgressAt(i);
@@ -1290,20 +1315,62 @@ private:
     static QVariantMap renderQueueJobByIndex(int jobIndex)
     {
         QVariantMap result;
+        result.insert(QStringLiteral("schemaVersion"), 1);
+        result.insert(QStringLiteral("resultType"), QStringLiteral("renderQueueJob"));
         auto* service = ArtifactRenderQueueService::instance();
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            result.insert(QStringLiteral("ok"), false);
+            result.insert(QStringLiteral("errorCode"), QStringLiteral("RENDER_QUEUE_JOB_NOT_FOUND"));
+            result.insert(QStringLiteral("message"),
+                          QStringLiteral("Render queue job index %1 is not available.").arg(jobIndex));
+            result.insert(QStringLiteral("retryable"), true);
             return result;
         }
         const QJsonArray jobs = service->toJson();
         if (jobIndex < 0 || jobIndex >= jobs.size() || !jobs.at(jobIndex).isObject()) {
+            result.insert(QStringLiteral("ok"), false);
+            result.insert(QStringLiteral("errorCode"), QStringLiteral("RENDER_QUEUE_JOB_NOT_FOUND"));
+            result.insert(QStringLiteral("message"),
+                          QStringLiteral("Render queue job index %1 is not available.").arg(jobIndex));
+            result.insert(QStringLiteral("retryable"), true);
             return result;
         }
         QJsonObject obj = jobs.at(jobIndex).toObject();
+        if (obj.contains(QStringLiteral("jobId"))) {
+            obj[QStringLiteral("id")] = obj.value(QStringLiteral("jobId"));
+        }
+        obj[QStringLiteral("schemaVersion")] = 1;
+        obj[QStringLiteral("resultType")] = QStringLiteral("renderQueueJob");
         obj[QStringLiteral("index")] = jobIndex;
         obj[QStringLiteral("status")] = service->jobStatusAt(jobIndex);
         obj[QStringLiteral("progress")] = service->jobProgressAt(jobIndex);
         obj[QStringLiteral("errorMessage")] = service->jobErrorMessageAt(jobIndex);
         return toVariantMap(obj);
+    }
+
+    static QVariantMap renderQueueJobById(const QString& jobId)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        const QJsonArray jobs = service ? service->toJson() : QJsonArray{};
+        for (int i = 0; i < jobs.size(); ++i) {
+            if (!jobs.at(i).isObject()) {
+                continue;
+            }
+            const QJsonObject job = jobs.at(i).toObject();
+            if (job.value(QStringLiteral("jobId")).toString() == jobId) {
+                return renderQueueJobByIndex(i);
+            }
+        }
+
+        return QVariantMap{
+            {QStringLiteral("schemaVersion"), 1},
+            {QStringLiteral("resultType"), QStringLiteral("renderQueueJob")},
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("errorCode"), QStringLiteral("RENDER_QUEUE_JOB_NOT_FOUND")},
+            {QStringLiteral("message"),
+             QStringLiteral("Render queue job id '%1' is not available.").arg(jobId)},
+            {QStringLiteral("retryable"), true}
+        };
     }
 
     static QVariant renderQueueJobStatusAt(int jobIndex)
@@ -1335,11 +1402,62 @@ private:
 
     static QVariantMap workspaceSnapshot()
     {
+        const QVariantMap project = projectSnapshot();
+        const QVariantMap selection = selectionSnapshot();
+        const QVariantMap composition = currentCompositionSnapshot();
+        const QVariantMap queue = renderQueueSnapshot();
         QVariantMap obj;
-        obj.insert(QStringLiteral("project"), projectSnapshot());
-        obj.insert(QStringLiteral("selection"), selectionSnapshot());
-        obj.insert(QStringLiteral("currentComposition"), currentCompositionSnapshot());
-        obj.insert(QStringLiteral("renderQueue"), renderQueueSnapshot());
+        obj.insert(QStringLiteral("schemaVersion"), 1);
+        obj.insert(QStringLiteral("snapshotType"), QStringLiteral("workspace"));
+        obj.insert(QStringLiteral("capturedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+        obj.insert(QStringLiteral("project"), project);
+        obj.insert(QStringLiteral("selection"), selection);
+        obj.insert(QStringLiteral("currentComposition"), composition);
+        obj.insert(QStringLiteral("renderQueue"), queue);
+
+        // Keep the identifiers and counts easy to consume without requiring
+        // an agent to recursively inspect every snapshot section first.
+        obj.insert(QStringLiteral("activeIds"), QVariantMap{
+            {QStringLiteral("compositionId"), composition.value(QStringLiteral("id"))},
+            {QStringLiteral("currentLayerId"), selection.value(QStringLiteral("currentLayerId"))},
+            {QStringLiteral("selectedLayerIds"), [&selection]() {
+                QVariantList ids;
+                const QVariantList layers = selection.value(QStringLiteral("selectedLayers")).toList();
+                for (const QVariant& value : layers) {
+                    const QVariantMap layer = value.toMap();
+                    ids.append(layer.value(QStringLiteral("id")));
+                }
+                return ids;
+            }()}
+        });
+        obj.insert(QStringLiteral("counts"), QVariantMap{
+            {QStringLiteral("compositionCount"), project.value(QStringLiteral("compositionCount"))},
+            {QStringLiteral("selectedLayerCount"), selection.value(QStringLiteral("selectedLayerCount"))},
+            {QStringLiteral("renderQueueJobCount"), queue.value(QStringLiteral("jobCount"))}
+        });
+        QStringList warnings;
+        QStringList warningCodes;
+        if (!project.value(QStringLiteral("available")).toBool()) {
+            warningCodes.append(QStringLiteral("NO_OPEN_PROJECT"));
+            warnings.append(QStringLiteral("No project is currently open."));
+        }
+        if (!composition.value(QStringLiteral("available")).toBool()) {
+            warningCodes.append(QStringLiteral("NO_ACTIVE_COMPOSITION"));
+            warnings.append(QStringLiteral("No active composition is selected."));
+        }
+        if (selection.value(QStringLiteral("selectedLayerCount")).toInt() == 0) {
+            warningCodes.append(QStringLiteral("NO_SELECTED_LAYERS"));
+            warnings.append(QStringLiteral("No layers are selected."));
+        }
+        if (!queue.value(QStringLiteral("available")).toBool()) {
+            warningCodes.append(QStringLiteral("RENDER_QUEUE_UNAVAILABLE"));
+            warnings.append(QStringLiteral("Render queue service is currently unavailable."));
+        } else if (queue.value(QStringLiteral("jobCount")).toInt() == 0) {
+            warningCodes.append(QStringLiteral("RENDER_QUEUE_EMPTY"));
+            warnings.append(QStringLiteral("Render queue is empty."));
+        }
+        obj.insert(QStringLiteral("warnings"), warnings);
+        obj.insert(QStringLiteral("warningCodes"), warningCodes);
         return obj;
     }
 
@@ -1352,6 +1470,9 @@ private:
         const QVariantMap queue = renderQueueSnapshot();
 
         diag.insert(QStringLiteral("available"), true);
+        diag.insert(QStringLiteral("schemaVersion"), 1);
+        diag.insert(QStringLiteral("snapshotType"), QStringLiteral("workspaceDiagnostics"));
+        diag.insert(QStringLiteral("capturedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
         diag.insert(QStringLiteral("hasProject"), project.value(QStringLiteral("available")).toBool());
         diag.insert(QStringLiteral("hasActiveComposition"), comp.value(QStringLiteral("available")).toBool());
         diag.insert(QStringLiteral("selectedLayerCount"), selection.value(QStringLiteral("selectedLayerCount")).toInt());
@@ -1428,19 +1549,25 @@ private:
                    effectPropertyDescriptors);
 
         QStringList warnings;
+        QStringList warningCodes;
         if (!diag.value(QStringLiteral("hasProject")).toBool()) {
+            warningCodes.append(QStringLiteral("NO_OPEN_PROJECT"));
             warnings.append(QStringLiteral("No project is currently open."));
         }
         if (!diag.value(QStringLiteral("hasActiveComposition")).toBool()) {
+            warningCodes.append(QStringLiteral("NO_ACTIVE_COMPOSITION"));
             warnings.append(QStringLiteral("No active composition is selected."));
         }
         if (diag.value(QStringLiteral("selectedLayerCount")).toInt() == 0) {
+            warningCodes.append(QStringLiteral("NO_SELECTED_LAYERS"));
             warnings.append(QStringLiteral("No layers are selected."));
         }
         if (diag.value(QStringLiteral("renderQueueJobCount")).toInt() == 0) {
+            warningCodes.append(QStringLiteral("RENDER_QUEUE_EMPTY"));
             warnings.append(QStringLiteral("Render queue is empty."));
         }
         diag.insert(QStringLiteral("warnings"), warnings);
+        diag.insert(QStringLiteral("warningCodes"), warningCodes);
         diag.insert(QStringLiteral("summary"), warnings.isEmpty()
             ? QStringLiteral("Workspace looks ready.")
             : QStringLiteral("Workspace needs attention."));
@@ -1456,12 +1583,46 @@ private:
     {
         const ArtifactCore::CommandRequest request = ArtifactCore::CommandIR::fromVariantMap(command);
         const ArtifactCore::CommandResult validation = ArtifactCore::CommandIR::validate(request);
-        return validation.toVariantMap();
+        QVariantMap result = validation.toVariantMap();
+        result.insert(QStringLiteral("ok"), validation.valid);
+        if (!validation.valid) {
+            result.insert(QStringLiteral("errorCode"), validation.errorCode.isEmpty()
+                ? (validation.error.contains(QStringLiteral("Unsupported"), Qt::CaseInsensitive)
+                    ? QStringLiteral("UNSUPPORTED_COMMAND")
+                    : QStringLiteral("COMMAND_INVALID"))
+                : validation.errorCode);
+        }
+        return result;
     }
 
     static QVariantMap executeCommand(const QVariantMap& command)
     {
-        return commandExecutor().execute(ArtifactCore::CommandIR::fromVariantMap(command)).toVariantMap();
+        const ArtifactCore::CommandResult execution =
+            commandExecutor().execute(ArtifactCore::CommandIR::fromVariantMap(command));
+        QVariantMap result = execution.toVariantMap();
+        result.insert(QStringLiteral("ok"), execution.success);
+        if (!execution.success) {
+            if (!execution.errorCode.isEmpty()) {
+                result.insert(QStringLiteral("errorCode"), execution.errorCode);
+            } else if (!execution.valid) {
+                result.insert(QStringLiteral("errorCode"), execution.errorCode.isEmpty()
+                    ? (execution.error.contains(QStringLiteral("Unsupported"), Qt::CaseInsensitive)
+                        ? QStringLiteral("UNSUPPORTED_COMMAND")
+                        : QStringLiteral("COMMAND_INVALID"))
+                    : execution.errorCode);
+            } else if (execution.executed) {
+                result.insert(QStringLiteral("errorCode"),
+                              execution.error.contains(QStringLiteral("setProperty failed for path"), Qt::CaseInsensitive)
+                                  ? QStringLiteral("PROPERTY_INVALID")
+                                  : (execution.error.contains(QStringLiteral("startRenderQueue failed"), Qt::CaseInsensitive) ||
+                                     execution.error.contains(QStringLiteral("exportComposition failed"), Qt::CaseInsensitive))
+                                  ? QStringLiteral("RENDER_FAILED")
+                                  : execution.error.contains(QStringLiteral("out of range"), Qt::CaseInsensitive)
+                                  ? QStringLiteral("TARGET_NOT_FOUND")
+                                  : QStringLiteral("EXECUTION_FAILED"));
+            }
+        }
+        return result;
     }
 
     static ArtifactCore::AbstractPropertyPtr findLayerProperty(const ArtifactAbstractLayerPtr& layer, const QString& propertyPath)

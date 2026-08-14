@@ -3052,7 +3052,8 @@ bool ArtifactMainWindow::restorePortableDockLayoutState(const QByteArray &state)
 }
 
 bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
-  if (!impl_ || !impl_->dockBackend->manager() || state.isEmpty())
+  if (!impl_ || !impl_->dockBackend || !impl_->dockBackend->manager() ||
+      state.isEmpty())
     return false;
   // ADS は「全ての dock が DockManager に登録された後」でないと restore できない。
   // 呼び出し側（AppMain）がレイアウト構築完了後に呼ぶことを前提とする。

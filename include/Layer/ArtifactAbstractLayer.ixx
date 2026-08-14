@@ -568,6 +568,7 @@ public:
   std::vector<LayerGeneratorDescriptor> layerGenerators() const;
   std::vector<LayerFieldDescriptor> layerFields() const;
   std::vector<LayerModifierDescriptor> layerCloneModifiers() const;
+  std::vector<QString> clonerTransformNames() const;
   std::vector<LayerComponentValidationIssue>
   validateLayerComponents() const;
   void setAuthoritativeComponentEvaluationState(

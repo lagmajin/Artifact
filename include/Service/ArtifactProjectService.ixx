@@ -10,6 +10,7 @@ module;
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QObject>
 export module Artifact.Service.Project;
 
@@ -58,6 +59,12 @@ W_REGISTER_ARGTYPE(PrecomposeMode)
 struct PrecomposeOutcome {
   ArtifactCore::LayerID precompLayerId;
   ArtifactCore::CompositionID childCompId;
+};
+
+struct RelinkCandidate {
+  QString path;
+  int score = 0;
+  QString reason;
 };
 
 W_REGISTER_ARGTYPE(PreviewQualityPreset)
@@ -228,6 +235,9 @@ export namespace Artifact {
    bool relinkFootage(ProjectItem* footageItem, const QString& newFilePath);
    int relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath);
    bool relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath);
+   QVector<RelinkCandidate> findRelinkCandidates(
+       const QString& oldFilePath, const QString& searchRoot,
+       int maxCandidates = 32) const;
    FootageItem* findFootageItemByPath(const QString& filePath) const;
  public /*signals*/:
   void layerRemoved(const CompositionID& compId, const LayerID& layerId)

@@ -198,6 +198,8 @@ private:
         result.executed = result.success;
         if (!result.success) {
             result.error = QStringLiteral("setProperty failed for path: ") + propertyPath;
+            result.errorCode = QStringLiteral("PROPERTY_INVALID");
+            result.retryable = true;
         }
         return result;
     }
@@ -214,6 +216,8 @@ private:
 
         if (keys.isEmpty()) {
             result.error = QStringLiteral("setKeyframes requires at least one keyframe");
+            result.errorCode = QStringLiteral("COMMAND_INVALID");
+            result.retryable = true;
             QVariantMap details;
             details.insert(QStringLiteral("keyframeCount"), 0);
             details.insert(QStringLiteral("succeeded"), 0);
@@ -262,6 +266,8 @@ private:
 
         if (batches.isEmpty()) {
             result.error = QStringLiteral("batch_set_keyframes requires at least one batch");
+            result.errorCode = QStringLiteral("COMMAND_INVALID");
+            result.retryable = true;
             QVariantMap details;
             details.insert(QStringLiteral("batchCount"), 0);
             details.insert(QStringLiteral("totalKeyframes"), 0);
@@ -298,9 +304,13 @@ private:
         result.success = totalKeyframes > 0 && failed == 0;
         result.executed = succeeded > 0 && failed == 0;
         if (!result.success) {
-            result.error = totalKeyframes == 0
-                ? QStringLiteral("batch_set_keyframes requires at least one keyframe")
-                : QStringLiteral("One or more keyframes could not be set");
+            if (totalKeyframes == 0) {
+                result.error = QStringLiteral("batch_set_keyframes requires at least one keyframe");
+                result.errorCode = QStringLiteral("COMMAND_INVALID");
+                result.retryable = true;
+            } else {
+                result.error = QStringLiteral("One or more keyframes could not be set");
+            }
         }
         QVariantMap details;
         details.insert(QStringLiteral("batchCount"), static_cast<int>(batches.size()));
@@ -392,6 +402,7 @@ private:
             ok = invokeWorkspaceAutomationMethod(QStringLiteral("addNullLayerToCurrentComposition"), args);
         } else {
             result.error = QStringLiteral("Unsupported layer type: ") + layerType;
+            result.errorCode = QStringLiteral("UNSUPPORTED_COMMAND");
             return result;
         }
 
@@ -505,6 +516,7 @@ private:
             ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackSetCurrentFrame"), args);
         } else {
             result.error = QStringLiteral("Unsupported playback state: ") + state;
+            result.errorCode = QStringLiteral("UNSUPPORTED_COMMAND");
             return result;
         }
 
@@ -544,6 +556,8 @@ private:
         const QString effectId = resolveEffectId(layerId, effectIndex);
         if (effectId.isEmpty()) {
             result.error = QStringLiteral("Effect index is out of range");
+            result.errorCode = QStringLiteral("TARGET_NOT_FOUND");
+            result.retryable = false;
             return result;
         }
 
@@ -867,6 +881,8 @@ private:
         const QString effectId = resolveEffectId(layerId, effectIndex);
         if (effectId.isEmpty()) {
             result.error = QStringLiteral("Effect index is out of range");
+            result.errorCode = QStringLiteral("TARGET_NOT_FOUND");
+            result.retryable = false;
             return result;
         }
 

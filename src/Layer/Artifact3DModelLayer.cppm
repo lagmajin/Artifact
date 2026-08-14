@@ -826,13 +826,17 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   QMatrix4x4 modelMatrix;
   modelMatrix.setToIdentity();
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
   QMatrix4x4 previousModelMatrix;
   previousModelMatrix.setToIdentity();
   previousModelMatrix.translate(previousSnapshot.positionX, previousSnapshot.positionY, previousSnapshot.positionZ);
-  previousModelMatrix.rotate(previousSnapshot.rotation, 0.0f, 0.0f, 1.0f);
+  previousModelMatrix.rotate(previousSnapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  previousModelMatrix.rotate(previousSnapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  previousModelMatrix.rotate(previousSnapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   previousModelMatrix.scale(previousSnapshot.scaleX, previousSnapshot.scaleY,
                            previousSnapshot.scaleZ);
   previousModelMatrix.translate(-previousSnapshot.anchorX, -previousSnapshot.anchorY, -previousSnapshot.anchorZ);
@@ -911,7 +915,9 @@ void Artifact3DLayer::drawSelectionOutline(ArtifactIRenderer *renderer) const {
   const auto snapshot = transform3D().snapshotAt(frameTime);
   QMatrix4x4 modelMatrix;
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
   const FloatColor outlineColor{0.30f, 0.86f, 1.0f, 0.98f};

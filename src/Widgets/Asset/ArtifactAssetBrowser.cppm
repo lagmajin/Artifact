@@ -31,6 +31,8 @@ module;
 #include <QPixmap>
 #include <QIcon>
 #include <QHash>
+#include <QPair>
+#include <QVector>
 #include <QFileInfo>
 #include <QStyle>
 #include <QApplication>
@@ -306,6 +308,58 @@ public:
 private:
   QString oldPath_;
   QString newPath_;
+  bool firstRedo_ = true;
+};
+
+struct RelinkLayerSourceChange {
+  ArtifactAbstractLayerWeak layer;
+  QString propertyPath;
+  QString oldPath;
+  QString newPath;
+};
+
+class RelinkAssetBatchCommand final : public UndoCommand {
+public:
+  RelinkAssetBatchCommand(QVector<QPair<QString, QString>> changes,
+                          QVector<RelinkLayerSourceChange> layerChanges)
+      : changes_(std::move(changes)),
+        layerChanges_(std::move(layerChanges)) {}
+
+  void undo() override {
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return;
+    for (auto it = layerChanges_.crbegin(); it != layerChanges_.crend(); ++it) {
+      if (auto layer = it->layer.lock()) {
+        layer->setLayerPropertyValue(it->propertyPath, it->oldPath);
+      }
+    }
+    for (auto it = changes_.crbegin(); it != changes_.crend(); ++it) {
+      service->relinkFootageByPath(it->second, it->first);
+    }
+  }
+
+  void redo() override {
+    if (firstRedo_) {
+      firstRedo_ = false;
+      return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return;
+    for (const auto& change : changes_) {
+      service->relinkFootageByPath(change.first, change.second);
+    }
+    for (const auto& change : layerChanges_) {
+      if (auto layer = change.layer.lock()) {
+        layer->setLayerPropertyValue(change.propertyPath, change.newPath);
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Relink Assets"); }
+
+private:
+  QVector<QPair<QString, QString>> changes_;
+  QVector<RelinkLayerSourceChange> layerChanges_;
   bool firstRedo_ = true;
 };
 
@@ -4658,6 +4712,225 @@ if (!item.isFolder) {
               : QStringLiteral("The selected footage could not be relinked."));
     }
   });
+
+  addAction(allMenu, QStringLiteral("Find Relink Candidates..."),
+            [this, filePath]() {
+    if (filePath.isEmpty()) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    const QString searchRoot = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Search for Relink Candidates"),
+        QDir::homePath());
+    if (searchRoot.isEmpty()) return;
+
+    const auto candidates =
+        svc->findRelinkCandidates(filePath, searchRoot, 32);
+    if (candidates.isEmpty()) {
+      QMessageBox::information(
+          this, QStringLiteral("No Relink Candidates"),
+          QStringLiteral("No matching candidates were found below:\n%1")
+              .arg(searchRoot));
+      return;
+    }
+
+    QStringList labels;
+    labels.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+      labels.append(QStringLiteral("[%1] %2\n%3")
+                        .arg(candidate.score)
+                        .arg(candidate.path)
+                        .arg(candidate.reason));
+    }
+    bool accepted = false;
+    const QString selected = QInputDialog::getItem(
+        this, QStringLiteral("Select Relink Candidate"),
+        QStringLiteral("Candidate:"), labels, 0, false, &accepted);
+    if (!accepted) return;
+    const int selectedIndex = labels.indexOf(selected);
+    if (selectedIndex < 0 || selectedIndex >= candidates.size()) return;
+
+    const QString newPath = candidates.at(selectedIndex).path;
+    if (!svc->relinkFootageByPath(filePath, newPath)) {
+      QMessageBox::warning(this, QStringLiteral("Relink Failed"),
+                           QStringLiteral("The selected candidate could not be relinked."));
+      return;
+    }
+    UndoManager::instance()->push(
+        std::make_unique<RelinkAssetCommand>(filePath, newPath));
+    impl_->applyFilters();
+    updateFileInfo(newPath);
+  });
+
+  if (selectedTargets.size() > 1) {
+    addAction(allMenu, QStringLiteral("Find Relink Candidates for Selected..."),
+              [this, selectedTargets]() {
+      auto* svc = ArtifactProjectService::instance();
+      if (!svc) return;
+      const QString searchRoot = QFileDialog::getExistingDirectory(
+          this, QStringLiteral("Search for Relink Candidates"),
+          QDir::homePath());
+      if (searchRoot.isEmpty()) return;
+
+      const auto project = svc->getCurrentProjectSharedPtr();
+      const QVector<QString> sourceProperties = {
+          QStringLiteral("image.sourcePath"),
+          QStringLiteral("video.sourcePath"),
+          QStringLiteral("audio.sourcePath"),
+          QStringLiteral("svg.sourcePath")};
+      const auto referenceCount = [&](const QString& oldPath) {
+        if (!project) return 0;
+        const QString normalizedOldPath = QDir::cleanPath(
+            QFileInfo(oldPath).absoluteFilePath());
+        int count = 0;
+        std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+          if (!item) return;
+          if (item->type() == eProjectItemType::Composition) {
+            const auto* compositionItem =
+                static_cast<const CompositionItem*>(item);
+            const auto composition = project->findComposition(
+                compositionItem->compositionId).ptr.lock();
+            if (composition) {
+              for (const auto& layer : composition->allLayerRef()) {
+                if (!layer) continue;
+                const QJsonObject layerJson = layer->toJson();
+                for (const QString& property : sourceProperties) {
+                  const QString path = layerJson.value(property).toString();
+                  if (!path.isEmpty() &&
+                      QDir::cleanPath(QFileInfo(path).absoluteFilePath()) ==
+                          normalizedOldPath) {
+                    ++count;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          for (auto* child : item->children) visit(child);
+        };
+        for (auto* root : project->projectItems()) visit(root);
+        return count;
+      };
+
+      QVector<QPair<QString, QString>> changes;
+      QSet<QString> processedFootagePaths;
+      for (const QString& selectedPath : selectedTargets) {
+        auto* footage = svc->findFootageItemByPath(selectedPath);
+        const QString oldPath = footage ? footage->filePath : selectedPath;
+        const QString normalizedOldPath =
+            QDir::cleanPath(QFileInfo(oldPath).absoluteFilePath());
+        if (processedFootagePaths.contains(normalizedOldPath)) continue;
+        processedFootagePaths.insert(normalizedOldPath);
+
+        const auto candidates = svc->findRelinkCandidates(oldPath, searchRoot, 32);
+        if (candidates.isEmpty()) {
+          QMessageBox::warning(
+              this, QStringLiteral("Batch Relink Cancelled"),
+              QStringLiteral("No candidate was found for:\n%1").arg(oldPath));
+          return;
+        }
+        const int references = referenceCount(oldPath);
+        QStringList labels;
+        for (const auto& candidate : candidates) {
+          labels.append(QStringLiteral("[%1] %2\n%3\nReferences: %4")
+                            .arg(candidate.score)
+                            .arg(candidate.path)
+                            .arg(candidate.reason)
+                            .arg(references));
+        }
+        bool accepted = false;
+        const QString selected = QInputDialog::getItem(
+            this, QStringLiteral("Select Relink Candidate"),
+            QStringLiteral("Candidate for:\n%1").arg(oldPath), labels, 0,
+            false, &accepted);
+        if (!accepted) return;
+        const int index = labels.indexOf(selected);
+        if (index < 0 || index >= candidates.size()) return;
+        changes.append(qMakePair(oldPath, candidates.at(index).path));
+      }
+
+      QVector<RelinkLayerSourceChange> layerChanges;
+      const QVector<QPair<QString, QString>> layerSourceProperties = {
+          {QStringLiteral("image.sourcePath"), QStringLiteral("image.sourcePath")},
+          {QStringLiteral("video.sourcePath"), QStringLiteral("video.sourcePath")},
+          {QStringLiteral("audio.sourcePath"), QStringLiteral("audio.sourcePath")},
+          {QStringLiteral("svg.sourcePath"), QStringLiteral("svg.sourcePath")}};
+      if (project) {
+        std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+          if (!item) return;
+          if (item->type() == eProjectItemType::Composition) {
+            const auto* compositionItem =
+                static_cast<const CompositionItem*>(item);
+            const auto composition = project->findComposition(
+                compositionItem->compositionId).ptr.lock();
+            if (composition) {
+              for (const auto& layer : composition->allLayerRef()) {
+                if (!layer) continue;
+                const QJsonObject layerJson = layer->toJson();
+                for (const auto& property : layerSourceProperties) {
+                  const QString oldPath =
+                      layerJson.value(property.first).toString();
+                  for (const auto& change : changes) {
+                    const QString normalizedLayerPath = QDir::cleanPath(
+                        QFileInfo(oldPath).absoluteFilePath());
+                    const QString normalizedFootagePath = QDir::cleanPath(
+                        QFileInfo(change.first).absoluteFilePath());
+                    if (!oldPath.isEmpty() &&
+                        normalizedLayerPath == normalizedFootagePath) {
+                      layerChanges.append({layer, property.second, oldPath,
+                                           change.second});
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          for (auto* child : item->children) visit(child);
+        };
+        for (auto* root : project->projectItems()) visit(root);
+      }
+
+      QVector<QPair<QString, QString>> applied;
+      for (const auto& change : changes) {
+        if (!svc->relinkFootageByPath(change.first, change.second)) {
+          for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
+            svc->relinkFootageByPath(it->second, it->first);
+          }
+          QMessageBox::warning(
+              this, QStringLiteral("Batch Relink Failed"),
+              QStringLiteral("No changes were kept because relinking failed for:\n%1")
+                  .arg(change.first));
+          return;
+        }
+        applied.append(change);
+      }
+      QVector<RelinkLayerSourceChange> appliedLayers;
+      for (const auto& change : layerChanges) {
+        auto layer = change.layer.lock();
+        if (!layer || !layer->setLayerPropertyValue(change.propertyPath,
+                                                     change.newPath)) {
+          for (auto it = appliedLayers.crbegin(); it != appliedLayers.crend();
+               ++it) {
+            if (auto previous = it->layer.lock()) {
+              previous->setLayerPropertyValue(it->propertyPath, it->oldPath);
+            }
+          }
+          for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
+            svc->relinkFootageByPath(it->second, it->first);
+          }
+          QMessageBox::warning(
+              this, QStringLiteral("Batch Relink Failed"),
+              QStringLiteral("A layer source could not be updated; all changes were rolled back."));
+          return;
+        }
+        appliedLayers.append(change);
+      }
+      UndoManager::instance()->push(
+          std::make_unique<RelinkAssetBatchCommand>(std::move(applied),
+                                                    std::move(layerChanges)));
+      impl_->applyFilters();
+    });
+  }
 }
 
   // Interpret Footage action for media files

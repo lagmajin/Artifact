@@ -4,6 +4,7 @@ module;
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -15,6 +16,7 @@ module;
 #include <QList>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPair>
 #include <QRectF>
 #include <QRegularExpression>
 #include <QSet>
@@ -66,12 +68,26 @@ import Memory.SharedPtr;
 import Artifact.Service.Playback;
 import Artifact.Audio.ScrubController;
 import Asset.Manager;
+import Asset.Database;
 import Undo.UndoManager;
 import Composition.PreCompose;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
 namespace {
+QString normalizeRelinkPath(const QString &path) {
+  const QFileInfo info(path.trimmed());
+  QString identity = info.canonicalFilePath();
+  if (identity.isEmpty()) {
+    identity = info.absoluteFilePath();
+  }
+  identity = QDir::cleanPath(identity);
+#ifdef Q_OS_WIN
+  identity = identity.toCaseFolded();
+#endif
+  return identity;
+}
+
 QString slugifyEffectId(const QString &text) {
   QString slug;
   slug.reserve(text.size());
@@ -1370,7 +1386,6 @@ public:
   void removeAllAssets();
   PreviewQualityPreset qualityPreset_ = PreviewQualityPreset::Preview;
   CompositionID currentCompositionId_{};
-  // ProgressiveRenderer progressiveRenderer_;
 
   void checkImportedAssetCompatibility(const QStringList &importedPaths);
   // Records the most recent precompose/unprecompose outcome so undo commands
@@ -2246,23 +2261,10 @@ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(
 void ArtifactProjectService::Impl::setPreviewQualityPreset(
     PreviewQualityPreset preset) {
   qualityPreset_ = preset;
-  switch (preset) {
-  case PreviewQualityPreset::Draft:
-    // progressiveRenderer_.setQuality(RenderQuality::Draft);
-    // progressiveRenderer_.setDraftQuality(4);
-    // progressiveRenderer_.setPreviewQuality(2);
-    break;
-  case PreviewQualityPreset::Preview:
-    // progressiveRenderer_.setQuality(RenderQuality::Preview);
-    // progressiveRenderer_.setDraftQuality(4);
-    // progressiveRenderer_.setPreviewQuality(2);
-    break;
-  case PreviewQualityPreset::Final:
-    // progressiveRenderer_.setQuality(RenderQuality::Final);
-    // progressiveRenderer_.setDraftQuality(2);
-    // progressiveRenderer_.setPreviewQuality(1);
-    break;
-  }
+  // The active viewport render contract is applied by
+  // CompositionRenderController::setPreviewQualityPreset().  Keep this
+  // service value as the persisted/shared selection; do not maintain a
+  // second progressive-renderer quality state here.
 }
 
 PreviewQualityPreset
@@ -4540,6 +4542,44 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
     }
   }
 
+  const QString oldRepresentativePath = footage->filePath;
+  QVector<QPair<QString, QString>> databaseChanges;
+  const auto registerDatabaseChange = [&](const QString& oldPath,
+                                           const QString& newPath) {
+    const QString oldIdentity = normalizeRelinkPath(oldPath);
+    const QString newIdentity = normalizeRelinkPath(newPath);
+    if (oldIdentity == newIdentity) {
+      return true;
+    }
+    if (ArtifactCore::AssetDatabase::instance().findAssetByPath(oldPath).isNull()) {
+      return true;
+    }
+    if (!ArtifactCore::AssetDatabase::instance().relinkAssetPath(oldPath,
+                                                                   newPath)) {
+      return false;
+    }
+    databaseChanges.append(qMakePair(oldPath, newPath));
+    return true;
+  };
+
+  if (!resolvedSequencePaths.isEmpty()) {
+    const QStringList oldPaths = footage->sequencePaths;
+    for (int index = 0; index < oldPaths.size(); ++index) {
+      if (!registerDatabaseChange(oldPaths.at(index),
+                                  resolvedSequencePaths.at(index))) {
+        for (auto it = databaseChanges.crbegin(); it != databaseChanges.crend();
+             ++it) {
+          ArtifactCore::AssetDatabase::instance().relinkAssetPath(
+              it->second, it->first);
+        }
+        return false;
+      }
+    }
+  } else if (!registerDatabaseChange(oldRepresentativePath,
+                                     newFileInfo.absoluteFilePath())) {
+    return false;
+  }
+
   footage->filePath = newFileInfo.absoluteFilePath();
   if (!resolvedSequencePaths.isEmpty()) {
     footage->filePath = resolvedSequencePaths.first();
@@ -4574,8 +4614,7 @@ ArtifactProjectService::findFootageItemByPath(const QString &filePath) const {
     return nullptr;
   }
 
-  QString normalizedPath =
-      QDir::cleanPath(QFileInfo(filePath).absoluteFilePath());
+  const QString normalizedPath = normalizeRelinkPath(filePath);
 
   std::function<FootageItem *(ProjectItem *)> findRecursive =
       [&](ProjectItem *item) -> FootageItem * {
@@ -4583,9 +4622,15 @@ ArtifactProjectService::findFootageItemByPath(const QString &filePath) const {
       return nullptr;
     if (item->type() == eProjectItemType::Footage) {
       auto *footage = static_cast<FootageItem *>(item);
-      QString itemPath =
-          QDir::cleanPath(QFileInfo(footage->filePath).absoluteFilePath());
-      if (itemPath == normalizedPath) {
+      const QString itemPath = normalizeRelinkPath(footage->filePath);
+      bool matchesSequenceFrame = false;
+      for (const QString& sequencePath : footage->sequencePaths) {
+        if (normalizeRelinkPath(sequencePath) == normalizedPath) {
+          matchesSequenceFrame = true;
+          break;
+        }
+      }
+      if (itemPath == normalizedPath || matchesSequenceFrame) {
         return footage;
       }
     }
@@ -4611,11 +4656,149 @@ bool ArtifactProjectService::relinkFootageByPath(const QString &oldFilePath,
   if (oldFilePath.isEmpty() || newFilePath.isEmpty()) {
     return false;
   }
+  if (normalizeRelinkPath(oldFilePath) == normalizeRelinkPath(newFilePath)) {
+    return false;
+  }
   auto *footage = findFootageItemByPath(oldFilePath);
   if (!footage) {
     return false;
   }
   return relinkFootage(footage, newFilePath);
+}
+
+QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
+    const QString &oldFilePath, const QString &searchRoot,
+    int maxCandidates) const {
+  QVector<RelinkCandidate> candidates;
+  if (oldFilePath.trimmed().isEmpty() || searchRoot.trimmed().isEmpty() ||
+      maxCandidates <= 0) {
+    return candidates;
+  }
+  const int resultLimit = std::min(maxCandidates, 256);
+
+  const QFileInfo oldInfo(oldFilePath);
+  const QDir root(QFileInfo(searchRoot).absoluteFilePath());
+  if (!root.exists() || oldInfo.fileName().isEmpty()) {
+    return candidates;
+  }
+
+  const QString oldName = oldInfo.fileName();
+  const QString normalizedOldPath =
+      QDir::cleanPath(oldInfo.absoluteFilePath());
+  const QString oldSuffix = oldInfo.suffix();
+  const QString oldBase = oldInfo.completeBaseName();
+  static const QRegularExpression sequencePattern(
+      QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
+  const auto oldSequenceMatch = sequencePattern.match(oldName);
+  const FootageItem *oldFootage = findFootageItemByPath(oldFilePath);
+  QDirIterator iterator(root.absolutePath(), QDir::Files,
+                        QDirIterator::Subdirectories);
+  while (iterator.hasNext()) {
+    const QFileInfo candidateInfo(iterator.next());
+    if (QDir::cleanPath(candidateInfo.absoluteFilePath()) ==
+        normalizedOldPath) {
+      continue;
+    }
+    int score = 0;
+    bool identityMatch = false;
+    QStringList reasons;
+    if (candidateInfo.fileName().compare(oldName, Qt::CaseInsensitive) == 0) {
+      score += 100;
+      identityMatch = true;
+      reasons.append(QStringLiteral("same filename"));
+    }
+    if (!oldSuffix.isEmpty() &&
+        candidateInfo.suffix().compare(oldSuffix, Qt::CaseInsensitive) == 0) {
+      score += 20;
+      reasons.append(QStringLiteral("same extension"));
+    }
+    if (!oldBase.isEmpty() &&
+        candidateInfo.completeBaseName().compare(oldBase,
+                                                  Qt::CaseInsensitive) == 0) {
+      score += 40;
+      identityMatch = true;
+      reasons.append(QStringLiteral("same basename"));
+    }
+    if (oldSequenceMatch.hasMatch()) {
+      const auto candidateSequenceMatch =
+          sequencePattern.match(candidateInfo.fileName());
+      if (candidateSequenceMatch.hasMatch() &&
+          candidateSequenceMatch.captured(1).compare(
+              oldSequenceMatch.captured(1), Qt::CaseInsensitive) == 0 &&
+          candidateSequenceMatch.captured(3).compare(
+              oldSequenceMatch.captured(3), Qt::CaseInsensitive) == 0 &&
+          candidateSequenceMatch.captured(2).size() ==
+              oldSequenceMatch.captured(2).size()) {
+        score += 60;
+        identityMatch = true;
+        reasons.append(QStringLiteral("same sequence pattern"));
+
+        if (oldFootage && oldFootage->isSequence &&
+            oldFootage->sequencePaths.size() > 1) {
+          bool complete = true;
+          const QString prefix = candidateSequenceMatch.captured(1);
+          const QString suffix = candidateSequenceMatch.captured(3);
+          const int padding = candidateSequenceMatch.captured(2).size();
+          for (const QString &oldSequencePath : oldFootage->sequencePaths) {
+            const auto oldFrameMatch =
+                sequencePattern.match(QFileInfo(oldSequencePath).fileName());
+            if (!oldFrameMatch.hasMatch()) {
+              complete = false;
+              break;
+            }
+            bool frameOk = false;
+            const qint64 frame =
+                oldFrameMatch.captured(2).toLongLong(&frameOk);
+            if (!frameOk) {
+              complete = false;
+              break;
+            }
+            const QString frameName =
+                prefix + QString::number(frame).rightJustified(
+                              padding, QLatin1Char('0')) +
+                suffix;
+            const QString framePath = candidateInfo.absoluteDir().filePath(frameName);
+            if (!QFileInfo::exists(framePath)) {
+              complete = false;
+              break;
+            }
+          }
+          if (complete) {
+            score += 80;
+            reasons.append(QStringLiteral("complete sequence"));
+          }
+        }
+      }
+    }
+    if (identityMatch && oldInfo.exists() &&
+        candidateInfo.size() == oldInfo.size()) {
+      score += 10;
+      reasons.append(QStringLiteral("same size"));
+    }
+    const QString oldDirectory = QDir::cleanPath(oldInfo.absolutePath());
+    const QString candidateDirectory =
+        QDir::cleanPath(candidateInfo.absolutePath());
+    if (identityMatch && !oldDirectory.isEmpty() &&
+        candidateDirectory.endsWith(oldDirectory, Qt::CaseInsensitive)) {
+      score += 10;
+      reasons.append(QStringLiteral("matching directory suffix"));
+    }
+    if (!identityMatch) {
+      continue;
+    }
+    candidates.append({candidateInfo.absoluteFilePath(), score,
+                       reasons.join(QStringLiteral(", "))});
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const RelinkCandidate &a, const RelinkCandidate &b) {
+              if (a.score != b.score) return a.score > b.score;
+              return a.path < b.path;
+            });
+  if (candidates.size() > resultLimit) {
+    candidates.resize(resultLimit);
+  }
+  return candidates;
 }
 
 void ArtifactProjectService::setPreviewQualityPreset(

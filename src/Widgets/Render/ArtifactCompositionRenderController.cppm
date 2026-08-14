@@ -485,14 +485,21 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
     }
   }
 
-  const float currentRotation = current.is3D
-      ? current.rotation.x()
-      : current.rotation.z();
   if (rotationChanged) {
-    if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
-      transform.setRotation(time, currentRotation);
+    if (current.is3D) {
+      if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
+        transform.setRotationX(time, current.rotation.x());
+        transform.setRotationY(time, current.rotation.y());
+        transform.setRotationZ(time, current.rotation.z());
+      } else {
+        transform.setCurrentRotationX(current.rotation.x());
+        transform.setCurrentRotationY(current.rotation.y());
+        transform.setCurrentRotationZ(current.rotation.z());
+      }
+    } else if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
+      transform.setRotation(time, current.rotation.z());
     } else {
-      transform.setInitialRotation(time, currentRotation);
+      transform.setInitialRotation(time, current.rotation.z());
     }
   }
 
@@ -508,6 +515,9 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
                          current.scale.z());
     }
   }
+  const float currentRotation = current.is3D
+      ? current.rotation.x()
+      : current.rotation.z();
   const auto syncProperty = [&](const QString &path, const QVariant &value,
                                 bool autoKey) {
     const auto property = layer->getProperty(path);
@@ -806,11 +816,15 @@ class GizmoTransformUndoCommand final : public UndoCommand {
       }
       transform.setCurrentPositionZ(snapshot.position.z());
       if (snapshot.hasRotationKey) {
-        transform.setRotation(time, snapshot.rotation.x());
+        transform.setRotationX(time, snapshot.rotation.x());
+        transform.setRotationY(time, snapshot.rotation.y());
+        transform.setRotationZ(time, snapshot.rotation.z());
       } else {
         transform.removeRotationKeyFrameAt(time);
         if (!snapshot.rotationAnimated) {
-          transform.setInitialRotation(time, snapshot.rotation.x());
+          transform.setCurrentRotationX(snapshot.rotation.x());
+          transform.setCurrentRotationY(snapshot.rotation.y());
+          transform.setInitialRotation(time, snapshot.rotation.z());
         }
       }
       if (snapshot.hasScaleKey) {
@@ -891,11 +905,15 @@ class GizmoGroupTransformUndoCommand final : public UndoCommand {
         }
         transform.setCurrentPositionZ(snapshot.position.z());
         if (snapshot.hasRotationKey) {
-          transform.setRotation(time, snapshot.rotation.x());
+          transform.setRotationX(time, snapshot.rotation.x());
+          transform.setRotationY(time, snapshot.rotation.y());
+          transform.setRotationZ(time, snapshot.rotation.z());
         } else {
           transform.removeRotationKeyFrameAt(time);
           if (!snapshot.rotationAnimated) {
-            transform.setInitialRotation(time, snapshot.rotation.x());
+            transform.setCurrentRotationX(snapshot.rotation.x());
+            transform.setCurrentRotationY(snapshot.rotation.y());
+            transform.setInitialRotation(time, snapshot.rotation.z());
           }
         }
         if (snapshot.hasScaleKey) {
@@ -6907,7 +6925,9 @@ bool projectedFixedPlaneFrameCornersAt(
   QMatrix4x4 world;
   world.setToIdentity();
   world.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  world.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  world.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  world.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  world.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   world.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   world.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
 
@@ -6941,7 +6961,9 @@ bool intersectPickingRayFixedPlaneAt(const Artifact3DLayer &plane, int frame,
   QMatrix4x4 world;
   world.setToIdentity();
   world.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  world.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  world.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  world.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  world.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   world.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   world.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
   const QVector3D planePoint = world.map(QVector3D());
@@ -7812,7 +7834,9 @@ static bool intersectModelLayerPickingRay(const Artifact3DLayer &layer,
       RationalTime(layer.currentFrame(), 30));
   QMatrix4x4 modelMatrix;
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
 
@@ -26178,11 +26202,15 @@ bool CompositionRenderController::cancelGizmoInteraction() {
       }
       transform.setCurrentPositionZ(snapshot.position.z());
       if (snapshot.hasRotationKey) {
-        transform.setRotation(time, snapshot.rotation.x());
+        transform.setRotationX(time, snapshot.rotation.x());
+        transform.setRotationY(time, snapshot.rotation.y());
+        transform.setRotationZ(time, snapshot.rotation.z());
       } else {
         transform.removeRotationKeyFrameAt(time);
         if (!snapshot.rotationAnimated) {
-          transform.setInitialRotation(time, snapshot.rotation.x());
+          transform.setCurrentRotationX(snapshot.rotation.x());
+          transform.setCurrentRotationY(snapshot.rotation.y());
+          transform.setInitialRotation(time, snapshot.rotation.z());
         }
       }
       if (snapshot.hasScaleKey) {
