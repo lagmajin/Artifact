@@ -28,6 +28,7 @@ public:
 
 struct SubmitVertex { float pos[2]; float uv[2]; float color[4]; };
 struct SubmitTransform { float offset[2]; float scale[2]; float screenSize[2]; };
+struct SubmitScreenTransform { float matrix[16]; };
 
 ArtifactTextGlyphSubmitter::ArtifactTextGlyphSubmitter() = default;
 ArtifactTextGlyphSubmitter::~ArtifactTextGlyphSubmitter() { destroy(); }
@@ -62,6 +63,7 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
     const float screenW = static_cast<float>(targetDesc.Width);
     const float screenH = static_cast<float>(targetDesc.Height);
     std::vector<SubmitVertex> vertices;
+    bool requiresTransformedPipeline = false;
     for (const auto& glyph : glyphs) {
         if (glyph.isEmojiSequence && glyph.shapedGlyphIndex == 0) {
             continue;
@@ -97,6 +99,10 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
         const float u1 = rect.u1(impl_->atlas.width()), v1 = rect.v1(impl_->atlas.height());
         const float alpha = rect.colorPreserved ? -std::clamp(opacity * glyph.offsetOpacity, 0.0f, 1.0f)
                                                 : std::clamp(opacity * glyph.offsetOpacity, 0.0f, 1.0f);
+        requiresTransformedPipeline = requiresTransformedPipeline ||
+            std::abs(glyph.offsetRotation) > 0.0001f ||
+            std::abs(glyph.offsetScale - 1.0f) > 0.0001f ||
+            std::abs(glyph.offsetOpacity - 1.0f) > 0.0001f;
         const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
         const float radians = glyph.offsetRotation * 0.0174532925199433f;
         const float cs = std::cos(radians), sn = std::sin(radians);
@@ -125,18 +131,30 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
     vbDesc.Size = vertices.size() * sizeof(SubmitVertex); vbDesc.Usage = Diligent::USAGE_IMMUTABLE; vbDesc.BindFlags = Diligent::BIND_VERTEX_BUFFER;
     Diligent::BufferData vbData{vertices.data(), vbDesc.Size}; Diligent::RefCntAutoPtr<Diligent::IBuffer> vb;
     impl_->device->CreateBuffer(vbDesc, &vbData, &vb);
-    SubmitTransform transform{{0,0},{1,1},{screenW,screenH}};
-    Diligent::BufferDesc cbDesc; cbDesc.Name = "ArtifactTextSubmitterCB"; cbDesc.Size = sizeof(transform);
+    Diligent::BufferDesc cbDesc; cbDesc.Name = "ArtifactTextSubmitterCB";
     cbDesc.Usage = Diligent::USAGE_IMMUTABLE; cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
-    Diligent::BufferData cbData{&transform, sizeof(transform)}; Diligent::RefCntAutoPtr<Diligent::IBuffer> cb;
+    SubmitTransform transform{{0,0},{1,1},{screenW,screenH}};
+    SubmitScreenTransform screenTransform{{
+        2.0f / std::max(screenW, 1.0f), 0.0f, 0.0f, 0.0f,
+        0.0f, -2.0f / std::max(screenH, 1.0f), 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        -1.0f, 1.0f, 0.0f, 1.0f}};
+    const auto& constantData = requiresTransformedPipeline ? static_cast<const void*>(&screenTransform)
+                                                            : static_cast<const void*>(&transform);
+    cbDesc.Size = requiresTransformedPipeline ? sizeof(screenTransform) : sizeof(transform);
+    Diligent::BufferData cbData{constantData, cbDesc.Size}; Diligent::RefCntAutoPtr<Diligent::IBuffer> cb;
     impl_->device->CreateBuffer(cbDesc, &cbData, &cb);
     if (!vb || !cb) return false;
-    auto* srb = impl_->pipelines.glyphBinding;
+    auto* pipeline = requiresTransformedPipeline ? impl_->pipelines.transformedGlyphPipeline
+                                                  : impl_->pipelines.glyphPipeline;
+    auto* srb = requiresTransformedPipeline ? impl_->pipelines.transformedGlyphBinding
+                                            : impl_->pipelines.glyphBinding;
+    if (!pipeline || !srb) return false;
     srb->GetVariableByName(Diligent::SHADER_TYPE_VERTEX, "TransformCB")->Set(cb);
     srb->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_texture")->Set(atlasView);
     srb->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_sampler")->Set(impl_->pipelines.atlasSampler);
     context->SetRenderTargets(1, &target, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    context->SetPipelineState(impl_->pipelines.glyphPipeline);
+    context->SetPipelineState(pipeline);
     context->CommitShaderResources(srb, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     Diligent::IBuffer* buffers[] = {vb.RawPtr()}; Diligent::Uint64 offsets[] = {0};
     context->SetVertexBuffers(0, 1, buffers, offsets, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
