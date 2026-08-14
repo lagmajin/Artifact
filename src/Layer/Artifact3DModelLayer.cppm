@@ -865,6 +865,43 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
       }
     }
   };
+  const auto drawFaceNormals = [&]() {
+    const FloatColor normalColor{1.0f, 0.35f, 0.08f, opacity() * 0.9f};
+    const auto normalMatrix = modelMatrix.normalMatrix();
+    for (int polygon = 0; polygon < impl_->mesh_.polygonCount(); ++polygon) {
+      const auto vertexIndices = impl_->mesh_.getPolygonVertices(polygon);
+      if (vertexIndices.size() < 3) {
+        continue;
+      }
+
+      QVector3D center;
+      QVector3D localNormal;
+      float edgeLengthSum = 0.0f;
+      for (size_t i = 0; i < vertexIndices.size(); ++i) {
+        const QVector3D &current = positions->data()[vertexIndices[i]];
+        const QVector3D &next =
+            positions->data()[vertexIndices[(i + 1) % vertexIndices.size()]];
+        center += current;
+        edgeLengthSum += (next - current).length();
+        localNormal += QVector3D(
+            (current.y() - next.y()) * (current.z() + next.z()),
+            (current.z() - next.z()) * (current.x() + next.x()),
+            (current.x() - next.x()) * (current.y() + next.y()));
+      }
+      if (localNormal.lengthSquared() <= 1.0e-10f) {
+        continue;
+      }
+      center /= static_cast<float>(vertexIndices.size());
+      const QVector3D normal = (normalMatrix * localNormal).normalized();
+      const float averageEdgeLength =
+          edgeLengthSum / static_cast<float>(vertexIndices.size());
+      const float faceScale = std::max(1.0f, averageEdgeLength * 0.25f);
+      const QVector3D worldCenter = modelMatrix.map(center);
+      const QVector3D worldEnd = worldCenter + normal * faceScale;
+      renderer->draw3DLine(toFloat3(worldCenter), toFloat3(worldEnd),
+                           normalColor, 1.5f);
+    }
+  };
 
   if (impl_->renderMode_ == RenderMode::Solid) {
     const QString cacheKey = QStringLiteral("%1|layer=%2")
@@ -884,6 +921,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
             .arg(solidShadingMode));
     if (impl_->wireOverlay_) {
       drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
+      drawFaceNormals();
     }
   } else {
     drawEdges(wireframeColor, thickness);

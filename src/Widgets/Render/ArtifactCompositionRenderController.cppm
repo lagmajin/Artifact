@@ -37044,6 +37044,28 @@ void CompositionRenderController::Impl::drawViewportGuideOverlay(
 
   guideHorizontals_.clear();
 
+  if (comp && !selectedLayerId_.isNil()) {
+    const auto child = comp->layerById(selectedLayerId_);
+    const auto parent = child ? child->parentLayer() : nullptr;
+    if (child && parent && renderer_) {
+      const QPointF childCanvas = child->getGlobalTransform().map(QPointF(0.0, 0.0));
+      const QPointF parentCanvas = parent->getGlobalTransform().map(QPointF(0.0, 0.0));
+      const auto childViewport = renderer_->canvasToViewport(
+          {static_cast<float>(childCanvas.x()), static_cast<float>(childCanvas.y())});
+      const auto parentViewport = renderer_->canvasToViewport(
+          {static_cast<float>(parentCanvas.x()), static_cast<float>(parentCanvas.y())});
+      const FloatColor relationshipColor{0.35f, 0.85f, 1.0f, 0.82f};
+      renderer_->drawDashedLineLocal(
+          {childViewport.x, childViewport.y},
+          {parentViewport.x, parentViewport.y}, 1.5f, 8.0f, 5.0f,
+          relationshipColor);
+      renderer_->drawCircle(childViewport.x, childViewport.y, 3.5f,
+                            relationshipColor, 1.0f, false);
+      renderer_->drawCircle(parentViewport.x, parentViewport.y, 4.5f,
+                            relationshipColor, 1.0f, false);
+    }
+  }
+
   if (showGuides_ && comp && !selectedLayerId_.isNil()) {
 
     const auto guideLayer = comp->layerById(selectedLayerId_);
@@ -38044,13 +38066,21 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
 
 
-  const auto canvasTopLeft = renderer_->canvasToViewport({0.0f, 0.0f});
+  const std::array<Detail::float2, 4> canvasCorners{
+      Detail::float2{0.0f, 0.0f}, Detail::float2{cw, 0.0f},
+      Detail::float2{cw, ch}, Detail::float2{0.0f, ch}};
+  std::array<Detail::float2, 4> screenCorners{};
+  for (size_t i = 0; i < canvasCorners.size(); ++i) {
+    screenCorners[i] = renderer_->canvasToViewport(canvasCorners[i]);
+  }
+  const Detail::float2 screenCenter =
+      renderer_->canvasToViewport({cw * 0.5f, ch * 0.5f});
 
-  const auto canvasBottomRight = renderer_->canvasToViewport({cw, ch});
+  const float screenW = std::hypot(screenCorners[1].x - screenCorners[0].x,
+                                   screenCorners[1].y - screenCorners[0].y);
 
-  const float screenW = std::abs(canvasBottomRight.x - canvasTopLeft.x);
-
-  const float screenH = std::abs(canvasBottomRight.y - canvasTopLeft.y);
+  const float screenH = std::hypot(screenCorners[3].x - screenCorners[0].x,
+                                   screenCorners[3].y - screenCorners[0].y);
 
   if (screenW <= 0.0f || screenH <= 0.0f) {
 
@@ -38062,7 +38092,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
   const FloatColor outlineColor = {0.0f, 0.0f, 0.0f, 0.72f};
 
-  const FloatColor innerColor = {0.95f, 0.97f, 1.0f, 0.94f};
+  const FloatColor innerColor = {0.95f, 0.97f, 1.0f, 0.42f};
 
   const auto snapScreen = [](float value) {
 
@@ -38072,33 +38102,24 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
   const auto drawSafeRect = [&](float ratio) {
 
-    const float insetX = screenW * (1.0f - ratio) * 0.5f;
+    std::vector<Detail::float2> points;
+    points.reserve(screenCorners.size() + 1);
+    for (const auto &corner : screenCorners) {
+      points.push_back({snapScreen(screenCenter.x +
+                                   (corner.x - screenCenter.x) * ratio),
+                        snapScreen(screenCenter.y +
+                                   (corner.y - screenCenter.y) * ratio)});
+    }
+    points.push_back(points.front());
 
-    const float insetY = screenH * (1.0f - ratio) * 0.5f;
-
-    const float x = snapScreen(std::min(canvasTopLeft.x, canvasBottomRight.x) +
-
-                               insetX);
-
-    const float y = snapScreen(std::min(canvasTopLeft.y, canvasBottomRight.y) +
-
-                               insetY);
-
-    const float w = std::max(0.0f, screenW - insetX * 2.0f);
-
-    const float h = std::max(0.0f, screenH - insetY * 2.0f);
-
-    if (w <= 2.0f || h <= 2.0f) {
+    if (screenW * ratio <= 2.0f || screenH * ratio <= 2.0f) {
 
       return;
 
     }
 
-    renderer_->drawRectOutlineLocal(x, y, w, h, outlineColor);
-
-    renderer_->drawRectOutlineLocal(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f,
-
-                                    innerColor);
+    renderer_->drawPolyline(points, outlineColor, 1.0f);
+    renderer_->drawPolyline(points, innerColor, 1.0f);
 
   };
 
@@ -38111,12 +38132,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
 
   const float centerX =
-
-      snapScreen((canvasTopLeft.x + canvasBottomRight.x) * 0.5f);
+      snapScreen(screenCenter.x);
 
   const float centerY =
-
-      snapScreen((canvasTopLeft.y + canvasBottomRight.y) * 0.5f);
+      snapScreen(screenCenter.y);
 
   const float crossSize =
 
