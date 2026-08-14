@@ -150,9 +150,16 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
     auto* srb = requiresTransformedPipeline ? impl_->pipelines.transformedGlyphBinding
                                             : impl_->pipelines.glyphBinding;
     if (!pipeline || !srb) return false;
-    srb->GetVariableByName(Diligent::SHADER_TYPE_VERTEX, "TransformCB")->Set(cb);
-    srb->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_texture")->Set(atlasView);
-    srb->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_sampler")->Set(impl_->pipelines.atlasSampler);
+    auto* transformVariable = srb->GetVariableByName(
+        Diligent::SHADER_TYPE_VERTEX, "TransformCB");
+    auto* textureVariable = srb->GetVariableByName(
+        Diligent::SHADER_TYPE_PIXEL, "g_texture");
+    auto* samplerVariable = srb->GetVariableByName(
+        Diligent::SHADER_TYPE_PIXEL, "g_sampler");
+    if (!transformVariable || !textureVariable || !samplerVariable) return false;
+    transformVariable->Set(cb);
+    textureVariable->Set(atlasView);
+    samplerVariable->Set(impl_->pipelines.atlasSampler);
     context->SetRenderTargets(1, &target, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     context->SetPipelineState(pipeline);
     context->CommitShaderResources(srb, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
