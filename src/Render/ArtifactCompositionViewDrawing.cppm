@@ -1127,7 +1127,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
     const bool useLuma = ref.type == MatteType::Luma ||
                          ref.type == MatteType::InverseLuma;
     const float opacity = std::clamp(ref.opacity, 0.0f, 1.0f);
-    for (int y = 0; y < height; ++y) {
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
       const auto* row = fitted.constScanLine(y);
       for (int x = 0; x < width; ++x) {
         const auto* pixel = row + x * 4;
@@ -1159,7 +1159,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
           }
         }
       }
-    }
+    });
     hasCombined = true;
     hasSource = true;
   }
@@ -1170,7 +1170,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  for (int y = 0; y < height; ++y) {
+  ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
     auto* row = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
     for (int x = 0; x < width; ++x) {
       const float factor = combined[static_cast<size_t>(y) * width + x];
@@ -1181,7 +1181,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
           std::clamp(static_cast<int>(qBlue(pixel) * factor + 0.5f), 0, 255),
           std::clamp(static_cast<int>(qAlpha(pixel) * factor + 0.5f), 0, 255));
     }
-  }
+  });
   return result;
 }
 
