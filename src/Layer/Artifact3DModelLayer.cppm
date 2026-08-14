@@ -104,6 +104,9 @@ public:
   bool affectedByLights_ = true;
   bool useTextureInSolid_ = false;
   bool wireOverlay_ = false;
+  bool faceNormals_ = false;
+  bool vertexNormals_ = false;
+  float normalLength_ = 25.0f;
   QString lastRenderTraceOutcome_;
   Impl() {}
   ~Impl() {}
@@ -264,6 +267,9 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["render.affectedByLights"] = impl_->affectedByLights_;
   obj["render.useTextureInSolid"] = impl_->useTextureInSolid_;
   obj["render.wireOverlay"] = impl_->wireOverlay_;
+  obj["render.faceNormals"] = impl_->faceNormals_;
+  obj["render.vertexNormals"] = impl_->vertexNormals_;
+  obj["render.normalLength"] = impl_->normalLength_;
   obj["fixedGeometry"] = static_cast<int>(impl_->fixedGeometry_);
   obj["geometry.width"] = impl_->geometryWidth_;
   obj["geometry.height"] = impl_->geometryHeight_;
@@ -340,6 +346,13 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       obj.value("render.useTextureInSolid").toBool(impl_->useTextureInSolid_);
   impl_->wireOverlay_ =
       obj.value("render.wireOverlay").toBool(impl_->wireOverlay_);
+  impl_->faceNormals_ =
+      obj.value("render.faceNormals").toBool(impl_->faceNormals_);
+  impl_->vertexNormals_ =
+      obj.value("render.vertexNormals").toBool(impl_->vertexNormals_);
+  impl_->normalLength_ = finiteClamped(
+      static_cast<float>(obj.value("render.normalLength").toDouble(
+          impl_->normalLength_)), impl_->normalLength_, 0.01f, 10000.0f);
 
   const QJsonObject baseColor = obj.value("material.base.color").toObject();
   if (!baseColor.isEmpty()) {
@@ -895,11 +908,32 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
       const QVector3D normal = (normalMatrix * localNormal).normalized();
       const float averageEdgeLength =
           edgeLengthSum / static_cast<float>(vertexIndices.size());
-      const float faceScale = std::max(1.0f, averageEdgeLength * 0.25f);
+      const float faceScale = impl_->normalLength_ > 0.0f
+                                  ? impl_->normalLength_
+                                  : std::max(1.0f, averageEdgeLength * 0.25f);
       const QVector3D worldCenter = modelMatrix.map(center);
       const QVector3D worldEnd = worldCenter + normal * faceScale;
       renderer->draw3DLine(toFloat3(worldCenter), toFloat3(worldEnd),
                            normalColor, 1.5f);
+    }
+  };
+  const auto drawVertexNormals = [&]() {
+    const auto normals = vertexAttrs.get<QVector3D>("normal");
+    if (!normals || normals->data().size() != positions->data().size()) {
+      return;
+    }
+    const FloatColor normalColor{1.0f, 0.72f, 0.08f, opacity() * 0.82f};
+    const auto normalMatrix = modelMatrix.normalMatrix();
+    for (int index = 0; index < positions->data().size(); ++index) {
+      const QVector3D localNormal = normals->data()[index];
+      if (localNormal.lengthSquared() <= 1.0e-10f) {
+        continue;
+      }
+      const QVector3D worldStart = transformedVertices[index];
+      const QVector3D worldNormal = (normalMatrix * localNormal).normalized();
+      const QVector3D worldEnd = worldStart + worldNormal * impl_->normalLength_;
+      renderer->draw3DLine(toFloat3(worldStart), toFloat3(worldEnd),
+                           normalColor, 1.25f);
     }
   };
 
@@ -921,7 +955,12 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
             .arg(solidShadingMode));
     if (impl_->wireOverlay_) {
       drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
-      drawFaceNormals();
+      if (impl_->faceNormals_) {
+        drawFaceNormals();
+      }
+      if (impl_->vertexNormals_) {
+        drawVertexNormals();
+      }
     }
   } else {
     drawEdges(wireframeColor, thickness);
@@ -1083,6 +1122,31 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   wireOverlayProp->setDisplayLabel(QStringLiteral("Wire Overlay"));
   wireOverlayProp->setTooltip(QStringLiteral("Draw mesh edges over the solid viewport"));
   renderGroup.addProperty(wireOverlayProp);
+
+  auto faceNormalsProp = persistentLayerProperty(
+      QStringLiteral("render.faceNormals"), PropertyType::Boolean,
+      impl_->faceNormals_, -51);
+  faceNormalsProp->setDisplayLabel(QStringLiteral("Face Normal"));
+  faceNormalsProp->setTooltip(
+      QStringLiteral("Draw one normal line from the center of each face"));
+  renderGroup.addProperty(faceNormalsProp);
+
+  auto vertexNormalsProp = persistentLayerProperty(
+      QStringLiteral("render.vertexNormals"), PropertyType::Boolean,
+      impl_->vertexNormals_, -50);
+  vertexNormalsProp->setDisplayLabel(QStringLiteral("Vertex Normal"));
+  vertexNormalsProp->setTooltip(
+      QStringLiteral("Draw one normal line from each vertex"));
+  renderGroup.addProperty(vertexNormalsProp);
+
+  auto normalLengthProp = persistentLayerProperty(
+      QStringLiteral("render.normalLength"), PropertyType::Float,
+      impl_->normalLength_, -49);
+  normalLengthProp->setDisplayLabel(QStringLiteral("Normal Length"));
+  normalLengthProp->setTooltip(QStringLiteral("Length of displayed normal lines"));
+  normalLengthProp->setHardRange(0.01, 10000.0);
+  normalLengthProp->setSoftRange(1.0, 200.0);
+  renderGroup.addProperty(normalLengthProp);
 
   PropertyGroup materialGroup(QStringLiteral("Material"));
 
@@ -1268,6 +1332,19 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("render.wireOverlay")) {
     impl_->wireOverlay_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("render.faceNormals")) {
+    impl_->faceNormals_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("render.vertexNormals")) {
+    impl_->vertexNormals_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("render.normalLength")) {
+    impl_->normalLength_ = finiteClamped(
+        value.toFloat(), impl_->normalLength_, 0.01f, 10000.0f);
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {
