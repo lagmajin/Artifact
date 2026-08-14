@@ -14,6 +14,7 @@ import Layer.Blend;
 import Color.Float;
 import Color.Conversion;
 import Color.Luminance;
+import Core.Parallel;
 
 namespace Artifact::SoftwareRender {
 
@@ -436,8 +437,7 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
  srcBgr.convertTo(srcF, CV_32FC3, 1.0 / 255.0);
 
  cv::Mat blended = dstF.clone();
- const auto blendRows = [&](int yBegin, int yEnd) {
-  for (int y = yBegin; y < yEnd; ++y) {
+ ArtifactCore::Parallel::For(0, dstF.rows, dstF.rows * dstF.cols, [&](int y) {
    const cv::Vec3f* dstRow = dstF.ptr<cv::Vec3f>(y);
    const cv::Vec3f* srcRow = srcF.ptr<cv::Vec3f>(y);
    cv::Vec3f* outRow = blended.ptr<cv::Vec3f>(y);
@@ -456,10 +456,7 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
     }
     outRow[x] = pixel;
    }
-  }
- };
-
- blendRows(0, dstF.rows);
+ });
 
  cv::Mat mixed = dstF * (1.0f - a) + blended * a;
  mixed.convertTo(dstBgr, CV_8UC3, 255.0);
