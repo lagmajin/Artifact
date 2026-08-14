@@ -1,6 +1,6 @@
 # Cloud AI Widget - Extended API Reference (Phases 1-5)
 
-**Updated**: 2026-04-26  
+**最終更新:** 2026-08-14
 **Phases**: 1 (Complete), 2 (Implemented), 3 (Partial), 4-5 (Framework Ready)
 
 ## Overview
@@ -12,6 +12,33 @@ The Cloud AI widget API now supports comprehensive composition and layer manipul
 - **Phase 3**: Effects and masks 🟡 (core effect operations available)
 - **Phase 4**: Keyframe animation ✅ (Layer and effect keyframe read/write/delete APIs)
 - **Phase 5**: Group layer management ✅ (Create, move, and ungroup operations)
+
+## AI Agent Safety Contract
+
+Before an agent edits the project, it should call the read-only preflight endpoint:
+
+```json
+{
+  "tool": "WorkspaceAutomation",
+  "method": "agentPreflight",
+  "arguments": []
+}
+```
+
+The result contains the current `workspace` snapshot, `diagnostics`, an
+`observedAtUtc` timestamp, and the versioned `contract`. The contract describes
+the required order:
+
+1. Inspect the current state and resolve stable target IDs.
+2. Validate the command with `validateCommand`.
+3. Use a preview/dry-run and explicit confirmation for high-risk writes.
+4. Execute the command.
+5. Verify the result with a snapshot or diagnostics before reporting completion.
+
+`agentContract()` can be called independently when only the protocol is needed.
+
+The Python bridge exposes the same read-only handshake as
+`artifact.workspace.agentPreflight()`, returning the compact JSON result.
 
 ---
 

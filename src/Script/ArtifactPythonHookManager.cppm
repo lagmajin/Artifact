@@ -39,6 +39,7 @@
 #include <regex>
 #include <random>
 #include <QJsonDocument>
+#include <QVariantMap>
 module Artifact.Script.Hooks;
 
 import Script.Python.Engine;
@@ -166,6 +167,10 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
     registerWorkspaceMethod("workspaceSnapshot", []() {
         const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("workspaceSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("agentPreflight", []() {
+        const QVariantMap preflight = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("agentPreflight"), {}).toMap();
+        return QString::fromUtf8(QJsonDocument::fromVariant(preflight).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("projectSnapshot", []() {
         const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("projectSnapshot"), {}).toMap();

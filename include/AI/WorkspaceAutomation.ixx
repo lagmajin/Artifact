@@ -131,11 +131,15 @@ public:
             "This tool host exposes a compact AI automation surface for ArtifactStudio. "
             "It can inspect the current project state, list compositions and layers, "
             "import assets, create compositions, edit layer order and names, and control "
-            "the render queue through existing application services.",
+            "the render queue through existing application services. Start with "
+            "agentPreflight() for a read-only contract, workspace snapshot, and diagnostics "
+            "handshake; validate and verify writes before reporting completion.",
             "This tool host exposes a compact AI automation surface for ArtifactStudio. "
             "It can inspect the current project state, list compositions and layers, "
             "import assets, create compositions, edit layer order and names, and control "
-            "the render queue through existing application services.",
+            "the render queue through existing application services. Start with "
+            "agentPreflight() for a read-only contract, workspace snapshot, and diagnostics "
+            "handshake; validate and verify writes before reporting completion.",
             {});
     }
 
@@ -148,6 +152,8 @@ public:
             {"saveSafeWriteAuditLog", IDescribable::loc("Persist the safe-write audit log as JSON.", "Persist the safe-write audit log as JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"loadSafeWriteAuditLog", IDescribable::loc("Load a safe-write audit log from JSON.", "Load a safe-write audit log from JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
+            {"agentContract", IDescribable::loc("Return the safety, observation, and recovery contract for AI agents.", "Return the safety, observation, and recovery contract for AI agents.", {}), "QVariantMap"},
+            {"agentPreflight", IDescribable::loc("Return the AI agent contract, current workspace snapshot, and diagnostics in one read-only call.", "Return the AI agent contract, current workspace snapshot, and diagnostics in one read-only call.", {}), "QVariantMap"},
             {"commandVocabulary", IDescribable::loc("List the supported command IR vocabulary and required fields.", "List the supported command IR vocabulary and required fields.", {}), "QVariantList"},
             {"validateCommand", IDescribable::loc("Validate a command IR request without executing it.", "Validate a command IR request without executing it.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
             {"executeCommand", IDescribable::loc("Execute a validated command IR request through the automation facade.", "Execute a validated command IR request through the automation facade.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
@@ -355,6 +361,12 @@ public:
         }
         if (name == QStringLiteral("workspaceDiagnostics")) {
             return workspaceDiagnostics();
+        }
+        if (name == QStringLiteral("agentContract")) {
+            return agentContract();
+        }
+        if (name == QStringLiteral("agentPreflight")) {
+            return agentPreflight();
         }
         if (name == QStringLiteral("commandVocabulary")) {
             return commandVocabulary();
@@ -1450,6 +1462,66 @@ private:
     static QVariantList commandVocabulary()
     {
         return ArtifactCore::CommandIR::supportedCommands();
+    }
+
+    static QVariantMap agentContract()
+    {
+        return {
+            {QStringLiteral("contractVersion"), QStringLiteral("1")},
+            {QStringLiteral("entryPoint"), QStringLiteral("WorkspaceAutomation")},
+            {QStringLiteral("alternateEntryPoints"), QVariantMap{
+                {QStringLiteral("python"), QStringLiteral("artifact.workspace.agentPreflight")}
+            }},
+            {QStringLiteral("discovery"), QVariantList{
+                QStringLiteral("agentPreflight"),
+                QStringLiteral("workspaceSnapshot"),
+                QStringLiteral("workspaceDiagnostics"),
+                QStringLiteral("commandVocabulary")
+            }},
+            {QStringLiteral("safeExecutionOrder"), QVariantList{
+                QStringLiteral("inspect"),
+                QStringLiteral("validateCommand"),
+                QStringLiteral("preview_or_dry_run"),
+                QStringLiteral("confirm_high_risk_write"),
+                QStringLiteral("executeCommand"),
+                QStringLiteral("verify_with_snapshot_or_diagnostics")
+            }},
+            {QStringLiteral("observationMethods"), QVariantList{
+                QStringLiteral("workspaceSnapshot"),
+                QStringLiteral("currentCompositionSnapshot"),
+                QStringLiteral("selectionSnapshot"),
+                QStringLiteral("workspaceDiagnostics"),
+                QStringLiteral("safeWriteAuditLogSnapshot")
+            }},
+            {QStringLiteral("safetyMethods"), QVariantList{
+                QStringLiteral("validateCommand"),
+                QStringLiteral("dryRunRemoveLayerFromCurrentComposition"),
+                QStringLiteral("dryRunRemoveComposition"),
+                QStringLiteral("removeLayerFromCurrentCompositionConfirmed")
+            }},
+            {QStringLiteral("failureResponseFields"), QVariantList{
+                QStringLiteral("success"), QStringLiteral("valid"),
+                QStringLiteral("executed"), QStringLiteral("error"),
+                QStringLiteral("diagnostics"), QStringLiteral("details")
+            }},
+            {QStringLiteral("principles"), QVariantList{
+                QStringLiteral("Do not infer target ids from display names when a snapshot can provide ids."),
+                QStringLiteral("Treat high-risk writes as preview-and-confirm operations."),
+                QStringLiteral("Do not report completion until the post-operation state is observed."),
+                QStringLiteral("Keep the command payload and diagnostics when reporting a failure.")
+            }}
+        };
+    }
+
+    static QVariantMap agentPreflight()
+    {
+        return {
+            {QStringLiteral("contract"), agentContract()},
+            {QStringLiteral("workspace"), workspaceSnapshot()},
+            {QStringLiteral("diagnostics"), workspaceDiagnostics()},
+            {QStringLiteral("observedAtUtc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+            {QStringLiteral("readOnly"), true}
+        };
     }
 
     static QVariantMap validateCommand(const QVariantMap& command)

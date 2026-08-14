@@ -15,6 +15,7 @@ module;
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QVariantMap>
 #include <QMetaObject>
 #include <QString>
 #include <QStringList>
@@ -263,8 +264,19 @@ QString buildCloudSystemPrompt(const AIContext &context) {
                            "The app also accepts component as an alias for class, and arguments may be an object or an array.\n"
                            "Do not wrap it in markdown fences.\n");
   prompt += ArtifactCore::ToolBridge::toolSchemaJson();
+  const QVariantMap agentContract =
+      Artifact::WorkspaceAutomation::instance()
+          .invokeMethod(QStringLiteral("agentContract"), {})
+          .toMap();
+  prompt += QStringLiteral("\n\n## AI Agent Contract\n"
+                           "Follow this machine-readable safety and observation contract before using tools:\n"
+                           "```json\n%1\n```\n")
+                .arg(QString::fromUtf8(
+                    QJsonDocument::fromVariant(agentContract).toJson(
+                        QJsonDocument::Compact)));
   prompt += QStringLiteral(
       "\n\n## Workspace Automation Quick Actions\n"
+      "- AI起動時の読み取り: WorkspaceAutomation.agentPreflight()（契約・現在状態・診断を一括取得）\n"
       "- コンポジション作成: WorkspaceAutomation.createComposition(name, "
       "width, height)\n"
       "- 画像レイヤー追加: "
@@ -352,6 +364,15 @@ ChatResponse runCloudChatWithToolLoop(ICloudAIAgentPtr cloudAgent,
     QString toolTrace;
     QString toolError;
     if (tryHandleToolCallResponse(response.content, &toolTrace, &toolError)) {
+      const QVariantMap postToolPreflight =
+          Artifact::WorkspaceAutomation::instance()
+              .invokeMethod(QStringLiteral("agentPreflight"), {})
+              .toMap();
+      toolTrace += QStringLiteral(
+          "\n[post_tool_preflight]\n%1")
+                       .arg(QString::fromUtf8(
+                           QJsonDocument::fromVariant(postToolPreflight).toJson(
+                               QJsonDocument::Compact)));
       systemPrompt =
           buildCloudSystemPrompt(context) +
           QStringLiteral(

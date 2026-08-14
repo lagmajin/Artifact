@@ -212,6 +212,25 @@ int runAIToolBridgeTests()
     const QJsonObject workspaceDiagnosticsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("workspaceDiagnostics"));
     report.check(!workspaceDiagnosticsTool.isEmpty(), QStringLiteral("workspace automation exposes diagnostics summary"));
 
+    const QJsonObject agentContractTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("agentContract"));
+    report.check(!agentContractTool.isEmpty(), QStringLiteral("workspace automation exposes the AI agent contract"));
+    const QJsonObject agentPreflightTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("agentPreflight"));
+    report.check(!agentPreflightTool.isEmpty(), QStringLiteral("workspace automation exposes the AI preflight"));
+
+    const QVariantMap agentContract = WorkspaceAutomation::instance()
+        .invokeMethod(QStringLiteral("agentContract"), {}).toMap();
+    report.check(agentContract.value(QStringLiteral("contractVersion")).toString() == QStringLiteral("1"),
+                 QStringLiteral("AI agent contract has a stable version"));
+    const QVariantMap preflight = WorkspaceAutomation::instance()
+        .invokeMethod(QStringLiteral("agentPreflight"), {}).toMap();
+    report.check(preflight.value(QStringLiteral("readOnly")).toBool(),
+                 QStringLiteral("AI preflight is explicitly read-only"));
+    report.check(preflight.contains(QStringLiteral("workspace")) &&
+                     preflight.contains(QStringLiteral("diagnostics")) &&
+                     preflight.contains(QStringLiteral("contract")) &&
+                     !preflight.value(QStringLiteral("observedAtUtc")).toString().isEmpty(),
+                 QStringLiteral("AI preflight contains state, diagnostics, contract, and observation time"));
+
     const QJsonObject setKeyframeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setKeyframe"));
     report.check(!setKeyframeTool.isEmpty(), QStringLiteral("workspace automation exposes keyframe creation"));
     report.check(setKeyframeTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),

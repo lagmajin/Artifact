@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QVariantMap>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -1024,6 +1025,15 @@ bool Artifact::ArtifactAICloudWidget::tryHandleToolCallResponse(
   if (!toolResult.handled && errorOut) {
     *errorOut = toolResult.trace;
   }
+  const QVariantMap postToolPreflight =
+      Artifact::WorkspaceAutomation::instance()
+          .invokeMethod(QStringLiteral("agentPreflight"), {})
+          .toMap();
+  *toolTraceOut += QStringLiteral(
+      "\n[post_tool_preflight]\n%1")
+                       .arg(QString::fromUtf8(
+                           QJsonDocument::fromVariant(postToolPreflight).toJson(
+                               QJsonDocument::Compact)));
   return true;
 }
 

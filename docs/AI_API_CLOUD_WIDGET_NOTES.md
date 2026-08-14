@@ -1,6 +1,6 @@
 # Cloud AI Widget - Note API Reference
 
-**Added**: 2026-04-26  
+**最終更新:** 2026-08-14
 **Phase**: 1 (Priority)
 
 ## Overview
@@ -19,9 +19,11 @@ Command results are structured maps with `success`, `valid`, `executed`, `type`,
 
 Suggested call order for agents:
 
-1. `commandVocabulary()`
-2. `validateCommand(command)`
-3. `executeCommand(command)`
+1. `agentPreflight()`
+2. `commandVocabulary()`
+3. `validateCommand(command)`
+4. `executeCommand(command)`
+5. Verify with `workspaceSnapshot()` or `workspaceDiagnostics()`
 
 ---
 
