@@ -292,7 +292,12 @@ SamplerState g_sampler : register(s0);
 
 float4 main(PS_INPUT input) : SV_TARGET
 {
-    const float alpha = g_texture.Sample(g_sampler, input.TexCoord).a;
+    const float4 sampled = g_texture.Sample(g_sampler, input.TexCoord);
+    // Negative alpha is an internal glyph-atlas contract for a color-preserved
+    // glyph.  Monochrome coverage keeps the normal tint*coverage path.
+    if (input.Color.a < 0.0f)
+        return float4(sampled.rgb, sampled.a * -input.Color.a);
+    const float alpha = sampled.a;
     return float4(input.Color.rgb * alpha, input.Color.a * alpha);
 }
 )";

@@ -332,7 +332,10 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
     }
     if (const QVariant value = valueAtTime(QStringLiteral("fillColor"));
         value.canConvert<QColor>()) {
-      resolved.properties.fillColor = toFloatRGBA(value.value<QColor>());
+      const QColor color = value.value<QColor>();
+      if (color.isValid()) {
+        resolved.properties.fillColor = toFloatRGBA(color);
+      }
     }
     if (const QVariant value = valueAtTime(QStringLiteral("strokeEnabled"));
         value.isValid()) {
@@ -340,7 +343,10 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
     }
     if (const QVariant value = valueAtTime(QStringLiteral("strokeColor"));
         value.canConvert<QColor>()) {
-      resolved.properties.strokeColor = toFloatRGBA(value.value<QColor>());
+      const QColor color = value.value<QColor>();
+      if (color.isValid()) {
+        resolved.properties.strokeColor = toFloatRGBA(color);
+      }
     }
     resolved.properties.strokeWidth = finiteFloat(
         QStringLiteral("strokeWidth"), resolved.properties.strokeWidth,
@@ -1274,10 +1280,18 @@ FloatRGBA colorFromJsonValue(const QJsonValue &value,
                              const FloatRGBA &fallback) {
   if (value.isObject()) {
     const QJsonObject obj = value.toObject();
-    return FloatRGBA(static_cast<float>(obj.value("r").toDouble(fallback.r())),
-                     static_cast<float>(obj.value("g").toDouble(fallback.g())),
-                     static_cast<float>(obj.value("b").toDouble(fallback.b())),
-                     static_cast<float>(obj.value("a").toDouble(fallback.a())));
+    const auto safeChannel = [](const QJsonValue &channel,
+                                const float fallbackChannel) {
+      const float converted = static_cast<float>(
+          channel.toDouble(static_cast<double>(fallbackChannel)));
+      return std::isfinite(converted)
+                 ? std::clamp(converted, 0.0f, 1.0f)
+                 : fallbackChannel;
+    };
+    return FloatRGBA(safeChannel(obj.value("r"), fallback.r()),
+                     safeChannel(obj.value("g"), fallback.g()),
+                     safeChannel(obj.value("b"), fallback.b()),
+                     safeChannel(obj.value("a"), fallback.a()));
   }
   if (value.isString()) {
     const QColor color(value.toString());
@@ -3786,6 +3800,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                       ArtifactCore::PropertyType::Float,
                                       animator.range.start, -118);
     startProp->setDisplayLabel(QStringLiteral("Start"));
+    startProp->setHardRange(-100000.0, 100000.0);
     startProp->setSoftRange(0.0, 100.0);
     animatorGroup.addProperty(startProp);
 
@@ -3793,6 +3808,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                     ArtifactCore::PropertyType::Float,
                                     animator.range.end, -117);
     endProp->setDisplayLabel(QStringLiteral("End"));
+    endProp->setHardRange(-100000.0, 100000.0);
     endProp->setSoftRange(0.0, 100.0);
     animatorGroup.addProperty(endProp);
 
@@ -3800,6 +3816,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                        ArtifactCore::PropertyType::Float,
                                        animator.range.offset, -116);
     offsetProp->setDisplayLabel(QStringLiteral("Offset"));
+    offsetProp->setHardRange(-100000.0, 100000.0);
     offsetProp->setSoftRange(-100.0, 100.0);
     animatorGroup.addProperty(offsetProp);
 
@@ -3807,6 +3824,9 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                       ArtifactCore::PropertyType::Integer,
                                       static_cast<int>(animator.range.units), -115);
     unitsProp->setDisplayLabel(QStringLiteral("Units"));
+    unitsProp->setHardRange(0, 4);
+    unitsProp->setSoftRange(0, 4);
+    unitsProp->setStep(1);
     unitsProp->setTooltip(selectorUnitsTooltip());
     animatorGroup.addProperty(unitsProp);
 
@@ -3814,6 +3834,9 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                       ArtifactCore::PropertyType::Integer,
                                       static_cast<int>(animator.range.shape), -114);
     shapeProp->setDisplayLabel(QStringLiteral("Shape"));
+    shapeProp->setHardRange(0, 5);
+    shapeProp->setSoftRange(0, 5);
+    shapeProp->setStep(1);
     shapeProp->setTooltip(selectorShapeTooltip());
     animatorGroup.addProperty(shapeProp);
 
@@ -3898,6 +3921,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                       ArtifactCore::PropertyType::Float,
                                       animator.wiggly.phase, -108);
     phaseProp->setDisplayLabel(QStringLiteral("Phase"));
+    phaseProp->setHardRange(-100000.0, 100000.0);
+    phaseProp->setSoftRange(-360.0, 360.0);
     animatorGroup.addProperty(phaseProp);
 
     auto seedProp = makeAnimatorProp(QStringLiteral("seed"),
@@ -3910,6 +3935,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                      ArtifactCore::PropertyType::Float,
                                      animator.properties.position.x(), -106);
     posXProp->setDisplayLabel(QStringLiteral("Position X"));
+    posXProp->setHardRange(-100000.0, 100000.0);
     posXProp->setSoftRange(-500.0, 500.0);
     animatorGroup.addProperty(posXProp);
 
@@ -3917,6 +3943,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                      ArtifactCore::PropertyType::Float,
                                      animator.properties.position.y(), -105);
     posYProp->setDisplayLabel(QStringLiteral("Position Y"));
+    posYProp->setHardRange(-100000.0, 100000.0);
     posYProp->setSoftRange(-500.0, 500.0);
     animatorGroup.addProperty(posYProp);
 
@@ -3934,6 +3961,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                          animator.properties.rotation, -105);
     rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
     rotationProp->setUnit(QStringLiteral("deg"));
+    rotationProp->setHardRange(-360000.0, 360000.0);
     rotationProp->setSoftRange(-180.0, 180.0);
     animatorGroup.addProperty(rotationProp);
 
@@ -3951,6 +3979,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                      animator.properties.skew, -103);
     skewProp->setDisplayLabel(QStringLiteral("Skew"));
     skewProp->setUnit(QStringLiteral("deg"));
+    skewProp->setHardRange(-360.0, 360.0);
     skewProp->setSoftRange(-60.0, 60.0);
     animatorGroup.addProperty(skewProp);
 
@@ -3958,6 +3987,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                          ArtifactCore::PropertyType::Float,
                                          animator.properties.tracking, -102);
     trackingProp->setDisplayLabel(QStringLiteral("Tracking"));
+    trackingProp->setHardRange(-100000.0, 100000.0);
     trackingProp->setSoftRange(-100.0, 100.0);
     animatorGroup.addProperty(trackingProp);
 
@@ -3965,6 +3995,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                   ArtifactCore::PropertyType::Float,
                                   animator.properties.z, -101);
     zProp->setDisplayLabel(QStringLiteral("Z"));
+    zProp->setHardRange(-100000.0, 100000.0);
     zProp->setSoftRange(-1000.0, 1000.0);
     animatorGroup.addProperty(zProp);
 
@@ -3979,6 +4010,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
         persistentLayerProperty(prefix + QStringLiteral("fillColor"),
                                 ArtifactCore::PropertyType::Color, QVariant(),
                                 -99);
+    fillColorProp->setAnimatable(true);
     fillColorProp->setDisplayLabel(QStringLiteral("Fill Color"));
     fillColorProp->setColorValue(toQColor(animator.properties.fillColor));
     fillColorProp->setValue(fillColorProp->getColorValue());
@@ -3995,6 +4027,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
         persistentLayerProperty(prefix + QStringLiteral("strokeColor"),
                                 ArtifactCore::PropertyType::Color, QVariant(),
                                 -97);
+    strokeColorProp->setAnimatable(true);
     strokeColorProp->setDisplayLabel(QStringLiteral("Stroke Color"));
     strokeColorProp->setColorValue(toQColor(animator.properties.strokeColor));
     strokeColorProp->setValue(strokeColorProp->getColorValue());
@@ -4005,6 +4038,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                             animator.properties.strokeWidth,
                                             -96);
     strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
+    strokeWidthProp->setHardRange(0.0, 256.0);
     strokeWidthProp->setSoftRange(0.0, 100.0);
     animatorGroup.addProperty(strokeWidthProp);
 
@@ -4012,6 +4046,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                      ArtifactCore::PropertyType::Float,
                                      animator.properties.blur, -95);
     blurProp->setDisplayLabel(QStringLiteral("Blur"));
+    blurProp->setHardRange(0.0, 10000.0);
     blurProp->setSoftRange(0.0, 128.0);
     animatorGroup.addProperty(blurProp);
 
@@ -4400,14 +4435,18 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       animator.properties.colorEnabled = value.toBool();
     } else if (field == QStringLiteral("fillColor")) {
       const QColor color = value.value<QColor>();
-      animator.properties.fillColor = toFloatRGBA(color);
-      animator.properties.colorEnabled = true;
+      if (color.isValid()) {
+        animator.properties.fillColor = toFloatRGBA(color);
+        animator.properties.colorEnabled = true;
+      }
     } else if (field == QStringLiteral("strokeEnabled")) {
       animator.properties.strokeEnabled = value.toBool();
     } else if (field == QStringLiteral("strokeColor")) {
       const QColor color = value.value<QColor>();
-      animator.properties.strokeColor = toFloatRGBA(color);
-      animator.properties.strokeEnabled = true;
+      if (color.isValid()) {
+        animator.properties.strokeColor = toFloatRGBA(color);
+        animator.properties.strokeEnabled = true;
+      }
     } else if (field == QStringLiteral("strokeWidth")) {
       animator.properties.strokeWidth =
           std::clamp(numericValue, 0.0f, 256.0f);
