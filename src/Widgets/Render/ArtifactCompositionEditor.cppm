@@ -12395,6 +12395,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *gridAct = displayMenu->addAction("Grid");
   QAction *guidesAct = displayMenu->addAction("Guides");
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
+  QAction *originAct = displayMenu->addAction("Origin");
   QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
   QAction *cameraOverlayAct = displayMenu->addAction("Camera Frustum");
   QAction *densityHeatmapAct = displayMenu->addAction("Density Heatmap");
@@ -12429,6 +12430,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
   safeMarginsAct->setCheckable(true);
+  originAct->setCheckable(true);
   anchorCenterAct->setCheckable(true);
   cameraOverlayAct->setCheckable(true);
   cameraOverlayAct->setShortcut(
@@ -12627,6 +12629,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                                ArtifactCore::ArtifactAppSettings::instance()) {
                          settings->setCompositionShowSafeMargins(checked);
                        }
+                     }
+                   });
+  QObject::connect(originAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowOriginOverlay(checked);
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowOriginOverlay(checked);
+                           });
                      }
                    });
   QObject::connect(anchorCenterAct, &QAction::toggled, this,
@@ -13088,6 +13100,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     gridAct->setChecked(impl_->renderController_->isShowGrid());
     guidesAct->setChecked(impl_->renderController_->isShowGuides());
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());
+    originAct->setChecked(impl_->renderController_->isShowOriginOverlay());
     anchorCenterAct->setChecked(impl_->renderController_->isShowAnchorCenterOverlay());
     cameraOverlayAct->setChecked(impl_->renderController_->isShowCameraFrustumOverlay());
     densityHeatmapAct->setChecked(

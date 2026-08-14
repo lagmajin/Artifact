@@ -467,6 +467,17 @@ if(_viewport_math_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cppm")
 endif()
 
+# ViewportOverlay owns the low-dependency Safe Area / Origin overlay drawing
+# extracted from the composition render controller.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx" _viewport_overlay_module_idx)
+if(_viewport_overlay_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm" _viewport_overlay_impl_idx)
+if(_viewport_overlay_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm")
+endif()
+
 set(ARTIFACT_RENDER_SUPPORT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactHDRMonitor.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRamPreviewController.ixx"

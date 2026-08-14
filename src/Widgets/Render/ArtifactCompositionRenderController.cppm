@@ -116,6 +116,7 @@ module Artifact.Widgets.CompositionRenderController;
 import Memory.SharedPtr;
 
 import Artifact.Render.IRenderer;
+import Artifact.Widgets.ViewportOverlay;
 
 import Artifact.Grid.System;
 import ArtifactCore.Rig2D;
@@ -12317,6 +12318,7 @@ public:
   bool showAutoColorPaletteOverlay_ = false;
 
   bool showAnchorCenterOverlay_ = false;
+  bool showOriginOverlay_ = false;
 
   bool showCameraFrustumOverlay_ = false;
 
@@ -17020,6 +17022,17 @@ bool CompositionRenderController::isShowAnchorCenterOverlay() const {
 
   return impl_ ? impl_->showAnchorCenterOverlay_ : false;
 
+}
+
+void CompositionRenderController::setShowOriginOverlay(bool show) {
+  if (impl_->showOriginOverlay_ == show) return;
+  impl_->showOriginOverlay_ = show;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowOriginOverlay() const {
+  return impl_ ? impl_->showOriginOverlay_ : false;
 }
 
 
@@ -37108,47 +37121,8 @@ void CompositionRenderController::Impl::drawViewportGuideOverlay(
 
 
 
-  if (!showGuides_) {
-
-    return;
-
-  }
-
-
-
-  const FloatColor guideColor = {0.2f, 0.8f, 1.0f, 0.7f};
-
-  for (float x : guideVerticals_) {
-
-    if (x >= 0 && x <= cw) {
-
-      renderer_->drawSolidLine({x, 0}, {x, ch}, guideColor, 1.0f);
-
-    }
-
-  }
-
-  for (float y : guideHorizontals_) {
-
-    if (y >= 0 && y <= ch) {
-
-      renderer_->drawSolidLine({0, y}, {cw, y}, guideColor, 1.0f);
-
-    }
-
-  }
-
-  if (guideVerticals_.isEmpty() && guideHorizontals_.isEmpty()) {
-
-    renderer_->drawSolidLine({cw * 0.5f, 0}, {cw * 0.5f, ch}, guideColor,
-
-                             1.0f);
-
-    renderer_->drawSolidLine({0, ch * 0.5f}, {cw, ch * 0.5f}, guideColor,
-
-                             1.0f);
-
-  }
+  ViewportOverlay::drawGuides(renderer_.get(), guideVerticals_,
+                              guideHorizontals_, showGuides_, cw, ch);
 
 }
 
@@ -38058,90 +38032,8 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
 
 
-  if (!showSafeMargins_) {
-
-    return;
-
-  }
-
-
-
-  const std::array<Detail::float2, 4> canvasCorners{
-      Detail::float2{0.0f, 0.0f}, Detail::float2{cw, 0.0f},
-      Detail::float2{cw, ch}, Detail::float2{0.0f, ch}};
-  std::array<Detail::float2, 4> screenCorners{};
-  for (size_t i = 0; i < canvasCorners.size(); ++i) {
-    screenCorners[i] = renderer_->canvasToViewport(canvasCorners[i]);
-  }
-  const Detail::float2 screenCenter =
-      renderer_->canvasToViewport({cw * 0.5f, ch * 0.5f});
-
-  const float screenW = std::hypot(screenCorners[1].x - screenCorners[0].x,
-                                   screenCorners[1].y - screenCorners[0].y);
-
-  const float screenH = std::hypot(screenCorners[3].x - screenCorners[0].x,
-                                   screenCorners[3].y - screenCorners[0].y);
-
-  if (screenW <= 0.0f || screenH <= 0.0f) {
-
-    return;
-
-  }
-
-
-
-  const FloatColor outlineColor = {0.0f, 0.0f, 0.0f, 0.72f};
-
-  const FloatColor innerColor = {0.95f, 0.97f, 1.0f, 0.42f};
-
-  const auto snapScreen = [](float value) {
-
-    return std::round(value) + 0.5f;
-
-  };
-
-  const auto drawSafeRect = [&](float ratio) {
-
-    std::vector<Detail::float2> points;
-    points.reserve(screenCorners.size() + 1);
-    for (const auto &corner : screenCorners) {
-      points.push_back({snapScreen(screenCenter.x +
-                                   (corner.x - screenCenter.x) * ratio),
-                        snapScreen(screenCenter.y +
-                                   (corner.y - screenCenter.y) * ratio)});
-    }
-    points.push_back(points.front());
-
-    if (screenW * ratio <= 2.0f || screenH * ratio <= 2.0f) {
-
-      return;
-
-    }
-
-    renderer_->drawPolyline(points, outlineColor, 1.0f);
-    renderer_->drawPolyline(points, innerColor, 1.0f);
-
-  };
-
-
-
-  drawSafeRect(0.9f);
-
-  drawSafeRect(0.8f);
-
-
-
-  const float centerX =
-      snapScreen(screenCenter.x);
-
-  const float centerY =
-      snapScreen(screenCenter.y);
-
-  const float crossSize =
-
-      std::clamp(std::min(screenW, screenH) * 0.05f, 12.0f, 72.0f);
-
-  renderer_->drawCrosshair(centerX, centerY, crossSize, innerColor);
+  ViewportOverlay::drawSafeAreaAndOrigin(
+      renderer_.get(), cw, ch, showSafeMargins_, showOriginOverlay_);
 
 }
 

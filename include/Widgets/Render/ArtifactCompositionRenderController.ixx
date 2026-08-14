@@ -199,6 +199,8 @@ bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);
 void setShowAnchorCenterOverlay(bool show);
 bool isShowAnchorCenterOverlay() const;
+void setShowOriginOverlay(bool show);
+bool isShowOriginOverlay() const;
 void setShowCameraFrustumOverlay(bool show);
 bool isShowCameraFrustumOverlay() const;
 void setShowGizmoOverlay(bool show);
