@@ -56,6 +56,7 @@ import Color.Float;
 import FloatRGBA;
 import Frame.Position;
 import Utils.Id;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -956,8 +957,7 @@ QImage applyMatteStackToSurface(
     const bool useLuminance =
         ArtifactCore::MatteModeUtils::isLuminance(node.mode());
     const bool invertMask = ArtifactCore::MatteModeUtils::isInverted(node.mode());
-    const auto buildMatteRows = [&](int yBegin, int yEnd) {
-      for (int y = yBegin; y < yEnd; ++y) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
         for (int x = 0; x < w; ++x) {
           const int sx = std::min(x * srcW / w, srcW - 1);
           const int sy = std::min(y * srcH / h, srcH - 1);
@@ -976,9 +976,7 @@ QImage applyMatteStackToSurface(
           }
           matteMask[static_cast<size_t>(y) * w + x] = std::clamp(v, 0.0f, 1.0f);
         }
-      }
-    };
-    buildMatteRows(0, h);
+    });
 
     if (!hasCurrent) {
       combinedMask = std::move(matteMask);
@@ -987,7 +985,9 @@ QImage applyMatteStackToSurface(
     }
 
     const ArtifactCore::MatteStackMode stackMode = matteStack.stackMode();
-    for (size_t i = 0; i < pixelCount; ++i) {
+    ArtifactCore::Parallel::For(0, static_cast<int>(pixelCount),
+                                static_cast<int>(pixelCount), [&](int index) {
+      const size_t i = static_cast<size_t>(index);
         switch (stackMode) {
         case ArtifactCore::MatteStackMode::Add:
           combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
@@ -999,14 +999,13 @@ QImage applyMatteStackToSurface(
           combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
           break;
         }
-    }
+    });
   }
 
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  const auto applyMatteRows = [&](int yBegin, int yEnd) {
-    for (int y = yBegin; y < yEnd; ++y) {
+  ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
       auto* resultRow = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
       for (int x = 0; x < w; ++x) {
         const size_t idx = static_cast<size_t>(y) * w + x;
@@ -1021,9 +1020,7 @@ QImage applyMatteStackToSurface(
                              std::clamp(b, 0, 255),
                              std::clamp(a, 0, 255));
       }
-    }
-  };
-  applyMatteRows(0, h);
+  });
   return result;
 }
 
