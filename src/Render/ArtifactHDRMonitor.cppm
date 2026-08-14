@@ -76,31 +76,52 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
                           impl_->luminanceCache_.size();
   }
 
-  // Check for clipping (assuming 0-1 range for now)
-  for (size_t i = 0; i < frameData.size(); ++i) {
-    const auto &color = frameData[i];
+  // Classify pixels independently, then reduce in input order so result
+  // counters and the legacy out-of-gamut list remain deterministic.
+  std::vector<unsigned char> clipped(frameData.size(), 0);
+  std::vector<unsigned char> highlightClipped(frameData.size(), 0);
+  std::vector<unsigned char> outOfGamut(frameData.size(), 0);
+  std::vector<unsigned char> broadcastViolation(frameData.size(), 0);
+  ArtifactCore::Parallel::For(0, static_cast<int>(frameData.size()),
+                              static_cast<int>(frameData.size()),
+                              [&](int index) {
+    const auto &color = frameData[static_cast<size_t>(index)];
     bool rClipped = color.r() >= 1.0f || color.r() <= 0.0f;
     bool gClipped = color.g() >= 1.0f || color.g() <= 0.0f;
     bool bClipped = color.b() >= 1.0f || color.b() <= 0.0f;
 
     if (rClipped || gClipped || bClipped) {
-      result.hasClipping = true;
-      if (impl_->luminanceCache_[i] > 0.5f) {
-        result.clippedHighlights++;
-      } else {
-        result.clippedShadows++;
-      }
+      const auto i = static_cast<size_t>(index);
+      clipped[i] = 1;
+      highlightClipped[i] = impl_->luminanceCache_[i] > 0.5f ? 1 : 0;
     }
 
     // Keep the legacy full-range gamut list and expose a separate legal-range
     // count for broadcast inspection. The latter is intentionally a lightweight
     // encoded-RGB check; full Y'CbCr gamut mapping belongs at export time.
     if (!isColorInGamut(color)) {
-      result.outOfGamutPixels.push_back(color);
+      outOfGamut[static_cast<size_t>(index)] = 1;
     }
     if (ArtifactCore::ColorLuminance::inspectBroadcastSafe(
             color.r(), color.g(), color.b(),
             ArtifactCore::LuminanceStandard::Rec709).hasViolation()) {
+      broadcastViolation[static_cast<size_t>(index)] = 1;
+    }
+  });
+
+  for (size_t i = 0; i < frameData.size(); ++i) {
+    if (clipped[i]) {
+      result.hasClipping = true;
+      if (highlightClipped[i]) {
+        ++result.clippedHighlights;
+      } else {
+        ++result.clippedShadows;
+      }
+    }
+    if (outOfGamut[i]) {
+      result.outOfGamutPixels.push_back(frameData[i]);
+    }
+    if (broadcastViolation[i]) {
       ++result.broadcastSafeViolations;
     }
   }
