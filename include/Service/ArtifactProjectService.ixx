@@ -94,6 +94,8 @@ export namespace Artifact {
   static ArtifactProjectService* instance();
   UniString projectName() const;
   bool hasProject() const;
+  bool ensureProject();
+  QString currentProjectAssetsPath() const;
   void changeProjectName(const UniString& string);
   void createProject(const ArtifactProjectSettings& setting);
 
@@ -174,6 +176,9 @@ export namespace Artifact {
   bool removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount = nullptr);
    bool duplicateComposition(const CompositionID& id);
    bool renameComposition(const CompositionID& id, const UniString& name);
+   // Keep composition-settings edits from different UI surfaces on the same
+   // dirty-state and playback synchronization path.
+   bool finalizeCompositionSettingsChange(const CompositionID& id);
   bool precomposeLayersInCurrentComposition(
        const QVector<LayerID>& layerIds,
        const UniString& newCompositionName,

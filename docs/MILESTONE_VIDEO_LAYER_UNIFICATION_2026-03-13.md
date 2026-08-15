@@ -1,6 +1,14 @@
 # Video Layer Unification Milestone
 
 Date: 2026-03-13
+**最終更新:** 2026-08-15
+
+## Update 2026-08-15
+
+- 現行コードを確認し、M-VIDEO-1〜5 の production code 上の統合状態を再監査。
+- `LayerType::Media`、`ArtifactMediaLayer`、`Artifact.Layer.Media` の残存参照は確認されず、factory/import inference は `Video` / `Audio` に統一済み。
+- `ArtifactVideoLayer::toJson()` は数値の `LayerType::Video` と `video.*` property を保存し、factory は `Video` / `VideoLayer` の旧形式を復元可能。timeline / inspector / Project View も `ArtifactVideoLayer` を共通経路として扱っている。
+- 今回は動画機能の拡張は行わない。デコーダーや render backend の受入れは本マイルストーンの非ゴールかつ、静止画・連番・シェイプ基盤を優先する方針のため未検証のまま保留。
 
 ## Goal
 

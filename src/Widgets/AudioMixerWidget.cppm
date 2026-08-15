@@ -34,6 +34,7 @@ module Artifact.Widgets.AudioMixer;
 
 import Audio.Bus;
 import Audio.Mixer;
+import Audio.Effect.Spectrum;
 import Artifact.VST.Effect;
 import Artifact.VST.Host;
 import Artifact.Audio.Effects.Manager;
@@ -280,6 +281,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     : QWidget(parent), bus_(bus), mixer_(mixer), onChanged_(std::move(onChanged)) {
     
     analyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);
+    loudnessAnalyzer_ = std::make_unique<ArtifactCore::AudioSpectrum>();
     clipTimer_.start();
     
     setFixedWidth(80);
@@ -292,6 +294,16 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     // 0. Spectrum Analyzer at Top
     analyzerWidget_ = new SpectrumAnalyzerWidget(this);
     layout->addWidget(analyzerWidget_);
+
+    loudnessLabel_ = new QLabel(QStringLiteral("LUFS: —\nTP: —"), this);
+    loudnessLabel_->setAlignment(Qt::AlignCenter);
+    loudnessLabel_->setAccessibleName(QStringLiteral("Loudness meter"));
+    loudnessLabel_->setAccessibleDescription(
+        QStringLiteral("Momentary and true-peak loudness for this audio bus"));
+    QPalette loudnessPalette = loudnessLabel_->palette();
+    loudnessPalette.setColor(QPalette::WindowText, QColor(170, 190, 205));
+    loudnessLabel_->setPalette(loudnessPalette);
+    layout->addWidget(loudnessLabel_);
 
     // 0.5. FX Slots (FX Rack)
     QVBoxLayout* fxLayout = new QVBoxLayout();
@@ -398,13 +410,28 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                 if (!mixer_ || !bus_) return;
                 QMenu menu(this);
                 const auto buses = mixer_->getAllBuses();
+                const auto existingSends = mixer_->getSideChainSends(bus_);
                 for (const auto& target : buses) {
                     if (!target || target == bus_) continue;
                     const auto name = target->getName();
-                    const QString label = QString::fromUtf8(
+                    const QString targetName = QString::fromUtf8(
                         name.data(), static_cast<qsizetype>(name.length()));
+                    float amount = 0.0f;
+                    bool hasSend = false;
+                    for (const auto& send : existingSends) {
+                        if (send.first == target) {
+                            amount = send.second;
+                            hasSend = true;
+                            break;
+                        }
+                    }
+                    const QString label = hasSend
+                        ? QStringLiteral("%1  (%2)").arg(targetName).arg(amount, 0, 'f', 2)
+                        : targetName;
                     auto* action = menu.addAction(label);
-                    action->setData(label);
+                    action->setData(targetName);
+                    action->setCheckable(true);
+                    action->setChecked(hasSend);
                 }
                 menu.addSeparator();
                 auto* clearAction = menu.addAction(QStringLiteral("Clear sends"));
@@ -523,6 +550,18 @@ void AudioChannelStripWidget::updateMeters() {
     if (analyzer_ && bus_) {
         auto result = analyzer_->analyze(bus_->getOutputBuffer());
         analyzerWidget_->setSpectrum(result.spectrum);
+    }
+    if (loudnessAnalyzer_ && bus_ && loudnessLabel_) {
+        auto output = bus_->getOutputBuffer();
+        loudnessAnalyzer_->process(output);
+        const auto formatDb = [](float value) {
+            return std::isfinite(value) ? QString::number(value, 'f', 1)
+                                        : QStringLiteral("-");
+        };
+        loudnessLabel_->setText(
+            QStringLiteral("LUFS: %1\nTP: %2 dB")
+                .arg(formatDb(loudnessAnalyzer_->getMomentaryLufs()))
+                .arg(formatDb(loudnessAnalyzer_->getTruePeakDb())));
     }
 
     if (bus_) {

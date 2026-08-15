@@ -9,6 +9,7 @@ export module Artifact.Render.SoftwareCompositor;
 
 import std;
 import Layer.Blend;
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact::SoftwareRender {
 
@@ -38,6 +39,8 @@ struct CompositeRequest {
 };
 
 QImage compose(const CompositeRequest& request);
+bool composeToBuffer(const CompositeRequest& request,
+                     ArtifactCore::ImageF32x4_RGBA& output);
 QString backendText(CompositeBackend backend);
 QString blendModeText(ArtifactCore::BlendMode mode);
 QString cvEffectText(CvEffectMode mode);

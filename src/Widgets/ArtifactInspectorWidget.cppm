@@ -118,6 +118,8 @@ module Widgets.Inspector;
 import Utils.Id;
 import Utils.String.UniString;
 import Widgets.Utils.CSS;
+import Artifact.Widgets.TemplateParameters;
+import Artifact.Template.Document;
 import Widgets.CommonStyle;
 import Artifact.Widgets.Inspector.EffectTabSurface;
 import Artifact.Widgets.Inspector.ComponentTabSurface;
@@ -134,6 +136,7 @@ import Artifact.Layer.Component.System;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Image.ImageF32x4_RGBA;
 import Artifact.Widgets.ObjectPicker;
 import Artifact.Layer.Matte;
@@ -588,6 +591,10 @@ std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
        QStringLiteral("Mosaic"), QStringLiteral("Stylize"),
        QStringLiteral("Apply configurable mosaic cells to the image."),
        QStringLiteral("mosaic pixel blocks stylize")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("mirror"), QStringLiteral("Mirror"), QStringLiteral("Stylize"),
+       QStringLiteral("Mirror the image around a configurable axis."),
+       QStringLiteral("mirror reflection axis flip stylize")},
       {EffectPipelineStage::Rasterizer,
        QStringLiteral("effect.colorcorrection.tritone"),
        QStringLiteral("Tritone"), QStringLiteral("Color"),
@@ -2970,6 +2977,7 @@ public:
   ~Impl();
   QWidget *containerWidget = nullptr;
   QTabWidget *tabWidget = nullptr;
+  ArtifactTemplateParametersWidget *templateParametersWidget = nullptr;
 
   // Layer Info Tab
   QGroupBox *compositionNoteGroup = nullptr;
@@ -3114,6 +3122,7 @@ public:
   QString currentSelectedEffectIdFromRacks() const;
   void syncFocusedEffectFromRackSelection();
   void syncEffectPropertyWidget();
+  void syncTemplateParameters();
   void ensureEffectPropertyWidget();
   void handleApplyLipSyncToSwitchLayer();
   void handleAddEffectClicked(int rackIndex);
@@ -3184,7 +3193,8 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(
   if (!normalized.isEmpty() && effectsModeTabs) {
     effectsModeTabs->setCurrentIndex(1);
   }
-  syncEffectPropertyWidget();
+           syncEffectPropertyWidget();
+           syncTemplateParameters();
 }
 
 QString ArtifactInspectorWidget::Impl::currentSelectedEffectIdFromRacks() const {
@@ -3498,6 +3508,30 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
                                          effect->isEnabled());
     }
   }
+}
+
+void ArtifactInspectorWidget::Impl::syncTemplateParameters() {
+  if (!templateParametersWidget) return;
+  if (currentLayerId_.isNil() || currentCompositionId_.isNil()) {
+    templateParametersWidget->setParameters(QJsonArray{});
+    return;
+  }
+  auto* service = ArtifactProjectService::instance();
+  if (!service) {
+    templateParametersWidget->setParameters(QJsonArray{});
+    return;
+  }
+  const auto result = service->findComposition(currentCompositionId_);
+  const auto composition = result.success ? result.ptr.lock() : ArtifactCompositionPtr{};
+  const auto layer = composition ? composition->layerById(currentLayerId_)
+                                 : ArtifactAbstractLayerPtr{};
+  if (!layer) {
+    templateParametersWidget->setParameters(QJsonArray{});
+    return;
+  }
+  const auto document = ArtifactTemplateDocument::fromLayers(
+      QVector<ArtifactAbstractLayerPtr>{layer}, layer->layerName());
+  templateParametersWidget->setDocument(document);
 }
 
 namespace {
@@ -4554,6 +4588,142 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
     layer->addMask(mask);
     layer->changed();
   });
+
+  if (!currentLayerId_.isNil() && !currentCompositionId_.isNil()) {
+    auto *projectService = ArtifactProjectService::instance();
+    ArtifactCompositionPtr comp;
+    if (projectService) {
+      const auto findResult = projectService->findComposition(currentCompositionId_);
+      if (findResult.success) {
+        comp = findResult.ptr.lock();
+      }
+    }
+    auto layer = comp ? comp->layerById(currentLayerId_)
+                      : ArtifactAbstractLayerPtr{};
+    if (layer && layer->maskCount() > 1) {
+      menu.addSeparator();
+      menu.addAction(QStringLiteral("Enable All Masks"), [layer]() {
+        std::vector<LayerMask> before;
+        std::vector<LayerMask> after;
+        before.reserve(static_cast<std::size_t>(layer->maskCount()));
+        after.reserve(static_cast<std::size_t>(layer->maskCount()));
+        bool changed = false;
+        for (int i = 0; i < layer->maskCount(); ++i) {
+          const auto mask = layer->mask(i);
+          auto next = mask;
+          next.setEnabled(true);
+          changed = changed || !mask.isEnabled();
+          before.push_back(mask);
+          after.push_back(next);
+        }
+        if (changed) {
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<MaskEditCommand>(layer, std::move(before),
+                                                        std::move(after)));
+          }
+          layer->changed();
+        }
+      });
+      menu.addAction(QStringLiteral("Disable All Masks"), [layer]() {
+        std::vector<LayerMask> before;
+        std::vector<LayerMask> after;
+        before.reserve(static_cast<std::size_t>(layer->maskCount()));
+        after.reserve(static_cast<std::size_t>(layer->maskCount()));
+        bool changed = false;
+        for (int i = 0; i < layer->maskCount(); ++i) {
+          const auto mask = layer->mask(i);
+          auto next = mask;
+          next.setEnabled(false);
+          changed = changed || mask.isEnabled();
+          before.push_back(mask);
+          after.push_back(next);
+        }
+        if (changed) {
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<MaskEditCommand>(layer, std::move(before),
+                                                        std::move(after)));
+          }
+          layer->changed();
+        }
+      });
+      menu.addAction(QStringLiteral("Invert All Mask States"), [layer]() {
+        std::vector<LayerMask> before;
+        std::vector<LayerMask> after;
+        before.reserve(static_cast<std::size_t>(layer->maskCount()));
+        after.reserve(static_cast<std::size_t>(layer->maskCount()));
+        for (int i = 0; i < layer->maskCount(); ++i) {
+          const auto mask = layer->mask(i);
+          auto next = mask;
+          next.setEnabled(!mask.isEnabled());
+          before.push_back(mask);
+          after.push_back(next);
+        }
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::make_unique<MaskEditCommand>(layer, std::move(before),
+                                                      std::move(after)));
+        }
+        layer->changed();
+      });
+      const auto addMaskModeAction = [&menu, layer](const QString &label,
+                                                     const MaskMode mode) {
+        menu.addAction(label, [layer, mode]() {
+          std::vector<LayerMask> before;
+          std::vector<LayerMask> after;
+          before.reserve(static_cast<std::size_t>(layer->maskCount()));
+          after.reserve(static_cast<std::size_t>(layer->maskCount()));
+          bool changed = false;
+          for (int maskIndex = 0; maskIndex < layer->maskCount(); ++maskIndex) {
+            const auto mask = layer->mask(maskIndex);
+            auto next = mask;
+            for (int pathIndex = 0; pathIndex < next.maskPathCount(); ++pathIndex) {
+              auto path = next.maskPath(pathIndex);
+              changed = changed || path.mode() != mode;
+              path.setMode(mode);
+              next.setMaskPath(pathIndex, path);
+            }
+            before.push_back(mask);
+            after.push_back(next);
+          }
+          if (!changed) {
+            return;
+          }
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<MaskEditCommand>(
+                layer, std::move(before), std::move(after)));
+          }
+          layer->changed();
+        });
+      };
+      addMaskModeAction(QStringLiteral("Set All Mask Paths: Add"), MaskMode::Add);
+      addMaskModeAction(QStringLiteral("Set All Mask Paths: Subtract"), MaskMode::Subtract);
+      addMaskModeAction(QStringLiteral("Set All Mask Paths: Intersect"), MaskMode::Intersect);
+      addMaskModeAction(QStringLiteral("Set All Mask Paths: Difference"), MaskMode::Difference);
+      for (int index = 0; index < layer->maskCount(); ++index) {
+        if (index > 0) {
+          const int targetIndex = index - 1;
+          menu.addAction(QStringLiteral("Mask %1 Up").arg(index + 1),
+                         [layer, index, targetIndex]() {
+                           if (auto *mgr = UndoManager::instance()) {
+                             mgr->push(std::make_unique<MoveMaskCommand>(
+                                 layer, index, targetIndex));
+                           }
+                           layer->changed();
+                         });
+        }
+        if (index + 1 < layer->maskCount()) {
+          const int targetIndex = index + 1;
+          menu.addAction(QStringLiteral("Mask %1 Down").arg(index + 1),
+                         [layer, index, targetIndex]() {
+                           if (auto *mgr = UndoManager::instance()) {
+                             mgr->push(std::make_unique<MoveMaskCommand>(
+                                 layer, index, targetIndex));
+                           }
+                           layer->changed();
+                         });
+        }
+      }
+    }
+  }
   menu.exec(accessibilityMenuPosition(menu, globalPos));
 }
 
@@ -4614,6 +4784,15 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                          static_cast<int>(effect->pipelineStage());
                      effectJson[QStringLiteral("computeMode")] =
                          static_cast<int>(effect->computeMode());
+                     if (effect->hasEffectRegion()) {
+                       const QRectF region = effect->effectRegion();
+                       QJsonObject regionJson;
+                       regionJson[QStringLiteral("x")] = region.x();
+                       regionJson[QStringLiteral("y")] = region.y();
+                       regionJson[QStringLiteral("width")] = region.width();
+                       regionJson[QStringLiteral("height")] = region.height();
+                       effectJson[QStringLiteral("effectRegion")] = regionJson;
+                     }
                      QJsonArray properties;
                      for (const auto &property : effect->getProperties()) {
                        QJsonObject propertyObject;
@@ -4670,6 +4849,19 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                          effectToPaste->setPropertyValue(
                              UniString::fromQString(name),
                              property.value(QStringLiteral("value")).toVariant());
+                       }
+                     }
+                     if (effectJson.value(QStringLiteral("effectRegion")).isObject()) {
+                       const QJsonObject regionJson =
+                           effectJson.value(QStringLiteral("effectRegion")).toObject();
+                       const QRectF region(
+                           regionJson.value(QStringLiteral("x")).toDouble(),
+                           regionJson.value(QStringLiteral("y")).toDouble(),
+                           regionJson.value(QStringLiteral("width")).toDouble(),
+                           regionJson.value(QStringLiteral("height")).toDouble());
+                       if (region.isValid() && region.width() > 0.0 &&
+                           region.height() > 0.0) {
+                         effectToPaste->setEffectRegion(region);
                        }
                      }
                      auto effectPtr = ArtifactCore::makeShared(effectToPaste.release(),
@@ -5188,6 +5380,7 @@ void ArtifactInspectorWidget::Impl::handleLayerSelected(
   currentLayerId_ = id;
   focusedEffectId_.clear();
   syncEffectPropertyWidget();
+  syncTemplateParameters();
   scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
 }
 
@@ -5879,6 +6072,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
         continue;
       }
       QString effectName = effect->displayName().toQString();
+      const auto uiDescriptor = effect->uiDescriptor();
       QString effectStatus = effect->isEnabled() ? QStringLiteral("Enabled")
                                                  : QStringLiteral("Disabled");
       const bool hasMask = effect->hasMask();
@@ -5897,10 +6091,14 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       item->setData(kEffectRackMaskCountRole, effectMaskCount);
       item->setSizeHint(QSize(0, 34));
       item->setToolTip(
-          QStringLiteral("%1 on this %2.%3%4 Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
+          QStringLiteral("%1 on this %2. UI: Preview %3, Preset %4, Appearance %5, Section %6.%7%8 Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
               .arg(effectName,
                    editingCompositionEffects() ? QStringLiteral("composition")
                                                : QStringLiteral("layer"),
+                   uiDescriptor.preview ? QStringLiteral("available") : QStringLiteral("n/a"),
+                   uiDescriptor.preset ? QStringLiteral("available") : QStringLiteral("n/a"),
+                   uiDescriptor.appearance ? QStringLiteral("available") : QStringLiteral("n/a"),
+                   uiDescriptor.section,
                    hasMask ? QStringLiteral(" Mask attached.") : QString(),
                    effectMaskCount > 0
                        ? QStringLiteral(" Effect mask images: %1.").arg(effectMaskCount)
@@ -7773,8 +7971,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   componentsTab->setObjectName(
       QStringLiteral("inspectorComponentsSurface"));
   componentsTab->setParent(this);
+  impl_->templateParametersWidget = new ArtifactTemplateParametersWidget(this);
+  impl_->templateParametersWidget->setObjectName(
+      QStringLiteral("inspectorTemplateParametersSurface"));
   impl_->tabWidget->addTab(layerInfoWidget, "Layer");
   impl_->tabWidget->addTab(componentsTab, "Components");
+  impl_->tabWidget->addTab(impl_->templateParametersWidget,
+                           QStringLiteral("Template"));
 
   // ================== Effects Pipeline Tab ==================
   impl_->effectsScrollArea = new QScrollArea();

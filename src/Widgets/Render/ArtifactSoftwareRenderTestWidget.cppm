@@ -21,6 +21,8 @@ module;
 module Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Render.SoftwareCompositor;
 import Layer.Blend;
+import Artifact.Service.Project;
+import Artifact.Application.Manager;
 
 namespace Artifact {
 
@@ -81,6 +83,36 @@ public:
     QImage overlayImage;
     QString backgroundPath;
     QString overlayPath;
+    QImage previewCapture;
+    QImage renderQueueCapture;
+    QString previewCapturePath;
+    QString renderQueueCapturePath;
+    QString parityStatus;
+    QString contextStatus;
+
+    void refreshContextStatus()
+    {
+        auto* service = ArtifactProjectService::instance();
+        auto* app = ArtifactApplicationManager::instance();
+        auto* selection = app ? app->layerSelectionManager() : nullptr;
+        const auto composition = service ? service->currentComposition().lock()
+                                         : ArtifactCompositionPtr{};
+        const auto layer = selection ? selection->currentLayer()
+                                     : ArtifactAbstractLayerPtr{};
+        if (!composition) {
+            contextStatus = QStringLiteral("Context: no current composition");
+            return;
+        }
+        const QString compositionName =
+            composition->settings().compositionName().toQString().trimmed();
+        const QString layerName = layer ? layer->layerName().trimmed()
+                                        : QStringLiteral("no current layer");
+        contextStatus = QStringLiteral("Context: %1  |  Layer: %2")
+                            .arg(compositionName.isEmpty()
+                                     ? QStringLiteral("<unnamed>")
+                                     : compositionName,
+                                 layerName);
+    }
 
     std::array<Vec3, 8> cube = {{
         {-1.0f, -1.0f, -1.0f}, { 1.0f, -1.0f, -1.0f},
@@ -253,6 +285,75 @@ public:
         overlayImage = loaded.convertToFormat(QImage::Format_ARGB32_Premultiplied);
         overlayPath = path;
         return true;
+    }
+
+    bool loadParityCapture(QWidget* owner, QImage* target, QString* path, const QString& title)
+    {
+        const QString selectedPath = QFileDialog::getOpenFileName(
+            owner,
+            title,
+            QString(),
+            QStringLiteral("Images (*.png *.jpg *.jpeg *.tif *.tiff *.exr *.bmp *.webp)"));
+        if (selectedPath.isEmpty()) {
+            return false;
+        }
+
+        QImage loaded(selectedPath);
+        if (loaded.isNull()) {
+            parityStatus = QStringLiteral("Unable to load %1").arg(QFileInfo(selectedPath).fileName());
+            return false;
+        }
+
+        *target = loaded.convertToFormat(QImage::Format_RGBA8888);
+        *path = selectedPath;
+        parityStatus = QStringLiteral("Loaded %1 (%2x%3)")
+            .arg(QFileInfo(selectedPath).fileName())
+            .arg(target->width())
+            .arg(target->height());
+        return true;
+    }
+
+    void compareParityCaptures()
+    {
+        if (previewCapture.isNull() || renderQueueCapture.isNull()) {
+            parityStatus = QStringLiteral("Load both Preview (P) and Render Queue (Q) captures first");
+            return;
+        }
+        if (previewCapture.size() != renderQueueCapture.size()) {
+            parityStatus = QStringLiteral("Size mismatch: Preview %1x%2, Render Queue %3x%4")
+                .arg(previewCapture.width()).arg(previewCapture.height())
+                .arg(renderQueueCapture.width()).arg(renderQueueCapture.height());
+            return;
+        }
+
+        const int pixelCount = previewCapture.width() * previewCapture.height();
+        quint64 totalDifference = 0;
+        int differentPixels = 0;
+        int maximumDifference = 0;
+        const uchar* previewBits = previewCapture.constBits();
+        const uchar* queueBits = renderQueueCapture.constBits();
+        const int byteCount = pixelCount * 4;
+        for (int offset = 0; offset < byteCount; offset += 4) {
+            int pixelDifference = 0;
+            for (int channel = 0; channel < 4; ++channel) {
+                pixelDifference += std::abs(static_cast<int>(previewBits[offset + channel]) -
+                                            static_cast<int>(queueBits[offset + channel]));
+            }
+            totalDifference += static_cast<quint64>(pixelDifference);
+            maximumDifference = std::max(maximumDifference, pixelDifference);
+            if (pixelDifference != 0) {
+                ++differentPixels;
+            }
+        }
+
+        const double meanDifference = pixelCount > 0
+            ? static_cast<double>(totalDifference) / static_cast<double>(pixelCount * 4)
+            : 0.0;
+        parityStatus = QStringLiteral("Parity: %1/%2 pixels differ | mean RGBA delta %3 | max %4")
+            .arg(differentPixels)
+            .arg(pixelCount)
+            .arg(QString::number(meanDifference, 'f', 3))
+            .arg(maximumDifference);
     }
 
     void compositeImages(QImage& target, const QImage& cubeLayer) const
@@ -473,6 +574,7 @@ ArtifactSoftwareRenderTestWidget::ArtifactSoftwareRenderTestWidget(QWidget* pare
     impl_->timer->setInterval(16);
     connect(impl_->timer, &QTimer::timeout, this, [this]() {
         impl_->angleY += 0.018f;
+        impl_->refreshContextStatus();
         update();
     });
     impl_->timer->start();
@@ -515,6 +617,20 @@ void ArtifactSoftwareRenderTestWidget::paintEvent(QPaintEvent* event)
             .arg(static_cast<int>(std::round(impl_->overlayOffset.y())))
             .arg(QString::number(impl_->overlayScale, 'f', 2))
             .arg(QString::number(impl_->overlayRotationDeg, 'f', 1)));
+    painter.drawText(
+        QRect(10, 82, w - 20, 44),
+        Qt::AlignLeft | Qt::AlignTop,
+        QStringLiteral("P: Load Preview  Q: Load Render Queue  D: Compare captures"));
+    painter.drawText(
+        QRect(10, 106, w - 20, 44),
+        Qt::AlignLeft | Qt::AlignTop,
+        impl_->contextStatus);
+    if (!impl_->parityStatus.isEmpty()) {
+        painter.drawText(
+            QRect(10, h - 62, w - 20, 18),
+            Qt::AlignLeft | Qt::AlignVCenter,
+            impl_->parityStatus);
+    }
     if (!impl_->backgroundPath.isEmpty()) {
         painter.drawText(QRect(10, h - 42, w - 20, 18), Qt::AlignLeft | Qt::AlignVCenter,
             QStringLiteral("BG: %1").arg(QFileInfo(impl_->backgroundPath).fileName()));
@@ -550,6 +666,30 @@ void ArtifactSoftwareRenderTestWidget::keyPressEvent(QKeyEvent* event)
         if (impl_->loadOverlayImage(this)) {
             update();
         }
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_P) {
+        if (impl_->loadParityCapture(this, &impl_->previewCapture,
+                                     &impl_->previewCapturePath,
+                                     QStringLiteral("Load Preview Capture"))) {
+            update();
+        }
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Q) {
+        if (impl_->loadParityCapture(this, &impl_->renderQueueCapture,
+                                     &impl_->renderQueueCapturePath,
+                                     QStringLiteral("Load Render Queue Capture"))) {
+            update();
+        }
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_D) {
+        impl_->compareParityCaptures();
+        update();
         event->accept();
         return;
     }

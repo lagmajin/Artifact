@@ -31,7 +31,7 @@ QColor toQColor(const ArtifactCore::FloatColor& color) {
     );
 }
 
-int64_t lightTimelineFps(const ArtifactLightLayer* layer)
+double lightTimelineFps(const ArtifactLightLayer* layer)
 {
     if (!layer) {
         return 30;
@@ -39,7 +39,7 @@ int64_t lightTimelineFps(const ArtifactLightLayer* layer)
     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
         const double fps = comp->frameRate().framerate();
         if (fps > 0.0) {
-            return std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
+            return fps;
         }
     }
     return 30;

@@ -1,6 +1,14 @@
 # Milestone: ImGuizmo Direct Code Integration / Gizmo Port to Artifact Render API (2026-04-09)
 
-**Status:** Draft  
+**Status:** Partial; direct 2D transform gizmo, renderer primitive path, hit testing, multi-target interaction, and overlay integration are implemented; 3D parity and runtime verification remain  
+**最終更新:** 2026-08-15
+
+## 2026-08-15 現行コード照合
+
+- `TransformGizmo` は外部 ImGuizmo 依存なしで Move / Rotate / Scale の描画、hover／active hit test、drag、snap、multi-target 操作、Undo 経路を持つ。
+- 描画は `ArtifactIRenderer` の線・円・矩形・三角・テキスト／overlay API に接続され、`QPainter` に逃がしていない。
+- Composition Editor と Layer Editor の overlay／入力経路への接続は実装済み。
+- 未完了は 3D gizmo との共通化、software／Diligent の実機 parity、座標ずれ診断の runtime 確認。現時点で direct-code 移植の追加実装は不要。
 **Goal:** `ImGuizmo` を外部ライブラリとして組み込むのではなく、描画プリミティブと操作ロジックを Artifact のコードとして移植し、既存の render / overlay 基盤へ直接つなぐ。
 
 ---
@@ -181,8 +189,10 @@
 
 ## Current Status
 
-- `ImGuizmo` の構造は分析済み
-- 描画プリミティブの置換先候補も見えている
-- ただし現状は分析ノート止まりで、実装用の direct-code milestone が不足している
-- そのため、まずは translation gizmo を direct code で 1 本通すのが最短
+- `TransformGizmo` は外部 ImGuizmo 依存なしの direct code として Move／Rotate／Scale の描画、hover／active hit test、multi-target drag、snap、Undo を実装済み。
+- Composition／Layer Editor overlay と Artifact renderer primitive 経路への接続も確認済み。
+- 3D 共通化、software／Diligent parity、runtime 診断は未完了または未検証。
 
+## Update 2026-08-15
+
+現行の `TransformGizmo.cppm` を追加照合し、本文の「分析ノート止まり」という記述を訂正した。translation gizmo の direct-code 実装を起点に、rotation／scale、multi-target、snap、Undo まで進んでいるため、追加の移植実装は行わない。

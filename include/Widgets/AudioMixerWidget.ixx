@@ -14,8 +14,11 @@ export module Artifact.Widgets.AudioMixer;
 import Audio.Mixer;
 import Audio.Bus;
 import Audio.Analyze;
+import Audio.Effect.Spectrum;
 import Memory.SharedPtr;
 import Artifact.Widgets.SpectrumAnalyzer;
+
+class QLabel;
 
 export namespace Artifact {
 
@@ -62,6 +65,8 @@ private:
     QComboBox* routeCombo_ = nullptr;
     SpectrumAnalyzerWidget* analyzerWidget_;
     std::unique_ptr<ArtifactCore::AudioAnalyzer> analyzer_;
+    std::unique_ptr<ArtifactCore::AudioSpectrum> loudnessAnalyzer_;
+    QLabel* loudnessLabel_ = nullptr;
     QElapsedTimer clipTimer_;
     qint64 clipLatchedUntilMs_ = 0;
     float clipPeak_ = 0.0f;

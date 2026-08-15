@@ -105,6 +105,10 @@ namespace detail {
 
 using AbstractPropertyPtr = ArtifactCore::AbstractPropertyPtr;
 
+constexpr int kPropertyRowLabelMinWidth = 132;
+constexpr int kPropertyRowLabelMaxWidth = 184;
+constexpr int kEffectRowLabelMaxWidth = 176;
+
 struct LayerStateToggleDef {
   const char *propertyName;
   const char *label;
@@ -1698,12 +1702,32 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           group, groupLayout, sortedProps, filterText,
           [this, effect](const QString &name, const QVariant &value) {
             ScopedPropertyEditGuard guard(localPropertyEditDepth);
-            effect->setPropertyValue(name, value);
+            if (name == QStringLiteral("Effect Region Enabled")) {
+              if (value.toBool()) effect->setEffectRegion(effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1));
+              else effect->clearEffectRegion();
+            } else if (name.startsWith(QStringLiteral("Effect Region "))) {
+              QRectF region = effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1);
+              if (name.endsWith(QStringLiteral(" X"))) region.moveLeft(value.toDouble());
+              else if (name.endsWith(QStringLiteral(" Y"))) region.moveTop(value.toDouble());
+              else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
+              else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
+              effect->setEffectRegion(region);
+            } else effect->setPropertyValue(name, value);
             scheduleUpdateValues();
           },
           [this, effect](const QString &name, const QVariant &value) {
             ScopedPropertyEditGuard guard(localPropertyEditDepth);
-            effect->setPropertyValue(name, value);
+            if (name == QStringLiteral("Effect Region Enabled")) {
+              if (value.toBool()) effect->setEffectRegion(effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1));
+              else effect->clearEffectRegion();
+            } else if (name.startsWith(QStringLiteral("Effect Region "))) {
+              QRectF region = effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1);
+              if (name.endsWith(QStringLiteral(" X"))) region.moveLeft(value.toDouble());
+              else if (name.endsWith(QStringLiteral(" Y"))) region.moveTop(value.toDouble());
+              else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
+              else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
+              effect->setEffectRegion(region);
+            } else effect->setPropertyValue(name, value);
           },
           currentCompositionEffectTime,
           [this](const QString &) { scheduleUpdateValues(); },
@@ -1712,7 +1736,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           {});
 
       if (addedGroupProperties) {
-        alignPropertyRowLabels(effectRows, 132, 176);
+        alignPropertyRowLabels(effectRows, kPropertyRowLabelMinWidth,
+                               kEffectRowLabelMaxWidth);
         mainLayout->addWidget(group);
         hasAnyCompositionEffectProperties = true;
       } else {
@@ -1742,10 +1767,41 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   };
   registerCurrentLayerPropertySnapshot(layer, focusedEffectId);
 
-  const auto notifyLayerKeyframeChanged = [this, layer](const QString &) {
-    if (layer) {
-      notifyLayerPropertyAnimationChanged(layer);
+  const auto notifyLayerKeyframeChanged = [this, layer, currentLayerTime](
+                                               const QString &propertyName) {
+    if (!layer) {
+      return;
     }
+
+    // Property rows operate on the primary layer's property object. When
+    // multiple layers are selected, mirror the current keyframe state to the
+    // other compatible layers so keyframe toggles and auto-key edits remain
+    // a true batch operation instead of only changing the visible primary.
+    const auto sourceProperty = layer->getProperty(propertyName);
+    const auto now = currentLayerTime();
+    if (sourceProperty && targetLayers.size() > 1) {
+      const auto sourceKeys = sourceProperty->getKeyFrames();
+      const auto sourceKey = std::find_if(
+          sourceKeys.cbegin(), sourceKeys.cend(),
+          [&now](const auto &key) { return key.time == now; });
+      for (const auto &target : targetLayers) {
+        if (!target || target == layer) {
+          continue;
+        }
+        const auto targetProperty = target->getProperty(propertyName);
+        if (!targetProperty) {
+          continue;
+        }
+        if (sourceKey != sourceKeys.cend()) {
+          targetProperty->setAnimatable(true);
+          targetProperty->addKeyFrame(now, sourceKey->value);
+        } else {
+          targetProperty->removeKeyFrame(now);
+        }
+        notifyLayerPropertyAnimationChanged(target);
+      }
+    }
+    notifyLayerPropertyAnimationChanged(layer);
   };
 
   const auto layerGroups = layer ? layer->getLayerPropertyGroups()
@@ -1760,6 +1816,25 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         updateScaleSupplementaryText(row, layer, property,
                                      property->getValue());
         const QString propName = property->getName();
+        if (targetLayers.size() > 1) {
+          const QVariant primaryValue = property->getValue();
+          bool mixed = false;
+          for (const auto &target : targetLayers) {
+            if (!target || target == layer) {
+              continue;
+            }
+            const auto targetProperty = target->getProperty(propName);
+            if (!targetProperty || targetProperty->getValue() != primaryValue) {
+              mixed = true;
+              break;
+            }
+          }
+          if (mixed) {
+            row->setSupplementaryText(QStringLiteral("Mixed"));
+            row->setEditorToolTip(QStringLiteral(
+                "Selected layers have different values. Editing applies the new value to all compatible layers."));
+          }
+        }
         const bool fav = isFavorite(propName);
         row->setShowFavoriteButton(true);
         row->setShowResetButton(true);
@@ -1879,7 +1954,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           QStringLiteral("channelBox"), &propertyEditors, &channelRows,
           decorateLayerRow, updateLayerRowValue);
       if (!channelRows.empty()) {
-        alignPropertyRowLabels(channelRows, 132, 184);
+        alignPropertyRowLabels(channelRows, kPropertyRowLabelMinWidth,
+                               kPropertyRowLabelMaxWidth);
         for (auto *row : channelRows) {
           if (row && channelLockedPaths.contains(row->propertyName())) {
             row->setEnabled(false);
@@ -2284,7 +2360,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             layer, &addedGroupProperties, transformTitle, &propertyEditors, &transformRows,
             decorateLayerRow, updateLayerRowValue);
         if (!transformRows.empty()) {
-          alignPropertyRowLabels(transformRows, 132, 184);
+          alignPropertyRowLabels(transformRows, kPropertyRowLabelMinWidth,
+                                 kPropertyRowLabelMaxWidth);
         }
         contentLayout->addWidget(transformBox);
       }
@@ -2551,7 +2628,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     if (addedGroupProperties) {
-      alignPropertyRowLabels(groupRows, 132, 184);
+      alignPropertyRowLabels(groupRows, kPropertyRowLabelMinWidth,
+                             kPropertyRowLabelMaxWidth);
       mainLayout->addWidget(group);
       hasAnyProperties = true;
     } else {
@@ -2674,12 +2752,32 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         group, groupLayout, sortedProps, filterText,
         [this, layer, effect](const QString &name, const QVariant &value) {
           ScopedPropertyEditGuard guard(localPropertyEditDepth);
-          effect->setPropertyValue(name, value);
+          if (name == QStringLiteral("Effect Region Enabled")) {
+            if (value.toBool()) effect->setEffectRegion(effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1));
+            else effect->clearEffectRegion();
+          } else if (name.startsWith(QStringLiteral("Effect Region "))) {
+            QRectF region = effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1);
+            if (name.endsWith(QStringLiteral(" X"))) region.moveLeft(value.toDouble());
+            else if (name.endsWith(QStringLiteral(" Y"))) region.moveTop(value.toDouble());
+            else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
+            else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
+            effect->setEffectRegion(region);
+          } else effect->setPropertyValue(name, value);
           notifyLayerPropertyAnimationChanged(layer);
         },
         [this, layer, effect](const QString &name, const QVariant &value) {
           ScopedPropertyEditGuard guard(localPropertyEditDepth);
-          effect->setPropertyValue(name, value);
+          if (name == QStringLiteral("Effect Region Enabled")) {
+            if (value.toBool()) effect->setEffectRegion(effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1));
+            else effect->clearEffectRegion();
+          } else if (name.startsWith(QStringLiteral("Effect Region "))) {
+            QRectF region = effect->hasEffectRegion() ? effect->effectRegion() : QRectF(0, 0, 1, 1);
+            if (name.endsWith(QStringLiteral(" X"))) region.moveLeft(value.toDouble());
+            else if (name.endsWith(QStringLiteral(" Y"))) region.moveTop(value.toDouble());
+            else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
+            else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
+            effect->setEffectRegion(region);
+          } else effect->setPropertyValue(name, value);
           notifyLayerPropertyPreviewChanged(layer);
         },
         currentLayerTime,
@@ -2689,7 +2787,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         decorateLayerRow);
 
     if (addedGroupProperties) {
-      alignPropertyRowLabels(effectRows, 132, 176);
+        alignPropertyRowLabels(effectRows, kPropertyRowLabelMinWidth,
+                               kEffectRowLabelMaxWidth);
       mainLayout->addWidget(group);
       hasAnyProperties = true;
     } else {

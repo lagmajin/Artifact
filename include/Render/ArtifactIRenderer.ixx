@@ -138,6 +138,8 @@ public:
   void clear();
   void flush();
   void flushAndWait();
+  quint64 flushCount() const;
+  qint64 flushContextTimeUs() const;
   void destroy();
   void present();
   bool isInitialized() const;
@@ -167,8 +169,11 @@ public:
   GlobalIlluminationSettings globalIlluminationSettings() const;
   GlobalIlluminationState globalIlluminationState() const;
   QString globalIlluminationDebugState() const;
+  QString pipelineStateCacheDebugState() const;
+  QString shadowMapDebugState() const;
 
   QImage readbackToImage() const;
+  ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
   QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;
   QImage readbackDepthToImage() const;
   Diligent::ITextureView *liveDepthShaderResourceView() const;

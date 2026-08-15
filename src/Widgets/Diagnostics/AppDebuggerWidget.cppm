@@ -478,6 +478,7 @@ public:
     QTabWidget* tabs_ = nullptr;
     QWidget* overviewPage_ = nullptr;
     QLabel* overviewSummary_ = nullptr;
+    QLabel* semanticLegend_ = nullptr;
     QWidget* capturePage_ = nullptr;
     QLabel* captureSummary_ = nullptr;
     FramePipelineViewWidget* capturePipelineView_ = nullptr;
@@ -669,6 +670,20 @@ public:
         overviewSummary_->setMinimumHeight(56);
         overviewSummary_->setMaximumHeight(72);
         overviewLayout->addWidget(overviewSummary_);
+        semanticLegend_ = new QLabel(overviewPage_);
+        semanticLegend_->setAccessibleName(QStringLiteral("Diagnostics color legend"));
+        semanticLegend_->setAccessibleDescription(QStringLiteral("Neutral, info, warning, error, and success color meanings"));
+        semanticLegend_->setTextFormat(Qt::PlainText);
+        semanticLegend_->setText(QStringLiteral("LEGEND  neutral: normal  |  info: context  |  warning: attention  |  error: failed  |  success: ready"));
+        semanticLegend_->setWordWrap(true);
+        semanticLegend_->setMargin(4);
+        QFont legendFont = semanticLegend_->font();
+        legendFont.setPointSize(std::max(8, legendFont.pointSize() - 1));
+        semanticLegend_->setFont(legendFont);
+        QPalette legendPalette = semanticLegend_->palette();
+        legendPalette.setColor(QPalette::WindowText, QColor::fromRgb(170, 182, 194));
+        semanticLegend_->setPalette(legendPalette);
+        overviewLayout->addWidget(semanticLegend_);
         layout->addWidget(overviewPage_);
 
         tabs_ = new QTabWidget(owner_);
@@ -1539,6 +1554,20 @@ public:
         lines << QStringLiteral("bundle: %1").arg(captureBundle_.label.isEmpty() ? QStringLiteral("<unnamed>") : captureBundle_.label);
         lines << QStringLiteral("createdAtMs: %1").arg(captureBundle_.createdAtMs);
 
+        const QString goal = QStringLiteral("Inspect the captured frame and identify the next actionable render state.");
+        const QString expected = QStringLiteral("capture=available, diagnostics=readable, comparison=stable");
+        const QString actual = QStringLiteral("capture=%1, diagnostics=%2, comparison=%3")
+                                   .arg(hasCaptureBundle_ ? QStringLiteral("available") : QStringLiteral("missing"),
+                                        current.failed ? QStringLiteral("failed") : QStringLiteral("available"),
+                                        captureSelectedRow_ <= 0 ? QStringLiteral("current") : QStringLiteral("baseline-selected"));
+        const QString nextAction = current.failed
+                                       ? QStringLiteral("Inspect the failed pass and compare against a known-good capture.")
+                                       : QStringLiteral("Compare with a baseline or capture the next deterministic scenario.");
+        lines << QStringLiteral("goal: %1").arg(goal);
+        lines << QStringLiteral("expected: %1").arg(expected);
+        lines << QStringLiteral("actual: %1").arg(actual);
+        lines << QStringLiteral("nextAction: %1").arg(nextAction);
+
         if (captureSelectedRow_ <= 0) {
             lines << QStringLiteral("comparison: current capture");
         } else {
@@ -1819,7 +1848,11 @@ public:
             const QString breakHistorySummaryText = debugMcpSessionSummary.value(QStringLiteral("breakHistorySummary")).toString().trimmed();
             const QString densityWarning = densityWarningText(controllerSnapshot);
             const QString nextText = frameDebugNextAction(controllerSnapshot);
-            stateSummary_->setText(QStringLiteral("NOW  %1 / %2 / Frame %3 / %4\nWARNING  %5    NEXT  %6")
+            const QString stateGoal = controllerSnapshot.failed
+                                          ? QStringLiteral("inspect the failed frame")
+                                          : QStringLiteral("inspect current render health");
+            stateSummary_->setText(QStringLiteral("GOAL  %1\nNOW  %2 / %3 / Frame %4 / %5\nWARNING  %6    NEXT  %7")
+                                       .arg(stateGoal)
                                        .arg(compositionText, layerText)
                                        .arg(controllerSnapshot.frame.framePosition())
                                        .arg(playbackText)
@@ -1998,7 +2031,11 @@ public:
                 warningText = densityWarningText(controllerSnapshot);
             }
             const QString nextText = frameDebugNextAction(controllerSnapshot);
-            overviewSummary_->setText(QStringLiteral("NOW  %1 / %2 / Frame %3 / %4 / %5\nWARNING  %6    NEXT  %7")
+            const QString overviewGoal = controllerSnapshot.failed
+                                             ? QStringLiteral("inspect the failed frame")
+                                             : QStringLiteral("inspect current render health");
+            overviewSummary_->setText(QStringLiteral("GOAL  %1\nNOW  %2 / %3 / Frame %4 / %5 / %6\nWARNING  %7    NEXT  %8")
+                                          .arg(overviewGoal)
                                           .arg(compositionText, layerText)
                                           .arg(controllerSnapshot.frame.framePosition())
                                           .arg(playbackText, backendText)
@@ -2602,7 +2639,18 @@ public:
                 const auto& crash = trace.crashes.back();
                 lastCrashText = crash.summary.isEmpty() ? QStringLiteral("<no-summary>") : crash.summary.left(48);
             }
-            QString summaryText = QStringLiteral("traceFrames=%1  traceEvents=%2  crashes=%3  openLocks=%4  queueJobs=%5  playback=%6")
+            const bool hasDiagnosticWarning = !trace.crashes.empty() || controllerSnapshot.failed ||
+                                              (projectSvc && projectSvc->currentProjectHealthStateToken() != QStringLiteral("healthy"));
+            const QString warningText = !trace.crashes.empty()
+                                            ? QStringLiteral("recent crash")
+                                            : (controllerSnapshot.failed ? QStringLiteral("frame failed")
+                                                                          : (hasDiagnosticWarning ? QStringLiteral("project health needs review")
+                                                                                                  : QStringLiteral("none")));
+            const QString nextText = !trace.crashes.empty() || controllerSnapshot.failed
+                                         ? QStringLiteral("inspect failure details")
+                                         : (hasDiagnosticWarning ? QStringLiteral("open Problem View")
+                                                                 : QStringLiteral("continue monitoring"));
+            QString summaryText = QStringLiteral("goal: inspect diagnostics | now: traceFrames=%1 events=%2 crashes=%3 locks=%4 queueJobs=%5 playback=%6")
                                       .arg(static_cast<int>(trace.frames.size()))
                                       .arg(static_cast<int>(trace.events.size()))
                                       .arg(static_cast<int>(trace.crashes.size()))
@@ -2615,8 +2663,9 @@ public:
                                       }())
                                       .arg(queueSvc ? queueSvc->jobCount() : 0)
                                       .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
-            summaryText += QStringLiteral("  tracker=%1")
+            summaryText += QStringLiteral(" tracker=%1 | warning: %2 | next: %3")
                                .arg(ArtifactCore::TrackerManager::instance().trackerCount());
+            summaryText = summaryText.arg(warningText).arg(nextText);
             diagnosticsSummary_->setText(summaryText);
             diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2\nprojectHealth=%3\n%4")
                                                 .arg(lastCrashText)

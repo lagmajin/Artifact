@@ -148,6 +148,7 @@ import Memory.SharedPtr;
 import Asset.Manager;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Search.Query;
+import Artifact.Render.Queue.Service;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Layer.InitParams;
@@ -1920,6 +1921,15 @@ private:
                 unusedOnly_ = true;
                 continue;
             }
+            if (token.compare("used:false", Qt::CaseInsensitive) == 0) {
+                unusedOnly_ = true;
+                continue;
+            }
+            if (token.compare("used:true", Qt::CaseInsensitive) == 0 ||
+                token.compare("is:used", Qt::CaseInsensitive) == 0) {
+                usedOnly_ = true;
+                continue;
+            }
             if (token.compare("missing:true", Qt::CaseInsensitive) == 0 ||
                 token.compare("is:missing", Qt::CaseInsensitive) == 0) {
                 missingOnly_ = true;
@@ -1959,14 +1969,22 @@ private:
     bool matchesAdvanced(const QModelIndex& idx0, const eProjectItemType itemType, ProjectItem* item) const {
         if (!typeMatches(itemType)) return false;
 
+        if (usedOnly_ && (!item || projectItemUsageCount(item) <= 0)) {
+            return false;
+        }
+
         const QString name = sourceModel()->data(idx0, Qt::DisplayRole).toString();
         QString searchBlob = name;
+        if (item) {
+            searchBlob += QStringLiteral(" ") + item->tags.join(QStringLiteral(" "));
+        }
         if (item && itemType == eProjectItemType::Footage) {
             const auto* footage = static_cast<const FootageItem*>(item);
             const QString path = footage->filePath;
             const QString normalizedPath = QDir::cleanPath(path);
             searchBlob += QStringLiteral(" ") + path;
-            if (unusedOnly_ && !unusedAssetPaths_.contains(normalizedPath)) {
+            if (unusedOnly_ && !unusedAssetPaths_.contains(normalizedPath) &&
+                projectItemUsageCount(item) > 0) {
                 return false;
             }
             if (missingOnly_) {
@@ -1982,7 +2000,12 @@ private:
                 if (!missing) return false;
             }
         } else if (unusedOnly_ || missingOnly_) {
-            return false;
+            if (unusedOnly_ && projectItemUsageCount(item) > 0) {
+                return false;
+            }
+            if (missingOnly_) {
+                return false;
+            }
         }
 
         for (const QString& term : plainTerms_) {
@@ -2012,6 +2035,7 @@ private:
     QString rawExpression_;
     QString typeFilter_;
     bool unusedOnly_ = false;
+    bool usedOnly_ = false;
     bool missingOnly_ = false;
     bool regexEnabled_ = false;
     QString regexPattern_;
@@ -2368,7 +2392,7 @@ public:
         collectImportablePaths(str, importTargets);
         importTargets.removeDuplicates();
         if (importTargets.isEmpty()) return;
-        svc->importAssetsFromPaths(importTargets);
+        svc->importAssetsFromPathsAsync(importTargets, {});
     }
 
     static void collectFootage(ProjectItem* item, QVector<FootageItem*>& out) {
@@ -3525,13 +3549,13 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
         impl_->hoverIndex = idx;
         impl_->hoverStartPos = mousePos;
         impl_->hoverTimer->stop();
-        if (idx.isValid()) impl_->hoverTimer->start(1100);
+        if (idx.isValid()) impl_->hoverTimer->start(300);
         update();
     } else if (idx.isValid() && (mousePos - impl_->hoverStartPos).manhattanLength() > 6) {
         if (impl_->hoverPopup) impl_->hoverPopup->hide();
         impl_->hoverTimer->stop();
         impl_->hoverStartPos = mousePos;
-        impl_->hoverTimer->start(1100);
+        impl_->hoverTimer->start(300);
     }
     event->accept();
 }
@@ -3622,9 +3646,43 @@ void ArtifactProjectView::refreshVisibleContent()
     if (!impl_) {
         return;
     }
+    QStringList selectedKeys;
+    if (impl_->selectionModel) {
+        for (const auto& selected : impl_->selectionModel->selectedRows(0)) {
+            QString key = selected.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId)).toString();
+            if (!key.isEmpty()) {
+                selectedKeys.append(QStringLiteral("composition:%1").arg(key));
+                continue;
+            }
+            key = selected.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId)).toString();
+            if (!key.isEmpty()) {
+                selectedKeys.append(QStringLiteral("asset:%1").arg(key));
+            }
+        }
+    }
     const int savedScroll = verticalScrollBar_ ? verticalScrollBar_->value() : 0;
 
     impl_->rebuildVisibleRows();
+
+    if (impl_->selectionModel && !selectedKeys.isEmpty()) {
+        const QSignalBlocker blocker(impl_->selectionModel);
+        impl_->selectionModel->clearSelection();
+        for (const auto& row : impl_->visibleRows) {
+            const QString compositionId = row.index0.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId)).toString();
+            const QString assetId = row.index0.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId)).toString();
+            const QString key = !compositionId.isEmpty()
+                ? QStringLiteral("composition:%1").arg(compositionId)
+                : (!assetId.isEmpty() ? QStringLiteral("asset:%1").arg(assetId) : QString());
+            if (!key.isEmpty() && selectedKeys.contains(key)) {
+                impl_->selectionModel->select(
+                    row.index0, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            }
+        }
+    }
     updateScrollRange();
 
     if (verticalScrollBar_) {
@@ -3707,6 +3765,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
                 obj[QStringLiteral("name")] = item->name.toQString();
                 obj[QStringLiteral("id")] = item->id.toString();
+                if (!item->tags.isEmpty()) {
+                    obj[QStringLiteral("tags")] = QJsonArray::fromStringList(item->tags);
+                }
 
                 switch (item->type()) {
                 case eProjectItemType::Folder: {
@@ -3803,6 +3864,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
             }, loadProjectViewIcon(QStringLiteral("Studio/composition.svg")));
+            addTrackedAction(QStringLiteral("queue_render"), QStringLiteral("Add to Render Queue"), [contextItem]() {
+                if (!contextItem || contextItem->type() != eProjectItemType::Composition) return;
+                auto* renderQueue = ArtifactRenderQueueService::instance();
+                if (!renderQueue) return;
+                const auto* composition = static_cast<const CompositionItem*>(contextItem);
+                renderQueue->addRenderQueueForComposition(
+                    composition->compositionId, contextItem->name.toQString());
+            }, loadProjectViewIcon(QStringLiteral("Studio/rendermenu_queue.svg")));
 
             {
                 auto* responsiveMenu = menu.addMenu(QStringLiteral("Responsive Layout"));
@@ -4552,6 +4621,24 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 }
             }
         }, loadProjectViewIcon(QStringLiteral("Studio/edit.svg")));
+        addTrackedAction(QStringLiteral("edit_tags"), QStringLiteral("Edit Tags"), [this, contextItem, svc]() {
+            if (!contextItem || !svc) return;
+            bool ok = false;
+            const QString value = QInputDialog::getText(
+                this, QStringLiteral("Edit Tags"),
+                QStringLiteral("Comma-separated tags:"), QLineEdit::Normal,
+                contextItem->tags.join(QStringLiteral(", ")), &ok);
+            if (!ok) return;
+            QStringList tags;
+            for (const QString& raw : value.split(',', Qt::SkipEmptyParts)) {
+                const QString tag = raw.trimmed();
+                if (!tag.isEmpty() && !tags.contains(tag, Qt::CaseInsensitive)) {
+                    tags.append(tag);
+                }
+            }
+            contextItem->tags = tags;
+            svc->projectChanged();
+        }, loadProjectViewIcon(QStringLiteral("Studio/edit.svg")));
 
         QMenu* moveToFolderMenu = menu.addMenu(QStringLiteral("Move to Folder"));
         moveToFolderMenu->setIcon(loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));
@@ -4905,7 +4992,7 @@ void ArtifactProjectView::dropEvent(QDropEvent* event) {
     }
 
     if (auto* svc = ArtifactProjectService::instance()) {
-        svc->importAssetsFromPaths(importTargets);
+        svc->importAssetsFromPathsAsync(importTargets, {});
         event->acceptProposedAction();
         return;
     }
@@ -5466,15 +5553,7 @@ public:
                 return false;
             }
 
-            if (auto project = svc->getCurrentProjectSharedPtr()) {
-                project->projectChanged();
-            }
-            if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
-                if (auto* playback = ArtifactPlaybackService::instance()) {
-                    playback->setFrameRange(comp->frameRange());
-                    playback->setFrameRate(comp->frameRate());
-                }
-            }
+            svc->finalizeCompositionSettingsChange(comp->id());
             return true;
         }
 
@@ -5505,19 +5584,11 @@ public:
             comp->setBackGroundColor(floatBg);
             applied = true;
 
-            if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
-                if (auto* playback = ArtifactPlaybackService::instance()) {
-                    playback->setFrameRange(comp->frameRange());
-                    playback->setFrameRate(comp->frameRate());
-                }
-            }
+            svc->finalizeCompositionSettingsChange(comp->id());
         }
 
-        if (applied) {
-            if (auto project = svc->getCurrentProjectSharedPtr()) {
-                project->projectChanged();
-            }
-        }
+        // finalizeCompositionSettingsChange() also marks the project dirty;
+        // each changed composition follows the same path as the single-edit UI.
         return applied;
     }
 

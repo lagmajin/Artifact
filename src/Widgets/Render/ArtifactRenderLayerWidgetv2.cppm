@@ -951,6 +951,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
  RefCntAutoPtr<IFence> m_layer_fence;
   LayerBackgroundMode backgroundMode_ = LayerBackgroundMode::Alpha;
   bool showGrid_ = false;
+  bool showSafeMargins_ = false;
   LayerSurfaceMode surfaceMode_ = LayerSurfaceMode::Edit;
   EditMode editModeBeforeSurface_ = EditMode::View;
   EditMode editMode_ = EditMode::View;
@@ -2299,7 +2300,7 @@ void ArtifactLayerEditorWidgetV2::Impl::drawSurfaceOverlay(
 
 void ArtifactLayerEditorWidgetV2::Impl::drawCompositionGuideOverlay()
 {
- if (!renderer_ || !showGrid_) return;
+ if (!renderer_ || (!showGrid_ && !showSafeMargins_)) return;
 
  auto* service = ArtifactProjectService::instance();
  if (!service) return;
@@ -2328,15 +2329,32 @@ void ArtifactLayerEditorWidgetV2::Impl::drawCompositionGuideOverlay()
  const FloatColor frameColor{0.30f, 0.68f, 1.0f, 0.86f};
 
  renderer_->setUseExternalMatrices(false);
- if (minorSpacing * zoom >= 8.0f) {
+ if (showGrid_ && minorSpacing * zoom >= 8.0f) {
   renderer_->drawGrid(0.0f, 0.0f, width, height, minorSpacing,
                       0.65f / zoom, minorColor);
  }
- renderer_->drawGrid(0.0f, 0.0f, width, height, majorSpacing,
-                     1.0f / zoom, majorColor);
- renderer_->drawDashedRectOutline(0.0f, 0.0f, width, height,
-                                  frameColor, 1.25f / zoom,
-                                  9.0f / zoom, 5.0f / zoom);
+ if (showGrid_) {
+  renderer_->drawGrid(0.0f, 0.0f, width, height, majorSpacing,
+                      1.0f / zoom, majorColor);
+  renderer_->drawDashedRectOutline(0.0f, 0.0f, width, height,
+                                   frameColor, 1.25f / zoom,
+                                   9.0f / zoom, 5.0f / zoom);
+ }
+ if (showSafeMargins_) {
+  const FloatColor actionSafe{1.0f, 0.78f, 0.24f, 0.78f};
+  const FloatColor titleSafe{0.98f, 0.44f, 0.28f, 0.68f};
+  const auto drawSafeRect = [this, width, height](float ratio,
+                                                   const FloatColor& color) {
+   const float insetX = width * (1.0f - ratio) * 0.5f;
+   const float insetY = height * (1.0f - ratio) * 0.5f;
+   renderer_->drawRectOutlineLocal(insetX, insetY,
+                                   width - insetX * 2.0f,
+                                   height - insetY * 2.0f,
+                                   color);
+  };
+  drawSafeRect(0.9f, actionSafe);
+  drawSafeRect(0.8f, titleSafe);
+ }
 }
 
 void ArtifactLayerEditorWidgetV2::Impl::refreshSurfaceInfo(
@@ -5233,16 +5251,43 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
 }
 
 
- void ArtifactLayerEditorWidgetV2::wheelEvent(QWheelEvent* event)
+void ArtifactLayerEditorWidgetV2::wheelEvent(QWheelEvent* event)
  {
   if (!impl_->renderer_) {
    QWidget::wheelEvent(event);
    return;
   }
 
-  const float steps = static_cast<float>(event->angleDelta().y()) / 120.0f;
+  const QPoint angleDelta = event->angleDelta();
+  const QPoint pixelDelta = event->pixelDelta();
+  // Match Composition View's trackpad normalization.  Some platforms do not
+  // provide the traditional 120-unit angle delta at all.
+  const float verticalDelta = angleDelta.y() != 0
+                                  ? static_cast<float>(angleDelta.y()) / 120.0f
+                                  : static_cast<float>(pixelDelta.y()) / 48.0f;
+  if (event->modifiers() & Qt::ShiftModifier) {
+   const int rawHorizontalDelta = angleDelta.x() != 0 ? angleDelta.x()
+                                                       : pixelDelta.x();
+   const int rawVerticalDelta = angleDelta.y() != 0 ? angleDelta.y()
+                                                     : pixelDelta.y();
+   const float horizontalDelta = rawHorizontalDelta != 0
+                                     ? (angleDelta.x() != 0
+                                            ? static_cast<float>(rawHorizontalDelta)
+                                            : static_cast<float>(rawHorizontalDelta) * 2.5f)
+                                     : (angleDelta.y() != 0
+                                            ? static_cast<float>(rawVerticalDelta)
+                                            : static_cast<float>(rawVerticalDelta) * 2.5f);
+   if (std::abs(horizontalDelta) > 0.001f) {
+    impl_->renderer_->panBy(horizontalDelta, 0.0f);
+    impl_->requestRender();
+   }
+   event->accept();
+   return;
+  }
+
+  const float steps = verticalDelta;
   if (std::abs(steps) <= std::numeric_limits<float>::epsilon()) {
-   event->ignore();
+   event->accept();
    return;
   }
 
@@ -5582,6 +5627,9 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* showGridAct = bgMenu.addAction(QStringLiteral("Show Composition Grid"));
  showGridAct->setCheckable(true);
  showGridAct->setChecked(impl_->showGrid_);
+ QAction* showSafeMarginsAct = bgMenu.addAction(QStringLiteral("Show Safe Margins"));
+ showSafeMarginsAct->setCheckable(true);
+ showSafeMarginsAct->setChecked(impl_->showSafeMargins_);
  bgMenu.addSeparator();
  QAction* alphaAct = bgMenu.addAction(QStringLiteral("Alpha"));
  QAction* solidAct = bgMenu.addAction(QStringLiteral("Solid"));
@@ -5612,6 +5660,8 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  }
  if (chosen == showGridAct) {
   impl_->showGrid_ = showGridAct->isChecked();
+ } else if (chosen == showSafeMarginsAct) {
+  impl_->showSafeMargins_ = showSafeMarginsAct->isChecked();
  } else if (chosen == alphaAct) {
   impl_->backgroundMode_ = LayerBackgroundMode::Alpha;
  } else if (chosen == solidAct) {

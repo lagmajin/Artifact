@@ -1,9 +1,12 @@
 module;
 #include <QDialog>
+#include <QDragEnterEvent>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMimeData>
 #include <QPushButton>
+#include <QDropEvent>
 #include <QSignalBlocker>
 #include <QVariant>
 #include <QWidget>
@@ -24,6 +27,7 @@ ArtifactObjectReferencePropertyEditor::ArtifactObjectReferencePropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   Q_UNUSED(property);
+  setAcceptDrops(true);
   setAccessibleName(QStringLiteral("Object reference property editor"));
   setAccessibleDescription(QStringLiteral("Choose or clear the object referenced by this property"));
 
@@ -133,5 +137,33 @@ void ArtifactObjectReferencePropertyEditor::updateReferenceDisplay() {
   if (clearButton_) {
     clearButton_->setEnabled(true);
   }
+}
+
+void ArtifactObjectReferencePropertyEditor::dragEnterEvent(QDragEnterEvent* event) {
+  if (event && event->mimeData() &&
+      event->mimeData()->hasFormat(
+          QStringLiteral("application/x-artifact-expression-reference"))) {
+    event->acceptProposedAction();
+    return;
+  }
+  ArtifactAbstractPropertyEditor::dragEnterEvent(event);
+}
+
+void ArtifactObjectReferencePropertyEditor::dropEvent(QDropEvent* event) {
+  if (event && event->mimeData() &&
+      event->mimeData()->hasFormat(
+          QStringLiteral("application/x-artifact-expression-reference"))) {
+    bool ok = false;
+    const qint64 id = QString::fromUtf8(event->mimeData()->data(
+        QStringLiteral("application/x-artifact-expression-reference")))
+                          .trimmed()
+                          .toLongLong(&ok);
+    if (ok) {
+      onReferenceChanged(id);
+      event->acceptProposedAction();
+      return;
+    }
+  }
+  ArtifactAbstractPropertyEditor::dropEvent(event);
 }
 } // namespace Artifact

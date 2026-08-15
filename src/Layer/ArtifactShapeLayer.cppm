@@ -982,6 +982,7 @@ public:
  // Phase 5: Bezier path override
  std::vector<CustomPathVertex> customPathVertices_;
  bool customPathClosed_ = true;
+ ArtifactCore::PathFillRule customPathFillRule_ = ArtifactCore::PathFillRule::Winding;
  std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
  ShapeCompatibilityFallback lastLoggedFallback_ = ShapeCompatibilityFallback::None;
 
@@ -1060,10 +1061,13 @@ public:
         std::abs(cachedShapeTolerance_ - tolerance) < 1.0e-9) {
      return cachedShapeGeometry_;
     }
-    const ShapePath path = buildLayerShapePath(
+    ShapePath path = buildLayerShapePath(
         shapeType_, width_, height_, cornerRadius_, starPoints_,
         starInnerRadius_, polygonSides_, customPolygonPoints_,
         customPolygonClosed_, customPathVertices_, customPathClosed_);
+    if (customPathVertices_.size() >= 3) {
+     path.setFillRule(customPathFillRule_);
+    }
     cachedShapeGeometry_.triangles = path.triangulate(tolerance);
     cachedShapeGeometry_.subpaths = path.flattenSubpaths(tolerance);
     cachedShapeTolerance_ = tolerance;
@@ -1553,6 +1557,20 @@ void ArtifactShapeLayer::clearCustomPath() {
 }
 std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
 bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
+ArtifactCore::PathFillRule ArtifactShapeLayer::customPathFillRule() const {
+ return impl_->customPathFillRule_;
+}
+void ArtifactShapeLayer::setCustomPathFillRule(ArtifactCore::PathFillRule rule) {
+ const auto normalized = rule == ArtifactCore::PathFillRule::EvenOdd
+     ? ArtifactCore::PathFillRule::EvenOdd
+     : ArtifactCore::PathFillRule::Winding;
+ if (impl_->customPathFillRule_ == normalized) return;
+ impl_->customPathFillRule_ = normalized;
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 
 std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() const
 {
@@ -1690,8 +1708,10 @@ QRectF ArtifactShapeLayer::localBounds() const
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
    }
   } else if (impl_->customPathVertices_.size() >= 3) {
-   bounds = buildCustomShapePath(impl_->customPathVertices_,
-                                 impl_->customPathClosed_).boundingRect();
+   auto customPath = buildCustomShapePath(impl_->customPathVertices_,
+                                          impl_->customPathClosed_);
+   customPath.setFillRule(impl_->customPathFillRule_);
+   bounds = customPath.boundingRect();
   } else if (impl_->customPathVertices_.size() >= 2) {
    std::vector<QPointF> pts;
    pts.reserve(impl_->customPathVertices_.size());
@@ -1748,12 +1768,17 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
        (impl->strokeAlign_ == StrokeAlign::Center &&
         !impl->hasCustomStrokeEffects()));
   if (nativeOperatorCandidate) {
-   const auto processedOperatorPaths = buildProcessedShapePaths(
+   auto processedOperatorPaths = buildProcessedShapePaths(
        impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
        impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
        impl->customPolygonPoints_, impl->customPolygonClosed_,
        impl->customPathVertices_, impl->customPathClosed_,
        impl->shapeOperators_);
+   if (impl->customPathVertices_.size() >= 3) {
+    for (auto& path : processedOperatorPaths) {
+     path.setFillRule(impl->customPathFillRule_);
+    }
+   }
    if (!processedOperatorPaths.empty()) {
    const FloatColor fill(impl->fillColor_.r(), impl->fillColor_.g(),
                          impl->fillColor_.b(), impl->fillColor_.a());
@@ -1800,7 +1825,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                                          points.front().y - points.back().y) < 0.01f;
           if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
            PolylineStyle style;
-           style.thickness = std::max(1.0f, impl->strokeWidth_);
+           style.thickness = std::max(
+               1.0f, impl->strokeWidth_ * static_cast<float>(renderScale));
            style.cap = static_cast<PolylineCap>(impl->strokeCap_);
            style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
            style.closed = closed;
@@ -1902,7 +1928,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                           std::hypot(points.front().x - points.back().x,
                                      points.front().y - points.back().y) < 0.01f;
       PolylineStyle style;
-      style.thickness = std::max(1.0f, impl->strokeWidth_);
+      style.thickness = std::max(
+          1.0f, impl->strokeWidth_ * static_cast<float>(renderScale));
       style.cap = static_cast<PolylineCap>(impl->strokeCap_);
       style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
       style.closed = closed;
@@ -2190,6 +2217,13 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  sidesProp->setDisplayLabel(QStringLiteral("Sides"));
  sidesProp->setHardRange(3, 100000);
   paramsGroup.addProperty(sidesProp);
+ auto fillRuleProp = makeProp(QStringLiteral("shape.customPathFillRule"),
+                              ArtifactCore::PropertyType::Integer,
+                              static_cast<int>(impl_->customPathFillRule_), -196);
+ fillRuleProp->setDisplayLabel(QStringLiteral("Custom Path Fill Rule"));
+ fillRuleProp->setHardRange(0, 1);
+ fillRuleProp->setTooltip(QStringLiteral("0=Winding, 1=Even Odd"));
+ paramsGroup.addProperty(fillRuleProp);
 
  groups.push_back(paramsGroup);
 
@@ -2359,6 +2393,10 @@ if (propertyPath == "shape.type") {
   }
   if (propertyPath == "shape.fillType") {
    setFillType(static_cast<ArtifactSolidFillType>(value.toInt()));
+   return true;
+  }
+  if (propertyPath == "shape.customPathFillRule") {
+   setCustomPathFillRule(static_cast<ArtifactCore::PathFillRule>(value.toInt()));
    return true;
   }
   if (propertyPath == "shape.fillGradientStartColor") {
@@ -2698,6 +2736,7 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["customPolygonPoints"] = customPolygonPoints;
   // Phase 5: bezier path
   obj["customPathClosed"] = impl_->customPathClosed_;
+  obj["customPathFillRule"] = static_cast<int>(impl_->customPathFillRule_);
   QJsonArray customPath;
   for (const auto& v : impl_->customPathVertices_) {
    QJsonObject vObj;
@@ -2802,6 +2841,11 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   const QJsonArray customPathArr = obj["customPath"].toArray();
   if (customPathArr.size() >= 3) {
     layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
+    layer->impl_->customPathFillRule_ =
+        obj["customPathFillRule"].toInt(0) ==
+                static_cast<int>(ArtifactCore::PathFillRule::EvenOdd)
+            ? ArtifactCore::PathFillRule::EvenOdd
+            : ArtifactCore::PathFillRule::Winding;
     layer->impl_->customPathVertices_.clear();
     const int pathVertexCount = std::min(
         static_cast<int>(customPathArr.size()), kMaxShapePathVertices);

@@ -17,6 +17,7 @@ module;
 #include <QApplication>
 #include <QStatusBar>
 #include <QStyle>
+#include <QSettings>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.SecondaryPreviewWindow;
 

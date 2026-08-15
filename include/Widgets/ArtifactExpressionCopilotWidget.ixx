@@ -32,6 +32,8 @@ export namespace Artifact {
                                int currentLayerIndex,
                                const QString& layerName,
                                const QVariant& propertyValue,
+                               const QVariantMap& layerSnapshots,
+                               const QVariantList& compositionMarkers,
                                double timeSeconds);
         void clearPreviewContext();
 

@@ -84,6 +84,15 @@ enum class EffectPipelineStage {
     LayerTransform
 };
 
+struct EffectUIDescriptor {
+    QString displayName;
+    bool preview = true;
+    bool preset = true;
+    bool appearance = false;
+    bool fallback = false;
+    QString section = QStringLiteral("Advanced");
+};
+
 class LIBRARY_DLL_API ArtifactAbstractEffect {
 private:
     class Impl;
@@ -117,6 +126,14 @@ public:
     void setAllowOverscan(bool enabled);
     bool allowOverscan() const;
 
+    // Optional effect-local rectangle in source-surface pixel coordinates.
+    // When set, the effect is blended only inside this region; mask images
+    // can further restrict the same result.
+    bool hasEffectRegion() const;
+    QRectF effectRegion() const;
+    void setEffectRegion(const QRectF& region);
+    void clearEffectRegion();
+
     // Per-effect mask metadata.
     // Runtime blending can hook into this later without changing the preset format.
     bool hasMask() const;
@@ -145,6 +162,7 @@ public:
     void setEffectID(const UniString& id);
     UniString displayName() const;
     void setDisplayName(const UniString& name);
+    virtual EffectUIDescriptor uiDescriptor() const;
 
     // pipeline stage
     EffectPipelineStage pipelineStage() const;

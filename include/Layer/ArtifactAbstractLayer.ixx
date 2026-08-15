@@ -606,6 +606,7 @@ public:
   /*Masks*/
   void addMask(const LayerMask &mask);
   void removeMask(int index);
+  bool moveMask(int fromIndex, int toIndex);
   void setMask(int index, const LayerMask &mask);
   LayerMask mask(int index) const;
   int maskCount() const;

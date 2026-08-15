@@ -873,7 +873,11 @@ public:
       if (externalAudioClockProvider_) {
         return externalAudioClockProvider_();
       }
-      return 0.0;
+      double seconds = audioOffsetSeconds_;
+      if (audioRunning_) {
+        seconds += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
+      }
+      return seconds;
     });
 
     engine_->setAudioMasterVolume(audioMasterVolume_);

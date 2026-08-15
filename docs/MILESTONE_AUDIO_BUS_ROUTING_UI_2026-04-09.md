@@ -1,6 +1,6 @@
 # Audio Bus Routing UI Milestone
 
-**Status:** AUR-1 partial implementation, AUR-2〜4 UI integration pending
+**Status:** AUR-1〜2 partial implementation, AUR-3〜4 persistence/runtime acceptance pending
 
 Date: 2026-04-09
 
@@ -108,3 +108,9 @@ Date: 2026-04-09
 - The current `AudioMixerWidget` exposes channel/master strip controls and effects, but does not yet expose bus creation, deletion, routing target selection, or send/return editing.
 - Composition mixer synchronization currently creates layer buses and connects strip controls; a user-facing routing graph editor and composition-level topology persistence are still pending.
 - Runtime thread-safety validation and end-to-end playback verification remain pending.
+
+## Update 2026-08-15 — 現行コード照合
+
+- `AudioMixerWidget` にbus rename／remove、output route選択、sidechain send追加・clear、cycle拒否の導線を確認した。
+- `ArtifactCompositionAudioMixerWidget` から同じCore mixerを使う `Advanced Audio Routing` surfaceを開けるため、通常のchannel/master操作とrouting編集の責務分離も実装済み。
+- Core mixerのJSON serialization／restoreは存在するため、残課題はcomposition再open時の完全受入、routing編集のUndo、callback thread安全性、send amountの再表示とruntime検証である。

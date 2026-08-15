@@ -992,6 +992,8 @@ public:
     QAction* createLiveRadialFieldAction = nullptr;
     QAction* createLiveBoxFieldAction = nullptr;
     QAction* createLiveLinearFieldAction = nullptr;
+    QAction* createLiveNoiseFieldAction = nullptr;
+    QAction* createLiveSolidFieldAction = nullptr;
     QMenu* liveFieldMenu = nullptr;
     QAction* selectLiveRadialFieldAction = nullptr;
     QAction* activatePreviousLiveRadialFieldAction = nullptr;
@@ -1421,6 +1423,14 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createLiveLinearFieldAction->setToolTip(
         QStringLiteral("元のTransformを保ったまま、選択レイヤーへ方向付きField変形を適用します"));
     arrangeMenu->addAction(createLiveLinearFieldAction);
+    createLiveNoiseFieldAction = new QAction("ライブNoise Fieldを作成...", arrangeMenu);
+    createLiveNoiseFieldAction->setIcon(createLiveRadialFieldAction->icon());
+    createLiveNoiseFieldAction->setToolTip(QStringLiteral("決定的なノイズ影響を持つ live field を作成"));
+    arrangeMenu->addAction(createLiveNoiseFieldAction);
+    createLiveSolidFieldAction = new QAction("ライブSolid Fieldを作成...", arrangeMenu);
+    createLiveSolidFieldAction->setIcon(createLiveRadialFieldAction->icon());
+    createLiveSolidFieldAction->setToolTip(QStringLiteral("一定の影響を持つ live field を作成"));
+    arrangeMenu->addAction(createLiveSolidFieldAction);
     liveFieldMenu = new QMenu("Live Fields", arrangeMenu);
     liveFieldMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     arrangeMenu->addMenu(liveFieldMenu);
@@ -1903,6 +1913,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createLiveRadialFieldAction) { handleCreateLiveTransformField(QStringLiteral("radial")); return; }
         if (action == createLiveBoxFieldAction) { handleCreateLiveTransformField(QStringLiteral("box")); return; }
         if (action == createLiveLinearFieldAction) { handleCreateLiveTransformField(QStringLiteral("linear")); return; }
+        if (action == createLiveNoiseFieldAction) { handleCreateLiveTransformField(QStringLiteral("noise")); return; }
+        if (action == createLiveSolidFieldAction) { handleCreateLiveTransformField(QStringLiteral("solid")); return; }
         if (action == selectLiveRadialFieldAction) { handleSelectLiveRadialField(); return; }
         if (action == activatePreviousLiveRadialFieldAction) { handleActivateLiveRadialField(-1); return; }
         if (action == activateNextLiveRadialFieldAction) { handleActivateLiveRadialField(1); return; }
@@ -2248,6 +2260,8 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createLiveRadialFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
     createLiveBoxFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
     createLiveLinearFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
+    createLiveNoiseFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
+    createLiveSolidFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
     const auto currentComposition =
         service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
     const bool hasLiveFields =
@@ -4349,14 +4363,20 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
 {
     const QString normalizedShape = requestedShape.trimmed().toLower();
     const QString shape = normalizedShape == QStringLiteral("box") ||
-                                  normalizedShape == QStringLiteral("linear")
+                                  normalizedShape == QStringLiteral("linear") ||
+                                  normalizedShape == QStringLiteral("noise") ||
+                                  normalizedShape == QStringLiteral("solid")
                               ? normalizedShape
                               : QStringLiteral("radial");
     const QString dialogTitle = shape == QStringLiteral("box")
                                     ? QStringLiteral("ライブBox Field")
                                     : shape == QStringLiteral("linear")
                                           ? QStringLiteral("ライブLinear Field")
-                                          : QStringLiteral("ライブ放射状Field");
+                                          : shape == QStringLiteral("noise")
+                                                ? QStringLiteral("ライブNoise Field")
+                                                : shape == QStringLiteral("solid")
+                                                      ? QStringLiteral("ライブSolid Field")
+                                                      : QStringLiteral("ライブ放射状Field");
     auto* selection = ArtifactLayerSelectionManager::instance();
     if (!selection) {
         return;
@@ -4443,7 +4463,11 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
                             ? QStringLiteral("Box Transform Field")
                             : shape == QStringLiteral("linear")
                                   ? QStringLiteral("Linear Transform Field")
-                                  : QStringLiteral("Radial Transform Field");
+                            : shape == QStringLiteral("noise")
+                                  ? QStringLiteral("Noise Transform Field")
+                                  : shape == QStringLiteral("solid")
+                                        ? QStringLiteral("Solid Transform Field")
+                                        : QStringLiteral("Radial Transform Field");
     field.center = center;
     field.expansion = expansionPercent / 100.0;
     field.edgeScale = edgeScalePercent / 100.0;
@@ -4476,6 +4500,11 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
         if (secondaryRadius <= 0.0001 && radius > 0.0001) {
             secondaryRadius = radius * 0.5;
         }
+    }
+    if (shape == QStringLiteral("solid")) {
+        radius = 1.0;
+    } else if (shape == QStringLiteral("noise")) {
+        radius = std::max<qreal>(1.0, radius);
     }
     if (radius <= 0.0001 ||
         ((shape == QStringLiteral("box") || shape == QStringLiteral("linear")) &&

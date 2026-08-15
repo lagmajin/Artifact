@@ -162,6 +162,7 @@ import Artifact.Project.Roles;
 import EnvironmentVariable;
 import Core.Localization;
 import Artifact.Widgets.UndoHistoryWidget;
+import Artifact.Widgets.RecoveryWorkspace;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.CompositionGraphWidget;
@@ -2859,6 +2860,16 @@ int main(int argc, char *argv[]) {
   const QString recoveryDir =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
           .filePath("Recovery");
+  const QString sessionLedgerPath =
+      QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+          .filePath(QStringLiteral("Session/session-ledger.json"));
+  QDir(QFileInfo(sessionLedgerPath).absolutePath()).mkpath(QStringLiteral("."));
+  if (auto *renderQueueService = ArtifactRenderQueueService::instance()) {
+    if (!renderQueueService->sessionLedger().loadFromFile(sessionLedgerPath)) {
+      qInfo() << "[SessionLedger] no previous ledger loaded or file is invalid"
+              << sessionLedgerPath;
+    }
+  }
   // Create the composition editor synchronously so its native HWND exists when
   // mw->show() fires. Deferring this inside singleShot(0) caused the widget to
   // miss its showEvent and never initialize the Diligent renderer.
@@ -3500,8 +3511,16 @@ int main(int argc, char *argv[]) {
         [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
         QString());
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
-    mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
-    mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
+  mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
+  mw->addLazyDockedWidgetTabbedWithId(
+      QStringLiteral("Recovery Workspace"), QStringLiteral("RecoveryWorkspace"),
+      DockArea::Right,
+      [mw, sessionLedgerPath]() -> QWidget* {
+        return new ArtifactRecoveryWorkspaceWidget(sessionLedgerPath, mw);
+      },
+      QStringLiteral("Inspector"));
+  mw->setDockVisible(QStringLiteral("Recovery Workspace"), false);
+  mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
     mw->setDockVisible(QStringLiteral("Layer Solo View"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
 
@@ -4325,6 +4344,10 @@ int main(int argc, char *argv[]) {
     // window has already disappeared.
     if (auto *renderQueueService = ArtifactRenderQueueService::instance()) {
       renderQueueService->pauseAllJobs();
+      if (!renderQueueService->sessionLedger().saveToFile(sessionLedgerPath)) {
+        qWarning() << "[SessionLedger] failed to persist ledger"
+                   << sessionLedgerPath;
+      }
       qInfo() << "[AppMain][Shutdown] render queue stop requested";
     }
     appendShutdownDiagnostic(QStringLiteral("render-queue stop requested"));

@@ -388,10 +388,12 @@ void enqueueDroppedTimelineAssets(const QStringList &validPaths) {
   });
 }
 
-double clampDurationFrames(const double value) { return std::max(1.0, value); }
+double clampDurationFrames(const double value) {
+  return std::isfinite(value) ? std::max(1.0, value) : 1.0;
+}
 
 double clampPixelsPerFrame(const double value) {
-  return std::clamp(value, 0.05, 64.0);
+  return std::isfinite(value) ? std::clamp(value, 0.05, 64.0) : 2.0;
 }
 
 bool timelineAllowOverscroll() {
@@ -3940,7 +3942,8 @@ std::optional<int> trackIndexAt(const QVector<int> &heights,
 QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
 collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
                        const ArtifactLayerSelectionManager *selectionManager,
-                       const QVector<TimelineRowDescriptor> &trackRows) {
+                       const QVector<TimelineRowDescriptor> &trackRows,
+                       const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter) {
   QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
   if (!composition || trackRows.isEmpty()) {
     return markers;
@@ -3967,6 +3970,11 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
     if (propertyPath.isEmpty()) {
       continue;
     }
+    const QString lowerPath = propertyPath.toLower();
+    const bool isTransform = lowerPath.startsWith(QStringLiteral("transform."));
+    const bool isAudio = lowerPath.startsWith(QStringLiteral("audio.")) || lowerPath.contains(QStringLiteral("volume")) || lowerPath.contains(QStringLiteral("pan"));
+    const bool isEffect = lowerPath.startsWith(QStringLiteral("effect.")) || lowerPath.startsWith(QStringLiteral("effects."));
+    if ((filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Transform && !isTransform) || (filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Audio && !isAudio) || (filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Effect && !isEffect)) continue;
 
     const auto layer = composition->layerById(row.layerId);
     if (!layer) {
@@ -4543,6 +4551,7 @@ public:
   double keyframeAreaCacheYOffset_ = 0.0;
   bool keyframeAreaCacheValid_ = false;
   QString hoverToolTipText_;
+  ArtifactTimelineTrackPainterView::PropertyChannelFilter propertyChannelFilter_ = ArtifactTimelineTrackPainterView::PropertyChannelFilter::All;
   bool selectionSyncDirty_ = true;
   const ArtifactAbstractComposition *lastSyncedComposition_ = nullptr;
   QSet<LayerID> lastSyncedSelectedLayerIds_;
@@ -4673,6 +4682,10 @@ void ArtifactTimelineTrackPainterView::setDurationFrames(const double frames) {
     return;
   }
   impl_->durationFrames_ = sanitized;
+  const double maxFrame = std::max(0.0, sanitized - 1.0);
+  if (impl_->currentFrame_ > maxFrame) {
+    impl_->currentFrame_ = maxFrame;
+  }
   update();
 }
 
@@ -4681,8 +4694,9 @@ double ArtifactTimelineTrackPainterView::durationFrames() const {
 }
 
 void ArtifactTimelineTrackPainterView::setCurrentFrame(const double frame) {
+  const double safeFrame = std::isfinite(frame) ? frame : impl_->currentFrame_;
   const double sanitized =
-      std::clamp(frame, 0.0,
+      std::clamp(safeFrame, 0.0,
                  std::max<double>(0.0, static_cast<double>(impl_->durationFrames_ - 1.0)));
   if (std::abs(impl_->currentFrame_ - sanitized) < 0.0001) {
     return;
@@ -4737,8 +4751,9 @@ double ArtifactTimelineTrackPainterView::pixelsPerFrame() const {
 }
 
 void ArtifactTimelineTrackPainterView::setHorizontalOffset(const double value) {
+  const double safeValue = std::isfinite(value) ? value : 0.0;
   const double clamped = clampTimelineHorizontalOffset(
-      this, impl_->durationFrames_, impl_->pixelsPerFrame_, value);
+      this, impl_->durationFrames_, impl_->pixelsPerFrame_, safeValue);
   if (std::abs(impl_->horizontalOffset_ - clamped) < 0.0001) {
     return;
   }
@@ -4751,10 +4766,11 @@ double ArtifactTimelineTrackPainterView::horizontalOffset() const {
 }
 
 void ArtifactTimelineTrackPainterView::setVerticalOffset(const double value) {
+  const double safeValue = std::isfinite(value) ? value : 0.0;
   const double maxOffset = std::max(
       0.0, static_cast<double>(totalTrackContentHeight(impl_->trackHeights_) -
                                height()));
-  const double clamped = std::clamp(value, 0.0, maxOffset);
+  const double clamped = std::clamp(safeValue, 0.0, maxOffset);
   if (std::abs(impl_->verticalOffset_ - clamped) < 0.0001) {
     return;
   }
@@ -4778,6 +4794,19 @@ void ArtifactTimelineTrackPainterView::setKeyframeContext(
   }
   impl_->contextLayerId_ = layerId;
   impl_->contextPropertyPath_ = trimmedPath;
+}
+
+void ArtifactTimelineTrackPainterView::setPropertyChannelFilter(
+    const PropertyChannelFilter filter) {
+  if (impl_->propertyChannelFilter_ == filter) return;
+  impl_->propertyChannelFilter_ = filter;
+  impl_->lastSyncedComposition_ = nullptr;
+  update();
+}
+
+ArtifactTimelineTrackPainterView::PropertyChannelFilter
+ArtifactTimelineTrackPainterView::propertyChannelFilter() const {
+  return impl_->propertyChannelFilter_;
 }
 
 void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
@@ -6066,7 +6095,7 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
   }
 
   const auto newMarkers =
-      collectKeyframeMarkers(composition, selectionManager, trackRows);
+      collectKeyframeMarkers(composition, selectionManager, trackRows, impl_->propertyChannelFilter_);
   bool selectionChanged = false;
   if (!sameVisualList(impl_->keyframeMarkers_, newMarkers,
                       sameKeyframeMarkerVisual)) {
@@ -8336,6 +8365,9 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
         const double fps =
             std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
         const int64_t scale = static_cast<int64_t>(std::llround(fps));
+        const bool smoothDraggedKeyframes =
+            (event->modifiers() & Qt::AltModifier) &&
+            !(event->modifiers() & Qt::ControlModifier);
         auto snapshotFor = [&afterSnapshots](const LayerID &layerId,
                                              const QString &propertyPath)
             -> KeyframePropertySnapshot * {
@@ -8380,6 +8412,20 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
           const QVariant &originalValue = impl_->dragMarkerSelectionOrigValues_[i];
           if (previewValue.isValid() && previewValue != originalValue) {
             keyframeIt->value = previewValue;
+          }
+          if (smoothDraggedKeyframes) {
+            float cp1x = 0.42f;
+            float cp1y = 0.0f;
+            float cp2x = 0.58f;
+            float cp2y = 1.0f;
+            if (tryComputeEasyEaseHandles(snapshot->keyframes, *keyframeIt,
+                                           true, true, cp1x, cp1y, cp2x, cp2y)) {
+              keyframeIt->interpolation = ArtifactCore::InterpolationType::Bezier;
+              keyframeIt->cp1_x = cp1x;
+              keyframeIt->cp1_y = cp1y;
+              keyframeIt->cp2_x = cp2x;
+              keyframeIt->cp2_y = cp2y;
+            }
           }
         }
         for (auto &snapshot : afterSnapshots) {

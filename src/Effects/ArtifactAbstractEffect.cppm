@@ -35,6 +35,7 @@ module;
 #include <regex>
 #include <random>
 #include <QString>
+#include <QRectF>
 #include <QSettings>
 
 module Artifact.Effect.Abstract;
@@ -61,6 +62,8 @@ class ArtifactAbstractEffect::Impl {
 public:
     bool enabled = true;
     bool allowOverscan = false;
+    bool effectRegionEnabled = false;
+    QRectF effectRegion;
     ComputeMode mode = ComputeMode::AUTO;
     UniString id;
     UniString name;
@@ -156,6 +159,31 @@ bool ArtifactAbstractEffect::allowOverscan() const {
     return impl_->allowOverscan;
 }
 
+bool ArtifactAbstractEffect::hasEffectRegion() const {
+    return impl_->effectRegionEnabled && impl_->effectRegion.isValid();
+}
+
+QRectF ArtifactAbstractEffect::effectRegion() const {
+    return impl_->effectRegion;
+}
+
+void ArtifactAbstractEffect::setEffectRegion(const QRectF& region) {
+    if (!region.isValid() || !std::isfinite(region.x()) ||
+        !std::isfinite(region.y()) || !std::isfinite(region.width()) ||
+        !std::isfinite(region.height()) || region.width() <= 0.0 ||
+        region.height() <= 0.0) {
+        clearEffectRegion();
+        return;
+    }
+    impl_->effectRegion = region.normalized();
+    impl_->effectRegionEnabled = true;
+}
+
+void ArtifactAbstractEffect::clearEffectRegion() {
+    impl_->effectRegion = QRectF();
+    impl_->effectRegionEnabled = false;
+}
+
 UniString ArtifactAbstractEffect::effectID() const { return impl_->id; }
 
 void ArtifactAbstractEffect::setEffectID(const UniString& id) { impl_->id = id; }
@@ -163,6 +191,23 @@ void ArtifactAbstractEffect::setEffectID(const UniString& id) { impl_->id = id; 
 UniString ArtifactAbstractEffect::displayName() const { return impl_->name; }
 
 void ArtifactAbstractEffect::setDisplayName(const UniString& name) { impl_->name = name; }
+
+EffectUIDescriptor ArtifactAbstractEffect::uiDescriptor() const {
+    EffectUIDescriptor descriptor;
+    descriptor.displayName = impl_->name.toQString();
+    const QString effectId = impl_->id.toQString();
+    descriptor.fallback = effectId.startsWith(QStringLiteral("ofx."), Qt::CaseInsensitive);
+    descriptor.appearance = descriptor.fallback ||
+                            effectId.contains(QStringLiteral("blur"), Qt::CaseInsensitive) ||
+                            effectId.contains(QStringLiteral("curve"), Qt::CaseInsensitive) ||
+                            effectId.contains(QStringLiteral("level"), Qt::CaseInsensitive) ||
+                            effectId.contains(QStringLiteral("glow"), Qt::CaseInsensitive);
+    descriptor.section = descriptor.fallback
+                             ? QStringLiteral("Fallback")
+                             : (descriptor.appearance ? QStringLiteral("Appearance")
+                                                       : QStringLiteral("Advanced"));
+    return descriptor;
+}
 
 EffectPipelineStage ArtifactAbstractEffect::pipelineStage() const { return impl_->pipelineStage; }
 
@@ -280,9 +325,10 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         dst.image().setColorDescriptor(sourceDescriptor);
     }
 
+    const bool hasRegion = hasEffectRegion();
     const bool hasPrimaryMask = impl_->maskEnabled && impl_->maskImage;
     const bool hasSecondaryMasks = !impl_->effectMaskImages.empty();
-    if (!hasPrimaryMask && !hasSecondaryMasks) {
+    if (!hasRegion && !hasPrimaryMask && !hasSecondaryMasks) {
         return;
     }
 
@@ -320,6 +366,15 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         for (int x = 0; x < width; ++x) {
             float combinedMaskAlpha = 1.0f;
             bool hasValidMask = false;
+
+            if (hasRegion) {
+                const QRectF region = impl_->effectRegion;
+                if (!region.contains(QPointF(static_cast<qreal>(x) + 0.5,
+                                             static_cast<qreal>(y) + 0.5))) {
+                    combinedMaskAlpha = 0.0f;
+                }
+                hasValidMask = true;
+            }
 
             const size_t pixelOffset = static_cast<size_t>(x) * 4u;
 
@@ -383,7 +438,27 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
         }
         const QVariant value = property->evaluateValue(time);
         if (value.isValid()) {
-            setPropertyValue(property->getName(), value);
+            const QString name = property->getName();
+            if (name == QStringLiteral("Effect Region Enabled")) {
+                if (value.toBool()) {
+                    auto region = hasEffectRegion() ? effectRegion() : QRectF(0, 0, 1, 1);
+                    setEffectRegion(region);
+                } else {
+                    clearEffectRegion();
+                }
+            } else if (name == QStringLiteral("Effect Region X") ||
+                       name == QStringLiteral("Effect Region Y") ||
+                       name == QStringLiteral("Effect Region Width") ||
+                       name == QStringLiteral("Effect Region Height")) {
+                QRectF region = hasEffectRegion() ? effectRegion() : QRectF(0, 0, 1, 1);
+                if (name == QStringLiteral("Effect Region X")) region.moveLeft(value.toDouble());
+                else if (name == QStringLiteral("Effect Region Y")) region.moveTop(value.toDouble());
+                else if (name == QStringLiteral("Effect Region Width")) region.setWidth(std::max(0.0, value.toDouble()));
+                else region.setHeight(std::max(0.0, value.toDouble()));
+                setEffectRegion(region);
+            } else {
+                setPropertyValue(property->getName(), value);
+            }
         }
     }
     if (impl_->cpuImpl_) {
@@ -428,6 +503,35 @@ ArtifactAbstractEffect::editableProperties() {
         }
         result.push_back(property);
     }
+
+    const QRectF region = hasEffectRegion() ? effectRegion() : QRectF();
+    const auto addCommon = [this, &result](const QString& name, PropertyType type,
+                                           const QVariant& value) {
+        auto existing = std::find_if(impl_->editableProperties_.begin(),
+                                     impl_->editableProperties_.end(),
+                                     [&name](const auto& candidate) {
+          return candidate && candidate->getName().compare(name, Qt::CaseInsensitive) == 0;
+        });
+        if (existing == impl_->editableProperties_.end()) {
+          auto property = makeShared<AbstractProperty>();
+          property->setName(name);
+          property->setType(type);
+          property->setValue(value);
+          property->setDefaultValue(value);
+          if (type == PropertyType::Float) property->setAnimatable(true);
+          impl_->editableProperties_.push_back(property);
+          result.push_back(property);
+        } else {
+          (*existing)->setValue(value);
+          result.push_back(*existing);
+        }
+    };
+    addCommon(QStringLiteral("Effect Region Enabled"), PropertyType::Boolean,
+              hasEffectRegion());
+    addCommon(QStringLiteral("Effect Region X"), PropertyType::Float, region.x());
+    addCommon(QStringLiteral("Effect Region Y"), PropertyType::Float, region.y());
+    addCommon(QStringLiteral("Effect Region Width"), PropertyType::Float, region.width());
+    addCommon(QStringLiteral("Effect Region Height"), PropertyType::Float, region.height());
 
     return result;
 }

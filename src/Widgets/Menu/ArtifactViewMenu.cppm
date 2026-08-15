@@ -178,6 +178,7 @@ namespace Artifact {
    double panY = 0.0;
    double rotation = 0.0;
    QQuaternion orientation;
+   int previewQualityPreset = static_cast<int>(::PreviewQualityPreset::Preview);
   };
 
   struct ViewportTemplateEntry {
@@ -220,7 +221,8 @@ namespace Artifact {
     map.insert(QStringLiteral("zoom"), entry.zoom);
     map.insert(QStringLiteral("panX"), entry.panX);
     map.insert(QStringLiteral("panY"), entry.panY);
-    map.insert(QStringLiteral("rotation"), entry.rotation);
+     map.insert(QStringLiteral("rotation"), entry.rotation);
+     map.insert(QStringLiteral("previewQualityPreset"), entry.previewQualityPreset);
     map.insert(QStringLiteral("orientationW"), entry.orientation.scalar());
     map.insert(QStringLiteral("orientationX"), entry.orientation.x());
     map.insert(QStringLiteral("orientationY"), entry.orientation.y());
@@ -241,7 +243,10 @@ namespace Artifact {
     entry.zoom = map.value(QStringLiteral("zoom"), 1.0).toDouble();
     entry.panX = map.value(QStringLiteral("panX"), 0.0).toDouble();
     entry.panY = map.value(QStringLiteral("panY"), 0.0).toDouble();
-    entry.rotation = map.value(QStringLiteral("rotation"), 0.0).toDouble();
+     entry.rotation = map.value(QStringLiteral("rotation"), 0.0).toDouble();
+     entry.previewQualityPreset = map.value(
+         QStringLiteral("previewQualityPreset"),
+         static_cast<int>(::PreviewQualityPreset::Preview)).toInt();
     entry.orientation = QQuaternion(
         static_cast<float>(map.value(QStringLiteral("orientationW"), 1.0).toDouble()),
         static_cast<float>(map.value(QStringLiteral("orientationX"), 0.0).toDouble()),
@@ -672,9 +677,12 @@ namespace Artifact {
    entry.zoom = std::max(0.001, static_cast<double>(renderer->getZoom()));
    entry.panX = static_cast<double>(panX);
    entry.panY = static_cast<double>(panY);
-   entry.rotation = static_cast<double>(renderer->getRotation());
-   entry.orientation = controller->viewportOrientationQuaternion();
-   return entry;
+    entry.rotation = static_cast<double>(renderer->getRotation());
+    entry.orientation = controller->viewportOrientationQuaternion();
+    if (auto* svc = ArtifactProjectService::instance()) {
+     entry.previewQualityPreset = static_cast<int>(svc->previewQualityPreset());
+    }
+    return entry;
   }
 
   std::optional<ViewportTemplateEntry> currentViewportTemplateState(
@@ -747,8 +755,15 @@ namespace Artifact {
    renderer->setZoom(static_cast<float>(std::max(0.001, entry.zoom)));
    renderer->setPan(static_cast<float>(entry.panX), static_cast<float>(entry.panY));
    renderer->setRotation(static_cast<float>(entry.rotation));
-   controller->setViewportOrientationQuaternion(entry.orientation);
-   controller->markRenderDirty();
+    controller->setViewportOrientationQuaternion(entry.orientation);
+    if (auto* svc = ArtifactProjectService::instance()) {
+     const auto preset = static_cast<::PreviewQualityPreset>(
+         std::clamp(entry.previewQualityPreset,
+                    static_cast<int>(::PreviewQualityPreset::Draft),
+                    static_cast<int>(::PreviewQualityPreset::Final)));
+     svc->setPreviewQualityPreset(preset);
+    }
+    controller->markRenderDirty();
    return true;
   }
 
@@ -2210,19 +2225,104 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
   if (!windowPanelsMenu || !mainWindow) return;
 
   const QStringList titles = dockTitles(mainWindow);
-  if (titles == cachedDockTitles_) {
-   for (QAction* action : windowPanelsMenu->actions()) {
-    if (!action || !action->isCheckable()) {
-     continue;
-    }
-    const QString title = action->text();
-    action->setChecked(isDockVisible(mainWindow, title));
-   }
-   return;
-  }
-
   cachedDockTitles_ = titles;
   windowPanelsMenu->clear();
+
+  QSettings dockSettings;
+  QStringList favorites = dockSettings.value(
+      QStringLiteral("Workspace/FavoriteDockIds")).toStringList();
+  favorites.removeAll(QString());
+  favorites.erase(std::remove_if(favorites.begin(), favorites.end(),
+                                  [&titles](const QString& id) {
+                                    return !titles.contains(id);
+                                  }), favorites.end());
+  const QStringList recent = dockSettings.value(
+      QStringLiteral("Workspace/RecentDockIds")).toStringList();
+
+  auto *recentMenu = windowPanelsMenu->addMenu(QStringLiteral("最近使ったパネル"));
+  auto *favoriteMenu = windowPanelsMenu->addMenu(QStringLiteral("お気に入り"));
+  recentMenu->setAccessibleName(QStringLiteral("Recently used panels"));
+  recentMenu->setAccessibleDescription(QStringLiteral("Activate a recently used registered dock panel"));
+  favoriteMenu->setAccessibleName(QStringLiteral("Favorite panels"));
+  favoriteMenu->setAccessibleDescription(QStringLiteral("Activate or favorite registered dock panels"));
+  const auto addActivationAction = [this](QMenu* target,
+                                                          const QString& title) {
+    QAction* action = target->addAction(title);
+    QObject::connect(action, &QAction::triggered, mainWindow,
+                     [mw = mainWindow, title]() {
+                       setDockVisible(mw, title, true);
+                       activateDock(mw, title);
+                       QSettings settings;
+                       QStringList ids = settings.value(
+                           QStringLiteral("Workspace/RecentDockIds")).toStringList();
+                       ids.removeAll(title);
+                       ids.prepend(title);
+                       while (ids.size() > 8) ids.removeLast();
+                       settings.setValue(QStringLiteral("Workspace/RecentDockIds"), ids);
+                     });
+  };
+  int recentCount = 0;
+  for (const auto& title : recent) {
+    if (titles.contains(title) && recentCount++ < 8) {
+      addActivationAction(recentMenu, title);
+    }
+  }
+  if (recentMenu->actions().isEmpty()) {
+    recentMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
+  }
+  for (const auto& title : titles) {
+    QAction* action = favoriteMenu->addAction(title);
+    action->setCheckable(true);
+    action->setChecked(favorites.contains(title));
+    QObject::connect(action, &QAction::triggered, mainWindow,
+                     [title](bool checked) {
+                       QSettings settings;
+                       QStringList ids = settings.value(
+                           QStringLiteral("Workspace/FavoriteDockIds")).toStringList();
+                       ids.removeAll(title);
+                       if (checked) ids.append(title);
+                       settings.setValue(QStringLiteral("Workspace/FavoriteDockIds"), ids);
+                     });
+  }
+  if (favoriteMenu->actions().isEmpty()) {
+    favoriteMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
+  }
+  windowPanelsMenu->addSeparator();
+
+  auto *addPanelMenu = windowPanelsMenu->addMenu(QStringLiteral("パネルを追加／再表示"));
+  addPanelMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+  addPanelMenu->setAccessibleName(QStringLiteral("Add or restore panel"));
+  addPanelMenu->setAccessibleDescription(QStringLiteral("Show and activate a registered dock panel"));
+  const auto categoryForDock = [](const QString& title) {
+    const QString lower = title.toLower();
+    if (lower.contains(QStringLiteral("project")) || lower.contains(QStringLiteral("asset"))) return QStringLiteral("Project / Assets");
+    if (lower.contains(QStringLiteral("inspector")) || lower.contains(QStringLiteral("property")) || lower.contains(QStringLiteral("component")) || lower.contains(QStringLiteral("effect"))) return QStringLiteral("Editing");
+    if (lower.contains(QStringLiteral("timeline")) || lower.contains(QStringLiteral("dope")) || lower.contains(QStringLiteral("curve"))) return QStringLiteral("Animation");
+    if (lower.contains(QStringLiteral("render")) || lower.contains(QStringLiteral("preview")) || lower.contains(QStringLiteral("profiler")) || lower.contains(QStringLiteral("debug"))) return QStringLiteral("Render / Diagnostics");
+    return QStringLiteral("Other");
+  };
+  QHash<QString, QMenu*> categoryMenus;
+  for (const QString& title : titles) {
+   const QString category = categoryForDock(title);
+   QMenu* categoryMenu = categoryMenus.value(category, nullptr);
+   if (!categoryMenu) {
+    categoryMenu = addPanelMenu->addMenu(category);
+    categoryMenus.insert(category, categoryMenu);
+   }
+   QAction* addAction = categoryMenu->addAction(title);
+   addAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   addAction->setToolTip(QStringLiteral("Show and activate %1").arg(title));
+   QObject::connect(addAction, &QAction::triggered, mainWindow,
+                    [mw = mainWindow, title]() {
+                      setDockVisible(mw, title, true);
+                      activateDock(mw, title);
+                    });
+  }
+  if (titles.isEmpty()) {
+   QAction* none = addPanelMenu->addAction("(no panels)");
+   none->setEnabled(false);
+  }
+  windowPanelsMenu->addSeparator();
 
   for (const QString& title : titles) {
    QAction* action = windowPanelsMenu->addAction(title);

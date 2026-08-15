@@ -64,6 +64,7 @@ public:
                       const QVector3D& zAxis);
 
     void setTransform(const QVector3D& position, const QVector3D& rotation);
+    void resetState();
     void setLocalBasis(const QVector3D& xAxis, const QVector3D& yAxis,
                        const QVector3D& zAxis);
     QVector3D position() const;

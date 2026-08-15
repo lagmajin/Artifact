@@ -15,6 +15,10 @@
 #include <QPalette>
 #include <QPen>
 #include <QPainter>
+#include <QMenu>
+#include <QInputDialog>
+#include <QSettings>
+#include <QHash>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TimeCodeWidget;
@@ -168,6 +172,7 @@ namespace Artifact
  public:
   Impl();
   QLineEdit* searchLineEdit_ = nullptr;
+  QStringList savedFilters_;
  };
 
 ArtifactTimelineSearchBarWidget::Impl::Impl()
@@ -177,6 +182,9 @@ ArtifactTimelineSearchBarWidget::Impl::Impl()
  searchLineEdit_->setAccessibleName(QStringLiteral("Timeline search"));
  searchLineEdit_->setAccessibleDescription(
      QStringLiteral("Search timeline layers and properties; Enter finds next and Shift-Enter finds previous"));
+ QSettings settings;
+ savedFilters_ = settings.value(QStringLiteral("Timeline/SavedSearchFilters")).toStringList();
+ savedFilters_.removeDuplicates();
 }
 
 ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
@@ -241,9 +249,38 @@ bool ArtifactTimelineSearchBarWidget::hasSearchText() const
  return impl_ && impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty();
 }
 
+void ArtifactTimelineSearchBarWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+ if (!impl_ || !impl_->searchLineEdit_ || !event) return;
+ QMenu menu(this);
+ QAction* save = menu.addAction(QStringLiteral("Save Current Filter..."));
+ if (!impl_->savedFilters_.isEmpty()) menu.addSeparator();
+ QHash<QAction*, QString> applyActions;
+ for (const auto& filter : impl_->savedFilters_) {
+  QAction* action = menu.addAction(QStringLiteral("Apply: %1").arg(filter));
+  applyActions.insert(action, filter);
+ }
+ QAction* chosen = menu.exec(event->globalPos());
+ if (chosen == save) {
+  const QString filter = impl_->searchLineEdit_->text().trimmed();
+  if (filter.isEmpty()) return;
+  bool accepted = false;
+  const QString name = QInputDialog::getText(
+      this, QStringLiteral("Save Timeline Filter"), QStringLiteral("Filter name:"),
+      QLineEdit::Normal, filter, &accepted).trimmed();
+  if (!accepted || name.isEmpty()) return;
+  impl_->savedFilters_.removeAll(name);
+  impl_->savedFilters_.append(name);
+  QSettings settings;
+  settings.setValue(QStringLiteral("Timeline/SavedSearchFilters"), impl_->savedFilters_);
+ } else if (applyActions.contains(chosen)) {
+  impl_->searchLineEdit_->setText(applyActions.value(chosen));
+ }
+}
+
  bool ArtifactTimelineSearchBarWidget::eventFilter(QObject* watched, QEvent* event)
  {
-  if (watched == impl_->searchLineEdit_ && event && event->type() == QEvent::KeyPress) {
+ if (watched == impl_->searchLineEdit_ && event && event->type() == QEvent::KeyPress) {
    auto* keyEvent = static_cast<QKeyEvent*>(event);
    if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
     if (keyEvent->modifiers() & Qt::ShiftModifier) {
@@ -257,8 +294,13 @@ bool ArtifactTimelineSearchBarWidget::hasSearchText() const
     if (impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
      clearSearch();
      return true;
-    }
-   }
+  }
+  if (watched == impl_->searchLineEdit_ && event &&
+      event->type() == QEvent::ContextMenu) {
+   contextMenuEvent(static_cast<QContextMenuEvent*>(event));
+   return true;
+  }
+ }
   }
   return QWidget::eventFilter(watched, event);
  }

@@ -227,7 +227,7 @@ int compositionPreviewIntervalMs(
  public:
   std::unique_ptr<ArtifactIRenderer> renderer_;
   ArtifactPreviewCompositionPipeline previewPipeline_;
-  bool initialized_ = false;
+  std::atomic_bool initialized_{ false };
   std::atomic_bool isPlaying_{ false };
   std::atomic_bool needsRender_{ true };
   std::atomic_uint64_t renderGeneration_{ 0 };
@@ -341,6 +341,7 @@ int compositionPreviewIntervalMs(
    resizeDebounceTimer_ = new QTimer(widget_);
    resizeDebounceTimer_->setSingleShot(true);
    QObject::connect(resizeDebounceTimer_, &QTimer::timeout, widget_, [this]() {
+    std::lock_guard<std::mutex> lock(renderMutex_);
     if (!initialized_ || !renderer_) {
      return;
     }
@@ -388,9 +389,13 @@ int compositionPreviewIntervalMs(
    }
    running_ = true;
    renderTask_ = std::thread([this]() {
-     while (running_.load(std::memory_order_acquire)) {
-       const int frameIntervalMs =
-           compositionPreviewIntervalMs(previewPipeline_.composition());
+    while (running_.load(std::memory_order_acquire)) {
+       int frameIntervalMs = 16;
+       {
+        std::lock_guard<std::mutex> lock(renderMutex_);
+        frameIntervalMs =
+            compositionPreviewIntervalMs(previewPipeline_.composition());
+       }
        const bool playing = isPlaying_.load(std::memory_order_acquire);
        const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
        if (!playing && !dirty) {
@@ -402,6 +407,7 @@ int compositionPreviewIntervalMs(
          });
          continue;
       }
+       qint64 renderElapsedMs = 0;
        {
         std::lock_guard<std::mutex> lock(renderMutex_);
         const std::uint64_t generation =
@@ -409,13 +415,22 @@ int compositionPreviewIntervalMs(
         QElapsedTimer frameTimer;
         frameTimer.start();
         renderOneFrame(generation);
-        const qint64 renderElapsedMs = frameTimer.elapsed();
-        if (playing) {
-          const int remainingMs =
-              std::max(0, frameIntervalMs - static_cast<int>(renderElapsedMs));
-          if (remainingMs > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(remainingMs));
-          }
+        renderElapsedMs = frameTimer.elapsed();
+       }
+       // Do not keep the render mutex while pacing playback. UI edits and
+       // resize requests must be able to update the pending generation during
+       // the frame interval.
+       if (playing) {
+        const int remainingMs =
+            std::max(0, frameIntervalMs - static_cast<int>(renderElapsedMs));
+        if (remainingMs > 0) {
+          std::unique_lock<std::mutex> waitLock(renderCvMutex_);
+          renderCv_.wait_for(
+              waitLock, std::chrono::milliseconds(remainingMs), [this]() {
+               return !running_.load(std::memory_order_acquire) ||
+                      !isPlaying_.load(std::memory_order_acquire) ||
+                      needsRender_.load(std::memory_order_acquire);
+              });
         }
        }
      }
@@ -433,7 +448,15 @@ int compositionPreviewIntervalMs(
 
   void renderOneFrame(const std::uint64_t generation) {
     if (!initialized_ || !renderer_) return;
+    // Drop obsolete work before reading playback/cache state or submitting
+    // GPU work. The final generation check below still protects publication.
+    const auto isCurrentGeneration = [this, generation]() {
+     return generation == renderGeneration_.load(std::memory_order_acquire) &&
+            running_.load(std::memory_order_acquire);
+    };
+    if (!isCurrentGeneration()) return;
     auto comp = previewPipeline_.composition();
+    if (!isCurrentGeneration()) return;
     FramePosition targetFrame = comp ? comp->framePosition() : FramePosition(0);
     ArtifactCore::ImageF32x4_RGBA ramPreviewFrameImage;
     bool useRamPreviewFallback = false;
@@ -441,6 +464,7 @@ int compositionPreviewIntervalMs(
     bool playbackPlaying = false;
     bool playbackAllowsRamFallbackWhilePlaying = false;
     if (auto* playback = ArtifactPlaybackService::instance()) {
+     if (!isCurrentGeneration()) return;
      const auto playbackComp = playback->currentComposition();
      if (!playbackComp || (comp && playbackComp->id() == comp->id())) {
       targetFrame = playback->currentFrame();
@@ -465,6 +489,7 @@ int compositionPreviewIntervalMs(
       ramPreviewFallbackReason = QStringLiteral("composition-mismatch");
      }
     }
+    if (!isCurrentGeneration()) return;
     const QString ramPreviewFallbackSummary =
         QStringLiteral("ramPreviewFallback=%1 reason=%2 playing=%3 allowPlaying=%4")
             .arg(useRamPreviewFallback ? 1 : 0)
@@ -477,27 +502,30 @@ int compositionPreviewIntervalMs(
                                    << ramPreviewFallbackSummary;
     }
     if (comp) {
+     if (!isCurrentGeneration()) return;
      auto size = comp->settings().compositionSize();
      renderer_->setCanvasSize((float)size.width(), (float)size.height());
     previewPipeline_.setCurrentFrame(targetFrame.framePosition());
    }
    if (useRamPreviewFallback && comp) {
+    if (!isCurrentGeneration()) return;
     QMatrix4x4 identity;
     renderer_->clear();
     renderer_->drawSpriteTransformed(
         0.0f, 0.0f, (float)comp->settings().compositionSize().width(),
         (float)comp->settings().compositionSize().height(), identity,
         ramPreviewFrameImage, 1.0f);
-    if (generation == renderGeneration_.load(std::memory_order_acquire)) {
+    if (isCurrentGeneration()) {
      renderer_->present();
     }
     return;
    }
+   if (!isCurrentGeneration()) return;
    previewPipeline_.render(renderer_.get());
    // Property edits can arrive while CPU preparation/effect evaluation is
    // running on this worker. Never publish an older frame after a newer edit;
    // the pending request will render the latest generation next.
-   if (generation == renderGeneration_.load(std::memory_order_acquire)) {
+   if (isCurrentGeneration()) {
     renderer_->present();
    }
   }
@@ -784,6 +812,7 @@ int compositionPreviewIntervalMs(
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
             [this](const LayerSelectionChangedEvent& event) {
+              std::lock_guard<std::mutex> lock(impl_->renderMutex_);
               impl_->selectedLayerId_ = LayerID(event.layerId);
               impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
               impl_->requestRender();

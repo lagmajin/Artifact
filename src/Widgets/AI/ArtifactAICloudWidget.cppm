@@ -1574,6 +1574,15 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
           this, [this]() {
             updateSendButtonState();
             updateModelSelectionLabel();
+            if (modelCombo_ && modelCombo_->currentData().isValid()) {
+              QSettings settings(QStringLiteral("ArtifactStudio"),
+                                 QStringLiteral("AICloud"));
+              const QString providerKey = providerCombo_
+                                              ? providerCombo_->currentText().trimmed().toLower()
+                                              : QStringLiteral("openai");
+              settings.setValue(QStringLiteral("model/%1").arg(providerKey),
+                                modelCombo_->currentData().toString());
+            }
           });
   connect(modelFilterEdit_, &QLineEdit::textChanged, this,
           [this](const QString &) { applyModelFilter(); });
@@ -1923,7 +1932,12 @@ void Artifact::ArtifactAICloudWidget::updateModelList() {
               }
               return a.compare(b, Qt::CaseInsensitive) < 0;
             });
-  applyModelFilter();
+  QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("AICloud"));
+  const QString providerKey = providerCombo_ ? providerCombo_->currentText().trimmed().toLower()
+                                             : QStringLiteral("openai");
+  const QString preferredModel = settings.value(
+      QStringLiteral("model/%1").arg(providerKey)).toString().trimmed();
+  applyModelFilter(preferredModel);
 }
 
 void Artifact::ArtifactAICloudWidget::populateModelList(

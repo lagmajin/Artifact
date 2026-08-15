@@ -33,6 +33,7 @@ module;
 #include <QHideEvent>
 #include <QIcon>
 #include <QInputDialog>
+#include <QInputMethodEvent>
 #include <QImageReader>
 #include <QKeySequence>
 #include <QMenu>
@@ -73,6 +74,8 @@ module;
 #include <QVector3D>
 #include <QWheelEvent>
 #include <QFileDialog>
+#include <QProgressDialog>
+#include <QFile>
 #include <QApplication>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
@@ -123,11 +126,13 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Image;
+import NLE.OTIO;
 import Artifact.Layers.SolidImage;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Project;
+import Artifact.Template.Document;
 import Artifact.Service.Playback;
 
 import Artifact.Audio.ScrubController;
@@ -138,6 +143,7 @@ import Artifact.Layer.Clone;
 import Artifact.Layer.Camera;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Tool.Manager;
+import Artifact.Tool.PuppetTool;
 import FloatColorPickerDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
 import Clipboard.ClipboardManager;
@@ -617,8 +623,19 @@ public:
       : QObject(editor), editor_(editor), layer_(layer), ctrl_(ctrl) {}
 
   bool eventFilter(QObject *obj, QEvent *event) override {
-    if (event->type() == QEvent::KeyPress) {
+    if (event->type() == QEvent::InputMethod) {
+      // Keep the native Qt input-method path alive while Microsoft IME is
+      // composing.  In particular, Ctrl+Enter/Escape must not close the
+      // overlay before the preedit has been committed or cancelled by Qt.
+      const auto *imeEvent = static_cast<const QInputMethodEvent *>(event);
+      imePreeditActive_ = !imeEvent->preeditString().isEmpty();
+    } else if (event->type() == QEvent::KeyPress) {
       auto *ke = static_cast<QKeyEvent *>(event);
+      if (imePreeditActive_ &&
+          (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter ||
+           ke->key() == Qt::Key_Escape)) {
+        return QObject::eventFilter(obj, event);
+      }
       if (isCancelKey(ke)) {
         cancel();
         return true;
@@ -682,6 +699,7 @@ private:
   QPlainTextEdit *editor_;
   ArtifactCore::SharedPtr<ArtifactTextLayer> layer_;
   CompositionRenderController *ctrl_;
+  bool imePreeditActive_ = false;
 };
 
 class ArtifactTextEditorDialog final : public QDialog {
@@ -996,8 +1014,16 @@ protected:
       return QDialog::eventFilter(obj, event);
     }
     if (obj == editor_) {
-      if (event->type() == QEvent::KeyPress) {
+      if (event->type() == QEvent::InputMethod) {
+        const auto *imeEvent = static_cast<const QInputMethodEvent *>(event);
+        imePreeditActive_ = !imeEvent->preeditString().isEmpty();
+      } else if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
+        if (imePreeditActive_ &&
+            (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter ||
+             ke->key() == Qt::Key_Escape)) {
+          return QDialog::eventFilter(obj, event);
+        }
         if (ke->key() == Qt::Key_Escape) {
           reject();
           return true;
@@ -1508,6 +1534,7 @@ private:
   QComboBox *animatorPresetCombo_ = nullptr;
   TextEditorState initialState_;
   bool richText_ = false;
+  bool imePreeditActive_ = false;
   QWidget *preview_ = nullptr;
 };
 
@@ -4506,6 +4533,135 @@ public:
         ArtifactTextLayerInitParams params(QStringLiteral("Text 1"));
         service->addLayerToCurrentComposition(params);
       });
+      add(QStringLiteral("Import SRT/WebVTT as Text Keyframes..."), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        const auto compNow = currentComposition();
+        if (!service || !compNow) {
+          return;
+        }
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Import SRT/WebVTT as Text Keyframes"), QString(),
+            QStringLiteral("Subtitles (*.srt *.vtt);;SubRip subtitles (*.srt);;WebVTT (*.vtt);;All Files (*.*)"));
+        if (path.isEmpty()) {
+          return;
+        }
+        QVector<QString> warnings;
+        if (!QFile::exists(path)) {
+          QMessageBox::warning(this, QStringLiteral("Subtitle Import"),
+                               QStringLiteral("Subtitle file does not exist."));
+          return;
+        }
+        QFile subtitleFile(path);
+        if (!subtitleFile.open(QIODevice::ReadOnly)) {
+          QMessageBox::warning(this, QStringLiteral("Subtitle Import"),
+                               QStringLiteral("Could not open subtitle file."));
+          return;
+        }
+        const auto subtitleText = QString::fromUtf8(subtitleFile.readAll());
+        const auto timeBase = ArtifactCore::NLE::TimeBase{
+            1, static_cast<int32_t>(std::lround(compNow->frameRate().fps())), false};
+        const auto cues = QFileInfo(path).suffix().compare(QStringLiteral("vtt"),
+                                                            Qt::CaseInsensitive) == 0
+                              ? ArtifactCore::NLE::OtioAdapter::importWebVtt(
+                                    subtitleText, timeBase, &warnings)
+                              : ArtifactCore::NLE::OtioAdapter::importSrt(
+                                    subtitleText, timeBase, &warnings);
+        if (cues.isEmpty()) {
+          QMessageBox::warning(this, QStringLiteral("Subtitle Import"),
+                               warnings.isEmpty()
+                                   ? QStringLiteral("No subtitle cues were found.")
+                                   : warnings.join(QStringLiteral("\n")));
+          return;
+        }
+        ArtifactTextLayerInitParams params(QStringLiteral("Imported Subtitles"));
+        service->addLayerToCurrentComposition(params, true);
+        const auto importedComp = currentComposition();
+        if (!importedComp || importedComp->allLayerRef().empty()) {
+          return;
+        }
+        const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
+            importedComp->allLayerRef().back());
+        if (!textLayer) {
+          return;
+        }
+        const auto textProperty = textLayer->getProperty(QStringLiteral("text.value"));
+        if (!textProperty) {
+          return;
+        }
+        textProperty->clearKeyFrames();
+        const double fps = compNow->frameRate().fps();
+        for (const auto &cue : cues) {
+          textProperty->addKeyFrame(
+              ArtifactCore::RationalTime(cue.range.start(), fps),
+              QVariant(cue.text), ArtifactCore::InterpolationType::Constant);
+        }
+        const auto &lastCue = cues.constLast();
+        textProperty->addKeyFrame(
+            ArtifactCore::RationalTime(
+                lastCue.range.start() + lastCue.range.duration(), fps),
+            QVariant(QString()), ArtifactCore::InterpolationType::Constant);
+        textLayer->setText(ArtifactCore::UniString::fromQString(cues.front().text));
+        if (!warnings.isEmpty()) {
+          QMessageBox::information(this, QStringLiteral("Subtitle Import"),
+                                   warnings.join(QStringLiteral("\n")));
+        }
+      });
+      add(QStringLiteral("Export Selected Text Keyframes as SRT/WebVTT..."), [this]() {
+        const auto compNow = currentComposition();
+        if (!compNow || !controller_ || controller_->selectedLayerId().isNil()) {
+          QMessageBox::information(this, QStringLiteral("Subtitle Export"),
+                                   QStringLiteral("Select a Text Layer first."));
+          return;
+        }
+        const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
+            compNow->layerById(controller_->selectedLayerId()));
+        if (!textLayer) {
+          QMessageBox::information(this, QStringLiteral("Subtitle Export"),
+                                   QStringLiteral("The selected layer is not a Text Layer."));
+          return;
+        }
+        const auto frames = textLayer->sourceTextKeyframeFrames();
+        if (frames.isEmpty()) {
+          QMessageBox::information(this, QStringLiteral("Subtitle Export"),
+                                   QStringLiteral("The selected Text Layer has no Source Text keyframes."));
+          return;
+        }
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Export Text Keyframes"), QString(),
+            QStringLiteral("SubRip subtitles (*.srt);;WebVTT (*.vtt)"));
+        if (path.isEmpty()) {
+          return;
+        }
+        const double fps = compNow->frameRate().fps();
+        const auto timeBase = ArtifactCore::NLE::TimeBase{
+            1, static_cast<int32_t>(std::lround(fps)), false};
+        QVector<ArtifactCore::NLE::SubtitleCue> cues;
+        for (qsizetype index = 0; index < frames.size(); ++index) {
+          const qint64 start = frames.at(index);
+          const qint64 next = index + 1 < frames.size()
+                                  ? frames.at(index + 1)
+                                  : start + std::max<qint64>(1, static_cast<qint64>(std::ceil(fps)));
+          const QString text = textLayer->sourceTextAtFrame(start).trimmed();
+          if (text.isEmpty() || next <= start) {
+            continue;
+          }
+          ArtifactCore::NLE::SubtitleCue cue;
+          cue.range = ArtifactCore::FrameRange::fromDuration(start, next - start);
+          cue.text = text;
+          cues.append(std::move(cue));
+        }
+        const bool webVtt = QFileInfo(path).suffix().compare(QStringLiteral("vtt"),
+                                                              Qt::CaseInsensitive) == 0;
+        const QString output = webVtt
+                                   ? ArtifactCore::NLE::OtioAdapter::exportWebVtt(cues, timeBase)
+                                   : ArtifactCore::NLE::OtioAdapter::exportSrt(cues, timeBase);
+        QFile outputFile(path);
+        if (!outputFile.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            outputFile.write(output.toUtf8()) != output.toUtf8().size()) {
+          QMessageBox::warning(this, QStringLiteral("Subtitle Export"),
+                               QStringLiteral("Could not write the subtitle file."));
+        }
+      });
       add(QStringLiteral("New Null Layer"), [this]() {
         auto *service = ArtifactProjectService::instance();
         const auto compNow = currentComposition();
@@ -4855,6 +5011,30 @@ public:
         });
   }
 
+  void importDroppedTemplate(const QString &fileName) {
+    if (fileName.isEmpty()) return;
+    auto *service = ArtifactProjectService::instance();
+    const auto composition = service ? service->currentComposition().lock()
+                                     : ArtifactCompositionPtr{};
+    if (!composition) return;
+    ArtifactTemplateLibrary library;
+    QString error;
+    const auto document = library.load(fileName, &error);
+    if (document.name.isEmpty() && document.layerSnapshots.isEmpty()) return;
+    auto *undoManager = UndoManager::instance();
+    if (!undoManager) {
+      document.appendToComposition(*composition);
+      return;
+    }
+    const auto layers = document.instantiateLayers();
+    for (auto it = layers.crbegin(); it != layers.crend(); ++it) {
+      if (*it) {
+        undoManager->push(std::make_unique<AddLayerCommand>(
+            composition, *it, true));
+      }
+    }
+  }
+
   void processPendingDroppedAssets() {
     if (processingDroppedAssets_) {
       return;
@@ -4935,6 +5115,10 @@ protected:
 
   // --- D&D: アセットブラウザ → コンポジションエディタ ---
   void dragEnterEvent(QDragEnterEvent *event) override {
+    if (event->mimeData()->hasFormat("application/x-artifact-template")) {
+      event->acceptProposedAction();
+      return;
+    }
     if (event->mimeData()->hasUrls()) {
       const auto urls = event->mimeData()->urls();
       // フォルダは弾く
@@ -4952,6 +5136,10 @@ protected:
   }
 
   void dragMoveEvent(QDragMoveEvent *event) override {
+    if (event->mimeData()->hasFormat("application/x-artifact-template")) {
+      event->acceptProposedAction();
+      return;
+    }
     if (dropOverlayVisible_) {
       updateDropPreview(event->mimeData()->urls(), event->position());
       event->acceptProposedAction();
@@ -4967,6 +5155,13 @@ protected:
 
   void dropEvent(QDropEvent *event) override {
     clearDropPreview();
+
+    if (event->mimeData()->hasFormat("application/x-artifact-template")) {
+      importDroppedTemplate(QString::fromUtf8(
+          event->mimeData()->data("application/x-artifact-template")));
+      event->acceptProposedAction();
+      return;
+    }
 
     if (!event->mimeData()->hasUrls()) {
       event->ignore();
@@ -4997,6 +5192,23 @@ protected:
   void hideEvent(QHideEvent *event) override {
     restoreTemporarySolo();
     restoreTemporaryPlayback();
+    const bool controllerDragActive =
+        isSpatialGizmoDragging() || nativeControllerDragActive_;
+    isPanning_ = false;
+    isPanningWithMiddle_ = false;
+    isAltOrbiting_ = false;
+    isAltZooming_ = false;
+    nativePointerCaptureActive_ = false;
+    nativeControllerDragActive_ = false;
+    panMomentumActive_ = false;
+    panVelocityPerMs_ = {};
+    if (controller_) {
+      const bool gizmoCancelled = controller_->cancelGizmoInteraction();
+      if (controllerDragActive && !gizmoCancelled) {
+        controller_->handleMouseRelease();
+      }
+      controller_->finishViewportInteraction();
+    }
     clearNavigationFeedback();
     if (controller_) {
       controller_->stop();
@@ -5007,6 +5219,23 @@ protected:
   void focusOutEvent(QFocusEvent *event) override {
     restoreTemporarySolo();
     restoreTemporaryPlayback();
+    const bool controllerDragActive =
+        isSpatialGizmoDragging() || nativeControllerDragActive_;
+    isPanning_ = false;
+    isPanningWithMiddle_ = false;
+    isAltOrbiting_ = false;
+    isAltZooming_ = false;
+    nativePointerCaptureActive_ = false;
+    nativeControllerDragActive_ = false;
+    panMomentumActive_ = false;
+    panVelocityPerMs_ = {};
+    if (controller_) {
+      const bool gizmoCancelled = controller_->cancelGizmoInteraction();
+      if (controllerDragActive && !gizmoCancelled) {
+        controller_->handleMouseRelease();
+      }
+      controller_->finishViewportInteraction();
+    }
     clearNavigationFeedback();
     QWidget::focusOutEvent(event);
   }
@@ -5065,10 +5294,11 @@ protected:
         ArtifactAudioScrubController::instance().stopScrub();
         didSpacePan_ = false;
       }
-      if (controllerDragActive && controller_) {
-        controller_->handleMouseRelease();
-      }
       if (controller_) {
+        const bool gizmoCancelled = controller_->cancelGizmoInteraction();
+        if (controllerDragActive && !gizmoCancelled) {
+          controller_->handleMouseRelease();
+        }
         controller_->finishViewportInteraction();
       }
       if (event->type() != QEvent::UngrabMouse &&
@@ -5310,34 +5540,82 @@ protected:
         }
         QAction *toggle = maskMenu.addAction(QStringLiteral("Toggle Enabled"));
         toggle->setProperty("artifactMaskAction", QStringLiteral("toggle"));
+        QAction *toggleSelected = maskMenu.addAction(
+            QStringLiteral("Toggle Enabled on Selected Layers"));
+        toggleSelected->setProperty("artifactMaskAction",
+                                    QStringLiteral("toggleSelected"));
         QAction *remove = maskMenu.addAction(QStringLiteral("Delete Mask"));
         remove->setProperty("artifactMaskAction", QStringLiteral("delete"));
+        QAction *removeSelected = maskMenu.addAction(
+            QStringLiteral("Delete Mask on Selected Layers"));
+        removeSelected->setProperty("artifactMaskAction",
+                                    QStringLiteral("deleteSelected"));
         QAction *lock = maskMenu.addAction(QStringLiteral("Toggle Locked"));
         lock->setProperty("artifactMaskAction", QStringLiteral("lock"));
         QAction *duplicate = maskMenu.addAction(QStringLiteral("Duplicate Mask"));
         duplicate->setProperty("artifactMaskAction", QStringLiteral("duplicate"));
+        QAction *duplicateSelected = maskMenu.addAction(
+            QStringLiteral("Duplicate Mask on Selected Layers"));
+        duplicateSelected->setProperty("artifactMaskAction",
+                                       QStringLiteral("duplicateSelected"));
         QAction *moveUp = maskMenu.addAction(QStringLiteral("Move Up"));
         moveUp->setProperty("artifactMaskAction", QStringLiteral("up"));
+        QAction *moveUpSelected = maskMenu.addAction(
+            QStringLiteral("Move Up on Selected Layers"));
+        moveUpSelected->setProperty("artifactMaskAction",
+                                    QStringLiteral("upSelected"));
         QAction *moveDown = maskMenu.addAction(QStringLiteral("Move Down"));
         moveDown->setProperty("artifactMaskAction", QStringLiteral("down"));
+        QAction *moveDownSelected = maskMenu.addAction(
+            QStringLiteral("Move Down on Selected Layers"));
+        moveDownSelected->setProperty("artifactMaskAction",
+                                      QStringLiteral("downSelected"));
         QAction *copy = maskMenu.addAction(QStringLiteral("Copy Mask"));
         copy->setProperty("artifactMaskAction", QStringLiteral("copy"));
         QAction *paste = maskMenu.addAction(QStringLiteral("Paste Mask"));
         paste->setProperty("artifactMaskAction", QStringLiteral("paste"));
         QAction *invert = maskMenu.addAction(QStringLiteral("Toggle Inverted"));
         invert->setProperty("artifactMaskAction", QStringLiteral("invert"));
+        QAction *invertSelected = maskMenu.addAction(
+            QStringLiteral("Toggle Inverted on Selected Layers"));
+        invertSelected->setProperty("artifactMaskAction",
+                                    QStringLiteral("invertSelected"));
         QAction *featherIn = maskMenu.addAction(QStringLiteral("Increase Feather"));
         featherIn->setProperty("artifactMaskAction", QStringLiteral("featherIn"));
+        QAction *featherInSelected = maskMenu.addAction(
+            QStringLiteral("Increase Feather on Selected Layers"));
+        featherInSelected->setProperty("artifactMaskAction",
+                                       QStringLiteral("featherInSelected"));
         QAction *featherOut = maskMenu.addAction(QStringLiteral("Decrease Feather"));
         featherOut->setProperty("artifactMaskAction", QStringLiteral("featherOut"));
+        QAction *featherOutSelected = maskMenu.addAction(
+            QStringLiteral("Decrease Feather on Selected Layers"));
+        featherOutSelected->setProperty("artifactMaskAction",
+                                        QStringLiteral("featherOutSelected"));
         QAction *expand = maskMenu.addAction(QStringLiteral("Expand Mask"));
         expand->setProperty("artifactMaskAction", QStringLiteral("expand"));
+        QAction *expandSelected = maskMenu.addAction(
+            QStringLiteral("Expand Mask on Selected Layers"));
+        expandSelected->setProperty("artifactMaskAction",
+                                    QStringLiteral("expandSelected"));
         QAction *contract = maskMenu.addAction(QStringLiteral("Contract Mask"));
         contract->setProperty("artifactMaskAction", QStringLiteral("contract"));
+        QAction *contractSelected = maskMenu.addAction(
+            QStringLiteral("Contract Mask on Selected Layers"));
+        contractSelected->setProperty("artifactMaskAction",
+                                     QStringLiteral("contractSelected"));
         QAction *opacityIn = maskMenu.addAction(QStringLiteral("Increase Opacity"));
         opacityIn->setProperty("artifactMaskAction", QStringLiteral("opacityIn"));
+        QAction *opacityInSelected = maskMenu.addAction(
+            QStringLiteral("Increase Opacity on Selected Layers"));
+        opacityInSelected->setProperty("artifactMaskAction",
+                                       QStringLiteral("opacityInSelected"));
         QAction *opacityOut = maskMenu.addAction(QStringLiteral("Decrease Opacity"));
         opacityOut->setProperty("artifactMaskAction", QStringLiteral("opacityOut"));
+        QAction *opacityOutSelected = maskMenu.addAction(
+            QStringLiteral("Decrease Opacity on Selected Layers"));
+        opacityOutSelected->setProperty("artifactMaskAction",
+                                        QStringLiteral("opacityOutSelected"));
       }
       if (added) {
         QAction *chosen = maskMenu.exec(event->globalPos());
@@ -5353,34 +5631,58 @@ protected:
                 chosen->property("artifactMaskAction").toString();
             if (action == QStringLiteral("toggle")) {
               controller_->toggleHoveredMaskEnabled();
+            } else if (action == QStringLiteral("toggleSelected")) {
+              controller_->toggleHoveredMaskEnabledForSelectedLayers();
             } else if (action == QStringLiteral("delete")) {
               controller_->deleteHoveredMask();
+            } else if (action == QStringLiteral("deleteSelected")) {
+              controller_->deleteHoveredMaskForSelectedLayers();
             } else if (action == QStringLiteral("lock")) {
               controller_->toggleHoveredMaskLocked();
             } else if (action == QStringLiteral("duplicate")) {
               controller_->duplicateHoveredMask();
+            } else if (action == QStringLiteral("duplicateSelected")) {
+              controller_->duplicateHoveredMaskForSelectedLayers();
             } else if (action == QStringLiteral("up")) {
               controller_->moveHoveredMask(-1);
+            } else if (action == QStringLiteral("upSelected")) {
+              controller_->moveHoveredMaskForSelectedLayers(-1);
             } else if (action == QStringLiteral("down")) {
               controller_->moveHoveredMask(1);
+            } else if (action == QStringLiteral("downSelected")) {
+              controller_->moveHoveredMaskForSelectedLayers(1);
             } else if (action == QStringLiteral("copy")) {
               controller_->copyHoveredMask();
             } else if (action == QStringLiteral("paste")) {
               controller_->pasteMask();
             } else if (action == QStringLiteral("invert")) {
               controller_->toggleHoveredMaskInverted();
+            } else if (action == QStringLiteral("invertSelected")) {
+              controller_->toggleHoveredMaskInvertedForSelectedLayers();
             } else if (action == QStringLiteral("featherIn")) {
               controller_->adjustHoveredMaskGeometry(5.0f, 0.0f);
+            } else if (action == QStringLiteral("featherInSelected")) {
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(5.0f, 0.0f);
             } else if (action == QStringLiteral("featherOut")) {
               controller_->adjustHoveredMaskGeometry(-5.0f, 0.0f);
+            } else if (action == QStringLiteral("featherOutSelected")) {
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(-5.0f, 0.0f);
             } else if (action == QStringLiteral("expand")) {
               controller_->adjustHoveredMaskGeometry(0.0f, 5.0f);
+            } else if (action == QStringLiteral("expandSelected")) {
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(0.0f, 5.0f);
             } else if (action == QStringLiteral("contract")) {
               controller_->adjustHoveredMaskGeometry(0.0f, -5.0f);
+            } else if (action == QStringLiteral("contractSelected")) {
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(0.0f, -5.0f);
             } else if (action == QStringLiteral("opacityIn")) {
               controller_->adjustHoveredMaskOpacity(0.1f);
+            } else if (action == QStringLiteral("opacityInSelected")) {
+              controller_->adjustHoveredMaskOpacityForSelectedLayers(0.1f);
             } else if (action == QStringLiteral("opacityOut")) {
               controller_->adjustHoveredMaskOpacity(-0.1f);
+            } else if (action == QStringLiteral("opacityOutSelected")) {
+              controller_->adjustHoveredMaskOpacityForSelectedLayers(-0.1f);
             }
           }
         }
@@ -5420,6 +5722,8 @@ protected:
       if (QWidget::mouseGrabber() == this) {
         releaseMouse();
       }
+      clearNavigationFeedback();
+      controller_->finishViewportInteraction();
       updateViewportCursor(event->position());
       event->accept();
       return;
@@ -5482,6 +5786,7 @@ protected:
     if (event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::AltModifier) &&
         !event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
+        !controller_->isTransformGizmoHovered(event->position()) &&
         !maskNavigationLocked() &&
         !(ArtifactApplicationManager::instance() &&
           ArtifactApplicationManager::instance()->toolManager() &&
@@ -5671,11 +5976,14 @@ protected:
         const std::weak_ptr<std::function<void()>> weakMomentum = momentumStep;
         *momentumStep = [this, weakMomentum]() {
           if (!controller_ || !panMomentumActive_) return;
+          controller_->notifyViewportInteractionActivity();
           controller_->panBy(panVelocityPerMs_ * 16.0);
           panVelocityPerMs_ *= 0.86;
           if (std::hypot(panVelocityPerMs_.x(), panVelocityPerMs_.y()) < 0.015) {
             panVelocityPerMs_ = {};
             panMomentumActive_ = false;
+            clearNavigationFeedback();
+            controller_->finishViewportInteraction();
             return;
           }
           if (const auto next = weakMomentum.lock()) {
@@ -5684,8 +5992,10 @@ protected:
         };
         QTimer::singleShot(16, this, [momentumStep]() { (*momentumStep)(); });
       }
-      clearNavigationFeedback();
-      if (controller_) {
+      if (!panMomentumActive_) {
+        clearNavigationFeedback();
+      }
+      if (controller_ && !panMomentumActive_) {
         controller_->finishViewportInteraction();
       }
       if (spacePressed_) {
@@ -5752,10 +6062,14 @@ protected:
       if (wasScaleDrag) {
         update();
       }
+      if (!wasSpatialGizmoDragging) {
+        controller_->finishViewportInteraction();
+      }
       if (!spacePressed_) {
         updateViewportCursor(event->position());
       }
       if (wasSpatialGizmoDragging) {
+        controller_->finishViewportInteraction();
         event->accept();
         return;
       }
@@ -5775,14 +6089,22 @@ protected:
     controller_->setPointerTilt(static_cast<float>(event->xTilt()),
                                  static_cast<float>(event->yTilt()));
     if (event->type() == QEvent::TabletPress) {
+      panMomentumActive_ = false;
+      panVelocityPerMs_ = {};
+      if (activatedCallback_) {
+        activatedCallback_();
+      }
+      controller_->notifyViewportInteractionActivity();
       QMouseEvent synth(QEvent::MouseButtonPress, event->position(),
                         event->globalPosition(), Qt::LeftButton,
                         Qt::LeftButton, event->modifiers());
       controller_->handleMousePress(&synth);
     } else if (event->type() == QEvent::TabletMove) {
+      controller_->notifyViewportInteractionActivity();
       controller_->handleMouseMove(event->position());
     } else if (event->type() == QEvent::TabletRelease) {
       controller_->handleMouseRelease();
+      controller_->finishViewportInteraction();
       controller_->setPointerPressure(1.0f);
       controller_->setPointerTilt(0.0f, 0.0f);
     }
@@ -5823,10 +6145,11 @@ protected:
       isAltOrbiting_ = false;
       isAltZooming_ = false;
       clearNavigationFeedback();
-      if (finishControllerDrag && controller_) {
-        controller_->handleMouseRelease();
-      }
       if (controller_) {
+        const bool gizmoCancelled = controller_->cancelGizmoInteraction();
+        if (finishControllerDrag && !gizmoCancelled) {
+          controller_->handleMouseRelease();
+        }
         controller_->finishViewportInteraction();
       }
       unsetCursor();
@@ -5843,6 +6166,8 @@ protected:
         if (GetCapture() == msg->hwnd) {
           ReleaseCapture();
         }
+        clearNavigationFeedback();
+        controller_->finishViewportInteraction();
         updateViewportCursor(logPos);
         return true;
       }
@@ -5885,7 +6210,9 @@ protected:
         if (controller_)
           controller_->notifyViewportInteractionActivity();
       } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) == 0 &&
-                 controller_ && !maskNavigationLocked()) {
+                 controller_ &&
+                 !controller_->isTransformGizmoHovered(logPos) &&
+                 !maskNavigationLocked()) {
         isAltOrbiting_ = true;
         setNavigationFeedback(NavigationFeedbackMode::Orbit);
         orbitDragStartPos_ = logPos;
@@ -5933,6 +6260,7 @@ protected:
         if (overlayWidget_)
           overlayWidget_->update();
         controller_->markRenderDirty();
+        controller_->finishViewportInteraction();
       }
       nativeControllerDragActive_ = false;
       nativePointerCaptureActive_ = false;
@@ -6068,8 +6396,19 @@ protected:
 
   void keyPressEvent(QKeyEvent *event) override {
     if (event && event->key() == Qt::Key_Escape && !event->isAutoRepeat()) {
+      const bool hadPanInteraction =
+          isPanning_ || panMomentumActive_ ||
+          std::hypot(panVelocityPerMs_.x(), panVelocityPerMs_.y()) > 0.0;
       panMomentumActive_ = false;
       panVelocityPerMs_ = {};
+      if (hadPanInteraction) {
+        isPanning_ = false;
+        isPanningWithMiddle_ = false;
+        clearNavigationFeedback();
+        if (controller_) {
+          controller_->finishViewportInteraction();
+        }
+      }
     }
     if (auto *owner = qobject_cast<ArtifactCompositionEditor *>(parentWidget())) {
       if (owner->handleImportPlacementKeyPress(event)) {
@@ -6091,6 +6430,8 @@ protected:
         ReleaseCapture();
       }
 #endif
+      clearNavigationFeedback();
+      controller_->finishViewportInteraction();
       updateViewportCursor(mapFromGlobal(QCursor::pos()));
       event->accept();
       return;
@@ -6220,11 +6561,15 @@ protected:
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         controller_ && controller_->hasPendingMaskEdit()) {
       controller_->cancelMaskInteraction();
+      clearNavigationFeedback();
+      controller_->finishViewportInteraction();
       event->accept();
       return;
     }
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         controller_ && controller_->cancelTextToolInteraction()) {
+      clearNavigationFeedback();
+      controller_->finishViewportInteraction();
       event->accept();
       return;
     }
@@ -6260,6 +6605,56 @@ protected:
         ArtifactApplicationManager::instance()->toolManager() &&
         ArtifactApplicationManager::instance()->toolManager()->activeTool() ==
             ToolType::Puppet && controller_->deleteSelectedPuppetPin()) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        ArtifactApplicationManager::instance() &&
+        ArtifactApplicationManager::instance()->toolManager() &&
+        ArtifactApplicationManager::instance()->toolManager()->activeTool() ==
+            ToolType::Puppet) {
+      auto *puppet = ArtifactApplicationManager::instance()->puppetTool();
+      if (puppet && (event->key() == Qt::Key_O || event->key() == Qt::Key_BracketLeft ||
+                     event->key() == Qt::Key_BracketRight)) {
+        if (event->key() == Qt::Key_O) {
+          puppet->setProportionalEditingEnabled(
+              !puppet->isProportionalEditingEnabled());
+        } else {
+          const float direction = event->key() == Qt::Key_BracketRight ? 1.25f : 0.8f;
+          puppet->setProportionalEditRadius(puppet->proportionalEditRadius() * direction);
+        }
+        if (controller_) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Puppet Proportional Editing"),
+              puppet->isProportionalEditingEnabled()
+                  ? QStringLiteral("On · radius %1").arg(puppet->proportionalEditRadius(), 0, 'f', 1)
+                  : QStringLiteral("Off"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        ArtifactApplicationManager::instance() &&
+        ArtifactApplicationManager::instance()->toolManager() &&
+        ArtifactApplicationManager::instance()->toolManager()->activeTool() ==
+            ToolType::Pen &&
+        (event->key() == Qt::Key_O || event->key() == Qt::Key_BracketLeft ||
+         event->key() == Qt::Key_BracketRight)) {
+      if (event->key() == Qt::Key_O) {
+        controller_->setMaskProportionalEditingEnabled(
+            !controller_->isMaskProportionalEditingEnabled());
+      } else {
+        const float direction = event->key() == Qt::Key_BracketRight ? 1.25f : 0.8f;
+        controller_->setMaskProportionalEditRadius(
+            controller_->maskProportionalEditRadius() * direction);
+      }
+      controller_->setInfoOverlayText(
+          QStringLiteral("Mask Proportional Editing"),
+          controller_->isMaskProportionalEditingEnabled()
+              ? QStringLiteral("On · radius %1").arg(
+                    controller_->maskProportionalEditRadius(), 0, 'f', 1)
+              : QStringLiteral("Off"));
       event->accept();
       return;
     }
@@ -9775,6 +10170,8 @@ public:
   bool layerChromeVisible_ = true;
   bool lockViewToSelection_ = false;
   bool autoAssignFourUpViews_ = true;
+  bool screenshotExportInProgress_ = false;
+  quint64 viewportLayoutGeneration_ = 0;
 
   void refreshHDRDisplayState() {
     if (!hdrDisplayBtn_) {
@@ -10883,21 +11280,9 @@ public:
       return;
     }
 
-    const QImage frame = renderer->readbackToImage();
-    if (frame.isNull()) {
-      QMessageBox::warning(owner, QStringLiteral("Viewport Render Output"),
-                           QStringLiteral("現在のビューポートを取得できませんでした。"));
-      return;
-    }
-
-    if (!saveScreenshotImage(frame, options.filePath, options.format, options.jpegQuality)) {
-      QMessageBox::warning(owner, QStringLiteral("Viewport Render Output"),
-                           QStringLiteral("保存に失敗しました:\n%1").arg(options.filePath));
-      return;
-    }
-
-    QMessageBox::information(owner, QStringLiteral("Viewport Render Output"),
-                             QStringLiteral("保存しました:\n%1").arg(options.filePath));
+    saveRendererImageAsync(owner, renderer, options.filePath, options.format,
+                           options.jpegQuality,
+                           QStringLiteral("Viewport Render Output"));
   }
 
   void applyFourUpDefaultOrientations() {
@@ -11006,6 +11391,73 @@ public:
     syncOverlayGeometry(owner);
   }
 
+  bool saveRendererImageAsync(ArtifactCompositionEditor *owner,
+                              ArtifactIRenderer *renderer,
+                              const QString &filePath,
+                              const QString &format,
+                              int jpegQuality,
+                              const QString &dialogTitle) {
+    if (!owner || !renderer || filePath.isEmpty() || screenshotExportInProgress_) {
+      return false;
+    }
+
+    screenshotExportInProgress_ = true;
+    auto *progress = new QProgressDialog(
+        QStringLiteral("Rendering and saving %1...").arg(QFileInfo(filePath).fileName()),
+        QStringLiteral("Cancel"), 0, 0, owner);
+    progress->setWindowTitle(dialogTitle);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->show();
+
+    QPointer<ArtifactCompositionEditor> safeOwner(owner);
+    QPointer<QProgressDialog> safeProgress(progress);
+    renderer->readbackToImageAsync(
+        [this, safeOwner, safeProgress, filePath, format, jpegQuality,
+         dialogTitle](const QImage &image) {
+          if (!safeOwner) {
+            return;
+          }
+          QMetaObject::invokeMethod(
+              safeOwner,
+              [this, safeOwner, safeProgress, filePath, format, jpegQuality,
+               dialogTitle, image]() {
+                const bool cancelled = !safeProgress || safeProgress->wasCanceled();
+                if (safeProgress) {
+                  safeProgress->close();
+                  safeProgress->deleteLater();
+                }
+                screenshotExportInProgress_ = false;
+                if (cancelled) {
+                  return;
+                }
+                if (image.isNull()) {
+                  QMessageBox::warning(
+                      safeOwner, dialogTitle,
+                      QStringLiteral("現在のフレームを取得できませんでした。\nStage: readback"));
+                  return;
+                }
+                if (safeProgress) {
+                  safeProgress->setLabelText(
+                      QStringLiteral("Saving %1...").arg(QFileInfo(filePath).fileName()));
+                }
+                if (!saveScreenshotImage(image, filePath, format, jpegQuality)) {
+                  QMessageBox::warning(
+                      safeOwner, dialogTitle,
+                      QStringLiteral("保存に失敗しました:\n%1\nStage: encode/write")
+                          .arg(filePath));
+                  return;
+                }
+                QMessageBox::information(
+                    safeOwner, dialogTitle,
+                    QStringLiteral("保存しました:\n%1").arg(filePath));
+              },
+              Qt::QueuedConnection);
+        });
+    return true;
+  }
+
   bool saveQuickScreenshot(ArtifactCompositionEditor* owner) {
     if (!owner || !renderController_) {
       return false;
@@ -11025,23 +11477,8 @@ public:
 
     const QString filePath = ensureScreenshotSuffix(rawPath, selectedFilter);
     const QString suffix = QFileInfo(filePath).suffix().toLower();
-    const QImage screenshot = captureScreenshotForOptions(
-        renderController_, owner, ScreenshotCaptureSource::Renderer);
-    if (screenshot.isNull()) {
-      QMessageBox::warning(owner, QStringLiteral("スクリーンショット"),
-                           QStringLiteral("現在のフレームを取得できませんでした。"));
-      return false;
-    }
-
-    if (!saveScreenshotImage(screenshot, filePath, suffix, 95)) {
-      QMessageBox::warning(owner, QStringLiteral("スクリーンショット"),
-                           QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
-      return false;
-    }
-
-    QMessageBox::information(owner, QStringLiteral("スクリーンショット"),
-                             QStringLiteral("保存しました:\n%1").arg(filePath));
-    return true;
+    return saveRendererImageAsync(owner, renderController_->renderer(), filePath,
+                                  suffix, 95, QStringLiteral("スクリーンショット"));
   }
 
   bool saveAdvancedScreenshot(ArtifactCompositionEditor* owner) {
@@ -11065,23 +11502,26 @@ public:
       return saveRendererMultiChannelImage(owner, filePath, options.format,
                                            QStringLiteral("Advanced Screenshot"));
     } else {
-      const QImage screenshot = captureScreenshotForOptions(
-          renderController_, owner, options.captureSource);
-      if (screenshot.isNull()) {
-        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                             QStringLiteral("現在のフレームを取得できませんでした。"));
-        return false;
+      if (options.captureSource == ScreenshotCaptureSource::WholeWindow) {
+        const QImage screenshot = captureScreenshotForOptions(
+            renderController_, owner, options.captureSource);
+        if (screenshot.isNull()) {
+          QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                               QStringLiteral("現在のフレームを取得できませんでした。"));
+          return false;
+        }
+        if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
+          QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                               QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
+          return false;
+        }
+        QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
+                                 QStringLiteral("保存しました:\n%1").arg(filePath));
+        return true;
       }
-
-      if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
-        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                             QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
-        return false;
-      }
-
-      QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
-                               QStringLiteral("保存しました:\n%1").arg(filePath));
-      return true;
+      return saveRendererImageAsync(owner, renderController_->renderer(), filePath,
+                                    options.format, options.jpegQuality,
+                                    QStringLiteral("Advanced Screenshot"));
     }
   }
 };
@@ -11368,6 +11808,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       return;
     }
     impl_->viewportLayoutMode_ = mode;
+    const quint64 layoutGeneration = ++impl_->viewportLayoutGeneration_;
+    const qint64 deferredStartMs = QDateTime::currentMSecsSinceEpoch();
     const auto composition = impl_->renderController_
                                  ? impl_->renderController_->composition()
                                  : ArtifactCompositionPtr{};
@@ -11389,13 +11831,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       // turns so the primary viewport remains responsive while they warm up.
       const int activeCount = impl_->activeViewportPaneCount();
       for (int i = 1; i < activeCount; ++i) {
-        QTimer::singleShot((i - 1) * 16, this, [this, i]() {
-          if (!impl_ || i >= impl_->activeViewportPaneCount()) {
+        QTimer::singleShot((i - 1) * 16, this, [this, i, layoutGeneration,
+                                                deferredStartMs]() {
+          if (!impl_ || layoutGeneration != impl_->viewportLayoutGeneration_ ||
+              i >= impl_->activeViewportPaneCount()) {
             return;
           }
           if (auto *paneState = impl_->pane(i);
               paneState && paneState->controller) {
             paneState->controller->start();
+            qInfo() << "[CompositionEditor][ViewportLayout] deferred pane start"
+                    << i << "latencyMs="
+                    << (QDateTime::currentMSecsSinceEpoch() - deferredStartMs);
             if (paneState->view) {
               paneState->view->requestInitialFit();
             }

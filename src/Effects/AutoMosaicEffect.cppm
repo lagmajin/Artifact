@@ -244,6 +244,60 @@ QImage AutoMosaicEffect::applyToImage(const QImage& input) const {
     return applyMosaic(input, regions);
 }
 
+void AutoMosaicEffect::apply(const ImageF32x4RGBAWithCache& src,
+                             ImageF32x4RGBAWithCache& dst) {
+    dst = src;
+    auto& image = dst.image();
+    float* pixels = image.rgba32fData();
+    if (!pixels || image.width() <= 0 || image.height() <= 0) {
+        return;
+    }
+
+    cv::Mat source(image.height(), image.width(), CV_32FC4, pixels);
+    QVector<QRect> regions;
+    if (useFaceDetection_ && faceDetector_) {
+        cv::Mat detectionImage;
+        source.convertTo(detectionImage, CV_8UC4, 255.0);
+        for (const auto& face : faceDetector_->detect(detectionImage)) {
+            QRect expanded = face.rect;
+            const int margin = static_cast<int>(expanded.width() * 0.15f);
+            expanded.adjust(-margin, -margin, margin, margin);
+            regions.append(expanded);
+        }
+    }
+    if (useCustomRegions_) {
+        regions.append(customRegions_);
+    }
+    if (regions.isEmpty()) {
+        return;
+    }
+
+    cv::Mat processed = source.clone();
+    for (const auto& region : regions) {
+        const QRect clipped = region.intersected(QRect(0, 0, image.width(), image.height()));
+        if (clipped.width() <= 0 || clipped.height() <= 0) {
+            continue;
+        }
+        const cv::Rect cvRegion(clipped.x(), clipped.y(), clipped.width(), clipped.height());
+        switch (mosaicType_) {
+        case MosaicType::Gaussian:
+            processed = applyGaussianBlur(processed, cvRegion, mosaicStrength_);
+            break;
+        case MosaicType::Median:
+            processed = applyMedianBlur(processed, cvRegion, mosaicStrength_);
+            break;
+        case MosaicType::Pixelate:
+        default:
+            processed = applyPixelateMosaic(processed, cvRegion, mosaicStrength_);
+            break;
+        }
+        if (feather_ > 0.0f) {
+            processed = applyFeather(source, processed, cvRegion, feather_);
+        }
+    }
+    processed.copyTo(source);
+}
+
 std::vector<AbstractProperty> AutoMosaicEffect::getProperties() const {
     std::vector<AbstractProperty> props;
 

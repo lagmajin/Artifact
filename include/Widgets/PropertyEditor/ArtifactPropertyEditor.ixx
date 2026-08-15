@@ -18,8 +18,10 @@ module;
 #include <QFontComboBox>
 #include <QKeyEvent>
 #include <QContextMenuEvent>
+#include <QDragEnterEvent>
 #include <QEnterEvent>
 #include <QMouseEvent>
+#include <QDropEvent>
 #include <QResizeEvent>
 #include <QLineEdit>
 #include <QSlider>
@@ -398,6 +400,10 @@ private slots:
     void onReferenceChanged(qint64 newId);
     void updateReferenceDisplay();
 
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
 private:
     QWidget* referenceWidget_ = nullptr;
     QLabel* valueLabel_ = nullptr;
@@ -492,6 +498,7 @@ public:
     ArtifactAbstractPropertyEditor* editor() const;
     QString propertyName() const;
     void setExpressionHandler(std::function<void()> handler);
+    void setExpressionReferenceDropHandler(std::function<void(const QString&)> handler);
     void setResetHandler(std::function<void()> handler);
     void setAuxAction(std::function<void()> handler, const QString& label);
     void setKeyframeHandler(KeyFrameHandler handler);
@@ -522,6 +529,8 @@ private:
     void updateKeyframeButtonIcon();
     void updateRowVisualState();
     void updateOwnedGeometry();
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
     QLabel* label_ = nullptr;
     QWidget* scrubTarget_ = nullptr;
@@ -535,6 +544,7 @@ private:
     QPushButton* nextKeyBtn_ = nullptr;
     
     std::function<void()> expressionHandler_;
+    std::function<void(const QString&)> expressionReferenceDropHandler_;
     std::function<void()> resetHandler_;
     std::function<void()> auxActionHandler_;
     std::function<void(bool)> favoriteHandler_;

@@ -434,11 +434,24 @@ QString projectHealthSummaryFromDiagnostics(const std::vector<ArtifactCore::Proj
   const int warningCount = static_cast<int>(std::count_if(
       diagnostics.begin(), diagnostics.end(),
       [](const auto& diagnostic) { return diagnostic.isWarning(); }));
-  const int issueCount = errorCount + warningCount;
-  return QStringLiteral("Status: Project %1 (%2 issue%3)")
-      .arg(issueCount == 0 ? QStringLiteral("healthy") : QStringLiteral("issues"))
-      .arg(issueCount)
-      .arg(issueCount == 1 ? QString() : QStringLiteral("s"));
+  const int infoCount = static_cast<int>(diagnostics.size()) - errorCount - warningCount;
+  const QString warningText =
+      errorCount > 0 ? QStringLiteral("%1 critical").arg(errorCount)
+                     : (warningCount > 0 ? QStringLiteral("%1 warnings").arg(warningCount)
+                                         : QStringLiteral("none"));
+  const QString nextText =
+      errorCount > 0 ? QStringLiteral("open items")
+                     : (warningCount > 0 ? QStringLiteral("review items")
+                                         : QStringLiteral("continue editing"));
+  const QString nowText = QStringLiteral("%1 items e%2 w%3 i%4")
+                              .arg(static_cast<int>(diagnostics.size()))
+                              .arg(errorCount)
+                              .arg(warningCount)
+                              .arg(std::max(0, infoCount));
+  return QStringLiteral("goal: keep the project healthy | now: %1 | warning: %2 | next: %3")
+      .arg(nowText)
+      .arg(warningText)
+      .arg(nextText);
 }
 
 void appendAppValidationDiagnostics(
@@ -1119,6 +1132,119 @@ private:
   LayerID layerId_;
   QString effectId_;
   int direction_;
+};
+
+class AddCompositionEffectUndoCommand : public UndoCommand {
+public:
+  explicit AddCompositionEffectUndoCommand(SharedPtr<ArtifactAbstractEffect> effect)
+      : effect_(std::move(effect)) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->addEffect(effect_);
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->removeEffect(effect_->effectID());
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override { return QStringLiteral("Add Composition Effect"); }
+
+private:
+  SharedPtr<ArtifactAbstractEffect> effect_;
+};
+
+class RemoveCompositionEffectUndoCommand : public UndoCommand {
+public:
+  RemoveCompositionEffectUndoCommand(SharedPtr<ArtifactAbstractEffect> effect,
+                                     int effectIndex)
+      : effect_(std::move(effect)), effectIndex_(effectIndex) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->removeEffect(effect_->effectID());
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->addEffect(effect_);
+    if (effectIndex_ >= 0) {
+      comp->moveEffect(effect_->effectID(), effectIndex_);
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override { return QStringLiteral("Remove Composition Effect"); }
+
+private:
+  SharedPtr<ArtifactAbstractEffect> effect_;
+  int effectIndex_ = -1;
+};
+
+class SetCompositionEffectEnabledUndoCommand : public UndoCommand {
+public:
+  SetCompositionEffectEnabledUndoCommand(QString effectId, bool wasEnabled,
+                                         bool nowEnabled)
+      : effectId_(std::move(effectId)), wasEnabled_(wasEnabled),
+        nowEnabled_(nowEnabled) {}
+
+  void redo() override { apply(nowEnabled_); }
+  void undo() override { apply(wasEnabled_); }
+  QString label() const override { return QStringLiteral("Toggle Composition Effect"); }
+
+private:
+  void apply(bool enabled) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp) return;
+    for (const auto &effect : comp->getEffects()) {
+      if (effect && effect->effectID().toQString() == effectId_) {
+        effect->setEnabled(enabled);
+        comp->changed();
+        break;
+      }
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString effectId_;
+  bool wasEnabled_;
+  bool nowEnabled_;
+};
+
+class MoveCompositionEffectUndoCommand : public UndoCommand {
+public:
+  MoveCompositionEffectUndoCommand(QString effectId, int fromIndex, int toIndex)
+      : effectId_(std::move(effectId)), fromIndex_(fromIndex), toIndex_(toIndex) {}
+
+  void redo() override { move(toIndex_); }
+  void undo() override { move(fromIndex_); }
+  QString label() const override { return QStringLiteral("Move Composition Effect"); }
+
+private:
+  void move(int index) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp) return;
+    comp->moveEffect(UniString::fromQString(effectId_), index);
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString effectId_;
+  int fromIndex_ = -1;
+  int toIndex_ = -1;
 };
 
 // --- GroupLayersUndoCommand ---
@@ -2374,6 +2500,16 @@ ArtifactProjectService *ArtifactProjectService::instance() {
 
 bool ArtifactProjectService::hasProject() const {
   return impl_->projectManager().getCurrentProjectSharedPtr() != nullptr;
+}
+
+bool ArtifactProjectService::ensureProject() {
+  if (hasProject()) return true;
+  impl_->projectManager().createProject();
+  return hasProject();
+}
+
+QString ArtifactProjectService::currentProjectAssetsPath() const {
+  return impl_->projectManager().currentProjectAssetsPath();
 }
 
 void ArtifactProjectService::projectSettingChanged(
@@ -3941,8 +4077,12 @@ bool ArtifactProjectService::addEffectToCurrentComposition(
       comp->getEffects(), effect->displayName().toQString(),
       effect->effectID().toQString());
   effect->setEffectID(UniString::fromQString(uniqueId));
-  comp->addEffect(std::move(effect));
-  notifyProjectMutation(impl_->projectManager());
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<AddCompositionEffectUndoCommand>(std::move(effect)));
+  } else {
+    comp->addEffect(std::move(effect));
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 
@@ -3955,8 +4095,24 @@ bool ArtifactProjectService::removeEffectFromCurrentComposition(
   if (!comp) {
     return false;
   }
-  comp->removeEffect(UniString(effectId.toStdString()));
-  notifyProjectMutation(impl_->projectManager());
+  auto effects = comp->getEffects();
+  SharedPtr<ArtifactAbstractEffect> effect;
+  int effectIndex = -1;
+  for (int i = 0; i < static_cast<int>(effects.size()); ++i) {
+    if (effects[i] && effects[i]->effectID().toQString() == effectId) {
+      effect = effects[i];
+      effectIndex = i;
+      break;
+    }
+  }
+  if (!effect) return false;
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<RemoveCompositionEffectUndoCommand>(
+        std::move(effect), effectIndex));
+  } else {
+    comp->removeEffect(UniString(effectId.toStdString()));
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 
@@ -3971,9 +4127,14 @@ bool ArtifactProjectService::setEffectEnabledInCurrentComposition(
   }
   for (const auto &effect : comp->getEffects()) {
     if (effect && effect->effectID().toQString() == effectId) {
-      effect->setEnabled(enabled);
-      comp->changed();
-      notifyProjectMutation(impl_->projectManager());
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<SetCompositionEffectEnabledUndoCommand>(
+            effectId, effect->enabled(), enabled));
+      } else {
+        effect->setEnabled(enabled);
+        comp->changed();
+        notifyProjectMutation(impl_->projectManager());
+      }
       return true;
     }
   }
@@ -4024,10 +4185,15 @@ bool ArtifactProjectService::moveEffectInCurrentComposition(
     return false;
   }
 
-  if (!comp->moveEffect(UniString::fromQString(effectId), swapIndex)) {
-    return false;
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<MoveCompositionEffectUndoCommand>(
+        effectId, currentIndex, swapIndex));
+  } else {
+    if (!comp->moveEffect(UniString::fromQString(effectId), swapIndex)) {
+      return false;
+    }
+    notifyProjectMutation(impl_->projectManager());
   }
-  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 
@@ -4208,6 +4374,25 @@ bool ArtifactProjectService::renameComposition(const CompositionID &id,
     }
   }
   return false;
+}
+
+bool ArtifactProjectService::finalizeCompositionSettingsChange(
+    const CompositionID& id) {
+  auto comp = impl_->projectManager().findComposition(id).ptr.lock();
+  if (!comp) {
+    return false;
+  }
+  if (auto project = impl_->projectManager().getCurrentProjectSharedPtr()) {
+    project->projectChanged();
+  }
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    if (auto current = playback->currentComposition();
+        current && current->id() == id) {
+      playback->setFrameRange(comp->frameRange());
+      playback->setFrameRate(comp->frameRate());
+    }
+  }
+  return true;
 }
 
 UniString ArtifactProjectService::projectName() const {

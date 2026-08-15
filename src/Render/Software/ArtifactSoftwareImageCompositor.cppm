@@ -6,6 +6,7 @@ module;
 #include <QTransform>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <opencv2/opencv.hpp>
 
 module Artifact.Render.SoftwareCompositor;
@@ -14,6 +15,7 @@ import Layer.Blend;
 import Color.Float;
 import Color.Conversion;
 import Color.Luminance;
+import Image.ImageF32x4_RGBA;
 
 namespace Artifact::SoftwareRender {
 
@@ -378,6 +380,12 @@ bool shouldUseQPainterFallback(const ArtifactCore::BlendMode mode)
   case ArtifactCore::BlendMode::LinearDodge:
   case ArtifactCore::BlendMode::ClassicColorDodge:
   case ArtifactCore::BlendMode::ClassicDifference:
+  case ArtifactCore::BlendMode::Hue:
+  case ArtifactCore::BlendMode::Saturation:
+  case ArtifactCore::BlendMode::Color:
+  case ArtifactCore::BlendMode::Luminosity:
+  case ArtifactCore::BlendMode::Dissolve:
+  case ArtifactCore::BlendMode::DancingDissolve:
    return false;
   default:
    return true;
@@ -450,6 +458,30 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
      outRow[x] = deterministicNoise(x, y, seed) < a ? srcRow[x] : dstRow[x];
      continue;
     }
+    if (mode == ArtifactCore::BlendMode::Hue ||
+        mode == ArtifactCore::BlendMode::Saturation ||
+        mode == ArtifactCore::BlendMode::Color ||
+        mode == ArtifactCore::BlendMode::Luminosity) {
+     const ArtifactCore::HSLColor dstHsl = ArtifactCore::ColorConversion::RGBToHSL(
+         dstRow[x][2], dstRow[x][1], dstRow[x][0]);
+     const ArtifactCore::HSLColor srcHsl = ArtifactCore::ColorConversion::RGBToHSL(
+         srcRow[x][2], srcRow[x][1], srcRow[x][0]);
+     ArtifactCore::HSLColor resultHsl = dstHsl;
+     if (mode == ArtifactCore::BlendMode::Hue ||
+         mode == ArtifactCore::BlendMode::Color) {
+      resultHsl.h = srcHsl.h;
+     }
+     if (mode == ArtifactCore::BlendMode::Saturation ||
+         mode == ArtifactCore::BlendMode::Color) {
+      resultHsl.s = srcHsl.s;
+     }
+     if (mode == ArtifactCore::BlendMode::Luminosity) {
+      resultHsl.l = srcHsl.l;
+     }
+     const auto rgb = ArtifactCore::ColorConversion::HSLToRGB(resultHsl);
+     outRow[x] = cv::Vec3f(rgb[2], rgb[1], rgb[0]);
+     continue;
+    }
     cv::Vec3f pixel;
     for (int c = 0; c < 3; ++c) {
      pixel[c] = blendChannel(dstRow[x][c], srcRow[x][c], mode);
@@ -465,11 +497,43 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
  mixed.convertTo(dstBgr, CV_8UC3, 255.0);
 }
 
+void applyAlphaBlendMode(cv::Mat& dstAlpha,
+                         const cv::Mat& srcRgba,
+                         const float opacity,
+                         const ArtifactCore::BlendMode mode)
+{
+ if (dstAlpha.empty() || srcRgba.empty() || opacity <= 0.0f) return;
+ const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
+ for (int y = 0; y < dstAlpha.rows; ++y) {
+  auto* dstRow = dstAlpha.ptr<std::uint8_t>(y);
+  const auto* srcRow = srcRgba.ptr<cv::Vec4b>(y);
+  for (int x = 0; x < dstAlpha.cols; ++x) {
+   const float srcR = static_cast<float>(srcRow[x][0]) / 255.0f;
+   const float srcG = static_cast<float>(srcRow[x][1]) / 255.0f;
+   const float srcB = static_cast<float>(srcRow[x][2]) / 255.0f;
+   const float srcA = static_cast<float>(srcRow[x][3]) / 255.0f;
+   float factor = clampedOpacity * srcA;
+   if (mode == ArtifactCore::BlendMode::StencilLuma ||
+       mode == ArtifactCore::BlendMode::SilhouetteLuma) {
+    factor = clampedOpacity * std::clamp(
+        ArtifactCore::ColorLuminance::calculate(srcR, srcG, srcB), 0.0f, 1.0f);
+   }
+   const float dstA = static_cast<float>(dstRow[x]) / 255.0f;
+   const bool silhouette = mode == ArtifactCore::BlendMode::SilhouetteAlpha ||
+                           mode == ArtifactCore::BlendMode::SilhouetteLuma;
+   const float result = silhouette ? dstA * (1.0f - factor) : dstA * factor;
+   dstRow[x] = static_cast<std::uint8_t>(std::round(
+       std::clamp(result, 0.0f, 1.0f) * 255.0f));
+  }
+ }
+}
+
 QImage composeOpenCV(const CompositeRequest& request)
 {
  const int w = std::max(1, request.outputSize.width());
  const int h = std::max(1, request.outputSize.height());
  cv::Mat canvasBgr(h, w, CV_8UC3, cv::Scalar(28, 24, 22));
+ cv::Mat canvasAlpha(h, w, CV_8UC1, cv::Scalar(255));
 
  if (!request.background.isNull()) {
   const QImage bgScaled = request.background.scaled(
@@ -479,8 +543,14 @@ QImage composeOpenCV(const CompositeRequest& request)
   cv::cvtColor(bgRgba, bgBgr, cv::COLOR_RGBA2BGR);
   if (bgBgr.size() == canvasBgr.size()) {
    bgBgr.copyTo(canvasBgr);
+   cv::Mat bgAlpha;
+   cv::extractChannel(bgRgba, bgAlpha, 3);
+   bgAlpha.copyTo(canvasAlpha);
   } else {
    cv::resize(bgBgr, canvasBgr, canvasBgr.size(), 0.0, 0.0, cv::INTER_LINEAR);
+   cv::Mat bgAlpha;
+   cv::extractChannel(bgRgba, bgAlpha, 3);
+   cv::resize(bgAlpha, canvasAlpha, canvasAlpha.size(), 0.0, 0.0, cv::INTER_LINEAR);
   }
  }
 
@@ -502,7 +572,14 @@ QImage composeOpenCV(const CompositeRequest& request)
   cv::Mat ovRgba = qImageToMatRGBA(overlayCanvas);
   cv::Mat ovBgr;
   cv::cvtColor(ovRgba, ovBgr, cv::COLOR_RGBA2BGR);
-  blendBgrInPlace(canvasBgr, ovBgr, request.overlayOpacity, request.blendMode);
+  if (request.blendMode == ArtifactCore::BlendMode::StencilAlpha ||
+      request.blendMode == ArtifactCore::BlendMode::StencilLuma ||
+      request.blendMode == ArtifactCore::BlendMode::SilhouetteAlpha ||
+      request.blendMode == ArtifactCore::BlendMode::SilhouetteLuma) {
+   applyAlphaBlendMode(canvasAlpha, ovRgba, request.overlayOpacity, request.blendMode);
+  } else {
+   blendBgrInPlace(canvasBgr, ovBgr, request.overlayOpacity, request.blendMode);
+  }
  }
 
  if (request.cvEffect == CvEffectMode::GaussianBlur) {
@@ -521,6 +598,10 @@ QImage composeOpenCV(const CompositeRequest& request)
 
  cv::Mat outRgba;
  cv::cvtColor(canvasBgr, outRgba, cv::COLOR_BGR2RGBA);
+ cv::Mat channels[4];
+ cv::split(outRgba, channels);
+ canvasAlpha.copyTo(channels[3]);
+ cv::merge(channels, 4, outRgba);
  return matRGBAToQImage(outRgba);
 }
 
@@ -530,6 +611,26 @@ QImage compose(const CompositeRequest& request)
 {
  Q_UNUSED(request);
  return composeOpenCV(request);
+}
+
+bool composeToBuffer(const CompositeRequest& request,
+                     ArtifactCore::ImageF32x4_RGBA& output)
+{
+ const QImage composed = compose(request);
+ if (composed.isNull()) {
+  return false;
+ }
+
+ const QImage rgba = composed.convertToFormat(QImage::Format_RGBA8888);
+ cv::Mat rgbaMat = qImageToMatRGBA(rgba);
+ if (rgbaMat.empty()) {
+  return false;
+ }
+
+ cv::Mat floatRgba;
+ rgbaMat.convertTo(floatRgba, CV_32FC4, 1.0 / 255.0);
+ output.setFromCVMat(floatRgba);
+ return !output.isEmpty();
 }
 
 QString backendText(const CompositeBackend backend)

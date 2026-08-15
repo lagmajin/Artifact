@@ -278,6 +278,11 @@ QJsonObject Artifact3DLayer::toJson() const {
       {QStringLiteral("a"), baseColor.alphaF()}};
   obj["material.metallic"] = impl_->material_.metallic();
   obj["material.roughness"] = impl_->material_.roughness();
+  obj["material.specular"] = impl_->material_.specular();
+  obj["material.ior"] = impl_->material_.ior();
+  obj["material.transmission"] = impl_->material_.transmission();
+  obj["material.clearcoat"] = impl_->material_.clearcoat();
+  obj["material.clearcoatRoughness"] = impl_->material_.clearcoatRoughness();
   obj["material.opacity"] = impl_->material_.opacity();
   const QColor emissionColor = impl_->material_.emissionColor();
   obj["material.emission.color"] = QJsonObject{
@@ -312,17 +317,33 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                                  ? obj.value("model.sourcePath").toString()
                                  : obj.value("sourcePath").toString();
   if (!sourcePath.isEmpty()) {
-    loadFromFile(sourcePath);
+    const QFileInfo sourceInfo(sourcePath);
+    if (sourceInfo.exists() && sourceInfo.isFile()) {
+      loadFromFile(sourcePath);
+    } else {
+      // A missing source must not leave a previous model visible when an
+      // existing layer instance is reused for project restoration.
+      impl_->sourcePath_ = sourcePath;
+      impl_->meshLoaded_ = false;
+      impl_->lastRenderTraceOutcome_.clear();
+    }
   }
 
   if (obj.contains("fixedGeometry")) {
     const int geometry = obj.value("fixedGeometry").toInt(
         static_cast<int>(FixedGeometry3D::Auto));
     if (geometry >= static_cast<int>(FixedGeometry3D::Auto) &&
-        geometry <= static_cast<int>(FixedGeometry3D::Cone) &&
-        (geometry != static_cast<int>(FixedGeometry3D::Auto) ||
-         sourcePath.isEmpty())) {
-      setFixedGeometry(static_cast<FixedGeometry3D>(geometry));
+        geometry <= static_cast<int>(FixedGeometry3D::Cone)) {
+      if (geometry == static_cast<int>(FixedGeometry3D::Auto) &&
+          sourcePath.isEmpty()) {
+        // Reusing a layer instance for source-less JSON must not retain the
+        // previously loaded model. Auto has no model to restore here, so use
+        // the same safe fallback as a failed model load.
+        setFixedGeometry(FixedGeometry3D::Cube);
+      } else if (geometry != static_cast<int>(FixedGeometry3D::Auto) ||
+                 sourcePath.isEmpty()) {
+        setFixedGeometry(static_cast<FixedGeometry3D>(geometry));
+      }
     }
   }
 
@@ -355,6 +376,21 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setRoughness(
       finiteClamped(static_cast<float>(obj.value("material.roughness").toDouble(impl_->material_.roughness())),
                     impl_->material_.roughness(), 0.0f, 1.0f));
+  impl_->material_.setSpecular(
+      finiteClamped(static_cast<float>(obj.value("material.specular").toDouble(impl_->material_.specular())),
+                    impl_->material_.specular(), 0.0f, 1.0f));
+  impl_->material_.setIOR(
+      finiteClamped(static_cast<float>(obj.value("material.ior").toDouble(impl_->material_.ior())),
+                    impl_->material_.ior(), 1.0f, 3.0f));
+  impl_->material_.setTransmission(
+      finiteClamped(static_cast<float>(obj.value("material.transmission").toDouble(impl_->material_.transmission())),
+                    impl_->material_.transmission(), 0.0f, 1.0f));
+  impl_->material_.setClearcoat(
+      finiteClamped(static_cast<float>(obj.value("material.clearcoat").toDouble(impl_->material_.clearcoat())),
+                    impl_->material_.clearcoat(), 0.0f, 1.0f));
+  impl_->material_.setClearcoatRoughness(
+      finiteClamped(static_cast<float>(obj.value("material.clearcoatRoughness").toDouble(impl_->material_.clearcoatRoughness())),
+                    impl_->material_.clearcoatRoughness(), 0.0f, 1.0f));
   impl_->material_.setOpacity(
       finiteClamped(static_cast<float>(obj.value("material.opacity").toDouble(impl_->material_.opacity())),
                     impl_->material_.opacity(), 0.0f, 1.0f));
@@ -819,9 +855,14 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
 
   const auto &t3 = transform3D();
   const auto size = sourceSize();
-  const RationalTime frameTime(currentFrame(), 30); // Assume 30fps for now
+  const double compositionFps = std::isfinite(compositionFrameRate()) &&
+                                compositionFrameRate() > 0.0
+      ? compositionFrameRate()
+      : 30.0;
+  const RationalTime frameTime(currentFrame(), compositionFps);
   const auto snapshot = t3.snapshotAt(frameTime);
-  const RationalTime previousFrameTime(std::max<int64_t>(0, currentFrame() - 1), 30);
+  const RationalTime previousFrameTime(
+      std::max<int64_t>(0, currentFrame() - 1), compositionFps);
   const auto previousSnapshot = t3.snapshotAt(previousFrameTime);
   QMatrix4x4 modelMatrix;
   modelMatrix.setToIdentity();
@@ -911,7 +952,9 @@ void Artifact3DLayer::drawSelectionOutline(ArtifactIRenderer *renderer) const {
   if (!positions || positions->data().isEmpty()) {
     return;
   }
-  const RationalTime frameTime(currentFrame(), 30);
+  const double fps = compositionFrameRate();
+  const RationalTime frameTime(
+      currentFrame(), std::isfinite(fps) && fps > 0.0 ? fps : 30.0);
   const auto snapshot = transform3D().snapshotAt(frameTime);
   QMatrix4x4 modelMatrix;
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
@@ -1075,6 +1118,41 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   roughnessProp->setHardRange(0.0, 1.0);
   roughnessProp->setSoftRange(0.0, 1.0);
   materialGroup.addProperty(roughnessProp);
+
+  auto specularProp = persistentLayerProperty(
+      QStringLiteral("material.specular"), PropertyType::Float,
+      impl_->material_.specular(), -46);
+  specularProp->setDisplayLabel(QStringLiteral("Specular"));
+  specularProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(specularProp);
+
+  auto iorProp = persistentLayerProperty(
+      QStringLiteral("material.ior"), PropertyType::Float,
+      impl_->material_.ior(), -45);
+  iorProp->setDisplayLabel(QStringLiteral("IOR"));
+  iorProp->setHardRange(1.0, 3.0);
+  materialGroup.addProperty(iorProp);
+
+  auto transmissionProp = persistentLayerProperty(
+      QStringLiteral("material.transmission"), PropertyType::Float,
+      impl_->material_.transmission(), -44);
+  transmissionProp->setDisplayLabel(QStringLiteral("Transmission"));
+  transmissionProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(transmissionProp);
+
+  auto clearcoatProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoat"), PropertyType::Float,
+      impl_->material_.clearcoat(), -43);
+  clearcoatProp->setDisplayLabel(QStringLiteral("Clearcoat"));
+  clearcoatProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(clearcoatProp);
+
+  auto clearcoatRoughnessProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatRoughness"), PropertyType::Float,
+      impl_->material_.clearcoatRoughness(), -42);
+  clearcoatRoughnessProp->setDisplayLabel(QStringLiteral("Clearcoat Roughness"));
+  clearcoatRoughnessProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(clearcoatRoughnessProp);
 
   auto opacityProp = persistentLayerProperty(
       QStringLiteral("material.opacity"), PropertyType::Float,
@@ -1277,6 +1355,26 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("material.roughness")) {
     impl_->material_.setRoughness(finiteClamped(value.toFloat(), impl_->material_.roughness(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.specular")) {
+    impl_->material_.setSpecular(finiteClamped(value.toFloat(), impl_->material_.specular(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.ior")) {
+    impl_->material_.setIOR(finiteClamped(value.toFloat(), impl_->material_.ior(), 1.0f, 3.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.transmission")) {
+    impl_->material_.setTransmission(finiteClamped(value.toFloat(), impl_->material_.transmission(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.clearcoat")) {
+    impl_->material_.setClearcoat(finiteClamped(value.toFloat(), impl_->material_.clearcoat(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.clearcoatRoughness")) {
+    impl_->material_.setClearcoatRoughness(finiteClamped(value.toFloat(), impl_->material_.clearcoatRoughness(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.emissionStrength")) {

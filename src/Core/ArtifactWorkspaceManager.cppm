@@ -146,6 +146,13 @@ static bool applyWindowState(QWidget *window,
     return false;
   }
 
+  // A syntactically valid but structurally incomplete session must not count
+  // as restored: accepting it would suppress the caller's default-layout
+  // recovery path while leaving the window only partially configured.
+  if (!json.value(QStringLiteral("layout")).isObject()) {
+    return false;
+  }
+
   const QJsonObject layoutJson = json.value(QStringLiteral("layout")).toObject();
   const ArtifactCore::UiLayoutState layout =
       ArtifactCore::UiLayoutState::fromJson(layoutJson);

@@ -1,5 +1,7 @@
 # Asset System Milestone
 
+**最終更新:** 2026-08-15
+
 日付: 2026-03-12
 
 ## Goal
@@ -171,3 +173,11 @@ asset 状態が保存再読込で落ちないようにする。
 ※ Project View の項目はprojectにimport済みなのでimported badgeは本質的に不要
 
 次の slice: (全て完了)
+
+## Update 2026-08-15
+
+Project View／Project Model の tree、folder/bin、検索、type／unused／missing filter、列 sort／幅保存、Asset Browser との同期基盤を追加監査した。M-AS-2 では ProjectItem 個別の tag metadata／編集 UI／JSON保存復元／`tag:`検索を接続した。tag と cross-view runtime 受入れは未検証とする。
+
+## Update 2026-08-15
+
+`AppMain` の selection guard 付き Project View ↔ Asset Browser 双方向同期、Asset Browser／Project View の sync chip、imported／missing／unused status、metadata／waveform 表示、selected／bulk relink と Undo、Project View import の非同期経路を追加確認した。統合基盤は実装済み相当だが、import／relink／missing／unused の cross-view 即時反映、再読込後の選択・active composition 維持、実データでの通し runtime 受入れは未検証とする。

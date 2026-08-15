@@ -991,6 +991,7 @@ public:
   // マスク管理
   void addMask(const LayerMask &mask);
   void removeMask(int index);
+  bool moveMask(int fromIndex, int toIndex);
   void setMask(int index, const LayerMask &mask);
   LayerMask getMask(int index) const;
   int maskCount() const;
@@ -4998,6 +4999,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           finiteClamped(appearanceObj.value(QStringLiteral("clonerOutputTimeOffsetFrames")).toDouble(0.0),
                         0.0, -10000.0, 10000.0));
   }
+  // A reused layer instance must not retain component activation from the
+  // previously restored JSON when the new snapshot has no component block.
+  if (!obj.contains("components") || !obj["components"].isObject()) {
+      impl_->scriptComponentEnabled_ = false;
+      impl_->clonerComponentEnabled_ = false;
+      impl_->layoutComponentEnabled_ = false;
+      impl_->collisionComponentEnabled_ = false;
+      impl_->crowdComponentEnabled_ = false;
+      impl_->particleEmitterComponentEnabled_ = false;
+      impl_->fluidComponentEnabled_ = false;
+      impl_->extraCloneModifierDescriptors_.clear();
+      impl_->scriptBinding_ = {};
+  }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
         impl_->scriptComponentEnabled_ =
@@ -5332,6 +5346,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       obj.value(QStringLiteral("componentGraph")).isArray()) {
     impl_->componentHost_.fromJson(
         obj.value(QStringLiteral("componentGraph")).toArray());
+  } else {
+    impl_->componentHost_.fromJson(QJsonArray{});
   }
   impl_->syncBuiltinComponentDescriptors();
 
@@ -5861,7 +5877,44 @@ std::vector<QString> ArtifactAbstractLayer::clonerTransformNames() const {
 std::vector<LayerComponentValidationIssue>
 ArtifactAbstractLayer::validateLayerComponents() const {
   impl_->syncBuiltinComponentDescriptors();
-  return impl_->componentHost_.validate();
+  auto issues = impl_->componentHost_.validate();
+  const auto validateIds = [&issues](const auto& descriptors,
+                                     const QString& kind,
+                                     const auto& idOf,
+                                     const auto& typeOf) {
+    for (std::size_t i = 0; i < descriptors.count(); ++i) {
+      const auto* descriptor = descriptors.at(i);
+      if (!descriptor) {
+        continue;
+      }
+      const QString id = idOf(*descriptor).trimmed();
+      const QString type = typeOf(*descriptor).trimmed();
+      if (id.isEmpty() || type.isEmpty()) {
+        issues.push_back({id,
+                          QStringLiteral("%1 descriptor id and type must be non-empty.")
+                              .arg(kind),
+                          true});
+      }
+      for (std::size_t j = i + 1; j < descriptors.count(); ++j) {
+        const auto* other = descriptors.at(j);
+        if (other && id == idOf(*other).trimmed()) {
+          issues.push_back({id,
+                            QStringLiteral("Duplicate %1 descriptor id.").arg(kind),
+                            true});
+        }
+      }
+    }
+  };
+  validateIds(impl_->extraGeneratorDescriptors_, QStringLiteral("Generator"),
+              [](const auto& descriptor) { return descriptor.generatorId; },
+              [](const auto& descriptor) { return descriptor.typeId; });
+  validateIds(impl_->extraFieldDescriptors_, QStringLiteral("Field"),
+              [](const auto& descriptor) { return descriptor.fieldId; },
+              [](const auto& descriptor) { return descriptor.typeId; });
+  validateIds(impl_->extraCloneModifierDescriptors_, QStringLiteral("Modifier"),
+              [](const auto& descriptor) { return descriptor.modifierId; },
+              [](const auto& descriptor) { return descriptor.typeId; });
+  return issues;
 }
 
 void ArtifactAbstractLayer::setAuthoritativeComponentEvaluationState(
@@ -10119,6 +10172,19 @@ void ArtifactAbstractLayer::Impl::removeMask(int index) {
   }
 }
 
+bool ArtifactAbstractLayer::Impl::moveMask(int fromIndex, int toIndex) {
+  const int count = static_cast<int>(masks_.size());
+  if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count ||
+      fromIndex == toIndex) {
+    return false;
+  }
+  auto mask = std::move(masks_[static_cast<std::size_t>(fromIndex)]);
+  masks_.erase(masks_.begin() + fromIndex);
+  masks_.insert(masks_.begin() + toIndex, std::move(mask));
+  ++maskRevision_;
+  return true;
+}
+
 void ArtifactAbstractLayer::Impl::setMask(int index, const LayerMask &mask) {
   if (index >= 0 && index < static_cast<int>(masks_.size())) {
     masks_[index] = mask;
@@ -10150,6 +10216,10 @@ void ArtifactAbstractLayer::addMask(const LayerMask &mask) {
 }
 
 void ArtifactAbstractLayer::removeMask(int index) { impl_->removeMask(index); }
+
+bool ArtifactAbstractLayer::moveMask(int fromIndex, int toIndex) {
+  return impl_->moveMask(fromIndex, toIndex);
+}
 
 void ArtifactAbstractLayer::setMask(int index, const LayerMask &mask) {
   impl_->setMask(index, mask);

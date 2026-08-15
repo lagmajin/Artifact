@@ -53,6 +53,8 @@ struct LayerPins {
 class ArtifactPuppetTool::Impl {
 public:
     bool active = false;
+    bool proportionalEditingEnabled = false;
+    float proportionalEditRadius = 120.0f;
     QString selectedPinId;
     std::map<QString, LayerPins> layerPins; // layerId.toString() -> LayerPins
 
@@ -156,7 +158,24 @@ bool ArtifactPuppetTool::movePin(const QString& pinId, const QPointF& canvasPos)
 {
     auto* pin = impl_->findPin(pinId);
     if (!pin || !std::isfinite(canvasPos.x()) || !std::isfinite(canvasPos.y())) return false;
+    const QPointF previousPos = pin->canvasPos;
     pin->canvasPos = canvasPos;
+
+    if (impl_->proportionalEditingEnabled && impl_->proportionalEditRadius > 0.0f) {
+        const QPointF delta = canvasPos - previousPos;
+        const float radius = impl_->proportionalEditRadius;
+        for (auto& [key, layerPins] : impl_->layerPins) {
+            for (auto& other : layerPins.pins) {
+                if (other.id == pinId || other.layerId != pin->layerId) continue;
+                const QPointF offset = other.canvasPos - previousPos;
+                const float distance = static_cast<float>(std::hypot(offset.x(), offset.y()));
+                if (distance >= radius) continue;
+                const float t = std::clamp(distance / radius, 0.0f, 1.0f);
+                const float weight = (1.0f - t) * (1.0f - t);
+                other.canvasPos += delta * weight;
+            }
+        }
+    }
 
     auto* lp = impl_->getLayerPins(pin->layerId);
     if (lp && lp->engine) {
@@ -166,6 +185,28 @@ bool ArtifactPuppetTool::movePin(const QString& pinId, const QPointF& canvasPos)
             static_cast<float>(canvasPos.y())));
     }
     return true;
+}
+
+bool ArtifactPuppetTool::isProportionalEditingEnabled() const
+{
+    return impl_->proportionalEditingEnabled;
+}
+
+void ArtifactPuppetTool::setProportionalEditingEnabled(bool enabled)
+{
+    impl_->proportionalEditingEnabled = enabled;
+}
+
+float ArtifactPuppetTool::proportionalEditRadius() const
+{
+    return impl_->proportionalEditRadius;
+}
+
+void ArtifactPuppetTool::setProportionalEditRadius(float radius)
+{
+    if (std::isfinite(radius)) {
+        impl_->proportionalEditRadius = std::clamp(radius, 1.0f, 100000.0f);
+    }
 }
 
 QPointF ArtifactPuppetTool::pinPosition(const QString& pinId) const

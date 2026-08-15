@@ -22,7 +22,9 @@ private:
     float splashAmount_ = 0.12f;
     float evolution_ = 0.0f;
     int seed_ = 1337;
+    QString preset_ = QStringLiteral("Custom");
     void syncImpl();
+    void applyPreset(const QString& preset);
 
 public:
     SimpleRainEffect();

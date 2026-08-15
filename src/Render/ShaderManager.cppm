@@ -131,6 +131,7 @@ public:
     RefCntAutoPtr<ISampler> glyphAtlasSampler_;
 
     bool initialized_ = false;
+    QString psoCacheDebugState_ = QStringLiteral("not-created");
 
     Impl() = default;
 
@@ -613,6 +614,7 @@ void ShaderManager::Impl::createPSOCache()
     ArtifactCore::ScopedStartupTimer cacheTimer(
         "ShaderManager::loadPSOCache", ArtifactCore::StartupPhase::PSOCacheLoad);
     psoCache_ = nullptr;
+    psoCacheDebugState_ = QStringLiteral("not-created");
     if (!device_) {
         return;
     }
@@ -639,10 +641,14 @@ void ShaderManager::Impl::createPSOCache()
 
     device_->CreatePipelineStateCache(cacheCI, &psoCache_);
     if (!psoCache_) {
+        psoCacheDebugState_ = QStringLiteral("unavailable");
         qInfo() << "[ShaderManager] PSO cache unavailable for this device";
         return;
     }
 
+    psoCacheDebugState_ = cacheData.isEmpty()
+        ? QStringLiteral("cold-start")
+        : QStringLiteral("loaded");
     qInfo() << "[ShaderManager] PSO cache ready"
             << (cacheData.isEmpty() ? "(cold start)" : "(loaded)")
             << filePath;
@@ -1572,7 +1578,12 @@ RefCntAutoPtr<ISampler> ShaderManager::glyphAtlasSampler() const
 
 IPipelineStateCache* ShaderManager::pipelineStateCache() const
 {
-    return impl_->psoCache_.RawPtr();
+ return impl_->psoCache_.RawPtr();
+}
+
+QString ShaderManager::pipelineStateCacheDebugState() const
+{
+ return impl_->psoCacheDebugState_;
 }
 
 bool ShaderManager::isInitialized() const

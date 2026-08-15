@@ -174,7 +174,22 @@ qreal evaluateCompositionFieldWeight(
 {
     const QPointF delta = samplePosition - field.center;
     qreal normalizedDistance = 0.0;
-    if (field.shape == QStringLiteral("box")) {
+    const QString shape = field.shape.trimmed().toLower();
+    if (shape == QStringLiteral("solid")) {
+        return std::clamp<qreal>(
+            std::max<qreal>(0.0, field.strength) * (field.invert ? 0.0 : 1.0),
+            0.0, 4.0);
+    } else if (shape == QStringLiteral("noise")) {
+        // Stable value noise for authoring/evaluation parity. The field remains
+        // deterministic without introducing a frame-dependent render state.
+        const qreal scale = std::max<qreal>(0.0001, field.radius);
+        const qreal x = samplePosition.x() / scale;
+        const qreal y = samplePosition.y() / scale;
+        const qreal value = std::sin(x * 12.9898 + y * 78.233 +
+                                     field.rotationDegrees * 0.0174532925199433) *
+                            43758.5453;
+        normalizedDistance = value - std::floor(value);
+    } else if (shape == QStringLiteral("box")) {
         normalizedDistance = std::clamp<qreal>(
             std::max(std::abs(delta.x()) / std::max<qreal>(0.0001, field.radius),
                      std::abs(delta.y()) /
@@ -786,6 +801,15 @@ QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
   eobj["displayName"] = effect->displayName().toQString();
   eobj["enabled"] = effect->isEnabled();
   eobj["pipelineStage"] = static_cast<int>(effect->pipelineStage());
+  if (effect->hasEffectRegion()) {
+    const QRectF region = effect->effectRegion();
+    QJsonObject regionObj;
+    regionObj[QStringLiteral("x")] = region.x();
+    regionObj[QStringLiteral("y")] = region.y();
+    regionObj[QStringLiteral("width")] = region.width();
+    regionObj[QStringLiteral("height")] = region.height();
+    eobj[QStringLiteral("effectRegion")] = regionObj;
+  }
   if (const auto surfaceFx = dynamicPointerCast<const SurfaceFXEffect>(effect)) {
     eobj["surfaceFX"] = surfaceFx->data().toJson();
   }
@@ -871,6 +895,17 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   effect->setDisplayName(UniString::fromQString(
       eobj.value(QStringLiteral("displayName")).toString(effect->effectID().toQString())));
   effect->setEnabled(eobj.value(QStringLiteral("enabled")).toBool(true));
+  if (eobj.value(QStringLiteral("effectRegion")).isObject()) {
+    const QJsonObject regionObj =
+        eobj.value(QStringLiteral("effectRegion")).toObject();
+    const QRectF region(regionObj.value(QStringLiteral("x")).toDouble(),
+                        regionObj.value(QStringLiteral("y")).toDouble(),
+                        regionObj.value(QStringLiteral("width")).toDouble(),
+                        regionObj.value(QStringLiteral("height")).toDouble());
+    if (region.isValid() && region.width() > 0.0 && region.height() > 0.0) {
+      effect->setEffectRegion(region);
+    }
+  }
   if (eobj.contains(QStringLiteral("pipelineStage"))) {
     effect->setPipelineStage(static_cast<EffectPipelineStage>(
         eobj.value(QStringLiteral("pipelineStage")).toInt(
@@ -2259,7 +2294,9 @@ QJsonObject CompositionTransformField::toJson() const
     const QString requestedShape = shape.trimmed().toLower();
     const QString normalizedShape =
         requestedShape == QStringLiteral("box") ||
-                requestedShape == QStringLiteral("linear")
+                requestedShape == QStringLiteral("linear") ||
+                requestedShape == QStringLiteral("noise") ||
+                requestedShape == QStringLiteral("solid")
             ? requestedShape
             : QStringLiteral("radial");
     obj.insert(QStringLiteral("type"), normalizedShape + QStringLiteral("-transform"));
@@ -2305,7 +2342,9 @@ CompositionTransformField CompositionTransformField::fromJson(const QJsonObject&
                                 : QStringLiteral("radial");
     }
     if (field.shape != QStringLiteral("box") &&
-        field.shape != QStringLiteral("linear")) {
+        field.shape != QStringLiteral("linear") &&
+        field.shape != QStringLiteral("noise") &&
+        field.shape != QStringLiteral("solid")) {
         field.shape = QStringLiteral("radial");
     }
     if (!obj.contains(QStringLiteral("displayName")) ||
@@ -2314,7 +2353,11 @@ CompositionTransformField CompositionTransformField::fromJson(const QJsonObject&
                                 ? QStringLiteral("Box Transform Field")
                                 : field.shape == QStringLiteral("linear")
                                       ? QStringLiteral("Linear Transform Field")
-                                      : QStringLiteral("Radial Transform Field");
+                                      : field.shape == QStringLiteral("noise")
+                                            ? QStringLiteral("Noise Transform Field")
+                                            : field.shape == QStringLiteral("solid")
+                                                  ? QStringLiteral("Solid Transform Field")
+                                                  : QStringLiteral("Radial Transform Field");
     }
     field.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
     const QJsonObject centerObj = obj.value(QStringLiteral("center")).toObject();

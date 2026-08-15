@@ -150,6 +150,29 @@ public:
     }
 
 private:
+    static bool validateKeyframePayload(const QString& propertyPath,
+                                        const QVariantList& keys,
+                                        QString* errorOut)
+    {
+        if (propertyPath.trimmed().isEmpty() || keys.isEmpty()) {
+            if (errorOut) {
+                *errorOut = QStringLiteral("Each keyframe batch requires a propertyPath and at least one keyframe");
+            }
+            return false;
+        }
+        for (const QVariant& keyVar : keys) {
+            const QVariantMap key = keyVar.toMap();
+            if (!key.contains(QStringLiteral("frame")) ||
+                !key.value(QStringLiteral("value")).isValid()) {
+                if (errorOut) {
+                    *errorOut = QStringLiteral("Each keyframe requires frame and value");
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+
     static QString resolveEffectId(const QString& layerId, int effectIndex)
     {
         if (layerId.trimmed().isEmpty() || effectIndex < 0) return {};
@@ -226,6 +249,14 @@ private:
             return result;
         }
 
+        QString payloadError;
+        if (!validateKeyframePayload(propertyPath, keys, &payloadError)) {
+            result.error = payloadError;
+            result.errorCode = QStringLiteral("COMMAND_INVALID");
+            result.retryable = true;
+            return result;
+        }
+
         int succeeded = 0;
         int failed = 0;
         for (const QVariant& keyVar : keys) {
@@ -275,6 +306,20 @@ private:
             details.insert(QStringLiteral("failed"), 0);
             result.diagnostics = details;
             return result;
+        }
+
+        for (const QVariant& batchVar : batches) {
+            const QVariantMap batch = batchVar.toMap();
+            QString payloadError;
+            if (!validateKeyframePayload(
+                    batch.value(QStringLiteral("propertyPath")).toString(),
+                    batch.value(QStringLiteral("keys")).toList(),
+                    &payloadError)) {
+                result.error = payloadError;
+                result.errorCode = QStringLiteral("COMMAND_INVALID");
+                result.retryable = true;
+                return result;
+            }
         }
 
         int totalKeyframes = 0;

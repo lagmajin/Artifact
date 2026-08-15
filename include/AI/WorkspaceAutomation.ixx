@@ -144,6 +144,7 @@ public:
         using ArtifactCore::IDescribable;
         return {
             {"workspaceSnapshot", IDescribable::loc("Return a combined workspace snapshot with schemaVersion, capturedAt, project, currentComposition, selection, renderQueue, activeIds, counts, warnings, and machine-readable warningCodes.", "Return a combined workspace snapshot with schemaVersion, capturedAt, project, currentComposition, selection, renderQueue, activeIds, counts, warnings, and machine-readable warningCodes.", {}), "QVariantMap"},
+            {"get_project_overview", IDescribable::loc("Read the current project overview and diagnostics context without modifying the project.", "Read the current project overview and diagnostics context without modifying the project.", {}), "QVariantMap"},
             {"safeWriteAuditLogSnapshot", IDescribable::loc("Return the in-memory audit entries for confirmed safe-write operations.", "Return the in-memory audit entries for confirmed safe-write operations.", {}), "QVariantList"},
             {"saveSafeWriteAuditLog", IDescribable::loc("Persist the safe-write audit log as JSON.", "Persist the safe-write audit log as JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"loadSafeWriteAuditLog", IDescribable::loc("Load a safe-write audit log from JSON.", "Load a safe-write audit log from JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
@@ -153,9 +154,12 @@ public:
             {"executeCommand", IDescribable::loc("Execute a validated command IR request through the automation facade; returns ok equal to success, an errorCode when unsuccessful, and retryable when the failure policy is known.", "Execute a validated command IR request through the automation facade; returns ok equal to success, an errorCode when unsuccessful, and retryable when the failure policy is known.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
             {"projectSnapshot", IDescribable::loc("Return the current project JSON snapshot.", "Return the current project JSON snapshot.", {}), "QVariantMap"},
             {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
+            {"get_active_composition", IDescribable::loc("Read the active composition snapshot without modifying the project.", "Read the active composition snapshot without modifying the project.", {}), "QVariantMap"},
             {"currentCompositionThumbnailAtFrame", IDescribable::loc("Return a PNG thumbnail for the active composition at a frame.", "Return a PNG thumbnail for the active composition at a frame.", {}), "QVariantMap", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameNumber"), QStringLiteral("width"), QStringLiteral("height")}},
             {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
+            {"get_selected_layers", IDescribable::loc("Read the current selected layer snapshot without modifying the project.", "Read the current selected layer snapshot without modifying the project.", {}), "QVariantMap"},
             {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot; each job exposes id copied from stable jobId for identity and index for lookup compatibility. Use renderQueueJobById to re-fetch a job by id.", "Return the render queue snapshot; each job exposes id copied from stable jobId for identity and index for lookup compatibility. Use renderQueueJobById to re-fetch a job by id.", {}), "QVariantMap"},
+            {"get_render_queue_summary", IDescribable::loc("Read the current render queue summary without starting or changing jobs.", "Read the current render queue summary without starting or changing jobs.", {}), "QVariantMap"},
             {"renderQueueJobByIndex", IDescribable::loc("Return a render queue job snapshot by index with schemaVersion=1, resultType=renderQueueJob, and id copied from the stable jobId; use id for identity and index only for lookup compatibility. Unavailable indexes return ok=false with errorCode RENDER_QUEUE_JOB_NOT_FOUND.", "Return a render queue job snapshot by index with schemaVersion=1, resultType=renderQueueJob, and id copied from the stable jobId; use id for identity and index only for lookup compatibility. Unavailable indexes return ok=false with errorCode RENDER_QUEUE_JOB_NOT_FOUND.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"renderQueueJobById", IDescribable::loc("Return a render queue job snapshot by stable job id.", "Return a render queue job snapshot by stable job id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("jobId")}},
             {"renderQueueJobStatusAt", IDescribable::loc("Return the status text for a render queue job by index.", "Return the status text for a render queue job by index.", {}), "QString", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
@@ -228,6 +232,8 @@ public:
             {"deleteKeyframe", IDescribable::loc("Delete a keyframe for a layer property at a specific frame.", "Delete a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber")}},
             {"getLayerKeyframeSummary", IDescribable::loc("Return a summary of keyframed properties for a layer.", "Return a summary of keyframed properties for a layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"batchSetKeyframes", IDescribable::loc("Set multiple keyframes for a layer from a JSON array.", "Set multiple keyframes for a layer from a JSON array.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("keyframes")}},
+            {"setSelectedLayersProperty", IDescribable::loc("Set one supported property on every selected layer.", "Set one supported property on every selected layer.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariant")}, {QStringLiteral("propertyPath"), QStringLiteral("value")}},
+            {"batchSetLayerProperties", IDescribable::loc("Set supported properties on multiple layers and report per-layer results.", "Set supported properties on multiple layers and report per-layer results.", {}), "QVariantMap", {QStringLiteral("QVariantList")}, {QStringLiteral("operations")}},
             {"createMotionSketchKeyframes", IDescribable::loc("Convert sampled motion points into position keyframes.", "Convert sampled motion points into position keyframes.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("samples")}},
             {"createAutoOrientKeyframes", IDescribable::loc("Create rotation keyframes from sampled motion direction.", "Create rotation keyframes from sampled motion direction.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("samples")}},
             {"createGroupLayer", IDescribable::loc("Create a new group layer in the active composition.", "Create a new group layer in the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
@@ -252,6 +258,7 @@ public:
             {"createFolderInProject", IDescribable::loc("Create a project folder, optionally under a parent folder.", "Create a project folder, optionally under a parent folder.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("parentFolderId")}},
             {"removeProjectItemById", IDescribable::loc("Remove a project item by id.", "Remove a project item by id.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"relinkFootageByPath", IDescribable::loc("Relink a footage item by its old file path.", "Relink a footage item by its old file path.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("oldFilePath"), QStringLiteral("newFilePath")}},
+            {"batchRelinkFootageByPath", IDescribable::loc("Relink multiple footage items from old and new file paths.", "Relink multiple footage items from old and new file paths.", {}), "QVariantMap", {QStringLiteral("QVariantList")}, {QStringLiteral("items")}},
             {"addRenderQueueForCurrentComposition", IDescribable::loc("Queue the active composition for rendering.", "Queue the active composition for rendering.", {}), "bool"},
             {"addRenderQueueForComposition", IDescribable::loc("Queue a specific composition for rendering.", "Queue a specific composition for rendering.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"addAllCompositionsToRenderQueue", IDescribable::loc("Queue every composition in the project.", "Queue every composition in the project.", {}), "int"},
@@ -354,6 +361,9 @@ public:
         if (name == QStringLiteral("workspaceSnapshot")) {
             return workspaceSnapshot();
         }
+        if (name == QStringLiteral("get_project_overview")) {
+            return workspaceSnapshot();
+        }
         if (name == QStringLiteral("workspaceDiagnostics")) {
             return workspaceDiagnostics();
         }
@@ -372,13 +382,22 @@ public:
         if (name == QStringLiteral("currentCompositionSnapshot")) {
             return currentCompositionSnapshot();
         }
+        if (name == QStringLiteral("get_active_composition")) {
+            return currentCompositionSnapshot();
+        }
         if (name == QStringLiteral("currentCompositionThumbnailAtFrame")) {
             return currentCompositionThumbnailAtFrame(intArg(args, 0, 0), intArg(args, 1, 256), intArg(args, 2, 144));
         }
         if (name == QStringLiteral("selectionSnapshot")) {
             return selectionSnapshot();
         }
+        if (name == QStringLiteral("get_selected_layers")) {
+            return selectionSnapshot();
+        }
         if (name == QStringLiteral("renderQueueSnapshot")) {
+            return renderQueueSnapshot();
+        }
+        if (name == QStringLiteral("get_render_queue_summary")) {
             return renderQueueSnapshot();
         }
         if (name == QStringLiteral("renderQueueJobByIndex")) {
@@ -607,6 +626,12 @@ public:
         if (name == QStringLiteral("batchSetKeyframes")) {
             return batchSetKeyframes(stringArg(args, 0), args.value(1).toList());
         }
+        if (name == QStringLiteral("setSelectedLayersProperty")) {
+            return setSelectedLayersProperty(stringArg(args, 0), args.value(1));
+        }
+        if (name == QStringLiteral("batchSetLayerProperties")) {
+            return batchSetLayerProperties(args.value(0).toList());
+        }
         if (name == QStringLiteral("createMotionSketchKeyframes")) {
             return createMotionSketchKeyframes(stringArg(args, 0), args.value(1).toList());
         }
@@ -692,6 +717,9 @@ public:
         }
         if (name == QStringLiteral("relinkFootageByPath")) {
             return relinkFootageByPath(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("batchRelinkFootageByPath")) {
+            return batchRelinkFootageByPath(args.value(0).toList());
         }
         if (name == QStringLiteral("addRenderQueueForCurrentComposition")) {
             return addRenderQueueForCurrentComposition();
@@ -2020,6 +2048,83 @@ private:
             {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
             {QStringLiteral("error"), QStringLiteral("Unsupported propertyPath")}
         };
+    }
+
+    static QVariantMap batchSetLayerProperties(const QVariantList& operations)
+    {
+        QVariantList results;
+        int successCount = 0;
+        int failureCount = 0;
+        int skippedCount = 0;
+        const auto composition = currentComposition();
+        for (const QVariant& operationValue : operations) {
+            const QVariantMap operation = operationValue.toMap();
+            const QString layerId = operation.value(QStringLiteral("layerId")).toString().trimmed();
+            const QString propertyPath = operation.value(QStringLiteral("propertyPath")).toString().trimmed();
+            const auto layer = composition ? composition->layerById(ArtifactCore::LayerID(layerId)) : ArtifactAbstractLayerPtr{};
+            if (layer && (layer->isLocked() || layer->isSelectionLocked())) {
+                results.append(QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("skipped"), true},
+                    {QStringLiteral("errorCode"), QStringLiteral("LAYER_LOCKED")},
+                    {QStringLiteral("layerId"), layerId},
+                    {QStringLiteral("propertyPath"), propertyPath}
+                });
+                ++skippedCount;
+                continue;
+            }
+            QVariantMap result = setGenericLayerProperty(layerId, propertyPath, operation.value(QStringLiteral("value")));
+            result.insert(QStringLiteral("layerId"), layerId);
+            result.insert(QStringLiteral("propertyPath"), propertyPath);
+            if (result.value(QStringLiteral("success")).toBool()) {
+                ++successCount;
+            } else {
+                ++failureCount;
+            }
+            results.append(result);
+        }
+        return QVariantMap{
+            {QStringLiteral("success"), failureCount == 0 && !operations.isEmpty()},
+            {QStringLiteral("partial"), successCount > 0 && failureCount > 0},
+            {QStringLiteral("requestedCount"), operations.size()},
+            {QStringLiteral("successCount"), successCount},
+            {QStringLiteral("failureCount"), failureCount},
+            {QStringLiteral("skippedCount"), skippedCount},
+            {QStringLiteral("results"), results}
+        };
+    }
+
+    static QVariantMap setSelectedLayersProperty(const QString& propertyPath, const QVariant& value)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        auto* selection = app ? app->layerSelectionManager() : nullptr;
+        if (!selection) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("errorCode"), QStringLiteral("SELECTION_UNAVAILABLE")},
+                {QStringLiteral("requestedCount"), 0}
+            };
+        }
+
+        QVariantList operations;
+        for (const auto& layer : selection->selectedLayers()) {
+            if (!layer) {
+                continue;
+            }
+            operations.append(QVariantMap{
+                {QStringLiteral("layerId"), layer->id().toString()},
+                {QStringLiteral("propertyPath"), propertyPath},
+                {QStringLiteral("value"), value}
+            });
+        }
+        QVariantMap result = batchSetLayerProperties(operations);
+        result.insert(QStringLiteral("propertyPath"), propertyPath);
+        result.insert(QStringLiteral("selectionBased"), true);
+        if (operations.isEmpty()) {
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("errorCode"), QStringLiteral("NO_SELECTED_LAYERS"));
+        }
+        return result;
     }
 
     static QVariantMap setGenericKeyframes(const QString& layerId, const QString& propertyPath, const QVariantList& keys)
@@ -4666,6 +4771,40 @@ private:
             return false;
         }
         return service->relinkFootageByPath(oldFilePath.trimmed(), newFilePath.trimmed());
+    }
+
+    static QVariant batchRelinkFootageByPath(const QVariantList& items)
+    {
+        QVariantMap result;
+        result.insert(QStringLiteral("schemaVersion"), 1);
+        result.insert(QStringLiteral("requested"), items.size());
+        int succeeded = 0;
+        int failed = 0;
+        QVariantList failures;
+        for (const QVariant& value : items) {
+            const QVariantMap item = value.toMap();
+            const QString oldPath = item.value(QStringLiteral("oldFilePath")).toString().trimmed();
+            const QString newPath = item.value(QStringLiteral("newFilePath")).toString().trimmed();
+            if (oldPath.isEmpty() || newPath.isEmpty() ||
+                !relinkFootageByPath(oldPath, newPath).toBool()) {
+                ++failed;
+                QVariantMap failure;
+                failure.insert(QStringLiteral("oldFilePath"), oldPath);
+                failure.insert(QStringLiteral("newFilePath"), newPath);
+                failure.insert(QStringLiteral("errorCode"),
+                               oldPath.isEmpty() || newPath.isEmpty()
+                                   ? QStringLiteral("PATH_REQUIRED")
+                                   : QStringLiteral("RELINK_FAILED"));
+                failures.append(failure);
+                continue;
+            }
+            ++succeeded;
+        }
+        result.insert(QStringLiteral("succeeded"), succeeded);
+        result.insert(QStringLiteral("failed"), failed);
+        result.insert(QStringLiteral("failures"), failures);
+        result.insert(QStringLiteral("success"), failed == 0);
+        return result;
     }
 
     // Phase 7: Timeline Operations

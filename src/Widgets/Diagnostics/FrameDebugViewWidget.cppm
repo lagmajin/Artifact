@@ -165,7 +165,7 @@ public:
                     ? QStringLiteral("diff off")
                     : QStringLiteral("diff %1")
                           .arg(ArtifactCore::toString(snapshot.compareMode));
-            const QString summaryText = QStringLiteral("goal: inspect this frame | now: %1 frame %2 comp %3 layer %4 backend %5 p%6 r%7 %8 | warning: video %9 particle %10 | next: compare or step")
+            const QString summaryText = QStringLiteral("goal: inspect this frame | frame: %1 #%2 comp %3 layer %4 backend %5 p%6 r%7 %8 | warning: video %9 particle %10 | next: compare or step")
                                             .arg(statusText)
                                             .arg(snapshot.frame.framePosition())
                                             .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)

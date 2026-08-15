@@ -31,6 +31,7 @@ export namespace Artifact
    SelectedOnly,
    AnimatedOnly,
    ImportantAndKeyframed,
+   KeyframesOnly,
    AudioOnly,
    VideoOnly
   };
@@ -154,7 +155,9 @@ export namespace Artifact
   int propertyColumnWidth() const;
   void setVerticalOffset(double offset);
   double verticalOffset() const;
+  enum class PropertyChannelFilter { All, Transform, Audio, Effect };
   void setFilterText(const QString& text);
+  void setPropertyChannelFilter(PropertyChannelFilter filter);
   void setSearchMatchMode(SearchMatchMode mode);
   SearchMatchMode searchMatchMode() const;
   void setLayerNameEditable(bool enabled);
@@ -197,6 +200,7 @@ export namespace Artifact
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
   void setFilterText(const QString& text);
+  void setPropertyChannelFilter(ArtifactLayerPanelWidget::PropertyChannelFilter filter);
   void setSearchMatchMode(SearchMatchMode mode);
   SearchMatchMode searchMatchMode() const;
   void setDisplayMode(TimelineLayerDisplayMode mode);

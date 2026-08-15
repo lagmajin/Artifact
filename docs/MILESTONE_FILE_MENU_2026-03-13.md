@@ -1,6 +1,14 @@
 # File Menu Milestone
 
 日付: 2026-03-13
+**最終更新:** 2026-08-15
+
+## Update 2026-08-15
+
+- 現行 File Menu を再監査し、create/open/save/save as/close、recent project の reopen、dirty confirmation、reveal/restart/quit、composition/import の導線を確認。
+- `新規コンポジション` が service の存在だけで有効になり、project 未オープン時に service の自動 project 作成へ進める不整合を修正。現在は project が存在する場合のみ有効。
+- File Menu の asset filter に SVG を追加し、SVG layer の実装済みimport経路と選択可能拡張子を一致させた。
+- save/open/create/recent/restart/quit の runtime 受入、save/restart failure の実機表示確認は未実施。
 
 ## Goal
 

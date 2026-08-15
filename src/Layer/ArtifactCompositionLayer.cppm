@@ -315,9 +315,10 @@ QJsonObject ArtifactCompositionLayer::toJson() const {
 
 void ArtifactCompositionLayer::fromJsonProperties(const QJsonObject &obj) {
   ArtifactAbstractLayer::fromJsonProperties(obj);
-  if (obj.contains("composition.sourceId")) {
-    setCompositionId(CompositionID(obj["composition.sourceId"].toString()));
-  }
+  // A reused precomp layer must not keep the previous source composition when
+  // the restored JSON has no source id.
+  setCompositionId(CompositionID(
+      obj.value(QStringLiteral("composition.sourceId")).toString()));
 
   impl_->restoreMoveAllAttributes_ = false;
   impl_->restoreExternalParents_.clear();

@@ -38,6 +38,7 @@ export namespace Artifact
   W_OBJECT(ArtifactTimelineTrackPainterView)
 
  public:
+  enum class PropertyChannelFilter { All, Transform, Audio, Effect };
  struct KeyframeMarkerVisual {
    LayerID layerId;
    QString propertyPath;
@@ -131,6 +132,8 @@ export namespace Artifact
   void setVerticalOffset(double value);
   double verticalOffset() const;
   void setKeyframeContext(const LayerID& layerId, const QString& propertyPath);
+  void setPropertyChannelFilter(PropertyChannelFilter filter);
+  PropertyChannelFilter propertyChannelFilter() const;
 
   void setTrackCount(int count);
   int trackCount() const;

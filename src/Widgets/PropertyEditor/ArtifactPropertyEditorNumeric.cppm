@@ -4,6 +4,7 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QVariant>
 #include <QWidget>
@@ -67,6 +68,43 @@ double storageToDisplayValue(const double value, const bool displayAsPercent) {
 
 double displayToStorageValue(const double value, const bool displayAsPercent) {
   return displayAsPercent ? value / 100.0 : value;
+}
+
+template <typename Number>
+std::optional<Number> parseQuickNumericExpression(const QString &text,
+                                                  const Number base) {
+  const QString normalized = text.trimmed().remove(QLatin1Char(' '));
+  bool ok = false;
+  const double absolute = normalized.toDouble(&ok);
+  if (ok) {
+    return static_cast<Number>(absolute);
+  }
+
+  static const QRegularExpression relativePattern(
+      QStringLiteral(R"(^([+\-*/])((?:\d+(?:\.\d*)?|\.\d+))$)"));
+  const auto match = relativePattern.match(normalized);
+  if (!match.hasMatch()) {
+    return std::nullopt;
+  }
+
+  const double operand = match.captured(2).toDouble(&ok);
+  if (!ok) {
+    return std::nullopt;
+  }
+  double result = static_cast<double>(base);
+  switch (match.captured(1).at(0).toLatin1()) {
+  case '+': result += operand; break;
+  case '-': result -= operand; break;
+  case '*': result *= operand; break;
+  case '/':
+    if (std::abs(operand) <= std::numeric_limits<double>::epsilon()) {
+      return std::nullopt;
+    }
+    result /= operand;
+    break;
+  default: return std::nullopt;
+  }
+  return static_cast<Number>(result);
 }
 
 int decimalsForNumericProperty(const ArtifactCore::PropertyMetadata &meta,
@@ -217,6 +255,14 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                    [this, initializing, displayAsPercent]() {
                      if (*initializing) {
                        return;
+                     }
+                     if (spinBox_->lineEdit()) {
+                       const auto parsed = parseQuickNumericExpression<double>(
+                           spinBox_->cleanText(), spinBox_->value());
+                       if (parsed.has_value()) {
+                         spinBox_->setValue(std::clamp(*parsed, spinBox_->minimum(),
+                                                       spinBox_->maximum()));
+                       }
                      }
                      commitValue(displayToStorageValue(spinBox_->value(),
                                                        displayAsPercent));
@@ -543,6 +589,14 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                    [this, initializing]() {
                      if (*initializing) {
                        return;
+                     }
+                     if (spinBox_->lineEdit()) {
+                       const auto parsed = parseQuickNumericExpression<int>(
+                           spinBox_->cleanText(), spinBox_->value());
+                       if (parsed.has_value()) {
+                         spinBox_->setValue(std::clamp(*parsed, spinBox_->minimum(),
+                                                       spinBox_->maximum()));
+                       }
                      }
                      commitValue(spinBox_->value());
                    });

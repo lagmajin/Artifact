@@ -447,6 +447,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     if (type == QStringLiteral("folder")) {
       auto folderUp = std::make_unique<FolderItem>();
       folderUp->name.setQString(name);
+      folderUp->tags = obj.value(QStringLiteral("tags")).toStringList();
       if (!idStr.isEmpty()) {
         folderUp->id = Id(idStr);
       }
@@ -468,6 +469,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     if (type == QStringLiteral("footage")) {
       auto footageUp = std::make_unique<FootageItem>();
       footageUp->name.setQString(name);
+      footageUp->tags = obj.value(QStringLiteral("tags")).toStringList();
       if (!idStr.isEmpty()) {
         footageUp->id = Id(idStr);
       }
@@ -501,6 +503,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     if (type == QStringLiteral("solid")) {
       auto solidUp = std::make_unique<SolidItem>();
       solidUp->name.setQString(name);
+      solidUp->tags = obj.value(QStringLiteral("tags")).toStringList();
       if (!idStr.isEmpty()) {
         solidUp->id = Id(idStr);
       }
@@ -522,6 +525,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
         // contain a full composition snapshot.
         auto compItemUp = std::make_unique<CompositionItem>();
         compItemUp->name.setQString(name.isEmpty() ? QStringLiteral("Composition") : name);
+        compItemUp->tags = obj.value(QStringLiteral("tags")).toStringList();
         if (!idStr.isEmpty()) {
           compItemUp->id = Id(idStr);
         }
@@ -542,6 +546,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
       auto compItemUp = std::make_unique<CompositionItem>();
       compItemUp->compositionId = compId;
       compItemUp->name.setQString(importedName);
+      compItemUp->tags = obj.value(QStringLiteral("tags")).toStringList();
       if (!idStr.isEmpty()) {
         compItemUp->id = Id(idStr);
       }
@@ -812,6 +817,9 @@ QJsonArray compsArray;
      if (!item) return obj;
      obj["name"] = item->name.toQString();
      obj["id"] = item->id.toString();
+     if (!item->tags.isEmpty()) {
+       obj["tags"] = QJsonArray::fromStringList(item->tags);
+     }
      switch (item->type()) {
       case eProjectItemType::Folder: {
        obj["type"] = "folder";
@@ -1856,10 +1864,12 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
     QString type = obj["type"].toString();
     QString name = obj["name"].toString();
     QString idStr = obj["id"].toString();
+    const QStringList tags = obj["tags"].toStringList();
 
     if (type == "footage") {
       auto footageUp = std::make_unique<FootageItem>();
       footageUp->name.setQString(name);
+      footageUp->tags = tags;
       footageUp->filePath = obj["filePath"].toString();
       if (!idStr.isEmpty()) {
         footageUp->id = Id(idStr);
@@ -1870,6 +1880,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
     } else if (type == "folder") {
       auto folderUp = std::make_unique<FolderItem>();
       folderUp->name.setQString(name);
+      folderUp->tags = tags;
       if (!idStr.isEmpty()) {
         folderUp->id = Id(idStr);
       }
@@ -1887,6 +1898,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
     } else if (type == "solid") {
       auto solidUp = std::make_unique<SolidItem>();
       solidUp->name.setQString(name);
+      solidUp->tags = tags;
       if (!idStr.isEmpty()) {
         solidUp->id = Id(idStr);
       }
@@ -1902,6 +1914,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
       // Just create a placeholder here
       auto compItemUp = std::make_unique<CompositionItem>();
       compItemUp->name.setQString(name);
+      compItemUp->tags = tags;
       if (!idStr.isEmpty()) {
         compItemUp->id = Id(idStr);
       }

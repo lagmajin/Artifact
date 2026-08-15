@@ -884,6 +884,11 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Kaleidoscope"));
    return effect;
   }
+  if (effectId == QStringLiteral("mirror") ||
+      effectId == QStringLiteral("effect.stylize.mirror")) {
+   return std::make_unique<ArtifactCoreCreativeEffect>(
+       "Mirror", "mirror", "Mirror");
+  }
   if (effectId == QStringLiteral("dithering") ||
       effectId == QStringLiteral("effect.stylize.dithering")) {
    auto effect = std::make_unique<DitheringEffect>();
@@ -1161,6 +1166,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("liquify"), "Liquify"});
   effects.push_back({EffectID("radio_waves"), "Radio Waves"});
   effects.push_back({EffectID("kaleidoscope"), "Kaleidoscope"});
+  effects.push_back({EffectID("mirror"), "Mirror"});
   effects.push_back({EffectID("dithering"), "Dithering"});
   effects.push_back({EffectID("kuwahara"), "Kuwahara"});
   effects.push_back({EffectID("anisotropic_flow_blur"), "Anisotropic Flow Blur"});
