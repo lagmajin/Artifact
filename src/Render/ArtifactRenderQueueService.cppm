@@ -6238,8 +6238,10 @@ namespace Artifact
                         ArtifactCore::DiagnosticSeverity::Warning,
                         ArtifactCore::DiagnosticCategory::Audio,
                         QStringLiteral("Audio true peak is close to full scale"),
-                        QStringLiteral("Measured true peak is %1 dBTP; the current preflight warning threshold is -1.0 dBTP.")
-                            .arg(QString::number(measurement.truePeakDb, 'f', 1)),
+                        QStringLiteral("Measured true peak is %1 dBTP (%2); the current preflight warning threshold is -1.0 dBTP.")
+                            .arg(QString::number(measurement.truePeakDb, 'f', 1))
+                            .arg(measurement.isApproximate ? QStringLiteral("approximate meter")
+                                                            : QStringLiteral("meter")),
                         QStringLiteral("Lower the master level or add a true-peak limiter before export"),
                         compId));
                 }
