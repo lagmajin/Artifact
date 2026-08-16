@@ -303,6 +303,10 @@ public:
 
         playbackStartFrame_ = currentFrame_.load();
         playbackStartTime_ = std::chrono::steady_clock::now();
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
         // ポーズ時にaudioTargetBufferedFrames_をリセットして再開時の同期問題を防ぐ
         audioTargetBufferedFrames_ = 0;
     }
