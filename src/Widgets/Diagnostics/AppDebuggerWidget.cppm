@@ -1258,9 +1258,10 @@ public:
                          .arg(QString::number(audio.rightRmsDb, 'f', 1))
                          .arg(QString::number(audio.leftPeakDb, 'f', 1))
                          .arg(QString::number(audio.rightPeakDb, 'f', 1));
-            parts << QStringLiteral("audioClipping=%1")
+            parts << QStringLiteral("audioClipping=%1 threshold=%2dBFS")
                          .arg(audio.clippingDetected ? QStringLiteral("yes")
-                                                      : QStringLiteral("no"));
+                                                      : QStringLiteral("no"))
+                         .arg(QString::number(audio.clippingThresholdDb, 'f', 1));
         }
         return parts.join(QStringLiteral("  "));
     }
