@@ -1266,6 +1266,9 @@ public:
                          .arg(audio.clippingDetected ? QStringLiteral("yes")
                                                       : QStringLiteral("no"))
                          .arg(QString::number(audio.clippingThresholdDb, 'f', 1));
+            parts << QStringLiteral("audioHealthy=%1")
+                         .arg(audio.isHealthy() ? QStringLiteral("yes")
+                                                : QStringLiteral("no"));
         }
         return parts.join(QStringLiteral("  "));
     }
