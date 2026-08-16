@@ -2832,9 +2832,16 @@ int main(int argc, char *argv[]) {
   // Enable output monitoring for debugging
   if (playbackService->controller()) {
     playbackService->controller()->enableOutputMonitoring(true);
+    QElapsedTimer outputMonitorAlertCooldown;
     playbackService->controller()->setOutputMonitorCallback(
-        [mw](bool audioOk, bool videoOk, const QString &context) {
+        [mw, outputMonitorAlertCooldown](bool audioOk, bool videoOk,
+                                         const QString &context) mutable {
           if (!audioOk || !videoOk) {
+            if (outputMonitorAlertCooldown.isValid() &&
+                !outputMonitorAlertCooldown.hasExpired(2000)) {
+              return;
+            }
+            outputMonitorAlertCooldown.restart();
             auto *aiWidget = mw->aiCloudWidget();
             if (aiWidget) {
               QString prompt =
