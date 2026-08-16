@@ -179,6 +179,8 @@ int runAIToolBridgeTests()
 
     const QJsonObject playbackAudioDiagnosticsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getPlaybackAudioDiagnostics"));
     report.check(!playbackAudioDiagnosticsTool.isEmpty(), QStringLiteral("workspace automation exposes playback audio diagnostics"));
+    report.check(playbackAudioDiagnosticsTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("playback audio diagnostics returns a result map"));
 
     const QJsonObject addTextLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addTextLayerToCurrentComposition"));
     report.check(!addTextLayerTool.isEmpty(), QStringLiteral("workspace automation exposes text layer creation"));
