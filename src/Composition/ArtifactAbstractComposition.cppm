@@ -3181,7 +3181,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
             pending.bus->clearInput(frameCount, sampleRate);
             pending.bus->addInput(pending.segment, pending.gain);
         }
-        if (hasAnyAudio) {
+        if (hasAnyAudio || mixer.graphTailSamples() > 0) {
             mixer.process(mixOutput);
             outSegment = std::move(mixOutput);
             impl_->limiter_.process(outSegment, sampleRate);

@@ -32,6 +32,7 @@ module;
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QJsonObject>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionAudioMixer;
@@ -46,6 +47,7 @@ import Artifact.Service.Effect;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Service.Audio;
+import Undo.UndoManager;
 import Settings.Accessibility;
 import Event.Bus;
 import std;
@@ -61,6 +63,22 @@ static QPoint accessibilityMenuPosition(const QMenu &menu,
 }
 
 namespace {
+class AudioMixerSnapshotUndoCommand final : public UndoCommand {
+public:
+  AudioMixerSnapshotUndoCommand(ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> mixer,
+                                const QJsonObject& before, const QJsonObject& after)
+      : mixer_(std::move(mixer)), before_(before), after_(after) {}
+
+  void undo() override { if (mixer_) mixer_->deserialize(before_); }
+  void redo() override { if (mixer_) mixer_->deserialize(after_); }
+  QString label() const override { return QStringLiteral("Audio Routing Change"); }
+
+private:
+  ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> mixer_;
+  QJsonObject before_;
+  QJsonObject after_;
+};
+
 struct AudioFxChipInfo {
   QString id;
   QString displayName;
@@ -2251,7 +2269,14 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     dialog.resize(760, 540);
     auto *dialogLayout = new QVBoxLayout(&dialog);
     dialogLayout->setContentsMargins(10, 10, 10, 10);
-    auto *routingWidget = new Artifact::AudioMixerWidget(coreMixer.get(), &dialog);
+    auto routingUndo = [coreMixer](const QJsonObject& before, const QJsonObject& after) {
+      if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<AudioMixerSnapshotUndoCommand>(
+            coreMixer, before, after));
+      }
+    };
+    auto *routingWidget = new Artifact::AudioMixerWidget(
+        coreMixer.get(), &dialog, std::move(routingUndo));
     dialogLayout->addWidget(routingWidget, 1);
     dialog.exec();
 

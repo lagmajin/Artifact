@@ -298,4 +298,40 @@ bool ArtifactAudioService::setLayerBusSolo(
  return true;
 }
 
+bool ArtifactAudioService::addLayerDeClickRange(
+    const ArtifactCore::LayerID& layerId, qint64 startSample, qint64 endSample)
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return false;
+ audioLayer->addDeClickRange(startSample, endSample);
+ return true;
+}
+
+bool ArtifactAudioService::clearLayerDeClickRanges(
+    const ArtifactCore::LayerID& layerId)
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return false;
+ audioLayer->clearDeClickRanges();
+ return true;
+}
+
+QVariantList ArtifactAudioService::layerDeClickRanges(
+    const ArtifactCore::LayerID& layerId) const
+{
+ QVariantList result;
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return result;
+ for (const auto& range : audioLayer->deClickRanges()) {
+  result.append(QVariantMap{{QStringLiteral("startSample"),
+                             QVariant::fromValue(range.first)},
+                            {QStringLiteral("endSample"),
+                             QVariant::fromValue(range.second)}});
+ }
+ return result;
+}
+
 };

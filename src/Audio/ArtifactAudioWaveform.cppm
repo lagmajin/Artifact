@@ -811,6 +811,63 @@ AudioSegment AudioSyncTools::normalize(const AudioSegment& segment, float target
     return result;
 }
 
+AudioSegment AudioSyncTools::deClick(const AudioSegment& segment,
+                                     qint64 selectionStart,
+                                     qint64 selectionSamples,
+                                     float thresholdDb,
+                                     qint64 maxClickSamples) {
+    AudioSegment result = segment;
+    const qint64 frameCount = result.frameCount();
+    if (frameCount < 3 || result.channelData.isEmpty()) return result;
+
+    const qint64 first = std::clamp<qint64>(selectionStart, 1, frameCount - 2);
+    const qint64 requestedEnd = selectionSamples < 0
+        ? frameCount - 1
+        : selectionStart + std::max<qint64>(0, selectionSamples);
+    const qint64 last = std::clamp<qint64>(requestedEnd, first + 1, frameCount - 1);
+    const qint64 safeWidth = std::clamp<qint64>(maxClickSamples, 1, 4096);
+    const float safeThreshold = std::clamp(
+        std::isfinite(thresholdDb) ? thresholdDb : -20.0f, -80.0f, 0.0f);
+    const float threshold = dbToLinearValue(safeThreshold);
+
+    for (auto& channel : result.channelData) {
+        if (channel.size() < frameCount) continue;
+        qint64 runStart = -1;
+        for (qint64 index = first; index < last; ++index) {
+            const float previous = sanitizeWaveformSample(channel[static_cast<int>(index - 1)]);
+            const float current = sanitizeWaveformSample(channel[static_cast<int>(index)]);
+            const float next = sanitizeWaveformSample(channel[static_cast<int>(index + 1)]);
+            const float neighbor = 0.5f * (previous + next);
+            const bool isolatedPeak = std::abs(current) > std::abs(previous) &&
+                std::abs(current) > std::abs(next) &&
+                std::abs(current - neighbor) >= threshold;
+            if (isolatedPeak) {
+                if (runStart < 0) runStart = index;
+                if (index - runStart + 1 >= safeWidth) runStart = -1;
+                continue;
+            }
+            if (runStart >= 0) {
+                const qint64 runEnd = index;
+                const qint64 width = runEnd - runStart;
+                if (width > 0 && width <= safeWidth) {
+                    const float left = sanitizeWaveformSample(
+                        channel[static_cast<int>(runStart - 1)]);
+                    const float right = sanitizeWaveformSample(
+                        channel[static_cast<int>(runEnd)]);
+                    for (qint64 repair = runStart; repair < runEnd; ++repair) {
+                        const float t = static_cast<float>(repair - runStart + 1) /
+                            static_cast<float>(width + 1);
+                        channel[static_cast<int>(repair)] =
+                            sanitizeWaveformSample(left + (right - left) * t);
+                    }
+                }
+                runStart = -1;
+            }
+        }
+    }
+    return result;
+}
+
 AudioSegment AudioSyncTools::fadeIn(const AudioSegment& segment, qint64 samples) {
     AudioSegment result = segment;
     if (result.channelData.isEmpty()) {
@@ -859,6 +916,81 @@ AudioSegment AudioSyncTools::fadeOut(const AudioSegment& segment, qint64 samples
         }
     }
 
+    return result;
+}
+
+AudioSegment AudioSyncTools::crossfade(const AudioSegment& outgoing,
+                                       const AudioSegment& incoming,
+                                       qint64 samples,
+                                       bool equalPower) {
+    if (outgoing.sampleRate != incoming.sampleRate ||
+        outgoing.layout != incoming.layout ||
+        outgoing.channelCount() == 0 || incoming.channelCount() == 0) {
+        return {};
+    }
+
+    const qint64 outgoingFrames = outgoing.frameCount();
+    const qint64 incomingFrames = incoming.frameCount();
+    const qint64 overlap = std::clamp<qint64>(
+        samples, 0, std::min(outgoingFrames, incomingFrames));
+    if (overlap <= 0) {
+        AudioSegment result = outgoing;
+        const int channels = std::max(outgoing.channelCount(), incoming.channelCount());
+        result.channelData.resize(channels);
+        for (int channel = 0; channel < channels; ++channel) {
+            const auto& source = channel < incoming.channelData.size()
+                ? incoming.channelData[channel] : QVector<float>{};
+            if (channel >= outgoing.channelData.size()) {
+                result.channelData[channel].resize(static_cast<int>(outgoingFrames));
+                result.channelData[channel].fill(0.0f);
+            }
+            result.channelData[channel].reserve(
+                static_cast<int>(outgoingFrames + incomingFrames));
+            result.channelData[channel].append(source);
+        }
+        return result;
+    }
+
+    AudioSegment result = outgoing;
+    const int channels = std::max(outgoing.channelCount(), incoming.channelCount());
+    result.channelData.resize(channels);
+    result.setFrameCount(outgoingFrames + incomingFrames - overlap);
+
+    constexpr double halfPi = 1.57079632679489661923;
+    for (int channel = 0; channel < channels; ++channel) {
+        const auto& outChannel = channel < outgoing.channelData.size()
+            ? outgoing.channelData[channel] : QVector<float>{};
+        const auto& inChannel = channel < incoming.channelData.size()
+            ? incoming.channelData[channel] : QVector<float>{};
+        auto& destination = result.channelData[channel];
+        for (qint64 frame = 0; frame < outgoingFrames - overlap; ++frame) {
+            destination[static_cast<int>(frame)] = frame < outChannel.size()
+                ? sanitizeWaveformSample(outChannel[static_cast<int>(frame)]) : 0.0f;
+        }
+        for (qint64 frame = 0; frame < overlap; ++frame) {
+            const float position = overlap <= 1
+                ? 1.0f
+                : static_cast<float>(frame) / static_cast<float>(overlap - 1);
+            const float outGain = equalPower
+                ? static_cast<float>(std::cos(position * halfPi))
+                : 1.0f - position;
+            const float inGain = equalPower
+                ? static_cast<float>(std::sin(position * halfPi))
+                : position;
+            const qint64 outIndex = outgoingFrames - overlap + frame;
+            const float outSample = outIndex < outChannel.size()
+                ? sanitizeWaveformSample(outChannel[static_cast<int>(outIndex)]) : 0.0f;
+            const float inSample = frame < inChannel.size()
+                ? sanitizeWaveformSample(inChannel[static_cast<int>(frame)]) : 0.0f;
+            destination[static_cast<int>(outgoingFrames - overlap + frame)] =
+                sanitizeWaveformSample(outSample * outGain + inSample * inGain);
+        }
+        for (qint64 frame = overlap; frame < incomingFrames; ++frame) {
+            const qint64 destinationIndex = outgoingFrames - overlap + frame;
+            destination[static_cast<int>(destinationIndex)] = frame < inChannel.size()
+                ? sanitizeWaveformSample(inChannel[static_cast<int>(frame)]) : 0.0f;
+        }
+    }
     return result;
 }
 

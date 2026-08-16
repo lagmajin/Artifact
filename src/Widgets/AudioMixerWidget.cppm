@@ -277,8 +277,10 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
 
 AudioChannelStripWidget::AudioChannelStripWidget(
     ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus,
-    ArtifactCore::AudioMixer* mixer, std::function<void()> onChanged, QWidget* parent)
-    : QWidget(parent), bus_(bus), mixer_(mixer), onChanged_(std::move(onChanged)) {
+    ArtifactCore::AudioMixer* mixer, std::function<void()> onChanged, QWidget* parent,
+    std::function<void(const QJsonObject&, const QJsonObject&)> onRoutingChanged)
+    : QWidget(parent), bus_(bus), mixer_(mixer), onChanged_(std::move(onChanged)),
+      onRoutingChanged_(std::move(onRoutingChanged)) {
     
     analyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);
     loudnessAnalyzer_ = std::make_unique<ArtifactCore::AudioSpectrum>();
@@ -295,11 +297,11 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     analyzerWidget_ = new SpectrumAnalyzerWidget(this);
     layout->addWidget(analyzerWidget_);
 
-    loudnessLabel_ = new QLabel(QStringLiteral("LUFS: —\nTP: —"), this);
+    loudnessLabel_ = new QLabel(QStringLiteral("M: —  S: —\nI: —  LRA: —\nTP: —"), this);
     loudnessLabel_->setAlignment(Qt::AlignCenter);
     loudnessLabel_->setAccessibleName(QStringLiteral("Loudness meter"));
     loudnessLabel_->setAccessibleDescription(
-        QStringLiteral("Momentary and true-peak loudness for this audio bus"));
+        QStringLiteral("Momentary, short-term, integrated, range, and true-peak loudness for this audio bus"));
     QPalette loudnessPalette = loudnessLabel_->palette();
     loudnessPalette.setColor(QPalette::WindowText, QColor(170, 190, 205));
     loudnessLabel_->setPalette(loudnessPalette);
@@ -340,7 +342,11 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                 QLineEdit::Normal, busName, &accepted).trimmed();
             if (!accepted || next.isEmpty() || !mixer_) return;
             if (!mixer_->findBusByName(next)) {
+                const QJsonObject before = mixer_->serialize();
                 bus_->setName(ArtifactCore::ZeroString(next.toUtf8().constData()));
+                if (onRoutingChanged_) {
+                    onRoutingChanged_(before, mixer_->serialize());
+                }
                 if (onChanged_) onChanged_();
             }
         };
@@ -351,7 +357,11 @@ AudioChannelStripWidget::AudioChannelStripWidget(
         removeButton->setAccessibleName(QStringLiteral("Remove bus: %1").arg(busName));
         removeButton->invoked = [this]() {
             if (!mixer_ || !bus_) return;
+            const QJsonObject before = mixer_->serialize();
             mixer_->removeBus(bus_);
+            if (onRoutingChanged_) {
+                onRoutingChanged_(before, mixer_->serialize());
+            }
             if (onChanged_) onChanged_();
         };
         layout->addWidget(removeButton);
@@ -386,11 +396,15 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                 for (const auto& target : buses) {
                     if (!target || target == bus_) continue;
                     if (routeIndex++ == index) {
+                        const QJsonObject before = mixer_->serialize();
                         const auto result = mixer_->connect(bus_, target);
                         if (result != ArtifactCore::AudioRoutingResult::Applied) {
                             QToolTip::showText(mapToGlobal(rect().center()),
                                 ArtifactCore::AudioMixer::routingResultDescription(result), this);
                         } else if (onChanged_) {
+                            if (onRoutingChanged_) {
+                                onRoutingChanged_(before, mixer_->serialize());
+                            }
                             onChanged_();
                         }
                         return;
@@ -439,6 +453,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                     sidechainButton->mapToGlobal(QPoint(0, sidechainButton->height())));
                 if (!chosen) return;
                 if (chosen == clearAction) {
+                    const QJsonObject before = mixer_->serialize();
                     bool removedAny = false;
                     for (const auto& send : mixer_->getSideChainSends(bus_)) {
                         if (send.first && mixer_->removeSideChainSend(bus_, send.first) ==
@@ -447,6 +462,9 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                         }
                     }
                     if (removedAny && onChanged_) {
+                        if (onRoutingChanged_) {
+                            onRoutingChanged_(before, mixer_->serialize());
+                        }
                         onChanged_();
                     }
                     return;
@@ -460,12 +478,16 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                     QStringLiteral("Amount for %1 → %2")
                         .arg(busName, targetName), 1.0, 0.0, 1.0, 2, &accepted);
                 if (accepted) {
+                    const QJsonObject before = mixer_->serialize();
                     const auto result = mixer_->addSideChainSend(
                         bus_, target, static_cast<float>(amount));
                     if (result != ArtifactCore::AudioRoutingResult::Applied) {
                         QToolTip::showText(sidechainButton->mapToGlobal(QPoint(0, sidechainButton->height())),
                             ArtifactCore::AudioMixer::routingResultDescription(result), sidechainButton);
                     } else if (onChanged_) {
+                        if (onRoutingChanged_) {
+                            onRoutingChanged_(before, mixer_->serialize());
+                        }
                         onChanged_();
                     }
                 }
@@ -558,10 +580,17 @@ void AudioChannelStripWidget::updateMeters() {
             return std::isfinite(value) ? QString::number(value, 'f', 1)
                                         : QStringLiteral("-");
         };
+        const auto formatLu = [](float value) {
+            return std::isfinite(value) ? QString::number(value, 'f', 1) + QStringLiteral(" LU")
+                                        : QStringLiteral("-");
+        };
         loudnessLabel_->setText(
-            QStringLiteral("LUFS: %1\nTP: %2 dB")
-                .arg(formatDb(loudnessAnalyzer_->getMomentaryLufs()))
-                .arg(formatDb(loudnessAnalyzer_->getTruePeakDb())));
+            QStringLiteral("M: %1  S: %2\nI: %3  LRA: %4\nTP: %5 dB")
+            .arg(formatDb(loudnessAnalyzer_->getMomentaryLufs()))
+            .arg(formatDb(loudnessAnalyzer_->getShortTermLufs()))
+            .arg(formatDb(loudnessAnalyzer_->getIntegratedLufs()))
+            .arg(formatLu(loudnessAnalyzer_->getLoudnessRangeLufs()))
+            .arg(formatDb(loudnessAnalyzer_->getTruePeakDb())));
     }
 
     if (bus_) {
@@ -682,8 +711,10 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
 // AudioMixerWidget
 // ============================================================================
 
-AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* parent)
-    : QWidget(parent), mixer_(mixer) {
+AudioMixerWidget::AudioMixerWidget(
+    ArtifactCore::AudioMixer* mixer, QWidget* parent,
+    std::function<void(const QJsonObject&, const QJsonObject&)> onRoutingChanged)
+    : QWidget(parent), mixer_(mixer), onRoutingChanged_(std::move(onRoutingChanged)) {
     setAccessibleName(QStringLiteral("Audio Mixer"));
     setAccessibleDescription(
         QStringLiteral("Adjust audio bus levels, mute state, and effects."));
@@ -698,6 +729,16 @@ AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* par
     QPalette mixerPalette = palette();
     mixerPalette.setColor(QPalette::Window, QColor(15, 16, 18));
     setPalette(mixerPalette);
+
+    graphLatencyLabel_ = new QLabel(QStringLiteral("PDC: 0 smp\nTail: 0 smp"), this);
+    graphLatencyLabel_->setAlignment(Qt::AlignCenter);
+    graphLatencyLabel_->setAccessibleName(QStringLiteral("Audio graph latency"));
+    graphLatencyLabel_->setAccessibleDescription(
+        QStringLiteral("Current primary audio graph latency and effect tail in samples"));
+    QPalette latencyPalette = graphLatencyLabel_->palette();
+    latencyPalette.setColor(QPalette::WindowText, QColor(170, 190, 205));
+    graphLatencyLabel_->setPalette(latencyPalette);
+    layout->addWidget(graphLatencyLabel_);
 
     // メーター定期更新タイマー（表示中のみ稼働）
     meterTimer_ = new QTimer(this);
@@ -742,8 +783,12 @@ void AudioMixerWidget::refreshBuses() {
         if (!accepted) return;
         const auto kind = selectedKind == QStringLiteral("Return")
             ? ArtifactCore::AudioBusKind::Return : ArtifactCore::AudioBusKind::Group;
+        const QJsonObject before = mixer_->serialize();
         if (mixer_->createBus(
                 ArtifactCore::String(name.toUtf8().constData()), kind)) {
+            if (onRoutingChanged_) {
+                onRoutingChanged_(before, mixer_->serialize());
+            }
             refreshBuses();
         }
     };
@@ -764,7 +809,7 @@ void AudioMixerWidget::refreshBuses() {
         hasMaster = hasMaster || isMaster;
 
         auto* strip = new AudioChannelStripWidget(
-            bus, mixer_, [this]() { refreshBuses(); }, this);
+            bus, mixer_, [this]() { refreshBuses(); }, this, onRoutingChanged_);
         strip->setFixedWidth(isMaster ? 120 : 80);
         layout()->addWidget(strip);
         strips_.push_back(strip);
@@ -774,6 +819,12 @@ void AudioMixerWidget::refreshBuses() {
 void AudioMixerWidget::updateAllMeters() {
     for (auto* strip : strips_) {
         strip->updateMeters();
+    }
+    if (graphLatencyLabel_ && mixer_) {
+        graphLatencyLabel_->setText(
+            QStringLiteral("PDC: %1 smp\nTail: %2 smp")
+                .arg(mixer_->graphLatencySamples())
+                .arg(mixer_->graphTailSamples()));
     }
 }
 

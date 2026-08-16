@@ -43,6 +43,7 @@ module;
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -86,6 +87,7 @@ import Image.ImageF32x4_RGBA;
 import Image.MultiChannelImage;
 import CvUtils;
 import Audio.Segment;
+import Audio.Effect.Spectrum;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
@@ -346,10 +348,21 @@ namespace Artifact
                 : 30.0;
             const int frameCount = std::max(1, endFrame - startFrame);
             const int sampleRate = 48000;
-            const int sampleCount = std::max(1, static_cast<int>(std::ceil((static_cast<double>(frameCount) / fps) * sampleRate)));
+            qint64 tailSamples = 0;
+            if (const auto mixer = composition->getAudioMixer()) {
+                tailSamples = std::max<qint64>(0, mixer->graphTailSamples());
+            }
+            const qint64 baseSamples = static_cast<qint64>(std::ceil(
+                (static_cast<double>(frameCount) / fps) * sampleRate));
+            const qint64 requestedSamples = baseSamples + tailSamples;
+            if (requestedSamples <= 0 || requestedSamples > std::numeric_limits<int>::max()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio range is too large");
+                return false;
+            }
 
             ArtifactCore::AudioSegment segment;
-            if (!composition->getAudio(segment, ArtifactCore::FramePosition(startFrame), sampleCount, sampleRate)) {
+            if (!composition->getAudio(segment, ArtifactCore::FramePosition(startFrame),
+                                       static_cast<int>(requestedSamples), sampleRate)) {
                 if (errorMessage) *errorMessage = QStringLiteral("Composition audio extraction failed");
                 return false;
             }
@@ -360,6 +373,52 @@ namespace Artifact
             }
 
             return writeAudioSegmentAsWav(wavPath, segment, errorMessage, bitDepth);
+        }
+
+        bool measureCompositionAudioForPreflight(
+            const ArtifactCompositionPtr& composition,
+            int startFrame,
+            int endFrame,
+            int sampleRate,
+            ArtifactCore::AudioSpectrum& analyzer,
+            QString* errorMessage)
+        {
+            if (!composition || !composition->hasAudio()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition has no audio");
+                return false;
+            }
+            const double fps = composition->frameRate().framerate() > 0.0
+                ? composition->frameRate().framerate() : 30.0;
+            const qint64 frameCount = std::max<qint64>(1, static_cast<qint64>(endFrame) - startFrame);
+            qint64 tailSamples = 0;
+            if (const auto mixer = composition->getAudioMixer()) {
+                tailSamples = std::max<qint64>(0, mixer->graphTailSamples());
+            }
+            const qint64 baseSamples = static_cast<qint64>(std::ceil(
+                (static_cast<double>(frameCount) / fps) * std::max(1, sampleRate)));
+            const qint64 requestedSamples = baseSamples + tailSamples;
+            if (requestedSamples <= 0 || requestedSamples > std::numeric_limits<int>::max()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Audio measurement range is too large");
+                return false;
+            }
+
+            ArtifactCore::AudioSegment segment;
+            if (!composition->getAudio(
+                    segment,
+                    ArtifactCore::FramePosition(startFrame),
+                    static_cast<int>(requestedSamples),
+                    std::max(1, sampleRate))) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio extraction failed");
+                return false;
+            }
+            if (segment.channelCount() == 0 || segment.frameCount() <= 0) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio segment is empty");
+                return false;
+            }
+            analyzer.resetLoudnessMeasurement();
+            analyzer.process(segment);
+            return std::isfinite(analyzer.getIntegratedLufs()) ||
+                   std::isfinite(analyzer.getTruePeakDb());
         }
 
         ArtifactCore::ProjectDiagnostic makePreflightDiagnostic(
@@ -6156,6 +6215,33 @@ namespace Artifact
                 auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(audioPath, QString());
                 diag.setSourceCompId(compId);
                 result.addDiagnostic(diag);
+            }
+
+            if (hasCompositionAudio) {
+                ArtifactCore::AudioSpectrum analyzer;
+                QString measurementError;
+                const int measurementRate = job.audioSampleRate > 0
+                    ? job.audioSampleRate : 48000;
+                if (!measureCompositionAudioForPreflight(
+                        composition, job.startFrame, job.endFrame,
+                        measurementRate, analyzer, &measurementError)) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Audio,
+                        QStringLiteral("Audio loudness preflight was unavailable"),
+                        measurementError,
+                        QStringLiteral("Check the composition audio range and source assets"),
+                        compId));
+                } else if (analyzer.getTruePeakDb() > -1.0f) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Audio,
+                        QStringLiteral("Audio true peak is close to full scale"),
+                        QStringLiteral("Measured true peak is %1 dBTP; the current preflight warning threshold is -1.0 dBTP.")
+                            .arg(QString::number(analyzer.getTruePeakDb(), 'f', 1)),
+                        QStringLiteral("Lower the master level or add a true-peak limiter before export"),
+                        compId));
+                }
             }
         }
 

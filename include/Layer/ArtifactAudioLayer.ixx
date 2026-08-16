@@ -31,6 +31,7 @@ module;
 #include <regex>
 #include <random>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QVariant>
 #include <QUuid>
 export module Artifact.Layer.Audio;
@@ -59,6 +60,19 @@ export namespace Artifact
 
   void setVolume(float volume);
   float volume() const;
+  // Non-destructive clip-level gain/fades, independent from mixer volume.
+  void setClipGainDb(float gainDb);
+  float clipGainDb() const;
+  void setFadeInSeconds(float seconds);
+  float fadeInSeconds() const;
+  void setFadeOutSeconds(float seconds);
+  float fadeOutSeconds() const;
+  // Non-destructive source-sample repair ranges. Ranges are normalized and
+  // merged on insertion, then persisted with the layer JSON.
+  void addDeClickRange(qint64 startSample, qint64 endSample);
+  void clearDeClickRanges();
+  int deClickRangeCount() const;
+  std::vector<std::pair<qint64, qint64>> deClickRanges() const;
   void setPan(float pan);
   float pan() const;
   bool isMuted() const;

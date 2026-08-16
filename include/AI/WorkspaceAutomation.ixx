@@ -52,6 +52,7 @@ import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
 import Artifact.Service.Playback;
+import Artifact.Service.Audio;
 import Undo.UndoManager;
 import Property.Abstract;
 import Property.Group;
@@ -176,6 +177,9 @@ public:
             {"addImageLayerToCurrentComposition", IDescribable::loc("Add an image layer to the active composition.", "Add an image layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("path")}},
             {"addSvgLayerToCurrentComposition", IDescribable::loc("Add an SVG layer to the active composition.", "Add an SVG layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("path")}},
             {"addAudioLayerToCurrentComposition", IDescribable::loc("Add an audio layer to the active composition.", "Add an audio layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("path")}},
+            {"addAudioDeClickRange", IDescribable::loc("Persist a non-destructive de-click range on an audio layer.", "Persist a non-destructive de-click range on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("qint64"), QStringLiteral("qint64")}, {QStringLiteral("layerId"), QStringLiteral("startSample"), QStringLiteral("endSample")}},
+            {"clearAudioDeClickRanges", IDescribable::loc("Clear all persisted de-click ranges on an audio layer.", "Clear all persisted de-click ranges on an audio layer.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"getAudioDeClickRanges", IDescribable::loc("Read persisted de-click ranges from an audio layer.", "Read persisted de-click ranges from an audio layer.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"addTextLayerToCurrentComposition", IDescribable::loc("Add a text layer to the active composition.", "Add a text layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"addNullLayerToCurrentComposition", IDescribable::loc("Add a null layer to the active composition.", "Add a null layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
             {"addSolidLayerToCurrentComposition", IDescribable::loc("Add a solid layer to the active composition.", "Add a solid layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
@@ -447,6 +451,16 @@ public:
         }
         if (name == QStringLiteral("addAudioLayerToCurrentComposition")) {
             return addAudioLayerToCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("addAudioDeClickRange")) {
+            return addAudioDeClickRange(stringArg(args, 0),
+                args.value(1).toLongLong(), args.value(2).toLongLong());
+        }
+        if (name == QStringLiteral("clearAudioDeClickRanges")) {
+            return clearAudioDeClickRanges(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("getAudioDeClickRanges")) {
+            return getAudioDeClickRanges(stringArg(args, 0));
         }
         if (name == QStringLiteral("addTextLayerToCurrentComposition")) {
             return addTextLayerToCurrentComposition(stringArg(args, 0));
@@ -2314,6 +2328,27 @@ private:
         params.setAudioPath(path);
         service->addLayerToCurrentComposition(params);
         return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant addAudioDeClickRange(const QString& layerId,
+                                         qint64 startSample, qint64 endSample)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio && audio->addLayerDeClickRange(ArtifactCore::LayerID(layerId),
+                                                    startSample, endSample);
+    }
+
+    static QVariant clearAudioDeClickRanges(const QString& layerId)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio && audio->clearLayerDeClickRanges(ArtifactCore::LayerID(layerId));
+    }
+
+    static QVariant getAudioDeClickRanges(const QString& layerId)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio ? QVariant(audio->layerDeClickRanges(ArtifactCore::LayerID(layerId)))
+                     : QVariantList{};
     }
 
     static QVariant addTextLayerToCurrentComposition(const QString& name)

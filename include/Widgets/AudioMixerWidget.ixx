@@ -8,6 +8,7 @@ module;
 #include <QWidget>
 #include <QElapsedTimer>
 #include <QComboBox>
+#include <QJsonObject>
 export module Artifact.Widgets.AudioMixer;
 
 
@@ -50,7 +51,8 @@ public:
     AudioChannelStripWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus,
                             ArtifactCore::AudioMixer* mixer = nullptr,
                             std::function<void()> onChanged = {},
-                            QWidget* parent = nullptr);
+                            QWidget* parent = nullptr,
+                            std::function<void(const QJsonObject&, const QJsonObject&)> onRoutingChanged = {});
     virtual ~AudioChannelStripWidget();
 
     void updateMeters(); // 定期的に呼び出してレベル表示を更新
@@ -62,6 +64,7 @@ private:
     ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus_;
     ArtifactCore::AudioMixer* mixer_ = nullptr;
     std::function<void()> onChanged_;
+    std::function<void(const QJsonObject&, const QJsonObject&)> onRoutingChanged_;
     QComboBox* routeCombo_ = nullptr;
     SpectrumAnalyzerWidget* analyzerWidget_;
     std::unique_ptr<ArtifactCore::AudioAnalyzer> analyzer_;
@@ -79,7 +82,8 @@ private:
 class AudioMixerWidget : public QWidget {
     W_OBJECT(AudioMixerWidget)
 public:
-    AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* parent = nullptr);
+    AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* parent = nullptr,
+                     std::function<void(const QJsonObject&, const QJsonObject&)> onRoutingChanged = {});
     virtual ~AudioMixerWidget();
 
     void refreshBuses(); // バスの増減を反映
@@ -91,8 +95,10 @@ protected:
 
 private:
     ArtifactCore::AudioMixer* mixer_;
+    std::function<void(const QJsonObject&, const QJsonObject&)> onRoutingChanged_;
     std::vector<AudioChannelStripWidget*> strips_;
     QWidget* addBusButton_ = nullptr;
+    QLabel* graphLatencyLabel_ = nullptr;
     QTimer* meterTimer_ = nullptr;
 };
 

@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <functional>
 
 #include <wobjectdefs.h>
 #include <QWidget>
@@ -64,6 +65,10 @@ private:
     QColor bgColor_ = QColor(26, 26, 46);
     QColor playheadColor_ = QColor(231, 76, 60);
     bool isDragging_ = false;
+    bool isSelecting_ = false;
+    int selectionAnchor_ = 0;
+    int selectionStart_ = 0;
+    int selectionEnd_ = 0;
 
 public:
     explicit AudioWaveformWidget(QWidget* parent = nullptr);
@@ -72,6 +77,9 @@ public:
     void setWaveformData(const WaveformData& data);
     void setPosition(int sampleIndex);
     void clear();
+    int selectionStart() const;
+    int selectionEnd() const;
+    void clearSelection();
 
 signals:
     void positionChanged(int sampleIndex) W_SIGNAL(positionChanged, sampleIndex);
@@ -106,6 +114,7 @@ public:
 
     void updateDurationLabel();
     int sampleIndexToMs(int sampleIndex) const;
+    void setDeClickCommitHandler(std::function<void(int, int)> handler);
 
 signals:
     void playbackStarted() W_SIGNAL(playbackStarted);

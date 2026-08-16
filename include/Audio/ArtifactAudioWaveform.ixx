@@ -233,10 +233,25 @@ public:
     
     // Normalize
     AudioSegment normalize(const AudioSegment& segment, float targetDb = -3.0f);
+
+    // Bounded offline click repair. Returns a repaired copy and never mutates
+    // the source segment; selection is expressed in local sample indices.
+    AudioSegment deClick(const AudioSegment& segment,
+                         qint64 selectionStart = 0,
+                         qint64 selectionSamples = -1,
+                         float thresholdDb = -20.0f,
+                         qint64 maxClickSamples = 64);
     
     // Fade in/out
     AudioSegment fadeIn(const AudioSegment& segment, qint64 samples);
     AudioSegment fadeOut(const AudioSegment& segment, qint64 samples);
+
+    // Non-destructive adjacent-clip crossfade. The two segments must share
+    // sample rate and channel layout; the overlap is removed from the join.
+    AudioSegment crossfade(const AudioSegment& outgoing,
+                           const AudioSegment& incoming,
+                           qint64 samples,
+                           bool equalPower = true);
     
 Q_SIGNALS:
     void processingComplete() W_SIGNAL(processingComplete);
