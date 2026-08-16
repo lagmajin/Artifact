@@ -776,6 +776,7 @@ public:
     QSlider* volumeSlider_ = nullptr;
     QString currentFilePath_;
     std::function<void(int, int)> deClickCommitHandler_;
+    std::function<void()> deClickUndoHandler_;
 };
 
 ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
@@ -895,6 +896,9 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
 
     connect(impl_->undoEditButton_, &QPushButton::clicked, this, [this]() {
         if (!impl_->engine_->undoLastEdit()) return;
+        if (impl_->deClickUndoHandler_) {
+            impl_->deClickUndoHandler_();
+        }
         impl_->waveformWidget_->setSamples(
             impl_->engine_->waveformSamples(), impl_->engine_->sampleRate());
         impl_->deClickButton_->setText("De-click selection");
@@ -1030,6 +1034,12 @@ void ArtifactAudioPreviewWidget::setDeClickCommitHandler(
     std::function<void(int, int)> handler)
 {
     impl_->deClickCommitHandler_ = std::move(handler);
+}
+
+void ArtifactAudioPreviewWidget::setDeClickUndoHandler(
+    std::function<void()> handler)
+{
+    impl_->deClickUndoHandler_ = std::move(handler);
 }
 
 } // namespace Artifact

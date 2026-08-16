@@ -115,6 +115,7 @@ public:
     void updateDurationLabel();
     int sampleIndexToMs(int sampleIndex) const;
     void setDeClickCommitHandler(std::function<void(int, int)> handler);
+    void setDeClickUndoHandler(std::function<void()> handler);
 
 signals:
     void playbackStarted() W_SIGNAL(playbackStarted);
