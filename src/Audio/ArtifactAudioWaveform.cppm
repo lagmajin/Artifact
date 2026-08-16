@@ -819,6 +819,7 @@ AudioSegment AudioSyncTools::deClick(const AudioSegment& segment,
     AudioSegment result = segment;
     const qint64 frameCount = result.frameCount();
     if (frameCount < 3 || result.channelData.isEmpty()) return result;
+    if (selectionSamples == 0) return result;
 
     const qint64 first = std::clamp<qint64>(selectionStart, 1, frameCount - 2);
     const qint64 requestedEnd = selectionSamples < 0
