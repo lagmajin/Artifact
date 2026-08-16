@@ -82,9 +82,9 @@ struct ArtifactPlaybackAudioDiagnostics {
     float clippingThresholdDb = -0.1f;
 
     bool isHealthy() const {
-        return deviceOpen && formatMismatchCount == 0 &&
-               underflowCount == 0 && overflowCount == 0 &&
-               !clippingDetected;
+        // The counters above are cumulative diagnostics, so they must not
+        // permanently latch the current health state after a recovered glitch.
+        return deviceOpen && !clippingDetected;
     }
 };
 
