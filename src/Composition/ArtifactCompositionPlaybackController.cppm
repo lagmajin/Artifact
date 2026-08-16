@@ -484,12 +484,7 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
     const ArtifactPlaybackAudioDiagnostics audioDiagnostics = playback
         ? playback->audioDiagnostics()
         : ArtifactPlaybackAudioDiagnostics{};
-    const bool audioOk = !playback ||
-        (audioDiagnostics.deviceOpen &&
-         audioDiagnostics.formatMismatchCount == 0 &&
-         audioDiagnostics.underflowCount == 0 &&
-         audioDiagnostics.overflowCount == 0 &&
-         !audioDiagnostics.clippingDetected);
+    const bool audioOk = !playback || audioDiagnostics.isHealthy();
     const bool videoOk = impl_->currentFrame_.isValid();
     QString context = QString("Frame: %1, Time: %2")
                           .arg(impl_->currentFrame_.framePosition())

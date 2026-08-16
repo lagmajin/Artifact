@@ -80,6 +80,12 @@ struct ArtifactPlaybackAudioDiagnostics {
     float rightPeakDb = -60.0f;
     bool clippingDetected = false;
     float clippingThresholdDb = -0.1f;
+
+    bool isHealthy() const {
+        return deviceOpen && formatMismatchCount == 0 &&
+               underflowCount == 0 && overflowCount == 0 &&
+               !clippingDetected;
+    }
 };
 
 /// 再生スレッドエンジン
