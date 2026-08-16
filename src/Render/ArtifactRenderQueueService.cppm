@@ -6232,13 +6232,14 @@ namespace Artifact
                         measurementError,
                         QStringLiteral("Check the composition audio range and source assets"),
                         compId));
-                } else if (analyzer.getTruePeakDb() > -1.0f) {
+                } else if (const auto measurement = analyzer.measurement();
+                           measurement.exceedsTruePeak()) {
                     result.addDiagnostic(makePreflightDiagnostic(
                         ArtifactCore::DiagnosticSeverity::Warning,
                         ArtifactCore::DiagnosticCategory::Audio,
                         QStringLiteral("Audio true peak is close to full scale"),
                         QStringLiteral("Measured true peak is %1 dBTP; the current preflight warning threshold is -1.0 dBTP.")
-                            .arg(QString::number(analyzer.getTruePeakDb(), 'f', 1)),
+                            .arg(QString::number(measurement.truePeakDb, 'f', 1)),
                         QStringLiteral("Lower the master level or add a true-peak limiter before export"),
                         compId));
                 }
