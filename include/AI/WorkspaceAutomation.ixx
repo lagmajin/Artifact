@@ -182,6 +182,7 @@ public:
             {"getAudioDeClickRanges", IDescribable::loc("Read persisted de-click ranges from an audio layer.", "Read persisted de-click ranges from an audio layer.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"setAudioDeClickSettings", IDescribable::loc("Set persisted de-click threshold and maximum repair width on an audio layer.", "Set persisted de-click threshold and maximum repair width on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("qint64")}, {QStringLiteral("layerId"), QStringLiteral("thresholdDb"), QStringLiteral("maxClickSamples")}},
             {"getAudioDeClickSettings", IDescribable::loc("Read de-click settings from an audio layer.", "Read de-click settings from an audio layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"getPlaybackAudioDiagnostics", IDescribable::loc("Read live playback audio device, buffer, level, and clipping diagnostics.", "Read live playback audio device, buffer, level, and clipping diagnostics.", {}), "QVariantMap"},
             {"addTextLayerToCurrentComposition", IDescribable::loc("Add a text layer to the active composition.", "Add a text layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"addNullLayerToCurrentComposition", IDescribable::loc("Add a null layer to the active composition.", "Add a null layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
             {"addSolidLayerToCurrentComposition", IDescribable::loc("Add a solid layer to the active composition.", "Add a solid layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
@@ -470,6 +471,9 @@ public:
         }
         if (name == QStringLiteral("getAudioDeClickSettings")) {
             return getAudioDeClickSettings(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("getPlaybackAudioDiagnostics")) {
+            return getPlaybackAudioDiagnostics();
         }
         if (name == QStringLiteral("addTextLayerToCurrentComposition")) {
             return addTextLayerToCurrentComposition(stringArg(args, 0));
@@ -2373,6 +2377,25 @@ private:
         auto* audio = ArtifactAudioService::instance();
         return audio ? QVariant(audio->layerDeClickSettings(ArtifactCore::LayerID(layerId)))
                      : QVariantMap{};
+    }
+
+    static QVariant getPlaybackAudioDiagnostics()
+    {
+        const auto diagnostics = ArtifactAudioService::instance()->playbackDiagnostics();
+        return QVariantMap{
+            {QStringLiteral("deviceOpen"), diagnostics.deviceOpen},
+            {QStringLiteral("bufferedFrames"), QVariant::fromValue(diagnostics.bufferedFrames)},
+            {QStringLiteral("targetBufferedFrames"), QVariant::fromValue(diagnostics.targetBufferedFrames)},
+            {QStringLiteral("sampleRate"), diagnostics.sampleRate},
+            {QStringLiteral("channelCount"), diagnostics.channelCount},
+            {QStringLiteral("underflowCount"), QVariant::fromValue(diagnostics.underflowCount)},
+            {QStringLiteral("overflowCount"), QVariant::fromValue(diagnostics.overflowCount)},
+            {QStringLiteral("formatMismatchCount"), QVariant::fromValue(diagnostics.formatMismatchCount)},
+            {QStringLiteral("leftRmsDb"), diagnostics.leftRmsDb},
+            {QStringLiteral("rightRmsDb"), diagnostics.rightRmsDb},
+            {QStringLiteral("leftPeakDb"), diagnostics.leftPeakDb},
+            {QStringLiteral("rightPeakDb"), diagnostics.rightPeakDb},
+            {QStringLiteral("clippingDetected"), diagnostics.clippingDetected}};
     }
 
     static QVariant addTextLayerToCurrentComposition(const QString& name)
