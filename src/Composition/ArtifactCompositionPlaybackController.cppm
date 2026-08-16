@@ -488,6 +488,7 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
         (audioDiagnostics.deviceOpen &&
          audioDiagnostics.formatMismatchCount == 0 &&
          audioDiagnostics.underflowCount == 0 &&
+         audioDiagnostics.overflowCount == 0 &&
          !audioDiagnostics.clippingDetected);
     const bool videoOk = impl_->currentFrame_.isValid();
     QString context = QString("Frame: %1, Time: %2")
@@ -499,6 +500,12 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
           .arg(QString::number(audioDiagnostics.rightRmsDb, 'f', 1))
           .arg(QString::number(audioDiagnostics.leftPeakDb, 'f', 1))
           .arg(QString::number(audioDiagnostics.rightPeakDb, 'f', 1));
+      context += QString("; underrun/overrun: %1/%2; recovery retry/resync/clock: %3/%4/%5")
+          .arg(QString::number(audioDiagnostics.underflowCount))
+          .arg(QString::number(audioDiagnostics.overflowCount))
+          .arg(QString::number(audioDiagnostics.openRetryCount))
+          .arg(QString::number(audioDiagnostics.resyncClearCount))
+          .arg(QString::number(audioDiagnostics.clockCorrectionCount));
       if (audioDiagnostics.clippingDetected) {
         context += QStringLiteral("; clipping detected");
       }
