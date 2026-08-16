@@ -79,6 +79,7 @@ struct ArtifactPlaybackAudioDiagnostics {
     float leftPeakDb = -60.0f;
     float rightPeakDb = -60.0f;
     bool clippingDetected = false;
+    float clippingThresholdDb = -0.1f;
 };
 
 /// 再生スレッドエンジン

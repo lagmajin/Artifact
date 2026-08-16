@@ -2398,7 +2398,8 @@ private:
             {QStringLiteral("rightRmsDb"), diagnostics.rightRmsDb},
             {QStringLiteral("leftPeakDb"), diagnostics.leftPeakDb},
             {QStringLiteral("rightPeakDb"), diagnostics.rightPeakDb},
-            {QStringLiteral("clippingDetected"), diagnostics.clippingDetected}};
+            {QStringLiteral("clippingDetected"), diagnostics.clippingDetected},
+            {QStringLiteral("clippingThresholdDb"), diagnostics.clippingThresholdDb}};
     }
 
     static QVariant addTextLayerToCurrentComposition(const QString& name)

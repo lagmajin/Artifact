@@ -1340,6 +1340,7 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     }
     diagnostics.clippingDetected = diagnostics.leftPeakDb >= -0.1f ||
                                    diagnostics.rightPeakDb >= -0.1f;
+    diagnostics.clippingThresholdDb = -0.1f;
     return diagnostics;
 }
 
