@@ -181,8 +181,11 @@ int runAIToolBridgeTests()
     report.check(!playbackAudioDiagnosticsTool.isEmpty(), QStringLiteral("workspace automation exposes playback audio diagnostics"));
     report.check(playbackAudioDiagnosticsTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
                  QStringLiteral("playback audio diagnostics returns a result map"));
-    report.check(playbackAudioDiagnosticsTool.value(QStringLiteral("description")).toString().contains(QStringLiteral("clipping"), Qt::CaseInsensitive),
+    const QString playbackAudioDiagnosticsDescription = playbackAudioDiagnosticsTool.value(QStringLiteral("description")).toString();
+    report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("clipping"), Qt::CaseInsensitive),
                  QStringLiteral("playback audio diagnostics describes clipping state"));
+    report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("health"), Qt::CaseInsensitive),
+                 QStringLiteral("playback audio diagnostics describes current health"));
 
     const QJsonObject addTextLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addTextLayerToCurrentComposition"));
     report.check(!addTextLayerTool.isEmpty(), QStringLiteral("workspace automation exposes text layer creation"));
