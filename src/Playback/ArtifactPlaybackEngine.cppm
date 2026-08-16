@@ -268,6 +268,11 @@ public:
                  << "audioNextFrame=" << audioNextFrame_
                  << "audioResyncClears=" << audioResyncClearCount_
                  << "audioClockCorrections=" << audioClockCorrectionCount_;
+
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
         
         PlaybackState oldState = state_.load();
         state_ = PlaybackState::Stopped;
