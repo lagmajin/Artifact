@@ -492,6 +492,13 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
     QString context = QString("Frame: %1, Time: %2")
                           .arg(impl_->currentFrame_.framePosition())
                           .arg(impl_->elapsedTimer_.elapsed() / 1000.0);
+    if (playback) {
+      context += QString("; Audio RMS L/R: %1/%2 dBFS; Peak L/R: %3/%4 dBFS")
+          .arg(QString::number(audioDiagnostics.leftRmsDb, 'f', 1))
+          .arg(QString::number(audioDiagnostics.rightRmsDb, 'f', 1))
+          .arg(QString::number(audioDiagnostics.leftPeakDb, 'f', 1))
+          .arg(QString::number(audioDiagnostics.rightPeakDb, 'f', 1));
+    }
     impl_->outputMonitorCallback_(audioOk, videoOk, context);
   }
 }

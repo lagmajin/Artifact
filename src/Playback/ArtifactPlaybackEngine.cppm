@@ -185,6 +185,10 @@ public:
     size_t audioResyncClearCount_ = 0;
     size_t audioClockCorrectionCount_ = 0;
     size_t audioFormatMismatchCount_ = 0;
+    std::atomic<float> audioLeftRmsDb_{-60.0f};
+    std::atomic<float> audioRightRmsDb_{-60.0f};
+    std::atomic<float> audioLeftPeakDb_{-60.0f};
+    std::atomic<float> audioRightPeakDb_{-60.0f};
     std::atomic<bool> audioSeekPending_{true};
     bool audioExhausted_ = false;  // 音声データが尽きたフラグ（再シーク時にリセット）
     
@@ -211,6 +215,10 @@ public:
         QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
 
         audioRenderer_->setLevelCallback([this](const AudioLevelData& levels) {
+            audioLeftRmsDb_.store(levels.leftRms, std::memory_order_relaxed);
+            audioRightRmsDb_.store(levels.rightRms, std::memory_order_relaxed);
+            audioLeftPeakDb_.store(levels.leftPeak, std::memory_order_relaxed);
+            audioRightPeakDb_.store(levels.rightPeak, std::memory_order_relaxed);
             QMetaObject::invokeMethod(owner_, [this, levels]() {
                 Q_EMIT owner_->audioLevelChanged(levels.leftRms, levels.rightRms, levels.leftPeak, levels.rightPeak);
             }, Qt::QueuedConnection);
@@ -1303,6 +1311,10 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     }
     diagnostics.sampleRate = impl_->audioSampleRate_;
     diagnostics.formatMismatchCount = impl_->audioFormatMismatchCount_;
+    diagnostics.leftRmsDb = impl_->audioLeftRmsDb_.load(std::memory_order_relaxed);
+    diagnostics.rightRmsDb = impl_->audioRightRmsDb_.load(std::memory_order_relaxed);
+    diagnostics.leftPeakDb = impl_->audioLeftPeakDb_.load(std::memory_order_relaxed);
+    diagnostics.rightPeakDb = impl_->audioRightPeakDb_.load(std::memory_order_relaxed);
     return diagnostics;
 }
 

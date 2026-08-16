@@ -74,6 +74,10 @@ struct ArtifactPlaybackAudioDiagnostics {
     int sampleRate = 0;
     int channelCount = 0;
     std::size_t formatMismatchCount = 0;
+    float leftRmsDb = -60.0f;
+    float rightRmsDb = -60.0f;
+    float leftPeakDb = -60.0f;
+    float rightPeakDb = -60.0f;
 };
 
 /// 再生スレッドエンジン
