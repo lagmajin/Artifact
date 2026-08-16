@@ -334,4 +334,27 @@ QVariantList ArtifactAudioService::layerDeClickRanges(
  return result;
 }
 
+bool ArtifactAudioService::setLayerDeClickSettings(
+    const ArtifactCore::LayerID& layerId, float thresholdDb, qint64 maxClickSamples)
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return false;
+ audioLayer->setDeClickThresholdDb(thresholdDb);
+ audioLayer->setDeClickMaxClickSamples(maxClickSamples);
+ return true;
+}
+
+QVariantMap ArtifactAudioService::layerDeClickSettings(
+    const ArtifactCore::LayerID& layerId) const
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return {};
+ return {{QStringLiteral("thresholdDb"), audioLayer->deClickThresholdDb()},
+         {QStringLiteral("maxClickSamples"),
+          QVariant::fromValue(audioLayer->deClickMaxClickSamples())},
+         {QStringLiteral("rangeCount"), audioLayer->deClickRangeCount()}};
+}
+
 };

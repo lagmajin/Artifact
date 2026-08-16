@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QtGlobal>
 export module Artifact.Service.Audio;
 
@@ -46,6 +47,9 @@ export namespace Artifact {
                             qint64 startSample, qint64 endSample);
   bool clearLayerDeClickRanges(const ArtifactCore::LayerID& layerId);
   QVariantList layerDeClickRanges(const ArtifactCore::LayerID& layerId) const;
+  bool setLayerDeClickSettings(const ArtifactCore::LayerID& layerId,
+                               float thresholdDb, qint64 maxClickSamples);
+  QVariantMap layerDeClickSettings(const ArtifactCore::LayerID& layerId) const;
  };
 
 

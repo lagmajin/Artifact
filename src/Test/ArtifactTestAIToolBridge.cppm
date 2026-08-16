@@ -171,6 +171,12 @@ int runAIToolBridgeTests()
     const QJsonObject getAudioDeClickRangesTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioDeClickRanges"));
     report.check(!getAudioDeClickRangesTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click range query"));
 
+    const QJsonObject setAudioDeClickSettingsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setAudioDeClickSettings"));
+    report.check(!setAudioDeClickSettingsTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click settings"));
+
+    const QJsonObject getAudioDeClickSettingsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioDeClickSettings"));
+    report.check(!getAudioDeClickSettingsTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click settings query"));
+
     const QJsonObject addTextLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addTextLayerToCurrentComposition"));
     report.check(!addTextLayerTool.isEmpty(), QStringLiteral("workspace automation exposes text layer creation"));
 

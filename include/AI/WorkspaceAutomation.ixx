@@ -180,6 +180,8 @@ public:
             {"addAudioDeClickRange", IDescribable::loc("Persist a non-destructive de-click range on an audio layer.", "Persist a non-destructive de-click range on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("qint64"), QStringLiteral("qint64")}, {QStringLiteral("layerId"), QStringLiteral("startSample"), QStringLiteral("endSample")}},
             {"clearAudioDeClickRanges", IDescribable::loc("Clear all persisted de-click ranges on an audio layer.", "Clear all persisted de-click ranges on an audio layer.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"getAudioDeClickRanges", IDescribable::loc("Read persisted de-click ranges from an audio layer.", "Read persisted de-click ranges from an audio layer.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setAudioDeClickSettings", IDescribable::loc("Set persisted de-click threshold and maximum repair width on an audio layer.", "Set persisted de-click threshold and maximum repair width on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("qint64")}, {QStringLiteral("layerId"), QStringLiteral("thresholdDb"), QStringLiteral("maxClickSamples")}},
+            {"getAudioDeClickSettings", IDescribable::loc("Read de-click settings from an audio layer.", "Read de-click settings from an audio layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"addTextLayerToCurrentComposition", IDescribable::loc("Add a text layer to the active composition.", "Add a text layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"addNullLayerToCurrentComposition", IDescribable::loc("Add a null layer to the active composition.", "Add a null layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
             {"addSolidLayerToCurrentComposition", IDescribable::loc("Add a solid layer to the active composition.", "Add a solid layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
@@ -461,6 +463,13 @@ public:
         }
         if (name == QStringLiteral("getAudioDeClickRanges")) {
             return getAudioDeClickRanges(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setAudioDeClickSettings")) {
+            return setAudioDeClickSettings(stringArg(args, 0),
+                static_cast<float>(args.value(1).toDouble()), args.value(2).toLongLong());
+        }
+        if (name == QStringLiteral("getAudioDeClickSettings")) {
+            return getAudioDeClickSettings(stringArg(args, 0));
         }
         if (name == QStringLiteral("addTextLayerToCurrentComposition")) {
             return addTextLayerToCurrentComposition(stringArg(args, 0));
@@ -2349,6 +2358,21 @@ private:
         auto* audio = ArtifactAudioService::instance();
         return audio ? QVariant(audio->layerDeClickRanges(ArtifactCore::LayerID(layerId)))
                      : QVariantList{};
+    }
+
+    static QVariant setAudioDeClickSettings(const QString& layerId,
+                                            float thresholdDb, qint64 maxClickSamples)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio && audio->setLayerDeClickSettings(
+            ArtifactCore::LayerID(layerId), thresholdDb, maxClickSamples);
+    }
+
+    static QVariant getAudioDeClickSettings(const QString& layerId)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio ? QVariant(audio->layerDeClickSettings(ArtifactCore::LayerID(layerId)))
+                     : QVariantMap{};
     }
 
     static QVariant addTextLayerToCurrentComposition(const QString& name)
