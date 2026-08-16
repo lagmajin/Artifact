@@ -199,6 +199,7 @@ void ArtifactAudioLayer::addDeClickRange(qint64 startSample, qint64 endSample)
   impl_->deClickRanges_ = std::move(merged);
   ++impl_->deClickRevision_;
   impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
 }
 
 void ArtifactAudioLayer::clearDeClickRanges()
@@ -207,6 +208,7 @@ void ArtifactAudioLayer::clearDeClickRanges()
   impl_->deClickRanges_.clear();
   ++impl_->deClickRevision_;
   impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
 }
 
 int ArtifactAudioLayer::deClickRangeCount() const
@@ -225,6 +227,7 @@ void ArtifactAudioLayer::setDeClickThresholdDb(float thresholdDb)
       ? std::clamp(thresholdDb, -80.0f, 0.0f) : -20.0f;
   ++impl_->deClickRevision_;
   impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
 }
 
 float ArtifactAudioLayer::deClickThresholdDb() const
@@ -237,6 +240,7 @@ void ArtifactAudioLayer::setDeClickMaxClickSamples(qint64 samples)
   impl_->deClickMaxClickSamples_ = std::clamp<qint64>(samples, 1, 4096);
   ++impl_->deClickRevision_;
   impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
 }
 
 qint64 ArtifactAudioLayer::deClickMaxClickSamples() const
