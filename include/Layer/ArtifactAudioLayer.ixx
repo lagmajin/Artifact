@@ -73,6 +73,10 @@ export namespace Artifact
   void clearDeClickRanges();
   int deClickRangeCount() const;
   std::vector<std::pair<qint64, qint64>> deClickRanges() const;
+  void setDeClickThresholdDb(float thresholdDb);
+  float deClickThresholdDb() const;
+  void setDeClickMaxClickSamples(qint64 samples);
+  qint64 deClickMaxClickSamples() const;
   void setPan(float pan);
   float pan() const;
   bool isMuted() const;

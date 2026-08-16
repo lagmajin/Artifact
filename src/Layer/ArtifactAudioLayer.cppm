@@ -38,6 +38,8 @@ namespace Artifact
    float fadeOutSeconds_ = 0.0f;
    std::vector<std::pair<qint64, qint64>> deClickRanges_;
    std::uint64_t deClickRevision_ = 0;
+   float deClickThresholdDb_ = -20.0f;
+   qint64 deClickMaxClickSamples_ = 64;
    float pan_ = 0.0f;
    bool muted_ = false;
    QString sourcePath_;
@@ -63,6 +65,8 @@ namespace Artifact
         float fadeInSeconds = 0.0f;
    float fadeOutSeconds = 0.0f;
         std::uint64_t deClickRevision = 0;
+        float deClickThresholdDb = -20.0f;
+        qint64 deClickMaxClickSamples = 64;
         float pan = 0.0f;
         ArtifactCore::AudioSegment segment;
     };
@@ -213,6 +217,31 @@ int ArtifactAudioLayer::deClickRangeCount() const
 std::vector<std::pair<qint64, qint64>> ArtifactAudioLayer::deClickRanges() const
 {
   return impl_->deClickRanges_;
+}
+
+void ArtifactAudioLayer::setDeClickThresholdDb(float thresholdDb)
+{
+  impl_->deClickThresholdDb_ = std::isfinite(thresholdDb)
+      ? std::clamp(thresholdDb, -80.0f, 0.0f) : -20.0f;
+  ++impl_->deClickRevision_;
+  impl_->resampledCache_ = Impl::ResampledCache{};
+}
+
+float ArtifactAudioLayer::deClickThresholdDb() const
+{
+  return impl_->deClickThresholdDb_;
+}
+
+void ArtifactAudioLayer::setDeClickMaxClickSamples(qint64 samples)
+{
+  impl_->deClickMaxClickSamples_ = std::clamp<qint64>(samples, 1, 4096);
+  ++impl_->deClickRevision_;
+  impl_->resampledCache_ = Impl::ResampledCache{};
+}
+
+qint64 ArtifactAudioLayer::deClickMaxClickSamples() const
+{
+  return impl_->deClickMaxClickSamples_;
 }
 
 void ArtifactAudioLayer::setPan(float pan)
@@ -368,6 +397,8 @@ QJsonObject ArtifactAudioLayer::toJson() const
     deClickRanges.append(item);
   }
   obj["audio.deClickRanges"] = deClickRanges;
+  obj["audio.deClickThresholdDb"] = static_cast<double>(impl_->deClickThresholdDb_);
+  obj["audio.deClickMaxClickSamples"] = static_cast<double>(impl_->deClickMaxClickSamples_);
   obj["audio.pan"] = static_cast<double>(impl_->pan_);
   obj["audio.muted"] = impl_->muted_;
   return obj;
@@ -410,6 +441,12 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
     const auto item = value.toObject();
     addDeClickRange(static_cast<qint64>(item.value("startSample").toDouble()),
                     static_cast<qint64>(item.value("endSample").toDouble()));
+  }
+  if (obj.contains("audio.deClickThresholdDb")) {
+    setDeClickThresholdDb(static_cast<float>(obj.value("audio.deClickThresholdDb").toDouble(-20.0)));
+  }
+  if (obj.contains("audio.deClickMaxClickSamples")) {
+    setDeClickMaxClickSamples(static_cast<qint64>(obj.value("audio.deClickMaxClickSamples").toDouble(64.0)));
   }
   if (obj.contains("audio.pan")) {
     setPan(static_cast<float>(obj.value("audio.pan").toDouble(0.0)));
@@ -480,6 +517,25 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   fadeOutProp->setStep(0.01);
   fadeOutProp->setUnit(QStringLiteral("s"));
   audioGroup.addProperty(fadeOutProp);
+  auto deClickThresholdProp = makeProp(
+      QStringLiteral("audio.deClickThresholdDb"), ArtifactCore::PropertyType::Float,
+      impl_->deClickThresholdDb_, -116);
+  deClickThresholdProp->setDisplayLabel(QStringLiteral("De-click Threshold"));
+  deClickThresholdProp->setHardRange(-80.0, 0.0);
+  deClickThresholdProp->setSoftRange(-40.0, -6.0);
+  deClickThresholdProp->setStep(0.5);
+  deClickThresholdProp->setUnit(QStringLiteral("dB"));
+  deClickThresholdProp->setTooltip(QStringLiteral("Detection threshold for persisted de-click repairs"));
+  audioGroup.addProperty(deClickThresholdProp);
+  auto deClickWidthProp = makeProp(
+      QStringLiteral("audio.deClickMaxClickSamples"), ArtifactCore::PropertyType::Integer,
+      static_cast<qint64>(impl_->deClickMaxClickSamples_), -115);
+  deClickWidthProp->setDisplayLabel(QStringLiteral("De-click Max Width"));
+  deClickWidthProp->setHardRange(1.0, 4096.0);
+  deClickWidthProp->setSoftRange(1.0, 256.0);
+  deClickWidthProp->setUnit(QStringLiteral("samples"));
+  deClickWidthProp->setTooltip(QStringLiteral("Maximum isolated click width to repair"));
+  audioGroup.addProperty(deClickWidthProp);
   auto panProp = makeProp(QStringLiteral("audio.pan"), ArtifactCore::PropertyType::Float, impl_->pan_, -115);
   panProp->setHardRange(-1.0, 1.0);
   panProp->setSoftRange(-1.0, 1.0);
@@ -516,6 +572,14 @@ bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, cons
   }
   if (propertyPath == QStringLiteral("audio.fadeOutSeconds")) {
     setFadeOutSeconds(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.deClickThresholdDb")) {
+    setDeClickThresholdDb(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.deClickMaxClickSamples")) {
+    setDeClickMaxClickSamples(static_cast<qint64>(value.toLongLong()));
     return true;
   }
   if (propertyPath == QStringLiteral("audio.pan")) {
@@ -846,6 +910,8 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       rc.fadeInSeconds == impl_->fadeInSeconds_ &&
       rc.fadeOutSeconds == impl_->fadeOutSeconds_ &&
       rc.deClickRevision == impl_->deClickRevision_ &&
+      rc.deClickThresholdDb == impl_->deClickThresholdDb_ &&
+      rc.deClickMaxClickSamples == impl_->deClickMaxClickSamples_ &&
       rc.segment.channelCount() >= outChannels &&
       rc.segment.frameCount() >= frameCount) {
     for (int ch = 0; ch < outChannels; ++ch) {
@@ -933,7 +999,8 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
           std::max<qint64>(0, localStart);
       if (localCount > 0) {
         outSegment = deClickTools.deClick(outSegment,
-            std::max<qint64>(0, localStart), localCount);
+            std::max<qint64>(0, localStart), localCount,
+            impl_->deClickThresholdDb_, impl_->deClickMaxClickSamples_);
       }
     }
   }
@@ -955,6 +1022,8 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     rc.fadeInSeconds = impl_->fadeInSeconds_;
     rc.fadeOutSeconds = impl_->fadeOutSeconds_;
     rc.deClickRevision = impl_->deClickRevision_;
+    rc.deClickThresholdDb = impl_->deClickThresholdDb_;
+    rc.deClickMaxClickSamples = impl_->deClickMaxClickSamples_;
     rc.pan = impl_->pan_;
     rc.segment.sampleRate = sampleRate;
     rc.segment.layout = outLayout;
