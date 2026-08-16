@@ -182,7 +182,7 @@ public:
             {"getAudioDeClickRanges", IDescribable::loc("Read persisted de-click ranges from an audio layer.", "Read persisted de-click ranges from an audio layer.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"setAudioDeClickSettings", IDescribable::loc("Set persisted de-click threshold and maximum repair width on an audio layer.", "Set persisted de-click threshold and maximum repair width on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("qint64")}, {QStringLiteral("layerId"), QStringLiteral("thresholdDb"), QStringLiteral("maxClickSamples")}},
             {"getAudioDeClickSettings", IDescribable::loc("Read de-click settings from an audio layer.", "Read de-click settings from an audio layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
-            {"getPlaybackAudioDiagnostics", IDescribable::loc("Read live playback audio device, buffer, level, health, and clipping diagnostics.", "Read live playback audio device, buffer, level, health, and clipping diagnostics.", {}), "QVariantMap"},
+            {"getPlaybackAudioDiagnostics", IDescribable::loc("Read live playback audio device, buffer, level, health, clipping, and health-reason diagnostics.", "Read live playback audio device, buffer, level, health, clipping, and health-reason diagnostics.", {}), "QVariantMap"},
             {"addTextLayerToCurrentComposition", IDescribable::loc("Add a text layer to the active composition.", "Add a text layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"addNullLayerToCurrentComposition", IDescribable::loc("Add a null layer to the active composition.", "Add a null layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
             {"addSolidLayerToCurrentComposition", IDescribable::loc("Add a solid layer to the active composition.", "Add a solid layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
@@ -2382,6 +2382,12 @@ private:
     static QVariant getPlaybackAudioDiagnostics()
     {
         const auto diagnostics = ArtifactAudioService::instance()->playbackDiagnostics();
+        QString healthReason = QStringLiteral("ok");
+        if (!diagnostics.deviceOpen) {
+            healthReason = QStringLiteral("device closed");
+        } else if (diagnostics.clippingDetected) {
+            healthReason = QStringLiteral("clipping detected");
+        }
         return QVariantMap{
             {QStringLiteral("deviceOpen"), diagnostics.deviceOpen},
             {QStringLiteral("bufferedFrames"), QVariant::fromValue(diagnostics.bufferedFrames)},
@@ -2400,7 +2406,8 @@ private:
             {QStringLiteral("rightPeakDb"), diagnostics.rightPeakDb},
             {QStringLiteral("clippingDetected"), diagnostics.clippingDetected},
             {QStringLiteral("clippingThresholdDb"), diagnostics.clippingThresholdDb},
-            {QStringLiteral("audioHealthy"), diagnostics.isHealthy()}};
+            {QStringLiteral("audioHealthy"), diagnostics.isHealthy()},
+            {QStringLiteral("healthReason"), healthReason}};
     }
 
     static QVariant addTextLayerToCurrentComposition(const QString& name)

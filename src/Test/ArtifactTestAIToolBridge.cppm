@@ -186,6 +186,8 @@ int runAIToolBridgeTests()
                  QStringLiteral("playback audio diagnostics describes clipping state"));
     report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("health"), Qt::CaseInsensitive),
                  QStringLiteral("playback audio diagnostics describes current health"));
+    report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("reason"), Qt::CaseInsensitive),
+                 QStringLiteral("playback audio diagnostics describes health reason"));
 
     const QJsonObject addTextLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addTextLayerToCurrentComposition"));
     report.check(!addTextLayerTool.isEmpty(), QStringLiteral("workspace automation exposes text layer creation"));
