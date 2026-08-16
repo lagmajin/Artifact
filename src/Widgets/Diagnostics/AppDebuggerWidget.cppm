@@ -1253,6 +1253,10 @@ public:
             parts << QStringLiteral("audioUnderrun=%1 overrun=%2")
                          .arg(QString::number(audio.underflowCount))
                          .arg(QString::number(audio.overflowCount));
+            parts << QStringLiteral("audioRecovery=retry:%1 resync:%2 clock:%3")
+                         .arg(QString::number(audio.openRetryCount))
+                         .arg(QString::number(audio.resyncClearCount))
+                         .arg(QString::number(audio.clockCorrectionCount));
             parts << QStringLiteral("audioRms=%1/%2dBFS peak=%3/%4dBFS")
                          .arg(QString::number(audio.leftRmsDb, 'f', 1))
                          .arg(QString::number(audio.rightRmsDb, 'f', 1))
