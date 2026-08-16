@@ -493,6 +493,8 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
       context += QString("; Audio health: %1")
           .arg(audioDiagnostics.isHealthy() ? QStringLiteral("ok")
                                              : QStringLiteral("ng"));
+      context += QString("; health reason: %1")
+          .arg(audioDiagnostics.healthReason());
       context += QString("; device=%1 buffer=%2/%3 formatMismatch=%4")
           .arg(audioDiagnostics.deviceOpen ? QStringLiteral("open")
                                            : QStringLiteral("closed"))

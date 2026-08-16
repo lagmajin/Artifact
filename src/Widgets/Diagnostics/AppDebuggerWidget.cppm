@@ -1269,6 +1269,8 @@ public:
             parts << QStringLiteral("audioHealthy=%1")
                          .arg(audio.isHealthy() ? QStringLiteral("yes")
                                                 : QStringLiteral("no"));
+            parts << QStringLiteral("audioHealthReason=%1")
+                         .arg(audio.healthReason());
         }
         return parts.join(QStringLiteral("  "));
     }

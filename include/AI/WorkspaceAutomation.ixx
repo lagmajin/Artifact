@@ -2382,12 +2382,6 @@ private:
     static QVariant getPlaybackAudioDiagnostics()
     {
         const auto diagnostics = ArtifactAudioService::instance()->playbackDiagnostics();
-        QString healthReason = QStringLiteral("ok");
-        if (!diagnostics.deviceOpen) {
-            healthReason = QStringLiteral("device closed");
-        } else if (diagnostics.clippingDetected) {
-            healthReason = QStringLiteral("clipping detected");
-        }
         return QVariantMap{
             {QStringLiteral("deviceOpen"), diagnostics.deviceOpen},
             {QStringLiteral("bufferedFrames"), QVariant::fromValue(diagnostics.bufferedFrames)},
@@ -2407,7 +2401,7 @@ private:
             {QStringLiteral("clippingDetected"), diagnostics.clippingDetected},
             {QStringLiteral("clippingThresholdDb"), diagnostics.clippingThresholdDb},
             {QStringLiteral("audioHealthy"), diagnostics.isHealthy()},
-            {QStringLiteral("healthReason"), healthReason}};
+            {QStringLiteral("healthReason"), diagnostics.healthReason()}};
     }
 
     static QVariant addTextLayerToCurrentComposition(const QString& name)

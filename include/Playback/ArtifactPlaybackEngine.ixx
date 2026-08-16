@@ -86,6 +86,12 @@ struct ArtifactPlaybackAudioDiagnostics {
         // permanently latch the current health state after a recovered glitch.
         return deviceOpen && !clippingDetected;
     }
+
+    QString healthReason() const {
+        if (!deviceOpen) return QStringLiteral("device closed");
+        if (clippingDetected) return QStringLiteral("clipping detected");
+        return QStringLiteral("ok");
+    }
 };
 
 /// 再生スレッドエンジン
