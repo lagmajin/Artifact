@@ -490,6 +490,9 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
                           .arg(impl_->currentFrame_.framePosition())
                           .arg(impl_->elapsedTimer_.elapsed() / 1000.0);
     if (playback) {
+      context += QString("; Audio health: %1")
+          .arg(audioDiagnostics.isHealthy() ? QStringLiteral("ok")
+                                             : QStringLiteral("ng"));
       context += QString("; Audio RMS L/R: %1/%2 dBFS; Peak L/R: %3/%4 dBFS")
           .arg(QString::number(audioDiagnostics.leftRmsDb, 'f', 1))
           .arg(QString::number(audioDiagnostics.rightRmsDb, 'f', 1))
