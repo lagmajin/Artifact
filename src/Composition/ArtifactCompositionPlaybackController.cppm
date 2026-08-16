@@ -493,6 +493,12 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
       context += QString("; Audio health: %1")
           .arg(audioDiagnostics.isHealthy() ? QStringLiteral("ok")
                                              : QStringLiteral("ng"));
+      context += QString("; device=%1 buffer=%2/%3 formatMismatch=%4")
+          .arg(audioDiagnostics.deviceOpen ? QStringLiteral("open")
+                                           : QStringLiteral("closed"))
+          .arg(QString::number(audioDiagnostics.bufferedFrames))
+          .arg(QString::number(audioDiagnostics.targetBufferedFrames))
+          .arg(QString::number(audioDiagnostics.formatMismatchCount));
       context += QString("; Audio RMS L/R: %1/%2 dBFS; Peak L/R: %3/%4 dBFS")
           .arg(QString::number(audioDiagnostics.leftRmsDb, 'f', 1))
           .arg(QString::number(audioDiagnostics.rightRmsDb, 'f', 1))
