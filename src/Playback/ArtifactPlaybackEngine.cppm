@@ -283,6 +283,10 @@ public:
             audioRenderer_->stop();
             audioRenderer_->clearBuffer();
         }
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
         audioTargetBufferedFrames_ = 0;
 
         if (workerThread_ && workerThread_->isRunning()) {
@@ -1162,6 +1166,10 @@ void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }
+    impl_->audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+    impl_->audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+    impl_->audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+    impl_->audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
 
     QImage preview = renderPreviewFrame(position);
     if (preview.isNull()) {
