@@ -1253,6 +1253,14 @@ public:
             parts << QStringLiteral("audioUnderrun=%1 overrun=%2")
                          .arg(QString::number(audio.underflowCount))
                          .arg(QString::number(audio.overflowCount));
+            parts << QStringLiteral("audioRms=%1/%2dBFS peak=%3/%4dBFS")
+                         .arg(QString::number(audio.leftRmsDb, 'f', 1))
+                         .arg(QString::number(audio.rightRmsDb, 'f', 1))
+                         .arg(QString::number(audio.leftPeakDb, 'f', 1))
+                         .arg(QString::number(audio.rightPeakDb, 'f', 1));
+            parts << QStringLiteral("audioClipping=%1")
+                         .arg(audio.clippingDetected ? QStringLiteral("yes")
+                                                      : QStringLiteral("no"));
         }
         return parts.join(QStringLiteral("  "));
     }
