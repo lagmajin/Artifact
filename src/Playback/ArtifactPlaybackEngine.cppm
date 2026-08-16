@@ -1315,6 +1315,8 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     diagnostics.rightRmsDb = impl_->audioRightRmsDb_.load(std::memory_order_relaxed);
     diagnostics.leftPeakDb = impl_->audioLeftPeakDb_.load(std::memory_order_relaxed);
     diagnostics.rightPeakDb = impl_->audioRightPeakDb_.load(std::memory_order_relaxed);
+    diagnostics.clippingDetected = diagnostics.leftPeakDb >= -0.1f ||
+                                   diagnostics.rightPeakDb >= -0.1f;
     return diagnostics;
 }
 
