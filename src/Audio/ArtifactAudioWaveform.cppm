@@ -864,6 +864,24 @@ AudioSegment AudioSyncTools::deClick(const AudioSegment& segment,
                 runStart = -1;
             }
         }
+        // Flush a click run that reaches the selection's final sample.  The
+        // loop above only closes runs when it sees the first non-click sample.
+        if (runStart >= 0) {
+            const qint64 runEnd = last;
+            const qint64 width = runEnd - runStart;
+            if (width > 0 && width <= safeWidth) {
+                const float left = sanitizeWaveformSample(
+                    channel[static_cast<int>(runStart - 1)]);
+                const float right = sanitizeWaveformSample(
+                    channel[static_cast<int>(runEnd)]);
+                for (qint64 repair = runStart; repair < runEnd; ++repair) {
+                    const float t = static_cast<float>(repair - runStart + 1) /
+                        static_cast<float>(width + 1);
+                    channel[static_cast<int>(repair)] =
+                        sanitizeWaveformSample(left + (right - left) * t);
+                }
+            }
+        }
     }
     return result;
 }
