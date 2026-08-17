@@ -829,21 +829,6 @@ QImage makeMissingImagePlaceholder(const QSize& size = QSize(256, 256), const QS
     return placeholder;
 }
 
-qint64 resolveSequenceFrame(qint64 layerFrame, double compositionFps,
-                            double sequenceFps)
-{
-    if (layerFrame <= 0 || !std::isfinite(compositionFps) || compositionFps <= 0.0 ||
-        !std::isfinite(sequenceFps) || sequenceFps <= 0.0) {
-        return std::max<qint64>(0, layerFrame);
-    }
-
-    const double sequenceTime = static_cast<double>(layerFrame) / compositionFps;
-    const double resolved = std::floor(sequenceTime * sequenceFps);
-    if (!std::isfinite(resolved) || resolved >= static_cast<double>(std::numeric_limits<qint64>::max())) {
-        return std::numeric_limits<qint64>::max();
-    }
-    return std::max<qint64>(0, static_cast<qint64>(resolved));
-}
 }
 
 class ArtifactImageLayer::Impl {
@@ -1103,9 +1088,6 @@ public:
         if (sequencePaths_.size() <= 1) {
             return false;
         }
-        if (sequenceCachedIndex_ == frameIndex && cache_) {
-            return true;
-        }
         if (!sequenceSource_) {
             sequenceSource_ = std::make_unique<ArtifactCore::ImageSequenceSource>();
             const bool opened = sequencePaths_.size() > 1
@@ -1125,6 +1107,9 @@ public:
             clearSequenceFrameCache();
             return false;
         }
+        frameIndex = sequenceFrameRate_ > 0.0
+            ? sequenceSource_->frameIndexAtTime(frameIndex, compositionFrameRate())
+            : std::clamp<qint64>(frameIndex, 0, frameCount - 1);
         // Hold the nearest valid source frame while the layer remains visible
         // beyond the discovered sequence range. This keeps an image-sequence
         // layer stable at its in/out boundaries instead of flashing blank.
@@ -2103,8 +2088,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     if (isImageSequence()) {
         const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(resolveSequenceFrame(
-            layerFrame, compositionFrameRate(), impl_->sequenceFrameRate_));
+        impl_->refreshSequenceFrame(layerFrame);
     }
 
     auto size = sourceSize();
@@ -2220,8 +2204,7 @@ QImage ArtifactImageLayer::toQImage() const
     if (isImageSequence()) {
         const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(resolveSequenceFrame(
-            layerFrame, compositionFrameRate(), impl_->sequenceFrameRate_));
+        impl_->refreshSequenceFrame(layerFrame);
     }
 
     const bool isMainThread = (QThread::currentThread() == qApp->thread());

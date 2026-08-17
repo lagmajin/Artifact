@@ -684,6 +684,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     // Flush all accumulated SolidRectPkts as a single batched draw call
     auto flushSolidRectBatch = [&]() {
         if (m_batchSolidRectCount_ == 0) return;
+        recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SolidRect");
         mapWriteDiscard(recordCtx, m_batch_solid_rect_vb_,
             m_batch_solid_rect_cpu_.data(),
             sizeof(BatchRectVertexAA) * Uint32(m_batchSolidRectCount_) * 4,
@@ -722,6 +723,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             recordCtx->DrawIndexed(da);
         }
         m_batchSolidRectCount_ = 0;
+        recordCtx->EndDebugGroup();
     };
 
     for (auto& pkt : buf.packets()) {
@@ -748,7 +750,9 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                     }
                     ++m_batchSolidRectCount_;
                 } else {
+                    recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SolidRect");
                     submitSolidRect(p, recordCtx, pRTV);
+                    recordCtx->EndDebugGroup();
                 }
             } else if constexpr (std::is_same_v<T, SolidRectXformPkt>) {
                 if (batchReady) {
@@ -778,7 +782,9 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                     }
                     ++m_batchSolidRectCount_;
                 } else {
+                    recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SolidRect");
                     submitSolidRectXform(p, recordCtx, pRTV);
+                    recordCtx->EndDebugGroup();
                 }
             } else {
                 flushSolidRectBatch(); // flush before switching to a different draw type
@@ -791,16 +797,16 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, AtlasSpritePkt>)     submitAtlasSprite(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, AtlasSpriteXformPkt>)submitAtlasSpriteXform(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SpritePkt>)          { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, SpriteXformPkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, AtlasSpritePkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitAtlasSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, AtlasSpriteXformPkt>){ recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitAtlasSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitMaskedSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, BillboardPkt>)       submitBillboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, BillboardImagePkt>)  submitBillboardImage(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, GlyphTextPkt>)       { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphText(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphTextTransformed(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
             }
         }, pkt);
     }

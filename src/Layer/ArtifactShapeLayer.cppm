@@ -1257,6 +1257,12 @@ void ArtifactShapeLayer::setShapeType(Artifact::ShapeType type) {
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
+  if (hasRigidBodyPhysics()) {
+   syncRigidBodyPhysicsToBounds();
+  }
+  if (hasSoftBodyPhysics()) {
+   syncSoftBodyPhysicsColliderToBounds();
+  }
   Q_EMIT changed();
 }
 Artifact::ShapeType ArtifactShapeLayer::shapeType() const { return impl_->shapeType_; }
@@ -1290,6 +1296,12 @@ void ArtifactShapeLayer::setSize(int w, int h) {
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
+  if (hasRigidBodyPhysics()) {
+   syncRigidBodyPhysicsToBounds();
+  }
+  if (hasSoftBodyPhysics()) {
+   syncSoftBodyPhysicsColliderToBounds();
+  }
   Q_EMIT changed();
 }
 int ArtifactShapeLayer::shapeWidth() const { return impl_->width_; }
