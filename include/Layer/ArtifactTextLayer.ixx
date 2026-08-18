@@ -103,6 +103,8 @@ public:
     void setTracking(float tracking);    float tracking() const;
     void setFontStretch(float stretch);
     float fontStretch() const;
+    void setFontWeight(int weight);
+    int fontWeight() const;
 
     void setLeading(float leading);
     float leading() const;

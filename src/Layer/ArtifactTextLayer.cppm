@@ -1913,11 +1913,28 @@ float ArtifactTextLayer::leading() const { return impl_->textStyle_.leading; }
 void ArtifactTextLayer::setBold(bool enabled) {
   impl_->textStyle_.fontWeight =
       enabled ? FontWeight::Bold : FontWeight::Normal;
+  impl_->textStyle_.fontWeightValue = enabled ? 700 : 400;
   markDirty();
 }
 
 bool ArtifactTextLayer::isBold() const {
   return impl_->textStyle_.fontWeight == FontWeight::Bold;
+}
+
+void ArtifactTextLayer::setFontWeight(int weight) {
+  const int normalized = std::clamp(weight, 100, 900);
+  impl_->textStyle_.fontWeightValue = normalized;
+  impl_->textStyle_.fontWeight = normalized >= 600
+      ? FontWeight::Bold : FontWeight::Normal;
+  setDirty(LayerDirtyFlag::Property);
+  markDirty();
+  Q_EMIT changed();
+}
+
+int ArtifactTextLayer::fontWeight() const {
+  return impl_->textStyle_.fontWeightValue >= 100
+      ? impl_->textStyle_.fontWeightValue
+      : (isBold() ? 700 : 400);
 }
 
 void ArtifactTextLayer::setItalic(bool enabled) {
@@ -2256,6 +2273,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.fontStretch"] = fontStretch();
   obj["text.leading"] = leading();
   obj["text.bold"] = isBold();
+  obj["text.fontWeight"] = fontWeight();
   obj["text.italic"] = isItalic();
   obj["text.allCaps"] = isAllCaps();
   obj["text.underline"] = isUnderline();
@@ -2365,6 +2383,9 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   }
   if (obj.contains("text.bold")) {
     setBold(obj.value("text.bold").toBool(isBold()));
+  }
+  if (obj.contains("text.fontWeight")) {
+    setFontWeight(obj.value("text.fontWeight").toInt(fontWeight()));
   }
   if (obj.contains("text.italic")) {
     setItalic(obj.value("text.italic").toBool(isItalic()));
@@ -3123,6 +3144,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           runStyle.pixelSize = runStyle.fontSize;
           runStyle.fontWeight =
               runFont.bold() ? FontWeight::Bold : FontWeight::Normal;
+          runStyle.fontWeightValue = runFont.weight();
           runStyle.fontStyle =
               runFont.italic() ? FontStyle::Italic : FontStyle::Normal;
           runStyle.allCaps = false;
@@ -3419,6 +3441,15 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   addEssentialTextProp(QStringLiteral("text.bold"),
                        ArtifactCore::PropertyType::Boolean, isBold(),
                        QStringLiteral("Bold"), -93);
+  auto fontWeightProp = makeProp(QStringLiteral("text.fontWeight"),
+                                 ArtifactCore::PropertyType::Integer,
+                                 fontWeight(), -92);
+  fontWeightProp->setDisplayLabel(QStringLiteral("Font Weight"));
+  fontWeightProp->setHardRange(100.0, 900.0);
+  fontWeightProp->setSoftRange(300.0, 700.0);
+  fontWeightProp->setStep(1.0);
+  fontWeightProp->setAnimatable(true);
+  textGroup.addProperty(fontWeightProp);
   addEssentialTextProp(QStringLiteral("text.italic"),
                        ArtifactCore::PropertyType::Boolean, isItalic(),
                        QStringLiteral("Italic"), -92);
@@ -4071,6 +4102,10 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
   if (propertyPath == QStringLiteral("text.bold")) {
     setBold(value.toBool());
     setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.fontWeight")) {
+    setFontWeight(value.toInt());
     return true;
   }
   if (propertyPath == QStringLiteral("text.italic")) {

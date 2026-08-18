@@ -137,6 +137,7 @@ static TextStyle textStyleFromQFont(const QFont& font)
     style.pixelSize = size;
     style.tracking = static_cast<float>(font.letterSpacing());
     style.fontWeight = font.bold() ? FontWeight::Bold : FontWeight::Normal;
+    style.fontWeightValue = font.weight();
     style.fontStyle = font.italic() ? FontStyle::Italic : FontStyle::Normal;
     style.allCaps = font.capitalization() == QFont::AllUppercase;
     style.underline = font.underline();
