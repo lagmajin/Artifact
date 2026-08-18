@@ -73,6 +73,9 @@ public:
     void setHdriPath(const QString& path) {
         if (hdriPath_ != path) {
             hdriPath_ = path;
+            // A path change invalidates all derived GPU resources. The loader
+            // will repopulate the cubemap and IBL products for the new asset.
+            clearGpuResources();
             ++revision_;
             changed();
         }
@@ -112,8 +115,11 @@ public:
     std::uint64_t revision() const { return revision_; }
 
     // Access the loaded cubemap texture
-    Diligent::ITexture* cubemapTexture() const { return cubemapTexture_; }
-    void setCubemapTexture(Diligent::ITexture* texture) { cubemapTexture_ = texture; }
+    Diligent::ITexture* cubemapTexture() const { return cubemapTexture_.RawPtr(); }
+    void setCubemapTexture(Diligent::ITexture* texture) {
+        cubemapTexture_ = texture;
+    }
+    void clearGpuResources() { cubemapTexture_.Release(); }
 
     // Generic properties for Inspector
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override {
@@ -176,7 +182,7 @@ private:
     float intensity_ = 1.0f;
     float rotation_ = 0.0f;
     bool visibleAsBackground_ = true;
-    Diligent::ITexture* cubemapTexture_ = nullptr;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> cubemapTexture_;
     std::uint64_t revision_ = 1;
 };
 
