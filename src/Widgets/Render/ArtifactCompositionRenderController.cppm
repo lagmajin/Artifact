@@ -155,6 +155,7 @@ import Core.Diagnostics.Trace;
 import Artifact.Composition.Abstract;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.EnvironmentMap;
 import Artifact.Layers.Abstract._2D;
 
 import Artifact.Layer.Clone;
@@ -30381,6 +30382,36 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   renderer_->setSceneLights(rendererSceneLights);
+
+  // The environment layer is a scene-level lighting source rather than a
+  // drawable 2D layer. Select the first active environment map deterministically
+  // and pass it to the mesh renderer; later layers remain available for explicit
+  // multi-environment blending without changing the current contract.
+  QString environmentMapPath;
+  float environmentMapIntensity = 0.0f;
+  float environmentMapRotation = 0.0f;
+  bool environmentMapVisibleAsBackground = false;
+  for (const auto& layer : layers) {
+    if (!layer || !isLayerEffectivelyVisible(layer) ||
+        !layer->isActiveAt(currentFrame)) {
+      continue;
+    }
+    auto* environmentLayer =
+        dynamic_cast<ArtifactEnvironmentMapLayer*>(layer.get());
+    if (!environmentLayer ||
+        environmentLayer->hdriPath().trimmed().isEmpty()) {
+      continue;
+    }
+    environmentMapPath = environmentLayer->hdriPath().trimmed();
+    environmentMapIntensity = environmentLayer->intensity();
+    environmentMapRotation = environmentLayer->rotation();
+    environmentMapVisibleAsBackground = environmentLayer->visibleAsBackground();
+    break;
+  }
+  renderer_->setEnvironmentMap(environmentMapPath, environmentMapIntensity);
+  renderer_->setEnvironmentRotation(environmentMapRotation);
+  renderer_->setEnvironmentBackgroundVisible(environmentMapVisibleAsBackground);
+  renderer_->drawEnvironmentSkybox();
 
   // Shadow maps currently support the two single-projection light types.  A
   // point light needs six faces and an area light needs an approximation, so

@@ -577,6 +577,10 @@ namespace {
   QString deviceRecoveryCurrentAdapter_ = QStringLiteral("<none>");
   bool deviceLossTeardown_ = false;
   std::vector<ArtifactCore::Light> m_sceneLights;
+  QString environmentMapPath_;
+  float environmentMapIntensity_ = 1.0f;
+  float environmentMapRotation_ = 0.0f;
+  bool environmentMapBackgroundVisible_ = false;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
   bool particle3DCameraActive_ = false;
   QMatrix4x4 particleViewMatrix_;
@@ -881,6 +885,8 @@ namespace {
     const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
     renderer->setNormalTexture(lowMaterialLOD ? QString() : material.normalTexture().toQString());
     renderer->setOcclusionTexture(lowMaterialLOD ? QString() : material.occlusionTexture().toQString());
+    renderer->setEnvironmentMap(environmentMapPath_, environmentMapIntensity_);
+    renderer->setEnvironmentRotation(environmentMapRotation_);
     renderer->setSceneLights(m_sceneLights);
     ArtifactCore::InstanceData instance{};
     const float* modelData = modelMatrix.constData();
@@ -3615,6 +3621,68 @@ void ArtifactIRenderer::resetStereoCameraMatrices()
 { impl_->resetStereoCameraMatrices(); }
 void ArtifactIRenderer::setSceneLights(const std::vector<ArtifactCore::Light>& lights)
 { impl_->m_sceneLights = lights; }
+void ArtifactIRenderer::setEnvironmentMap(const QString& path, float intensity)
+{
+ impl_->environmentMapPath_ = path.trimmed();
+ impl_->environmentMapIntensity_ = std::isfinite(intensity) ? std::max(0.0f, intensity) : 0.0f;
+ for (auto &entry : impl_->meshRenderers_) {
+  if (entry.second) {
+   entry.second->setEnvironmentMap(impl_->environmentMapPath_,
+                                   impl_->environmentMapIntensity_);
+  }
+ }
+}
+
+void ArtifactIRenderer::setEnvironmentRotation(float degrees)
+{
+ impl_->environmentMapRotation_ = std::isfinite(degrees) ? degrees : 0.0f;
+ for (auto &entry : impl_->meshRenderers_) {
+  if (entry.second) {
+   entry.second->setEnvironmentRotation(impl_->environmentMapRotation_);
+  }
+ }
+}
+
+void ArtifactIRenderer::setEnvironmentBackgroundVisible(bool visible)
+{
+ impl_->environmentMapBackgroundVisible_ = visible;
+}
+
+Diligent::ITextureView *ArtifactIRenderer::environmentMapView() const
+{
+  // MeshRenderer owns the shared environment resources. Find the first
+  // renderer that has completed environment loading; cache entries may be
+  // created before their material/geometry path has been prepared.
+  for (const auto &entry : impl_->meshRenderers_) {
+    if (!entry.second) {
+      continue;
+    }
+    if (auto *view = entry.second->environmentMapView()) {
+      return view;
+    }
+  }
+  return nullptr;
+}
+
+void ArtifactIRenderer::drawEnvironmentSkybox()
+{
+  if (!impl_->environmentMapBackgroundVisible_) {
+    return;
+  }
+  auto *environmentMap = environmentMapView();
+  auto context = immediateContext();
+  if (!environmentMap || !context) {
+    return;
+  }
+  bool invertible = false;
+  const QMatrix4x4 inverseViewProjection =
+      (impl_->meshProjMatrix_ * impl_->meshViewMatrix_).inverted(&invertible);
+  if (!invertible) {
+    return;
+  }
+  impl_->shaderManager_.drawSkybox(context.RawPtr(), environmentMap,
+                                   inverseViewProjection.constData());
+}
 const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() const
 { return impl_->m_sceneLights; }
 void ArtifactIRenderer::beginShadowMapFrame(

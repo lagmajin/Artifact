@@ -517,6 +517,11 @@ public:
   void setOverrideDSV(Diligent::ITextureView *dsv);
 
   void setSceneLights(const std::vector<ArtifactCore::Light> &lights);
+  void setEnvironmentMap(const QString &path, float intensity = 1.0f);
+  void setEnvironmentRotation(float degrees);
+  void setEnvironmentBackgroundVisible(bool visible);
+  Diligent::ITextureView *environmentMapView() const;
+  void drawEnvironmentSkybox();
   const std::vector<ArtifactCore::Light> &getSceneLights() const;
   void beginShadowMapFrame(const QMatrix4x4 &lightViewProjection,
                            const ArtifactCore::Light *shadowLight);

@@ -1,6 +1,8 @@
 module;
 #include <utility>
 #include <RenderDevice.h>
+#include <DeviceContext.h>
+#include <Buffer.h>
 #include <Shader.h>
 #include <PipelineState.h>
 #include <PipelineStateCache.h>
@@ -126,6 +128,7 @@ public:
     PSOAndSRB batchSolidRectPsoAndSrb_;
     PSOAndSRB batchSolidRectAAPsoAndSrb_;
     PSOAndSRB skyboxPsoAndSrb_;
+    RefCntAutoPtr<IBuffer> skyboxConstantBuffer_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
     RefCntAutoPtr<ISampler> glyphAtlasSampler_;
@@ -1110,9 +1113,52 @@ void ShaderManager::Impl::createSkyboxPSO()
     device_->CreateGraphicsPipelineState(skyboxInfo, &skyboxPsoAndSrb_.pPSO);
     if (skyboxPsoAndSrb_.pPSO) {
         skyboxPsoAndSrb_.pPSO->CreateShaderResourceBinding(&skyboxPsoAndSrb_.pSRB, true);
+        BufferDesc cbDesc;
+        cbDesc.Name = "SkyboxCB";
+        cbDesc.Size = sizeof(float) * 16;
+        cbDesc.Usage = USAGE_DYNAMIC;
+        cbDesc.BindFlags = BIND_UNIFORM_BUFFER;
+        cbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        device_->CreateBuffer(cbDesc, nullptr, &skyboxConstantBuffer_);
     } else {
         qWarning() << "[ShaderManager] Failed to create PSO: Skybox PSO";
     }
+}
+
+void ShaderManager::drawSkybox(IDeviceContext *context,
+                               ITextureView *environmentMap,
+                               const float *inverseViewProjection)
+{
+    if (!context || !environmentMap || !inverseViewProjection ||
+        !impl_->skyboxPsoAndSrb_.pPSO || !impl_->skyboxPsoAndSrb_.pSRB ||
+        !impl_->skyboxConstantBuffer_) {
+        return;
+    }
+    void *mapped = nullptr;
+    context->MapBuffer(impl_->skyboxConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+    if (!mapped) {
+        return;
+    }
+    std::memcpy(mapped, inverseViewProjection, sizeof(float) * 16);
+    context->UnmapBuffer(impl_->skyboxConstantBuffer_, MAP_WRITE);
+
+    auto *srb = impl_->skyboxPsoAndSrb_.pSRB.RawPtr();
+    if (auto *cb = srb->GetVariableByName(SHADER_TYPE_VERTEX, "SkyboxCB")) {
+        cb->Set(impl_->skyboxConstantBuffer_);
+    }
+    if (auto *env = srb->GetVariableByName(SHADER_TYPE_PIXEL, "g_envMap")) {
+        env->Set(environmentMap);
+    }
+    if (auto *sampler = srb->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
+        sampler->Set(spriteSampler_);
+    }
+    context->SetPipelineState(impl_->skyboxPsoAndSrb_.pPSO);
+    context->CommitShaderResources(impl_->skyboxPsoAndSrb_.pSRB,
+                                   RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = 3;
+    drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+    context->Draw(drawAttrs);
 }
 
 void ShaderManager::Impl::createUtilityFamilyPSOs()
@@ -1335,6 +1381,7 @@ void ShaderManager::Impl::destroy(bool persistCache)
     clearPso(batchSolidRectPsoAndSrb_);
     clearPso(batchSolidRectAAPsoAndSrb_);
     clearPso(skyboxPsoAndSrb_);
+    skyboxConstantBuffer_.Release();
 
     clearShaderPair(lineShaders_);
     clearShaderPair(outlineShaders_);

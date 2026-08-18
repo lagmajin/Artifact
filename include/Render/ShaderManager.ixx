@@ -63,6 +63,9 @@ public:
     /// Skybox rendering PSO (fullscreen triangle with cubemap sampling)
     PSOAndSRB skyboxPsoAndSrb() const;
     RenderShaderPair skyboxShaders() const;
+    void drawSkybox(Diligent::IDeviceContext *context,
+                    Diligent::ITextureView *environmentMap,
+                    const float *inverseViewProjection);
 
     /// Glyph quad PSO for GPU text rendering
     RefCntAutoPtr<ISampler> spriteSampler() const;
