@@ -14317,6 +14317,11 @@ public:
     }
 
     const bool useTextGizmo = layerUsesTextGizmo(layer);
+    // A fixed 3D Plane is manipulated by Artifact3DGizmo even in the
+    // default composition view.  Do not leave the legacy 2D gizmo bound as a
+    // second owner for the same selection.
+    const bool use3DGizmoOnly = layer && layer->is3D() &&
+        layerUsesProjectedFrameGizmo(layer);
 
     if (textGizmo_) {
 
@@ -14326,7 +14331,7 @@ public:
 
     if (gizmo_) {
 
-      if (useTextGizmo) {
+      if (useTextGizmo || use3DGizmoOnly) {
 
         gizmo_->setLayer(nullptr);
 
@@ -23731,17 +23736,14 @@ if (event->button() == Qt::LeftButton &&
                                         frameView, frameProjection,
                                         frameViewport);
 
-    // The projected frame owns the default plane viewport. Keep the 3D axis
-    // gizmo for oriented views, where its depth-aware handles are visible.
-    const bool showProjected3DGizmo = impl_->viewportOrientationActive_;
-    // Corner and edge handles remain the most explicit targets. Outside the
-    // frame interior, visible 3D axis/ring handles retain their priority.
+    // A projected Plane is drawn with Artifact3DGizmo in every orientation,
+    // so its input ownership must follow the same rule.  Test the visible 3D
+    // handles before the legacy projected-frame fallback; otherwise a large
+    // plane interior swallows the axis or centre handle that is drawn on it.
     const Ray priorityRay = createPickingRay(physicalViewportPos);
-    const GizmoAxis priorityAxis = showProjected3DGizmo
-        ? impl_->gizmo3D_->hitTest(priorityRay, frameView, frameProjection)
-        : GizmoAxis::None;
-    if (frameHandle == TransformGizmo::HandleType::None &&
-        !frameInteriorHit && priorityAxis != GizmoAxis::None) {
+    const GizmoAxis priorityAxis =
+        impl_->gizmo3D_->hitTest(priorityRay, frameView, frameProjection);
+    if (priorityAxis != GizmoAxis::None) {
       beginGizmoUndoSnapshot();
       configureCombinedGroupBasis();
       impl_->gizmo3D_->beginDrag(
@@ -30136,6 +30138,14 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
     if (!projectedFrameHandleEnabled(impl_->gizmoMode_, frameHandle)) {
       frameHandle = TransformGizmo::HandleType::None;
     }
+    // Cursor priority mirrors mousePressEvent(): a visible 3D handle owns the
+    // pointer even when it overlaps a projected frame edge or interior.
+    const GizmoAxis axis = impl_->gizmo3D_->hitTest(
+        createPickingRay(physPos), frameView, frameProjection);
+    if (axis != GizmoAxis::None) {
+      return impl_->gizmoDragActive_ ? Qt::ClosedHandCursor
+                                    : Qt::OpenHandCursor;
+    }
     if (frameHandle != TransformGizmo::HandleType::None) {
       if (combinedProjectedFrame) {
         return cursorForAxisAlignedFrameHandle(frameHandle);
@@ -30143,14 +30153,6 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
       return cursorForProjectedFrameCorner(frameHandle, selectedLayer,
                                            frameView, frameProjection,
                                            frameViewport);
-    }
-    const GizmoAxis axis = impl_->viewportOrientationActive_
-        ? impl_->gizmo3D_->hitTest(createPickingRay(physPos), frameView,
-                                    frameProjection)
-        : GizmoAxis::None;
-    if (axis != GizmoAxis::None) {
-      return impl_->gizmoDragActive_ ? Qt::ClosedHandCursor
-                                    : Qt::OpenHandCursor;
     }
     const bool frameInteriorHit = combinedProjectedFrame
         ? combinedFrameBounds.contains(physPos)
@@ -39331,12 +39333,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
         gizmo_->setMode(gizmoMode_);
       }
 
-      // Projected plane/image frames need the same readily visible 2D
-      // transform controls in the default view as text does.  The 3D gizmo
-      // remains active below for oriented views and depth-aware operations.
+      // Text remains a screen-space editing surface.  A fixed 3D Plane is
+      // always owned by Artifact3DGizmo so its visible handles, hit test, and
+      // drag use one transform and camera contract.
       const bool use2DTransformGizmo = !viewportOrientationActive_ &&
-          (layerUsesTextGizmo(selectedLayer) ||
-           layerUsesProjectedFrameGizmo(selectedLayer));
+          layerUsesTextGizmo(selectedLayer);
       if (use2DTransformGizmo) {
 
         ArtifactCore::ProfileScope _profG2D(
@@ -39393,12 +39394,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
 
 
-      // In the default composition view, a Plane is edited through its
-      // projected frame. Do not add a detached 3D Full Gizmo; it is retained
-      // in orientation views where the depth-aware axes are meaningful.
-      const bool showProjected3DGizmo =
-          !layerUsesProjectedFrameGizmo(selectedLayer) ||
-          viewportOrientationActive_;
+      // Planes use the same 3D manipulator in every viewport orientation.
+      // This keeps one owner for drawing, hit testing, and transform writes.
+      const bool showProjected3DGizmo = true;
       if (gizmo3D_ && showProjected3DGizmo) {
 
         ArtifactCore::ProfileScope _profG3D(
@@ -39466,6 +39464,14 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f,
                        1000.0f);
           }
+
+          // The projected-plane press and drag paths must use the exact
+          // fallback pair used to draw this gizmo.  Reading the renderer's
+          // mutable generic matrices here makes the handle ray depend on the
+          // last unrelated draw call.
+          gizmo3DViewMatrix_ = view;
+          gizmo3DProjectionMatrix_ = proj;
+          gizmo3DCameraMatricesValid_ = true;
 
 
 

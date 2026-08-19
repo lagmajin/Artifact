@@ -704,8 +704,10 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   applyPropertyPanelPalette(impl_->containerWidget);
   impl_->mainLayout = new QVBoxLayout(impl_->containerWidget);
   impl_->mainLayout->setAlignment(Qt::AlignTop);
-  impl_->mainLayout->setContentsMargins(8, 8, 8, 10);
-  impl_->mainLayout->setSpacing(6);
+  // Keep the Property Editor dense enough that the current layer's primary
+  // controls appear above the fold in a standard dock width.
+  impl_->mainLayout->setContentsMargins(6, 6, 6, 8);
+  impl_->mainLayout->setSpacing(4);
 
   setWidget(impl_->containerWidget);
   if (viewport()) {
@@ -1481,8 +1483,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     auto *selectionHeader = new QLabel(
         selectionText);
     selectionHeader->setObjectName(QStringLiteral("propertySelectionHeader"));
-    selectionHeader->setMinimumHeight(38);
-    selectionHeader->setContentsMargins(10, 4, 10, 4);
+    selectionHeader->setMinimumHeight(32);
+    selectionHeader->setContentsMargins(8, 2, 8, 2);
     QFont headerFont = selectionHeader->font();
     headerFont.setPointSize(12);
     headerFont.setWeight(QFont::DemiBold);
@@ -1508,7 +1510,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     favRow->setObjectName(QStringLiteral("propertySearchRow"));
     auto *favLayout = new QHBoxLayout(favRow);
     favLayout->setContentsMargins(0, 0, 0, 0);
-    favLayout->setSpacing(6);
+    favLayout->setSpacing(4);
     favLayout->addWidget(searchEdit, 1);
     auto *favToggle = new QPushButton(QStringLiteral("Favorites"));
     favToggle->setCheckable(true);
