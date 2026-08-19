@@ -23732,6 +23732,13 @@ if (event->button() == Qt::LeftButton &&
   }
 
 
+  // Clicking outside the motion path ends path-key selection before the
+  // ordinary layer gizmo receives the same pointer event.
+  if (event->button() == Qt::LeftButton &&
+      event->modifiers() == Qt::NoModifier) {
+    impl_->selectedMotionPathFrames_.clear();
+  }
+
 
   // The camera-projected frame is outside the ordinary 2D transform space.
   // Keep the hit test in viewport space, but route the drag through the 3D
