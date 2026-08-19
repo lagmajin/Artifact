@@ -1549,6 +1549,9 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
             static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                                   (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
             resolvedFont.family().toStdString(),
+            {},
+            0,
+            {},
             glyph.renderMode
         };
         const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
@@ -1736,6 +1739,9 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
             static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                                   (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
             resolvedFont.family().toStdString(),
+            {},
+            0,
+            {},
             glyph.renderMode
         };
         const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);

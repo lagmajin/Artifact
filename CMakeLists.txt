@@ -874,35 +874,6 @@ set(ARTIFACT_RENDER_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm"
 )
 
-# Primary module implementations use `module Name;` to attach to the public
-# interface units above.  Keep the BMI mapping explicit: MSVC's dependency
-# scanner otherwise compiles these .cppm files without the owning interface
-# declaration, which produces misleading "type is not a class/namespace"
-# cascades in the renderer.
-include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ArtifactRenderModuleReferences.cmake")
-foreach(_artifact_render_module_reference IN LISTS ARTIFACT_RENDER_IMPLEMENTATION_MODULE_REFERENCES)
-    string(REPLACE "|" ";" _artifact_render_module_fields "${_artifact_render_module_reference}")
-    list(GET _artifact_render_module_fields 0 _artifact_render_impl_relative)
-    list(GET _artifact_render_module_fields 1 _artifact_render_module_name)
-    list(GET _artifact_render_module_fields 2 _artifact_render_interface_relative)
-    set(_artifact_render_impl_file "${CMAKE_CURRENT_SOURCE_DIR}/${_artifact_render_impl_relative}")
-    set_source_files_properties("${_artifact_render_impl_file}" PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-    if(CMAKE_GENERATOR MATCHES "Ninja")
-        set(_artifact_render_interface_ifc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/ArtifactRender.dir/${_artifact_render_module_name}.ifc")
-    else()
-        set(_artifact_render_interface_ifc "$(IntDir)/${_artifact_render_interface_relative}.ifc")
-    endif()
-    set_property(SOURCE "${_artifact_render_impl_file}" APPEND PROPERTY
-        COMPILE_OPTIONS "/reference;${_artifact_render_module_name}=${_artifact_render_interface_ifc}")
-endforeach()
-
-# This coordinator is a legacy private implementation unit (not a module
-# interface or module attachment).  Compile it as a normal translation unit.
-set_source_files_properties(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentUploadCoordinator.cppm"
-    PROPERTIES CXX_SCAN_FOR_MODULES OFF
-)
-
 # Keep the first render split deliberately small.  Device and shader modules
 # are the highest fan-out units and are therefore isolated before moving the
 # renderer and widget orchestration layers.
@@ -968,7 +939,7 @@ endif()
 # Headless GPU smoke target for the TextAnimatorLab experiment.  It keeps the
 # Core layout/animator input but exercises the production Artifact renderer and
 # readback path, without adding UI or application startup dependencies.
-add_executable(ArtifactRenderTextSmoke
+add_executable(ArtifactRenderTextSmoke EXCLUDE_FROM_ALL
     "${CMAKE_CURRENT_SOURCE_DIR}/../experiments/TextAnimatorLab/artifact_gpu_text_smoke.cpp"
 )
 target_link_libraries(ArtifactRenderTextSmoke PRIVATE ArtifactRenderTextRuntime Qt6::Core Qt6::Gui)
@@ -2788,60 +2759,16 @@ set(ARTIFACT_RENDER_TEXT_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cppm"
 )
 
-# The same implementation units are also part of ArtifactRender's legacy
-# split.  Clear its source-level IFC options before attaching them to this
-# focused target; otherwise MSVC may import the sibling target's BMI.
-foreach(_artifact_text_impl IN LISTS ARTIFACT_RENDER_TEXT_IMPL)
-    set_source_files_properties("${_artifact_text_impl}" PROPERTIES
-        CXX_SCAN_FOR_MODULES OFF
-        COMPILE_OPTIONS "")
-endforeach()
-foreach(_artifact_text_module_reference IN LISTS ARTIFACT_RENDER_IMPLEMENTATION_MODULE_REFERENCES)
-    string(REPLACE "|" ";" _artifact_text_module_fields "${_artifact_text_module_reference}")
-    list(GET _artifact_text_module_fields 0 _artifact_text_impl_relative)
-    list(GET _artifact_text_module_fields 1 _artifact_text_module_name)
-    list(GET _artifact_text_module_fields 2 _artifact_text_interface_relative)
-    set(_artifact_text_impl_file "${CMAKE_CURRENT_SOURCE_DIR}/${_artifact_text_impl_relative}")
-    if(_artifact_text_impl_file IN_LIST ARTIFACT_RENDER_TEXT_IMPL)
-        if(CMAKE_GENERATOR MATCHES "Ninja")
-            set(_artifact_text_interface_ifc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/ArtifactRenderTextRuntime.dir/${_artifact_text_module_name}.ifc")
-        else()
-            set(_artifact_text_interface_ifc "$(IntDir)/${_artifact_text_interface_relative}.ifc")
-        endif()
-        set_property(SOURCE "${_artifact_text_impl_file}" APPEND PROPERTY
-            COMPILE_OPTIONS "/reference;${_artifact_text_module_name}=${_artifact_text_interface_ifc}")
-    endif()
-endforeach()
-add_library(ArtifactRenderTextRuntime STATIC)
-set_target_properties(ArtifactRenderTextRuntime PROPERTIES
-    CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
-target_sources(ArtifactRenderTextRuntime
-    PRIVATE ${ARTIFACT_RENDER_TEXT_IMPL}
-    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_TEXT_MODULES})
-foreach(_artifact_text_impl IN LISTS ARTIFACT_RENDER_TEXT_IMPL)
-    set_source_files_properties("${_artifact_text_impl}" PROPERTIES CXX_SCAN_FOR_MODULES ON)
-endforeach()
-target_include_directories(ArtifactRenderTextRuntime PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface")
-target_link_libraries(ArtifactRenderTextRuntime PUBLIC
-    ArtifactCore ArtifactCoreTextRuntime ArtifactCoreComposition ArtifactTextRenderTargetRuntime ${DILIGENT_LIBS}
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent)
-if(DILIGENT_COMPILE_DEFINITIONS)
-    target_compile_definitions(ArtifactRenderTextRuntime PRIVATE ${DILIGENT_COMPILE_DEFINITIONS})
-endif()
+# The production render implementation units remain owned by ArtifactRender.
+# Do not attach those same .cppm files to a second target: MSVC then sees two
+# providers for the same module and reports ambiguous IFC resolution.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ArtifactRenderModuleReferences.cmake")
+add_library(ArtifactRenderTextRuntime INTERFACE)
 
 # Core-free offscreen target slice.  This is the first independently buildable
 # unit for GPU text validation; it owns only texture creation and readback.
 # Module: Artifact.Render.TextRenderTarget
-add_library(ArtifactTextRenderTargetRuntime STATIC
+add_library(ArtifactTextRenderTargetRuntime STATIC EXCLUDE_FROM_ALL
     )
 target_sources(ArtifactTextRenderTargetRuntime PUBLIC FILE_SET CXX_MODULES FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextRenderTarget.ixx")
@@ -2861,7 +2788,7 @@ target_link_libraries(ArtifactTextRenderTargetRuntime PUBLIC
 # Contract-only boundary for the glyph submitter.  The implementation is
 # intentionally added in a later G2 step; keeping the interface in its own
 # target prevents the contract from acquiring ArtifactIRenderer dependencies.
-add_library(ArtifactTextGlyphSubmitterRuntime STATIC)
+add_library(ArtifactTextGlyphSubmitterRuntime STATIC EXCLUDE_FROM_ALL)
 target_sources(ArtifactTextGlyphSubmitterRuntime
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cppm"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cppm"
@@ -2876,13 +2803,14 @@ target_include_directories(ArtifactTextGlyphSubmitterRuntime PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface")
 target_link_libraries(ArtifactTextGlyphSubmitterRuntime PUBLIC
     ArtifactCoreTextRuntime Qt6::Core Qt6::Gui ${DILIGENT_LIBS})
 
-add_executable(ArtifactTextGlyphSmoke
+add_executable(ArtifactTextGlyphSmoke EXCLUDE_FROM_ALL
     "${CMAKE_CURRENT_SOURCE_DIR}/../experiments/TextAnimatorLab/artifact_text_glyph_smoke.cpp")
 target_compile_features(ArtifactTextGlyphSmoke PRIVATE cxx_std_23)
 target_sources(ArtifactTextGlyphSmoke
@@ -2896,7 +2824,8 @@ target_sources(ArtifactTextGlyphSmoke
 target_include_directories(ArtifactTextGlyphSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface")
 target_link_libraries(ArtifactTextGlyphSmoke PRIVATE
     ArtifactCoreTextRuntime Qt6::Core Qt6::Gui ${DILIGENT_LIBS})
 
