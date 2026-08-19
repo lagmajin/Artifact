@@ -16814,6 +16814,8 @@ void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
   impl_->clearPendingMaskCreation();
 
   impl_->selectedLayerId_ = id;
+  impl_->selectedMotionPathFrames_.clear();
+  impl_->draggingMotionPathGroupBefore_.clear();
 
   impl_->invalidateOverlayComposite();
 
