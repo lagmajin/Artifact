@@ -23718,6 +23718,20 @@ if (event->button() == Qt::LeftButton &&
 
                                  QPointF(cPos.x, cPos.y), before,
                                  event->modifiers());
+      if (impl_->selectedMotionPathFrames_.size() > 1) {
+        const QString mode =
+            event->modifiers().testFlag(Qt::ControlModifier) &&
+                    event->modifiers().testFlag(Qt::ShiftModifier)
+                ? QStringLiteral("Scale")
+            : event->modifiers().testFlag(Qt::AltModifier) &&
+                    event->modifiers().testFlag(Qt::ShiftModifier)
+                ? QStringLiteral("Rotate")
+                : QStringLiteral("Move");
+        setInfoOverlayText(
+            QStringLiteral("Motion Path (%1 keys)").arg(
+                impl_->selectedMotionPathFrames_.size()),
+            QStringLiteral("%1 selected keys — Undo available").arg(mode));
+      }
 
       impl_->motionPathCache_.valid = false;
 
