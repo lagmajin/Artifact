@@ -1,6 +1,7 @@
 module;
 #include <QCheckBox>
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -430,6 +431,11 @@ void GeneralSettingPage::saveSettings() {
       impl_->dockTabFontSizeSpinBox_->value());
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentText());
+    if (auto *app = qobject_cast<QApplication *>(QCoreApplication::instance())) {
+      const auto preset = static_cast<ArtifactCore::DccStylePreset>(
+          impl_->themeCombo_->currentData().toInt());
+      ArtifactCore::applyDCCTheme(*app, preset);
+    }
   }
   settings->setAccessibilityHandedness(
       impl_->handednessCombo_->currentData().toString());

@@ -46,6 +46,11 @@ export namespace Artifact {
   Diff
  };
 
+ enum class CompositionLayerRenderFilter {
+  All,
+  SelectedOnly
+ };
+
  enum class CompositionBackgroundMode {
   Solid,
   Checkerboard,
@@ -137,6 +142,8 @@ float viewportZoom() const;
   ArtifactCompositionPtr composition() const;
 void setSelectedLayerId(const LayerID& id);
 LayerID selectedLayerId() const;
+void setLayerRenderFilter(CompositionLayerRenderFilter filter);
+CompositionLayerRenderFilter layerRenderFilter() const;
 void setCompareMode(CompositionCompareMode mode);
 CompositionCompareMode compareMode() const;
 void setReferencePinned(bool pinned);
@@ -326,6 +333,10 @@ void handleMouseMove(const QPointF& viewportPos);
   void setPointerPressure(float pressure);
   void setPointerTilt(float tiltX, float tiltY);
   bool hasPendingMaskEdit() const;
+  bool isMaskProportionalEditingEnabled() const;
+  void setMaskProportionalEditingEnabled(bool enabled);
+  float maskProportionalEditRadius() const;
+  void setMaskProportionalEditRadius(float radius);
   void cancelMaskInteraction();
   bool removeLastPendingMaskVertex();
   bool cancelTextToolInteraction();
@@ -355,6 +366,7 @@ void clearRigPoseSlots();
   bool deleteHoveredMaskVertex();
   bool deleteSelectedMaskVertices();
   bool deleteHoveredMask();
+  bool deleteHoveredMaskForSelectedLayers();
   bool resetHoveredMaskTangent();
   bool resetHoveredMaskVertexTangents();
   bool hasHoveredMaskVertex() const;
@@ -363,20 +375,28 @@ void clearRigPoseSlots();
   bool setHoveredMaskMode(int modeValue);
   bool hasHoveredMaskPath() const;
   bool toggleHoveredMaskEnabled();
+  bool toggleHoveredMaskEnabledForSelectedLayers();
   bool toggleHoveredMaskLocked();
   bool duplicateHoveredMask();
+  bool duplicateHoveredMaskForSelectedLayers();
   bool moveHoveredMask(int direction);
+  bool moveHoveredMaskForSelectedLayers(int direction);
   bool copyHoveredMask();
   bool pasteMask();
   bool toggleHoveredMaskInverted();
+  bool toggleHoveredMaskInvertedForSelectedLayers();
   bool adjustHoveredMaskGeometry(float featherDelta, float expansionDelta);
+  bool adjustHoveredMaskGeometryForSelectedLayers(float featherDelta,
+                                                   float expansionDelta);
   bool adjustHoveredMaskOpacity(float opacityDelta);
+  bool adjustHoveredMaskOpacityForSelectedLayers(float opacityDelta);
   bool createTextLayerAtCanvas(const QPointF& canvasPos,
                                const QSizeF& boxSize = QSizeF());
   bool editTextAtViewport(const QPointF& viewportPos);
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
+ bool isTransformGizmoHovered(const QPointF& viewportPos) const;
  ArtifactPointTrackerGizmo* trackerGizmo() const;
  struct CameraFrustumVisual {
   bool valid = false;

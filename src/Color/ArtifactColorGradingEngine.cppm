@@ -197,6 +197,52 @@ ColorGradingSuggestion ArtifactColorGradingEngine::suggestGrading(
   return suggestion;
 }
 
+AIColorAnalysisResult ArtifactColorGradingEngine::analyzeSamples(
+    const std::vector<FloatColor> &samples) {
+  AIColorAnalysisResult result;
+  double luminanceSum = 0.0;
+  double saturationSum = 0.0;
+  double temperatureSum = 0.0;
+  float minLuminance = std::numeric_limits<float>::max();
+  float maxLuminance = std::numeric_limits<float>::lowest();
+  std::size_t shadowCount = 0;
+  std::size_t highlightCount = 0;
+
+  for (const FloatColor &color : samples) {
+    if (!std::isfinite(color.r()) || !std::isfinite(color.g()) ||
+        !std::isfinite(color.b())) {
+      continue;
+    }
+    const float luminance = std::clamp(
+        0.2126f * color.r() + 0.7152f * color.g() + 0.0722f * color.b(),
+        0.0f, 1.0f);
+    const float maximum = std::max({color.r(), color.g(), color.b()});
+    const float minimum = std::min({color.r(), color.g(), color.b()});
+    luminanceSum += luminance;
+    saturationSum += std::max(0.0f, maximum - minimum);
+    temperatureSum += color.r() - color.b();
+    minLuminance = std::min(minLuminance, luminance);
+    maxLuminance = std::max(maxLuminance, luminance);
+    shadowCount += luminance < 0.25f ? 1u : 0u;
+    highlightCount += luminance > 0.75f ? 1u : 0u;
+    ++result.sampleCount;
+  }
+
+  if (result.sampleCount == 0)
+    return result;
+
+  result.hasFiniteSamples = true;
+  const float count = static_cast<float>(result.sampleCount);
+  result.averageLuminance = static_cast<float>(luminanceSum / count);
+  result.luminanceRange = std::clamp(maxLuminance - minLuminance, 0.0f, 1.0f);
+  result.averageSaturation = static_cast<float>(saturationSum / count);
+  result.colorTemperatureBias = std::clamp(
+      static_cast<float>(temperatureSum / count), -1.0f, 1.0f);
+  result.shadowFraction = static_cast<float>(shadowCount) / count;
+  result.highlightFraction = static_cast<float>(highlightCount) / count;
+  return result;
+}
+
 bool ArtifactColorGradingEngine::applySuggestion(
     const ColorGradingSuggestion &suggestion) {
   const auto finiteColor = [](const FloatColor &color) {

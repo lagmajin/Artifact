@@ -1626,6 +1626,9 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
   if (layer_ == layer) {
     return;
   }
+  if (isDragging_) {
+    cancelInteraction();
+  }
   layer_ = std::move(layer);
   targetLayers_.clear();
   if (layer_) {
@@ -1639,7 +1642,25 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
 }
 
 void TransformGizmo::setTargetLayers(std::vector<ArtifactAbstractLayerPtr> layers) {
-  targetLayers_ = std::move(layers);
+  if (isDragging_) {
+    cancelInteraction();
+  }
+  std::vector<ArtifactAbstractLayerPtr> normalizedLayers;
+  normalizedLayers.reserve(layers.size());
+  for (auto& candidate : layers) {
+    if (!candidate) {
+      continue;
+    }
+    const auto duplicate = std::any_of(
+        normalizedLayers.cbegin(), normalizedLayers.cend(),
+        [&candidate](const auto& existing) {
+          return existing && existing->id() == candidate->id();
+        });
+    if (!duplicate) {
+      normalizedLayers.push_back(std::move(candidate));
+    }
+  }
+  targetLayers_ = std::move(normalizedLayers);
   layer_ = targetLayers_.empty() ? ArtifactAbstractLayerPtr{} : targetLayers_.front();
   geometryCacheValid_ = false;
   if (!isDragging_) {

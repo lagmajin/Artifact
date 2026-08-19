@@ -97,6 +97,18 @@ struct ColorGradingSuggestion {
   std::string rationale;
 };
 
+// Read-only scene statistics used as input to assisted grading suggestions.
+struct AIColorAnalysisResult {
+  std::size_t sampleCount = 0;
+  float averageLuminance = 0.0f;
+  float luminanceRange = 0.0f;
+  float averageSaturation = 0.0f;
+  float colorTemperatureBias = 0.0f; // negative = cool, positive = warm
+  float shadowFraction = 0.0f;
+  float highlightFraction = 0.0f;
+  bool hasFiniteSamples = false;
+};
+
 class ArtifactColorGradingEngine {
 private:
   class Impl;
@@ -118,6 +130,8 @@ public:
   FloatColor applyGrading(const FloatColor &input) const;
   void applyGradingToBuffer(std::vector<FloatColor> &buffer) const;
   static ColorGradingSuggestion suggestGrading(
+      const std::vector<FloatColor> &samples);
+  static AIColorAnalysisResult analyzeSamples(
       const std::vector<FloatColor> &samples);
   bool applySuggestion(const ColorGradingSuggestion &suggestion);
 

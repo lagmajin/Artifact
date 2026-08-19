@@ -829,27 +829,21 @@ QImage makeMissingImagePlaceholder(const QSize& size = QSize(256, 256), const QS
     return placeholder;
 }
 
-qint64 resolveSequenceFrame(qint64 layerFrame, double compositionFps,
-                            double sequenceFps)
-{
-    if (layerFrame <= 0 || !std::isfinite(compositionFps) || compositionFps <= 0.0 ||
-        !std::isfinite(sequenceFps) || sequenceFps <= 0.0) {
-        return std::max<qint64>(0, layerFrame);
-    }
-
-    const double sequenceTime = static_cast<double>(layerFrame) / compositionFps;
-    const double resolved = std::floor(sequenceTime * sequenceFps);
-    if (!std::isfinite(resolved) || resolved >= static_cast<double>(std::numeric_limits<qint64>::max())) {
-        return std::numeric_limits<qint64>::max();
-    }
-    return std::max<qint64>(0, static_cast<qint64>(resolved));
-}
 }
 
 class ArtifactImageLayer::Impl {
 public:
     Impl() = default;
     ~Impl() = default;
+
+    void resetCacheBuffer() const {
+        cacheBuffer_.reset();
+        cacheBufferQImageSource_ = nullptr;
+        cacheBufferQImage_ = {};
+        cacheBufferCropSource_ = nullptr;
+        cacheBufferCropSignature_.clear();
+        cacheBufferCroppedImage_ = {};
+    }
 
     bool hasImage_ = false;
     bool fitToLayer_ = true;
@@ -867,6 +861,11 @@ public:
     SourceImageMetadata sourceMetadata_;
     mutable ArtifactCore::SharedPtr<QImage> cache_;
     mutable ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
+    mutable const ArtifactCore::ImageF32x4_RGBA *cacheBufferQImageSource_ = nullptr;
+    mutable QImage cacheBufferQImage_;
+    mutable const ArtifactCore::ImageF32x4_RGBA *cacheBufferCropSource_ = nullptr;
+    mutable QString cacheBufferCropSignature_;
+    mutable QImage cacheBufferCroppedImage_;
     QString inputColorSpace_;
     QString inputTransferFunction_;
     // [Fix 1] バックグラウンド先読み用
@@ -1025,7 +1024,7 @@ public:
         if (result.sourceVersion > 0 &&
             currentSourceVersion != result.sourceVersion) {
             cache_.reset();
-            cacheBuffer_.reset();
+            resetCacheBuffer();
             prefetchDone_ = currentSourceVersion == 0;
             if (currentSourceVersion > 0 && !sourcePath_.isEmpty()) {
                 cachedSourceVersion_ = currentSourceVersion;
@@ -1083,14 +1082,11 @@ public:
     {
         const auto clearSequenceFrameCache = [this]() {
             cache_.reset();
-            cacheBuffer_.reset();
+            resetCacheBuffer();
             sequenceCachedIndex_ = -1;
         };
         if (sequencePaths_.size() <= 1) {
             return false;
-        }
-        if (sequenceCachedIndex_ == frameIndex && cache_) {
-            return true;
         }
         if (!sequenceSource_) {
             sequenceSource_ = std::make_unique<ArtifactCore::ImageSequenceSource>();
@@ -1111,6 +1107,9 @@ public:
             clearSequenceFrameCache();
             return false;
         }
+        frameIndex = sequenceFrameRate_ > 0.0
+            ? sequenceSource_->frameIndexAtTime(frameIndex, compositionFrameRate())
+            : std::clamp<qint64>(frameIndex, 0, frameCount - 1);
         // Hold the nearest valid source frame while the layer remains visible
         // beyond the discovered sequence range. This keeps an image-sequence
         // layer stable at its in/out boundaries instead of flashing blank.
@@ -1210,7 +1209,7 @@ public:
 
         cachedSourceVersion_ = currentVersion;
         cache_.reset();
-        cacheBuffer_.reset();
+        resetCacheBuffer();
         sequenceSource_.reset();
         sequenceCachedIndex_ = -1;
         prefetchDone_ = false;
@@ -1280,7 +1279,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         impl_->prefetchDone_ = true;
         impl_->hasImage_ = false;
         impl_->cache_.reset();
-        impl_->cacheBuffer_.reset();
+        impl_->resetCacheBuffer();
         impl_->width_ = 0;
         impl_->height_ = 0;
         setSourceSize(Size_2D(0, 0));
@@ -1400,7 +1399,7 @@ void ArtifactImageLayer::setPsdSubimageIndex(const int index)
     if (impl_->psdSubimageIndex_ == normalized) return;
     impl_->psdSubimageIndex_ = normalized;
     impl_->cache_.reset();
-    impl_->cacheBuffer_.reset();
+    impl_->resetCacheBuffer();
     ++impl_->prefetchGeneration_;
     if (!impl_->sourcePath_.isEmpty()) impl_->startPrefetch();
     setDirty(LayerDirtyFlag::Source);
@@ -1423,7 +1422,7 @@ void ArtifactImageLayer::setInputInterpretation(
         // applying a second interpretation to an already converted buffer
         // would compound transfer and gamut transforms.
         impl_->cache_.reset();
-        impl_->cacheBuffer_.reset();
+        impl_->resetCacheBuffer();
         loadFromPath(impl_->sourcePath_);
     }
     setDirty(LayerDirtyFlag::Source);
@@ -1625,7 +1624,7 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
     impl_->sequenceCachedIndex_ = -1;
     impl_->sourceMetadata_ = {};
     impl_->cache_.reset();
-    impl_->cacheBuffer_.reset();
+    impl_->resetCacheBuffer();
     const int serializedSubimage = obj.value(QStringLiteral("image.psdSubimageIndex")).toInt(-1);
     impl_->psdSubimageIndex_ = serializedSubimage < 0
         ? -1
@@ -2089,8 +2088,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     if (isImageSequence()) {
         const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(resolveSequenceFrame(
-            layerFrame, compositionFrameRate(), impl_->sequenceFrameRate_));
+        impl_->refreshSequenceFrame(layerFrame);
     }
 
     auto size = sourceSize();
@@ -2206,8 +2204,7 @@ QImage ArtifactImageLayer::toQImage() const
     if (isImageSequence()) {
         const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(resolveSequenceFrame(
-            layerFrame, compositionFrameRate(), impl_->sequenceFrameRate_));
+        impl_->refreshSequenceFrame(layerFrame);
     }
 
     const bool isMainThread = (QThread::currentThread() == qApp->thread());
@@ -2224,17 +2221,57 @@ QImage ArtifactImageLayer::toQImage() const
     // that working-space buffer at this explicit Qt compatibility boundary so
     // thumbnails and software/export consumers use the same color source.
     QImage compatibleImage;
+    const auto *source = impl_->cacheBuffer_ ? impl_->cacheBuffer_.get() : nullptr;
     if (impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) {
-        compatibleImage = impl_->cacheBuffer_->toQImage();
+        if (isMainThread) {
+            if (impl_->cacheBufferQImageSource_ != source) {
+                impl_->cacheBufferQImage_ = impl_->cacheBuffer_->toQImage();
+                impl_->cacheBufferQImageSource_ = source;
+            }
+            compatibleImage = impl_->cacheBufferQImage_;
+        } else {
+            compatibleImage = impl_->cacheBuffer_->toQImage();
+        }
     } else if (impl_->cache_) {
+        if (isMainThread) {
+            impl_->cacheBufferQImageSource_ = nullptr;
+            impl_->cacheBufferQImage_ = {};
+            impl_->cacheBufferCropSource_ = nullptr;
+            impl_->cacheBufferCropSignature_.clear();
+            impl_->cacheBufferCroppedImage_ = {};
+        }
         compatibleImage = *impl_->cache_;
+    } else {
+        if (isMainThread) {
+            impl_->cacheBufferQImageSource_ = nullptr;
+            impl_->cacheBufferQImage_ = {};
+            impl_->cacheBufferCropSource_ = nullptr;
+            impl_->cacheBufferCropSignature_.clear();
+            impl_->cacheBufferCroppedImage_ = {};
+        }
     }
     if (!compatibleImage.isNull()) {
         const QImage& base = compatibleImage;
         const QRect cropRect =
             sourceCropToRect(impl_->sourceCrop_, QSize(base.width(), base.height()));
         if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
-            return makeTransparentCropCanvas(base, cropRect);
+            if (!isMainThread) {
+                return makeTransparentCropCanvas(base, cropRect);
+            }
+            const QString cropSignature = sourceCropSignature();
+            if (impl_->cacheBufferCropSource_ != source ||
+                impl_->cacheBufferCropSignature_ != cropSignature) {
+                impl_->cacheBufferCroppedImage_ =
+                    makeTransparentCropCanvas(base, cropRect);
+                impl_->cacheBufferCropSource_ = source;
+                impl_->cacheBufferCropSignature_ = cropSignature;
+            }
+            return impl_->cacheBufferCroppedImage_;
+        }
+        if (isMainThread) {
+            impl_->cacheBufferCropSource_ = nullptr;
+            impl_->cacheBufferCropSignature_.clear();
+            impl_->cacheBufferCroppedImage_ = {};
         }
         return base;
     }
@@ -2385,7 +2422,7 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
     if (image.isNull()) {
         impl_->hasImage_ = false;
         impl_->cache_.reset();
-        impl_->cacheBuffer_.reset();
+        impl_->resetCacheBuffer();
         impl_->width_ = 0;
         impl_->height_ = 0;
         setSourceSize(Size_2D(0, 0));
@@ -2445,7 +2482,7 @@ void ArtifactImageLayer::setFromImageBuffer(
     if (image.isEmpty()) {
         impl_->hasImage_ = false;
         impl_->cache_.reset();
-        impl_->cacheBuffer_.reset();
+        impl_->resetCacheBuffer();
         impl_->width_ = 0;
         impl_->height_ = 0;
         setSourceSize(Size_2D(0, 0));

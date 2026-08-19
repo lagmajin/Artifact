@@ -1,6 +1,13 @@
 # Edit Menu Milestone
 
 Date: 2026-03-13
+**最終更新:** 2026-08-15
+
+## Update 2026-08-15
+
+- 現行 Edit Menu を再監査し、Undo/Redo、layer clipboard、selection、delete/duplicate、split/trim、select/find/preferences の実接続と rebuild 状態を確認。
+- `split` / `trim in` / `trim out` が selection のみで有効になっていたため、playhead を提供する `ArtifactPlaybackService` の存在も enabled 条件に追加。current time が利用できない状態では操作できないようにした。
+- runtime での全操作結果、shortcut と menu の完全一致、複数選択・Undo の受入確認は未実施。
 
 ## Goal
 

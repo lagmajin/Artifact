@@ -33,6 +33,13 @@ namespace Artifact
   {
   public:
    float volume_ = 1.0f;
+   float clipGainDb_ = 0.0f;
+   float fadeInSeconds_ = 0.0f;
+   float fadeOutSeconds_ = 0.0f;
+   std::vector<std::pair<qint64, qint64>> deClickRanges_;
+   std::uint64_t deClickRevision_ = 0;
+   float deClickThresholdDb_ = -20.0f;
+   qint64 deClickMaxClickSamples_ = 64;
    float pan_ = 0.0f;
    bool muted_ = false;
    QString sourcePath_;
@@ -54,6 +61,12 @@ namespace Artifact
         qint64 startSample = -1;
         int sampleRate = 0;
         float volume = 1.0f;
+        float clipGainDb = 0.0f;
+        float fadeInSeconds = 0.0f;
+   float fadeOutSeconds = 0.0f;
+        std::uint64_t deClickRevision = 0;
+        float deClickThresholdDb = -20.0f;
+        qint64 deClickMaxClickSamples = 64;
         float pan = 0.0f;
         ArtifactCore::AudioSegment segment;
     };
@@ -134,6 +147,107 @@ float ArtifactAudioLayer::volume() const
   return impl_->volume_;
 }
 
+void ArtifactAudioLayer::setClipGainDb(float gainDb)
+{
+  impl_->clipGainDb_ = std::isfinite(gainDb) ? std::clamp(gainDb, -60.0f, 12.0f) : 0.0f;
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::clipGainDb() const
+{
+  return impl_->clipGainDb_;
+}
+
+void ArtifactAudioLayer::setFadeInSeconds(float seconds)
+{
+  impl_->fadeInSeconds_ = std::isfinite(seconds) ? std::max(0.0f, seconds) : 0.0f;
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::fadeInSeconds() const
+{
+  return impl_->fadeInSeconds_;
+}
+
+void ArtifactAudioLayer::setFadeOutSeconds(float seconds)
+{
+  impl_->fadeOutSeconds_ = std::isfinite(seconds) ? std::max(0.0f, seconds) : 0.0f;
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::fadeOutSeconds() const
+{
+  return impl_->fadeOutSeconds_;
+}
+
+void ArtifactAudioLayer::addDeClickRange(qint64 startSample, qint64 endSample)
+{
+  const qint64 start = std::max<qint64>(0, std::min(startSample, endSample));
+  const qint64 end = std::max<qint64>(start, std::max(startSample, endSample));
+  if (end <= start) return;
+  impl_->deClickRanges_.emplace_back(start, end);
+  std::sort(impl_->deClickRanges_.begin(), impl_->deClickRanges_.end());
+  std::vector<std::pair<qint64, qint64>> merged;
+  merged.reserve(impl_->deClickRanges_.size());
+  for (const auto& range : impl_->deClickRanges_) {
+    if (!merged.empty() && range.first <= merged.back().second) {
+      merged.back().second = std::max(merged.back().second, range.second);
+    } else {
+      merged.push_back(range);
+    }
+  }
+  impl_->deClickRanges_ = std::move(merged);
+  ++impl_->deClickRevision_;
+  impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
+}
+
+void ArtifactAudioLayer::clearDeClickRanges()
+{
+  if (impl_->deClickRanges_.empty()) return;
+  impl_->deClickRanges_.clear();
+  ++impl_->deClickRevision_;
+  impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
+}
+
+int ArtifactAudioLayer::deClickRangeCount() const
+{
+  return static_cast<int>(impl_->deClickRanges_.size());
+}
+
+std::vector<std::pair<qint64, qint64>> ArtifactAudioLayer::deClickRanges() const
+{
+  return impl_->deClickRanges_;
+}
+
+void ArtifactAudioLayer::setDeClickThresholdDb(float thresholdDb)
+{
+  impl_->deClickThresholdDb_ = std::isfinite(thresholdDb)
+      ? std::clamp(thresholdDb, -80.0f, 0.0f) : -20.0f;
+  ++impl_->deClickRevision_;
+  impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::deClickThresholdDb() const
+{
+  return impl_->deClickThresholdDb_;
+}
+
+void ArtifactAudioLayer::setDeClickMaxClickSamples(qint64 samples)
+{
+  impl_->deClickMaxClickSamples_ = std::clamp<qint64>(samples, 1, 4096);
+  ++impl_->deClickRevision_;
+  impl_->resampledCache_ = Impl::ResampledCache{};
+  Q_EMIT changed();
+}
+
+qint64 ArtifactAudioLayer::deClickMaxClickSamples() const
+{
+  return impl_->deClickMaxClickSamples_;
+}
+
 void ArtifactAudioLayer::setPan(float pan)
 {
   impl_->pan_ = std::isfinite(pan) ? std::clamp(pan, -1.0f, 1.0f) : 0.0f;
@@ -168,6 +282,9 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
     impl_->sharedPcm_.reset();
     impl_->sourceSampleRate_ = 0;
     impl_->sourceChannelCount_ = 0;
+    impl_->deClickRanges_.clear();
+    ++impl_->deClickRevision_;
+    impl_->resampledCache_ = Impl::ResampledCache{};
     Q_EMIT changed();
     return false;
   }
@@ -209,6 +326,9 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
 
    // 新規ロード時はキャッシュクリア
    impl_->cache_.clear();
+   impl_->deClickRanges_.clear();
+   ++impl_->deClickRevision_;
+   impl_->resampledCache_ = Impl::ResampledCache{};
 
    qDebug() << "[AudioLayer] loaded path=" << trimmed
             << "sampleRate=" << impl_->sourceSampleRate_
@@ -270,6 +390,19 @@ QJsonObject ArtifactAudioLayer::toJson() const
   obj["audio.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
   obj["audio.sourceLocalized"] = isSourceIdentityLocalized();
   obj["audio.volume"] = static_cast<double>(impl_->volume_);
+  obj["audio.clipGainDb"] = static_cast<double>(impl_->clipGainDb_);
+  obj["audio.fadeInSeconds"] = static_cast<double>(impl_->fadeInSeconds_);
+  obj["audio.fadeOutSeconds"] = static_cast<double>(impl_->fadeOutSeconds_);
+  QJsonArray deClickRanges;
+  for (const auto& range : impl_->deClickRanges_) {
+    QJsonObject item;
+    item["startSample"] = static_cast<double>(range.first);
+    item["endSample"] = static_cast<double>(range.second);
+    deClickRanges.append(item);
+  }
+  obj["audio.deClickRanges"] = deClickRanges;
+  obj["audio.deClickThresholdDb"] = static_cast<double>(impl_->deClickThresholdDb_);
+  obj["audio.deClickMaxClickSamples"] = static_cast<double>(impl_->deClickMaxClickSamples_);
   obj["audio.pan"] = static_cast<double>(impl_->pan_);
   obj["audio.muted"] = impl_->muted_;
   return obj;
@@ -296,6 +429,28 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
   }
   if (obj.contains("audio.volume")) {
     setVolume(static_cast<float>(obj.value("audio.volume").toDouble(1.0)));
+  }
+  if (obj.contains("audio.clipGainDb")) {
+    setClipGainDb(static_cast<float>(obj.value("audio.clipGainDb").toDouble(0.0)));
+  }
+  if (obj.contains("audio.fadeInSeconds")) {
+    setFadeInSeconds(static_cast<float>(obj.value("audio.fadeInSeconds").toDouble(0.0)));
+  }
+  if (obj.contains("audio.fadeOutSeconds")) {
+    setFadeOutSeconds(static_cast<float>(obj.value("audio.fadeOutSeconds").toDouble(0.0)));
+  }
+  clearDeClickRanges();
+  const auto deClickRanges = obj.value("audio.deClickRanges").toArray();
+  for (const auto& value : deClickRanges) {
+    const auto item = value.toObject();
+    addDeClickRange(static_cast<qint64>(item.value("startSample").toDouble()),
+                    static_cast<qint64>(item.value("endSample").toDouble()));
+  }
+  if (obj.contains("audio.deClickThresholdDb")) {
+    setDeClickThresholdDb(static_cast<float>(obj.value("audio.deClickThresholdDb").toDouble(-20.0)));
+  }
+  if (obj.contains("audio.deClickMaxClickSamples")) {
+    setDeClickMaxClickSamples(static_cast<qint64>(obj.value("audio.deClickMaxClickSamples").toDouble(64.0)));
   }
   if (obj.contains("audio.pan")) {
     setPan(static_cast<float>(obj.value("audio.pan").toDouble(0.0)));
@@ -341,6 +496,50 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   volumeProp->setUnit(QStringLiteral("linear"));
   volumeProp->setTooltip(QStringLiteral("Audio gain (0.0 - 2.0)"));
   audioGroup.addProperty(volumeProp);
+  auto clipGainProp = makeProp(QStringLiteral("audio.clipGainDb"), ArtifactCore::PropertyType::Float,
+                               impl_->clipGainDb_, -119);
+  clipGainProp->setDisplayLabel(QStringLiteral("Clip Gain"));
+  clipGainProp->setHardRange(-60.0, 12.0);
+  clipGainProp->setSoftRange(-12.0, 6.0);
+  clipGainProp->setStep(0.1);
+  clipGainProp->setUnit(QStringLiteral("dB"));
+  clipGainProp->setTooltip(QStringLiteral("Non-destructive clip gain"));
+  audioGroup.addProperty(clipGainProp);
+  auto fadeInProp = makeProp(QStringLiteral("audio.fadeInSeconds"), ArtifactCore::PropertyType::Float,
+                             impl_->fadeInSeconds_, -118);
+  fadeInProp->setDisplayLabel(QStringLiteral("Fade In"));
+  fadeInProp->setHardRange(0.0, 3600.0);
+  fadeInProp->setSoftRange(0.0, 10.0);
+  fadeInProp->setStep(0.01);
+  fadeInProp->setUnit(QStringLiteral("s"));
+  audioGroup.addProperty(fadeInProp);
+  auto fadeOutProp = makeProp(QStringLiteral("audio.fadeOutSeconds"), ArtifactCore::PropertyType::Float,
+                              impl_->fadeOutSeconds_, -117);
+  fadeOutProp->setDisplayLabel(QStringLiteral("Fade Out"));
+  fadeOutProp->setHardRange(0.0, 3600.0);
+  fadeOutProp->setSoftRange(0.0, 10.0);
+  fadeOutProp->setStep(0.01);
+  fadeOutProp->setUnit(QStringLiteral("s"));
+  audioGroup.addProperty(fadeOutProp);
+  auto deClickThresholdProp = makeProp(
+      QStringLiteral("audio.deClickThresholdDb"), ArtifactCore::PropertyType::Float,
+      impl_->deClickThresholdDb_, -116);
+  deClickThresholdProp->setDisplayLabel(QStringLiteral("De-click Threshold"));
+  deClickThresholdProp->setHardRange(-80.0, 0.0);
+  deClickThresholdProp->setSoftRange(-40.0, -6.0);
+  deClickThresholdProp->setStep(0.5);
+  deClickThresholdProp->setUnit(QStringLiteral("dB"));
+  deClickThresholdProp->setTooltip(QStringLiteral("Detection threshold for persisted de-click repairs"));
+  audioGroup.addProperty(deClickThresholdProp);
+  auto deClickWidthProp = makeProp(
+      QStringLiteral("audio.deClickMaxClickSamples"), ArtifactCore::PropertyType::Integer,
+      static_cast<qint64>(impl_->deClickMaxClickSamples_), -115);
+  deClickWidthProp->setDisplayLabel(QStringLiteral("De-click Max Width"));
+  deClickWidthProp->setHardRange(1.0, 4096.0);
+  deClickWidthProp->setSoftRange(1.0, 256.0);
+  deClickWidthProp->setUnit(QStringLiteral("samples"));
+  deClickWidthProp->setTooltip(QStringLiteral("Maximum isolated click width to repair"));
+  audioGroup.addProperty(deClickWidthProp);
   auto panProp = makeProp(QStringLiteral("audio.pan"), ArtifactCore::PropertyType::Float, impl_->pan_, -115);
   panProp->setHardRange(-1.0, 1.0);
   panProp->setSoftRange(-1.0, 1.0);
@@ -365,6 +564,26 @@ bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, cons
   }
   if (propertyPath == QStringLiteral("audio.volume")) {
     setVolume(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.clipGainDb")) {
+    setClipGainDb(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.fadeInSeconds")) {
+    setFadeInSeconds(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.fadeOutSeconds")) {
+    setFadeOutSeconds(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.deClickThresholdDb")) {
+    setDeClickThresholdDb(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.deClickMaxClickSamples")) {
+    setDeClickMaxClickSamples(static_cast<qint64>(value.toLongLong()));
     return true;
   }
   if (propertyPath == QStringLiteral("audio.pan")) {
@@ -691,6 +910,12 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   auto& rc = impl_->resampledCache_;
   if (rc.startSample == startSample && rc.sampleRate == sampleRate &&
       rc.volume == impl_->volume_ && rc.pan == impl_->pan_ &&
+      rc.clipGainDb == impl_->clipGainDb_ &&
+      rc.fadeInSeconds == impl_->fadeInSeconds_ &&
+      rc.fadeOutSeconds == impl_->fadeOutSeconds_ &&
+      rc.deClickRevision == impl_->deClickRevision_ &&
+      rc.deClickThresholdDb == impl_->deClickThresholdDb_ &&
+      rc.deClickMaxClickSamples == impl_->deClickMaxClickSamples_ &&
       rc.segment.channelCount() >= outChannels &&
       rc.segment.frameCount() >= frameCount) {
     for (int ch = 0; ch < outChannels; ++ch) {
@@ -702,6 +927,9 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
 
   const int srcChannels = impl_->sourceChannelCount_;
   const float volume = impl_->volume_;
+  const float clipGain = std::pow(10.0f, impl_->clipGainDb_ / 20.0f);
+  const double clipDurationSeconds = static_cast<double>(sourceFrameCount) /
+      std::max(1, impl_->sourceSampleRate_);
 
   int producedFrames = 0;
   for (int i = 0; i < frameCount; ++i) {
@@ -717,13 +945,26 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     const int base1 = (srcFrame1 < sourceFrameCount)
         ? static_cast<int>(srcFrame1) * srcChannels : base0;
 
+    const double sourceTimeSeconds = srcPos / std::max(1, impl_->sourceSampleRate_);
+    float fade = 1.0f;
+    if (impl_->fadeInSeconds_ > 0.0f) {
+      fade *= static_cast<float>(std::clamp(
+          sourceTimeSeconds / static_cast<double>(impl_->fadeInSeconds_), 0.0, 1.0));
+    }
+    if (impl_->fadeOutSeconds_ > 0.0f) {
+      fade *= static_cast<float>(std::clamp(
+          (clipDurationSeconds - sourceTimeSeconds) /
+              static_cast<double>(impl_->fadeOutSeconds_), 0.0, 1.0));
+    }
+    const float clipScale = clipGain * fade;
+
     if (srcChannels == 1) {
       // Mono source: interpolate and distribute to all output channels
       const float s0 = impl_->pcm()[base0];
       const float s1 = (srcFrame1 < sourceFrameCount)
           ? impl_->pcm()[base1]
           : 0.0f;
-      const float sample = (s0 + t * (s1 - s0)) * volume;
+      const float sample = (s0 + t * (s1 - s0)) * volume * clipScale;
       for (int ch = 0; ch < outChannels; ++ch) {
         outSegment.channelData[ch][i] = sample;
       }
@@ -735,11 +976,37 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
         const float s1 = (srcFrame1 < sourceFrameCount)
             ? impl_->pcm()[base1 + ch]
             : 0.0f;
-        outSegment.channelData[ch][i] = (s0 + t * (s1 - s0)) * volume;
+        outSegment.channelData[ch][i] = (s0 + t * (s1 - s0)) * volume * clipScale;
       }
       // Extra output channels remain zero (already zeroed)
     }
     producedFrames = i + 1;
+  }
+
+  // Apply panning only for stereo/mono output (first 2 channels)
+  if (producedFrames > 0 && !impl_->deClickRanges_.empty()) {
+    AudioSyncTools deClickTools;
+    for (const auto& range : impl_->deClickRanges_) {
+      const qint64 rangeStart = std::max(range.first, startSample);
+      const qint64 rangeEnd = std::min(range.second,
+          startSample + static_cast<qint64>(std::ceil(
+              producedFrames * static_cast<double>(impl_->sourceSampleRate_) /
+              std::max(1, sampleRate))));
+      if (rangeEnd <= rangeStart) continue;
+      const qint64 localStart = static_cast<qint64>(std::floor(
+          (rangeStart - startSample) * static_cast<double>(sampleRate) /
+          std::max(1, impl_->sourceSampleRate_)));
+      const qint64 localEnd = static_cast<qint64>(std::ceil(
+          (rangeEnd - startSample) * static_cast<double>(sampleRate) /
+          std::max(1, impl_->sourceSampleRate_)));
+      const qint64 localCount = std::min<qint64>(producedFrames, localEnd) -
+          std::max<qint64>(0, localStart);
+      if (localCount > 0) {
+        outSegment = deClickTools.deClick(outSegment,
+            std::max<qint64>(0, localStart), localCount,
+            impl_->deClickThresholdDb_, impl_->deClickMaxClickSamples_);
+      }
+    }
   }
 
   // Apply panning only for stereo/mono output (first 2 channels)
@@ -755,6 +1022,12 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     rc.startSample = startSample;
     rc.sampleRate = sampleRate;
     rc.volume = impl_->volume_;
+    rc.clipGainDb = impl_->clipGainDb_;
+    rc.fadeInSeconds = impl_->fadeInSeconds_;
+    rc.fadeOutSeconds = impl_->fadeOutSeconds_;
+    rc.deClickRevision = impl_->deClickRevision_;
+    rc.deClickThresholdDb = impl_->deClickThresholdDb_;
+    rc.deClickMaxClickSamples = impl_->deClickMaxClickSamples_;
     rc.pan = impl_->pan_;
     rc.segment.sampleRate = sampleRate;
     rc.segment.layout = outLayout;

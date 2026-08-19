@@ -565,7 +565,10 @@ void ArtifactCommandPaletteWidget::loadMruFromJson(const QJsonObject &data)
     const QJsonArray arr = data.value(QStringLiteral("ids")).toArray();
     for (const auto &v : arr) {
         if (v.isString()) {
-            list.append(v.toString());
+            const QString id = v.toString().trimmed();
+            if (!id.isEmpty() && !list.contains(id)) {
+                list.append(id);
+            }
         }
         if (list.size() >= kMruMaxEntries) {
             break;

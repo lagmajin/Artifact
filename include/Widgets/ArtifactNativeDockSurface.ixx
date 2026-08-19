@@ -3,10 +3,13 @@ module;
 #include <algorithm>
 #include <QHash>
 #include <QByteArray>
+#include <QColor>
 #include <QDebug>
+#include <QPalette>
 #include <QJsonDocument>
 #include <QSplitter>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QVBoxLayout>
 #include <QStringList>
 #include <QWidget>
@@ -14,6 +17,7 @@ module;
 export module Artifact.NativeDockSurface;
 
 import Artifact.DockManager;
+import Widgets.Utils.CSS;
 
 export namespace Artifact {
 
@@ -58,6 +62,31 @@ public:
     tabs->show();
     docks_.insert(dockId, widget);
     areas_.insert(dockId, area);
+    titles_.insert(dockId, title);
+    pinned_.insert(dockId, false);
+    return true;
+  }
+
+  // Add a dock to the same tab surface as an existing dock.  The native MVP
+  // uses the dock ID as the stable routing key; callers do not need to know
+  // which QTabWidget currently owns either panel.
+  bool addDockWidgetToTab(const QString &dockId, const QString &title,
+                          QWidget *widget, const QString &targetDockId) {
+    if (dockId.trimmed().isEmpty() || !widget || docks_.contains(dockId) ||
+        targetDockId.trimmed().isEmpty()) {
+      return false;
+    }
+    auto *target = docks_.value(targetDockId, nullptr);
+    auto *tabs = target ? tabsForWidget(target) : nullptr;
+    if (!tabs) {
+      return false;
+    }
+    widget->setParent(tabs);
+    tabs->addTab(widget, title);
+    tabs->setCurrentWidget(widget);
+    tabs->show();
+    docks_.insert(dockId, widget);
+    areas_.insert(dockId, areas_.value(targetDockId, DockArea::Center));
     titles_.insert(dockId, title);
     pinned_.insert(dockId, false);
     return true;
@@ -200,6 +229,50 @@ public:
     return true;
   }
 
+  bool moveDockWidgetToTab(const QString &dockId,
+                           const QString &targetDockId) {
+    auto *widget = docks_.value(dockId, nullptr);
+    auto *target = docks_.value(targetDockId, nullptr);
+    auto *targetTabs = target ? tabsForWidget(target) : nullptr;
+    if (!widget || !target || !targetTabs || dockId == targetDockId) {
+      return false;
+    }
+    const QString title = titles_.value(dockId, dockId);
+    const bool visible = widget->isVisible();
+    const bool pinned = pinned_.value(dockId, false);
+    const DockArea previousArea = areas_.value(dockId, DockArea::Center);
+    const DockArea targetArea = areas_.value(targetDockId, DockArea::Center);
+    if (!removeDockWidget(dockId) ||
+        !addDockWidget(dockId, title, widget, targetArea)) {
+      if (!docks_.contains(dockId)) {
+        addDockWidget(dockId, title, widget, previousArea);
+        pinned_.insert(dockId, pinned);
+        widget->setVisible(visible);
+      }
+      return false;
+    }
+    auto *newTabs = tabsForWidget(widget);
+    if (!newTabs || newTabs == targetTabs) {
+      widget->setVisible(visible);
+      pinned_.insert(dockId, pinned);
+      return newTabs == targetTabs;
+    }
+    const int index = newTabs->indexOf(widget);
+    if (index >= 0) {
+      newTabs->removeTab(index);
+    }
+    widget->setParent(targetTabs);
+    targetTabs->addTab(widget, title);
+    targetTabs->setCurrentWidget(widget);
+    areas_.insert(dockId, targetArea);
+    pinned_.insert(dockId, pinned);
+    widget->setVisible(visible);
+    if (newTabs->count() == 0) {
+      newTabs->hide();
+    }
+    return true;
+  }
+
   bool setDockVisible(const QString &dockId, bool visible) {
     auto *widget = docks_.value(dockId);
     if (!widget) {
@@ -207,6 +280,14 @@ public:
     }
     widget->setVisible(visible);
     return true;
+  }
+
+  bool containsDock(const QString &dockId) const {
+    return docks_.contains(dockId);
+  }
+
+  QString dockTitle(const QString &dockId) const {
+    return titles_.value(dockId);
   }
 
   bool setDockPinned(const QString &dockId, bool pinned) {
@@ -269,6 +350,22 @@ private:
     auto *tabs = new QTabWidget(parent);
     tabs->setDocumentMode(true);
     tabs->setMovable(true);
+    tabs->tabBar()->setExpanding(false);
+    tabs->tabBar()->setUsesScrollButtons(true);
+    tabs->tabBar()->setElideMode(Qt::ElideRight);
+    const auto &theme = ArtifactCore::currentDCCTheme();
+    QPalette palette = tabs->palette();
+    palette.setColor(QPalette::Window,
+                     QColor(theme.secondaryBackgroundColor));
+    palette.setColor(QPalette::Base, QColor(theme.backgroundColor));
+    palette.setColor(QPalette::Button,
+                     QColor(theme.secondaryBackgroundColor));
+    palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    palette.setColor(QPalette::Text, QColor(theme.textColor));
+    palette.setColor(QPalette::Highlight, QColor(theme.accentColor));
+    palette.setColor(QPalette::HighlightedText, QColor(theme.textColor));
+    tabs->setPalette(palette);
+    tabs->tabBar()->setPalette(palette);
     return tabs;
   }
 

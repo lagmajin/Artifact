@@ -484,14 +484,38 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
     const ArtifactPlaybackAudioDiagnostics audioDiagnostics = playback
         ? playback->audioDiagnostics()
         : ArtifactPlaybackAudioDiagnostics{};
-    const bool audioOk = !playback ||
-        (audioDiagnostics.deviceOpen &&
-         audioDiagnostics.formatMismatchCount == 0 &&
-         audioDiagnostics.underflowCount == 0);
+    const bool audioOk = !playback || audioDiagnostics.isHealthy();
     const bool videoOk = impl_->currentFrame_.isValid();
     QString context = QString("Frame: %1, Time: %2")
                           .arg(impl_->currentFrame_.framePosition())
                           .arg(impl_->elapsedTimer_.elapsed() / 1000.0);
+    if (playback) {
+      context += QString("; Audio health: %1")
+          .arg(audioDiagnostics.isHealthy() ? QStringLiteral("ok")
+                                             : QStringLiteral("ng"));
+      context += QString("; health reason: %1")
+          .arg(audioDiagnostics.healthReason());
+      context += QString("; device=%1 buffer=%2/%3 formatMismatch=%4")
+          .arg(audioDiagnostics.deviceOpen ? QStringLiteral("open")
+                                           : QStringLiteral("closed"))
+          .arg(QString::number(audioDiagnostics.bufferedFrames))
+          .arg(QString::number(audioDiagnostics.targetBufferedFrames))
+          .arg(QString::number(audioDiagnostics.formatMismatchCount));
+      context += QString("; Audio RMS L/R: %1/%2 dBFS; Peak L/R: %3/%4 dBFS")
+          .arg(QString::number(audioDiagnostics.leftRmsDb, 'f', 1))
+          .arg(QString::number(audioDiagnostics.rightRmsDb, 'f', 1))
+          .arg(QString::number(audioDiagnostics.leftPeakDb, 'f', 1))
+          .arg(QString::number(audioDiagnostics.rightPeakDb, 'f', 1));
+      context += QString("; underrun/overrun: %1/%2; recovery retry/resync/clock: %3/%4/%5")
+          .arg(QString::number(audioDiagnostics.underflowCount))
+          .arg(QString::number(audioDiagnostics.overflowCount))
+          .arg(QString::number(audioDiagnostics.openRetryCount))
+          .arg(QString::number(audioDiagnostics.resyncClearCount))
+          .arg(QString::number(audioDiagnostics.clockCorrectionCount));
+      if (audioDiagnostics.clippingDetected) {
+        context += QStringLiteral("; clipping detected");
+      }
+    }
     impl_->outputMonitorCallback_(audioOk, videoOk, context);
   }
 }

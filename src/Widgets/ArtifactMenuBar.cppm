@@ -10,7 +10,10 @@ module;
 #include <QSizePolicy>
 #include <QMenuBar>
 #include <QMenu>
+#include <QSettings>
+#include <QStringList>
 #include <QWidget>
+#include <QToolButton>
 #include <wobjectimpl.h>
 module Menu.MenuBar;
 
@@ -32,6 +35,7 @@ import Menu.Render;
 import Settings.Accessibility;
 import Menu.Time;
 import Artifact.Menu.View;
+import Artifact.MainWindow;
 import Menu.Option;
 import Menu.Test;
 import Menu.Help;
@@ -191,6 +195,67 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  }
 #endif
  menuBar->addMenu(static_cast<QMenu*>(helpMenu));
+
+ auto *addPanelButton = new QToolButton(menuBar);
+ addPanelButton->setText(QStringLiteral("+"));
+ addPanelButton->setToolTip(QStringLiteral("Add or restore a dock panel"));
+ addPanelButton->setAccessibleName(QStringLiteral("Add or restore dock panel"));
+ addPanelButton->setAccessibleDescription(
+     QStringLiteral("Show and activate a registered dock panel"));
+ addPanelButton->setAutoRaise(true);
+ addPanelButton->setPopupMode(QToolButton::InstantPopup);
+ auto *addPanelMenu = new QMenu(addPanelButton);
+ addPanelButton->setMenu(addPanelMenu);
+ QObject::connect(addPanelMenu, &QMenu::aboutToShow, menuBar,
+                  [mainWindow, addPanelMenu]() {
+                    addPanelMenu->clear();
+                    auto *window = dynamic_cast<ArtifactMainWindow*>(mainWindow);
+                    if (!window) return;
+                    const auto titles = window->dockTitles();
+                    QSettings settings;
+                    const QStringList favorites = settings.value(
+                        QStringLiteral("Workspace/FavoriteDockIds")).toStringList();
+                    const QStringList recent = settings.value(
+                        QStringLiteral("Workspace/RecentDockIds")).toStringList();
+                    auto addActivate = [window](QMenu* menu, const QString& title) {
+                      QAction* action = menu->addAction(title);
+                      action->setToolTip(QStringLiteral("Show and activate %1").arg(title));
+                      QObject::connect(action, &QAction::triggered, window,
+                                       [window, title]() {
+                                         window->setDockVisible(title, true);
+                                         window->activateDock(title);
+                                         QSettings settings;
+                                         QStringList ids = settings.value(
+                                             QStringLiteral("Workspace/RecentDockIds")).toStringList();
+                                         ids.removeAll(title);
+                                         ids.prepend(title);
+                                         while (ids.size() > 8) ids.removeLast();
+                                         settings.setValue(QStringLiteral("Workspace/RecentDockIds"), ids);
+                                       });
+                    };
+                    auto *recentMenu = addPanelMenu->addMenu(QStringLiteral("最近使ったパネル"));
+                    for (const auto& title : recent) {
+                      if (titles.contains(title)) addActivate(recentMenu, title);
+                    }
+                    if (recentMenu->actions().isEmpty()) {
+                      recentMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
+                    }
+                    auto *favoriteMenu = addPanelMenu->addMenu(QStringLiteral("お気に入り"));
+                    for (const auto& title : titles) {
+                      if (favorites.contains(title)) addActivate(favoriteMenu, title);
+                    }
+                    if (favoriteMenu->actions().isEmpty()) {
+                      favoriteMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
+                    }
+                    addPanelMenu->addSeparator();
+                    for (const auto& title : titles) {
+                      addActivate(addPanelMenu, title);
+                    }
+                    if (titles.isEmpty()) {
+                      addPanelMenu->addAction(QStringLiteral("(no panels)"))->setEnabled(false);
+                    }
+                  });
+ menuBar->setCornerWidget(addPanelButton, Qt::TopRightCorner);
 
  // Top-level menu titles stay text-only. Icons are reserved for commands
  // inside each menu, where they improve scanning without crowding the bar.

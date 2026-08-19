@@ -276,10 +276,22 @@ public:
             lines << QStringLiteral("  <not captured>");
         } else {
             const auto& graph = snapshot_.renderGraphDiagnostic;
-            lines << QStringLiteral("  executionId=%1 valid=%2 estimatedBytes=%3")
+            lines << QStringLiteral("  executionId=%1 valid=%2 estimatedBytes=%3 aliasedBytes=%4 slots=%5")
                          .arg(QString::number(graph.executionId))
                          .arg(graph.valid ? QStringLiteral("true") : QStringLiteral("false"))
-                         .arg(QString::number(graph.estimatedResourceBytes));
+                         .arg(QString::number(graph.estimatedResourceBytes))
+                         .arg(QString::number(graph.estimatedAliasedResourceBytes))
+                         .arg(QString::number(graph.allocationSlots.size()));
+            for (const auto& slot : graph.allocationSlots) {
+                lines << QStringLiteral("    slot#%1 kind=%2 size=%3x%4x%5 format=%6 bytes=%7")
+                             .arg(QString::number(slot.index))
+                             .arg(ArtifactCore::toString(slot.kind))
+                             .arg(QString::number(slot.width))
+                             .arg(QString::number(slot.height))
+                             .arg(QString::number(slot.depth))
+                             .arg(QString::number(slot.format))
+                             .arg(QString::number(slot.byteSize));
+            }
             if (!graph.error.empty()) {
                 lines << QStringLiteral("  error=%1").arg(QString::fromStdString(graph.error));
             }
@@ -306,6 +318,10 @@ public:
                              .arg(ArtifactCore::toString(pass.state))
                              .arg(reads.isEmpty() ? QStringLiteral("<none>") : reads.join(QStringLiteral(", ")))
                              .arg(writes.isEmpty() ? QStringLiteral("<none>") : writes.join(QStringLiteral(", ")));
+                if (!pass.stateReason.empty()) {
+                    lines << QStringLiteral("      reason=%1")
+                                 .arg(QString::fromStdString(pass.stateReason));
+                }
                 if (pass.gpuTimingAvailable) {
                     lines << QStringLiteral("      gpu=%1us sample=%2")
                                  .arg(QString::number(pass.gpuDurationUs))

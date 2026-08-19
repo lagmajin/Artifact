@@ -587,6 +587,34 @@ void Artifact3DGizmo::setTransform(const QVector3D& position, const QVector3D& r
         finiteOr(rotation.z(), 0.0f));
 }
 
+void Artifact3DGizmo::resetState() {
+    impl_->position = QVector3D();
+    impl_->rotation = QVector3D();
+    impl_->scale = QVector3D(1.0f, 1.0f, 1.0f);
+    impl_->localAxisX = QVector3D(1.0f, 0.0f, 0.0f);
+    impl_->localAxisY = QVector3D(0.0f, -1.0f, 0.0f);
+    impl_->localAxisZ = QVector3D(0.0f, 0.0f, 1.0f);
+    impl_->viewAxisX = QVector3D(1.0f, 0.0f, 0.0f);
+    impl_->viewAxisY = QVector3D(0.0f, -1.0f, 0.0f);
+    impl_->viewAxisZ = QVector3D(0.0f, 0.0f, 1.0f);
+    impl_->hasLocalBasis = false;
+    impl_->currentScale = 1.0f;
+    impl_->boundingBoxDrag = false;
+    impl_->numericInputActive = false;
+    impl_->numericPlanarScale = false;
+    impl_->drawingFullOverlay = false;
+    impl_->testingFullOverlay = false;
+    activeAxis_ = GizmoAxis::None;
+    hoverAxis_ = GizmoAxis::None;
+    activeOperation_ = GizmoOperation::None;
+    hoverOperation_ = GizmoOperation::None;
+    hoverAxisDirectionSign_ = 1.0f;
+    hoverScaleAxes_ = QVector3D();
+    hoverScaleSigns_ = QVector3D(1.0f, 1.0f, 1.0f);
+    fullModeDrag_ = false;
+    clearBoundingBox();
+}
+
 void Artifact3DGizmo::setLocalBasis(const QVector3D& xAxis,
                                     const QVector3D& yAxis,
                                     const QVector3D& zAxis) {

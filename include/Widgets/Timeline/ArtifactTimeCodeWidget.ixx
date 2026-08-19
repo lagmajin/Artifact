@@ -4,6 +4,7 @@ module;
 #include <QEvent>
 #include <QObject>
 #include <QWidget>
+#include <QContextMenuEvent>
 
 export module Artifact.Timeline.TimeCodeWidget;
 
@@ -41,6 +42,7 @@ export namespace Artifact
 
  protected:
   bool eventFilter(QObject* watched, QEvent* event) override;
+  void contextMenuEvent(QContextMenuEvent* event) override;
 
  public:
   void searchTextChanged(const QString& text) W_SIGNAL(searchTextChanged, text);

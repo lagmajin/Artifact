@@ -137,6 +137,7 @@ namespace Artifact {
   QLabel* mouseLabel = nullptr;
   QLabel* resolutionInfoLabel = nullptr;
   QComboBox* resolutionCombo = nullptr;
+  QComboBox* qualityCombo = nullptr;
   double fps_ = 0.0;
   uint64_t memMB_ = 0;
   float ramPreviewHitRate_ = 0.0f;
@@ -226,6 +227,24 @@ ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent
   impl_->resolutionCombo->setAccessibleDescription(QStringLiteral("Choose the composition preview resolution"));
   layout->addWidget(impl_->resolutionCombo);
 
+  auto *qualityLabel = new QLabel(QStringLiteral("Quality:"), this);
+  impl_->qualityCombo = new QComboBox(this);
+  impl_->qualityCombo->addItem(QStringLiteral("Draft (1/4)"),
+                               static_cast<int>(PreviewQualityPreset::Draft));
+  impl_->qualityCombo->addItem(QStringLiteral("Preview (1/2)"),
+                               static_cast<int>(PreviewQualityPreset::Preview));
+  impl_->qualityCombo->addItem(QStringLiteral("Full"),
+                               static_cast<int>(PreviewQualityPreset::Final));
+  impl_->qualityCombo->setAccessibleName(QStringLiteral("Preview quality"));
+  impl_->qualityCombo->setAccessibleDescription(
+      QStringLiteral("Choose the preview render quality"));
+  if (auto *service = ArtifactProjectService::instance()) {
+    impl_->qualityCombo->setCurrentIndex(
+        impl_->qualityCombo->findData(static_cast<int>(service->previewQualityPreset())));
+  }
+  layout->addWidget(qualityLabel);
+  layout->addWidget(impl_->qualityCombo);
+
   // Playback controls
   impl_->pPlayPauseButton->setToolTip("Play/Pause");
   layout->addWidget(impl_->pPlayPauseButton);
@@ -259,6 +278,14 @@ ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent
 
   // Connections
   connect(impl_->pSnapShotButton, &QToolButton::clicked, this, &ArtifactCompositionViewerFooter::takeSnapShotRequested);
+  connect(impl_->qualityCombo, &QComboBox::currentIndexChanged, this,
+          [this](int index) {
+            if (index < 0 || !impl_->qualityCombo) return;
+            if (auto *service = ArtifactProjectService::instance()) {
+              service->setPreviewQualityPreset(
+                  static_cast<PreviewQualityPreset>(impl_->qualityCombo->itemData(index).toInt()));
+            }
+          });
   connect(impl_->pPlayPauseButton, &QToolButton::clicked, this, [this]() {
     impl_->isPlaying_ = !impl_->isPlaying_;
     // update icon

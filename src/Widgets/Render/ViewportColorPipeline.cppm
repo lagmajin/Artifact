@@ -37,6 +37,7 @@ ViewportColorPipeline::~ViewportColorPipeline() {
 void ViewportColorPipeline::clear() {
   if (impl_ && impl_->postProcess) {
     impl_->postProcess->clearLUT();
+    impl_->postProcess->setViewTransformEnabled(false);
   }
   if (impl_) {
     impl_->lutKey.clear();

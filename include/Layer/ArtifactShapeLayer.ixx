@@ -133,6 +133,8 @@ public:
   void clearCustomPath();
   std::vector<CustomPathVertex> customPathVertices() const;
   bool customPathClosed() const;
+  ArtifactCore::PathFillRule customPathFillRule() const;
+  void setCustomPathFillRule(ArtifactCore::PathFillRule rule);
 
   // Backend-neutral geometry after applying the current operator stack.
   std::vector<ArtifactCore::ShapePath> nativeShapePaths() const;

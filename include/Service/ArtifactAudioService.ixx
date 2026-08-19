@@ -2,6 +2,9 @@ module;
 #include <utility>
 #include <memory>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QtGlobal>
 export module Artifact.Service.Audio;
 
 import Utils.Id;
@@ -40,6 +43,13 @@ export namespace Artifact {
   bool setLayerBusPan(const ArtifactCore::LayerID& layerId, float pan);
   bool setLayerBusMuted(const ArtifactCore::LayerID& layerId, bool muted);
   bool setLayerBusSolo(const ArtifactCore::LayerID& layerId, bool solo);
+  bool addLayerDeClickRange(const ArtifactCore::LayerID& layerId,
+                            qint64 startSample, qint64 endSample);
+  bool clearLayerDeClickRanges(const ArtifactCore::LayerID& layerId);
+  QVariantList layerDeClickRanges(const ArtifactCore::LayerID& layerId) const;
+  bool setLayerDeClickSettings(const ArtifactCore::LayerID& layerId,
+                               float thresholdDb, qint64 maxClickSamples);
+  QVariantMap layerDeClickSettings(const ArtifactCore::LayerID& layerId) const;
  };
 
 

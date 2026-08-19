@@ -71,6 +71,8 @@ public:
     RefCntAutoPtr<ISampler> spriteSampler() const;
     RefCntAutoPtr<ISampler> glyphAtlasSampler() const;
     IPipelineStateCache* pipelineStateCache() const;
+    /// Diagnostic state for the persistent PSO cache (no hit/miss counters).
+    QString pipelineStateCacheDebugState() const;
 
     bool isInitialized() const;
 

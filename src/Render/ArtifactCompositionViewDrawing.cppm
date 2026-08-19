@@ -100,6 +100,9 @@ export bool layerUsesStaticLayerGpuCacheForCompositionView(ArtifactAbstractLayer
 export bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* composition,
                                                 QImage& image,
                                                 DetailLevel lod = DetailLevel::High);
+export bool applyCompositionFinalEffectsToBuffer(
+    ArtifactAbstractComposition* composition,
+    ArtifactCore::ImageF32x4_RGBA& buffer);
 export void applyRasterizerEffectsAndMasksToSurface(
     ArtifactAbstractLayer* targetLayer, QImage& surface, DetailLevel lod);
 export void applyRasterizerEffectsAndMasksToSurface(
@@ -682,6 +685,11 @@ bool hasEnabledMatteReferences(ArtifactAbstractLayer* targetLayer)
                      });
 }
 
+bool buildRasterizedSurfaceBuffer(
+    ArtifactAbstractLayer* targetLayer,
+    const ArtifactCore::ImageF32x4_RGBA& surface,
+    ArtifactCore::ImageF32x4_RGBA* outBuffer);
+
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
                                   const QImage& surface,
                                   ArtifactCore::ImageF32x4_RGBA* outBuffer)
@@ -689,87 +697,14 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   if (!targetLayer || surface.isNull() || !outBuffer) {
     return false;
   }
-
-  const bool hasMasks = targetLayer->hasMasks();
-  const bool hasMattes = hasEnabledMatteReferences(targetLayer);
-  const auto effects = targetLayer->getEffects();
-  bool hasRasterizerEffect = false;
-  for (const auto& effect : effects) {
-    if (effect && effect->isEnabled() &&
-        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
-      hasRasterizerEffect = true;
-      break;
-    }
-  }
-
-  if (!hasRasterizerEffect && !hasMasks && !hasMattes) {
-    return false;
-  }
-
   const QImage effectSurface = normalizeQImageForCvEffectBoundary(surface);
-  ArtifactCore::SurfaceColorDescriptor surfaceDescriptor =
-      qImageCvMatSurfaceDescriptor(effectSurface);
-
   cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(effectSurface, true);
   if (mat.type() != CV_32FC4) {
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
   }
-
-  if (hasMasks) {
-    // Layer masks define the source alpha seen by rasterizer effects. Applying
-    // them first prevents effects such as Drop Shadow from sampling pixels
-    // that the layer mask has already removed.
-    const QRectF lb = targetLayer->localBounds();
-    const float scaleX = static_cast<float>(mat.cols) /
-                         std::max(1.0f, static_cast<float>(lb.width()));
-    const float scaleY = static_cast<float>(mat.rows) /
-                         std::max(1.0f, static_cast<float>(lb.height()));
-    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
-    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
-    for (int m = 0; m < targetLayer->maskCount(); ++m) {
-      LayerMask mask = targetLayer->mask(m);
-      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
-                        scaleX, scaleY);
-    }
-  }
-
-  if (hasRasterizerEffect) {
-    ArtifactCore::ImageF32x4_RGBA cpuImage;
-    cpuImage.setFromCVMat(mat, surfaceDescriptor);
-    ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
-
-    // 調整レイヤーのエフェクトは背面全体に作用するため、
-    // requiresFullFrame として扱い ROI 縮小によるサンプリング欠けを防ぐ。
-    const bool isAdjustment = targetLayer->isAdjustmentLayer();
-
-    for (const auto& effect : effects) {
-      if (!effect || !effect->isEnabled() ||
-          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
-        continue;
-      }
-
-      // ROI hint を収集して必要な拡張量を計算する。
-      // 調整レイヤーは hint に関わらず常に full-frame が必要。
-      const EffectROIHint hint = effect->roiHint();
-      Q_UNUSED(isAdjustment);
-      Q_UNUSED(hint);
-
-      ArtifactCore::ImageF32x4RGBAWithCache next;
-      effect->setContext(makeLayerEffectContext(
-          targetLayer,
-          QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
-                 static_cast<qreal>(current.height()))));
-      effect->applyConfigured(current, next);
-      current = next;
-    }
-
-    // Store frame for temporal effect lookback.
-    mat = current.image().toCVMat();
-    surfaceDescriptor = current.image().colorDescriptor();
-  }
-
-  outBuffer->setFromCVMat(mat, surfaceDescriptor);
-  return true;
+  ArtifactCore::ImageF32x4_RGBA input;
+  input.setFromCVMat(mat, qImageCvMatSurfaceDescriptor(effectSurface));
+  return buildRasterizedSurfaceBuffer(targetLayer, input, outBuffer);
 }
 
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
@@ -1306,11 +1241,11 @@ bool layerUsesStaticLayerGpuCacheForCompositionView(ArtifactAbstractLayer* layer
          dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr;
 }
 
-bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* composition,
-                                         QImage& image,
-                                         DetailLevel lod)
+bool applyCompositionFinalEffectsToBuffer(
+    ArtifactAbstractComposition* composition,
+    ArtifactCore::ImageF32x4_RGBA& buffer)
 {
-  if (!composition || image.isNull()) {
+  if (!composition || buffer.isEmpty()) {
     return false;
   }
 
@@ -1327,20 +1262,7 @@ bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* compositio
     return false;
   }
 
-  const QImage processedImage = downsampleForLOD(image, lod);
-  if (processedImage.isNull()) {
-    return false;
-  }
-
-  const QImage effectImage = normalizeQImageForCvEffectBoundary(processedImage);
-  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(effectImage, true);
-  if (mat.type() != CV_32FC4) {
-    mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
-  }
-
-  ArtifactCore::ImageF32x4_RGBA cpuImage;
-  cpuImage.setFromCVMat(mat, qImageCvMatSurfaceDescriptor(effectImage));
-  ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
+  ArtifactCore::ImageF32x4RGBAWithCache current(buffer);
 
   for (const auto& effect : effects) {
     if (!effect || !effect->isEnabled() ||
@@ -1356,7 +1278,36 @@ bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* compositio
     current = next;
   }
 
-  image = current.image().toQImage();
+  buffer = current.image();
+  return true;
+}
+
+bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* composition,
+                                         QImage& image,
+                                         DetailLevel lod)
+{
+  if (!composition || image.isNull()) {
+    return false;
+  }
+
+  const QImage processedImage = downsampleForLOD(image, lod);
+  if (processedImage.isNull()) {
+    return false;
+  }
+
+  const QImage effectImage = normalizeQImageForCvEffectBoundary(processedImage);
+  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(effectImage, true);
+  if (mat.type() != CV_32FC4) {
+    mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
+  }
+
+  ArtifactCore::ImageF32x4_RGBA buffer;
+  buffer.setFromCVMat(mat, qImageCvMatSurfaceDescriptor(effectImage));
+  if (!applyCompositionFinalEffectsToBuffer(composition, buffer)) {
+    return false;
+  }
+
+  image = buffer.toQImage();
   return true;
 }
 
@@ -1425,7 +1376,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
     const bool usesGpuTextureCache =
         !hasResolvedMattes && layerCacheEnabled && gpuTextureCacheManager &&
-        layerUsesGpuTextureCacheForCompositionView(layer);
+        layerUsesGpuTextureCacheForCompositionView(layer) &&
+        !(sceneLights && !sceneLights->empty() && !layer->is3D());
     const bool usesStaticGpuCache = !hasResolvedMattes &&
         layerUsesStaticLayerGpuCacheForCompositionView(layer);
     const bool usesSurfaceCache = !hasResolvedMattes &&
@@ -1434,10 +1386,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     const QString ownerId = usesSurfaceCache || usesStaticGpuCache
                                 ? layer->id().toString()
                                 : QString{};
-    const QString cacheSignature = usesSurfaceCache || usesStaticGpuCache
-                                       ? buildLayerSurfaceCacheKey(
-                                             layer, surface, cacheFrameNumber)
-                                       : QString{};
+    QString cacheSignature = usesSurfaceCache || usesStaticGpuCache
+                                 ? buildLayerSurfaceCacheKey(
+                                       layer, surface, cacheFrameNumber)
+                                 : QString{};
+    // Lighting is applied after the rasterized-surface cache is resolved.
+    // Include its deterministic lift in the surface/GPU cache identity so a
+    // cached pre-light texture cannot be reused for a lit frame.
+    if (!cacheSignature.isEmpty() && sceneLights && !sceneLights->empty() &&
+        !layer->is3D()) {
+      const float lightLift =
+          std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()));
+      cacheSignature += QStringLiteral("|scene-light-lift=%1").arg(lightLift, 0, 'f', 6);
+    }
     QString gpuOwnerId = ownerId;
     QString gpuCacheSignature = cacheSignature;
     if (!allowSurfaceCache) {
@@ -1569,14 +1530,27 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     if (sceneLights && !sceneLights->empty() && !layer->is3D()) {
       const float lift = std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()));
       if (lift > 0.0f) {
-        if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
-          surface = directProcessedBuffer->toQImage();
-        }
-        QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        auto* litBits = lit.bits();
-        const int litStride = lit.bytesPerLine();
-        const auto applyLightRows = [&](int yBegin, int yEnd) {
-          for (int y = yBegin; y < yEnd; ++y) {
+        if (directProcessedBuffer && !directProcessedBuffer->isEmpty() &&
+            !usesGpuTextureCache) {
+          // Keep non-GPU-cached typed surfaces in the float path. The previous
+          // implementation converted every available buffer to QImage before
+          // applying this small lighting lift.
+          cv::Mat lit = directProcessedBuffer->toCanonicalRGBA32FC4();
+          for (int y = 0; y < lit.rows; ++y) {
+            auto* row = lit.ptr<cv::Vec4f>(y);
+            for (int x = 0; x < lit.cols; ++x) {
+              row[x][0] = std::clamp(row[x][0] + (1.0f - row[x][0]) * lift, 0.0f, 1.0f);
+              row[x][1] = std::clamp(row[x][1] + (1.0f - row[x][1]) * lift, 0.0f, 1.0f);
+              row[x][2] = std::clamp(row[x][2] + (1.0f - row[x][2]) * lift, 0.0f, 1.0f);
+            }
+          }
+          directProcessedBuffer = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
+          directProcessedBuffer->setFromCVMat(lit);
+        } else {
+          QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+          auto* litBits = lit.bits();
+          const int litStride = lit.bytesPerLine();
+          for (int y = 0; y < lit.height(); ++y) {
             auto* row = reinterpret_cast<QRgb*>(litBits + y * litStride);
             for (int x = 0; x < lit.width(); ++x) {
               const int r = qRed(row[x]);
@@ -1589,17 +1563,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                              a);
             }
           }
-        };
-        const std::size_t lightPixelCount =
-            static_cast<std::size_t>(lit.width()) *
-            static_cast<std::size_t>(lit.height());
-        if (lightPixelCount >= 256u * 1024u) {
-          applyLightRows(0, lit.height());
-        } else {
-          applyLightRows(0, lit.height());
+          surface = std::move(lit);
         }
-        surface = std::move(lit);
-        directProcessedBuffer.reset();
       }
     }
 

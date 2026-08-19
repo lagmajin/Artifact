@@ -43,6 +43,7 @@ module;
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 
 #include <QPointer>
 
@@ -487,14 +488,21 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
     }
   }
 
-  const float currentRotation = current.is3D
-      ? current.rotation.x()
-      : current.rotation.z();
   if (rotationChanged) {
-    if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
-      transform.setRotation(time, currentRotation);
+    if (current.is3D) {
+      if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
+        transform.setRotationX(time, current.rotation.x());
+        transform.setRotationY(time, current.rotation.y());
+        transform.setRotationZ(time, current.rotation.z());
+      } else {
+        transform.setCurrentRotationX(current.rotation.x());
+        transform.setCurrentRotationY(current.rotation.y());
+        transform.setCurrentRotationZ(current.rotation.z());
+      }
+    } else if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
+      transform.setRotation(time, current.rotation.z());
     } else {
-      transform.setInitialRotation(time, currentRotation);
+      transform.setInitialRotation(time, current.rotation.z());
     }
   }
 
@@ -510,6 +518,9 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
                          current.scale.z());
     }
   }
+  const float currentRotation = current.is3D
+      ? current.rotation.x()
+      : current.rotation.z();
   const auto syncProperty = [&](const QString &path, const QVariant &value,
                                 bool autoKey) {
     const auto property = layer->getProperty(path);
@@ -808,11 +819,15 @@ class GizmoTransformUndoCommand final : public UndoCommand {
       }
       transform.setCurrentPositionZ(snapshot.position.z());
       if (snapshot.hasRotationKey) {
-        transform.setRotation(time, snapshot.rotation.x());
+        transform.setRotationX(time, snapshot.rotation.x());
+        transform.setRotationY(time, snapshot.rotation.y());
+        transform.setRotationZ(time, snapshot.rotation.z());
       } else {
         transform.removeRotationKeyFrameAt(time);
         if (!snapshot.rotationAnimated) {
-          transform.setInitialRotation(time, snapshot.rotation.x());
+          transform.setCurrentRotationX(snapshot.rotation.x());
+          transform.setCurrentRotationY(snapshot.rotation.y());
+          transform.setInitialRotation(time, snapshot.rotation.z());
         }
       }
       if (snapshot.hasScaleKey) {
@@ -893,11 +908,15 @@ class GizmoGroupTransformUndoCommand final : public UndoCommand {
         }
         transform.setCurrentPositionZ(snapshot.position.z());
         if (snapshot.hasRotationKey) {
-          transform.setRotation(time, snapshot.rotation.x());
+          transform.setRotationX(time, snapshot.rotation.x());
+          transform.setRotationY(time, snapshot.rotation.y());
+          transform.setRotationZ(time, snapshot.rotation.z());
         } else {
           transform.removeRotationKeyFrameAt(time);
           if (!snapshot.rotationAnimated) {
-            transform.setInitialRotation(time, snapshot.rotation.x());
+            transform.setCurrentRotationX(snapshot.rotation.x());
+            transform.setCurrentRotationY(snapshot.rotation.y());
+            transform.setInitialRotation(time, snapshot.rotation.z());
           }
         }
         if (snapshot.hasScaleKey) {
@@ -5700,6 +5719,22 @@ bool isLayerSelected(const QStringList &selectedIds,
 
 }
 
+bool passesLayerRenderFilter(CompositionLayerRenderFilter filter,
+                             const QStringList &selectedIds,
+                             const LayerID &selectedLayerId,
+                             const ArtifactAbstractLayerPtr &layer) {
+  if (filter == CompositionLayerRenderFilter::All) {
+    return true;
+  }
+  if (!layer) {
+    return false;
+  }
+  if (!selectedIds.isEmpty()) {
+    return isLayerSelected(selectedIds, layer);
+  }
+  return !selectedLayerId.isNil() && layer->id() == selectedLayerId;
+}
+
 
 
 enum class MotionPathSampleKind { Keyframe, Current };
@@ -6904,12 +6939,16 @@ bool projectedFixedPlaneFrameCornersAt(
 
   // Match Artifact3DLayer::draw() so each historical frame has the same
   // position, rotation, scale, and anchor transform as the rendered plane.
+  const double planeFps = plane.compositionFrameRate();
   const auto snapshot = plane.transform3D().snapshotAt(
-      ArtifactCore::RationalTime(frame, 30));
+      ArtifactCore::RationalTime(
+          frame, std::isfinite(planeFps) && planeFps > 0.0 ? planeFps : 30.0));
   QMatrix4x4 world;
   world.setToIdentity();
   world.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  world.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  world.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  world.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  world.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   world.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   world.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
 
@@ -6938,12 +6977,16 @@ bool projectedFixedPlaneFrameCornersAt(
 
 bool intersectPickingRayFixedPlaneAt(const Artifact3DLayer &plane, int frame,
                                      const Ray &ray, QVector3D &hit) {
+  const double planeFps = plane.compositionFrameRate();
   const auto snapshot = plane.transform3D().snapshotAt(
-      ArtifactCore::RationalTime(frame, 30));
+      ArtifactCore::RationalTime(
+          frame, std::isfinite(planeFps) && planeFps > 0.0 ? planeFps : 30.0));
   QMatrix4x4 world;
   world.setToIdentity();
   world.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  world.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  world.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  world.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  world.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   world.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   world.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
   const QVector3D planePoint = world.map(QVector3D());
@@ -7574,7 +7617,8 @@ bool layerIntersectsCanvasRect(const ArtifactAbstractLayerPtr &layer,
 
   if (!layer || !rect.isValid() || !isLayerEffectivelyVisible(layer) ||
 
-      !layer->isActiveAt(currentFrame)) {
+      !layer->isActiveAt(currentFrame) || layer->isLocked() ||
+      layer->isSelectionLocked()) {
 
     return false;
 
@@ -7810,11 +7854,15 @@ static bool intersectModelLayerPickingRay(const Artifact3DLayer &layer,
     return false;
   }
 
+  const double layerFps = layer.compositionFrameRate();
   const auto snapshot = layer.transform3D().snapshotAt(
-      RationalTime(layer.currentFrame(), 30));
+      RationalTime(layer.currentFrame(),
+                   std::isfinite(layerFps) && layerFps > 0.0 ? layerFps : 30.0));
   QMatrix4x4 modelMatrix;
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  modelMatrix.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
   modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
 
@@ -10492,6 +10540,54 @@ public:
 
     }
 
+    template <std::size_t PassCount>
+    static bool runAllWithRenderGraph(
+        const std::array<RenderPass*, PassCount>& passes,
+        RenderPassContext& context, RenderPassResources& resources) {
+      static const auto graphAndCompiled = [] {
+        ArtifactCore::RenderGraph graph;
+        auto dependency = graph.addResource({
+            "RenderPass.Begin", ArtifactCore::RenderResourceKind::Buffer,
+            ArtifactCore::RenderResourceLifetime::External, 0, 0, 1, 0, 0});
+        for (std::size_t index = 0; index < PassCount; ++index) {
+          auto output = graph.addResource({
+              "RenderPass." + std::to_string(index),
+              ArtifactCore::RenderResourceKind::Buffer,
+              ArtifactCore::RenderResourceLifetime::Transient, 0, 0, 1, 0,
+              0});
+          graph.addPass({"RenderPass." + std::to_string(index),
+                         ArtifactCore::RenderPassQueue::Graphics,
+                         {dependency}, {output}, true});
+          dependency = output;
+        }
+        auto compiled = graph.compile();
+        return std::pair<ArtifactCore::RenderGraph,
+                         ArtifactCore::CompiledRenderGraph>{
+            std::move(graph), std::move(compiled)};
+      }();
+      const auto& graph = graphAndCompiled.first;
+      const auto& compiled = graphAndCompiled.second;
+      if (!compiled.valid) return false;
+
+      std::size_t nextPass = 0;
+      std::string error;
+      return graph.execute(
+          compiled,
+          [&](const ArtifactCore::RenderGraphExecutionContext&) {
+            return nextPass < PassCount &&
+                   passes[nextPass] != nullptr &&
+                   run(*passes[nextPass++], context, resources);
+          },
+          &error);
+    }
+
+    static bool runWithRenderGraph(RenderPass& pass,
+                                   RenderPassContext& context,
+                                   RenderPassResources& resources) {
+      const std::array<RenderPass*, 1> passes{&pass};
+      return runAllWithRenderGraph(passes, context, resources);
+    }
+
   };
 
   struct GpuBasePassState {
@@ -10565,6 +10661,8 @@ public:
   bool renderScheduled_ = false;
 
   CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
+  CompositionLayerRenderFilter layerRenderFilter_ =
+      CompositionLayerRenderFilter::All;
   QString compareRestoreStateId_;
   bool stateCompareSessionActive_ = false;
 
@@ -12333,6 +12431,8 @@ public:
 
   QPointF colorSamplerCanvasPos_;
 
+  LayerID colorSamplerLayerId_;
+
   QVector<FloatColor> referenceDominantPalette_;
 
   QVector<FloatColor> referenceHarmonyPalette_;
@@ -13509,12 +13609,14 @@ public:
   QSize pendingResizeSize_;
 
   bool isRubberBandSelecting_ = false;
+  bool isLassoSelecting_ = false;
 
   bool dragGroupMove_ = false;
 
   QPointF rubberBandStartViewportPos_;
 
   QPointF rubberBandCurrentViewportPos_;
+  QVector<QPointF> lassoViewportPoints_;
 
   SelectionMode selectionMode_ = SelectionMode::Replace;
 
@@ -13561,6 +13663,8 @@ public:
   QPointF dragStartVertexLocal_;
 
   std::vector<std::tuple<int, int, int>> selectedMaskVertices_;
+  bool maskProportionalEditingEnabled_ = false;
+  float maskProportionalEditRadius_ = 120.0f;
   bool maskRubberBandCandidate_ = false;
   bool isMaskRubberBandSelecting_ = false;
   QPointF maskRubberBandStartCanvas_;
@@ -14260,9 +14364,17 @@ public:
 
 
 
-    if (gizmo3D_ && layer) {
+    if (gizmo3D_) {
 
-      syncGizmo3DFromLayer(layer);
+      if (layer) {
+
+        syncGizmo3DFromLayer(layer);
+
+      } else {
+
+        gizmo3D_->resetState();
+
+      }
 
     }
 
@@ -14450,6 +14562,20 @@ public:
 
   }
 
+  QPolygonF lassoCanvasPolygon() const {
+    QPolygonF polygon;
+    if (!renderer_ || lassoViewportPoints_.size() < 3) {
+      return polygon;
+    }
+    polygon.reserve(lassoViewportPoints_.size());
+    for (const auto &point : lassoViewportPoints_) {
+      const auto canvas = renderer_->viewportToCanvas(
+          {static_cast<float>(point.x()), static_cast<float>(point.y())});
+      polygon.push_back(QPointF(canvas.x, canvas.y));
+    }
+    return polygon;
+  }
+
 
 
   void clearSelectionGestureState() {
@@ -14457,6 +14583,8 @@ public:
     isDraggingLayer_ = false;
 
     isRubberBandSelecting_ = false;
+    isLassoSelecting_ = false;
+    lassoViewportPoints_.clear();
 
     dragGroupMove_ = false;
 
@@ -15829,6 +15957,8 @@ void CompositionRenderController::destroy() {
   impl_->maskCutoutPipeline_.reset();
 
   impl_->lastPresentedReadbackSRV_ = nullptr;
+  impl_->compareMode_ = CompositionCompareMode::Off;
+  impl_->layerRenderFilter_ = CompositionLayerRenderFilter::All;
 
   if (impl_->renderer_) {
 
@@ -16307,6 +16437,7 @@ void CompositionRenderController::setComposition(
   impl_->stateCompareSessionActive_ = false;
   impl_->compareRestoreStateId_.clear();
   impl_->compareMode_ = CompositionCompareMode::Off;
+  impl_->layerRenderFilter_ = CompositionLayerRenderFilter::All;
 
 
 
@@ -16410,6 +16541,21 @@ LayerID CompositionRenderController::selectedLayerId() const {
 
   return impl_->selectedLayerId_;
 
+}
+
+void CompositionRenderController::setLayerRenderFilter(
+    CompositionLayerRenderFilter filter) {
+  if (impl_->layerRenderFilter_ == filter) {
+    return;
+  }
+  impl_->layerRenderFilter_ = filter;
+  impl_->invalidateBaseComposite();
+  impl_->markRenderDirty();
+}
+
+CompositionLayerRenderFilter
+CompositionRenderController::layerRenderFilter() const {
+  return impl_->layerRenderFilter_;
 }
 
 
@@ -20322,6 +20468,19 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     snapshot.resources.push_back(textureCacheResource);
 
+  }
+
+  if (impl_->renderer_) {
+    ArtifactCore::FrameDebugResourceRecord shadowMapResource;
+    shadowMapResource.label = QStringLiteral("Shadow Map");
+    shadowMapResource.type = QStringLiteral("depthTexture");
+    shadowMapResource.relation = QStringLiteral("lighting");
+    const QString shadowState = impl_->renderer_->shadowMapDebugState();
+    shadowMapResource.cacheHit = shadowState.contains(QStringLiteral("ready=true"));
+    shadowMapResource.stale = shadowState.contains(QStringLiteral("enabled=true")) &&
+                              !shadowMapResource.cacheHit;
+    shadowMapResource.note = shadowState;
+    snapshot.resources.push_back(std::move(shadowMapResource));
   }
 
 
@@ -24263,6 +24422,10 @@ if (event->button() == Qt::LeftButton &&
           impl_->dragMode_ = LayerDragMode::None;
 
           impl_->isRubberBandSelecting_ = true;
+          impl_->isLassoSelecting_ =
+              event->modifiers().testFlag(Qt::AltModifier);
+          impl_->lassoViewportPoints_.clear();
+          impl_->lassoViewportPoints_.push_back(viewportPos);
 
           impl_->rubberBandStartViewportPos_ = viewportPos;
 
@@ -24640,6 +24803,11 @@ void CompositionRenderController::handleMouseMove(
   if (impl_->isRubberBandSelecting_) {
 
     impl_->rubberBandCurrentViewportPos_ = viewportPos;
+    if (impl_->isLassoSelecting_ &&
+        (impl_->lassoViewportPoints_.isEmpty() ||
+         QLineF(impl_->lassoViewportPoints_.back(), viewportPos).length() >= 3.0)) {
+      impl_->lassoViewportPoints_.push_back(viewportPos);
+    }
 
     if (needsRender || impl_->isRubberBandSelecting_) {
 
@@ -25129,6 +25297,38 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
             otherPath.setVertex(vertexIndex, otherVertex);
             otherMask.setMaskPath(pathIndex, otherPath);
             selectedLayer->setMask(maskIndex, otherMask);
+          }
+
+          if (impl_->maskProportionalEditingEnabled_ &&
+              impl_->maskProportionalEditRadius_ > 0.0f) {
+            const QPointF pivotCanvas = globalTransform.map(previousPosition);
+            const float radius = impl_->maskProportionalEditRadius_;
+            for (int maskIndex = 0; maskIndex < selectedLayer->maskCount(); ++maskIndex) {
+              LayerMask otherMask = selectedLayer->mask(maskIndex);
+              for (int pathIndex = 0; pathIndex < otherMask.maskPathCount(); ++pathIndex) {
+                MaskPath otherPath = otherMask.maskPath(pathIndex);
+                for (int vertexIndex = 0; vertexIndex < otherPath.vertexCount(); ++vertexIndex) {
+                  if (maskIndex == impl_->draggingMaskIndex_ &&
+                      pathIndex == impl_->draggingPathIndex_ &&
+                      vertexIndex == impl_->draggingVertexIndex_) continue;
+                  const auto selected = std::make_tuple(maskIndex, pathIndex, vertexIndex);
+                  if (std::find(impl_->selectedMaskVertices_.begin(),
+                                impl_->selectedMaskVertices_.end(), selected) !=
+                      impl_->selectedMaskVertices_.end()) continue;
+                  MaskVertex otherVertex = otherPath.vertex(vertexIndex);
+                  const QPointF otherCanvas = globalTransform.map(otherVertex.position);
+                  const float distance = static_cast<float>(
+                      QLineF(pivotCanvas, otherCanvas).length());
+                  if (distance >= radius) continue;
+                  const float t = std::clamp(distance / radius, 0.0f, 1.0f);
+                  const QPointF weightedDelta = delta * ((1.0f - t) * (1.0f - t));
+                  otherVertex.position += weightedDelta;
+                  otherPath.setVertex(vertexIndex, otherVertex);
+                }
+                otherMask.setMaskPath(pathIndex, otherPath);
+              }
+              selectedLayer->setMask(maskIndex, otherMask);
+            }
           }
 
           impl_->markMaskEditDirty();
@@ -26192,11 +26392,15 @@ bool CompositionRenderController::cancelGizmoInteraction() {
       }
       transform.setCurrentPositionZ(snapshot.position.z());
       if (snapshot.hasRotationKey) {
-        transform.setRotation(time, snapshot.rotation.x());
+        transform.setRotationX(time, snapshot.rotation.x());
+        transform.setRotationY(time, snapshot.rotation.y());
+        transform.setRotationZ(time, snapshot.rotation.z());
       } else {
         transform.removeRotationKeyFrameAt(time);
         if (!snapshot.rotationAnimated) {
-          transform.setInitialRotation(time, snapshot.rotation.x());
+          transform.setCurrentRotationX(snapshot.rotation.x());
+          transform.setCurrentRotationY(snapshot.rotation.y());
+          transform.setInitialRotation(time, snapshot.rotation.z());
         }
       }
       if (snapshot.hasScaleKey) {
@@ -26843,6 +27047,7 @@ void CompositionRenderController::handleMouseRelease() {
     if (comp && selection && impl_->renderer_) {
 
       const QRectF rect = impl_->rubberBandCanvasRect().normalized();
+      const QPolygonF lasso = impl_->lassoCanvasPolygon();
 
       const auto currentFrame = currentFrameForComposition(comp);
 
@@ -26858,6 +27063,12 @@ void CompositionRenderController::handleMouseRelease() {
 
           continue;
 
+        }
+        if (impl_->isLassoSelecting_ &&
+            (lasso.size() < 3 ||
+             !lasso.containsPoint(layer->transformedBoundingBox().center(),
+                                  Qt::OddEvenFill))) {
+          continue;
         }
 
         hits.push_back(layer);
@@ -27828,6 +28039,120 @@ bool CompositionRenderController::toggleHoveredMaskEnabled() {
   return true;
 }
 
+bool CompositionRenderController::isMaskProportionalEditingEnabled() const {
+  return impl_ && impl_->maskProportionalEditingEnabled_;
+}
+
+void CompositionRenderController::setMaskProportionalEditingEnabled(bool enabled) {
+  if (impl_) impl_->maskProportionalEditingEnabled_ = enabled;
+}
+
+float CompositionRenderController::maskProportionalEditRadius() const {
+  return impl_ ? impl_->maskProportionalEditRadius_ : 120.0f;
+}
+
+void CompositionRenderController::setMaskProportionalEditRadius(float radius) {
+  if (impl_ && std::isfinite(radius)) {
+    impl_->maskProportionalEditRadius_ = std::clamp(radius, 1.0f, 100000.0f);
+  }
+}
+
+bool CompositionRenderController::deleteHoveredMaskForSelectedLayers() {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const int maskIndex = impl_->hoveredMaskIndex_;
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Delete Mask on Selected Layers"));
+  bool changed = false;
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        maskIndex < 0 || maskIndex >= layer->maskCount() ||
+        layer->mask(maskIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    layer->removeMask(maskIndex);
+    impl_->publishLayerModified(layer, true);
+    std::vector<LayerMask> afterMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      afterMasks.push_back(layer->mask(index));
+    }
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(afterMasks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->hoveredMaskIndex_ = std::max(0, maskIndex - 1);
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
+}
+
+bool CompositionRenderController::toggleHoveredMaskEnabledForSelectedLayers() {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const int maskIndex = impl_->hoveredMaskIndex_;
+  const auto primary = comp->layerById(impl_->selectedLayerId_);
+  if (!primary || maskIndex >= primary->maskCount() ||
+      primary->mask(maskIndex).isLocked()) {
+    return false;
+  }
+  const bool enabled = !primary->mask(maskIndex).isEnabled();
+  bool changed = false;
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Toggle Mask Enabled on Selected Layers"));
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        maskIndex >= layer->maskCount() || layer->mask(maskIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    beforeMasks.reserve(static_cast<size_t>(layer->maskCount()));
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    auto mask = layer->mask(maskIndex);
+    mask.setEnabled(enabled);
+    layer->setMask(maskIndex, mask);
+    impl_->publishLayerModified(layer, true);
+    std::vector<LayerMask> afterMasks;
+    afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      afterMasks.push_back(layer->mask(index));
+    }
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(afterMasks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
+}
+
 bool CompositionRenderController::toggleHoveredMaskLocked() {
   if (!impl_ || impl_->hoveredMaskIndex_ < 0) {
     return false;
@@ -27963,6 +28288,166 @@ bool CompositionRenderController::toggleHoveredMaskInverted() {
   return true;
 }
 
+bool CompositionRenderController::duplicateHoveredMaskForSelectedLayers() {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const int maskIndex = impl_->hoveredMaskIndex_;
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Duplicate Mask on Selected Layers"));
+  bool changed = false;
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        maskIndex < 0 || maskIndex >= layer->maskCount() ||
+        layer->mask(maskIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    layer->addMask(layer->mask(maskIndex));
+    impl_->publishLayerModified(layer, true);
+    std::vector<LayerMask> afterMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      afterMasks.push_back(layer->mask(index));
+    }
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(afterMasks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
+}
+
+bool CompositionRenderController::moveHoveredMaskForSelectedLayers(int direction) {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0 || direction == 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const int sourceIndex = impl_->hoveredMaskIndex_;
+  const int step = direction < 0 ? -1 : 1;
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Move Mask on Selected Layers"));
+  bool changed = false;
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        sourceIndex < 0 || sourceIndex >= layer->maskCount()) {
+      continue;
+    }
+    const int targetIndex = sourceIndex + step;
+    if (targetIndex < 0 || targetIndex >= layer->maskCount() ||
+        layer->mask(sourceIndex).isLocked() ||
+        layer->mask(targetIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    std::vector<LayerMask> masks = beforeMasks;
+    std::swap(masks[static_cast<size_t>(sourceIndex)],
+              masks[static_cast<size_t>(targetIndex)]);
+    for (int index = layer->maskCount() - 1; index >= 0; --index) {
+      layer->removeMask(index);
+    }
+    for (const auto &mask : masks) {
+      layer->addMask(mask);
+    }
+    impl_->publishLayerModified(layer, true);
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(masks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->hoveredMaskIndex_ = sourceIndex + step;
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
+}
+
+bool CompositionRenderController::toggleHoveredMaskInvertedForSelectedLayers() {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0 ||
+      impl_->hoveredPathIndex_ < 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const auto primary = comp->layerById(impl_->selectedLayerId_);
+  const int maskIndex = impl_->hoveredMaskIndex_;
+  const int pathIndex = impl_->hoveredPathIndex_;
+  if (!primary || maskIndex >= primary->maskCount() ||
+      pathIndex >= primary->mask(maskIndex).maskPathCount() ||
+      primary->mask(maskIndex).isLocked() ||
+      primary->mask(maskIndex).maskPath(pathIndex).isLocked()) {
+    return false;
+  }
+  const bool inverted =
+      !primary->mask(maskIndex).maskPath(pathIndex).isInverted();
+  bool changed = false;
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Toggle Mask Inverted on Selected Layers"));
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        maskIndex >= layer->maskCount()) {
+      continue;
+    }
+    auto mask = layer->mask(maskIndex);
+    if (mask.isLocked() || pathIndex >= mask.maskPathCount() ||
+        mask.maskPath(pathIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    beforeMasks.reserve(static_cast<size_t>(layer->maskCount()));
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    auto path = mask.maskPath(pathIndex);
+    path.setInverted(inverted);
+    mask.setMaskPath(pathIndex, path);
+    layer->setMask(maskIndex, mask);
+    impl_->publishLayerModified(layer, true);
+    std::vector<LayerMask> afterMasks;
+    afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      afterMasks.push_back(layer->mask(index));
+    }
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(afterMasks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
+}
+
 bool CompositionRenderController::adjustHoveredMaskGeometry(
     float featherDelta, float expansionDelta) {
   if (!impl_ || impl_->hoveredMaskIndex_ < 0 ||
@@ -28028,6 +28513,138 @@ bool CompositionRenderController::adjustHoveredMaskOpacity(float opacityDelta) {
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
+}
+
+bool CompositionRenderController::adjustHoveredMaskGeometryForSelectedLayers(
+    float featherDelta, float expansionDelta) {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0 ||
+      impl_->hoveredPathIndex_ < 0 ||
+      (std::abs(featherDelta) <= 0.0f && std::abs(expansionDelta) <= 0.0f)) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const auto primary = comp->layerById(impl_->selectedLayerId_);
+  const int maskIndex = impl_->hoveredMaskIndex_;
+  const int pathIndex = impl_->hoveredPathIndex_;
+  if (!primary || maskIndex >= primary->maskCount() ||
+      pathIndex >= primary->mask(maskIndex).maskPathCount() ||
+      primary->mask(maskIndex).isLocked() ||
+      primary->mask(maskIndex).maskPath(pathIndex).isLocked()) {
+    return false;
+  }
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Adjust Mask Geometry on Selected Layers"));
+  bool changed = false;
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        maskIndex >= layer->maskCount()) {
+      continue;
+    }
+    auto mask = layer->mask(maskIndex);
+    if (mask.isLocked() || pathIndex >= mask.maskPathCount() ||
+        mask.maskPath(pathIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    auto path = mask.maskPath(pathIndex);
+    const float nextFeather = std::max(0.0f, path.feather() + featherDelta);
+    const float nextExpansion = path.expansion() + expansionDelta;
+    if (std::abs(nextFeather - path.feather()) <= 0.0001f &&
+        std::abs(nextExpansion - path.expansion()) <= 0.0001f) {
+      continue;
+    }
+    path.setFeather(nextFeather);
+    path.setExpansion(nextExpansion);
+    mask.setMaskPath(pathIndex, path);
+    layer->setMask(maskIndex, mask);
+    impl_->publishLayerModified(layer, true);
+    std::vector<LayerMask> afterMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      afterMasks.push_back(layer->mask(index));
+    }
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(afterMasks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
+}
+
+bool CompositionRenderController::adjustHoveredMaskOpacityForSelectedLayers(
+    float opacityDelta) {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0 ||
+      impl_->hoveredPathIndex_ < 0 || std::abs(opacityDelta) <= 0.0f) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!comp || !selection) {
+    return false;
+  }
+  const auto primary = comp->layerById(impl_->selectedLayerId_);
+  const int maskIndex = impl_->hoveredMaskIndex_;
+  const int pathIndex = impl_->hoveredPathIndex_;
+  if (!primary || maskIndex >= primary->maskCount() ||
+      pathIndex >= primary->mask(maskIndex).maskPathCount() ||
+      primary->mask(maskIndex).isLocked() ||
+      primary->mask(maskIndex).maskPath(pathIndex).isLocked()) {
+    return false;
+  }
+  auto macro = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Adjust Mask Opacity on Selected Layers"));
+  bool changed = false;
+  for (const auto &layer : selection->selectedLayersInOrder()) {
+    if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
+        maskIndex >= layer->maskCount()) {
+      continue;
+    }
+    auto mask = layer->mask(maskIndex);
+    if (mask.isLocked() || pathIndex >= mask.maskPathCount() ||
+        mask.maskPath(pathIndex).isLocked()) {
+      continue;
+    }
+    std::vector<LayerMask> beforeMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      beforeMasks.push_back(layer->mask(index));
+    }
+    auto path = mask.maskPath(pathIndex);
+    const float nextOpacity = std::clamp(path.opacity() + opacityDelta, 0.0f, 1.0f);
+    if (std::abs(nextOpacity - path.opacity()) <= 0.0001f) {
+      continue;
+    }
+    path.setOpacity(nextOpacity);
+    mask.setMaskPath(pathIndex, path);
+    layer->setMask(maskIndex, mask);
+    impl_->publishLayerModified(layer, true);
+    std::vector<LayerMask> afterMasks;
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      afterMasks.push_back(layer->mask(index));
+    }
+    macro->addChild(std::make_unique<MaskEditCommand>(
+        layer, std::move(beforeMasks), std::move(afterMasks)));
+    changed = true;
+  }
+  if (changed) {
+    if (auto *undo = UndoManager::instance()) {
+      undo->push(std::move(macro));
+    }
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+  return changed;
 }
 
 bool CompositionRenderController::createTextLayerAtCanvas(
@@ -28098,6 +28715,24 @@ Artifact3DGizmo *CompositionRenderController::gizmo3D() const {
 
   return impl_->gizmo3D_.get();
 
+}
+
+bool CompositionRenderController::isTransformGizmoHovered(
+    const QPointF& viewportPos) const {
+  if (!impl_) {
+    return false;
+  }
+  if (impl_->projectedFrameHoverHandle_ != TransformGizmo::HandleType::None) {
+    return true;
+  }
+  if (impl_->gizmo3D_ &&
+      impl_->gizmo3D_->hoverAxis() != GizmoAxis::None) {
+    return true;
+  }
+  return impl_->gizmo_ && impl_->renderer_ &&
+         impl_->gizmo_->handleAtViewportPos(viewportPos,
+                                             impl_->renderer_.get()) !=
+             TransformGizmo::HandleType::None;
 }
 
 
@@ -31516,9 +32151,45 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                                  static_cast<bool>(comp));
 
+    // Keep the legacy pass executors as the resource-owning implementation,
+    // but let the shared RenderGraph validate and schedule the frame-level
+    // dependency chain. This makes ordering failures visible before the
+    // incremental executor migration replaces individual pass calls.
     const QString framePassPlanSummary =
 
         summarizeFrameRenderPassPlan(framePassPlan);
+
+    const bool framePassPlanChanged =
+        framePassPlanSummary != lastFrameRenderPassPlanSummary_;
+    if (framePassPlanChanged || captureRenderDiagnostics) {
+      ArtifactCore::RenderGraph frameRenderGraph;
+      const auto graphWidth = static_cast<std::uint32_t>(std::max(1, viewportW));
+      const auto graphHeight = static_cast<std::uint32_t>(std::max(1, viewportH));
+      constexpr std::uint32_t graphFormat = 1; // RGBA8 diagnostic estimate.
+      auto frameToken = frameRenderGraph.addResource({
+          "Frame.Begin", ArtifactCore::RenderResourceKind::Texture,
+          ArtifactCore::RenderResourceLifetime::External, graphWidth,
+          graphHeight, 1, graphFormat,
+          static_cast<std::uint64_t>(graphWidth) * graphHeight * 4});
+      for (const auto& framePass : framePassPlan) {
+        auto nextToken = frameRenderGraph.addResource({
+            "Frame." + framePass.name.toStdString(),
+            ArtifactCore::RenderResourceKind::Texture,
+            ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
+            graphHeight, 1, graphFormat,
+            static_cast<std::uint64_t>(graphWidth) * graphHeight * 4});
+        frameRenderGraph.addPass({
+            framePass.name.toStdString(),
+            ArtifactCore::RenderPassQueue::Graphics,
+            {frameToken}, {nextToken}, true});
+        frameToken = nextToken;
+      }
+      const auto compiledFrameGraph = frameRenderGraph.compile();
+      if (!compiledFrameGraph.valid) {
+        qWarning() << "[CompositionView] frame RenderGraph compile failed:"
+                   << QString::fromStdString(compiledFrameGraph.error);
+      }
+    }
 
     if (framePassPlanSummary != lastFrameRenderPassPlanSummary_) {
 
@@ -31682,6 +32353,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     qint64 flushMs = 0;
 
+    const quint64 flushCountAtFrameStart = renderer_->flushCount();
+    const qint64 flushContextTimeUsAtFrameStart =
+        renderer_->flushContextTimeUs();
+    quint64 flushCountThisFrame = 0;
+
     qint64 presentMs = 0;
 
 
@@ -31804,7 +32480,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         });
 
-    RenderPassExecutor::run(setupPass, setupContext, setupResources);
+    RenderPassExecutor::runWithRenderGraph(setupPass, setupContext,
+                                           setupResources);
 
     renderCrashTrace("render-clear-end", renderFrameCounter_);
 
@@ -31911,7 +32588,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           &ramBasePass, &ramCompositePass};
 
-      RenderPassExecutor::runAll(ramPasses, ramContext, ramResources);
+      RenderPassExecutor::runAllWithRenderGraph(ramPasses, ramContext,
+                                                ramResources);
 
       maskPassMs = surfacePassMs;
 
@@ -32053,7 +32731,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::run(basePass, baseContext, baseResources);
+      RenderPassExecutor::runWithRenderGraph(basePass, baseContext,
+                                             baseResources);
 
       const float origZoom = gpuBasePassState.origZoom;
 
@@ -32146,6 +32825,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         bool shared3DSceneDepthOpen = false;
 
         for (const auto &layer : layers) {
+
+          if (layerRenderFilter_ == CompositionLayerRenderFilter::SelectedOnly) {
+            if (!passesLayerRenderFilter(layerRenderFilter_, selectedIds,
+                                         selectedLayerId_, layer)) {
+              continue;
+            }
+          }
 
           if (!isLayerEffectivelyVisible(layer)) {
 
@@ -32307,20 +32993,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (opacity <= 0.0f) {
 
             ++opacityZeroCount;
-
-            qCDebug(compositionViewLog)
-
-                << "[LayerSkip] opacity <= 0"
-
-                << "layer=" << layer->id().toString()
-
-                << "layerName=" << layer->layerName()
-
-                << "opacity=" << opacity
-
-                << "rawOpacity=" << layer->opacity()
-
-                << "hasSelection=" << hasSelection;
 
             continue;
 
@@ -32611,7 +33283,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               &layerRasterPass, &maskPass, &blendPass};
 
-          if (!RenderPassExecutor::runAll(layerPasses, passContext,
+          if (!RenderPassExecutor::runAllWithRenderGraph(layerPasses, passContext,
 
                                           passResources)) {
 
@@ -32782,7 +33454,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::run(resolvePass, resolveContext, resolveResources);
+      RenderPassExecutor::runWithRenderGraph(resolvePass, resolveContext,
+                                             resolveResources);
 
       postPassMs = markPhaseMs();
 
@@ -32967,9 +33640,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::run(fallbackBasePass, fallbackContext,
-
-                              fallbackResources);
+      RenderPassExecutor::runWithRenderGraph(fallbackBasePass, fallbackContext,
+                                             fallbackResources);
 
       basePassMs = markPhaseMs();
 
@@ -33241,9 +33913,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               });
 
-          RenderPassExecutor::run(directCompositePass, directContext,
-
-                                  directResources);
+          RenderPassExecutor::runWithRenderGraph(directCompositePass,
+                                                 directContext,
+                                                 directResources);
 
           surfacePassMs = markPhaseMs();
 
@@ -34973,13 +35645,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         });
 
-    RenderPassExecutor::run(overlayPass, overlayContext, overlayResources);
+    RenderPassExecutor::runWithRenderGraph(overlayPass, overlayContext,
+                                           overlayResources);
 
     overlayMs = markPhaseMs();
 
 
 
-    flushMs = 0;
+    flushCountThisFrame = renderer_->flushCount() - flushCountAtFrameStart;
+    const qint64 flushContextTimeUsThisFrame =
+        renderer_->flushContextTimeUs() - flushContextTimeUsAtFrameStart;
+    flushMs = std::max<qint64>(
+        0, static_cast<qint64>(std::llround(
+               static_cast<double>(flushContextTimeUsThisFrame) / 1000.0)));
 
   renderCrashTrace("render-cost-end-begin", renderFrameCounter_);
 
@@ -35039,7 +35717,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::run(presentPass, presentContext, presentResources);
+      RenderPassExecutor::runWithRenderGraph(presentPass, presentContext,
+                                             presentResources);
 
       if (!presentResult.presentedVideoDebug.isEmpty() &&
 
@@ -35628,6 +36307,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             << "layerPassMs=" << layerPassMs << "overlayMs=" << overlayMs
 
+            << "flushCount=" << flushCountThisFrame
+
             << "flushMs=" << flushMs << "submit2DMs=" << lastSubmit2DMs_
 
             << "presentMs=" << presentMs;
@@ -35646,7 +36327,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             << "basePassMs=" << basePassMs << "layerPassMs=" << layerPassMs
 
-            << "overlayMs=" << overlayMs << "flushMs=" << flushMs
+            << "overlayMs=" << overlayMs << "flushCount=" << flushCountThisFrame
+
+            << "flushMs=" << flushMs
 
             << "submit2DMs=" << lastSubmit2DMs_ << "presentMs=" << presentMs;
 
@@ -36902,6 +37585,7 @@ bool CompositionRenderController::Impl::updateColorSamplerOverlay(
     const bool hadSample = colorSamplerHasSample_;
 
     colorSamplerHasSample_ = false;
+    colorSamplerLayerId_ = LayerID::Nil();
 
     return hadSample;
 
@@ -36915,6 +37599,8 @@ bool CompositionRenderController::Impl::updateColorSamplerOverlay(
 
   const QColor sampledColor = frame.pixelColor(sampleX, sampleY);
 
+  const LayerID sampledLayerId = owner->layerAtViewportPos(viewportPos);
+
   const auto canvasPos =
       renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()),
                                    static_cast<float>(viewportPos.y())});
@@ -36922,12 +37608,14 @@ bool CompositionRenderController::Impl::updateColorSamplerOverlay(
   const bool changed =
       !colorSamplerHasSample_ || colorSamplerColor_ != sampledColor ||
       colorSamplerImagePixel_ != QPoint(sampleX, sampleY) ||
+      colorSamplerLayerId_ != sampledLayerId ||
       std::abs(colorSamplerCanvasPos_.x() - canvasPos.x) > 0.5 ||
       std::abs(colorSamplerCanvasPos_.y() - canvasPos.y) > 0.5;
 
   colorSamplerHasSample_ = true;
   colorSamplerColor_ = sampledColor;
   colorSamplerImagePixel_ = QPoint(sampleX, sampleY);
+  colorSamplerLayerId_ = sampledLayerId;
   colorSamplerCanvasPos_ = QPointF(canvasPos.x, canvasPos.y);
 
   return changed;
@@ -36987,10 +37675,15 @@ void CompositionRenderController::Impl::drawColorSamplerOverlay(int overlayW,
   const QString title =
       QStringLiteral("Sampler %1").arg(colorHexLabel(colorSamplerColor_));
 
+  const QString layerLabel = colorSamplerLayerId_.isNil()
+                                 ? QStringLiteral("Layer —")
+                                 : QStringLiteral("Layer %1")
+                                       .arg(colorSamplerLayerId_.toString());
   const QString detail =
-      QStringLiteral("%1  •  %2  •  XY %3,%4  •  PX %5,%6")
+      QStringLiteral("%1  •  %2  •  %3  •  XY %4,%5  •  PX %6,%7")
           .arg(colorRgbLabel(colorSamplerColor_))
           .arg(colorHslLabel(colorSamplerColor_))
+          .arg(layerLabel)
           .arg(QString::number(colorSamplerCanvasPos_.x(), 'f', 1))
           .arg(QString::number(colorSamplerCanvasPos_.y(), 'f', 1))
           .arg(colorSamplerImagePixel_.x())
@@ -38086,6 +38779,22 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
   }
 
   if (renderer_ && isRubberBandSelecting_) {
+
+    if (isLassoSelecting_ && lassoViewportPoints_.size() >= 2) {
+      std::vector<Detail::float2> outline;
+      outline.reserve(lassoViewportPoints_.size() + 1);
+      for (const auto &point : lassoViewportPoints_) {
+        const auto canvas = renderer_->viewportToCanvas(
+            {static_cast<float>(point.x()), static_cast<float>(point.y())});
+        outline.emplace_back(canvas.x, canvas.y);
+      }
+      const auto first = outline.front();
+      outline.push_back(first);
+      renderer_->drawPolyline(
+          outline, {0.35f, 0.78f, 1.0f, 0.95f},
+          1.6f / std::max(0.001f, renderer_->getZoom()));
+      return;
+    }
 
     const QRectF rubberBandRect = rubberBandCanvasRect().normalized();
 

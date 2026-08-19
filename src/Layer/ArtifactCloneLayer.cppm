@@ -304,13 +304,13 @@ void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
             }
         }
     }
-    if (obj.contains("clone.sourceLayerId")) {
-        impl_->settings_.sourceLayerId = LayerID(obj.value("clone.sourceLayerId").toString());
-    }
+    impl_->settings_.sourceLayerId = obj.contains("clone.sourceLayerId")
+        ? LayerID(obj.value("clone.sourceLayerId").toString())
+        : LayerID();
     impl_->settings_.sourceIndex = std::max(0, obj.value("clone.sourceIndex").toInt(0));
-    if (obj.contains("clone.useEffector")) {
-        impl_->settings_.useEffector = obj.value("clone.useEffector").toBool(true);
-    }
+    impl_->settings_.useEffector = obj.contains("clone.useEffector")
+        ? obj.value("clone.useEffector").toBool(false)
+        : false;
 }
 
 ArtifactCloneLayerSettings ArtifactCloneLayer::cloneSettings() const {

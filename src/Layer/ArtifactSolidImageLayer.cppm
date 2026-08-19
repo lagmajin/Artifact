@@ -235,6 +235,12 @@ void ArtifactSolidImageLayer::setGradientOffset(const float value) {
 void ArtifactSolidImageLayer::setSize(const int width, const int height) {
   setSourceSize(Size_2D(std::clamp(width, 1, 16384),
                        std::clamp(height, 1, 16384)));
+  if (hasRigidBodyPhysics()) {
+    syncRigidBodyPhysicsToBounds();
+  }
+  if (hasSoftBodyPhysics()) {
+    syncSoftBodyPhysicsColliderToBounds();
+  }
 }
 
 QJsonObject ArtifactSolidImageLayer::toJson() const {

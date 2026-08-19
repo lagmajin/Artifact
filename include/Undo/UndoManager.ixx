@@ -134,6 +134,19 @@ private:
     int64_t frame_;
 };
 
+class MoveMaskCommand : public UndoCommand {
+public:
+    MoveMaskCommand(ArtifactAbstractLayerPtr layer, int oldIndex, int newIndex);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    int oldIndex_ = -1;
+    int newIndex_ = -1;
+};
+
 class AddLayerCommand : public UndoCommand {
 public:
     AddLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer, bool atTop = true);
@@ -243,6 +256,25 @@ private:
     QString propertyPath_;
     std::vector<ArtifactCore::KeyFrame> beforeKeyframes_;
     std::vector<ArtifactCore::KeyFrame> afterKeyframes_;
+    QString label_;
+};
+
+class SetLayerPropertyValueCommand : public UndoCommand {
+public:
+    SetLayerPropertyValueCommand(ArtifactAbstractLayerPtr layer,
+                                 QString propertyPath,
+                                 QVariant beforeValue,
+                                 QVariant afterValue,
+                                 QString label = QStringLiteral("Edit Layer Property Value"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QString propertyPath_;
+    QVariant beforeValue_;
+    QVariant afterValue_;
     QString label_;
 };
 

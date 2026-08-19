@@ -14,6 +14,9 @@ module;
 #include <QDir>
 #include <QLabel>
 #include <QLineEdit>
+#include <QCompleter>
+#include <QStringListModel>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -31,6 +34,8 @@ module;
 #include <QPixmap>
 #include <QIcon>
 #include <QHash>
+#include <QPair>
+#include <QVector>
 #include <QFileInfo>
 #include <QStyle>
 #include <QApplication>
@@ -79,6 +84,7 @@ module;
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QTabWidget>
 #include <QMouseEvent>
 #include <QCursor>
 #include <cstdint>
@@ -135,6 +141,8 @@ import Audio.SimpleWav;
 import Input.Operator;
 import Undo.UndoManager;
 import Settings.Accessibility;
+import Artifact.Template.Document;
+import Artifact.Widgets.TemplateLibrary;
 
 namespace Artifact {
 
@@ -306,6 +314,58 @@ public:
 private:
   QString oldPath_;
   QString newPath_;
+  bool firstRedo_ = true;
+};
+
+struct RelinkLayerSourceChange {
+  ArtifactAbstractLayerWeak layer;
+  QString propertyPath;
+  QString oldPath;
+  QString newPath;
+};
+
+class RelinkAssetBatchCommand final : public UndoCommand {
+public:
+  RelinkAssetBatchCommand(QVector<QPair<QString, QString>> changes,
+                          QVector<RelinkLayerSourceChange> layerChanges)
+      : changes_(std::move(changes)),
+        layerChanges_(std::move(layerChanges)) {}
+
+  void undo() override {
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return;
+    for (auto it = layerChanges_.crbegin(); it != layerChanges_.crend(); ++it) {
+      if (auto layer = it->layer.lock()) {
+        layer->setLayerPropertyValue(it->propertyPath, it->oldPath);
+      }
+    }
+    for (auto it = changes_.crbegin(); it != changes_.crend(); ++it) {
+      service->relinkFootageByPath(it->second, it->first);
+    }
+  }
+
+  void redo() override {
+    if (firstRedo_) {
+      firstRedo_ = false;
+      return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return;
+    for (const auto& change : changes_) {
+      service->relinkFootageByPath(change.first, change.second);
+    }
+    for (const auto& change : layerChanges_) {
+      if (auto layer = change.layer.lock()) {
+        layer->setLayerPropertyValue(change.propertyPath, change.newPath);
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Relink Assets"); }
+
+private:
+  QVector<QPair<QString, QString>> changes_;
+  QVector<RelinkLayerSourceChange> layerChanges_;
   bool firstRedo_ = true;
 };
 
@@ -1626,8 +1686,8 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   QString syncStateText() const;
    int thumbnailSizePx() const;
    void setThumbnailSizePx(int value);
-   QFileSystemWatcher* fsWatcher_ = nullptr;
-   bool watchScheduled_ = false;
+  QFileSystemWatcher* fsWatcher_ = nullptr;
+  bool watchScheduled_ = false;
    void setupFileSystemWatcher();
    void watchCurrentDirectory();
    void handleFileRenamed(const QString& oldPath, const QString& newPath);
@@ -2517,7 +2577,9 @@ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
 {
   if (!directoryModel_) return;
 
-  QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+  QString assetsPath = ArtifactProjectService::instance()
+                           ? ArtifactProjectService::instance()->currentProjectAssetsPath()
+                           : QString();
   if (assetsPath.isEmpty()) {
    assetsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
   }
@@ -3212,6 +3274,14 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
   if (impl_->searchEdit_) {
    impl_->searchEdit_->installEventFilter(this);
+   QSettings settings;
+   auto *searchHistoryModel = new QStringListModel(
+       settings.value(QStringLiteral("AssetBrowser/SearchHistory")).toStringList(),
+       impl_->searchEdit_);
+   auto *searchCompleter = new QCompleter(searchHistoryModel, impl_->searchEdit_);
+   searchCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+   searchCompleter->setFilterMode(Qt::MatchContains);
+   impl_->searchEdit_->setCompleter(searchCompleter);
   }
   impl_->upButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserUpButton"));
   impl_->refreshButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserRefreshButton"));
@@ -3450,7 +3520,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   auto directoryView = impl_->directoryView_ = new QTreeView();
   auto directoryModel = impl_->directoryModel_ = new AssetDirectoryModel(this);
 
-  QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+  QString assetsPath = ArtifactProjectService::instance()
+                           ? ArtifactProjectService::instance()->currentProjectAssetsPath()
+                           : QString();
   if (assetsPath.isEmpty()) {
    assetsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
   }
@@ -3647,16 +3719,37 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   // Connect search filter
   if (impl_->searchEdit_) {
-   connect(impl_->searchEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+   auto *searchCompleter = impl_->searchEdit_->completer();
+   auto *searchHistoryModel = searchCompleter
+       ? qobject_cast<QStringListModel *>(searchCompleter->model())
+       : nullptr;
+   connect(impl_->searchEdit_, &QLineEdit::textChanged, this,
+           [this, searchCompleter, searchHistoryModel](const QString& text) {
     impl_->currentSearchFilter_ = text;
     impl_->applyFilters();
+    const QString normalized = text.trimmed();
+    if (normalized.size() < 2 || !searchHistoryModel) {
+      return;
+    }
+    QStringList history = searchHistoryModel->stringList();
+    history.removeAll(normalized);
+    history.prepend(normalized);
+    while (history.size() > 12) {
+      history.removeLast();
+    }
+    searchHistoryModel->setStringList(history);
+    QSettings settings;
+    settings.setValue(QStringLiteral("AssetBrowser/SearchHistory"), history);
+    Q_UNUSED(searchCompleter);
    });
   }
 
   if (impl_->upButton_) {
    connect(impl_->upButton_, &QToolButton::clicked, this, [this]() {
     if (impl_->currentDirectoryPath_.isEmpty()) return;
-    const QString assetsRoot = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+    const QString assetsRoot = ArtifactProjectService::instance()
+                                   ? ArtifactProjectService::instance()->currentProjectAssetsPath()
+                                   : QString();
     const QDir currentDir(impl_->currentDirectoryPath_);
     QString nextPath = QFileInfo(currentDir.absolutePath()).dir().absolutePath();
     if (nextPath.isEmpty()) {
@@ -3866,7 +3959,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
     if (auto* service = ArtifactProjectService::instance();
         service && !paths.isEmpty()) {
-      service->importAssetsFromPaths(paths);
+      service->importAssetsFromPathsAsync(paths, {});
     }
   });
 
@@ -3918,6 +4011,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   VBoxLayout->addWidget(fileInfoGroup);
   thumbnailControlGroup->hide();
 
+  auto* contentTabs = new QTabWidget(this);
+  contentTabs->setObjectName(QStringLiteral("assetBrowserContentTabs"));
+  contentTabs->setDocumentMode(true);
+  contentTabs->addTab(browserSurface, QStringLiteral("Assets"));
+  auto* templateLibrary = new Artifact::ArtifactTemplateLibraryWidget(contentTabs);
+  templateLibrary->setObjectName(QStringLiteral("assetBrowserTemplateLibrary"));
+  templateLibrary->setLibrary(Artifact::ArtifactTemplateLibrary());
+  contentTabs->addTab(templateLibrary, QStringLiteral("Templates"));
+
   auto leftColumnLayout = new QVBoxLayout();
   leftColumnLayout->setContentsMargins(0, 0, 0, 0);
   leftColumnLayout->setSpacing(0);
@@ -3941,7 +4043,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   vLayout->addWidget(navigationHeader);
   layout->addLayout(leftColumnLayout, 2);
-  layout->addWidget(browserSurface, 7);
+  layout->addWidget(contentTabs, 7);
   vLayout->addLayout(layout);
   setLayout(vLayout);
 
@@ -4028,7 +4130,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      if (url.isLocalFile()) paths.append(url.toLocalFile());
     }
     if (!paths.isEmpty() && ArtifactProjectService::instance()) {
-     ArtifactProjectService::instance()->importAssetsFromPaths(paths);
+     ArtifactProjectService::instance()->importAssetsFromPathsAsync(paths, {});
     }
    }
    event->accept();
@@ -4205,10 +4307,12 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (!filePaths.isEmpty()) {
     auto* svc = ArtifactProjectService::instance();
     if (svc) {
-     QStringList imported = svc->importAssetsFromPaths(filePaths);
-     if (!imported.isEmpty()) {
-      filesDropped(imported);
-     }
+     QPointer<ArtifactAssetBrowser> owner(this);
+     svc->importAssetsFromPathsAsync(filePaths, [owner](QStringList imported) {
+      if (owner && !imported.isEmpty()) {
+       owner->filesDropped(imported);
+      }
+     });
     }
     // Refresh file view
     impl_->applyFilters();
@@ -4567,31 +4671,38 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (importTargets.isEmpty() && filePath.isEmpty()) return;
    auto* svc = ArtifactProjectService::instance();
    if (!svc) return;
-   const QStringList imported = svc->importAssetsFromPaths(importTargets.isEmpty() ? QStringList{filePath} : importTargets);
-   if (!imported.isEmpty()) {
-    const int requestedCount = importTargets.isEmpty() ? 1 : importTargets.size();
-    if (imported.size() < requestedCount) {
+   const QStringList requested =
+       importTargets.isEmpty() ? QStringList{filePath} : importTargets;
+   QPointer<ArtifactAssetBrowser> owner(this);
+   svc->importAssetsFromPathsAsync(
+       requested, [owner, requested, filePath](QStringList imported) {
+    if (!owner) return;
+    if (imported.isEmpty()) {
      QMessageBox::warning(
-         this, QStringLiteral("Import Incomplete"),
+         owner, QStringLiteral("Import Failed"),
+         QStringLiteral("No requested files could be imported."));
+     return;
+    }
+    if (imported.size() < requested.size()) {
+     QMessageBox::warning(
+         owner, QStringLiteral("Import Incomplete"),
          QStringLiteral("Imported %1 of %2 requested files.")
              .arg(imported.size())
-             .arg(requestedCount));
+             .arg(requested.size()));
     }
-    if (auto project = svc->getCurrentProjectSharedPtr()) {
-     for (const QString& importedPath : imported) {
-      UndoManager::instance()->push(
-          std::make_unique<AssetRegistrationCommand>(project, importedPath));
+    if (auto* service = ArtifactProjectService::instance()) {
+     if (auto project = service->getCurrentProjectSharedPtr()) {
+      for (const QString& importedPath : imported) {
+       UndoManager::instance()->push(
+           std::make_unique<AssetRegistrationCommand>(project, importedPath));
+      }
      }
     }
-    filesDropped(imported);
-    impl_->applyFilters();
+    owner->filesDropped(imported);
+    owner->impl_->applyFilters();
     // Keep the info/preview pane in sync with the refreshed row status.
-    updateFileInfo(filePath.isEmpty() ? imported.first() : filePath);
-   } else {
-    QMessageBox::warning(
-        this, QStringLiteral("Import Failed"),
-        QStringLiteral("No requested files could be imported."));
-   }
+    owner->updateFileInfo(filePath.isEmpty() ? imported.first() : filePath);
+   });
   });
 
   if (!item.isFolder) {
@@ -4658,6 +4769,225 @@ if (!item.isFolder) {
               : QStringLiteral("The selected footage could not be relinked."));
     }
   });
+
+  addAction(allMenu, QStringLiteral("Find Relink Candidates..."),
+            [this, filePath]() {
+    if (filePath.isEmpty()) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    const QString searchRoot = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Search for Relink Candidates"),
+        QDir::homePath());
+    if (searchRoot.isEmpty()) return;
+
+    const auto candidates =
+        svc->findRelinkCandidates(filePath, searchRoot, 32);
+    if (candidates.isEmpty()) {
+      QMessageBox::information(
+          this, QStringLiteral("No Relink Candidates"),
+          QStringLiteral("No matching candidates were found below:\n%1")
+              .arg(searchRoot));
+      return;
+    }
+
+    QStringList labels;
+    labels.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+      labels.append(QStringLiteral("[%1] %2\n%3")
+                        .arg(candidate.score)
+                        .arg(candidate.path)
+                        .arg(candidate.reason));
+    }
+    bool accepted = false;
+    const QString selected = QInputDialog::getItem(
+        this, QStringLiteral("Select Relink Candidate"),
+        QStringLiteral("Candidate:"), labels, 0, false, &accepted);
+    if (!accepted) return;
+    const int selectedIndex = labels.indexOf(selected);
+    if (selectedIndex < 0 || selectedIndex >= candidates.size()) return;
+
+    const QString newPath = candidates.at(selectedIndex).path;
+    if (!svc->relinkFootageByPath(filePath, newPath)) {
+      QMessageBox::warning(this, QStringLiteral("Relink Failed"),
+                           QStringLiteral("The selected candidate could not be relinked."));
+      return;
+    }
+    UndoManager::instance()->push(
+        std::make_unique<RelinkAssetCommand>(filePath, newPath));
+    impl_->applyFilters();
+    updateFileInfo(newPath);
+  });
+
+  if (selectedTargets.size() > 1) {
+    addAction(allMenu, QStringLiteral("Find Relink Candidates for Selected..."),
+              [this, selectedTargets]() {
+      auto* svc = ArtifactProjectService::instance();
+      if (!svc) return;
+      const QString searchRoot = QFileDialog::getExistingDirectory(
+          this, QStringLiteral("Search for Relink Candidates"),
+          QDir::homePath());
+      if (searchRoot.isEmpty()) return;
+
+      const auto project = svc->getCurrentProjectSharedPtr();
+      const QVector<QString> sourceProperties = {
+          QStringLiteral("image.sourcePath"),
+          QStringLiteral("video.sourcePath"),
+          QStringLiteral("audio.sourcePath"),
+          QStringLiteral("svg.sourcePath")};
+      const auto referenceCount = [&](const QString& oldPath) {
+        if (!project) return 0;
+        const QString normalizedOldPath = QDir::cleanPath(
+            QFileInfo(oldPath).absoluteFilePath());
+        int count = 0;
+        std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+          if (!item) return;
+          if (item->type() == eProjectItemType::Composition) {
+            const auto* compositionItem =
+                static_cast<const CompositionItem*>(item);
+            const auto composition = project->findComposition(
+                compositionItem->compositionId).ptr.lock();
+            if (composition) {
+              for (const auto& layer : composition->allLayerRef()) {
+                if (!layer) continue;
+                const QJsonObject layerJson = layer->toJson();
+                for (const QString& property : sourceProperties) {
+                  const QString path = layerJson.value(property).toString();
+                  if (!path.isEmpty() &&
+                      QDir::cleanPath(QFileInfo(path).absoluteFilePath()) ==
+                          normalizedOldPath) {
+                    ++count;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          for (auto* child : item->children) visit(child);
+        };
+        for (auto* root : project->projectItems()) visit(root);
+        return count;
+      };
+
+      QVector<QPair<QString, QString>> changes;
+      QSet<QString> processedFootagePaths;
+      for (const QString& selectedPath : selectedTargets) {
+        auto* footage = svc->findFootageItemByPath(selectedPath);
+        const QString oldPath = footage ? footage->filePath : selectedPath;
+        const QString normalizedOldPath =
+            QDir::cleanPath(QFileInfo(oldPath).absoluteFilePath());
+        if (processedFootagePaths.contains(normalizedOldPath)) continue;
+        processedFootagePaths.insert(normalizedOldPath);
+
+        const auto candidates = svc->findRelinkCandidates(oldPath, searchRoot, 32);
+        if (candidates.isEmpty()) {
+          QMessageBox::warning(
+              this, QStringLiteral("Batch Relink Cancelled"),
+              QStringLiteral("No candidate was found for:\n%1").arg(oldPath));
+          return;
+        }
+        const int references = referenceCount(oldPath);
+        QStringList labels;
+        for (const auto& candidate : candidates) {
+          labels.append(QStringLiteral("[%1] %2\n%3\nReferences: %4")
+                            .arg(candidate.score)
+                            .arg(candidate.path)
+                            .arg(candidate.reason)
+                            .arg(references));
+        }
+        bool accepted = false;
+        const QString selected = QInputDialog::getItem(
+            this, QStringLiteral("Select Relink Candidate"),
+            QStringLiteral("Candidate for:\n%1").arg(oldPath), labels, 0,
+            false, &accepted);
+        if (!accepted) return;
+        const int index = labels.indexOf(selected);
+        if (index < 0 || index >= candidates.size()) return;
+        changes.append(qMakePair(oldPath, candidates.at(index).path));
+      }
+
+      QVector<RelinkLayerSourceChange> layerChanges;
+      const QVector<QPair<QString, QString>> layerSourceProperties = {
+          {QStringLiteral("image.sourcePath"), QStringLiteral("image.sourcePath")},
+          {QStringLiteral("video.sourcePath"), QStringLiteral("video.sourcePath")},
+          {QStringLiteral("audio.sourcePath"), QStringLiteral("audio.sourcePath")},
+          {QStringLiteral("svg.sourcePath"), QStringLiteral("svg.sourcePath")}};
+      if (project) {
+        std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+          if (!item) return;
+          if (item->type() == eProjectItemType::Composition) {
+            const auto* compositionItem =
+                static_cast<const CompositionItem*>(item);
+            const auto composition = project->findComposition(
+                compositionItem->compositionId).ptr.lock();
+            if (composition) {
+              for (const auto& layer : composition->allLayerRef()) {
+                if (!layer) continue;
+                const QJsonObject layerJson = layer->toJson();
+                for (const auto& property : layerSourceProperties) {
+                  const QString oldPath =
+                      layerJson.value(property.first).toString();
+                  for (const auto& change : changes) {
+                    const QString normalizedLayerPath = QDir::cleanPath(
+                        QFileInfo(oldPath).absoluteFilePath());
+                    const QString normalizedFootagePath = QDir::cleanPath(
+                        QFileInfo(change.first).absoluteFilePath());
+                    if (!oldPath.isEmpty() &&
+                        normalizedLayerPath == normalizedFootagePath) {
+                      layerChanges.append({layer, property.second, oldPath,
+                                           change.second});
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          for (auto* child : item->children) visit(child);
+        };
+        for (auto* root : project->projectItems()) visit(root);
+      }
+
+      QVector<QPair<QString, QString>> applied;
+      for (const auto& change : changes) {
+        if (!svc->relinkFootageByPath(change.first, change.second)) {
+          for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
+            svc->relinkFootageByPath(it->second, it->first);
+          }
+          QMessageBox::warning(
+              this, QStringLiteral("Batch Relink Failed"),
+              QStringLiteral("No changes were kept because relinking failed for:\n%1")
+                  .arg(change.first));
+          return;
+        }
+        applied.append(change);
+      }
+      QVector<RelinkLayerSourceChange> appliedLayers;
+      for (const auto& change : layerChanges) {
+        auto layer = change.layer.lock();
+        if (!layer || !layer->setLayerPropertyValue(change.propertyPath,
+                                                     change.newPath)) {
+          for (auto it = appliedLayers.crbegin(); it != appliedLayers.crend();
+               ++it) {
+            if (auto previous = it->layer.lock()) {
+              previous->setLayerPropertyValue(it->propertyPath, it->oldPath);
+            }
+          }
+          for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
+            svc->relinkFootageByPath(it->second, it->first);
+          }
+          QMessageBox::warning(
+              this, QStringLiteral("Batch Relink Failed"),
+              QStringLiteral("A layer source could not be updated; all changes were rolled back."));
+          return;
+        }
+        appliedLayers.append(change);
+      }
+      UndoManager::instance()->push(
+          std::make_unique<RelinkAssetBatchCommand>(std::move(applied),
+                                                    std::move(layerChanges)));
+      impl_->applyFilters();
+    });
+  }
 }
 
   // Interpret Footage action for media files
@@ -5113,6 +5443,7 @@ void ArtifactAssetBrowser::Impl::setupFileSystemWatcher()
   QObject::connect(fsWatcher_, &QFileSystemWatcher::directoryChanged,
                    QCoreApplication::instance(), [this](const QString& path) {
     Q_UNUSED(path);
+    thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
     if (!watchScheduled_) {
       watchScheduled_ = true;
       QTimer::singleShot(500, [this]() {
@@ -5125,6 +5456,7 @@ void ArtifactAssetBrowser::Impl::setupFileSystemWatcher()
   QObject::connect(fsWatcher_, &QFileSystemWatcher::fileChanged,
                    QCoreApplication::instance(), [this](const QString& path) {
     Q_UNUSED(path);
+    thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
     if (!watchScheduled_) {
       watchScheduled_ = true;
       QTimer::singleShot(500, [this]() {
@@ -5168,7 +5500,9 @@ void ArtifactAssetBrowser::Impl::createNewFolder()
 
   QString parentDir = currentDirectoryPath_;
   if (parentDir.isEmpty()) {
-    parentDir = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+    parentDir = ArtifactProjectService::instance()
+                    ? ArtifactProjectService::instance()->currentProjectAssetsPath()
+                    : QString();
   }
   if (parentDir.isEmpty()) {
     parentDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";

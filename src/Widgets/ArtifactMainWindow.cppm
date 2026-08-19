@@ -26,6 +26,7 @@ module;
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QHash>
 #include <QHeaderView>
 #include <QLabel>
@@ -293,13 +294,32 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
   return &rules[0];
 }
 
-QWidget *createLazyDockPlaceholder(QWidget *parent) {
+QWidget *createLazyDockPlaceholder(QWidget *parent,
+                                   const QString &panelTitle = {}) {
   auto *placeholder = new QWidget(parent);
   placeholder->setObjectName(QStringLiteral("ArtifactLazyDockPlaceholder"));
   placeholder->setAutoFillBackground(true);
   QPalette palette = placeholder->palette();
   palette.setColor(QPalette::Window, QColor(32, 34, 38));
   placeholder->setPalette(palette);
+  auto *layout = new QVBoxLayout(placeholder);
+  layout->setContentsMargins(24, 24, 24, 24);
+  layout->setSpacing(6);
+  auto *title = new QLabel(
+      panelTitle.trimmed().isEmpty() ? QStringLiteral("Panel") : panelTitle,
+      placeholder);
+  title->setAlignment(Qt::AlignCenter);
+  QFont titleFont = title->font();
+  titleFont.setBold(true);
+  title->setFont(titleFont);
+  auto *hint = new QLabel(QStringLiteral("Open this panel to initialize it."),
+                          placeholder);
+  hint->setAlignment(Qt::AlignCenter);
+  hint->setWordWrap(true);
+  layout->addStretch(1);
+  layout->addWidget(title);
+  layout->addWidget(hint);
+  layout->addStretch(1);
   return placeholder;
 }
 
@@ -1015,7 +1035,9 @@ void syncTrackedDockState(ArtifactDockManager *backend,
 class ArtifactMainWindow::Impl {
 public:
   Impl() : dockBackend(new ArtifactDockManager()),
-           dockWidgets(dockBackend->dockWidgets()) {}
+           dockWidgets(dockBackend->dockWidgets()),
+           nativeDockMvpEnabled(qEnvironmentVariableIsSet(
+               "ARTIFACT_NATIVE_DOCK_MVP")) {}
 
   ~Impl() { delete dockBackend; }
 
@@ -1035,6 +1057,8 @@ public:
   QWidget *centralWorkspaceWidget = nullptr;
   QString centralWorkspaceTitle;
   QByteArray defaultDockManagerState;
+  NativeDockSurface *nativeDockSurface = nullptr;
+  bool nativeDockMvpEnabled = false;
   QList<CDockWidget *> &dockWidgets;
   WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   bool immersiveMode_ = false;
@@ -1884,6 +1908,12 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->centralWorkspaceLayout = new QVBoxLayout(impl_->centralWidgetHost);
   impl_->centralWorkspaceLayout->setContentsMargins(0, 0, 0, 0);
   impl_->centralWorkspaceLayout->setSpacing(0);
+  if (impl_->nativeDockMvpEnabled) {
+    impl_->nativeDockSurface = new NativeDockSurface(impl_->centralWidgetHost);
+    impl_->nativeDockSurface->setObjectName(
+        QStringLiteral("ArtifactNativeDockMvpSurface"));
+    impl_->centralWorkspaceLayout->addWidget(impl_->nativeDockSurface);
+  }
   auto *centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
   centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
   centralDock->setWidget(impl_->centralWidgetHost);
@@ -1925,18 +1955,13 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
       [this]() {
           auto* svc = ArtifactProjectService::instance();
           if (!svc) return;
-          if (!svc->hasProject()) {
-              ArtifactProjectManager::getInstance().createProject();
-          }
+          if (!svc->ensureProject()) return;
           svc->createComposition(ArtifactCompositionInitParams::hdPreset());
       });
   QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::importAsset, this,
       [this]() {
           auto* svc = ArtifactProjectService::instance();
-          if (!svc || !svc->hasProject()) {
-              ArtifactProjectManager::getInstance().createProject();
-              svc = ArtifactProjectService::instance();
-          }
+          if (!svc || !svc->ensureProject()) return;
           if (svc) {
               const QStringList files = QFileDialog::getOpenFileNames(
                   this, QStringLiteral("Import Assets"));
@@ -2047,8 +2072,14 @@ void ArtifactMainWindow::setCentralWorkspace(const QString &title,
     }
     wireDockWidgetSignals(impl_->primaryCenterDock, this, impl_->dockBackend);
   }
-  widget->setParent(impl_->centralWidgetHost);
-  impl_->centralWorkspaceLayout->addWidget(widget);
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->addDockWidget(
+        QStringLiteral("Composition Viewer"), title, widget,
+        DockArea::Center);
+  } else {
+    widget->setParent(impl_->centralWidgetHost);
+    impl_->centralWorkspaceLayout->addWidget(widget);
+  }
   widget->show();
   impl_->primaryCenterDockAssigned = true;
   if (impl_->dockStyleManager) {
@@ -2107,6 +2138,13 @@ void ArtifactMainWindow::addDockedWidget(const QString &title,
                                          QWidget *widget) {
   if (!impl_ || !impl_->dockBackend->manager() || !widget)
     return;
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      title == QStringLiteral("Inspector")) {
+    if (impl_->nativeDockSurface->addDockWidget(
+            QStringLiteral("Inspector"), title, widget, DockArea::Right)) {
+      return;
+    }
+  }
   if (area == DockArea::Center && impl_->primaryCenterDock &&
       !impl_->primaryCenterDockAssigned) {
     setCentralWorkspace(title, widget);
@@ -2229,7 +2267,7 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
   if (dock->objectName().startsWith(QStringLiteral("timeline::"))) {
     dock->setProperty("artifactLazyForceNoScrollArea", true);
   }
-  auto *placeholder = createLazyDockPlaceholder(dock);
+  auto *placeholder = createLazyDockPlaceholder(dock, title);
   dock->setWidget(placeholder);
   impl_->lazyDockFactories.insert(dock, std::move(factory));
   dock->setProperty("artifactLazyFactoryAvailable", true);
@@ -2367,7 +2405,7 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
   dock->setProperty("artifactLazyFloatingDock", true);
   dock->setProperty("artifactDeferredFloatingContainer", true);
   dock->setProperty("artifactDeferredFloatingGeometry", floatingGeometry);
-  auto *placeholder = createLazyDockPlaceholder(dock);
+  auto *placeholder = createLazyDockPlaceholder(dock, title);
   dock->setWidget(placeholder, CDockWidget::ForceNoScrollArea);
   impl_->lazyDockFactories.insert(dock, std::move(factory));
   dock->setProperty("artifactLazyFactoryAvailable", true);
@@ -2421,6 +2459,13 @@ void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
   if (!impl_ || !impl_->dockBackend->manager() || title.isEmpty() ||
       tabGroupPrefix.isEmpty())
     return;
+
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title) &&
+      impl_->nativeDockSurface->containsDock(tabGroupPrefix)) {
+    impl_->nativeDockSurface->moveDockWidgetToTab(title, tabGroupPrefix);
+    return;
+  }
 
   const QByteArray beforeState = saveDockManagerState();
 
@@ -2479,6 +2524,14 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
                                         const bool visible) {
   if (!impl_)
     return;
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    impl_->nativeDockSurface->setDockVisible(title, visible);
+    if (visible) {
+      impl_->nativeDockSurface->activateDock(title);
+    }
+    return;
+  }
   if (title == impl_->centralWorkspaceTitle &&
       impl_->centralWorkspaceWidget) {
     // The central workspace is structural, not a toggleable tool panel.
@@ -2560,6 +2613,11 @@ void ArtifactMainWindow::setDockPinned(const QString &title, bool pinned) {
   if (!impl_ || title.isEmpty()) {
     return;
   }
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    impl_->nativeDockSurface->setDockPinned(title, pinned);
+    return;
+  }
   for (auto *dock : impl_->dockWidgets) {
     if (!dock || (dock->objectName() != title && dock->windowTitle() != title)) {
       continue;
@@ -2576,6 +2634,10 @@ bool ArtifactMainWindow::isDockPinned(const QString &title) const {
   if (!impl_ || title.isEmpty()) {
     return false;
   }
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    return impl_->nativeDockSurface->dockPinned(title);
+  }
   for (auto *dock : impl_->dockWidgets) {
     if (dock && (dock->objectName() == title || dock->windowTitle() == title)) {
       return dock->property("artifactDockPinned").toBool();
@@ -2587,6 +2649,11 @@ bool ArtifactMainWindow::isDockPinned(const QString &title) const {
 void ArtifactMainWindow::activateDock(const QString &title) {
   if (!impl_)
     return;
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    impl_->nativeDockSurface->activateDock(title);
+    return;
+  }
   if (title == impl_->centralWorkspaceTitle &&
       impl_->centralWorkspaceWidget) {
     impl_->centralWorkspaceWidget->show();
@@ -2628,6 +2695,10 @@ bool ArtifactMainWindow::closeDock(const QString &title) {
     return false;
   if (title == impl_->centralWorkspaceTitle) {
     return false;
+  }
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    return impl_->nativeDockSurface->setDockVisible(title, false);
   }
 
   const QByteArray beforeState = saveDockManagerState();
@@ -2909,6 +2980,15 @@ QStringList ArtifactMainWindow::dockTitles() const {
       titles.append(title.isEmpty() ? name : title);
     }
   }
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface) {
+    for (const auto &dockId : impl_->nativeDockSurface->dockIds()) {
+      const QString title = impl_->nativeDockSurface->dockTitle(dockId);
+      if (!title.isEmpty()) {
+        titles.append(title);
+      }
+    }
+  }
+  titles.removeDuplicates();
   return titles;
 }
 
@@ -2918,6 +2998,10 @@ bool ArtifactMainWindow::isDockVisible(const QString &title) const {
   if (title == impl_->centralWorkspaceTitle &&
       impl_->centralWorkspaceWidget) {
     return impl_->centralWorkspaceWidget->isVisible();
+  }
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    return impl_->nativeDockSurface->dockVisible(title);
   }
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
@@ -2934,6 +3018,10 @@ bool ArtifactMainWindow::isDockVisible(const QString &title) const {
 bool ArtifactMainWindow::hasDock(const QString &title) const {
   if (!impl_)
     return false;
+  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(title)) {
+    return true;
+  }
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
@@ -3042,18 +3130,47 @@ QByteArray ArtifactMainWindow::savePortableDockLayoutState() const {
   if (!impl_ || !impl_->dockBackend) {
     return {};
   }
-  return impl_->dockBackend->portableLayoutState();
+  const QByteArray qadsState = impl_->dockBackend->portableLayoutState();
+  if (!impl_->nativeDockMvpEnabled || !impl_->nativeDockSurface) {
+    return qadsState;
+  }
+
+  const auto qadsJson = QJsonDocument::fromJson(qadsState);
+  const auto nativeJson = QJsonDocument::fromJson(
+      impl_->nativeDockSurface->saveLayoutState());
+  if (!qadsJson.isObject() || !nativeJson.isObject()) {
+    return qadsState;
+  }
+  DockLayoutDocument merged = DockLayoutDocument::fromJson(qadsJson.object());
+  const DockLayoutDocument nativeDocument =
+      DockLayoutDocument::fromJson(nativeJson.object());
+  QHash<QString, bool> seen;
+  for (const auto &entry : merged.entries) {
+    seen.insert(entry.dockId, true);
+  }
+  for (const auto &entry : nativeDocument.entries) {
+    if (!seen.contains(entry.dockId)) {
+      merged.entries.push_back(entry);
+      seen.insert(entry.dockId, true);
+    }
+  }
+  return QJsonDocument(merged.toJson()).toJson(QJsonDocument::Compact);
 }
 
 bool ArtifactMainWindow::restorePortableDockLayoutState(const QByteArray &state) {
   if (!impl_ || !impl_->dockBackend) {
     return false;
   }
-  return impl_->dockBackend->restorePortableLayoutState(state);
+  const bool qadsRestored = impl_->dockBackend->restorePortableLayoutState(state);
+  const bool nativeRestored =
+      impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->restoreLayoutState(state);
+  return qadsRestored || nativeRestored;
 }
 
 bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
-  if (!impl_ || !impl_->dockBackend->manager() || state.isEmpty())
+  if (!impl_ || !impl_->dockBackend || !impl_->dockBackend->manager() ||
+      state.isEmpty())
     return false;
   // ADS は「全ての dock が DockManager に登録された後」でないと restore できない。
   // 呼び出し側（AppMain）がレイアウト構築完了後に呼ぶことを前提とする。

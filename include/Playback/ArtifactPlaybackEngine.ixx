@@ -74,6 +74,24 @@ struct ArtifactPlaybackAudioDiagnostics {
     int sampleRate = 0;
     int channelCount = 0;
     std::size_t formatMismatchCount = 0;
+    float leftRmsDb = -60.0f;
+    float rightRmsDb = -60.0f;
+    float leftPeakDb = -60.0f;
+    float rightPeakDb = -60.0f;
+    bool clippingDetected = false;
+    float clippingThresholdDb = -0.1f;
+
+    bool isHealthy() const {
+        // The counters above are cumulative diagnostics, so they must not
+        // permanently latch the current health state after a recovered glitch.
+        return deviceOpen && !clippingDetected;
+    }
+
+    QString healthReason() const {
+        if (!deviceOpen) return QStringLiteral("device closed");
+        if (clippingDetected) return QStringLiteral("clipping detected");
+        return QStringLiteral("ok");
+    }
 };
 
 /// 再生スレッドエンジン

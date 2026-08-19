@@ -190,7 +190,8 @@ ArtifactCore::ExpressionValue variantToExpressionValue(const QVariant& value)
 }
 
 ArtifactCore::ExpressionValue buildLayerObject(const QString& layerName, int layerIndex,
-                                               const QString& compositionName)
+                                               const QString& compositionName,
+                                               const QVariantMap& snapshot = {})
 {
     std::map<std::string, ArtifactCore::ExpressionValue> object;
     object["name"] = ArtifactCore::ExpressionValue(layerName.toStdString());
@@ -199,18 +200,37 @@ ArtifactCore::ExpressionValue buildLayerObject(const QString& layerName, int lay
         std::map<std::string, ArtifactCore::ExpressionValue>{
             {"name", ArtifactCore::ExpressionValue(compositionName.toStdString())}
         });
+    const QVariantMap transform = snapshot.value(QStringLiteral("transform")).toMap();
+    const QVariantMap position = transform.value(QStringLiteral("position")).toMap();
+    const QVariantMap scale = transform.value(QStringLiteral("scale")).toMap();
+    object["transform"] = ArtifactCore::ExpressionValue(
+        std::map<std::string, ArtifactCore::ExpressionValue>{
+            {"position", ArtifactCore::ExpressionValue(
+                std::map<std::string, ArtifactCore::ExpressionValue>{
+                    {"x", variantToExpressionValue(position.value(QStringLiteral("x")))},
+                    {"y", variantToExpressionValue(position.value(QStringLiteral("y")))}})},
+            {"scale", ArtifactCore::ExpressionValue(
+                std::map<std::string, ArtifactCore::ExpressionValue>{
+                    {"x", variantToExpressionValue(scale.value(QStringLiteral("x")))},
+                    {"y", variantToExpressionValue(scale.value(QStringLiteral("y")))}})},
+            {"rotation", variantToExpressionValue(transform.value(QStringLiteral("rotation")))},
+            {"opacity", variantToExpressionValue(snapshot.value(QStringLiteral("opacity")))}
+        });
     return ArtifactCore::ExpressionValue(object);
 }
 
 ArtifactCore::ExpressionValue buildCompositionObject(
     const QString& compositionName,
     const QSize& compositionSize,
-    const QStringList& layerNames)
+    const QStringList& layerNames,
+    const QVariantMap& layerSnapshots = {},
+    const QVariantList& compositionMarkers = {})
 {
     std::vector<ArtifactCore::ExpressionValue> layers;
     layers.reserve(layerNames.size());
     for (int i = 0; i < layerNames.size(); ++i) {
-        layers.push_back(buildLayerObject(layerNames.at(i), i + 1, compositionName));
+        layers.push_back(buildLayerObject(layerNames.at(i), i + 1, compositionName,
+                                          layerSnapshots.value(layerNames.at(i)).toMap()));
     }
 
     std::map<std::string, ArtifactCore::ExpressionValue> object;
@@ -219,6 +239,9 @@ ArtifactCore::ExpressionValue buildCompositionObject(
     object["height"] = ArtifactCore::ExpressionValue(static_cast<double>(compositionSize.height()));
     object["numLayers"] = ArtifactCore::ExpressionValue(static_cast<double>(layerNames.size()));
     object["layers"] = ArtifactCore::ExpressionValue(layers);
+    object["marker"] = ArtifactCore::ExpressionValue(
+        std::map<std::string, ArtifactCore::ExpressionValue>{
+            {"keys", variantToExpressionValue(compositionMarkers)}});
     return ArtifactCore::ExpressionValue(object);
 }
 
@@ -264,6 +287,8 @@ public:
     int previewLayerIndex = -1;
     QString previewLayerName;
     QVariant previewValue;
+    QVariantMap previewLayerSnapshots;
+    QVariantList previewCompositionMarkers;
     double previewTimeSeconds = 0.0;
 
     static QList<SuggestionCandidate> rootSuggestions()
@@ -580,12 +605,15 @@ public:
                     "thisComp",
                     buildCompositionObject(previewCompositionName,
                                            previewCompositionSize,
-                                           previewLayerNames));
+                                           previewLayerNames,
+                                           previewLayerSnapshots,
+                                           previewCompositionMarkers));
                 evaluator.setVariable(
                     "thisLayer",
                     buildLayerObject(previewLayerName,
                                      previewLayerIndex >= 0 ? previewLayerIndex + 1 : 0,
-                                     previewCompositionName));
+                                     previewCompositionName,
+                                     previewLayerSnapshots.value(previewLayerName).toMap()));
             }
 
             const auto runtime = evaluator.evaluate(expr);
@@ -906,6 +934,8 @@ void ArtifactExpressionCopilotWidget::setPreviewContext(
     int currentLayerIndex,
     const QString& layerName,
     const QVariant& propertyValue,
+    const QVariantMap& layerSnapshots,
+    const QVariantList& compositionMarkers,
     double timeSeconds) {
     if (!impl_) {
         return;
@@ -917,6 +947,8 @@ void ArtifactExpressionCopilotWidget::setPreviewContext(
     impl_->previewLayerIndex = currentLayerIndex;
     impl_->previewLayerName = layerName;
     impl_->previewValue = propertyValue;
+    impl_->previewLayerSnapshots = layerSnapshots;
+    impl_->previewCompositionMarkers = compositionMarkers;
     impl_->previewTimeSeconds = timeSeconds;
     impl_->validateExpression();
 }
@@ -932,6 +964,8 @@ void ArtifactExpressionCopilotWidget::clearPreviewContext() {
     impl_->previewLayerIndex = -1;
     impl_->previewLayerName.clear();
     impl_->previewValue = QVariant();
+    impl_->previewLayerSnapshots.clear();
+    impl_->previewCompositionMarkers.clear();
     impl_->previewTimeSeconds = 0.0;
     impl_->validateExpression();
 }

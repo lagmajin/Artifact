@@ -47,6 +47,7 @@ module Artifact.Render.Scheduler;
 
 
 import Thread.Helper;
+import Core.Diagnostics.Trace;
 import Frame.Position;
 import Frame.Range;
 
@@ -500,11 +501,20 @@ void RenderScheduler::processNextTask() {
             const QString threadName =
                 QStringLiteral("RenderScheduler/%1").arg(taskName);
             ArtifactCore::ScopedThreadName threadScope(threadName);
-            const auto startNs = std::chrono::steady_clock::now().time_since_epoch().count();
+            ArtifactCore::TraceScopeRecord traceScope;
+            traceScope.name = QStringLiteral("startup/render-scheduler/%1").arg(taskName);
+            traceScope.domain = ArtifactCore::TraceDomain::Render;
+            traceScope.threadId = ArtifactCore::TraceRecorder::currentThreadId();
+            traceScope.startNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
             QString execError;
             const bool ok = self->impl_->executeTask(task, &execError);
-            const auto endNs = std::chrono::steady_clock::now().time_since_epoch().count();
-            const double elapsedMs = (endNs - startNs) / 1000000.0;
+            traceScope.endNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count();
+            ArtifactCore::TraceRecorder::instance().recordScope(traceScope);
+            const double elapsedMs = (traceScope.endNs - traceScope.startNs) / 1000000.0;
 
             {
                 QMutexLocker locker(&self->impl_->mutex_);

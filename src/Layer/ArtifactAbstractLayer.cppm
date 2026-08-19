@@ -991,6 +991,7 @@ public:
   // マスク管理
   void addMask(const LayerMask &mask);
   void removeMask(int index);
+  bool moveMask(int fromIndex, int toIndex);
   void setMask(int index, const LayerMask &mask);
   LayerMask getMask(int index) const;
   int maskCount() const;
@@ -2063,6 +2064,18 @@ QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) cons
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const auto &t = transform3D();
   const RationalTime time = currentTimelineTime(this);
+  if (is3D()) {
+    const auto snapshot = t.snapshotAt(time);
+    QMatrix4x4 result;
+    result.setToIdentity();
+    result.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+    result.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+    result.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+    result.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+    result.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+    result.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+    return result;
+  }
   const int64_t frame = impl_->currentFrame_;
   const double fps = effectiveLayerFrameRate(this);
   auto evaluateDouble = [this, &time](const QString &propertyPath,
@@ -3998,13 +4011,16 @@ void ArtifactAbstractLayer::setPosition3D(const QVector3D &pos) {
 
 QVector3D ArtifactAbstractLayer::rotation3D() const {
   const auto time = currentTimelineTime(this);
-  return QVector3D(impl_->transform_.rotationAt(time), 0,
-                   0); // Only X rotation for now
+  const auto snapshot = impl_->transform_.snapshotAt(time);
+  return QVector3D(snapshot.rotationX, snapshot.rotationY,
+                   snapshot.rotationZ);
 }
 
 void ArtifactAbstractLayer::setRotation3D(const QVector3D &rot) {
   const auto time = currentTimelineTime(this);
-  impl_->transform_.setRotation(time, rot.x());
+  impl_->transform_.setRotationX(time, rot.x());
+  impl_->transform_.setRotationY(time, rot.y());
+  impl_->transform_.setRotationZ(time, rot.z());
   changed();
   if (hasRigidBodyPhysics()) {
     syncRigidBodyPhysicsToBounds();
@@ -4058,7 +4074,11 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   trans["px"] = t3.positionX();
   trans["py"] = t3.positionY();
   trans["pz"] = t3.positionZ();
-  trans["rx"] = t3.rotation(); // Currently only 1 rotation in ixx outline
+  // Keep rx as the legacy single-angle (Z) field and persist the full model.
+  trans["rx"] = t3.rotationZ();
+  trans["rotationX"] = t3.rotationX();
+  trans["rotationY"] = t3.rotationY();
+  trans["rotationZ"] = t3.rotationZ();
   trans["sx"] = t3.scaleX();
   trans["sy"] = t3.scaleY();
   trans["ax"] = t3.anchorX();
@@ -4097,7 +4117,10 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     const auto frame = time.rescaledTo(24);
     QJsonObject keyframe;
     keyframe["frame"] = static_cast<qint64>(frame);
-    keyframe["value"] = t3.rotationAt(time);
+    keyframe["value"] = t3.rotationZAt(time);
+    keyframe["x"] = t3.rotationXAt(time);
+    keyframe["y"] = t3.rotationYAt(time);
+    keyframe["z"] = t3.rotationZAt(time);
     rotationKeyframes.append(keyframe);
   }
   if (!rotationKeyframes.isEmpty()) {
@@ -4394,7 +4417,10 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
           vtrans["px"] = vt3.positionX();
           vtrans["py"] = vt3.positionY();
           vtrans["pz"] = vt3.positionZ();
-          vtrans["rx"] = vt3.rotation();
+          vtrans["rx"] = vt3.rotationZ();
+          vtrans["rotationX"] = vt3.rotationX();
+          vtrans["rotationY"] = vt3.rotationY();
+          vtrans["rotationZ"] = vt3.rotationZ();
           vtrans["sx"] = vt3.scaleX();
           vtrans["sy"] = vt3.scaleY();
           vtrans["ax"] = vt3.anchorX();
@@ -4705,8 +4731,20 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           finiteTransformValue(trans["py"].toDouble(0.0), 0.0));
     if (trans.contains("pz"))
       t3.setPositionZ(t0, finiteTransformValue(trans["pz"].toDouble(), 0.0));
-    if (trans.contains("rx"))
-      t3.setRotation(t0, finiteTransformValue(trans["rx"].toDouble(), 0.0));
+    const bool hasRotationAxes = trans.contains("rotationX") ||
+                                 trans.contains("rotationY") ||
+                                 trans.contains("rotationZ");
+    if (hasRotationAxes) {
+      t3.setRotationX(t0, static_cast<float>(finiteTransformValue(
+          trans["rotationX"].toDouble(0.0), 0.0)));
+      t3.setRotationY(t0, static_cast<float>(finiteTransformValue(
+          trans["rotationY"].toDouble(0.0), 0.0)));
+      t3.setRotationZ(t0, static_cast<float>(finiteTransformValue(
+          trans["rotationZ"].toDouble(0.0), 0.0)));
+    } else if (trans.contains("rx")) {
+      t3.setRotationZ(t0, static_cast<float>(finiteTransformValue(
+          trans["rx"].toDouble(), 0.0)));
+    }
     if (trans.contains("sx"))
       t3.setScale(
           t0,
@@ -4735,8 +4773,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         const QJsonObject keyframe = value.toObject();
         const ArtifactCore::RationalTime time(
             keyframe["frame"].toInteger(), 24);
-        t3.setRotation(time, static_cast<float>(finiteTransformValue(
-            keyframe["value"].toDouble(), 0.0)));
+        const bool hasAxes = keyframe.contains("x") ||
+                             keyframe.contains("y") || keyframe.contains("z");
+        if (hasAxes) {
+          t3.setRotationX(time, static_cast<float>(finiteTransformValue(
+              keyframe["x"].toDouble(0.0), 0.0)));
+          t3.setRotationY(time, static_cast<float>(finiteTransformValue(
+              keyframe["y"].toDouble(0.0), 0.0)));
+          t3.setRotationZ(time, static_cast<float>(finiteTransformValue(
+              keyframe["z"].toDouble(0.0), 0.0)));
+        } else {
+          t3.setRotationZ(time, static_cast<float>(finiteTransformValue(
+              keyframe["value"].toDouble(), 0.0)));
+        }
       }
     }
     if (trans.contains("scaleKeyframes") &&
@@ -4949,6 +4998,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->fragmentClonerOutputTimeOffsetFrames_ = static_cast<float>(
           finiteClamped(appearanceObj.value(QStringLiteral("clonerOutputTimeOffsetFrames")).toDouble(0.0),
                         0.0, -10000.0, 10000.0));
+  }
+  // A reused layer instance must not retain component activation from the
+  // previously restored JSON when the new snapshot has no component block.
+  if (!obj.contains("components") || !obj["components"].isObject()) {
+      impl_->scriptComponentEnabled_ = false;
+      impl_->clonerComponentEnabled_ = false;
+      impl_->layoutComponentEnabled_ = false;
+      impl_->collisionComponentEnabled_ = false;
+      impl_->crowdComponentEnabled_ = false;
+      impl_->particleEmitterComponentEnabled_ = false;
+      impl_->fluidComponentEnabled_ = false;
+      impl_->extraCloneModifierDescriptors_.clear();
+      impl_->scriptBinding_ = {};
   }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
@@ -5284,6 +5346,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       obj.value(QStringLiteral("componentGraph")).isArray()) {
     impl_->componentHost_.fromJson(
         obj.value(QStringLiteral("componentGraph")).toArray());
+  } else {
+    impl_->componentHost_.fromJson(QJsonArray{});
   }
   impl_->syncBuiltinComponentDescriptors();
 
@@ -5324,9 +5388,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
                   vt3.setPositionZ(
                       t0, finiteVariantTransformValue(vtrans["pz"].toDouble(), 0.0));
               }
-              if (vtrans.contains("rx")) {
-                  vt3.setRotation(
-                      t0, finiteVariantTransformValue(vtrans["rx"].toDouble(), 0.0));
+              const bool hasVariantRotationAxes =
+                  vtrans.contains("rotationX") || vtrans.contains("rotationY") ||
+                  vtrans.contains("rotationZ");
+              if (hasVariantRotationAxes) {
+                  vt3.setRotationX(t0, static_cast<float>(finiteVariantTransformValue(
+                      vtrans["rotationX"].toDouble(0.0), 0.0)));
+                  vt3.setRotationY(t0, static_cast<float>(finiteVariantTransformValue(
+                      vtrans["rotationY"].toDouble(0.0), 0.0)));
+                  vt3.setRotationZ(t0, static_cast<float>(finiteVariantTransformValue(
+                      vtrans["rotationZ"].toDouble(0.0), 0.0)));
+              } else if (vtrans.contains("rx")) {
+                  vt3.setRotationZ(t0, static_cast<float>(finiteVariantTransformValue(
+                      vtrans["rx"].toDouble(), 0.0)));
               }
               if (vtrans.contains("sx")) {
                   vt3.setScale(
@@ -5788,10 +5862,59 @@ ArtifactAbstractLayer::layerCloneModifiers() const {
   return modifiers;
 }
 
+std::vector<QString> ArtifactAbstractLayer::clonerTransformNames() const {
+  std::vector<QString> names;
+  names.reserve(impl_->clonerTransforms_.size());
+  for (std::size_t index = 0; index < impl_->clonerTransforms_.size(); ++index) {
+    const auto& operation = impl_->clonerTransforms_[index];
+    names.push_back(operation.name.trimmed().isEmpty()
+                        ? QStringLiteral("Transform %1").arg(static_cast<int>(index) + 1)
+                        : operation.name.trimmed());
+  }
+  return names;
+}
+
 std::vector<LayerComponentValidationIssue>
 ArtifactAbstractLayer::validateLayerComponents() const {
   impl_->syncBuiltinComponentDescriptors();
-  return impl_->componentHost_.validate();
+  auto issues = impl_->componentHost_.validate();
+  const auto validateIds = [&issues](const auto& descriptors,
+                                     const QString& kind,
+                                     const auto& idOf,
+                                     const auto& typeOf) {
+    for (std::size_t i = 0; i < descriptors.count(); ++i) {
+      const auto* descriptor = descriptors.at(i);
+      if (!descriptor) {
+        continue;
+      }
+      const QString id = idOf(*descriptor).trimmed();
+      const QString type = typeOf(*descriptor).trimmed();
+      if (id.isEmpty() || type.isEmpty()) {
+        issues.push_back({id,
+                          QStringLiteral("%1 descriptor id and type must be non-empty.")
+                              .arg(kind),
+                          true});
+      }
+      for (std::size_t j = i + 1; j < descriptors.count(); ++j) {
+        const auto* other = descriptors.at(j);
+        if (other && id == idOf(*other).trimmed()) {
+          issues.push_back({id,
+                            QStringLiteral("Duplicate %1 descriptor id.").arg(kind),
+                            true});
+        }
+      }
+    }
+  };
+  validateIds(impl_->extraGeneratorDescriptors_, QStringLiteral("Generator"),
+              [](const auto& descriptor) { return descriptor.generatorId; },
+              [](const auto& descriptor) { return descriptor.typeId; });
+  validateIds(impl_->extraFieldDescriptors_, QStringLiteral("Field"),
+              [](const auto& descriptor) { return descriptor.fieldId; },
+              [](const auto& descriptor) { return descriptor.typeId; });
+  validateIds(impl_->extraCloneModifierDescriptors_, QStringLiteral("Modifier"),
+              [](const auto& descriptor) { return descriptor.modifierId; },
+              [](const auto& descriptor) { return descriptor.typeId; });
+  return issues;
 }
 
 void ArtifactAbstractLayer::setAuthoritativeComponentEvaluationState(
@@ -10049,6 +10172,19 @@ void ArtifactAbstractLayer::Impl::removeMask(int index) {
   }
 }
 
+bool ArtifactAbstractLayer::Impl::moveMask(int fromIndex, int toIndex) {
+  const int count = static_cast<int>(masks_.size());
+  if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count ||
+      fromIndex == toIndex) {
+    return false;
+  }
+  auto mask = std::move(masks_[static_cast<std::size_t>(fromIndex)]);
+  masks_.erase(masks_.begin() + fromIndex);
+  masks_.insert(masks_.begin() + toIndex, std::move(mask));
+  ++maskRevision_;
+  return true;
+}
+
 void ArtifactAbstractLayer::Impl::setMask(int index, const LayerMask &mask) {
   if (index >= 0 && index < static_cast<int>(masks_.size())) {
     masks_[index] = mask;
@@ -10080,6 +10216,10 @@ void ArtifactAbstractLayer::addMask(const LayerMask &mask) {
 }
 
 void ArtifactAbstractLayer::removeMask(int index) { impl_->removeMask(index); }
+
+bool ArtifactAbstractLayer::moveMask(int fromIndex, int toIndex) {
+  return impl_->moveMask(fromIndex, toIndex);
+}
 
 void ArtifactAbstractLayer::setMask(int index, const LayerMask &mask) {
   impl_->setMask(index, mask);
@@ -10217,5 +10357,3 @@ void ArtifactAbstractLayer::setOpacity(float value) {
 }
 
 } // namespace Artifact
-
-

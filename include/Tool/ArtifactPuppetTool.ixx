@@ -35,6 +35,10 @@ public:
     void setPinWeight(const QString& pinId, float weight);
     float pinDepth(const QString& pinId) const;
     void setPinDepth(const QString& pinId, float depth);
+    bool isProportionalEditingEnabled() const;
+    void setProportionalEditingEnabled(bool enabled);
+    float proportionalEditRadius() const;
+    void setProportionalEditRadius(float radius);
     QString hitTestPin(const QPointF& canvasPos, float threshold = 12.0f) const;
 
     // Deformation

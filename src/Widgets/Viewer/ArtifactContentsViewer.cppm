@@ -36,6 +36,7 @@ module;
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QUrl>
 #include <QSignalBlocker>
 #include <QAudioFormat>
@@ -635,6 +636,7 @@ namespace Artifact
    QToolButton* copyPathButton = nullptr;
    QToolButton* revealButton = nullptr;
    QToolButton* previewButton = nullptr;
+   QToolButton* screenshotButton = nullptr;
    QToolButton* sourceButton = nullptr;
    QToolButton* finalButton = nullptr;
    QToolButton* compareButton = nullptr;
@@ -1084,7 +1086,18 @@ namespace Artifact
     waveform.maxSample = *std::max_element(audioWaveformSamples.constBegin(), audioWaveformSamples.constEnd());
    }
    waveform.width = audioWaveformSamples.size();
-   waveform.sampleRate = 44100;
+   int sampleRate = 44100;
+   if (audioController_ && audioController_->isMediaOpen()) {
+    const auto metadata = audioController_->getMetadata();
+    for (const auto& stream : metadata.streams) {
+     if (stream.type == ArtifactCore::MediaType::Audio &&
+         stream.audioCodec.sampleRate > 0) {
+      sampleRate = stream.audioCodec.sampleRate;
+      break;
+     }
+    }
+   }
+   waveform.sampleRate = sampleRate;
    audioWaveformWidget->setWaveformData(waveform);
    if (!audioWaveformSamples.isEmpty()) {
     audioWaveformWidget->setPosition(static_cast<int>(audioWaveformSamples.size()) - 1);
@@ -1111,6 +1124,16 @@ namespace Artifact
 
    ArtifactCore::AudioSegment segment;
    segment.sampleRate = 44100;
+   if (audioController_ && audioController_->isMediaOpen()) {
+    const auto metadata = audioController_->getMetadata();
+    for (const auto& stream : metadata.streams) {
+     if (stream.type == ArtifactCore::MediaType::Audio &&
+         stream.audioCodec.sampleRate > 0) {
+      segment.sampleRate = stream.audioCodec.sampleRate;
+      break;
+     }
+    }
+   }
    segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
    segment.channelData.resize(2);
    segment.channelData[0].resize(frameCount);
@@ -2491,6 +2514,10 @@ namespace Artifact
                             || currentFileType == ArtifactCore::FileType::Audio
                             || currentFileType == ArtifactCore::FileType::Model3D);
    }
+   if (screenshotButton) {
+    screenshotButton->setEnabled(currentFileType == ArtifactCore::FileType::Image &&
+                                 imageLabel && !imageLabel->pixmap().isNull());
+   }
    if (rotateLeftButton) {
     rotateLeftButton->setEnabled(currentFileType == ArtifactCore::FileType::Image);
    }
@@ -2698,6 +2725,8 @@ namespace Artifact
    stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop media"));
    copyPathButton = createButton(QStringLiteral("Copy"), QStringLiteral("Copy file path"));
    revealButton = createButton(QStringLiteral("Open"), QStringLiteral("Open containing folder"));
+   screenshotButton = createButton(QStringLiteral("Screenshot"),
+                                   QStringLiteral("Save the current image view as a PNG"));
 #if defined(Q_OS_MACOS)
    previewButton = createButton(QStringLiteral("Quick Look"), QStringLiteral("Open system preview"));
 #endif
@@ -2746,7 +2775,8 @@ namespace Artifact
     buttonRow->addWidget(stopButton);
     buttonRow->addSpacing(4);
     buttonRow->addWidget(copyPathButton);
-    buttonRow->addWidget(revealButton);
+   buttonRow->addWidget(revealButton);
+   buttonRow->addWidget(screenshotButton);
 #if defined(Q_OS_MACOS)
     buttonRow->addWidget(previewButton);
 #endif
@@ -2878,6 +2908,25 @@ namespace Artifact
     }
     QGuiApplication::clipboard()->setText(currentFilePath);
     updateActionAvailability();
+   });
+
+   QObject::connect(screenshotButton, &QToolButton::clicked, parent, [this]() {
+    if (currentFileType != ArtifactCore::FileType::Image || !imageLabel ||
+        imageLabel->pixmap().isNull()) {
+     return;
+    }
+    const QString suggested = currentFilePath.isEmpty()
+        ? QStringLiteral("artifact-view.png")
+        : QFileInfo(currentFilePath).completeBaseName() + QStringLiteral("-view.png");
+    const QString path = QFileDialog::getSaveFileName(
+        owner_, QStringLiteral("Save Viewer Screenshot"), suggested,
+        QStringLiteral("PNG Image (*.png);;JPEG Image (*.jpg *.jpeg)"));
+    if (path.isEmpty()) {
+     return;
+    }
+    if (!imageLabel->pixmap().save(path)) {
+     qWarning() << "[ContentsViewer] failed to save screenshot" << path;
+    }
    });
 
    QObject::connect(revealButton, &QToolButton::clicked, parent, [this]() {

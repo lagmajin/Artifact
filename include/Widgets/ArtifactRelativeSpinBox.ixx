@@ -7,6 +7,7 @@ module;
 #include <QFocusEvent>
 #include <QString>
 #include <QChar>
+#include <algorithm>
 #include <cmath>
 export module Artifact.Widgets.RelativeSpinBox;
 
@@ -23,7 +24,19 @@ public:
 
 protected:
   void wheelEvent(QWheelEvent *event) override {
-    event->ignore();
+    const auto modifiers = event->modifiers();
+    if (!(modifiers & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) ||
+        event->angleDelta().y() == 0) {
+      event->ignore();
+      return;
+    }
+    double scale = 1.0;
+    if (modifiers & Qt::ShiftModifier) scale *= 0.1;
+    if (modifiers & Qt::ControlModifier) scale *= 10.0;
+    if (modifiers & Qt::AltModifier) scale *= 0.01;
+    const double direction = event->angleDelta().y() > 0 ? 1.0 : -1.0;
+    setValue(value() + direction * singleStep() * scale);
+    event->accept();
   }
 
   void focusInEvent(QFocusEvent *event) override {
@@ -97,7 +110,20 @@ public:
 
 protected:
   void wheelEvent(QWheelEvent *event) override {
-    event->ignore();
+    const auto modifiers = event->modifiers();
+    if (!(modifiers & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) ||
+        event->angleDelta().y() == 0) {
+      event->ignore();
+      return;
+    }
+    double scale = 1.0;
+    if (modifiers & Qt::ShiftModifier) scale *= 0.1;
+    if (modifiers & Qt::ControlModifier) scale *= 10.0;
+    if (modifiers & Qt::AltModifier) scale *= 0.01;
+    const double direction = event->angleDelta().y() > 0 ? 1.0 : -1.0;
+    const int delta = std::max(1, static_cast<int>(std::llround(singleStep() * scale)));
+    setValue(value() + (direction > 0.0 ? delta : -delta));
+    event->accept();
   }
 
   void focusInEvent(QFocusEvent *event) override {

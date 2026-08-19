@@ -120,6 +120,31 @@ SimpleRainEffect::SimpleRainEffect() {
 
 SimpleRainEffect::~SimpleRainEffect() = default;
 
+void SimpleRainEffect::applyPreset(const QString& preset) {
+    const QString normalized = preset.trimmed().toLower();
+    if (normalized == QStringLiteral("light")) {
+        density_ = 0.28f;
+        streakLength_ = 18.0f;
+        speed_ = 0.85f;
+        wind_ = -0.12f;
+        opacity_ = 0.22f;
+        depth_ = 0.45f;
+        splashAmount_ = 0.05f;
+        preset_ = QStringLiteral("Light");
+    } else if (normalized == QStringLiteral("heavy")) {
+        density_ = 0.95f;
+        streakLength_ = 34.0f;
+        speed_ = 1.35f;
+        wind_ = -0.28f;
+        opacity_ = 0.46f;
+        depth_ = 0.80f;
+        splashAmount_ = 0.20f;
+        preset_ = QStringLiteral("Heavy");
+    } else {
+        preset_ = QStringLiteral("Custom");
+    }
+}
+
 void SimpleRainEffect::syncImpl() {
     if (auto* impl = dynamic_cast<SimpleRainCPUImpl*>(cpuImpl().get())) {
         impl->density = density_; impl->streakLength = streakLength_;
@@ -140,12 +165,15 @@ std::vector<AbstractProperty> SimpleRainEffect::getProperties() const {
     auto& splash = props.emplace_back(); splash.setName("Splash Amount"); splash.setType(PropertyType::Float); splash.setValue(splashAmount_);
     auto& evolution = props.emplace_back(); evolution.setName("Evolution"); evolution.setType(PropertyType::Float); evolution.setValue(evolution_);
     auto& seed = props.emplace_back(); seed.setName("Seed"); seed.setType(PropertyType::Integer); seed.setValue(seed_);
+    auto& preset = props.emplace_back(); preset.setName("Preset"); preset.setType(PropertyType::String); preset.setValue(preset_);
     return props;
 }
 
 void SimpleRainEffect::setPropertyValue(const UniString& name,
                                         const QVariant& value) {
     const QString key = name.toQString();
+    if (key == QStringLiteral("Preset")) { applyPreset(value.toString()); syncImpl(); return; }
+    preset_ = QStringLiteral("Custom");
     if (key == QStringLiteral("Density")) { const float v=value.toFloat(); density_=std::isfinite(v)?std::clamp(v,0.0f,4.0f):0.45f; }
     else if (key == QStringLiteral("Streak Length")) { const float v=value.toFloat(); streakLength_=std::isfinite(v)?std::clamp(v,1.0f,200.0f):24.0f; }
     else if (key == QStringLiteral("Speed")) { const float v=value.toFloat(); speed_=std::isfinite(v)?std::clamp(v,0.0f,10.0f):1.0f; }

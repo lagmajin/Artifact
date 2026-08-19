@@ -282,6 +282,13 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
         return QObject::eventFilter(watched, event);
     }
 
+    if (event->type() == QEvent::ApplicationPaletteChange ||
+        event->type() == QEvent::PaletteChange) {
+        setGlowColor(QColor(ArtifactCore::currentDCCTheme().borderColor));
+        scheduleRefresh();
+        return QObject::eventFilter(watched, event);
+    }
+
     // 高速パス: ドック装飾に無関係なイベント型は isDockRelatedObject の
     // 高コストな isAncestorOf 呼び出しを行わず即座にスキップする。
     // ChildAdded / ChildRemoved / LayoutRequest / Polish はレイアウト処理中に

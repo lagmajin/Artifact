@@ -43,6 +43,7 @@ module;
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -86,6 +87,7 @@ import Image.ImageF32x4_RGBA;
 import Image.MultiChannelImage;
 import CvUtils;
 import Audio.Segment;
+import Audio.Effect.Spectrum;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
@@ -346,10 +348,21 @@ namespace Artifact
                 : 30.0;
             const int frameCount = std::max(1, endFrame - startFrame);
             const int sampleRate = 48000;
-            const int sampleCount = std::max(1, static_cast<int>(std::ceil((static_cast<double>(frameCount) / fps) * sampleRate)));
+            qint64 tailSamples = 0;
+            if (const auto mixer = composition->getAudioMixer()) {
+                tailSamples = std::max<qint64>(0, mixer->graphTailSamples());
+            }
+            const qint64 baseSamples = static_cast<qint64>(std::ceil(
+                (static_cast<double>(frameCount) / fps) * sampleRate));
+            const qint64 requestedSamples = baseSamples + tailSamples;
+            if (requestedSamples <= 0 || requestedSamples > std::numeric_limits<int>::max()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio range is too large");
+                return false;
+            }
 
             ArtifactCore::AudioSegment segment;
-            if (!composition->getAudio(segment, ArtifactCore::FramePosition(startFrame), sampleCount, sampleRate)) {
+            if (!composition->getAudio(segment, ArtifactCore::FramePosition(startFrame),
+                                       static_cast<int>(requestedSamples), sampleRate)) {
                 if (errorMessage) *errorMessage = QStringLiteral("Composition audio extraction failed");
                 return false;
             }
@@ -360,6 +373,52 @@ namespace Artifact
             }
 
             return writeAudioSegmentAsWav(wavPath, segment, errorMessage, bitDepth);
+        }
+
+        bool measureCompositionAudioForPreflight(
+            const ArtifactCompositionPtr& composition,
+            int startFrame,
+            int endFrame,
+            int sampleRate,
+            ArtifactCore::AudioSpectrum& analyzer,
+            QString* errorMessage)
+        {
+            if (!composition || !composition->hasAudio()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition has no audio");
+                return false;
+            }
+            const double fps = composition->frameRate().framerate() > 0.0
+                ? composition->frameRate().framerate() : 30.0;
+            const qint64 frameCount = std::max<qint64>(1, static_cast<qint64>(endFrame) - startFrame);
+            qint64 tailSamples = 0;
+            if (const auto mixer = composition->getAudioMixer()) {
+                tailSamples = std::max<qint64>(0, mixer->graphTailSamples());
+            }
+            const qint64 baseSamples = static_cast<qint64>(std::ceil(
+                (static_cast<double>(frameCount) / fps) * std::max(1, sampleRate)));
+            const qint64 requestedSamples = baseSamples + tailSamples;
+            if (requestedSamples <= 0 || requestedSamples > std::numeric_limits<int>::max()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Audio measurement range is too large");
+                return false;
+            }
+
+            ArtifactCore::AudioSegment segment;
+            if (!composition->getAudio(
+                    segment,
+                    ArtifactCore::FramePosition(startFrame),
+                    static_cast<int>(requestedSamples),
+                    std::max(1, sampleRate))) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio extraction failed");
+                return false;
+            }
+            if (segment.channelCount() == 0 || segment.frameCount() <= 0) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio segment is empty");
+                return false;
+            }
+            analyzer.resetLoudnessMeasurement();
+            analyzer.process(segment);
+            return std::isfinite(analyzer.getIntegratedLufs()) ||
+                   std::isfinite(analyzer.getTruePeakDb());
         }
 
         ArtifactCore::ProjectDiagnostic makePreflightDiagnostic(
@@ -3741,9 +3800,20 @@ namespace Artifact
                 args << QStringLiteral("-c:v") << QStringLiteral("libvpx-vp9")
                      << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
             } else if (format == QStringLiteral("gif")) {
-                args << QStringLiteral("-c:v") << QStringLiteral("gif");
+                // GIF is palette based. Generate the palette from the complete
+                // sequence before paletteuse so gradients do not collapse to
+                // the first frame's colors.
+                args << QStringLiteral("-vf")
+                     << QStringLiteral("split[s0][s1];[s0]palettegen=max_colors=256:reserve_transparent=1[p];[s1][p]paletteuse=dither=sierra2_4a")
+                     << QStringLiteral("-c:v") << QStringLiteral("gif")
+                     << QStringLiteral("-loop") << QStringLiteral("0");
+            } else if (format == QStringLiteral("apng")) {
+                args << QStringLiteral("-c:v") << QStringLiteral("apng")
+                     << QStringLiteral("-plays") << QStringLiteral("0");
             } else if (format == QStringLiteral("webp")) {
-                args << QStringLiteral("-c:v") << QStringLiteral("libwebp");
+                args << QStringLiteral("-c:v") << QStringLiteral("libwebp_anim")
+                     << QStringLiteral("-loop") << QStringLiteral("0")
+                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuva420p");
             } else {
                 args << QStringLiteral("-c:v") << QStringLiteral("libx264")
                      << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
@@ -4501,21 +4571,39 @@ namespace Artifact
                     return false;
                 }
             } else {
-                frame = gpuRenderer_->readbackToImage();
-                if (frame.isNull()) {
-                    if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
-                    return false;
+                auto frameBuffer = gpuRenderer_->readbackToImageF32();
+                if (!frameBuffer.isEmpty()) {
+                    if (job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                        const QRect fullRect(0, 0, frameBuffer.width(), frameBuffer.height());
+                        const QRect crop = QRect(job.cropX, job.cropY, job.cropW, job.cropH)
+                                                .intersected(fullRect);
+                        if (!crop.isEmpty()) {
+                            frameBuffer = frameBuffer.crop(
+                                crop.x(), crop.y(), crop.width(), crop.height());
+                        }
+                    }
+                    if (frameBuffer.width() != width || frameBuffer.height() != height) {
+                        frameBuffer.resize(width, height);
+                    }
+                    applyCompositionFinalEffectsToBuffer(comp.get(), frameBuffer);
+                    frame = frameBuffer.toQImage();
+                } else {
+                    frame = gpuRenderer_->readbackToImage();
+                    if (frame.isNull()) {
+                        if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
+                        return false;
+                    }
+                    if (job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                        const QRect crop = QRect(job.cropX, job.cropY, job.cropW, job.cropH)
+                                                .intersected(frame.rect());
+                        if (!crop.isEmpty()) frame = frame.copy(crop);
+                    }
+                    if (frame.width() != width || frame.height() != height) {
+                        frame = frame.scaled(width, height, Qt::IgnoreAspectRatio,
+                                             Qt::SmoothTransformation);
+                    }
+                    applyCompositionFinalEffectsToImage(comp.get(), frame);
                 }
-                if (job.regionMode != ArtifactRenderJob::RegionMode::Full) {
-                    const QRect crop = QRect(job.cropX, job.cropY, job.cropW, job.cropH)
-                                            .intersected(frame.rect());
-                    if (!crop.isEmpty()) frame = frame.copy(crop);
-                }
-                if (frame.width() != width || frame.height() != height) {
-                    frame = frame.scaled(width, height, Qt::IgnoreAspectRatio,
-                                         Qt::SmoothTransformation);
-                }
-                applyCompositionFinalEffectsToImage(comp.get(), frame);
             }
 
             // 出力パス決定
@@ -5805,6 +5893,25 @@ namespace Artifact
                     QStringLiteral("The output directory '%1' is missing.").arg(outputInfo.absolutePath()),
                     QStringLiteral("Choose an existing output directory"),
                     compId));
+            } else if (!outputInfo.dir().isWritable()) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::File,
+                    QStringLiteral("Render output directory is not writable"),
+                    QStringLiteral("The output directory '%1' is not writable.")
+                        .arg(outputInfo.absolutePath()),
+                    QStringLiteral("Choose a writable output directory"),
+                    compId));
+            }
+            if (outputInfo.exists() && outputInfo.isFile()) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::File,
+                    QStringLiteral("Render output already exists"),
+                    QStringLiteral("Rendering may overwrite the existing file '%1'.")
+                        .arg(outputInfo.absoluteFilePath()),
+                    QStringLiteral("Choose another path or enable versioning"),
+                    compId));
             }
         }
 
@@ -6108,6 +6215,36 @@ namespace Artifact
                 auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(audioPath, QString());
                 diag.setSourceCompId(compId);
                 result.addDiagnostic(diag);
+            }
+
+            if (hasCompositionAudio) {
+                ArtifactCore::AudioSpectrum analyzer;
+                QString measurementError;
+                const int measurementRate = job.audioSampleRate > 0
+                    ? job.audioSampleRate : 48000;
+                if (!measureCompositionAudioForPreflight(
+                        composition, job.startFrame, job.endFrame,
+                        measurementRate, analyzer, &measurementError)) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Audio,
+                        QStringLiteral("Audio loudness preflight was unavailable"),
+                        measurementError,
+                        QStringLiteral("Check the composition audio range and source assets"),
+                        compId));
+                } else if (const auto measurement = analyzer.measurement();
+                           measurement.exceedsTruePeak()) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Audio,
+                        QStringLiteral("Audio true peak is close to full scale"),
+                        QStringLiteral("Measured true peak is %1 dBTP (%2); the current preflight warning threshold is -1.0 dBTP.")
+                            .arg(QString::number(measurement.truePeakDb, 'f', 1))
+                            .arg(measurement.isApproximate ? QStringLiteral("approximate meter")
+                                                            : QStringLiteral("meter")),
+                        QStringLiteral("Lower the master level or add a true-peak limiter before export"),
+                        compId));
+                }
             }
         }
 
@@ -6425,14 +6562,30 @@ namespace Artifact
                     return false;
                 }
             } else {
-                output.beauty = gpuRenderer_->readbackToImage();
-                if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
-                    const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
-                                             snap.job.cropW, snap.job.cropH)
-                                           .intersected(output.beauty.rect());
-                    if (!crop.isEmpty()) output.beauty = output.beauty.copy(crop);
+                auto beautyBuffer = gpuRenderer_->readbackToImageF32();
+                if (!beautyBuffer.isEmpty()) {
+                    if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                        const QRect fullRect(0, 0, beautyBuffer.width(), beautyBuffer.height());
+                        const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
+                                                 snap.job.cropW, snap.job.cropH)
+                                               .intersected(fullRect);
+                        if (!crop.isEmpty()) {
+                            beautyBuffer = beautyBuffer.crop(
+                                crop.x(), crop.y(), crop.width(), crop.height());
+                        }
+                    }
+                    applyCompositionFinalEffectsToBuffer(snap.composition.get(), beautyBuffer);
+                    output.beauty = beautyBuffer.toQImage();
+                } else {
+                    output.beauty = gpuRenderer_->readbackToImage();
+                    if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                        const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
+                                                 snap.job.cropW, snap.job.cropH)
+                                               .intersected(output.beauty.rect());
+                        if (!crop.isEmpty()) output.beauty = output.beauty.copy(crop);
+                    }
+                    applyCompositionFinalEffectsToImage(snap.composition.get(), output.beauty);
                 }
-                applyCompositionFinalEffectsToImage(snap.composition.get(), output.beauty);
             }
         } else {
             if (snap.job.multiChannelExportEnabled) {

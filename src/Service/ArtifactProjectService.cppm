@@ -4,6 +4,7 @@ module;
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -15,6 +16,7 @@ module;
 #include <QList>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPair>
 #include <QRectF>
 #include <QRegularExpression>
 #include <QSet>
@@ -64,12 +66,26 @@ import Memory.SharedPtr;
 import Artifact.Service.Playback;
 import Artifact.Audio.ScrubController;
 import Asset.Manager;
+import Asset.Database;
 import Undo.UndoManager;
 import Composition.PreCompose;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
 namespace {
+QString normalizeRelinkPath(const QString &path) {
+  const QFileInfo info(path.trimmed());
+  QString identity = info.canonicalFilePath();
+  if (identity.isEmpty()) {
+    identity = info.absoluteFilePath();
+  }
+  identity = QDir::cleanPath(identity);
+#ifdef Q_OS_WIN
+  identity = identity.toCaseFolded();
+#endif
+  return identity;
+}
+
 QString slugifyEffectId(const QString &text) {
   QString slug;
   slug.reserve(text.size());
@@ -416,11 +432,24 @@ QString projectHealthSummaryFromDiagnostics(const std::vector<ArtifactCore::Proj
   const int warningCount = static_cast<int>(std::count_if(
       diagnostics.begin(), diagnostics.end(),
       [](const auto& diagnostic) { return diagnostic.isWarning(); }));
-  const int issueCount = errorCount + warningCount;
-  return QStringLiteral("Status: Project %1 (%2 issue%3)")
-      .arg(issueCount == 0 ? QStringLiteral("healthy") : QStringLiteral("issues"))
-      .arg(issueCount)
-      .arg(issueCount == 1 ? QString() : QStringLiteral("s"));
+  const int infoCount = static_cast<int>(diagnostics.size()) - errorCount - warningCount;
+  const QString warningText =
+      errorCount > 0 ? QStringLiteral("%1 critical").arg(errorCount)
+                     : (warningCount > 0 ? QStringLiteral("%1 warnings").arg(warningCount)
+                                         : QStringLiteral("none"));
+  const QString nextText =
+      errorCount > 0 ? QStringLiteral("open items")
+                     : (warningCount > 0 ? QStringLiteral("review items")
+                                         : QStringLiteral("continue editing"));
+  const QString nowText = QStringLiteral("%1 items e%2 w%3 i%4")
+                              .arg(static_cast<int>(diagnostics.size()))
+                              .arg(errorCount)
+                              .arg(warningCount)
+                              .arg(std::max(0, infoCount));
+  return QStringLiteral("goal: keep the project healthy | now: %1 | warning: %2 | next: %3")
+      .arg(nowText)
+      .arg(warningText)
+      .arg(nextText);
 }
 
 void appendAppValidationDiagnostics(
@@ -1103,6 +1132,119 @@ private:
   int direction_;
 };
 
+class AddCompositionEffectUndoCommand : public UndoCommand {
+public:
+  explicit AddCompositionEffectUndoCommand(SharedPtr<ArtifactAbstractEffect> effect)
+      : effect_(std::move(effect)) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->addEffect(effect_);
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->removeEffect(effect_->effectID());
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override { return QStringLiteral("Add Composition Effect"); }
+
+private:
+  SharedPtr<ArtifactAbstractEffect> effect_;
+};
+
+class RemoveCompositionEffectUndoCommand : public UndoCommand {
+public:
+  RemoveCompositionEffectUndoCommand(SharedPtr<ArtifactAbstractEffect> effect,
+                                     int effectIndex)
+      : effect_(std::move(effect)), effectIndex_(effectIndex) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->removeEffect(effect_->effectID());
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp || !effect_) return;
+    comp->addEffect(effect_);
+    if (effectIndex_ >= 0) {
+      comp->moveEffect(effect_->effectID(), effectIndex_);
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override { return QStringLiteral("Remove Composition Effect"); }
+
+private:
+  SharedPtr<ArtifactAbstractEffect> effect_;
+  int effectIndex_ = -1;
+};
+
+class SetCompositionEffectEnabledUndoCommand : public UndoCommand {
+public:
+  SetCompositionEffectEnabledUndoCommand(QString effectId, bool wasEnabled,
+                                         bool nowEnabled)
+      : effectId_(std::move(effectId)), wasEnabled_(wasEnabled),
+        nowEnabled_(nowEnabled) {}
+
+  void redo() override { apply(nowEnabled_); }
+  void undo() override { apply(wasEnabled_); }
+  QString label() const override { return QStringLiteral("Toggle Composition Effect"); }
+
+private:
+  void apply(bool enabled) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp) return;
+    for (const auto &effect : comp->getEffects()) {
+      if (effect && effect->effectID().toQString() == effectId_) {
+        effect->setEnabled(enabled);
+        comp->changed();
+        break;
+      }
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString effectId_;
+  bool wasEnabled_;
+  bool nowEnabled_;
+};
+
+class MoveCompositionEffectUndoCommand : public UndoCommand {
+public:
+  MoveCompositionEffectUndoCommand(QString effectId, int fromIndex, int toIndex)
+      : effectId_(std::move(effectId)), fromIndex_(fromIndex), toIndex_(toIndex) {}
+
+  void redo() override { move(toIndex_); }
+  void undo() override { move(fromIndex_); }
+  QString label() const override { return QStringLiteral("Move Composition Effect"); }
+
+private:
+  void move(int index) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!comp) return;
+    comp->moveEffect(UniString::fromQString(effectId_), index);
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString effectId_;
+  int fromIndex_ = -1;
+  int toIndex_ = -1;
+};
+
 // --- GroupLayersUndoCommand ---
 class GroupLayersUndoCommand : public UndoCommand {
 public:
@@ -1368,7 +1510,6 @@ public:
   void removeAllAssets();
   PreviewQualityPreset qualityPreset_ = PreviewQualityPreset::Preview;
   CompositionID currentCompositionId_{};
-  // ProgressiveRenderer progressiveRenderer_;
 
   void checkImportedAssetCompatibility(const QStringList &importedPaths);
   // Records the most recent precompose/unprecompose outcome so undo commands
@@ -2244,23 +2385,10 @@ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(
 void ArtifactProjectService::Impl::setPreviewQualityPreset(
     PreviewQualityPreset preset) {
   qualityPreset_ = preset;
-  switch (preset) {
-  case PreviewQualityPreset::Draft:
-    // progressiveRenderer_.setQuality(RenderQuality::Draft);
-    // progressiveRenderer_.setDraftQuality(4);
-    // progressiveRenderer_.setPreviewQuality(2);
-    break;
-  case PreviewQualityPreset::Preview:
-    // progressiveRenderer_.setQuality(RenderQuality::Preview);
-    // progressiveRenderer_.setDraftQuality(4);
-    // progressiveRenderer_.setPreviewQuality(2);
-    break;
-  case PreviewQualityPreset::Final:
-    // progressiveRenderer_.setQuality(RenderQuality::Final);
-    // progressiveRenderer_.setDraftQuality(2);
-    // progressiveRenderer_.setPreviewQuality(1);
-    break;
-  }
+  // The active viewport render contract is applied by
+  // CompositionRenderController::setPreviewQualityPreset().  Keep this
+  // service value as the persisted/shared selection; do not maintain a
+  // second progressive-renderer quality state here.
 }
 
 PreviewQualityPreset
@@ -2370,6 +2498,16 @@ ArtifactProjectService *ArtifactProjectService::instance() {
 
 bool ArtifactProjectService::hasProject() const {
   return impl_->projectManager().getCurrentProjectSharedPtr() != nullptr;
+}
+
+bool ArtifactProjectService::ensureProject() {
+  if (hasProject()) return true;
+  impl_->projectManager().createProject();
+  return hasProject();
+}
+
+QString ArtifactProjectService::currentProjectAssetsPath() const {
+  return impl_->projectManager().currentProjectAssetsPath();
 }
 
 void ArtifactProjectService::projectSettingChanged(
@@ -3937,8 +4075,12 @@ bool ArtifactProjectService::addEffectToCurrentComposition(
       comp->getEffects(), effect->displayName().toQString(),
       effect->effectID().toQString());
   effect->setEffectID(UniString::fromQString(uniqueId));
-  comp->addEffect(std::move(effect));
-  notifyProjectMutation(impl_->projectManager());
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<AddCompositionEffectUndoCommand>(std::move(effect)));
+  } else {
+    comp->addEffect(std::move(effect));
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 
@@ -3951,8 +4093,24 @@ bool ArtifactProjectService::removeEffectFromCurrentComposition(
   if (!comp) {
     return false;
   }
-  comp->removeEffect(UniString(effectId.toStdString()));
-  notifyProjectMutation(impl_->projectManager());
+  auto effects = comp->getEffects();
+  SharedPtr<ArtifactAbstractEffect> effect;
+  int effectIndex = -1;
+  for (int i = 0; i < static_cast<int>(effects.size()); ++i) {
+    if (effects[i] && effects[i]->effectID().toQString() == effectId) {
+      effect = effects[i];
+      effectIndex = i;
+      break;
+    }
+  }
+  if (!effect) return false;
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<RemoveCompositionEffectUndoCommand>(
+        std::move(effect), effectIndex));
+  } else {
+    comp->removeEffect(UniString(effectId.toStdString()));
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 
@@ -3967,9 +4125,14 @@ bool ArtifactProjectService::setEffectEnabledInCurrentComposition(
   }
   for (const auto &effect : comp->getEffects()) {
     if (effect && effect->effectID().toQString() == effectId) {
-      effect->setEnabled(enabled);
-      comp->changed();
-      notifyProjectMutation(impl_->projectManager());
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<SetCompositionEffectEnabledUndoCommand>(
+            effectId, effect->enabled(), enabled));
+      } else {
+        effect->setEnabled(enabled);
+        comp->changed();
+        notifyProjectMutation(impl_->projectManager());
+      }
       return true;
     }
   }
@@ -4020,10 +4183,15 @@ bool ArtifactProjectService::moveEffectInCurrentComposition(
     return false;
   }
 
-  if (!comp->moveEffect(UniString::fromQString(effectId), swapIndex)) {
-    return false;
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<MoveCompositionEffectUndoCommand>(
+        effectId, currentIndex, swapIndex));
+  } else {
+    if (!comp->moveEffect(UniString::fromQString(effectId), swapIndex)) {
+      return false;
+    }
+    notifyProjectMutation(impl_->projectManager());
   }
-  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 
@@ -4204,6 +4372,25 @@ bool ArtifactProjectService::renameComposition(const CompositionID &id,
     }
   }
   return false;
+}
+
+bool ArtifactProjectService::finalizeCompositionSettingsChange(
+    const CompositionID& id) {
+  auto comp = impl_->projectManager().findComposition(id).ptr.lock();
+  if (!comp) {
+    return false;
+  }
+  if (auto project = impl_->projectManager().getCurrentProjectSharedPtr()) {
+    project->projectChanged();
+  }
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    if (auto current = playback->currentComposition();
+        current && current->id() == id) {
+      playback->setFrameRange(comp->frameRange());
+      playback->setFrameRate(comp->frameRate());
+    }
+  }
+  return true;
 }
 
 UniString ArtifactProjectService::projectName() const {
@@ -4538,6 +4725,44 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
     }
   }
 
+  const QString oldRepresentativePath = footage->filePath;
+  QVector<QPair<QString, QString>> databaseChanges;
+  const auto registerDatabaseChange = [&](const QString& oldPath,
+                                           const QString& newPath) {
+    const QString oldIdentity = normalizeRelinkPath(oldPath);
+    const QString newIdentity = normalizeRelinkPath(newPath);
+    if (oldIdentity == newIdentity) {
+      return true;
+    }
+    if (ArtifactCore::AssetDatabase::instance().findAssetByPath(oldPath).isNull()) {
+      return true;
+    }
+    if (!ArtifactCore::AssetDatabase::instance().relinkAssetPath(oldPath,
+                                                                   newPath)) {
+      return false;
+    }
+    databaseChanges.append(qMakePair(oldPath, newPath));
+    return true;
+  };
+
+  if (!resolvedSequencePaths.isEmpty()) {
+    const QStringList oldPaths = footage->sequencePaths;
+    for (int index = 0; index < oldPaths.size(); ++index) {
+      if (!registerDatabaseChange(oldPaths.at(index),
+                                  resolvedSequencePaths.at(index))) {
+        for (auto it = databaseChanges.crbegin(); it != databaseChanges.crend();
+             ++it) {
+          ArtifactCore::AssetDatabase::instance().relinkAssetPath(
+              it->second, it->first);
+        }
+        return false;
+      }
+    }
+  } else if (!registerDatabaseChange(oldRepresentativePath,
+                                     newFileInfo.absoluteFilePath())) {
+    return false;
+  }
+
   footage->filePath = newFileInfo.absoluteFilePath();
   if (!resolvedSequencePaths.isEmpty()) {
     footage->filePath = resolvedSequencePaths.first();
@@ -4572,8 +4797,7 @@ ArtifactProjectService::findFootageItemByPath(const QString &filePath) const {
     return nullptr;
   }
 
-  QString normalizedPath =
-      QDir::cleanPath(QFileInfo(filePath).absoluteFilePath());
+  const QString normalizedPath = normalizeRelinkPath(filePath);
 
   std::function<FootageItem *(ProjectItem *)> findRecursive =
       [&](ProjectItem *item) -> FootageItem * {
@@ -4581,9 +4805,15 @@ ArtifactProjectService::findFootageItemByPath(const QString &filePath) const {
       return nullptr;
     if (item->type() == eProjectItemType::Footage) {
       auto *footage = static_cast<FootageItem *>(item);
-      QString itemPath =
-          QDir::cleanPath(QFileInfo(footage->filePath).absoluteFilePath());
-      if (itemPath == normalizedPath) {
+      const QString itemPath = normalizeRelinkPath(footage->filePath);
+      bool matchesSequenceFrame = false;
+      for (const QString& sequencePath : footage->sequencePaths) {
+        if (normalizeRelinkPath(sequencePath) == normalizedPath) {
+          matchesSequenceFrame = true;
+          break;
+        }
+      }
+      if (itemPath == normalizedPath || matchesSequenceFrame) {
         return footage;
       }
     }
@@ -4609,11 +4839,149 @@ bool ArtifactProjectService::relinkFootageByPath(const QString &oldFilePath,
   if (oldFilePath.isEmpty() || newFilePath.isEmpty()) {
     return false;
   }
+  if (normalizeRelinkPath(oldFilePath) == normalizeRelinkPath(newFilePath)) {
+    return false;
+  }
   auto *footage = findFootageItemByPath(oldFilePath);
   if (!footage) {
     return false;
   }
   return relinkFootage(footage, newFilePath);
+}
+
+QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
+    const QString &oldFilePath, const QString &searchRoot,
+    int maxCandidates) const {
+  QVector<RelinkCandidate> candidates;
+  if (oldFilePath.trimmed().isEmpty() || searchRoot.trimmed().isEmpty() ||
+      maxCandidates <= 0) {
+    return candidates;
+  }
+  const int resultLimit = std::min(maxCandidates, 256);
+
+  const QFileInfo oldInfo(oldFilePath);
+  const QDir root(QFileInfo(searchRoot).absoluteFilePath());
+  if (!root.exists() || oldInfo.fileName().isEmpty()) {
+    return candidates;
+  }
+
+  const QString oldName = oldInfo.fileName();
+  const QString normalizedOldPath =
+      QDir::cleanPath(oldInfo.absoluteFilePath());
+  const QString oldSuffix = oldInfo.suffix();
+  const QString oldBase = oldInfo.completeBaseName();
+  static const QRegularExpression sequencePattern(
+      QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
+  const auto oldSequenceMatch = sequencePattern.match(oldName);
+  const FootageItem *oldFootage = findFootageItemByPath(oldFilePath);
+  QDirIterator iterator(root.absolutePath(), QDir::Files,
+                        QDirIterator::Subdirectories);
+  while (iterator.hasNext()) {
+    const QFileInfo candidateInfo(iterator.next());
+    if (QDir::cleanPath(candidateInfo.absoluteFilePath()) ==
+        normalizedOldPath) {
+      continue;
+    }
+    int score = 0;
+    bool identityMatch = false;
+    QStringList reasons;
+    if (candidateInfo.fileName().compare(oldName, Qt::CaseInsensitive) == 0) {
+      score += 100;
+      identityMatch = true;
+      reasons.append(QStringLiteral("same filename"));
+    }
+    if (!oldSuffix.isEmpty() &&
+        candidateInfo.suffix().compare(oldSuffix, Qt::CaseInsensitive) == 0) {
+      score += 20;
+      reasons.append(QStringLiteral("same extension"));
+    }
+    if (!oldBase.isEmpty() &&
+        candidateInfo.completeBaseName().compare(oldBase,
+                                                  Qt::CaseInsensitive) == 0) {
+      score += 40;
+      identityMatch = true;
+      reasons.append(QStringLiteral("same basename"));
+    }
+    if (oldSequenceMatch.hasMatch()) {
+      const auto candidateSequenceMatch =
+          sequencePattern.match(candidateInfo.fileName());
+      if (candidateSequenceMatch.hasMatch() &&
+          candidateSequenceMatch.captured(1).compare(
+              oldSequenceMatch.captured(1), Qt::CaseInsensitive) == 0 &&
+          candidateSequenceMatch.captured(3).compare(
+              oldSequenceMatch.captured(3), Qt::CaseInsensitive) == 0 &&
+          candidateSequenceMatch.captured(2).size() ==
+              oldSequenceMatch.captured(2).size()) {
+        score += 60;
+        identityMatch = true;
+        reasons.append(QStringLiteral("same sequence pattern"));
+
+        if (oldFootage && oldFootage->isSequence &&
+            oldFootage->sequencePaths.size() > 1) {
+          bool complete = true;
+          const QString prefix = candidateSequenceMatch.captured(1);
+          const QString suffix = candidateSequenceMatch.captured(3);
+          const int padding = candidateSequenceMatch.captured(2).size();
+          for (const QString &oldSequencePath : oldFootage->sequencePaths) {
+            const auto oldFrameMatch =
+                sequencePattern.match(QFileInfo(oldSequencePath).fileName());
+            if (!oldFrameMatch.hasMatch()) {
+              complete = false;
+              break;
+            }
+            bool frameOk = false;
+            const qint64 frame =
+                oldFrameMatch.captured(2).toLongLong(&frameOk);
+            if (!frameOk) {
+              complete = false;
+              break;
+            }
+            const QString frameName =
+                prefix + QString::number(frame).rightJustified(
+                              padding, QLatin1Char('0')) +
+                suffix;
+            const QString framePath = candidateInfo.absoluteDir().filePath(frameName);
+            if (!QFileInfo::exists(framePath)) {
+              complete = false;
+              break;
+            }
+          }
+          if (complete) {
+            score += 80;
+            reasons.append(QStringLiteral("complete sequence"));
+          }
+        }
+      }
+    }
+    if (identityMatch && oldInfo.exists() &&
+        candidateInfo.size() == oldInfo.size()) {
+      score += 10;
+      reasons.append(QStringLiteral("same size"));
+    }
+    const QString oldDirectory = QDir::cleanPath(oldInfo.absolutePath());
+    const QString candidateDirectory =
+        QDir::cleanPath(candidateInfo.absolutePath());
+    if (identityMatch && !oldDirectory.isEmpty() &&
+        candidateDirectory.endsWith(oldDirectory, Qt::CaseInsensitive)) {
+      score += 10;
+      reasons.append(QStringLiteral("matching directory suffix"));
+    }
+    if (!identityMatch) {
+      continue;
+    }
+    candidates.append({candidateInfo.absoluteFilePath(), score,
+                       reasons.join(QStringLiteral(", "))});
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const RelinkCandidate &a, const RelinkCandidate &b) {
+              if (a.score != b.score) return a.score > b.score;
+              return a.path < b.path;
+            });
+  if (candidates.size() > resultLimit) {
+    candidates.resize(resultLimit);
+  }
+  return candidates;
 }
 
 void ArtifactProjectService::setPreviewQualityPreset(

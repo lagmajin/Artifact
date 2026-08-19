@@ -101,14 +101,14 @@ bool saveProjectJson(const QStringList& projectPaths, const QJsonObject& project
 }
 
 std::map<QString, CommandHandler> createCommandRegistry(const QStringList& projectPaths,
-                                                         const std::shared_ptr<bool>& scriptFailed)
+                                                         const std::shared_ptr<bool>& scriptFailed,
+                                                         const std::shared_ptr<QSet<QString>>& activeScripts)
 {
   std::map<QString, CommandHandler> commands;
   const auto selectedComposition = std::make_shared<QString>();
   const auto selectedLayer = std::make_shared<QString>();
   const auto undoStack = std::make_shared<std::vector<HistoryEntry>>();
   const auto redoStack = std::make_shared<std::vector<HistoryEntry>>();
-  const auto activeScripts = std::make_shared<QSet<QString>>();
   const auto commandNames = std::make_shared<QStringList>();
   const auto commandStore = std::make_shared<std::map<QString, CommandHandler>>();
   const auto dispatch = std::make_shared<std::function<void(const QString&, QTextStream&, QTextStream&)>>();
@@ -597,7 +597,10 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
       return;
     }
     QFile file(line.mid(separator).trimmed());
-    const QString canonicalPath = QFileInfo(file.fileName()).absoluteFilePath();
+    const QFileInfo sourceInfo(file.fileName());
+    const QString canonicalPath = sourceInfo.canonicalFilePath().isEmpty()
+        ? sourceInfo.absoluteFilePath()
+        : sourceInfo.canonicalFilePath();
     if (activeScripts->contains(canonicalPath)) {
       err << "Recursive source detected: " << canonicalPath << "\n";
       return;
@@ -715,7 +718,8 @@ InteractiveShellResult runInteractiveShell(const QStringList& projectPaths, cons
     out << "Project: " << projectPaths.constFirst() << "\n";
   }
   const auto scriptFailed = std::make_shared<bool>(false);
-  const auto commands = createCommandRegistry(projectPaths, scriptFailed);
+  const auto activeScripts = std::make_shared<QSet<QString>>();
+  const auto commands = createCommandRegistry(projectPaths, scriptFailed, activeScripts);
   const auto dispatchLine = [&commands, scriptFailed](const QString& line, QTextStream& output, QTextStream& error) {
     const QString name = commandName(line);
     if (name == QStringLiteral("quit") || name == QStringLiteral("exit")) {
@@ -735,12 +739,22 @@ InteractiveShellResult runInteractiveShell(const QStringList& projectPaths, cons
       err << "Unable to open command file: " << scriptPath << "\n";
       return {2, false};
     }
+    const QFileInfo scriptInfo(file.fileName());
+    const QString activeScriptPath = scriptInfo.canonicalFilePath().isEmpty()
+        ? scriptInfo.absoluteFilePath()
+        : scriptInfo.canonicalFilePath();
+    if (activeScripts->contains(activeScriptPath)) {
+      err << "Recursive source detected: " << activeScriptPath << "\n";
+      return {1, false};
+    }
+    activeScripts->insert(activeScriptPath);
     while (!file.atEnd()) {
       const QString commandLine = QString::fromUtf8(file.readLine()).trimmed();
       if (!commandLine.isEmpty() && !commandLine.startsWith(QLatin1Char('#'))) {
         dispatchLine(commandLine, out, err);
       }
     }
+    activeScripts->remove(activeScriptPath);
     return {*scriptFailed ? 1 : 0, false};
   }
 

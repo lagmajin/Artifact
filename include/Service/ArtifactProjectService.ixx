@@ -10,6 +10,7 @@ module;
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QObject>
 export module Artifact.Service.Project;
 
@@ -60,6 +61,12 @@ struct PrecomposeOutcome {
   ArtifactCore::CompositionID childCompId;
 };
 
+struct RelinkCandidate {
+  QString path;
+  int score = 0;
+  QString reason;
+};
+
 W_REGISTER_ARGTYPE(PreviewQualityPreset)
 
 export namespace Artifact {
@@ -87,6 +94,8 @@ export namespace Artifact {
   static ArtifactProjectService* instance();
   UniString projectName() const;
   bool hasProject() const;
+  bool ensureProject();
+  QString currentProjectAssetsPath() const;
   void changeProjectName(const UniString& string);
   void createProject(const ArtifactProjectSettings& setting);
 
@@ -167,6 +176,9 @@ export namespace Artifact {
   bool removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount = nullptr);
    bool duplicateComposition(const CompositionID& id);
    bool renameComposition(const CompositionID& id, const UniString& name);
+   // Keep composition-settings edits from different UI surfaces on the same
+   // dirty-state and playback synchronization path.
+   bool finalizeCompositionSettingsChange(const CompositionID& id);
   bool precomposeLayersInCurrentComposition(
        const QVector<LayerID>& layerIds,
        const UniString& newCompositionName,
@@ -228,6 +240,9 @@ export namespace Artifact {
    bool relinkFootage(ProjectItem* footageItem, const QString& newFilePath);
    int relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath);
    bool relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath);
+   QVector<RelinkCandidate> findRelinkCandidates(
+       const QString& oldFilePath, const QString& searchRoot,
+       int maxCandidates = 32) const;
    FootageItem* findFootageItemByPath(const QString& filePath) const;
  public /*signals*/:
   void layerRemoved(const CompositionID& compId, const LayerID& layerId)

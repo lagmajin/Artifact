@@ -566,6 +566,8 @@ namespace {
   float meshIdPassEncodedValue_ = 0.0f;
   quint64 presentAttemptCount_ = 0;
   quint64 presentSuccessCount_ = 0;
+  quint64 flushCount_ = 0;
+  qint64 flushContextTimeUs_ = 0;
   quint64 presentFailureCount_ = 0;
   quint64 presentSkippedCount_ = 0;
   QString lastPresentStatus_ = QStringLiteral("never-presented");
@@ -769,6 +771,7 @@ namespace {
         cachedGeometry != meshRendererGeometry_.end() &&
         cachedGeometry->second.meshIdentity == &mesh &&
         cachedGeometry->second.meshRevision == meshRevision;
+    bool geometryChangedForRayTracing = !geometryCacheCurrent;
     if (!geometryCacheCurrent) {
       const auto data = mesh.generateRenderData();
       if (data.positions.isEmpty()) {
@@ -808,6 +811,7 @@ namespace {
         geometryIt->second.indexCount != indexCount;
     const bool geometryContentChanged =
         geometrySizeChanged || geometryIt->second.contentHash != geometryHash;
+    geometryChangedForRayTracing = geometryContentChanged;
     if (geometrySizeChanged) {
       renderer->setFrameCostStats(&m_currentFrameCostStats_);
       renderer->initialize(1, vertexCount, indexCount);
@@ -858,6 +862,46 @@ namespace {
       }
       renderer->updateMeshGeometry(positions.data(), normals.data(), uvs.data(),
                                    indices.data());
+
+      // Prepare the mesh-shader resources alongside the indexed fallback.
+      // The packed index stream is already expanded per meshlet by Mesh, so
+      // the first integration pass can address source positions directly.
+      const auto meshletData = mesh.generateMeshletLODData();
+      if (meshletData.isValid()) {
+        std::vector<ArtifactCore::MeshRenderer::MeshletGpu> gpuMeshlets;
+        gpuMeshlets.reserve(static_cast<size_t>(meshletData.meshlets.size()));
+        for (const auto& meshlet : meshletData.meshlets) {
+          ArtifactCore::MeshRenderer::MeshletGpu gpuMeshlet{};
+          gpuMeshlet.indexOffset = meshlet.firstIndex;
+          gpuMeshlet.indexCount = meshlet.indexCount;
+          gpuMeshlet.vertexOffset = 0;
+          gpuMeshlet.vertexCount = meshlet.indexCount;
+          gpuMeshlet.boundsCenter[0] = meshlet.boundsCenter.x();
+          gpuMeshlet.boundsCenter[1] = meshlet.boundsCenter.y();
+          gpuMeshlet.boundsCenter[2] = meshlet.boundsCenter.z();
+          gpuMeshlet.boundsRadius = meshlet.boundsRadius;
+          gpuMeshlets.push_back(gpuMeshlet);
+        }
+
+        std::vector<uint32_t> meshletIndices;
+        meshletIndices.reserve(static_cast<size_t>(meshletData.lodIndices.size()));
+        for (const auto index : meshletData.lodIndices) {
+          meshletIndices.push_back(static_cast<uint32_t>(index));
+        }
+
+        std::vector<ArtifactCore::MeshRenderer::MeshletLodGpu> gpuLods;
+        gpuLods.reserve(static_cast<size_t>(meshletData.levels.size()));
+        for (const auto& level : meshletData.levels) {
+          ArtifactCore::MeshRenderer::MeshletLodGpu gpuLod{};
+          gpuLod.meshletOffset = static_cast<uint32_t>(level.meshletOffset);
+          gpuLod.meshletCount = static_cast<uint32_t>(level.meshletCount);
+          gpuLod.switchPixels = level.switchDistancePixels;
+          gpuLods.push_back(gpuLod);
+        }
+        renderer->updateMeshletGeometry(
+            gpuMeshlets.data(), gpuMeshlets.size(), meshletIndices.data(),
+            meshletIndices.size(), gpuLods.data(), gpuLods.size());
+      }
       meshRendererGeometry_[cacheKey] = {
           &mesh, meshRevision, vertexCount, indexCount, geometryHash};
     }
@@ -868,8 +912,51 @@ namespace {
     }
     }
 
+    const bool rayTracingOpaque =
+        opacity >= 0.9999f && material.opacity() >= 0.9999f &&
+        material.baseColor().alphaF() >= 0.9999f &&
+        !material.hasOpacityTexture();
+    if (rayTracingManager_ && rayTracingManager_->isSupported()) {
+      const ArtifactCore::UniString rayTracingId(cacheKey);
+      if (!rayTracingOpaque) {
+        if (rayTracingManager_->setInstanceActive(rayTracingId, false)) {
+          rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
+        }
+      } else if (renderer->positionBuffer() && renderer->vertexCount() > 0) {
+        Diligent::float4x4 transform = Diligent::float4x4::Identity();
+        const float* transformData = modelMatrix.constData();
+        for (int row = 0; row < 4; ++row) {
+          for (int column = 0; column < 4; ++column) {
+            transform.Data()[row * 4 + column] =
+                transformData[column * 4 + row];
+          }
+        }
+        bool tlasDirty = false;
+        if (geometryChangedForRayTracing ||
+            !rayTracingManager_->hasBLAS(rayTracingId)) {
+          ArtifactCore::RTGeometryData geometry;
+          geometry.pVertexBuffer = renderer->positionBuffer();
+          geometry.vertexCount = static_cast<Uint32>(renderer->vertexCount());
+          geometry.pIndexBuffer = renderer->indexBuffer();
+          geometry.indexCount = static_cast<Uint32>(renderer->indexCount());
+          geometry.transform = transform;
+          tlasDirty = rayTracingManager_->createOrUpdateBLAS(
+              rayTracingId, geometry);
+        } else {
+          tlasDirty = rayTracingManager_->updateInstanceTransform(
+              rayTracingId, transform);
+        }
+        if (tlasDirty) {
+          rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
+        }
+      }
+    }
+
     renderer->setViewMatrix(meshViewMatrix_.constData());
     renderer->setProjectionMatrix(meshProjMatrix_.constData());
+    renderer->setMeshletMatrices(meshViewMatrix_.constData(),
+                                 meshProjMatrix_.constData(),
+                                 modelMatrix.constData());
     renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
     renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
@@ -880,6 +967,9 @@ namespace {
     renderer->setPbrFactors(material.metallic(), material.roughness(),
                             material.normalStrength(),
                             material.occlusionStrength());
+    renderer->setPrincipledFactors(material.specular(), material.ior(),
+                                   material.transmission(), material.clearcoat(),
+                                   material.clearcoatRoughness());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
     const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
@@ -982,8 +1072,28 @@ namespace {
         renderer->setRenderTargetFormat(colorTexture->GetDesc().Format);
       }
     }
-    renderer->prepare(ctx.RawPtr());
-    renderer->draw(ctx.RawPtr(), 1);
+    bool meshShaderDrawn = false;
+    if (renderer->meshShaderReady()) {
+      const QVector3D boundsMin = mesh.boundingBoxMin();
+      const QVector3D boundsMax = mesh.boundingBoxMax();
+      const QVector3D boundsCenter = (boundsMin + boundsMax) * 0.5f;
+      const float boundsRadius = (boundsMax - boundsCenter).length();
+      const QVector4D clipCenter =
+          meshProjMatrix_ * meshViewMatrix_ * modelMatrix *
+          QVector4D(boundsCenter, 1.0f);
+      const float clipW = std::max(0.0001f, std::abs(clipCenter.w()));
+      const float projectedRadiusPixels =
+          boundsRadius * std::abs(meshProjMatrix_(1, 1)) *
+          std::max(1.0f, m_viewportHeight) / (2.0f * clipW);
+      const size_t lodIndex = renderer->chooseMeshletLOD(projectedRadiusPixels);
+      renderer->prepareMeshShader(ctx.RawPtr(), lodIndex);
+      renderer->drawMeshlets(ctx.RawPtr(), lodIndex);
+      meshShaderDrawn = true;
+    }
+    if (!meshShaderDrawn) {
+      renderer->prepare(ctx.RawPtr());
+      renderer->draw(ctx.RawPtr(), 1);
+    }
     const auto state = meshRendererGeometry_.find(cacheKey);
     traceResult(QStringLiteral("gpu-draw-issued"),
                 state != meshRendererGeometry_.end()
@@ -1004,6 +1114,7 @@ namespace {
   void initialize(QWidget* parent);
   void initializeHeadless(int width, int height);
   QImage readbackToImage() const;
+  ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
   QImage readbackDepthToImage() const;
   QImage readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const;
   bool readbackDepthToFloatBuffer(std::vector<float>& outDepth,
@@ -1041,6 +1152,8 @@ namespace {
   void beginFrameCostCapture();
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
+  QString pipelineStateCacheDebugState() const;
+  QString shadowMapDebugState() const;
   std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
    bool isInitialized() const { return m_initialized; }
   void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
@@ -1519,6 +1632,10 @@ namespace {
              << "tlas=" << builtTLAS
              << "pipeline=" << prepared
              << "traceWarmup=" << traced;
+    qDebug() << "[ArtifactIRenderer] RayTracing capacities"
+             << "registeredBLAS=" << rayTracingManager_->capabilities().registeredBLASCount
+             << "activeInstances=" << rayTracingManager_->capabilities().activeInstanceCount
+             << "lastBuildSucceeded=" << rayTracingManager_->capabilities().lastBuildSucceeded;
    } else if (rayTracingManager_) {
     qDebug() << "[ArtifactIRenderer] RayTracing init skipped"
              << "supported=" << rayTracingManager_->isSupported();
@@ -1669,10 +1786,26 @@ namespace {
   m_initialized = true;
  }
 
- QImage ArtifactIRenderer::Impl::readbackToImage() const
- {
+QImage ArtifactIRenderer::Impl::readbackToImage() const
+{
   return readbackTextureViewToImage(activeColorView());
- }
+}
+
+ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() const
+{
+  std::vector<float> rgba;
+  int width = 0;
+  int height = 0;
+  if (!readbackTextureViewToFloatBuffer(activeColorView(), rgba, width, height) ||
+      width <= 0 || height <= 0 ||
+      rgba.size() != static_cast<size_t>(width) * static_cast<size_t>(height) * 4u) {
+    return {};
+  }
+
+  ArtifactCore::ImageF32x4_RGBA result;
+  result.setFromRGBA32F(rgba.data(), width, height);
+  return result;
+}
 
  QImage ArtifactIRenderer::Impl::readbackTextureViewToImage(
      ITextureView* textureView) const
@@ -2725,7 +2858,22 @@ void ArtifactIRenderer::Impl::endFrameCostCapture()
 
 ArtifactCore::RenderCostStats ArtifactIRenderer::Impl::frameCostStats() const
 {
-  return m_lastFrameCostStats_;
+ return m_lastFrameCostStats_;
+}
+
+QString ArtifactIRenderer::Impl::pipelineStateCacheDebugState() const
+{
+ return shaderManager_.pipelineStateCacheDebugState();
+}
+
+QString ArtifactIRenderer::Impl::shadowMapDebugState() const
+{
+ return QStringLiteral("enabled=%1 ready=%2 casters=%3 texture=%4 srv=%5")
+     .arg(m_shadowMapEnabled ? QStringLiteral("true") : QStringLiteral("false"))
+     .arg(m_shadowMapReady ? QStringLiteral("true") : QStringLiteral("false"))
+     .arg(m_shadowCasters.size())
+     .arg(m_shadowMapTex ? QStringLiteral("true") : QStringLiteral("false"))
+     .arg(m_shadowMapSRV ? QStringLiteral("true") : QStringLiteral("false"));
 }
 
 std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDebugPasses() const
@@ -2796,9 +2944,23 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  void ArtifactIRenderer::Impl::flush()
  {
   if (auto ctx = deviceManager_.immediateContext()) {
+   ++flushCount_;
    submitQueuedDraws(ctx);
+   QElapsedTimer flushTimer;
+   flushTimer.start();
    ctx->Flush();
+   flushContextTimeUs_ += flushTimer.nsecsElapsed() / 1000;
   }
+ }
+
+ quint64 ArtifactIRenderer::Impl::flushCount() const
+ {
+  return flushCount_;
+ }
+
+ qint64 ArtifactIRenderer::Impl::flushContextTimeUs() const
+ {
+  return flushContextTimeUs_;
  }
 
  void ArtifactIRenderer::Impl::flushAndWait()
@@ -3051,6 +3213,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   void ArtifactIRenderer::clear()        { impl_->clear(); }
   void ArtifactIRenderer::flush()        { impl_->flush(); }
   void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
+  quint64 ArtifactIRenderer::flushCount() const { return impl_->flushCount(); }
+  qint64 ArtifactIRenderer::flushContextTimeUs() const { return impl_->flushContextTimeUs(); }
  void ArtifactIRenderer::destroy()      { impl_->destroy(); }
  bool ArtifactIRenderer::isInitialized() const { return impl_->isInitialized(); }
  bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
@@ -3069,8 +3233,11 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  bool ArtifactIRenderer::hasFrameGpuTiming() const { return impl_->hasFrameGpuTiming(); }
  quint64 ArtifactIRenderer::lastFrameGpuTimingExecutionId() const { return impl_->lastFrameGpuTimingExecutionId(); }
 
- QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
- QImage ArtifactIRenderer::readbackTextureViewToImage(
+QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
+ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::readbackToImageF32() const {
+  return impl_->readbackToImageF32();
+}
+QImage ArtifactIRenderer::readbackTextureViewToImage(
      Diligent::ITextureView* textureView) const
  {
   return impl_->readbackTextureViewToImage(textureView);
@@ -4337,6 +4504,16 @@ QString ArtifactIRenderer::globalIlluminationDebugState() const
       .arg(settings.ssgiRaySteps)
       .arg(settings.ddgiRaysPerProbe)
       .arg(settings.ddgiProbeUpdateBudget);
+}
+
+QString ArtifactIRenderer::pipelineStateCacheDebugState() const
+{
+ return impl_->pipelineStateCacheDebugState();
+}
+
+QString ArtifactIRenderer::shadowMapDebugState() const
+{
+ return impl_->shadowMapDebugState();
 }
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }

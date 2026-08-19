@@ -185,6 +185,10 @@ public:
     size_t audioResyncClearCount_ = 0;
     size_t audioClockCorrectionCount_ = 0;
     size_t audioFormatMismatchCount_ = 0;
+    std::atomic<float> audioLeftRmsDb_{-60.0f};
+    std::atomic<float> audioRightRmsDb_{-60.0f};
+    std::atomic<float> audioLeftPeakDb_{-60.0f};
+    std::atomic<float> audioRightPeakDb_{-60.0f};
     std::atomic<bool> audioSeekPending_{true};
     bool audioExhausted_ = false;  // 音声データが尽きたフラグ（再シーク時にリセット）
     
@@ -211,6 +215,10 @@ public:
         QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
 
         audioRenderer_->setLevelCallback([this](const AudioLevelData& levels) {
+            audioLeftRmsDb_.store(levels.leftRms, std::memory_order_relaxed);
+            audioRightRmsDb_.store(levels.rightRms, std::memory_order_relaxed);
+            audioLeftPeakDb_.store(levels.leftPeak, std::memory_order_relaxed);
+            audioRightPeakDb_.store(levels.rightPeak, std::memory_order_relaxed);
             QMetaObject::invokeMethod(owner_, [this, levels]() {
                 Q_EMIT owner_->audioLevelChanged(levels.leftRms, levels.rightRms, levels.leftPeak, levels.rightPeak);
             }, Qt::QueuedConnection);
@@ -260,6 +268,11 @@ public:
                  << "audioNextFrame=" << audioNextFrame_
                  << "audioResyncClears=" << audioResyncClearCount_
                  << "audioClockCorrections=" << audioClockCorrectionCount_;
+
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
         
         PlaybackState oldState = state_.load();
         state_ = PlaybackState::Stopped;
@@ -275,6 +288,10 @@ public:
             audioRenderer_->stop();
             audioRenderer_->clearBuffer();
         }
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
         audioTargetBufferedFrames_ = 0;
 
         if (workerThread_ && workerThread_->isRunning()) {
@@ -291,6 +308,10 @@ public:
 
         playbackStartFrame_ = currentFrame_.load();
         playbackStartTime_ = std::chrono::steady_clock::now();
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
         // ポーズ時にaudioTargetBufferedFrames_をリセットして再開時の同期問題を防ぐ
         audioTargetBufferedFrames_ = 0;
     }
@@ -1154,6 +1175,10 @@ void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }
+    impl_->audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+    impl_->audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+    impl_->audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+    impl_->audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
 
     QImage preview = renderPreviewFrame(position);
     if (preview.isNull()) {
@@ -1303,6 +1328,19 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     }
     diagnostics.sampleRate = impl_->audioSampleRate_;
     diagnostics.formatMismatchCount = impl_->audioFormatMismatchCount_;
+    diagnostics.leftRmsDb = impl_->audioLeftRmsDb_.load(std::memory_order_relaxed);
+    diagnostics.rightRmsDb = impl_->audioRightRmsDb_.load(std::memory_order_relaxed);
+    diagnostics.leftPeakDb = impl_->audioLeftPeakDb_.load(std::memory_order_relaxed);
+    diagnostics.rightPeakDb = impl_->audioRightPeakDb_.load(std::memory_order_relaxed);
+    if (!diagnostics.deviceOpen) {
+        diagnostics.leftRmsDb = -60.0f;
+        diagnostics.rightRmsDb = -60.0f;
+        diagnostics.leftPeakDb = -60.0f;
+        diagnostics.rightPeakDb = -60.0f;
+    }
+    diagnostics.clippingDetected = diagnostics.leftPeakDb >= -0.1f ||
+                                   diagnostics.rightPeakDb >= -0.1f;
+    diagnostics.clippingThresholdDb = -0.1f;
     return diagnostics;
 }
 

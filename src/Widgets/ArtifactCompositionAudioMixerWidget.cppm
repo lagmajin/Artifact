@@ -10,6 +10,7 @@ module;
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLayoutItem>
@@ -31,6 +32,7 @@ module;
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QJsonObject>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionAudioMixer;
@@ -38,12 +40,14 @@ module Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Audio.Mixer;
 import Artifact.Widgets.AudioMixer;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Audio;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Service.Effect;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Service.Audio;
+import Undo.UndoManager;
 import Settings.Accessibility;
 import Event.Bus;
 import std;
@@ -59,6 +63,22 @@ static QPoint accessibilityMenuPosition(const QMenu &menu,
 }
 
 namespace {
+class AudioMixerSnapshotUndoCommand final : public UndoCommand {
+public:
+  AudioMixerSnapshotUndoCommand(ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> mixer,
+                                const QJsonObject& before, const QJsonObject& after)
+      : mixer_(std::move(mixer)), before_(before), after_(after) {}
+
+  void undo() override { if (mixer_) mixer_->deserialize(before_); }
+  void redo() override { if (mixer_) mixer_->deserialize(after_); }
+  QString label() const override { return QStringLiteral("Audio Routing Change"); }
+
+private:
+  ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> mixer_;
+  QJsonObject before_;
+  QJsonObject after_;
+};
+
 struct AudioFxChipInfo {
   QString id;
   QString displayName;
@@ -188,16 +208,19 @@ public:
     const float clampedRight = std::clamp(right, -60.0f, 6.02f);
     const float clampedPeakLeft = std::clamp(peakLeft, -60.0f, 6.02f);
     const float clampedPeakRight = std::clamp(peakRight, -60.0f, 6.02f);
+    const bool clipped = peakLeft >= 0.0f || peakRight >= 0.0f;
     if (qFuzzyCompare(left_ + 61.0f, clampedLeft + 61.0f) &&
         qFuzzyCompare(right_ + 61.0f, clampedRight + 61.0f) &&
         qFuzzyCompare(peakLeft_ + 61.0f, clampedPeakLeft + 61.0f) &&
-        qFuzzyCompare(peakRight_ + 61.0f, clampedPeakRight + 61.0f)) {
+        qFuzzyCompare(peakRight_ + 61.0f, clampedPeakRight + 61.0f) &&
+        clipped_ == clipped) {
       return;
     }
     left_ = clampedLeft;
     right_ = clampedRight;
     peakLeft_ = std::max(clampedPeakLeft, left_);
     peakRight_ = std::max(clampedPeakRight, right_);
+    clipped_ = clipped;
     update();
   }
 
@@ -210,6 +233,13 @@ protected:
     painter.setPen(QColor(51, 60, 69));
     painter.setBrush(QColor(15, 18, 22));
     painter.drawRoundedRect(bounds, 4.0, 4.0);
+
+    if (clipped_) {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(QColor(235, 77, 73));
+      painter.drawRoundedRect(QRectF(4.0, 3.0, width() - 8.0, 4.0), 2.0,
+                              2.0);
+    }
 
     const qreal outerMargin = 1.0;
     const qreal gap = 1.0;
@@ -264,6 +294,7 @@ private:
   float right_ = -60.0f;
   float peakLeft_ = -60.0f;
   float peakRight_ = -60.0f;
+  bool clipped_ = false;
 };
 
 class AudioDbScaleWidget final : public QWidget {
@@ -2238,7 +2269,14 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     dialog.resize(760, 540);
     auto *dialogLayout = new QVBoxLayout(&dialog);
     dialogLayout->setContentsMargins(10, 10, 10, 10);
-    auto *routingWidget = new Artifact::AudioMixerWidget(coreMixer.get(), &dialog);
+    auto routingUndo = [coreMixer](const QJsonObject& before, const QJsonObject& after) {
+      if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<AudioMixerSnapshotUndoCommand>(
+            coreMixer, before, after));
+      }
+    };
+    auto *routingWidget = new Artifact::AudioMixerWidget(
+        coreMixer.get(), &dialog, std::move(routingUndo));
     dialogLayout->addWidget(routingWidget, 1);
     dialog.exec();
 
@@ -2328,6 +2366,8 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
   int mutedCount = 0;
   int soloCount = 0;
   int fxCount = 0;
+  int missingCount = 0;
+  int unloadedCount = 0;
   for (auto *strip : strips) {
     if (!strip) {
       continue;
@@ -2340,16 +2380,33 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
     }
     const auto effectChain = strip->effectChain();
     fxCount += effectChain.size();
+    if (composition) {
+      const auto layer = composition->layerById(strip->layerId());
+      if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
+        const QString sourcePath = audioLayer->sourcePath();
+        if (!sourcePath.isEmpty() && !QFileInfo::exists(sourcePath)) {
+          ++missingCount;
+        } else if (!audioLayer->isLoaded()) {
+          ++unloadedCount;
+        }
+      }
+    }
   }
   if (impl_->summaryLabel_) {
     if (strips.isEmpty()) {
       impl_->summaryLabel_->setText(QStringLiteral("Unavailable"));
     } else {
-      impl_->summaryLabel_->setText(QStringLiteral("%1 layers · %2 FX · %3 solo · %4 mute")
+      impl_->summaryLabel_->setText(QStringLiteral("%1 layers · %2 FX · %3 solo · %4 mute%5%6")
                                         .arg(strips.size())
                                         .arg(fxCount)
                                         .arg(soloCount)
-                                        .arg(mutedCount));
+                                        .arg(mutedCount)
+                                        .arg(missingCount > 0
+                                                 ? QStringLiteral(" · %1 missing").arg(missingCount)
+                                                 : QString())
+                                        .arg(unloadedCount > 0
+                                                 ? QStringLiteral(" · %1 unloaded").arg(unloadedCount)
+                                                 : QString()));
     }
   }
 

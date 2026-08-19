@@ -1096,6 +1096,21 @@ public:
         const QString shortReason = hasSnapshot_ && snapshot_.failed && !snapshot_.failureReason.isEmpty()
                                         ? snapshot_.failureReason
                                         : QStringLiteral("none");
+        const QString goal = QStringLiteral("Capture a deterministic %1 render scenario and expose its first actionable state.").arg(preset);
+        const QString expected = QStringLiteral("preview=ready, diagnostics=available, status=ok");
+        const QString actual = QStringLiteral("preview=%1, diagnostics=%2, status=%3")
+                                   .arg(previewImage.isNull() ? QStringLiteral("missing") : QStringLiteral("ready"),
+                                        hasSnapshot_ ? QStringLiteral("available") : QStringLiteral("pending"),
+                                        statusText);
+        const QString nextAction = statusText == QStringLiteral("ok")
+                                        ? QStringLiteral("compare the capture against the matching baseline or continue the smoke checklist")
+                                        : (statusText == QStringLiteral("failed")
+                                               ? QStringLiteral("inspect the first failed pass and its resource inputs")
+                                               : QStringLiteral("capture a frame, then refresh the report after diagnostics arrive"));
+        const QString reportStatus = statusText == QStringLiteral("ok") || statusText == QStringLiteral("failed") ||
+                                             statusText == QStringLiteral("pending")
+                                         ? statusText
+                                         : QStringLiteral("degraded");
 
         QStringList lines;
         lines << QStringLiteral("Debug Render Harness");
@@ -1123,7 +1138,11 @@ public:
 
         lines << QString();
         lines << QStringLiteral("Summary");
-        lines << QStringLiteral("status: %1").arg(statusText);
+        lines << QStringLiteral("status: %1").arg(reportStatus);
+        lines << QStringLiteral("goal: %1").arg(goal);
+        lines << QStringLiteral("expected: %1").arg(expected);
+        lines << QStringLiteral("actual: %1").arg(actual);
+        lines << QStringLiteral("nextAction: %1").arg(nextAction);
         lines << QStringLiteral("shortReason: %1").arg(shortReason);
         lines << QStringLiteral("viewport: %1").arg(viewport);
         lines << QStringLiteral("rtvState: %1").arg(previewImage.isNull() ? QStringLiteral("missing")

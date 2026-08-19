@@ -1,5 +1,6 @@
 # Static Layer GPU Cache (2026-03-26)
 
+**最終更新:** 2026-08-15
 **ステータス:** 実装完了（runtime性能検証待ち）
 
 `Composition Editor` には部分的な surface cache は入ってきたが、
@@ -44,10 +45,13 @@
 invalidate する明示的な clear API を備える。画像・SVG は source revision を cache key
 へ含め、同一パス差し替え時の stale surface 再利用を避ける。
 
-まではあるが、static layer を跨いだ `GPU texture` の明示的な cache policy はない。
+までが既に実装されており、static layer 向けにも source/effect/mask/resolution を
+含む signature、GPU texture の再利用、budget/LRU、owner/device 単位の
+invalidation がある。したがって、見た目が変わらない静止レイヤーは、
+viewport 再描画や overlay 更新での再 upload を cache hit により抑制できる。
 
-そのため、見た目が変わらない静止レイヤーでも、
-viewport 再描画や overlay 更新のたびに GPU upload に近い経路へ落ちやすい。
+残る確認事項は、実プロジェクトでの runtime 性能、VRAM 使用量、長時間運転時の
+eviction と device 再生成の受入れである。
 
 ## Proposed Model
 

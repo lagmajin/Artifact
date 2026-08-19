@@ -25,6 +25,7 @@ module;
 #include <QLocale>
 #include <QLinearGradient>
 #include <QMenu>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -77,7 +78,8 @@ QString propertyUiText(const QString& key, const QString& fallback) {
 namespace {
 constexpr int kPropertyRowMinHeight = 30;
 constexpr int kPropertyRowLabelMinHeight = 22;
-constexpr int kPropertyRowLabelWidth = 124;
+// Keep the concrete row widget aligned with the shared property-row layout.
+constexpr int kPropertyRowLabelWidth = 132;
 constexpr int kPropertyRowMarginH = 8;
 constexpr int kPropertyRowMarginV = 3;
 constexpr int kPropertyRowSpacing = 6;
@@ -534,6 +536,12 @@ void ArtifactPropertyEditorRowWidget::setExpressionHandler(
   expressionHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setExpressionReferenceDropHandler(
+    std::function<void(const QString&)> handler) {
+  expressionReferenceDropHandler_ = std::move(handler);
+  setAcceptDrops(static_cast<bool>(expressionReferenceDropHandler_));
+}
+
 void ArtifactPropertyEditorRowWidget::setResetHandler(
     std::function<void()> handler) {
   resetHandler_ = std::move(handler);
@@ -873,6 +881,33 @@ void ArtifactPropertyEditorRowWidget::leaveEvent(QEvent *event) {
   QWidget::leaveEvent(event);
   updateAuxControlVisibility();
   updateRowVisualState();
+}
+
+void ArtifactPropertyEditorRowWidget::dragEnterEvent(QDragEnterEvent* event) {
+  if (event && expressionReferenceDropHandler_ && event->mimeData() &&
+      event->mimeData()->hasFormat(
+          QStringLiteral("application/x-artifact-expression-reference"))) {
+    event->acceptProposedAction();
+    return;
+  }
+  QWidget::dragEnterEvent(event);
+}
+
+void ArtifactPropertyEditorRowWidget::dropEvent(QDropEvent* event) {
+  if (event && expressionReferenceDropHandler_ && event->mimeData() &&
+      event->mimeData()->hasFormat(
+          QStringLiteral("application/x-artifact-expression-reference"))) {
+    const QString reference = QString::fromUtf8(
+        event->mimeData()
+            ->data(QStringLiteral("application/x-artifact-expression-reference")))
+        .trimmed();
+    if (!reference.isEmpty()) {
+      expressionReferenceDropHandler_(reference);
+      event->acceptProposedAction();
+      return;
+    }
+  }
+  QWidget::dropEvent(event);
 }
 
 void ArtifactPropertyEditorRowWidget::contextMenuEvent(

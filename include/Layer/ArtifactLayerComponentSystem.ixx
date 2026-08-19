@@ -2,6 +2,8 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
+#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -503,6 +505,13 @@ LayerComponentHost::validate() const {
             }
         }
         for (const auto& requiredTypeId : descriptor.requiredTypeIds) {
+            if (requiredTypeId.trimmed().isEmpty()) {
+                issues.push_back(
+                    {descriptor.componentId,
+                     QStringLiteral("Required component type id must be non-empty."),
+                     true});
+                continue;
+            }
             const auto* dependency = findByType(requiredTypeId);
             if (!dependency) {
                 QString message = QStringLiteral(
@@ -538,6 +547,43 @@ LayerComponentHost::validate() const {
                      true});
             }
         }
+    }
+
+    // Dependency cycles make phase ordering and deterministic evaluation
+    // ambiguous. Detect them separately from missing/late dependencies so a
+    // malformed descriptor graph cannot silently enter the evaluator.
+    std::vector<QString> visiting;
+    std::vector<QString> visited;
+    std::function<void(const QString&)> visit = [&](const QString& typeId) {
+        if (std::find(visited.begin(), visited.end(), typeId) != visited.end()) {
+            return;
+        }
+        const auto cycleBegin = std::find(visiting.begin(), visiting.end(), typeId);
+        if (cycleBegin != visiting.end()) {
+            const QString cycle = std::accumulate(
+                cycleBegin, visiting.end(), QString(),
+                [](const QString& left, const QString& right) {
+                    return left.isEmpty() ? right : left + QStringLiteral(" -> ") + right;
+                });
+            issues.push_back({typeId,
+                              QStringLiteral("Component dependency cycle: %1 -> %2")
+                                  .arg(cycle, typeId),
+                              true});
+            return;
+        }
+        const auto* descriptor = findByType(typeId);
+        if (!descriptor) {
+            return;
+        }
+        visiting.push_back(typeId);
+        for (const auto& requiredTypeId : descriptor->requiredTypeIds) {
+            visit(requiredTypeId.trimmed());
+        }
+        visiting.pop_back();
+        visited.push_back(typeId);
+    };
+    for (const auto& descriptor : components_) {
+        visit(descriptor.typeId.trimmed());
     }
     return issues;
 }

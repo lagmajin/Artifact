@@ -16,6 +16,7 @@ module Artifact.Workspace.Manager;
 
 import Widgets.ToolBar;
 import UI.Layout.State;
+import Artifact.MainWindow;
 
 namespace Artifact {
 
@@ -125,6 +126,12 @@ static QJsonObject captureWindowState(const QWidget *window,
   layout.version = 1;
 
   json["layout"] = layout.toJson();
+  if (const auto *mainWindow = dynamic_cast<const ArtifactMainWindow *>(window)) {
+    const QByteArray dockState = mainWindow->saveDockManagerState();
+    if (!dockState.isEmpty()) {
+      json["dockState"] = QString::fromLatin1(dockState.toBase64());
+    }
+  }
   if (includeWorkspaceMode) {
     json["workspaceMode"] = static_cast<int>(workspaceModeForWindow(window));
   }
@@ -139,6 +146,13 @@ static bool applyWindowState(QWidget *window,
     return false;
   }
 
+  // A syntactically valid but structurally incomplete session must not count
+  // as restored: accepting it would suppress the caller's default-layout
+  // recovery path while leaving the window only partially configured.
+  if (!json.value(QStringLiteral("layout")).isObject()) {
+    return false;
+  }
+
   const QJsonObject layoutJson = json.value(QStringLiteral("layout")).toObject();
   const ArtifactCore::UiLayoutState layout =
       ArtifactCore::UiLayoutState::fromJson(layoutJson);
@@ -146,10 +160,22 @@ static bool applyWindowState(QWidget *window,
     window->restoreGeometry(layout.geometry);
   }
   if (applyWorkspaceMode) {
-    const WorkspaceMode mode = static_cast<WorkspaceMode>(
-        json.value(QStringLiteral("workspaceMode")).toInt(
-            static_cast<int>(WorkspaceMode::Default)));
+    constexpr int kFirstWorkspaceMode = static_cast<int>(WorkspaceMode::Default);
+    constexpr int kLastWorkspaceMode = static_cast<int>(WorkspaceMode::Audio);
+    const int modeValue = json.value(QStringLiteral("workspaceMode")).toInt(
+        kFirstWorkspaceMode);
+    const WorkspaceMode mode =
+        (modeValue >= kFirstWorkspaceMode && modeValue <= kLastWorkspaceMode)
+            ? static_cast<WorkspaceMode>(modeValue)
+            : WorkspaceMode::Default;
     setWorkspaceModeForWindow(window, mode);
+  }
+  if (auto *mainWindow = dynamic_cast<ArtifactMainWindow *>(window)) {
+    const QByteArray dockState = QByteArray::fromBase64(
+        json.value(QStringLiteral("dockState")).toString().toLatin1());
+    if (!dockState.isEmpty()) {
+      mainWindow->restoreDockManagerState(dockState);
+    }
   }
 
   return true;

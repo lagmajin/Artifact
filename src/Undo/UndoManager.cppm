@@ -563,6 +563,30 @@ bool AddLayerCommand::deserialize(const QJsonObject& data) {
 }
 
 // --- RemoveLayerCommand ---
+MoveMaskCommand::MoveMaskCommand(ArtifactAbstractLayerPtr layer, int oldIndex, int newIndex)
+    : layer_(layer), oldIndex_(oldIndex), newIndex_(newIndex) {}
+
+void MoveMaskCommand::undo() {
+  if (auto layer = layer_.lock()) {
+    layer->moveMask(newIndex_, oldIndex_);
+  }
+}
+
+void MoveMaskCommand::redo() {
+  if (auto layer = layer_.lock()) {
+    layer->moveMask(oldIndex_, newIndex_);
+  }
+}
+
+QString MoveMaskCommand::label() const {
+  return QStringLiteral("Move Mask");
+}
+
+size_t MoveMaskCommand::estimatedMemoryBytes() const {
+  return sizeof(*this);
+}
+
+// --- RemoveLayerCommand ---
 RemoveLayerCommand::RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer)
     : comp_(comp), layer_(layer),
       compositionId_(comp ? comp->id().toString() : QString()),
@@ -1020,6 +1044,50 @@ void SetLayerPropertyKeyframesCommand::redo() {
 
 QString SetLayerPropertyKeyframesCommand::label() const {
     return label_;
+}
+
+SetLayerPropertyValueCommand::SetLayerPropertyValueCommand(
+    ArtifactAbstractLayerPtr layer,
+    QString propertyPath,
+    QVariant beforeValue,
+    QVariant afterValue,
+    QString label)
+    : layer_(layer),
+      propertyPath_(std::move(propertyPath)),
+      beforeValue_(std::move(beforeValue)),
+      afterValue_(std::move(afterValue)),
+      label_(std::move(label)) {}
+
+void SetLayerPropertyValueCommand::undo() {
+    if (const auto layer = layer_.lock()) {
+        if (const auto property = layer->getProperty(propertyPath_)) {
+            property->setValue(beforeValue_);
+            layer->changed();
+        }
+    }
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void SetLayerPropertyValueCommand::redo() {
+    if (const auto layer = layer_.lock()) {
+        if (const auto property = layer->getProperty(propertyPath_)) {
+            property->setValue(afterValue_);
+            layer->changed();
+        }
+    }
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetLayerPropertyValueCommand::label() const {
+    return label_;
+}
+
+size_t SetLayerPropertyValueCommand::estimatedMemoryBytes() const {
+    return sizeof(*this) + static_cast<size_t>(propertyPath_.size()) * sizeof(QChar);
 }
 
 bool SetLayerPropertyKeyframesCommand::canSerialize() const {

@@ -162,6 +162,33 @@ int runAIToolBridgeTests()
     const QJsonObject addAudioLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addAudioLayerToCurrentComposition"));
     report.check(!addAudioLayerTool.isEmpty(), QStringLiteral("workspace automation exposes audio layer creation"));
 
+    const QJsonObject addAudioDeClickRangeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addAudioDeClickRange"));
+    report.check(!addAudioDeClickRangeTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click range add"));
+
+    const QJsonObject clearAudioDeClickRangesTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("clearAudioDeClickRanges"));
+    report.check(!clearAudioDeClickRangesTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click range clear"));
+
+    const QJsonObject getAudioDeClickRangesTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioDeClickRanges"));
+    report.check(!getAudioDeClickRangesTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click range query"));
+
+    const QJsonObject setAudioDeClickSettingsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setAudioDeClickSettings"));
+    report.check(!setAudioDeClickSettingsTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click settings"));
+
+    const QJsonObject getAudioDeClickSettingsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioDeClickSettings"));
+    report.check(!getAudioDeClickSettingsTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click settings query"));
+
+    const QJsonObject playbackAudioDiagnosticsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getPlaybackAudioDiagnostics"));
+    report.check(!playbackAudioDiagnosticsTool.isEmpty(), QStringLiteral("workspace automation exposes playback audio diagnostics"));
+    report.check(playbackAudioDiagnosticsTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("playback audio diagnostics returns a result map"));
+    const QString playbackAudioDiagnosticsDescription = playbackAudioDiagnosticsTool.value(QStringLiteral("description")).toString();
+    report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("clipping"), Qt::CaseInsensitive),
+                 QStringLiteral("playback audio diagnostics describes clipping state"));
+    report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("health"), Qt::CaseInsensitive),
+                 QStringLiteral("playback audio diagnostics describes current health"));
+    report.check(playbackAudioDiagnosticsDescription.contains(QStringLiteral("reason"), Qt::CaseInsensitive),
+                 QStringLiteral("playback audio diagnostics describes health reason"));
+
     const QJsonObject addTextLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addTextLayerToCurrentComposition"));
     report.check(!addTextLayerTool.isEmpty(), QStringLiteral("workspace automation exposes text layer creation"));
 

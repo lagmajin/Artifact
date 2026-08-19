@@ -33,6 +33,7 @@ module;
 #include <QDesktopServices>
 #include <QMessageBox>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <QFocusEvent>
@@ -1354,6 +1355,20 @@ QString summarizeLayerState(const ArtifactAbstractLayerPtr& layer)
  return {};
 }
 
+QString appendMotionDynamicsState(const ArtifactAbstractLayerPtr& layer,
+                                  const QString& state)
+{
+ if (!layer) {
+  return state;
+ }
+ const auto enabled = layer->getProperty(QStringLiteral("motion.enabled"));
+ if (!enabled || !enabled->getValue().toBool()) {
+  return state;
+ }
+ return state.isEmpty() ? QStringLiteral("Dynamics")
+                        : state + QStringLiteral(" · Dynamics");
+}
+
 LayerPresentationBadgeTone summarizeLayerStateTone(const ArtifactAbstractLayerPtr& layer)
 {
  if (!layer) {
@@ -1416,6 +1431,7 @@ bool propertyMatchesDisplayMode(const ArtifactCore::AbstractPropertyPtr& propert
  switch (mode) {
  case TimelineLayerDisplayMode::AnimatedOnly:
  case TimelineLayerDisplayMode::ImportantAndKeyframed:
+ case TimelineLayerDisplayMode::KeyframesOnly:
   return property->isAnimatable() && !property->getKeyFrames().empty();
  case TimelineLayerDisplayMode::AudioOnly:
  case TimelineLayerDisplayMode::VideoOnly:
@@ -1426,11 +1442,25 @@ bool propertyMatchesDisplayMode(const ArtifactCore::AbstractPropertyPtr& propert
  }
 }
 
+bool propertyMatchesChannelFilter(const ArtifactCore::AbstractPropertyPtr& property,
+                                  const ArtifactLayerPanelWidget::PropertyChannelFilter filter)
+{
+ if (!property || filter == ArtifactLayerPanelWidget::PropertyChannelFilter::All) return true;
+ const QString path = property->getName().toLower();
+ const bool transform = path.startsWith(QStringLiteral("transform."));
+ const bool audio = path.startsWith(QStringLiteral("audio.")) || path.contains(QStringLiteral("volume")) || path.contains(QStringLiteral("pan"));
+ const bool effect = path.startsWith(QStringLiteral("effect.")) || path.startsWith(QStringLiteral("effects."));
+ if (filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Transform) return transform;
+ if (filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Audio) return audio;
+ return filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Effect ? effect : true;
+}
+
 bool groupHasVisibleProperties(const ArtifactCore::PropertyGroup& group,
-                               const TimelineLayerDisplayMode mode)
+                               const TimelineLayerDisplayMode mode,
+                               const ArtifactLayerPanelWidget::PropertyChannelFilter filter)
 {
  for (const auto& property : group.sortedProperties()) {
-  if (propertyMatchesDisplayMode(property, mode)) {
+  if (propertyMatchesDisplayMode(property, mode) && propertyMatchesChannelFilter(property, filter)) {
    return true;
   }
  }
@@ -2239,7 +2269,8 @@ public:
   QString filterText;
   QHash<QString, QStringList> propertyGroupSearchCache;
   SearchMatchMode searchMatchMode = SearchMatchMode::AllVisible;
-  TimelineLayerDisplayMode displayMode = TimelineLayerDisplayMode::AllLayers;
+  TimelineLayerDisplayMode displayMode = TimelineLayerDisplayMode::KeyframesOnly;
+  ArtifactLayerPanelWidget::PropertyChannelFilter propertyChannelFilter = ArtifactLayerPanelWidget::PropertyChannelFilter::All;
   int rowHeight = kLayerRowHeight;
   int propertyColumnWidth = kLayerColumnWidth * kLayerPropertyColumnCount;
   double verticalOffset = 0.0;
@@ -2497,12 +2528,22 @@ public:
 
    QVector<ArtifactAbstractLayerPtr> layers;
     const QString needle = filterText.trimmed();
+   const bool regexQuery = needle.size() >= 2 && needle.startsWith(QLatin1Char('/')) &&
+                           needle.endsWith(QLatin1Char('/'));
+   const QRegularExpression searchRegex(
+       regexQuery ? needle.mid(1, needle.size() - 2) : QString());
+   const auto matchesSearch = [&](const QString& value) {
+     if (regexQuery) {
+       return searchRegex.isValid() && searchRegex.match(value).hasMatch();
+     }
+     return value.contains(needle, Qt::CaseInsensitive);
+   };
    for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
      if (maskFilterEnabled_ && !l->hasMasks()) continue;
      if (!needle.isEmpty()) {
-       bool nameMatch = l->layerName().contains(needle, Qt::CaseInsensitive);
+       bool nameMatch = matchesSearch(l->layerName());
        bool propMatch = false;
        if (searchInProperties_ && !nameMatch) {
          const QString layerKey = l->id().toString();
@@ -2517,11 +2558,19 @@ public:
                continue;
              }
              groupNames.push_back(group.name());
+             for (const auto& property : group.sortedProperties()) {
+               if (property) {
+                 groupNames.push_back(property->getName());
+                 if (!property->metadata().displayLabel.isEmpty()) {
+                   groupNames.push_back(property->metadata().displayLabel);
+                 }
+               }
+             }
            }
            propertyGroupSearchCache.insert(layerKey, groupNames);
          }
          for (const QString& groupName : groupNames) {
-           if (groupName.contains(needle, Qt::CaseInsensitive)) {
+         if (matchesSearch(groupName)) {
             propMatch = true;
             break;
            }
@@ -2566,8 +2615,11 @@ public:
     node->isGroupLayer() ? groupLayerSummaryText(node)
                          : presentation.timelineBadgeText,
     presentation.badgeTone,
-    summarizeLayerState(node),
-    summarizeLayerStateTone(node)
+    appendMotionDynamicsState(node, summarizeLayerState(node)),
+    node->getProperty(QStringLiteral("motion.enabled")) &&
+            node->getProperty(QStringLiteral("motion.enabled"))->getValue().toBool()
+        ? LayerPresentationBadgeTone::Motion
+        : summarizeLayerStateTone(node)
    });
    emitted.insert(nodeId);
 
@@ -2580,7 +2632,7 @@ public:
      const QString groupKey = nodeId + QStringLiteral("::") + groupName.toLower();
      const bool groupExpanded =
          expandedByGroupKey.value(groupKey, timelineGroupExpandedByDefault(groupName));
-      const bool hasVisibleProperties = groupHasVisibleProperties(groupDef, displayMode);
+      const bool hasVisibleProperties = groupHasVisibleProperties(groupDef, displayMode, propertyChannelFilter);
       if (!hasVisibleProperties) {
        continue;
       }
@@ -2610,7 +2662,14 @@ public:
         if (!property) {
          continue;
         }
-        if (!propertyMatchesDisplayMode(property, displayMode)) {
+        if (!propertyMatchesDisplayMode(property, displayMode) ||
+            !propertyMatchesChannelFilter(property, propertyChannelFilter)) {
+         continue;
+        }
+        if (searchInProperties_ && !needle.isEmpty() &&
+            !matchesSearch(property->getName()) &&
+            !matchesSearch(property->metadata().displayLabel) &&
+            !matchesSearch(groupName)) {
          continue;
         }
         visibleRows.push_back(VisibleRow{
@@ -2868,9 +2927,18 @@ void ArtifactLayerPanelWidget::setFilterText(const QString& text)
 {
   if (impl_->filterText == text) {
     return;
-  }
-  impl_->filterText = text;
-  updateLayout();
+ }
+ impl_->filterText = text;
+ impl_->searchInProperties_ = !text.trimmed().isEmpty();
+ updateLayout();
+}
+
+void ArtifactLayerPanelWidget::setPropertyChannelFilter(
+    const PropertyChannelFilter filter)
+{
+ if (impl_->propertyChannelFilter == filter) return;
+ impl_->propertyChannelFilter = filter;
+ updateLayout();
 }
 
 void ArtifactLayerPanelWidget::setSearchMatchMode(SearchMatchMode mode)
@@ -2975,7 +3043,9 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
           a.propertyPath != b.propertyPath ||
           a.groupKey != b.groupKey ||
           a.auxiliaryText != b.auxiliaryText ||
-          a.auxiliaryTone != b.auxiliaryTone) {
+          a.auxiliaryTone != b.auxiliaryTone ||
+          a.stateText != b.stateText ||
+          a.stateTone != b.stateTone) {
         return false;
       }
     }
@@ -3105,8 +3175,11 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
     auto l = comp->layerById(id);
     if (!l) return;
 
-    impl_->inlineNameEditor = new QLineEdit(this);
-    impl_->inlineNameEditor->setText(l->layerName());
+   impl_->inlineNameEditor = new QLineEdit(this);
+   impl_->inlineNameEditor->setAccessibleName(QStringLiteral("Layer name editor"));
+   impl_->inlineNameEditor->setAccessibleDescription(
+       QStringLiteral("Edit the selected layer name; press Enter to commit or Escape to cancel."));
+   impl_->inlineNameEditor->setText(l->layerName());
     impl_->inlineNameEditor->selectAll();
     applyLayerPanelLineEditPalette(impl_->inlineNameEditor);
 
@@ -3551,6 +3624,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && parentRect.contains(event->pos())) {
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
+      combo->setAccessibleName(QStringLiteral("Layer parent editor"));
+      combo->setAccessibleDescription(
+          QStringLiteral("Choose the selected layer's parent layer."));
       combo->setGeometry(parentRect);
       applyLayerPanelComboPalette(combo);
       combo->addItem(QStringLiteral("<None>"), QString());
@@ -3590,6 +3666,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && blendRect.contains(event->pos())) {
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
+      combo->setAccessibleName(QStringLiteral("Layer blend mode editor"));
+      combo->setAccessibleDescription(
+          QStringLiteral("Choose the selected layer's blend mode."));
       combo->setGeometry(blendRect);
       applyLayerPanelComboPalette(combo);
       const auto items = blendModeItems(impl_->blendModeFavorites);
@@ -4333,6 +4412,107 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QMenu menu(this);
     QMenu* frequentMenu = menu.addMenu(QStringLiteral("Frequent"));
     QMenu* allMenu = menu.addMenu(QStringLiteral("All"));
+    if (auto* lightLayer = dynamic_cast<ArtifactLightLayer*>(layer.get())) {
+      QMenu* lightLinkMenu = frequentMenu->addMenu(QStringLiteral("Light Linking"));
+      const auto selectedIds = selectedLayerIdsSnapshot();
+      QStringList targetIds;
+      for (const auto& selectedId : selectedIds) {
+        if (!selectedId.isNil() && selectedId != lightLayer->id()) {
+          targetIds.push_back(selectedId.toString());
+        }
+      }
+      const QString targets = targetIds.join(QStringLiteral(","));
+      const auto publishLightChange = [this, lightLayer]() {
+        if (auto current = safeCompositionLookup(impl_->compositionId)) {
+          ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+              LayerChangedEvent{current->id().toString(), lightLayer->id().toString(),
+                                LayerChangedEvent::ChangeType::Modified});
+        }
+        updateLayout();
+      };
+      QAction* allLightsAction = lightLinkMenu->addAction(QStringLiteral("All Layers"));
+      allLightsAction->setCheckable(true);
+      allLightsAction->setChecked(lightLayer->lightLinkMode() == LightLinkMode::All);
+      QObject::connect(allLightsAction, &QAction::triggered, this, [lightLayer, publishLightChange]() {
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Link Mode"),
+                                          static_cast<int>(LightLinkMode::All));
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Include Layer IDs"), QString());
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Exclude Layer IDs"), QString());
+        publishLightChange();
+      });
+      QAction* includeSelectedAction = lightLinkMenu->addAction(
+          QStringLiteral("Include Selected Layers"));
+      includeSelectedAction->setEnabled(!targets.isEmpty());
+      QObject::connect(includeSelectedAction, &QAction::triggered, this,
+                       [lightLayer, targets, publishLightChange]() {
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Link Mode"),
+                                          static_cast<int>(LightLinkMode::IncludeOnly));
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Include Layer IDs"), targets);
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Exclude Layer IDs"), QString());
+        publishLightChange();
+      });
+      QAction* excludeSelectedAction = lightLinkMenu->addAction(
+          QStringLiteral("Exclude Selected Layers"));
+      excludeSelectedAction->setEnabled(!targets.isEmpty());
+      QObject::connect(excludeSelectedAction, &QAction::triggered, this,
+                       [lightLayer, targets, publishLightChange]() {
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Link Mode"),
+                                          static_cast<int>(LightLinkMode::ExcludeList));
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Exclude Layer IDs"), targets);
+        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Include Layer IDs"), QString());
+        publishLightChange();
+      });
+    }
+    if (layer->is3D()) {
+      QMenu* materialMenu = frequentMenu->addMenu(QStringLiteral("3D Material"));
+      const auto applyMaterialPreset = [layer](const QColor& baseColor,
+                                                 double metallic,
+                                                 double roughness,
+                                                 double specular,
+                                                 double transmission,
+                                                 double ior) {
+        layer->setLayerPropertyValue(QStringLiteral("material.base.color"), baseColor);
+        layer->setLayerPropertyValue(QStringLiteral("material.metallic"), metallic);
+        layer->setLayerPropertyValue(QStringLiteral("material.roughness"), roughness);
+        layer->setLayerPropertyValue(QStringLiteral("material.specular"), specular);
+        layer->setLayerPropertyValue(QStringLiteral("material.transmission"), transmission);
+        layer->setLayerPropertyValue(QStringLiteral("material.ior"), ior);
+        if (auto current = safeCompositionLookup(impl_->compositionId)) {
+          ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+              LayerChangedEvent{current->id().toString(), layer->id().toString(),
+                                LayerChangedEvent::ChangeType::Modified});
+        }
+        updateLayout();
+      };
+      materialMenu->addAction(QStringLiteral("Matte"), [applyMaterialPreset]() {
+        applyMaterialPreset(QColor(180, 180, 180), 0.0, 0.82, 0.35, 0.0, 1.45);
+      });
+      materialMenu->addAction(QStringLiteral("Metal"), [applyMaterialPreset]() {
+        applyMaterialPreset(QColor(170, 180, 195), 0.9, 0.24, 0.5, 0.0, 1.45);
+      });
+      materialMenu->addAction(QStringLiteral("Plastic"), [applyMaterialPreset]() {
+        applyMaterialPreset(QColor(210, 220, 235), 0.0, 0.3, 0.5, 0.0, 1.46);
+      });
+      materialMenu->addAction(QStringLiteral("Glass"), [applyMaterialPreset]() {
+        applyMaterialPreset(QColor(225, 240, 255), 0.0, 0.08, 0.5, 0.82, 1.5);
+      });
+    }
+    if (layer->className().toQString() == QStringLiteral("ArtifactTextLayer")) {
+      QMenu* textAnimatorMenu = frequentMenu->addMenu(QStringLiteral("Text Animator"));
+      const std::array<std::pair<const char*, int>, 7> presets = {{
+          {"Typewriter", 1}, {"Slide Up", 2}, {"Scale In", 3},
+          {"Rotation In", 4}, {"Tracking Fade", 5},
+          {"Wiggly Position", 6}, {"Blur Reveal", 7}}};
+      for (const auto& [label, presetId] : presets) {
+        textAnimatorMenu->addAction(QString::fromLatin1(label), [layer, presetId]() {
+          layer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"), presetId);
+        });
+      }
+      textAnimatorMenu->addSeparator();
+      textAnimatorMenu->addAction(QStringLiteral("Clear Animators"), [layer]() {
+        layer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"), 0);
+      });
+    }
     if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
       QMenu *precompMenu = allMenu->addMenu(QStringLiteral("プリコンポーズ"));
       precompMenu->addAction(QStringLiteral("コンポジションを開く"),
@@ -4421,6 +4601,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       groupMenu->addSeparator();
       groupMenu->addAction(QStringLiteral("グループ名を変更..."), [triggerRenameLayer]() {
         triggerRenameLayer();
+      });
+      groupMenu->addAction(QStringLiteral("グループを解除"), [this]() {
+        if (auto *svc = ArtifactProjectService::instance()) {
+          if (svc->ungroupSelectedGroupWithUndo()) {
+            updateLayout();
+          }
+        }
       });
 
       QObject::connect(toggleCollapseAct, &QAction::triggered, groupMenu, [this, layer](bool) {
@@ -4657,6 +4844,55 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         svc->smartSoloOnlyLayerInCurrentComposition(layer->id());
         updateLayout();
       }
+    });
+
+    QMenu* dynamicsMenu = frequentMenu->addMenu(QStringLiteral("Motion Dynamics"));
+    const auto applyDynamicsPreset = [layer](double stiffness,
+                                               double damping,
+                                               double mass,
+                                               double lagTau,
+                                               bool clampOvershoot,
+                                               double overshootLimit) {
+      if (!layer) {
+        return;
+      }
+      layer->setLayerPropertyValue(QStringLiteral("motion.enabled"), true);
+      layer->setLayerPropertyValue(QStringLiteral("motion.mode"), 1);
+      layer->setLayerPropertyValue(QStringLiteral("motion.stiffness"), stiffness);
+      layer->setLayerPropertyValue(QStringLiteral("motion.damping"), damping);
+      layer->setLayerPropertyValue(QStringLiteral("motion.mass"), mass);
+      layer->setLayerPropertyValue(QStringLiteral("motion.lagTau"), lagTau);
+      layer->setLayerPropertyValue(QStringLiteral("motion.clampOvershoot"), clampOvershoot);
+      layer->setLayerPropertyValue(QStringLiteral("motion.overshootLimit"), overshootLimit);
+    };
+    dynamicsMenu->addAction(QStringLiteral("Smooth"), [applyDynamicsPreset]() {
+      applyDynamicsPreset(70.0, 20.0, 1.0, 0.12, true, 0.15);
+    });
+    dynamicsMenu->addAction(QStringLiteral("Bouncy"), [applyDynamicsPreset]() {
+      applyDynamicsPreset(95.0, 7.0, 1.0, 0.08, false, 0.5);
+    });
+    dynamicsMenu->addAction(QStringLiteral("Heavy"), [applyDynamicsPreset]() {
+      applyDynamicsPreset(120.0, 32.0, 2.5, 0.2, true, 0.1);
+    });
+    dynamicsMenu->addAction(QStringLiteral("Floaty"), [applyDynamicsPreset]() {
+      applyDynamicsPreset(35.0, 8.0, 1.4, 0.28, false, 0.6);
+    });
+    dynamicsMenu->addAction(QStringLiteral("Rigid"), [applyDynamicsPreset]() {
+      applyDynamicsPreset(220.0, 55.0, 0.8, 0.04, true, 0.05);
+    });
+    dynamicsMenu->addSeparator();
+    dynamicsMenu->addAction(QStringLiteral("Reset"), [layer]() {
+      if (!layer) {
+        return;
+      }
+      layer->setLayerPropertyValue(QStringLiteral("motion.enabled"), false);
+      layer->setLayerPropertyValue(QStringLiteral("motion.mode"), 0);
+      layer->setLayerPropertyValue(QStringLiteral("motion.stiffness"), 80.0);
+      layer->setLayerPropertyValue(QStringLiteral("motion.damping"), 16.0);
+      layer->setLayerPropertyValue(QStringLiteral("motion.mass"), 1.0);
+      layer->setLayerPropertyValue(QStringLiteral("motion.lagTau"), 0.1);
+      layer->setLayerPropertyValue(QStringLiteral("motion.clampOvershoot"), false);
+      layer->setLayerPropertyValue(QStringLiteral("motion.overshootLimit"), 0.3);
     });
 
     // カラーラベル
@@ -5322,7 +5558,15 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
         }
         toolTipText = QStringLiteral("Track Mattes: %1").arg(parts.join(QStringLiteral(" | ")));
       } else if (!impl_->dragStarted_) {
-        toolTipText = QStringLiteral("Alt-drag a layer here to create a Track Matte link");
+        const qint64 inFrame = row.layer->inPoint().framePosition();
+        const qint64 outFrame = row.layer->outPoint().framePosition();
+        toolTipText = QStringLiteral("%1\nFrames: %2 - %3\nOpacity: %4%\nBlend: %5\nEffects: %6\n\nAlt-drag a layer here to create a Track Matte link")
+          .arg(row.badgeText.isEmpty() ? QStringLiteral("Layer") : row.badgeText)
+          .arg(inFrame)
+          .arg(outFrame)
+          .arg(row.layer->opacity(), 0, 'f', 1)
+          .arg(blendModeToText(row.layer->layerBlendType()))
+          .arg(row.layer->effectCount());
       }
     } else if (impl_->dragStarted_ && impl_->dragMatteLinkMode &&
                row.kind == RowKind::MatteStack) {
@@ -5710,9 +5954,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   if (event->key() == Qt::Key_U &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
     const auto nextMode =
-        impl_->displayMode == TimelineLayerDisplayMode::ImportantAndKeyframed
+        impl_->displayMode == TimelineLayerDisplayMode::KeyframesOnly
             ? TimelineLayerDisplayMode::AllLayers
-            : TimelineLayerDisplayMode::ImportantAndKeyframed;
+            : TimelineLayerDisplayMode::KeyframesOnly;
     setDisplayMode(nextMode);
     event->accept();
     return;
@@ -7279,11 +7523,17 @@ void ArtifactLayerTimelinePanelWrapper::dropEvent(QDropEvent* event)
    impl_->panel->updateLayout();
   }
 
-  void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)
+void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)
   {
    if (impl_ && impl_->panel) {
     impl_->panel->setFilterText(text);
-   }
+}
+
+void ArtifactLayerTimelinePanelWrapper::setPropertyChannelFilter(
+    const ArtifactLayerPanelWidget::PropertyChannelFilter filter)
+{
+ if (impl_ && impl_->panel) impl_->panel->setPropertyChannelFilter(filter);
+}
   }
 
   void ArtifactLayerTimelinePanelWrapper::setSearchMatchMode(SearchMatchMode mode)

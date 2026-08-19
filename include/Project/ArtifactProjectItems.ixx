@@ -62,6 +62,7 @@ export namespace Artifact {
 
   Id id;
   UniString name;
+  QStringList tags;
   ProjectItem* parent = nullptr;
   QVector<ProjectItem*> children; // non-owning pointers; ownership managed by project
  };

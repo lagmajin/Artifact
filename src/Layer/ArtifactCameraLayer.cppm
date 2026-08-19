@@ -24,7 +24,7 @@ namespace {
 
 constexpr float kDegreesToRadians = 0.017453292519943295769f;
 
-int64_t cameraTimelineFps(const ArtifactCameraLayer* layer)
+double cameraTimelineFps(const ArtifactCameraLayer* layer)
 {
     if (!layer) {
         return 30;
@@ -32,7 +32,7 @@ int64_t cameraTimelineFps(const ArtifactCameraLayer* layer)
     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
         const double fps = comp->frameRate().framerate();
         if (fps > 0.0) {
-            return std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
+            return fps;
         }
     }
     return 30;
@@ -461,6 +461,11 @@ void ArtifactCameraLayer::advanceShake(double timeSeconds, double deltaSeconds) 
 QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
 {
     QMatrix4x4 proj;
+    // Projection can also be requested by viewport/gizmo paths before a valid
+    // widget size exists. Keep every projection caller on the same finite,
+    // positive aspect contract so orthographic mode never divides by zero.
+    const float safeAspect = std::isfinite(aspect) ? std::max(0.001f, aspect)
+                                                   : 1.0f;
     
     if (camImpl_->projectionMode_ == ProjectionMode::Orthographic) {
         // Orthographic projection
@@ -468,10 +473,10 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
         float halfH = camImpl_->orthoHeight_ * 0.5f;
         
         // Adjust for aspect ratio if needed
-        if (aspect > 1.0f) {
-            halfW *= aspect;
+        if (safeAspect > 1.0f) {
+            halfW *= safeAspect;
         } else {
-            halfH /= aspect;
+            halfH /= safeAspect;
         }
         
         proj.ortho(-halfW, halfW, -halfH, halfH,
@@ -480,7 +485,7 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
     } else {
         // Perspective projection
         float vFov = fov();
-        proj.perspective(vFov, aspect,
+        proj.perspective(vFov, safeAspect,
                         camImpl_->nearClipPlane_,
                         camImpl_->farClipPlane_);
     }

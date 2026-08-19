@@ -585,11 +585,6 @@ namespace Artifact
    if (!selectedLayerId_.isNil())
    {
     auto layer = composition_->layerById(selectedLayerId_);
-    qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo]"
-                                << "selectedLayerId=" << selectedLayerId_.toString()
-                                << "hasLayer=" << static_cast<bool>(layer)
-                                << "frame=" << currentFrame.framePosition()
-                                << "active=" << (layer ? layer->isActiveAt(currentFrame) : false);
     if (layer && layer->isActiveAt(currentFrame))
     {
      if (layer->isCloneLayer()) {
@@ -602,15 +597,6 @@ namespace Artifact
                                    << "id=" << layer->id().toString()
                                    << "bounds=" << localBounds;
       } else {
-       qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] draw"
-                                   << "id=" << layer->id().toString()
-                                   << "bounds=" << localBounds
-                                   << "m11=" << global.m11()
-                                   << "m12=" << global.m12()
-                                   << "m21=" << global.m21()
-                                   << "m22=" << global.m22()
-                                   << "dx=" << global.dx()
-                                   << "dy=" << global.dy();
        float w = (float)localBounds.width();
        float h = (float)localBounds.height();
 

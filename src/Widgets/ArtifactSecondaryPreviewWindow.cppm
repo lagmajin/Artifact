@@ -50,6 +50,41 @@ public:
     bool autoUpdate_ = true;
     int updateRate_ = 30;
     int currentScreenIndex_ = 0;
+    QString preferredScreenName_;
+
+    void restoreDisplayProfile() {
+        QSettings settings;
+        preferredScreenName_ = settings.value(
+            QStringLiteral("Artifact/SecondaryPreview/ScreenName")).toString();
+        fullscreen_ = settings.value(
+            QStringLiteral("Artifact/SecondaryPreview/Fullscreen"), false).toBool();
+        autoUpdate_ = settings.value(
+            QStringLiteral("Artifact/SecondaryPreview/AutoUpdate"), true).toBool();
+        updateRate_ = std::clamp(settings.value(
+            QStringLiteral("Artifact/SecondaryPreview/UpdateRate"), 30).toInt(), 1, 120);
+    }
+
+    void saveDisplayProfile() const {
+        QSettings settings;
+        const auto screens = QGuiApplication::screens();
+        const QString screenName = (currentScreenIndex_ >= 0 &&
+                                    currentScreenIndex_ < screens.size())
+            ? screens[currentScreenIndex_]->name() : preferredScreenName_;
+        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/ScreenName"), screenName);
+        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/Fullscreen"), fullscreen_);
+        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/AutoUpdate"), autoUpdate_);
+        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/UpdateRate"), updateRate_);
+        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/Geometry"), normalGeometry());
+    }
+
+    int preferredScreenIndex() const {
+        const auto screens = QGuiApplication::screens();
+        for (int i = 0; i < screens.size(); ++i) {
+            if (!preferredScreenName_.isEmpty() &&
+                screens[i]->name() == preferredScreenName_) return i;
+        }
+        return std::clamp(currentScreenIndex_, 0, std::max(0, screens.size() - 1));
+    }
 
     // OSD
     QString osdText_;
@@ -248,9 +283,26 @@ ArtifactSecondaryPreviewWindow::ArtifactSecondaryPreviewWindow(QWidget* parent)
 
     // Set window icon from application
     setWindowIcon(QApplication::windowIcon());
+
+    impl_->restoreDisplayProfile();
+    impl_->updateTimer_->setInterval(1000 / impl_->updateRate_);
+    if (!impl_->autoUpdate_) {
+        impl_->updateTimer_->stop();
+    }
+    if (const QVariant geometry = QSettings().value(
+            QStringLiteral("Artifact/SecondaryPreview/Geometry")); geometry.isValid()) {
+        setGeometry(geometry.toRect());
+    }
+    const int screenIndex = impl_->preferredScreenIndex();
+    impl_->currentScreenIndex_ = screenIndex;
+    if (impl_->fullscreen_) {
+        impl_->fullscreen_ = false;
+        setFullscreen(true);
+    }
 }
 
 ArtifactSecondaryPreviewWindow::~ArtifactSecondaryPreviewWindow() {
+    impl_->saveDisplayProfile();
     delete impl_;
 }
 
@@ -293,6 +345,7 @@ void ArtifactSecondaryPreviewWindow::showOnScreen(int screenIndex) {
 
     QScreen* screen = screens[screenIndex];
     impl_->currentScreenIndex_ = screenIndex;
+    impl_->preferredScreenName_ = screen->name();
 
     QRect geo = screen->availableGeometry();
     setGeometry(geo);

@@ -627,8 +627,10 @@ void ArtifactProcedural3DLayer::drawResolved(ArtifactIRenderer* renderer,
     const RationalTime frameTime(frame, static_cast<int64_t>(std::lround(fps)));
     const auto snapshot = transform.snapshotAt(frameTime);
     model.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-    model.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
-    model.scale(snapshot.scaleX, snapshot.scaleY, 1.0f);
+    model.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+    model.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+    model.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+    model.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
     model.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
 
     if (impl_->shading == ArtifactCore::Procedural3DShading::Wire) {

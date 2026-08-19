@@ -80,6 +80,8 @@ public:
     QImage applyToImage(const QImage& input) const;
 
     // ArtifactAbstractEffect
+    void apply(const ImageF32x4RGBAWithCache& src,
+               ImageF32x4RGBAWithCache& dst) override;
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 };

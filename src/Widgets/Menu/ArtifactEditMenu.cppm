@@ -663,6 +663,7 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
 
   bool hasSelection = false;
   bool hasComposition = false;
+  const bool hasPlayhead = ArtifactPlaybackService::instance() != nullptr;
   if (auto* sel = ArtifactApplicationManager::instance()->layerSelectionManager()) {
    hasComposition = sel->activeComposition() != ArtifactCompositionPtr{};
    hasSelection = hasComposition && !sel->selectedLayers().isEmpty();
@@ -679,9 +680,9 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
   pasteAction_->setEnabled(hasProject && hasComposition && layerClipboardReady);
   deleteAction_->setEnabled(hasProject && hasSelection);
   duplicateAction->setEnabled(hasProject && hasSelection);
-  splitAction->setEnabled(hasProject && hasSelection);
-  trimInAction->setEnabled(hasProject && hasSelection);
-  trimOutAction->setEnabled(hasProject && hasSelection);
+  splitAction->setEnabled(hasProject && hasSelection && hasPlayhead);
+  trimInAction->setEnabled(hasProject && hasSelection && hasPlayhead);
+  trimOutAction->setEnabled(hasProject && hasSelection && hasPlayhead);
    selectAllAction->setEnabled(hasProject && hasComposition);
    selectNoneAction->setEnabled(hasProject && hasSelection);
    invertSelectionAction->setEnabled(hasProject && hasSelection);

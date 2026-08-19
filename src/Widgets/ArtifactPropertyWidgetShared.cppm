@@ -30,6 +30,7 @@ import Artifact.Widgets.PropertyEditor;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InOutPoints;
 import Artifact.Layer.Text;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Selection.Manager;
@@ -949,8 +950,27 @@ void launchExpressionCopilot(
     auto *composition =
         static_cast<ArtifactAbstractComposition *>(layer->composition());
     QStringList layerNames;
+    QVariantMap layerSnapshots;
+    QVariantList compositionMarkers;
     int currentLayerIndex = -1;
     if (composition) {
+      if (const auto *points = composition->inOutPoints()) {
+        const auto markers = points->allMarkers();
+        compositionMarkers.reserve(static_cast<int>(markers.size()));
+        int markerIndex = 1;
+        for (const auto *marker : markers) {
+          if (!marker) {
+            continue;
+          }
+          QVariantMap item;
+          item[QStringLiteral("time")] = marker->position().toDouble();
+          item[QStringLiteral("index")] = markerIndex++;
+          item[QStringLiteral("duration")] = 0.0;
+          item[QStringLiteral("comment")] = marker->comment();
+          item[QStringLiteral("chapter")] = marker->type() == MarkerType::Chapter;
+          compositionMarkers.push_back(item);
+        }
+      }
       const auto layers = composition->allLayerRef();
       layerNames.reserve(layers.size());
       for (int i = 0; i < layers.size(); ++i) {
@@ -959,6 +979,24 @@ void launchExpressionCopilot(
           continue;
         }
         layerNames.push_back(candidate->layerName());
+        QVariantMap snapshot;
+        const auto readProperty = [candidate, &currentTime](const QString& path) {
+          const auto property = candidate->getProperty(path);
+          return property ? property->evaluateValue(currentTime) : QVariant();
+        };
+        snapshot[QStringLiteral("opacity")] = readProperty(QStringLiteral("layer.opacity"));
+        QVariantMap transform;
+        QVariantMap position;
+        position[QStringLiteral("x")] = readProperty(QStringLiteral("transform.position.x"));
+        position[QStringLiteral("y")] = readProperty(QStringLiteral("transform.position.y"));
+        transform[QStringLiteral("position")] = position;
+        QVariantMap scale;
+        scale[QStringLiteral("x")] = readProperty(QStringLiteral("transform.scale.x"));
+        scale[QStringLiteral("y")] = readProperty(QStringLiteral("transform.scale.y"));
+        transform[QStringLiteral("scale")] = scale;
+        transform[QStringLiteral("rotation")] = readProperty(QStringLiteral("transform.rotation"));
+        snapshot[QStringLiteral("transform")] = transform;
+        layerSnapshots[candidate->layerName()] = snapshot;
         if (candidate->id() == layer->id()) {
           currentLayerIndex = i;
         }
@@ -972,6 +1010,8 @@ void launchExpressionCopilot(
         currentLayerIndex,
         layer->layerName(),
         propertyPtr ? propertyPtr->getValue() : QVariant(),
+        layerSnapshots,
+        compositionMarkers,
         currentTime.toDouble());
     copilot->setReferenceItems(layerNames, propertyName);
   } else {
@@ -1226,17 +1266,32 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   row->setShowResetButton(showResetButton);
   if (defaultValue.isValid()) {
     row->setResetHandler([editor, defaultValue, propertyPtr, layer]() {
+      const QVariant beforeValue = propertyPtr ? propertyPtr->getValue() : QVariant{};
       const auto beforeKeyframes = propertyPtr
                                        ? propertyPtr->getKeyFrames()
                                        : std::vector<ArtifactCore::KeyFrame>{};
       if (layer && propertyPtr && !beforeKeyframes.empty()) {
         if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+          auto macro = std::make_unique<MacroUndoCommand>(
+              QStringLiteral("Reset Layer Property"));
+          macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
               layer, propertyPtr->getName(), beforeKeyframes,
               std::vector<ArtifactCore::KeyFrame>{},
               QStringLiteral("Reset Property Keyframes")));
+          macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+              layer, propertyPtr->getName(), beforeValue, defaultValue,
+              QStringLiteral("Reset Property Value")));
+          mgr->push(std::move(macro));
         } else {
           propertyPtr->clearKeyFrames();
+        }
+      } else if (layer && propertyPtr && beforeValue != defaultValue) {
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::make_unique<SetLayerPropertyValueCommand>(
+              layer, propertyPtr->getName(), beforeValue, defaultValue,
+              QStringLiteral("Reset Property Value")));
+        } else {
+          propertyPtr->setValue(defaultValue);
         }
       }
       editor->setValueFromVariant(defaultValue);
@@ -1377,6 +1432,23 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
               layer,
               nowTime,
               [layer, keyframeChanged, propertyName](const QString &) {
+                if (keyframeChanged) {
+                  keyframeChanged(propertyName);
+                }
+                if (layer) {
+                  notifyLayerPropertyAnimationChanged(layer);
+                }
+              });
+        });
+    row->setExpressionReferenceDropHandler(
+        [parent, propertyName = property.getName(), propertyPtr, layer,
+         keyframeChanged, currentTimeProvider, playback](const QString& reference) {
+          const auto nowTime = currentTimeProvider
+                                   ? currentTimeProvider()
+                                   : currentPlaybackTime(playback);
+          launchExpressionCopilot(
+              parent, propertyName, propertyPtr, reference, layer, nowTime,
+              [layer, keyframeChanged, propertyName](const QString&) {
                 if (keyframeChanged) {
                   keyframeChanged(propertyName);
                 }

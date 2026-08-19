@@ -458,18 +458,47 @@ namespace Artifact
     if (alsoHistory) addHistoryEntry(QString("[UI] %1").arg(event));
   }
 
+  QString jobHistoryMetadata(int sourceIndex) const {
+    if (!service || sourceIndex < 0 || sourceIndex >= service->jobCount()) {
+      return QString();
+    }
+    int startFrame = 0;
+    int endFrame = 0;
+    service->jobFrameRangeAt(sourceIndex, &startFrame, &endFrame);
+    const QString jobId = QStringLiteral("render-queue-%1-%2")
+                              .arg(service->jobCompositionIdAt(sourceIndex).toString())
+                              .arg(startFrame);
+    const QString error = service->jobErrorMessageAt(sourceIndex).trimmed();
+    const QString stage = error.isEmpty()
+                              ? QStringLiteral("none")
+                              : (error.contains(QStringLiteral("encode"), Qt::CaseInsensitive)
+                                     ? QStringLiteral("encode")
+                                     : error.contains(QStringLiteral("read"), Qt::CaseInsensitive)
+                                           ? QStringLiteral("readback")
+                                           : QStringLiteral("render"));
+    return QStringLiteral("jobId=%1 frames=[%2,%3) failureStage=%4 action=Retry Job")
+        .arg(jobId).arg(startFrame).arg(endFrame).arg(stage);
+  }
+
   void logServiceEvent(const QString& event, int sourceIndex = -1, bool alsoHistory = true) {
     QString msg = event;
     if (service && sourceIndex >= 0 && sourceIndex < service->jobCount()) {
         msg += QString(" (%1)").arg(service->jobCompositionNameAt(sourceIndex));
     }
     if (statusLabel) statusLabel->setText(QString("[%1] [Service] %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), msg));
-    if (alsoHistory) addHistoryEntry(QString("[Service] %1").arg(msg));
+    if (alsoHistory) addHistoryEntry(QString("[Service] %1%2").arg(msg)
+                                         .arg(sourceIndex >= 0
+                                                  ? QStringLiteral(" | %1").arg(jobHistoryMetadata(sourceIndex))
+                                                  : QString()),
+                                     sourceIndex);
   }
 
-  void addHistoryEntry(const QString& message) {
+  void addHistoryEntry(const QString& message, int sourceIndex = -1) {
     if (!historyListWidget) return;
-    historyListWidget->addItem(QString("[%1] %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), message));
+    auto* item = new QListWidgetItem(
+        QString("[%1] %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), message));
+    item->setData(Qt::UserRole, sourceIndex);
+    historyListWidget->addItem(item);
     while (historyListWidget->count() > 300) delete historyListWidget->takeItem(0);
     historyListWidget->scrollToBottom();
     saveHistory();
@@ -900,7 +929,7 @@ namespace Artifact
                                       {QStringLiteral("1"), QStringLiteral("Work Area")},
                                       {QStringLiteral("2"), QStringLiteral("Custom")},
                                       {QStringLiteral("3"), QStringLiteral("Selected Frames")},
-                                      {QStringLiteral("4"), QStringLiteral("Single Frame")}};
+                                      {QStringLiteral("4"), QStringLiteral("Current Frame")}};
         const QVariantMap regionLabels{{QStringLiteral("0"), QStringLiteral("Full")},
                                        {QStringLiteral("1"), QStringLiteral("Region of Interest")},
                                        {QStringLiteral("2"), QStringLiteral("Custom Crop")}};
@@ -1618,8 +1647,10 @@ namespace Artifact
   impl_->frameRangeModeCombo->addItem(QStringLiteral("Work Area"), 1);
   impl_->frameRangeModeCombo->addItem(QStringLiteral("Custom"), 2);
   impl_->frameRangeModeCombo->addItem(QStringLiteral("Selected Frames"), 3);
-  impl_->frameRangeModeCombo->addItem(QStringLiteral("Single Frame"), 4);
+  impl_->frameRangeModeCombo->addItem(QStringLiteral("Current Frame"), 4);
   impl_->frameRangeModeCombo->setAccessibleName(QStringLiteral("Render frame range mode"));
+  impl_->frameRangeModeCombo->setAccessibleDescription(
+      QStringLiteral("Choose composition, work area, custom, selected, or current frame output."));
   rangeModeRow->addWidget(impl_->frameRangeModeCombo, 1);
   selectiveLayout->addLayout(rangeModeRow);
   auto* selectedRangeRow = new QHBoxLayout();
@@ -2164,7 +2195,32 @@ namespace Artifact
   impl_->historyListWidget->setAccessibleName(QStringLiteral("Render history"));
   impl_->historyListWidget->setAccessibleDescription(
       QStringLiteral("Review completed and failed render job history."));
+  impl_->historyListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
   historyLayout->addWidget(impl_->historyListWidget, 1);
+  connect(impl_->historyListWidget, &QListWidget::customContextMenuRequested,
+          this, [this](const QPoint& position) {
+            if (!impl_ || !impl_->historyListWidget || !impl_->service) return;
+            auto* item = impl_->historyListWidget->itemAt(position);
+            if (!item) return;
+            const int index = item->data(Qt::UserRole).toInt();
+            if (index < 0 || index >= impl_->service->jobCount()) return;
+            QMenu menu(this);
+            QAction* retry = menu.addAction(QStringLiteral("Retry Job"));
+            QAction* reveal = menu.addAction(QStringLiteral("Reveal Output"));
+            const QAction* chosen = menu.exec(
+                impl_->historyListWidget->viewport()->mapToGlobal(position));
+            if (chosen == retry) {
+              impl_->service->resetJobForRerun(index);
+              impl_->service->startRenderQueueAt(index);
+              impl_->postHistoryMessage(QStringLiteral("Retry requested from history"), index);
+            } else if (chosen == reveal) {
+              const QString path = impl_->service->jobOutputPathAt(index);
+              if (!path.trimmed().isEmpty()) {
+                QDesktopServices::openUrl(
+                    QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+              }
+            }
+          });
   auto* historyButtonLayout = new QHBoxLayout();
   impl_->clearHistoryButton = new QPushButton("Clear");
   impl_->exportHistoryButton = new QPushButton("Export...");

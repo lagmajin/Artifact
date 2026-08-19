@@ -514,12 +514,17 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addSeparator();
  menu->addAction(settingsAction);
  menu->addAction(sendAction);
- menu->addAction(addToRenderQueueAction);
- menu->addAction(addCurrentFrameToRenderQueueAction);
- menu->addAction(addWorkAreaToRenderQueueAction);
- menu->addAction(addSelectedLayersToRenderQueueAction);
- menu->addAction(addSelectedCurrentFrameToRenderQueueAction);
- menu->addAction(addSelectedWorkAreaToRenderQueueAction);
+ auto* renderQueueAddMenu = menu->addMenu(QStringLiteral("レンダーキューに追加"));
+ renderQueueAddMenu->setAccessibleName(QStringLiteral("Add to render queue"));
+ renderQueueAddMenu->setAccessibleDescription(
+     QStringLiteral("Choose composition range and layer scope for a new render queue item."));
+ renderQueueAddMenu->addAction(addToRenderQueueAction);
+ renderQueueAddMenu->addAction(addCurrentFrameToRenderQueueAction);
+ renderQueueAddMenu->addAction(addWorkAreaToRenderQueueAction);
+ renderQueueAddMenu->addSeparator();
+ renderQueueAddMenu->addAction(addSelectedLayersToRenderQueueAction);
+ renderQueueAddMenu->addAction(addSelectedCurrentFrameToRenderQueueAction);
+ renderQueueAddMenu->addAction(addSelectedWorkAreaToRenderQueueAction);
  menu->addAction(advancedRenderQueueAction);
  menu->addSeparator();
  menu->addAction(colorAction);
@@ -1348,13 +1353,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
    return;
   }
 
-  if (auto project = service->getCurrentProjectSharedPtr()) {
-   project->projectChanged();
-  }
-  if (auto* playback = ArtifactPlaybackService::instance()) {
-   playback->setFrameRange(current->frameRange());
-   playback->setFrameRate(current->frameRate());
-  }
+  service->finalizeCompositionSettingsChange(current->id());
 
  dialog.accept();
  });

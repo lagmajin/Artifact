@@ -1,12 +1,11 @@
 module;
-#include <algorithm>
 #include <QtGlobal>
 #include <QString>
 #include <QColor>
-#include <cmath>
 
 module Settings.Accessibility;
 
+import std;
 import Application.AppSettings;
 
 namespace Artifact::Accessibility {

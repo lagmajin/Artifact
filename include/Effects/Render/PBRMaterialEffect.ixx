@@ -51,6 +51,11 @@ export namespace Artifact {
         QColor emissiveColor_ = QColor(0, 0, 0);
         float metallic_ = 0.0f;
         float roughness_ = 0.5f;
+        float specular_ = 0.5f;
+        float ior_ = 1.5f;
+        float transmission_ = 0.0f;
+        float clearcoat_ = 0.0f;
+        float clearcoatRoughness_ = 0.03f;
         float ambientOcclusion_ = 1.0f;
         float emissiveIntensity_ = 0.0f;
 
@@ -73,6 +78,17 @@ export namespace Artifact {
         float roughness() const { return roughness_; }
         void setRoughness(float r) { roughness_ = std::isfinite(r) ? std::clamp(r, 0.0f, 1.0f) : 0.5f; }
 
+        float specular() const { return specular_; }
+        void setSpecular(float v) { specular_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
+        float ior() const { return ior_; }
+        void setIOR(float v) { ior_ = std::isfinite(v) ? std::clamp(v, 1.0f, 3.0f) : 1.5f; }
+        float transmission() const { return transmission_; }
+        void setTransmission(float v) { transmission_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; }
+        float clearcoat() const { return clearcoat_; }
+        void setClearcoat(float v) { clearcoat_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; }
+        float clearcoatRoughness() const { return clearcoatRoughness_; }
+        void setClearcoatRoughness(float v) { clearcoatRoughness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.03f; }
+
         float ambientOcclusion() const { return ambientOcclusion_; }
         void setAmbientOcclusion(float ao) {
             ambientOcclusion_ = std::isfinite(ao) ? std::clamp(ao, 0.0f, 1.0f) : 1.0f;
@@ -89,6 +105,11 @@ export namespace Artifact {
             material.setBaseColor(albedoColor_);
             material.setMetallic(metallic_);
             material.setRoughness(roughness_);
+            material.setSpecular(specular_);
+            material.setIOR(ior_);
+            material.setTransmission(transmission_);
+            material.setClearcoat(clearcoat_);
+            material.setClearcoatRoughness(clearcoatRoughness_);
             material.setEmissionColor(emissiveColor_);
             material.setEmissionStrength(emissiveIntensity_);
             material.setOcclusionStrength(ambientOcclusion_);
@@ -97,7 +118,7 @@ export namespace Artifact {
 
         std::vector<AbstractProperty> getProperties() const override {
             std::vector<AbstractProperty> props;
-            props.reserve(6);
+            props.reserve(11);
 
             auto& albedoProp = props.emplace_back();
             albedoProp.setName("Albedo Color");
@@ -117,6 +138,20 @@ export namespace Artifact {
             roughProp.setValue(roughness_);
             roughProp.setHardRange(0.0, 1.0);
             roughProp.setSoftRange(0.0, 1.0);
+
+            auto addFloat = [&props](const char* name, float value, double maxValue) {
+                auto& prop = props.emplace_back();
+                prop.setName(name);
+                prop.setType(PropertyType::Float);
+                prop.setValue(value);
+                prop.setHardRange(0.0, maxValue);
+                prop.setSoftRange(0.0, maxValue);
+            };
+            addFloat("Specular", specular_, 1.0);
+            addFloat("IOR", ior_, 3.0);
+            addFloat("Transmission", transmission_, 1.0);
+            addFloat("Clearcoat", clearcoat_, 1.0);
+            addFloat("Clearcoat Roughness", clearcoatRoughness_, 1.0);
 
             auto& aoProp = props.emplace_back();
             aoProp.setName("Ambient Occlusion");
@@ -145,6 +180,16 @@ export namespace Artifact {
                 setMetallic(value.toFloat());
             } else if (name == UniString("Roughness")) {
                 setRoughness(value.toFloat());
+            } else if (name == UniString("Specular")) {
+                setSpecular(value.toFloat());
+            } else if (name == UniString("IOR")) {
+                setIOR(value.toFloat());
+            } else if (name == UniString("Transmission")) {
+                setTransmission(value.toFloat());
+            } else if (name == UniString("Clearcoat")) {
+                setClearcoat(value.toFloat());
+            } else if (name == UniString("Clearcoat Roughness")) {
+                setClearcoatRoughness(value.toFloat());
             } else if (name == UniString("Albedo Color")) {
                 if (value.canConvert<QColor>()) {
                     setAlbedoColor(value.value<QColor>());

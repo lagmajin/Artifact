@@ -242,6 +242,17 @@ void AudioWaveformWidget::setPosition(int sampleIndex) {
     update();
 }
 
+int AudioWaveformWidget::selectionStart() const { return selectionStart_; }
+int AudioWaveformWidget::selectionEnd() const { return selectionEnd_; }
+
+void AudioWaveformWidget::clearSelection() {
+    selectionStart_ = 0;
+    selectionEnd_ = 0;
+    selectionAnchor_ = 0;
+    isSelecting_ = false;
+    update();
+}
+
 void AudioWaveformWidget::clear() {
     peaks_.clear();
     rms_.clear();
@@ -324,17 +335,40 @@ void AudioWaveformWidget::paintEvent(QPaintEvent* event) {
         painter.setPen(QPen(playheadColor_, 2));
         painter.drawLine(playheadX, 0, playheadX, h);
     }
+
+    if (selectionEnd_ > selectionStart_ && totalSamples_ > 0) {
+        const int x0 = static_cast<int>(static_cast<double>(selectionStart_) /
+            totalSamples_ * w);
+        const int x1 = static_cast<int>(static_cast<double>(selectionEnd_) /
+            totalSamples_ * w);
+        painter.fillRect(QRect(x0, 0, std::max(1, x1 - x0), h),
+            QColor(80, 160, 220, 55));
+    }
 }
 
 void AudioWaveformWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
-        isDragging_ = true;
+        if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+            isSelecting_ = true;
+            selectionAnchor_ = std::clamp(
+                static_cast<int>(static_cast<double>(event->position().x()) /
+                    std::max(width(), 1) * totalSamples_), 0, totalSamples_);
+            selectionStart_ = selectionEnd_ = selectionAnchor_;
+        } else {
+            isDragging_ = true;
+        }
         updatePositionFromMouse(event->pos());
     }
 }
 
 void AudioWaveformWidget::mouseMoveEvent(QMouseEvent* event) {
-    if (isDragging_) {
+    if (isSelecting_ && totalSamples_ > 0 && width() > 0) {
+        const int cursorSample = std::clamp(static_cast<int>(static_cast<double>(event->position().x()) /
+            width() * totalSamples_), 0, totalSamples_);
+        selectionStart_ = std::min(selectionAnchor_, cursorSample);
+        selectionEnd_ = std::max(selectionAnchor_, cursorSample);
+        update();
+    } else if (isDragging_) {
         updatePositionFromMouse(event->pos());
     }
 }
@@ -342,6 +376,7 @@ void AudioWaveformWidget::mouseMoveEvent(QMouseEvent* event) {
 void AudioWaveformWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         isDragging_ = false;
+        isSelecting_ = false;
     }
 }
 
@@ -388,6 +423,7 @@ public:
         // A failed open must not leave the previous asset playable through
         // the now-unbound preview controls.
         preloadedSegments_.clear();
+        undoSegments_.clear();
         waveformSamples_.clear();
         totalSamples_ = 0;
         if (!decoder_->openFile(filePath)) {
@@ -527,6 +563,44 @@ public:
 
     const QVector<float>& waveformSamples() const { return waveformSamples_; }
 
+    bool deClickSelection(int selectionStart, int selectionEnd) {
+        if (preloadedSegments_.empty()) return false;
+        const int start = std::max(0, selectionStart);
+        const int end = selectionEnd > start ? selectionEnd : totalSamples_;
+        if (end <= start) return false;
+        undoSegments_ = preloadedSegments_;
+        AudioSyncTools tools;
+        qint64 offset = 0;
+        for (auto& segment : preloadedSegments_) {
+            const int frames = segment.frameCount();
+            const qint64 localStart = std::max<qint64>(0, start - offset);
+            const qint64 localEnd = std::min<qint64>(frames, end - offset);
+            if (localEnd > localStart) {
+                segment = tools.deClick(segment, localStart,
+                    localEnd - localStart);
+            }
+            offset += frames;
+            if (offset >= end) break;
+        }
+        stop();
+        currentSample_ = 0;
+        currentSegmentIndex_ = 0;
+        currentSegmentOffset_ = 0;
+        generateWaveformSamples();
+        return true;
+    }
+
+    bool undoLastEdit() {
+        if (undoSegments_.empty()) return false;
+        stop();
+        preloadedSegments_ = std::move(undoSegments_);
+        currentSample_ = 0;
+        currentSegmentIndex_ = 0;
+        currentSegmentOffset_ = 0;
+        generateWaveformSamples();
+        return true;
+    }
+
 signals:
     void playbackStarted() W_SIGNAL(playbackStarted);
     void playbackStopped() W_SIGNAL(playbackStopped);
@@ -660,6 +734,7 @@ private:
     std::unique_ptr<ArtifactCore::AudioRenderer> renderer_;
     QTimer* timer_ = nullptr;
     std::vector<ArtifactCore::AudioSegment> preloadedSegments_;
+    std::vector<ArtifactCore::AudioSegment> undoSegments_;
     QVector<float> waveformSamples_;
     int sampleRate_ = 44100;
     int numChannels_ = 2;
@@ -696,8 +771,12 @@ public:
     QLabel* durationLabel_ = nullptr;
     QPushButton* playButton_ = nullptr;
     QPushButton* stopButton_ = nullptr;
+    QPushButton* deClickButton_ = nullptr;
+    QPushButton* undoEditButton_ = nullptr;
     QSlider* volumeSlider_ = nullptr;
     QString currentFilePath_;
+    std::function<void(int, int)> deClickCommitHandler_;
+    std::function<void()> deClickUndoHandler_;
 };
 
 ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
@@ -744,9 +823,15 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
 
     impl_->stopButton_ = new QPushButton("⏹ Stop");
     impl_->stopButton_->setDefault(false);
+    impl_->deClickButton_ = new QPushButton("De-click selection");
+    impl_->deClickButton_->setToolTip("Shift-drag a waveform range, then repair isolated clicks in memory");
+    impl_->undoEditButton_ = new QPushButton("Undo edit");
+    impl_->undoEditButton_->setEnabled(false);
 
     controlsLayout->addWidget(impl_->playButton_);
     controlsLayout->addWidget(impl_->stopButton_);
+    controlsLayout->addWidget(impl_->deClickButton_);
+    controlsLayout->addWidget(impl_->undoEditButton_);
     controlsLayout->addStretch();
 
     // Volume
@@ -790,6 +875,36 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
         impl_->engine_->setVolume(value / 100.0f);
     });
 
+    connect(impl_->deClickButton_, &QPushButton::clicked, this, [this]() {
+        const int selectionStart = impl_->waveformWidget_->selectionStart();
+        const int selectionEnd = impl_->waveformWidget_->selectionEnd();
+        if (!impl_->engine_->deClickSelection(
+                selectionStart, selectionEnd)) {
+            return;
+        }
+        if (impl_->deClickCommitHandler_) {
+            const int committedEnd = selectionEnd > selectionStart
+                ? selectionEnd : impl_->engine_->totalSamples();
+            impl_->deClickCommitHandler_(selectionStart, committedEnd);
+        }
+        impl_->waveformWidget_->setSamples(
+            impl_->engine_->waveformSamples(), impl_->engine_->sampleRate());
+        impl_->deClickButton_->setText("De-clicked (memory)");
+        impl_->undoEditButton_->setEnabled(true);
+        impl_->waveformWidget_->clearSelection();
+    });
+
+    connect(impl_->undoEditButton_, &QPushButton::clicked, this, [this]() {
+        if (!impl_->engine_->undoLastEdit()) return;
+        if (impl_->deClickUndoHandler_) {
+            impl_->deClickUndoHandler_();
+        }
+        impl_->waveformWidget_->setSamples(
+            impl_->engine_->waveformSamples(), impl_->engine_->sampleRate());
+        impl_->deClickButton_->setText("De-click selection");
+        impl_->undoEditButton_->setEnabled(false);
+    });
+
     connect(impl_->engine_, &AudioPlaybackEngine::positionChanged, this, [this](int sampleIndex) {
         impl_->waveformWidget_->setPosition(sampleIndex);
         updateDurationLabel();
@@ -815,6 +930,8 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
     // Initial state
     impl_->playButton_->setEnabled(false);
     impl_->stopButton_->setEnabled(false);
+    impl_->deClickButton_->setEnabled(false);
+    impl_->undoEditButton_->setEnabled(false);
 }
 
 ArtifactAudioPreviewWidget::~ArtifactAudioPreviewWidget() {
@@ -832,6 +949,9 @@ void ArtifactAudioPreviewWidget::loadAudioFile(const QString& filePath) {
             impl_->engine_->sampleRate());
         impl_->playButton_->setEnabled(true);
         impl_->stopButton_->setEnabled(true);
+        impl_->deClickButton_->setEnabled(true);
+        impl_->undoEditButton_->setEnabled(false);
+        impl_->deClickButton_->setText("De-click selection");
         updateDurationLabel();
     } else {
         QMessageBox::warning(this, "Audio Preview",
@@ -908,6 +1028,18 @@ int ArtifactAudioPreviewWidget::sampleIndexToMs(int sampleIndex) const {
         return std::numeric_limits<int>::max();
     }
     return static_cast<int>(milliseconds);
+}
+
+void ArtifactAudioPreviewWidget::setDeClickCommitHandler(
+    std::function<void(int, int)> handler)
+{
+    impl_->deClickCommitHandler_ = std::move(handler);
+}
+
+void ArtifactAudioPreviewWidget::setDeClickUndoHandler(
+    std::function<void()> handler)
+{
+    impl_->deClickUndoHandler_ = std::move(handler);
 }
 
 } // namespace Artifact

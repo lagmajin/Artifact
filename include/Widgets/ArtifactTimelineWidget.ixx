@@ -76,6 +76,9 @@ class ArtifactTimelineWidget :public QWidget {
   void reverseAllKeyframesInSelectedLayers();
   void reverseAllKeyframesInComposition();
   void copySelectedKeyframes();
+  bool saveKeyframeSnippet(const QString& name);
+  bool applyKeyframeSnippet(const QString& name);
+  bool removeKeyframeSnippet(const QString& name);
   void pasteKeyframesAtPlayhead();
   void copySelectedKeyframeEasing();
   void pasteKeyframeEasingToSelectedKeyframes();

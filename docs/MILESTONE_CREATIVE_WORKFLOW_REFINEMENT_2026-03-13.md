@@ -1,6 +1,8 @@
 # Milestone: Creative Workflow & Inspector Refinement
 
-> 状態: Partial（M-CW-1〜5 の実装・静的確認済み。実ランタイム検証とコンポーネント面の統合は未完了）
+**最終更新:** 2026-08-15
+
+> 状態: Partial（M-CW-1〜5 の実装・静的確認済み。composition effect の追加・削除・enable・移動は Undo 接続済み。実ランタイム検証とコンポーネント面の統合は未完了）
 
 Date: 2026-03-13
 
@@ -21,7 +23,7 @@ Date: 2026-03-13
 ## Milestones
 
 ### M-CW-1 Creative Effects Bridge
-- ✅ Halftone / Posterize / Pixelate / Mirror 系を含む catalog entry と EffectService factory の接続を確認した。
+- ✅ Halftone / Posterize / Pixelate / Mirror 系を含む catalog entry と EffectService factory の接続を確認した。Mirror は Core `CreativeEffectFactory` bridge 経由で CPU 利用可能。
 - Expose the following effects from `ArtifactCore` to the "Add Effect" menu in the Inspector:
   - `Halftone`, `Pixelate`, `Posterize`, `Mirror`, `Kaleidoscope`, `Glitch`, `OldTV`, `Fisheye`.
 - Ensure these effects are correctly registered in the `EffectPipelineStage::Rasterizer` or a new `Creative` stage if appropriate.
@@ -30,7 +32,7 @@ Date: 2026-03-13
 ### 2026-07-29 Implementation Loop
 
 - ✅ Layer and Composition effect groups in `ArtifactPropertyWidget` now expose `Enabled` and `Remove` controls.
-- ✅ Both operation families use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation.
+- ✅ Layer operations use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation. Composition-target add/remove/enable/reorder operations are now routed through dedicated Undo commands in `ArtifactProjectService`; removal preserves stack position and reorder preserves source/target indices.
 - ✅ Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and Property 側管理を実装済み。
 - ⏳ 実ランタイム検証とコンポーネント面の統合は未完了。
 
@@ -63,8 +65,9 @@ Date: 2026-03-13
 - When a user searches for "Blur" in the Inspector, both the effect stack should be filtered and the Property Editor should show only Blur-related properties.
 
 ### M-CW-5 Drag-and-Drop Reordering (Visual)
-- ✅ Effect racks support single-selection drag-and-drop reordering through the existing service/Undo path.
-- ⏳ Multi-selection drag semantics and runtime verification remain incomplete.
+- ✅ Effect racks support single- and multi-selection drag-and-drop reordering through the existing service/Undo path; selected effects move as a stable block while preserving relative order.
+- ✅ Composition effect add/remove/enable/move now uses dedicated service Undo commands; removal restores the original stack index and reordering restores the exact source/target indices.
+- ⏳ Runtime verification remains incomplete.
 
 ## Recommended Order
 

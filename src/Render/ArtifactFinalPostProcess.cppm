@@ -65,7 +65,11 @@ public:
         // baked LUT in this path. A direct GPUProcessor shader path remains a
         // separate backend.
         if (viewTransformEnabled_ && srcSRV && dstUAV) {
-            if (!hasLUT_) return true;
+            // Do not report success when no transform can actually write the
+            // destination. Callers use the return value to decide whether to
+            // consume the post-process output; returning true here would let
+            // an uninitialized or stale destination texture escape.
+            if (!hasLUT_) return false;
         }
 
         if (!hasLUT_ || !pContext || !srcSRV || !dstUAV) {
