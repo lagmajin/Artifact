@@ -568,6 +568,8 @@ namespace {
   quint64 presentSuccessCount_ = 0;
   quint64 flushCount_ = 0;
   qint64 flushContextTimeUs_ = 0;
+  quint64 flushCount() const;
+  qint64 flushContextTimeUs() const;
   quint64 presentFailureCount_ = 0;
   quint64 presentSkippedCount_ = 0;
   QString lastPresentStatus_ = QStringLiteral("never-presented");
