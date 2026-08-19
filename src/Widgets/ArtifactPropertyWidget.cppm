@@ -431,6 +431,7 @@ public:
   int localPropertyEditDepth = 0;
   QMultiHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
   QSet<QString> channelLockedPaths;
+  QSet<QString> selectedChannelPaths;
   QString rebuildSignature;
   QString pendingScrollGroupName;
   qint64 lastPropertyUpdateFramePosition = std::numeric_limits<qint64>::min();
@@ -1891,6 +1892,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       const QString lockSettingsKey =
           QStringLiteral("UI/ChannelBox/Locked/") +
           layer->id().toString();
+      const QString selectionSettingsKey =
+          QStringLiteral("UI/ChannelBox/Selected/") + layer->id().toString();
+      selectedChannelPaths.clear();
+      for (const auto &path : QSettings().value(selectionSettingsKey).toStringList()) {
+        if (channelPaths.contains(path)) selectedChannelPaths.insert(path);
+      }
       QSet<QString> persistedLocks;
       for (const auto &path : QSettings().value(lockSettingsKey).toStringList()) {
         persistedLocks.insert(path);
@@ -1898,6 +1905,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       for (const auto &path : persistedLocks) {
         if (channelPaths.contains(path)) {
           channelLockedPaths.insert(path);
+        }
+      }
+      if (!selectedChannelPaths.isEmpty()) {
+        if (const auto *host = channelBox->window()) {
+          const auto timelines = host->findChildren<ArtifactTimelineWidget*>();
+          for (auto *timeline : timelines) {
+            if (timeline) timeline->setSelectedPropertyPaths(selectedChannelPaths);
+          }
         }
       }
       auto *keyAllButton = new QPushButton(QStringLiteral("Key All"), channelBox);
@@ -1961,6 +1976,38 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         for (auto *row : channelRows) {
           if (row && channelLockedPaths.contains(row->propertyName())) {
             row->setEnabled(false);
+            row->setToolTip(QStringLiteral("Channel is locked. Unlock it in Channel Box to edit."));
+          }
+          if (row) {
+            const QString path = row->propertyName();
+            row->setSelectionChecked(selectedChannelPaths.contains(path));
+            row->setSelectionHandler(
+                [this, channelBox, selectionSettingsKey, path](
+                    Qt::KeyboardModifiers modifiers) {
+                  if (modifiers.testFlag(Qt::ControlModifier)) {
+                    if (selectedChannelPaths.contains(path))
+                      selectedChannelPaths.remove(path);
+                    else
+                      selectedChannelPaths.insert(path);
+                  } else {
+                    selectedChannelPaths.clear();
+                    selectedChannelPaths.insert(path);
+                  }
+                  for (auto *candidate : channelBox->findChildren<ArtifactPropertyEditorRowWidget*>()) {
+                    candidate->setSelectionChecked(
+                        selectedChannelPaths.contains(candidate->propertyName()));
+                  }
+                  QStringList persisted;
+                  for (const auto &selected : selectedChannelPaths)
+                    persisted.append(selected);
+                  QSettings().setValue(selectionSettingsKey, persisted);
+                  if (const auto *host = channelBox->window()) {
+                    const auto timelines = host->findChildren<ArtifactTimelineWidget*>();
+                    for (auto *timeline : timelines) {
+                      if (timeline) timeline->setSelectedPropertyPaths(selectedChannelPaths);
+                    }
+                  }
+                });
           }
         }
         auto *keySelectedButton =
@@ -1969,7 +2016,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             "Insert a keyframe for the active Channel Box row"));
         QObject::connect(
             keySelectedButton, &QPushButton::clicked, channelBox,
-            [layer, channelRows, currentLayerTime]() {
+            [this, layer, channelBox, channelRows, currentLayerTime,
+             selectionSettingsKey]() {
               if (!layer) return;
               QWidget *focus = QApplication::focusWidget();
               ArtifactPropertyEditorRowWidget *selectedRow = nullptr;
@@ -1980,6 +2028,20 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 }
               }
               if (!selectedRow) return;
+              selectedChannelPaths.insert(selectedRow->propertyName());
+              for (auto *candidate : channelBox->findChildren<ArtifactPropertyEditorRowWidget*>()) {
+                candidate->setSelectionChecked(
+                    selectedChannelPaths.contains(candidate->propertyName()));
+              }
+              QStringList persistedSelection;
+              for (const auto &path : selectedChannelPaths) persistedSelection.append(path);
+              QSettings().setValue(selectionSettingsKey, persistedSelection);
+              if (const auto *host = channelBox->window()) {
+                const auto timelines = host->findChildren<ArtifactTimelineWidget*>();
+                for (auto *timeline : timelines) {
+                  if (timeline) timeline->setSelectedPropertyPaths(selectedChannelPaths);
+                }
+              }
               const auto property = layer->getProperty(selectedRow->propertyName());
               if (!property) return;
               property->addKeyFrame(currentLayerTime(), property->getValue());

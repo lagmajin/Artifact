@@ -3038,7 +3038,8 @@ bool timelinePropertyMatchesChannel(
 CurveEditorPayload collectCurveEditorPayload(
     const ArtifactCompositionPtr& composition,
     ArtifactLayerSelectionManager* selectionManager,
-    const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter)
+    const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter,
+    const QSet<QString>& selectedPropertyPaths = {})
 {
   CurveEditorPayload payload;
   if (!composition || !selectionManager) {
@@ -3069,6 +3070,8 @@ CurveEditorPayload collectCurveEditorPayload(
           continue;
         }
         if (!timelinePropertyMatchesChannel(property->getName(), filter)) continue;
+        if (!selectedPropertyPaths.isEmpty() &&
+            !selectedPropertyPaths.contains(property->getName())) continue;
 
         const auto keyframes = property->getKeyFrames();
         const bool hasKeyframes = !keyframes.empty();
@@ -3212,7 +3215,8 @@ CurveEditorPayload collectCurveEditorPayload(
 CurveEditorPayload collectCurveEditorSpeedPayload(
     const ArtifactCompositionPtr& composition,
     ArtifactLayerSelectionManager* selectionManager,
-    const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter)
+    const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter,
+    const QSet<QString>& selectedPropertyPaths = {})
 {
   CurveEditorPayload payload;
   if (!composition || !selectionManager) {
@@ -3243,6 +3247,8 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
           continue;
         }
         if (!timelinePropertyMatchesChannel(property->getName(), filter)) continue;
+        if (!selectedPropertyPaths.isEmpty() &&
+            !selectedPropertyPaths.contains(property->getName())) continue;
 
         const auto keyframes = property->getKeyFrames();
         if (keyframes.size() < 2) {
@@ -4667,6 +4673,7 @@ public:
   QLabel *curvePropertySummaryLabel_ = nullptr;
   QListWidget *curvePropertyList_ = nullptr;
   int focusedCurveTrackIndex_ = -1;
+  QSet<QString> selectedPropertyPaths_;
   bool curveFocusPinned_ = false;
   QLabel *curveEditorSummaryLabel_ = nullptr;
   QToolButton *curveEditorModeButton_ = nullptr;
@@ -4865,8 +4872,10 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                                   ? impl_->painterTrackView_->propertyChannelFilter()
                                   : ArtifactTimelineTrackPainterView::PropertyChannelFilter::All;
   const auto payload = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
-                           ? collectCurveEditorSpeedPayload(composition, selectionManager, channelFilter)
-                           : collectCurveEditorPayload(composition, selectionManager, channelFilter);
+                           ? collectCurveEditorSpeedPayload(composition, selectionManager, channelFilter,
+                                                            impl_->selectedPropertyPaths_)
+                           : collectCurveEditorPayload(composition, selectionManager, channelFilter,
+                                                       impl_->selectedPropertyPaths_);
   const QString modeTag = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
                               ? QStringLiteral("speed")
                               : QStringLiteral("value");
@@ -7980,6 +7989,20 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   }
   updateSelectionState();
   updateSearchState();
+}
+
+void ArtifactTimelineWidget::setSelectedPropertyPaths(const QSet<QString>& propertyPaths) {
+  if (!impl_ || impl_->selectedPropertyPaths_ == propertyPaths) return;
+  impl_->selectedPropertyPaths_ = propertyPaths;
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setSelectedPropertyPaths(propertyPaths);
+  }
+  refreshCurveEditorTracks();
+  updateCurvePropertyList();
+}
+
+QSet<QString> ArtifactTimelineWidget::selectedPropertyPaths() const {
+  return impl_ ? impl_->selectedPropertyPaths_ : QSet<QString>{};
 }
 
 void ArtifactTimelineWidget::onLayerCreated(const CompositionID &compId,

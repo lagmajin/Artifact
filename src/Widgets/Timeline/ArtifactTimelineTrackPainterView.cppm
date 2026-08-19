@@ -3942,7 +3942,8 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
 collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
                        const ArtifactLayerSelectionManager *selectionManager,
                        const QVector<TimelineRowDescriptor> &trackRows,
-                       const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter) {
+                       const ArtifactTimelineTrackPainterView::PropertyChannelFilter filter,
+                       const QSet<QString>& selectedPropertyPaths = {}) {
   QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
   if (!composition || trackRows.isEmpty()) {
     return markers;
@@ -3974,6 +3975,7 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
     const bool isAudio = lowerPath.startsWith(QStringLiteral("audio.")) || lowerPath.contains(QStringLiteral("volume")) || lowerPath.contains(QStringLiteral("pan"));
     const bool isEffect = lowerPath.startsWith(QStringLiteral("effect.")) || lowerPath.startsWith(QStringLiteral("effects."));
     if ((filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Transform && !isTransform) || (filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Audio && !isAudio) || (filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Effect && !isEffect)) continue;
+    if (!selectedPropertyPaths.isEmpty() && !selectedPropertyPaths.contains(propertyPath)) continue;
 
     const auto layer = composition->layerById(row.layerId);
     if (!layer) {
@@ -4551,6 +4553,7 @@ public:
   bool keyframeAreaCacheValid_ = false;
   QString hoverToolTipText_;
   ArtifactTimelineTrackPainterView::PropertyChannelFilter propertyChannelFilter_ = ArtifactTimelineTrackPainterView::PropertyChannelFilter::All;
+  QSet<QString> selectedPropertyPaths_;
   bool selectionSyncDirty_ = true;
   const ArtifactAbstractComposition *lastSyncedComposition_ = nullptr;
   QSet<LayerID> lastSyncedSelectedLayerIds_;
@@ -4806,6 +4809,18 @@ void ArtifactTimelineTrackPainterView::setPropertyChannelFilter(
 ArtifactTimelineTrackPainterView::PropertyChannelFilter
 ArtifactTimelineTrackPainterView::propertyChannelFilter() const {
   return impl_->propertyChannelFilter_;
+}
+
+void ArtifactTimelineTrackPainterView::setSelectedPropertyPaths(
+    const QSet<QString>& propertyPaths) {
+  if (impl_->selectedPropertyPaths_ == propertyPaths) return;
+  impl_->selectedPropertyPaths_ = propertyPaths;
+  impl_->lastSyncedComposition_ = nullptr;
+  update();
+}
+
+QSet<QString> ArtifactTimelineTrackPainterView::selectedPropertyPaths() const {
+  return impl_->selectedPropertyPaths_;
 }
 
 void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
@@ -6094,7 +6109,9 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
   }
 
   const auto newMarkers =
-      collectKeyframeMarkers(composition, selectionManager, trackRows, impl_->propertyChannelFilter_);
+      collectKeyframeMarkers(composition, selectionManager, trackRows,
+                             impl_->propertyChannelFilter_,
+                             impl_->selectedPropertyPaths_);
   bool selectionChanged = false;
   if (!sameVisualList(impl_->keyframeMarkers_, newMarkers,
                       sameKeyframeMarkerVisual)) {

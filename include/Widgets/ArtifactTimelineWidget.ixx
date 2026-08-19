@@ -8,6 +8,7 @@
 #include <QKeyEvent>
 #include <QPointF>
 #include <QVector>
+#include <QSet>
 
 #include <QWidget>
 export module Artifact.Widgets.Timeline;
@@ -58,6 +59,10 @@ class ArtifactTimelineWidget :public QWidget {
   ~ArtifactTimelineWidget();
   void update();
   void setComposition(const CompositionID& id);
+  // Restrict curve/timeline property payloads to explicitly selected channels.
+  // An empty set keeps the existing category/search behaviour.
+  void setSelectedPropertyPaths(const QSet<QString>& propertyPaths);
+  QSet<QString> selectedPropertyPaths() const;
   double currentFrame() const;
 
   // Layer management

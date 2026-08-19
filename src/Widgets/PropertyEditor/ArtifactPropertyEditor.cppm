@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <array>
 
 #include <QAbstractButton>
 #include <QAction>
@@ -611,6 +612,17 @@ void ArtifactPropertyEditorRowWidget::setNavigationHandler(
   navigationHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setSelectionHandler(
+    SelectionHandler handler) {
+  selectionHandler_ = std::move(handler);
+}
+
+void ArtifactPropertyEditorRowWidget::setSelectionChecked(const bool checked) {
+  if (property("channelSelectionChecked").toBool() == checked) return;
+  setProperty("channelSelectionChecked", checked);
+  update();
+}
+
 void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   label_->setToolTip(tooltip);
   editor_->setToolTip(tooltip);
@@ -903,6 +915,11 @@ void ArtifactPropertyEditorRowWidget::mousePressEvent(QMouseEvent *event) {
       }
     }
   }
+  if (selectionHandler_) {
+    selectionHandler_(event->modifiers());
+    event->accept();
+    return;
+  }
   QWidget::mousePressEvent(event);
 }
 
@@ -1087,6 +1104,7 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   QPainter painter(this);
   const bool hovered = hoverActive_;
   const bool focused = editorFocusActive_;
+  const bool channelSelected = property("channelSelectionChecked").toBool();
 
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor accent =
@@ -1098,17 +1116,18 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   const QColor border =
       themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
 
-  if (hovered || focused) {
+  if (hovered || focused || channelSelected) {
     const QColor selection =
         themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
     QColor fill = propertySurfaceColor(false);
-    fill = focused ? blendColor(fill, selection, 0.14)
+    fill = channelSelected ? blendColor(fill, selection, 0.20)
+                           : focused ? blendColor(fill, selection, 0.14)
                    : blendColor(fill, accent, 0.035);
     painter.setRenderHint(QPainter::Antialiasing, false);
     painter.setPen(Qt::NoPen);
     painter.setBrush(fill);
     painter.drawRect(rect());
-    if (focused) {
+    if (focused || channelSelected) {
       painter.fillRect(QRect(0, 0, 2, height()),
                        blendColor(accent, selection, 0.22));
     }
@@ -1180,6 +1199,9 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
     if (mouseEvent->button() != Qt::LeftButton) {
       break;
+    }
+    if (selectionHandler_ && (watched == editor_ || watched == scrubTarget_)) {
+      selectionHandler_(mouseEvent->modifiers());
     }
     if (watched == scrubTarget_) {
       scrubCandidate_ = true;

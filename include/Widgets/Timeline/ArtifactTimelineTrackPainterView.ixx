@@ -134,6 +134,8 @@ export namespace Artifact
   void setKeyframeContext(const LayerID& layerId, const QString& propertyPath);
   void setPropertyChannelFilter(PropertyChannelFilter filter);
   PropertyChannelFilter propertyChannelFilter() const;
+  void setSelectedPropertyPaths(const QSet<QString>& propertyPaths);
+  QSet<QString> selectedPropertyPaths() const;
 
   void setTrackCount(int count);
   int trackCount() const;

@@ -35,6 +35,7 @@ import Memory.SharedPtr;
 import Core.AI.Describable;
 import Core.AI.CommandIR;
 import Artifact.Application.Manager;
+import Application.AppSettings;
 import Artifact.Service.ActiveContext;
 import Artifact.Project;
 import Artifact.Composition.Abstract;
@@ -153,6 +154,11 @@ public:
             {"saveSafeWriteAuditLog", IDescribable::loc("Persist the safe-write audit log as JSON.", "Persist the safe-write audit log as JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"loadSafeWriteAuditLog", IDescribable::loc("Load a safe-write audit log from JSON.", "Load a safe-write audit log from JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
+            {"getViewportSettings", IDescribable::loc("Read viewport grid, guide, and snap settings without modifying the application.", "Read viewport grid, guide, and snap settings without modifying the application.", {}), "QVariantMap"},
+            {"describeViewportSettings", IDescribable::loc("Describe viewport setting keys, types, ranges, and scopes without modifying the application.", "Describe viewport setting keys, types, ranges, and scopes without modifying the application.", {}), "QVariantMap"},
+            {"validateViewportSettings", IDescribable::loc("Validate a viewport settings patch without applying it.", "Validate a viewport settings patch without applying it.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("patch")}},
+            {"patchViewportSettings", IDescribable::loc("Apply a validated viewport settings patch and return before/after values.", "Apply a validated viewport settings patch and return before/after values.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("patch")}},
+            {"restoreViewportSettings", IDescribable::loc("Restore viewport settings from a prior settings snapshot.", "Restore viewport settings from a prior settings snapshot.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("snapshot")}},
             {"agentContract", IDescribable::loc("Return the safety, observation, and recovery contract for AI agents.", "Return the safety, observation, and recovery contract for AI agents.", {}), "QVariantMap"},
             {"agentPreflight", IDescribable::loc("Return the AI agent contract, current workspace snapshot, and diagnostics in one read-only call.", "Return the AI agent contract, current workspace snapshot, and diagnostics in one read-only call.", {}), "QVariantMap"},
             {"commandVocabulary", IDescribable::loc("List the supported command IR vocabulary and required fields.", "List the supported command IR vocabulary and required fields.", {}), "QVariantList"},
@@ -378,6 +384,21 @@ public:
         }
         if (name == QStringLiteral("workspaceDiagnostics")) {
             return workspaceDiagnostics();
+        }
+        if (name == QStringLiteral("getViewportSettings")) {
+            return getViewportSettings();
+        }
+        if (name == QStringLiteral("describeViewportSettings")) {
+            return describeViewportSettings();
+        }
+        if (name == QStringLiteral("validateViewportSettings")) {
+            return validateViewportSettings(args.value(0).toMap());
+        }
+        if (name == QStringLiteral("patchViewportSettings")) {
+            return patchViewportSettings(args.value(0).toMap());
+        }
+        if (name == QStringLiteral("restoreViewportSettings")) {
+            return restoreViewportSettings(args.value(0).toMap());
         }
         if (name == QStringLiteral("agentContract")) {
             return agentContract();
@@ -1525,6 +1546,170 @@ private:
         obj.insert(QStringLiteral("warnings"), warnings);
         obj.insert(QStringLiteral("warningCodes"), warningCodes);
         return obj;
+    }
+
+    static QVariantMap describeViewportSettings()
+    {
+        QVariantList fields;
+        const auto add = [&fields](const QString& key, const QString& type,
+                                   const QString& description, const QVariant& minimum = {},
+                                   const QVariant& maximum = {}) {
+            QVariantMap field{{QStringLiteral("key"), key},
+                              {QStringLiteral("type"), type},
+                              {QStringLiteral("description"), description}};
+            if (minimum.isValid()) field.insert(QStringLiteral("minimum"), minimum);
+            if (maximum.isValid()) field.insert(QStringLiteral("maximum"), maximum);
+            fields.append(field);
+        };
+        add(QStringLiteral("grid.visible"), QStringLiteral("bool"), QStringLiteral("Show the viewport grid."));
+        add(QStringLiteral("guides.visible"), QStringLiteral("bool"), QStringLiteral("Show composition guides."));
+        add(QStringLiteral("grid.majorInterval"), QStringLiteral("number"), QStringLiteral("Major grid spacing."), 0.0001, 1000000000.0);
+        add(QStringLiteral("grid.subdivisions"), QStringLiteral("integer"), QStringLiteral("Minor divisions per major interval."), 1, 32);
+        add(QStringLiteral("grid.snap"), QStringLiteral("bool"), QStringLiteral("Enable grid snapping."));
+        add(QStringLiteral("grid.showMajor"), QStringLiteral("bool"), QStringLiteral("Show major grid lines."));
+        add(QStringLiteral("grid.showMinor"), QStringLiteral("bool"), QStringLiteral("Show minor grid lines."));
+        add(QStringLiteral("grid.showAxis"), QStringLiteral("bool"), QStringLiteral("Show origin axes."));
+        add(QStringLiteral("grid.showNumbers"), QStringLiteral("bool"), QStringLiteral("Show grid labels."));
+        return QVariantMap{{QStringLiteral("scope"), QStringLiteral("viewport")},
+                           {QStringLiteral("schemaVersion"), 1},
+                           {QStringLiteral("fields"), fields}};
+    }
+
+    static QVariantMap getViewportSettings()
+    {
+        QVariantMap result;
+        auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+        if (!settings) {
+            result.insert(QStringLiteral("available"), false);
+            result.insert(QStringLiteral("errorCode"), QStringLiteral("SETTINGS_UNAVAILABLE"));
+            return result;
+        }
+        const auto grid = settings->compositionGridSettings();
+        result.insert(QStringLiteral("available"), true);
+        result.insert(QStringLiteral("schemaVersion"), 1);
+        result.insert(QStringLiteral("scope"), QStringLiteral("viewport"));
+        result.insert(QStringLiteral("grid.visible"), settings->compositionShowGrid());
+        result.insert(QStringLiteral("guides.visible"), settings->compositionShowGuides());
+        result.insert(QStringLiteral("grid.majorInterval"), grid.majorInterval);
+        result.insert(QStringLiteral("grid.subdivisions"), grid.subdivisions);
+        result.insert(QStringLiteral("grid.snap"), grid.snapToGrid);
+        result.insert(QStringLiteral("grid.showMajor"), grid.showMajor);
+        result.insert(QStringLiteral("grid.showMinor"), grid.showMinor);
+        result.insert(QStringLiteral("grid.showAxis"), grid.showAxis);
+        result.insert(QStringLiteral("grid.showNumbers"), grid.showNumbers);
+        return result;
+    }
+
+    static QVariantMap validateViewportSettings(const QVariantMap& patch)
+    {
+        QVariantMap result;
+        QVariantList errors;
+        const QSet<QString> booleanKeys{
+            QStringLiteral("grid.visible"), QStringLiteral("guides.visible"),
+            QStringLiteral("grid.snap"), QStringLiteral("grid.showMajor"),
+            QStringLiteral("grid.showMinor"), QStringLiteral("grid.showAxis"),
+            QStringLiteral("grid.showNumbers")};
+        const QSet<QString> numericKeys{QStringLiteral("grid.majorInterval"),
+                                        QStringLiteral("grid.subdivisions")};
+        for (auto it = patch.cbegin(); it != patch.cend(); ++it) {
+            const QString key = it.key();
+            if (!booleanKeys.contains(key) && !numericKeys.contains(key)) {
+                errors.append(QStringLiteral("UNKNOWN_KEY:%1").arg(key));
+                continue;
+            }
+            if (booleanKeys.contains(key)) {
+                if (it.value().typeId() != QMetaType::Bool)
+                    errors.append(QStringLiteral("EXPECTED_BOOL:%1").arg(key));
+                continue;
+            }
+            if (!it.value().canConvert<double>()) {
+                errors.append(QStringLiteral("EXPECTED_NUMBER:%1").arg(key));
+                continue;
+            }
+            const double value = it.value().toDouble();
+            if (key == QStringLiteral("grid.majorInterval") &&
+                (value < 0.0001 || value > 1000000000.0))
+                errors.append(QStringLiteral("OUT_OF_RANGE:%1").arg(key));
+            if (key == QStringLiteral("grid.subdivisions") &&
+                (value < 1.0 || value > 32.0 || std::floor(value) != value))
+                errors.append(QStringLiteral("OUT_OF_RANGE:%1").arg(key));
+        }
+        result.insert(QStringLiteral("valid"), errors.isEmpty());
+        result.insert(QStringLiteral("scope"), QStringLiteral("viewport"));
+        result.insert(QStringLiteral("errors"), errors);
+        return result;
+    }
+
+    static QVariantMap patchViewportSettings(const QVariantMap& patch)
+    {
+        const bool previewOnly = patch.value(QStringLiteral("previewOnly")).toBool();
+        QVariantMap changes = patch;
+        changes.remove(QStringLiteral("previewOnly"));
+        const QVariantMap validation = validateViewportSettings(changes);
+        QVariantMap result;
+        result.insert(QStringLiteral("scope"), QStringLiteral("viewport"));
+        result.insert(QStringLiteral("valid"), validation.value(QStringLiteral("valid")));
+        result.insert(QStringLiteral("errors"), validation.value(QStringLiteral("errors")));
+        if (!validation.value(QStringLiteral("valid")).toBool()) {
+            result.insert(QStringLiteral("applied"), false);
+            return result;
+        }
+        auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+        if (!settings) {
+            result.insert(QStringLiteral("applied"), false);
+            result.insert(QStringLiteral("errors"), QVariantList{QStringLiteral("SETTINGS_UNAVAILABLE")});
+            return result;
+        }
+        const QVariantMap before = getViewportSettings();
+        if (previewOnly) {
+            QVariantMap preview = before;
+            for (auto it = changes.cbegin(); it != changes.cend(); ++it)
+                preview.insert(it.key(), it.value());
+            result.insert(QStringLiteral("previewOnly"), true);
+            result.insert(QStringLiteral("applied"), false);
+            result.insert(QStringLiteral("before"), before);
+            result.insert(QStringLiteral("after"), preview);
+            return result;
+        }
+        auto grid = settings->compositionGridSettings();
+        if (patch.contains(QStringLiteral("grid.visible")))
+            settings->setCompositionShowGrid(patch.value(QStringLiteral("grid.visible")).toBool());
+        if (patch.contains(QStringLiteral("guides.visible")))
+            settings->setCompositionShowGuides(patch.value(QStringLiteral("guides.visible")).toBool());
+        if (patch.contains(QStringLiteral("grid.majorInterval")))
+            grid.majorInterval = static_cast<float>(patch.value(QStringLiteral("grid.majorInterval")).toDouble());
+        if (patch.contains(QStringLiteral("grid.subdivisions")))
+            grid.subdivisions = patch.value(QStringLiteral("grid.subdivisions")).toInt();
+        if (patch.contains(QStringLiteral("grid.snap")))
+            grid.snapToGrid = patch.value(QStringLiteral("grid.snap")).toBool();
+        if (patch.contains(QStringLiteral("grid.showMajor")))
+            grid.showMajor = patch.value(QStringLiteral("grid.showMajor")).toBool();
+        if (patch.contains(QStringLiteral("grid.showMinor")))
+            grid.showMinor = patch.value(QStringLiteral("grid.showMinor")).toBool();
+        if (patch.contains(QStringLiteral("grid.showAxis")))
+            grid.showAxis = patch.value(QStringLiteral("grid.showAxis")).toBool();
+        if (patch.contains(QStringLiteral("grid.showNumbers")))
+            grid.showNumbers = patch.value(QStringLiteral("grid.showNumbers")).toBool();
+        settings->setCompositionGridSettings(grid);
+        result.insert(QStringLiteral("applied"), true);
+        result.insert(QStringLiteral("before"), before);
+        result.insert(QStringLiteral("after"), getViewportSettings());
+        return result;
+    }
+
+    static QVariantMap restoreViewportSettings(const QVariantMap& snapshot)
+    {
+        const QSet<QString> keys{
+            QStringLiteral("grid.visible"), QStringLiteral("guides.visible"),
+            QStringLiteral("grid.majorInterval"), QStringLiteral("grid.subdivisions"),
+            QStringLiteral("grid.snap"), QStringLiteral("grid.showMajor"),
+            QStringLiteral("grid.showMinor"), QStringLiteral("grid.showAxis"),
+            QStringLiteral("grid.showNumbers")};
+        QVariantMap patch;
+        for (const auto& key : keys) {
+            if (snapshot.contains(key)) patch.insert(key, snapshot.value(key));
+        }
+        return patchViewportSettings(patch);
     }
 
     static QVariantMap workspaceDiagnostics()

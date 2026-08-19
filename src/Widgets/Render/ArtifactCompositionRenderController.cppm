@@ -5763,6 +5763,47 @@ struct MotionPathPositionSnapshot {
 
 };
 
+struct MotionPathKeySnapshot {
+  int64_t frame = 0;
+  MotionPathPositionSnapshot value;
+};
+
+class MotionPathGroupUndoCommand final : public UndoCommand {
+public:
+  MotionPathGroupUndoCommand(ArtifactAbstractLayerPtr layer,
+                             QVector<MotionPathKeySnapshot> before,
+                             QVector<MotionPathKeySnapshot> after)
+      : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
+
+  void undo() override { apply(before_); }
+  void redo() override { apply(after_); }
+  QString label() const override {
+    return QStringLiteral("Transform Motion Path Keys");
+  }
+
+private:
+  void apply(const QVector<MotionPathKeySnapshot> &snapshots) {
+    auto layer = layer_.lock();
+    if (!layer) return;
+    auto &transform = layer->transform3D();
+    for (const auto &snapshot : snapshots) {
+      const auto time = ArtifactCore::RationalTime(snapshot.frame, 24);
+      if (snapshot.value.hasPositionKey) {
+        transform.setPositionKeyFrameValueAt(time, snapshot.value.x,
+                                              snapshot.value.y);
+      } else {
+        transform.removePositionKeyFrameAt(time);
+      }
+    }
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  QVector<MotionPathKeySnapshot> before_;
+  QVector<MotionPathKeySnapshot> after_;
+};
+
 
 
 struct MotionPathInterpolationSnapshot {
@@ -5776,6 +5817,7 @@ struct MotionPathInterpolationSnapshot {
 };
 
 enum class MotionPathTangentHandle { None, In, Out };
+enum class MotionPathGroupTransform { Translate, Rotate, Scale };
 
 struct MotionPathTangentSnapshot {
   bool present = false;
@@ -13391,6 +13433,15 @@ public:
 
   MotionPathPositionSnapshot draggingMotionPathBefore_;
 
+  QVector<int64_t> selectedMotionPathFrames_;
+  QVector<MotionPathKeySnapshot> draggingMotionPathGroupBefore_;
+  Qt::KeyboardModifiers draggingMotionPathModifiers_ = Qt::NoModifier;
+  MotionPathGroupTransform draggingMotionPathGroupTransform_ =
+      MotionPathGroupTransform::Translate;
+  QPointF draggingMotionPathGroupPivot_;
+  float draggingMotionPathGroupStartAngle_ = 0.0f;
+  float draggingMotionPathGroupStartRadius_ = 1.0f;
+
   QPointF draggingMotionPathStartCanvasPos_;
 
   int hoveredMotionPathFrame_ = -1;
@@ -14020,16 +14071,54 @@ public:
   void beginMotionPathDrag(const ArtifactAbstractLayerPtr &layer,
 
                            int64_t frame, const QPointF &canvasPos,
-
-                           const MotionPathPositionSnapshot &before) {
+                           const MotionPathPositionSnapshot &before,
+                           Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
 
     draggingMotionPathLayer_ = layer;
 
     draggingMotionPathFrame_ = frame;
 
     draggingMotionPathBefore_ = before;
-
     draggingMotionPathStartCanvasPos_ = canvasPos;
+    draggingMotionPathModifiers_ = modifiers;
+    draggingMotionPathGroupTransform_ =
+        modifiers.testFlag(Qt::ControlModifier) &&
+                modifiers.testFlag(Qt::ShiftModifier)
+            ? MotionPathGroupTransform::Scale
+        : modifiers.testFlag(Qt::AltModifier) &&
+                modifiers.testFlag(Qt::ShiftModifier)
+            ? MotionPathGroupTransform::Rotate
+            : MotionPathGroupTransform::Translate;
+    draggingMotionPathGroupBefore_.clear();
+    draggingMotionPathGroupPivot_ = {};
+    const auto &transform = layer->transform3D();
+    const auto &frames = selectedMotionPathFrames_.isEmpty()
+                             ? QVector<int64_t>{frame}
+                             : selectedMotionPathFrames_;
+    for (const auto selectedFrame : frames) {
+      const auto time = ArtifactCore::RationalTime(selectedFrame, 24);
+      MotionPathKeySnapshot snapshot;
+      snapshot.frame = selectedFrame;
+      snapshot.value.hasPositionKey = transform.hasPositionKeyFrameAt(time);
+      snapshot.value.x = transform.positionXAt(time);
+      snapshot.value.y = transform.positionYAt(time);
+      if (snapshot.value.hasPositionKey) {
+        draggingMotionPathGroupBefore_.push_back(snapshot);
+      }
+    }
+    for (const auto &snapshot : draggingMotionPathGroupBefore_)
+      draggingMotionPathGroupPivot_ +=
+          QPointF(snapshot.value.x, snapshot.value.y);
+    if (!draggingMotionPathGroupBefore_.isEmpty())
+      draggingMotionPathGroupPivot_ /= draggingMotionPathGroupBefore_.size();
+    const QPointF startVector = draggingMotionPathStartCanvasPos_ -
+                                 draggingMotionPathGroupPivot_;
+    draggingMotionPathGroupStartAngle_ =
+        std::atan2(static_cast<float>(startVector.y()),
+                   static_cast<float>(startVector.x()));
+    draggingMotionPathGroupStartRadius_ =
+        std::max(1.0f, static_cast<float>(std::hypot(startVector.x(),
+                                                     startVector.y())));
 
     isDraggingMotionPathKeyframe_ = true;
 
@@ -14046,6 +14135,10 @@ public:
     draggingMotionPathFrame_ = 0;
 
     draggingMotionPathBefore_ = {};
+    draggingMotionPathGroupBefore_.clear();
+    draggingMotionPathModifiers_ = Qt::NoModifier;
+    draggingMotionPathGroupTransform_ = MotionPathGroupTransform::Translate;
+    draggingMotionPathGroupPivot_ = {};
 
     draggingMotionPathStartCanvasPos_ = {};
 
@@ -14259,9 +14352,44 @@ public:
 
     const ArtifactCore::RationalTime time(draggingMotionPathFrame_, 24);
 
-    t3d.setPositionKeyFrameValueAt(time, static_cast<float>(localPos.x()),
-
-                                   static_cast<float>(localPos.y()));
+    const QPointF delta = localPos - draggingMotionPathStartCanvasPos_;
+    if (draggingMotionPathGroupBefore_.size() > 1) {
+      const QPointF currentVector = localPos - draggingMotionPathGroupPivot_;
+      const float currentAngle = std::atan2(
+          static_cast<float>(currentVector.y()),
+          static_cast<float>(currentVector.x()));
+      const float angleDelta = currentAngle -
+                               draggingMotionPathGroupStartAngle_;
+      const float scale = std::clamp(
+          static_cast<float>(std::hypot(currentVector.x(), currentVector.y())) /
+              draggingMotionPathGroupStartRadius_,
+          0.05f, 20.0f);
+      for (const auto &snapshot : draggingMotionPathGroupBefore_) {
+        const auto keyTime = ArtifactCore::RationalTime(snapshot.frame, 24);
+        QPointF point(snapshot.value.x, snapshot.value.y);
+        if (draggingMotionPathGroupTransform_ ==
+            MotionPathGroupTransform::Translate) {
+          point += delta;
+        } else {
+          point -= draggingMotionPathGroupPivot_;
+          if (draggingMotionPathGroupTransform_ ==
+              MotionPathGroupTransform::Scale) {
+            point *= scale;
+          } else {
+            const float c = std::cos(angleDelta);
+            const float s = std::sin(angleDelta);
+            point = QPointF(point.x() * c - point.y() * s,
+                            point.x() * s + point.y() * c);
+          }
+          point += draggingMotionPathGroupPivot_;
+        }
+        t3d.setPositionKeyFrameValueAt(keyTime, static_cast<float>(point.x()),
+                                       static_cast<float>(point.y()));
+      }
+    } else {
+      t3d.setPositionKeyFrameValueAt(time, static_cast<float>(localPos.x()),
+                                     static_cast<float>(localPos.y()));
+    }
 
     layer->setDirty(LayerDirtyFlag::Transform);
 
@@ -19022,6 +19150,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   for (const auto &pt : motionPathCache_.keyPoints) {
     const bool isCurrent = pt.frame == currentFrameNum;
     const bool isHovered = pt.frame == hoveredMotionPathFrame_;
+    const bool isSelected = selectedMotionPathFrames_.contains(pt.frame);
     const FloatColor keyColor =
         motionPathInterpolationColor(pt.interpolation, isCurrent);
     if (pt.hasSpatialTangents) {
@@ -19046,7 +19175,8 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     const float innerRadius =
         isHovered ? dotRadius * 2.0f : dotRadius * 1.65f;
     const FloatColor ringColor =
-        isHovered ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f}
+        isSelected ? FloatColor{1.0f, 0.95f, 0.25f, 1.0f}
+        : isHovered ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f}
                   : FloatColor{0.96f, 0.96f, 1.0f, 0.92f};
     renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
     renderer_->drawPoint(pt.x, pt.y, innerRadius, keyColor);
@@ -23478,6 +23608,22 @@ if (event->button() == Qt::LeftButton &&
 
                                 hitThreshold, hitSample)) {
 
+      const auto selectionMode = selectionModeFromModifiers(event->modifiers());
+      if (selectionMode == SelectionMode::Replace) {
+        impl_->selectedMotionPathFrames_.clear();
+        impl_->selectedMotionPathFrames_.push_back(hitSample.framePosition);
+      } else if (selectionMode == SelectionMode::Add) {
+        if (!impl_->selectedMotionPathFrames_.contains(hitSample.framePosition))
+          impl_->selectedMotionPathFrames_.push_back(hitSample.framePosition);
+      } else {
+        const int index = impl_->selectedMotionPathFrames_.indexOf(
+            hitSample.framePosition);
+        if (index >= 0)
+          impl_->selectedMotionPathFrames_.removeAt(index);
+        else
+          impl_->selectedMotionPathFrames_.push_back(hitSample.framePosition);
+      }
+
       const auto &t3d = selectedLayer->transform3D();
 
       const ArtifactCore::RationalTime time(hitSample.framePosition, 24);
@@ -23492,7 +23638,8 @@ if (event->button() == Qt::LeftButton &&
         return;
       }
 
-      if (event->modifiers().testFlag(Qt::AltModifier)) {
+      if (event->modifiers().testFlag(Qt::AltModifier) &&
+          !event->modifiers().testFlag(Qt::ShiftModifier)) {
 
         MotionPathPositionSnapshot before;
 
@@ -23566,7 +23713,8 @@ if (event->button() == Qt::LeftButton &&
 
       impl_->beginMotionPathDrag(selectedLayer, hitSample.framePosition,
 
-                                 QPointF(cPos.x, cPos.y), before);
+                                 QPointF(cPos.x, cPos.y), before,
+                                 event->modifiers());
 
       impl_->motionPathCache_.valid = false;
 
@@ -26912,12 +27060,25 @@ void CompositionRenderController::handleMouseRelease() {
       if (changed) {
 
         if (auto *mgr = UndoManager::instance()) {
-
-          mgr->push(std::make_unique<MotionPathUndoCommand>(
-
-              layer, impl_->draggingMotionPathFrame_,
-
-              impl_->draggingMotionPathBefore_, after));
+          if (impl_->draggingMotionPathGroupBefore_.size() > 1) {
+            QVector<MotionPathKeySnapshot> groupAfter;
+            for (const auto &beforeKey :
+                 impl_->draggingMotionPathGroupBefore_) {
+              const auto keyTime = ArtifactCore::RationalTime(beforeKey.frame, 24);
+              MotionPathKeySnapshot current;
+              current.frame = beforeKey.frame;
+              current.value.hasPositionKey = t3d.hasPositionKeyFrameAt(keyTime);
+              current.value.x = t3d.positionXAt(keyTime);
+              current.value.y = t3d.positionYAt(keyTime);
+              groupAfter.push_back(current);
+            }
+            mgr->push(std::make_unique<MotionPathGroupUndoCommand>(
+                layer, impl_->draggingMotionPathGroupBefore_, groupAfter));
+          } else {
+            mgr->push(std::make_unique<MotionPathUndoCommand>(
+                layer, impl_->draggingMotionPathFrame_,
+                impl_->draggingMotionPathBefore_, after));
+          }
 
         }
 
@@ -38398,10 +38559,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
       const float axisExtent = groundSettings.extent;
       renderer_->draw3DLine(
           {-axisExtent, 0.0f, 0.0f}, {axisExtent, 0.0f, 0.0f},
-          FloatColor{0.88f, 0.24f, 0.20f, 0.82f}, 1.35f);
+          gridSettings_.axisColor, 1.35f);
       renderer_->draw3DLine(
           {0.0f, 0.0f, -axisExtent}, {0.0f, 0.0f, axisExtent},
-          FloatColor{0.24f, 0.48f, 0.96f, 0.82f}, 1.35f);
+          gridSettings_.axisColor, 1.35f);
     }
     renderer_->flushGizmo3D();
     renderer_->resetGizmoCameraMatrices();

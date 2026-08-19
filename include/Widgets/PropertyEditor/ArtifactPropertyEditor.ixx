@@ -486,6 +486,7 @@ class ArtifactPropertyEditorRowWidget final : public QWidget {
 public:
     using KeyFrameHandler = std::function<void(bool)>;
     using NavigationHandler = std::function<void(int)>; // -1 for prev, 1 for next
+    using SelectionHandler = std::function<void(Qt::KeyboardModifiers)>;
 
     explicit ArtifactPropertyEditorRowWidget(
         const QString& labelText,
@@ -503,6 +504,8 @@ public:
     void setAuxAction(std::function<void()> handler, const QString& label);
     void setKeyframeHandler(KeyFrameHandler handler);
     void setNavigationHandler(NavigationHandler handler);
+    void setSelectionHandler(SelectionHandler handler);
+    void setSelectionChecked(bool checked);
     
     void setEditorToolTip(const QString& tooltip);
     void setSupplementaryText(const QString& text);
@@ -550,6 +553,7 @@ private:
     std::function<void(bool)> favoriteHandler_;
     KeyFrameHandler keyframeHandler_;
     NavigationHandler navigationHandler_;
+    SelectionHandler selectionHandler_;
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
     std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
     bool currentFrameKeyframed_ = false;
