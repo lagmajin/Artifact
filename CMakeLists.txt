@@ -1,11 +1,21 @@
 cmake_minimum_required(VERSION 3.30)
 
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444" CACHE STRING "Required for import std" FORCE)
+# The experimental gate token changed in CMake 4.2. Keep the 3.30-era
+# value for the project's minimum supported CMake version.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.2")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b" CACHE STRING "Required for import std" FORCE)
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444" CACHE STRING "Required for import std" FORCE)
+endif()
 set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "Keep import std opt-in during toolchain detection" FORCE)
 set(CMAKE_CXX_STANDARD 23 CACHE STRING "Required for import std detection" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
 
 project(Artifact)
+
+if(WIN32)
+    add_compile_definitions(PLATFORM_WIN32)
+endif()
 
 # Only the toolchain-detection phase needs the global import-std default.
 # Reset it before adding subdirectories so third-party targets do not inherit
@@ -58,17 +68,20 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     endforeach()
 
     if(_artifact_std_include_dirs)
+        # These directories are supplied by the Visual Studio environment and
+        # by CMake's MSVC toolchain discovery.  Earlier configurations also
+        # appended them to the cached global flags on every reconfigure,
+        # eventually making Ninja's cl.exe command exceed CreateProcess's
+        # command-line limit.  Remove that legacy cache state instead of
+        # adding another copy.
         foreach(_artifact_include_dir IN LISTS _artifact_std_include_dirs)
-            string(APPEND CMAKE_C_FLAGS   " /I\"${_artifact_include_dir}\"")
-            string(APPEND CMAKE_CXX_FLAGS " /I\"${_artifact_include_dir}\"")
+            foreach(_artifact_language_flags CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+                string(REPLACE " /I\"${_artifact_include_dir}\"" ""
+                    ${_artifact_language_flags} "${${_artifact_language_flags}}")
+            endforeach()
         endforeach()
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}" CACHE STRING "C flags with explicit MSVC include paths" FORCE)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" CACHE STRING "CXX flags with explicit MSVC include paths" FORCE)
-        set(ENV{INCLUDE} "${_artifact_std_include_dirs};$ENV{INCLUDE}")
-
-        if(TARGET __cmake_cxx23)
-            target_include_directories(__cmake_cxx23 SYSTEM PRIVATE ${_artifact_std_include_dirs})
-        endif()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}" CACHE STRING "C flags without duplicated MSVC include paths" FORCE)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" CACHE STRING "CXX flags without duplicated MSVC include paths" FORCE)
     endif()
 endif()
 
@@ -195,6 +208,51 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ArtifactSources.cmake")
 set(APP_MODULES ${ARTIFACT_APP_MODULE_SOURCES})
 set(APP_IMPL ${ARTIFACT_APP_IMPL_SOURCES})
+
+# The generated manifest is rooted at cmake/ and therefore contains
+# "../" segments, while split target manifests use normalized absolute paths.
+# Normalize both lists before the REMOVE_ITEM partitioning below so a source
+# is owned by exactly one CXX_MODULES target.
+set(_artifact_normalized_app_modules)
+foreach(_artifact_source IN LISTS APP_MODULES)
+    file(REAL_PATH "${_artifact_source}" _artifact_source_real)
+    list(APPEND _artifact_normalized_app_modules "${_artifact_source_real}")
+endforeach()
+set(APP_MODULES ${_artifact_normalized_app_modules})
+
+set(_artifact_normalized_app_impl)
+foreach(_artifact_source IN LISTS APP_IMPL)
+    file(REAL_PATH "${_artifact_source}" _artifact_source_real)
+    list(APPEND _artifact_normalized_app_impl "${_artifact_source_real}")
+endforeach()
+set(APP_IMPL ${_artifact_normalized_app_impl})
+
+# Source-only module units are intentionally kept in the generated
+# implementation manifest, but CMake/MSVC also requires an `export module`
+# provider to be present in a CXX_MODULES file set.  Promote only those units
+# that do not already have a matching public .ixx; paired interface/implementation
+# modules remain split as before.
+set(_artifact_source_only_modules)
+foreach(_artifact_impl IN LISTS APP_IMPL)
+    file(STRINGS "${_artifact_impl}" _artifact_export_module_lines
+        REGEX "^[ \\t]*export[ \\t]+module[ \\t]+")
+    if(_artifact_export_module_lines)
+        get_filename_component(_artifact_impl_name "${_artifact_impl}" NAME_WE)
+        set(_artifact_has_public_interface FALSE)
+        foreach(_artifact_public_module IN LISTS APP_MODULES)
+            get_filename_component(_artifact_public_name "${_artifact_public_module}" NAME_WE)
+            if(_artifact_public_name STREQUAL _artifact_impl_name)
+                set(_artifact_has_public_interface TRUE)
+                break()
+            endif()
+        endforeach()
+        if(NOT _artifact_has_public_interface)
+            list(APPEND _artifact_source_only_modules "${_artifact_impl}")
+        endif()
+    endif()
+endforeach()
+list(REMOVE_ITEM APP_IMPL ${_artifact_source_only_modules})
+list(APPEND APP_MODULES ${_artifact_source_only_modules})
 
 # Composition export modules are imported by the File menu and each writer.
 # Keep the complete public/implementation set explicit so an existing build
@@ -535,7 +593,7 @@ target_include_directories(ArtifactRenderSupport PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
 )
-target_link_libraries(ArtifactRenderSupport PUBLIC ArtifactCore ArtifactCoreAudio)
+target_link_libraries(ArtifactRenderSupport PUBLIC ArtifactCore ArtifactCoreAudio ArtifactCoreThread)
 
 add_library(ArtifactRenderSupportContracts STATIC)
 set_target_properties(ArtifactRenderSupportContracts PROPERTIES
@@ -785,6 +843,7 @@ set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/LOD/ArtifactLODManager.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ThickLineShaders.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ViewerHelperShaders.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx"
 )
 set(ARTIFACT_RENDER_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
@@ -801,6 +860,7 @@ set(ARTIFACT_RENDER_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/GPUTextureCacheManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentUploadCoordinator.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm"
 )
 
 # Keep the first render split deliberately small.  Device and shader modules
@@ -808,6 +868,10 @@ set(ARTIFACT_RENDER_IMPL
 # renderer and widget orchestration layers.
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_RENDER_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_RENDER_IMPL})
+list(REMOVE_ITEM APP_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx")
+list(REMOVE_ITEM APP_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm")
 
 add_library(ArtifactRender STATIC)
 set_target_properties(ArtifactRender PROPERTIES
@@ -856,7 +920,7 @@ target_include_directories(ArtifactRender PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
 )
-target_link_libraries(ArtifactRender PUBLIC ArtifactCore ArtifactCoreAudio ArtifactCoreVideo ArtifactCoreMedia ArtifactCoreNetwork ArtifactRenderSupportContracts)
+target_link_libraries(ArtifactRender PUBLIC ArtifactCore ArtifactCoreAudio ArtifactCoreVideo ArtifactCoreMedia ArtifactCoreComposition ArtifactCoreNetwork ArtifactCoreThread ArtifactCoreText ArtifactCoreMaterial ArtifactCoreGrid ArtifactRenderSupportContracts)
 if(TARGET Diligent-GraphicsTools)
     target_link_libraries(ArtifactRender PRIVATE Diligent-GraphicsTools)
 endif()
@@ -899,6 +963,7 @@ endif()
 target_include_directories(ArtifactEffectContract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
 )
 target_compile_definitions(ArtifactEffectContract PRIVATE LIBRARY_DLL_MODE=1)
 target_link_libraries(ArtifactEffectContract PUBLIC ArtifactCore ArtifactCoreAudio ArtifactRender ArtifactRenderSupport ArtifactRenderSupportContracts)
@@ -1189,7 +1254,7 @@ target_include_directories(ArtifactEffectsColor PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
 )
-target_link_libraries(ArtifactEffectsColor PUBLIC ArtifactCore ArtifactCoreAudio ArtifactRender ArtifactEffectContract)
+target_link_libraries(ArtifactEffectsColor PUBLIC ArtifactCore ArtifactCoreAudio ArtifactCoreColorCollection ArtifactRender ArtifactEffectContract)
 
 # Temporal effects keep frame/history state and are isolated from the broad
 # rasterizer pack.  Effects that merely happen to be rendered in the
@@ -1306,6 +1371,7 @@ target_include_directories(ArtifactEffectsKeying PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
 )
 target_link_libraries(ArtifactEffectsKeying PUBLIC ArtifactCore ArtifactCoreAudio ArtifactRender ArtifactEffectContract)
+target_compile_definitions(ArtifactEffectsKeying PRIVATE PLATFORM_WIN32)
 
 # Blur effects are another cohesive spatial operator family.  Isolate the
 # three implemented Blur modules from the larger Spatial pack.
@@ -2572,6 +2638,12 @@ target_include_directories(Artifact
 
 # 内部ライブラリ
 target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactCoreAudio ArtifactCoreAI ArtifactCoreVideo ArtifactCoreMedia ArtifactCoreComposition ArtifactCoreScene ArtifactCoreMaterial ArtifactCoreUI ArtifactCoreData ArtifactCoreCommand ArtifactCoreAsset ArtifactCoreShape ArtifactCoreText ArtifactCoreGenerate ArtifactCoreSimulation ArtifactCoreTrack ArtifactCoreSource ArtifactCoreProject ArtifactCoreRig ArtifactCoreGrid ArtifactCoreColorCollection ArtifactCoreSound ArtifactCoreSequence ArtifactCoreAnalyze ArtifactCoreTracking ArtifactCoreIPC ArtifactCoreNetwork ArtifactCoreCollaborate ArtifactCoreNLE ArtifactCorePlayback ArtifactCorePreview ArtifactCoreExport ArtifactCoreVST3 ArtifactCoreLocalization ArtifactCoreCoordinate ArtifactCoreEvent ArtifactCoreFile ArtifactCorePlugin ArtifactCoreControl ArtifactCoreDatabase ArtifactCoreMask ArtifactCoreConfiguration ArtifactCoreEnvironment ArtifactCorePlatform ArtifactCoreAcoustic ArtifactCoreLight ArtifactCoreCrowd ArtifactCoreDomain ArtifactCoreFileSystem ArtifactCoreIcon ArtifactCoreVST ArtifactColorPalette ArtifactColorNode ArtifactColorSettings ArtifactColorScience ArtifactColorManagement ArtifactColorGrading ArtifactEffectsResidual ArtifactWidgets ArtifactAsset ArtifactColor ArtifactRenderSupport ArtifactRenderSupportContracts ArtifactRender ArtifactEffectContract ArtifactEffectsColor ArtifactEffectsTemporal ArtifactEffectsSpatial ArtifactEffectsKeying ArtifactEffectsBlur ArtifactEffectsGenerate ArtifactEffectsDistort ArtifactEffectsRasterizer)
+target_link_libraries(Artifact PRIVATE ArtifactRender)
+if(MSVC)
+    target_link_options(Artifact PRIVATE
+        "/NODEFAULTLIB:libcpmt.lib"
+        "/WHOLEARCHIVE:$<TARGET_FILE:ArtifactRender>")
+endif()
 
 # DiligentEngine
 set(DILIGENT_LIBS "")
@@ -2852,22 +2924,21 @@ if(WIN32 AND ARTIFACT_ENABLE_DIRECTSTORAGE AND
         "${ARTIFACT_DIRECTSTORAGE_SDK_DIR}/native/include")
     set(_ARTIFACT_DIRECTSTORAGE_DLL
         "${ARTIFACT_DIRECTSTORAGE_SDK_DIR}/native/bin/x64/dstorage.dll")
-    if(NOT EXISTS "${_ARTIFACT_DIRECTSTORAGE_INCLUDE}/dstorage.h")
-        message(FATAL_ERROR
-            "DirectStorage header not found: ${_ARTIFACT_DIRECTSTORAGE_INCLUDE}/dstorage.h")
+    if(EXISTS "${_ARTIFACT_DIRECTSTORAGE_INCLUDE}/dstorage.h" AND
+       EXISTS "${_ARTIFACT_DIRECTSTORAGE_DLL}")
+        target_include_directories(Artifact PRIVATE "${_ARTIFACT_DIRECTSTORAGE_INCLUDE}")
+        add_custom_command(TARGET Artifact POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${_ARTIFACT_DIRECTSTORAGE_DLL}"
+                "$<TARGET_FILE_DIR:Artifact>/dstorage.dll"
+            COMMENT "Deploying DirectStorage runtime"
+            VERBATIM
+        )
+        message(STATUS "DirectStorage SDK selected: ${ARTIFACT_DIRECTSTORAGE_SDK_DIR}")
+    else()
+        message(STATUS
+            "DirectStorage SDK layout is incomplete; portable asynchronous file I/O will be used")
     endif()
-    if(NOT EXISTS "${_ARTIFACT_DIRECTSTORAGE_DLL}")
-        message(FATAL_ERROR "DirectStorage runtime not found: ${_ARTIFACT_DIRECTSTORAGE_DLL}")
-    endif()
-    target_include_directories(Artifact PRIVATE "${_ARTIFACT_DIRECTSTORAGE_INCLUDE}")
-    add_custom_command(TARGET Artifact POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${_ARTIFACT_DIRECTSTORAGE_DLL}"
-            "$<TARGET_FILE_DIR:Artifact>/dstorage.dll"
-        COMMENT "Deploying DirectStorage runtime"
-        VERBATIM
-    )
-    message(STATUS "DirectStorage SDK selected: ${ARTIFACT_DIRECTSTORAGE_SDK_DIR}")
 elseif(WIN32 AND ARTIFACT_ENABLE_DIRECTSTORAGE)
     message(STATUS
         "DirectStorage SDK unavailable; portable asynchronous file I/O will be used")
@@ -2981,4 +3052,34 @@ if(ARTIFACT_DEPLOY_DIR)
         COMMAND_EXPAND_LISTS
         VERBATIM
     )
+endif()
+
+# Keep all local Artifact C++23 targets attached to the explicit MSVC std.ifc
+# producer, falling back to CMake's native provider on other configurations.
+if(TARGET ArtifactStdModule OR TARGET __CMAKE::CXX23)
+    get_property(_artifact_local_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_artifact_target IN LISTS _artifact_local_targets)
+        if(_artifact_target MATCHES "^Artifact")
+            get_target_property(_artifact_target_type ${_artifact_target} TYPE)
+            if(_artifact_target_type MATCHES
+               "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
+                if(TARGET ArtifactStdModule)
+                    add_dependencies(${_artifact_target} ArtifactStdModule)
+                    if(MSVC AND _artifact_std_ifc)
+                        target_compile_options(${_artifact_target} PRIVATE
+                            "/reference;std=${_artifact_std_ifc}")
+                    endif()
+                else()
+                    set_property(TARGET ${_artifact_target} PROPERTY CXX_MODULE_STD ON)
+                endif()
+            endif()
+        endif()
+    endforeach()
+endif()
+
+if(DEFINED ARTIFACT_USE_EXPLICIT_STD_IFC)
+    get_property(_artifact_final_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_artifact_target IN LISTS _artifact_final_targets)
+        set_property(TARGET "${_artifact_target}" PROPERTY CXX_MODULE_STD OFF)
+    endforeach()
 endif()

@@ -1,12 +1,12 @@
 module;
 #include <utility>
+#include <algorithm>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
 export module Artifact.Render.Queue.Presets;
 
-import std;
 export namespace Artifact {
 
 /**

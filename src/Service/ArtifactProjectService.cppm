@@ -29,8 +29,6 @@ module;
 
 module Artifact.Service.Project;
 
-import std;
-
 import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Composition;

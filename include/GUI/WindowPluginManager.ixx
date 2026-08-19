@@ -6,10 +6,6 @@
 
 export module WindowManager;
 
-import std;
-
-
-
 export namespace Artifact
 {
  struct WindowTypeInfo {

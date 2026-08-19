@@ -386,7 +386,7 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         desc.BindFlags      = BIND_INDEX_BUFFER;
         desc.Size           = sizeof(indices);
         desc.CPUAccessFlags = CPU_ACCESS_NONE;
-        desc.MiscFlags      = MISC_BUFFER_FLAG_TIGHT_ALIGNMENT;
+        desc.MiscFlags      = MISC_BUFFER_FLAG_NONE;
         BufferData initData;
         initData.pData    = indices;
         initData.DataSize = sizeof(indices);
@@ -427,7 +427,7 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         desc.Usage          = USAGE_IMMUTABLE;
         desc.CPUAccessFlags = CPU_ACCESS_NONE;
         desc.Size           = sizeof(unitVerts);
-        desc.MiscFlags      = MISC_BUFFER_FLAG_TIGHT_ALIGNMENT;
+        desc.MiscFlags      = MISC_BUFFER_FLAG_NONE;
         BufferData initData;
         initData.pData    = unitVerts;
         initData.DataSize = sizeof(unitVerts);

@@ -38,7 +38,6 @@ module;
 #include <wobjectimpl.h>
 
 module Menu.Composition;
-import std;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;

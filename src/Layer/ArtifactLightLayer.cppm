@@ -4,6 +4,7 @@ module;
 #include <cmath>
 #include <QColor>
 #include <QJsonObject>
+#include <QDir>
 #include <QVariant>
 #include <QStringList>
 #include <wobjectimpl.h>
@@ -375,7 +376,10 @@ void ArtifactLightLayer::setConeLength(float length)
 QString ArtifactLightLayer::goboTexturePath() const { return lightImpl_->goboTexturePath_; }
 void ArtifactLightLayer::setGoboTexturePath(const QString& path)
 {
-  lightImpl_->goboTexturePath_ = path.trimmed();
+  const QString trimmedPath = path.trimmed();
+  lightImpl_->goboTexturePath_ = trimmedPath.isEmpty()
+      ? QString{}
+      : QDir::cleanPath(trimmedPath);
   changed();
 }
 float ArtifactLightLayer::goboIntensity() const { return lightImpl_->goboIntensity_; }

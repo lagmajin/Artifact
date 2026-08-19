@@ -4,9 +4,9 @@ module;
 
 export module Artifact.Widgets.ViewportOverlay;
 
-export namespace Artifact {
-class ArtifactIRenderer;
+import Artifact.Render.IRenderer;
 
+export namespace Artifact {
 namespace ViewportOverlay {
 void drawSafeAreaAndOrigin(ArtifactIRenderer *renderer, float canvasWidth,
                            float canvasHeight, bool showSafeArea,

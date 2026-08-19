@@ -3,13 +3,13 @@ module;
 #include <QObject>
 #include <wobjectimpl.h>
 
-import std;
-
 import Color.Float;
 import Color.Luminance;
 import Core.Parallel;
 
 module Render.HDRMonitor;
+
+import std;
 
 namespace Artifact {
 
@@ -179,7 +179,7 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
       avgLuminance += impl_->luminanceCache_[i];
     }
     if (endIdx <= startIdx) {
-      continue;
+      return;
     }
     avgLuminance /= static_cast<float>(endIdx - startIdx);
 

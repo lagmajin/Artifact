@@ -20,7 +20,6 @@ module;
 
 module Artifact.Project.RevisionService;
 
-import std;
 import Artifact.Project;
 import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;

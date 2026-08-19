@@ -35,7 +35,6 @@ module;
 
 module Artifact.Composition.Abstract;
 
-import std;
 
 import Container;
 import Frame.Position;

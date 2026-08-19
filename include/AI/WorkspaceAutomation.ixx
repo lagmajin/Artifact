@@ -31,7 +31,6 @@ module;
 
 export module Artifact.AI.WorkspaceAutomation;
 
-import std;
 import Memory.SharedPtr;
 import Core.AI.Describable;
 import Core.AI.CommandIR;

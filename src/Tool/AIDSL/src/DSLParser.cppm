@@ -1,9 +1,5 @@
 module;
-#include <utility>
-#include <sstream>
-#include <algorithm>
-#include <cctype>
-#include <iomanip>
+#include <QByteArray>
 //#include "DSLTypes.ixx"
 
 export module AIToolDSL.Parser;
@@ -15,9 +11,41 @@ namespace AIToolDSL {
 
 namespace {
 
+class StringBuilder {
+public:
+    StringBuilder& operator<<(const std::string& value) {
+        text_ += value;
+        return *this;
+    }
+
+    StringBuilder& operator<<(const int value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const unsigned int value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const long value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const unsigned long value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const long long value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const unsigned long long value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const float value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+    StringBuilder& operator<<(const double value) { text_ += QByteArray::number(value).toStdString(); return *this; }
+
+    StringBuilder& operator<<(const char* value) {
+        text_ += value;
+        return *this;
+    }
+
+    StringBuilder& operator<<(const char value) {
+        text_ += value;
+        return *this;
+    }
+
+    [[nodiscard]] std::string str() const { return text_; }
+
+private:
+    std::string text_;
+};
+
 std::string escapeJson(const std::string& input)
 {
-    std::ostringstream out;
+    StringBuilder out;
     for (const char c : input) {
         switch (c) {
         case '\\': out << "\\\\"; break;
@@ -29,10 +57,10 @@ std::string escapeJson(const std::string& input)
         case '\t': out << "\\t"; break;
         default:
             if (static_cast<unsigned char>(c) < 0x20) {
-                out << "\\u"
-                    << std::hex << std::uppercase << std::setw(4) << std::setfill('0')
-                    << static_cast<int>(static_cast<unsigned char>(c))
-                    << std::nouppercase << std::dec;
+                constexpr char hex[] = "0123456789ABCDEF";
+                const auto value = static_cast<unsigned char>(c);
+                out << "\\u" << '0' << '0'
+                    << hex[(value >> 4) & 0x0F] << hex[value & 0x0F];
             } else {
                 out << c;
             }
@@ -53,7 +81,7 @@ std::string jsonBool(const bool value)
 
 std::string jsonArray(const std::vector<std::string>& values)
 {
-    std::ostringstream out;
+    StringBuilder out;
     out << '[';
     for (size_t i = 0; i < values.size(); ++i) {
         if (i > 0) {
@@ -67,7 +95,7 @@ std::string jsonArray(const std::vector<std::string>& values)
 
 std::string summarizeScript(const DSLScript& script, const std::string& mode)
 {
-    std::ostringstream out;
+    StringBuilder out;
     out << '{'
         << "\"mode\":" << jsonString(mode) << ','
         << "\"hasError\":" << jsonBool(script.hasError) << ','
@@ -110,7 +138,7 @@ std::vector<std::string> tokenize(const std::string& line) {
             if (c == '"' || c == '\'') {
                 inQuotes = true;
                 quoteChar = c;
-            } else if (isspace(c)) {
+            } else if (std::isspace(static_cast<unsigned char>(c))) {
                 if (!current.empty()) {
                     tokens.push_back(current);
                     current.clear();
@@ -196,10 +224,14 @@ Value parseValue(const std::string& token) {
     if (!token.empty() && token[0] == '[' && token.back() == ']') {
         std::string inner = token.substr(1, token.size() - 2);
         std::vector<std::string> parts;
-        std::stringstream ss(inner);
-        std::string item;
-        while (std::getline(ss, item, ',')) {
-            parts.push_back(trim(item));
+        std::size_t partStart = 0;
+        while (partStart <= inner.size()) {
+            const auto partEnd = inner.find(',', partStart);
+            parts.push_back(trim(inner.substr(
+                partStart,
+                partEnd == std::string::npos ? std::string::npos : partEnd - partStart)));
+            if (partEnd == std::string::npos) break;
+            partStart = partEnd + 1;
         }
         std::vector<double> vec;
         for (const auto& p : parts) {
@@ -420,7 +452,6 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
     ParseResult result;
     DSLScript script;
 
-    std::istringstream iss(input);
     std::string line;
     int lineNum = 0;
 
@@ -428,7 +459,15 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
     bool inTransaction = false;
     TransactionCommand* currentTransaction = nullptr;
 
-    while (std::getline(iss, line)) {
+    std::size_t lineStart = 0;
+    while (lineStart <= input.size()) {
+        const auto lineEnd = input.find('\n', lineStart);
+        line = input.substr(
+            lineStart,
+            lineEnd == std::string::npos ? std::string::npos : lineEnd - lineStart);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (lineEnd == std::string::npos) lineStart = input.size() + 1;
+        else lineStart = lineEnd + 1;
         ++lineNum;
         auto trimmed = trim(line);
         if (trimmed.empty() || trimmed.starts_with('#')) {
@@ -736,7 +775,7 @@ std::unique_ptr<Action> SelectLayersCommand::compile(
         }
     }
     action->valueText = filter ? "filtered" : "all";
-    std::ostringstream resolved;
+    StringBuilder resolved;
     for (std::size_t i = 0; i < resolvedLayerIds.size(); ++i) {
         if (i > 0) resolved << ',';
         resolved << resolvedLayerIds[i];
@@ -781,7 +820,7 @@ std::unique_ptr<Action> SetPropertyCommand::compile(
         } else if constexpr (std::is_same_v<T, std::string>) {
             return item;
         } else if constexpr (std::is_same_v<T, std::vector<double>>) {
-            std::ostringstream text;
+            StringBuilder text;
             text << '[';
             for (std::size_t i = 0; i < item.size(); ++i) {
                 if (i > 0) text << ',';
@@ -837,7 +876,7 @@ std::unique_ptr<Action> AddKeyCommand::compile(
         } else if constexpr (std::is_same_v<T, std::string>) {
             return item;
         } else if constexpr (std::is_same_v<T, std::vector<double>>) {
-            std::ostringstream text;
+            StringBuilder text;
             text << '[';
             for (std::size_t i = 0; i < item.size(); ++i) {
                 if (i > 0) text << ',';
@@ -960,7 +999,7 @@ std::string QuerySelectedLayers::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    std::ostringstream out;
+    StringBuilder out;
     out << "{\"status\":\"unavailable\",\"selectedLayerIds\":[]"
         << ",\"availableCompCount\":" << compMap.size()
         << ",\"availableLayerGroupCount\":" << layerMap.size()
@@ -972,7 +1011,7 @@ std::string QueryActiveComp::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    std::ostringstream out;
+    StringBuilder out;
     out << "{\"status\":\"unavailable\",\"activeCompId\":null"
         << ",\"availableCompCount\":" << compMap.size()
         << ",\"availableLayerGroupCount\":" << layerMap.size()
@@ -993,7 +1032,7 @@ std::string QueryCompSize::execute(
             break;
         }
     }
-    std::ostringstream out;
+    StringBuilder out;
     out << "{\"status\":\"unavailable\",\"compId\":" << jsonString(requestedId)
         << ",\"knownComp\":" << jsonBool(known)
         << ",\"availableLayerGroupCount\":" << layerMap.size()
@@ -1026,7 +1065,7 @@ std::string QueryFindLayers::execute(
             }
         }
     }
-    std::ostringstream out;
+    StringBuilder out;
     out << "{\"status\":\"ok\",\"matchedLayerIds\":" << jsonArray(ids)
         << ",\"availableCompCount\":" << compMap.size()
         << ",\"filterScope\":\"layer id and lookup name\"}";
@@ -1046,7 +1085,7 @@ std::string QueryDescribeLayer::execute(
             break;
         }
     }
-    std::ostringstream out;
+    StringBuilder out;
     out << "{\"status\":\"ok\",\"layerId\":" << jsonString(layerId)
         << ",\"groupName\":" << jsonString(groupName)
         << ",\"knownLayer\":" << jsonBool(known)
@@ -1067,7 +1106,7 @@ std::string QueryListProperties::execute(
             break;
         }
     }
-    std::ostringstream out;
+    StringBuilder out;
     out << "{\"status\":\"ok\",\"layerId\":" << jsonString(layerId)
         << ",\"properties\":[\"id\",\"name\",\"layer.id\",\"layer.name\"]"
         << ",\"propertyValues\":{\"id\":" << jsonString(layerId)
@@ -1092,7 +1131,7 @@ std::string AIDSLInterpreter::dryRun(const DSLScript& script) const {
             ++compiledActionCount;
         }
     }
-    std::ostringstream out;
+    StringBuilder out;
     out << '{'
         << "\"mode\":\"dry_run\","
         << "\"script\":" << summarizeScript(script, "dry_run") << ','
@@ -1151,7 +1190,7 @@ std::string AIDSLInterpreter::execute(const DSLScript& script) {
         ++compiledActionCount;
     }
 
-    std::ostringstream out;
+    StringBuilder out;
     out << '{'
         << "\"mode\":\"execute\","
         << "\"script\":" << summarizeScript(script, "execute") << ','
@@ -1173,7 +1212,7 @@ std::string AIDSLInterpreter::executeQuery(const QueryNode& query) {
         std::string active = activeCompId_.empty()
                                  ? std::string()
                                  : activeCompId_;
-        std::ostringstream out;
+        StringBuilder out;
         out << "{\"status\":\"ok\",\"activeCompId\":" << jsonString(active)
             << ",\"availableCompCount\":" << compNameToId_.size()
             << ",\"availableLayerGroupCount\":" << layerNameToIds_.size() << "}";

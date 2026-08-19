@@ -1,5 +1,4 @@
 module;
-#include <algorithm>
 #include <utility>
 #include <QAction>
 #include <QActionGroup>
@@ -34,7 +33,6 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
-import std;
 import Memory.SharedPtr;
 
 import Event.Bus;

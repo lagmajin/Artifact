@@ -1,15 +1,7 @@
 ﻿module;
-#include <utility>
-#include <string>
-#include <vector>
-#include <memory>
-#include <optional>
-#include <variant>
-#include <cstdint>
-#include <unordered_map>
-#include <functional>
-
 export module AIToolDSL.Types;
+
+import std;
 
 export namespace AIToolDSL {
 
@@ -28,7 +20,7 @@ struct TransactionAction : Action {
 // Utility types
 using LayerID = std::string;  // "#L1234"
 using CompID = std::string;   // "#C9"
-using FrameTime = int64_t;    // frame number
+using FrameTime = std::int64_t;    // frame number
 using PropertyPath = std::string;  // "layer.opacity", "transform.position.x"
 
 struct CommandAction : Action {
@@ -42,7 +34,7 @@ struct CommandAction : Action {
 // Value variant (supports all property types)
 export using Value = std::variant<
     bool,
-    int64_t,
+    std::int64_t,
     double,
     std::string,
     std::vector<double>  // vec2, vec3, vec4
@@ -50,7 +42,7 @@ export using Value = std::variant<
 
 // Frame expression: 12f or 12
 struct FrameExpr {
-    std::variant<int64_t, std::string> value;  // raw number or "12f"
+    std::variant<std::int64_t, std::string> value;  // raw number or "12f"
     FrameTime resolve(const std::unordered_map<std::string, FrameTime>& context) const;
 };
 

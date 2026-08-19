@@ -123,7 +123,6 @@ module;
 #include <random>
 module Artifact.Widgets.ProjectManagerWidget;
 
-import std;
 import Proxy.Service;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import FloatColorPickerDialog;

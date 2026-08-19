@@ -13,7 +13,6 @@ module;
 #include <vector>
 
 export module Artifact.Composition.Abstract;
-import std;
 import Memory.SharedPtr;
 import Utils;
 import Utils.Optional;

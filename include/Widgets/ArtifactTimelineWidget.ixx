@@ -12,7 +12,6 @@
 #include <QWidget>
 export module Artifact.Widgets.Timeline;
 
-import std;
 import Utils.Id;
 import Math.Interpolate;
 import Animation.KeyframePatternGenerator;

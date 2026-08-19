@@ -22,7 +22,6 @@ module;
 #include <wobjectimpl.h>
 
 module Menu.Animation;
-import std;
 
 import Event.Bus;
 import Application.AppSettings;

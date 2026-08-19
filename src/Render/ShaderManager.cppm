@@ -1142,7 +1142,7 @@ void ShaderManager::drawSkybox(IDeviceContext *context,
     std::memcpy(mapped, inverseViewProjection, sizeof(float) * 16);
     context->UnmapBuffer(impl_->skyboxConstantBuffer_, MAP_WRITE);
 
-    auto *srb = impl_->skyboxPsoAndSrb_.pSRB.RawPtr();
+    auto *srb = impl_->skyboxPsoAndSrb_.pSRB;
     if (auto *cb = srb->GetVariableByName(SHADER_TYPE_VERTEX, "SkyboxCB")) {
         cb->Set(impl_->skyboxConstantBuffer_);
     }
@@ -1150,7 +1150,7 @@ void ShaderManager::drawSkybox(IDeviceContext *context,
         env->Set(environmentMap);
     }
     if (auto *sampler = srb->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
-        sampler->Set(spriteSampler_);
+        sampler->Set(impl_->spriteSampler_);
     }
     context->SetPipelineState(impl_->skyboxPsoAndSrb_.pPSO);
     context->CommitShaderResources(impl_->skyboxPsoAndSrb_.pSRB,

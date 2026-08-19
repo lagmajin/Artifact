@@ -96,7 +96,6 @@ module;
 #endif
 
 module Artifact.Widgets.CompositionEditor;
-import std;
 import Memory.SharedPtr;
 
 import Artifact.Widgets.CompositionRenderController;

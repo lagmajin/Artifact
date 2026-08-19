@@ -32,6 +32,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QAbstractButton>
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QStyle>
 #include <QLocale>
 #include <QColor>
 #include <QString>

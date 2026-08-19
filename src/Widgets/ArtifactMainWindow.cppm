@@ -31,6 +31,7 @@ module;
 #include <QLabel>
 #include <QKeyEvent>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLayout>
 #include <QList>
@@ -95,6 +96,10 @@ import Command.Palette;
 #endif
 
 namespace Artifact {
+
+class ArtifactDockManager;
+void syncTrackedDockState(ArtifactDockManager *backend,
+                          ads::CDockWidget *dock);
 
 using namespace ads;
 
@@ -577,10 +582,6 @@ void pushDockLayoutSnapshot(ArtifactMainWindow *window,
 
 void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
                                   QObject *eventFilterOwner);
-
-class ArtifactDockManager;
-void syncTrackedDockState(ArtifactDockManager *backend,
-                          ads::CDockWidget *dock);
 
 void wireDockWidgetSignals(ads::CDockWidget *dock, QObject *owner,
                            ArtifactDockManager *backend = nullptr) {

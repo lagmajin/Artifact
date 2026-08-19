@@ -6,7 +6,6 @@ module;
 
 module Artifact.Widgets.ProjectMemoModel;
 
-import std;
 
 namespace Artifact {
 

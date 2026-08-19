@@ -22,6 +22,22 @@ module;
 #include <span>
 #include <vector>
 
+struct ArtifactRendererFloat2 {
+  float x = 0.0f;
+  float y = 0.0f;
+  ArtifactRendererFloat2() = default;
+  ArtifactRendererFloat2(float x_, float y_) : x(x_), y(y_) {}
+};
+
+struct ArtifactRendererFloat3 {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  ArtifactRendererFloat3() = default;
+  ArtifactRendererFloat3(float x_, float y_, float z_)
+      : x(x_), y(y_), z(z_) {}
+};
+
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
@@ -64,20 +80,8 @@ export struct PSOAndSRB {
   void *pSRB = nullptr;
 };
 
-export struct float2 {
-  float x = 0.0f;
-  float y = 0.0f;
-  float2() = default;
-  float2(float x_, float y_) : x(x_), y(y_) {}
-};
-
-export struct float3 {
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  float3() = default;
-  float3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
-};
+export using float2 = ::ArtifactRendererFloat2;
+export using float3 = ::ArtifactRendererFloat3;
 } // namespace Detail
 
 export enum class GlobalIlluminationMode {

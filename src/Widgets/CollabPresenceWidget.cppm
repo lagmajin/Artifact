@@ -17,7 +17,6 @@ module;
 
 module Artifact.Widgets.CollabPresenceWidget;
 
-import std;
 
 namespace Artifact {
 

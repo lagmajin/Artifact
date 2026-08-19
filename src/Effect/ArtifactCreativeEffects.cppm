@@ -52,21 +52,21 @@ void ArtifactCoreCreativeEffect::apply(const ImageF32x4RGBAWithCache& src,
     const auto& source = src.image();
     auto result = source.DeepCopy();
     ArtifactCore::MultiChannelImage channels(source.width(), source.height());
-    const float* pixels = source.rgba32fData();
+    const float* sourcePixels = source.rgba32fData();
     const std::size_t count = source.totalPixels();
     auto red = channels.getChannel(ArtifactCore::ChannelType::Red);
     auto green = channels.getChannel(ArtifactCore::ChannelType::Green);
     auto blue = channels.getChannel(ArtifactCore::ChannelType::Blue);
     auto alpha = channels.getChannel(ArtifactCore::ChannelType::Alpha);
-    if (!pixels || !red || !green || !blue || !alpha) {
+    if (!sourcePixels || !red || !green || !blue || !alpha) {
         dst = src;
         return;
     }
     for (std::size_t i = 0; i < count; ++i) {
-        red->data()[i] = pixels[i * 4 + 0];
-        green->data()[i] = pixels[i * 4 + 1];
-        blue->data()[i] = pixels[i * 4 + 2];
-        alpha->data()[i] = pixels[i * 4 + 3];
+        red->data()[i] = sourcePixels[i * 4 + 0];
+        green->data()[i] = sourcePixels[i * 4 + 1];
+        blue->data()[i] = sourcePixels[i * 4 + 2];
+        alpha->data()[i] = sourcePixels[i * 4 + 3];
     }
 
     context_.renderWidth = source.width();
@@ -82,7 +82,7 @@ void ArtifactCoreCreativeEffect::apply(const ImageF32x4RGBAWithCache& src,
         dst = src;
         return;
     }
-    pixels = result.rgba32fData();
+    float* pixels = result.rgba32fData();
     for (std::size_t i = 0; i < count; ++i) {
         pixels[i * 4 + 0] = red->data()[i];
         pixels[i * 4 + 1] = green->data()[i];

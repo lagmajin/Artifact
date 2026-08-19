@@ -17,8 +17,6 @@ module Artifact.Project;
 
 //#include <QtCore/QString>
 
-import std;
-
 import Artifact.Event.Types;
 import Event.Bus;
 import Utils;

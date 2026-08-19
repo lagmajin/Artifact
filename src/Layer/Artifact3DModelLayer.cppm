@@ -905,7 +905,17 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
         continue;
       }
       center /= static_cast<float>(vertexIndices.size());
-      const QVector3D normal = (normalMatrix * localNormal).normalized();
+      const QVector3D normal = QVector3D(
+          normalMatrix(0, 0) * localNormal.x() +
+              normalMatrix(0, 1) * localNormal.y() +
+              normalMatrix(0, 2) * localNormal.z(),
+          normalMatrix(1, 0) * localNormal.x() +
+              normalMatrix(1, 1) * localNormal.y() +
+              normalMatrix(1, 2) * localNormal.z(),
+          normalMatrix(2, 0) * localNormal.x() +
+          normalMatrix(2, 1) * localNormal.y() +
+              normalMatrix(2, 2) * localNormal.z())
+          .normalized();
       const float averageEdgeLength =
           edgeLengthSum / static_cast<float>(vertexIndices.size());
       const float faceScale = impl_->normalLength_ > 0.0f
@@ -930,7 +940,17 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
         continue;
       }
       const QVector3D worldStart = transformedVertices[index];
-      const QVector3D worldNormal = (normalMatrix * localNormal).normalized();
+      const QVector3D worldNormal = QVector3D(
+          normalMatrix(0, 0) * localNormal.x() +
+              normalMatrix(0, 1) * localNormal.y() +
+              normalMatrix(0, 2) * localNormal.z(),
+          normalMatrix(1, 0) * localNormal.x() +
+              normalMatrix(1, 1) * localNormal.y() +
+              normalMatrix(1, 2) * localNormal.z(),
+          normalMatrix(2, 0) * localNormal.x() +
+          normalMatrix(2, 1) * localNormal.y() +
+              normalMatrix(2, 2) * localNormal.z())
+          .normalized();
       const QVector3D worldEnd = worldStart + worldNormal * impl_->normalLength_;
       renderer->draw3DLine(toFloat3(worldStart), toFloat3(worldEnd),
                            normalColor, 1.25f);

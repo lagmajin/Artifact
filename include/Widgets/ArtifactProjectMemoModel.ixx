@@ -6,8 +6,6 @@ module;
 
 export module Artifact.Widgets.ProjectMemoModel;
 
-import std;
-
 export namespace Artifact {
 
 struct ProjectMemo {

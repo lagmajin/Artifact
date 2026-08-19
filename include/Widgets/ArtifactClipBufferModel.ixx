@@ -6,8 +6,6 @@ module;
 
 export module Artifact.Widgets.ClipBufferModel;
 
-import std;
-
 export namespace Artifact {
 
 struct ArtifactClipBufferItem {

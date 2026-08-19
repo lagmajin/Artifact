@@ -40,7 +40,6 @@
 #include <QtGlobal>
 export module AssetMenuModel;
 
-import std;
 import Utils.String.UniString;
 
 export namespace Artifact

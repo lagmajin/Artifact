@@ -3695,11 +3695,11 @@ void ArtifactIRenderer::renderShadowMapFrame()
  QMatrix4x4 ArtifactIRenderer::getViewMatrix() const { return impl_->primitiveRenderer_.getViewMatrix(); }
  QMatrix4x4 ArtifactIRenderer::getProjectionMatrix() const { return impl_->primitiveRenderer_.getProjectionMatrix(); }
 
- void ArtifactIRenderer::zoomAroundViewportPoint(Detail::float2 pos, float newZoom)
+ void ArtifactIRenderer::zoomAroundViewportPoint(Artifact::Detail::float2 pos, float newZoom)
  { impl_->zoomAroundViewportPoint(pos, newZoom); }
- Detail::float2 ArtifactIRenderer::canvasToViewport(Detail::float2 pos) const
+ Artifact::Detail::float2 ArtifactIRenderer::canvasToViewport(Artifact::Detail::float2 pos) const
  { return impl_->canvasToViewport(pos); }
- Detail::float2 ArtifactIRenderer::viewportToCanvas(Detail::float2 pos) const
+ Artifact::Detail::float2 ArtifactIRenderer::viewportToCanvas(Artifact::Detail::float2 pos) const
  { return impl_->viewportToCanvas(pos); }
 
  // LOD Implementation
@@ -3742,7 +3742,7 @@ void ArtifactIRenderer::renderShadowMapFrame()
                                           float opacity,
                                           float outlineThickness)
  { impl_->drawRoundedPanel(toDiligentFloat2(pos), toDiligentFloat2(size), radius, fillColor, outlineColor, opacity, outlineThickness); }
- void ArtifactIRenderer::drawSolidLine(Detail::float2 start, Detail::float2 end,
+ void ArtifactIRenderer::drawSolidLine(Artifact::Detail::float2 start, Artifact::Detail::float2 end,
                                        const FloatColor& color, float thickness)
  { impl_->drawSolidLine(start, end, color, thickness); }
  void ArtifactIRenderer::drawArcLocal(Detail::float2 center, float radius,

@@ -18,14 +18,12 @@ module;
 #include <QColor>
 #include <QInputDialog>
 #include <QStringList>
-#include <algorithm>
 #include <functional>
 #include <QSettings>
 #include <qevent.h>
 
 module Artifact.Widgets.CompositionGraphWidget;
 
-import std;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
 import Artifact.Widgets.AppDialogs;

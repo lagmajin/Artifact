@@ -1,12 +1,10 @@
 module;
 #include <utility>
-#include <algorithm>
 #include <cmath>
 #include <QVariant>
 
 module Artifact.Layer.Construction;
 
-import std;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;

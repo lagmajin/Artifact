@@ -39,7 +39,6 @@ module;
 #include <QPolygonF>
 #include <QStackedWidget>
 #include <limits>
-#include <algorithm>
 #include <cmath>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
@@ -48,7 +47,6 @@ module;
 
 module Artifact.Widgets.Timeline;
 
-import std;
 
 import Widgets.Utils.CSS;
 
