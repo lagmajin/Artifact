@@ -23628,7 +23628,8 @@ if (event->button() == Qt::LeftButton &&
 
       const ArtifactCore::RationalTime time(hitSample.framePosition, 24);
 
-      if (event->modifiers().testFlag(Qt::ControlModifier)) {
+      if (event->modifiers().testFlag(Qt::ControlModifier) &&
+          !event->modifiers().testFlag(Qt::ShiftModifier)) {
         impl_->beginMotionPathTangentDrag(selectedLayer,
                                           hitSample.framePosition,
                                           MotionPathTangentHandle::Out);
