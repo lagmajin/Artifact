@@ -3,6 +3,7 @@ module;
 #include <QElapsedTimer>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QRegularExpression>
 #include <QSignalBlocker>
@@ -256,7 +257,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                      if (*initializing) {
                        return;
                      }
-                     if (spinBox_->lineEdit()) {
+                     if (spinBox_->findChild<QLineEdit*>()) {
                        const auto parsed = parseQuickNumericExpression<double>(
                            spinBox_->cleanText(), spinBox_->value());
                        if (parsed.has_value()) {
@@ -590,7 +591,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                      if (*initializing) {
                        return;
                      }
-                     if (spinBox_->lineEdit()) {
+                     if (spinBox_->findChild<QLineEdit*>()) {
                        const auto parsed = parseQuickNumericExpression<int>(
                            spinBox_->cleanText(), spinBox_->value());
                        if (parsed.has_value()) {

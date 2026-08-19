@@ -963,7 +963,8 @@ void launchExpressionCopilot(
             continue;
           }
           QVariantMap item;
-          item[QStringLiteral("time")] = marker->position().toDouble();
+          item[QStringLiteral("time")] =
+              static_cast<double>(marker->position().framePosition());
           item[QStringLiteral("index")] = markerIndex++;
           item[QStringLiteral("duration")] = 0.0;
           item[QStringLiteral("comment")] = marker->comment();

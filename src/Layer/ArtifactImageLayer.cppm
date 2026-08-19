@@ -1078,7 +1078,7 @@ public:
         return true;
     }
 
-    bool refreshSequenceFrame(qint64 frameIndex) const
+    bool refreshSequenceFrame(qint64 frameIndex, double timelineFrameRate) const
     {
         const auto clearSequenceFrameCache = [this]() {
             cache_.reset();
@@ -1108,7 +1108,7 @@ public:
             return false;
         }
         frameIndex = sequenceFrameRate_ > 0.0
-            ? sequenceSource_->frameIndexAtTime(frameIndex, compositionFrameRate())
+            ? sequenceSource_->frameIndexAtTime(frameIndex, timelineFrameRate)
             : std::clamp<qint64>(frameIndex, 0, frameCount - 1);
         // Hold the nearest valid source frame while the layer remains visible
         // beyond the discovered sequence range. This keeps an image-sequence
@@ -2088,7 +2088,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     if (isImageSequence()) {
         const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(layerFrame);
+        impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
     }
 
     auto size = sourceSize();
@@ -2204,7 +2204,7 @@ QImage ArtifactImageLayer::toQImage() const
     if (isImageSequence()) {
         const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(layerFrame);
+        impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
     }
 
     const bool isMainThread = (QThread::currentThread() == qApp->thread());

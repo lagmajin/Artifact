@@ -15,6 +15,7 @@ import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Shape.Operator;
 import Shape.Path;
+import Shape.Types;
 import Memory.SharedPtr;
 
 export namespace Artifact {

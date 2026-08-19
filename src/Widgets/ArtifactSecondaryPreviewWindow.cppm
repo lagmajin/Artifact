@@ -24,6 +24,7 @@ module;
 #include <QGraphicsOpacityEffect>
 #include <QPalette>
 #include <QColor>
+#include <QSettings>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.SecondaryPreviewWindow;
@@ -74,7 +75,8 @@ public:
         settings.setValue(QStringLiteral("Artifact/SecondaryPreview/Fullscreen"), fullscreen_);
         settings.setValue(QStringLiteral("Artifact/SecondaryPreview/AutoUpdate"), autoUpdate_);
         settings.setValue(QStringLiteral("Artifact/SecondaryPreview/UpdateRate"), updateRate_);
-        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/Geometry"), normalGeometry());
+        settings.setValue(QStringLiteral("Artifact/SecondaryPreview/Geometry"),
+                          owner_ ? owner_->normalGeometry() : QRect());
     }
 
     int preferredScreenIndex() const {
@@ -83,7 +85,8 @@ public:
             if (!preferredScreenName_.isEmpty() &&
                 screens[i]->name() == preferredScreenName_) return i;
         }
-        return std::clamp(currentScreenIndex_, 0, std::max(0, screens.size() - 1));
+        const int screenCount = static_cast<int>(screens.size());
+        return std::clamp(currentScreenIndex_, 0, std::max(0, screenCount - 1));
     }
 
     // OSD

@@ -418,6 +418,17 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
   constexpr std::size_t kMaxAddedItems = 100000;
   constexpr int kMaxAddedFolderDepth = 64;
   std::size_t addedItemCount = 0;
+  const auto jsonStringList = [](const QJsonValue& value) {
+    QStringList result;
+    const QJsonArray array = value.toArray();
+    result.reserve(array.size());
+    for (const QJsonValue& entry : array) {
+      if (entry.isString()) {
+        result.append(entry.toString());
+      }
+    }
+    return result;
+  };
 
   std::function<bool(const QJsonObject&, ProjectItem*, int)> appendItem =
       [&](const QJsonObject& obj, ProjectItem* currentParent,
@@ -445,7 +456,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     if (type == QStringLiteral("folder")) {
       auto folderUp = std::make_unique<FolderItem>();
       folderUp->name.setQString(name);
-      folderUp->tags = obj.value(QStringLiteral("tags")).toStringList();
+      folderUp->tags = jsonStringList(obj.value(QStringLiteral("tags")));
       if (!idStr.isEmpty()) {
         folderUp->id = Id(idStr);
       }
@@ -467,7 +478,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     if (type == QStringLiteral("footage")) {
       auto footageUp = std::make_unique<FootageItem>();
       footageUp->name.setQString(name);
-      footageUp->tags = obj.value(QStringLiteral("tags")).toStringList();
+      footageUp->tags = jsonStringList(obj.value(QStringLiteral("tags")));
       if (!idStr.isEmpty()) {
         footageUp->id = Id(idStr);
       }
@@ -501,7 +512,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     if (type == QStringLiteral("solid")) {
       auto solidUp = std::make_unique<SolidItem>();
       solidUp->name.setQString(name);
-      solidUp->tags = obj.value(QStringLiteral("tags")).toStringList();
+      solidUp->tags = jsonStringList(obj.value(QStringLiteral("tags")));
       if (!idStr.isEmpty()) {
         solidUp->id = Id(idStr);
       }
@@ -523,7 +534,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
         // contain a full composition snapshot.
         auto compItemUp = std::make_unique<CompositionItem>();
         compItemUp->name.setQString(name.isEmpty() ? QStringLiteral("Composition") : name);
-        compItemUp->tags = obj.value(QStringLiteral("tags")).toStringList();
+        compItemUp->tags = jsonStringList(obj.value(QStringLiteral("tags")));
         if (!idStr.isEmpty()) {
           compItemUp->id = Id(idStr);
         }
@@ -544,7 +555,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
       auto compItemUp = std::make_unique<CompositionItem>();
       compItemUp->compositionId = compId;
       compItemUp->name.setQString(importedName);
-      compItemUp->tags = obj.value(QStringLiteral("tags")).toStringList();
+      compItemUp->tags = jsonStringList(obj.value(QStringLiteral("tags")));
       if (!idStr.isEmpty()) {
         compItemUp->id = Id(idStr);
       }
@@ -1852,6 +1863,17 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
   constexpr std::size_t kMaxRestoredItems = 100000;
   constexpr int kMaxRestoredFolderDepth = 64;
   std::size_t restoredItemCount = 0;
+  const auto jsonStringList = [](const QJsonValue& value) {
+    QStringList result;
+    const QJsonArray array = value.toArray();
+    result.reserve(array.size());
+    for (const QJsonValue& entry : array) {
+      if (entry.isString()) {
+        result.append(entry.toString());
+      }
+    }
+    return result;
+  };
   std::function<void(const QJsonObject&, ProjectItem*, int)> restoreItem =
       [&](const QJsonObject& obj, ProjectItem* parent, const int depth) {
     if (!parent || depth > kMaxRestoredFolderDepth ||
@@ -1862,7 +1884,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
     QString type = obj["type"].toString();
     QString name = obj["name"].toString();
     QString idStr = obj["id"].toString();
-    const QStringList tags = obj["tags"].toStringList();
+    const QStringList tags = jsonStringList(obj.value(QStringLiteral("tags")));
 
     if (type == "footage") {
       auto footageUp = std::make_unique<FootageItem>();

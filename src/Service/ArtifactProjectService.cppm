@@ -4127,7 +4127,7 @@ bool ArtifactProjectService::setEffectEnabledInCurrentComposition(
     if (effect && effect->effectID().toQString() == effectId) {
       if (auto *mgr = UndoManager::instance()) {
         mgr->push(std::make_unique<SetCompositionEffectEnabledUndoCommand>(
-            effectId, effect->enabled(), enabled));
+            effectId, effect->isEnabled(), enabled));
       } else {
         effect->setEnabled(enabled);
         comp->changed();

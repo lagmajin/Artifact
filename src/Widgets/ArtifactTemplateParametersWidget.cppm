@@ -68,7 +68,7 @@ QJsonArray ArtifactTemplateParametersWidget::parameters() const {
         object.insert(QStringLiteral("defaultValue"), parsed.isNull()
                                                            ? QJsonValue(item->text(3))
                                                            : (parsed.isArray()
-                                                                  ? parsed.array().value(0)
+                                                                  ? parsed.array().at(0)
                                                                   : QJsonValue(item->text(3))));
         result.append(object);
     }

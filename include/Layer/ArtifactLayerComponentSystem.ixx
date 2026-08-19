@@ -567,7 +567,8 @@ LayerComponentHost::validate() const {
                 });
             issues.push_back({typeId,
                               QStringLiteral("Component dependency cycle: %1 -> %2")
-                                  .arg(cycle, typeId),
+                                  .arg(cycle)
+                                  .arg(typeId),
                               true});
             return;
         }

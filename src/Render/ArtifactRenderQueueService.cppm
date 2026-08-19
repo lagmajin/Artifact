@@ -5893,7 +5893,7 @@ namespace Artifact
                     QStringLiteral("The output directory '%1' is missing.").arg(outputInfo.absolutePath()),
                     QStringLiteral("Choose an existing output directory"),
                     compId));
-            } else if (!outputInfo.dir().isWritable()) {
+            } else if (!QFileInfo(outputInfo.absolutePath()).isWritable()) {
                 result.addDiagnostic(makePreflightDiagnostic(
                     ArtifactCore::DiagnosticSeverity::Error,
                     ArtifactCore::DiagnosticCategory::File,

@@ -16550,7 +16550,7 @@ void CompositionRenderController::setLayerRenderFilter(
   }
   impl_->layerRenderFilter_ = filter;
   impl_->invalidateBaseComposite();
-  impl_->markRenderDirty();
+  markRenderDirty();
 }
 
 CompositionLayerRenderFilter
@@ -28400,8 +28400,7 @@ bool CompositionRenderController::toggleHoveredMaskInvertedForSelectedLayers() {
   const int pathIndex = impl_->hoveredPathIndex_;
   if (!primary || maskIndex >= primary->maskCount() ||
       pathIndex >= primary->mask(maskIndex).maskPathCount() ||
-      primary->mask(maskIndex).isLocked() ||
-      primary->mask(maskIndex).maskPath(pathIndex).isLocked()) {
+      primary->mask(maskIndex).isLocked()) {
     return false;
   }
   const bool inverted =
@@ -28415,8 +28414,7 @@ bool CompositionRenderController::toggleHoveredMaskInvertedForSelectedLayers() {
       continue;
     }
     auto mask = layer->mask(maskIndex);
-    if (mask.isLocked() || pathIndex >= mask.maskPathCount() ||
-        mask.maskPath(pathIndex).isLocked()) {
+    if (mask.isLocked() || pathIndex >= mask.maskPathCount()) {
       continue;
     }
     std::vector<LayerMask> beforeMasks;
@@ -28532,8 +28530,7 @@ bool CompositionRenderController::adjustHoveredMaskGeometryForSelectedLayers(
   const int pathIndex = impl_->hoveredPathIndex_;
   if (!primary || maskIndex >= primary->maskCount() ||
       pathIndex >= primary->mask(maskIndex).maskPathCount() ||
-      primary->mask(maskIndex).isLocked() ||
-      primary->mask(maskIndex).maskPath(pathIndex).isLocked()) {
+      primary->mask(maskIndex).isLocked()) {
     return false;
   }
   auto macro = std::make_unique<MacroUndoCommand>(
@@ -28545,8 +28542,7 @@ bool CompositionRenderController::adjustHoveredMaskGeometryForSelectedLayers(
       continue;
     }
     auto mask = layer->mask(maskIndex);
-    if (mask.isLocked() || pathIndex >= mask.maskPathCount() ||
-        mask.maskPath(pathIndex).isLocked()) {
+    if (mask.isLocked() || pathIndex >= mask.maskPathCount()) {
       continue;
     }
     std::vector<LayerMask> beforeMasks;
@@ -28599,8 +28595,7 @@ bool CompositionRenderController::adjustHoveredMaskOpacityForSelectedLayers(
   const int pathIndex = impl_->hoveredPathIndex_;
   if (!primary || maskIndex >= primary->maskCount() ||
       pathIndex >= primary->mask(maskIndex).maskPathCount() ||
-      primary->mask(maskIndex).isLocked() ||
-      primary->mask(maskIndex).maskPath(pathIndex).isLocked()) {
+      primary->mask(maskIndex).isLocked()) {
     return false;
   }
   auto macro = std::make_unique<MacroUndoCommand>(
@@ -28612,8 +28607,7 @@ bool CompositionRenderController::adjustHoveredMaskOpacityForSelectedLayers(
       continue;
     }
     auto mask = layer->mask(maskIndex);
-    if (mask.isLocked() || pathIndex >= mask.maskPathCount() ||
-        mask.maskPath(pathIndex).isLocked()) {
+    if (mask.isLocked() || pathIndex >= mask.maskPathCount()) {
       continue;
     }
     std::vector<LayerMask> beforeMasks;
@@ -32163,8 +32157,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         framePassPlanSummary != lastFrameRenderPassPlanSummary_;
     if (framePassPlanChanged || captureRenderDiagnostics) {
       ArtifactCore::RenderGraph frameRenderGraph;
-      const auto graphWidth = static_cast<std::uint32_t>(std::max(1, viewportW));
-      const auto graphHeight = static_cast<std::uint32_t>(std::max(1, viewportH));
+      const auto graphWidth = static_cast<std::uint32_t>(std::max(1.0f, viewportW));
+      const auto graphHeight = static_cast<std::uint32_t>(std::max(1.0f, viewportH));
       constexpr std::uint32_t graphFormat = 1; // RGBA8 diagnostic estimate.
       auto frameToken = frameRenderGraph.addResource({
           "Frame.Begin", ArtifactCore::RenderResourceKind::Texture,

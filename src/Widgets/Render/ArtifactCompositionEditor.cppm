@@ -125,6 +125,7 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Image;
+import NLE.Core;
 import NLE.OTIO;
 import Artifact.Layers.SolidImage;
 import Artifact.Application.Manager;
@@ -4558,7 +4559,7 @@ public:
         }
         const auto subtitleText = QString::fromUtf8(subtitleFile.readAll());
         const auto timeBase = ArtifactCore::NLE::TimeBase{
-            1, static_cast<int32_t>(std::lround(compNow->frameRate().fps())), false};
+            1, static_cast<int32_t>(std::lround(compNow->frameRate().framerate())), false};
         const auto cues = QFileInfo(path).suffix().compare(QStringLiteral("vtt"),
                                                             Qt::CaseInsensitive) == 0
                               ? ArtifactCore::NLE::OtioAdapter::importWebVtt(
@@ -4588,7 +4589,7 @@ public:
           return;
         }
         textProperty->clearKeyFrames();
-        const double fps = compNow->frameRate().fps();
+        const double fps = compNow->frameRate().framerate();
         for (const auto &cue : cues) {
           textProperty->addKeyFrame(
               ArtifactCore::RationalTime(cue.range.start(), fps),
@@ -4631,7 +4632,7 @@ public:
         if (path.isEmpty()) {
           return;
         }
-        const double fps = compNow->frameRate().fps();
+        const double fps = compNow->frameRate().framerate();
         const auto timeBase = ArtifactCore::NLE::TimeBase{
             1, static_cast<int32_t>(std::lround(fps)), false};
         QVector<ArtifactCore::NLE::SubtitleCue> cues;

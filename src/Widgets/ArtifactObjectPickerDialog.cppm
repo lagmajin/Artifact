@@ -6,6 +6,9 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QHeaderView>
+#include <QTreeWidget>
+#include <QLineEdit>
+#include <QPushButton>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
 module Artifact.Widgets.ObjectPicker;

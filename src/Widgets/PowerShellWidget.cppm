@@ -111,8 +111,9 @@ PowerShellWidget::PowerShellWidget(QWidget* parent) : QWidget(parent), impl_(new
         if (impl_->historyIndex < 0) {
             impl_->historyIndex = impl_->history.size();
         }
+        const int historySize = static_cast<int>(impl_->history.size());
         impl_->historyIndex = std::clamp(
-            impl_->historyIndex + direction, 0, impl_->history.size());
+            impl_->historyIndex + direction, 0, historySize);
         impl_->cmd->setText(impl_->historyIndex == impl_->history.size()
                                 ? QString{}
                                 : impl_->history.at(impl_->historyIndex));

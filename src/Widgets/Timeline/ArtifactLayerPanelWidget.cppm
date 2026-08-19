@@ -4465,7 +4465,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     if (layer->is3D()) {
       QMenu* materialMenu = frequentMenu->addMenu(QStringLiteral("3D Material"));
-      const auto applyMaterialPreset = [layer](const QColor& baseColor,
+      const auto applyMaterialPreset = [this, layer](const QColor& baseColor,
                                                  double metallic,
                                                  double roughness,
                                                  double specular,
@@ -5561,7 +5561,8 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
         const qint64 inFrame = row.layer->inPoint().framePosition();
         const qint64 outFrame = row.layer->outPoint().framePosition();
         toolTipText = QStringLiteral("%1\nFrames: %2 - %3\nOpacity: %4%\nBlend: %5\nEffects: %6\n\nAlt-drag a layer here to create a Track Matte link")
-          .arg(row.badgeText.isEmpty() ? QStringLiteral("Layer") : row.badgeText)
+          .arg(row.layer->layerName().isEmpty() ? QStringLiteral("Layer")
+                                                : row.layer->layerName())
           .arg(inFrame)
           .arg(outFrame)
           .arg(row.layer->opacity(), 0, 'f', 1)
@@ -7524,9 +7525,10 @@ void ArtifactLayerTimelinePanelWrapper::dropEvent(QDropEvent* event)
   }
 
 void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)
-  {
-   if (impl_ && impl_->panel) {
+{
+  if (impl_ && impl_->panel) {
     impl_->panel->setFilterText(text);
+  }
 }
 
 void ArtifactLayerTimelinePanelWrapper::setPropertyChannelFilter(
@@ -7534,7 +7536,6 @@ void ArtifactLayerTimelinePanelWrapper::setPropertyChannelFilter(
 {
  if (impl_ && impl_->panel) impl_->panel->setPropertyChannelFilter(filter);
 }
-  }
 
   void ArtifactLayerTimelinePanelWrapper::setSearchMatchMode(SearchMatchMode mode)
   {

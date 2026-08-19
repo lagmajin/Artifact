@@ -39,6 +39,8 @@ module Artifact.Widgets.CompositionAudioMixer;
 
 import Artifact.Audio.Mixer;
 import Artifact.Widgets.AudioMixer;
+import Audio.Mixer;
+import Memory.SharedPtr;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
 import Artifact.Composition.Abstract;
