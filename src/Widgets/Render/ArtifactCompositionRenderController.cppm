@@ -13446,6 +13446,8 @@ public:
   QPointF draggingMotionPathStartLocalPos_;
 
   int hoveredMotionPathFrame_ = -1;
+  MotionPathTangentHandle hoveredMotionPathTangentHandle_ =
+      MotionPathTangentHandle::None;
 
   bool isDraggingMotionPathTangent_ = false;
   ArtifactAbstractLayerWeak draggingMotionPathTangentLayer_;
@@ -14156,6 +14158,7 @@ public:
     draggingMotionPathStartLocalPos_ = {};
 
     hoveredMotionPathFrame_ = -1;
+    hoveredMotionPathTangentHandle_ = MotionPathTangentHandle::None;
 
   }
 
@@ -19181,15 +19184,26 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       const FloatColor tangentHandle{0.76f, 0.95f, 1.0f,
                                      isCurrent ? 1.0f : 0.84f};
       const float handleRadius = isCurrent ? dotRadius * 1.15f : dotRadius;
+      const float hoveredHandleRadius = dotRadius * 1.65f;
       drawTaggedSolidLine(renderer_.get(), {pt.x, pt.y},
                           {pt.inTangentX, pt.inTangentY}, tangentLine,
                           std::max(1.0f, invZoom), true);
       drawTaggedSolidLine(renderer_.get(), {pt.x, pt.y},
                           {pt.outTangentX, pt.outTangentY}, tangentLine,
                           std::max(1.0f, invZoom), true);
-      renderer_->drawPoint(pt.inTangentX, pt.inTangentY, handleRadius,
+      renderer_->drawPoint(
+          pt.inTangentX, pt.inTangentY,
+          pt.frame == hoveredMotionPathFrame_ &&
+                  hoveredMotionPathTangentHandle_ == MotionPathTangentHandle::In
+              ? hoveredHandleRadius
+              : handleRadius,
                            tangentHandle);
-      renderer_->drawPoint(pt.outTangentX, pt.outTangentY, handleRadius,
+      renderer_->drawPoint(
+          pt.outTangentX, pt.outTangentY,
+          pt.frame == hoveredMotionPathFrame_ &&
+                  hoveredMotionPathTangentHandle_ == MotionPathTangentHandle::Out
+              ? hoveredHandleRadius
+              : handleRadius,
                            tangentHandle);
     }
     const float outerRadius =
@@ -25113,6 +25127,7 @@ void CompositionRenderController::handleMouseMove(
             tangentHoverHandle);
 
         if (tangentHovered) {
+          impl_->hoveredMotionPathTangentHandle_ = tangentHoverHandle;
           hoverChanged = impl_->setHoveredMotionPathFrame(
               static_cast<int>(tangentHoverFrame));
           if (hoverChanged) {
@@ -25128,6 +25143,8 @@ void CompositionRenderController::handleMouseMove(
                                            QPointF(cPos.x, cPos.y),
 
                                     hoverThreshold, hoverSample)) {
+          impl_->hoveredMotionPathTangentHandle_ =
+              MotionPathTangentHandle::None;
 
           hoverChanged = impl_->setHoveredMotionPathFrame(
 
@@ -25167,6 +25184,8 @@ void CompositionRenderController::handleMouseMove(
           }
 
         } else {
+          impl_->hoveredMotionPathTangentHandle_ =
+              MotionPathTangentHandle::None;
 
           hoverChanged = impl_->setHoveredMotionPathFrame(-1);
           if (hoverChanged) {
