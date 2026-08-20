@@ -19226,6 +19226,27 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
     renderer_->drawPoint(pt.x, pt.y, innerRadius, keyColor);
   }
+  // Keep frame labels sparse: only the active selection or hovered key gets
+  // a viewport-space label, which preserves path readability at high key
+  // counts while making the editing target unambiguous.
+  if (!selectedMotionPathFrames_.isEmpty() ||
+      hoveredMotionPathFrame_ >= 0) {
+    renderer_->setUseExternalMatrices(false);
+    const QFont frameLabelFont(QStringLiteral("Consolas"), 8);
+    const FloatColor frameLabelColor{0.96f, 0.98f, 1.0f, 0.92f};
+    for (const auto &pt : motionPathCache_.keyPoints) {
+      if (!selectedMotionPathFrames_.contains(pt.frame) &&
+          pt.frame != hoveredMotionPathFrame_) {
+        continue;
+      }
+      const auto viewportPoint = renderer_->canvasToViewport({pt.x, pt.y});
+      renderer_->drawText(
+          QRectF(viewportPoint.x + 6.0f, viewportPoint.y - 18.0f, 52.0f,
+                 16.0f),
+          QStringLiteral("F%1").arg(pt.frame), frameLabelFont,
+          frameLabelColor, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+  }
   if (viewportOrientationMatricesValid_) {
     renderer_->setUseExternalMatrices(false);
   }
