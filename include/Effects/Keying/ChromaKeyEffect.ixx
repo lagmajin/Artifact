@@ -53,6 +53,7 @@ private:
     float blackClip_ = 0.0f;
     float whiteClip_ = 1.0f;
     bool previewMatte_ = false;
+    bool lumaOnly_ = false;
 
 public:
     ChromaKeyEffectCPUImpl() = default;
@@ -84,6 +85,8 @@ public:
     float whiteClip() const { return whiteClip_; }
     void setPreviewMatte(bool enabled) { previewMatte_ = enabled; }
     bool previewMatte() const { return previewMatte_; }
+    void setLumaOnly(bool enabled) { lumaOnly_ = enabled; }
+    bool lumaOnly() const { return lumaOnly_; }
 
     void applyCPU(const ArtifactCore::ImageF32x4RGBAWithCache& src, ArtifactCore::ImageF32x4RGBAWithCache& dst) override;
 };
@@ -118,6 +121,8 @@ public:
     float whiteClip() const;
     void setPreviewMatte(bool enabled);
     bool previewMatte() const;
+    void setLumaOnly(bool enabled);
+    bool lumaOnly() const;
 };
 
 }

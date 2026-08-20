@@ -82,6 +82,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     float kr = keyColor_.r();
     float kg = keyColor_.g();
     float kb = keyColor_.b();
+    const float keyLuma = kr * 0.299f + kg * 0.587f + kb * 0.114f;
     
     float sim = std::clamp(similarity_, 0.0f, 1.7320508f);
     float smooth = std::clamp(smoothness_, 0.001f, 1.7320508f);
@@ -99,7 +100,9 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
             float a = ptr[x][3];
 
             // Euclidian distance
-            float dist = std::sqrt(std::pow(r - kr, 2) + std::pow(g - kg, 2) + std::pow(b - kb, 2));
+            float dist = lumaOnly_
+                ? std::abs((r * 0.299f + g * 0.587f + b * 0.114f) - keyLuma)
+                : std::sqrt(std::pow(r - kr, 2) + std::pow(g - kg, 2) + std::pow(b - kb, 2));
             if (!std::isfinite(r) || !std::isfinite(g) ||
                 !std::isfinite(b) || !std::isfinite(dist) ||
                 !std::isfinite(a)) {
@@ -235,6 +238,14 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     previewMatteProp.setValue(previewMatte());
     previewMatteProp.setTooltip(QStringLiteral("Display the generated alpha matte as an opaque grayscale image."));
 
+    auto& lumaOnlyProp = props.emplace_back();
+    lumaOnlyProp.setName("lumaOnly");
+    lumaOnlyProp.setDisplayLabel(QStringLiteral("Luma Only"));
+    lumaOnlyProp.setType(ArtifactCore::PropertyType::Boolean);
+    lumaOnlyProp.setValue(lumaOnly());
+    lumaOnlyProp.setDefaultValue(false);
+    lumaOnlyProp.setTooltip(QStringLiteral("Key by luminance distance instead of RGB color distance."));
+
     return props;
 }
 
@@ -258,6 +269,8 @@ void ChromaKeyEffect::setPropertyValue(const ArtifactCore::UniString& name, cons
         setWhiteClip(safeValue(1.0f, 0.0f, 1.0f));
     } else if (n == "previewMatte") {
         setPreviewMatte(value.toBool());
+    } else if (n == "lumaOnly") {
+        setLumaOnly(value.toBool());
     } else if (n == "keyColor") {
         // Expect QColor or other representation; best-effort
         if (value.canConvert<QColor>()) {
@@ -322,5 +335,7 @@ void ChromaKeyEffect::setPreviewMatte(bool enabled) {
     typedCpuImpl_->setPreviewMatte(enabled);
 }
 bool ChromaKeyEffect::previewMatte() const { return typedCpuImpl_->previewMatte(); }
+void ChromaKeyEffect::setLumaOnly(bool enabled) { typedCpuImpl_->setLumaOnly(enabled); }
+bool ChromaKeyEffect::lumaOnly() const { return typedCpuImpl_->lumaOnly(); }
 
 }
