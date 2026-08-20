@@ -158,8 +158,9 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     keyColorProp.setName("keyColor");
     keyColorProp.setDisplayLabel(QStringLiteral("Key Color"));
     keyColorProp.setType(ArtifactCore::PropertyType::Color);
+    keyColorProp.setValue(QColor::fromRgbF(keyColor().r(), keyColor().g(), keyColor().b(), keyColor().a()));
+    keyColorProp.setDefaultValue(QColor::fromRgbF(0.0, 1.0, 0.0, 1.0));
     keyColorProp.setTooltip(QStringLiteral("Color to remove from the image."));
-    keyColorProp.setDefaultValue(QVariant());
 
     auto& similarityProp = props.emplace_back();
     similarityProp.setName("similarity");
