@@ -213,7 +213,10 @@ std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties(
     distProp.setValue(QVariant(static_cast<double>(distortion())));
       distProp.setSoftRange(QVariant(-100.0), QVariant(100.0));
       distProp.setHardRange(QVariant(-100.0), QVariant(100.0));
+      distProp.setMinValue(QVariant(-100.0));
+      distProp.setMaxValue(QVariant(100.0));
       distProp.setStep(0.1);
+      distProp.setTooltip(QStringLiteral("Radial lens distortion coefficient."));
 
     auto& cxProp = props.emplace_back();
       cxProp.setName("centerX");
@@ -223,7 +226,10 @@ std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties(
     cxProp.setValue(QVariant(static_cast<double>(centerX())));
       cxProp.setSoftRange(QVariant(0.0), QVariant(1.0));
       cxProp.setHardRange(QVariant(0.0), QVariant(1.0));
+      cxProp.setMinValue(QVariant(0.0));
+      cxProp.setMaxValue(QVariant(1.0));
       cxProp.setStep(0.001);
+      cxProp.setTooltip(QStringLiteral("Horizontal optical center in normalized image coordinates."));
 
     auto& cyProp = props.emplace_back();
       cyProp.setName("centerY");
@@ -233,7 +239,10 @@ std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties(
     cyProp.setValue(QVariant(static_cast<double>(centerY())));
       cyProp.setSoftRange(QVariant(0.0), QVariant(1.0));
       cyProp.setHardRange(QVariant(0.0), QVariant(1.0));
-    cyProp.setStep(0.001);
+      cyProp.setMinValue(QVariant(0.0));
+      cyProp.setMaxValue(QVariant(1.0));
+      cyProp.setStep(0.001);
+      cyProp.setTooltip(QStringLiteral("Vertical optical center in normalized image coordinates."));
 
     auto& txProp = props.emplace_back();
     txProp.setName("tangentialX");
@@ -242,6 +251,8 @@ std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties(
     txProp.setDefaultValue(QVariant(0.0));
     txProp.setValue(QVariant(static_cast<double>(tangentialX())));
     txProp.setHardRange(QVariant(-1.0), QVariant(1.0));
+    txProp.setMinValue(QVariant(-1.0));
+    txProp.setMaxValue(QVariant(1.0));
     txProp.setSoftRange(QVariant(-0.1), QVariant(0.1));
     txProp.setStep(0.0001);
     txProp.setTooltip(QStringLiteral("Decentering distortion coefficient along the X axis."));
@@ -253,6 +264,8 @@ std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties(
     tyProp.setDefaultValue(QVariant(0.0));
     tyProp.setValue(QVariant(static_cast<double>(tangentialY())));
     tyProp.setHardRange(QVariant(-1.0), QVariant(1.0));
+    tyProp.setMinValue(QVariant(-1.0));
+    tyProp.setMaxValue(QVariant(1.0));
     tyProp.setSoftRange(QVariant(-0.1), QVariant(0.1));
     tyProp.setStep(0.0001);
     tyProp.setTooltip(QStringLiteral("Decentering distortion coefficient along the Y axis."));
@@ -272,7 +285,10 @@ std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties(
     zoomProp.setValue(QVariant(static_cast<double>(zoom())));
       zoomProp.setSoftRange(QVariant(0.1), QVariant(3.0));
       zoomProp.setHardRange(QVariant(0.1), QVariant(3.0));
+      zoomProp.setMinValue(QVariant(0.1));
+      zoomProp.setMaxValue(QVariant(3.0));
       zoomProp.setStep(0.01);
+      zoomProp.setTooltip(QStringLiteral("Compensating zoom to keep distorted edges inside the frame."));
 
     return props;
 }

@@ -158,6 +158,7 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     keyColorProp.setName("keyColor");
     keyColorProp.setDisplayLabel(QStringLiteral("Key Color"));
     keyColorProp.setType(ArtifactCore::PropertyType::Color);
+    keyColorProp.setTooltip(QStringLiteral("Color to remove from the image."));
     keyColorProp.setDefaultValue(QVariant());
 
     auto& similarityProp = props.emplace_back();
@@ -166,6 +167,8 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     similarityProp.setType(ArtifactCore::PropertyType::Float);
     similarityProp.setSoftRange(0.0, 1.7320508);
     similarityProp.setHardRange(0.0, 1.7320508);
+    similarityProp.setMinValue(QVariant(0.0));
+    similarityProp.setMaxValue(QVariant(1.7320508));
     similarityProp.setDefaultValue(QVariant(static_cast<double>(similarity())));
     similarityProp.setValue(QVariant(static_cast<double>(similarity())));
     similarityProp.setStep(0.01);
@@ -177,6 +180,8 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     smoothProp.setType(ArtifactCore::PropertyType::Float);
     smoothProp.setSoftRange(0.001, 1.7320508);
     smoothProp.setHardRange(0.001, 1.7320508);
+    smoothProp.setMinValue(QVariant(0.001));
+    smoothProp.setMaxValue(QVariant(1.7320508));
     smoothProp.setDefaultValue(QVariant(static_cast<double>(smoothness())));
     smoothProp.setValue(QVariant(static_cast<double>(smoothness())));
     smoothProp.setStep(0.01);
@@ -188,6 +193,8 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     spillProp.setType(ArtifactCore::PropertyType::Float);
     spillProp.setSoftRange(0.0, 1.0);
     spillProp.setHardRange(0.0, 1.0);
+    spillProp.setMinValue(QVariant(0.0));
+    spillProp.setMaxValue(QVariant(1.0));
     spillProp.setDefaultValue(QVariant(static_cast<double>(spillReduction())));
     spillProp.setValue(QVariant(static_cast<double>(spillReduction())));
     spillProp.setStep(0.01);
@@ -198,6 +205,8 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     blackClipProp.setDisplayLabel(QStringLiteral("Matte Black Clip"));
     blackClipProp.setType(ArtifactCore::PropertyType::Float);
     blackClipProp.setHardRange(0.0, 1.0);
+    blackClipProp.setMinValue(QVariant(0.0));
+    blackClipProp.setMaxValue(QVariant(1.0));
     blackClipProp.setSoftRange(0.0, 0.5);
     blackClipProp.setDefaultValue(0.0);
     blackClipProp.setValue(static_cast<double>(blackClip()));
@@ -209,6 +218,8 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     whiteClipProp.setDisplayLabel(QStringLiteral("Matte White Clip"));
     whiteClipProp.setType(ArtifactCore::PropertyType::Float);
     whiteClipProp.setHardRange(0.0, 1.0);
+    whiteClipProp.setMinValue(QVariant(0.0));
+    whiteClipProp.setMaxValue(QVariant(1.0));
     whiteClipProp.setSoftRange(0.5, 1.0);
     whiteClipProp.setDefaultValue(1.0);
     whiteClipProp.setValue(static_cast<double>(whiteClip()));

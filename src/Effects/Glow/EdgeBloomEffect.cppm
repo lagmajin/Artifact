@@ -212,10 +212,13 @@ std::vector<AbstractProperty> EdgeBloomEffect::getProperties() const {
 
     auto& thresholdSoftnessProp = props.emplace_back();
       thresholdSoftnessProp.setName("Threshold Softness");
+      thresholdSoftnessProp.setDisplayLabel(QStringLiteral("Threshold Softness"));
       thresholdSoftnessProp.setType(PropertyType::Float);
       thresholdSoftnessProp.setValue(thresholdSoftness_);
       thresholdSoftnessProp.setDefaultValue(0.0);
       thresholdSoftnessProp.setHardRange(0.0, 1.0);
+      thresholdSoftnessProp.setMinValue(QVariant(0.0));
+      thresholdSoftnessProp.setMaxValue(QVariant(1.0));
       thresholdSoftnessProp.setStep(0.01);
       thresholdSoftnessProp.setTooltip(QStringLiteral("Gradually lowers the bloom extraction threshold instead of using a hard cutoff."));
 
@@ -237,30 +240,32 @@ std::vector<AbstractProperty> EdgeBloomEffect::getProperties() const {
       amountProp.setType(PropertyType::Float);
       amountProp.setValue(amount_);
       amountProp.setDefaultValue(1.15);
+      amountProp.setHardRange(0.0, 4.0);
       amountProp.setMinValue(QVariant(0.0));
       amountProp.setMaxValue(QVariant(4.0));
-      amountProp.setHardRange(0.0, 4.0);
       amountProp.setStep(0.01);
 
     auto& edgeBoostProp = props.emplace_back();
       edgeBoostProp.setName("Edge Boost");
+      edgeBoostProp.setDisplayLabel(QStringLiteral("Edge Boost"));
       edgeBoostProp.setType(PropertyType::Float);
       edgeBoostProp.setValue(edgeBoost_);
       edgeBoostProp.setDefaultValue(1.8);
+      edgeBoostProp.setHardRange(0.0, 4.0);
       edgeBoostProp.setMinValue(QVariant(0.0));
       edgeBoostProp.setMaxValue(QVariant(4.0));
-      edgeBoostProp.setHardRange(0.0, 4.0);
       edgeBoostProp.setStep(0.01);
       edgeBoostProp.setTooltip(QStringLiteral("Additional weighting for high-contrast edges."));
 
     auto& tintMixProp = props.emplace_back();
       tintMixProp.setName("Tint Mix");
+      tintMixProp.setDisplayLabel(QStringLiteral("Tint Mix"));
       tintMixProp.setType(PropertyType::Float);
       tintMixProp.setValue(tintMix_);
       tintMixProp.setDefaultValue(0.35);
+      tintMixProp.setHardRange(0.0, 1.0);
       tintMixProp.setMinValue(QVariant(0.0));
       tintMixProp.setMaxValue(QVariant(1.0));
-      tintMixProp.setHardRange(0.0, 1.0);
       tintMixProp.setStep(0.01);
 
     return props;
