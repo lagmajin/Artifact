@@ -23648,6 +23648,16 @@ if (event->button() == Qt::LeftButton &&
           impl_->selectedMotionPathFrames_.push_back(hitSample.framePosition);
       }
 
+      // Keep the viewport and timeline in sync when a motion-path key is
+      // picked.  The existing playback service owns the authoritative CTI;
+      // using it here also refreshes all layer evaluations consistently.
+      if (auto *playback = ArtifactPlaybackService::instance()) {
+        playback->setCurrentFrame(
+            FramePosition(static_cast<int>(hitSample.framePosition)));
+      } else {
+        comp->goToFrame(hitSample.framePosition);
+      }
+
       const auto &t3d = selectedLayer->transform3D();
 
       const ArtifactCore::RationalTime time(hitSample.framePosition, 24);
@@ -25102,10 +25112,21 @@ void CompositionRenderController::handleMouseMove(
           hoverChanged = impl_->setHoveredMotionPathFrame(
 
               static_cast<int>(hoverSample.framePosition));
+          if (hoverChanged) {
+            setInfoOverlayText(
+                QStringLiteral("Motion Path • Frame %1")
+                    .arg(hoverSample.framePosition),
+                QStringLiteral("Position %1, %2")
+                    .arg(hoverSample.position.x(), 0, 'f', 1)
+                    .arg(hoverSample.position.y(), 0, 'f', 1));
+          }
 
         } else {
 
           hoverChanged = impl_->setHoveredMotionPathFrame(-1);
+          if (hoverChanged) {
+            clearInfoOverlayText();
+          }
 
         }
 
