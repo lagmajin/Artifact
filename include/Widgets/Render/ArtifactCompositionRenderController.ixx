@@ -142,6 +142,7 @@ float viewportZoom() const;
   ArtifactCompositionPtr composition() const;
 void setSelectedLayerId(const LayerID& id);
 LayerID selectedLayerId() const;
+void clearMotionPathSelection();
 void setLayerRenderFilter(CompositionLayerRenderFilter filter);
 CompositionLayerRenderFilter layerRenderFilter() const;
 void setCompareMode(CompositionCompareMode mode);

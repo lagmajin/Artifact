@@ -16699,6 +16699,15 @@ LayerID CompositionRenderController::selectedLayerId() const {
 
 }
 
+void CompositionRenderController::clearMotionPathSelection() {
+  if (impl_->selectedMotionPathFrames_.isEmpty()) return;
+  impl_->selectedMotionPathFrames_.clear();
+  impl_->hoveredMotionPathFrame_ = -1;
+  impl_->hoveredMotionPathTangentHandle_ = MotionPathTangentHandle::None;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
 void CompositionRenderController::setLayerRenderFilter(
     CompositionLayerRenderFilter filter) {
   if (impl_->layerRenderFilter_ == filter) {

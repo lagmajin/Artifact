@@ -6418,6 +6418,10 @@ protected:
     // Blender-style transform semantics: Esc restores the drag-start
     // transform instead of committing the in-progress frame gizmo edit.
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_) {
+      controller_->clearMotionPathSelection();
+    }
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         controller_ && controller_->cancelGizmoInteraction()) {
       modalTransformNumericInput_.clear();
       nativePointerCaptureActive_ = false;
