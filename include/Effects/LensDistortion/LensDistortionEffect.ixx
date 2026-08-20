@@ -40,6 +40,7 @@ export namespace Artifact {
 class LensDistortionEffectCPUImpl : public ArtifactEffectImplBase {
 private:
     float distortion_ = 0.0f;
+    float radialQuadratic_ = 0.0f;
     float centerX_ = 0.5f;
     float centerY_ = 0.5f;
     float tangentialX_ = 0.0f;
@@ -52,6 +53,8 @@ public:
 
     void setDistortion(float v) { distortion_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 0.0f; }
     float distortion() const { return distortion_; }
+    void setRadialQuadratic(float v) { radialQuadratic_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 0.0f; }
+    float radialQuadratic() const { return radialQuadratic_; }
 
     void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
@@ -76,6 +79,7 @@ public:
 class LensDistortionEffectGPUImpl : public ArtifactEffectImplBase {
 private:
     float distortion_ = 0.0f;
+    float radialQuadratic_ = 0.0f;
     float centerX_ = 0.5f;
     float centerY_ = 0.5f;
     float tangentialX_ = 0.0f;
@@ -88,6 +92,8 @@ public:
 
     void setDistortion(float v) { distortion_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 0.0f; }
     float distortion() const { return distortion_; }
+    void setRadialQuadratic(float v) { radialQuadratic_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 0.0f; }
+    float radialQuadratic() const { return radialQuadratic_; }
 
     void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
@@ -122,6 +128,8 @@ public:
 
     void setDistortion(float v);
     float distortion() const;
+    void setRadialQuadratic(float v);
+    float radialQuadratic() const;
 
     void setCenterX(float cx);
     float centerX() const;
