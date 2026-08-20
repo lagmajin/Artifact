@@ -19258,6 +19258,47 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
     renderer_->drawPoint(pt.x, pt.y, innerRadius, keyColor);
   }
+  if (selectedMotionPathFrames_.size() > 1) {
+    QRectF selectionBounds;
+    bool hasSelectionBounds = false;
+    for (const auto &pt : motionPathCache_.keyPoints) {
+      if (!selectedMotionPathFrames_.contains(pt.frame)) continue;
+      const QPointF point(pt.x, pt.y);
+      if (!hasSelectionBounds) {
+        selectionBounds = QRectF(point, QSizeF(0.0, 0.0));
+        hasSelectionBounds = true;
+      } else {
+        selectionBounds |= QRectF(point, QSizeF(0.0, 0.0));
+      }
+    }
+    if (hasSelectionBounds) {
+      const qreal padding = std::max<qreal>(10.0, 12.0 * invZoom);
+      selectionBounds.adjust(-padding, -padding, padding, padding);
+      const FloatColor selectionBoxColor{1.0f, 0.82f, 0.22f, 0.72f};
+      const QPointF topLeft = selectionBounds.topLeft();
+      const QPointF topRight = selectionBounds.topRight();
+      const QPointF bottomLeft = selectionBounds.bottomLeft();
+      const QPointF bottomRight = selectionBounds.bottomRight();
+      renderer_->drawDashedLineLocal(
+          {static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y())},
+          {static_cast<float>(topRight.x()), static_cast<float>(topRight.y())},
+          std::max(1.0f, invZoom), 5.0f, 3.0f, selectionBoxColor);
+      renderer_->drawDashedLineLocal(
+          {static_cast<float>(topRight.x()), static_cast<float>(topRight.y())},
+          {static_cast<float>(bottomRight.x()),
+           static_cast<float>(bottomRight.y())},
+          std::max(1.0f, invZoom), 5.0f, 3.0f, selectionBoxColor);
+      renderer_->drawDashedLineLocal(
+          {static_cast<float>(bottomRight.x()),
+           static_cast<float>(bottomRight.y())},
+          {static_cast<float>(bottomLeft.x()), static_cast<float>(bottomLeft.y())},
+          std::max(1.0f, invZoom), 5.0f, 3.0f, selectionBoxColor);
+      renderer_->drawDashedLineLocal(
+          {static_cast<float>(bottomLeft.x()), static_cast<float>(bottomLeft.y())},
+          {static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y())},
+          std::max(1.0f, invZoom), 5.0f, 3.0f, selectionBoxColor);
+    }
+  }
   // Keep frame labels sparse: only the active selection or hovered key gets
   // a viewport-space label, which preserves path readability at high key
   // counts while making the editing target unambiguous.
