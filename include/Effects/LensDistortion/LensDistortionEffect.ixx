@@ -46,6 +46,7 @@ private:
     float tangentialX_ = 0.0f;
     float tangentialY_ = 0.0f;
     bool invertDistortion_ = false;
+    bool transparentEdges_ = false;
     float zoom_ = 1.0f;
 
 public:
@@ -69,6 +70,8 @@ public:
 
     void setInvertDistortion(bool v) { invertDistortion_ = v; }
     bool invertDistortion() const { return invertDistortion_; }
+    void setTransparentEdges(bool v) { transparentEdges_ = v; }
+    bool transparentEdges() const { return transparentEdges_; }
 
     void setZoom(float v) { zoom_ = std::isfinite(v) ? std::max(0.01f, v) : 1.0f; }
     float zoom() const { return zoom_; }
@@ -85,6 +88,7 @@ private:
     float tangentialX_ = 0.0f;
     float tangentialY_ = 0.0f;
     bool invertDistortion_ = false;
+    bool transparentEdges_ = false;
     float zoom_ = 1.0f;
 
 public:
@@ -108,6 +112,8 @@ public:
 
     void setInvertDistortion(bool v) { invertDistortion_ = v; }
     bool invertDistortion() const { return invertDistortion_; }
+    void setTransparentEdges(bool v) { transparentEdges_ = v; }
+    bool transparentEdges() const { return transparentEdges_; }
 
     void setZoom(float v) { zoom_ = std::isfinite(v) ? std::max(0.01f, v) : 1.0f; }
     float zoom() const { return zoom_; }
@@ -144,6 +150,8 @@ public:
 
     void setInvertDistortion(bool v);
     bool invertDistortion() const;
+    void setTransparentEdges(bool v);
+    bool transparentEdges() const;
 
     void setZoom(float v);
     float zoom() const;
