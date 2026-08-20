@@ -25257,13 +25257,24 @@ void CompositionRenderController::handleMouseMove(
           hoverChanged = impl_->setHoveredMotionPathFrame(
               static_cast<int>(tangentHoverFrame));
           if (hoverChanged) {
+            ArtifactCore::PositionSpatialTangents hoverTangents;
+            const bool hasHoverTangents =
+                selectedLayer->transform3D().positionKeyFrameSpatialTangentsAt(
+                    ArtifactCore::RationalTime(tangentHoverFrame, 24),
+                    hoverTangents);
             setInfoOverlayText(
                 QStringLiteral("Motion Path • %1 Tangent • Frame %2")
                     .arg(tangentHoverHandle == MotionPathTangentHandle::In
                              ? QStringLiteral("In")
                              : QStringLiteral("Out"))
                     .arg(tangentHoverFrame),
-                QStringLiteral("Alt+drag to break the tangent link"));
+                QStringLiteral("%1 • Alt+drag to %2")
+                    .arg(hasHoverTangents && hoverTangents.linked
+                             ? QStringLiteral("Linked")
+                             : QStringLiteral("Broken"))
+                    .arg(hasHoverTangents && hoverTangents.linked
+                             ? QStringLiteral("break link")
+                             : QStringLiteral("keep independent")));
           }
         } else if (hitTestMotionPathSample(motionPathSamples,
                                            QPointF(cPos.x, cPos.y),
