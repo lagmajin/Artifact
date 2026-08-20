@@ -25,6 +25,7 @@ private:
     float threshold_ = 0.65f;
     float thresholdSoftness_ = 0.0f;
     float radius_ = 10.0f;
+    int quality_ = 1;
     float amount_ = 1.15f;
     float edgeBoost_ = 1.8f;
     float tintMix_ = 0.35f;
@@ -43,6 +44,8 @@ public:
 
     float radius() const { return radius_; }
     void setRadius(float v) { radius_ = std::isfinite(v) ? std::clamp(v, 0.5f, 32.0f) : 10.0f; syncImpls(); }
+    int quality() const { return quality_; }
+    void setQuality(int v) { quality_ = std::clamp(v, 0, 2); syncImpls(); }
 
     float amount() const { return amount_; }
     void setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.15f; syncImpls(); }

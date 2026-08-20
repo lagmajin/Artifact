@@ -40,6 +40,7 @@ public:
     float threshold_ = 0.65f;
     float thresholdSoftness_ = 0.0f;
     float radius_ = 10.0f;
+    int quality_ = 1;
     float amount_ = 1.15f;
     float edgeBoost_ = 1.8f;
     float tintMix_ = 0.35f;
@@ -81,7 +82,8 @@ public:
         cv::Mat sourceMask = edge * edgeBoost_ + highlight;
         cv::threshold(sourceMask, sourceMask, 1.0, 1.0, cv::THRESH_TRUNC);
 
-        const int ksize = kernelSizeForRadius(radius_);
+        const float qualityScale = quality_ == 0 ? 0.65f : (quality_ == 2 ? 1.35f : 1.0f);
+        const int ksize = kernelSizeForRadius(radius_ * qualityScale);
         cv::GaussianBlur(sourceMask, sourceMask, cv::Size(ksize, ksize),
                          std::max(0.1f, radius_), std::max(0.1f, radius_),
                          cv::BORDER_REPLICATE);
@@ -113,6 +115,7 @@ public:
     float threshold_ = 0.65f;
     float thresholdSoftness_ = 0.0f;
     float radius_ = 10.0f;
+    int quality_ = 1;
     float amount_ = 1.15f;
     float edgeBoost_ = 1.8f;
     float tintMix_ = 0.35f;
@@ -143,7 +146,7 @@ public:
         Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex; if (!createTextureFromImage(src, device_, &inputTex, "EdgeBloom/InputTexture")) { applyCPU(src,dst); return; }
         Diligent::TextureDesc outDesc = inputTex->GetDesc(); outDesc.Usage = Diligent::USAGE_DEFAULT; outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE; outDesc.Name = "EdgeBloom/OutputTexture"; if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width || outputTex_->GetDesc().Height != outDesc.Height || outputTex_->GetDesc().Format != outDesc.Format || outputTex_->GetDesc().BindFlags != outDesc.BindFlags) { outputTex_.Release(); device_->CreateTexture(outDesc,nullptr,&outputTex_); } if (!outputTex_) { applyCPU(src,dst); return; }
         void* mapped=nullptr; context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped); if (!mapped) { applyCPU(src,dst); return; }
-        ParamsCB params{}; params.threshold=threshold_; params.thresholdSoftness=thresholdSoftness_; params.radius=radius_; params.amount=amount_; params.edgeBoost=edgeBoost_; params.tintMix=tintMix_; std::memcpy(mapped,&params,sizeof(params)); context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        ParamsCB params{}; params.threshold=threshold_; params.thresholdSoftness=thresholdSoftness_; params.radius=radius_; params.amount=amount_; params.edgeBoost=edgeBoost_; params.tintMix=tintMix_; params.quality=static_cast<float>(quality_); std::memcpy(mapped,&params,sizeof(params)); context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1); executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if (!readbackTexture(device_, context_, outputTex_, dst, src.image().colorDescriptor(), "EdgeBloom/StagingTexture")) { applyCPU(src,dst); return; }
@@ -151,15 +154,15 @@ public:
     }
 
 private:
-    struct ParamsCB { float threshold=0.65f; float thresholdSoftness=0.0f; float radius=10.0f; float amount=1.15f; float edgeBoost=1.8f; float tintMix=0.35f; float pad[2]{}; };
+    struct ParamsCB { float threshold=0.65f; float thresholdSoftness=0.0f; float radius=10.0f; float amount=1.15f; float edgeBoost=1.8f; float tintMix=0.35f; float quality=1.0f; float pad=0.0f; };
     EdgeBloomEffectCPUImpl cpuImpl_;
     static constexpr const char* kEdgeBloomHlsl = R"(
 Texture2D<float4> g_InputTexture : register(t0);
 RWTexture2D<float4> g_OutputTexture : register(u0);
-cbuffer EdgeBloomParams : register(b0) { float g_Threshold; float g_ThresholdSoftness; float g_Radius; float g_Amount; float g_EdgeBoost; float g_TintMix; float2 g_Pad; };
+cbuffer EdgeBloomParams : register(b0) { float g_Threshold; float g_ThresholdSoftness; float g_Radius; float g_Amount; float g_EdgeBoost; float g_TintMix; float g_Quality; float g_Pad; };
 float luma(float3 c){ return dot(c,float3(0.299f,0.587f,0.114f)); }
 float sampleLuma(int2 p,uint w,uint h){ p=clamp(p,int2(0,0),int2(w-1,h-1)); return luma(g_InputTexture.Load(int3(p,0)).rgb); }
-[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; int2 p=int2(dtid.xy); int radiusPx=clamp((int)round(g_Radius),1,8); int2 ox=int2(radiusPx,0),oy=int2(0,radiusPx); float4 px=g_InputTexture[dtid.xy]; float3 c=px.rgb; float lum=luma(c); float softThreshold=max(0,g_Threshold-g_ThresholdSoftness*(1-g_Threshold)); float highlight=saturate((lum-softThreshold)/max(0.0001f,1-softThreshold)); float edge=0.5f*(abs(sampleLuma(p+ox,w,h)-sampleLuma(p-ox,w,h))+abs(sampleLuma(p+oy,w,h)-sampleLuma(p-oy,w,h))); float glow=saturate(highlight+edge*g_EdgeBoost); float3 bloom=lerp(float3(glow,glow,glow), c*glow, g_TintMix); px.rgb=saturate(c + bloom * g_Amount); g_OutputTexture[dtid.xy]=px; }
+[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; int2 p=int2(dtid.xy); float qualityScale=g_Quality<0.5?0.65:(g_Quality>1.5?1.35:1.0); int radiusPx=clamp((int)round(g_Radius*qualityScale),1,8); int2 ox=int2(radiusPx,0),oy=int2(0,radiusPx); float4 px=g_InputTexture[dtid.xy]; float3 c=px.rgb; float lum=luma(c); float softThreshold=max(0,g_Threshold-g_ThresholdSoftness*(1-g_Threshold)); float highlight=saturate((lum-softThreshold)/max(0.0001f,1-softThreshold)); float edge=0.5f*(abs(sampleLuma(p+ox,w,h)-sampleLuma(p-ox,w,h))+abs(sampleLuma(p+oy,w,h)-sampleLuma(p-oy,w,h))); float glow=saturate(highlight+edge*g_EdgeBoost); float3 bloom=lerp(float3(glow,glow,glow), c*glow, g_TintMix); px.rgb=saturate(c + bloom * g_Amount); g_OutputTexture[dtid.xy]=px; }
 )";
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); const float* data=img.rgba32fData(); if(!device||!outTex||!data||img.width()<=0||img.height()<=0) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=data; sub.Stride=static_cast<Diligent::Uint64>(img.width())*sizeof(float)*4ull; Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
     static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const ArtifactCore::SurfaceColorDescriptor& colorDescriptor, const char* name){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride); dst.image().setFromCVMat(temp, colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return true; }
@@ -181,6 +184,7 @@ void EdgeBloomEffect::syncImpls() {
         cpu->threshold_ = threshold_;
         cpu->thresholdSoftness_ = thresholdSoftness_;
         cpu->radius_ = radius_;
+        cpu->quality_ = quality_;
         cpu->amount_ = amount_;
         cpu->edgeBoost_ = edgeBoost_;
         cpu->tintMix_ = tintMix_;
@@ -189,6 +193,7 @@ void EdgeBloomEffect::syncImpls() {
         gpu->threshold_ = threshold_;
         gpu->thresholdSoftness_ = thresholdSoftness_;
         gpu->radius_ = radius_;
+        gpu->quality_ = quality_;
         gpu->amount_ = amount_;
         gpu->edgeBoost_ = edgeBoost_;
         gpu->tintMix_ = tintMix_;
@@ -197,7 +202,7 @@ void EdgeBloomEffect::syncImpls() {
 
 std::vector<AbstractProperty> EdgeBloomEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    props.reserve(6);
+    props.reserve(7);
 
     auto& thresholdProp = props.emplace_back();
       thresholdProp.setName("Threshold");
@@ -234,6 +239,18 @@ std::vector<AbstractProperty> EdgeBloomEffect::getProperties() const {
       radiusProp.setHardRange(0.5, 32.0);
       radiusProp.setStep(0.1);
       radiusProp.setUnit(QStringLiteral("px"));
+
+    auto& qualityProp = props.emplace_back();
+      qualityProp.setName("Quality");
+      qualityProp.setDisplayLabel(QStringLiteral("Quality"));
+      qualityProp.setType(PropertyType::Integer);
+      qualityProp.setValue(quality_);
+      qualityProp.setDefaultValue(1);
+      qualityProp.setMinValue(QVariant(0));
+      qualityProp.setMaxValue(QVariant(2));
+      qualityProp.setHardRange(0, 2);
+      qualityProp.setStep(1);
+      qualityProp.setTooltip(QStringLiteral("0=Draft, 1=Standard, 2=High; controls bloom sampling scale."));
 
     auto& amountProp = props.emplace_back();
       amountProp.setName("Amount");
@@ -280,6 +297,8 @@ void EdgeBloomEffect::setPropertyValue(const UniString& name, const QVariant& va
         setThresholdSoftness(value.toFloat());
     } else if (key == QStringLiteral("Radius")) {
         setRadius(value.toFloat());
+    } else if (key == QStringLiteral("Quality")) {
+        setQuality(value.toInt());
     } else if (key == QStringLiteral("Amount")) {
         setAmount(value.toFloat());
     } else if (key == QStringLiteral("Edge Boost")) {
