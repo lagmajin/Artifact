@@ -50,6 +50,7 @@ private:
     float similarity_ = 0.4f;
     float smoothness_ = 0.1f;
     float spillReduction_ = 0.5f;
+    float spillDesaturation_ = 1.0f;
     float blackClip_ = 0.0f;
     float whiteClip_ = 1.0f;
     bool previewMatte_ = false;
@@ -78,6 +79,8 @@ public:
     
     void setSpillReduction(float val) { spillReduction_ = val; }
     float spillReduction() const { return spillReduction_; }
+    void setSpillDesaturation(float val) { spillDesaturation_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 1.0f; }
+    float spillDesaturation() const { return spillDesaturation_; }
 
     void setBlackClip(float val) { blackClip_ = val; }
     float blackClip() const { return blackClip_; }
@@ -114,6 +117,8 @@ public:
     
     void setSpillReduction(float val);
     float spillReduction() const;
+    void setSpillDesaturation(float val);
+    float spillDesaturation() const;
 
     void setBlackClip(float val);
     float blackClip() const;

@@ -87,6 +87,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     float sim = std::clamp(similarity_, 0.0f, 1.7320508f);
     float smooth = std::clamp(smoothness_, 0.001f, 1.7320508f);
     float spill = std::clamp(spillReduction_, 0.0f, 1.0f);
+    float desaturation = std::clamp(spillDesaturation_, 0.0f, 1.0f);
     float blackClip = std::clamp(blackClip_, 0.0f, 0.9999f);
     float whiteClip = std::clamp(whiteClip_, 0.0001f, 1.0f);
     whiteClip = std::max(whiteClip, blackClip + 0.0001f);
@@ -129,9 +130,10 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
                  // Factor depends on how "green" it is
                  float factor = spill * (1.0f - std::min(1.0f, (dist - sim) / (smooth + 0.2f)));
                  if (factor > 0.0f) {
-                    ptr[x][0] = r * (1.0f - factor) + gray * factor;
-                    ptr[x][1] = g * (1.0f - factor) + gray * factor;
-                    ptr[x][2] = b * (1.0f - factor) + gray * factor;
+                    const float colorMix = factor * desaturation;
+                    ptr[x][0] = r * (1.0f - colorMix) + gray * colorMix;
+                    ptr[x][1] = g * (1.0f - colorMix) + gray * colorMix;
+                    ptr[x][2] = b * (1.0f - colorMix) + gray * colorMix;
                  }
             }
 
@@ -204,6 +206,18 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     spillProp.setStep(0.01);
     spillProp.setTooltip(QStringLiteral("Suppresses the sampled screen color in retained pixels."));
 
+    auto& desaturationProp = props.emplace_back();
+    desaturationProp.setName("spillDesaturation");
+    desaturationProp.setDisplayLabel(QStringLiteral("Spill Desaturation"));
+    desaturationProp.setType(ArtifactCore::PropertyType::Float);
+    desaturationProp.setValue(static_cast<double>(spillDesaturation()));
+    desaturationProp.setDefaultValue(1.0);
+    desaturationProp.setMinValue(QVariant(0.0));
+    desaturationProp.setMaxValue(QVariant(1.0));
+    desaturationProp.setHardRange(0.0, 1.0);
+    desaturationProp.setStep(0.01);
+    desaturationProp.setTooltip(QStringLiteral("How strongly spill suppression desaturates retained pixels."));
+
     auto& blackClipProp = props.emplace_back();
     blackClipProp.setName("blackClip");
     blackClipProp.setDisplayLabel(QStringLiteral("Matte Black Clip"));
@@ -263,6 +277,8 @@ void ChromaKeyEffect::setPropertyValue(const ArtifactCore::UniString& name, cons
         setSmoothness(safeValue(0.001f, 0.001f, 1.7320508f));
     } else if (n == "spillReduction") {
         setSpillReduction(safeValue(0.0f, 0.0f, 1.0f));
+    } else if (n == "spillDesaturation") {
+        setSpillDesaturation(safeValue(1.0f, 0.0f, 1.0f));
     } else if (n == "blackClip") {
         setBlackClip(safeValue(0.0f, 0.0f, 1.0f));
     } else if (n == "whiteClip") {
@@ -317,6 +333,12 @@ void ChromaKeyEffect::setSpillReduction(float val) {
 }
 float ChromaKeyEffect::spillReduction() const {
     return typedCpuImpl_->spillReduction();
+}
+void ChromaKeyEffect::setSpillDesaturation(float val) {
+    typedCpuImpl_->setSpillDesaturation(std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 1.0f);
+}
+float ChromaKeyEffect::spillDesaturation() const {
+    return typedCpuImpl_->spillDesaturation();
 }
 
 void ChromaKeyEffect::setBlackClip(float val) {
