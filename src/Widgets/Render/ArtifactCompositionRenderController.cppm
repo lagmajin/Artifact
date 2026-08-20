@@ -25105,7 +25105,27 @@ void CompositionRenderController::handleMouseMove(
 
         bool hoverChanged = false;
 
-        if (hitTestMotionPathSample(motionPathSamples, QPointF(cPos.x, cPos.y),
+        int64_t tangentHoverFrame = 0;
+        MotionPathTangentHandle tangentHoverHandle =
+            MotionPathTangentHandle::None;
+        const bool tangentHovered = impl_->hitTestMotionPathTangent(
+            QPointF(cPos.x, cPos.y), hoverThreshold, tangentHoverFrame,
+            tangentHoverHandle);
+
+        if (tangentHovered) {
+          hoverChanged = impl_->setHoveredMotionPathFrame(
+              static_cast<int>(tangentHoverFrame));
+          if (hoverChanged) {
+            setInfoOverlayText(
+                QStringLiteral("Motion Path • %1 Tangent • Frame %2")
+                    .arg(tangentHoverHandle == MotionPathTangentHandle::In
+                             ? QStringLiteral("In")
+                             : QStringLiteral("Out"))
+                    .arg(tangentHoverFrame),
+                QStringLiteral("Alt+drag to break the tangent link"));
+          }
+        } else if (hitTestMotionPathSample(motionPathSamples,
+                                           QPointF(cPos.x, cPos.y),
 
                                     hoverThreshold, hoverSample)) {
 
