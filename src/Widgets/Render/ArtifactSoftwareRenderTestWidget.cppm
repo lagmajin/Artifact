@@ -84,8 +84,10 @@ public:
     QString backgroundPath;
     QString overlayPath;
     QImage previewCapture;
+    QImage softwarePreviewCapture;
     QImage renderQueueCapture;
     QString previewCapturePath;
+    QString softwarePreviewCapturePath;
     QString renderQueueCapturePath;
     QString parityStatus;
     QString contextStatus;
@@ -318,54 +320,82 @@ public:
     void compareParityCaptures()
     {
         if (previewCapture.isNull() || renderQueueCapture.isNull()) {
-            parityStatus = QStringLiteral("Load both Preview (P) and Render Queue (Q) captures first");
-            return;
-        }
-        if (previewCapture.size() != renderQueueCapture.size()) {
-            parityStatus = QStringLiteral("Size mismatch: Preview %1x%2, Render Queue %3x%4")
-                .arg(previewCapture.width()).arg(previewCapture.height())
-                .arg(renderQueueCapture.width()).arg(renderQueueCapture.height());
+            parityStatus = QStringLiteral("Load Preview (P) and Render Queue (Q) captures first");
             return;
         }
 
-        const int pixelCount = previewCapture.width() * previewCapture.height();
-        quint64 totalDifference = 0;
-        int differentPixels = 0;
-        int maximumDifference = 0;
-        const uchar* previewBits = previewCapture.constBits();
-        const uchar* queueBits = renderQueueCapture.constBits();
-        const int byteCount = pixelCount * 4;
-        for (int offset = 0; offset < byteCount; offset += 4) {
-            int pixelDifference = 0;
-            int maximumChannelDifference = 0;
-            for (int channel = 0; channel < 4; ++channel) {
-                const int channelDifference = std::abs(
-                    static_cast<int>(previewBits[offset + channel]) -
-                    static_cast<int>(queueBits[offset + channel]));
-                pixelDifference += channelDifference;
-                maximumChannelDifference = std::max(maximumChannelDifference, channelDifference);
+        struct PairResult {
+            bool passed = false;
+            QString summary;
+        };
+        const auto comparePair = [this](const QImage& lhs, const QImage& rhs,
+                                        const QString& label) -> PairResult {
+            if (lhs.size() != rhs.size()) {
+                return {false, QStringLiteral("%1 size mismatch (%2x%3 vs %4x%5)")
+                    .arg(label)
+                    .arg(lhs.width()).arg(lhs.height())
+                    .arg(rhs.width()).arg(rhs.height())};
             }
-            totalDifference += static_cast<quint64>(pixelDifference);
-            maximumDifference = std::max(maximumDifference, pixelDifference);
-            if (maximumChannelDifference > parityChannelTolerance) {
-                ++differentPixels;
+
+            const int pixelCount = lhs.width() * lhs.height();
+            quint64 totalDifference = 0;
+            int differentPixels = 0;
+            int maximumDifference = 0;
+            const uchar* lhsBits = lhs.constBits();
+            const uchar* rhsBits = rhs.constBits();
+            for (int offset = 0; offset < pixelCount * 4; offset += 4) {
+                int pixelDifference = 0;
+                int maximumChannelDifference = 0;
+                for (int channel = 0; channel < 4; ++channel) {
+                    const int channelDifference = std::abs(
+                        static_cast<int>(lhsBits[offset + channel]) -
+                        static_cast<int>(rhsBits[offset + channel]));
+                    pixelDifference += channelDifference;
+                    maximumChannelDifference = std::max(maximumChannelDifference,
+                                                         channelDifference);
+                }
+                totalDifference += static_cast<quint64>(pixelDifference);
+                maximumDifference = std::max(maximumDifference, pixelDifference);
+                if (maximumChannelDifference > parityChannelTolerance) {
+                    ++differentPixels;
+                }
             }
+
+            const double meanDifference = pixelCount > 0
+                ? static_cast<double>(totalDifference) / static_cast<double>(pixelCount * 4)
+                : 0.0;
+            const double failureRatio = pixelCount > 0
+                ? static_cast<double>(differentPixels) / static_cast<double>(pixelCount)
+                : 1.0;
+            const bool passed = failureRatio <= parityPixelFailureLimit;
+            return {passed, QStringLiteral("%1 %2: %3/%4 over tolerance | mean %5 | max %6")
+                .arg(label, passed ? QStringLiteral("PASS") : QStringLiteral("FAIL"))
+                .arg(differentPixels)
+                .arg(pixelCount)
+                .arg(QString::number(meanDifference, 'f', 3))
+                .arg(maximumDifference)};
+        };
+
+        const PairResult previewToQueue = comparePair(
+            previewCapture, renderQueueCapture, QStringLiteral("Preview↔Render Queue"));
+        if (softwarePreviewCapture.isNull()) {
+            parityStatus = previewToQueue.summary +
+                QStringLiteral(" | channel <= %1, pixel limit %2%%")
+                    .arg(parityChannelTolerance)
+                    .arg(QString::number(parityPixelFailureLimit * 100.0, 'f', 2));
+            return;
         }
 
-        const double meanDifference = pixelCount > 0
-            ? static_cast<double>(totalDifference) / static_cast<double>(pixelCount * 4)
-            : 0.0;
-        const double failureRatio = pixelCount > 0
-            ? static_cast<double>(differentPixels) / static_cast<double>(pixelCount)
-            : 1.0;
-        const bool passed = failureRatio <= parityPixelFailureLimit;
-        parityStatus = QStringLiteral("Parity %1: %2/%3 pixels over tolerance (channel <= %4) | mean RGBA delta %5 | max sum %6")
+        const PairResult previewToSoftware = comparePair(
+            previewCapture, softwarePreviewCapture, QStringLiteral("Preview↔Software"));
+        const PairResult softwareToQueue = comparePair(
+            softwarePreviewCapture, renderQueueCapture, QStringLiteral("Software↔Render Queue"));
+        const bool passed = previewToQueue.passed && previewToSoftware.passed && softwareToQueue.passed;
+        parityStatus = QStringLiteral("Parity %1 | %2 | %3 | %4")
             .arg(passed ? QStringLiteral("PASS") : QStringLiteral("FAIL"))
-            .arg(differentPixels)
-            .arg(pixelCount)
-            .arg(parityChannelTolerance)
-            .arg(QString::number(meanDifference, 'f', 3))
-            .arg(maximumDifference);
+            .arg(previewToQueue.summary)
+            .arg(previewToSoftware.summary)
+            .arg(softwareToQueue.summary);
     }
 
     void compositeImages(QImage& target, const QImage& cubeLayer) const
@@ -632,7 +662,7 @@ void ArtifactSoftwareRenderTestWidget::paintEvent(QPaintEvent* event)
     painter.drawText(
         QRect(10, 82, w - 20, 44),
         Qt::AlignLeft | Qt::AlignTop,
-        QStringLiteral("P: Load Preview  Q: Load Render Queue  D: Compare captures"));
+        QStringLiteral("P: Load Preview  V: Load Software Preview  Q: Load Render Queue  D: Compare"));
     painter.drawText(
         QRect(10, 106, w - 20, 44),
         Qt::AlignLeft | Qt::AlignTop,
@@ -694,6 +724,15 @@ void ArtifactSoftwareRenderTestWidget::keyPressEvent(QKeyEvent* event)
         if (impl_->loadParityCapture(this, &impl_->renderQueueCapture,
                                      &impl_->renderQueueCapturePath,
                                      QStringLiteral("Load Render Queue Capture"))) {
+            update();
+        }
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_V) {
+        if (impl_->loadParityCapture(this, &impl_->softwarePreviewCapture,
+                                     &impl_->softwarePreviewCapturePath,
+                                     QStringLiteral("Load Software Preview Capture"))) {
             update();
         }
         event->accept();
