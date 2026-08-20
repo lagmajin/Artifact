@@ -5766,6 +5766,8 @@ struct MotionPathPositionSnapshot {
 struct MotionPathKeySnapshot {
   int64_t frame = 0;
   MotionPathPositionSnapshot value;
+  bool hasTangents = false;
+  ArtifactCore::PositionSpatialTangents tangents;
 };
 
 class MotionPathGroupUndoCommand final : public UndoCommand {
@@ -5791,6 +5793,10 @@ private:
       if (snapshot.value.hasPositionKey) {
         transform.setPositionKeyFrameValueAt(time, snapshot.value.x,
                                               snapshot.value.y);
+        if (snapshot.hasTangents) {
+          transform.setPositionKeyFrameSpatialTangentsAt(time,
+                                                         snapshot.tangents);
+        }
       } else {
         transform.removePositionKeyFrameAt(time);
       }
@@ -14117,6 +14123,9 @@ public:
       snapshot.value.x = transform.positionXAt(time);
       snapshot.value.y = transform.positionYAt(time);
       if (snapshot.value.hasPositionKey) {
+        snapshot.hasTangents =
+            transform.positionKeyFrameSpatialTangentsAt(time,
+                                                        snapshot.tangents);
         draggingMotionPathGroupBefore_.push_back(snapshot);
       }
     }
@@ -14408,6 +14417,29 @@ public:
         }
         t3d.setPositionKeyFrameValueAt(keyTime, static_cast<float>(point.x()),
                                        static_cast<float>(point.y()));
+        if (snapshot.hasTangents) {
+          auto tangents = snapshot.tangents;
+          if (draggingMotionPathGroupTransform_ ==
+              MotionPathGroupTransform::Scale) {
+            tangents.inTangent.x *= scale;
+            tangents.inTangent.y *= scale;
+            tangents.outTangent.x *= scale;
+            tangents.outTangent.y *= scale;
+          } else if (draggingMotionPathGroupTransform_ ==
+                     MotionPathGroupTransform::Rotate) {
+            const float c = std::cos(angleDelta);
+            const float s = std::sin(angleDelta);
+            const auto inX = snapshot.tangents.inTangent.x;
+            const auto inY = snapshot.tangents.inTangent.y;
+            const auto outX = snapshot.tangents.outTangent.x;
+            const auto outY = snapshot.tangents.outTangent.y;
+            tangents.inTangent.x = inX * c - inY * s;
+            tangents.inTangent.y = inX * s + inY * c;
+            tangents.outTangent.x = outX * c - outY * s;
+            tangents.outTangent.y = outX * s + outY * c;
+          }
+          t3d.setPositionKeyFrameSpatialTangentsAt(keyTime, tangents);
+        }
       }
     } else {
       t3d.setPositionKeyFrameValueAt(time, static_cast<float>(localPos.x()),
@@ -27232,6 +27264,9 @@ void CompositionRenderController::handleMouseRelease() {
               current.value.hasPositionKey = t3d.hasPositionKeyFrameAt(keyTime);
               current.value.x = t3d.positionXAt(keyTime);
               current.value.y = t3d.positionYAt(keyTime);
+              current.hasTangents =
+                  t3d.positionKeyFrameSpatialTangentsAt(keyTime,
+                                                        current.tangents);
               groupAfter.push_back(current);
             }
             mgr->push(std::make_unique<MotionPathGroupUndoCommand>(
