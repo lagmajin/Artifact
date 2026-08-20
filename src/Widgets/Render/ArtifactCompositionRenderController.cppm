@@ -13406,6 +13406,7 @@ public:
       float outTangentX = 0.0f;
       float outTangentY = 0.0f;
       bool hasSpatialTangents = false;
+      bool tangentsLinked = true;
 
     };
 
@@ -19153,6 +19154,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
         pt.outTangentX = static_cast<float>(outHandle.x());
         pt.outTangentY = static_cast<float>(outHandle.y());
         pt.hasSpatialTangents = true;
+        pt.tangentsLinked = tangents.linked;
       }
       motionPathCache_.keyPoints.push_back(pt);
     }
@@ -19220,10 +19222,16 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     const FloatColor keyColor =
         motionPathInterpolationColor(pt.interpolation, isCurrent);
     if (pt.hasSpatialTangents) {
-      const FloatColor tangentLine{0.50f, 0.88f, 1.0f,
-                                   isCurrent ? 0.92f : 0.58f};
-      const FloatColor tangentHandle{0.76f, 0.95f, 1.0f,
-                                     isCurrent ? 1.0f : 0.84f};
+      const FloatColor tangentLine =
+          pt.tangentsLinked ? FloatColor{0.50f, 0.88f, 1.0f,
+                                         isCurrent ? 0.92f : 0.58f}
+                            : FloatColor{1.0f, 0.60f, 0.28f,
+                                         isCurrent ? 0.96f : 0.72f};
+      const FloatColor tangentHandle =
+          pt.tangentsLinked ? FloatColor{0.76f, 0.95f, 1.0f,
+                                         isCurrent ? 1.0f : 0.84f}
+                            : FloatColor{1.0f, 0.78f, 0.42f,
+                                         isCurrent ? 1.0f : 0.90f};
       const float handleRadius = isCurrent ? dotRadius * 1.15f : dotRadius;
       const float hoveredHandleRadius = dotRadius * 1.65f;
       drawTaggedSolidLine(renderer_.get(), {pt.x, pt.y},
