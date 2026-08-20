@@ -39,6 +39,8 @@ public:
 
     bool motionAdaptive() const;
     void setMotionAdaptive(bool enabled);
+    float ghostSuppression() const;
+    void setGhostSuppression(float v);
 
     bool rejectSceneCuts() const;
     void setRejectSceneCuts(bool enabled);
@@ -54,6 +56,7 @@ private:
     int   frameCount_        = 3;
     float varianceThreshold_ = 0.05f;
     bool motionAdaptive_ = true;
+    float ghostSuppression_ = 1.0f;
     bool rejectSceneCuts_ = true;
     float sceneCutThreshold_ = 0.25f;
     void syncImpls();
