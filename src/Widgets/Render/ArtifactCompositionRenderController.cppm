@@ -13443,6 +13443,7 @@ public:
   float draggingMotionPathGroupStartRadius_ = 1.0f;
 
   QPointF draggingMotionPathStartCanvasPos_;
+  QPointF draggingMotionPathStartLocalPos_;
 
   int hoveredMotionPathFrame_ = -1;
 
@@ -14080,6 +14081,16 @@ public:
 
     draggingMotionPathBefore_ = before;
     draggingMotionPathStartCanvasPos_ = canvasPos;
+    draggingMotionPathStartLocalPos_ = canvasPos;
+    if (const auto parent = layer->parentLayer()) {
+      bool invertible = false;
+      const QTransform inverseParent =
+          parent->getGlobalTransformAt(frame).inverted(&invertible);
+      if (invertible) {
+        draggingMotionPathStartLocalPos_ =
+            inverseParent.map(draggingMotionPathStartCanvasPos_);
+      }
+    }
     draggingMotionPathModifiers_ = modifiers;
     draggingMotionPathGroupTransform_ =
         modifiers.testFlag(Qt::ControlModifier) &&
@@ -14111,7 +14122,7 @@ public:
           QPointF(snapshot.value.x, snapshot.value.y);
     if (!draggingMotionPathGroupBefore_.isEmpty())
       draggingMotionPathGroupPivot_ /= draggingMotionPathGroupBefore_.size();
-    const QPointF startVector = draggingMotionPathStartCanvasPos_ -
+    const QPointF startVector = draggingMotionPathStartLocalPos_ -
                                  draggingMotionPathGroupPivot_;
     draggingMotionPathGroupStartAngle_ =
         std::atan2(static_cast<float>(startVector.y()),
@@ -14141,6 +14152,7 @@ public:
     draggingMotionPathGroupPivot_ = {};
 
     draggingMotionPathStartCanvasPos_ = {};
+    draggingMotionPathStartLocalPos_ = {};
 
     hoveredMotionPathFrame_ = -1;
 
@@ -14352,7 +14364,7 @@ public:
 
     const ArtifactCore::RationalTime time(draggingMotionPathFrame_, 24);
 
-    const QPointF delta = localPos - draggingMotionPathStartCanvasPos_;
+    const QPointF delta = localPos - draggingMotionPathStartLocalPos_;
     if (draggingMotionPathGroupBefore_.size() > 1) {
       const QPointF currentVector = localPos - draggingMotionPathGroupPivot_;
       const float currentAngle = std::atan2(
