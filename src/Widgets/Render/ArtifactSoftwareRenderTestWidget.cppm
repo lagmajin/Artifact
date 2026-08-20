@@ -89,6 +89,8 @@ public:
     QString renderQueueCapturePath;
     QString parityStatus;
     QString contextStatus;
+    static constexpr int parityChannelTolerance = 2;
+    static constexpr double parityPixelFailureLimit = 0.001;
 
     void refreshContextStatus()
     {
@@ -335,13 +337,17 @@ public:
         const int byteCount = pixelCount * 4;
         for (int offset = 0; offset < byteCount; offset += 4) {
             int pixelDifference = 0;
+            int maximumChannelDifference = 0;
             for (int channel = 0; channel < 4; ++channel) {
-                pixelDifference += std::abs(static_cast<int>(previewBits[offset + channel]) -
-                                            static_cast<int>(queueBits[offset + channel]));
+                const int channelDifference = std::abs(
+                    static_cast<int>(previewBits[offset + channel]) -
+                    static_cast<int>(queueBits[offset + channel]));
+                pixelDifference += channelDifference;
+                maximumChannelDifference = std::max(maximumChannelDifference, channelDifference);
             }
             totalDifference += static_cast<quint64>(pixelDifference);
             maximumDifference = std::max(maximumDifference, pixelDifference);
-            if (pixelDifference != 0) {
+            if (maximumChannelDifference > parityChannelTolerance) {
                 ++differentPixels;
             }
         }
@@ -349,9 +355,15 @@ public:
         const double meanDifference = pixelCount > 0
             ? static_cast<double>(totalDifference) / static_cast<double>(pixelCount * 4)
             : 0.0;
-        parityStatus = QStringLiteral("Parity: %1/%2 pixels differ | mean RGBA delta %3 | max %4")
+        const double failureRatio = pixelCount > 0
+            ? static_cast<double>(differentPixels) / static_cast<double>(pixelCount)
+            : 1.0;
+        const bool passed = failureRatio <= parityPixelFailureLimit;
+        parityStatus = QStringLiteral("Parity %1: %2/%3 pixels over tolerance (channel <= %4) | mean RGBA delta %5 | max sum %6")
+            .arg(passed ? QStringLiteral("PASS") : QStringLiteral("FAIL"))
             .arg(differentPixels)
             .arg(pixelCount)
+            .arg(parityChannelTolerance)
             .arg(QString::number(meanDifference, 'f', 3))
             .arg(maximumDifference);
     }
