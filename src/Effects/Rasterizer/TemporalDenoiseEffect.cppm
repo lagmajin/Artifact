@@ -27,6 +27,7 @@ public:
     float strength_ = 0.5f;
     int   frameCount_ = 3;
     float varianceThreshold_ = 0.05f;
+    bool motionAdaptive_ = true;
     bool rejectSceneCuts_ = true;
     float sceneCutThreshold_ = 0.25f;
 
@@ -103,7 +104,9 @@ Parallel::For(0, H, W * H, [&](int y) {
                 float maxVar = std::max({ varR, varG, varB });
 
                 // Variance-based blend factor: low variance → strong blend.
-                float vf = 1.0f - std::min(maxVar / std::max(vt * vt, 1e-8f), 1.0f);
+                float vf = motionAdaptive_
+                    ? 1.0f - std::min(maxVar / std::max(vt * vt, 1e-8f), 1.0f)
+                    : 1.0f;
                 float w = s * vf;
                 float iw = 1.0f - w;
 
@@ -128,6 +131,8 @@ int TemporalDenoiseEffect::frameCount() const { return frameCount_; }
 void TemporalDenoiseEffect::setFrameCount(int v) { frameCount_=std::clamp(v,1,8); syncImpls(); }
 float TemporalDenoiseEffect::varianceThreshold() const { return varianceThreshold_; }
 void TemporalDenoiseEffect::setVarianceThreshold(float v) { varianceThreshold_=std::clamp(v,0.0f,1.0f); syncImpls(); }
+bool TemporalDenoiseEffect::motionAdaptive() const { return motionAdaptive_; }
+void TemporalDenoiseEffect::setMotionAdaptive(bool enabled) { motionAdaptive_ = enabled; syncImpls(); }
 bool TemporalDenoiseEffect::rejectSceneCuts() const { return rejectSceneCuts_; }
 void TemporalDenoiseEffect::setRejectSceneCuts(bool enabled) { rejectSceneCuts_ = enabled; syncImpls(); }
 float TemporalDenoiseEffect::sceneCutThreshold() const { return sceneCutThreshold_; }
@@ -135,7 +140,7 @@ void TemporalDenoiseEffect::setSceneCutThreshold(float v) { sceneCutThreshold_ =
 
 std::vector<AbstractProperty> TemporalDenoiseEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    props.reserve(5);
+    props.reserve(6);
 
     auto addInt = [&props](const char* name, const char* label, const char* tooltip,
                            int value, int defaultValue, int minValue, int maxValue) {
@@ -177,6 +182,13 @@ std::vector<AbstractProperty> TemporalDenoiseEffect::getProperties() const {
            frameCount_, 3, 1, 8);
     addFloat("varianceThreshold", "Variance Threshold", "Motion sensitivity above which history is rejected.",
              varianceThreshold_, 0.05f, 0.0f, 1.0f);
+    auto& motionAdaptive = props.emplace_back();
+    motionAdaptive.setName(QStringLiteral("motionAdaptive"));
+    motionAdaptive.setDisplayLabel(QStringLiteral("Motion Adaptive"));
+    motionAdaptive.setType(PropertyType::Boolean);
+    motionAdaptive.setValue(motionAdaptive_);
+    motionAdaptive.setDefaultValue(true);
+    motionAdaptive.setTooltip(QStringLiteral("Reduce history blending at pixels with temporal disagreement."));
     auto& rejectCuts = props.emplace_back();
     rejectCuts.setName(QStringLiteral("rejectSceneCuts"));
     rejectCuts.setDisplayLabel(QStringLiteral("Reject Scene Cuts"));
@@ -193,6 +205,7 @@ void TemporalDenoiseEffect::setPropertyValue(const UniString& n, const QVariant&
     if (k == "strength") setStrength(v.toFloat());
     else if (k == "frameCount") setFrameCount(v.toInt());
     else if (k == "varianceThreshold") setVarianceThreshold(v.toFloat());
+    else if (k == "motionAdaptive") setMotionAdaptive(v.toBool());
     else if (k == "rejectSceneCuts") setRejectSceneCuts(v.toBool());
     else if (k == "sceneCutThreshold") setSceneCutThreshold(v.toFloat());
     else setCommonPropertyValue(k, v);
@@ -200,6 +213,7 @@ void TemporalDenoiseEffect::setPropertyValue(const UniString& n, const QVariant&
 void TemporalDenoiseEffect::syncImpls() {
     auto c = ArtifactCore::makeShared<TemporalDenoiseCPUImpl>();
     c->strength_ = strength_; c->frameCount_ = frameCount_; c->varianceThreshold_ = varianceThreshold_;
+    c->motionAdaptive_ = motionAdaptive_;
     c->rejectSceneCuts_ = rejectSceneCuts_; c->sceneCutThreshold_ = sceneCutThreshold_;
     setCPUImpl(c);
 }

@@ -37,6 +37,9 @@ public:
     float varianceThreshold() const;
     void  setVarianceThreshold(float v);
 
+    bool motionAdaptive() const;
+    void setMotionAdaptive(bool enabled);
+
     bool rejectSceneCuts() const;
     void setRejectSceneCuts(bool enabled);
     float sceneCutThreshold() const;
@@ -50,6 +53,7 @@ private:
     float strength_          = 0.5f;
     int   frameCount_        = 3;
     float varianceThreshold_ = 0.05f;
+    bool motionAdaptive_ = true;
     bool rejectSceneCuts_ = true;
     float sceneCutThreshold_ = 0.25f;
     void syncImpls();
