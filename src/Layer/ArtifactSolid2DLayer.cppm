@@ -10,7 +10,6 @@ module;
 #include <QPainter>
 #include <QRadialGradient>
 #include <QVariant>
-#include <Layer/ArtifactSolidGradientUtil.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -486,29 +485,14 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
  const Size_2D size(std::clamp(sourceSize.width, 1, 16384),
                     std::clamp(sourceSize.height, 1, 16384));
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
- drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
-  if (impl_->fillType() != ArtifactSolidFillType::Solid) {
-   const QImage gradientImage = ArtifactSolidGradientUtil::makeSolidGradientImage(
-       QSize(size.width, size.height),
-       QColor::fromRgbF(impl_->gradientStartColor().r(), impl_->gradientStartColor().g(),
-                  impl_->gradientStartColor().b(),
-                  impl_->gradientStartColor().a() * this->opacity() * weight),
-       QColor::fromRgbF(impl_->gradientEndColor().r(), impl_->gradientEndColor().g(),
-                  impl_->gradientEndColor().b(),
-                  impl_->gradientEndColor().a() * this->opacity() * weight),
-       static_cast<int>(impl_->fillType()),
-       impl_->gradientAngleDegrees(),
-       impl_->gradientReverse(),
-       impl_->gradientCenterX(),
-       impl_->gradientCenterY(),
-       impl_->gradientScale(),
-       impl_->gradientOffset());
-   renderer->drawSpriteTransformed(0.0f, 0.0f,
-                                   static_cast<float>(size.width),
-                                   static_cast<float>(size.height),
-                                   transform,
-                                   gradientImage,
-                                   1.0f);
+  drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
+   if (impl_->fillType() != ArtifactSolidFillType::Solid) {
+   renderer->drawGradientRectTransformed(
+       0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height),
+       transform, impl_->gradientStartColor(), impl_->gradientEndColor(),
+       static_cast<int>(impl_->fillType()), impl_->gradientAngleDegrees(),
+       impl_->gradientReverse(), impl_->gradientCenterX(), impl_->gradientCenterY(),
+       impl_->gradientScale(), impl_->gradientOffset(), this->opacity() * weight);
    return;
   }
   const FloatColor src = impl_->color();

@@ -117,6 +117,7 @@ module Artifact.Widgets.CompositionRenderController;
 import Memory.SharedPtr;
 
 import Artifact.Render.IRenderer;
+import Material.Material;
 import Artifact.Widgets.ViewportOverlay;
 
 import Artifact.Grid.System;
@@ -8687,6 +8688,28 @@ void drawLayerForCompositionView(
   }
 
 
+
+  if (auto *depthImage = dynamic_cast<ArtifactImageLayer *>(layer);
+      depthImage && depthImage->hasDepthMap() &&
+      depthImage->hasCurrentFrameBuffer() && gpuTextureCacheManager) {
+    const auto &imageBuffer = depthImage->currentFrameBuffer();
+    const QString textureKey = QStringLiteral("depth-image:f%1:g%2")
+                                   .arg(cacheFrameNumber)
+                                   .arg(surfaceGeneration);
+    const auto handle = gpuTextureCacheManager->acquireOrCreate(
+        layer->id().toString(), textureKey, imageBuffer);
+    const auto binding = gpuTextureCacheManager->bindingRecord(handle);
+    if (binding.isValid()) {
+      ArtifactCore::Material material = ArtifactCore::Material::makeDefault();
+      Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
+      renderer->drawMesh(QStringLiteral("depth-image:%1").arg(layer->id().toString()),
+                         depthImage->depthMesh(), material,
+                         globalTransform4x4,
+                         opacityOverride >= 0.0f ? opacityOverride : layer->opacity(),
+                         3, nullptr, binding.srv);
+      return;
+    }
+  }
 
   // Handle 3D layers separately
 

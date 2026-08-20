@@ -458,7 +458,8 @@ public:
                 const ArtifactCore::Material &material,
                 const QMatrix4x4 &modelMatrix, float opacity = 1.0f,
                 int shadingMode = 3,
-                const QMatrix4x4 *previousModelMatrix = nullptr);
+                const QMatrix4x4 *previousModelMatrix = nullptr,
+                Diligent::ITextureView *baseColorTextureView = nullptr);
 
   void drawCheckerboard(float x, float y, float w, float h, float tileSize,
                         const FloatColor &c1, const FloatColor &c2);

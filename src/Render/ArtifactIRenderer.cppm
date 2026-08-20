@@ -725,7 +725,8 @@ namespace {
                 const ArtifactCore::Material& material,
                 const QMatrix4x4& modelMatrix, float opacity,
                 int shadingMode,
-                const QMatrix4x4* previousModelMatrix)
+                const QMatrix4x4* previousModelMatrix,
+                Diligent::ITextureView* baseColorTextureView)
   {
     static const bool traceEnabled =
         !qEnvironmentVariableIsSet("ARTIFACT_DISABLE_3D_RENDER_TRACE");
@@ -961,7 +962,11 @@ namespace {
                                  modelMatrix.constData());
     renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
     renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
-    renderer->setBaseColorTexture(material.baseColorTexture().toQString());
+    if (baseColorTextureView) {
+      renderer->setBaseColorTextureView(baseColorTextureView);
+    } else {
+      renderer->setBaseColorTexture(material.baseColorTexture().toQString());
+    }
     renderer->setOpacityTexture(material.opacityTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),
@@ -4596,8 +4601,10 @@ void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Me
                                  const ArtifactCore::Material& material,
                                  const QMatrix4x4& modelMatrix, float opacity,
                                  int shadingMode,
-                                 const QMatrix4x4* previousModelMatrix)
-{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity, shadingMode, previousModelMatrix); }
+                                 const QMatrix4x4* previousModelMatrix,
+                                 Diligent::ITextureView* baseColorTextureView)
+{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity, shadingMode,
+                 previousModelMatrix, baseColorTextureView); }
  void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
  {
   impl_->m_upscaleEnabled = enable;

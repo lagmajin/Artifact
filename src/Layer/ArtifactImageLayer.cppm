@@ -43,6 +43,10 @@ module;
 module Artifact.Layer.Image;
 
 import Artifact.Layer.CloneEffectSupport;
+import Image.DepthMap;
+import Geometry.DepthMeshGenerator;
+import Material.Material;
+import Core.AI.ImageSegmenter;
 import Media.ImageSequenceSource;
 import Artifact.Color.OCIOManager;
 import Artifact.IO.AsyncAssetReadScheduler;
@@ -866,6 +870,11 @@ public:
     mutable const ArtifactCore::ImageF32x4_RGBA *cacheBufferCropSource_ = nullptr;
     mutable QString cacheBufferCropSignature_;
     mutable QImage cacheBufferCroppedImage_;
+    ArtifactCore::DepthMap depthMap_;
+    ArtifactCore::Mesh depthMesh_;
+    ArtifactCore::DepthMeshOptions depthMeshOptions_;
+    QString depthMapPath_;
+    bool depthEnabled_ = false;
     QString inputColorSpace_;
     QString inputTransferFunction_;
     // [Fix 1] バックグラウンド先読み用
@@ -1588,6 +1597,14 @@ QJsonObject ArtifactImageLayer::toJson() const
     obj["image.width"] = std::clamp(impl_->width_, 0, kMaxImageDimension);
     obj["image.height"] = std::clamp(impl_->height_, 0, kMaxImageDimension);
     obj["image.sourceMetadata"] = impl_->sourceMetadata_.toJson();
+    obj["image.depthMapPath"] = impl_->depthMapPath_;
+    obj["image.depthMeshEnabled"] = impl_->depthEnabled_;
+    obj["image.depthMeshColumns"] = impl_->depthMeshOptions_.columns;
+    obj["image.depthMeshRows"] = impl_->depthMeshOptions_.rows;
+    obj["image.depthMeshWidth"] = impl_->depthMeshOptions_.width;
+    obj["image.depthMeshHeight"] = impl_->depthMeshOptions_.height;
+    obj["image.depthMeshDepthScale"] = impl_->depthMeshOptions_.depthScale;
+    obj["image.depthMeshInvert"] = impl_->depthMeshOptions_.invertDepth;
     if (!impl_->sequencePaths_.isEmpty()) {
         QJsonArray sequenceArray;
         for (const QString& framePath : impl_->sequencePaths_) {
@@ -1654,6 +1671,22 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
     }
     const QString sourcePath = obj.value(QStringLiteral("image.sourcePath"))
                                    .toString().trimmed().left(32768);
+    impl_->depthMapPath_ = obj.value(QStringLiteral("image.depthMapPath"))
+                               .toString().trimmed().left(32768);
+    impl_->depthMeshOptions_.columns = std::clamp(
+        obj.value(QStringLiteral("image.depthMeshColumns")).toInt(64), 2, 512);
+    impl_->depthMeshOptions_.rows = std::clamp(
+        obj.value(QStringLiteral("image.depthMeshRows")).toInt(64), 2, 512);
+    impl_->depthMeshOptions_.width = std::clamp(
+        static_cast<float>(obj.value(QStringLiteral("image.depthMeshWidth")).toDouble(1.0)),
+        0.001f, 100000.0f);
+    impl_->depthMeshOptions_.height = std::clamp(
+        static_cast<float>(obj.value(QStringLiteral("image.depthMeshHeight")).toDouble(1.0)),
+        0.001f, 100000.0f);
+    impl_->depthMeshOptions_.depthScale = std::clamp(
+        static_cast<float>(obj.value(QStringLiteral("image.depthMeshDepthScale")).toDouble(0.25)),
+        -100000.0f, 100000.0f);
+    impl_->depthMeshOptions_.invertDepth = obj.value(QStringLiteral("image.depthMeshInvert")).toBool(false);
     const QString inputColorSpace =
         obj.value(QStringLiteral("image.inputColorSpace")).toString();
     const QString inputTransferFunction =
@@ -1759,6 +1792,10 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
         if (!restored) {
             localizeSourceIdentity();
         }
+    }
+    if (obj.value(QStringLiteral("image.depthMeshEnabled")).toBool(false) &&
+        !impl_->depthMapPath_.isEmpty()) {
+        setDepthMapPath(impl_->depthMapPath_);
     }
 }
 
@@ -2121,6 +2158,21 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                       fittedSize);
     };
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+
+    // Depth-enabled file-backed images use the existing 3D mesh renderer.
+    // In-memory/sequence sources continue through the regular sprite path
+    // until a GPU texture-view material overload is available.
+    if (impl_->depthEnabled_ && impl_->depthMesh_.vertexCount() > 0 &&
+        !impl_->sourcePath_.isEmpty()) {
+        ArtifactCore::Material material = ArtifactCore::Material::makeDefault();
+        material.setBaseColorTexture(
+            ArtifactCore::UniString::fromQString(impl_->sourcePath_));
+        renderer->drawMesh(QStringLiteral("depth-image:%1").arg(id().toString()),
+                           impl_->depthMesh_, material, baseTransform,
+                           opacity(), 3, nullptr);
+        return;
+    }
+
     if (hasCurrentFrameBuffer()) {
         const ArtifactCore::ImageF32x4_RGBA& buffer = currentFrameBuffer();
         const QRectF uvRect = useCrop
@@ -2504,6 +2556,101 @@ void ArtifactImageLayer::setFromImageBuffer(
     }
     setDirty(LayerDirtyFlag::Source);
     Q_EMIT changed();
+}
+
+void ArtifactImageLayer::setDepthMap(const ArtifactCore::DepthMap& depthMap)
+{
+    if (depthMap.isEmpty()) {
+        clearDepthMap();
+        return;
+    }
+    impl_->depthMap_ = depthMap;
+    impl_->depthMapPath_.clear();
+    impl_->depthMesh_ = ArtifactCore::DepthMeshGenerator::generate(
+        impl_->depthMap_, impl_->depthMeshOptions_);
+    impl_->depthEnabled_ = true;
+    setIs3D(true);
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+}
+
+bool ArtifactImageLayer::setDepthMapPath(const QString& path)
+{
+    const QString normalizedPath = path.trimmed().left(32768);
+    ArtifactCore::DepthMap depthMap;
+    if (normalizedPath.isEmpty() || !depthMap.load(normalizedPath)) {
+        return false;
+    }
+    impl_->depthMapPath_ = normalizedPath;
+    impl_->depthMap_ = std::move(depthMap);
+    impl_->depthMesh_ = ArtifactCore::DepthMeshGenerator::generate(
+        impl_->depthMap_, impl_->depthMeshOptions_);
+    impl_->depthEnabled_ = true;
+    setIs3D(true);
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+    return true;
+}
+
+QString ArtifactImageLayer::depthMapPath() const
+{
+    return impl_->depthMapPath_;
+}
+
+void ArtifactImageLayer::clearDepthMap()
+{
+    if (!impl_->depthEnabled_ && impl_->depthMap_.isEmpty()) return;
+    impl_->depthMap_ = {};
+    impl_->depthMesh_ = {};
+    impl_->depthMapPath_.clear();
+    impl_->depthEnabled_ = false;
+    setIs3D(false);
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+}
+
+bool ArtifactImageLayer::hasDepthMap() const
+{
+    return impl_->depthEnabled_ && !impl_->depthMap_.isEmpty();
+}
+
+const ArtifactCore::Mesh& ArtifactImageLayer::depthMesh() const
+{
+    return impl_->depthMesh_;
+}
+
+void ArtifactImageLayer::setDepthMeshOptions(
+    const ArtifactCore::DepthMeshOptions& options)
+{
+    impl_->depthMeshOptions_ = options;
+    if (hasDepthMap()) {
+        impl_->depthMesh_ = ArtifactCore::DepthMeshGenerator::generate(
+            impl_->depthMap_, impl_->depthMeshOptions_);
+        setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
+    }
+}
+
+ArtifactCore::DepthMeshOptions ArtifactImageLayer::depthMeshOptions() const
+{
+    return impl_->depthMeshOptions_;
+}
+
+bool ArtifactImageLayer::applySegmentationMask(
+    const ArtifactCore::DepthMap& mask, float opacity)
+{
+    if (mask.isEmpty() || !impl_->cacheBuffer_ || impl_->cacheBuffer_->isEmpty()) {
+        return false;
+    }
+    auto processed = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+        impl_->cacheBuffer_->DeepCopy());
+    ArtifactCore::applySegmentationMask(*processed, mask, opacity);
+    impl_->cacheBuffer_ = processed;
+    impl_->cache_ = ArtifactCore::makeShared<QImage>(processed->toQImage());
+    impl_->hasImage_ = true;
+    setDirty(LayerDirtyFlag::Source);
+    Q_EMIT changed();
+    return true;
 }
 
 void ArtifactImageLayer::setFitToLayer(bool fit)

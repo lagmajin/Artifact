@@ -15,6 +15,9 @@ import Artifact.Layers.Abstract._2D;
 
 import Image;
 import Image.ImageF32x4_RGBA;
+import Image.DepthMap;
+import Geometry.DepthMeshGenerator;
+import Core.AI.ImageSegmenter;
 
 export namespace Artifact {
 
@@ -54,6 +57,16 @@ export namespace Artifact {
   void fromJsonProperties(const QJsonObject& obj) override;
   void setFromQImage(const QImage& image);
   void setFromImageBuffer(const ArtifactCore::ImageF32x4_RGBA& image);
+  void setDepthMap(const ArtifactCore::DepthMap& depthMap);
+  bool setDepthMapPath(const QString& path);
+  QString depthMapPath() const;
+  void clearDepthMap();
+  bool hasDepthMap() const;
+  const ArtifactCore::Mesh& depthMesh() const;
+  void setDepthMeshOptions(const ArtifactCore::DepthMeshOptions& options);
+  ArtifactCore::DepthMeshOptions depthMeshOptions() const;
+  bool applySegmentationMask(const ArtifactCore::DepthMap& mask,
+                             float opacity = 1.0f);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();
   void setFitToLayer(bool fit);
