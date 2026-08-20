@@ -392,11 +392,18 @@ void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
 void Artifact3DModelViewer::setPbrMaterial(
     const QColor& baseColor,
     float metallic,
-    float roughness)
+    float roughness,
+    float sheen,
+    float clearcoat,
+    float clearcoatRoughness,
+    float transmission,
+    float specular,
+    float ior)
 {
     if (impl_->renderWindow) {
         impl_->renderWindow->setPbrMaterial(
-            baseColor, metallic, roughness);
+            baseColor, metallic, roughness, sheen, clearcoat,
+            clearcoatRoughness, transmission, specular, ior);
     }
 }
 

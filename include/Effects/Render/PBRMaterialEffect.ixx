@@ -57,6 +57,10 @@ export namespace Artifact {
         float clearcoat_ = 0.0f;
         float clearcoatRoughness_ = 0.03f;
         float ambientOcclusion_ = 1.0f;
+        float normalStrength_ = 1.0f;
+        float sheen_ = 0.0f;
+        MaterialAlphaMode alphaMode_ = MaterialAlphaMode::Opaque;
+        float alphaCutoff_ = 0.5f;
         float emissiveIntensity_ = 0.0f;
 
     public:
@@ -94,6 +98,35 @@ export namespace Artifact {
             ambientOcclusion_ = std::isfinite(ao) ? std::clamp(ao, 0.0f, 1.0f) : 1.0f;
         }
 
+        float normalStrength() const { return normalStrength_; }
+        void setNormalStrength(float strength) {
+            normalStrength_ = std::isfinite(strength)
+                ? std::clamp(strength, 0.0f, 2.0f) : 1.0f;
+        }
+        float sheen() const { return sheen_; }
+        void setSheen(float value) {
+            sheen_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+        }
+
+        MaterialAlphaMode alphaMode() const { return alphaMode_; }
+        void setAlphaMode(MaterialAlphaMode mode) {
+            switch (mode) {
+            case MaterialAlphaMode::Masked:
+            case MaterialAlphaMode::Blended:
+                alphaMode_ = mode;
+                break;
+            case MaterialAlphaMode::Opaque:
+            default:
+                alphaMode_ = MaterialAlphaMode::Opaque;
+                break;
+            }
+        }
+        float alphaCutoff() const { return alphaCutoff_; }
+        void setAlphaCutoff(float cutoff) {
+            alphaCutoff_ = std::isfinite(cutoff)
+                ? std::clamp(cutoff, 0.0f, 1.0f) : 0.5f;
+        }
+
         float emissiveIntensity() const { return emissiveIntensity_; }
         void setEmissiveIntensity(float intensity) {
             emissiveIntensity_ = std::isfinite(intensity) ? std::clamp(intensity, 0.0f, 100.0f) : 0.0f;
@@ -113,12 +146,16 @@ export namespace Artifact {
             material.setEmissionColor(emissiveColor_);
             material.setEmissionStrength(emissiveIntensity_);
             material.setOcclusionStrength(ambientOcclusion_);
+            material.setNormalStrength(normalStrength_);
+            material.setSheen(sheen_);
+            material.setAlphaMode(alphaMode_);
+            material.setAlphaCutoff(alphaCutoff_);
             return material;
         }
 
         std::vector<AbstractProperty> getProperties() const override {
             std::vector<AbstractProperty> props;
-            props.reserve(11);
+            props.reserve(15);
 
             auto& albedoProp = props.emplace_back();
             albedoProp.setName("Albedo Color");
@@ -160,6 +197,34 @@ export namespace Artifact {
             aoProp.setHardRange(0.0, 1.0);
             aoProp.setSoftRange(0.0, 1.0);
 
+            auto& normalProp = props.emplace_back();
+            normalProp.setName("Normal Strength");
+            normalProp.setType(PropertyType::Float);
+            normalProp.setValue(normalStrength_);
+            normalProp.setHardRange(0.0, 2.0);
+            normalProp.setSoftRange(0.0, 1.0);
+
+            auto& sheenProp = props.emplace_back();
+            sheenProp.setName("Sheen");
+            sheenProp.setType(PropertyType::Float);
+            sheenProp.setValue(sheen_);
+            sheenProp.setHardRange(0.0, 1.0);
+            sheenProp.setSoftRange(0.0, 1.0);
+
+            auto& alphaModeProp = props.emplace_back();
+            alphaModeProp.setName("Alpha Mode");
+            alphaModeProp.setType(PropertyType::Integer);
+            alphaModeProp.setValue(static_cast<int>(alphaMode_));
+            alphaModeProp.setHardRange(0, 2);
+            alphaModeProp.setSoftRange(0, 2);
+
+            auto& alphaCutoffProp = props.emplace_back();
+            alphaCutoffProp.setName("Alpha Cutoff");
+            alphaCutoffProp.setType(PropertyType::Float);
+            alphaCutoffProp.setValue(alphaCutoff_);
+            alphaCutoffProp.setHardRange(0.0, 1.0);
+            alphaCutoffProp.setSoftRange(0.0, 1.0);
+
             auto& emissiveColorProp = props.emplace_back();
             emissiveColorProp.setName("Emissive Color");
             emissiveColorProp.setType(PropertyType::Color);
@@ -196,6 +261,15 @@ export namespace Artifact {
                 }
             } else if (name == UniString("Ambient Occlusion")) {
                 setAmbientOcclusion(value.toFloat());
+            } else if (name == UniString("Normal Strength")) {
+                setNormalStrength(value.toFloat());
+            } else if (name == UniString("Sheen")) {
+                setSheen(value.toFloat());
+            } else if (name == UniString("Alpha Mode")) {
+                const int mode = std::clamp(value.toInt(), 0, 2);
+                setAlphaMode(static_cast<MaterialAlphaMode>(mode));
+            } else if (name == UniString("Alpha Cutoff")) {
+                setAlphaCutoff(value.toFloat());
             } else if (name == UniString("Emissive Color")) {
                 if (value.canConvert<QColor>()) {
                     setEmissiveColor(value.value<QColor>());

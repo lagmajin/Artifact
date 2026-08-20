@@ -1129,10 +1129,13 @@ public:
         }
         QImage frame;
         if (!sequenceSource_->tryFrameAt(resolvedFrame, frame)) {
-            if (resolvedFrame + 1 < frameCount) {
-                sequenceSource_->prefetchFrame(resolvedFrame + 1);
-            }
-            return cache_ != nullptr;
+            // A clamped out-of-range frame is intentionally held above, but a
+            // frame that exists in the sequence and fails to decode must not
+            // keep displaying the previous frame.  Returning the old cache
+            // here makes missing/corrupt sources look valid and violates the
+            // stale-pixel failure contract.
+            clearSequenceFrameCache();
+            return false;
         }
         if (!hasSupportedImageDimensions(frame.width(), frame.height())) {
             clearSequenceFrameCache();

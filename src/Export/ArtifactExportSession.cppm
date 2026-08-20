@@ -161,8 +161,13 @@ bool ArtifactExportSession::build(QString* errorMessage) {
                                      hasActiveMatte ||
                                      !layer->getEffects().empty() ||
                                      needsExportRasterization(exported.serialized);
-        if (!exported.requiresPreRender) {
-            collectAsset(exported.serialized.value(QStringLiteral("image.sourcePath")).toString());
+        collectAsset(exported.serialized.value(QStringLiteral("image.sourcePath")).toString());
+        const QJsonArray sequencePaths = exported.serialized
+            .value(QStringLiteral("image.sequencePaths")).toArray();
+        for (const QJsonValue& sequencePath : sequencePaths) {
+            if (sequencePath.isString()) {
+                collectAsset(sequencePath.toString());
+            }
         }
         if (exported.is3D) {
             exported.preRenderReason = QStringLiteral("3Dレイヤー");
@@ -231,6 +236,19 @@ bool ArtifactExportSession::build(QString* errorMessage) {
             snapshot_.warnings.push_back(
                 QStringLiteral("レイヤー '%1' のソースが見つかりません: %2")
                     .arg(layerName, sourcePath));
+        }
+        const auto serializedSequencePaths = snapshot_.layers.back().serialized
+            .value(QStringLiteral("image.sequencePaths")).toArray();
+        for (const QJsonValue& sequencePath : serializedSequencePaths) {
+            if (!sequencePath.isString()) {
+                continue;
+            }
+            const QString framePath = sequencePath.toString().trimmed();
+            if (!framePath.isEmpty() && !QFileInfo::exists(framePath)) {
+                snapshot_.warnings.push_back(
+                    QStringLiteral("レイヤー '%1' の連番フレームが見つかりません: %2")
+                        .arg(layerName, framePath));
+            }
         }
     }
 

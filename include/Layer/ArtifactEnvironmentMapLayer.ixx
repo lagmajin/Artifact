@@ -71,8 +71,9 @@ public:
     // Environment map properties
     QString hdriPath() const { return hdriPath_; }
     void setHdriPath(const QString& path) {
-        if (hdriPath_ != path) {
-            hdriPath_ = path;
+        const QString normalizedPath = path.trimmed();
+        if (hdriPath_ != normalizedPath) {
+            hdriPath_ = normalizedPath;
             // A path change invalidates all derived GPU resources. The loader
             // will repopulate the cubemap and IBL products for the new asset.
             clearGpuResources();
@@ -96,8 +97,10 @@ public:
     float rotation() const { return rotation_; }
     void setRotation(float rotationDegrees) {
         if (!std::isfinite(rotationDegrees)) return;
-        if (rotation_ != rotationDegrees) {
-            rotation_ = rotationDegrees;
+        float normalized = std::fmod(rotationDegrees, 360.0f);
+        if (normalized < 0.0f) normalized += 360.0f;
+        if (rotation_ != normalized) {
+            rotation_ = normalized;
             ++revision_;
             changed();
         }

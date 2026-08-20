@@ -146,6 +146,80 @@ namespace
   return rgba8;
  }
 
+ QVector<QVector<quint8>> buildViewportMipChain(
+     const QVector<quint8>& base, Uint32 width, Uint32 height,
+     bool srgb, bool renormalizeNormal)
+ {
+  QVector<QVector<quint8>> levels;
+  if (base.isEmpty() || width == 0 || height == 0) {
+   return levels;
+  }
+  levels.push_back(base);
+  Uint32 levelWidth = width;
+  Uint32 levelHeight = height;
+  while (levelWidth > 1 || levelHeight > 1) {
+   const Uint32 nextWidth = std::max(1u, levelWidth / 2u);
+   const Uint32 nextHeight = std::max(1u, levelHeight / 2u);
+   QVector<quint8> next(static_cast<qsizetype>(nextWidth) * nextHeight * 4);
+   const auto& previous = levels.back();
+   auto toLinear = [srgb](float value) {
+    value /= 255.0f;
+    return srgb ? (value <= 0.04045f ? value / 12.92f
+                                    : std::pow((value + 0.055f) / 1.055f, 2.4f))
+                : value;
+   };
+   auto toByte = [srgb](float value) {
+    value = std::clamp(value, 0.0f, 1.0f);
+    if (srgb) {
+     value = value <= 0.0031308f ? value * 12.92f
+                                 : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+    }
+    return static_cast<quint8>(std::lround(value * 255.0f));
+   };
+   for (Uint32 y = 0; y < nextHeight; ++y) {
+    for (Uint32 x = 0; x < nextWidth; ++x) {
+     float sum[4] = {};
+     int count = 0;
+     for (Uint32 oy = 0; oy < 2; ++oy) {
+      const Uint32 sourceY = std::min(levelHeight - 1, y * 2 + oy);
+      for (Uint32 ox = 0; ox < 2; ++ox) {
+       const Uint32 sourceX = std::min(levelWidth - 1, x * 2 + ox);
+       const qsizetype index = (static_cast<qsizetype>(sourceY) * levelWidth + sourceX) * 4;
+       sum[0] += toLinear(previous[index + 0]);
+       sum[1] += toLinear(previous[index + 1]);
+       sum[2] += toLinear(previous[index + 2]);
+       sum[3] += previous[index + 3] / 255.0f;
+       ++count;
+      }
+     }
+     float r = sum[0] / count;
+     float g = sum[1] / count;
+     float b = sum[2] / count;
+     if (renormalizeNormal) {
+      r = r * 2.0f - 1.0f;
+      g = g * 2.0f - 1.0f;
+      b = b * 2.0f - 1.0f;
+      const float length = std::sqrt(r * r + g * g + b * b);
+      if (length > 1.0e-5f) {
+       r = r / length * 0.5f + 0.5f;
+       g = g / length * 0.5f + 0.5f;
+       b = b / length * 0.5f + 0.5f;
+      }
+     }
+     const qsizetype output = (static_cast<qsizetype>(y) * nextWidth + x) * 4;
+     next[output + 0] = toByte(r);
+     next[output + 1] = toByte(g);
+     next[output + 2] = toByte(b);
+     next[output + 3] = static_cast<quint8>(std::lround(std::clamp(sum[3] / count, 0.0f, 1.0f) * 255.0f));
+    }
+   }
+   levels.push_back(std::move(next));
+   levelWidth = nextWidth;
+   levelHeight = nextHeight;
+  }
+  return levels;
+ }
+
  const char* kSolidViewportVS = R"(
 cbuffer TransformCB : register(b0)
 {
@@ -193,6 +267,8 @@ cbuffer ColorCB : register(b0)
     float4 BaseColor;
     float4 CameraPositionAndMetallic;
     float4 LightDirectionAndRoughness;
+    float4 PrincipledFactors;
+    float4 OpticalFactors;
 };
 
 struct PSInput
@@ -203,11 +279,24 @@ struct PSInput
     float2 uv : TEXCOORD1;
 };
 
+float3 srgbToLinear(float3 value)
+{
+    return float3(
+        value.r <= 0.04045 ? value.r / 12.92
+                           : pow((value.r + 0.055) / 1.055, 2.4),
+        value.g <= 0.04045 ? value.g / 12.92
+                           : pow((value.g + 0.055) / 1.055, 2.4),
+        value.b <= 0.04045 ? value.b / 12.92
+                           : pow((value.b + 0.055) / 1.055, 2.4));
+}
+
 float4 main(PSInput input) : SV_TARGET
 {
     const float pi = 3.14159265;
-    float4 sampledBaseColor =
-        BaseColorTexture.Sample(BaseColorSampler, input.uv) * BaseColor;
+    float4 baseSample = BaseColorTexture.Sample(BaseColorSampler, input.uv);
+    float4 sampledBaseColor = float4(
+        baseSample.rgb * srgbToLinear(saturate(BaseColor.rgb)),
+        baseSample.a * BaseColor.a);
     float3 N = normalize(input.normal);
     float3 tangentNormal =
         NormalTexture.Sample(BaseColorSampler, input.uv).xyz * 2.0 - 1.0;
@@ -238,6 +327,11 @@ float4 main(PSInput input) : SV_TARGET
             LightDirectionAndRoughness.w * metallicRoughnessSample.g,
             0.04,
             1.0);
+    float transmissionWeight = saturate(PrincipledFactors.w);
+    float sheenWeight = saturate(PrincipledFactors.x) *
+                        (1.0 - materialMetallic);
+    float coatWeight = saturate(PrincipledFactors.y);
+    float coatRoughness = clamp(PrincipledFactors.z, 0.04, 1.0);
     float3 L = normalize(LightDirectionAndRoughness.xyz);
     float3 V =
         normalize(CameraPositionAndMetallic.xyz - input.worldPosition);
@@ -247,7 +341,7 @@ float4 main(PSInput input) : SV_TARGET
     float NdotH = saturate(dot(N, H));
     float VdotH = saturate(dot(V, H));
 
-    float alpha = max(materialRoughness * materialRoughness, 0.04);
+    float alpha = max(materialRoughness * materialRoughness, 1e-4);
     float alpha2 = alpha * alpha;
     float denom = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
     float distribution = alpha2 / max(pi * denom * denom, 0.001);
@@ -255,13 +349,24 @@ float4 main(PSInput input) : SV_TARGET
         ((materialRoughness + 1.0) * (materialRoughness + 1.0)) * 0.125;
     float geometryV = NdotV / max(NdotV * (1.0 - k) + k, 0.001);
     float geometryL = NdotL / max(NdotL * (1.0 - k) + k, 0.001);
-    float3 f0 =
-        lerp(float3(0.04, 0.04, 0.04), sampledBaseColor.rgb, materialMetallic);
+    float opticalIor = max(OpticalFactors.y, 1.0);
+    float dielectricF0 = pow((opticalIor - 1.0) / (opticalIor + 1.0), 2.0);
+    float3 f0 = lerp(float3(dielectricF0, dielectricF0, dielectricF0),
+                     sampledBaseColor.rgb, materialMetallic);
+    f0 *= lerp(1.0, saturate(OpticalFactors.x), 1.0 - materialMetallic);
     float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - VdotH, 5.0);
     float3 specular = distribution * geometryV * geometryL * fresnel /
                       max(4.0 * NdotV * max(NdotL, 0.001), 0.001);
+    float coatAlpha = coatRoughness * coatRoughness;
+    float coatAlpha2 = coatAlpha * coatAlpha;
+    float coatDenom = NdotH * NdotH * (coatAlpha2 - 1.0) + 1.0;
+    float coatDistribution = coatAlpha2 /
+        max(pi * coatDenom * coatDenom, 0.001);
+    float coatFresnel = 0.04 + 0.96 * pow(1.0 - VdotH, 5.0);
+    float3 coatSpecular = coatDistribution * geometryV * geometryL *
+        coatFresnel / max(4.0 * NdotV * max(NdotL, 0.001), 0.001);
     float3 diffuse =
-        (1.0 - fresnel) * (1.0 - materialMetallic) *
+        (1.0 - transmissionWeight) * (1.0 - fresnel) * (1.0 - materialMetallic) *
         sampledBaseColor.rgb / pi;
     // Neutral analytic environment fallback.  It keeps the viewport material
     // readable before an HDRI cubemap has been generated, and deliberately
@@ -278,12 +383,38 @@ float4 main(PSInput input) : SV_TARGET
         float3(0.22, 0.30, 0.44),
         reflectionWeight);
     specularEnvironment *= lerp(1.0, 0.16, materialRoughness);
+    float3 T = refract(-V, N, 1.0 / max(opticalIor, 1.0));
+    float transmissionDirectionValid = step(1e-4, dot(T, T));
+    float transmissionEnvironmentWeight = saturate(T.y * 0.5 + 0.5);
+    float3 transmissionEnvironment = lerp(
+        float3(0.035, 0.030, 0.028),
+        float3(0.28, 0.36, 0.48),
+        transmissionEnvironmentWeight);
+    transmissionEnvironment *= sampledBaseColor.rgb *
+        (1.0 - materialMetallic) * (1.0 - materialRoughness * 0.65);
     float3 ambientDiffuse =
         diffuseEnvironment * sampledBaseColor.rgb *
         (1.0 - materialMetallic) * (1.0 - fresnel);
     float3 ambientSpecular = specularEnvironment * fresnel;
-    float3 color = ambientDiffuse + ambientSpecular +
-        (diffuse + specular) * NdotL * 2.2;
+    float coatViewFresnel = 0.04 + 0.96 * pow(1.0 - saturate(dot(N, V)), 5.0);
+    float coatEnergy = 1.0 - coatWeight * coatViewFresnel;
+    ambientDiffuse *= coatEnergy;
+    ambientSpecular *= coatEnergy;
+    float3 sheen = sheenWeight * pow(1.0 - NdotV, 5.0) *
+                   diffuseEnvironment;
+    float3 coatEnvironment = specularEnvironment *
+        coatViewFresnel;
+    float transmissionF0 = pow((opticalIor - 1.0) / (opticalIor + 1.0), 2.0);
+    float transmissionFresnel = transmissionF0 +
+        (1.0 - transmissionF0) * pow(1.0 - NdotV, 5.0);
+    float3 transmissionFallback = transmissionWeight *
+        transmissionEnvironment * (1.0 - transmissionFresnel) *
+        (0.55 + 0.45 * (1.0 - NdotL)) * transmissionDirectionValid;
+    float3 color = ambientDiffuse * (1.0 - transmissionWeight) + ambientSpecular +
+        coatEnvironment * coatWeight +
+        (diffuse * coatEnergy + specular * coatEnergy +
+         coatSpecular * coatWeight) * NdotL * 2.2 + sheen +
+        transmissionFallback;
     color = color / (color + 1.0);
     color = pow(color, 1.0 / 2.2);
     return float4(color, sampledBaseColor.a);
@@ -301,7 +432,9 @@ float4 main(PSInput input) : SV_TARGET
  {
   float baseColor[4];
   float cameraPositionAndMetallic[4];
-  float lightDirectionAndRoughness[4];
+ float lightDirectionAndRoughness[4];
+ float principledFactors[4];
+  float opticalFactors[4];
  };
 
  std::vector<QVector3D> makeFallbackCubePositions()
@@ -560,11 +693,23 @@ void ArtifactDiligentEngineRenderWindow::setNormalTexture(const QString& path)
 void ArtifactDiligentEngineRenderWindow::setPbrMaterial(
     const QColor& baseColor,
     float metallic,
-    float roughness)
+    float roughness,
+    float sheen,
+    float clearcoat,
+    float clearcoatRoughness,
+    float transmission,
+    float specular,
+    float ior)
 {
   materialBaseColor_ = baseColor;
   materialMetallic_ = std::clamp(metallic, 0.0f, 1.0f);
   materialRoughness_ = std::clamp(roughness, 0.04f, 1.0f);
+  materialSheen_ = std::clamp(sheen, 0.0f, 1.0f);
+  materialClearcoat_ = std::clamp(clearcoat, 0.0f, 1.0f);
+  materialClearcoatRoughness_ = std::clamp(clearcoatRoughness, 0.04f, 1.0f);
+  materialTransmission_ = std::clamp(transmission, 0.0f, 1.0f);
+  materialSpecular_ = std::clamp(specular, 0.0f, 1.0f);
+  materialIor_ = std::clamp(ior, 1.0f, 3.0f);
   requestRender();
 }
 
@@ -757,17 +902,22 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   textureDesc.Type = RESOURCE_DIM_TEX_2D;
   textureDesc.Width = width;
   textureDesc.Height = height;
-  textureDesc.MipLevels = 1;
+  const auto mipChain = buildViewportMipChain(rgba8, width, height, true, false);
+  textureDesc.MipLevels = static_cast<Uint32>(mipChain.size());
   textureDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
   textureDesc.Usage = USAGE_IMMUTABLE;
   textureDesc.BindFlags = BIND_SHADER_RESOURCE;
 
-  TextureSubResData subresource;
-  subresource.pData = rgba8.constData();
-  subresource.Stride = static_cast<Uint64>(width) * 4u;
+  std::vector<TextureSubResData> subresources;
+  subresources.reserve(static_cast<size_t>(mipChain.size()));
+  Uint32 mipWidth = width;
+  for (const auto& mip : mipChain) {
+   subresources.push_back({mip.constData(), static_cast<Uint64>(mipWidth) * 4u});
+   mipWidth = std::max(1u, mipWidth / 2u);
+  }
   TextureData textureData;
-  textureData.pSubResources = &subresource;
-  textureData.NumSubresources = 1;
+  textureData.pSubResources = subresources.data();
+  textureData.NumSubresources = static_cast<Uint32>(subresources.size());
   pDevice->CreateTexture(textureDesc, &textureData, &baseColorTexture_);
   if (baseColorTexture_) {
    baseColorTextureSrv_ =
@@ -810,17 +960,22 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   textureDesc.Type = RESOURCE_DIM_TEX_2D;
   textureDesc.Width = width;
   textureDesc.Height = height;
-  textureDesc.MipLevels = 1;
+  const auto mipChain = buildViewportMipChain(rgba8, width, height, false, false);
+  textureDesc.MipLevels = static_cast<Uint32>(mipChain.size());
   textureDesc.Format = TEX_FORMAT_RGBA8_UNORM;
   textureDesc.Usage = USAGE_IMMUTABLE;
   textureDesc.BindFlags = BIND_SHADER_RESOURCE;
 
-  TextureSubResData subresource;
-  subresource.pData = rgba8.constData();
-  subresource.Stride = static_cast<Uint64>(width) * 4u;
+  std::vector<TextureSubResData> subresources;
+  subresources.reserve(static_cast<size_t>(mipChain.size()));
+  Uint32 mipWidth = width;
+  for (const auto& mip : mipChain) {
+   subresources.push_back({mip.constData(), static_cast<Uint64>(mipWidth) * 4u});
+   mipWidth = std::max(1u, mipWidth / 2u);
+  }
   TextureData textureData;
-  textureData.pSubResources = &subresource;
-  textureData.NumSubresources = 1;
+  textureData.pSubResources = subresources.data();
+  textureData.NumSubresources = static_cast<Uint32>(subresources.size());
   pDevice->CreateTexture(
       textureDesc, &textureData, &metallicRoughnessTexture_);
   if (metallicRoughnessTexture_) {
@@ -865,17 +1020,22 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   textureDesc.Type = RESOURCE_DIM_TEX_2D;
   textureDesc.Width = width;
   textureDesc.Height = height;
-  textureDesc.MipLevels = 1;
+  const auto mipChain = buildViewportMipChain(rgba8, width, height, false, true);
+  textureDesc.MipLevels = static_cast<Uint32>(mipChain.size());
   textureDesc.Format = TEX_FORMAT_RGBA8_UNORM;
   textureDesc.Usage = USAGE_IMMUTABLE;
   textureDesc.BindFlags = BIND_SHADER_RESOURCE;
 
-  TextureSubResData subresource;
-  subresource.pData = rgba8.constData();
-  subresource.Stride = static_cast<Uint64>(width) * 4u;
+  std::vector<TextureSubResData> subresources;
+  subresources.reserve(static_cast<size_t>(mipChain.size()));
+  Uint32 mipWidth = width;
+  for (const auto& mip : mipChain) {
+   subresources.push_back({mip.constData(), static_cast<Uint64>(mipWidth) * 4u});
+   mipWidth = std::max(1u, mipWidth / 2u);
+  }
   TextureData textureData;
-  textureData.pSubResources = &subresource;
-  textureData.NumSubresources = 1;
+  textureData.pSubResources = subresources.data();
+  textureData.NumSubresources = static_cast<Uint32>(subresources.size());
   pDevice->CreateTexture(textureDesc, &textureData, &normalTexture_);
   if (normalTexture_) {
    normalTextureSrv_ =
@@ -1146,6 +1306,18 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
               metallicRoughnessTexturePath_.isEmpty()
                   ? materialRoughness_
                   : 1.0f
+          },
+          {
+              materialSheen_,
+              materialClearcoat_,
+              materialClearcoatRoughness_,
+              materialTransmission_
+          },
+          {
+              materialSpecular_,
+              materialIor_,
+              0.0f,
+              0.0f
           }
       };
       pImmediateContext->MapBuffer(solidColorBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mappedData);

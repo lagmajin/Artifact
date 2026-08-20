@@ -65,7 +65,9 @@ public:
     RenderShaderPair skyboxShaders() const;
     void drawSkybox(Diligent::IDeviceContext *context,
                     Diligent::ITextureView *environmentMap,
-                    const float *inverseViewProjection);
+                    const float *inverseViewProjection,
+                    float intensity,
+                    float rotationRadians);
 
     /// Glyph quad PSO for GPU text rendering
     RefCntAutoPtr<ISampler> spriteSampler() const;

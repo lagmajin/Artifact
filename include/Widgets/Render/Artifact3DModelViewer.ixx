@@ -76,7 +76,11 @@ public:
     void setCameraRotation(float yaw, float pitch);
     void setCameraPosition(const QVector3D& position);
     void setDisplayMode(DisplayMode mode);
-    void setPbrMaterial(const QColor& baseColor, float metallic, float roughness);
+    void setPbrMaterial(const QColor& baseColor, float metallic, float roughness,
+                        float sheen = 0.0f, float clearcoat = 0.0f,
+                        float clearcoatRoughness = 0.03f,
+                        float transmission = 0.0f,
+                        float specular = 0.5f, float ior = 1.5f);
     void displayModeChanged(int mode) W_SIGNAL(displayModeChanged, mode);
     DisplayMode displayMode() const;
     bool hasModel() const;

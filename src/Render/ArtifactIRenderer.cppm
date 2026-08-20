@@ -976,15 +976,32 @@ namespace {
                             material.occlusionStrength());
     renderer->setPrincipledFactors(material.specular(), material.ior(),
                                    material.transmission(), material.clearcoat(),
-                                   material.clearcoatRoughness());
+                                   material.clearcoatRoughness(), material.sheen());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
     const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
     renderer->setNormalTexture(lowMaterialLOD ? QString() : material.normalTexture().toQString());
     renderer->setOcclusionTexture(lowMaterialLOD ? QString() : material.occlusionTexture().toQString());
-    renderer->setEnvironmentMap(environmentMapPath_, environmentMapIntensity_);
+    bool sharedEnvironment = false;
+    if (!environmentMapPath_.isEmpty()) {
+      for (const auto& entry : meshRenderers_) {
+        if (entry.second && entry.second.get() != renderer &&
+            entry.second->hasEnvironmentMap()) {
+          renderer->shareEnvironmentMapsFrom(*entry.second);
+          sharedEnvironment = true;
+          break;
+        }
+      }
+    }
+    if (!sharedEnvironment) {
+      renderer->setEnvironmentMap(environmentMapPath_, environmentMapIntensity_);
+    }
     renderer->setEnvironmentRotation(environmentMapRotation_);
     renderer->setSceneLights(m_sceneLights);
+    const bool alphaMasked =
+        material.alphaMode() == ArtifactCore::MaterialAlphaMode::Masked;
+    renderer->setAlphaMasked(alphaMasked);
+    renderer->setAlphaCutoff(material.alphaCutoff());
     ArtifactCore::InstanceData instance{};
     const float* modelData = modelMatrix.constData();
     const QMatrix4x4& previousMatrix =
@@ -999,7 +1016,9 @@ namespace {
     }
     const QColor color = material.baseColor();
     const float alpha = std::clamp(opacity * material.opacity() * color.alphaF(), 0.0f, 1.0f);
-    renderer->setTransparentPass(alpha < 0.9999f || material.hasOpacityTexture());
+    renderer->setTransparentPass(
+        !alphaMasked && (material.alphaMode() == ArtifactCore::MaterialAlphaMode::Blended ||
+                         alpha < 0.9999f));
     if (meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
         meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId) {
       instance.color[0] = meshIdPassEncodedValue_;
@@ -3799,17 +3818,32 @@ void ArtifactIRenderer::setEnvironmentMap(const QString& path, float intensity)
 {
  impl_->environmentMapPath_ = path.trimmed();
  impl_->environmentMapIntensity_ = std::isfinite(intensity) ? std::max(0.0f, intensity) : 0.0f;
+ ArtifactCore::MeshRenderer* environmentSource = nullptr;
  for (auto &entry : impl_->meshRenderers_) {
   if (entry.second) {
-   entry.second->setEnvironmentMap(impl_->environmentMapPath_,
-                                   impl_->environmentMapIntensity_);
+   if (!environmentSource) {
+    entry.second->setEnvironmentMap(impl_->environmentMapPath_,
+                                    impl_->environmentMapIntensity_);
+    environmentSource = entry.second.get();
+   } else if (!impl_->environmentMapPath_.isEmpty()) {
+    entry.second->shareEnvironmentMapsFrom(*environmentSource);
+   } else {
+    entry.second->setEnvironmentMap(QString(), 0.0f);
+   }
   }
  }
 }
 
 void ArtifactIRenderer::setEnvironmentRotation(float degrees)
 {
- impl_->environmentMapRotation_ = std::isfinite(degrees) ? degrees : 0.0f;
+ if (!std::isfinite(degrees)) {
+  degrees = 0.0f;
+ }
+ degrees = std::fmod(degrees, 360.0f);
+ if (degrees < 0.0f) {
+  degrees += 360.0f;
+ }
+ impl_->environmentMapRotation_ = degrees;
  for (auto &entry : impl_->meshRenderers_) {
   if (entry.second) {
    entry.second->setEnvironmentRotation(impl_->environmentMapRotation_);
@@ -3829,6 +3863,9 @@ Diligent::ITextureView *ArtifactIRenderer::environmentMapView() const
   // created before their material/geometry path has been prepared.
   for (const auto &entry : impl_->meshRenderers_) {
     if (!entry.second) {
+      continue;
+    }
+    if (!entry.second->hasEnvironmentMap()) {
       continue;
     }
     if (auto *view = entry.second->environmentMapView()) {
@@ -3855,7 +3892,10 @@ void ArtifactIRenderer::drawEnvironmentSkybox()
     return;
   }
   impl_->shaderManager_.drawSkybox(context.RawPtr(), environmentMap,
-                                   inverseViewProjection.constData());
+                                   inverseViewProjection.constData(),
+                                   impl_->environmentMapIntensity_,
+                                   impl_->environmentMapRotation_ *
+                                       std::numbers::pi_v<float> / 180.0f);
 }
 const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() const
 { return impl_->m_sceneLights; }

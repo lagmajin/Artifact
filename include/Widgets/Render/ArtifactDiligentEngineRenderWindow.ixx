@@ -82,6 +82,12 @@ namespace Artifact
    QColor materialBaseColor_{ 180, 185, 195 };
    float materialMetallic_ = 0.0f;
    float materialRoughness_ = 0.55f;
+   float materialSheen_ = 0.0f;
+   float materialClearcoat_ = 0.0f;
+   float materialClearcoatRoughness_ = 0.03f;
+   float materialTransmission_ = 0.0f;
+   float materialSpecular_ = 0.5f;
+   float materialIor_ = 1.5f;
    bool baseColorTextureDirty_ = true;
    bool metallicRoughnessTextureDirty_ = true;
    bool normalTextureDirty_ = true;
@@ -122,7 +128,11 @@ namespace Artifact
   void setBaseColorTexture(const QString& path);
   void setMetallicRoughnessTexture(const QString& path);
   void setNormalTexture(const QString& path);
-  void setPbrMaterial(const QColor& baseColor, float metallic, float roughness);
+  void setPbrMaterial(const QColor& baseColor, float metallic, float roughness,
+                      float sheen = 0.0f, float clearcoat = 0.0f,
+                      float clearcoatRoughness = 0.03f,
+                      float transmission = 0.0f,
+                      float specular = 0.5f, float ior = 1.5f);
   void setPreviewCamera(float zoom, float yawDeg, float pitchDeg, const QVector3D& target = QVector3D(0.0f, 0.0f, 0.0f));
   float previewZoom() const;
   float previewYaw() const;

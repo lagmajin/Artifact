@@ -289,7 +289,10 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.transmission"] = impl_->material_.transmission();
   obj["material.clearcoat"] = impl_->material_.clearcoat();
   obj["material.clearcoatRoughness"] = impl_->material_.clearcoatRoughness();
+  obj["material.sheen"] = impl_->material_.sheen();
   obj["material.opacity"] = impl_->material_.opacity();
+  obj["material.alphaMode"] = static_cast<int>(impl_->material_.alphaMode());
+  obj["material.alphaCutoff"] = impl_->material_.alphaCutoff();
   const QColor emissionColor = impl_->material_.emissionColor();
   obj["material.emission.color"] = QJsonObject{
       {QStringLiteral("r"), emissionColor.redF()},
@@ -404,9 +407,25 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setClearcoatRoughness(
       finiteClamped(static_cast<float>(obj.value("material.clearcoatRoughness").toDouble(impl_->material_.clearcoatRoughness())),
                     impl_->material_.clearcoatRoughness(), 0.0f, 1.0f));
+  impl_->material_.setSheen(
+      finiteClamped(static_cast<float>(obj.value("material.sheen").toDouble(impl_->material_.sheen())),
+                    impl_->material_.sheen(), 0.0f, 1.0f));
   impl_->material_.setOpacity(
       finiteClamped(static_cast<float>(obj.value("material.opacity").toDouble(impl_->material_.opacity())),
                     impl_->material_.opacity(), 0.0f, 1.0f));
+  if (obj.contains("material.alphaMode")) {
+    const int alphaMode = std::clamp(
+        obj.value("material.alphaMode").toInt(
+            static_cast<int>(impl_->material_.alphaMode())),
+        static_cast<int>(ArtifactCore::MaterialAlphaMode::Opaque),
+        static_cast<int>(ArtifactCore::MaterialAlphaMode::Blended));
+    impl_->material_.setAlphaMode(
+        static_cast<ArtifactCore::MaterialAlphaMode>(alphaMode));
+  }
+  impl_->material_.setAlphaCutoff(finiteClamped(
+      static_cast<float>(obj.value("material.alphaCutoff").toDouble(
+          impl_->material_.alphaCutoff())),
+      impl_->material_.alphaCutoff(), 0.0f, 1.0f));
   const QJsonObject emissionColor = obj.value("material.emission.color").toObject();
   if (!emissionColor.isEmpty()) {
     impl_->material_.setEmissionColor(QColor::fromRgbF(
@@ -1276,6 +1295,13 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   clearcoatRoughnessProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(clearcoatRoughnessProp);
 
+  auto sheenProp = persistentLayerProperty(
+      QStringLiteral("material.sheen"), PropertyType::Float,
+      impl_->material_.sheen(), -41);
+  sheenProp->setDisplayLabel(QStringLiteral("Sheen"));
+  sheenProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(sheenProp);
+
   auto opacityProp = persistentLayerProperty(
       QStringLiteral("material.opacity"), PropertyType::Float,
       impl_->material_.opacity(), -47);
@@ -1284,6 +1310,22 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   opacityProp->setHardRange(0.0, 1.0);
   opacityProp->setSoftRange(0.0, 1.0);
   materialGroup.addProperty(opacityProp);
+
+  auto alphaModeProp = persistentLayerProperty(
+      QStringLiteral("material.alphaMode"), PropertyType::Integer,
+      static_cast<int>(impl_->material_.alphaMode()), -46);
+  alphaModeProp->setDisplayLabel(QStringLiteral("Alpha Mode"));
+  alphaModeProp->setTooltip(QStringLiteral("0=Opaque, 1=Masked, 2=Blended"));
+  alphaModeProp->setHardRange(0, 2);
+  materialGroup.addProperty(alphaModeProp);
+
+  auto alphaCutoffProp = persistentLayerProperty(
+      QStringLiteral("material.alphaCutoff"), PropertyType::Float,
+      impl_->material_.alphaCutoff(), -45);
+  alphaCutoffProp->setDisplayLabel(QStringLiteral("Alpha Cutoff"));
+  alphaCutoffProp->setHardRange(0.0, 1.0);
+  alphaCutoffProp->setSoftRange(0.0, 1.0);
+  materialGroup.addProperty(alphaCutoffProp);
 
   auto baseColorTextureProp = persistentLayerProperty(
       QStringLiteral("material.baseColorTexture"), PropertyType::String,
@@ -1512,12 +1554,30 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->material_.setClearcoatRoughness(finiteClamped(value.toFloat(), impl_->material_.clearcoatRoughness(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.sheen")) {
+    impl_->material_.setSheen(finiteClamped(value.toFloat(), impl_->material_.sheen(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.emissionStrength")) {
     impl_->material_.setEmissionStrength(finiteClamped(value.toFloat(), impl_->material_.emissionStrength(), 0.0f, 100000.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.opacity")) {
     impl_->material_.setOpacity(finiteClamped(value.toFloat(), impl_->material_.opacity(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.alphaMode")) {
+    const int alphaMode = std::clamp(
+        value.toInt(),
+        static_cast<int>(ArtifactCore::MaterialAlphaMode::Opaque),
+        static_cast<int>(ArtifactCore::MaterialAlphaMode::Blended));
+    impl_->material_.setAlphaMode(
+        static_cast<ArtifactCore::MaterialAlphaMode>(alphaMode));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.alphaCutoff")) {
+    impl_->material_.setAlphaCutoff(finiteClamped(
+        value.toFloat(), impl_->material_.alphaCutoff(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.normalStrength")) {
@@ -1547,8 +1607,10 @@ QString Artifact3DLayer::materialSignature() const
   return QStringLiteral(
              "src=%1|baseTex=%2|mrTex=%3|normalTex=%4|emissionTex=%5|occTex=%6|opacityTex=%7|"
              "base=%8,%9,%10,%11|emission=%12,%13,%14,%15|metallic=%16|roughness=%17|"
-             "emissionStrength=%18|opacity=%19|normalStrength=%20|occlusionStrength=%21|"
-             "solidTexture=%22|wireOverlay=%23")
+             "specular=%18|ior=%19|transmission=%20|clearcoat=%21|clearcoatRoughness=%22|"
+             "alphaMode=%23|alphaCutoff=%24|emissionStrength=%25|opacity=%26|"
+             "normalStrength=%27|occlusionStrength=%28|sheen=%29|solidTexture=%30|"
+             "wireOverlay=%31")
       .arg(impl_->sourcePath_)
       .arg(impl_->material_.baseColorTexture().toQString())
       .arg(impl_->material_.metallicRoughnessTexture().toQString())
@@ -1566,10 +1628,18 @@ QString Artifact3DLayer::materialSignature() const
       .arg(emissionColor.alpha())
       .arg(impl_->material_.metallic(), 0, 'f', 6)
       .arg(impl_->material_.roughness(), 0, 'f', 6)
+      .arg(impl_->material_.specular(), 0, 'f', 6)
+      .arg(impl_->material_.ior(), 0, 'f', 6)
+      .arg(impl_->material_.transmission(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoat(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatRoughness(), 0, 'f', 6)
+      .arg(static_cast<int>(impl_->material_.alphaMode()))
+      .arg(impl_->material_.alphaCutoff(), 0, 'f', 6)
       .arg(impl_->material_.emissionStrength(), 0, 'f', 6)
       .arg(impl_->material_.opacity(), 0, 'f', 6)
       .arg(impl_->material_.normalStrength(), 0, 'f', 6)
       .arg(impl_->material_.occlusionStrength(), 0, 'f', 6)
+      .arg(impl_->material_.sheen(), 0, 'f', 6)
       .arg(impl_->useTextureInSolid_ ? 1 : 0)
       .arg(impl_->wireOverlay_ ? 1 : 0);
 }

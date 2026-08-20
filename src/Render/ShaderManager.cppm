@@ -525,6 +525,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     cbuffer SkyboxCB : register(b0)
     {
         float4x4 g_InvViewProj;
+        float4 g_Settings;
     };
     VSOut main(uint vI : SV_VERTEXID)
     {
@@ -553,7 +554,14 @@ float4 main(PS_INPUT input) : SV_TARGET
     SamplerState g_sampler : register(s0);
     float4 main(PSIn input) : SV_TARGET
     {
-        return g_envMap.Sample(g_sampler, normalize(input.dir));
+        float angle = g_Settings.y;
+        float2 rotation = float2(cos(angle), sin(angle));
+        float3 direction = normalize(input.dir);
+        direction = float3(direction.x * rotation.x - direction.z * rotation.y,
+                           direction.y,
+                           direction.x * rotation.y + direction.z * rotation.x);
+        return float4(g_envMap.SampleLevel(g_sampler, direction, 0.0).rgb *
+                      max(g_Settings.x, 0.0), 1.0);
     }
     )";
     ShaderCreateInfo skyboxPsInfo;
@@ -1126,7 +1134,7 @@ void ShaderManager::Impl::createSkyboxPSO()
         skyboxPsoAndSrb_.pPSO->CreateShaderResourceBinding(&skyboxPsoAndSrb_.pSRB, true);
         BufferDesc cbDesc;
         cbDesc.Name = "SkyboxCB";
-        cbDesc.Size = sizeof(float) * 16;
+        cbDesc.Size = sizeof(float) * 20;
         cbDesc.Usage = USAGE_DYNAMIC;
         cbDesc.BindFlags = BIND_UNIFORM_BUFFER;
         cbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
@@ -1138,7 +1146,9 @@ void ShaderManager::Impl::createSkyboxPSO()
 
 void ShaderManager::drawSkybox(IDeviceContext *context,
                                ITextureView *environmentMap,
-                               const float *inverseViewProjection)
+                               const float *inverseViewProjection,
+                               float intensity,
+                               float rotationRadians)
 {
     if (!context || !environmentMap || !inverseViewProjection ||
         !impl_->skyboxPsoAndSrb_.pPSO || !impl_->skyboxPsoAndSrb_.pSRB ||
@@ -1151,6 +1161,11 @@ void ShaderManager::drawSkybox(IDeviceContext *context,
         return;
     }
     std::memcpy(mapped, inverseViewProjection, sizeof(float) * 16);
+    auto *settings = static_cast<float *>(mapped) + 16;
+    settings[0] = std::isfinite(intensity) ? std::max(0.0f, intensity) : 0.0f;
+    settings[1] = std::isfinite(rotationRadians) ? rotationRadians : 0.0f;
+    settings[2] = 0.0f;
+    settings[3] = 0.0f;
     context->UnmapBuffer(impl_->skyboxConstantBuffer_, MAP_WRITE);
 
     auto *srb = impl_->skyboxPsoAndSrb_.pSRB;
