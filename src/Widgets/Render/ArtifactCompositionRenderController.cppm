@@ -19297,6 +19297,21 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
           {static_cast<float>(bottomLeft.x()), static_cast<float>(bottomLeft.y())},
           {static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y())},
           std::max(1.0f, invZoom), 5.0f, 3.0f, selectionBoxColor);
+      const QPointF pivot = selectionBounds.center();
+      const float pivotRadius = std::max(5.0f, 7.0f * invZoom);
+      const FloatColor pivotColor{1.0f, 0.92f, 0.30f, 0.95f};
+      renderer_->drawSolidLine(
+          {static_cast<float>(pivot.x() - pivotRadius),
+           static_cast<float>(pivot.y())},
+          {static_cast<float>(pivot.x() + pivotRadius),
+           static_cast<float>(pivot.y())},
+          pivotColor, std::max(1.0f, invZoom));
+      renderer_->drawSolidLine(
+          {static_cast<float>(pivot.x()),
+           static_cast<float>(pivot.y() - pivotRadius)},
+          {static_cast<float>(pivot.x()),
+           static_cast<float>(pivot.y() + pivotRadius)},
+          pivotColor, std::max(1.0f, invZoom));
     }
   }
   // Keep frame labels sparse: only the active selection or hovered key gets
