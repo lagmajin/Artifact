@@ -4781,6 +4781,8 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                      effectJson[QStringLiteral("displayName")] =
                          effect->displayName().toQString();
                      effectJson[QStringLiteral("enabled")] = effect->isEnabled();
+                     effectJson[QStringLiteral("mix")] = effect->mix();
+                     effectJson[QStringLiteral("allowOverscan")] = effect->allowOverscan();
                      effectJson[QStringLiteral("pipelineStage")] =
                          static_cast<int>(effect->pipelineStage());
                      effectJson[QStringLiteral("computeMode")] =
@@ -4843,6 +4845,14 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                          effectJson.value(QStringLiteral("computeMode")).toInt(0)));
                      effectToPaste->setEnabled(
                          effectJson.value(QStringLiteral("enabled")).toBool(true));
+                     if (effectJson.contains(QStringLiteral("mix"))) {
+                       effectToPaste->setMix(static_cast<float>(
+                           effectJson.value(QStringLiteral("mix")).toDouble(1.0)));
+                     }
+                     if (effectJson.contains(QStringLiteral("allowOverscan"))) {
+                       effectToPaste->setAllowOverscan(
+                           effectJson.value(QStringLiteral("allowOverscan")).toBool(false));
+                     }
                      for (const auto &value : effectJson.value(QStringLiteral("properties")).toArray()) {
                        const QJsonObject property = value.toObject();
                        const QString name = property.value(QStringLiteral("name")).toString();

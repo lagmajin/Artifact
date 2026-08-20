@@ -116,6 +116,9 @@ QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffe
     root["schema_version"] = 2;
     root["effect_id"] = effect->effectID().toQString();
     root["display_name"] = effect->displayName().toQString();
+    root["effect_enabled"] = effect->isEnabled();
+    root["effect_mix"] = effect->mix();
+    root["allow_overscan"] = effect->allowOverscan();
     root["mask_enabled"] = effect->maskEnabled();
     root["mask_layer_id"] = effect->maskLayerId();
     root["mask_name"] = effect->maskName();
@@ -179,6 +182,15 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
 
     if (json.contains("mask_enabled")) {
         effect->setMaskEnabled(json["mask_enabled"].toBool());
+    }
+    if (json.contains("effect_enabled")) {
+        effect->setEnabled(json["effect_enabled"].toBool(true));
+    }
+    if (json.contains("effect_mix")) {
+        effect->setMix(static_cast<float>(json["effect_mix"].toDouble(1.0)));
+    }
+    if (json.contains("allow_overscan")) {
+        effect->setAllowOverscan(json["allow_overscan"].toBool(false));
     }
     if (json.contains("mask_layer_id")) {
         effect->setMaskLayerId(json["mask_layer_id"].toString());

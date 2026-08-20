@@ -61,6 +61,7 @@ using namespace ArtifactCore;
 class ArtifactAbstractEffect::Impl {
 public:
     bool enabled = true;
+    float mix = 1.0f;
     bool allowOverscan = false;
     bool effectRegionEnabled = false;
     QRectF effectRegion;
@@ -146,6 +147,12 @@ void ArtifactAbstractEffect::release() {
 void ArtifactAbstractEffect::setEnabled(bool enabled) { impl_->enabled = enabled; }
 
 bool ArtifactAbstractEffect::isEnabled() const { return impl_->enabled; }
+
+void ArtifactAbstractEffect::setMix(float mix) {
+    impl_->mix = std::isfinite(mix) ? std::clamp(mix, 0.0f, 1.0f) : 1.0f;
+}
+
+float ArtifactAbstractEffect::mix() const { return impl_->mix; }
 
 ComputeMode ArtifactAbstractEffect::computeMode() const { return impl_->mode; }
 
@@ -328,7 +335,8 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
     const bool hasRegion = hasEffectRegion();
     const bool hasPrimaryMask = impl_->maskEnabled && impl_->maskImage;
     const bool hasSecondaryMasks = !impl_->effectMaskImages.empty();
-    if (!hasRegion && !hasPrimaryMask && !hasSecondaryMasks) {
+    const bool hasMix = impl_->mix < 1.0f;
+    if (!hasMix && !hasRegion && !hasPrimaryMask && !hasSecondaryMasks) {
         return;
     }
 
@@ -364,8 +372,8 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         const float* sourceRow = sourcePixels + rowOffset;
         float* effectRow = effectPixels + rowOffset;
         for (int x = 0; x < width; ++x) {
-            float combinedMaskAlpha = 1.0f;
-            bool hasValidMask = false;
+            float combinedMaskAlpha = impl_->mix;
+            bool hasValidMask = hasMix;
 
             if (hasRegion) {
                 const QRectF region = impl_->effectRegion;
@@ -456,6 +464,10 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
                 else if (name == QStringLiteral("Effect Region Width")) region.setWidth(std::max(0.0, value.toDouble()));
                 else region.setHeight(std::max(0.0, value.toDouble()));
                 setEffectRegion(region);
+            } else if (name == QStringLiteral("Effect Enabled") ||
+                       name == QStringLiteral("Effect Mix") ||
+                       name == QStringLiteral("Allow Overscan")) {
+                setCommonPropertyValue(name, value);
             } else {
                 setPropertyValue(property->getName(), value);
             }
@@ -532,6 +544,28 @@ ArtifactAbstractEffect::editableProperties() {
     addCommon(QStringLiteral("Effect Region Y"), PropertyType::Float, region.y());
     addCommon(QStringLiteral("Effect Region Width"), PropertyType::Float, region.width());
     addCommon(QStringLiteral("Effect Region Height"), PropertyType::Float, region.height());
+    addCommon(QStringLiteral("Effect Enabled"), PropertyType::Boolean, isEnabled());
+    addCommon(QStringLiteral("Effect Mix"), PropertyType::Float, mix());
+    addCommon(QStringLiteral("Allow Overscan"), PropertyType::Boolean, allowOverscan());
+
+    for (const auto& property : result) {
+        if (!property) continue;
+        if (property->getName() == QStringLiteral("Effect Mix")) {
+            property->setHardRange(0.0, 1.0);
+            property->setSoftRange(0.0, 1.0);
+            property->setStep(0.01);
+            property->setTooltip(QStringLiteral(
+                "Blend the processed result with the unprocessed input."));
+            property->setDisplayPriority(-100);
+        } else if (property->getName() == QStringLiteral("Effect Enabled")) {
+            property->setTooltip(QStringLiteral(
+                "Bypass this effect without removing it from the stack."));
+            property->setDisplayPriority(-110);
+        } else if (property->getName() == QStringLiteral("Allow Overscan")) {
+            property->setTooltip(QStringLiteral(
+                "Allow spatial output outside the source layer bounds when supported."));
+        }
+    }
 
     return result;
 }
@@ -654,35 +688,51 @@ std::vector<ArtifactCore::AbstractProperty> ArtifactAbstractEffect::getPropertie
 
 void ArtifactAbstractEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
     const QString key = name.toQString();
+    setCommonPropertyValue(key, value);
+}
+
+bool ArtifactAbstractEffect::setCommonPropertyValue(const QString& key, const QVariant& value) {
+    if (key == QStringLiteral("Effect Enabled")) {
+        setEnabled(value.toBool());
+        return true;
+    }
+    if (key == QStringLiteral("Effect Mix")) {
+        setMix(value.toFloat());
+        return true;
+    }
+    if (key == QStringLiteral("Allow Overscan")) {
+        setAllowOverscan(value.toBool());
+        return true;
+    }
     if (key == QStringLiteral("mask.enabled")) {
         setMaskEnabled(value.toBool());
-        return;
+        return true;
     }
     if (key == QStringLiteral("mask.hasImage")) {
         Q_UNUSED(value);
-        return;
+        return true;
     }
     if (key == QStringLiteral("mask.effectImageCount")) {
         Q_UNUSED(value);
-        return;
+        return true;
     }
     if (key == QStringLiteral("mask.layerId")) {
         setMaskLayerId(value.toString());
-        return;
+        return true;
     }
     if (key == QStringLiteral("mask.name")) {
         setMaskName(value.toString());
-        return;
+        return true;
     }
     if (key == QStringLiteral("mask.inverted")) {
         setMaskInverted(value.toBool());
-        return;
+        return true;
     }
     if (key == QStringLiteral("mask.opacity")) {
         setMaskOpacity(value.toFloat());
-        return;
+        return true;
     }
-    // Default: no-op. Subclasses override.
+    return false;
 }
 
 }

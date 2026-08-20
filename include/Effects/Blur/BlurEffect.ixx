@@ -49,7 +49,7 @@ public:
     void setSigma(float s) { setRadius(std::max(0.1f, s) * 2.0f); }
 
     int iterations() const { return iterations_; }
-    void setIterations(int n) { iterations_ = std::max(1, n); syncImpls(); }
+    void setIterations(int n) { iterations_ = std::clamp(n, 1, 16); syncImpls(); }
 
     BlurMode mode() const { return mode_; }
     void setMode(BlurMode m) { mode_ = m; syncImpls(); }
@@ -67,21 +67,61 @@ public:
         radiusProp.setName(TranslationManager::instance().tr("effect.blur.radius", "Radius"));
         radiusProp.setType(PropertyType::Float);
         radiusProp.setValue(radius_);
+        radiusProp.setDefaultValue(10.0);
+        radiusProp.setHardRange(0.1, 2048.0);
+        radiusProp.setSoftRange(0.1, 128.0);
+        radiusProp.setStep(0.1);
+        radiusProp.setUnit(QStringLiteral("px"));
+        radiusProp.setTooltip(QStringLiteral("Blur radius in source pixels."));
         props.push_back(radiusProp);
 
         AbstractProperty strengthProp;
         strengthProp.setName(TranslationManager::instance().tr("effect.blur.strength", "Strength"));
         strengthProp.setType(PropertyType::Float);
         strengthProp.setValue(strength_);
-        props.push_back(strengthProp);
+        strengthProp.setDefaultValue(1.0);
+        strengthProp.setHardRange(0.0, 1.0);
+        strengthProp.setStep(0.01);
+        strengthProp.setTooltip(QStringLiteral("Blend amount of the blur calculation."));
 
-        AbstractProperty overscanProp;
-        overscanProp.setName(QStringLiteral("effect.allowOverscan"));
-        overscanProp.setDisplayLabel(QStringLiteral("Allow Overscan"));
-        overscanProp.setTooltip(QStringLiteral("Allow blur to extend outside the source layer bounds."));
-        overscanProp.setType(PropertyType::Boolean);
-        overscanProp.setValue(allowOverscan());
-        props.push_back(overscanProp);
+        AbstractProperty iterationsProp;
+        iterationsProp.setName(QStringLiteral("Iterations"));
+        iterationsProp.setType(PropertyType::Integer);
+        iterationsProp.setValue(iterations_);
+        iterationsProp.setDefaultValue(1);
+        iterationsProp.setHardRange(1, 16);
+        iterationsProp.setStep(1);
+        iterationsProp.setTooltip(QStringLiteral("Repeated blur passes; higher values increase the effective radius and cost."));
+        props.push_back(iterationsProp);
+
+        AbstractProperty modeProp;
+        modeProp.setName(QStringLiteral("Mode"));
+        modeProp.setDisplayLabel(QStringLiteral("Blur Mode"));
+        modeProp.setType(PropertyType::Integer);
+        modeProp.setValue(static_cast<int>(mode_));
+        modeProp.setDefaultValue(static_cast<int>(BlurMode::Gaussian));
+        modeProp.setHardRange(0, 1);
+        modeProp.setTooltip(QStringLiteral("0=Gaussian, 1=Edge Preserving."));
+        props.push_back(modeProp);
+
+        AbstractProperty edgeThresholdProp;
+        edgeThresholdProp.setName(QStringLiteral("Edge Threshold"));
+        edgeThresholdProp.setType(PropertyType::Float);
+        edgeThresholdProp.setValue(edgeThreshold_);
+        edgeThresholdProp.setDefaultValue(0.1);
+        edgeThresholdProp.setHardRange(0.0, 1.0);
+        edgeThresholdProp.setStep(0.01);
+        edgeThresholdProp.setTooltip(QStringLiteral("Edge-preserving sensitivity; used only in Edge Preserving mode."));
+        props.push_back(edgeThresholdProp);
+
+        AbstractProperty premultipliedProp;
+        premultipliedProp.setName(QStringLiteral("Premultiplied Alpha"));
+        premultipliedProp.setType(PropertyType::Boolean);
+        premultipliedProp.setValue(premultiplied_);
+        premultipliedProp.setDefaultValue(true);
+        premultipliedProp.setTooltip(QStringLiteral("Process color as premultiplied alpha to avoid transparent-edge color bleed."));
+        props.push_back(premultipliedProp);
+        props.push_back(strengthProp);
 
         return props;
     }
@@ -105,6 +145,8 @@ public:
         } else if (key == QStringLiteral("effect.allowOverscan") ||
                    key == QStringLiteral("Allow Overscan")) {
             setAllowOverscan(value.toBool());
+        } else {
+            setCommonPropertyValue(key, value);
         }
     }
 

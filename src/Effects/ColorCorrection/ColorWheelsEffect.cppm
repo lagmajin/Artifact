@@ -181,13 +181,35 @@ std::vector<AbstractProperty> ColorWheelsEffect::getProperties() const {
         prop.setName(name);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        const QString key = QString::fromLatin1(name);
+        const bool gamma = key.startsWith(QStringLiteral("Gamma"));
+        const bool gain = key.startsWith(QStringLiteral("Gain"));
+        const bool offset = key.startsWith(QStringLiteral("Offset"));
+        const double minimum = gamma ? 0.1 : gain ? 0.0 : -2.0;
+        const double maximum = gamma ? 5.0 : gain ? 4.0 : 2.0;
+        const double defaultValue = gamma || gain ? 1.0 : 0.0;
+        prop.setDefaultValue(defaultValue);
+        prop.setHardRange(minimum, maximum);
+        prop.setSoftRange(gamma ? 0.5 : gain ? 0.0 : -1.0,
+                          gamma ? 2.0 : gain ? 2.0 : 1.0);
+        prop.setStep(0.01);
+        prop.setTooltip(gamma
+            ? QStringLiteral("Midtone multiplier; 1.0 is neutral.")
+            : gain ? QStringLiteral("Highlight multiplier; 1.0 is neutral.")
+            : offset ? QStringLiteral("Additive color balance; 0.0 is neutral.")
+                     : QStringLiteral("Shadow color balance; 0.0 is neutral."));
         props.push_back(prop);
     };
 
     AbstractProperty modeProp;
     modeProp.setName("Wheel Type");
+    modeProp.setDisplayLabel(QStringLiteral("Wheel Model"));
     modeProp.setType(PropertyType::Integer);
     modeProp.setValue(static_cast<int>(wheelType_));
+    modeProp.setDefaultValue(static_cast<int>(ColorWheelType::LiftGammaGain));
+    modeProp.setHardRange(0, 3);
+    modeProp.setTooltip(QStringLiteral(
+        "0=RGB, 1=Lift/Gamma/Gain, 2=Offset/Gamma/Gain, 3=Shadows/Midtones/Highlights."));
     props.push_back(modeProp);
 
     addFloat("Lift Master", wheels_.liftMaster);
@@ -246,6 +268,8 @@ void ColorWheelsEffect::setPropertyValue(const UniString& name, const QVariant& 
         setOffset(wheels_.offsetR, value.toFloat(), wheels_.offsetB);
     } else if (key == QStringLiteral("Offset B")) {
         setOffset(wheels_.offsetR, wheels_.offsetG, value.toFloat());
+    } else {
+        setCommonPropertyValue(key, value);
     }
 }
 

@@ -50,6 +50,9 @@ private:
     float similarity_ = 0.4f;
     float smoothness_ = 0.1f;
     float spillReduction_ = 0.5f;
+    float blackClip_ = 0.0f;
+    float whiteClip_ = 1.0f;
+    bool previewMatte_ = false;
 
 public:
     ChromaKeyEffectCPUImpl() = default;
@@ -74,6 +77,13 @@ public:
     
     void setSpillReduction(float val) { spillReduction_ = val; }
     float spillReduction() const { return spillReduction_; }
+
+    void setBlackClip(float val) { blackClip_ = val; }
+    float blackClip() const { return blackClip_; }
+    void setWhiteClip(float val) { whiteClip_ = val; }
+    float whiteClip() const { return whiteClip_; }
+    void setPreviewMatte(bool enabled) { previewMatte_ = enabled; }
+    bool previewMatte() const { return previewMatte_; }
 
     void applyCPU(const ArtifactCore::ImageF32x4RGBAWithCache& src, ArtifactCore::ImageF32x4RGBAWithCache& dst) override;
 };
@@ -101,6 +111,13 @@ public:
     
     void setSpillReduction(float val);
     float spillReduction() const;
+
+    void setBlackClip(float val);
+    float blackClip() const;
+    void setWhiteClip(float val);
+    float whiteClip() const;
+    void setPreviewMatte(bool enabled);
+    bool previewMatte() const;
 };
 
 }

@@ -1357,6 +1357,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effectCopy->setDisplayName(QStringLiteral("%1 (copy)").arg(sourceDisplayName));
   effectCopy->setEnabled(sourceEnabled);
   if (sourceEffect) {
+   effectCopy->setMix(sourceEffect->mix());
+   effectCopy->setAllowOverscan(sourceEffect->allowOverscan());
    effectCopy->setPipelineStage(sourceEffect->pipelineStage());
    effectCopy->setComputeMode(sourceEffect->computeMode());
   }
@@ -1452,16 +1454,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
    if (!effect || effect->effectID().toQString() != effectId) {
     continue;
    }
-   const auto properties = effect->getProperties();
+   const auto properties = effect->editableProperties();
    const auto propertyExists = std::any_of(
        properties.begin(), properties.end(),
-       [&normalizedPropertyName](const ArtifactCore::AbstractProperty &property) {
-         return property.getName().compare(normalizedPropertyName, Qt::CaseInsensitive) == 0;
+       [&normalizedPropertyName](const auto &property) {
+         return property && property->getName().compare(normalizedPropertyName, Qt::CaseInsensitive) == 0;
        });
    if (!propertyExists) {
     return EffectServiceResult::fail("Property not found");
    }
-    effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+    if (!effect->setCommonPropertyValue(normalizedPropertyName, value)) {
+      effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+    }
     ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
         comp->id().toString(), layerId.toString(),
         LayerChangedEvent::ChangeType::Modified});
@@ -1495,16 +1499,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
    if (!effect || effect->effectID().toQString() != effectId) {
     continue;
    }
-   const auto properties = effect->getProperties();
+   const auto properties = effect->editableProperties();
    const auto propertyExists = std::any_of(
        properties.begin(), properties.end(),
-       [&normalizedPropertyName](const ArtifactCore::AbstractProperty &property) {
-         return property.getName().compare(normalizedPropertyName, Qt::CaseInsensitive) == 0;
+       [&normalizedPropertyName](const auto &property) {
+         return property && property->getName().compare(normalizedPropertyName, Qt::CaseInsensitive) == 0;
        });
    if (!propertyExists) {
     return EffectServiceResult::fail("Property not found");
    }
-   effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+   if (!effect->setCommonPropertyValue(normalizedPropertyName, value)) {
+     effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+   }
    comp->changed();
    if (auto project = ps->getCurrentProjectSharedPtr()) {
     ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});

@@ -1715,7 +1715,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
               else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
               else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
               effect->setEffectRegion(region);
-            } else effect->setPropertyValue(name, value);
+            } else if (!effect->setCommonPropertyValue(name, value)) effect->setPropertyValue(name, value);
             scheduleUpdateValues();
           },
           [this, effect](const QString &name, const QVariant &value) {
@@ -1730,7 +1730,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
               else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
               else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
               effect->setEffectRegion(region);
-            } else effect->setPropertyValue(name, value);
+            } else if (!effect->setCommonPropertyValue(name, value)) effect->setPropertyValue(name, value);
           },
           currentCompositionEffectTime,
           [this](const QString &) { scheduleUpdateValues(); },
@@ -2826,7 +2826,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
             else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
             effect->setEffectRegion(region);
-          } else effect->setPropertyValue(name, value);
+          } else if (!effect->setCommonPropertyValue(name, value)) effect->setPropertyValue(name, value);
           notifyLayerPropertyAnimationChanged(layer);
         },
         [this, layer, effect](const QString &name, const QVariant &value) {
@@ -2841,7 +2841,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             else if (name.endsWith(QStringLiteral(" Width"))) region.setWidth(std::max(0.0, value.toDouble()));
             else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
             effect->setEffectRegion(region);
-          } else effect->setPropertyValue(name, value);
+          } else if (!effect->setCommonPropertyValue(name, value)) effect->setPropertyValue(name, value);
           notifyLayerPropertyPreviewChanged(layer);
         },
         currentLayerTime,

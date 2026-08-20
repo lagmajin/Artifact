@@ -23,6 +23,7 @@ using namespace ArtifactCore;
 class EdgeBloomEffect : public ArtifactAbstractEffect {
 private:
     float threshold_ = 0.65f;
+    float thresholdSoftness_ = 0.0f;
     float radius_ = 10.0f;
     float amount_ = 1.15f;
     float edgeBoost_ = 1.8f;
@@ -36,6 +37,9 @@ public:
 
     float threshold() const { return threshold_; }
     void setThreshold(float v) { threshold_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.65f; syncImpls(); }
+
+    float thresholdSoftness() const { return thresholdSoftness_; }
+    void setThresholdSoftness(float v) { thresholdSoftness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; syncImpls(); }
 
     float radius() const { return radius_; }
     void setRadius(float v) { radius_ = std::isfinite(v) ? std::clamp(v, 0.5f, 32.0f) : 10.0f; syncImpls(); }

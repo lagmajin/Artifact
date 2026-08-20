@@ -42,6 +42,8 @@ private:
     float distortion_ = 0.0f;
     float centerX_ = 0.5f;
     float centerY_ = 0.5f;
+    float tangentialX_ = 0.0f;
+    float tangentialY_ = 0.0f;
     bool invertDistortion_ = false;
     float zoom_ = 1.0f;
 
@@ -57,6 +59,11 @@ public:
     void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
+    void setTangentialX(float v) { tangentialX_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; }
+    float tangentialX() const { return tangentialX_; }
+    void setTangentialY(float v) { tangentialY_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; }
+    float tangentialY() const { return tangentialY_; }
+
     void setInvertDistortion(bool v) { invertDistortion_ = v; }
     bool invertDistortion() const { return invertDistortion_; }
 
@@ -71,6 +78,8 @@ private:
     float distortion_ = 0.0f;
     float centerX_ = 0.5f;
     float centerY_ = 0.5f;
+    float tangentialX_ = 0.0f;
+    float tangentialY_ = 0.0f;
     bool invertDistortion_ = false;
     float zoom_ = 1.0f;
 
@@ -85,6 +94,11 @@ public:
 
     void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
+
+    void setTangentialX(float v) { tangentialX_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; }
+    float tangentialX() const { return tangentialX_; }
+    void setTangentialY(float v) { tangentialY_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; }
+    float tangentialY() const { return tangentialY_; }
 
     void setInvertDistortion(bool v) { invertDistortion_ = v; }
     bool invertDistortion() const { return invertDistortion_; }
@@ -114,6 +128,11 @@ public:
 
     void setCenterY(float cy);
     float centerY() const;
+
+    void setTangentialX(float v);
+    float tangentialX() const;
+    void setTangentialY(float v);
+    float tangentialY() const;
 
     void setInvertDistortion(bool v);
     bool invertDistortion() const;

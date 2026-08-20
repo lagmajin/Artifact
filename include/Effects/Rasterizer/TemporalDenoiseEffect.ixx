@@ -37,6 +37,11 @@ public:
     float varianceThreshold() const;
     void  setVarianceThreshold(float v);
 
+    bool rejectSceneCuts() const;
+    void setRejectSceneCuts(bool enabled);
+    float sceneCutThreshold() const;
+    void setSceneCutThreshold(float v);
+
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
     bool supportsGPU() const override { return false; }
@@ -45,6 +50,8 @@ private:
     float strength_          = 0.5f;
     int   frameCount_        = 3;
     float varianceThreshold_ = 0.05f;
+    bool rejectSceneCuts_ = true;
+    float sceneCutThreshold_ = 0.25f;
     void syncImpls();
 };
 

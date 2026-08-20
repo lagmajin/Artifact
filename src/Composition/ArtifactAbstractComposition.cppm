@@ -799,6 +799,8 @@ QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
   eobj["id"] = effect->effectID().toQString();
   eobj["displayName"] = effect->displayName().toQString();
   eobj["enabled"] = effect->isEnabled();
+  eobj["mix"] = effect->mix();
+  eobj["allowOverscan"] = effect->allowOverscan();
   eobj["pipelineStage"] = static_cast<int>(effect->pipelineStage());
   if (effect->hasEffectRegion()) {
     const QRectF region = effect->effectRegion();
@@ -894,6 +896,12 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   effect->setDisplayName(UniString::fromQString(
       eobj.value(QStringLiteral("displayName")).toString(effect->effectID().toQString())));
   effect->setEnabled(eobj.value(QStringLiteral("enabled")).toBool(true));
+  if (eobj.contains(QStringLiteral("mix"))) {
+    effect->setMix(static_cast<float>(eobj.value(QStringLiteral("mix")).toDouble(1.0)));
+  }
+  if (eobj.contains(QStringLiteral("allowOverscan"))) {
+    effect->setAllowOverscan(eobj.value(QStringLiteral("allowOverscan")).toBool(false));
+  }
   if (eobj.value(QStringLiteral("effectRegion")).isObject()) {
     const QJsonObject regionObj =
         eobj.value(QStringLiteral("effectRegion")).toObject();

@@ -74,22 +74,16 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
     float* destinationPixels = dstImage.rgba32fData();
     ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
         for (int x = 0; x < width; x++) {
-            float dx = static_cast<float>(x) - cx;
-            float dy = static_cast<float>(y) - cy;
-            float r = std::sqrt(dx * dx + dy * dy) / maxR;
-
-            float rDistorted = r * (1.0f + k * r * r);
-            rDistorted /= zm;
-
-            float srcX, srcY;
-            if (r > 1e-6f) {
-                float scale = (rDistorted * maxR) / (r * maxR);
-                srcX = cx + dx * scale;
-                srcY = cy + dy * scale;
-            } else {
-                srcX = cx;
-                srcY = cy;
-            }
+            const float nx = (static_cast<float>(x) - cx) / maxR;
+            const float ny = (static_cast<float>(y) - cy) / maxR;
+            const float r2 = nx * nx + ny * ny;
+            const float radial = (1.0f + k * r2) / zm;
+            const float tx = tangentialX_;
+            const float ty = tangentialY_;
+            const float srcX = cx + maxR * (nx * radial + 2.0f * tx * nx * ny +
+                ty * (r2 + 2.0f * nx * nx));
+            const float srcY = cy + maxR * (ny * radial +
+                tx * (r2 + 2.0f * ny * ny) + 2.0f * ty * nx * ny);
 
             FloatRGBA pixel = sampleBilinear(srcImage, srcX, srcY);
             size_t idx = static_cast<size_t>(y) * width + x;
@@ -106,16 +100,16 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
 
 static constexpr const char* kLensDistortionHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0);
-cbuffer LensDistortionParams:register(b0){float g_Distortion;float g_Cx;float g_Cy;float g_Zoom;float g_Invert;float3 g_Pad;}
+cbuffer LensDistortionParams:register(b0){float g_Distortion;float g_Cx;float g_Cy;float g_Zoom;float g_Invert;float g_TangentialX;float g_TangentialY;float g_Pad;}
 float4 sampleLinear(float2 p,uint w,uint h){p=clamp(p,float2(0,0),float2(w-1,h-1));int2 i=int2(floor(p));float2 f=frac(p);float4 a=g_InputTexture[uint2(i)],b=g_InputTexture[uint2(min(i+int2(1,0),int2(w-1,h-1)))],c=g_InputTexture[uint2(min(i+int2(0,1),int2(w-1,h-1)))],d=g_InputTexture[uint2(min(i+int2(1,1),int2(w-1,h-1)))];return lerp(lerp(a,b,f.x),lerp(c,d,f.x),f.y);}
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float2 c=float2(g_Cx*w,g_Cy*h),q=float2(id.xy),d=q-c;float maxR=0.5*min(w,h),r=length(d)/max(maxR,1);float k=(g_Invert>0.5?-1:1)*g_Distortion/100;float rd=r*(1+k*r*r)/max(g_Zoom,0.001);float2 s=(r>1e-6?c+d*(rd/r):c);g_OutputTexture[id.xy]=sampleLinear(s,w,h);}
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float2 c=float2(g_Cx*w,g_Cy*h),d=float2(id.xy)-c;float maxR=max(0.5*min(w,h),1),nx=d.x/maxR,ny=d.y/maxR,r2=nx*nx+ny*ny,k=(g_Invert>0.5?-1:1)*g_Distortion/100,radial=(1+k*r2)/max(g_Zoom,0.001);float2 s=c+maxR*float2(nx*radial+2*g_TangentialX*nx*ny+g_TangentialY*(r2+2*nx*nx),ny*radial+g_TangentialX*(r2+2*ny*ny)+2*g_TangentialY*nx*ny);g_OutputTexture[id.xy]=sampleLinear(s,w,h);}
 )";
 static constexpr const char* kHlsl = kLensDistortionHlsl;
 
 void LensDistortionEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
-    auto fallback = [&] { LensDistortionEffectCPUImpl cpu; cpu.setDistortion(distortion_); cpu.setCenterX(centerX_); cpu.setCenterY(centerY_); cpu.setInvertDistortion(invertDistortion_); cpu.setZoom(zoom_); cpu.applyCPU(src, dst); };
+    auto fallback = [&] { LensDistortionEffectCPUImpl cpu; cpu.setDistortion(distortion_); cpu.setCenterX(centerX_); cpu.setCenterY(centerY_); cpu.setTangentialX(tangentialX_); cpu.setTangentialY(tangentialY_); cpu.setInvertDistortion(invertDistortion_); cpu.setZoom(zoom_); cpu.applyCPU(src, dst); };
     if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { fallback(); return; }
     const auto& image = src.image();
     const float* data = image.rgba32fData();
@@ -124,7 +118,7 @@ void LensDistortionEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, I
     Diligent::TextureSubResData sub{}; sub.pData=data; sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull; Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1;
     Diligent::RefCntAutoPtr<Diligent::ITexture> input; device->CreateTexture(td,&init,&input); if(!input){fallback();return;}
     auto od=td; od.Name="LensDistortion/Output"; od.Usage=Diligent::USAGE_DEFAULT; od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS; Diligent::RefCntAutoPtr<Diligent::ITexture> output; device->CreateTexture(od,nullptr,&output); if(!output){fallback();return;}
-    struct Params{float distortion,cx,cy,zoom;float invert,pad[3];}; Diligent::BufferDesc bd{}; bd.Name="LensDistortion/Params"; bd.Size=sizeof(Params); bd.Usage=Diligent::USAGE_DYNAMIC; bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER; bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE; Diligent::RefCntAutoPtr<Diligent::IBuffer> params; device->CreateBuffer(bd,nullptr,&params); if(!params){fallback();return;} void* mapped=nullptr; context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped); if(!mapped){fallback();return;} Params p{distortion_,centerX_,centerY_,std::max(zoom_,0.001f),invertDistortion_?1.0f:0.0f,{0,0,0}}; std::memcpy(mapped,&p,sizeof(p)); context->UnmapBuffer(params,Diligent::MAP_WRITE);
+    struct Params{float distortion,cx,cy,zoom;float invert,tangentialX,tangentialY,pad;}; Diligent::BufferDesc bd{}; bd.Name="LensDistortion/Params"; bd.Size=sizeof(Params); bd.Usage=Diligent::USAGE_DYNAMIC; bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER; bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE; Diligent::RefCntAutoPtr<Diligent::IBuffer> params; device->CreateBuffer(bd,nullptr,&params); if(!params){fallback();return;} void* mapped=nullptr; context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped); if(!mapped){fallback();return;} Params p{distortion_,centerX_,centerY_,std::max(zoom_,0.001f),invertDistortion_?1.0f:0.0f,tangentialX_,tangentialY_,0.0f}; std::memcpy(mapped,&p,sizeof(p)); context->UnmapBuffer(params,Diligent::MAP_WRITE);
     static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"LensDistortionParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}}; ArtifactCore::GpuContext gc{device,context}; ArtifactCore::ComputeExecutor ex{gc}; ArtifactCore::ComputePipelineDesc pd{}; pd.name="LensDistortion/PSO"; pd.shaderSource=kHlsl; pd.entryPoint="main"; pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL; pd.variables=vars; pd.variableCount=3; pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC; if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("LensDistortionParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){fallback();return;} ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     auto sd=od; sd.Name="LensDistortion/Readback"; sd.Usage=Diligent::USAGE_STAGING; sd.BindFlags=Diligent::BIND_NONE; sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(sd,nullptr,&staging); if(!staging){fallback();return;} context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION)); context->Flush(); context->WaitForIdle(); Diligent::MappedTextureSubresource read{}; context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read); if(!read.pData||!read.Stride){fallback();return;} cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride); dst.image().setFromCVMat(result,image.colorDescriptor()); context->UnmapTextureSubresource(staging,0,0);
 }
@@ -175,6 +169,22 @@ float LensDistortionEffect::centerY() const {
     return impl_->cpuImpl_ ? impl_->cpuImpl_->centerY() : 0.5f;
 }
 
+void LensDistortionEffect::setTangentialX(float v) {
+    if (impl_->cpuImpl_) impl_->cpuImpl_->setTangentialX(v);
+    if (impl_->gpuImpl_) impl_->gpuImpl_->setTangentialX(v);
+}
+float LensDistortionEffect::tangentialX() const {
+    return impl_->cpuImpl_ ? impl_->cpuImpl_->tangentialX() : 0.0f;
+}
+
+void LensDistortionEffect::setTangentialY(float v) {
+    if (impl_->cpuImpl_) impl_->cpuImpl_->setTangentialY(v);
+    if (impl_->gpuImpl_) impl_->gpuImpl_->setTangentialY(v);
+}
+float LensDistortionEffect::tangentialY() const {
+    return impl_->cpuImpl_ ? impl_->cpuImpl_->tangentialY() : 0.0f;
+}
+
 void LensDistortionEffect::setInvertDistortion(bool v) {
     if (impl_->cpuImpl_) impl_->cpuImpl_->setInvertDistortion(v);
     if (impl_->gpuImpl_) impl_->gpuImpl_->setInvertDistortion(v);
@@ -193,41 +203,76 @@ float LensDistortionEffect::zoom() const {
 
 std::vector<ArtifactCore::AbstractProperty> LensDistortionEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> props;
-    props.reserve(5);
+    props.reserve(7);
 
     auto& distProp = props.emplace_back();
-    distProp.setName("distortion");
+      distProp.setName("distortion");
+      distProp.setDisplayLabel(QStringLiteral("Radial Distortion"));
     distProp.setType(ArtifactCore::PropertyType::Float);
     distProp.setDefaultValue(QVariant(0.0));
     distProp.setValue(QVariant(static_cast<double>(distortion())));
-    distProp.setSoftRange(QVariant(-100.0), QVariant(100.0));
+      distProp.setSoftRange(QVariant(-100.0), QVariant(100.0));
+      distProp.setHardRange(QVariant(-100.0), QVariant(100.0));
+      distProp.setStep(0.1);
 
     auto& cxProp = props.emplace_back();
-    cxProp.setName("centerX");
+      cxProp.setName("centerX");
+      cxProp.setDisplayLabel(QStringLiteral("Center X"));
     cxProp.setType(ArtifactCore::PropertyType::Float);
     cxProp.setDefaultValue(QVariant(0.5));
     cxProp.setValue(QVariant(static_cast<double>(centerX())));
-    cxProp.setSoftRange(QVariant(0.0), QVariant(1.0));
+      cxProp.setSoftRange(QVariant(0.0), QVariant(1.0));
+      cxProp.setHardRange(QVariant(0.0), QVariant(1.0));
+      cxProp.setStep(0.001);
 
     auto& cyProp = props.emplace_back();
-    cyProp.setName("centerY");
+      cyProp.setName("centerY");
+      cyProp.setDisplayLabel(QStringLiteral("Center Y"));
     cyProp.setType(ArtifactCore::PropertyType::Float);
     cyProp.setDefaultValue(QVariant(0.5));
     cyProp.setValue(QVariant(static_cast<double>(centerY())));
-    cyProp.setSoftRange(QVariant(0.0), QVariant(1.0));
+      cyProp.setSoftRange(QVariant(0.0), QVariant(1.0));
+      cyProp.setHardRange(QVariant(0.0), QVariant(1.0));
+    cyProp.setStep(0.001);
+
+    auto& txProp = props.emplace_back();
+    txProp.setName("tangentialX");
+    txProp.setDisplayLabel(QStringLiteral("Tangential X"));
+    txProp.setType(ArtifactCore::PropertyType::Float);
+    txProp.setDefaultValue(QVariant(0.0));
+    txProp.setValue(QVariant(static_cast<double>(tangentialX())));
+    txProp.setHardRange(QVariant(-1.0), QVariant(1.0));
+    txProp.setSoftRange(QVariant(-0.1), QVariant(0.1));
+    txProp.setStep(0.0001);
+    txProp.setTooltip(QStringLiteral("Decentering distortion coefficient along the X axis."));
+
+    auto& tyProp = props.emplace_back();
+    tyProp.setName("tangentialY");
+    tyProp.setDisplayLabel(QStringLiteral("Tangential Y"));
+    tyProp.setType(ArtifactCore::PropertyType::Float);
+    tyProp.setDefaultValue(QVariant(0.0));
+    tyProp.setValue(QVariant(static_cast<double>(tangentialY())));
+    tyProp.setHardRange(QVariant(-1.0), QVariant(1.0));
+    tyProp.setSoftRange(QVariant(-0.1), QVariant(0.1));
+    tyProp.setStep(0.0001);
+    tyProp.setTooltip(QStringLiteral("Decentering distortion coefficient along the Y axis."));
 
     auto& invProp = props.emplace_back();
-    invProp.setName("invertDistortion");
+      invProp.setName("invertDistortion");
+      invProp.setDisplayLabel(QStringLiteral("Invert Distortion"));
     invProp.setType(ArtifactCore::PropertyType::Boolean);
     invProp.setDefaultValue(QVariant(false));
     invProp.setValue(QVariant(invertDistortion()));
 
     auto& zoomProp = props.emplace_back();
-    zoomProp.setName("zoom");
+      zoomProp.setName("zoom");
+      zoomProp.setDisplayLabel(QStringLiteral("Zoom"));
     zoomProp.setType(ArtifactCore::PropertyType::Float);
     zoomProp.setDefaultValue(QVariant(1.0));
     zoomProp.setValue(QVariant(static_cast<double>(zoom())));
-    zoomProp.setSoftRange(QVariant(0.1), QVariant(3.0));
+      zoomProp.setSoftRange(QVariant(0.1), QVariant(3.0));
+      zoomProp.setHardRange(QVariant(0.1), QVariant(3.0));
+      zoomProp.setStep(0.01);
 
     return props;
 }
@@ -240,10 +285,16 @@ void LensDistortionEffect::setPropertyValue(const ArtifactCore::UniString& name,
         setCenterX(static_cast<float>(value.toDouble()));
     } else if (n == "centerY") {
         setCenterY(static_cast<float>(value.toDouble()));
+    } else if (n == "tangentialX") {
+        setTangentialX(static_cast<float>(value.toDouble()));
+    } else if (n == "tangentialY") {
+        setTangentialY(static_cast<float>(value.toDouble()));
     } else if (n == "invertDistortion") {
         setInvertDistortion(value.toBool());
     } else if (n == "zoom") {
         setZoom(static_cast<float>(value.toDouble()));
+    } else {
+        setCommonPropertyValue(n, value);
     }
 }
 

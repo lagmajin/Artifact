@@ -193,6 +193,8 @@ namespace Artifact {
             effectJson["effectId"] = QString(effect->effectID());
             effectJson["displayName"] = QString(effect->displayName());
             effectJson["enabled"] = effect->isEnabled();
+            effectJson["mix"] = effect->mix();
+            effectJson["allowOverscan"] = effect->allowOverscan();
             QJsonArray properties;
             for (const auto& property : effect->getProperties()) {
                 QJsonObject prop;

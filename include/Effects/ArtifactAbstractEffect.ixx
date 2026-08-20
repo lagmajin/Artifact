@@ -116,6 +116,10 @@ public:
     void setEnabled(bool enabled);
     bool isEnabled() const;
 
+    // Global contribution, applied after an effect generates its result.
+    void setMix(float mix);
+    float mix() const;
+
     // compute mode
     ComputeMode computeMode() const;
     void setComputeMode(ComputeMode mode);
@@ -184,6 +188,9 @@ public:
     // Property interface (use ArtifactCore::AbstractProperty)
     virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
     virtual void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value);
+    // Handles controls shared by every effect. Derived implementations should
+    // call this before routing their own properties.
+    bool setCommonPropertyValue(const QString& name, const QVariant& value);
 
     // Stable property objects used by editors and animation. getProperties()
     // remains the effect-specific value description API; these objects retain

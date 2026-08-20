@@ -189,28 +189,52 @@ std::vector<AbstractProperty> DisplacementMapEffect::getProperties() const {
 
     auto& hProp = props.emplace_back();
     hProp.setName("Max Horizontal");
+    hProp.setDisplayLabel(QStringLiteral("Horizontal Amount"));
     hProp.setType(PropertyType::Float);
     hProp.setValue(maxHorizontal_);
+    hProp.setDefaultValue(20.0);
+    hProp.setHardRange(-4096.0, 4096.0);
+    hProp.setSoftRange(-256.0, 256.0);
+    hProp.setStep(0.1);
+    hProp.setUnit(QStringLiteral("px"));
+    hProp.setTooltip(QStringLiteral("Maximum horizontal pixel displacement; negative values reverse direction."));
 
     auto& vProp = props.emplace_back();
     vProp.setName("Max Vertical");
+    vProp.setDisplayLabel(QStringLiteral("Vertical Amount"));
     vProp.setType(PropertyType::Float);
     vProp.setValue(maxVertical_);
+    vProp.setDefaultValue(20.0);
+    vProp.setHardRange(-4096.0, 4096.0);
+    vProp.setSoftRange(-256.0, 256.0);
+    vProp.setStep(0.1);
+    vProp.setUnit(QStringLiteral("px"));
+    vProp.setTooltip(QStringLiteral("Maximum vertical pixel displacement; negative values reverse direction."));
 
     auto& hcProp = props.emplace_back();
     hcProp.setName("Horizontal Channel");
+    hcProp.setDisplayLabel(QStringLiteral("Horizontal Map Channel"));
     hcProp.setType(PropertyType::Integer);
     hcProp.setValue(static_cast<int>(horizontalChannel_));
+    hcProp.setDefaultValue(static_cast<int>(DisplaceChannel::Red));
+    hcProp.setHardRange(0, 4);
+    hcProp.setTooltip(QStringLiteral("0=Luminance, 1=Red, 2=Green, 3=Blue, 4=Alpha."));
 
     auto& vcProp = props.emplace_back();
     vcProp.setName("Vertical Channel");
+    vcProp.setDisplayLabel(QStringLiteral("Vertical Map Channel"));
     vcProp.setType(PropertyType::Integer);
     vcProp.setValue(static_cast<int>(verticalChannel_));
+    vcProp.setDefaultValue(static_cast<int>(DisplaceChannel::Green));
+    vcProp.setHardRange(0, 4);
+    vcProp.setTooltip(QStringLiteral("0=Luminance, 1=Red, 2=Green, 3=Blue, 4=Alpha."));
 
     auto& wProp = props.emplace_back();
     wProp.setName("Wrap Around");
     wProp.setType(PropertyType::Boolean);
     wProp.setValue(wrapAround_);
+    wProp.setDefaultValue(false);
+    wProp.setTooltip(QStringLiteral("Wrap samples from the opposite edge instead of clamping to the source boundary."));
 
     return props;
 }
@@ -222,6 +246,7 @@ void DisplacementMapEffect::setPropertyValue(const UniString& name, const QVaria
     else if (k == "Horizontal Channel")  setHorizontalChannel(static_cast<DisplaceChannel>(value.toInt()));
     else if (k == "Vertical Channel")    setVerticalChannel(static_cast<DisplaceChannel>(value.toInt()));
     else if (k == "Wrap Around")         setWrapAround(value.toBool());
+    else setCommonPropertyValue(k, value);
 }
 
 void DisplacementMapEffect::syncImpls() {
