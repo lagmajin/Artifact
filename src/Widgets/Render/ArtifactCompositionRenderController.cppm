@@ -25133,12 +25133,37 @@ void CompositionRenderController::handleMouseMove(
 
               static_cast<int>(hoverSample.framePosition));
           if (hoverChanged) {
+            const auto interpolation = static_cast<ArtifactCore::InterpolationType>(
+                motionPathPositionInterpolation(
+                    selectedLayer,
+                    ArtifactCore::RationalTime(hoverSample.framePosition, 24)));
+            QString interpolationName = QStringLiteral("Linear");
+            switch (interpolation) {
+            case ArtifactCore::InterpolationType::Constant:
+              interpolationName = QStringLiteral("Hold");
+              break;
+            case ArtifactCore::InterpolationType::Bezier:
+              interpolationName = QStringLiteral("Bezier");
+              break;
+            case ArtifactCore::InterpolationType::EaseIn:
+              interpolationName = QStringLiteral("Ease In");
+              break;
+            case ArtifactCore::InterpolationType::EaseOut:
+              interpolationName = QStringLiteral("Ease Out");
+              break;
+            case ArtifactCore::InterpolationType::EaseInOut:
+              interpolationName = QStringLiteral("Ease In-Out");
+              break;
+            default:
+              break;
+            }
             setInfoOverlayText(
                 QStringLiteral("Motion Path • Frame %1")
                     .arg(hoverSample.framePosition),
-                QStringLiteral("Position %1, %2")
+                QStringLiteral("Position %1, %2 • %3")
                     .arg(hoverSample.position.x(), 0, 'f', 1)
-                    .arg(hoverSample.position.y(), 0, 'f', 1));
+                    .arg(hoverSample.position.y(), 0, 'f', 1)
+                    .arg(interpolationName));
           }
 
         } else {
