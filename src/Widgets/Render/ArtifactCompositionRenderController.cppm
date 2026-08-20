@@ -13453,6 +13453,7 @@ public:
   MotionPathTangentHandle draggingMotionPathTangentHandle_ =
       MotionPathTangentHandle::None;
   MotionPathTangentSnapshot draggingMotionPathTangentBefore_;
+  bool draggingMotionPathTangentBroken_ = false;
 
   bool dropGhostVisible_ = false;
 
@@ -14206,11 +14207,15 @@ public:
 
   void beginMotionPathTangentDrag(const ArtifactAbstractLayerPtr &layer,
                                   int64_t frame,
-                                  MotionPathTangentHandle handle) {
+                                  MotionPathTangentHandle handle,
+                                  Qt::KeyboardModifiers modifiers =
+                                      Qt::NoModifier) {
     draggingMotionPathTangentLayer_ = layer;
     draggingMotionPathTangentFrame_ = frame;
     draggingMotionPathTangentHandle_ = handle;
+    draggingMotionPathTangentBroken_ = modifiers.testFlag(Qt::AltModifier);
     draggingMotionPathTangentBefore_ = {};
+    draggingMotionPathTangentBroken_ = false;
     if (layer) {
       const ArtifactCore::RationalTime time(frame, 24);
       draggingMotionPathTangentBefore_.present =
@@ -14252,6 +14257,9 @@ public:
     ArtifactCore::PositionSpatialTangents tangents;
     if (!t3d.positionKeyFrameSpatialTangentsAt(time, tangents)) {
       tangents.linked = true;
+    }
+    if (draggingMotionPathTangentBroken_) {
+      tangents.linked = false;
     }
     if (draggingMotionPathTangentHandle_ == MotionPathTangentHandle::In) {
       tangents.inTangent = {static_cast<float>(delta.x()),
@@ -23611,9 +23619,11 @@ if (event->button() == Qt::LeftButton &&
                                         hitThreshold, tangentFrame,
                                         tangentHandle)) {
       impl_->beginMotionPathTangentDrag(selectedLayer, tangentFrame,
-                                        tangentHandle);
+                                        tangentHandle, event->modifiers());
       setInfoOverlayText(QStringLiteral("Motion Path"),
-                         QStringLiteral("Drag tangent to shape the path"));
+                         event->modifiers().testFlag(Qt::AltModifier)
+                             ? QStringLiteral("Broken tangent — drag independently")
+                             : QStringLiteral("Drag tangent to shape the path"));
       event->accept();
       return;
     }
@@ -23646,7 +23656,8 @@ if (event->button() == Qt::LeftButton &&
           !event->modifiers().testFlag(Qt::ShiftModifier)) {
         impl_->beginMotionPathTangentDrag(selectedLayer,
                                           hitSample.framePosition,
-                                          MotionPathTangentHandle::Out);
+                                          MotionPathTangentHandle::Out,
+                                          event->modifiers());
         setInfoOverlayText(QStringLiteral("Motion Path"),
                            QStringLiteral("Drag to create linked tangents"));
         event->accept();
