@@ -69,6 +69,9 @@ import Asset.Manager;
 import Asset.Database;
 import Undo.UndoManager;
 import Composition.PreCompose;
+import Control.OSC.Input;
+import Control.Midi.Input;
+import ArtifactCore.Control.External;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
@@ -1531,10 +1534,13 @@ public:
 
   QFileSystemWatcher* fileWatcher_ = nullptr;
   QTimer* statusCheckTimer_ = nullptr;
+  ArtifactCore::OscInput* oscInput_ = nullptr;
+  ArtifactCore::MidiInput* midiInput_ = nullptr;
   void setupFileWatcher(ArtifactProjectService* owner);
   void refreshFileWatcherPaths();
   void updateAllAssetStatuses();
   void handleFileChanged(const QString& path);
+  void setupExternalControlInputs(ArtifactProjectService* owner);
 };
 
 void ArtifactProjectService::Impl::setupFileWatcher(ArtifactProjectService* owner) {
@@ -1552,6 +1558,43 @@ void ArtifactProjectService::Impl::setupFileWatcher(ArtifactProjectService* owne
 
   statusCheckTimer_->start();
   refreshFileWatcherPaths();
+}
+
+void ArtifactProjectService::Impl::setupExternalControlInputs(
+    ArtifactProjectService *owner) {
+  constexpr uint16_t kDefaultOscPort = 8000;
+  oscInput_ = new ArtifactCore::OscInput(owner);
+  if (oscInput_->startServer(kDefaultOscPort)) {
+    QObject::connect(oscInput_, &ArtifactCore::OscInput::messageReceived, owner,
+                     [](const QString &address, float value) {
+                       ArtifactCore::ExternalControlManager::instance()
+                           .observeInput(QStringLiteral("osc:") + address,
+                                         static_cast<double>(value));
+                     });
+  } else {
+    qWarning() << "[ProjectService] OSC input unavailable on port"
+               << kDefaultOscPort;
+  }
+
+  const auto midiDevices = ArtifactCore::MidiInput::enumerateDevices();
+  for (const auto &device : midiDevices) {
+    if (!device.isAvailable) {
+      continue;
+    }
+    midiInput_ = new ArtifactCore::MidiInput(owner);
+    if (midiInput_->openDevice(device.id)) {
+      QObject::connect(
+          midiInput_, &ArtifactCore::MidiInput::ccReceived, owner,
+          [](int channel, int controller, int value) {
+            ArtifactCore::ExternalControlManager::instance().observeInput(
+                QStringLiteral("midi:%1:%2").arg(channel).arg(controller),
+                static_cast<double>(value) / 127.0);
+          });
+      break;
+    }
+    midiInput_->deleteLater();
+    midiInput_ = nullptr;
+  }
 }
 
 void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
@@ -2494,6 +2537,7 @@ W_OBJECT_IMPL(ArtifactProjectService)
 ArtifactProjectService::ArtifactProjectService(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
   impl_->setupFileWatcher(this);
+  impl_->setupExternalControlInputs(this);
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectCreatedEvent>([this](const ProjectCreatedEvent&) {
         impl_->currentCompositionId_ = {};

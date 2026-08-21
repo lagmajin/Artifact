@@ -2126,8 +2126,10 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     if (!renderer) return;
 
     if (isImageSequence()) {
-        const qint64 layerFrame =
-            currentFrame() - startTime().framePosition();
+        const qint64 layerFrame = isTimeRemapEnabled()
+            ? static_cast<qint64>(std::llround(
+                  getSourceFrameAtCompFrame(currentFrame())))
+            : currentFrame() - startTime().framePosition();
         impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
     }
 
@@ -2257,8 +2259,10 @@ QImage ArtifactImageLayer::toQImage() const
     }
 
     if (isImageSequence()) {
-        const qint64 layerFrame =
-            currentFrame() - startTime().framePosition();
+        const qint64 layerFrame = isTimeRemapEnabled()
+            ? static_cast<qint64>(std::llround(
+                  getSourceFrameAtCompFrame(currentFrame())))
+            : currentFrame() - startTime().framePosition();
         impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
     }
 

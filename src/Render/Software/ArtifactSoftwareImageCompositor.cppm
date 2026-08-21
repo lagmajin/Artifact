@@ -188,10 +188,12 @@ inline ArtifactCore::FloatColor blendColor(const ArtifactCore::FloatColor& base,
  }
 }
 
-QPainter::CompositionMode toCompositionMode(const ArtifactCore::BlendMode mode)
+QPainter::CompositionMode qPainterCompositionMode(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
- case ArtifactCore::BlendMode::Subtract: return QPainter::CompositionMode_Difference;
+ // QPainter has no native Subtract; the exact float/CV implementation lives
+ // in blendChannel(). Approximating it as Difference changes the result, so
+ // QPainter consumers fall back to SourceOver.
  case ArtifactCore::BlendMode::Add: return QPainter::CompositionMode_Plus;
  case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
  case ArtifactCore::BlendMode::Screen: return QPainter::CompositionMode_Screen;
@@ -204,24 +206,24 @@ QPainter::CompositionMode toCompositionMode(const ArtifactCore::BlendMode mode)
  case ArtifactCore::BlendMode::SoftLight: return QPainter::CompositionMode_SoftLight;
  case ArtifactCore::BlendMode::Difference: return QPainter::CompositionMode_Difference;
  case ArtifactCore::BlendMode::Exclusion: return QPainter::CompositionMode_Exclusion;
-  case ArtifactCore::BlendMode::Hue:
-  case ArtifactCore::BlendMode::Saturation:
-  case ArtifactCore::BlendMode::Color:
-  case ArtifactCore::BlendMode::Luminosity:
-  case ArtifactCore::BlendMode::Dissolve:
-  case ArtifactCore::BlendMode::DancingDissolve:
-  case ArtifactCore::BlendMode::ClassicColorBurn:
-  case ArtifactCore::BlendMode::LinearDodge:
-  case ArtifactCore::BlendMode::ClassicColorDodge:
-  case ArtifactCore::BlendMode::ClassicDifference:
-  case ArtifactCore::BlendMode::StencilAlpha:
-  case ArtifactCore::BlendMode::StencilLuma:
-  case ArtifactCore::BlendMode::SilhouetteAlpha:
-  case ArtifactCore::BlendMode::SilhouetteLuma:
-   return QPainter::CompositionMode_SourceOver;
-  case ArtifactCore::BlendMode::Normal:
-  default:
-   return QPainter::CompositionMode_SourceOver;
+ case ArtifactCore::BlendMode::Hue:
+ case ArtifactCore::BlendMode::Saturation:
+ case ArtifactCore::BlendMode::Color:
+ case ArtifactCore::BlendMode::Luminosity:
+ case ArtifactCore::BlendMode::Dissolve:
+ case ArtifactCore::BlendMode::DancingDissolve:
+ case ArtifactCore::BlendMode::ClassicColorBurn:
+ case ArtifactCore::BlendMode::LinearDodge:
+ case ArtifactCore::BlendMode::ClassicColorDodge:
+ case ArtifactCore::BlendMode::ClassicDifference:
+ case ArtifactCore::BlendMode::StencilAlpha:
+ case ArtifactCore::BlendMode::StencilLuma:
+ case ArtifactCore::BlendMode::SilhouetteAlpha:
+ case ArtifactCore::BlendMode::SilhouetteLuma:
+ case ArtifactCore::BlendMode::Subtract:
+ case ArtifactCore::BlendMode::Normal:
+ default:
+  return QPainter::CompositionMode_SourceOver;
  }
 }
 
@@ -416,7 +418,7 @@ void blendBgrWithQPainter(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float op
 
  QPainter painter(&dstCopy);
  painter.setOpacity(std::clamp(opacity, 0.0f, 1.0f));
- painter.setCompositionMode(toCompositionMode(mode));
+  painter.setCompositionMode(qPainterCompositionMode(mode));
  painter.drawImage(0, 0, srcCopy);
  painter.end();
 

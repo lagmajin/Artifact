@@ -249,7 +249,7 @@ void ArtifactCompositionPlaybackController::stop() {
   PlaybackState oldState = impl_->state_;
   impl_->state_ = PlaybackState::Stopped;
   impl_->stopTimer();
-  impl_->currentFrame_ = impl_->frameRange_.start();
+  impl_->currentFrame_ = impl_->effectiveStartFrame();
 
   qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->"
            << (int)PlaybackState::Stopped;
@@ -268,8 +268,6 @@ void ArtifactCompositionPlaybackController::togglePlayPause() {
 void ArtifactCompositionPlaybackController::goToFrame(
     const FramePosition &position) {
   impl_->currentFrame_ = position;
-  qDebug() << "PlaybackController::goToFrame"
-           << impl_->currentFrame_.framePosition();
   Q_EMIT frameChanged(impl_->currentFrame_);
 }
 
@@ -474,8 +472,6 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
   }
 
   impl_->currentFrame_ = next;
-  qDebug() << "PlaybackController::onTimerTick - frame"
-           << impl_->currentFrame_.framePosition();
   Q_EMIT frameChanged(impl_->currentFrame_);
 
   // Output monitoring

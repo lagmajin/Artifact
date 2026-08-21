@@ -4107,6 +4107,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
   }
 
   bool changed = false;
+  const auto beforeKeyframes = property->getKeyFrames();
   if (removeKeyframes) {
     if (property->hasKeyFrameAt(nowTime)) {
       property->removeKeyFrame(nowTime);
@@ -4120,6 +4121,12 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
   }
 
   if (changed) {
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+          layer, propertyPath, beforeKeyframes, property->getKeyFrames(),
+          removeKeyframes ? QStringLiteral("Remove Keyframe")
+                          : QStringLiteral("Add Keyframe")));
+    }
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(LayerChangedEvent{
         composition ? composition->id().toString() : QString(),

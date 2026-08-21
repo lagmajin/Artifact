@@ -1324,18 +1324,28 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     // キーフレームトグル (◆ボタン)
     row->setKeyframeHandler(
         [propertyPtr, playback, row, editor, keyframeChanged,
-         currentTimeProvider, propertyName](bool checked) {
+         currentTimeProvider, propertyName, layer](bool checked) {
           if (!propertyPtr)
             return;
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);
 
+          const auto beforeKeyframes = propertyPtr->getKeyFrames();
+          const bool hadKeyAtTime = propertyPtr->hasKeyFrameAt(nowTime);
           if (checked) {
             propertyPtr->setAnimatable(true);
             propertyPtr->addKeyFrame(nowTime, editor->value());
           } else {
             propertyPtr->removeKeyFrame(nowTime);
+          }
+          if (checked || hadKeyAtTime) {
+            if (auto *mgr = UndoManager::instance()) {
+              mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                  layer, propertyName, beforeKeyframes,
+                  propertyPtr->getKeyFrames(),
+                  QStringLiteral("Toggle Keyframe")));
+            }
           }
           row->setKeyframeModeEnabled(!propertyPtr->getKeyFrames().empty());
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));

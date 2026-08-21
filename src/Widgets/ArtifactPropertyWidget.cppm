@@ -1947,7 +1947,28 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                            for (const auto &path : channelPaths) {
                              channelLockedPaths.remove(path);
                            }
-                         } else {
+      } else if (name == QStringLiteral("text.animatorCount") ||
+                 name.compare(QStringLiteral("text.animatorPreset"),
+                              Qt::CaseInsensitive) == 0) {
+        for (const auto &tl : this->targetLayers) {
+          if (!tl) { continue; }
+          const auto textLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(tl);
+          if (!textLayer) {
+            tl->setLayerPropertyValue(name, value);
+            continue;
+          }
+          const QJsonArray beforeStack = textLayer->textAnimatorStackSnapshot();
+          tl->setLayerPropertyValue(name, value);
+          const QJsonArray afterStack = textLayer->textAnimatorStackSnapshot();
+          if (beforeStack != afterStack) {
+            UndoManager::instance()->push(
+                std::make_unique<SetTextAnimatorStackCommand>(
+                    tl, beforeStack, afterStack,
+                    QStringLiteral("Edit Text Animators")));
+          }
+        }
+      } else {
                            for (const auto &path : channelPaths) {
                              channelLockedPaths.insert(path);
                            }

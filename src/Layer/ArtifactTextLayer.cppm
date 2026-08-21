@@ -2257,6 +2257,47 @@ void ArtifactTextLayer::setAnimatorCount(const int count) {
   }
 }
 
+QJsonArray ArtifactTextLayer::textAnimatorStackSnapshot() const {
+  QJsonArray animatorArray;
+  for (int index = 0; index < animatorCount(); ++index) {
+    QJsonObject animatorObject = textAnimatorToJson(
+        impl_->animators_[static_cast<size_t>(index)]);
+    const QJsonObject animatedProperties =
+        serializedAnimatorProperties(this, index);
+    if (!animatedProperties.isEmpty()) {
+      animatorObject[QStringLiteral("animatedProperties")] =
+          animatedProperties;
+    }
+    animatorArray.append(animatorObject);
+  }
+  return animatorArray;
+}
+
+void ArtifactTextLayer::restoreTextAnimatorStack(const QJsonArray& snapshot) {
+  removePersistentLayerPropertiesWithPrefix(QStringLiteral("text.animators."));
+  impl_->animators_.clear();
+  const int count = std::min(static_cast<int>(snapshot.size()), 16);
+  impl_->animators_.reserve(count);
+  for (int i = 0; i < count; ++i) {
+    if (!snapshot.at(i).isObject()) {
+      continue;
+    }
+    impl_->animators_.push_back(
+        textAnimatorFromJson(snapshot.at(i).toObject(), i));
+  }
+  (void)getLayerPropertyGroups();
+  int restoredIndex = 0;
+  for (int i = 0; i < count; ++i) {
+    if (!snapshot.at(i).isObject()) continue;
+    const QJsonObject animatorObject = snapshot.at(i).toObject();
+    restoreAnimatorProperties(
+        this, restoredIndex,
+        animatorObject.value(QStringLiteral("animatedProperties")).toObject());
+    ++restoredIndex;
+  }
+  markDirty();
+}
+
 int ArtifactTextLayer::animatorCount() const {
   return static_cast<int>(impl_->animators_.size());
 }
@@ -2399,19 +2440,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.shadowOffsetY"] = shadowOffsetY();
   obj["text.shadowBlur"] = shadowBlur();
 
-  QJsonArray animatorArray;
-  for (int index = 0; index < animatorCount(); ++index) {
-    QJsonObject animatorObject = textAnimatorToJson(
-        impl_->animators_[static_cast<size_t>(index)]);
-    const QJsonObject animatedProperties =
-        serializedAnimatorProperties(this, index);
-    if (!animatedProperties.isEmpty()) {
-      animatorObject[QStringLiteral("animatedProperties")] =
-          animatedProperties;
-    }
-    animatorArray.append(animatorObject);
-  }
-  obj["text.animators"] = animatorArray;
+  obj["text.animators"] = textAnimatorStackSnapshot();
   return obj;
 }
 
@@ -2612,29 +2641,8 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
         static_cast<float>(obj.value("text.shadowBlur").toDouble(shadowBlur())));
   }
 
-  removePersistentLayerPropertiesWithPrefix(QStringLiteral("text.animators."));
-  impl_->animators_.clear();
   if (obj.contains("text.animators") && obj.value("text.animators").isArray()) {
-    const QJsonArray animatorArray = obj.value("text.animators").toArray();
-    const int animatorCount = std::min(static_cast<int>(animatorArray.size()), 16);
-    impl_->animators_.reserve(animatorCount);
-    for (int i = 0; i < animatorCount; ++i) {
-      if (!animatorArray.at(i).isObject()) {
-        continue;
-      }
-      impl_->animators_.push_back(
-          textAnimatorFromJson(animatorArray.at(i).toObject(), i));
-    }
-    (void)getLayerPropertyGroups();
-    int restoredIndex = 0;
-    for (int i = 0; i < animatorCount; ++i) {
-      if (!animatorArray.at(i).isObject()) continue;
-      const QJsonObject animatorObject = animatorArray.at(i).toObject();
-      restoreAnimatorProperties(
-          this, restoredIndex,
-          animatorObject.value(QStringLiteral("animatedProperties")).toObject());
-      ++restoredIndex;
-    }
+    restoreTextAnimatorStack(obj.value("text.animators").toArray());
   }
 
   const auto current = sourceSize();

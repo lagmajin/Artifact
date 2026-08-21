@@ -198,11 +198,13 @@ public:
     std::unordered_map<qint64, CachedTexture> m_spriteTexCache;
     std::unordered_map<qint64, CachedTexture> m_maskTexCache;
     qint64 m_frameCount = 0;
+    qint64 m_lastPruneDrawCount = 0;
 
     void pruneCache() {
+        const qint64 cycleBoundary = m_lastPruneDrawCount;
         if (m_spriteTexCache.size() > 50) {
             for (auto it = m_spriteTexCache.begin(); it != m_spriteTexCache.end(); ) {
-                if (it->second.lastUsedFrame < m_frameCount - 60)
+                if (it->second.lastUsedFrame <= cycleBoundary)
                     it = m_spriteTexCache.erase(it);
                 else
                     ++it;
@@ -210,12 +212,13 @@ public:
         }
         if (m_maskTexCache.size() > 50) {
             for (auto it = m_maskTexCache.begin(); it != m_maskTexCache.end(); ) {
-                if (it->second.lastUsedFrame < m_frameCount - 60)
+                if (it->second.lastUsedFrame <= cycleBoundary)
                     it = m_maskTexCache.erase(it);
                 else
                     ++it;
             }
         }
+        m_lastPruneDrawCount = m_frameCount;
     }
 
     ViewportTransformer viewport_;

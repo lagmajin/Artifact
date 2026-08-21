@@ -4100,29 +4100,7 @@ namespace Artifact
         QPainter::CompositionMode compositionModeForLayer(const ArtifactAbstractLayerPtr& layer) const
         {
             const auto blend = ArtifactCore::toBlendMode(layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL);
-            switch (blend) {
-            case ArtifactCore::BlendMode::Subtract: return QPainter::CompositionMode_Difference;
-            case ArtifactCore::BlendMode::Add: return QPainter::CompositionMode_Plus;
-            case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
-            case ArtifactCore::BlendMode::Screen: return QPainter::CompositionMode_Screen;
-            case ArtifactCore::BlendMode::Overlay: return QPainter::CompositionMode_Overlay;
-            case ArtifactCore::BlendMode::Darken: return QPainter::CompositionMode_Darken;
-            case ArtifactCore::BlendMode::Lighten: return QPainter::CompositionMode_Lighten;
-            case ArtifactCore::BlendMode::ColorDodge: return QPainter::CompositionMode_ColorDodge;
-            case ArtifactCore::BlendMode::ColorBurn: return QPainter::CompositionMode_ColorBurn;
-            case ArtifactCore::BlendMode::HardLight: return QPainter::CompositionMode_HardLight;
-            case ArtifactCore::BlendMode::SoftLight: return QPainter::CompositionMode_SoftLight;
-            case ArtifactCore::BlendMode::Difference: return QPainter::CompositionMode_Difference;
-            case ArtifactCore::BlendMode::Exclusion: return QPainter::CompositionMode_Exclusion;
-            case ArtifactCore::BlendMode::Hue:
-            case ArtifactCore::BlendMode::Saturation:
-            case ArtifactCore::BlendMode::Color:
-            case ArtifactCore::BlendMode::Luminosity:
-                return QPainter::CompositionMode_SourceOver;
-            case ArtifactCore::BlendMode::Normal:
-            default:
-                return QPainter::CompositionMode_SourceOver;
-            }
+            return SoftwareRender::qPainterCompositionMode(blend);
         }
 
         QSize safeLayerSize(const ArtifactAbstractLayerPtr& layer, const QSize& fallback = QSize(320, 180)) const

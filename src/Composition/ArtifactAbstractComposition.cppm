@@ -1296,6 +1296,7 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
   layerMultiIndex_.add(layer,id,layer->type_index());
   invalidateThumbnailCache();
   recalculateFrameRange();
+  owner_->changed();
 
   result.success = true;
   result.error = AppendLayerToCompositionError::None;
@@ -1329,11 +1330,12 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
     layer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
    }
   }
-  layerMultiIndex_.clear();
-  invalidateThumbnailCache();
-  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-      owner_->id().toString(), QString{},
-      LayerChangedEvent::ChangeType::Removed});
+   layerMultiIndex_.clear();
+   invalidateThumbnailCache();
+   owner_->changed();
+   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+       owner_->id().toString(), QString{},
+       LayerChangedEvent::ChangeType::Removed});
  }
 
 void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
@@ -1366,6 +1368,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
      removedLayer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
      invalidateThumbnailCache();
      recalculateFrameRange();
+     owner_->changed();
      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
          owner_->id().toString(), id.toString(),
          LayerChangedEvent::ChangeType::Removed});
@@ -2070,6 +2073,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
       invalidateThumbnailCache();
       recalculateFrameRange();
+      owner_->changed();
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
@@ -2086,6 +2090,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, newIndex);
       invalidateThumbnailCache();
+      owner_->changed();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           owner_->id().toString(), id.toString(),
           LayerChangedEvent::ChangeType::Modified});
@@ -2099,6 +2104,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
       invalidateThumbnailCache();
+      owner_->changed();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           owner_->id().toString(), id.toString(),
           LayerChangedEvent::ChangeType::Modified});
@@ -2112,6 +2118,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, 0);
       invalidateThumbnailCache();
+      owner_->changed();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           owner_->id().toString(), id.toString(),
           LayerChangedEvent::ChangeType::Modified});

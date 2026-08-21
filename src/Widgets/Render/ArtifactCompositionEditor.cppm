@@ -18,6 +18,7 @@ module;
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -1406,6 +1407,7 @@ private:
     const auto beforeVerticalAlignment = textLayer->verticalAlignment();
     const auto beforeWritingMode = textLayer->writingMode();
     const int beforeAnimatorCount = textLayer->animatorCount();
+    const QJsonArray beforeAnimatorStack = textLayer->textAnimatorStackSnapshot();
     bool animatorPresetChanged = false;
     if (fontSizeSpin_) textLayer->setFontSize(static_cast<float>(fontSizeSpin_->value()));
     if (trackingSpin_) textLayer->setTracking(static_cast<float>(trackingSpin_->value()));
@@ -1461,6 +1463,14 @@ private:
         textLayer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"),
                                          presetId);
         animatorPresetChanged = true;
+      }
+    }
+    const QJsonArray afterAnimatorStack = textLayer->textAnimatorStackSnapshot();
+    if (beforeAnimatorStack != afterAnimatorStack) {
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<SetTextAnimatorStackCommand>(
+            textLayer, beforeAnimatorStack, afterAnimatorStack,
+            QStringLiteral("Edit Text Animators")));
       }
     }
     const bool styleChanged = beforeFontSize != textLayer->fontSize() ||

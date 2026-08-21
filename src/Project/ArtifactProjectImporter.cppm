@@ -64,6 +64,34 @@ namespace Artifact
   QJsonDocument loadJsonDocument(const QString& path, UniString& errorMsg);
 
  public:
+  struct SourceResolutionStats {
+   int adoptedExisting = 0;
+   int adoptedForEmptyOriginal = 0;
+   int keptMissingCandidate = 0;
+   int keptEmptyCandidate = 0;
+
+   void reset() { *this = SourceResolutionStats{}; }
+
+   void record(const ArtifactCore::SourceCandidateResolution& resolution) {
+    switch (resolution.outcome) {
+     case ArtifactCore::SourceCandidateOutcome::AdoptedExistingCandidate:
+      ++adoptedExisting;
+      break;
+     case ArtifactCore::SourceCandidateOutcome::AdoptedCandidateForEmptyOriginal:
+      ++adoptedForEmptyOriginal;
+      break;
+     case ArtifactCore::SourceCandidateOutcome::KeptOriginalMissingCandidate:
+      ++keptMissingCandidate;
+      break;
+     case ArtifactCore::SourceCandidateOutcome::KeptOriginalEmptyCandidate:
+      ++keptEmptyCandidate;
+      break;
+    }
+   }
+  };
+
+  SourceResolutionStats sourceResolutionStats_;
+
   Impl();
   ~Impl();
   void setInputPath(const QString& path);
@@ -370,6 +398,7 @@ namespace Artifact
    result.project = nullptr;
    result.compositionsLoaded = 0;
    result.layersLoaded = 0;
+   sourceResolutionStats_.reset();
 
    if (inputPath_.isEmpty()) {
     result.errorMessage = UniString("Input path is empty");
@@ -545,12 +574,16 @@ namespace Artifact
      const QString relative = source.value(QStringLiteral("pathRelative"))
                                   .toString().trimmed();
      const QString original = source.value(QStringLiteral("path")).toString();
-     if (!relative.isEmpty()) {
-      const QString candidate =
-          QDir(sourceProjectDirectory).absoluteFilePath(relative);
-      if (QFileInfo::exists(candidate) || original.trimmed().isEmpty()) {
-       source.insert(QStringLiteral("path"), QDir::cleanPath(candidate));
-      }
+     const ArtifactCore::SourceCandidateResolution resolution =
+         ArtifactCore::resolveProjectRelativeSource(
+             sourceProjectDirectory,
+             ArtifactCore::SourceResolutionCandidateKind::RegistryRelativePath,
+             original,
+             relative,
+             true);
+     sourceResolutionStats_.record(resolution);
+     if (resolution.adopted) {
+      source.insert(QStringLiteral("path"), resolution.resolvedPath);
      }
      sources[i] = source;
     }
@@ -597,12 +630,16 @@ namespace Artifact
         if (isSourcePath && value.isString()) {
          const QString relative =
              object.value(key + QStringLiteral("Relative")).toString().trimmed();
-         if (!relative.isEmpty()) {
-          const QString candidate =
-              QDir(layerSourceProjectDirectory).absoluteFilePath(relative);
-          if (QFileInfo::exists(candidate) || value.toString().isEmpty()) {
-           object.insert(key, QDir::cleanPath(candidate));
-          }
+         const ArtifactCore::SourceCandidateResolution resolution =
+             ArtifactCore::resolveProjectRelativeSource(
+                 layerSourceProjectDirectory,
+                 ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                 value.toString(),
+                 relative,
+                 true);
+         sourceResolutionStats_.record(resolution);
+         if (resolution.adopted) {
+          object.insert(key, resolution.resolvedPath);
          }
         } else if (isSequencePaths && value.isArray()) {
          const QJsonArray relativePaths =
@@ -611,17 +648,18 @@ namespace Artifact
           QJsonArray resolvedPaths;
           const QJsonArray originalPaths = value.toArray();
           for (int i = 0; i < relativePaths.size(); ++i) {
-           const QString relative = relativePaths.at(i).toString().trimmed();
            const QString original = i < originalPaths.size()
                ? originalPaths.at(i).toString()
                : QString();
-           const QString candidate = relative.isEmpty()
-               ? original
-               : QDir(layerSourceProjectDirectory).absoluteFilePath(relative);
-           resolvedPaths.append(
-               (!relative.isEmpty() && QFileInfo::exists(candidate))
-                   ? QDir::cleanPath(candidate)
-                   : original);
+           const ArtifactCore::SourceCandidateResolution resolution =
+               ArtifactCore::resolveProjectRelativeSource(
+                   layerSourceProjectDirectory,
+                   ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                   original,
+                   relativePaths.at(i).toString().trimmed(),
+                   false);
+           sourceResolutionStats_.record(resolution);
+           resolvedPaths.append(resolution.resolvedPath);
           }
           if (!resolvedPaths.isEmpty()) {
            object.insert(key, resolvedPaths);
@@ -687,17 +725,20 @@ namespace Artifact
        ? QFileInfo(inputPath_).absoluteFilePath()
        : QFileInfo(inputPath_).absolutePath();
    const auto resolveRelativeIfPresent =
-       [&projectDirectory](QJsonObject& item) {
+       [&](QJsonObject& item) {
         const QString absolutePath = item.value(QStringLiteral("filePath")).toString();
         const QString relativePath =
             item.value(QStringLiteral("filePathRelative")).toString().trimmed();
-        if (!relativePath.isEmpty()) {
-         const QString candidate = QDir(projectDirectory).absoluteFilePath(relativePath);
-         if (QFileInfo::exists(candidate)) {
-          item.insert(QStringLiteral("filePath"), QDir::cleanPath(candidate));
-         } else if (absolutePath.isEmpty()) {
-          item.insert(QStringLiteral("filePath"), QDir::cleanPath(candidate));
-         }
+        const ArtifactCore::SourceCandidateResolution resolution =
+            ArtifactCore::resolveProjectRelativeSource(
+                projectDirectory,
+                ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                absolutePath,
+                relativePath,
+                true);
+        sourceResolutionStats_.record(resolution);
+        if (resolution.adopted) {
+         item.insert(QStringLiteral("filePath"), resolution.resolvedPath);
         }
         const QJsonArray sequencePaths =
             item.value(QStringLiteral("sequencePaths")).toArray();
@@ -706,17 +747,18 @@ namespace Artifact
         if (!relativeSequencePaths.isEmpty()) {
          QJsonArray resolvedSequencePaths;
          for (int i = 0; i < relativeSequencePaths.size(); ++i) {
-          const QString relative = relativeSequencePaths.at(i).toString().trimmed();
           const QString original = i < sequencePaths.size()
               ? sequencePaths.at(i).toString()
               : QString();
-          const QString candidate = relative.isEmpty()
-              ? original
-              : QDir(projectDirectory).absoluteFilePath(relative);
-          resolvedSequencePaths.append(
-              (!relative.isEmpty() && QFileInfo::exists(candidate))
-                  ? QDir::cleanPath(candidate)
-                  : original);
+          const ArtifactCore::SourceCandidateResolution entryResolution =
+              ArtifactCore::resolveProjectRelativeSource(
+                  projectDirectory,
+                  ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                  original,
+                  relativeSequencePaths.at(i).toString().trimmed(),
+                  false);
+          sourceResolutionStats_.record(entryResolution);
+          resolvedSequencePaths.append(entryResolution.resolvedPath);
          }
          if (!resolvedSequencePaths.isEmpty()) {
           item.insert(QStringLiteral("sequencePaths"), resolvedSequencePaths);
@@ -798,13 +840,27 @@ namespace Artifact
       }
   }
 
-  result.project = projectPtr;
-  result.success = true;
-  qDebug() << "[Importer] Project imported successfully - Compositions:" 
-           << result.compositionsLoaded << "Layers:" << result.layersLoaded;
+   result.project = projectPtr;
+   result.success = true;
+   if (sourceResolutionStats_.keptMissingCandidate > 0) {
+    qWarning() << "[Importer][SourceResolution]"
+               << sourceResolutionStats_.keptMissingCandidate
+               << "project-relative candidate(s) missing; kept stored paths;"
+               << sourceResolutionStats_.adoptedExisting << "adopted from existing candidates,"
+               << sourceResolutionStats_.adoptedForEmptyOriginal
+               << "adopted for empty stored paths";
+   } else {
+    qDebug() << "[Importer][SourceResolution]"
+             << sourceResolutionStats_.adoptedExisting
+             << "path(s) adopted from project-relative candidates,"
+             << sourceResolutionStats_.keptEmptyCandidate
+             << "empty candidate(s) kept as-is";
+   }
+   qDebug() << "[Importer] Project imported successfully - Compositions:"
+            << result.compositionsLoaded << "Layers:" << result.layersLoaded;
 
-  return result;
- }
+   return result;
+  }
 
  ArtifactProjectImporter::ArtifactProjectImporter() : impl_(new Impl())
  {

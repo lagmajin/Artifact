@@ -1,6 +1,7 @@
 ﻿module;
 #include <utility>
 #include <QImage>
+#include <QPainter>
 #include <QSize>
 #include <QString>
 #include <QPointF>
@@ -44,5 +45,10 @@ bool composeToBuffer(const CompositeRequest& request,
 QString backendText(CompositeBackend backend);
 QString blendModeText(ArtifactCore::BlendMode mode);
 QString cvEffectText(CvEffectMode mode);
+
+// QPainter has no native Subtract mode. The float/CV paths implement it
+// exactly; QPainter consumers must fall back to SourceOver instead of the
+// visually different Difference approximation.
+QPainter::CompositionMode qPainterCompositionMode(ArtifactCore::BlendMode mode);
 
 } // namespace Artifact::SoftwareRender

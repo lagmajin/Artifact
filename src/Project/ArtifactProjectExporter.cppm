@@ -12,6 +12,7 @@ module;
 #include <QStringList>
 module Artifact.Project.Exporter;
 
+import Asset.Manager;
 import Artifact.Color.OCIOManager;
 import Serialization.ProjectSerializer;
 
@@ -106,18 +107,7 @@ namespace Artifact
   // relative candidate for relocation. Older importers ignore the extra keys.
   const QString projectDirectory = QFileInfo(outputPath_).absolutePath();
   const auto relativePathFor = [&projectDirectory](const QString& path) {
-   const QString trimmedPath = path.trimmed();
-   if (trimmedPath.isEmpty()) {
-    return QString();
-   }
-   // Resolve relative inputs once against the process working directory,
-   // then persist the project-relative candidate. This preserves the same
-   // relocation contract for callers that already provide relative paths.
-   const QFileInfo info(trimmedPath);
-   const QString absolutePath = info.isAbsolute()
-       ? info.absoluteFilePath()
-       : QFileInfo(QDir::current().absoluteFilePath(trimmedPath)).absoluteFilePath();
-   return QDir(projectDirectory).relativeFilePath(absolutePath);
+   return ArtifactCore::projectRelativeSourceCandidate(projectDirectory, path);
   };
   QJsonObject assets = obj.value(QStringLiteral("assets")).toObject();
   QJsonObject sourceRegistry = assets.value(QStringLiteral("sourceRegistry")).toObject();

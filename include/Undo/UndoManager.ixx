@@ -300,6 +300,29 @@ private:
     QString label_;
 };
 
+class SetTextAnimatorStackCommand : public UndoCommand {
+public:
+    SetTextAnimatorStackCommand(ArtifactAbstractLayerPtr layer,
+                                QJsonArray beforeStack,
+                                QJsonArray afterStack,
+                                QString label = QStringLiteral("Edit Text Animators"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetTextAnimatorStackCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
+private:
+    void apply(const QJsonArray& stack);
+    ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
+    QJsonArray beforeStack_;
+    QJsonArray afterStack_;
+    QString label_;
+};
+
 class ReplaceLayerSourceCommand : public UndoCommand {
 public:
     ReplaceLayerSourceCommand(ArtifactAbstractLayerPtr layer,
