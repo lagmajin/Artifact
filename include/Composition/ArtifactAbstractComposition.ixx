@@ -180,6 +180,18 @@ export namespace Artifact {
   bool valid = false;
  };
 
+ struct CompositionTimelineTransition {
+  QString kind = QStringLiteral("Crossfade");
+  QString leftClipName;
+  QString rightClipName;
+  FrameRange range = FrameRange::zero();
+  bool enabled = true;
+
+  QJsonObject toJson() const;
+  static CompositionTimelineTransition fromJson(const QJsonObject& object);
+  bool isOpacityOnly() const;
+};
+
  class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
  private:
   class Impl;
@@ -297,6 +309,14 @@ export namespace Artifact {
   QVector<CompositionAudioReactiveBinding> audioReactiveBindings() const;
   void setAudioReactiveBindings(
       const QVector<CompositionAudioReactiveBinding>& bindings);
+  void addTimelineTransition(const CompositionTimelineTransition& transition);
+  QVector<CompositionTimelineTransition> timelineTransitions() const;
+  bool timelineTransitionAtFrame(qint64 frame,
+                                 CompositionTimelineTransition* outTransition = nullptr) const;
+  double timelineTransitionProgressAtFrame(
+      qint64 frame,
+      CompositionTimelineTransition* outTransition = nullptr) const;
+  void clearTimelineTransitions();
   void addAudioReactiveBinding(const CompositionAudioReactiveBinding& binding);
   bool removeAudioReactiveBinding(const QString& bindingId);
   CompositionAudioReactiveMonitor evaluateAudioReactiveBindingValue(

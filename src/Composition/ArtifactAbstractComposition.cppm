@@ -1140,6 +1140,7 @@ class ArtifactAbstractComposition::Impl {
   QString stateComparisonAId_;
   QString stateComparisonBId_;
   QVector<CompositionAudioReactiveBinding> audioReactiveBindings_;
+  QVector<CompositionTimelineTransition> timelineTransitions_;
   QHash<QString, double> audioReactiveSmoothedValues_;
   QHash<QString, double> audioReactiveEnvelopeValues_;
   QHash<QString, CompositionAudioReactiveMonitor> audioReactiveMonitors_;
@@ -2423,6 +2424,39 @@ QJsonObject CompositionAudioReactiveBinding::toJson() const
     return obj;
 }
 
+QJsonObject CompositionTimelineTransition::toJson() const
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("kind"), kind);
+    object.insert(QStringLiteral("leftClipName"), leftClipName);
+    object.insert(QStringLiteral("rightClipName"), rightClipName);
+    object.insert(QStringLiteral("range"), range.toJson());
+    object.insert(QStringLiteral("enabled"), enabled);
+    return object;
+}
+
+CompositionTimelineTransition CompositionTimelineTransition::fromJson(
+    const QJsonObject& object)
+{
+    CompositionTimelineTransition transition;
+    transition.kind = object.value(QStringLiteral("kind"))
+                         .toString(QStringLiteral("Crossfade"));
+    transition.leftClipName = object.value(QStringLiteral("leftClipName")).toString();
+    transition.rightClipName = object.value(QStringLiteral("rightClipName")).toString();
+    if (object.value(QStringLiteral("range")).isObject()) {
+        transition.range = FrameRange::fromJson(object.value(QStringLiteral("range")).toObject());
+    }
+    transition.enabled = object.value(QStringLiteral("enabled")).toBool(true);
+    return transition;
+}
+
+bool CompositionTimelineTransition::isOpacityOnly() const
+{
+    return kind.compare(QStringLiteral("Cut"), Qt::CaseInsensitive) == 0 ||
+           kind.compare(QStringLiteral("Crossfade"), Qt::CaseInsensitive) == 0 ||
+           kind.compare(QStringLiteral("Dissolve"), Qt::CaseInsensitive) == 0;
+}
+
 CompositionAudioReactiveBinding CompositionAudioReactiveBinding::fromJson(
     const QJsonObject& obj)
 {
@@ -3108,6 +3142,13 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
         return false;
     }
 
+    // Audio evaluation is the authoritative activation point for the mixer.
+    // Do not require the mixer panel or a serialized audioMixer object to have
+    // been created before playback/export can use graph-based routing.
+    if (!impl_->audioMixer_ && hasAudio()) {
+        ensureAudioMixer();
+    }
+
     bool hasAnyAudio = false;
     int activeAudioLayerCount = 0;
     int producedAudioLayerCount = 0;
@@ -3136,7 +3177,10 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
         AudioMixer& mixer = *impl_->audioMixer_;
         for (auto &layer : impl_->layerMultiIndex_) {
             if (layer && shouldEvaluateLayer(layer->id()) && layer->hasAudio()) {
-                mixer.ensureLayerBus(layer->id());
+                if (auto bus = mixer.ensureLayerBus(layer->id())) {
+                    bus->setLayout(AudioChannelLayout::Stereo);
+                    bus->clearInput(frameCount, sampleRate);
+                }
             }
         }
         struct PendingAudioInput {
@@ -4246,6 +4290,65 @@ void ArtifactAbstractComposition::setAudioReactiveBindings(
     Q_EMIT changed();
 }
 
+void ArtifactAbstractComposition::addTimelineTransition(
+    const CompositionTimelineTransition& transition)
+{
+    if (transition.range.duration() <= 0 ||
+        transition.leftClipName.trimmed().isEmpty() ||
+        transition.rightClipName.trimmed().isEmpty()) {
+        return;
+    }
+    CompositionTimelineTransition normalized = transition;
+    normalized.kind = normalized.kind.trimmed();
+    if (normalized.kind.isEmpty()) {
+        normalized.kind = QStringLiteral("Crossfade");
+    }
+    normalized.leftClipName = normalized.leftClipName.trimmed();
+    normalized.rightClipName = normalized.rightClipName.trimmed();
+    impl_->timelineTransitions_.append(std::move(normalized));
+    Q_EMIT changed();
+}
+
+QVector<CompositionTimelineTransition>
+ArtifactAbstractComposition::timelineTransitions() const
+{
+    return impl_->timelineTransitions_;
+}
+
+bool ArtifactAbstractComposition::timelineTransitionAtFrame(
+    qint64 frame, CompositionTimelineTransition* outTransition) const
+{
+    for (const auto& transition : impl_->timelineTransitions_) {
+        if (!transition.enabled || !transition.range.contains(frame)) {
+            continue;
+        }
+        if (outTransition) *outTransition = transition;
+        return true;
+    }
+    return false;
+}
+
+double ArtifactAbstractComposition::timelineTransitionProgressAtFrame(
+    qint64 frame, CompositionTimelineTransition* outTransition) const
+{
+    CompositionTimelineTransition transition;
+    if (!timelineTransitionAtFrame(frame, &transition)) return -1.0;
+    if (outTransition) *outTransition = transition;
+    const qint64 duration = transition.range.duration();
+    if (duration <= 1) return 1.0;
+    return std::clamp(
+        static_cast<double>(frame - transition.range.start()) /
+            static_cast<double>(duration - 1),
+        0.0, 1.0);
+}
+
+void ArtifactAbstractComposition::clearTimelineTransitions()
+{
+    if (impl_->timelineTransitions_.isEmpty()) return;
+    impl_->timelineTransitions_.clear();
+    Q_EMIT changed();
+}
+
 void ArtifactAbstractComposition::addAudioReactiveBinding(
     const CompositionAudioReactiveBinding& binding)
 {
@@ -4644,6 +4747,11 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
         audioBindingsArray.append(binding.toJson());
     }
     obj["audioReactiveBindings"] = audioBindingsArray;
+    QJsonArray timelineTransitionsArray;
+    for (const auto& transition : impl_->timelineTransitions_) {
+        timelineTransitionsArray.append(transition.toJson());
+    }
+    obj["timelineTransitions"] = timelineTransitionsArray;
     QJsonArray stateVariantsArray;
     for (const auto& state : impl_->stateVariants_) {
         stateVariantsArray.append(state.toJson());
@@ -4792,6 +4900,15 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
             }
         }
         comp->setAudioReactiveBindings(bindings);
+    }
+    if (obj.contains("timelineTransitions") &&
+        obj.value("timelineTransitions").isArray()) {
+        for (const auto& value : obj.value("timelineTransitions").toArray()) {
+            if (value.isObject()) {
+                comp->addTimelineTransition(
+                    CompositionTimelineTransition::fromJson(value.toObject()));
+            }
+        }
     }
     if (!comp->impl_->activeStateVariantId_.isEmpty() &&
         findStateVariantById(comp->impl_->stateVariants_,

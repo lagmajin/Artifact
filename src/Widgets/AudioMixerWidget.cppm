@@ -22,6 +22,7 @@ module;
 #include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QInputDialog>
+#include <QStringList>
 #include <QLineEdit>
 #include <QToolTip>
 #include <QJsonObject>
@@ -365,6 +366,54 @@ AudioChannelStripWidget::AudioChannelStripWidget(
             if (onChanged_) onChanged_();
         };
         layout->addWidget(removeButton);
+
+        if (mixer_->busKind(bus_) == ArtifactCore::AudioBusKind::Vca) {
+            auto* membersButton = new ActionButton(this);
+            membersButton->setText(QStringLiteral("VCA Members"));
+            membersButton->setAccessibleName(QStringLiteral("VCA members: %1").arg(busName));
+            membersButton->invoked = [this, membersButton]() {
+                if (!mixer_ || !bus_) return;
+                QMenu menu(this);
+                const auto assigned = mixer_->getVcaMembers(bus_);
+                const auto buses = mixer_->getAllBuses();
+                for (const auto& candidate : buses) {
+                    if (!candidate || candidate == mixer_->getMasterBus() ||
+                        candidate == bus_ ||
+                        mixer_->busKind(candidate) == ArtifactCore::AudioBusKind::Vca) {
+                        continue;
+                    }
+                    const auto name = candidate->getName();
+                    const QString label = QString::fromUtf8(
+                        name.data(), static_cast<qsizetype>(name.length()));
+                    auto* action = menu.addAction(label);
+                    action->setCheckable(true);
+                    action->setChecked(std::find(assigned.begin(), assigned.end(), candidate) != assigned.end());
+                    action->setData(label);
+                }
+                QAction* chosen = menu.exec(
+                    membersButton->mapToGlobal(QPoint(0, membersButton->height())));
+                if (!chosen) return;
+                const auto candidate = mixer_->findBusByName(chosen->data().toString());
+                if (!candidate) return;
+                const QJsonObject before = mixer_->serialize();
+                const bool wasAssigned = chosen->isChecked();
+                const auto result = wasAssigned
+                    ? mixer_->removeVcaMember(bus_, candidate)
+                    : mixer_->assignVcaMember(bus_, candidate);
+                if (result != ArtifactCore::AudioRoutingResult::Applied) {
+                    QToolTip::showText(membersButton->mapToGlobal(
+                        QPoint(0, membersButton->height())),
+                        ArtifactCore::AudioMixer::routingResultDescription(result),
+                        membersButton);
+                } else if (onChanged_) {
+                    if (onRoutingChanged_) {
+                        onRoutingChanged_(before, mixer_->serialize());
+                    }
+                    onChanged_();
+                }
+            };
+            layout->addWidget(membersButton);
+        }
     }
 
     // Output routing is edited through AudioMixer, which owns the graph.
@@ -439,8 +488,11 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                             break;
                         }
                     }
+                    const QString mode = hasSend && mixer_->isSideChainSendPreFader(bus_, target)
+                        ? QStringLiteral("Pre") : QStringLiteral("Post");
                     const QString label = hasSend
-                        ? QStringLiteral("%1  (%2)").arg(targetName).arg(amount, 0, 'f', 2)
+                        ? QStringLiteral("%1  (%2, %3-Fader)")
+                            .arg(targetName).arg(amount, 0, 'f', 2).arg(mode)
                         : targetName;
                     auto* action = menu.addAction(label);
                     action->setData(targetName);
@@ -478,9 +530,16 @@ AudioChannelStripWidget::AudioChannelStripWidget(
                     QStringLiteral("Amount for %1 → %2")
                         .arg(busName, targetName), 1.0, 0.0, 1.0, 2, &accepted);
                 if (accepted) {
+                    const QStringList modes{QStringLiteral("Post-Fader"), QStringLiteral("Pre-Fader")};
+                    const QString mode = QInputDialog::getItem(
+                        this, QStringLiteral("Sidechain timing"),
+                        QStringLiteral("Send timing for %1 → %2")
+                            .arg(busName, targetName), modes, 0, false, &accepted);
+                    if (!accepted) return;
                     const QJsonObject before = mixer_->serialize();
                     const auto result = mixer_->addSideChainSend(
-                        bus_, target, static_cast<float>(amount));
+                        bus_, target, static_cast<float>(amount),
+                        mode == QStringLiteral("Pre-Fader"));
                     if (result != ArtifactCore::AudioRoutingResult::Applied) {
                         QToolTip::showText(sidechainButton->mapToGlobal(QPoint(0, sidechainButton->height())),
                             ArtifactCore::AudioMixer::routingResultDescription(result), sidechainButton);
@@ -776,13 +835,17 @@ void AudioMixerWidget::refreshBuses() {
         if (!accepted || name.isEmpty() || mixer_->findBusByName(name)) {
             return;
         }
-        const QStringList kinds{QStringLiteral("Group"), QStringLiteral("Return")};
+        const QStringList kinds{QStringLiteral("Group"), QStringLiteral("Return"),
+                                QStringLiteral("VCA")};
         const QString selectedKind = QInputDialog::getItem(
             this, QStringLiteral("Add audio bus"), QStringLiteral("Type"),
             kinds, 0, false, &accepted);
         if (!accepted) return;
         const auto kind = selectedKind == QStringLiteral("Return")
-            ? ArtifactCore::AudioBusKind::Return : ArtifactCore::AudioBusKind::Group;
+            ? ArtifactCore::AudioBusKind::Return
+            : selectedKind == QStringLiteral("VCA")
+                ? ArtifactCore::AudioBusKind::Vca
+                : ArtifactCore::AudioBusKind::Group;
         const QJsonObject before = mixer_->serialize();
         if (mixer_->createBus(
                 ArtifactCore::String(name.toUtf8().constData()), kind)) {
