@@ -1128,7 +1128,10 @@ void ArtifactProjectManager::setCurrentProjectPath(const QString& path)
  if (!impl_) {
   return;
  }
- const QString normalizedPath = path.trimmed();
+ const QString trimmedPath = path.trimmed();
+ const QString normalizedPath = trimmedPath.isEmpty()
+     ? QString()
+     : QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
  impl_->currentProjectPath_ = normalizedPath;
  impl_->projectRootPath_ = normalizedPath.isEmpty()
      ? QString()
