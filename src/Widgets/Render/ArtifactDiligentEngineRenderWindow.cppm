@@ -67,6 +67,15 @@ import Mesh;
 import Artifact.Render.DiligentDeviceManager;
 
 namespace {
+ bool isFiniteMatrix(const QMatrix4x4& matrix)
+ {
+  const float* values = matrix.constData();
+  for (int i = 0; i < 16; ++i) {
+   if (!std::isfinite(values[i])) return false;
+  }
+  return true;
+ }
+
  Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
  {
 #if D3D12_SUPPORTED
@@ -228,11 +237,18 @@ cbuffer TransformCB : register(b0)
     float4x4 ProjMatrix;
 };
 
+cbuffer SkinningCB : register(b1)
+{
+    float4x4 BoneMatrices[128];
+};
+
 struct VSInput
 {
     float3 position : ATTRIB0;
     float3 normal : ATTRIB1;
     float2 uv : ATTRIB2;
+    float4 boneIndices : ATTRIB3;
+    float4 boneWeights : ATTRIB4;
 };
 
 struct VSOutput
@@ -246,11 +262,57 @@ struct VSOutput
 VSOutput main(VSInput input)
 {
     VSOutput output;
-    float4 worldPos = mul(WorldMatrix, float4(input.position, 1.0f));
+    float3 skinnedPosition = input.position;
+    float3 skinnedNormal = input.normal;
+    float totalWeight = 0.0f;
+    float3 weightedPosition = 0.0f;
+    float3 weightedNormal = 0.0f;
+    for (int influence = 0; influence < 4; ++influence)
+    {
+        const float weight = input.boneWeights[influence];
+        const float index = input.boneIndices[influence];
+        if (weight > 0.0f && weight < 1.0e20f &&
+            index >= 0.0f && index < 128.0f &&
+            frac(index) == 0.0f)
+        {
+            weightedPosition += mul(BoneMatrices[(int)index],
+                                    float4(input.position, 1.0f)).xyz * weight;
+            const float3x3 boneMatrix = (float3x3)BoneMatrices[(int)index];
+            const float boneDeterminant = determinant(boneMatrix);
+            if (abs(boneDeterminant) > 1.0e-8f)
+            {
+                const float3x3 boneNormalMatrix = transpose(
+                    inverse(boneMatrix));
+                weightedNormal += mul(boneNormalMatrix, input.normal) * weight;
+            }
+            else
+            {
+                weightedNormal += input.normal * weight;
+            }
+            totalWeight += weight;
+        }
+    }
+    if (totalWeight > 0.0f && totalWeight < 1.0e20f)
+    {
+        skinnedPosition = weightedPosition / totalWeight;
+        const float weightedNormalLength = length(weightedNormal);
+        skinnedNormal = weightedNormalLength > 1.0e-8f
+            ? weightedNormal / weightedNormalLength
+            : input.normal;
+    }
+    float4 worldPos = mul(WorldMatrix, float4(skinnedPosition, 1.0f));
     float4 viewPos = mul(ViewMatrix, worldPos);
     output.position = mul(ProjMatrix, viewPos);
     output.worldPosition = worldPos.xyz;
-    output.normal = normalize(mul((float3x3)WorldMatrix, input.normal));
+    const float3x3 worldMatrix3x3 = (float3x3)WorldMatrix;
+    const float worldDeterminant = determinant(worldMatrix3x3);
+    const float3 transformedNormal = abs(worldDeterminant) > 1.0e-8f
+        ? mul(transpose(inverse(worldMatrix3x3)), skinnedNormal)
+        : skinnedNormal;
+    const float transformedNormalLength = length(transformedNormal);
+    output.normal = transformedNormalLength > 1.0e-8f
+        ? transformedNormal / transformedNormalLength
+        : float3(0.0f, 0.0f, 1.0f);
     output.uv = input.uv;
     return output;
 }
@@ -425,7 +487,9 @@ float4 main(PSInput input) : SV_TARGET
  {
   float position[3];
   float normal[3];
-  float uv[2];
+ float uv[2];
+  float boneIndices[4];
+  float boneWeights[4];
  };
 
  struct SolidViewportMaterial
@@ -476,6 +540,8 @@ float4 main(PSInput input) : SV_TARGET
      {position.x(), position.y(), position.z()},
      {normal.x(), normal.y(), normal.z()},
      {uvs[corner][0], uvs[corner][1]}
+     , {-1.0f, -1.0f, -1.0f, -1.0f}
+     , {0.0f, 0.0f, 0.0f, 0.0f}
     });
    }
   }
@@ -542,6 +608,7 @@ ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
  solidIndexBuffer_ = nullptr;
  solidTransformBuffer_ = nullptr;
  solidColorBuffer_ = nullptr;
+ solidSkinningBuffer_ = nullptr;
  baseColorTextureSrv_ = nullptr;
  baseColorTexture_ = nullptr;
  metallicRoughnessTextureSrv_ = nullptr;
@@ -622,14 +689,104 @@ bool ArtifactDiligentEngineRenderWindow::initialize()
 
  void ArtifactDiligentEngineRenderWindow::setMesh(ArtifactCore::SharedPtr<ArtifactCore::Mesh> mesh)
  {
-  mesh_ = std::move(mesh);
+ mesh_ = std::move(mesh);
+   skinPoseMatrices_.clear();
+   gpuSkinningActive_ = false;
+   skinPoseDirty_ = true;
+   if (mesh_ && !mesh_->skinBones().isEmpty()) {
+       const QVector<QMatrix4x4> initialPose = mesh_->skinPoseMatrices();
+       bool finitePose = initialPose.size() >= mesh_->skinBones().size();
+       for (const QMatrix4x4& matrix : initialPose) {
+           finitePose = finitePose && isFiniteMatrix(matrix);
+       }
+       const auto sourceMethod = mesh_->skinningMethod();
+       const bool gpuCompatibleSkinning =
+           sourceMethod == ArtifactCore::Mesh::SkinningMethod::LinearBlend;
+       // The current GPU vertex input carries four influences; extended
+       // packed weights must stay on the CPU deformer path.
+       const bool hasExtendedWeights = mesh_->hasExtendedSkinningWeights();
+       if (mesh_->skinBones().size() <= 128 && finitePose &&
+           gpuCompatibleSkinning && !hasExtendedWeights) {
+           // Model loading evaluates the initial pose on the CPU so that the
+           // software path has usable geometry. Restore the source/morph
+           // result before the GPU applies the same pose in the vertex shader.
+           mesh_->restoreSkinningBase();
+           skinPoseMatrices_ = initialPose;
+           gpuSkinningActive_ = true;
+       } else {
+           // The preview SkinningCB is intentionally bounded. Preserve
+           // correctness for larger rigs through the existing CPU LBS path.
+           mesh_->applyDeformers(mesh_->skinPoseMatrices());
+       }
+   }
+   meshDirty_ = true;
+   skinPoseDirty_ = true;
+   requestRender();
+ }
+
+ void ArtifactDiligentEngineRenderWindow::setSkinPoseMatrices(
+     const QVector<QMatrix4x4>& boneMatrices)
+ {
+  if (!mesh_ || boneMatrices.isEmpty() || mesh_->skinBones().isEmpty()) {
+   return;
+  }
+  const bool completePose = boneMatrices.size() >= mesh_->skinBones().size();
+  bool finitePose = completePose;
+  for (const QMatrix4x4& matrix : boneMatrices) {
+      finitePose = finitePose && isFiniteMatrix(matrix);
+  }
+  const bool wasGpuSkinningActive = gpuSkinningActive_;
+  bool cpuFallback = false;
+  const auto sourceMethod = mesh_->skinningMethod();
+  const bool gpuCompatibleSkinning =
+      sourceMethod == ArtifactCore::Mesh::SkinningMethod::LinearBlend;
+  const bool hasExtendedWeights = mesh_->hasExtendedSkinningWeights();
+  if (boneMatrices.size() <= 128 && finitePose && gpuCompatibleSkinning &&
+      !hasExtendedWeights) {
+      if (!wasGpuSkinningActive) {
+          // CPU fallback may have left the mesh deformed. Restore bind space
+          // before the GPU shader applies the pose again.
+          mesh_->restoreSkinningBase();
+      }
+      skinPoseMatrices_ = boneMatrices;
+      gpuSkinningActive_ = true;
+  } else {
+      skinPoseMatrices_.clear();
+      gpuSkinningActive_ = false;
+      mesh_->applyDeformers(boneMatrices);
+      cpuFallback = true;
+  }
+  skinPoseDirty_ = true;
+  if (cpuFallback || wasGpuSkinningActive != gpuSkinningActive_) {
+      meshDirty_ = true;
+  }
+  requestRender();
+ }
+
+ void ArtifactDiligentEngineRenderWindow::refreshMeshGeometry()
+ {
+  if (!mesh_) return;
+  if (gpuSkinningActive_) {
+      // Mesh deformer setters evaluate CPU LBS so the software path remains
+      // usable. GPU uploads must contain the Morph result before skinning,
+      // otherwise the vertex shader would apply the pose a second time.
+      mesh_->restoreSkinningBase();
+  }
   meshDirty_ = true;
   requestRender();
  }
 
+ bool ArtifactDiligentEngineRenderWindow::gpuSkinningActive() const
+ {
+  return gpuSkinningActive_;
+ }
+
  void ArtifactDiligentEngineRenderWindow::clearMesh()
  {
-  mesh_.reset();
+ mesh_.reset();
+  skinPoseMatrices_.clear();
+  gpuSkinningActive_ = false;
+  skinPoseDirty_ = true;
   meshDirty_ = true;
   requestRender();
  }
@@ -799,6 +956,14 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   colorDesc.Size = sizeof(SolidViewportMaterial);
   pDevice->CreateBuffer(colorDesc, nullptr, &solidColorBuffer_);
 
+  BufferDesc skinningDesc;
+  skinningDesc.Name = "ArtifactSolidViewportSkinningCB";
+  skinningDesc.Usage = USAGE_DYNAMIC;
+  skinningDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  skinningDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  skinningDesc.Size = sizeof(float) * 16 * 128;
+  pDevice->CreateBuffer(skinningDesc, nullptr, &solidSkinningBuffer_);
+
   auto createPSO = [&](FILL_MODE fillMode, RefCntAutoPtr<IPipelineState>& outPSO, RefCntAutoPtr<IShaderResourceBinding>& outSRB) {
    GraphicsPipelineStateCreateInfo psoCI;
    psoCI.PSODesc.Name = (fillMode == FILL_MODE_WIREFRAME) ? "ArtifactSolidViewportWirePSO" : "ArtifactSolidViewportPSO";
@@ -823,14 +988,17 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
     LayoutElement{0, 0, 3, VT_FLOAT32, False, LAYOUT_ELEMENT_AUTO_OFFSET, sizeof(SolidViewportVertex)},
     LayoutElement{1, 0, 3, VT_FLOAT32, False, LAYOUT_ELEMENT_AUTO_OFFSET, sizeof(SolidViewportVertex)},
     LayoutElement{2, 0, 2, VT_FLOAT32, False, LAYOUT_ELEMENT_AUTO_OFFSET, sizeof(SolidViewportVertex)},
+    LayoutElement{3, 0, 4, VT_FLOAT32, False, LAYOUT_ELEMENT_AUTO_OFFSET, sizeof(SolidViewportVertex)},
+    LayoutElement{4, 0, 4, VT_FLOAT32, False, LAYOUT_ELEMENT_AUTO_OFFSET, sizeof(SolidViewportVertex)},
    };
    gp.InputLayout.LayoutElements = layout;
-   gp.InputLayout.NumElements = 3;
+   gp.InputLayout.NumElements = 5;
    psoCI.pVS = vs;
    psoCI.pPS = ps;
 
    ShaderResourceVariableDesc vars[] = {
     {SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
+    {SHADER_TYPE_VERTEX, "SkinningCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
     {SHADER_TYPE_PIXEL, "ColorCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
     {SHADER_TYPE_PIXEL, "BaseColorTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     {SHADER_TYPE_PIXEL, "MetallicRoughnessTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
@@ -838,12 +1006,13 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
     {SHADER_TYPE_PIXEL, "BaseColorSampler", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
    };
    psoCI.PSODesc.ResourceLayout.Variables = vars;
-   psoCI.PSODesc.ResourceLayout.NumVariables = 6;
+   psoCI.PSODesc.ResourceLayout.NumVariables = 7;
 
    pDevice->CreateGraphicsPipelineState(psoCI, &outPSO);
    if (outPSO) {
     outPSO->CreateShaderResourceBinding(&outSRB, true);
      outPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(solidTransformBuffer_);
+     outPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "SkinningCB")->Set(solidSkinningBuffer_);
      outPSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "ColorCB")->Set(solidColorBuffer_);
      outPSO->GetStaticVariableByName(
          SHADER_TYPE_PIXEL, "BaseColorSampler")->Set(baseColorSampler_);
@@ -864,7 +1033,9 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   createPSO(FILL_MODE_WIREFRAME, wirePso_, wireSrb_);
 
   solidResourcesReady_ = static_cast<bool>(solidPso_) && static_cast<bool>(wirePso_) &&
-                         static_cast<bool>(solidTransformBuffer_) && static_cast<bool>(solidColorBuffer_);
+                         static_cast<bool>(solidTransformBuffer_) &&
+                         static_cast<bool>(solidColorBuffer_) &&
+                         static_cast<bool>(solidSkinningBuffer_);
  }
 
  void ArtifactDiligentEngineRenderWindow::updateBaseColorTexture()
@@ -1049,6 +1220,10 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   std::vector<Uint32> indices;
   if (mesh_) {
     const auto renderData = mesh_->generateRenderData();
+   const auto boneIndicesAttr =
+       mesh_->vertexAttributes().get<QVector4D>("boneIndices");
+   const auto boneWeightsAttr =
+       mesh_->vertexAttributes().get<QVector4D>("boneWeights");
    vertices.reserve(renderData.positions.size());
    for (qsizetype i = 0; i < renderData.positions.size(); ++i) {
     const QVector3D& position = renderData.positions[i];
@@ -1057,10 +1232,20 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
                                       : QVector3D(0.0f, 0.0f, 1.0f);
     const QVector2D uv =
         i < renderData.uvs.size() ? renderData.uvs[i] : QVector2D();
+    const QVector4D boneIndices = gpuSkinningActive_ && boneIndicesAttr &&
+        i < boneIndicesAttr->size()
+        ? (*boneIndicesAttr)[static_cast<int>(i)]
+        : QVector4D(-1.0f, -1.0f, -1.0f, -1.0f);
+    const QVector4D boneWeights = gpuSkinningActive_ && boneWeightsAttr &&
+        i < boneWeightsAttr->size()
+        ? (*boneWeightsAttr)[static_cast<int>(i)]
+        : QVector4D(0.0f, 0.0f, 0.0f, 0.0f);
     vertices.push_back({
      {position.x(), position.y(), position.z()},
      {normal.x(), normal.y(), normal.z()},
-     {uv.x(), uv.y()}
+     {uv.x(), uv.y()},
+     {boneIndices.x(), boneIndices.y(), boneIndices.z(), boneIndices.w()},
+     {boneWeights.x(), boneWeights.y(), boneWeights.z(), boneWeights.w()}
     });
    }
    if (renderData.normals.size() != renderData.positions.size()) {
@@ -1232,15 +1417,49 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   pImmediateContext->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-  if (solidPso_ && solidVertexBuffer_ && solidTransformBuffer_ && solidColorBuffer_ && solidVertexCount_ > 0) {
+  if (solidPso_ && solidVertexBuffer_ && solidTransformBuffer_ &&
+      solidColorBuffer_ && solidSkinningBuffer_ && solidVertexCount_ > 0) {
       const auto scDesc = pSwapChain->GetDesc();
       const float aspect = (scDesc.Height > 0) ? static_cast<float>(scDesc.Width) / static_cast<float>(scDesc.Height) : 1.0f;
 
       QMatrix4x4 world;
       world.setToIdentity();
       if (mesh_) {
-          const QVector3D minBound = mesh_->boundingBoxMin();
-          const QVector3D maxBound = mesh_->boundingBoxMax();
+          QVector3D minBound = mesh_->boundingBoxMin();
+          QVector3D maxBound = mesh_->boundingBoxMax();
+          if (gpuSkinningActive_ && !skinPoseMatrices_.isEmpty()) {
+              const QVector3D corners[8] = {
+                  {minBound.x(), minBound.y(), minBound.z()},
+                  {maxBound.x(), minBound.y(), minBound.z()},
+                  {minBound.x(), maxBound.y(), minBound.z()},
+                  {maxBound.x(), maxBound.y(), minBound.z()},
+                  {minBound.x(), minBound.y(), maxBound.z()},
+                  {maxBound.x(), minBound.y(), maxBound.z()},
+                  {minBound.x(), maxBound.y(), maxBound.z()},
+                  {maxBound.x(), maxBound.y(), maxBound.z()}
+              };
+              QVector3D skinnedMin = minBound;
+              QVector3D skinnedMax = maxBound;
+              // Vertices without valid influences remain in bind space.
+              for (const QMatrix4x4& boneMatrix : skinPoseMatrices_) {
+                  for (const QVector3D& corner : corners) {
+                      const QVector3D transformed = boneMatrix.map(corner);
+                      if (!std::isfinite(transformed.x()) ||
+                          !std::isfinite(transformed.y()) ||
+                          !std::isfinite(transformed.z())) {
+                          continue;
+                      }
+                      skinnedMin.setX(std::min(skinnedMin.x(), transformed.x()));
+                      skinnedMin.setY(std::min(skinnedMin.y(), transformed.y()));
+                      skinnedMin.setZ(std::min(skinnedMin.z(), transformed.z()));
+                      skinnedMax.setX(std::max(skinnedMax.x(), transformed.x()));
+                      skinnedMax.setY(std::max(skinnedMax.y(), transformed.y()));
+                      skinnedMax.setZ(std::max(skinnedMax.z(), transformed.z()));
+                  }
+              }
+              minBound = skinnedMin;
+              maxBound = skinnedMax;
+          }
           const QVector3D center = (minBound + maxBound) * 0.5f;
           const QVector3D extent = maxBound - minBound;
           const float maxExtent = std::max({ extent.x(), extent.y(), extent.z(), 1.0f });
@@ -1272,6 +1491,36 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
       if (mappedData) {
           std::memcpy(mappedData, &transform, sizeof(transform));
           pImmediateContext->UnmapBuffer(solidTransformBuffer_, MAP_WRITE);
+      }
+
+      if (skinPoseDirty_ && gpuSkinningActive_) {
+      struct SkinningCB {
+          float boneMatrices[128][16];
+      } skinning{};
+      for (int i = 0; i < 128; ++i) {
+          skinning.boneMatrices[i][0] = 1.0f;
+          skinning.boneMatrices[i][5] = 1.0f;
+          skinning.boneMatrices[i][10] = 1.0f;
+          skinning.boneMatrices[i][15] = 1.0f;
+      }
+      const int skinCount = std::min<int>(
+          static_cast<int>(skinPoseMatrices_.size()), 128);
+      for (int i = 0; i < skinCount; ++i) {
+          std::memcpy(skinning.boneMatrices[i],
+                      skinPoseMatrices_[i].constData(),
+                      sizeof(skinning.boneMatrices[i]));
+      }
+      bool skinPoseUploaded = false;
+      pImmediateContext->MapBuffer(
+          solidSkinningBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mappedData);
+      if (mappedData) {
+          std::memcpy(mappedData, &skinning, sizeof(skinning));
+          pImmediateContext->UnmapBuffer(solidSkinningBuffer_, MAP_WRITE);
+          skinPoseUploaded = true;
+      }
+      if (skinPoseUploaded) {
+          skinPoseDirty_ = false;
+      }
       }
 
       const float yawRadians = qDegreesToRadians(previewYaw_);

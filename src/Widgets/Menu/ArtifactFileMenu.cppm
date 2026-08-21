@@ -12,6 +12,7 @@ module;
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QFileInfo>
+#include <QDir>
 #include <QSet>
 #include <QMessageBox>
 #include <QPushButton>
@@ -52,6 +53,14 @@ using namespace ArtifactCore;
 namespace {
 constexpr int kMaxRecentProjects = 5;
 
+QString normalizedProjectPath(const QString& path)
+{
+    const QString trimmed = path.trimmed();
+    return trimmed.isEmpty()
+        ? QString()
+        : QDir::cleanPath(QFileInfo(trimmed).absoluteFilePath());
+}
+
 QString menuText(const QString& key, const QString& fallback)
 {
     return TranslationManager::instance().tr(key, fallback);
@@ -59,7 +68,8 @@ QString menuText(const QString& key, const QString& fallback)
 
 void addRecentProject(const QString& path)
 {
-    if (path.isEmpty()) {
+    const QString normalizedPath = normalizedProjectPath(path);
+    if (normalizedPath.isEmpty()) {
         return;
     }
     auto* settings = ArtifactAppSettings::instance();
@@ -67,8 +77,8 @@ void addRecentProject(const QString& path)
         return;
     }
     auto recent = settings->recentProjectPaths();
-    recent.removeAll(path);
-    recent.prepend(path);
+    recent.removeAll(normalizedPath);
+    recent.prepend(normalizedPath);
     while (recent.size() > kMaxRecentProjects) {
         recent.removeLast();
     }
@@ -81,12 +91,13 @@ QStringList pruneMissingRecentProjects(const QStringList& paths)
     QSet<QString> seen;
     pruned.reserve(paths.size());
     for (const QString& path : paths) {
-        if (path.isEmpty() || seen.contains(path)) {
+        const QString normalizedPath = normalizedProjectPath(path);
+        if (normalizedPath.isEmpty() || seen.contains(normalizedPath)) {
             continue;
         }
-        seen.insert(path);
-        if (QFileInfo(path).exists()) {
-            pruned.push_back(path);
+        seen.insert(normalizedPath);
+        if (QFileInfo(normalizedPath).exists()) {
+            pruned.push_back(normalizedPath);
         }
     }
     return pruned;
@@ -97,11 +108,11 @@ QString supportedAssetFilter()
     return QStringLiteral(
         "対応アセット (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg "
         "*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a "
-        "*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc);;"
+        "*.obj *.fbx *.gltf *.glb *.pmd *.abc *.usd *.usda *.usdc);;"
         "画像 (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg);;"
         "動画 (*.mp4 *.mov *.mkv *.avi *.webm);;"
         "音声 (*.mp3 *.wav *.flac *.ogg *.aac *.m4a);;"
-        "3D (*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc)"
+        "3D (*.obj *.fbx *.gltf *.glb *.pmd *.abc *.usd *.usda *.usdc)"
     );
 }
 

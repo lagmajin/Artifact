@@ -125,7 +125,7 @@ public:
     QJsonObject serialize() const override { return toJson(); }
     bool deserialize(const QJsonObject& json) override;
     QString typeName() const override { return QStringLiteral("ArtifactEffectPreset"); }
-    int schemaVersion() const override { return 2; }
+    int schemaVersion() const override { return 3; }
 
     // 適用（既存のArtifactAbstractEffectにパラメータを適用）
     void applyTo(ArtifactAbstractEffect* effect) const;

@@ -73,6 +73,20 @@ const bool registeredInOutPoints = [] {
 W_OBJECT_IMPL(ArtifactMarker)
 W_OBJECT_IMPL(ArtifactInOutPoints)
 
+namespace {
+void publishMarkerAttributeChanged(const ArtifactMarker* marker) {
+    if (!marker) {
+        return;
+    }
+    auto* points = qobject_cast<const ArtifactInOutPoints*>(marker->parent());
+    if (!points) {
+        return;
+    }
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{points->hasInPoint(), points->hasOutPoint()});
+}
+}
+
 // ==================== ArtifactMarker Implementation ====================
 
 ArtifactMarker::ArtifactMarker(const FramePosition& position,
@@ -103,6 +117,7 @@ void ArtifactMarker::setPosition(const FramePosition& position) {
         position_ = position;
         Q_EMIT positionChanged(position);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -115,6 +130,7 @@ void ArtifactMarker::setComment(const QString& comment) {
         comment_ = comment;
         Q_EMIT commentChanged(comment);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -127,6 +143,7 @@ void ArtifactMarker::setType(MarkerType type) {
         type_ = type;
         Q_EMIT typeChanged(type);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -139,6 +156,7 @@ void ArtifactMarker::setColor(const QColor& color) {
         color_ = color;
         Q_EMIT colorChanged(color);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -151,6 +169,7 @@ void ArtifactMarker::setWebLink(const QString& link) {
         webLink_ = link;
         Q_EMIT webLinkChanged(link);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -172,6 +191,7 @@ void ArtifactMarker::setTags(const QStringList& tags) {
         tags_ = normalized;
         Q_EMIT tagsChanged(tags_);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -183,6 +203,7 @@ void ArtifactMarker::addTag(const QString& tag) {
     tags_.append(trimmed);
     Q_EMIT tagsChanged(tags_);
     Q_EMIT markerChanged();
+    publishMarkerAttributeChanged(this);
 }
 
 void ArtifactMarker::removeTag(const QString& tag) {
@@ -195,6 +216,7 @@ void ArtifactMarker::removeTag(const QString& tag) {
     if (before != tags_.size()) {
         Q_EMIT tagsChanged(tags_);
         Q_EMIT markerChanged();
+        publishMarkerAttributeChanged(this);
     }
 }
 
@@ -340,6 +362,9 @@ ArtifactMarker* ArtifactInOutPoints::addMarker(const FramePosition& position,
         it->second->setType(type);
         impl_->chaptersDirty_ = true;
         Q_EMIT markerChanged(it->second);
+        ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+            PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
+                                            impl_->outPoint_.has_value()});
         return it->second;
     }
     
@@ -349,6 +374,9 @@ ArtifactMarker* ArtifactInOutPoints::addMarker(const FramePosition& position,
     impl_->chaptersDirty_ = true;
     
     Q_EMIT markerAdded(marker);
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
+                                        impl_->outPoint_.has_value()});
     return marker;
 }
 
@@ -361,6 +389,9 @@ bool ArtifactInOutPoints::removeMarker(const FramePosition& position) {
         
         Q_EMIT markerRemoved(marker);
         delete marker;
+        ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+            PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
+                                            impl_->outPoint_.has_value()});
         return true;
     }
     return false;
@@ -376,6 +407,9 @@ void ArtifactInOutPoints::removeMarker(ArtifactMarker* marker) {
         
         Q_EMIT markerRemoved(marker);
         delete marker;
+        ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+            PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
+                                            impl_->outPoint_.has_value()});
     }
 }
 
@@ -497,6 +531,9 @@ void ArtifactInOutPoints::clearAllMarkers() {
     impl_->chaptersDirty_ = false;
     
     Q_EMIT allMarkersCleared();
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
+                                        impl_->outPoint_.has_value()});
 }
 
 size_t ArtifactInOutPoints::markerCount() const {
@@ -661,12 +698,16 @@ bool ArtifactInOutPoints::fromJson(const QJsonObject& object) {
     for (const auto& value : markers) {
         if (!value.isObject()) continue;
         const auto item = value.toObject();
+        const auto positionValue = item.value(QStringLiteral("position"));
+        if (!positionValue.isDouble()) {
+            continue;
+        }
         const int rawType = item.value(QStringLiteral("type")).toInt(0);
         const auto type = rawType >= static_cast<int>(MarkerType::Comment) &&
                                   rawType <= static_cast<int>(MarkerType::Color)
             ? static_cast<MarkerType>(rawType) : MarkerType::Comment;
         auto* marker = addMarker(
-            FramePosition(item.value(QStringLiteral("position")).toInt()),
+            FramePosition(positionValue.toInt()),
             item.value(QStringLiteral("comment")).toString(), type);
         if (!marker) continue;
         const QColor color(item.value(QStringLiteral("color")).toString());

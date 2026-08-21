@@ -4,11 +4,15 @@ module;
 #include <QColor>
 #include <QHash>
 #include <QImage>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QMatrix4x4>
 #include <QRectF>
 #include <QSize>
 #include <QSizeF>
 #include <QString>
+#include <QStringList>
+#include <QSet>
 #include <QUuid>
 
 
@@ -1013,7 +1017,8 @@ static QImage fitMatteSourceToTarget(const QImage& source,
 static QImage applyLayerMatteReferencesToSurfaceImpl(
     const QImage& surface,
     const std::vector<LayerMatteReference>& references,
-    const QHash<ArtifactCore::Id, QImage>& sourceImages)
+    const QHash<ArtifactCore::Id, QImage>& sourceImages,
+    QString* diagnosticOut)
 {
   if (surface.isNull() || references.empty()) {
     return surface;
@@ -1027,6 +1032,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
   // Keep the software path aligned with the GPU path: an incomplete matte
   // stack must not partially mask the layer with only the sources that happen
   // to be available in this frame.
+  QStringList missingSourceIds;
   for (const auto& ref : references) {
     if (!ref.enabled || ref.sourceLayerId.isNil()) {
       continue;
@@ -1034,10 +1040,42 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
     const auto sourceIt = sourceImages.constFind(ref.sourceLayerId);
     if (sourceIt == sourceImages.constEnd() || sourceIt.value().isNull() ||
         fitMatteSourceToTarget(sourceIt.value(), QSize(width, height),
-                               ref.fitMode)
+            ref.fitMode)
             .isNull()) {
-      return surface;
+      const QString sourceId = ref.sourceLayerId.toString();
+      if (!sourceId.isEmpty() && !missingSourceIds.contains(sourceId)) {
+        missingSourceIds.append(sourceId);
+      }
     }
+  }
+  if (!missingSourceIds.isEmpty()) {
+    missingSourceIds.sort();
+    static QMutex diagnosticMutex;
+    static QSet<QString> reportedMissingSources;
+    const QString diagnosticKey = missingSourceIds.join(QStringLiteral(","));
+    bool reportDiagnostic = false;
+    {
+      QMutexLocker lock(&diagnosticMutex);
+      if (!reportedMissingSources.contains(diagnosticKey)) {
+        if (reportedMissingSources.size() >= 512) {
+          reportedMissingSources.clear();
+        }
+        reportedMissingSources.insert(diagnosticKey);
+        reportDiagnostic = true;
+      }
+    }
+    if (reportDiagnostic) {
+      qWarning() << "[CompositionView][MatteDiagnostics] incomplete matte stack;"
+                 << "missingSources=" << diagnosticKey;
+    }
+    if (diagnosticOut) {
+      if (!diagnosticOut->isEmpty()) {
+        diagnosticOut->append(QLatin1Char(' '));
+      }
+      diagnosticOut->append(
+          QStringLiteral("[Matte] missingSources=%1").arg(diagnosticKey));
+    }
+    return surface;
   }
 
   std::vector<float> combined(static_cast<size_t>(width) * height, 0.0f);
@@ -1125,10 +1163,11 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
 export QImage applyLayerMatteReferencesToSurface(
     const QImage& surface,
     const std::vector<LayerMatteReference>& references,
-    const QHash<ArtifactCore::Id, QImage>& sourceImages)
+    const QHash<ArtifactCore::Id, QImage>& sourceImages,
+    QString* diagnosticOut = nullptr)
 {
   return applyLayerMatteReferencesToSurfaceImpl(surface, references,
-                                                sourceImages);
+                                                sourceImages, diagnosticOut);
 }
 
 StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
@@ -1371,7 +1410,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                     });
     if (hasResolvedMattes) {
       surface = applyLayerMatteReferencesToSurface(
-          surface, effectiveMatteReferences, *matteSourceImages);
+          surface, effectiveMatteReferences, *matteSourceImages,
+          videoDebugOut);
     }
 
     const bool usesGpuTextureCache =
@@ -2056,6 +2096,24 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       const double mappedFrameD =
           compLayer->getSourceFrameAtCompFrame(parentFrame);
       const int64_t childFrame = static_cast<int64_t>(std::llround(mappedFrameD));
+      static QMutex precompThumbnailDiagnosticMutex;
+      static QSet<QString> reportedPrecompThumbnails;
+      const QString precompId = layer->id().toString();
+      bool reportPrecompThumbnail = false;
+      {
+        QMutexLocker lock(&precompThumbnailDiagnosticMutex);
+        if (!reportedPrecompThumbnails.contains(precompId)) {
+          if (reportedPrecompThumbnails.size() >= 512) {
+            reportedPrecompThumbnails.clear();
+          }
+          reportedPrecompThumbnails.insert(precompId);
+          reportPrecompThumbnail = true;
+        }
+      }
+      if (reportPrecompThumbnail) {
+        qWarning() << "[CompositionView][PrecompDiagnostics] child composition"
+                   << "sampled through QImage thumbnail; layerId=" << precompId;
+      }
       QImage childImage = childComp->getThumbnailAtFrame(
           childFrame, childSize.width(), childSize.height());
 
@@ -2119,6 +2177,24 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     // 調整レイヤー: 背面の画像をキャプチャしてエフェクトを適用する
     // GPUパスの場合は既に controller 側で background がコピーされている前提。
     // readbackToImage は現在の描画ターゲット（RTV）の内容を QImage として取得する。
+    static QMutex adjustmentReadbackDiagnosticMutex;
+    static QSet<QString> reportedAdjustmentReadbacks;
+    const QString adjustmentId = layer->id().toString();
+    bool reportAdjustmentReadback = false;
+    {
+      QMutexLocker lock(&adjustmentReadbackDiagnosticMutex);
+      if (!reportedAdjustmentReadbacks.contains(adjustmentId)) {
+        if (reportedAdjustmentReadbacks.size() >= 512) {
+          reportedAdjustmentReadbacks.clear();
+        }
+        reportedAdjustmentReadbacks.insert(adjustmentId);
+        reportAdjustmentReadback = true;
+      }
+    }
+    if (reportAdjustmentReadback) {
+      qWarning() << "[CompositionView][AdjustmentDiagnostics] GPU target readback"
+                 << "via QImage; layerId=" << adjustmentId;
+    }
     QImage background = renderer->readbackToImage();
     if (!background.isNull()) {
       applySurfaceAndDraw(background, localRect, true);

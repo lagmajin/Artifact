@@ -84,6 +84,7 @@ import Artifact.Application.Manager;
 import Artifact.Tool.Manager;
 import Application.AppSettings;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InOutPoints;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
 import Artifact.Audio.Waveform;
@@ -113,6 +114,31 @@ using namespace ArtifactCore;
 using namespace ArtifactWidgets;
 
 namespace {
+QVector<ArtifactTimelineTrackPainterView::CompositionMarkerVisual>
+compositionMarkerVisuals(const ArtifactCompositionPtr& composition) {
+  QVector<ArtifactTimelineTrackPainterView::CompositionMarkerVisual> visuals;
+  if (!composition) {
+    return visuals;
+  }
+  if (const auto* points = composition->inOutPoints()) {
+    for (const auto* marker : points->allMarkers()) {
+      if (!marker) {
+        continue;
+      }
+      ArtifactTimelineTrackPainterView::CompositionMarkerVisual visual;
+      visual.frame = marker->position().framePosition();
+      if (!std::isfinite(visual.frame)) {
+        continue;
+      }
+      visual.comment = marker->comment();
+      visual.color = marker->color();
+      visual.chapter = marker->type() == MarkerType::Chapter;
+      visuals.push_back(std::move(visual));
+    }
+  }
+  return visuals;
+}
+
 void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
                                    const ArtifactAbstractLayerPtr& layer,
                                    const qint64 frameDelta);
@@ -4716,6 +4742,7 @@ public:
   QVector<KeyframePropertySnapshot> curveEditorUndoBeforeSnapshots_;
   QSet<QString> curveEditorUndoBeforeSelectionKeys_;
   ArtifactCore::EventBus::Subscription compositionChangedSubscription_;
+  ArtifactCore::EventBus::Subscription markerChangedSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   // refreshTracks() の重複キューイング防止フラグ。
@@ -7890,6 +7917,9 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   }
 
   if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setCompositionMarkers({});
+    impl_->compositionChangedSubscription_.disconnect();
+    impl_->markerChangedSubscription_.disconnect();
     struct UpdateRestoreGuard {
       QWidget* widget = nullptr;
       bool restore = true;
@@ -7910,7 +7940,6 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         auto comp = res.ptr.lock();
         
         // Listen to composition-level changes via the shared internal event bus.
-        impl_->compositionChangedSubscription_.disconnect();
         const QString compositionId = comp->id().toString();
         impl_->compositionChangedSubscription_ =
             impl_->eventBus_.subscribe<CompositionChangedEvent>(
@@ -7927,8 +7956,32 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
                       return;
                     }
                     impl_->pendingCompositionRefresh_ = false;
+                    if (auto svc = ArtifactProjectService::instance()) {
+                      if (auto refreshed = svc->currentComposition().lock()) {
+                        impl_->painterTrackView_->setCompositionMarkers(
+                            compositionMarkerVisuals(refreshed));
+                      }
+                    }
                     syncWorkAreaFromCurrentComposition();
                     refreshTracks();
+                  }, Qt::QueuedConnection);
+                });
+        impl_->markerChangedSubscription_ =
+            impl_->eventBus_.subscribe<PlaybackInOutPointsChangedEvent>(
+                [this](const PlaybackInOutPointsChangedEvent&) {
+                  if (!impl_ || impl_->pendingCompositionRefresh_) {
+                    return;
+                  }
+                  QMetaObject::invokeMethod(this, [this]() {
+                    if (!impl_) {
+                      return;
+                    }
+                    if (auto svc = ArtifactProjectService::instance()) {
+                      if (auto refreshed = svc->currentComposition().lock()) {
+                        impl_->painterTrackView_->setCompositionMarkers(
+                            compositionMarkerVisuals(refreshed));
+                      }
+                    }
                   }, Qt::QueuedConnection);
                 });
 
@@ -7951,6 +8004,8 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         }
         ArtifactAudioScrubController::instance().setComposition(comp);
         impl_->painterTrackView_->setDurationFrames(static_cast<double>(totalFrames));
+        impl_->painterTrackView_->setCompositionMarkers(
+            compositionMarkerVisuals(comp));
         syncWorkAreaFromCurrentComposition();
         if (impl_->scrubBar_) {
           impl_->scrubBar_->setTotalFrames(std::max(1, totalFrames));

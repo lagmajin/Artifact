@@ -180,6 +180,17 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
     const int schemaVersion = json.value(QStringLiteral("schema_version")).toInt(1);
     if (schemaVersion < 1 || schemaVersion > 2) return false;
 
+    const QString serializedEffectId =
+        json.value(QStringLiteral("effect_id")).toString().trimmed();
+    const QString targetEffectId = effect->effectID().toQString().trimmed();
+    if (!serializedEffectId.isEmpty() && !targetEffectId.isEmpty() &&
+        serializedEffectId != targetEffectId) {
+        qWarning() << "[ArtifactPresetManager] effect preset target mismatch"
+                   << "preset=" << serializedEffectId
+                   << "target=" << targetEffectId;
+        return false;
+    }
+
     if (json.contains("mask_enabled")) {
         effect->setMaskEnabled(json["mask_enabled"].toBool());
     }

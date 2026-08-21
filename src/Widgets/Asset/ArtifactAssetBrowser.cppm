@@ -1825,6 +1825,7 @@ ArtifactAssetBrowser::Impl::~Impl()
   else if (currentFileTypeFilter_ == "3d") {
    return lower.endsWith(".fbx") || lower.endsWith(".obj") ||
           lower.endsWith(".gltf") || lower.endsWith(".glb") ||
+          lower.endsWith(".pmd") ||
           lower.endsWith(".usd") || lower.endsWith(".usda") ||
           lower.endsWith(".usdc") || lower.endsWith(".abc") ||
           lower.endsWith(".stl");
@@ -2179,6 +2180,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
   QStringLiteral("fbx"),
   QStringLiteral("glb"),
   QStringLiteral("gltf"),
+  QStringLiteral("pmd"),
   QStringLiteral("abc"),
   QStringLiteral("stl"),
   QStringLiteral("usd"),

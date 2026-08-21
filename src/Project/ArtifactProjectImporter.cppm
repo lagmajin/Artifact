@@ -162,17 +162,178 @@ namespace Artifact
 
  bool ArtifactProjectImporter::Impl::validateFile(const QString& path)
  {
+  const QFileInfo fileInfo(path);
+  if (path.trimmed().isEmpty() || !fileInfo.exists() || !fileInfo.isFile() ||
+      !fileInfo.isReadable()) {
+   qDebug() << "[Importer] Validation failed: input is missing or unreadable"
+            << path;
+   return false;
+  }
+  const QString extension = QFileInfo(path).suffix().toLower();
+  if (extension == QStringLiteral("aep") ||
+      extension == QStringLiteral("aepx") ||
+      extension == QStringLiteral("mogrt")) {
+    qWarning() << "[Importer] Unsupported interchange format:" << extension
+              << "(AEP/MOGRT preflight is not implemented)";
+   return false;
+  }
+
   UniString errorMsg;
   QJsonDocument doc = loadJsonDocument(path, errorMsg);
   if (doc.isNull()) {
    qDebug() << "[Importer] Validation failed:" << errorMsg.toQString();
    return false;
   }
+  if (!doc.isObject()) {
+   qDebug() << "[Importer] Validation failed: root is not a JSON object";
+   return false;
+  }
 
   QJsonObject root = doc.object();
-  if (!root.contains("name")) {
+  if (!root.contains("name") || !root.value("name").isString() ||
+      root.value("name").toString().trimmed().isEmpty()) {
    qDebug() << "[Importer] Validation failed: missing 'name' field";
    return false;
+  }
+  for (const QString& versionKey : {QStringLiteral("version"),
+                                    QStringLiteral("minVersion")}) {
+   if (!root.contains(versionKey)) {
+    continue;
+   }
+   const QJsonValue versionValue = root.value(versionKey);
+   bool ok = false;
+   const float version = versionValue.isString()
+       ? versionValue.toString().toFloat(&ok)
+       : 0.0f;
+   if (!versionValue.isString() || !ok || !std::isfinite(version) ||
+       version < 0.0f) {
+    qDebug() << "[Importer] Validation failed: invalid" << versionKey;
+    return false;
+   }
+  }
+  if (root.contains(QStringLiteral("version")) &&
+      root.contains(QStringLiteral("minVersion"))) {
+   bool versionOk = false;
+   bool minVersionOk = false;
+   const float version = root.value(QStringLiteral("version"))
+       .toString().toFloat(&versionOk);
+   const float minVersion = root.value(QStringLiteral("minVersion"))
+       .toString().toFloat(&minVersionOk);
+   if (versionOk && minVersionOk && minVersion > version) {
+    qDebug() << "[Importer] Validation failed: minVersion exceeds version";
+    return false;
+   }
+  }
+  if (root.contains(QStringLiteral("compositions"))) {
+   const QJsonValue compositionsValue = root.value(QStringLiteral("compositions"));
+   if (!compositionsValue.isArray()) {
+    qDebug() << "[Importer] Validation failed: 'compositions' is not an array";
+    return false;
+   }
+   const QJsonArray compositions = compositionsValue.toArray();
+   constexpr qsizetype kMaxPreflightCompositions = 10000;
+   if (compositions.size() > kMaxPreflightCompositions) {
+    qDebug() << "[Importer] Validation failed: too many compositions"
+             << compositions.size();
+    return false;
+   }
+   std::set<QString> compositionIds;
+   for (int index = 0; index < compositions.size(); ++index) {
+    if (!compositions.at(index).isObject()) {
+     qDebug() << "[Importer] Validation failed: composition entry is not an object"
+              << index;
+     return false;
+    }
+    const QJsonObject composition = compositions.at(index).toObject();
+    if (!composition.value(QStringLiteral("id")).isString() ||
+        composition.value(QStringLiteral("id")).toString().trimmed().isEmpty()) {
+     qDebug() << "[Importer] Validation failed: composition id is missing"
+              << index;
+     return false;
+    }
+    const QString compositionId = composition.value(QStringLiteral("id")).toString().trimmed();
+    if (!compositionIds.insert(compositionId).second) {
+     qDebug() << "[Importer] Validation failed: duplicate composition id"
+              << compositionId;
+     return false;
+    }
+    if (composition.contains(QStringLiteral("layers"))) {
+     const QJsonValue layersValue = composition.value(QStringLiteral("layers"));
+     if (!layersValue.isArray()) {
+      qDebug() << "[Importer] Validation failed: composition layers is not an array"
+               << compositionId;
+      return false;
+     }
+     const QJsonArray layers = layersValue.toArray();
+     constexpr qsizetype kMaxPreflightLayers = 100000;
+     if (layers.size() > kMaxPreflightLayers) {
+      qDebug() << "[Importer] Validation failed: too many layers"
+               << compositionId << layers.size();
+      return false;
+     }
+     std::set<QString> layerIds;
+     std::vector<std::pair<QString, QString>> parentReferences;
+     for (int layerIndex = 0; layerIndex < layers.size(); ++layerIndex) {
+      if (!layers.at(layerIndex).isObject()) {
+       qDebug() << "[Importer] Validation failed: layer entry is not an object"
+                << compositionId << layerIndex;
+       return false;
+      }
+      const QJsonObject layer = layers.at(layerIndex).toObject();
+      if (layer.contains(QStringLiteral("id"))) {
+       if (!layer.value(QStringLiteral("id")).isString() ||
+           layer.value(QStringLiteral("id")).toString().trimmed().isEmpty()) {
+        qDebug() << "[Importer] Validation failed: layer id is invalid"
+                 << compositionId << layerIndex;
+        return false;
+       }
+       const QString layerId = layer.value(QStringLiteral("id")).toString().trimmed();
+       if (!layerIds.insert(layerId).second) {
+        qDebug() << "[Importer] Validation failed: duplicate layer id"
+                 << compositionId << layerId;
+        return false;
+       }
+      }
+      if (layer.contains(QStringLiteral("parentId")) &&
+          !layer.value(QStringLiteral("parentId")).isString()) {
+       qDebug() << "[Importer] Validation failed: layer parentId is not a string"
+                << compositionId << layerIndex;
+       return false;
+      }
+      const QString parentId = layer.value(QStringLiteral("parentId")).toString().trimmed();
+      if (!parentId.isEmpty()) {
+       const QString childId = layer.value(QStringLiteral("id")).toString().trimmed();
+       parentReferences.emplace_back(childId, parentId);
+      }
+     }
+     for (const auto& reference : parentReferences) {
+      if (reference.first == reference.second ||
+          !layerIds.contains(reference.second)) {
+       qDebug() << "[Importer] Validation failed: unresolved layer parentId"
+                << compositionId << reference.first << reference.second;
+       return false;
+      }
+     }
+     std::map<QString, QString> parentByLayer;
+     for (const auto& reference : parentReferences) {
+      if (!reference.first.isEmpty()) {
+       parentByLayer[reference.first] = reference.second;
+      }
+     }
+     for (const auto& entry : parentByLayer) {
+      std::set<QString> visited;
+      QString current = entry.first;
+      while (parentByLayer.contains(current)) {
+       if (!visited.insert(current).second) {
+        qDebug() << "[Importer] Validation failed: cyclic layer parenting"
+                 << compositionId << entry.first;
+        return false;
+       }
+       current = parentByLayer.at(current);
+      }
+     }
+    }
+   }
   }
 
   qDebug() << "[Importer] File validated successfully";
@@ -181,6 +342,13 @@ namespace Artifact
 
  UniString ArtifactProjectImporter::Impl::getFileFormatVersion(const QString& path)
  {
+  const QString extension = QFileInfo(path).suffix().toLower();
+  if (extension == QStringLiteral("aep") ||
+      extension == QStringLiteral("aepx") ||
+      extension == QStringLiteral("mogrt")) {
+   return UniString(QStringLiteral("unsupported.%1").arg(extension));
+  }
+
   UniString errorMsg;
   QJsonDocument doc = loadJsonDocument(path, errorMsg);
   if (doc.isNull()) {
@@ -206,6 +374,35 @@ namespace Artifact
    if (inputPath_.isEmpty()) {
     result.errorMessage = UniString("Input path is empty");
     qDebug() << "[Importer] Error: Input path is empty";
+    return result;
+   }
+
+   const QString extension = QFileInfo(inputPath_).suffix().toLower();
+   if (extension == QStringLiteral("aep") ||
+       extension == QStringLiteral("aepx") ||
+       extension == QStringLiteral("mogrt")) {
+    result.errorMessage = UniString(
+        "AEP/AEPX/MOGRT interchange import is not implemented");
+    result.healthReport.isHealthy = false;
+    result.healthReport.issues.push_back(HealthIssue{
+        HealthIssueSeverity::Error,
+        QStringLiteral("AEP/AEPX/MOGRT interchange import is not implemented"),
+        QFileInfo(inputPath_).fileName(),
+        QStringLiteral("UnsupportedInterchangeFormat")});
+   qWarning() << "[Importer] Unsupported interchange format:" << extension
+               << "(AEP/MOGRT preflight is not implemented)";
+   return result;
+   }
+
+   if (!validateFile(inputPath_)) {
+    result.errorMessage = UniString("Project preflight validation failed");
+    result.healthReport.isHealthy = false;
+    result.healthReport.issues.push_back(HealthIssue{
+        HealthIssueSeverity::Error,
+        QStringLiteral("Project preflight validation failed"),
+        QFileInfo(inputPath_).fileName(),
+        QStringLiteral("InvalidProjectPreflight")});
+    qWarning() << "[Importer] Project preflight rejected input:" << inputPath_;
     return result;
    }
 

@@ -3224,3 +3224,22 @@ if(DEFINED ARTIFACT_USE_EXPLICIT_STD_IFC)
         set_property(TARGET "${_artifact_target}" PROPERTY CXX_MODULE_STD OFF)
     endforeach()
 endif()
+
+# Optional Roslyn bootstrap used by CSharpScriptEngine's embedded hostfxr path.
+# Keep this as an explicit target: restoring NuGet packages should not become
+# an implicit side effect of every native Artifact build.
+find_program(ARTIFACT_DOTNET_EXECUTABLE NAMES dotnet dotnet.exe)
+set(ARTIFACT_SCRIPTING_PROJECT
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dotnet/Artifact.Scripting/Artifact.Scripting.csproj")
+if(ARTIFACT_DOTNET_EXECUTABLE AND EXISTS "${ARTIFACT_SCRIPTING_PROJECT}")
+    add_custom_target(ArtifactScriptingDotnet
+        COMMAND "${ARTIFACT_DOTNET_EXECUTABLE}" build
+                "${ARTIFACT_SCRIPTING_PROJECT}"
+                --configuration "$<CONFIG>"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dotnet/Artifact.Scripting"
+        COMMENT "Building Artifact.Scripting Roslyn host"
+        VERBATIM)
+    set_target_properties(ArtifactScriptingDotnet PROPERTIES FOLDER "Artifact/Scripting")
+else()
+    message(STATUS "ArtifactScriptingDotnet disabled: dotnet or Artifact.Scripting.csproj not found")
+endif()

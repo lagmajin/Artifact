@@ -15,6 +15,8 @@
 #include <QColor>
 #include <QPoint>
 #include <QVector3D>
+#include <QMatrix4x4>
+#include <QVector>
 #include <QString>
 #include <QWindow>
 #include <QWidget>
@@ -63,6 +65,7 @@ namespace Artifact
    RefCntAutoPtr<IBuffer> solidIndexBuffer_;
    RefCntAutoPtr<IBuffer> solidTransformBuffer_;
    RefCntAutoPtr<IBuffer> solidColorBuffer_;
+   RefCntAutoPtr<IBuffer> solidSkinningBuffer_;
    RefCntAutoPtr<ITexture> baseColorTexture_;
    RefCntAutoPtr<ITextureView> baseColorTextureSrv_;
    RefCntAutoPtr<ITexture> metallicRoughnessTexture_;
@@ -98,6 +101,9 @@ namespace Artifact
    float previewDistance_ = 4.0f;
    QVector3D pickingRayOrigin_;
    QVector3D pickingRayDirection_{0.0f, 0.0f, -1.0f};
+   QVector<QMatrix4x4> skinPoseMatrices_;
+   bool gpuSkinningActive_ = false;
+   bool skinPoseDirty_ = true;
    void render();
    void present();
    void ensureSolidResources();
@@ -139,6 +145,9 @@ namespace Artifact
   float previewPitch() const;
   QVector3D previewTarget() const;
   void setMesh(ArtifactCore::SharedPtr<ArtifactCore::Mesh> mesh);
+  void refreshMeshGeometry();
+  void setSkinPoseMatrices(const QVector<QMatrix4x4>& boneMatrices);
+   bool gpuSkinningActive() const;
   void clearMesh();
   void requestRender();
   bool m_initialized = false;
