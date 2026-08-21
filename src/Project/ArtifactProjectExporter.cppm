@@ -106,11 +106,16 @@ namespace Artifact
   // relative candidate for relocation. Older importers ignore the extra keys.
   const QString projectDirectory = QFileInfo(outputPath_).absolutePath();
   const auto relativePathFor = [&projectDirectory](const QString& path) {
-   const QFileInfo info(path);
-   if (path.trimmed().isEmpty() || !info.isAbsolute()) {
+   const QString trimmedPath = path.trimmed();
+   if (trimmedPath.isEmpty()) {
     return QString();
    }
-   return QDir(projectDirectory).relativeFilePath(info.absoluteFilePath());
+   const QFileInfo info(trimmedPath);
+   const QString absolutePath = info.isAbsolute()
+       ? info.absoluteFilePath()
+       : QDir(projectDirectory).absoluteFilePath(trimmedPath);
+   return QDir(projectDirectory).relativeFilePath(
+       QDir::cleanPath(absolutePath));
   };
   QJsonObject assets = obj.value(QStringLiteral("assets")).toObject();
   QJsonObject sourceRegistry = assets.value(QStringLiteral("sourceRegistry")).toObject();
