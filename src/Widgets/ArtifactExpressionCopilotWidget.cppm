@@ -600,6 +600,10 @@ public:
             ArtifactCore::ExpressionEvaluator evaluator;
             evaluator.setVariable("value", variantToExpressionValue(previewValue));
             evaluator.setVariable("time", ArtifactCore::ExpressionValue(previewTimeSeconds));
+            if (previewLayerIndex >= 0) {
+                // AE-style global layer index (1-based), matching thisLayer.index.
+                evaluator.setVariable("index", ArtifactCore::ExpressionValue(static_cast<double>(previewLayerIndex + 1)));
+            }
             if (!previewCompositionName.isEmpty() || !previewLayerName.isEmpty()) {
                 evaluator.setVariable(
                     "thisComp",

@@ -395,6 +395,7 @@ public:
         quint64 sig = 0xcbf29ce484222325ULL;
         auto mixInt = [&sig](quint64 value) { sig = mixSignature(sig, value); };
         mixInt(static_cast<quint64>(frameNumber));
+        mixInt(static_cast<quint64>(std::lround(opacity() * 100000.0)));
         mixInt(static_cast<quint64>(std::lround(transform.m11() * 100000.0)));
         mixInt(static_cast<quint64>(std::lround(transform.m12() * 100000.0)));
         mixInt(static_cast<quint64>(std::lround(transform.m13() * 100000.0)));
@@ -591,7 +592,8 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                                                         float timeSeconds,
                                                         const QTransform& transform,
                                                         const ArtifactCore::ImageF32x4_RGBA* layerMapSource,
-                                                        const std::vector<QVector3D>& basePoints)
+                                                        const std::vector<QVector3D>& basePoints,
+                                                        float layerOpacity = 1.0f)
 {
     ArtifactCore::ParticleRenderData data;
     data.frameNumber = frameNumber;
@@ -679,7 +681,8 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                 vertex.g = color.greenF();
                 vertex.b = color.blueF();
                 vertex.a = clampValue(
-                    color.alphaF() * settings.particleOpacity * sourceOpacity,
+                    color.alphaF() * settings.particleOpacity * sourceOpacity *
+                        layerOpacity,
                     0.0f,
                     1.0f);
                 vertex.size = std::max(0.1f, settings.particleSize);
@@ -741,7 +744,8 @@ void ArtifactFormParticleLayer::draw(ArtifactIRenderer* renderer)
             timeSeconds,
             transform,
             layerMapSource,
-            impl_->basePoints());
+            impl_->basePoints(),
+            opacity());
         impl_->cachedSignature = signature;
         impl_->cachedFrame = frameNumber;
         impl_->cacheDirty = false;

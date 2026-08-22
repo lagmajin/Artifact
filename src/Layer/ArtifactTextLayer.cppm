@@ -4596,10 +4596,13 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
                             impl_->paragraphStyle_, impl_->writingMode_,
                             impl_->rubyText_, impl_->rubyScale_,
                             impl_->layoutMode_, impl_->pathSegments_};
-  if (rasterize && !hasAnimators && !sourceTextAnimated && !impl_->isDirty_ &&
-      impl_->lastCacheKey_ &&
-      *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
-    return;
+  const bool contentUnchanged = !impl_->isDirty_ && impl_->lastCacheKey_ &&
+                                *impl_->lastCacheKey_ == currentKey;
+  if (contentUnchanged && !hasAnimators && !sourceTextAnimated) {
+    if (rasterize ? !impl_->renderedImage_.isNull()
+                  : !impl_->glyphs_.empty()) {
+      return;
+    }
   }
   impl_->lastCacheKey_ = currentKey;
 

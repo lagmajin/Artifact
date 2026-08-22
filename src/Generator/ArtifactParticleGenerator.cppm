@@ -641,8 +641,11 @@ QVector3D ParticleEmitter::getEmissionDirection() const
         dir = QVector3D(0.0f, 1.0f, 0.0f);
     }
     
+    // Spread is a full-cone angle: 360 covers all directions (dust/explosion/
+    // pollen presets use 360). The old 180 clamp silently turned "omnidirectional"
+    // into a half-circle.
     const float spreadDegrees = std::isfinite(params_.directionSpread)
-                                    ? std::clamp(params_.directionSpread, 0.0f, 180.0f)
+                                    ? std::clamp(params_.directionSpread, 0.0f, 360.0f)
                                     : 0.0f;
     if (spreadDegrees > 0.0f) {
         float spreadRad = spreadDegrees * M_PI / 180.0f;
@@ -963,8 +966,13 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     p.velocity += p.acceleration * deltaTime;
     
     // Apply drag
+    // Exponential decay form: v *= (1 - drag)^dt stays stable for any drag
+    // magnitude. The previous linear form (1 - drag*dt) produced negative
+    // factors (velocity reversal + divergence) once drag > 1/dt.
     if (params_.drag > 0.0f) {
-        p.velocity *= (1.0f - params_.drag * deltaTime);
+        const float decay = std::pow(std::max(0.0f, 1.0f - std::min(params_.drag, 1.0f)),
+                                     deltaTime);
+        p.velocity *= decay;
     }
     
     p.prevPosition = p.position;
@@ -1479,6 +1487,12 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
     // 本来のシミュレーションに先立って短時間のプリウォームを行う。
     // これにより rate の低いエミッタでも冒頭フレームから十分な粒子が描画される。
     // frame > 1 ではスキップするので、タイムライン途中の見た目は変わらない。
+    //
+    // 2026-08-21: プリウォーム時間を「目標フレーム時刻を超えない範囲」に制限する。
+    // 従来は frame<=1 で常に 0.5 秒分温めていたため、frame 1→2 で粒子数が急減
+    // (ポップ)していた。プリウォームを実質的な先行シミュレーションとして扱い、
+    // 通常ループとの合計が連続になるようにする。
+    double preWarmedTime = 0.0;
     if (frame <= 1) {
         bool anyPreWarm = false;
         for (const auto& emitter : emitters_) {
@@ -1488,23 +1502,25 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
             }
         }
         if (anyPreWarm) {
-            // preWarm() は内部で clear()+update() を呼ぶが、直前の reset() と
-            // 重複しても副作用はない。プリウォーム後の粒子状態を保持したまま
-            // 以下の通常ループへ進むため、ここでは各エミッタの preWarm ではなく
-            // update() を直接回して状態を温める。
-            constexpr float kPreWarmDuration = 0.5f; // 秒
-            const float stepSize = 1.0f / 120.0f;    // 決定論的な基本刻み
-            float warmTime = 0.0f;
-            while (warmTime < kPreWarmDuration) {
-                const float dt = std::min(stepSize, kPreWarmDuration - warmTime);
-                for (auto& emitter : emitters_) {
-                    if (emitter && emitter->params().preWarm) {
-                        emitter->update(dt);
+            const double rawTargetTime = static_cast<double>(frame) / fps;
+            constexpr double kMaxPreWarmDuration = 0.5; // 秒
+            const double preWarmBudget =
+                std::max(0.0, std::min(kMaxPreWarmDuration, rawTargetTime));
+            if (preWarmBudget > 0.0) {
+                const float stepSize = 1.0f / 120.0f; // 決定論的な基本刻み
+                double warmTime = 0.0;
+                while (warmTime < preWarmBudget) {
+                    const float dt = static_cast<float>(std::min(
+                        static_cast<double>(stepSize), preWarmBudget - warmTime));
+                    for (auto& emitter : emitters_) {
+                        if (emitter && emitter->params().preWarm) {
+                            emitter->update(dt);
+                        }
                     }
+                    warmTime += dt;
                 }
-                warmTime += dt;
+                preWarmedTime = warmTime;
             }
-            // プリウォームで進めた時刻を time_ に反映させない（frame 時刻は下で上書き）
         }
     }
 
@@ -1517,7 +1533,7 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
     const double targetTime = std::min(rawTargetTime, kMaxSimulationTime);
     const float stepSize = 1.0f / 120.0f; // 決定論的な基本刻み
 
-    double currentTime = 0.0;
+    double currentTime = preWarmedTime;
     while (currentTime < targetTime) {
         const float dt = static_cast<float>(std::min(
             static_cast<double>(stepSize), targetTime - currentTime));

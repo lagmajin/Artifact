@@ -604,12 +604,100 @@ QImage composeOpenCV(const CompositeRequest& request)
  return matRGBAToQImage(outRgba);
 }
 
+bool qPainterSupportsBlendMode(const ArtifactCore::BlendMode mode)
+{
+ switch (mode) {
+ case ArtifactCore::BlendMode::Normal:
+ case ArtifactCore::BlendMode::Add:
+ case ArtifactCore::BlendMode::Multiply:
+ case ArtifactCore::BlendMode::Screen:
+ case ArtifactCore::BlendMode::Overlay:
+ case ArtifactCore::BlendMode::Darken:
+ case ArtifactCore::BlendMode::Lighten:
+ case ArtifactCore::BlendMode::ColorDodge:
+ case ArtifactCore::BlendMode::ColorBurn:
+ case ArtifactCore::BlendMode::HardLight:
+ case ArtifactCore::BlendMode::SoftLight:
+ case ArtifactCore::BlendMode::Difference:
+ case ArtifactCore::BlendMode::Exclusion:
+  return true;
+ default:
+  return false;
+ }
+}
+
 } // namespace
 
-QImage compose(const CompositeRequest& request)
+bool blendSurface(QImage& canvas,
+                  const QImage& surface,
+                  const float opacity,
+                  const ArtifactCore::BlendMode mode)
 {
- Q_UNUSED(request);
- return composeOpenCV(request);
+ if (qPainterSupportsBlendMode(mode)) {
+  return false;
+ }
+ if (canvas.isNull() || surface.isNull() ||
+     canvas.format() != QImage::Format_RGBA8888 ||
+     surface.format() != QImage::Format_RGBA8888 ||
+     canvas.size() != surface.size()) {
+  return false;
+ }
+
+ const float srcAlpha = clamp01(opacity);
+ if (srcAlpha <= 0.0f) {
+  return false;
+ }
+
+ const int w = canvas.width();
+ const int h = canvas.height();
+ const bool dissolve =
+     mode == ArtifactCore::BlendMode::Dissolve ||
+     mode == ArtifactCore::BlendMode::DancingDissolve;
+ const int dissolveSeed = mode == ArtifactCore::BlendMode::DancingDissolve
+                              ? static_cast<int>(std::round(srcAlpha * 1000.0f))
+                              : 0;
+
+ ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+  auto* dstRow = canvas.bits() + static_cast<qsizetype>(y) * canvas.bytesPerLine();
+  const uchar* srcRow = surface.constBits() + static_cast<qsizetype>(y) * surface.bytesPerLine();
+  for (int x = 0; x < w; ++x) {
+   const int i = x * 4;
+   const float dr = dstRow[i + 0] / 255.0f;
+   const float dg = dstRow[i + 1] / 255.0f;
+   const float db = dstRow[i + 2] / 255.0f;
+   const float da = dstRow[i + 3] / 255.0f;
+
+   if (dissolve) {
+    if (deterministicNoise(x, y, dissolveSeed) < srcAlpha) {
+     dstRow[i + 0] = srcRow[i + 0];
+     dstRow[i + 1] = srcRow[i + 1];
+     dstRow[i + 2] = srcRow[i + 2];
+     dstRow[i + 3] = srcRow[i + 3];
+    }
+    continue;
+   }
+
+   const float pixA = srcRow[i + 3] / 255.0f;
+   const float effA = pixA * srcAlpha;
+   if (effA <= 0.0f) {
+    continue;
+   }
+
+   const ArtifactCore::FloatColor base(dr, dg, db, da);
+   const ArtifactCore::FloatColor blend(
+       srcRow[i + 0] / 255.0f,
+       srcRow[i + 1] / 255.0f,
+       srcRow[i + 2] / 255.0f,
+       pixA);
+   const ArtifactCore::FloatColor result = blendColor(base, blend, mode, effA);
+
+   dstRow[i + 0] = static_cast<uchar>(std::round(clamp01(result.r()) * 255.0f));
+   dstRow[i + 1] = static_cast<uchar>(std::round(clamp01(result.g()) * 255.0f));
+   dstRow[i + 2] = static_cast<uchar>(std::round(clamp01(result.b()) * 255.0f));
+   dstRow[i + 3] = static_cast<uchar>(std::round(clamp01(result.a()) * 255.0f));
+  }
+ });
+ return true;
 }
 
 bool composeToBuffer(const CompositeRequest& request,

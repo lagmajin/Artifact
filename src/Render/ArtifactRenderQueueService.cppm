@@ -4347,6 +4347,14 @@ namespace Artifact
 
                 const QSize layerSize(surface.size());
                 const qreal opacity = std::clamp(static_cast<qreal>(layer->opacity()), 0.0, 1.0);
+                const auto blendMode = ArtifactCore::toBlendMode(
+                    layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL);
+                if (!SoftwareRender::qPainterSupportsBlendMode(blendMode)) {
+                    // QPainter が表現できないモードは float ブレンドエンジンへ迂回する
+                    if (SoftwareRender::blendSurface(canvas, surface, static_cast<float>(opacity), blendMode)) {
+                        continue;
+                    }
+                }
                 painter.save();
                 painter.setOpacity(opacity);
                 painter.setCompositionMode(compositionModeForLayer(layer));

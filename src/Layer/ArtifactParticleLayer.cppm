@@ -127,6 +127,7 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
 {
     ArtifactCore::ParticleRenderData transformed;
     transformed.frameNumber = source.frameNumber;
+    transformed.options = source.options;
     transformed.particles.resize(source.particles.size());
 
     const auto finite = [](double value) { return std::isfinite(value); };
@@ -203,7 +204,9 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         const float sourceSize = std::isfinite(src.size)
             ? std::clamp(src.size, 0.0f, 1000000.0f)
             : 0.0f;
-        v.size = std::clamp(std::max(4.0f, sourceSize * scale), 4.0f, 1000000.0f);
+        // No minimum-size clamp: presets that shrink to zero (sparks, fire)
+        // rely on size reaching 0 to make particles disappear at end of life.
+        v.size = std::clamp(sourceSize * scale, 0.0f, 1000000.0f);
         if (!std::isfinite(v.stretch) || v.stretch <= 0.0f) {
             const float speed = std::isfinite(std::hypot(src.vx, src.vy))
                 ? static_cast<float>(std::hypot(src.vx, src.vy))
@@ -265,6 +268,41 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         converted.particles.push_back(vertex);
     }
     return converted;
+}
+
+// Maps the app-level render settings onto the Core GPU pipeline contract.
+// Without this the GPU path always renders with the Core defaults
+// (Additive / ScreenAligned / depthTest off) regardless of what the user
+// picks in the properties panel.
+ArtifactCore::ParticleRenderOptions coreRenderOptionsFromSettings(
+    const ParticleRenderSettings& settings)
+{
+    ArtifactCore::ParticleRenderOptions options;
+    switch (settings.blendMode) {
+    case ParticleBlendMode::Additive:
+        options.blend = ArtifactCore::ParticleBlendPolicy::Additive; break;
+    case ParticleBlendMode::Subtractive:
+        options.blend = ArtifactCore::ParticleBlendPolicy::Subtractive; break;
+    case ParticleBlendMode::Normal:
+        options.blend = ArtifactCore::ParticleBlendPolicy::Alpha; break;
+    case ParticleBlendMode::Screen:
+        options.blend = ArtifactCore::ParticleBlendPolicy::Screen; break;
+    case ParticleBlendMode::Multiply:
+        options.blend = ArtifactCore::ParticleBlendPolicy::Multiply; break;
+    }
+    switch (settings.billboardMode) {
+    case ParticleRenderSettings::BillboardMode::None:
+        options.billboard = ArtifactCore::ParticleBillboardPolicy::None; break;
+    case ParticleRenderSettings::BillboardMode::ScreenAligned:
+        options.billboard = ArtifactCore::ParticleBillboardPolicy::ScreenAligned; break;
+    case ParticleRenderSettings::BillboardMode::ViewPlane:
+        options.billboard = ArtifactCore::ParticleBillboardPolicy::ViewPlane; break;
+    case ParticleRenderSettings::BillboardMode::VelocityAligned:
+        options.billboard = ArtifactCore::ParticleBillboardPolicy::VelocityAligned; break;
+    }
+    options.depthTest = settings.depthTest;
+    options.depthWrite = settings.depthWrite;
+    return options;
 }
 
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
@@ -436,12 +474,14 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // 2. GPU レンダリングパス
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (rendererReady) {
-        const auto sourceData = impl_->particleSystem->captureRenderData();
+        auto coreData = toCoreParticleRenderData(sourceData);
+        coreData.options = coreRenderOptionsFromSettings(
+            impl_->particleSystem->renderSettings());
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
         const auto lodData = applyParticleRenderLOD(
-            toCoreParticleRenderData(sourceData), screenScale);
+            std::move(coreData), screenScale);
         qInfo() << "[ParticleLayer] GPU path: particleCount=" << lodData.particles.size()
                 << "sourceCount=" << sourceData.particles.size();
         if (!lodData.particles.empty()) {
@@ -3053,11 +3093,14 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
 
     if (rendererReady) {
         const auto sourceData = particleSystem()->captureRenderData();
+        auto coreData = toCoreParticleRenderData(sourceData);
+        coreData.options = coreRenderOptionsFromSettings(
+            particleSystem()->renderSettings());
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
         const auto lodData = applyParticleRenderLOD(
-            toCoreParticleRenderData(sourceData), screenScale);
+            std::move(coreData), screenScale);
         qInfo() << "[ParticleDebugLayer] GPU path: particleCount=" << lodData.particles.size()
                 << "sourceCount=" << sourceData.particles.size();
         if (!lodData.particles.empty()) {
