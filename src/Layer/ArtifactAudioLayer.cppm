@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 #include <QDebug>
 #include <QJsonObject>
@@ -25,6 +26,7 @@ import Artifact.Layer.Switch;
 import Artifact.Composition.Abstract;
 import Asset.Manager;
 import AssetType;
+import EnvironmentVariable.Expansion;
 
 namespace Artifact
 {
@@ -71,6 +73,17 @@ namespace Artifact
         ArtifactCore::AudioSegment segment;
     };
    ResampledCache resampledCache_;
+   // Guards resampledCache_: getAudio is called from the playback audio
+   // path, scrub/UI and render-queue workers concurrently. Critical
+   // sections are short (cache probe + memcpy), so a plain mutex is safe
+   // for the pull-based audio path.
+   mutable std::mutex resampledCacheMutex_;
+
+   void resetResampledCache()
+   {
+     std::lock_guard<std::mutex> lock(resampledCacheMutex_);
+     resampledCache_ = ResampledCache{};
+   }
 
    const QVector<float>& pcm() const
    {
@@ -95,7 +108,7 @@ namespace Artifact
 
      cachedSourceVersion_ = currentVersion;
      cache_.clear();
-     resampledCache_ = ResampledCache{};
+     resetResampledCache();
      if (sourcePath_.isEmpty() || !wav_.loadFromFile(sourcePath_)) {
        sharedPcm_.reset();
        isLoaded_ = false;
@@ -198,7 +211,7 @@ void ArtifactAudioLayer::addDeClickRange(qint64 startSample, qint64 endSample)
   }
   impl_->deClickRanges_ = std::move(merged);
   ++impl_->deClickRevision_;
-  impl_->resampledCache_ = Impl::ResampledCache{};
+  impl_->resetResampledCache();
   Q_EMIT changed();
 }
 
@@ -207,7 +220,7 @@ void ArtifactAudioLayer::clearDeClickRanges()
   if (impl_->deClickRanges_.empty()) return;
   impl_->deClickRanges_.clear();
   ++impl_->deClickRevision_;
-  impl_->resampledCache_ = Impl::ResampledCache{};
+  impl_->resetResampledCache();
   Q_EMIT changed();
 }
 
@@ -226,7 +239,7 @@ void ArtifactAudioLayer::setDeClickThresholdDb(float thresholdDb)
   impl_->deClickThresholdDb_ = std::isfinite(thresholdDb)
       ? std::clamp(thresholdDb, -80.0f, 0.0f) : -20.0f;
   ++impl_->deClickRevision_;
-  impl_->resampledCache_ = Impl::ResampledCache{};
+  impl_->resetResampledCache();
   Q_EMIT changed();
 }
 
@@ -239,7 +252,7 @@ void ArtifactAudioLayer::setDeClickMaxClickSamples(qint64 samples)
 {
   impl_->deClickMaxClickSamples_ = std::clamp<qint64>(samples, 1, 4096);
   ++impl_->deClickRevision_;
-  impl_->resampledCache_ = Impl::ResampledCache{};
+  impl_->resetResampledCache();
   Q_EMIT changed();
 }
 
@@ -272,8 +285,14 @@ void ArtifactAudioLayer::mute()
 
 bool ArtifactAudioLayer::loadFromPath(const QString& path)
 {
-  const QString trimmed = path.trimmed();
-  if (trimmed.isEmpty()) {
+  // テンプレート ($VAR 等) はメンバ保持し、ファイル IO のみ展開結果を使う。
+  const QString templatePath = path.trimmed();
+  QString trimmed = templatePath;
+  if (containsExpansionMarker(trimmed)) {
+      ExpansionContext expansionContext;
+      trimmed = expandTokens(trimmed, expansionContext);
+  }
+  if (templatePath.isEmpty()) {
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = {};
     impl_->cachedSourceVersion_ = 0;
@@ -284,7 +303,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
     impl_->sourceChannelCount_ = 0;
     impl_->deClickRanges_.clear();
     ++impl_->deClickRevision_;
-    impl_->resampledCache_ = Impl::ResampledCache{};
+    impl_->resetResampledCache();
     Q_EMIT changed();
     return false;
   }
@@ -305,7 +324,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
    impl_->sourceAssetId_ = nextAssetId;
    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
 
-   impl_->sourcePath_ = trimmed;
+   impl_->sourcePath_ = templatePath;
    const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
    impl_->sharedPcm_ = ArtifactCore::staticPointerCast<QVector<float>>(
        ArtifactCore::AssetManager::instance().decodedPayload(
@@ -328,7 +347,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
    impl_->cache_.clear();
    impl_->deClickRanges_.clear();
    ++impl_->deClickRevision_;
-   impl_->resampledCache_ = Impl::ResampledCache{};
+   impl_->resetResampledCache();
 
    qDebug() << "[AudioLayer] loaded path=" << trimmed
             << "sampleRate=" << impl_->sourceSampleRate_
@@ -880,13 +899,24 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
 
   const qint64 sourceFrameCount = impl_->pcm().size() / std::max(1, impl_->sourceChannelCount_);
-  const long double localFrame =
-      static_cast<long double>(start.framePosition()) -
-      static_cast<long double>(inPoint().framePosition()) +
-      static_cast<long double>(startTime().framePosition());
-  const long double samplePosition =
-      localFrame / static_cast<long double>(compositionFps) *
-      static_cast<long double>(impl_->sourceSampleRate_);
+  // Time-remapped layers map each composition frame through the remap curve
+  // (same convention as the video layer); otherwise the layer-local offset applies.
+  const bool useTimeRemap = isTimeRemapEnabled();
+  long double samplePosition;
+  if (useTimeRemap) {
+      samplePosition =
+          static_cast<long double>(getSourceFrameAtCompFrame(start.framePosition())) /
+          static_cast<long double>(compositionFps) *
+          static_cast<long double>(impl_->sourceSampleRate_);
+  } else {
+      const long double localFrame =
+          static_cast<long double>(start.framePosition()) -
+          static_cast<long double>(inPoint().framePosition()) +
+          static_cast<long double>(startTime().framePosition());
+      samplePosition =
+          localFrame / static_cast<long double>(compositionFps) *
+          static_cast<long double>(impl_->sourceSampleRate_);
+  }
 
   const int outChannels = std::max(1, impl_->sourceChannelCount_);
   AudioChannelLayout outLayout = AudioChannelLayout::Stereo;
@@ -907,22 +937,27 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   const qint64 startSample = static_cast<qint64>(std::floor(samplePosition));
 
   // リサンプリング結果キャッシュを確認（チャンネル数も一致するか検証）
+  // Time-remapped output is not linear in startSample, so bypass the cache.
   auto& rc = impl_->resampledCache_;
-  if (rc.startSample == startSample && rc.sampleRate == sampleRate &&
-      rc.volume == impl_->volume_ && rc.pan == impl_->pan_ &&
-      rc.clipGainDb == impl_->clipGainDb_ &&
-      rc.fadeInSeconds == impl_->fadeInSeconds_ &&
-      rc.fadeOutSeconds == impl_->fadeOutSeconds_ &&
-      rc.deClickRevision == impl_->deClickRevision_ &&
-      rc.deClickThresholdDb == impl_->deClickThresholdDb_ &&
-      rc.deClickMaxClickSamples == impl_->deClickMaxClickSamples_ &&
-      rc.segment.channelCount() >= outChannels &&
-      rc.segment.frameCount() >= frameCount) {
-    for (int ch = 0; ch < outChannels; ++ch) {
-      std::copy_n(rc.segment.channelData[ch].data(), frameCount,
-                  outSegment.channelData[ch].data());
+  {
+    std::lock_guard<std::mutex> cacheLock(impl_->resampledCacheMutex_);
+    if (!useTimeRemap &&
+        rc.startSample == startSample && rc.sampleRate == sampleRate &&
+        rc.volume == impl_->volume_ && rc.pan == impl_->pan_ &&
+        rc.clipGainDb == impl_->clipGainDb_ &&
+        rc.fadeInSeconds == impl_->fadeInSeconds_ &&
+        rc.fadeOutSeconds == impl_->fadeOutSeconds_ &&
+        rc.deClickRevision == impl_->deClickRevision_ &&
+        rc.deClickThresholdDb == impl_->deClickThresholdDb_ &&
+        rc.deClickMaxClickSamples == impl_->deClickMaxClickSamples_ &&
+        rc.segment.channelCount() >= outChannels &&
+        rc.segment.frameCount() >= frameCount) {
+      for (int ch = 0; ch < outChannels; ++ch) {
+        std::copy_n(rc.segment.channelData[ch].data(), frameCount,
+                    outSegment.channelData[ch].data());
+      }
+      return true;
     }
-    return true;
   }
 
   const int srcChannels = impl_->sourceChannelCount_;
@@ -933,8 +968,14 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
 
   int producedFrames = 0;
   for (int i = 0; i < frameCount; ++i) {
-    const double srcPos = static_cast<double>(startSample) +
-        (static_cast<double>(i) * impl_->sourceSampleRate_) / sampleRate;
+    // Non-remap: constant-rate resample from the block start. Time-remap:
+    // each output frame maps through the remap curve (variable speed).
+    const double srcPos = useTimeRemap
+        ? static_cast<double>(getSourceFrameAtCompFrame(
+              start.framePosition() + i)) *
+              impl_->sourceSampleRate_ / compositionFps
+        : static_cast<double>(startSample) +
+              (static_cast<double>(i) * impl_->sourceSampleRate_) / sampleRate;
     const qint64 srcFrame0 = static_cast<qint64>(std::floor(srcPos));
     if (srcFrame0 < 0) continue;
     if (srcFrame0 >= sourceFrameCount) break;
@@ -1018,7 +1059,8 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     }
   }
 
-  if (producedFrames > 0) {
+  if (producedFrames > 0 && !useTimeRemap) {
+    std::lock_guard<std::mutex> cacheLock(impl_->resampledCacheMutex_);
     rc.startSample = startSample;
     rc.sampleRate = sampleRate;
     rc.volume = impl_->volume_;
