@@ -23184,9 +23184,17 @@ if (event->button() == Qt::LeftButton &&
 
 
 
-  if (event->button() == Qt::LeftButton && activeTool == ToolType::Pen &&
-
-      selectedLayer && comp && impl_->renderer_) {
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Pen) {
+    if (!selectedLayer || !comp || !impl_->renderer_) {
+      setInfoOverlayText(
+          QStringLiteral("Mask editing"),
+          QStringLiteral(
+              "Select a layer first, then click in the viewport to add mask "
+              "vertices."));
+      markRenderDirty();
+      event->accept();
+      return;
+    }
 
     if (event->modifiers().testFlag(Qt::ControlModifier) &&
         resetHoveredMaskTangent()) {
