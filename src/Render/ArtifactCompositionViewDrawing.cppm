@@ -1792,6 +1792,12 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       const ArtifactCore::ImageF32x4_RGBA& buffer = imageLayer->currentFrameBuffer();
       const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
       GPUTextureBindingRecord cachedBinding;
+      // Static file-backed images share the asset texture. Sequence frames
+      // bypass that path but are cached per resolved source frame so playback
+      // does not re-upload every frame (the manager evicts by budget/LRU).
+      const bool sequenceShareable =
+          gpuTextureCacheManager && imageLayer->isImageSequence() &&
+          imageLayer->sequenceCachedFrameIndex() >= 0;
       if (gpuTextureCacheManager && imageLayer->canShareSourceGpuTexture() &&
           imageLayer->sourceVersion() > 0) {
         const auto sourceAssetId = imageLayer->sourceAssetId();
@@ -1804,6 +1810,18 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                 .arg(imageLayer->sourceVersion())
                 .arg(imageLayer->inputColorSpace())
                 .arg(imageLayer->inputTransferFunction());
+        auto handle = gpuTextureCacheManager->findExisting(ownerId, cacheKey);
+        if (!handle.isValid()) {
+          handle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheKey, buffer);
+        }
+        cachedBinding = gpuTextureCacheManager->bindingRecord(handle);
+      } else if (sequenceShareable) {
+        const QString ownerId = layer->id().toString();
+        const QString cacheKey =
+            QStringLiteral("seq-f32:f%1|cs=%2|tf=%3")
+                .arg(imageLayer->sequenceCachedFrameIndex())
+                .arg(imageLayer->inputColorSpace(),
+                     imageLayer->inputTransferFunction());
         auto handle = gpuTextureCacheManager->findExisting(ownerId, cacheKey);
         if (!handle.isValid()) {
           handle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheKey, buffer);
