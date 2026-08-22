@@ -52,28 +52,46 @@ public:
         std::vector<AbstractProperty> props;
         AbstractProperty intensity;
         intensity.setName(QStringLiteral("Intensity"));
+        intensity.setDisplayLabel(QStringLiteral("Intensity"));
         intensity.setType(PropertyType::Float);
         intensity.setValue(intensity_);
+        intensity.setDefaultValue(1.0);
         intensity.setMinValue(QVariant(0.0));
         intensity.setMaxValue(QVariant(1000.0));
-        props.push_back(intensity);
+        intensity.setSoftRange(QVariant(0.0), QVariant(50.0));
+        intensity.setStep(0.1);
+        intensity.setTooltip(QStringLiteral("Light intensity multiplier for the IES profile."));
+        props.push_back(std::move(intensity));
+
         AbstractProperty temperature;
         temperature.setName(QStringLiteral("Temperature"));
+        temperature.setDisplayLabel(QStringLiteral("Color Temperature"));
         temperature.setType(PropertyType::Float);
         temperature.setValue(temperature_);
+        temperature.setDefaultValue(4000.0);
         temperature.setMinValue(QVariant(1000.0));
         temperature.setMaxValue(QVariant(40000.0));
-        props.push_back(temperature);
+        temperature.setSoftRange(QVariant(2000.0), QVariant(12000.0));
+        temperature.setStep(50.0);
+        temperature.setUnit(QStringLiteral("K"));
+        temperature.setTooltip(QStringLiteral("Correlated color temperature of the light in Kelvin."));
+        props.push_back(std::move(temperature));
+
         AbstractProperty useTemperature;
         useTemperature.setName(QStringLiteral("UseTemperature"));
+        useTemperature.setDisplayLabel(QStringLiteral("Use Temperature"));
         useTemperature.setType(PropertyType::Boolean);
         useTemperature.setValue(useTemperature_);
-        props.push_back(useTemperature);
+        useTemperature.setTooltip(QStringLiteral("Enable color temperature tinting instead of the raw IES profile color."));
+        props.push_back(std::move(useTemperature));
+
         AbstractProperty iesPath;
         iesPath.setName(QStringLiteral("IESPath"));
+        iesPath.setDisplayLabel(QStringLiteral("IES Profile"));
         iesPath.setType(PropertyType::String);
         iesPath.setValue(iesFilePath_);
-        props.push_back(iesPath);
+        iesPath.setTooltip(QStringLiteral("Path to the IES photometric data file describing the light distribution."));
+        props.push_back(std::move(iesPath));
         return props;
     }
 
