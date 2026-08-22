@@ -78,6 +78,7 @@ import Render.Queue.Manager;
 import Frame.Range;
 import Frame.Debug;
 import Core.Diagnostics.Trace;
+import Core.Diagnostics.Recorder;
 import Core.Diagnostics.ProjectDiagnostic;
 import Diagnostics.Logger;
 import Artifact.Project.Manager;
@@ -1893,6 +1894,22 @@ namespace Artifact
         virtual bool close(QString* errorMessage) = 0;
     };
 
+    static void recordEncodeFailure(const char* code,
+                                    const QString& message,
+                                    const QString& objectId = QString(),
+                                    const std::int64_t frameIndex = -1)
+    {
+        auto diagnostic = ArtifactCore::makeDiagnosticEvent(
+            ArtifactCore::CoreDiagnosticSeverity::Error,
+            code,
+            message.toStdString(),
+            "RenderEncoder",
+            code,
+            objectId.toStdString());
+        diagnostic.frameIndex = frameIndex;
+        ArtifactCore::DiagnosticRecorder::instance().record(std::move(diagnostic));
+    }
+
     class PipeFFmpegExeBackend final : public IVideoEncodeBackend {
     public:
         explicit PipeFFmpegExeBackend(bool preferHardware = false, bool preferVulkan = false)
@@ -1917,6 +1934,7 @@ namespace Artifact
                     *errorMessage = QStringLiteral("Hardware pipe encoding is only supported for H.264/H.265 jobs");
                 }
                 lastError_ = QStringLiteral("Unsupported hardware codec: %1").arg(codec);
+                recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                 return false;
             }
 
@@ -1958,6 +1976,7 @@ namespace Artifact
                         *errorMessage = QStringLiteral("ffmpeg.exe does not advertise %1").arg(hwEncoder);
                     }
                     lastError_ = QStringLiteral("Missing hardware encoder: %1").arg(hwEncoder);
+                    recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                     close(nullptr);
                     return false;
                 }
@@ -1971,6 +1990,7 @@ namespace Artifact
                 }
                 lastError_ = errorMessage ? *errorMessage
                                           : process_->errorString();
+                recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                 close(nullptr);
                 return false;
             }
@@ -2062,6 +2082,7 @@ namespace Artifact
                     .arg(processOutput);
                 if (errorMessage) *errorMessage = lastError_;
                 qWarning() << "[Encode][Pipe] finalize failed" << lastError_;
+                recordEncodeFailure("encode.finalize_failed", lastError_);
             } else {
                 qInfo() << "[Encode][Pipe] finalized"
                         << "exitCode=" << exitCode
@@ -2095,6 +2116,7 @@ namespace Artifact
                 : buildNativeVideoSettings(job);
             if (useGpuBackend_ && selectedEncoder.isEmpty()) {
                 lastError_ = errorMessage ? *errorMessage : QStringLiteral("No hardware encoder available");
+                recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                 return false;
             }
             if (!encoder_.open(job.outputPath, settings)) {
@@ -2109,6 +2131,7 @@ namespace Artifact
                            << settings.height
                            << "fps=" << settings.fps
                            << "error=" << lastError_;
+                recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                 return false;
             }
 
@@ -2145,6 +2168,7 @@ namespace Artifact
             if (!lastError_.isEmpty()) {
                 if (errorMessage) *errorMessage = lastError_;
                 qWarning() << "[Encode][Native] finalize failed" << lastError_;
+                recordEncodeFailure("encode.finalize_failed", lastError_);
                 return false;
             }
             qInfo() << "[Encode][Native] finalized";
@@ -4350,8 +4374,29 @@ namespace Artifact
                 const auto blendMode = ArtifactCore::toBlendMode(
                     layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL);
                 if (!SoftwareRender::qPainterSupportsBlendMode(blendMode)) {
-                    // QPainter が表現できないモードは float ブレンドエンジンへ迂回する
-                    if (SoftwareRender::blendSurface(canvas, surface, static_cast<float>(opacity), blendMode)) {
+                    // QPainter 非対応モードはレイヤーを透明一時キャンバスに描いてから
+                    // float ブレンドエンジンへ迂回する (SourceOver 潰れを回避)
+                    QImage blendedSurface(compW, compH, QImage::Format_RGBA8888);
+                    blendedSurface.fill(Qt::transparent);
+                    {
+                        QPainter surfacePainter(&blendedSurface);
+                        surfacePainter.setRenderHint(QPainter::Antialiasing, true);
+                        surfacePainter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+                        surfacePainter.setTransform(layer->getGlobalTransform(), true);
+                        surfacePainter.setOpacity(1.0);
+                        surfacePainter.drawImage(
+                            QRectF(0.0, 0.0, layerSize.width(), layerSize.height()),
+                            surface,
+                            QRectF(0.0, 0.0, surface.width(), surface.height()));
+                    }
+                    // 直接ピクセル編集の間は QPainter をキャンバスから離す
+                    painter.end();
+                    const bool blended =
+                        SoftwareRender::blendSurface(canvas, blendedSurface, static_cast<float>(opacity), blendMode);
+                    painter.begin(&canvas);
+                    painter.setRenderHint(QPainter::Antialiasing, true);
+                    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+                    if (blended) {
                         continue;
                     }
                 }
@@ -6844,6 +6889,14 @@ namespace Artifact
                     anyWorkerFailed.store(true, std::memory_order_relaxed);
                     QString reason = QStringLiteral("Farm completed with %1 failed frames").arg(r.failedFrames);
                     workerFailureReasons.push_back(reason);
+                    auto diagnostic = ArtifactCore::makeDiagnosticEvent(
+                        ArtifactCore::CoreDiagnosticSeverity::Error,
+                        "render.farm_failed",
+                        reason.toStdString(),
+                        "RenderQueue",
+                        "farmJob",
+                        farmJobId.toStdString());
+                    ArtifactCore::DiagnosticRecorder::instance().record(std::move(diagnostic));
                     farmLog.logError(QStringLiteral("master"),
                         QStringLiteral("Farm job failed: %1 errors").arg(r.failedFrames));
                     sessionLedger_.recordRenderFailed(jobIndex, reason);
@@ -7094,15 +7147,46 @@ namespace Artifact
                 }
                 const QString fp = outDir.filePath(
                     QStringLiteral("%1_%2.svg").arg(bn).arg(f, job.framePadding, 10, QLatin1Char('0')));
+
+                // Vector export: convert visible shape layers into core
+                // ShapeLayers and emit real path geometry via SvgFrameExporter
+                // instead of the previous black-rect placeholder.
+                std::vector<ArtifactCore::ShapeLayer> coreSvgLayers;
+                QString shapeLayersSvg;
+                if (compositionForRender) {
+                    for (const auto& layerPtr : compositionForRender->allLayerRef()) {
+                        const auto* shapeLayer = dynamic_cast<const ArtifactShapeLayer*>(layerPtr.get());
+                        if (!shapeLayer || !shapeLayer->isVisible() ||
+                            !shapeLayer->isActiveAt(ArtifactCore::FramePosition(f))) {
+                            continue;
+                        }
+                        coreSvgLayers.push_back(shapeLayer->toCoreShapeLayer());
+                        const auto& coreLayer = coreSvgLayers.back();
+                        if (!coreLayer.isVisible() || coreLayer.shapeCount() == 0) {
+                            continue;
+                        }
+                        const QTransform globalTransform = shapeLayer->getGlobalTransformAt(f);
+                        const QString layerSvg =
+                            ArtifactCore::SvgFrameExporter::exportLayerToSvg(coreLayer, globalTransform);
+                        if (!layerSvg.isEmpty()) {
+                            shapeLayersSvg += QStringLiteral("<!-- Layer: %1 -->\n")
+                                                  .arg(coreLayer.name().toHtmlEscaped());
+                            shapeLayersSvg += layerSvg;
+                        }
+                    }
+                }
+
                 QFile sf(fp);
                 if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
                     QTextStream so(&sf);
-                    so << QStringLiteral("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%2\">\n")
+                    so << QStringLiteral(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%2\""
+                        " viewBox=\"0 0 %1 %2\">\n")
                           .arg(job.resolutionWidth)
                           .arg(job.resolutionHeight);
-                    so << QStringLiteral("<rect width=\"100%\" height=\"100%\" fill=\"black\" />\n");
-                    so << QStringLiteral("<text x=\"50%\" y=\"50%\" fill=\"white\" text-anchor=\"middle\" dy=\"0.35em\">Fr %1</text>\n")
-                          .arg(f);
+                    so << QStringLiteral("<!-- Frame %1 -->\n").arg(f);
+                    so << shapeLayersSvg;
                     so << QStringLiteral("</svg>\n");
                     sf.close();
                 }
