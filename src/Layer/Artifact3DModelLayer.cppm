@@ -31,6 +31,7 @@ import MeshImporter;
 import Utils.String.UniString;
 import Material.Material;
 import Core.Parallel;
+import EnvironmentVariable.Expansion;
 
 namespace Artifact {
 
@@ -156,7 +157,13 @@ void Artifact3DLayer::loadFromFile() {
 }
 
 void Artifact3DLayer::loadFromFile(const QString &filePath) {
-  const QString normalizedInput = filePath.trimmed();
+  // テンプレート ($VAR 等) はメンバ保持し、ファイル IO のみ展開結果を使う。
+  const QString templatePath = filePath.trimmed();
+  QString normalizedInput = templatePath;
+  if (containsExpansionMarker(normalizedInput)) {
+      ExpansionContext expansionContext;
+      normalizedInput = expandTokens(normalizedInput, expansionContext);
+  }
   if (normalizedInput.isEmpty()) {
     qWarning() << "[Artifact3DLayer] Ignoring empty source path reload";
     return;
@@ -236,11 +243,12 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       }
     }
     impl_->renderMode_ = RenderMode::Solid;
-    const QFileInfo sourceInfo(filePath);
+    const QFileInfo sourceInfo(normalizedInput);
     const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
-        ? sourceInfo.absoluteFilePath()
-        : sourceInfo.canonicalFilePath();
-    impl_->sourcePath_ = normalizedSourcePath;
+        ? templatePath
+        : (sourceInfo.canonicalFilePath());
+    // テンプレートを保持する (展開済み canonical パスではなく)
+    impl_->sourcePath_ = containsExpansionMarker(templatePath) ? templatePath : normalizedSourcePath;
     setLayerName(sourceInfo.baseName());
     Q_EMIT changed();
     return;

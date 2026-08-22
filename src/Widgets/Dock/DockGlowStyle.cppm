@@ -7,16 +7,20 @@ module;
 #include <QRect>
 #include <QStyleOption>
 #include <wobjectimpl.h>
+#if defined(ARTIFACT_QADS_COMPAT)
 #include "DockWidget.h"
 #include "DockAreaWidget.h"
 #include "DockContainerWidget.h"
 #include "DockWidgetTab.h"
+#endif
 
 module Widgets.Dock.GlowStyle;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(DockGlowStyle)
+
+#if defined(ARTIFACT_QADS_COMPAT)
 
 class DockGlowStyle::Impl {
 public:
@@ -194,5 +198,68 @@ bool DockGlowStyle::isDockTabActive(const QWidget* widget) const {
 
     return tab->property("artifactCurrentTab").toBool();
 }
+
+#else
+
+class DockGlowStyle::Impl {
+public:
+    bool glowEnabled_ = false;
+    QColor glowColor_ = QColor(86, 156, 214);
+    int glowWidth_ = 1;
+    float glowIntensity_ = 0.58f;
+};
+
+DockGlowStyle::DockGlowStyle(QStyle* baseStyle)
+    : QProxyStyle(baseStyle), impl_(new Impl()) {}
+
+DockGlowStyle::~DockGlowStyle() {
+    delete impl_;
+}
+
+void DockGlowStyle::setGlowEnabled(bool enabled) {
+    if (impl_) impl_->glowEnabled_ = enabled;
+}
+
+void DockGlowStyle::setGlowColor(const QColor& color) {
+    if (impl_) impl_->glowColor_ = color;
+}
+
+void DockGlowStyle::setGlowWidth(int width) {
+    if (impl_) impl_->glowWidth_ = width;
+}
+
+void DockGlowStyle::setGlowIntensity(float intensity) {
+    if (impl_) impl_->glowIntensity_ = intensity;
+}
+
+void DockGlowStyle::drawControl(ControlElement element,
+                                const QStyleOption* option,
+                                QPainter* painter,
+                                const QWidget* widget) const {
+    QProxyStyle::drawControl(element, option, painter, widget);
+}
+
+void DockGlowStyle::drawPrimitive(PrimitiveElement element,
+                                  const QStyleOption* option,
+                                  QPainter* painter,
+                                  const QWidget* widget) const {
+    QProxyStyle::drawPrimitive(element, option, painter, widget);
+}
+
+void DockGlowStyle::drawComplexControl(ComplexControl control,
+                                       const QStyleOptionComplex* option,
+                                       QPainter* painter,
+                                       const QWidget* widget) const {
+    QProxyStyle::drawComplexControl(control, option, painter, widget);
+}
+
+void DockGlowStyle::drawDockWidgetGlow(const QStyleOption*, QPainter*,
+                                       const QWidget*) const {}
+void DockGlowStyle::drawDockTabGlow(const QStyleOption*, QPainter*,
+                                    const QWidget*) const {}
+bool DockGlowStyle::isDockWidgetActive(const QWidget*) const { return false; }
+bool DockGlowStyle::isDockTabActive(const QWidget*) const { return false; }
+
+#endif
 
 }

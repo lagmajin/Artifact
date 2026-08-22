@@ -53,6 +53,7 @@ import Asset.Manager;
 import Memory.SharedPtr;
 import Artifact.Color.OCIOManager;
 import Serialization.ProjectSerializer;
+import EnvironmentVariable;
 
 namespace Artifact
 {
@@ -404,6 +405,19 @@ namespace Artifact
     result.errorMessage = UniString("Input path is empty");
     qDebug() << "[Importer] Error: Input path is empty";
     return result;
+   }
+
+   // プロジェクト変数を env マネージャへ登録 ($PROJECT_DIR / $PROJECT_NAME /
+   // $PROJECT_FILE)。レイヤーのパステンプレート展開で使われる。
+   {
+    auto* envManager = ArtifactCore::EnvironmentVariableManager::instance();
+    const QFileInfo projectInfo(inputPath_);
+    envManager->setVariable(QStringLiteral("PROJECT_DIR"),
+                            projectInfo.absolutePath());
+    envManager->setVariable(QStringLiteral("PROJECT_NAME"),
+                            projectInfo.completeBaseName());
+    envManager->setVariable(QStringLiteral("PROJECT_FILE"),
+                            projectInfo.absoluteFilePath());
    }
 
    const QString extension = QFileInfo(inputPath_).suffix().toLower();

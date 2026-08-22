@@ -11,6 +11,8 @@
 
 module Artifact.Render.RamPreviewController;
 
+import Core.Diagnostics.Recorder;
+
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactRamPreviewController)
@@ -204,6 +206,14 @@ void ArtifactRamPreviewController::startBuild() {
             impl_->failedCount_++;
             fs.failReason = QString("Render returned false");
             impl_->lastError_ = QString("Frame %1: %2").arg(job.frame).arg(fs.failReason);
+            auto diagnostic = ArtifactCore::makeDiagnosticEvent(
+                ArtifactCore::CoreDiagnosticSeverity::Error,
+                "preview.frame_failed",
+                impl_->lastError_.toStdString(),
+                "RamPreview",
+                "renderFrame");
+            diagnostic.frameIndex = job.frame;
+            ArtifactCore::DiagnosticRecorder::instance().record(std::move(diagnostic));
             frameFailed(job.frame, fs.failReason);
         }
 

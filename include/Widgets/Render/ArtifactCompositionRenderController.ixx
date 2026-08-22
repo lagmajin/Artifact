@@ -380,6 +380,10 @@ void clearRigPoseSlots();
   bool toggleHoveredMaskLocked();
   bool duplicateHoveredMask();
   bool duplicateHoveredMaskForSelectedLayers();
+  bool rotateSelectedMaskVertices(float centerX, float centerY,
+                                  float angleDegrees);
+  bool scaleSelectedMaskVertices(float centerX, float centerY,
+                                 float scaleX, float scaleY);
   bool moveHoveredMask(int direction);
   bool moveHoveredMaskForSelectedLayers(int direction);
   bool copyHoveredMask();

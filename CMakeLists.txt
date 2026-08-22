@@ -2928,10 +2928,25 @@ target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 find_package(TBB REQUIRED)
 target_link_libraries(Artifact PRIVATE TBB::tbb)
 
-if(NOT TARGET ads::qtadvanceddocking-qt6)
-    find_package(qtadvanceddocking-qt6 REQUIRED)
+option(ARTIFACT_QADS_COMPAT_STYLE
+       "Compile QADS-specific dock glow styling for the compatibility backend"
+       OFF)
+if(ARTIFACT_QADS_COMPAT_STYLE)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_QADS_COMPAT=1)
 endif()
-target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
+
+option(ARTIFACT_QADS_COMPAT_BACKEND
+       "Build the legacy QADS compatibility adapter"
+       OFF)
+if(ARTIFACT_QADS_COMPAT_STYLE OR ARTIFACT_QADS_COMPAT_BACKEND)
+    if(NOT TARGET ads::qtadvanceddocking-qt6)
+        find_package(qtadvanceddocking-qt6 REQUIRED)
+    endif()
+    target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
+endif()
+if(ARTIFACT_QADS_COMPAT_BACKEND)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_QADS_COMPAT_BACKEND=1)
+endif()
 
 find_package(glm CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE glm::glm)

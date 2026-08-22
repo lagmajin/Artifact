@@ -25,7 +25,6 @@ enum class DockArea {
 };
 
 enum class DockBackendKind {
-  QadsAdapter,
   Native,
 };
 
@@ -36,14 +35,13 @@ struct DockBackendCapabilities {
 };
 
 inline QString dockBackendKindToString(DockBackendKind kind) {
-  return kind == DockBackendKind::Native ? QStringLiteral("native")
-                                         : QStringLiteral("qads");
+  static_cast<void>(kind);
+  return QStringLiteral("native");
 }
 
 inline DockBackendKind dockBackendKindFromString(const QString &value) {
-  return value.compare(QStringLiteral("native"), Qt::CaseInsensitive) == 0
-             ? DockBackendKind::Native
-             : DockBackendKind::QadsAdapter;
+  static_cast<void>(value);
+  return DockBackendKind::Native;
 }
 
 struct DockLayoutEntry {

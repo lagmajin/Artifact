@@ -8,12 +8,14 @@ module;
 #include <windows.h>
 #undef MessageBox
 #endif
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 #include <DockAreaWidget.h>
 #include <DockManager.h>
 #include <DockOverlay.h>
 #include <DockWidget.h>
 #include <DockWidgetTab.h>
 #include <FloatingDockContainer.h>
+#endif
 #include <QAbstractScrollArea>
 #include <QApplication>
 #include <QByteArray>
@@ -98,8 +100,9 @@ import Command.Palette;
 
 namespace Artifact {
 
-class ArtifactDockManager;
-void syncTrackedDockState(ArtifactDockManager *backend,
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+class ArtifactQadsDockAdapter;
+void syncTrackedDockState(ArtifactQadsDockAdapter *backend,
                           ads::CDockWidget *dock);
 
 using namespace ads;
@@ -114,6 +117,7 @@ static DockWidgetArea toAdsDockArea(DockArea area) {
   }
   return CenterDockWidgetArea;
 }
+#endif
 
 #if defined(_WIN32)
 using DwmSetWindowAttributeFn = HRESULT(WINAPI *)(HWND, DWORD, LPCVOID, DWORD);
@@ -394,6 +398,7 @@ void restoreInheritedUpdates(QWidget *widget) {
   }
 }
 
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 void enableDockDropPreview(QObject *root);
 
 void prepareDockDropOverlayWindow(QWidget *widget) {
@@ -436,6 +441,7 @@ void prepareDockDropOverlays(ads::CDockManager *dockManager) {
     }
   });
 }
+#endif
 
 void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   if (!window) {
@@ -510,6 +516,7 @@ void refreshFloatingWidgetTree(QWidget *widget) {
   widget->update();
 }
 
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 void enableDockDropPreview(QObject *root) {
   if (!root) {
     return;
@@ -576,6 +583,7 @@ void scheduleFloatingRefresh(ads::CFloatingDockContainer *floatingWidget) {
     });
   });
 }
+#endif
 
 void pushDockLayoutSnapshot(ArtifactMainWindow *window,
                             const QByteArray &beforeState,
@@ -600,11 +608,12 @@ void pushDockLayoutSnapshot(ArtifactMainWindow *window,
   }
 }
 
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
                                   QObject *eventFilterOwner);
 
 void wireDockWidgetSignals(ads::CDockWidget *dock, QObject *owner,
-                           ArtifactDockManager *backend = nullptr) {
+                           ArtifactQadsDockAdapter *backend = nullptr) {
   if (!dock || !owner ||
       dock->property("artifactFloatingHooksInstalled").toBool()) {
     return;
@@ -661,17 +670,19 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
   floatingWidget->update();
   scheduleFloatingRefresh(floatingWidget);
 }
+#endif
 } // namespace
 
 W_OBJECT_IMPL(ArtifactMainWindow)
 
-// Backend seam for the migration away from QADS.  Callers express layout
-// intent with Artifact::DockArea; only this adapter knows the QADS area enum.
-class ArtifactDockManager {
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+// Temporary QADS compatibility adapter. Callers express layout intent with
+// Artifact::DockArea; only this adapter knows the QADS area enum.
+class ArtifactQadsDockAdapter {
 public:
-  ArtifactDockManager() = default;
+  ArtifactQadsDockAdapter() = default;
 
-  DockBackendKind backendKind() const { return DockBackendKind::QadsAdapter; }
+  DockBackendKind backendKind() const { return DockBackendKind::Native; }
 
   DockBackendCapabilities capabilities() const {
     return DockBackendCapabilities{true, true, true};
@@ -687,10 +698,6 @@ public:
   CDockManager *manager() const { return manager_; }
 
   QList<CDockWidget *> &dockWidgets() { return dockWidgets_; }
-
-  QList<DockLayoutEntry> layoutEntries() const {
-    return layoutRegistry_.values();
-  }
 
   void syncDockState() {
     QHash<CDockAreaWidget *, QStringList> areaDockIds;
@@ -839,13 +846,13 @@ public:
     }
     const QString dockId = dock->objectName().trimmed();
     if (dockId.isEmpty()) {
-      qWarning() << "[ArtifactDockManager] refusing dock without objectName"
+      qWarning() << "[ArtifactQadsDockAdapter] refusing dock without objectName"
                  << dock;
       return;
     }
     for (auto it = layoutEntries_.cbegin(); it != layoutEntries_.cend(); ++it) {
       if (it.key() != dock && it.value().dockId == dockId) {
-        qWarning() << "[ArtifactDockManager] refusing duplicate dock ID"
+        qWarning() << "[ArtifactQadsDockAdapter] refusing duplicate dock ID"
                    << dockId;
         return;
       }
@@ -1024,7 +1031,7 @@ private:
   DockLayoutRegistry layoutRegistry_;
 };
 
-void syncTrackedDockState(ArtifactDockManager *backend,
+void syncTrackedDockState(ArtifactQadsDockAdapter *backend,
                           ads::CDockWidget *dock) {
   if (backend) {
     Q_UNUSED(dock);
@@ -1034,14 +1041,17 @@ void syncTrackedDockState(ArtifactDockManager *backend,
 
 class ArtifactMainWindow::Impl {
 public:
-  Impl() : dockBackend(new ArtifactDockManager()),
-           dockWidgets(dockBackend->dockWidgets()),
-           nativeDockMvpEnabled(qEnvironmentVariableIsSet(
-               "ARTIFACT_NATIVE_DOCK_MVP")) {}
+  Impl() = default;
 
-  ~Impl() { delete dockBackend; }
+  ~Impl() {
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+    delete dockBackend;
+#endif
+  }
 
-  ArtifactDockManager *dockBackend = nullptr;
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ArtifactQadsDockAdapter *dockBackend = nullptr;
+#endif
   DockStyleManager *dockStyleManager = nullptr;
   ArtifactToolBar *toolBar = nullptr;
   ArtifactToolOptionsBar *toolOptionsBar = nullptr;
@@ -1051,23 +1061,34 @@ public:
   ArtifactMenuBar *menuBar = nullptr;
   QStatusBar *statusBar = nullptr;
   QWidget *centralWidgetHost = nullptr;
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
+#endif
   QVBoxLayout *centralWorkspaceLayout = nullptr;
   QWidget *centralWorkspaceWidget = nullptr;
   QString centralWorkspaceTitle;
   QByteArray defaultDockManagerState;
   NativeDockSurface *nativeDockSurface = nullptr;
-  bool nativeDockMvpEnabled = false;
-  QList<CDockWidget *> &dockWidgets;
+  QHash<QString, QPointer<QWidget>> nativeDockWidgets;
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  QList<CDockWidget *> dockWidgets;
+#endif
   WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   bool immersiveMode_ = false;
   Qt::WindowStates immersivePreviousWindowState_ = Qt::WindowNoState;
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   QHash<CDockWidget *, bool> immersiveDockVisibility_;
   QPointer<CDockWidget> immersiveTargetDock_;
+#endif
+  QHash<QString, bool> nativeImmersiveDockVisibility_;
+  QString nativeImmersiveTargetDock_;
   bool focusMode_ = false;
   QHash<QWidget *, bool> focusChromeVisibility_;
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   QHash<CDockWidget *, bool> focusDockVisibility_;
+#endif
+  QHash<QString, bool> nativeFocusDockVisibility_;
   ArtifactWelcomeWidget* welcomeWidget = nullptr;
   bool menuBarInitialized = false;
   bool initialLayoutApplied = false;
@@ -1077,12 +1098,29 @@ public:
   bool recordLayoutMutations = true;
   ArtifactAICloudWidget *aiCloudWidget_ = nullptr;
   QLabel *previewResolutionLabel = nullptr;
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   QHash<CDockWidget *, std::function<QWidget *()>> lazyDockFactories;
+#endif
   QMetaObject::Connection currentTextLayerChangedConnection;
   QMetaObject::Connection currentShapeLayerChangedConnection;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
+  QString nativeDockIdForWidget(const QWidget *widget) const {
+    if (!widget) {
+      return {};
+    }
+    for (auto it = nativeDockWidgets.cbegin();
+         it != nativeDockWidgets.cend(); ++it) {
+      if (it.value() == widget ||
+          (it.value() && it.value()->isAncestorOf(widget))) {
+        return it.key();
+      }
+    }
+    return {};
+  }
+
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   bool createLazyDockWidgetNow(ArtifactMainWindow *owner, CDockWidget *dock,
                                const QString &reason) {
     if (!owner || !dock || dock->property("artifactLazyWidgetCreated").toBool()) {
@@ -1289,22 +1327,6 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->rootLayout = new QVBoxLayout(this);
   impl_->rootLayout->setContentsMargins(0, 0, 0, 0);
   impl_->rootLayout->setSpacing(0);
-  CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
-  // CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden,
-  // true);
-  CDockManager::setConfigFlag(CDockManager::FocusHighlighting, false);
-  CDockManager::setConfigFlag(CDockManager::TabCloseButtonIsToolButton, true);
-  CDockManager::setConfigFlag(CDockManager::AllTabsHaveCloseButton, true);
-  CDockManager::setConfigFlag(CDockManager::AlwaysShowTabs, true);
-  CDockManager::setConfigFlag(CDockManager::EqualSplitOnInsertion, true);
-  CDockManager::setConfigFlag(CDockManager::FloatingContainerHasWidgetTitle,
-                              true);
-  CDockManager::setConfigFlag(CDockManager::FloatingContainerHasWidgetIcon,
-                              true);
-  CDockManager::setAutoHideConfigFlags(CDockManager::DefaultAutoHideConfig);
-  CDockManager::setAutoHideConfigFlag(CDockManager::AutoHideButtonCheckable,
-                                      true);
-
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || impl_->menuBarInitialized)
       return;
@@ -1882,25 +1904,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->syncTextToolOptions(this);
   impl_->syncShapeToolOptions(this);
 
-  impl_->dockBackend->createManager(this);
-  impl_->rootLayout->addWidget(impl_->dockBackend->manager(), 1);
-  impl_->dockBackend->prepareOverlays();
-  QTimer::singleShot(0, this, [this]() {
-    if (impl_ && impl_->dockBackend->manager()) {
-      impl_->dockBackend->prepareOverlays();
-    }
-  });
-  impl_->dockStyleManager = new DockStyleManager(impl_->dockBackend->manager(), this);
   if (qApp) {
     qApp->installEventFilter(this);
   }
-  impl_->dockBackend->connectFloatingWidgetCreated(this, this);
-  // QADS tabs use their normal palette state; do not add a second focus frame.
-  impl_->dockStyleManager->setGlowEnabled(false);
-  impl_->dockStyleManager->setGlowColor(QColor(86, 156, 214));
-  impl_->dockStyleManager->setGlowWidth(1);
-  impl_->dockStyleManager->setGlowIntensity(0.58f);
-  // Dock styling now comes from the global theme and DockStyleManager.
   impl_->centralWidgetHost = new QWidget(this);
   impl_->centralWidgetHost->setObjectName(QStringLiteral("ArtifactCentralWidgetHost"));
   impl_->centralWidgetHost->setSizePolicy(QSizePolicy::Expanding,
@@ -1908,19 +1914,14 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->centralWorkspaceLayout = new QVBoxLayout(impl_->centralWidgetHost);
   impl_->centralWorkspaceLayout->setContentsMargins(0, 0, 0, 0);
   impl_->centralWorkspaceLayout->setSpacing(0);
-  if (impl_->nativeDockMvpEnabled) {
-    impl_->nativeDockSurface = new NativeDockSurface(impl_->centralWidgetHost);
-    impl_->nativeDockSurface->setObjectName(
-        QStringLiteral("ArtifactNativeDockMvpSurface"));
-    impl_->centralWorkspaceLayout->addWidget(impl_->nativeDockSurface);
+  impl_->nativeDockSurface = new NativeDockSurface(impl_->centralWidgetHost);
+  impl_->nativeDockSurface->setObjectName(
+      QStringLiteral("ArtifactNativeDockMvpSurface"));
+  impl_->centralWorkspaceLayout->addWidget(impl_->nativeDockSurface);
+  impl_->rootLayout->addWidget(impl_->centralWidgetHost, 1);
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
   }
-  auto *centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
-  centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
-  centralDock->setWidget(impl_->centralWidgetHost);
-  centralDock->setFeatures(ads::CDockWidget::NoDockWidgetFeatures);
-  impl_->dockBackend->setCentralWidget(centralDock);
-  impl_->primaryCenterDock = centralDock;
-  impl_->dockStyleManager->applyStyle();
 
   impl_->statusBar = new QStatusBar(this);
   impl_->rootLayout->addWidget(impl_->statusBar);
@@ -2064,18 +2065,13 @@ void ArtifactMainWindow::setCentralWorkspace(const QString &title,
   }
   impl_->centralWorkspaceTitle = title;
   impl_->centralWorkspaceWidget = widget;
-  if (impl_->primaryCenterDock) {
-    impl_->primaryCenterDock->setWindowTitle(title);
-    if (!impl_->dockWidgets.contains(impl_->primaryCenterDock)) {
-      impl_->dockWidgets.push_back(impl_->primaryCenterDock);
-      impl_->dockBackend->trackDock(impl_->primaryCenterDock, DockArea::Center);
-    }
-    wireDockWidgetSignals(impl_->primaryCenterDock, this, impl_->dockBackend);
-  }
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface) {
-    impl_->nativeDockSurface->addDockWidget(
+  if (impl_->nativeDockSurface) {
+    if (impl_->nativeDockSurface->addDockWidget(
         QStringLiteral("Composition Viewer"), title, widget,
-        DockArea::Center);
+        DockArea::Center)) {
+      impl_->nativeDockWidgets.insert(QStringLiteral("Composition Viewer"),
+                                      widget);
+    }
   } else {
     widget->setParent(impl_->centralWidgetHost);
     impl_->centralWorkspaceLayout->addWidget(widget);
@@ -2085,7 +2081,6 @@ void ArtifactMainWindow::setCentralWorkspace(const QString &title,
   if (impl_->dockStyleManager) {
     impl_->dockStyleManager->applyStyle();
   }
-  impl_->dockBackend->prepareOverlays();
   if (impl_->welcomeWidget) {
     impl_->welcomeWidget->raise();
   }
@@ -2136,35 +2131,11 @@ void ArtifactMainWindow::applyApplicationSettings() {
 void ArtifactMainWindow::addDockedWidget(const QString &title,
                                          DockArea area,
                                          QWidget *widget) {
-  if (!impl_ || !impl_->dockBackend->manager() || !widget)
+  if (!impl_ || !impl_->nativeDockSurface || !widget)
     return;
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
-      title == QStringLiteral("Inspector")) {
-    if (impl_->nativeDockSurface->addDockWidget(
-            QStringLiteral("Inspector"), title, widget, DockArea::Right)) {
-      return;
-    }
-  }
-  if (area == DockArea::Center && impl_->primaryCenterDock &&
-      !impl_->primaryCenterDockAssigned) {
-    setCentralWorkspace(title, widget);
-    if (title == "AI Cloud") {
-      impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
-    }
-    if (!impl_->startupLayoutFrozen) {
-      applyWorkspaceMode(this, impl_->workspaceMode_);
-    }
+  if (!impl_->nativeDockSurface->addDockWidget(title, title, widget, area))
     return;
-  }
-  auto *dock = new CDockWidget(title, this);
-  dock->setObjectName(title);
-  dock->setWidget(widget);
-  impl_->dockBackend->addDockWidget(area, dock);
-  impl_->dockWidgets.push_back(dock);
-  impl_->dockBackend->trackDock(dock, area);
-  wireDockWidgetSignals(dock, this, impl_->dockBackend);
-  impl_->dockBackend->prepareOverlays();
-  impl_->dockStyleManager->applyStyle();
+  impl_->nativeDockWidgets.insert(title, widget);
   if (title == "AI Cloud") {
     impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
   }
@@ -2183,80 +2154,49 @@ void ArtifactMainWindow::addDockedWidgetTabbed(const QString &title,
 void ArtifactMainWindow::addDockedWidgetTabbedWithId(
     const QString &title, const QString &dockId, DockArea area,
     QWidget *widget, const QString &tabGroupPrefix) {
-  if (!impl_ || !impl_->dockBackend->manager() || !widget)
+  if (!impl_ || !impl_->nativeDockSurface || !widget)
     return;
 
-  auto *dock = new CDockWidget(title, this);
-  dock->setObjectName(dockId.isEmpty() ? title : dockId);
-  const bool compositionScopedDock =
-      dock->objectName().startsWith(QStringLiteral("timeline::")) ||
-      dock->objectName().startsWith(QStringLiteral("dopesheet::"));
-  dock->setWidget(widget);
-  if (auto *aiWidget = qobject_cast<ArtifactAICloudWidget *>(widget)) {
-    impl_->aiCloudWidget_ = aiWidget;
-  }
-
-  ads::CDockAreaWidget *targetArea = nullptr;
-  if (!tabGroupPrefix.isEmpty()) {
-    for (auto it = impl_->dockWidgets.crbegin();
-         it != impl_->dockWidgets.crend(); ++it) {
-      auto *existingDock = *it;
-      if (!existingDock)
-        continue;
-      const QString objectName = existingDock->objectName();
-      const QString windowTitle = existingDock->windowTitle();
-      if ((objectName == tabGroupPrefix || windowTitle == tabGroupPrefix) &&
-          existingDock->dockAreaWidget()) {
-        targetArea = existingDock->dockAreaWidget();
-        break;
-      }
+  const QString nativeDockId = dockId.isEmpty() ? title : dockId;
+  if (!impl_->nativeDockSurface->containsDock(nativeDockId)) {
+    bool added = false;
+    if (!tabGroupPrefix.isEmpty() &&
+        impl_->nativeDockSurface->containsDockPrefix(tabGroupPrefix)) {
+      const QString targetDockId =
+          impl_->nativeDockSurface->dockIdWithPrefix(tabGroupPrefix);
+      added = impl_->nativeDockSurface->addDockWidgetToTab(
+          nativeDockId, title, widget, targetDockId);
     }
-  }
-
-  if (!targetArea && !tabGroupPrefix.isEmpty()) {
-    for (auto it = impl_->dockWidgets.crbegin();
-         it != impl_->dockWidgets.crend(); ++it) {
-      auto *existingDock = *it;
-      if (!existingDock)
-        continue;
-      const QString objectName = existingDock->objectName();
-      const QString windowTitle = existingDock->windowTitle();
-      if ((objectName.startsWith(tabGroupPrefix) ||
-           windowTitle.startsWith(tabGroupPrefix)) &&
-          existingDock->dockAreaWidget()) {
-        targetArea = existingDock->dockAreaWidget();
-        break;
-      }
+    if (!added) {
+      added = impl_->nativeDockSurface->addDockWidget(
+          nativeDockId, title, widget, area);
     }
+    if (!added) {
+      return;
+    }
+    impl_->nativeDockWidgets.insert(nativeDockId, widget);
+    if (!impl_->startupLayoutFrozen) {
+      applyWorkspaceMode(this, impl_->workspaceMode_);
+    }
+    return;
   }
-
-  if (targetArea) {
-    impl_->dockBackend->addDockWidgetToArea(dock, targetArea);
-  } else {
-    impl_->dockBackend->addDockWidget(area, dock);
-  }
-
-  impl_->dockWidgets.push_back(dock);
-  impl_->dockBackend->trackDock(dock, area, tabGroupPrefix);
-  if (!impl_->startupLayoutFrozen) {
-    dock->toggleView(true);
-    dock->setAsCurrentTab();
-    dock->raise();
-  }
-  wireDockWidgetSignals(dock, this, impl_->dockBackend);
-  impl_->dockBackend->prepareOverlays();
-  impl_->dockStyleManager->applyStyle();
-  if (!impl_->startupLayoutFrozen && !compositionScopedDock) {
-    applyWorkspaceMode(this, impl_->workspaceMode_);
-  }
+  return;
 }
 
 void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
     const QString &title, const QString &dockId, DockArea area,
     std::function<QWidget *()> factory, const QString &tabGroupPrefix) {
-  if (!impl_ || !impl_->dockBackend->manager() || !factory) {
+  if (!impl_ || !factory) {
     return;
   }
+  if (impl_->nativeDockSurface) {
+    if (auto *widget = factory()) {
+      addDockedWidgetTabbedWithId(title, dockId, area, widget,
+                                  tabGroupPrefix);
+    }
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
@@ -2344,60 +2284,55 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
         createNow();
   });
 
-  impl_->dockStyleManager->applyStyle();
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
+  }
   if (!impl_->startupLayoutFrozen && !compositionScopedDock) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
   }
+#else
+  Q_UNUSED(title);
+  Q_UNUSED(dockId);
+  Q_UNUSED(area);
+  Q_UNUSED(tabGroupPrefix);
+#endif
 }
 
 void ArtifactMainWindow::addDockedWidgetFloating(
     const QString &title, const QString &dockId, QWidget *widget,
     const QRect &floatingGeometry) {
-  if (!impl_ || !impl_->dockBackend->manager() || !widget)
+  if (!impl_ || !impl_->nativeDockSurface || !widget)
     return;
 
-  qInfo() << "[MainWindow][Floating] addDockedWidgetFloating"
-          << "title=" << title << "dockId=" << dockId
-          << "widget=" << widget
-          << "geometry=" << floatingGeometry;
-
-  auto *dock = new CDockWidget(title, this);
-  dock->setObjectName(dockId.isEmpty() ? title : dockId);
-  dock->setWidget(widget, CDockWidget::ForceNoScrollArea);
+  const QString nativeDockId = dockId.isEmpty() ? title : dockId;
+  if (!impl_->nativeDockSurface->addFloatingDockWidget(
+          nativeDockId, title, widget, floatingGeometry,
+          !impl_->startupLayoutFrozen)) {
+    return;
+  }
+  impl_->nativeDockWidgets.insert(nativeDockId, widget);
   if (auto *aiWidget = qobject_cast<ArtifactAICloudWidget *>(widget)) {
     impl_->aiCloudWidget_ = aiWidget;
   }
-
-  auto *container =
-      impl_->dockBackend->addFloatingDockWidget(dock, floatingGeometry);
-  if (container) {
-    qInfo() << "[MainWindow][Floating] dock container created"
-            << "dock=" << dock << "container=" << container
-            << "visible=" << container->isVisible()
-            << "geometry=" << container->geometry();
-  }
-
-  impl_->dockWidgets.push_back(dock);
-  impl_->dockBackend->trackDock(dock, DockArea::Center, {}, true);
-  if (!impl_->startupLayoutFrozen) {
-    impl_->dockBackend->setVisible(dock, true);
-  } else {
-    impl_->dockBackend->setVisible(dock, false);
-  }
-  wireDockWidgetSignals(dock, this, impl_->dockBackend);
-  impl_->dockBackend->prepareOverlays();
-  impl_->dockStyleManager->applyStyle();
   if (!impl_->startupLayoutFrozen) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
   }
 }
+#endif
 
 void ArtifactMainWindow::addLazyDockedWidgetFloating(
     const QString &title, const QString &dockId,
     std::function<QWidget *()> factory, const QRect &floatingGeometry) {
-  if (!impl_ || !impl_->dockBackend->manager() || !factory) {
+  if (!impl_ || !factory) {
     return;
   }
+  if (impl_->nativeDockSurface) {
+    if (auto *widget = factory()) {
+      addDockedWidgetFloating(title, dockId, widget, floatingGeometry);
+    }
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
@@ -2448,27 +2383,39 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
   } else {
     dock->toggleView(false);
   }
-  impl_->dockStyleManager->applyStyle();
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
+  }
   if (!impl_->startupLayoutFrozen) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
   }
+#else
+  Q_UNUSED(title);
+  Q_UNUSED(dockId);
+  Q_UNUSED(floatingGeometry);
+#endif
 }
 
 void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
                                             const QString &tabGroupPrefix) {
-  if (!impl_ || !impl_->dockBackend->manager() || title.isEmpty() ||
+  if (!impl_ || !impl_->nativeDockSurface || title.isEmpty() ||
       tabGroupPrefix.isEmpty())
     return;
 
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
-      impl_->nativeDockSurface->containsDock(title) &&
-      impl_->nativeDockSurface->containsDock(tabGroupPrefix)) {
-    impl_->nativeDockSurface->moveDockWidgetToTab(title, tabGroupPrefix);
+  if (!impl_->nativeDockSurface->containsDock(title) ||
+      !impl_->nativeDockSurface->containsDock(tabGroupPrefix)) {
     return;
   }
-
   const QByteArray beforeState = saveDockManagerState();
+  if (!impl_->nativeDockSurface->moveDockWidgetToTab(title, tabGroupPrefix)) {
+    return;
+  }
+  pushDockLayoutSnapshot(this, beforeState,
+                         QStringLiteral("Move Dock: %1").arg(title));
+  return;
 
+
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   CDockWidget *dockToMove = nullptr;
   ads::CDockAreaWidget *targetArea = nullptr;
 
@@ -2515,16 +2462,19 @@ void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
 
   impl_->dockBackend->addDockWidgetToTab(dockToMove, targetArea);
   dockToMove->toggleView(true);
-  impl_->dockStyleManager->applyStyle();
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
+  }
   pushDockLayoutSnapshot(this, beforeState,
                          QStringLiteral("Move Dock: %1").arg(title));
+#endif
 }
 
 void ArtifactMainWindow::setDockVisible(const QString &title,
                                         const bool visible) {
   if (!impl_)
     return;
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+  if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
     impl_->nativeDockSurface->setDockVisible(title, visible);
     if (visible) {
@@ -2532,6 +2482,10 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
     }
     return;
   }
+  if (impl_->nativeDockSurface) {
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   if (title == impl_->centralWorkspaceTitle &&
       impl_->centralWorkspaceWidget) {
     // The central workspace is structural, not a toggleable tool panel.
@@ -2607,17 +2561,22 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
       return;
     }
   }
+#endif
 }
 
 void ArtifactMainWindow::setDockPinned(const QString &title, bool pinned) {
   if (!impl_ || title.isEmpty()) {
     return;
   }
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+  if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
     impl_->nativeDockSurface->setDockPinned(title, pinned);
     return;
   }
+  if (impl_->nativeDockSurface) {
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (!dock || (dock->objectName() != title && dock->windowTitle() != title)) {
       continue;
@@ -2628,32 +2587,42 @@ void ArtifactMainWindow::setDockPinned(const QString &title, bool pinned) {
     impl_->dockBackend->setPinned(dock, pinned);
     return;
   }
+#endif
 }
 
 bool ArtifactMainWindow::isDockPinned(const QString &title) const {
   if (!impl_ || title.isEmpty()) {
     return false;
   }
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+  if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
     return impl_->nativeDockSurface->dockPinned(title);
   }
+  if (impl_->nativeDockSurface) {
+    return false;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (dock && (dock->objectName() == title || dock->windowTitle() == title)) {
       return dock->property("artifactDockPinned").toBool();
     }
   }
+#endif
   return false;
 }
 
 void ArtifactMainWindow::activateDock(const QString &title) {
   if (!impl_)
     return;
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+  if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
     impl_->nativeDockSurface->activateDock(title);
     return;
   }
+  if (impl_->nativeDockSurface) {
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   if (title == impl_->centralWorkspaceTitle &&
       impl_->centralWorkspaceWidget) {
     impl_->centralWorkspaceWidget->show();
@@ -2684,10 +2653,13 @@ void ArtifactMainWindow::activateDock(const QString &title) {
         }
       }
       impl_->dockBackend->activate(dock);
-      impl_->dockStyleManager->applyStyle();
+      if (impl_->dockStyleManager) {
+        impl_->dockStyleManager->applyStyle();
+      }
       return;
     }
   }
+#endif
 }
 
 bool ArtifactMainWindow::closeDock(const QString &title) {
@@ -2696,10 +2668,20 @@ bool ArtifactMainWindow::closeDock(const QString &title) {
   if (title == impl_->centralWorkspaceTitle) {
     return false;
   }
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+  if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
-    return impl_->nativeDockSurface->setDockVisible(title, false);
+    const QByteArray beforeState = saveDockManagerState();
+    const bool closed = impl_->nativeDockSurface->setDockVisible(title, false);
+    if (closed) {
+      pushDockLayoutSnapshot(this, beforeState,
+                             QStringLiteral("Close Dock: %1").arg(title));
+    }
+    return closed;
   }
+  if (impl_->nativeDockSurface) {
+    return false;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
 
   const QByteArray beforeState = saveDockManagerState();
   for (auto *dock : impl_->dockWidgets) {
@@ -2707,22 +2689,40 @@ bool ArtifactMainWindow::closeDock(const QString &title) {
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
       impl_->dockBackend->close(dock);
-      impl_->dockStyleManager->applyStyle();
+      if (impl_->dockStyleManager) {
+        impl_->dockStyleManager->applyStyle();
+      }
       pushDockLayoutSnapshot(this, beforeState,
                              QStringLiteral("Close Dock: %1").arg(title));
       return true;
     }
   }
   return false;
+#endif
 }
 
 void ArtifactMainWindow::closeAllDocks() {
   if (!impl_)
     return;
+  if (impl_->nativeDockSurface) {
+    const QByteArray beforeState = saveDockManagerState();
+    for (auto it = impl_->nativeDockWidgets.cbegin();
+         it != impl_->nativeDockWidgets.cend(); ++it) {
+      const auto &dockId = it.key();
+      if (dockId != QStringLiteral("Composition Viewer")) {
+        impl_->nativeDockSurface->setDockVisible(dockId, false);
+      }
+    }
+    pushDockLayoutSnapshot(this, beforeState,
+                           QStringLiteral("Close All Docks"));
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (dock && dock != impl_->primaryCenterDock)
       impl_->dockBackend->close(dock);
   }
+#endif
 }
 
 void ArtifactMainWindow::setDockImmersive(QWidget *widget, bool immersive) {
@@ -2730,6 +2730,61 @@ void ArtifactMainWindow::setDockImmersive(QWidget *widget, bool immersive) {
     return;
   }
 
+  if (impl_->nativeDockSurface) {
+    const QString targetId = impl_->nativeDockIdForWidget(widget);
+    if (targetId.isEmpty()) {
+      if (!immersive && impl_->immersiveMode_) {
+        for (auto it = impl_->nativeImmersiveDockVisibility_.cbegin();
+             it != impl_->nativeImmersiveDockVisibility_.cend(); ++it) {
+          impl_->nativeDockSurface->setDockVisible(it.key(), it.value());
+        }
+        impl_->nativeImmersiveDockVisibility_.clear();
+        impl_->nativeImmersiveTargetDock_.clear();
+        impl_->immersiveMode_ = false;
+        showNormal();
+      }
+      return;
+    }
+    if (!immersive) {
+      if (impl_->immersiveMode_) {
+        for (auto it = impl_->nativeImmersiveDockVisibility_.cbegin();
+             it != impl_->nativeImmersiveDockVisibility_.cend(); ++it) {
+          impl_->nativeDockSurface->setDockVisible(it.key(), it.value());
+        }
+        impl_->nativeImmersiveDockVisibility_.clear();
+        impl_->nativeImmersiveTargetDock_.clear();
+        impl_->immersiveMode_ = false;
+        showNormal();
+      }
+      return;
+    }
+    if (impl_->immersiveMode_ &&
+        impl_->nativeImmersiveTargetDock_ == targetId) {
+      return;
+    }
+    if (impl_->immersiveMode_) {
+      for (auto it = impl_->nativeImmersiveDockVisibility_.cbegin();
+           it != impl_->nativeImmersiveDockVisibility_.cend(); ++it) {
+        impl_->nativeDockSurface->setDockVisible(it.key(), it.value());
+      }
+      impl_->nativeImmersiveDockVisibility_.clear();
+    }
+    impl_->nativeImmersiveTargetDock_ = targetId;
+    impl_->nativeImmersiveDockVisibility_.clear();
+    for (auto it = impl_->nativeDockWidgets.cbegin();
+         it != impl_->nativeDockWidgets.cend(); ++it) {
+      const auto &dockId = it.key();
+      const bool visible = impl_->nativeDockSurface->dockVisible(dockId);
+      impl_->nativeImmersiveDockVisibility_.insert(dockId, visible);
+      impl_->nativeDockSurface->setDockVisible(dockId, dockId == targetId);
+    }
+    impl_->nativeDockSurface->activateDock(targetId);
+    impl_->immersiveMode_ = true;
+    showFullScreen();
+    return;
+  }
+
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   auto findDockForWidget = [this](QWidget *target) -> CDockWidget * {
     if (!impl_ || !target) {
       return nullptr;
@@ -2816,6 +2871,7 @@ void ArtifactMainWindow::setDockImmersive(QWidget *widget, bool immersive) {
   if (impl_->immersiveMode_) {
     restoreVisibility();
   }
+#endif
 }
 
 void ArtifactMainWindow::showStatusMessage(const QString &message,
@@ -2827,10 +2883,22 @@ void ArtifactMainWindow::togglePanelsVisible(bool visible) {
   if (!impl_)
     return;
   qDebug() << "[MainWindow] togglePanelsVisible visible=" << visible;
+  if (impl_->nativeDockSurface) {
+    for (auto it = impl_->nativeDockWidgets.cbegin();
+         it != impl_->nativeDockWidgets.cend(); ++it) {
+      const auto &dockId = it.key();
+      if (dockId != QStringLiteral("Composition Viewer")) {
+        impl_->nativeDockSurface->setDockVisible(dockId, visible);
+      }
+    }
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (dock && dock != impl_->primaryCenterDock)
       dock->setVisible(visible);
   }
+#endif
 }
 
 void ArtifactMainWindow::enterFocusMode() {
@@ -2854,6 +2922,26 @@ void ArtifactMainWindow::enterFocusMode() {
   hideChrome(impl_->toolOptionsHost);
   hideChrome(impl_->statusBar);
 
+  if (impl_->nativeDockSurface) {
+    impl_->nativeFocusDockVisibility_.clear();
+    for (auto it = impl_->nativeDockWidgets.cbegin();
+         it != impl_->nativeDockWidgets.cend(); ++it) {
+      const auto &dockId = it.key();
+      const bool isVisible = impl_->nativeDockSurface->dockVisible(dockId);
+      impl_->nativeFocusDockVisibility_.insert(dockId, isVisible);
+      if (dockId != QStringLiteral("Composition Viewer")) {
+        impl_->nativeDockSurface->setDockVisible(dockId, false);
+      }
+    }
+    if (impl_->centralWorkspaceWidget) {
+      impl_->centralWorkspaceWidget->show();
+    }
+    showStatusMessage(QStringLiteral("Focus mode enabled — Ctrl+Shift+F to restore"),
+                      2500);
+    return;
+  }
+
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (!dock || dock == impl_->primaryCenterDock) {
       continue;
@@ -2866,6 +2954,7 @@ void ArtifactMainWindow::enterFocusMode() {
   if (impl_->primaryCenterDock) {
     impl_->primaryCenterDock->toggleView(true);
   }
+#endif
   if (impl_->centralWorkspaceWidget) {
     impl_->centralWorkspaceWidget->show();
   }
@@ -2879,6 +2968,23 @@ void ArtifactMainWindow::exitFocusMode() {
   }
 
   impl_->focusMode_ = false;
+  if (impl_->nativeDockSurface) {
+    for (auto it = impl_->nativeFocusDockVisibility_.cbegin();
+         it != impl_->nativeFocusDockVisibility_.cend(); ++it) {
+      impl_->nativeDockSurface->setDockVisible(it.key(), it.value());
+    }
+    impl_->nativeFocusDockVisibility_.clear();
+    for (auto it = impl_->focusChromeVisibility_.cbegin();
+         it != impl_->focusChromeVisibility_.cend(); ++it) {
+      if (it.key()) {
+        it.key()->setVisible(it.value());
+      }
+    }
+    impl_->focusChromeVisibility_.clear();
+    showStatusMessage(QStringLiteral("Focus mode disabled"), 1500);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto it = impl_->focusDockVisibility_.cbegin();
        it != impl_->focusDockVisibility_.cend(); ++it) {
     if (it.key()) {
@@ -2891,6 +2997,7 @@ void ArtifactMainWindow::exitFocusMode() {
       it.key()->setVisible(it.value());
     }
   }
+#endif
   impl_->focusDockVisibility_.clear();
   impl_->focusChromeVisibility_.clear();
   showStatusMessage(QStringLiteral("Focus mode disabled"), 1500);
@@ -2980,8 +3087,10 @@ QStringList ArtifactMainWindow::dockTitles() const {
       titles.append(title.isEmpty() ? name : title);
     }
   }
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface) {
-    for (const auto &dockId : impl_->nativeDockSurface->dockIds()) {
+  if (impl_->nativeDockSurface) {
+    for (auto it = impl_->nativeDockWidgets.cbegin();
+         it != impl_->nativeDockWidgets.cend(); ++it) {
+      const auto &dockId = it.key();
       const QString title = impl_->nativeDockSurface->dockTitle(dockId);
       if (!title.isEmpty()) {
         titles.append(title);
@@ -2999,9 +3108,13 @@ bool ArtifactMainWindow::isDockVisible(const QString &title) const {
       impl_->centralWorkspaceWidget) {
     return impl_->centralWorkspaceWidget->isVisible();
   }
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
-      impl_->nativeDockSurface->containsDock(title)) {
-    return impl_->nativeDockSurface->dockVisible(title);
+  if (impl_->nativeDockSurface) {
+    const QString resolvedId = impl_->nativeDockSurface->resolveDockId(title);
+    if (!resolvedId.isEmpty()) {
+      const auto widget = impl_->nativeDockWidgets.value(resolvedId);
+      return widget && impl_->nativeDockSurface->dockVisible(resolvedId);
+    }
+    return false;
   }
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
@@ -3018,7 +3131,7 @@ bool ArtifactMainWindow::isDockVisible(const QString &title) const {
 bool ArtifactMainWindow::hasDock(const QString &title) const {
   if (!impl_)
     return false;
-  if (impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
+  if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
     return true;
   }
@@ -3094,7 +3207,27 @@ void ArtifactMainWindow::setStatusBar(QStatusBar *statusBar) {
 
 void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
                                               const QList<int> &sizes) {
-  if (!impl_ || !impl_->dockBackend->manager())
+  if (!impl_)
+    return;
+
+  if (impl_->nativeDockSurface &&
+      impl_->nativeDockSurface->containsDock(dockTitle)) {
+    const bool recordMutation =
+        impl_->recordLayoutMutations &&
+        property("artifactWorkspaceVisibilityBatchDepth").toInt() == 0 &&
+        property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+    const QByteArray beforeState =
+        recordMutation ? saveDockManagerState() : QByteArray{};
+    const bool changed = impl_->nativeDockSurface->setSplitterSizes(
+        impl_->nativeDockSurface->dockArea(dockTitle), sizes);
+    if (changed && recordMutation) {
+      pushDockLayoutSnapshot(this, beforeState,
+                             QStringLiteral("Resize Dock Splitter: %1")
+                                 .arg(dockTitle));
+    }
+    return;
+  }
+  if (!impl_->dockBackend->manager())
     return;
 
   const bool recordMutation =
@@ -3121,54 +3254,35 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
 }
 
 QByteArray ArtifactMainWindow::saveDockManagerState() const {
-  if (!impl_ || !impl_->dockBackend->manager())
+  if (!impl_)
+    return {};
+  if (impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->saveLayoutState();
+  }
+  if (!impl_->dockBackend->manager())
     return {};
   return impl_->dockBackend ? impl_->dockBackend->saveState() : QByteArray{};
 }
 
 QByteArray ArtifactMainWindow::savePortableDockLayoutState() const {
-  if (!impl_ || !impl_->dockBackend) {
+  if (!impl_ || !impl_->nativeDockSurface) {
     return {};
   }
-  const QByteArray qadsState = impl_->dockBackend->portableLayoutState();
-  if (!impl_->nativeDockMvpEnabled || !impl_->nativeDockSurface) {
-    return qadsState;
-  }
-
-  const auto qadsJson = QJsonDocument::fromJson(qadsState);
-  const auto nativeJson = QJsonDocument::fromJson(
-      impl_->nativeDockSurface->saveLayoutState());
-  if (!qadsJson.isObject() || !nativeJson.isObject()) {
-    return qadsState;
-  }
-  DockLayoutDocument merged = DockLayoutDocument::fromJson(qadsJson.object());
-  const DockLayoutDocument nativeDocument =
-      DockLayoutDocument::fromJson(nativeJson.object());
-  QHash<QString, bool> seen;
-  for (const auto &entry : merged.entries) {
-    seen.insert(entry.dockId, true);
-  }
-  for (const auto &entry : nativeDocument.entries) {
-    if (!seen.contains(entry.dockId)) {
-      merged.entries.push_back(entry);
-      seen.insert(entry.dockId, true);
-    }
-  }
-  return QJsonDocument(merged.toJson()).toJson(QJsonDocument::Compact);
+  return impl_->nativeDockSurface->saveLayoutState();
 }
 
 bool ArtifactMainWindow::restorePortableDockLayoutState(const QByteArray &state) {
-  if (!impl_ || !impl_->dockBackend) {
+  if (!impl_ || !impl_->nativeDockSurface) {
     return false;
   }
-  const bool qadsRestored = impl_->dockBackend->restorePortableLayoutState(state);
-  const bool nativeRestored =
-      impl_->nativeDockMvpEnabled && impl_->nativeDockSurface &&
-      impl_->nativeDockSurface->restoreLayoutState(state);
-  return qadsRestored || nativeRestored;
+  return impl_->nativeDockSurface->restoreLayoutState(state);
 }
 
 bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->restoreLayoutState(state);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   if (!impl_ || !impl_->dockBackend || !impl_->dockBackend->manager() ||
       state.isEmpty())
     return false;
@@ -3193,23 +3307,52 @@ bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
     }
   }
   return true;
+#else
+  Q_UNUSED(state);
+  return false;
+#endif
 }
 
 void ArtifactMainWindow::captureDefaultDockManagerState() {
-  if (!impl_ || !impl_->dockBackend->manager()) {
+  if (!impl_) {
+    return;
+  }
+  if (impl_->nativeDockSurface) {
+    impl_->defaultDockManagerState =
+        impl_->nativeDockSurface->saveLayoutState();
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  if (!impl_->dockBackend->manager()) {
     return;
   }
   impl_->defaultDockManagerState = impl_->dockBackend
                                        ? impl_->dockBackend->saveState()
                                        : QByteArray{};
+#endif
 }
 
 bool ArtifactMainWindow::resetDockManagerStateToDefault() {
-  if (!impl_ || !impl_->dockBackend->manager() ||
+  if (!impl_ ||
       impl_->defaultDockManagerState.isEmpty()) {
     return false;
   }
   const QByteArray beforeState = saveDockManagerState();
+  if (impl_->nativeDockSurface) {
+    if (!impl_->nativeDockSurface->restoreLayoutState(
+            impl_->defaultDockManagerState)) {
+      return false;
+    }
+    pushDockLayoutSnapshot(this, beforeState,
+                           QStringLiteral("Reset Dock Layout"));
+    setWorkspaceMode(WorkspaceMode::Default);
+    return true;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+#endif
+  if (!impl_->dockBackend->manager()) {
+    return false;
+  }
   if (!impl_->dockBackend ||
       !impl_->dockBackend->restoreState(impl_->defaultDockManagerState)) {
     return false;
@@ -3248,6 +3391,15 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
   impl_->startupRefreshScheduled = true;
   applyWorkspaceMode(this, impl_->workspaceMode_);
 
+  if (impl_->nativeDockSurface) {
+    impl_->startupLayoutApplying = false;
+    impl_->recordLayoutMutations = true;
+    impl_->startupRefreshScheduled = false;
+    setUpdatesEnabled(true);
+    return;
+  }
+
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (!dock ||
         !dock->property("artifactStartupVisibilityOverride").isValid()) {
@@ -3366,6 +3518,7 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
     }
     update();
   });
+#endif
 }
 
 void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
@@ -3478,6 +3631,7 @@ void ArtifactMainWindow::showEvent(QShowEvent *event) {
   if (impl_ && (impl_->startupLayoutFrozen || impl_->startupRefreshScheduled)) {
     return;
   }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || !impl_->dockBackend->manager()) {
       return;
@@ -3511,6 +3665,7 @@ void ArtifactMainWindow::showEvent(QShowEvent *event) {
       }
     }
   });
+#endif
 }
 
 bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
@@ -3546,6 +3701,11 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
     }
   }
 
+  if (impl_ && impl_->nativeDockSurface) {
+    return QWidget::eventFilter(watched, event);
+  }
+
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   ads::CFloatingDockContainer *floatingWidget =
       qobject_cast<ads::CFloatingDockContainer *>(watched);
   if (!floatingWidget) {
@@ -3591,6 +3751,7 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
           impl_->welcomeWidget->setGeometry(static_cast<QWidget*>(watched)->rect());
       }
   }
+#endif
 
   return QWidget::eventFilter(watched, event);
 }
