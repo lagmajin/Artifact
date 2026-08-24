@@ -6177,7 +6177,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto headerWidget = new QWidget();
   headerWidget->setObjectName(QStringLiteral("timelineHeaderWidget"));
   headerWidget->setLayout(searchBarLayout);
-  headerWidget->setFixedHeight(kTimelineHeaderRowHeight);
+  headerWidget->setFixedHeight(Accessibility::scaledSize(kTimelineHeaderRowHeight));
 
   auto *leftHeaderPriorityFilter = new LeftHeaderPriorityFilter(
       headerWidget, leftHeader, searchBar, globalSwitches, headerWidget);
@@ -6511,7 +6511,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto leftTopSpacer = new QWidget();
   leftTopSpacer->setObjectName(QStringLiteral("timelineLeftTopSpacer"));
-  leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
+  leftTopSpacer->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   leftTopSpacer->setAutoFillBackground(true);
 
@@ -6867,12 +6867,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->addWidget(impl_->curveEditorBezierButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
-  timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
+  timeNavigatorWidget->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
-  scrubBar->setFixedHeight(kTimelineHeaderRowHeight);
+  scrubBar->setFixedHeight(Accessibility::scaledSize(kTimelineHeaderRowHeight));
   scrubBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  workAreaWidget->setFixedHeight(kTimelineWorkAreaRowHeight);
+  workAreaWidget->setFixedHeight(Accessibility::scaledSize(kTimelineWorkAreaRowHeight));
   workAreaWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   scrubBar->setTotalFrames(kDefaultTimelineFrames);
   scrubBar->setCurrentFrame(FramePosition(0));
