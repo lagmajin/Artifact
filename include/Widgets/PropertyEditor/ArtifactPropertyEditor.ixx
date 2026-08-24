@@ -13,6 +13,7 @@ module;
 #include <QPushButton>
 #include <QVariant>
 #include <QColor>
+#include <QPointer>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFontComboBox>
@@ -536,7 +537,7 @@ private:
     void dropEvent(QDropEvent* event) override;
 
     QLabel* label_ = nullptr;
-    QWidget* scrubTarget_ = nullptr;
+    QPointer<QWidget> scrubTarget_;
     QLabel* supplementaryLabel_ = nullptr;
     ArtifactAbstractPropertyEditor* editor_ = nullptr;
     QPushButton* keyframeButton_ = nullptr;
