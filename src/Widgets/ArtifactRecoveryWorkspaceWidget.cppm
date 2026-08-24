@@ -8,6 +8,7 @@ module;
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <utility>
 #include <vector>
 
 module Artifact.Widgets.RecoveryWorkspace;
@@ -45,7 +46,7 @@ ArtifactRecoveryWorkspaceWidget::ArtifactRecoveryWorkspaceWidget(
   auto* controls = new QHBoxLayout();
   impl_->filter = new QComboBox(this);
   impl_->filter->addItems({QStringLiteral("Recent"), QStringLiteral("Failed"),
-                           QStringLiteral("Recoverable")});
+                           QStringLiteral("Recoverable / Snapshots")});
   impl_->refresh = new QPushButton(QStringLiteral("Refresh"), this);
   impl_->action = new QPushButton(QStringLiteral("Open / Resume Selected"), this);
   controls->addWidget(impl_->filter, 1);
@@ -64,6 +65,12 @@ ArtifactRecoveryWorkspaceWidget::ArtifactRecoveryWorkspaceWidget(
     const int row = impl_->entries->row(impl_->entries->currentItem());
     if (row < 0 || row >= static_cast<int>(impl_->visibleEntries.size())) return;
     const auto& entry = impl_->visibleEntries[static_cast<size_t>(row)];
+    if (entry.kind == ArtifactCore::SessionEntryKind::RecoveryPoint) {
+      if (!entry.detail.isEmpty() && QFileInfo::exists(entry.detail)) {
+        ArtifactProjectManager::getInstance().loadFromFile(entry.detail);
+      }
+      return;
+    }
     if (entry.kind == ArtifactCore::SessionEntryKind::RenderFailed &&
         entry.jobIndex >= 0) {
       if (auto* service = ArtifactRenderQueueService::instance()) {
@@ -104,6 +111,30 @@ void ArtifactRecoveryWorkspaceWidget::refreshLedger() {
     impl_->entries->addItem(label);
     impl_->visibleEntries.push_back(*it);
     ++shown;
+  }
+  if (mode == 2) {
+    for (auto it = impl_->ledger.recoveryPoints().rbegin();
+         it != impl_->ledger.recoveryPoints().rend(); ++it) {
+      if (it->snapshotPath.isEmpty() || !QFileInfo::exists(it->snapshotPath)) {
+        continue;
+      }
+      ArtifactCore::SessionLedgerEntry entry;
+      entry.kind = ArtifactCore::SessionEntryKind::RecoveryPoint;
+      entry.timestampMs = it->timestampMs;
+      entry.detail = it->snapshotPath;
+      entry.projectId = it->projectId;
+      entry.projectName = it->projectName;
+      entry.isRecoverable = true;
+      const auto timestamp = QDateTime::fromMSecsSinceEpoch(entry.timestampMs);
+      const QString label = QStringLiteral("%1  recovery.snapshot  %2  [%3]")
+          .arg(timestamp.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+               entry.projectName.isEmpty() ? QStringLiteral("Unnamed project")
+                                           : entry.projectName,
+               entry.detail);
+      impl_->entries->addItem(label);
+      impl_->visibleEntries.push_back(std::move(entry));
+      ++shown;
+    }
   }
   impl_->summary->setText(QStringLiteral("%1 entries  |  %2 recovery points%3")
       .arg(shown)

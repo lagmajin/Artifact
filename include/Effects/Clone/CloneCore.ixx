@@ -88,6 +88,26 @@ export namespace Artifact {
 
     // ─────────────────────────────────────────────────────────
     // ブレンドユーティリティ関数
+    //
+    // すべてのモードで位置ベクトルのみを合成する（回転・スケールは不変）。
+    // s = strength (0..1)。
+    //
+    //   Add      : base を effPos へ s 分だけ移動（差分の加算）
+    //   Subtract : Add の逆（差分の減算）
+    //   Multiply : base を原点からの比率で拡縮。effPos を「base長で正規化した
+    //              比率ベクトル」と解釈し、各成分を (1 + (ratio-1)*s) 倍。
+    //              位置の要素積ではなくスケール比として扱うため、effPos の
+    //              絶対位置ではなく base との相対比が意味を持つ。
+    //   Max      : 成分ごとに max(base, effPos*s)。s=0 で base 不変。
+    //   Min      : 成分ごとに min(base, effPos*(s+ε))。s=0 でも effPos*ε と
+    //              の比較が働くため、base より小さい成分は縮む。
+    //   Average  : base と effPos*s の中点。s=1 で (base+eff)/2。
+    //   Normal   : 線形補間 base*(1-s) + effPos*s。s=1 で effPos に完全置換。
+    //
+    // 注意: Multiply/Max/Min/Average は原点基準の演算のため、クローン配列が
+    // 原点から離れていると意図より強く動く。原点中心の配置（Grid 等）での
+    // 使用を推奨。回転・スケールを合成したい場合は各 Effector の
+    // applyToClones で明示的に行うこと。
     // ─────────────────────────────────────────────────────────
     export inline void blendCloneData(
         CloneData& base,
@@ -162,6 +182,9 @@ export namespace Artifact {
             setPipelineStage(EffectPipelineStage::PreProcess);
         }
         virtual ~AbstractCloneEffector() = default;
+
+        // Stable short type tag used by chain UIs and serialization.
+        virtual QString effectorTypeName() const { return QStringLiteral("custom"); }
 
         EffectorBlendMode blendMode = EffectorBlendMode::Add;
         float strength = 1.0f;

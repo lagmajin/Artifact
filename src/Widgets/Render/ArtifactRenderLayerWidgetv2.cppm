@@ -5342,7 +5342,8 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* addRoundedCornersAct = nullptr;
  QAction* addWigglePathsAct = nullptr;
  QAction* addZigZagAct = nullptr;
- QAction* addTwistAct = nullptr;
+  QAction* addTwistAct = nullptr;
+  QAction* addHandDrawnWobbleAct = nullptr;
  QAction* insertPointAct = nullptr;
  QAction* splitSegmentAct = nullptr;
  QAction* deletePointAct = nullptr;
@@ -5370,7 +5371,8 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    addRoundedCornersAct = shapeOpsMenu->addAction(QStringLiteral("Rounded Corners"));
    addWigglePathsAct = shapeOpsMenu->addAction(QStringLiteral("Wiggle Paths"));
    addZigZagAct = shapeOpsMenu->addAction(QStringLiteral("ZigZag"));
-   addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
+    addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
+    addHandDrawnWobbleAct = shapeOpsMenu->addAction(QStringLiteral("Hand Drawn Wobble"));
    clearShapeOperatorsAct = menu.addAction(QStringLiteral("Clear Shape Operators"));
    clearShapeOperatorsAct->setEnabled(shapeLayer->shapeOperatorCount() > 0);
    if (shapeLayer->shapeOperatorCount() > 0) {
@@ -5472,6 +5474,9 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       handled = true;
      } else if (shapeChosen == addTwistAct) {
       shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::Twist);
+      handled = true;
+     } else if (shapeChosen == addHandDrawnWobbleAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::HandDrawnWobble);
       handled = true;
      } else if (shapeChosen->text() == QStringLiteral("Remove")) {
       const int oi = shapeChosen->data().toInt();

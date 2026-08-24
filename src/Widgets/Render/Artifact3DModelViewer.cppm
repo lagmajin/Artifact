@@ -98,6 +98,12 @@ public:
     QLabel* statusLabel = nullptr;
     NavHudLabel* navHud_ = nullptr;
     std::unique_ptr<ArtifactCore::PreciseTicker> renderTimer_;
+    bool animationPlaybackEnabled_ = false;
+    int animationClipIndex_ = 0;
+    double animationTime_ = 0.0;
+    std::map<QString, float> blendShapeWeightOverrides_;
+    std::chrono::steady_clock::time_point animationClock_ =
+        std::chrono::steady_clock::now();
 
     explicit Impl(Artifact3DModelViewer* widget)
         : owner(widget)
@@ -126,6 +132,8 @@ public:
                 return QStringLiteral("tinyobj");
             case ArtifactCore::MeshImporter::Backend::UfbxGltf:
                 return QStringLiteral("glTF via ufbx");
+            case ArtifactCore::MeshImporter::Backend::PMD:
+                return QStringLiteral("PMD");
             case ArtifactCore::MeshImporter::Backend::Usda:
                 return QStringLiteral("USD ASCII");
             case ArtifactCore::MeshImporter::Backend::None:
@@ -144,11 +152,52 @@ public:
             const QVector3D minB = currentMesh->boundingBoxMin();
             const QVector3D maxB = currentMesh->boundingBoxMax();
             const QVector3D extents = maxB - minB;
+            const auto* activeClip = currentMesh->skinAnimationClip(
+                animationClipIndex_);
+            const QString clipName = activeClip && !activeClip->name.isEmpty()
+                ? activeClip->name
+                : QStringLiteral("-");
+            const QString skinningMode = currentMesh->skinBones().isEmpty()
+                ? QStringLiteral("-")
+                : (renderWindow && renderWindow->gpuSkinningActive()
+                       ? QStringLiteral("GPU")
+                       : QStringLiteral("CPU"));
+            const QString influenceMode = currentMesh->skinBones().isEmpty()
+                ? QStringLiteral("-")
+                : (currentMesh->hasExtendedSkinningWeights()
+                       ? QStringLiteral("8+")
+                       : QStringLiteral("4"));
+            QString sourceSkinningMethod;
+            switch (currentMesh->skinningMethod()) {
+                case ArtifactCore::Mesh::SkinningMethod::Rigid:
+                    sourceSkinningMethod = QStringLiteral("Rigid");
+                    break;
+                case ArtifactCore::Mesh::SkinningMethod::DualQuaternion:
+                    sourceSkinningMethod = QStringLiteral("DualQuaternion");
+                    break;
+                case ArtifactCore::Mesh::SkinningMethod::BlendedDualQuaternion:
+                    sourceSkinningMethod = QStringLiteral("BlendedDQ");
+                    break;
+                case ArtifactCore::Mesh::SkinningMethod::LinearBlend:
+                default:
+                    sourceSkinningMethod = QStringLiteral("LBS");
+                    break;
+            }
             statusLabel->setText(
-                QString("Preview: %1 | Vertices: %2 | Polygons: %3 | Bounds: %4 x %5 x %6 | Backend: %7")
+                QString("Preview: %1 | Vertices: %2 | Polygons: %3 | Bones: %4 | Skinning: %5 (%6, %7inf) | Morphs: %8 | Clips: %9 [#%10: %11] | Animation: %12 | Bounds: %13 x %14 x %15 | Backend: %16")
                     .arg(currentModelPath.toQString())
                     .arg(currentMesh->vertexCount())
                     .arg(currentMesh->polygonCount())
+                    .arg(currentMesh->skinBones().size())
+                    .arg(skinningMode)
+                    .arg(sourceSkinningMethod)
+                    .arg(influenceMode)
+                    .arg(currentMesh->blendShapes().size())
+                    .arg(currentMesh->skinAnimationClips().size())
+                    .arg(animationClipIndex_)
+                    .arg(clipName)
+                    .arg(animationPlaybackEnabled_ ? QStringLiteral("Playing")
+                                                    : QStringLiteral("Stopped"))
                     .arg(static_cast<int>(std::round(extents.x())))
                     .arg(static_cast<int>(std::round(extents.y())))
                     .arg(static_cast<int>(std::round(extents.z())))
@@ -170,6 +219,30 @@ public:
         }
         const float zoomFactor = 5.0f / std::max(0.05f, orbitDistance_);
         renderWindow->setPreviewCamera(zoomFactor, orbitYaw_, orbitPitch_, orbitTarget_);
+    }
+
+    void advanceAnimation()
+    {
+        if (!animationPlaybackEnabled_ || !currentMesh ||
+            currentMesh->skinAnimationClips().isEmpty()) {
+            animationClock_ = std::chrono::steady_clock::now();
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const double rawDeltaSeconds =
+            std::chrono::duration<double>(now - animationClock_).count();
+        animationClock_ = now;
+        const auto* clip = currentMesh->skinAnimationClip(animationClipIndex_);
+        if (!clip || clip->timeEnd <= clip->timeBegin) return;
+        const double deltaSeconds = std::isfinite(rawDeltaSeconds)
+            ? std::clamp(rawDeltaSeconds, 0.0, 0.25)
+            : 0.0;
+        if (!std::isfinite(animationTime_)) animationTime_ = clip->timeBegin;
+        animationTime_ += deltaSeconds;
+        const double duration = clip->timeEnd - clip->timeBegin;
+        animationTime_ = clip->timeBegin +
+            std::fmod(std::max(0.0, animationTime_ - clip->timeBegin), duration);
+        owner->loadModelAtTime(currentModelPath, animationTime_, animationClipIndex_);
     }
 };
 
@@ -243,7 +316,10 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     impl_->renderTimer_ = std::make_unique<ArtifactCore::PreciseTicker>();
     impl_->renderTimer_->setInterval(std::chrono::milliseconds(16));
     impl_->renderTimer_->setCallback([this]() {
-        QMetaObject::invokeMethod(this, [this]() { requestUpdate(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, [this]() {
+            impl_->advanceAnimation();
+            requestUpdate();
+        }, Qt::QueuedConnection);
     });
     // Start only when visible; stopped in hideEvent.
     if (isVisible()) {
@@ -259,11 +335,17 @@ Artifact3DModelViewer::~Artifact3DModelViewer()
 void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
 {
     impl_->currentModelPath = filePath;
+    impl_->blendShapeWeightOverrides_.clear();
 
     ArtifactCore::MeshImporter importer;
     impl_->currentMesh = importer.importMeshFromFile(filePath);
     impl_->lastBackend = importer.lastBackend();
     impl_->lastErrorText = importer.lastError();
+    impl_->animationTime_ = 0.0;
+    impl_->animationClipIndex_ = 0;
+    impl_->animationPlaybackEnabled_ = impl_->currentMesh &&
+        !impl_->currentMesh->skinAnimationClips().isEmpty();
+    impl_->animationClock_ = std::chrono::steady_clock::now();
 
     if (impl_->currentMesh && impl_->currentMesh->isValid()) {
         impl_->modelLoaded = true;
@@ -296,11 +378,226 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
     requestUpdate();
 }
 
+void Artifact3DModelViewer::loadModelAtTime(
+    const ArtifactCore::UniString& filePath,
+    const double time,
+    const int clipIndex)
+{
+    impl_->currentModelPath = filePath;
+
+    ArtifactCore::MeshImporter importer;
+    impl_->currentMesh = importer.importMeshFromFileAtTime(
+        filePath, time, clipIndex);
+    if (impl_->currentMesh) {
+        for (int shapeIndex = 0;
+             shapeIndex < impl_->currentMesh->blendShapes().size();
+             ++shapeIndex) {
+            const auto overrideIt = impl_->blendShapeWeightOverrides_.find(
+                impl_->currentMesh->blendShapes()[shapeIndex].name);
+            if (overrideIt != impl_->blendShapeWeightOverrides_.end()) {
+                impl_->currentMesh->setBlendShapeWeight(
+                    shapeIndex, overrideIt->second);
+            }
+        }
+    }
+    impl_->lastBackend = importer.lastBackend();
+    impl_->lastErrorText = importer.lastError();
+    impl_->animationClipIndex_ = impl_->currentMesh &&
+        !impl_->currentMesh->skinAnimationClips().isEmpty()
+        ? std::clamp(clipIndex, 0,
+                     static_cast<int>(impl_->currentMesh->skinAnimationClips().size()) - 1)
+        : 0;
+    impl_->animationTime_ = std::isfinite(time)
+        ? time
+        : 0.0;
+    if (const auto* clip = impl_->currentMesh
+            ? impl_->currentMesh->skinAnimationClip(impl_->animationClipIndex_)
+            : nullptr) {
+        if (std::isfinite(clip->timeBegin) &&
+            std::isfinite(clip->timeEnd) &&
+            clip->timeEnd > clip->timeBegin) {
+            const double requestedTime = std::isfinite(time)
+                ? time
+                : clip->timeBegin;
+            impl_->animationTime_ = std::clamp(
+                requestedTime, clip->timeBegin, clip->timeEnd);
+        } else {
+            impl_->animationTime_ = 0.0;
+        }
+    }
+    impl_->animationPlaybackEnabled_ = impl_->currentMesh &&
+        !impl_->currentMesh->skinAnimationClips().isEmpty();
+
+    if (impl_->currentMesh && impl_->currentMesh->isValid()) {
+        impl_->modelLoaded = true;
+        if (impl_->renderWindow) {
+            impl_->renderWindow->setMesh(impl_->currentMesh);
+            impl_->renderWindow->setBaseColorTexture(
+                importer.lastBaseColorTexture());
+            impl_->renderWindow->setMetallicRoughnessTexture(
+                importer.lastMetallicRoughnessTexture());
+            impl_->renderWindow->setNormalTexture(
+                importer.lastNormalTexture());
+        }
+    } else {
+        impl_->modelLoaded = false;
+        if (impl_->lastErrorText.isEmpty()) {
+            impl_->lastErrorText = QStringLiteral("failed to evaluate model");
+        }
+        if (impl_->renderWindow) {
+            impl_->renderWindow->clearMesh();
+            impl_->renderWindow->setBaseColorTexture(QString());
+            impl_->renderWindow->setMetallicRoughnessTexture(QString());
+            impl_->renderWindow->setNormalTexture(QString());
+        }
+    }
+
+    impl_->animationClock_ = std::chrono::steady_clock::now();
+    impl_->updateStatus();
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::setAnimationPlaybackEnabled(const bool enabled)
+{
+    impl_->animationPlaybackEnabled_ = enabled;
+    impl_->animationClock_ = std::chrono::steady_clock::now();
+    if (enabled && impl_->currentMesh &&
+        !impl_->currentMesh->skinAnimationClips().isEmpty()) {
+        const auto* clip = impl_->currentMesh->skinAnimationClip(
+            impl_->animationClipIndex_);
+        if (clip) {
+            impl_->animationTime_ = clip->timeBegin;
+            if (!impl_->currentModelPath.isEmpty()) {
+                impl_->owner->loadModelAtTime(
+                    impl_->currentModelPath, clip->timeBegin,
+                    impl_->animationClipIndex_);
+                impl_->animationPlaybackEnabled_ = impl_->currentMesh &&
+                    impl_->currentMesh->isValid();
+                impl_->animationClock_ = std::chrono::steady_clock::now();
+            }
+        }
+    }
+    impl_->updateStatus();
+    requestUpdate();
+}
+
+bool Artifact3DModelViewer::animationPlaybackEnabled() const
+{
+    return impl_->animationPlaybackEnabled_;
+}
+
+void Artifact3DModelViewer::setAnimationClipIndex(const int clipIndex)
+{
+    if (impl_->currentMesh) {
+        const int clipCount = static_cast<int>(
+            impl_->currentMesh->skinAnimationClips().size());
+        impl_->animationClipIndex_ = clipCount > 0
+            ? std::clamp(clipIndex, 0, clipCount - 1)
+            : 0;
+        if (const auto* clip = impl_->currentMesh->skinAnimationClip(
+                impl_->animationClipIndex_)) {
+            impl_->animationTime_ = clip->timeBegin;
+            const bool wasPlaying = impl_->animationPlaybackEnabled_;
+            const auto sourcePath = impl_->currentModelPath;
+            if (!sourcePath.isEmpty()) {
+                impl_->owner->loadModelAtTime(
+                    sourcePath, clip->timeBegin, impl_->animationClipIndex_);
+                impl_->animationPlaybackEnabled_ = wasPlaying;
+                impl_->animationClock_ = std::chrono::steady_clock::now();
+                impl_->updateStatus();
+                requestUpdate();
+            }
+        }
+    } else {
+        impl_->animationClipIndex_ = std::max(0, clipIndex);
+    }
+}
+
+int Artifact3DModelViewer::animationClipIndex() const
+{
+    return impl_->animationClipIndex_;
+}
+
+int Artifact3DModelViewer::animationClipCount() const
+{
+    return impl_->currentMesh
+        ? static_cast<int>(impl_->currentMesh->skinAnimationClips().size())
+        : 0;
+}
+
+QString Artifact3DModelViewer::animationClipName(const int clipIndex) const
+{
+    if (!impl_->currentMesh) return QString();
+    const auto* clip = impl_->currentMesh->skinAnimationClip(clipIndex);
+    return clip ? clip->name : QString();
+}
+
+int Artifact3DModelViewer::blendShapeCount() const
+{
+    return impl_->currentMesh
+        ? static_cast<int>(impl_->currentMesh->blendShapes().size())
+        : 0;
+}
+
+QString Artifact3DModelViewer::blendShapeName(const int shapeIndex) const
+{
+    if (!impl_->currentMesh) return QString();
+    const auto& shapes = impl_->currentMesh->blendShapes();
+    return shapeIndex >= 0 && shapeIndex < shapes.size()
+        ? shapes[shapeIndex].name : QString();
+}
+
+float Artifact3DModelViewer::blendShapeWeight(const int shapeIndex) const
+{
+    return impl_->currentMesh
+        ? impl_->currentMesh->blendShapeWeight(shapeIndex)
+        : 0.0f;
+}
+
+void Artifact3DModelViewer::setBlendShapeWeight(const int shapeIndex,
+                                                const float weight)
+{
+    if (!impl_->currentMesh || shapeIndex < 0 ||
+        shapeIndex >= impl_->currentMesh->blendShapes().size() ||
+        !std::isfinite(weight)) return;
+    impl_->blendShapeWeightOverrides_[
+        impl_->currentMesh->blendShapes()[shapeIndex].name] = weight;
+    impl_->currentMesh->setBlendShapeWeight(shapeIndex, weight);
+    if (impl_->renderWindow) {
+        impl_->renderWindow->refreshMeshGeometry();
+    }
+    impl_->updateStatus();
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::clearBlendShapeWeightOverride(
+    const int shapeIndex)
+{
+    if (!impl_->currentMesh || shapeIndex < 0 ||
+        shapeIndex >= impl_->currentMesh->blendShapes().size()) {
+        return;
+    }
+    impl_->blendShapeWeightOverrides_.erase(
+        impl_->currentMesh->blendShapes()[shapeIndex].name);
+    if (!impl_->currentModelPath.isEmpty()) {
+        loadModelAtTime(impl_->currentModelPath, impl_->animationTime_,
+                        impl_->animationClipIndex_);
+    } else {
+        impl_->updateStatus();
+        requestUpdate();
+    }
+}
+
 void Artifact3DModelViewer::clearModel()
 {
     impl_->currentModelPath = ArtifactCore::UniString();
     impl_->modelLoaded = false;
     impl_->currentMesh = nullptr;
+    impl_->animationTime_ = 0.0;
+    impl_->animationClipIndex_ = 0;
+    impl_->animationPlaybackEnabled_ = false;
+    impl_->blendShapeWeightOverrides_.clear();
+    impl_->animationClock_ = std::chrono::steady_clock::now();
     impl_->lastBackend = ArtifactCore::MeshImporter::Backend::None;
     impl_->lastErrorText.clear();
     if (impl_->renderWindow) {
@@ -309,6 +606,17 @@ void Artifact3DModelViewer::clearModel()
         impl_->renderWindow->setMetallicRoughnessTexture(QString());
         impl_->renderWindow->setNormalTexture(QString());
     }
+    impl_->updateStatus();
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::setSkinPoseMatrices(
+    const QVector<QMatrix4x4>& boneMatrices)
+{
+    if (!impl_->currentMesh || !impl_->renderWindow) {
+        return;
+    }
+    impl_->renderWindow->setSkinPoseMatrices(boneMatrices);
     impl_->updateStatus();
     requestUpdate();
 }
@@ -439,6 +747,8 @@ QString Artifact3DModelViewer::backendName() const
             return QStringLiteral("tinyobj");
         case ArtifactCore::MeshImporter::Backend::UfbxGltf:
             return QStringLiteral("glTF via ufbx");
+        case ArtifactCore::MeshImporter::Backend::PMD:
+            return QStringLiteral("PMD");
         case ArtifactCore::MeshImporter::Backend::Usda:
             return QStringLiteral("USD ASCII");
         case ArtifactCore::MeshImporter::Backend::None:

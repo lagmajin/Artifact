@@ -193,6 +193,10 @@ public:
             {"getAudioDeClickRanges", IDescribable::loc("Read persisted de-click ranges from an audio layer.", "Read persisted de-click ranges from an audio layer.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"setAudioDeClickSettings", IDescribable::loc("Set persisted de-click threshold and maximum repair width on an audio layer.", "Set persisted de-click threshold and maximum repair width on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("qint64")}, {QStringLiteral("layerId"), QStringLiteral("thresholdDb"), QStringLiteral("maxClickSamples")}},
             {"getAudioDeClickSettings", IDescribable::loc("Read de-click settings from an audio layer.", "Read de-click settings from an audio layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setAudioLayerTrim", IDescribable::loc("Set non-destructive source trim in/out seconds on an audio layer.", "Set non-destructive source trim in/out seconds on an audio layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("trimInSeconds"), QStringLiteral("trimOutSeconds")}},
+            {"getAudioLayerTrim", IDescribable::loc("Read non-destructive source trim seconds from an audio layer.", "Read non-destructive source trim seconds from an audio layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setAudioLayerPlaybackRate", IDescribable::loc("Set the constant playback rate of an audio layer (ignored while time remap is enabled).", "Set the constant playback rate of an audio layer (ignored while time remap is enabled).", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("rate")}},
+            {"getAudioLayerPlaybackRate", IDescribable::loc("Read the constant playback rate of an audio layer.", "Read the constant playback rate of an audio layer.", {}), "double", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"getPlaybackAudioDiagnostics", IDescribable::loc("Read live playback audio device, buffer, level, health, clipping, and health-reason diagnostics.", "Read live playback audio device, buffer, level, health, clipping, and health-reason diagnostics.", {}), "QVariantMap"},
             {"addTextLayerToCurrentComposition", IDescribable::loc("Add a text layer to the active composition.", "Add a text layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"addNullLayerToCurrentComposition", IDescribable::loc("Add a null layer to the active composition.", "Add a null layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
@@ -503,6 +507,20 @@ public:
         }
         if (name == QStringLiteral("getAudioDeClickSettings")) {
             return getAudioDeClickSettings(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setAudioLayerTrim")) {
+            return setAudioLayerTrim(stringArg(args, 0),
+                args.value(1).toDouble(), args.value(2).toDouble());
+        }
+        if (name == QStringLiteral("getAudioLayerTrim")) {
+            return getAudioLayerTrim(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setAudioLayerPlaybackRate")) {
+            return setAudioLayerPlaybackRate(stringArg(args, 0),
+                args.value(1).toDouble());
+        }
+        if (name == QStringLiteral("getAudioLayerPlaybackRate")) {
+            return getAudioLayerPlaybackRate(stringArg(args, 0));
         }
         if (name == QStringLiteral("getPlaybackAudioDiagnostics")) {
             return getPlaybackAudioDiagnostics();
@@ -2633,6 +2651,34 @@ private:
         auto* audio = ArtifactAudioService::instance();
         return audio ? QVariant(audio->layerDeClickSettings(ArtifactCore::LayerID(layerId)))
                      : QVariantMap{};
+    }
+
+    static QVariant setAudioLayerTrim(const QString& layerId,
+                                      double trimInSeconds, double trimOutSeconds)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio && audio->setLayerTrim(
+            ArtifactCore::LayerID(layerId), trimInSeconds, trimOutSeconds);
+    }
+
+    static QVariant getAudioLayerTrim(const QString& layerId)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio ? QVariant(audio->layerTrim(ArtifactCore::LayerID(layerId)))
+                     : QVariantMap{};
+    }
+
+    static QVariant setAudioLayerPlaybackRate(const QString& layerId, double rate)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio && audio->setLayerPlaybackRate(ArtifactCore::LayerID(layerId), rate);
+    }
+
+    static QVariant getAudioLayerPlaybackRate(const QString& layerId)
+    {
+        auto* audio = ArtifactAudioService::instance();
+        return audio ? QVariant(audio->layerPlaybackRate(ArtifactCore::LayerID(layerId)))
+                     : QVariant(1.0);
     }
 
     static QVariant getPlaybackAudioDiagnostics()

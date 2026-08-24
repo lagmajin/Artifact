@@ -144,6 +144,10 @@ import Artifact.Layer.Matte;
 import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Switch;
+import Artifact.Layer.Clone;
+import Artifact.Effect.Clone.Core;
+import Artifact.Effect.Clone.Basic;
+import Artifact.Effect.Clone.Advanced;
 import Artifact.Event.Types;
 import Event.Bus;
 import Undo.UndoManager;
@@ -3028,6 +3032,8 @@ public:
   QLabel *componentUtilitiesLabel = nullptr;
   InspectorActionButton *openScriptButton = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
+  InspectorActionButton *addEffectorButton = nullptr;
+  InspectorActionButton *removeEffectorButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   InspectorPropertySurface *componentPropertySurface = nullptr;
   QString lastComponentPropertyStateSignature_;
@@ -3897,6 +3903,25 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         canEditComponents
             ? QStringLiteral("Add a clone modifier to this layer.")
             : QStringLiteral("Select a layer inside a composition to add Clone Modifiers."));
+  }
+  const auto* inspectorCloneLayer =
+      (canEditComponents && layer) ? dynamic_cast<const ArtifactCloneLayer*>(layer.get()) : nullptr;
+  if (addEffectorButton) {
+    const int effectorCount = inspectorCloneLayer ? inspectorCloneLayer->effectorCount() : 0;
+    addEffectorButton->setEnabled(inspectorCloneLayer != nullptr);
+    addEffectorButton->setText(
+        effectorCount > 0 ? QStringLiteral("+ Effector (%1)").arg(effectorCount)
+                          : QStringLiteral("+ Effector"));
+    addEffectorButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Add an effector to this layer's clone chain.")
+            : QStringLiteral("Select a clone layer to add Effectors."));
+    addEffectorButton->setVisible(inspectorCloneLayer != nullptr);
+  }
+  if (removeEffectorButton) {
+    removeEffectorButton->setEnabled(
+        inspectorCloneLayer && inspectorCloneLayer->effectorCount() > 0);
+    removeEffectorButton->setVisible(inspectorCloneLayer != nullptr);
   }
   if (removeTransformComponentButton && !transformListWidget) {
     removeTransformComponentButton->setEnabled(false);
@@ -6781,6 +6806,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierMoveDownButton = new InspectorActionButton("Mod Down");
   impl_->openScriptButton = new InspectorActionButton("Open Script");
   impl_->applyLipSyncButton = new InspectorActionButton("Lip Sync");
+  impl_->addEffectorButton = new InspectorActionButton("+ Effector");
+  impl_->removeEffectorButton = new InspectorActionButton("- Effector");
   for (auto *button : {impl_->physicsComponentButton,
                        impl_->scriptComponentButton,
                        impl_->layoutComponentButton,
@@ -6803,8 +6830,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                        impl_->removeCloneModifierButton,
                        impl_->cloneModifierMoveUpButton,
                        impl_->cloneModifierMoveDownButton,
-                       impl_->openScriptButton,
-                       impl_->applyLipSyncButton}) {
+                        impl_->openScriptButton,
+                        impl_->applyLipSyncButton,
+                        impl_->addEffectorButton,
+                        impl_->removeEffectorButton}) {
     button->setOwnerDrawn(true);
   }
   impl_->physicsComponentButton->setCheckable(true);
@@ -6835,6 +6864,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorButton(impl_->fluidComponentButton, false);
   applyInspectorButton(impl_->generatorComponentButton, false);
   applyInspectorButton(impl_->removeGeneratorComponentButton, false);
+  applyInspectorButton(impl_->addEffectorButton, false);
+  applyInspectorButton(impl_->removeEffectorButton, false);
   applyInspectorButton(impl_->generatorMoveUpButton, false);
   applyInspectorButton(impl_->generatorMoveDownButton, false);
   applyInspectorButton(impl_->fieldComponentButton, false);
@@ -6885,6 +6916,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Open the script file linked to this layer."));
   impl_->applyLipSyncButton->setToolTip(
       QStringLiteral("Build a lip sync track from the audio layer and apply it to a Switch Layer."));
+  impl_->addEffectorButton->setToolTip(
+      QStringLiteral("Add an effector to this layer's clone chain."));
+  impl_->removeEffectorButton->setToolTip(
+      QStringLiteral("Remove an effector from this layer's clone chain."));
   impl_->addComponentButton =
       new InspectorActionButton(QStringLiteral("+ Add Component"));
   impl_->addComponentButton->setOwnerDrawn(true);
@@ -6925,6 +6960,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   componentsStack->appendWidget(impl_->physicsComponentButton);
   componentsStack->appendWidget(impl_->fluidComponentButton);
   componentsStack->appendWidget(impl_->scriptComponentButton);
+
+  auto* effectorRow = new InspectorCanvasSurface(componentsStack);
+  auto* effectorLayout = new QHBoxLayout(effectorRow);
+  effectorLayout->setContentsMargins(0, 0, 0, 0);
+  effectorLayout->addStretch(1);
+  effectorLayout->addWidget(impl_->addEffectorButton);
+  effectorLayout->addWidget(impl_->removeEffectorButton);
+  effectorLayout->addStretch(1);
+  componentsStack->appendWidget(effectorRow);
 
   auto* addComponentRow = new InspectorCanvasSurface(componentsStack);
   auto *addComponentLayout = new QHBoxLayout(addComponentRow);
@@ -7336,11 +7380,133 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                            ArtifactInspectorWidget::Impl::LayerInfoDirty |
                            ArtifactInspectorWidget::Impl::EffectsDirty);
                        if (impl_->statusLabel) {
-                         impl_->statusLabel->setText(
-                             QStringLiteral(
-                                 "Status: extra generator removed"));
-                       }
+                          impl_->statusLabel->setText(
+                              QStringLiteral(
+                                  "Status: extra generator removed"));
+                        }
+                      }
+                    });
+  const auto resolveInspectorCloneLayer =
+      [this]() -> ArtifactCloneLayer* {
+    if (impl_->currentCompositionId_.isNil() ||
+        impl_->currentLayerId_.isNil()) {
+      return nullptr;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return nullptr;
+    }
+    auto findResult = projectService->findComposition(impl_->currentCompositionId_);
+    if (!findResult.success) {
+      return nullptr;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return nullptr;
+    }
+    return dynamic_cast<ArtifactCloneLayer*>(comp->layerById(impl_->currentLayerId_).get());
+  };
+  const auto refreshAfterEffectorChange = [this](ArtifactCloneLayer* cloneLayer) {
+    if (!cloneLayer) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (projectService) {
+      auto findResult = projectService->findComposition(impl_->currentCompositionId_);
+      if (findResult.success) {
+        if (auto comp = findResult.ptr.lock()) {
+          if (auto layerPtr = comp->layerById(impl_->currentLayerId_)) {
+            impl_->updateComponentControls(layerPtr);
+          }
+        }
+      }
+    }
+    impl_->lastLayerInfoSignature_.clear();
+    impl_->scheduleRefresh(
+        ArtifactInspectorWidget::Impl::LayerInfoDirty |
+        ArtifactInspectorWidget::Impl::EffectsDirty);
+    if (impl_->statusLabel) {
+      impl_->statusLabel->setText(
+          QStringLiteral("Status: clone chain updated (%1 effectors)")
+              .arg(cloneLayer->effectorCount()));
+    }
+  };
+  impl_->addEffectorButton->setAction([this, resolveInspectorCloneLayer,
+                                       refreshAfterEffectorChange]() {
+                     auto* cloneLayer = resolveInspectorCloneLayer();
+                     if (!cloneLayer) {
+                       return;
                      }
+                     const QStringList effectorChoices = {
+                         QStringLiteral("transform"),
+                         QStringLiteral("step"),
+                         QStringLiteral("random"),
+                         QStringLiteral("delay"),
+                         QStringLiteral("sound"),
+                         QStringLiteral("noise"),
+                     };
+                     bool accepted = false;
+                     const QString choice = QInputDialog::getItem(
+                         this, QStringLiteral("Add Effector"),
+                         QStringLiteral("Effector Type"),
+                         effectorChoices, 0, false, &accepted);
+                     if (!accepted || choice.trimmed().isEmpty()) {
+                       return;
+                     }
+                     ArtifactCore::SharedPtr<AbstractCloneEffector> effector;
+                     if (choice == QLatin1String("transform")) {
+                       effector = ArtifactCore::makeShared<TransformCloneEffector>();
+                     } else if (choice == QLatin1String("step")) {
+                       effector = ArtifactCore::makeShared<StepCloneEffector>();
+                     } else if (choice == QLatin1String("random")) {
+                       effector = ArtifactCore::makeShared<RandomCloneEffector>();
+                     } else if (choice == QLatin1String("delay")) {
+                       effector = ArtifactCore::makeShared<DelayCloneEffector>();
+                     } else if (choice == QLatin1String("sound")) {
+                       effector = ArtifactCore::makeShared<SoundCloneEffector>();
+                     } else if (choice == QLatin1String("noise")) {
+                       effector = ArtifactCore::makeShared<NoiseCloneEffector>();
+                     }
+                     if (!effector) {
+                       return;
+                     }
+                     cloneLayer->addEffector(std::move(effector));
+                     refreshAfterEffectorChange(cloneLayer);
+                   });
+  impl_->removeEffectorButton->setAction([this, resolveInspectorCloneLayer,
+                                          refreshAfterEffectorChange]() {
+                     auto* cloneLayer = resolveInspectorCloneLayer();
+                     if (!cloneLayer || cloneLayer->effectorCount() == 0) {
+                       return;
+                     }
+                     QStringList entries;
+                     const int count = cloneLayer->effectorCount();
+                     entries.reserve(count);
+                     for (int i = 0; i < count; ++i) {
+                       const auto effector = cloneLayer->effectorAt(i);
+                       entries.push_back(
+                           QStringLiteral("%1: %2")
+                               .arg(i + 1)
+                               .arg(effector ? effector->effectorTypeName()
+                                             : QStringLiteral("custom")));
+                     }
+                     bool accepted = false;
+                     const QString choice = QInputDialog::getItem(
+                         this, QStringLiteral("Remove Effector"),
+                         QStringLiteral("Effector"), entries, 0, false, &accepted);
+                     if (!accepted) {
+                       return;
+                     }
+                     const int sep = choice.indexOf(QLatin1Char(':'));
+                     int index = -1;
+                     if (sep > 0) {
+                       index = choice.left(sep).toInt() - 1;
+                     }
+                     if (index < 0 || index >= count) {
+                       return;
+                     }
+                     cloneLayer->removeEffector(index);
+                     refreshAfterEffectorChange(cloneLayer);
                    });
   impl_->generatorMoveUpButton->setAction([this]() {
                      if (!impl_->generatorListWidget ||

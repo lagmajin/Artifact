@@ -102,6 +102,8 @@ import std;
 import Memory.SharedPtr;
 import Core.AI.Context;
 import Core.AI.McpBridge;
+import Core.Diagnostics.Recorder;
+import Core.Diagnostics.Snapshot;
 
 import Application.AppSettings;
 import Settings.Accessibility;
@@ -899,6 +901,58 @@ QJsonArray trimJsonArray(const QJsonArray& array, const int maxEntries) {
   return trimmed;
 }
 
+QJsonObject diagnosticEventToJson(const ArtifactCore::DiagnosticEvent& event) {
+  QJsonObject json;
+  json.insert(QStringLiteral("severity"),
+              QString::fromUtf8(ArtifactCore::diagnosticSeverityName(event.severity)));
+  json.insert(QStringLiteral("code"), QString::fromStdString(event.code));
+  json.insert(QStringLiteral("message"), QString::fromStdString(event.message));
+  json.insert(QStringLiteral("component"), QString::fromStdString(event.component));
+  json.insert(QStringLiteral("operation"), QString::fromStdString(event.operation));
+  json.insert(QStringLiteral("objectId"), QString::fromStdString(event.objectId));
+  json.insert(QStringLiteral("sequence"), static_cast<qint64>(event.sequence));
+  json.insert(QStringLiteral("threadId"), static_cast<qint64>(event.threadId));
+  json.insert(QStringLiteral("traceId"), static_cast<qint64>(event.traceId));
+  json.insert(QStringLiteral("frameIndex"), static_cast<qint64>(event.frameIndex));
+  json.insert(QStringLiteral("timestampNs"), static_cast<qint64>(event.timestampNs));
+  json.insert(QStringLiteral("durationNs"), static_cast<qint64>(event.durationNs));
+  if (event.location.file) {
+    json.insert(QStringLiteral("file"), QString::fromUtf8(event.location.file));
+  }
+  if (event.location.function) {
+    json.insert(QStringLiteral("function"), QString::fromUtf8(event.location.function));
+  }
+  if (event.location.line > 0) {
+    json.insert(QStringLiteral("line"), event.location.line);
+  }
+  return json;
+}
+
+QJsonObject diagnosticSnapshotJson() {
+  QJsonObject diagnostics;
+  const auto events = ArtifactCore::DiagnosticRecorder::instance().errorsFor();
+  QJsonArray eventArray;
+  const int first = std::max(0, static_cast<int>(events.size()) - 32);
+  for (int i = first; i < static_cast<int>(events.size()); ++i) {
+    eventArray.append(diagnosticEventToJson(events[static_cast<std::size_t>(i)]));
+  }
+  diagnostics.insert(QStringLiteral("latestSequence"),
+                     static_cast<qint64>(ArtifactCore::DiagnosticRecorder::instance().latestSequence()));
+  diagnostics.insert(QStringLiteral("eventsTruncated"), events.size() > 32);
+  diagnostics.insert(QStringLiteral("firstPublishedSequence"),
+                     eventArray.isEmpty()
+                         ? QJsonValue(0)
+                         : eventArray.first().toObject().value(QStringLiteral("sequence")));
+  diagnostics.insert(QStringLiteral("events"), eventArray);
+  if (!events.empty()) {
+    diagnostics.insert(QStringLiteral("latestFailure"),
+                       diagnosticEventToJson(events.back()));
+  } else {
+    diagnostics.insert(QStringLiteral("latestFailure"), QJsonValue::Null);
+  }
+  return diagnostics;
+}
+
 QJsonObject buildDebugBridgeSnapshotJson() {
   QJsonObject root;
   root.insert(QStringLiteral("snapshotVersion"), 1);
@@ -973,6 +1027,10 @@ QJsonObject buildDebugBridgeSnapshotJson() {
     diagnosticsJson.insert(QStringLiteral("healthState"), QStringLiteral("unknown"));
     diagnosticsJson.insert(QStringLiteral("summary"),
                            QStringLiteral("Project service unavailable."));
+  }
+  const QJsonObject recordedDiagnostics = diagnosticSnapshotJson();
+  for (auto it = recordedDiagnostics.begin(); it != recordedDiagnostics.end(); ++it) {
+    diagnosticsJson.insert(it.key(), it.value());
   }
   root.insert(QStringLiteral("diagnostics"), diagnosticsJson);
 
@@ -1287,7 +1345,9 @@ QJsonArray debugMcpWatchValues(const QJsonObject& state, const QJsonObject& snap
 QString debugMcpSnapshotSignature(const QJsonObject& snapshot) {
   const QJsonArray layerIds = debugMcpSelectionArray(snapshot, QStringLiteral("layerIds"));
   const QJsonArray layerNames = debugMcpSelectionArray(snapshot, QStringLiteral("layerNames"));
-  return QStringLiteral("frame=%1|selectionIds=%2|selectionNames=%3|health=%4|trace=%5|properties=%6")
+  const QJsonObject diagnostics = snapshot.value(QStringLiteral("diagnostics")).toObject();
+  const QJsonObject latestFailure = diagnostics.value(QStringLiteral("latestFailure")).toObject();
+  return QStringLiteral("frame=%1|selectionIds=%2|selectionNames=%3|health=%4|diagSeq=%5|diagSeverity=%6|diagCode=%7|diagComponent=%8|trace=%9|properties=%10")
       .arg(snapshot.value(QStringLiteral("playback"))
                .toObject()
                .value(QStringLiteral("frame"))
@@ -1299,6 +1359,10 @@ QString debugMcpSnapshotSignature(const QJsonObject& snapshot) {
                .toObject()
                .value(QStringLiteral("healthState"))
                .toString())
+      .arg(diagnostics.value(QStringLiteral("latestSequence")).toVariant().toLongLong())
+      .arg(latestFailure.value(QStringLiteral("severity")).toString())
+      .arg(latestFailure.value(QStringLiteral("code")).toString())
+      .arg(latestFailure.value(QStringLiteral("component")).toString())
       .arg(debugMcpSnapshotTraceText(snapshot))
       .arg(debugMcpSnapshotPropertiesText(snapshot));
 }
@@ -1325,6 +1389,13 @@ QString debugMcpSnapshotHealthState(const QJsonObject& snapshot) {
       .toObject()
       .value(QStringLiteral("healthState"))
       .toString();
+}
+
+QJsonObject debugMcpLatestFailure(const QJsonObject& snapshot) {
+  return snapshot.value(QStringLiteral("diagnostics"))
+      .toObject()
+      .value(QStringLiteral("latestFailure"))
+      .toObject();
 }
 
 qint64 debugMcpSnapshotFrame(const QJsonObject& snapshot) {
@@ -1387,6 +1458,37 @@ bool debugMcpMatchesCondition(const QJsonObject& condition, const QJsonObject& s
     const QString needle = rawValue.toString().trimmed();
     return !needle.isEmpty() &&
            debugMcpSnapshotTraceText(snapshot).contains(needle, Qt::CaseInsensitive);
+  }
+
+  if (kind == QStringLiteral("diagnostic_severity_is")) {
+    const QJsonObject failure = debugMcpLatestFailure(snapshot);
+    return !failure.isEmpty() &&
+           failure.value(QStringLiteral("severity")).toString().compare(
+               rawValue.toString(), Qt::CaseInsensitive) == 0;
+  }
+
+  if (kind == QStringLiteral("diagnostic_code_is")) {
+    const QJsonObject failure = debugMcpLatestFailure(snapshot);
+    return !failure.isEmpty() &&
+           failure.value(QStringLiteral("code")).toString().compare(
+               rawValue.toString(), Qt::CaseInsensitive) == 0;
+  }
+
+  if (kind == QStringLiteral("diagnostic_matches")) {
+    const QJsonObject failure = debugMcpLatestFailure(snapshot);
+    const QJsonObject expected = rawValue.toObject();
+    if (failure.isEmpty()) {
+      return false;
+    }
+    const auto matches = [&failure, &expected](const QString& key) {
+      return !expected.contains(key) ||
+             failure.value(key).toString().compare(
+                 expected.value(key).toString(), Qt::CaseInsensitive) == 0;
+    };
+    return matches(QStringLiteral("severity")) &&
+           matches(QStringLiteral("code")) &&
+           matches(QStringLiteral("component")) &&
+           matches(QStringLiteral("objectId"));
   }
 
   if (kind == QStringLiteral("property_equals")) {

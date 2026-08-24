@@ -55,35 +55,63 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override {
         std::vector<AbstractProperty> props;
+        props.reserve(5);
+
         AbstractProperty middleGray;
         middleGray.setName(QStringLiteral("MiddleGray"));
+        middleGray.setDisplayLabel(QStringLiteral("Middle Gray"));
         middleGray.setType(PropertyType::Float);
         middleGray.setValue(middleGray_);
-        props.push_back(middleGray);
+        middleGray.setDefaultValue(0.18);
+        middleGray.setHardRange(0.01, 1.0);
+        middleGray.setSoftRange(0.05, 0.5);
+        middleGray.setStep(0.01);
+        middleGray.setTooltip(QStringLiteral("Target mid-tone luminance the auto-exposure aims for. 0.18 is the photometric standard."));
+        props.push_back(std::move(middleGray));
 
         AbstractProperty minExposure;
         minExposure.setName(QStringLiteral("MinExposure"));
+        minExposure.setDisplayLabel(QStringLiteral("Min Exposure"));
         minExposure.setType(PropertyType::Float);
         minExposure.setValue(minExposure_);
-        props.push_back(minExposure);
+        minExposure.setDefaultValue(-4.0);
+        minExposure.setHardRange(-10.0, 0.0);
+        minExposure.setStep(0.1);
+        minExposure.setUnit(QStringLiteral("EV"));
+        minExposure.setTooltip(QStringLiteral("Lower bound of exposure adaptation in stops."));
+        props.push_back(std::move(minExposure));
 
         AbstractProperty maxExposure;
         maxExposure.setName(QStringLiteral("MaxExposure"));
+        maxExposure.setDisplayLabel(QStringLiteral("Max Exposure"));
         maxExposure.setType(PropertyType::Float);
         maxExposure.setValue(maxExposure_);
-        props.push_back(maxExposure);
+        maxExposure.setDefaultValue(4.0);
+        maxExposure.setHardRange(0.0, 10.0);
+        maxExposure.setStep(0.1);
+        maxExposure.setUnit(QStringLiteral("EV"));
+        maxExposure.setTooltip(QStringLiteral("Upper bound of exposure adaptation in stops."));
+        props.push_back(std::move(maxExposure));
 
         AbstractProperty adaptationSpeed;
         adaptationSpeed.setName(QStringLiteral("AdaptationSpeed"));
+        adaptationSpeed.setDisplayLabel(QStringLiteral("Adaptation Speed"));
         adaptationSpeed.setType(PropertyType::Float);
         adaptationSpeed.setValue(adaptationSpeed_);
-        props.push_back(adaptationSpeed);
+        adaptationSpeed.setDefaultValue(1.5);
+        adaptationSpeed.setHardRange(0.01, 20.0);
+        adaptationSpeed.setSoftRange(0.1, 5.0);
+        adaptationSpeed.setStep(0.01);
+        adaptationSpeed.setTooltip(QStringLiteral("How quickly the exposure adjusts to scene brightness changes."));
+        props.push_back(std::move(adaptationSpeed));
 
         AbstractProperty enabled;
         enabled.setName(QStringLiteral("Enabled"));
         enabled.setType(PropertyType::Boolean);
         enabled.setValue(enabled_);
-        props.push_back(enabled);
+        enabled.setDefaultValue(true);
+        enabled.setTooltip(QStringLiteral("Enable auto exposure adjustment."));
+        props.push_back(std::move(enabled));
         return props;
     }
 

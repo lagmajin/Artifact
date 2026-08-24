@@ -3,7 +3,6 @@ module;
 #include <functional>
 #include <QFile>
 #include <QFileInfo>
-#include <QDir>
 #include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -12,6 +11,7 @@ module;
 #include <QStringList>
 module Artifact.Project.Exporter;
 
+import Asset.Manager;
 import Artifact.Color.OCIOManager;
 import Serialization.ProjectSerializer;
 
@@ -106,16 +106,7 @@ namespace Artifact
   // relative candidate for relocation. Older importers ignore the extra keys.
   const QString projectDirectory = QFileInfo(outputPath_).absolutePath();
   const auto relativePathFor = [&projectDirectory](const QString& path) {
-   const QString trimmedPath = path.trimmed();
-   if (trimmedPath.isEmpty()) {
-    return QString();
-   }
-   const QFileInfo info(trimmedPath);
-   const QString absolutePath = info.isAbsolute()
-       ? info.absoluteFilePath()
-       : QDir(projectDirectory).absoluteFilePath(trimmedPath);
-   return QDir(projectDirectory).relativeFilePath(
-       QDir::cleanPath(absolutePath));
+   return ArtifactCore::projectRelativeSourceCandidate(projectDirectory, path);
   };
   QJsonObject assets = obj.value(QStringLiteral("assets")).toObject();
   QJsonObject sourceRegistry = assets.value(QStringLiteral("sourceRegistry")).toObject();

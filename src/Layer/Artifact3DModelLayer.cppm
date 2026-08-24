@@ -4,6 +4,8 @@ module;
 #include <QDir>
 #include <QColor>
 #include <QDebug>
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QRectF>
 #include <QSizeF>
@@ -12,7 +14,10 @@ module;
 #include <QVector3D>
 #include <QVector>
 #include <QtGlobal>
+#include <algorithm>
+#include <cstdint>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 module Artifact.Layers.Model3D;
@@ -26,6 +31,7 @@ import MeshImporter;
 import Utils.String.UniString;
 import Material.Material;
 import Core.Parallel;
+import EnvironmentVariable.Expansion;
 
 namespace Artifact {
 
@@ -40,6 +46,12 @@ Artifact::Detail::float3 toFloat3(const QVector3D &v) {
 
 void centerMeshPositions(Mesh &mesh) {
   mesh.updateBounds();
+  // Skin matrices are authored in the imported mesh space. Translating only
+  // the positions would make later pose updates use a mismatched origin.
+  // Keep skinned assets in source space; camera/model framing handles bounds.
+  if (!mesh.skinBones().isEmpty()) {
+    return;
+  }
   const QVector3D minB = mesh.boundingBoxMin();
   const QVector3D maxB = mesh.boundingBoxMax();
   const QVector3D center = (minB + maxB) * 0.5f;
@@ -52,6 +64,7 @@ void centerMeshPositions(Mesh &mesh) {
     positionData[index] -= center;
   });
   mesh.updateBounds();
+  mesh.invalidateSkinningBase();
 }
 
 QString detectSiblingBaseColorTexture(const QString& modelPath)
@@ -106,6 +119,11 @@ public:
   bool wireOverlay_ = false;
   bool faceNormals_ = false;
   bool vertexNormals_ = false;
+  int64_t lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  int skinAnimationClipIndex_ = 0;
+  bool updatingSkinAnimation_ = false;
+  bool skinAnimationEnabled_ = true;
+  QHash<QString, float> blendShapeWeightOverrides_;
   float normalLength_ = 25.0f;
   QString lastRenderTraceOutcome_;
   Impl() {}
@@ -139,23 +157,34 @@ void Artifact3DLayer::loadFromFile() {
 }
 
 void Artifact3DLayer::loadFromFile(const QString &filePath) {
-  const QString normalizedInput = filePath.trimmed();
+  // テンプレート ($VAR 等) はメンバ保持し、ファイル IO のみ展開結果を使う。
+  const QString templatePath = filePath.trimmed();
+  QString normalizedInput = templatePath;
+  if (containsExpansionMarker(normalizedInput)) {
+      ExpansionContext expansionContext;
+      normalizedInput = expandTokens(normalizedInput, expansionContext);
+  }
   if (normalizedInput.isEmpty()) {
     qWarning() << "[Artifact3DLayer] Ignoring empty source path reload";
     return;
   }
+  impl_->blendShapeWeightOverrides_.clear();
   const QFileInfo inputInfo(normalizedInput);
   if (!inputInfo.exists() || !inputInfo.isFile()) {
     qWarning() << "[Artifact3DLayer] Ignoring missing model source:" << normalizedInput;
     return;
   }
   impl_->fixedGeometry_ = FixedGeometry3D::Auto;
+  impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
 
   ArtifactCore::MeshImporter importer;
   auto mesh = importer.importMeshFromFile(UniString(normalizedInput));
 
   if (mesh && mesh->vertexCount() > 0) {
     impl_->mesh_ = *mesh;
+    if (!impl_->mesh_.skinBones().isEmpty()) {
+      impl_->mesh_.applyDeformers(impl_->mesh_.skinPoseMatrices());
+    }
     centerMeshPositions(impl_->mesh_);
     impl_->meshLoaded_ = true;
     updateSourceSizeFromMesh();
@@ -214,11 +243,12 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       }
     }
     impl_->renderMode_ = RenderMode::Solid;
-    const QFileInfo sourceInfo(filePath);
+    const QFileInfo sourceInfo(normalizedInput);
     const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
-        ? sourceInfo.absoluteFilePath()
-        : sourceInfo.canonicalFilePath();
-    impl_->sourcePath_ = normalizedSourcePath;
+        ? templatePath
+        : (sourceInfo.canonicalFilePath());
+    // テンプレートを保持する (展開済み canonical パスではなく)
+    impl_->sourcePath_ = containsExpansionMarker(templatePath) ? templatePath : normalizedSourcePath;
     setLayerName(sourceInfo.baseName());
     Q_EMIT changed();
     return;
@@ -263,6 +293,17 @@ QJsonObject Artifact3DLayer::toJson() const {
   QJsonObject obj = ArtifactAbstractLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
+  obj["animation.enabled"] = impl_->skinAnimationEnabled_;
+  obj["animation.clipIndex"] = impl_->skinAnimationClipIndex_;
+  QJsonArray blendShapeWeights;
+  for (auto it = impl_->blendShapeWeightOverrides_.cbegin();
+       it != impl_->blendShapeWeightOverrides_.cend(); ++it) {
+    blendShapeWeights.append(QJsonObject{
+        {QStringLiteral("name"), it.key()},
+        {QStringLiteral("weight"), it.value()},
+        {QStringLiteral("override"), true}});
+  }
+  obj["deformers.blendShapes"] = blendShapeWeights;
   obj["renderMode"] = static_cast<int>(impl_->renderMode_);
   obj["render.affectedByLights"] = impl_->affectedByLights_;
   obj["render.useTextureInSolid"] = impl_->useTextureInSolid_;
@@ -333,9 +374,51 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       // A missing source must not leave a previous model visible when an
       // existing layer instance is reused for project restoration.
       impl_->sourcePath_ = sourcePath;
+      impl_->blendShapeWeightOverrides_.clear();
+      impl_->mesh_ = Mesh();
       impl_->meshLoaded_ = false;
+      updateSourceSizeFromMesh();
       impl_->lastRenderTraceOutcome_.clear();
     }
+  }
+
+  if (obj.contains("animation.enabled")) {
+    impl_->skinAnimationEnabled_ = obj.value("animation.enabled").toBool(
+        impl_->skinAnimationEnabled_);
+  }
+  if (obj.contains("animation.clipIndex")) {
+    const int requestedClip = obj.value("animation.clipIndex").toInt(0);
+    const int clipCount = static_cast<int>(
+        impl_->mesh_.skinAnimationClips().size());
+    impl_->skinAnimationClipIndex_ = clipCount > 0
+        ? std::clamp(requestedClip, 0, clipCount - 1)
+        : std::max(0, requestedClip);
+    impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  }
+
+  if (obj.value("deformers.blendShapes").isArray()) {
+    const QJsonArray savedWeights =
+        obj.value("deformers.blendShapes").toArray();
+    for (const QJsonValue& value : savedWeights) {
+      if (!value.isObject()) continue;
+      const QJsonObject entry = value.toObject();
+      if (entry.contains("override") &&
+          !entry.value("override").toBool(true)) {
+        continue;
+      }
+      const QString name = entry.value("name").toString();
+      if (name.isEmpty()) continue;
+      const float weight = static_cast<float>(
+          entry.value("weight").toDouble(0.0));
+      if (!std::isfinite(weight)) continue;
+      for (int index = 0; index < impl_->mesh_.blendShapes().size(); ++index) {
+        if (impl_->mesh_.blendShapes()[index].name == name) {
+          impl_->blendShapeWeightOverrides_.insert(name, weight);
+          impl_->mesh_.setBlendShapeWeight(index, weight);
+        }
+      }
+    }
+    updateSourceSizeFromMesh();
   }
 
   if (obj.contains("fixedGeometry")) {
@@ -829,6 +912,164 @@ void Artifact3DLayer::updateSourceSizeFromMesh() {
 
 RenderMode Artifact3DLayer::renderMode() const { return impl_->renderMode_; }
 
+void Artifact3DLayer::loadFromFileAtTime(const QString& filePath,
+                                         const double time,
+                                         const int clipIndex)
+{
+  const QString normalizedInput = filePath.trimmed();
+  if (normalizedInput.isEmpty()) return;
+
+  ArtifactCore::MeshImporter importer;
+  auto mesh = importer.importMeshFromFileAtTime(
+      UniString(normalizedInput), time, clipIndex);
+  if (!mesh || mesh->vertexCount() <= 0) {
+    qWarning() << "[Artifact3DLayer] Timed model evaluation failed:"
+               << normalizedInput << importer.lastError();
+    return;
+  }
+  impl_->fixedGeometry_ = FixedGeometry3D::Auto;
+  const int clipCount = static_cast<int>(mesh->skinAnimationClips().size());
+  impl_->skinAnimationClipIndex_ = clipCount > 0
+      ? std::clamp(clipIndex, 0, clipCount - 1)
+      : std::max(0, clipIndex);
+  impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  impl_->mesh_ = *mesh;
+  if (!impl_->mesh_.skinBones().isEmpty()) {
+    impl_->mesh_.applyDeformers(impl_->mesh_.skinPoseMatrices());
+  }
+  for (int shapeIndex = 0;
+       shapeIndex < impl_->mesh_.blendShapes().size(); ++shapeIndex) {
+    const auto overrideIt = impl_->blendShapeWeightOverrides_.constFind(
+        impl_->mesh_.blendShapes()[shapeIndex].name);
+    if (overrideIt != impl_->blendShapeWeightOverrides_.constEnd()) {
+      impl_->mesh_.setBlendShapeWeight(shapeIndex, overrideIt.value());
+    }
+  }
+  centerMeshPositions(impl_->mesh_);
+  impl_->meshLoaded_ = true;
+  impl_->renderMode_ = RenderMode::Solid;
+  updateSourceSizeFromMesh();
+  const QFileInfo sourceInfo(normalizedInput);
+  const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
+      ? sourceInfo.absoluteFilePath()
+      : sourceInfo.canonicalFilePath();
+  impl_->sourcePath_ = normalizedSourcePath;
+  setLayerName(sourceInfo.baseName());
+  Q_EMIT changed();
+}
+
+void Artifact3DLayer::setAnimationTime(const double time, const int clipIndex)
+{
+  if (impl_->sourcePath_.isEmpty() || !impl_->meshLoaded_) {
+    return;
+  }
+  loadFromFileAtTime(impl_->sourcePath_, time, clipIndex);
+}
+
+void Artifact3DLayer::setSkinAnimationEnabled(const bool enabled)
+{
+  impl_->skinAnimationEnabled_ = enabled;
+  impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  if (!enabled && impl_->meshLoaded_ && !impl_->sourcePath_.isEmpty()) {
+    if (const auto* clip = impl_->mesh_.skinAnimationClip(
+            impl_->skinAnimationClipIndex_)) {
+      loadFromFileAtTime(impl_->sourcePath_, clip->timeBegin,
+                         impl_->skinAnimationClipIndex_);
+    }
+  }
+  Q_EMIT changed();
+}
+
+bool Artifact3DLayer::skinAnimationEnabled() const
+{
+  return impl_->skinAnimationEnabled_;
+}
+
+void Artifact3DLayer::setSkinAnimationClipIndex(const int clipIndex)
+{
+  const int clipCount = static_cast<int>(
+      impl_->mesh_.skinAnimationClips().size());
+  impl_->skinAnimationClipIndex_ = clipCount > 0
+      ? std::clamp(clipIndex, 0, clipCount - 1)
+      : 0;
+  impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  if (impl_->meshLoaded_ && !impl_->sourcePath_.isEmpty()) {
+    if (const auto* clip = impl_->mesh_.skinAnimationClip(
+            impl_->skinAnimationClipIndex_)) {
+      loadFromFileAtTime(impl_->sourcePath_, clip->timeBegin,
+                         impl_->skinAnimationClipIndex_);
+    }
+  }
+  Q_EMIT changed();
+}
+
+int Artifact3DLayer::skinAnimationClipIndex() const
+{
+  return impl_->skinAnimationClipIndex_;
+}
+
+int Artifact3DLayer::skinAnimationClipCount() const
+{
+  return static_cast<int>(impl_->mesh_.skinAnimationClips().size());
+}
+
+QString Artifact3DLayer::skinAnimationClipName(const int clipIndex) const
+{
+  const auto* clip = impl_->mesh_.skinAnimationClip(clipIndex);
+  return clip ? clip->name : QString();
+}
+
+int Artifact3DLayer::blendShapeCount() const
+{
+  return static_cast<int>(impl_->mesh_.blendShapes().size());
+}
+
+QString Artifact3DLayer::blendShapeName(const int shapeIndex) const
+{
+  const auto& shapes = impl_->mesh_.blendShapes();
+  return shapeIndex >= 0 && shapeIndex < shapes.size()
+      ? shapes[shapeIndex].name : QString();
+}
+
+float Artifact3DLayer::blendShapeWeight(const int shapeIndex) const
+{
+  return impl_->mesh_.blendShapeWeight(shapeIndex);
+}
+
+void Artifact3DLayer::setBlendShapeWeight(const int shapeIndex,
+                                          const float weight)
+{
+  if (shapeIndex < 0 || shapeIndex >= impl_->mesh_.blendShapes().size() ||
+      !std::isfinite(weight)) {
+    return;
+  }
+  impl_->blendShapeWeightOverrides_.insert(
+      impl_->mesh_.blendShapes()[shapeIndex].name, weight);
+  impl_->mesh_.setBlendShapeWeight(shapeIndex, weight);
+  updateSourceSizeFromMesh();
+  Q_EMIT changed();
+}
+
+void Artifact3DLayer::clearBlendShapeWeightOverride(const int shapeIndex)
+{
+  if (shapeIndex < 0 || shapeIndex >= impl_->mesh_.blendShapes().size()) {
+    return;
+  }
+  impl_->blendShapeWeightOverrides_.remove(
+      impl_->mesh_.blendShapes()[shapeIndex].name);
+  if (!impl_->sourcePath_.isEmpty()) {
+    const double fps = std::isfinite(compositionFrameRate()) &&
+                               compositionFrameRate() > 0.0
+        ? compositionFrameRate()
+        : 30.0;
+    loadFromFileAtTime(impl_->sourcePath_,
+                       static_cast<double>(currentFrame()) / fps,
+                       impl_->skinAnimationClipIndex_);
+    return;
+  }
+  Q_EMIT changed();
+}
+
 void Artifact3DLayer::setRenderMode(RenderMode mode) {
   const int raw = static_cast<int>(mode);
   if (raw < static_cast<int>(RenderMode::Wireframe) ||
@@ -843,6 +1084,18 @@ void Artifact3DLayer::setRenderMode(RenderMode mode) {
 const ArtifactCore::Mesh& Artifact3DLayer::mesh() const
 {
   return impl_->mesh_;
+}
+
+void Artifact3DLayer::setSkinPoseMatrices(
+    const QVector<QMatrix4x4>& boneMatrices)
+{
+  if (boneMatrices.isEmpty() || impl_->mesh_.skinBones().isEmpty()) {
+    return;
+  }
+  impl_->mesh_.applyDeformers(boneMatrices);
+  impl_->mesh_.updateBounds();
+  updateSourceSizeFromMesh();
+  Q_EMIT changed();
 }
 
 void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
@@ -891,6 +1144,32 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
                                 compositionFrameRate() > 0.0
       ? compositionFrameRate()
       : 30.0;
+  if (!impl_->sourcePath_.isEmpty() &&
+      !impl_->mesh_.skinAnimationClips().isEmpty() &&
+      impl_->skinAnimationEnabled_ &&
+      impl_->lastSkinAnimationFrame_ != frame &&
+      !impl_->updatingSkinAnimation_) {
+    const int clipCount = static_cast<int>(
+        impl_->mesh_.skinAnimationClips().size());
+    impl_->skinAnimationClipIndex_ = std::clamp(
+        impl_->skinAnimationClipIndex_, 0, clipCount - 1);
+    impl_->updatingSkinAnimation_ = true;
+    const auto* clip = impl_->mesh_.skinAnimationClip(
+        impl_->skinAnimationClipIndex_);
+    if (clip && std::isfinite(clip->timeBegin) &&
+        std::isfinite(clip->timeEnd) && clip->timeEnd > clip->timeBegin) {
+      const double duration = clip->timeEnd - clip->timeBegin;
+      const double requestedTime = static_cast<double>(frame) / compositionFps;
+      const double relativeTime = std::isfinite(requestedTime)
+          ? std::fmod(std::max(0.0, requestedTime - clip->timeBegin),
+                      duration)
+          : 0.0;
+      setAnimationTime(clip->timeBegin + relativeTime,
+                       impl_->skinAnimationClipIndex_);
+    }
+    impl_->updatingSkinAnimation_ = false;
+    impl_->lastSkinAnimationFrame_ = frame;
+  }
   const RationalTime frameTime(currentFrame(), compositionFps);
   const auto snapshot = t3.snapshotAt(frameTime);
   const RationalTime previousFrameTime(
@@ -1187,6 +1466,44 @@ Artifact3DLayer::getLayerPropertyGroups() const {
     sourcePathProp->setDisplayLabel(QStringLiteral("Source Path"));
     sourcePathProp->setTooltip(QStringLiteral("3D model source file path"));
     renderGroup.addProperty(sourcePathProp);
+
+    auto skinAnimationEnabledProp = persistentLayerProperty(
+        QStringLiteral("animation.enabled"), PropertyType::Boolean,
+        impl_->skinAnimationEnabled_, -54);
+    skinAnimationEnabledProp->setDisplayLabel(QStringLiteral("Skin Animation"));
+    skinAnimationEnabledProp->setTooltip(
+        QStringLiteral("Evaluate imported FBX/glTF skin animation during composition playback"));
+    renderGroup.addProperty(skinAnimationEnabledProp);
+
+    auto skinAnimationClipProp = persistentLayerProperty(
+        QStringLiteral("animation.clipIndex"), PropertyType::Integer,
+        impl_->skinAnimationClipIndex_, -53);
+    skinAnimationClipProp->setDisplayLabel(QStringLiteral("Animation Clip"));
+    skinAnimationClipProp->setTooltip(
+        QStringLiteral("Imported animation clip index"));
+    skinAnimationClipProp->setHardRange(0, 9999);
+    renderGroup.addProperty(skinAnimationClipProp);
+
+    if (!impl_->mesh_.blendShapes().isEmpty()) {
+      PropertyGroup morphGroup(QStringLiteral("Morphs"));
+      for (int shapeIndex = 0;
+           shapeIndex < impl_->mesh_.blendShapes().size(); ++shapeIndex) {
+        const auto& shape = impl_->mesh_.blendShapes()[shapeIndex];
+        const QString propertyPath = QStringLiteral(
+            "deformers.blendShapes.%1.weight").arg(shapeIndex);
+        auto weightProp = persistentLayerProperty(
+            propertyPath, PropertyType::Float, shape.weight,
+            -52 - shapeIndex);
+        weightProp->setDisplayLabel(
+            shape.name.isEmpty()
+                ? QStringLiteral("Shape %1").arg(shapeIndex + 1)
+                : shape.name);
+        weightProp->setTooltip(QStringLiteral("Blend Shape weight"));
+        weightProp->setSoftRange(0.0, 1.0);
+        morphGroup.addProperty(weightProp);
+      }
+      groups.push_back(morphGroup);
+    }
   }
 
   auto affectedByLightsProp = persistentLayerProperty(
@@ -1469,6 +1786,29 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     loadFromFile(value.toString());
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("animation.enabled")) {
+    setSkinAnimationEnabled(value.toBool());
+    return true;
+  } else if (propertyPath == QStringLiteral("animation.clipIndex")) {
+    setSkinAnimationClipIndex(value.toInt());
+    return true;
+  } else if (propertyPath.startsWith(
+                 QStringLiteral("deformers.blendShapes.")) &&
+             propertyPath.endsWith(QStringLiteral(".weight"))) {
+    const QString indexText = propertyPath.mid(
+        QStringLiteral("deformers.blendShapes.").size(),
+        propertyPath.size() - QStringLiteral("deformers.blendShapes.").size() -
+            QStringLiteral(".weight").size());
+    bool indexOk = false;
+    const int shapeIndex = indexText.toInt(&indexOk);
+    if (indexOk && shapeIndex >= 0 &&
+        shapeIndex < impl_->mesh_.blendShapes().size()) {
+      const float weight = value.toFloat();
+      if (std::isfinite(weight)) {
+        setBlendShapeWeight(shapeIndex, weight);
+        return true;
+      }
+    }
   } else if (propertyPath == QStringLiteral("render.affectedByLights")) {
     setAffectedByLights(value.toBool());
     return true;

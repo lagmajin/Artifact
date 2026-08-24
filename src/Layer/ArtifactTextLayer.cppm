@@ -103,6 +103,7 @@ struct TextAnimatorState {
   bool enabled = true;
   RangeSelector range;
   WigglySelector wiggly;
+  ExpressionSelector expression;
   AnimatorProperties properties;
 };
 
@@ -250,7 +251,8 @@ RationalTime effectiveTextTimelineTime(const ArtifactTextLayer *layer) {
 }
 
 using ResolvedTextAnimatorStack =
-    std::vector<std::tuple<RangeSelector, WigglySelector, AnimatorProperties>>;
+    std::vector<std::tuple<RangeSelector, WigglySelector, ExpressionSelector,
+                           AnimatorProperties>>;
 
 ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
     const ArtifactTextLayer *layer,
@@ -355,7 +357,8 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
                                            resolved.properties.blur,
                                            0.0f, 10000.0f);
 
-    stack.emplace_back(resolved.range, resolved.wiggly, resolved.properties);
+    stack.emplace_back(resolved.range, resolved.wiggly, resolved.expression,
+                       resolved.properties);
   }
   return stack;
 }
@@ -1161,6 +1164,9 @@ bool sameTextAnimatorState(const TextAnimatorState &a,
          fuzzyEqual(a.wiggly.correlation, b.wiggly.correlation) &&
          fuzzyEqual(a.wiggly.phase, b.wiggly.phase) &&
          a.wiggly.seed == b.wiggly.seed &&
+         a.expression.enabled == b.expression.enabled &&
+         a.expression.expression == b.expression.expression &&
+         a.expression.seed == b.expression.seed &&
          fuzzyEqual(a.properties.position, b.properties.position) &&
          fuzzyEqual(a.properties.scale, b.properties.scale) &&
          fuzzyEqual(a.properties.rotation, b.properties.rotation) &&
@@ -1329,6 +1335,12 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
   wigglyObj["seed"] = animator.wiggly.seed;
   obj["wiggly"] = wigglyObj;
 
+  QJsonObject expressionObj;
+  expressionObj["enabled"] = animator.expression.enabled;
+  expressionObj["expression"] = animator.expression.expression;
+  expressionObj["seed"] = animator.expression.seed;
+  obj["expressionSelector"] = expressionObj;
+
   QJsonObject propsObj;
   propsObj["positionX"] = animator.properties.position.x();
   propsObj["positionY"] = animator.properties.position.y();
@@ -1401,6 +1413,35 @@ TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) 
     animator.wiggly.correlation = safeFloat(wigglyObj.value("correlation").toDouble(animator.wiggly.correlation), animator.wiggly.correlation, 0.0f, 100.0f);
     animator.wiggly.phase = safeFloat(wigglyObj.value("phase").toDouble(animator.wiggly.phase), animator.wiggly.phase, -100000.0f, 100000.0f);
     animator.wiggly.seed = wigglyObj.value("seed").toInt(animator.wiggly.seed);
+  }
+
+  if (obj.contains("expressionSelector") &&
+      obj.value("expressionSelector").isObject()) {
+    const QJsonObject expressionObj = obj.value("expressionSelector").toObject();
+    animator.expression.enabled =
+        expressionObj.value("enabled").toBool(animator.expression.enabled);
+    if (expressionObj.contains("expression") &&
+        !expressionObj.value("expression").isString()) {
+      animator.expression.enabled = false;
+      animator.expression.diagnostic =
+          QStringLiteral("expression must be a string");
+    } else {
+      animator.expression.expression =
+          expressionObj.value("expression").toString().trimmed();
+      if (animator.expression.expression.size() > 16384) {
+        animator.expression.expression =
+            animator.expression.expression.left(16384);
+      }
+      if (animator.expression.enabled &&
+          animator.expression.expression.isEmpty()) {
+        animator.expression.enabled = false;
+        animator.expression.diagnostic =
+            QStringLiteral("expression is empty");
+      }
+    }
+    animator.expression.seed = std::clamp(
+        expressionObj.value("seed").toInt(animator.expression.seed),
+        -1000000, 1000000);
   }
 
   if (obj.contains("properties") && obj.value("properties").isObject()) {
@@ -2216,6 +2257,47 @@ void ArtifactTextLayer::setAnimatorCount(const int count) {
   }
 }
 
+QJsonArray ArtifactTextLayer::textAnimatorStackSnapshot() const {
+  QJsonArray animatorArray;
+  for (int index = 0; index < animatorCount(); ++index) {
+    QJsonObject animatorObject = textAnimatorToJson(
+        impl_->animators_[static_cast<size_t>(index)]);
+    const QJsonObject animatedProperties =
+        serializedAnimatorProperties(this, index);
+    if (!animatedProperties.isEmpty()) {
+      animatorObject[QStringLiteral("animatedProperties")] =
+          animatedProperties;
+    }
+    animatorArray.append(animatorObject);
+  }
+  return animatorArray;
+}
+
+void ArtifactTextLayer::restoreTextAnimatorStack(const QJsonArray& snapshot) {
+  removePersistentLayerPropertiesWithPrefix(QStringLiteral("text.animators."));
+  impl_->animators_.clear();
+  const int count = std::min(static_cast<int>(snapshot.size()), 16);
+  impl_->animators_.reserve(count);
+  for (int i = 0; i < count; ++i) {
+    if (!snapshot.at(i).isObject()) {
+      continue;
+    }
+    impl_->animators_.push_back(
+        textAnimatorFromJson(snapshot.at(i).toObject(), i));
+  }
+  (void)getLayerPropertyGroups();
+  int restoredIndex = 0;
+  for (int i = 0; i < count; ++i) {
+    if (!snapshot.at(i).isObject()) continue;
+    const QJsonObject animatorObject = snapshot.at(i).toObject();
+    restoreAnimatorProperties(
+        this, restoredIndex,
+        animatorObject.value(QStringLiteral("animatedProperties")).toObject());
+    ++restoredIndex;
+  }
+  markDirty();
+}
+
 int ArtifactTextLayer::animatorCount() const {
   return static_cast<int>(impl_->animators_.size());
 }
@@ -2358,19 +2440,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.shadowOffsetY"] = shadowOffsetY();
   obj["text.shadowBlur"] = shadowBlur();
 
-  QJsonArray animatorArray;
-  for (int index = 0; index < animatorCount(); ++index) {
-    QJsonObject animatorObject = textAnimatorToJson(
-        impl_->animators_[static_cast<size_t>(index)]);
-    const QJsonObject animatedProperties =
-        serializedAnimatorProperties(this, index);
-    if (!animatedProperties.isEmpty()) {
-      animatorObject[QStringLiteral("animatedProperties")] =
-          animatedProperties;
-    }
-    animatorArray.append(animatorObject);
-  }
-  obj["text.animators"] = animatorArray;
+  obj["text.animators"] = textAnimatorStackSnapshot();
   return obj;
 }
 
@@ -2571,29 +2641,8 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
         static_cast<float>(obj.value("text.shadowBlur").toDouble(shadowBlur())));
   }
 
-  removePersistentLayerPropertiesWithPrefix(QStringLiteral("text.animators."));
-  impl_->animators_.clear();
   if (obj.contains("text.animators") && obj.value("text.animators").isArray()) {
-    const QJsonArray animatorArray = obj.value("text.animators").toArray();
-    const int animatorCount = std::min(static_cast<int>(animatorArray.size()), 16);
-    impl_->animators_.reserve(animatorCount);
-    for (int i = 0; i < animatorCount; ++i) {
-      if (!animatorArray.at(i).isObject()) {
-        continue;
-      }
-      impl_->animators_.push_back(
-          textAnimatorFromJson(animatorArray.at(i).toObject(), i));
-    }
-    (void)getLayerPropertyGroups();
-    int restoredIndex = 0;
-    for (int i = 0; i < animatorCount; ++i) {
-      if (!animatorArray.at(i).isObject()) continue;
-      const QJsonObject animatorObject = animatorArray.at(i).toObject();
-      restoreAnimatorProperties(
-          this, restoredIndex,
-          animatorObject.value(QStringLiteral("animatedProperties")).toObject());
-      ++restoredIndex;
-    }
+    restoreTextAnimatorStack(obj.value("text.animators").toArray());
   }
 
   const auto current = sourceSize();
@@ -2740,7 +2789,7 @@ QString ArtifactTextLayer::selectorBoundarySummary() const {
 QString ArtifactTextLayer::selectorOverviewSummary() const {
   if (!impl_) {
     return QStringLiteral(
-        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;tag=unknown;token=none;scripts=0;vertical=tcy=0;punct=0;brackets=0;kinsoku=0;clusters=0;lines=0");
+        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;expr=off;tag=unknown;token=none;scripts=0;vertical=tcy=0;punct=0;brackets=0;kinsoku=0;clusters=0;lines=0");
   }
   const QString displayText = resolvedSourceTextAtTime(this);
   const bool hasAnimators =
@@ -2754,6 +2803,19 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
                     return animator.range.regexEnabled &&
                            !animator.range.selectorPattern.isEmpty();
                   });
+  const bool hasExpressionSelector =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.expression.enabled;
+                  });
+  const bool hasExpressionDiagnostic =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return !animator.expression.diagnostic.isEmpty();
+                  });
+  const QString expressionSummary = hasExpressionDiagnostic
+      ? QStringLiteral("error")
+      : (hasExpressionSelector ? QStringLiteral("on") : QStringLiteral("off"));
   const bool hasRuby = !impl_->rubyText_.isEmpty();
   const bool hasCjk = FontManager::containsCjkCharacters(displayText);
   const bool isRichText = Qt::mightBeRichText(displayText);
@@ -2764,7 +2826,7 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
   const QString tagSummary = selectorTagLabelForText(displayText);
   const QString scriptSummary = selectorScriptLabelForContract(impl_->layoutContract_);
   const QString verticalSummary = selectorVerticalLabelForContract(impl_->layoutContract_);
-  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;%8;vertical=%9;clusters=%10;lines=%11")
+  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;expr=%6;%7;%8;%9;vertical=%10;clusters=%11;lines=%12")
       .arg(selectorDebugSummary())
       .arg(textWritingModeLabel(impl_->writingMode_))
       .arg(textOrderingLabel(impl_->writingMode_))
@@ -2772,6 +2834,7 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
                                           isRichText, impl_->writingMode_,
                                           lineAware))
       .arg(hasRegexSelector ? QStringLiteral("on") : QStringLiteral("off"))
+      .arg(expressionSummary)
       .arg(tagSummary)
       .arg(tokenSummary)
       .arg(scriptSummary)
@@ -3796,6 +3859,31 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
     animatorGroup.addProperty(enabledProp);
 
+    auto expressionEnabledProp = makeAnimatorProp(
+        QStringLiteral("expressionEnabled"), ArtifactCore::PropertyType::Boolean,
+        animator.expression.enabled, -118);
+    expressionEnabledProp->setDisplayLabel(QStringLiteral("Expression Selector"));
+    expressionEnabledProp->setTooltip(
+        QStringLiteral("Evaluate an expression per glyph using textIndex and textTotal."));
+    animatorGroup.addProperty(expressionEnabledProp);
+
+    auto expressionProp = makeAnimatorProp(
+        QStringLiteral("expression"), ArtifactCore::PropertyType::String,
+        animator.expression.expression, -117);
+    expressionProp->setDisplayLabel(QStringLiteral("Selector Expression"));
+    expressionProp->setTooltip(
+        QStringLiteral("Returns a selector weight from 0 to 1 for the current glyph."));
+    animatorGroup.addProperty(expressionProp);
+
+    auto expressionSeedProp = makeAnimatorProp(
+        QStringLiteral("expressionSeed"), ArtifactCore::PropertyType::Integer,
+        animator.expression.seed, -116);
+    expressionSeedProp->setDisplayLabel(QStringLiteral("Expression Seed"));
+    expressionSeedProp->setHardRange(-1000000, 1000000);
+    expressionSeedProp->setSoftRange(-1000, 1000);
+    expressionSeedProp->setStep(1);
+    animatorGroup.addProperty(expressionSeedProp);
+
     auto startProp = makeAnimatorProp(QStringLiteral("start"),
                                       ArtifactCore::PropertyType::Float,
                                       animator.range.start, -118);
@@ -4357,6 +4445,25 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       }
     } else if (field == QStringLiteral("enabled")) {
       animator.enabled = value.toBool();
+    } else if (field == QStringLiteral("expressionEnabled")) {
+      animator.expression.enabled = value.toBool();
+      if (animator.expression.enabled &&
+          animator.expression.expression.trimmed().isEmpty()) {
+        animator.expression.enabled = false;
+        animator.expression.diagnostic = QStringLiteral("expression is empty");
+      } else if (!animator.expression.enabled) {
+        animator.expression.diagnostic.clear();
+      }
+    } else if (field == QStringLiteral("expression")) {
+      animator.expression.expression = value.toString().trimmed().left(16384);
+      if (animator.expression.enabled && animator.expression.expression.isEmpty()) {
+        animator.expression.enabled = false;
+        animator.expression.diagnostic = QStringLiteral("expression is empty");
+      } else {
+        animator.expression.diagnostic.clear();
+      }
+    } else if (field == QStringLiteral("expressionSeed")) {
+      animator.expression.seed = std::clamp(value.toInt(), -1000000, 1000000);
     } else if (field == QStringLiteral("start")) {
       animator.range.start = std::clamp(numericValue, -100000.0f, 100000.0f);
     } else if (field == QStringLiteral("end")) {
@@ -4489,10 +4596,13 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
                             impl_->paragraphStyle_, impl_->writingMode_,
                             impl_->rubyText_, impl_->rubyScale_,
                             impl_->layoutMode_, impl_->pathSegments_};
-  if (rasterize && !hasAnimators && !sourceTextAnimated && !impl_->isDirty_ &&
-      impl_->lastCacheKey_ &&
-      *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
-    return;
+  const bool contentUnchanged = !impl_->isDirty_ && impl_->lastCacheKey_ &&
+                                *impl_->lastCacheKey_ == currentKey;
+  if (contentUnchanged && !hasAnimators && !sourceTextAnimated) {
+    if (rasterize ? !impl_->renderedImage_.isNull()
+                  : !impl_->glyphs_.empty()) {
+      return;
+    }
   }
   impl_->lastCacheKey_ = currentKey;
 

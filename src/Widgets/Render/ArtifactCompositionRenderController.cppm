@@ -23184,9 +23184,17 @@ if (event->button() == Qt::LeftButton &&
 
 
 
-  if (event->button() == Qt::LeftButton && activeTool == ToolType::Pen &&
-
-      selectedLayer && comp && impl_->renderer_) {
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Pen) {
+    if (!selectedLayer || !comp || !impl_->renderer_) {
+      setInfoOverlayText(
+          QStringLiteral("Mask editing"),
+          QStringLiteral(
+              "Select a layer first, then click in the viewport to add mask "
+              "vertices."));
+      markRenderDirty();
+      event->accept();
+      return;
+    }
 
     if (event->modifiers().testFlag(Qt::ControlModifier) &&
         resetHoveredMaskTangent()) {
@@ -28380,6 +28388,124 @@ bool CompositionRenderController::deleteSelectedMaskVertices() {
   impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::rotateSelectedMaskVertices(
+    const float centerX, const float centerY, const float angleDegrees) {
+  if (!impl_ || impl_->selectedMaskVertices_.empty()) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto layer = comp ? comp->layerById(impl_->selectedLayerId_) : nullptr;
+  if (!layer) {
+    return false;
+  }
+
+  const double radians = angleDegrees * (M_PI / 180.0);
+  const double cosA = std::cos(radians);
+  const double sinA = std::sin(radians);
+
+  impl_->beginMaskEditTransaction(layer);
+
+  for (const auto& [maskIndex, pathIndex, vertexIndex] :
+       impl_->selectedMaskVertices_) {
+    if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
+    LayerMask mask = layer->mask(maskIndex);
+    if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
+    MaskPath path = mask.maskPath(pathIndex);
+    if (vertexIndex < 0 || vertexIndex >= path.vertexCount()) continue;
+
+    MaskVertex v = path.vertex(vertexIndex);
+
+    // Tangents are relative offsets from position; compute their absolute
+    // coordinates first so all three points rotate consistently.
+    const QPointF inAbs = v.position + v.inTangent;
+    const QPointF outAbs = v.position + v.outTangent;
+
+    auto rotateAroundCenter = [&](const QPointF& p) -> QPointF {
+      const double dx = p.x() - centerX;
+      const double dy = p.y() - centerY;
+      return QPointF(centerX + dx * cosA - dy * sinA,
+                     centerY + dx * sinA + dy * cosA);
+    };
+
+    const QPointF newPos = rotateAroundCenter(v.position);
+    const QPointF newInAbs = rotateAroundCenter(inAbs);
+    const QPointF newOutAbs = rotateAroundCenter(outAbs);
+
+    v.position = newPos;
+    v.inTangent = newInAbs - newPos;
+    v.outTangent = newOutAbs - newPos;
+
+    path.setVertex(vertexIndex, v);
+    mask.setMaskPath(pathIndex, path);
+    layer->setMask(maskIndex, mask);
+  }
+
+  impl_->markMaskEditDirty();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      comp->id().toString(), layer->id().toString(),
+      LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+bool CompositionRenderController::scaleSelectedMaskVertices(
+    const float centerX, const float centerY, const float scaleX,
+    const float scaleY) {
+  if (!impl_ || impl_->selectedMaskVertices_.empty()) {
+    return false;
+  }
+  if (!std::isfinite(scaleX) || !std::isfinite(scaleY) ||
+      (std::abs(scaleX) < 1e-6f && std::abs(scaleY) < 1e-6f)) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto layer = comp ? comp->layerById(impl_->selectedLayerId_) : nullptr;
+  if (!layer) {
+    return false;
+  }
+
+  impl_->beginMaskEditTransaction(layer);
+
+  for (const auto& [maskIndex, pathIndex, vertexIndex] :
+       impl_->selectedMaskVertices_) {
+    if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
+    LayerMask mask = layer->mask(maskIndex);
+    if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
+    MaskPath path = mask.maskPath(pathIndex);
+    if (vertexIndex < 0 || vertexIndex >= path.vertexCount()) continue;
+
+    MaskVertex v = path.vertex(vertexIndex);
+    v.position.setX(centerX + (v.position.x() - centerX) * scaleX);
+    v.position.setY(centerY + (v.position.y() - centerY) * scaleY);
+
+    QPointF inAbs(v.position.x() + v.inTangent.x(),
+                  v.position.y() + v.inTangent.y());
+    QPointF outAbs(v.position.x() + v.outTangent.x(),
+                   v.position.y() + v.outTangent.y());
+    inAbs.setX(centerX + (inAbs.x() - centerX) * scaleX);
+    inAbs.setY(centerY + (inAbs.y() - centerY) * scaleY);
+    outAbs.setX(centerX + (outAbs.x() - centerX) * scaleX);
+    outAbs.setY(centerY + (outAbs.y() - centerY) * scaleY);
+    v.inTangent = inAbs - v.position;
+    v.outTangent = outAbs - v.position;
+
+    path.setVertex(vertexIndex, v);
+    mask.setMaskPath(pathIndex, path);
+    layer->setMask(maskIndex, mask);
+  }
+
+  impl_->markMaskEditDirty();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      comp->id().toString(), layer->id().toString(),
+      LayerChangedEvent::ChangeType::Modified});
   return true;
 }
 

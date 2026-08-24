@@ -156,8 +156,10 @@ public:
     /// Get current frame info
     VideoFrameInfo currentFrameInfo() const;
 
-    /// Get the current GPU-friendly frame buffer, if available
-    const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+    /// Get a thread-safe copy of the current frame buffer, if available.
+    /// Returns by value because the background decoder can replace the
+    /// underlying buffer at any time.
+    ArtifactCore::ImageF32x4_RGBA currentFrameBuffer() const;
     QImage getThumbnail(int width = 128, int height = 128) const override;
     bool hasCurrentFrameBuffer() const;
     ArtifactCore::ImageF32x4_RGBA currentFrameImageBuffer() const;

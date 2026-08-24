@@ -3174,7 +3174,10 @@ void ArtifactPlaybackService::addMarkerAtCurrentFrame(const QString &comment) {
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->addMarker(currentFrame(), comment, MarkerType::Comment);
-    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
+    const QJsonObject after = points->toJson();
+    if (before != after) {
+      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
+    }
   }
 }
 
@@ -3182,7 +3185,10 @@ void ArtifactPlaybackService::addChapterMarkerAtCurrentFrame(const QString &name
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->addMarker(currentFrame(), name, MarkerType::Chapter);
-    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
+    const QJsonObject after = points->toJson();
+    if (before != after) {
+      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
+    }
   }
 }
 
@@ -3190,7 +3196,10 @@ void ArtifactPlaybackService::deleteMarkerAtCurrentFrame() {
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->removeMarker(currentFrame());
-    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
+    const QJsonObject after = points->toJson();
+    if (before != after) {
+      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
+    }
   }
 }
 
@@ -3198,7 +3207,10 @@ void ArtifactPlaybackService::clearAllMarkers() {
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->clearAllMarkers();
-    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
+    const QJsonObject after = points->toJson();
+    if (before != after) {
+      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
+    }
   }
 }
 
@@ -3207,6 +3219,10 @@ void ArtifactPlaybackService::goToNextMarker() {
     impl_->engine_->goToNextMarker();
   } else if (impl_ && impl_->controller_) {
     impl_->controller_->goToNextMarker();
+  } else if (auto *points = inOutPoints()) {
+    if (const auto next = points->nextMarker(currentFrame())) {
+      goToFrame(*next);
+    }
   }
 }
 
@@ -3215,6 +3231,10 @@ void ArtifactPlaybackService::goToPreviousMarker() {
     impl_->engine_->goToPreviousMarker();
   } else if (impl_ && impl_->controller_) {
     impl_->controller_->goToPreviousMarker();
+  } else if (auto *points = inOutPoints()) {
+    if (const auto previous = points->previousMarker(currentFrame())) {
+      goToFrame(*previous);
+    }
   }
 }
 
@@ -3223,6 +3243,10 @@ void ArtifactPlaybackService::goToNextChapter() {
     impl_->engine_->goToNextChapter();
   } else if (impl_ && impl_->controller_) {
     impl_->controller_->goToNextChapter();
+  } else if (auto *points = inOutPoints()) {
+    if (const auto next = points->nextChapter(currentFrame())) {
+      goToFrame(*next);
+    }
   }
 }
 
@@ -3231,6 +3255,10 @@ void ArtifactPlaybackService::goToPreviousChapter() {
     impl_->engine_->goToPreviousChapter();
   } else if (impl_ && impl_->controller_) {
     impl_->controller_->goToPreviousChapter();
+  } else if (auto *points = inOutPoints()) {
+    if (const auto previous = points->previousChapter(currentFrame())) {
+      goToFrame(*previous);
+    }
   }
 }
 

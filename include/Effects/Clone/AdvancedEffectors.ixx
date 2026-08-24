@@ -1,4 +1,5 @@
 ﻿module;
+#include <cstdint>
 #include <cmath>
 #include <random>
 
@@ -79,6 +80,7 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     class StepCloneEffector : public AbstractCloneEffector {
     public:
+        QString effectorTypeName() const override { return QStringLiteral("step"); }
         QVector3D positionStep{0, 0, 0};
         QVector3D rotationStep{0, 0, 0};
         QVector3D scaleStep{0, 0, 0};
@@ -98,8 +100,8 @@ export namespace Artifact {
                 float progress = static_cast<float>(i) / std::max(1, count - 1);
                 progress = ArtifactCore::interpolate(0.0f, 1.0f, progress, easeType);
                 
-                // 最終的な影響度 (フィールド × 進行度)
-                float finalWeight = clone.weight * fieldWeight * progress;
+                // 最終的な影響度 (フィールド × 進行度 × strength)
+                float finalWeight = clone.weight * fieldWeight * progress * strength;
 
                 if (finalWeight <= 0.0001f) continue;
 
@@ -130,22 +132,26 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     class RandomCloneEffector : public AbstractCloneEffector {
     public:
+        QString effectorTypeName() const override { return QStringLiteral("random"); }
         QVector3D positionVariance{0, 0, 0}; // 例: (50, 50, 50) なら -50〜50の範囲でブレる
         QVector3D rotationVariance{0, 0, 0};
         float scaleVariance = 0.0f; // 例: 0.5 なら 0.5倍〜1.5倍の範囲でブレる
         int seed = 12345;
 
         // 簡単なハッシュベースの擬似乱数ジェネレータ
+        // 符号なし32bitでラップアラウンドさせる（符号付き乗算のUB回避）。
         float hash(int n) const {
-            n = (n << 13) ^ n;
-            return 1.0f - ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0f;
+            std::uint32_t x = static_cast<std::uint32_t>(n);
+            x = (x << 13) ^ x;
+            x = x * (x * x * 15731U + 789221U) + 1376312589U;
+            return 1.0f - static_cast<float>(x & 0x7fffffffU) / 1073741824.0f;
         }
 
         void applyToClones(std::vector<CloneData>& clones) const override {
             for (auto& clone : clones) {
                 QVector3D currentPos = clone.transform.column(3).toVector3D();
                 float fieldWeight = calculateFieldWeight(currentPos);
-                float finalWeight = clone.weight * fieldWeight;
+                float finalWeight = clone.weight * fieldWeight * strength;
 
                 if (finalWeight <= 0.0001f) continue;
 
@@ -184,6 +190,7 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     class DelayCloneEffector : public AbstractCloneEffector {
     public:
+        QString effectorTypeName() const override { return QStringLiteral("delay"); }
         enum class DelayMode {
             None = 0,
             Forward,
@@ -211,7 +218,7 @@ export namespace Artifact {
                 auto& clone = clones[i];
                 QVector3D currentPos = clone.transform.column(3).toVector3D();
                 float fieldWeight = calculateFieldWeight(currentPos);
-                float finalWeight = clone.weight * fieldWeight * delayStrength;
+                float finalWeight = clone.weight * fieldWeight * strength * delayStrength;
                 if (finalWeight <= 0.0001f) continue;
 
                 // インデックスに基づく時間オフセット (0.0 - 1.0)
@@ -267,6 +274,7 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     class SoundCloneEffector : public AbstractCloneEffector {
     public:
+        QString effectorTypeName() const override { return QStringLiteral("sound"); }
         enum class FrequencyMode {
             Full = 0,
             Low,
@@ -345,7 +353,7 @@ export namespace Artifact {
                 auto& clone = clones[i];
                 QVector3D currentPos = clone.transform.column(3).toVector3D();
                 float fieldWeight = calculateFieldWeight(currentPos);
-                float finalWeight = clone.weight * fieldWeight;
+                float finalWeight = clone.weight * fieldWeight * strength;
                 if (finalWeight <= 0.0001f) continue;
 
                 // Clone delay (wave propagation along indices)
@@ -388,7 +396,7 @@ export namespace Artifact {
                     float r = std::clamp(clone.color.redF()   + colorAmount.redF()   * delayedAmp * finalWeight, 0.0f, 1.0f);
                     float g = std::clamp(clone.color.greenF() + colorAmount.greenF() * delayedAmp * finalWeight, 0.0f, 1.0f);
                     float b = std::clamp(clone.color.blueF()  + colorAmount.blueF()  * delayedAmp * finalWeight, 0.0f, 1.0f);
-                    clone.color.setRgbF(r, g, b);
+                    clone.color.setRgbF(r, g, b, clone.color.alphaF());
                 }
 
                 // Weight
@@ -410,6 +418,7 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     class NoiseCloneEffector : public AbstractCloneEffector {
     public:
+        QString effectorTypeName() const override { return QStringLiteral("noise"); }
         QVector3D positionAmplitude{50, 50, 0};
         QVector3D rotationAmplitude{0, 0, 45};
         float scaleAmplitude = 0.0f;
@@ -428,7 +437,7 @@ export namespace Artifact {
             for (auto& clone : clones) {
                 QVector3D currentPos = clone.transform.column(3).toVector3D();
                 float fieldWeight = calculateFieldWeight(currentPos);
-                float finalWeight = clone.weight * fieldWeight;
+                float finalWeight = clone.weight * fieldWeight * strength;
 
                 if (finalWeight <= 0.0001f) continue;
 

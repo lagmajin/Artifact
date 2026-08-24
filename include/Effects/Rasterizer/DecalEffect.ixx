@@ -42,14 +42,26 @@ public:
         std::vector<AbstractProperty> props;
         AbstractProperty opacity;
         opacity.setName(QStringLiteral("Opacity"));
+        opacity.setDisplayLabel(QStringLiteral("Opacity"));
         opacity.setType(PropertyType::Float);
         opacity.setValue(opacity_);
-        props.push_back(opacity);
+        opacity.setDefaultValue(1.0);
+        opacity.setMinValue(QVariant(0.0));
+        opacity.setMaxValue(QVariant(1.0));
+        opacity.setStep(0.01);
+        opacity.setTooltip(QStringLiteral("Decal texture blend strength."));
+        props.push_back(std::move(opacity));
         AbstractProperty normalFade;
         normalFade.setName(QStringLiteral("NormalFade"));
+        normalFade.setDisplayLabel(QStringLiteral("Normal Fade"));
         normalFade.setType(PropertyType::Float);
         normalFade.setValue(normalFade_);
-        props.push_back(normalFade);
+        normalFade.setDefaultValue(0.5);
+        normalFade.setMinValue(QVariant(0.0));
+        normalFade.setMaxValue(QVariant(1.0));
+        normalFade.setStep(0.01);
+        normalFade.setTooltip(QStringLiteral("Fades the decal on surfaces perpendicular to the projection direction to prevent stretching."));
+        props.push_back(std::move(normalFade));
         return props;
     }
 

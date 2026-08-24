@@ -26,7 +26,6 @@ module;
 #include <QFileSystemWatcher>
 #include <QTimer>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
-#include <glm/ext/matrix_projection.hpp>
 #include <wobjectimpl.h>
 
 module Artifact.Service.Project;
@@ -69,6 +68,9 @@ import Asset.Manager;
 import Asset.Database;
 import Undo.UndoManager;
 import Composition.PreCompose;
+import Control.OSC.Input;
+import Control.Midi.Input;
+import ArtifactCore.Control.External;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
@@ -1531,10 +1533,13 @@ public:
 
   QFileSystemWatcher* fileWatcher_ = nullptr;
   QTimer* statusCheckTimer_ = nullptr;
+  ArtifactCore::OscInput* oscInput_ = nullptr;
+  ArtifactCore::MidiInput* midiInput_ = nullptr;
   void setupFileWatcher(ArtifactProjectService* owner);
   void refreshFileWatcherPaths();
   void updateAllAssetStatuses();
   void handleFileChanged(const QString& path);
+  void setupExternalControlInputs(ArtifactProjectService* owner);
 };
 
 void ArtifactProjectService::Impl::setupFileWatcher(ArtifactProjectService* owner) {
@@ -1552,6 +1557,43 @@ void ArtifactProjectService::Impl::setupFileWatcher(ArtifactProjectService* owne
 
   statusCheckTimer_->start();
   refreshFileWatcherPaths();
+}
+
+void ArtifactProjectService::Impl::setupExternalControlInputs(
+    ArtifactProjectService *owner) {
+  constexpr uint16_t kDefaultOscPort = 8000;
+  oscInput_ = new ArtifactCore::OscInput(owner);
+  if (oscInput_->startServer(kDefaultOscPort)) {
+    QObject::connect(oscInput_, &ArtifactCore::OscInput::messageReceived, owner,
+                     [](const QString &address, float value) {
+                       ArtifactCore::ExternalControlManager::instance()
+                           .observeInput(QStringLiteral("osc:") + address,
+                                         static_cast<double>(value));
+                     });
+  } else {
+    qWarning() << "[ProjectService] OSC input unavailable on port"
+               << kDefaultOscPort;
+  }
+
+  const auto midiDevices = ArtifactCore::MidiInput::enumerateDevices();
+  for (const auto &device : midiDevices) {
+    if (!device.isAvailable) {
+      continue;
+    }
+    midiInput_ = new ArtifactCore::MidiInput(owner);
+    if (midiInput_->openDevice(device.id)) {
+      QObject::connect(
+          midiInput_, &ArtifactCore::MidiInput::ccReceived, owner,
+          [](int channel, int controller, int value) {
+            ArtifactCore::ExternalControlManager::instance().observeInput(
+                QStringLiteral("midi:%1:%2").arg(channel).arg(controller),
+                static_cast<double>(value) / 127.0);
+          });
+      break;
+    }
+    midiInput_->deleteLater();
+    midiInput_ = nullptr;
+  }
 }
 
 void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
@@ -1579,6 +1621,31 @@ void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
                                .absoluteFilePath();
       if (!path.isEmpty() && QFileInfo::exists(path)) {
         assetPaths.append(path);
+      }
+    }
+    if (item->type() == eProjectItemType::Composition) {
+      const auto* compositionItem = static_cast<const CompositionItem*>(item);
+      const auto composition = project->findComposition(
+          compositionItem->compositionId).ptr.lock();
+      if (composition) {
+        const QStringList sourceProperties = {
+            QStringLiteral("image.sourcePath"),
+            QStringLiteral("video.sourcePath"),
+            QStringLiteral("audio.sourcePath"),
+            QStringLiteral("svg.sourcePath")};
+        for (const auto& layer : composition->allLayerRef()) {
+          if (!layer) continue;
+          const QJsonObject layerJson = layer->toJson();
+          for (const QString& property : sourceProperties) {
+            const QString sourcePath = layerJson.value(property).toString().trimmed();
+            if (sourcePath.isEmpty()) continue;
+            const QString absolutePath = QDir::cleanPath(
+                QFileInfo(sourcePath).absoluteFilePath());
+            if (QFileInfo::exists(absolutePath)) {
+              assetPaths.append(absolutePath);
+            }
+          }
+        }
       }
     }
     for (auto* child : item->children) {
@@ -2469,6 +2536,7 @@ W_OBJECT_IMPL(ArtifactProjectService)
 ArtifactProjectService::ArtifactProjectService(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
   impl_->setupFileWatcher(this);
+  impl_->setupExternalControlInputs(this);
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectCreatedEvent>([this](const ProjectCreatedEvent&) {
         impl_->currentCompositionId_ = {};
@@ -2870,10 +2938,13 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
   }
 
   const QString trimmed = sourcePath.trimmed();
-  const QFileInfo sourceInfo(trimmed);
-  if (trimmed.isEmpty() || !sourceInfo.exists() || !sourceInfo.isFile()) {
+  const QFileInfo requestedSourceInfo(trimmed);
+  if (trimmed.isEmpty() || !requestedSourceInfo.exists() ||
+      !requestedSourceInfo.isFile()) {
     return false;
   }
+  const QString normalizedSourcePath = QDir::cleanPath(
+      requestedSourceInfo.absoluteFilePath());
 
   QString oldSourcePath;
   QString propertyPath;
@@ -2894,14 +2965,15 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
     propertyPath = QStringLiteral("video.sourcePath");
   }
 
-  if (propertyPath.isEmpty() || oldSourcePath == trimmed) {
+  if (propertyPath.isEmpty() ||
+      normalizeRelinkPath(oldSourcePath) == normalizeRelinkPath(normalizedSourcePath)) {
     return false;
   }
 
   if (auto* undoManager = UndoManager::instance()) {
     undoManager->push(std::make_unique<ReplaceLayerSourceCommand>(
-        layer, propertyPath, oldSourcePath, trimmed));
-  } else if (!layer->setLayerPropertyValue(propertyPath, trimmed)) {
+        layer, propertyPath, oldSourcePath, normalizedSourcePath));
+  } else if (!layer->setLayerPropertyValue(propertyPath, normalizedSourcePath)) {
     return false;
   }
 
@@ -4682,10 +4754,12 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
   if (newFilePath.isEmpty()) {
     return false;
   }
-  const QFileInfo newFileInfo(newFilePath);
-  if (!newFileInfo.exists()) {
+  const QFileInfo requestedFileInfo(newFilePath.trimmed());
+  if (!requestedFileInfo.exists() || !requestedFileInfo.isFile()) {
     return false;
   }
+  const QFileInfo newFileInfo(
+      QDir::cleanPath(requestedFileInfo.absoluteFilePath()));
 
   QStringList resolvedSequencePaths;
   if (footage->isSequence && footage->sequencePaths.size() > 1) {
@@ -4726,6 +4800,7 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
   }
 
   const QString oldRepresentativePath = footage->filePath;
+  const QStringList oldSequencePaths = footage->sequencePaths;
   QVector<QPair<QString, QString>> databaseChanges;
   const auto registerDatabaseChange = [&](const QString& oldPath,
                                            const QString& newPath) {
@@ -4734,14 +4809,14 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
     if (oldIdentity == newIdentity) {
       return true;
     }
-    if (ArtifactCore::AssetDatabase::instance().findAssetByPath(oldPath).isNull()) {
+    if (ArtifactCore::AssetDatabase::instance().findAssetByPath(oldIdentity).isNull()) {
       return true;
     }
-    if (!ArtifactCore::AssetDatabase::instance().relinkAssetPath(oldPath,
-                                                                   newPath)) {
+    if (!ArtifactCore::AssetDatabase::instance().relinkAssetPath(oldIdentity,
+                                                                   newIdentity)) {
       return false;
     }
-    databaseChanges.append(qMakePair(oldPath, newPath));
+    databaseChanges.append(qMakePair(oldIdentity, newIdentity));
     return true;
   };
 
@@ -4765,8 +4840,52 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
 
   footage->filePath = newFileInfo.absoluteFilePath();
   if (!resolvedSequencePaths.isEmpty()) {
-    footage->filePath = resolvedSequencePaths.first();
-    footage->sequencePaths = resolvedSequencePaths;
+   footage->filePath = resolvedSequencePaths.first();
+   footage->sequencePaths = resolvedSequencePaths;
+  }
+
+  // Keep composition layers that reference this footage item aligned with
+  // the asset relink. The existing relink undo command calls this same
+  // service path in reverse, so layer references follow undo/redo as well.
+  if (auto project = getCurrentProjectSharedPtr()) {
+   const QString replacementPath = footage->filePath;
+   const QSet<QString> oldPathSet = [&]() {
+    QSet<QString> paths;
+    paths.insert(normalizeRelinkPath(oldRepresentativePath));
+    for (const QString& path : oldSequencePaths) {
+     paths.insert(normalizeRelinkPath(path));
+    }
+    return paths;
+   }();
+   const QStringList sourceProperties = {
+       QStringLiteral("image.sourcePath"),
+       QStringLiteral("video.sourcePath"),
+       QStringLiteral("audio.sourcePath"),
+       QStringLiteral("svg.sourcePath")};
+   std::function<void(ProjectItem*)> updateLayers = [&](ProjectItem* item) {
+    if (!item) return;
+    if (item->type() == eProjectItemType::Composition) {
+     const auto* compositionItem = static_cast<const CompositionItem*>(item);
+     const auto composition = project->findComposition(
+         compositionItem->compositionId).ptr.lock();
+     if (composition) {
+      for (const auto& layer : composition->allLayerRef()) {
+       if (!layer) continue;
+       const QJsonObject layerJson = layer->toJson();
+       for (const QString& property : sourceProperties) {
+        const QString currentPath = layerJson.value(property).toString();
+        if (!currentPath.isEmpty() &&
+            oldPathSet.contains(normalizeRelinkPath(currentPath))) {
+         layer->setLayerPropertyValue(property, replacementPath);
+         break;
+        }
+       }
+      }
+     }
+    }
+    for (auto* child : item->children) updateLayers(child);
+   };
+   for (auto* root : project->projectItems()) updateLayers(root);
   }
   // Notify project changed
   auto shared = getCurrentProjectSharedPtr();

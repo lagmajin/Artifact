@@ -1252,6 +1252,13 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
     }
     break;
   }
+  case QEvent::FocusOut:
+  case QEvent::WindowDeactivate:
+    if (scrubbing_ || scrubCandidate_) {
+      finishScrub(false);
+      return true;
+    }
+    break;
   default:
     break;
   }

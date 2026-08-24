@@ -22,6 +22,7 @@ import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
 import Artifact.Event.Types;
 import Event.Bus;
+import Core.Diagnostics.FallbackPolicy;
 import BrightnessEffect;
 import Artifact.Effect.Creative;
 import Artifact.Effect.SurfaceFX;
@@ -1022,10 +1023,24 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<ArtifactAbstractEffect>();
    effect->setEffectID(effectId);
    effect->setDisplayName(QStringLiteral("OFX: %1").arg(pluginId));
+   FallbackTracker::instance()->record(
+       FallbackCategory::Effect,
+       FallbackAction::Fallback,
+       effectId,
+       QStringLiteral("generic-ofx"),
+       QStringLiteral("OFX plugin is not loaded; preserving a generic effect envelope"));
    return effect;
   }
 
-  if (!impl_->effectManager_) return nullptr;
+  if (!impl_->effectManager_) {
+   FallbackTracker::instance()->record(
+       FallbackCategory::Effect,
+       FallbackAction::Bypass,
+       effectId,
+       QStringLiteral("none"),
+       QStringLiteral("Effect manager is unavailable; effect creation skipped"));
+   return nullptr;
+  }
   // Delegate to the global effect manager's factory
   if (auto pluginEffect = impl_->effectManager_->factoryByID(id)) {
     return pluginEffect;
@@ -1038,6 +1053,12 @@ W_OBJECT_IMPL(ArtifactEffectService)
   auto fallback = std::make_unique<ArtifactAbstractEffect>();
   fallback->setEffectID(UniString::fromQString(effectId));
   fallback->setDisplayName(QStringLiteral("Plugin Effect: %1").arg(effectId));
+  FallbackTracker::instance()->record(
+      FallbackCategory::Effect,
+      FallbackAction::Fallback,
+      effectId,
+      QStringLiteral("generic-effect"),
+      QStringLiteral("Effect factory is unavailable; preserving a generic effect envelope"));
   return fallback;
  }
 

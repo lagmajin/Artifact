@@ -233,7 +233,8 @@ namespace Artifact
     cpuImage.setFromCVMat(mat);
     ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
 
-    for (const auto& effect : effects) {
+    const auto stageEffects = ArtifactAbstractEffect::sortedByStage(effects);
+    for (const auto& effect : stageEffects) {
      if (!effect || !effect->isEnabled() ||
          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
       continue;

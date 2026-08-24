@@ -15,6 +15,7 @@ import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Shape.Operator;
 import Shape.Path;
+import Shape.Layer;
 import Shape.Types;
 import Memory.SharedPtr;
 
@@ -139,6 +140,10 @@ public:
 
   // Backend-neutral geometry after applying the current operator stack.
   std::vector<ArtifactCore::ShapePath> nativeShapePaths() const;
+
+  // Convert to a core ShapeLayer (processed paths + fill/stroke settings)
+  // for vector export pipelines (e.g. SvgFrameExporter).
+  ArtifactCore::ShapeLayer toCoreShapeLayer() const;
 
   // Shape operators (AE-style path operators)
   void addShapeOperator(ArtifactCore::ShapeOperatorType type);

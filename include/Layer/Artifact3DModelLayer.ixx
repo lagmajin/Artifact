@@ -5,6 +5,8 @@ module;
 #include <QString>
 #include <QJsonObject>
 #include <QRectF>
+#include <QMatrix4x4>
+#include <QVector>
 
 export module Artifact.Layers.Model3D;
 
@@ -46,6 +48,20 @@ export namespace Artifact {
     ~Artifact3DLayer();
     void loadFromFile();
     void loadFromFile(const QString& filePath);
+    void loadFromFileAtTime(const QString& filePath, double time,
+                            int clipIndex = 0);
+    void setAnimationTime(double time, int clipIndex = 0);
+    void setSkinAnimationEnabled(bool enabled);
+    bool skinAnimationEnabled() const;
+    void setSkinAnimationClipIndex(int clipIndex);
+    int skinAnimationClipIndex() const;
+    int skinAnimationClipCount() const;
+    QString skinAnimationClipName(int clipIndex) const;
+    int blendShapeCount() const;
+    QString blendShapeName(int shapeIndex) const;
+    float blendShapeWeight(int shapeIndex) const;
+    void setBlendShapeWeight(int shapeIndex, float weight);
+    void clearBlendShapeWeightOverride(int shapeIndex);
     void setFixedGeometry(FixedGeometry3D geometry);
     FixedGeometry3D fixedGeometry() const;
 
@@ -53,6 +69,7 @@ export namespace Artifact {
     RenderMode renderMode() const;
     void setRenderMode(RenderMode mode);
     const ArtifactCore::Mesh& mesh() const;
+    void setSkinPoseMatrices(const QVector<QMatrix4x4>& boneMatrices);
 
     // ArtifactIRenderer interface
     void draw(ArtifactIRenderer* renderer) override;

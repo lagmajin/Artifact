@@ -282,10 +282,12 @@ public:
         audioNextFrame_ = currentFrame_.load();
         audioSeekPending_ = true;
 
-        // Keep stop responsive: closing the backend device can block on some
-        // drivers, so stop playback and drain our buffer without tearing down.
+        // Keep stop responsive: the renderer/backend already exposes a
+        // requestStop() path that signals the audio thread without joining it
+        // on the UI/playback control path. The next start or final close
+        // reaps the joinable worker before reusing or releasing the device.
         if (audioRenderer_) {
-            audioRenderer_->stop();
+            audioRenderer_->requestStop();
             audioRenderer_->clearBuffer();
         }
         audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);

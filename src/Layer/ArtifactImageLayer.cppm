@@ -6,6 +6,7 @@ module;
 #include <cstdint>
 #include <limits>
 #include <cmath>
+#include <mutex>
 
 #include <QDebug>
 #include <QUuid>
@@ -65,6 +66,7 @@ import Memory.SharedPtr;
 import Size;
 import Asset.Manager;
 import AssetType;
+import EnvironmentVariable.Expansion;
 
 namespace Artifact {
 namespace
@@ -860,6 +862,29 @@ public:
     double sequenceFrameRate_ = 0.0;
     mutable std::unique_ptr<ArtifactCore::ImageSequenceSource> sequenceSource_;
     mutable qint64 sequenceCachedIndex_ = -1;
+    // Serializes sequence frame refresh across UI/render threads. Retired
+    // buffers stay alive briefly because currentFrameBuffer() hands out raw
+    // references that a concurrent reader may still be dereferencing.
+    mutable std::mutex sequenceStateMutex_;
+    std::vector<ArtifactCore::SharedPtr<QImage>> retiredFrameCaches_;
+    std::vector<ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> retiredFrameBuffers_;
+    static constexpr size_t kMaxRetiredFrameCaches = 4;
+
+    void retireFrameCache(ArtifactCore::SharedPtr<QImage>&& oldCache,
+                          ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>&& oldBuffer) {
+        if (oldCache) retiredFrameCaches_.push_back(std::move(oldCache));
+        if (oldBuffer) retiredFrameBuffers_.push_back(std::move(oldBuffer));
+        if (retiredFrameCaches_.size() > kMaxRetiredFrameCaches) {
+            retiredFrameCaches_.erase(
+                retiredFrameCaches_.begin(),
+                retiredFrameCaches_.end() - static_cast<std::ptrdiff_t>(kMaxRetiredFrameCaches));
+        }
+        if (retiredFrameBuffers_.size() > kMaxRetiredFrameCaches) {
+            retiredFrameBuffers_.erase(
+                retiredFrameBuffers_.begin(),
+                retiredFrameBuffers_.end() - static_cast<std::ptrdiff_t>(kMaxRetiredFrameCaches));
+        }
+    }
     mutable std::uint64_t cachedSourceVersion_ = 0;
     SourceCrop sourceCrop_;
     SourceImageMetadata sourceMetadata_;
@@ -1089,7 +1114,11 @@ public:
 
     bool refreshSequenceFrame(qint64 frameIndex, double timelineFrameRate) const
     {
+        // Serialized so a UI-thread toQImage() and a render-worker draw()
+        // cannot mutate the frame caches concurrently.
+        std::lock_guard<std::mutex> lock(sequenceStateMutex_);
         const auto clearSequenceFrameCache = [this]() {
+            retireFrameCache(std::move(cache_), std::move(cacheBuffer_));
             cache_.reset();
             resetCacheBuffer();
             sequenceCachedIndex_ = -1;
@@ -1146,6 +1175,7 @@ public:
             clearSequenceFrameCache();
             return false;
         }
+        retireFrameCache(std::move(cache_), std::move(cacheBuffer_));
         cache_ = ArtifactCore::makeShared<QImage>(frame);
         cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
             toFrameBuffer(frame));
@@ -1270,8 +1300,17 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
-    const QString normalizedPath = path.trimmed().left(32768);
-    if (normalizedPath.isEmpty()) {
+    // テンプレート ($VAR / ${VAR} / $F4) はそのまま保持し、
+    // ファイル IO のみ展開結果を使う。保存 JSON もテンプレートのまま維持される。
+    const QString templatePath = path.trimmed().left(32768);
+    QString normalizedPath = templatePath;
+    if (containsExpansionMarker(normalizedPath)) {
+        // ロード経路ではフレーム文脈を持たないため frame=0。
+        // $F<n> は「ロード時点」の固定値になる (連番追従は将来課題)。
+        ExpansionContext expansionContext;
+        normalizedPath = expandTokens(normalizedPath, expansionContext);
+    }
+    if (templatePath.isEmpty()) {
         const bool stateChanged = !impl_->sourcePath_.isEmpty() ||
                                   !impl_->sourceAssetId_.isNull() ||
                                   impl_->hasImage_ || impl_->cache_ ||
@@ -1301,13 +1340,13 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         }
         return true;
     }
-    const auto enterLoadFailureState = [this, &normalizedPath](
+    const auto enterLoadFailureState = [this, &normalizedPath, &templatePath](
         const QString& diagnostic) {
         ArtifactCore::AssetManager::instance().releaseSource(
             impl_->sourceAssetId_);
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
-        impl_->sourcePath_ = normalizedPath;
+        impl_->sourcePath_ = templatePath;
         impl_->sequenceSource_.reset();
         impl_->sequenceCachedIndex_ = -1;
         impl_->sourceMetadata_ = {};
@@ -1373,7 +1412,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = nextAssetId;
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
-    impl_->sourcePath_ = normalizedPath;
+    impl_->sourcePath_ = templatePath;
     impl_->sourceMetadata_ = SourceImageMetadata::fromSpec(spec);
     impl_->cache_.reset();
     impl_->sequenceCachedIndex_ = -1;
@@ -1492,6 +1531,11 @@ bool ArtifactImageLayer::isImageSequence() const
 double ArtifactImageLayer::sequenceFrameRate() const
 {
     return impl_->sequenceFrameRate_;
+}
+
+qint64 ArtifactImageLayer::sequenceCachedFrameIndex() const
+{
+    return impl_->sequenceCachedIndex_;
 }
 
 QUuid ArtifactImageLayer::sourceAssetId() const
@@ -2126,8 +2170,10 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     if (!renderer) return;
 
     if (isImageSequence()) {
-        const qint64 layerFrame =
-            currentFrame() - startTime().framePosition();
+        const qint64 layerFrame = isTimeRemapEnabled()
+            ? static_cast<qint64>(std::llround(
+                  getSourceFrameAtCompFrame(currentFrame())))
+            : currentFrame() - startTime().framePosition();
         impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
     }
 
@@ -2257,8 +2303,10 @@ QImage ArtifactImageLayer::toQImage() const
     }
 
     if (isImageSequence()) {
-        const qint64 layerFrame =
-            currentFrame() - startTime().framePosition();
+        const qint64 layerFrame = isTimeRemapEnabled()
+            ? static_cast<qint64>(std::llround(
+                  getSourceFrameAtCompFrame(currentFrame())))
+            : currentFrame() - startTime().framePosition();
         impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
     }
 
@@ -2421,15 +2469,19 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
         (void)toQImage();
     }
     if (impl_ && !impl_->cacheBuffer_ && impl_->cache_) {
-        impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
-        const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
-            impl_->sourceAssetId_);
-        if (version > 0) {
-            impl_->cacheBuffer_ = publishImagePayloadOrKeep(
-                impl_->sourceAssetId_, version,
-                imageF32RepresentationKey(impl_->effectiveInputColorSpace(),
-                                          impl_->effectiveInputTransferFunction()),
-                impl_->cacheBuffer_);
+        // Serialize lazy buffer creation against sequence frame refresh.
+        std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+        if (!impl_->cacheBuffer_ && impl_->cache_) {
+            impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+            const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
+                impl_->sourceAssetId_);
+            if (version > 0) {
+                impl_->cacheBuffer_ = publishImagePayloadOrKeep(
+                    impl_->sourceAssetId_, version,
+                    imageF32RepresentationKey(impl_->effectiveInputColorSpace(),
+                                              impl_->effectiveInputTransferFunction()),
+                    impl_->cacheBuffer_);
+            }
         }
     }
     if (impl_ && impl_->cacheBuffer_) {

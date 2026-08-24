@@ -1,6 +1,7 @@
 ﻿module;
 #include <utility>
 #include <QImage>
+#include <QPainter>
 #include <QSize>
 #include <QString>
 #include <QPointF>
@@ -44,5 +45,26 @@ bool composeToBuffer(const CompositeRequest& request,
 QString backendText(CompositeBackend backend);
 QString blendModeText(ArtifactCore::BlendMode mode);
 QString cvEffectText(CvEffectMode mode);
+
+// QPainter has no native Subtract mode. The float/CV paths implement it
+// exactly; QPainter consumers must fall back to SourceOver instead of the
+// visually different Difference approximation.
+QPainter::CompositionMode qPainterCompositionMode(ArtifactCore::BlendMode mode);
+
+// True when QPainter's native CompositionMode reproduces the blend mode
+// faithfully; false when callers must route through blendSurface() instead
+// (Subtract, LinearBurn, Divide, Pin/Vivid/LinearLight, HardMix, LinearDodge,
+// Classic*, HSL, Dissolve, Stencil, Silhouette collapse to SourceOver).
+bool qPainterSupportsBlendMode(ArtifactCore::BlendMode mode);
+
+// Blends `surface` over `canvas` in place with the float blend engine for
+// modes QPainter cannot express (see qPainterSupportsBlendMode). Both images
+// must be Format_RGBA8888 and the same size; `opacity` is the layer opacity.
+// Returns false (no change) when qPainterSupportsBlendMode(mode) is true or
+// the image contracts are violated.
+bool blendSurface(QImage& canvas,
+                  const QImage& surface,
+                  float opacity,
+                  ArtifactCore::BlendMode mode);
 
 } // namespace Artifact::SoftwareRender

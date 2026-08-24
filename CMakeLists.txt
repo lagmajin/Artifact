@@ -2928,10 +2928,25 @@ target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 find_package(TBB REQUIRED)
 target_link_libraries(Artifact PRIVATE TBB::tbb)
 
-if(NOT TARGET ads::qtadvanceddocking-qt6)
-    find_package(qtadvanceddocking-qt6 REQUIRED)
+option(ARTIFACT_QADS_COMPAT_STYLE
+       "Compile QADS-specific dock glow styling for the compatibility backend"
+       OFF)
+if(ARTIFACT_QADS_COMPAT_STYLE)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_QADS_COMPAT=1)
 endif()
-target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
+
+option(ARTIFACT_QADS_COMPAT_BACKEND
+       "Build the legacy QADS compatibility adapter"
+       OFF)
+if(ARTIFACT_QADS_COMPAT_STYLE OR ARTIFACT_QADS_COMPAT_BACKEND)
+    if(NOT TARGET ads::qtadvanceddocking-qt6)
+        find_package(qtadvanceddocking-qt6 REQUIRED)
+    endif()
+    target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
+endif()
+if(ARTIFACT_QADS_COMPAT_BACKEND)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_QADS_COMPAT_BACKEND=1)
+endif()
 
 find_package(glm CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE glm::glm)
@@ -3223,4 +3238,23 @@ if(DEFINED ARTIFACT_USE_EXPLICIT_STD_IFC)
     foreach(_artifact_target IN LISTS _artifact_final_targets)
         set_property(TARGET "${_artifact_target}" PROPERTY CXX_MODULE_STD OFF)
     endforeach()
+endif()
+
+# Optional Roslyn bootstrap used by CSharpScriptEngine's embedded hostfxr path.
+# Keep this as an explicit target: restoring NuGet packages should not become
+# an implicit side effect of every native Artifact build.
+find_program(ARTIFACT_DOTNET_EXECUTABLE NAMES dotnet dotnet.exe)
+set(ARTIFACT_SCRIPTING_PROJECT
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dotnet/Artifact.Scripting/Artifact.Scripting.csproj")
+if(ARTIFACT_DOTNET_EXECUTABLE AND EXISTS "${ARTIFACT_SCRIPTING_PROJECT}")
+    add_custom_target(ArtifactScriptingDotnet
+        COMMAND "${ARTIFACT_DOTNET_EXECUTABLE}" build
+                "${ARTIFACT_SCRIPTING_PROJECT}"
+                --configuration "$<CONFIG>"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dotnet/Artifact.Scripting"
+        COMMENT "Building Artifact.Scripting Roslyn host"
+        VERBATIM)
+    set_target_properties(ArtifactScriptingDotnet PROPERTIES FOLDER "Artifact/Scripting")
+else()
+    message(STATUS "ArtifactScriptingDotnet disabled: dotnet or Artifact.Scripting.csproj not found")
 endif()

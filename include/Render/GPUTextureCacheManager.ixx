@@ -131,6 +131,12 @@ public:
     size_t ownerMemoryBytes(const QString& ownerId) const;
 
 private:
+    enum class ExistingSourceState {
+        NeedUpload,
+        Hit,
+        Pending,
+    };
+
     struct Entry {
         quint64 id = 0;
         quint64 generation = 0;
@@ -154,6 +160,12 @@ private:
     };
 
     QString makeKey(const QString& ownerId, const QString& cacheKey) const;
+    ExistingSourceState tryAcquireExistingLocked(const QString& ownerId,
+                                                 const QString& cacheKey,
+                                                 Diligent::TEXTURE_FORMAT format,
+                                                 GPUTextureCacheHandle& outHandle);
+    void purgeStaleVersionEntriesLocked(const QString& ownerId,
+                                        const QString& cacheKey);
     GPUTextureCacheHandle acquireOrCreateFromRgbaBytes(const QString& ownerId,
                                                        const QString& cacheKey,
                                                        Diligent::Uint32 width,

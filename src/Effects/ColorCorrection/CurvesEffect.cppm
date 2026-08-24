@@ -22,6 +22,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ColorCollection.ColorGrading;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -161,10 +163,15 @@ public:
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        if (!readbackTexture(device_, context_, outputTex_, dst, src.image().colorDescriptor(), "Curves/StagingTexture")) {
+        // The compute texture is canonical RGBA; keep that order instead of the
+        // source descriptor, which may be BGRA for QImage-sourced buffers.
+        ArtifactCore::SurfaceColorDescriptor rgbaDescriptor =
+            src.image().colorDescriptor();
+        rgbaDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+        if (!readbackTexture(device_, context_, outputTex_, dst, rgbaDescriptor, "Curves/StagingTexture")) {
             applyCPU(src, dst);
+            return;
         }
-        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
     void syncCurves(const ArtifactCore::ColorCurves& curves) {
@@ -215,8 +222,10 @@ private:
             return false;
         }
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!data || img.width() <= 0 || img.height() <= 0) {
+        // Normalize BGRA backing storage to RGBA before upload so the shader's
+        // px.r/g/b references address the intended channels.
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView());
+        if (!upload.isValid() || img.width() <= 0 || img.height() <= 0) {
             return false;
         }
         Diligent::TextureDesc desc;
@@ -231,8 +240,8 @@ private:
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.bytes.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;

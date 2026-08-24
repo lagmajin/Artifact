@@ -53,6 +53,7 @@ import Asset.Manager;
 import Memory.SharedPtr;
 import Artifact.Color.OCIOManager;
 import Serialization.ProjectSerializer;
+import EnvironmentVariable;
 
 namespace Artifact
 {
@@ -64,6 +65,34 @@ namespace Artifact
   QJsonDocument loadJsonDocument(const QString& path, UniString& errorMsg);
 
  public:
+  struct SourceResolutionStats {
+   int adoptedExisting = 0;
+   int adoptedForEmptyOriginal = 0;
+   int keptMissingCandidate = 0;
+   int keptEmptyCandidate = 0;
+
+   void reset() { *this = SourceResolutionStats{}; }
+
+   void record(const ArtifactCore::SourceCandidateResolution& resolution) {
+    switch (resolution.outcome) {
+     case ArtifactCore::SourceCandidateOutcome::AdoptedExistingCandidate:
+      ++adoptedExisting;
+      break;
+     case ArtifactCore::SourceCandidateOutcome::AdoptedCandidateForEmptyOriginal:
+      ++adoptedForEmptyOriginal;
+      break;
+     case ArtifactCore::SourceCandidateOutcome::KeptOriginalMissingCandidate:
+      ++keptMissingCandidate;
+      break;
+     case ArtifactCore::SourceCandidateOutcome::KeptOriginalEmptyCandidate:
+      ++keptEmptyCandidate;
+      break;
+    }
+   }
+  };
+
+  SourceResolutionStats sourceResolutionStats_;
+
   Impl();
   ~Impl();
   void setInputPath(const QString& path);
@@ -162,17 +191,178 @@ namespace Artifact
 
  bool ArtifactProjectImporter::Impl::validateFile(const QString& path)
  {
+  const QFileInfo fileInfo(path);
+  if (path.trimmed().isEmpty() || !fileInfo.exists() || !fileInfo.isFile() ||
+      !fileInfo.isReadable()) {
+   qDebug() << "[Importer] Validation failed: input is missing or unreadable"
+            << path;
+   return false;
+  }
+  const QString extension = QFileInfo(path).suffix().toLower();
+  if (extension == QStringLiteral("aep") ||
+      extension == QStringLiteral("aepx") ||
+      extension == QStringLiteral("mogrt")) {
+    qWarning() << "[Importer] Unsupported interchange format:" << extension
+              << "(AEP/MOGRT preflight is not implemented)";
+   return false;
+  }
+
   UniString errorMsg;
   QJsonDocument doc = loadJsonDocument(path, errorMsg);
   if (doc.isNull()) {
    qDebug() << "[Importer] Validation failed:" << errorMsg.toQString();
    return false;
   }
+  if (!doc.isObject()) {
+   qDebug() << "[Importer] Validation failed: root is not a JSON object";
+   return false;
+  }
 
   QJsonObject root = doc.object();
-  if (!root.contains("name")) {
+  if (!root.contains("name") || !root.value("name").isString() ||
+      root.value("name").toString().trimmed().isEmpty()) {
    qDebug() << "[Importer] Validation failed: missing 'name' field";
    return false;
+  }
+  for (const QString& versionKey : {QStringLiteral("version"),
+                                    QStringLiteral("minVersion")}) {
+   if (!root.contains(versionKey)) {
+    continue;
+   }
+   const QJsonValue versionValue = root.value(versionKey);
+   bool ok = false;
+   const float version = versionValue.isString()
+       ? versionValue.toString().toFloat(&ok)
+       : 0.0f;
+   if (!versionValue.isString() || !ok || !std::isfinite(version) ||
+       version < 0.0f) {
+    qDebug() << "[Importer] Validation failed: invalid" << versionKey;
+    return false;
+   }
+  }
+  if (root.contains(QStringLiteral("version")) &&
+      root.contains(QStringLiteral("minVersion"))) {
+   bool versionOk = false;
+   bool minVersionOk = false;
+   const float version = root.value(QStringLiteral("version"))
+       .toString().toFloat(&versionOk);
+   const float minVersion = root.value(QStringLiteral("minVersion"))
+       .toString().toFloat(&minVersionOk);
+   if (versionOk && minVersionOk && minVersion > version) {
+    qDebug() << "[Importer] Validation failed: minVersion exceeds version";
+    return false;
+   }
+  }
+  if (root.contains(QStringLiteral("compositions"))) {
+   const QJsonValue compositionsValue = root.value(QStringLiteral("compositions"));
+   if (!compositionsValue.isArray()) {
+    qDebug() << "[Importer] Validation failed: 'compositions' is not an array";
+    return false;
+   }
+   const QJsonArray compositions = compositionsValue.toArray();
+   constexpr qsizetype kMaxPreflightCompositions = 10000;
+   if (compositions.size() > kMaxPreflightCompositions) {
+    qDebug() << "[Importer] Validation failed: too many compositions"
+             << compositions.size();
+    return false;
+   }
+   std::set<QString> compositionIds;
+   for (int index = 0; index < compositions.size(); ++index) {
+    if (!compositions.at(index).isObject()) {
+     qDebug() << "[Importer] Validation failed: composition entry is not an object"
+              << index;
+     return false;
+    }
+    const QJsonObject composition = compositions.at(index).toObject();
+    if (!composition.value(QStringLiteral("id")).isString() ||
+        composition.value(QStringLiteral("id")).toString().trimmed().isEmpty()) {
+     qDebug() << "[Importer] Validation failed: composition id is missing"
+              << index;
+     return false;
+    }
+    const QString compositionId = composition.value(QStringLiteral("id")).toString().trimmed();
+    if (!compositionIds.insert(compositionId).second) {
+     qDebug() << "[Importer] Validation failed: duplicate composition id"
+              << compositionId;
+     return false;
+    }
+    if (composition.contains(QStringLiteral("layers"))) {
+     const QJsonValue layersValue = composition.value(QStringLiteral("layers"));
+     if (!layersValue.isArray()) {
+      qDebug() << "[Importer] Validation failed: composition layers is not an array"
+               << compositionId;
+      return false;
+     }
+     const QJsonArray layers = layersValue.toArray();
+     constexpr qsizetype kMaxPreflightLayers = 100000;
+     if (layers.size() > kMaxPreflightLayers) {
+      qDebug() << "[Importer] Validation failed: too many layers"
+               << compositionId << layers.size();
+      return false;
+     }
+     std::set<QString> layerIds;
+     std::vector<std::pair<QString, QString>> parentReferences;
+     for (int layerIndex = 0; layerIndex < layers.size(); ++layerIndex) {
+      if (!layers.at(layerIndex).isObject()) {
+       qDebug() << "[Importer] Validation failed: layer entry is not an object"
+                << compositionId << layerIndex;
+       return false;
+      }
+      const QJsonObject layer = layers.at(layerIndex).toObject();
+      if (layer.contains(QStringLiteral("id"))) {
+       if (!layer.value(QStringLiteral("id")).isString() ||
+           layer.value(QStringLiteral("id")).toString().trimmed().isEmpty()) {
+        qDebug() << "[Importer] Validation failed: layer id is invalid"
+                 << compositionId << layerIndex;
+        return false;
+       }
+       const QString layerId = layer.value(QStringLiteral("id")).toString().trimmed();
+       if (!layerIds.insert(layerId).second) {
+        qDebug() << "[Importer] Validation failed: duplicate layer id"
+                 << compositionId << layerId;
+        return false;
+       }
+      }
+      if (layer.contains(QStringLiteral("parentId")) &&
+          !layer.value(QStringLiteral("parentId")).isString()) {
+       qDebug() << "[Importer] Validation failed: layer parentId is not a string"
+                << compositionId << layerIndex;
+       return false;
+      }
+      const QString parentId = layer.value(QStringLiteral("parentId")).toString().trimmed();
+      if (!parentId.isEmpty()) {
+       const QString childId = layer.value(QStringLiteral("id")).toString().trimmed();
+       parentReferences.emplace_back(childId, parentId);
+      }
+     }
+     for (const auto& reference : parentReferences) {
+      if (reference.first == reference.second ||
+          !layerIds.contains(reference.second)) {
+       qDebug() << "[Importer] Validation failed: unresolved layer parentId"
+                << compositionId << reference.first << reference.second;
+       return false;
+      }
+     }
+     std::map<QString, QString> parentByLayer;
+     for (const auto& reference : parentReferences) {
+      if (!reference.first.isEmpty()) {
+       parentByLayer[reference.first] = reference.second;
+      }
+     }
+     for (const auto& entry : parentByLayer) {
+      std::set<QString> visited;
+      QString current = entry.first;
+      while (parentByLayer.contains(current)) {
+       if (!visited.insert(current).second) {
+        qDebug() << "[Importer] Validation failed: cyclic layer parenting"
+                 << compositionId << entry.first;
+        return false;
+       }
+       current = parentByLayer.at(current);
+      }
+     }
+    }
+   }
   }
 
   qDebug() << "[Importer] File validated successfully";
@@ -181,6 +371,13 @@ namespace Artifact
 
  UniString ArtifactProjectImporter::Impl::getFileFormatVersion(const QString& path)
  {
+  const QString extension = QFileInfo(path).suffix().toLower();
+  if (extension == QStringLiteral("aep") ||
+      extension == QStringLiteral("aepx") ||
+      extension == QStringLiteral("mogrt")) {
+   return UniString(QStringLiteral("unsupported.%1").arg(extension));
+  }
+
   UniString errorMsg;
   QJsonDocument doc = loadJsonDocument(path, errorMsg);
   if (doc.isNull()) {
@@ -202,10 +399,53 @@ namespace Artifact
    result.project = nullptr;
    result.compositionsLoaded = 0;
    result.layersLoaded = 0;
+   sourceResolutionStats_.reset();
 
    if (inputPath_.isEmpty()) {
     result.errorMessage = UniString("Input path is empty");
     qDebug() << "[Importer] Error: Input path is empty";
+    return result;
+   }
+
+   // プロジェクト変数を env マネージャへ登録 ($PROJECT_DIR / $PROJECT_NAME /
+   // $PROJECT_FILE)。レイヤーのパステンプレート展開で使われる。
+   {
+    auto* envManager = ArtifactCore::EnvironmentVariableManager::instance();
+    const QFileInfo projectInfo(inputPath_);
+    envManager->setVariable(QStringLiteral("PROJECT_DIR"),
+                            projectInfo.absolutePath());
+    envManager->setVariable(QStringLiteral("PROJECT_NAME"),
+                            projectInfo.completeBaseName());
+    envManager->setVariable(QStringLiteral("PROJECT_FILE"),
+                            projectInfo.absoluteFilePath());
+   }
+
+   const QString extension = QFileInfo(inputPath_).suffix().toLower();
+   if (extension == QStringLiteral("aep") ||
+       extension == QStringLiteral("aepx") ||
+       extension == QStringLiteral("mogrt")) {
+    result.errorMessage = UniString(
+        "AEP/AEPX/MOGRT interchange import is not implemented");
+    result.healthReport.isHealthy = false;
+    result.healthReport.issues.push_back(HealthIssue{
+        HealthIssueSeverity::Error,
+        QStringLiteral("AEP/AEPX/MOGRT interchange import is not implemented"),
+        QFileInfo(inputPath_).fileName(),
+        QStringLiteral("UnsupportedInterchangeFormat")});
+   qWarning() << "[Importer] Unsupported interchange format:" << extension
+               << "(AEP/MOGRT preflight is not implemented)";
+   return result;
+   }
+
+   if (!validateFile(inputPath_)) {
+    result.errorMessage = UniString("Project preflight validation failed");
+    result.healthReport.isHealthy = false;
+    result.healthReport.issues.push_back(HealthIssue{
+        HealthIssueSeverity::Error,
+        QStringLiteral("Project preflight validation failed"),
+        QFileInfo(inputPath_).fileName(),
+        QStringLiteral("InvalidProjectPreflight")});
+    qWarning() << "[Importer] Project preflight rejected input:" << inputPath_;
     return result;
    }
 
@@ -348,12 +588,16 @@ namespace Artifact
      const QString relative = source.value(QStringLiteral("pathRelative"))
                                   .toString().trimmed();
      const QString original = source.value(QStringLiteral("path")).toString();
-     if (!relative.isEmpty()) {
-      const QString candidate =
-          QDir(sourceProjectDirectory).absoluteFilePath(relative);
-      if (QFileInfo::exists(candidate) || original.trimmed().isEmpty()) {
-       source.insert(QStringLiteral("path"), QDir::cleanPath(candidate));
-      }
+     const ArtifactCore::SourceCandidateResolution resolution =
+         ArtifactCore::resolveProjectRelativeSource(
+             sourceProjectDirectory,
+             ArtifactCore::SourceResolutionCandidateKind::RegistryRelativePath,
+             original,
+             relative,
+             true);
+     sourceResolutionStats_.record(resolution);
+     if (resolution.adopted) {
+      source.insert(QStringLiteral("path"), resolution.resolvedPath);
      }
      sources[i] = source;
     }
@@ -400,12 +644,16 @@ namespace Artifact
         if (isSourcePath && value.isString()) {
          const QString relative =
              object.value(key + QStringLiteral("Relative")).toString().trimmed();
-         if (!relative.isEmpty()) {
-          const QString candidate =
-              QDir(layerSourceProjectDirectory).absoluteFilePath(relative);
-          if (QFileInfo::exists(candidate) || value.toString().isEmpty()) {
-           object.insert(key, QDir::cleanPath(candidate));
-          }
+         const ArtifactCore::SourceCandidateResolution resolution =
+             ArtifactCore::resolveProjectRelativeSource(
+                 layerSourceProjectDirectory,
+                 ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                 value.toString(),
+                 relative,
+                 true);
+         sourceResolutionStats_.record(resolution);
+         if (resolution.adopted) {
+          object.insert(key, resolution.resolvedPath);
          }
         } else if (isSequencePaths && value.isArray()) {
          const QJsonArray relativePaths =
@@ -414,17 +662,18 @@ namespace Artifact
           QJsonArray resolvedPaths;
           const QJsonArray originalPaths = value.toArray();
           for (int i = 0; i < relativePaths.size(); ++i) {
-           const QString relative = relativePaths.at(i).toString().trimmed();
            const QString original = i < originalPaths.size()
                ? originalPaths.at(i).toString()
                : QString();
-           const QString candidate = relative.isEmpty()
-               ? original
-               : QDir(layerSourceProjectDirectory).absoluteFilePath(relative);
-           resolvedPaths.append(
-               (!relative.isEmpty() && QFileInfo::exists(candidate))
-                   ? QDir::cleanPath(candidate)
-                   : original);
+           const ArtifactCore::SourceCandidateResolution resolution =
+               ArtifactCore::resolveProjectRelativeSource(
+                   layerSourceProjectDirectory,
+                   ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                   original,
+                   relativePaths.at(i).toString().trimmed(),
+                   false);
+           sourceResolutionStats_.record(resolution);
+           resolvedPaths.append(resolution.resolvedPath);
           }
           if (!resolvedPaths.isEmpty()) {
            object.insert(key, resolvedPaths);
@@ -490,17 +739,20 @@ namespace Artifact
        ? QFileInfo(inputPath_).absoluteFilePath()
        : QFileInfo(inputPath_).absolutePath();
    const auto resolveRelativeIfPresent =
-       [&projectDirectory](QJsonObject& item) {
+       [&](QJsonObject& item) {
         const QString absolutePath = item.value(QStringLiteral("filePath")).toString();
         const QString relativePath =
             item.value(QStringLiteral("filePathRelative")).toString().trimmed();
-        if (!relativePath.isEmpty()) {
-         const QString candidate = QDir(projectDirectory).absoluteFilePath(relativePath);
-         if (QFileInfo::exists(candidate)) {
-          item.insert(QStringLiteral("filePath"), QDir::cleanPath(candidate));
-         } else if (absolutePath.isEmpty()) {
-          item.insert(QStringLiteral("filePath"), QDir::cleanPath(candidate));
-         }
+        const ArtifactCore::SourceCandidateResolution resolution =
+            ArtifactCore::resolveProjectRelativeSource(
+                projectDirectory,
+                ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                absolutePath,
+                relativePath,
+                true);
+        sourceResolutionStats_.record(resolution);
+        if (resolution.adopted) {
+         item.insert(QStringLiteral("filePath"), resolution.resolvedPath);
         }
         const QJsonArray sequencePaths =
             item.value(QStringLiteral("sequencePaths")).toArray();
@@ -509,17 +761,18 @@ namespace Artifact
         if (!relativeSequencePaths.isEmpty()) {
          QJsonArray resolvedSequencePaths;
          for (int i = 0; i < relativeSequencePaths.size(); ++i) {
-          const QString relative = relativeSequencePaths.at(i).toString().trimmed();
           const QString original = i < sequencePaths.size()
               ? sequencePaths.at(i).toString()
               : QString();
-          const QString candidate = relative.isEmpty()
-              ? original
-              : QDir(projectDirectory).absoluteFilePath(relative);
-          resolvedSequencePaths.append(
-              (!relative.isEmpty() && QFileInfo::exists(candidate))
-                  ? QDir::cleanPath(candidate)
-                  : original);
+          const ArtifactCore::SourceCandidateResolution entryResolution =
+              ArtifactCore::resolveProjectRelativeSource(
+                  projectDirectory,
+                  ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
+                  original,
+                  relativeSequencePaths.at(i).toString().trimmed(),
+                  false);
+          sourceResolutionStats_.record(entryResolution);
+          resolvedSequencePaths.append(entryResolution.resolvedPath);
          }
          if (!resolvedSequencePaths.isEmpty()) {
           item.insert(QStringLiteral("sequencePaths"), resolvedSequencePaths);
@@ -601,13 +854,27 @@ namespace Artifact
       }
   }
 
-  result.project = projectPtr;
-  result.success = true;
-  qDebug() << "[Importer] Project imported successfully - Compositions:" 
-           << result.compositionsLoaded << "Layers:" << result.layersLoaded;
+   result.project = projectPtr;
+   result.success = true;
+   if (sourceResolutionStats_.keptMissingCandidate > 0) {
+    qWarning() << "[Importer][SourceResolution]"
+               << sourceResolutionStats_.keptMissingCandidate
+               << "project-relative candidate(s) missing; kept stored paths;"
+               << sourceResolutionStats_.adoptedExisting << "adopted from existing candidates,"
+               << sourceResolutionStats_.adoptedForEmptyOriginal
+               << "adopted for empty stored paths";
+   } else {
+    qDebug() << "[Importer][SourceResolution]"
+             << sourceResolutionStats_.adoptedExisting
+             << "path(s) adopted from project-relative candidates,"
+             << sourceResolutionStats_.keptEmptyCandidate
+             << "empty candidate(s) kept as-is";
+   }
+   qDebug() << "[Importer] Project imported successfully - Compositions:"
+            << result.compositionsLoaded << "Layers:" << result.layersLoaded;
 
-  return result;
- }
+   return result;
+  }
 
  ArtifactProjectImporter::ArtifactProjectImporter() : impl_(new Impl())
  {

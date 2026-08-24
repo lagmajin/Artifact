@@ -4,6 +4,7 @@ module;
 #include <QApplication>
 #include <QCursor>
 #include <QPoint>
+#include <QPointer>
 #include <QFont>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -237,10 +238,10 @@ private:
     }
   }
 
-  QWidget *target_ = nullptr;
-};
+  QPointer<QWidget> target_;
+ };
 
-QStringList loadFavoriteProperties();
+ QStringList loadFavoriteProperties();
 void saveFavoriteProperties(const QStringList &favorites);
 bool isFavorite(const QString &propertyPath);
 void toggleFavorite(const QString &propertyPath);
@@ -1947,7 +1948,28 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                            for (const auto &path : channelPaths) {
                              channelLockedPaths.remove(path);
                            }
-                         } else {
+      } else if (name == QStringLiteral("text.animatorCount") ||
+                 name.compare(QStringLiteral("text.animatorPreset"),
+                              Qt::CaseInsensitive) == 0) {
+        for (const auto &tl : this->targetLayers) {
+          if (!tl) { continue; }
+          const auto textLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(tl);
+          if (!textLayer) {
+            tl->setLayerPropertyValue(name, value);
+            continue;
+          }
+          const QJsonArray beforeStack = textLayer->textAnimatorStackSnapshot();
+          tl->setLayerPropertyValue(name, value);
+          const QJsonArray afterStack = textLayer->textAnimatorStackSnapshot();
+          if (beforeStack != afterStack) {
+            UndoManager::instance()->push(
+                std::make_unique<SetTextAnimatorStackCommand>(
+                    tl, beforeStack, afterStack,
+                    QStringLiteral("Edit Text Animators")));
+          }
+        }
+      } else {
                            for (const auto &path : channelPaths) {
                              channelLockedPaths.insert(path);
                            }

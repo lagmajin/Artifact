@@ -64,22 +64,40 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override {
         std::vector<AbstractProperty> props;
-        auto addFloat = [&props](const QString& name, float value) {
+        auto addFloat = [&props](const QString& name, const QString& label,
+                                 float value, float def, float minV, float maxV,
+                                 const char* tip) {
             AbstractProperty prop;
             prop.setName(name);
+            prop.setDisplayLabel(label);
             prop.setType(PropertyType::Float);
             prop.setValue(value);
-            props.push_back(prop);
+            prop.setDefaultValue(def);
+            prop.setMinValue(minV);
+            prop.setMaxValue(maxV);
+            prop.setStep(0.01);
+            prop.setTooltip(tip);
+            props.push_back(std::move(prop));
         };
-        addFloat(QStringLiteral("StrengthR"), strengthR_);
-        addFloat(QStringLiteral("StrengthG"), strengthG_);
-        addFloat(QStringLiteral("StrengthB"), strengthB_);
-        addFloat(QStringLiteral("Radius"), radiusMM_);
+        addFloat(QStringLiteral("StrengthR"), QStringLiteral("Red Strength"),
+                 strengthR_, 0.45f, 0.0f, 1.0f,
+                 "Subsurface scattering strength for the red channel.");
+        addFloat(QStringLiteral("StrengthG"), QStringLiteral("Green Strength"),
+                 strengthG_, 0.25f, 0.0f, 1.0f,
+                 "Subsurface scattering strength for the green channel.");
+        addFloat(QStringLiteral("StrengthB"), QStringLiteral("Blue Strength"),
+                 strengthB_, 0.15f, 0.0f, 1.0f,
+                 "Subsurface scattering strength for the blue channel.");
+        addFloat(QStringLiteral("Radius"), QStringLiteral("Radius (mm)"),
+                 radiusMM_, 3.5f, 0.1f, 10.0f,
+                 "Scattering radius in millimetres.");
         AbstractProperty preset;
         preset.setName(QStringLiteral("Preset"));
+        preset.setDisplayLabel(QStringLiteral("Skin Preset"));
         preset.setType(PropertyType::Integer);
         preset.setValue(static_cast<int>(preset_));
-        props.push_back(preset);
+        preset.setTooltip(QStringLiteral("Predefined SSS colour profile (Skin, Marble, etc.)."));
+        props.push_back(std::move(preset));
         return props;
     }
 

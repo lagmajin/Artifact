@@ -50,6 +50,11 @@ export namespace Artifact {
   bool setLayerDeClickSettings(const ArtifactCore::LayerID& layerId,
                                float thresholdDb, qint64 maxClickSamples);
   QVariantMap layerDeClickSettings(const ArtifactCore::LayerID& layerId) const;
+  bool setLayerTrim(const ArtifactCore::LayerID& layerId,
+                    double trimInSeconds, double trimOutSeconds);
+  QVariantMap layerTrim(const ArtifactCore::LayerID& layerId) const;
+  bool setLayerPlaybackRate(const ArtifactCore::LayerID& layerId, double rate);
+  double layerPlaybackRate(const ArtifactCore::LayerID& layerId) const;
  };
 
 

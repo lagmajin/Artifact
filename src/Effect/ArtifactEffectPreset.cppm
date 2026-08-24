@@ -85,6 +85,13 @@ const bool registeredArtifactEffectPreset = [] {
             migrated[QStringLiteral("parameters")] = parameters;
             return migrated;
         });
+    migrations.registerMigration(
+        QStringLiteral("ArtifactEffectPreset"), 2, 3,
+        [](const QJsonObject& legacy) {
+            QJsonObject migrated = legacy;
+            migrated[QStringLiteral("schema_version")] = 3;
+            return migrated;
+        });
     return true;
 }();
 }
@@ -93,6 +100,7 @@ namespace
 {
 constexpr qint64 kMaxEffectPresetFileBytes = 16LL * 1024LL * 1024LL;
 constexpr qsizetype kMaxEffectPresetEntries = 100000;
+constexpr qsizetype kMaxEffectPresetThumbnailBytes = 8LL * 1024LL * 1024LL;
 }
 
 // ==================== ArtifactEffectPreset::Impl ====================
@@ -353,6 +361,10 @@ QJsonObject ArtifactEffectPreset::toJson() const
     obj["category"] = impl_->category_;
     obj["description"] = impl_->description_;
     obj["schema_version"] = schemaVersion();
+    if (!impl_->thumbnail_.isEmpty() &&
+        impl_->thumbnail_.size() <= kMaxEffectPresetThumbnailBytes) {
+        obj["thumbnail_base64"] = QString::fromLatin1(impl_->thumbnail_.toBase64());
+    }
 
     QJsonArray params;
     for (const auto& p : impl_->parameters_) {
@@ -396,16 +408,43 @@ QJsonObject ArtifactEffectPreset::toJson() const
 ArtifactEffectPreset ArtifactEffectPreset::fromJson(const QJsonObject& json)
 {
     ArtifactEffectPreset preset;
-    preset.setId(json["id"].toString());
+    const QString serializedId = json[QStringLiteral("id")].toString().trimmed();
+    if (!serializedId.isEmpty()) {
+        preset.setId(serializedId);
+    }
     preset.setName(json["name"].toString());
     preset.setCategory(json["category"].toString());
     preset.setDescription(json["description"].toString());
+    const QByteArray encodedThumbnail =
+        json.value(QStringLiteral("thumbnail_base64")).toString().toLatin1();
+    if (!encodedThumbnail.isEmpty() &&
+        encodedThumbnail.size() <=
+            ((kMaxEffectPresetThumbnailBytes + 2) / 3) * 4) {
+        const QByteArray thumbnail = QByteArray::fromBase64(encodedThumbnail);
+        if (thumbnail.size() <= kMaxEffectPresetThumbnailBytes) {
+            preset.setThumbnail(thumbnail);
+        }
+    }
 
     QJsonArray params = json["parameters"].toArray();
     for (const QJsonValue& v : params) {
+        if (!v.isObject()) {
+            continue;
+        }
         QJsonObject p = v.toObject();
-        QString name = p["name"].toString();
-        auto type = static_cast<Parameter::Type>(p["type"].toInt());
+        const QString name = p["name"].toString().trimmed();
+        if (name.isEmpty()) {
+            continue;
+        }
+        const int serializedType = p["type"].toInt(-1);
+        if (serializedType < static_cast<int>(Parameter::Float) ||
+            serializedType > static_cast<int>(Parameter::Double)) {
+            const QString valueType = p.value(QStringLiteral("value_type")).toString();
+            if (valueType.isEmpty()) {
+                continue;
+            }
+        }
+        auto type = static_cast<Parameter::Type>(serializedType);
         const QString valueType = p.value(QStringLiteral("value_type")).toString();
         if (valueType == QStringLiteral("integer")) type = Parameter::Integer;
         else if (valueType == QStringLiteral("boolean")) type = Parameter::Boolean;
@@ -419,8 +458,13 @@ ArtifactEffectPreset ArtifactEffectPreset::fromJson(const QJsonObject& json)
             preset.addParameter(name, static_cast<float>(p["value"].toDouble()));
             break;
         case Parameter::Color:
-            preset.addParameter(name, QColor(p["value"].toString()));
+        {
+            const QColor color(p["value"].toString());
+            if (color.isValid()) {
+                preset.addParameter(name, color);
+            }
             break;
+        }
         case Parameter::String:
             preset.addParameter(name, p["value"].toString());
             break;
@@ -653,6 +697,10 @@ bool ArtifactEffectPresetCollection::loadFromFile(const QString& filePath)
             }
             auto preset = ArtifactEffectPreset::fromJson(v.toObject());
             auto id = preset.id();
+            if (impl_->presets_.find(id) != impl_->presets_.end()) {
+                qWarning() << "[EffectPreset] duplicate preset id; replacing existing entry:"
+                           << id;
+            }
             impl_->presets_[id] = std::make_unique<ArtifactEffectPreset>(preset);
         }
         return true;

@@ -3,6 +3,7 @@
 #include <QKeySequence>
 #include <QDebug>
 #include <QInputDialog>
+#include <QJsonObject>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -49,6 +50,7 @@ import Artifact.Composition.PlaybackController;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Input.Operator;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -580,7 +582,13 @@ void ArtifactPlaybackShortcuts::addMarker(const QString& comment) {
         service->addMarkerAtCurrentFrame(comment);
     } else if (impl_->inOutPoints_) {
         auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        const QJsonObject before = impl_->inOutPoints_->toJson();
         impl_->inOutPoints_->addMarker(frame, comment, MarkerType::Comment);
+        const QJsonObject after = impl_->inOutPoints_->toJson();
+        if (before != after) {
+            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
+                impl_->inOutPoints_, before, after));
+        }
     }
     // emit markerAdded(frame.value(), comment);
     emit shortcutExecuted(Impl::ACTION_ADD_MARKER);
@@ -591,7 +599,13 @@ void ArtifactPlaybackShortcuts::addChapterMarker(const QString& name) {
         service->addChapterMarkerAtCurrentFrame(name);
     } else if (impl_->inOutPoints_) {
         auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        const QJsonObject before = impl_->inOutPoints_->toJson();
         impl_->inOutPoints_->addMarker(frame, name, MarkerType::Chapter);
+        const QJsonObject after = impl_->inOutPoints_->toJson();
+        if (before != after) {
+            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
+                impl_->inOutPoints_, before, after));
+        }
     }
     // emit markerAdded(frame.value(), name);
     emit shortcutExecuted(Impl::ACTION_ADD_CHAPTER);
@@ -638,7 +652,13 @@ void ArtifactPlaybackShortcuts::deleteMarkerAtCurrent() {
         service->deleteMarkerAtCurrentFrame();
     } else if (impl_->inOutPoints_) {
         auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        const QJsonObject before = impl_->inOutPoints_->toJson();
         impl_->inOutPoints_->removeMarker(frame);
+        const QJsonObject after = impl_->inOutPoints_->toJson();
+        if (before != after) {
+            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
+                impl_->inOutPoints_, before, after));
+        }
     }
     emit shortcutExecuted(Impl::ACTION_DELETE_MARKER);
 }
@@ -647,7 +667,13 @@ void ArtifactPlaybackShortcuts::clearAllMarkers() {
     if (auto* service = ArtifactPlaybackService::instance()) {
         service->clearAllMarkers();
     } else if (impl_->inOutPoints_) {
+        const QJsonObject before = impl_->inOutPoints_->toJson();
         impl_->inOutPoints_->clearAllMarkers();
+        const QJsonObject after = impl_->inOutPoints_->toJson();
+        if (before != after) {
+            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
+                impl_->inOutPoints_, before, after));
+        }
     }
     emit shortcutExecuted(Impl::ACTION_CLEAR_MARKERS);
 }

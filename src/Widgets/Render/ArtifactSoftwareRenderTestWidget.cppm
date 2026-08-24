@@ -337,27 +337,31 @@ public:
                     .arg(rhs.width()).arg(rhs.height())};
             }
 
-            const int pixelCount = lhs.width() * lhs.height();
+            const qint64 pixelCount = static_cast<qint64>(lhs.width()) *
+                                      static_cast<qint64>(lhs.height());
             quint64 totalDifference = 0;
-            int differentPixels = 0;
+            qint64 differentPixels = 0;
             int maximumDifference = 0;
-            const uchar* lhsBits = lhs.constBits();
-            const uchar* rhsBits = rhs.constBits();
-            for (int offset = 0; offset < pixelCount * 4; offset += 4) {
-                int pixelDifference = 0;
-                int maximumChannelDifference = 0;
-                for (int channel = 0; channel < 4; ++channel) {
-                    const int channelDifference = std::abs(
-                        static_cast<int>(lhsBits[offset + channel]) -
-                        static_cast<int>(rhsBits[offset + channel]));
-                    pixelDifference += channelDifference;
-                    maximumChannelDifference = std::max(maximumChannelDifference,
-                                                         channelDifference);
-                }
-                totalDifference += static_cast<quint64>(pixelDifference);
-                maximumDifference = std::max(maximumDifference, pixelDifference);
-                if (maximumChannelDifference > parityChannelTolerance) {
-                    ++differentPixels;
+            for (int y = 0; y < lhs.height(); ++y) {
+                const uchar* lhsRow = lhs.constScanLine(y);
+                const uchar* rhsRow = rhs.constScanLine(y);
+                for (int x = 0; x < lhs.width(); ++x) {
+                    const int offset = x * 4;
+                    int pixelDifference = 0;
+                    int maximumChannelDifference = 0;
+                    for (int channel = 0; channel < 4; ++channel) {
+                        const int channelDifference = std::abs(
+                            static_cast<int>(lhsRow[offset + channel]) -
+                            static_cast<int>(rhsRow[offset + channel]));
+                        pixelDifference += channelDifference;
+                        maximumChannelDifference = std::max(
+                            maximumChannelDifference, channelDifference);
+                    }
+                    totalDifference += static_cast<quint64>(pixelDifference);
+                    maximumDifference = std::max(maximumDifference, pixelDifference);
+                    if (maximumChannelDifference > parityChannelTolerance) {
+                        ++differentPixels;
+                    }
                 }
             }
 

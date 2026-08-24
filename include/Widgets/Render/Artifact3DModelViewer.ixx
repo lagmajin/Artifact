@@ -8,6 +8,8 @@
 #include <QEvent>
 #include <QColor>
 #include <QVector3D>
+#include <QMatrix4x4>
+#include <QVector>
 #include <QPainter>
 #include <QPaintEvent>
 export module Artifact.Widgets.ModelViewer;
@@ -68,6 +70,20 @@ public:
     virtual ~Artifact3DModelViewer();
 
     void loadModel(const ArtifactCore::UniString& filePath);
+    void loadModelAtTime(const ArtifactCore::UniString& filePath,
+                         double time,
+                         int clipIndex = 0);
+    void setAnimationPlaybackEnabled(bool enabled);
+    bool animationPlaybackEnabled() const;
+    void setAnimationClipIndex(int clipIndex);
+    int animationClipIndex() const;
+    int animationClipCount() const;
+    QString animationClipName(int clipIndex) const;
+    int blendShapeCount() const;
+    QString blendShapeName(int shapeIndex) const;
+    float blendShapeWeight(int shapeIndex) const;
+    void setBlendShapeWeight(int shapeIndex, float weight);
+    void clearBlendShapeWeightOverride(int shapeIndex);
     void clearModel();
     void resetView();
 
@@ -75,6 +91,7 @@ public:
     void setZoom(float factor);
     void setCameraRotation(float yaw, float pitch);
     void setCameraPosition(const QVector3D& position);
+    void setSkinPoseMatrices(const QVector<QMatrix4x4>& boneMatrices);
     void setDisplayMode(DisplayMode mode);
     void setPbrMaterial(const QColor& baseColor, float metallic, float roughness,
                         float sheen = 0.0f, float clearcoat = 0.0f,

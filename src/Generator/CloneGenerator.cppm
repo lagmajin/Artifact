@@ -484,10 +484,45 @@ namespace Artifact
    std::uniform_real_distribution<float> distZ(-impl_->bounds_.z() / 2, impl_->bounds_.z() / 2);
    std::uniform_real_distribution<float> distRot(0.0f, 360.0f);
    std::uniform_real_distribution<float> distScale(0.5f, 1.5f);
-   std::vector<QVector3D> acceptedPositions;
-   if (impl_->usePoissonDisk_) {
-    acceptedPositions.reserve(count);
-   }
+
+   // Poisson-disk sampling uses a uniform spatial hash so neighbor queries
+   // stay O(1)-ish as the clone count grows. Cell size equals the minimum
+   // distance, so only the 3x3x3 neighborhood can contain a violating point.
+   struct SpatialHash {
+    float cell = 1.0f;
+    std::unordered_map<uint64_t, std::vector<QVector3D>> cells;
+    static uint64_t keyFor(int ix, int iy, int iz) {
+     return (static_cast<uint64_t>(static_cast<uint32_t>(ix)) * 73856093ULL) ^
+            (static_cast<uint64_t>(static_cast<uint32_t>(iy)) * 19349663ULL) ^
+            (static_cast<uint64_t>(static_cast<uint32_t>(iz)) * 83492791ULL);
+    }
+    void insert(const QVector3D& p) {
+     cells[keyFor(
+       static_cast<int>(std::floor(p.x() / cell)),
+       static_cast<int>(std::floor(p.y() / cell)),
+       static_cast<int>(std::floor(p.z() / cell)))].push_back(p);
+    }
+    bool hasNeighborWithin(const QVector3D& p, float minDist) const {
+     const float minDist2 = minDist * minDist;
+     const int cx = static_cast<int>(std::floor(p.x() / cell));
+     const int cy = static_cast<int>(std::floor(p.y() / cell));
+     const int cz = static_cast<int>(std::floor(p.z() / cell));
+     for (int dz = -1; dz <= 1; ++dz) {
+      for (int dy = -1; dy <= 1; ++dy) {
+       for (int dx = -1; dx <= 1; ++dx) {
+        const auto it = cells.find(keyFor(cx + dx, cy + dy, cz + dz));
+        if (it == cells.end()) continue;
+        for (const auto& other : it->second) {
+         if ((p - other).lengthSquared() < minDist2) return true;
+        }
+       }
+      }
+     }
+     return false;
+    }
+   };
+   SpatialHash hash;
+   hash.cell = std::max(impl_->spacing_, 0.001f);
 
    for (int i = 0; i < count; ++i) {
      QVector3D position;
@@ -497,19 +532,11 @@ namespace Artifact
       position = QVector3D(distX(rng), distY(rng), distZ(rng));
       accepted = !impl_->usePoissonDisk_ || minimumDistance <= 0.0f;
       if (!accepted) {
-       accepted = std::all_of(
-           acceptedPositions.begin(), acceptedPositions.end(),
-           [&](const QVector3D& other) {
-            return (position - other).lengthSquared() >=
-                   minimumDistance * minimumDistance;
-           });
+       accepted = !hash.hasNeighborWithin(position, minimumDistance);
       }
      }
-     if (impl_->usePoissonDisk_ && !accepted) {
-      position = QVector3D(distX(rng), distY(rng), distZ(rng));
-     }
      if (impl_->usePoissonDisk_) {
-      acceptedPositions.push_back(position);
+      hash.insert(position);
      }
      QMatrix4x4 m;
      m.translate(

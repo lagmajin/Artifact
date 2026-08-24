@@ -617,7 +617,10 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
 
 bool ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
-  const QString normalizedPath = fullpath.trimmed();
+  const QString trimmedPath = fullpath.trimmed();
+  const QString normalizedPath = trimmedPath.isEmpty()
+      ? QString()
+      : QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
   if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
       !QFileInfo(normalizedPath).isFile()) {
    qWarning() << "[loadFromFile] Invalid project file path:" << fullpath;
@@ -826,7 +829,10 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
   ArtifactProjectExporterResult result;
   result.success = false;
 
-  const QString normalizedPath = fullpath.trimmed();
+  const QString trimmedPath = fullpath.trimmed();
+  const QString normalizedPath = trimmedPath.isEmpty()
+      ? QString()
+      : QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
   if (normalizedPath.isEmpty()) {
     qWarning() << "[saveToFile] Empty project file path";
     return result;
@@ -939,7 +945,10 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
                                                ProjectLoadFinishedFn onFinished,
                                                ProjectProgressFn onProgress)
 {
-  const QString normalizedPath = fullpath.trimmed();
+  const QString trimmedPath = fullpath.trimmed();
+  const QString normalizedPath = trimmedPath.isEmpty()
+      ? QString()
+      : QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
   if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
       !QFileInfo(normalizedPath).isFile()) {
     ArtifactProjectImporterResult result;
@@ -1025,7 +1034,10 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
                                              ProjectSaveFinishedFn onFinished,
                                              ProjectProgressFn onProgress)
 {
-  const QString normalizedPath = fullpath.trimmed();
+  const QString trimmedPath = fullpath.trimmed();
+  const QString normalizedPath = trimmedPath.isEmpty()
+      ? QString()
+      : QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
   if (normalizedPath.isEmpty()) {
     ArtifactProjectExporterResult result;
     result.success = false;
@@ -1048,13 +1060,16 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
     watcher->deleteLater();
 
     if (result.success) {
-      QMetaObject::invokeMethod(this, [this, normalizedPath]() {
+      QMetaObject::invokeMethod(this, [this, normalizedPath, result, onFinished]() {
         impl_->currentProjectPath_ = normalizedPath;
         impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
         if (impl_->currentProjectPtr_) {
           impl_->currentProjectPtr_->setDirty(false);
         }
         runProjectHookScript(QStringLiteral("after_project_export"), normalizedPath);
+        if (onFinished) {
+          onFinished(result);
+        }
       }, Qt::QueuedConnection);
     } else {
       QMetaObject::invokeMethod(this, [normalizedPath]() {
@@ -1062,7 +1077,9 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
       }, Qt::QueuedConnection);
     }
 
-    if (onFinished) onFinished(result);
+    if (!result.success && onFinished) {
+      onFinished(result);
+    }
   });
 
   // Run export in background thread
@@ -1143,7 +1160,10 @@ void ArtifactProjectManager::setCurrentProjectRootPath(const QString& path)
  if (!impl_) {
   return;
  }
- const QString normalizedPath = path.trimmed();
+ const QString trimmedPath = path.trimmed();
+ const QString normalizedPath = trimmedPath.isEmpty()
+     ? QString()
+     : QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
  impl_->projectRootPath_ = normalizedPath.isEmpty()
      ? QString()
      : QDir::cleanPath(QFileInfo(normalizedPath).absoluteFilePath());

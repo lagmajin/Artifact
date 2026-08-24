@@ -10,6 +10,7 @@ module;
 #include <QScreen>
 #include <QGuiApplication>
 #include <QTimer>
+#include <QPointer>
 #include <QImage>
 #include <QPixmap>
 #include <QPainter>
@@ -264,9 +265,8 @@ ArtifactSecondaryPreviewWindow::ArtifactSecondaryPreviewWindow(QWidget* parent)
     impl_->osdTimer_ = new QTimer(this);
     impl_->osdTimer_->setSingleShot(true);
     connect(impl_->osdTimer_, &QTimer::timeout, this, [this]() {
-        if (impl_->osdOpacity_) {
-            impl_->osdOpacity_->setOpacity(0.0f);
-        }
+        if (!impl_ || !impl_->osdOpacity_) return;
+        impl_->osdOpacity_->setOpacity(0.0f);
         impl_->osdVisible_ = false;
     });
 
@@ -305,8 +305,19 @@ ArtifactSecondaryPreviewWindow::ArtifactSecondaryPreviewWindow(QWidget* parent)
 }
 
 ArtifactSecondaryPreviewWindow::~ArtifactSecondaryPreviewWindow() {
-    impl_->saveDisplayProfile();
-    delete impl_;
+    if (impl_) {
+        if (impl_->osdTimer_) {
+            impl_->osdTimer_->stop();
+            QObject::disconnect(impl_->osdTimer_, nullptr, this, nullptr);
+        }
+        if (impl_->updateTimer_) {
+            impl_->updateTimer_->stop();
+            QObject::disconnect(impl_->updateTimer_, nullptr, this, nullptr);
+        }
+        impl_->saveDisplayProfile();
+        delete impl_;
+        impl_ = nullptr;
+    }
 }
 
 void ArtifactSecondaryPreviewWindow::updatePreviewImage(const QImage& image) {
@@ -319,16 +330,21 @@ void ArtifactSecondaryPreviewWindow::updatePreviewImage(const QImage& image) {
         return;
     }
 
-    // Scale image to fit available space
+    if (!impl_->previewLabel_) return;
     QSize availableSize = impl_->previewLabel_->size();
+    if (availableSize.isEmpty()) return;
+    qreal dpr = impl_->previewLabel_->devicePixelRatioF();
+    if (dpr < 1.0) dpr = 1.0;
     QSize scaledSize = impl_->scaledImageSize(image.size(), availableSize);
-
-    if (!scaledSize.isEmpty()) {
-        QPixmap pixmap = QPixmap::fromImage(image.scaled(
-            scaledSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        impl_->previewLabel_->setPixmap(pixmap);
-        impl_->previewLabel_->setText(QString());
-    }
+    if (scaledSize.isEmpty()) return;
+    QSize scaledDevice = scaledSize * dpr;
+    if (scaledDevice.isEmpty()) return;
+    QImage scaled = image.scaled(scaledDevice, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(dpr);
+    QPixmap pixmap = QPixmap::fromImage(scaled);
+    pixmap.setDevicePixelRatio(dpr);
+    impl_->previewLabel_->setPixmap(pixmap);
+    impl_->previewLabel_->setText(QString());
 }
 
 void ArtifactSecondaryPreviewWindow::updateFrameInfo(int64_t frame, int64_t totalFrames, const QString& compName) {
@@ -446,12 +462,13 @@ void ArtifactSecondaryPreviewWindow::closeEvent(QCloseEvent* event) {
 
 void ArtifactSecondaryPreviewWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
-    if (!impl_ || impl_->currentImage_.isNull()) {
-        return;
-    }
-    if (impl_->owner_) {
-        impl_->owner_->updatePreviewImage(impl_->currentImage_);
-    }
+    if (!impl_ || impl_->currentImage_.isNull() || !impl_->owner_) return;
+    // Defer until layout has updated so previewLabel size is valid
+    QPointer<ArtifactSecondaryPreviewWindow> guard(this);
+    QTimer::singleShot(0, this, [guard]() {
+        if (!guard || !guard->impl_ || guard->impl_->currentImage_.isNull() || !guard->impl_->owner_) return;
+        guard->impl_->owner_->updatePreviewImage(guard->impl_->currentImage_);
+    });
 }
 
 void ArtifactSecondaryPreviewWindow::paintEvent(QPaintEvent* event) {

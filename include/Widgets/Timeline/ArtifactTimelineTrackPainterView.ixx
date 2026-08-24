@@ -70,6 +70,13 @@ export namespace Artifact
    QString label;
   };
 
+  struct CompositionMarkerVisual {
+   double frame = 0.0;
+   QString comment;
+   QColor color = QColor(247, 204, 83);
+   bool chapter = false;
+  };
+
   struct TrackClipVisual {
    enum class Kind {
     Generic,
@@ -147,6 +154,7 @@ export namespace Artifact
   void clearClips();
   void setClips(const QVector<TrackClipVisual>& clips);
   void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
+  void setCompositionMarkers(const QVector<CompositionMarkerVisual>& markers);
   QVector<KeyframeMarkerVisual> keyframeMarkers() const;
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;

@@ -4107,6 +4107,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
   }
 
   bool changed = false;
+  const auto beforeKeyframes = property->getKeyFrames();
   if (removeKeyframes) {
     if (property->hasKeyFrameAt(nowTime)) {
       property->removeKeyFrame(nowTime);
@@ -4120,6 +4121,12 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
   }
 
   if (changed) {
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+          layer, propertyPath, beforeKeyframes, property->getKeyFrames(),
+          removeKeyframes ? QStringLiteral("Remove Keyframe")
+                          : QStringLiteral("Add Keyframe")));
+    }
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(LayerChangedEvent{
         composition ? composition->id().toString() : QString(),
@@ -4474,6 +4481,7 @@ public:
   QVector<int> trackHeights_;
   QVector<int> trackTops_;
   QVector<TrackClipVisual> clips_;
+  QVector<CompositionMarkerVisual> compositionMarkers_;
   QVector<TimelineRowDescriptor> trackRows_;
 
   // ドラッグ / ホバー状態
@@ -4942,6 +4950,12 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
   if (selectionChanged) {
     Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
   }
+  update();
+}
+
+void ArtifactTimelineTrackPainterView::setCompositionMarkers(
+    const QVector<CompositionMarkerVisual>& markers) {
+  impl_->compositionMarkers_ = markers;
   update();
 }
 
@@ -6239,6 +6253,45 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     gridColor.setAlpha(std::max(40, static_cast<int>((major ? 76 : 30) * contrastScale)));
     p.setPen(QPen(gridColor, major ? contrastScale : std::max(1.0f, contrastScale * 0.8f)));
     p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
+  }
+
+  // Composition markers are read-only guides, separate from keyframe markers.
+  for (const auto& marker : impl_->compositionMarkers_) {
+    const double x = marker.frame * ppf - xOffset;
+    if (x < dirtyRect.left() - 8.0 || x > dirtyRect.right() + 8.0) {
+      continue;
+    }
+    QColor color = marker.color.isValid() ? marker.color : theme.accent;
+    color.setAlpha(210);
+    p.setPen(QPen(color, 1.0));
+    p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
+    const double markerTop = dirtyRect.top();
+    const QPolygonF triangle = marker.chapter
+        ? QPolygonF{QPointF(x, markerTop), QPointF(x - 4.0, markerTop + 4.0),
+                    QPointF(x, markerTop + 8.0), QPointF(x + 4.0, markerTop + 4.0)}
+        : QPolygonF{QPointF(x, markerTop), QPointF(x - 4.0, markerTop + 7.0),
+                    QPointF(x + 4.0, markerTop + 7.0)};
+    p.setBrush(color);
+    p.setPen(Qt::NoPen);
+    p.drawPolygon(triangle);
+
+    // Keep the overview uncluttered; reveal marker comments only when the
+    // timeline is zoomed enough for a label to remain readable.
+    if (ppf >= 4.0 && !marker.comment.trimmed().isEmpty()) {
+      const QString label = marker.comment.trimmed().left(48);
+      const QFont baseFont = p.font();
+      QFont labelFont = p.font();
+      labelFont.setPointSizeF(std::max(7.0, labelFont.pointSizeF() - 1.0));
+      p.setFont(labelFont);
+      QColor labelColor = color;
+      labelColor.setAlpha(235);
+      p.setPen(labelColor);
+      const QRectF labelRect(x + 5.0, dirtyRect.top() + 8.0,
+                             std::max(0.0, dirtyRect.right() - x - 5.0),
+                             QFontMetrics(labelFont).height());
+      p.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, label);
+      p.setFont(baseFont);
+    }
   }
 
   // Clips.

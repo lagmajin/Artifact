@@ -30,6 +30,8 @@ module;
 #include <regex>
 #include <random>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QString>
 export module Artifact.Layer.Text;
 
@@ -170,6 +172,11 @@ public:
      void removeAnimator(int index);
      void setAnimatorCount(int count);
      int animatorCount() const;
+
+     // Snapshot / restore the full animator stack (state + animated
+     // properties) in the same JSON shape as toJson()'s "text.animators".
+     QJsonArray textAnimatorStackSnapshot() const;
+     void restoreTextAnimatorStack(const QJsonArray& snapshot);
 
      // Apply a fill color to a character range by creating an animator.
      // Returns the animator index, or -1 if the range is invalid.

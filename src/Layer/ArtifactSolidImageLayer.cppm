@@ -28,6 +28,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Property.Group;
+import Property.SerializationBridge;
 import Animation.Value;
 import Time.Rational;
 
@@ -250,6 +251,12 @@ QJsonObject ArtifactSolidImageLayer::toJson() const {
   obj["solidWidth"] = std::clamp(safeSource.width, 1, 16384);
   obj["solidHeight"] = std::clamp(safeSource.height, 1, 16384);
   QJsonObject colorObj;
+  if (const auto colorProperty = getProperty(QStringLiteral("solid.color"));
+      colorProperty && !colorProperty->getKeyFrames().empty()) {
+    obj["solidColorKeyframes"] =
+        ArtifactCore::PropertySerializationBridge::serializeProperty(colorProperty)
+            .keyframes;
+  }
   const auto c = color();
   colorObj["r"] = c.r();
   colorObj["g"] = c.g();
@@ -289,10 +296,28 @@ void ArtifactSolidImageLayer::fromJsonProperties(const QJsonObject &obj) {
   }
   if (obj.contains("solidColor") && obj["solidColor"].isObject()) {
     const auto colorObj = obj["solidColor"].toObject();
-    setColor(FloatColor(static_cast<float>(colorObj.value("r").toDouble(1.0)),
-                        static_cast<float>(colorObj.value("g").toDouble(1.0)),
-                        static_cast<float>(colorObj.value("b").toDouble(1.0)),
-                        static_cast<float>(colorObj.value("a").toDouble(1.0))));
+    bool restoredColorKeyframes = false;
+    if (obj.contains("solidColorKeyframes") &&
+        obj["solidColorKeyframes"].isArray()) {
+      auto colorProperty = persistentLayerProperty(
+          QStringLiteral("solid.color"), ArtifactCore::PropertyType::Color,
+          QVariant(), -120);
+      ArtifactCore::SerializedProperty serialized;
+      serialized.name = QStringLiteral("solid.color");
+      serialized.type = static_cast<int>(ArtifactCore::PropertyType::Color);
+      serialized.value = obj["solidColor"];
+      serialized.keyframes = obj["solidColorKeyframes"].toArray();
+      ArtifactCore::PropertySerializationBridge::deserializeProperty(
+          colorProperty, serialized);
+      restoredColorKeyframes = !serialized.keyframes.isEmpty();
+    }
+    if (!restoredColorKeyframes) {
+      setColor(
+          FloatColor(static_cast<float>(colorObj.value("r").toDouble(1.0)),
+                     static_cast<float>(colorObj.value("g").toDouble(1.0)),
+                     static_cast<float>(colorObj.value("b").toDouble(1.0)),
+                     static_cast<float>(colorObj.value("a").toDouble(1.0))));
+    }
   }
   setFillType(static_cast<ArtifactSolidFillType>(
       obj.value("solidFillType").toInt(static_cast<int>(ArtifactSolidFillType::Solid))));

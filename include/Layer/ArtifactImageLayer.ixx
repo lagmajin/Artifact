@@ -41,6 +41,9 @@ export namespace Artifact {
   QStringList sequenceFramePaths() const;
   bool isImageSequence() const;
   double sequenceFrameRate() const;
+  // Resolved source frame index currently held by the sequence cache. -1 when
+  // no sequence frame is cached (used as a GPU texture cache key component).
+  qint64 sequenceCachedFrameIndex() const;
   QString sourcePath() const;
   void setInputInterpretation(const QString& colorSpace, const QString& transferFunction);
   QString inputColorSpace() const;

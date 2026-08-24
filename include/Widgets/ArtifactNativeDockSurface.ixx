@@ -4,7 +4,16 @@ module;
 #include <QHash>
 #include <QByteArray>
 #include <QColor>
+#include <QApplication>
 #include <QDebug>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDialog>
+#include <QDropEvent>
+#include <QEvent>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QPalette>
 #include <QJsonDocument>
 #include <QSplitter>
@@ -21,12 +30,13 @@ import Widgets.Utils.CSS;
 
 export namespace Artifact {
 
-// Minimal backend-independent dock surface.  It intentionally omits floating
-// and drag/drop until the registry and persistence paths are proven against
-// the current QADS adapter.
+// Backend-independent dock surface.  Floating docks are represented by owned
+// top-level dialogs; the registry remains the stable routing and persistence
+// boundary used by both embedded and floating surfaces.
 class NativeDockSurface final : public QWidget {
 public:
   explicit NativeDockSurface(QWidget *parent = nullptr) : QWidget(parent) {
+    setAcceptDrops(true);
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -35,6 +45,7 @@ public:
     rootLayout->addWidget(topTabs_);
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
+    splitter_ = splitter;
     leftTabs_ = createTabSurface(splitter);
     centerTabs_ = createTabSurface(splitter);
     rightTabs_ = createTabSurface(splitter);
@@ -46,6 +57,29 @@ public:
     bottomTabs_ = createTabSurface(this);
     bottomTabs_->hide();
     rootLayout->addWidget(bottomTabs_);
+
+    for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_, topTabs_,
+                       bottomTabs_}) {
+      if (!tabs) {
+        continue;
+      }
+      tabs->setAcceptDrops(true);
+      tabs->installEventFilter(this);
+      tabs->tabBar()->installEventFilter(this);
+    }
+  }
+
+  ~NativeDockSurface() override {
+    const auto dialogs = floatingDialogs_.values();
+    for (auto *dialog : dialogs) {
+      if (!dialog) {
+        continue;
+      }
+      dialog->hide();
+      delete dialog;
+    }
+    floatingDialogs_.clear();
+    floatingWidgets_.clear();
   }
 
   bool addDockWidget(const QString &dockId, const QString &title,
@@ -92,6 +126,37 @@ public:
     return true;
   }
 
+  bool addFloatingDockWidget(const QString &dockId, const QString &title,
+                             QWidget *widget, const QRect &geometry,
+                             bool visible = true) {
+    if (dockId.trimmed().isEmpty() || !widget ||
+        docks_.contains(dockId) || floatingDialogs_.contains(dockId)) {
+      return false;
+    }
+    auto *dialog = new QDialog(window());
+    dialog->setWindowTitle(title);
+    dialog->setObjectName(QStringLiteral("ArtifactNativeFloatingDock_%1")
+                              .arg(dockId));
+    dialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    widget->setParent(dialog);
+    layout->addWidget(widget);
+    if (geometry.isValid()) {
+      dialog->setGeometry(geometry);
+    }
+    floatingDialogs_.insert(dockId, dialog);
+    floatingWidgets_.insert(dockId, widget);
+    titles_.insert(dockId, title);
+    areas_.insert(dockId, DockArea::Center);
+    pinned_.insert(dockId, false);
+    widget->setVisible(visible);
+    if (visible) {
+      dialog->show();
+    }
+    return true;
+  }
+
   bool restoreLayout(const QList<DockLayoutEntry> &entries) {
     QList<DockLayoutEntry> normalized;
     QHash<QString, bool> seen;
@@ -114,6 +179,17 @@ public:
 
     bool restoredAny = false;
     for (const auto &entry : normalized) {
+      if (entry.floating) {
+        if (auto *dialog = floatingDialogs_.value(entry.dockId, nullptr)) {
+          if (entry.floatingGeometry.isValid()) {
+            dialog->setGeometry(entry.floatingGeometry);
+          }
+          dialog->setVisible(entry.visible);
+          pinned_.insert(entry.dockId, entry.pinned);
+          restoredAny = true;
+        }
+        continue;
+      }
       auto *widget = docks_.value(entry.dockId);
       if (!widget) {
         continue;
@@ -151,7 +227,24 @@ public:
       areaIds[static_cast<int>(entry.area)].push_back(entry.dockId);
       document.entries.push_back(entry);
     }
+    for (auto it = floatingWidgets_.cbegin(); it != floatingWidgets_.cend();
+         ++it) {
+      DockLayoutEntry entry;
+      entry.dockId = it.key();
+      entry.area = DockArea::Center;
+      entry.visible = it.value() && it.value()->isVisible();
+      entry.pinned = pinned_.value(it.key(), false);
+      entry.floating = true;
+      if (auto *dialog = floatingDialogs_.value(it.key(), nullptr)) {
+        entry.floatingGeometry = dialog->geometry();
+      }
+      document.entries.push_back(entry);
+    }
     for (auto &entry : document.entries) {
+      if (entry.floating) {
+        entry.tabGroup.clear();
+        continue;
+      }
       auto ids = areaIds.value(static_cast<int>(entry.area));
       ids.removeDuplicates();
       ids.sort();
@@ -186,7 +279,17 @@ public:
   }
 
   bool removeDockWidget(const QString &dockId) {
-    auto *widget = docks_.take(dockId);
+    const QString resolvedId = resolveDockId(dockId);
+    if (auto *dialog = floatingDialogs_.take(resolvedId)) {
+      floatingWidgets_.remove(resolvedId);
+      dialog->hide();
+      dialog->deleteLater();
+      areas_.remove(resolvedId);
+      titles_.remove(resolvedId);
+      pinned_.remove(resolvedId);
+      return true;
+    }
+    auto *widget = docks_.take(resolvedId);
     if (!widget) {
       return false;
     }
@@ -200,53 +303,57 @@ public:
       }
     }
     widget->setParent(nullptr);
-    areas_.remove(dockId);
-    titles_.remove(dockId);
-    pinned_.remove(dockId);
+    areas_.remove(resolvedId);
+    titles_.remove(resolvedId);
+    pinned_.remove(resolvedId);
     return true;
   }
 
   bool moveDockWidget(const QString &dockId, DockArea area) {
-    auto *widget = docks_.value(dockId);
-    if (!widget || areas_.value(dockId, DockArea::Center) == area) {
+    const QString resolvedId = resolveDockId(dockId);
+    auto *widget = docks_.value(resolvedId);
+    if (!widget || areas_.value(resolvedId, DockArea::Center) == area) {
       return widget != nullptr;
     }
-    const QString title = titles_.value(dockId, dockId);
+    const QString title = titles_.value(resolvedId, resolvedId);
     const bool visible = widget->isVisible();
-    const bool pinned = pinned_.value(dockId, false);
-    const DockArea previousArea = areas_.value(dockId, DockArea::Center);
-    if (!removeDockWidget(dockId) ||
-        !addDockWidget(dockId, title, widget, area)) {
-      if (!docks_.contains(dockId)) {
-        addDockWidget(dockId, title, widget, previousArea);
-        pinned_.insert(dockId, pinned);
+    const bool pinned = pinned_.value(resolvedId, false);
+    const DockArea previousArea = areas_.value(resolvedId, DockArea::Center);
+    if (!removeDockWidget(resolvedId) ||
+        !addDockWidget(resolvedId, title, widget, area)) {
+      if (!docks_.contains(resolvedId)) {
+        addDockWidget(resolvedId, title, widget, previousArea);
+        pinned_.insert(resolvedId, pinned);
         widget->setVisible(visible);
       }
       return false;
     }
-    pinned_.insert(dockId, pinned);
+    pinned_.insert(resolvedId, pinned);
     widget->setVisible(visible);
     return true;
   }
 
   bool moveDockWidgetToTab(const QString &dockId,
                            const QString &targetDockId) {
-    auto *widget = docks_.value(dockId, nullptr);
-    auto *target = docks_.value(targetDockId, nullptr);
+    const QString resolvedId = resolveDockId(dockId);
+    const QString resolvedTargetId = resolveDockId(targetDockId);
+    auto *widget = docks_.value(resolvedId, nullptr);
+    auto *target = docks_.value(resolvedTargetId, nullptr);
     auto *targetTabs = target ? tabsForWidget(target) : nullptr;
-    if (!widget || !target || !targetTabs || dockId == targetDockId) {
+    if (!widget || !target || !targetTabs ||
+        resolvedId == resolvedTargetId) {
       return false;
     }
-    const QString title = titles_.value(dockId, dockId);
+    const QString title = titles_.value(resolvedId, resolvedId);
     const bool visible = widget->isVisible();
-    const bool pinned = pinned_.value(dockId, false);
-    const DockArea previousArea = areas_.value(dockId, DockArea::Center);
-    const DockArea targetArea = areas_.value(targetDockId, DockArea::Center);
-    if (!removeDockWidget(dockId) ||
-        !addDockWidget(dockId, title, widget, targetArea)) {
-      if (!docks_.contains(dockId)) {
-        addDockWidget(dockId, title, widget, previousArea);
-        pinned_.insert(dockId, pinned);
+    const bool pinned = pinned_.value(resolvedId, false);
+    const DockArea previousArea = areas_.value(resolvedId, DockArea::Center);
+    const DockArea targetArea = areas_.value(resolvedTargetId, DockArea::Center);
+    if (!removeDockWidget(resolvedId) ||
+        !addDockWidget(resolvedId, title, widget, targetArea)) {
+      if (!docks_.contains(resolvedId)) {
+        addDockWidget(resolvedId, title, widget, previousArea);
+        pinned_.insert(resolvedId, pinned);
         widget->setVisible(visible);
       }
       return false;
@@ -254,7 +361,7 @@ public:
     auto *newTabs = tabsForWidget(widget);
     if (!newTabs || newTabs == targetTabs) {
       widget->setVisible(visible);
-      pinned_.insert(dockId, pinned);
+      pinned_.insert(resolvedId, pinned);
       return newTabs == targetTabs;
     }
     const int index = newTabs->indexOf(widget);
@@ -264,8 +371,8 @@ public:
     widget->setParent(targetTabs);
     targetTabs->addTab(widget, title);
     targetTabs->setCurrentWidget(widget);
-    areas_.insert(dockId, targetArea);
-    pinned_.insert(dockId, pinned);
+    areas_.insert(resolvedId, targetArea);
+    pinned_.insert(resolvedId, pinned);
     widget->setVisible(visible);
     if (newTabs->count() == 0) {
       newTabs->hide();
@@ -274,7 +381,12 @@ public:
   }
 
   bool setDockVisible(const QString &dockId, bool visible) {
-    auto *widget = docks_.value(dockId);
+    const QString resolvedId = resolveDockId(dockId);
+    if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      dialog->setVisible(visible);
+      return true;
+    }
+    auto *widget = docks_.value(resolvedId);
     if (!widget) {
       return false;
     }
@@ -282,24 +394,82 @@ public:
     return true;
   }
 
+  bool setSplitterSizes(DockArea area, const QList<int> &sizes) {
+    if (!splitter_ || sizes.isEmpty()) {
+      return false;
+    }
+    if (area == DockArea::Left || area == DockArea::Center ||
+        area == DockArea::Right) {
+      splitter_->setSizes(sizes);
+      return true;
+    }
+    return false;
+  }
+
   bool containsDock(const QString &dockId) const {
-    return docks_.contains(dockId);
+    return !resolveDockId(dockId).isEmpty();
+  }
+
+  QString resolveDockId(const QString &idOrTitle) const {
+    if (docks_.contains(idOrTitle) || floatingDialogs_.contains(idOrTitle)) {
+      return idOrTitle;
+    }
+    for (auto it = titles_.cbegin(); it != titles_.cend(); ++it) {
+      if (it.value() == idOrTitle) {
+        return it.key();
+      }
+    }
+    return {};
+  }
+
+  bool containsDockPrefix(const QString &prefix) const {
+    if (prefix.trimmed().isEmpty()) {
+      return false;
+    }
+    for (auto it = docks_.cbegin(); it != docks_.cend(); ++it) {
+      if (it.key().startsWith(prefix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  QString dockIdWithPrefix(const QString &prefix) const {
+    if (prefix.trimmed().isEmpty()) {
+      return {};
+    }
+    auto ids = docks_.keys();
+    std::sort(ids.begin(), ids.end());
+    for (const auto &id : ids) {
+      if (id.startsWith(prefix)) {
+        return id;
+      }
+    }
+    return {};
   }
 
   QString dockTitle(const QString &dockId) const {
-    return titles_.value(dockId);
+    return titles_.value(resolveDockId(dockId));
   }
 
   bool setDockPinned(const QString &dockId, bool pinned) {
-    if (!docks_.contains(dockId)) {
+    const QString resolvedId = resolveDockId(dockId);
+    if (resolvedId.isEmpty()) {
       return false;
     }
-    pinned_.insert(dockId, pinned);
+    pinned_.insert(resolvedId, pinned);
     return true;
   }
 
   bool activateDock(const QString &dockId) {
-    auto *widget = docks_.value(dockId);
+    const QString resolvedId = resolveDockId(dockId);
+    if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      dialog->show();
+      dialog->raise();
+      dialog->activateWindow();
+      return true;
+    }
+    auto *widget = docks_.value(resolvedId);
     if (!widget) {
       return false;
     }
@@ -317,35 +487,175 @@ public:
   }
 
   QWidget *dockWidget(const QString &dockId) const {
-    return docks_.value(dockId, nullptr);
+    const QString resolvedId = resolveDockId(dockId);
+    return docks_.value(resolvedId,
+                        floatingWidgets_.value(resolvedId, nullptr));
+  }
+
+  QString dockIdForWidget(const QWidget *widget) const {
+    if (!widget) {
+      return {};
+    }
+    for (auto it = docks_.cbegin(); it != docks_.cend(); ++it) {
+      if (it.value() == widget ||
+          (it.value() && it.value()->isAncestorOf(widget))) {
+        return it.key();
+      }
+    }
+    for (auto it = floatingWidgets_.cbegin();
+         it != floatingWidgets_.cend(); ++it) {
+      if (it.value() == widget ||
+          (it.value() && it.value()->isAncestorOf(widget))) {
+        return it.key();
+      }
+    }
+    return {};
   }
 
   QStringList dockIds() const {
     auto ids = docks_.keys();
+    ids.append(floatingWidgets_.keys());
+    ids.removeDuplicates();
     ids.sort();
     return ids;
   }
 
   DockArea dockArea(const QString &dockId) const {
-    return areas_.value(dockId, DockArea::Center);
+    return areas_.value(resolveDockId(dockId), DockArea::Center);
   }
 
   bool dockVisible(const QString &dockId) const {
-    const auto *widget = docks_.value(dockId, nullptr);
+    const QString resolvedId = resolveDockId(dockId);
+    if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      return dialog->isVisible();
+    }
+    const auto *widget = docks_.value(resolvedId,
+                                      floatingWidgets_.value(resolvedId, nullptr));
     return widget && widget->isVisible();
   }
 
   bool dockPinned(const QString &dockId) const {
-    return pinned_.value(dockId, false);
+    return pinned_.value(resolveDockId(dockId), false);
   }
 
   DockBackendKind backendKind() const { return DockBackendKind::Native; }
 
   DockBackendCapabilities capabilities() const {
-    return DockBackendCapabilities{};
+    return DockBackendCapabilities{true, true, true};
+  }
+
+protected:
+  void dragEnterEvent(QDragEnterEvent *event) override {
+    if (event->mimeData()->hasFormat(
+            QStringLiteral("application/x-artifact-dock-id"))) {
+      event->acceptProposedAction();
+      return;
+    }
+    QWidget::dragEnterEvent(event);
+  }
+
+  void dropEvent(QDropEvent *event) override {
+    const QByteArray payload = event->mimeData()->data(
+        QStringLiteral("application/x-artifact-dock-id"));
+    if (!payload.isEmpty()) {
+      const QString sourceId = QString::fromUtf8(payload);
+      if (moveDockWidget(sourceId, areaForPosition(event->position().toPoint()))) {
+        event->acceptProposedAction();
+        return;
+      }
+    }
+    QWidget::dropEvent(event);
+  }
+
+  bool eventFilter(QObject *watched, QEvent *event) override {
+    auto *tabs = qobject_cast<QTabWidget *>(watched);
+    auto *tabBar = qobject_cast<QTabBar *>(watched);
+    if (!tabs && tabBar) {
+      tabs = qobject_cast<QTabWidget *>(tabBar->parentWidget());
+    }
+    if (!tabs) {
+      return QWidget::eventFilter(watched, event);
+    }
+
+    if (event->type() == QEvent::MouseButtonPress && tabBar) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      if (mouseEvent->button() == Qt::LeftButton) {
+        const int index = tabBar->tabAt(mouseEvent->position().toPoint());
+        dragSourceId_ = index >= 0
+                            ? dockIdForWidget(tabs->widget(index))
+                            : QString{};
+        dragStartPosition_ = mouseEvent->position().toPoint();
+      }
+    } else if (event->type() == QEvent::MouseMove && tabBar &&
+               !dragSourceId_.isEmpty()) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      if (!(mouseEvent->buttons() & Qt::LeftButton) ||
+          (mouseEvent->position().toPoint() - dragStartPosition_).manhattanLength() <
+              QApplication::startDragDistance()) {
+        return QWidget::eventFilter(watched, event);
+      }
+      auto *mime = new QMimeData();
+      mime->setData(QStringLiteral("application/x-artifact-dock-id"),
+                    dragSourceId_.toUtf8());
+      auto *drag = new QDrag(tabBar);
+      drag->setMimeData(mime);
+      drag->exec(Qt::MoveAction);
+      dragSourceId_.clear();
+      return true;
+    } else if (event->type() == QEvent::DragEnter ||
+               event->type() == QEvent::DragMove) {
+      auto *dragEvent = static_cast<QDragMoveEvent *>(event);
+      if (dragEvent->mimeData()->hasFormat(
+              QStringLiteral("application/x-artifact-dock-id"))) {
+        dragEvent->acceptProposedAction();
+        return true;
+      }
+    } else if (event->type() == QEvent::Drop) {
+      auto *dropEvent = static_cast<QDropEvent *>(event);
+      const QByteArray payload = dropEvent->mimeData()->data(
+          QStringLiteral("application/x-artifact-dock-id"));
+      if (!payload.isEmpty()) {
+        const QString sourceId = QString::fromUtf8(payload);
+        const QPoint position = dropEvent->position().toPoint();
+        const QPoint tabPosition = tabBar
+                                       ? position
+                                       : tabs->tabBar()->mapFrom(tabs, position);
+        const int targetIndex = tabs->tabBar()->tabAt(tabPosition);
+        if (targetIndex >= 0) {
+          const QString targetId = dockIdForWidget(tabs->widget(targetIndex));
+          if (!targetId.isEmpty() && sourceId != targetId &&
+              moveDockWidgetToTab(sourceId, targetId)) {
+            dropEvent->acceptProposedAction();
+            return true;
+          }
+        }
+      }
+    }
+    return QWidget::eventFilter(watched, event);
   }
 
 private:
+  DockArea areaForPosition(const QPoint &position) const {
+    if (topTabs_ && topTabs_->isVisible() &&
+        topTabs_->geometry().contains(position)) {
+      return DockArea::Top;
+    }
+    if (bottomTabs_ && bottomTabs_->isVisible() &&
+        bottomTabs_->geometry().contains(position)) {
+      return DockArea::Bottom;
+    }
+    if (splitter_ && splitter_->geometry().contains(position)) {
+      const int center = splitter_->geometry().center().x();
+      if (position.x() < center - splitter_->width() / 6) {
+        return DockArea::Left;
+      }
+      if (position.x() > center + splitter_->width() / 6) {
+        return DockArea::Right;
+      }
+    }
+    return DockArea::Center;
+  }
+
   static QTabWidget *createTabSurface(QWidget *parent) {
     auto *tabs = new QTabWidget(parent);
     tabs->setDocumentMode(true);
@@ -400,7 +710,12 @@ private:
   QTabWidget *centerTabs_ = nullptr;
   QTabWidget *rightTabs_ = nullptr;
   QTabWidget *bottomTabs_ = nullptr;
+  QSplitter *splitter_ = nullptr;
+  QPoint dragStartPosition_;
+  QString dragSourceId_;
   QHash<QString, QWidget *> docks_;
+  QHash<QString, QDialog *> floatingDialogs_;
+  QHash<QString, QWidget *> floatingWidgets_;
   QHash<QString, DockArea> areas_;
   QHash<QString, QString> titles_;
   QHash<QString, bool> pinned_;

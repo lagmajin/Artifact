@@ -17,6 +17,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ColorCollection.ColorGrading;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -27,23 +29,50 @@ import Memory.SharedPtr;
 
 namespace Artifact {
 
+// ColorWheelsProcessor::process expects canonical RGBA float pixels. Buffers
+// sourced from QImage use BGRA backing storage, so normalize before grading
+// and restore the source channel order afterwards.
+static void applyColorWheelsCore(const ImageF32x4RGBAWithCache& src,
+                                 ImageF32x4RGBAWithCache& dst,
+                                 const ArtifactCore::ColorWheelsProcessor& processor) {
+    dst = src;
+    float* pixels = dst.image().rgba32fData();
+    if (!pixels) {
+        return;
+    }
+
+    const int width = dst.image().width();
+    const int height = dst.image().height();
+    const bool bgrOrder = src.image().colorDescriptor().channelOrder ==
+                          ArtifactCore::SurfaceChannelOrder::BGRA;
+    if (!bgrOrder) {
+        Parallel::For(0, height, width * height, [&](int y) {
+            auto proc = processor;
+            proc.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
+        });
+        return;
+    }
+    Parallel::For(0, height, width * height, [&](int y) {
+        auto proc = processor;
+        float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+        for (int x = 0; x < width; ++x) {
+            float* p = row + static_cast<size_t>(x) * 4u;
+            std::swap(p[0], p[2]);
+        }
+        proc.process(row, width, 1);
+        for (int x = 0; x < width; ++x) {
+            float* p = row + static_cast<size_t>(x) * 4u;
+            std::swap(p[0], p[2]);
+        }
+    });
+}
+
 class ColorWheelsEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     ArtifactCore::ColorWheelsProcessor processor_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-
-        const int width = dst.image().width();
-        const int height = dst.image().height();
-        Parallel::For(0, height, width * height, [&](int y) {
-            auto processor = processor_;
-            processor.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
-        });
+        applyColorWheelsCore(src, dst, processor_);
     }
 };
 
@@ -59,18 +88,7 @@ public:
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-
-        const int width = dst.image().width();
-        const int height = dst.image().height();
-        Parallel::For(0, height, width * height, [&](int y) {
-            auto processor = processor_;
-            processor.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
-        });
+        applyColorWheelsCore(src, dst, processor_);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -98,8 +116,10 @@ public:
 private:
     struct ParamsCB { float liftR,liftG,liftB,liftMaster; float gammaR,gammaG,gammaB,gammaMaster; float gainR,gainG,gainB,gainMaster; float offsetR,offsetG,offsetB,offsetMaster; float offsetMode; float pad[3]{}; };
     static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0); cbuffer ColorWheelsParams:register(b0){float3 lift;float liftMaster;float3 gamma;float gammaMaster;float3 gain;float gainMaster;float3 offset;float offsetMaster;float offsetMode;float3 pad;} float lum(float3 c){return dot(c,float3(0.2126,0.7152,0.0722));} [numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 px=g_InputTexture[id.xy];float3 c=px.rgb;float l=lum(c);c+=(lift+liftMaster)*(1.0-l);c*=gain+gainMaster*l;c.r=pow(saturate(c.r),1.0/max(0.0001,gamma.r*gammaMaster));c.g=pow(saturate(c.g),1.0/max(0.0001,gamma.g*gammaMaster));c.b=pow(saturate(c.b),1.0/max(0.0001,gamma.b*gammaMaster));if(offsetMode>0.5)c+=offset+offsetMaster;px.rgb=saturate(c);g_OutputTexture[id.xy]=px;})";
-    bool createTexture(const ImageF32x4RGBAWithCache& src,Diligent::ITexture** out,const char* name){const auto&i=src.image();const float*data=i.rgba32fData();if(!out||!data||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(i.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
-    static bool readback(Diligent::IRenderDevice*dev,Diligent::IDeviceContext*ctx,Diligent::ITexture*src,ImageF32x4RGBAWithCache&dst,const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,const char*name){if(!dev||!ctx||!src)return false;auto d=src->GetDesc();Diligent::TextureDesc s;s.Type=Diligent::RESOURCE_DIM_TEX_2D;s.Width=d.Width;s.Height=d.Height;s.Format=d.Format;s.ArraySize=1;s.MipLevels=1;s.SampleCount=1;s.Usage=Diligent::USAGE_STAGING;s.CPUAccessFlags=Diligent::CPU_ACCESS_READ;s.Name=name;Diligent::RefCntAutoPtr<Diligent::ITexture>staging;dev->CreateTexture(s,nullptr,&staging);if(!staging)return false;ctx->CopyTexture(Diligent::CopyTextureAttribs(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));ctx->Flush();ctx->WaitForIdle();Diligent::MappedTextureSubresource m{};ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||!m.Stride)return false;cv::Mat temp((int)d.Height,(int)d.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(temp,colorDescriptor);ctx->UnmapTextureSubresource(staging,0,0);return true;}
+    bool createTexture(const ImageF32x4RGBAWithCache& src,Diligent::ITexture** out,const char* name){const auto&i=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(i.surfaceView());if(!upload.isValid()||!out||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=upload.bytes.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
+    // Compute textures are always written in canonical RGBA order. Passing the
+    // source descriptor here would swap red and blue for BGRA-backed buffers.
+    static bool readback(Diligent::IRenderDevice*dev,Diligent::IDeviceContext*ctx,Diligent::ITexture*src,ImageF32x4RGBAWithCache&dst,const ArtifactCore::SurfaceColorDescriptor&,const char*name){if(!dev||!ctx||!src)return false;auto d=src->GetDesc();ArtifactCore::SurfaceColorDescriptor rgbaDescriptor=dst.image().colorDescriptor();rgbaDescriptor.channelOrder=ArtifactCore::SurfaceChannelOrder::RGBA;Diligent::TextureDesc s;s.Type=Diligent::RESOURCE_DIM_TEX_2D;s.Width=d.Width;s.Height=d.Height;s.Format=d.Format;s.ArraySize=1;s.MipLevels=1;s.SampleCount=1;s.Usage=Diligent::USAGE_STAGING;s.CPUAccessFlags=Diligent::CPU_ACCESS_READ;s.Name=name;Diligent::RefCntAutoPtr<Diligent::ITexture>staging;dev->CreateTexture(s,nullptr,&staging);if(!staging)return false;ctx->CopyTexture(Diligent::CopyTextureAttribs(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));ctx->Flush();ctx->WaitForIdle();Diligent::MappedTextureSubresource m{};ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||!m.Stride)return false;cv::Mat temp((int)d.Height,(int)d.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(temp,rgbaDescriptor);ctx->UnmapTextureSubresource(staging,0,0);return true;}
 };
 
 ColorWheelsEffect::ColorWheelsEffect() {

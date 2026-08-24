@@ -13,21 +13,27 @@ module;
 #include <QTimer>
 #include <QWidget>
 #include <wobjectimpl.h>
+#if defined(ARTIFACT_QADS_COMPAT)
 #include "DockManager.h"
 #include "DockAreaWidget.h"
 #include "DockWidget.h"
 #include "DockWidgetTab.h"
 #include "FloatingDockContainer.h"
+#endif
 
 module Widgets.Dock.StyleManager;
 
 import Application.AppSettings;
+#if defined(ARTIFACT_QADS_COMPAT)
 import Widgets.Dock.GlowStyle;
+#endif
 import Widgets.Utils.CSS;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(DockStyleManager)
+
+#if defined(ARTIFACT_QADS_COMPAT)
 
 class DockStyleManager::Impl {
 public:
@@ -191,8 +197,6 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
     }
 }
 
-}
-
 DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     auto* dockManager = qobject_cast<ads::CDockManager*>(dockSurface);
@@ -200,7 +204,10 @@ DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
     impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().borderColor);
 
     if (!impl_->dockManager_) {
-        qWarning() << "[DockStyleManager] unsupported dock surface backend";
+        // NativeDockSurface intentionally does not expose a QADS manager.
+        // Keep this manager as a harmless no-op for the shared MainWindow
+        // ownership path; QADS-specific styling is only activated when the
+        // compatibility backend supplies a CDockManager.
         return;
     }
 
@@ -406,5 +413,49 @@ void DockStyleManager::refreshDockDecorations() {
         impl_->dockManager_->update();
     }
 }
+
+#else
+
+class DockStyleManager::Impl {
+public:
+    bool glowEnabled_ = false;
+    QColor glowColor_ = QColor(86, 156, 214);
+    int glowWidth_ = 1;
+    float glowIntensity_ = 0.58f;
+};
+
+DockStyleManager::DockStyleManager(QWidget*, QObject* parent)
+    : QObject(parent), impl_(new Impl()) {}
+
+DockStyleManager::~DockStyleManager() {
+    delete impl_;
+}
+
+void DockStyleManager::setGlowEnabled(bool enabled) {
+    if (impl_) impl_->glowEnabled_ = enabled;
+}
+
+void DockStyleManager::setGlowColor(const QColor& color) {
+    if (impl_) impl_->glowColor_ = color;
+}
+
+void DockStyleManager::setGlowWidth(int width) {
+    if (impl_) impl_->glowWidth_ = width;
+}
+
+void DockStyleManager::setGlowIntensity(float intensity) {
+    if (impl_) impl_->glowIntensity_ = intensity;
+}
+
+void DockStyleManager::applyStyle() {}
+
+bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
+    return QObject::eventFilter(watched, event);
+}
+
+void DockStyleManager::scheduleRefresh() {}
+void DockStyleManager::refreshDockDecorations() {}
+
+#endif
 
 }

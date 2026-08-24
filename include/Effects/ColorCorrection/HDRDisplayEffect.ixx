@@ -56,30 +56,50 @@ public:
         std::vector<AbstractProperty> props;
         AbstractProperty peakNits;
         peakNits.setName(QStringLiteral("PeakNits"));
+        peakNits.setDisplayLabel(QStringLiteral("Peak Brightness"));
         peakNits.setType(PropertyType::Float);
         peakNits.setValue(peakNits_);
+        peakNits.setDefaultValue(1000.0);
         peakNits.setMinValue(QVariant(100.0));
         peakNits.setMaxValue(QVariant(10000.0));
-        props.push_back(peakNits);
+        peakNits.setSoftRange(QVariant(400.0), QVariant(4000.0));
+        peakNits.setStep(50.0);
+        peakNits.setUnit(QStringLiteral("nits"));
+        peakNits.setTooltip(QStringLiteral("HDR peak luminance of the target display."));
+        props.push_back(std::move(peakNits));
+
         AbstractProperty paperWhite;
         paperWhite.setName(QStringLiteral("PaperWhite"));
+        paperWhite.setDisplayLabel(QStringLiteral("Paper White"));
         paperWhite.setType(PropertyType::Float);
         paperWhite.setValue(paperWhiteNits_);
+        paperWhite.setDefaultValue(80.0);
         paperWhite.setMinValue(QVariant(10.0));
         paperWhite.setMaxValue(QVariant(500.0));
-        props.push_back(paperWhite);
+        paperWhite.setStep(5.0);
+        paperWhite.setUnit(QStringLiteral("nits"));
+        paperWhite.setTooltip(QStringLiteral("Luminance level that white diffuse surfaces map to."));
+        props.push_back(std::move(paperWhite));
+
         AbstractProperty saturationBoost;
         saturationBoost.setName(QStringLiteral("SaturationBoost"));
+        saturationBoost.setDisplayLabel(QStringLiteral("Saturation Boost"));
         saturationBoost.setType(PropertyType::Float);
         saturationBoost.setValue(saturationBoost_);
+        saturationBoost.setDefaultValue(1.2);
         saturationBoost.setMinValue(QVariant(0.5));
         saturationBoost.setMaxValue(QVariant(2.0));
-        props.push_back(saturationBoost);
+        saturationBoost.setStep(0.01);
+        saturationBoost.setTooltip(QStringLiteral("Saturation multiplier for HDR display compensation."));
+        props.push_back(std::move(saturationBoost));
+
         AbstractProperty displayMode;
         displayMode.setName(QStringLiteral("DisplayMode"));
+        displayMode.setDisplayLabel(QStringLiteral("Display Mode"));
         displayMode.setType(PropertyType::Integer);
         displayMode.setValue(static_cast<int>(mode_));
-        props.push_back(displayMode);
+        displayMode.setTooltip(QStringLiteral("Tone mapping mode for SDR-to-HDR conversion."));
+        props.push_back(std::move(displayMode));
         return props;
     }
 

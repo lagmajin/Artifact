@@ -1,5 +1,7 @@
 # QADS Upstream Comparison Investigation (2026-06-23)
 
+**最終更新:** 2026-08-22
+
 ## Purpose
 - Compare the current ArtifactStudio QADS usage against the upstream Qt Advanced Docking System behavior.
 - Focus areas:
@@ -56,8 +58,9 @@
 - Earlier project notes show that Artifact previously experimented with vendored QADS source and direct QADS patches:
   - `Artifact/docs/INVESTIGATION_PROJECT_TREE_FLOATING_RESIZE_2026-03-14.md`
 - Current build path no longer appears to use that local vendored source directly for normal builds.
-- Current app code links through:
+- The legacy compatibility build links through:
   - `find_package(qtadvanceddocking-qt6 REQUIRED)`
+  - only when `ARTIFACT_QADS_COMPAT_BACKEND=ON`
 
 ## Working hypothesis
 - The most suspicious local divergence is forcing extra window behavior onto `DockOverlay` widgets:
@@ -73,5 +76,23 @@
    - `FloatingDockContainer.cpp`
 
 ## Current status
-- Investigation note only.
+- Native dock migration is now the default main-window path. The native surface
+  handles embedded left/right/top/bottom/center docks, tab-group prefix routing,
+  floating docks through owned top-level dialogs, portable layout entries,
+  splitter sizing, close/visibility/activation, and tab-bar drag/drop between
+  native tab surfaces.
+- The MainWindow now selects Native unconditionally; the former
+  `ARTIFACT_DISABLE_NATIVE_DOCK` runtime escape hatch has been removed.
+- QADS-specific `DockStyleManager` / `DockGlowStyle` compilation is opt-in via
+  the CMake option `ARTIFACT_QADS_COMPAT_STYLE` (default `OFF`).
+- When either QADS compatibility option is enabled, CMake resolves and links
+  the QADS package; with both options disabled, no QADS package is required.
+- QADS remains available only as an opt-in source compatibility backend. The
+  default CMake configuration does not define `ARTIFACT_QADS_COMPAT_BACKEND`
+  and does not require the QADS package. The Native-only MainWindow no longer
+  constructs a QADS `CDockManager` at runtime. The backend data contract now
+  exposes only `native`; QADS adapter/types remain behind the compatibility
+  boundary for optional builds. QADS-style insertion preview overlay is not
+  yet rendered for arbitrary empty-area drops, but the drop itself resolves to
+  the Native top/bottom/left/right/center region.
 - No build or runtime verification performed in this step.

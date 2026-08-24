@@ -23,17 +23,18 @@ public:
 
     QTransform getViewTransform(float widgetWidth, float widgetHeight) const {
         QTransform t;
-        // Move to center
-        t.translate(widgetWidth / 2.0, widgetHeight / 2.0);
-        // Apply zoom
+        // Pan in screen space so zoom does not scale pan speed
+        t.translate(widgetWidth / 2.0 + pan_.x(), widgetHeight / 2.0 + pan_.y());
         t.scale(zoom_, zoom_);
-        // Apply pan
-        t.translate(pan_.x(), pan_.y());
         return t;
     }
 
     QPointF mapToScene(const QPointF& widgetPos, float widgetWidth, float widgetHeight) const {
-        return getViewTransform(widgetWidth, widgetHeight).inverted().map(widgetPos);
+        QTransform vt = getViewTransform(widgetWidth, widgetHeight);
+        bool invertible = false;
+        QTransform inv = vt.inverted(&invertible);
+        if (!invertible) return widgetPos;
+        return inv.map(widgetPos);
     }
 
     QPointF mapFromScene(const QPointF& scenePos, float widgetWidth, float widgetHeight) const {

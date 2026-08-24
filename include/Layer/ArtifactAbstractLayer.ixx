@@ -163,6 +163,7 @@ enum class LayerType {
   EnvironmentMap = 26,          // HDRI / Skybox environment map layer
   Switch = 27,                  // Switch layer (Moho-style pose switching)
   Paint = 28,                   // Paint layer (frame-by-frame raster)
+  SpatialAudio = 29,            // 3D spatial audio source
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -598,6 +599,8 @@ public:
 
   virtual std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const;
+  std::vector<ArtifactCore::PropertyGroup>
+  getComponentPropertyGroups() const;
   virtual bool setLayerPropertyValue(const QString &propertyPath,
                                      const QVariant &value);
   SharedPtr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;

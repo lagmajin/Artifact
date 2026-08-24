@@ -57,6 +57,7 @@ module Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Text;
 import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
@@ -1200,6 +1201,67 @@ bool SetTextLayerTextCommand::deserialize(const QJsonObject& data) {
     layerId_ = data.value(QStringLiteral("layerId")).toString();
     beforeText_ = data.value(QStringLiteral("beforeText")).toString();
     afterText_ = data.value(QStringLiteral("afterText")).toString();
+    label_ = data.value(QStringLiteral("label")).toString();
+    auto* manager = UndoManager::instance();
+    if (!manager) return false;
+    layer_ = manager->resolveLayer(layerId_);
+    return !layerId_.isEmpty() && !layer_.expired();
+}
+
+// --- SetTextAnimatorStackCommand ---
+SetTextAnimatorStackCommand::SetTextAnimatorStackCommand(
+    ArtifactAbstractLayerPtr layer,
+    QJsonArray beforeStack,
+    QJsonArray afterStack,
+    QString label)
+    : layer_(layer),
+      layerId_(layer ? layer->id().toQString() : QString()),
+      beforeStack_(std::move(beforeStack)),
+      afterStack_(std::move(afterStack)),
+      label_(std::move(label)) {}
+
+void SetTextAnimatorStackCommand::apply(const QJsonArray& stack) {
+    auto layer = layer_.lock();
+    if (!layer) return;
+    if (auto textLayer =
+            ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
+        textLayer->restoreTextAnimatorStack(stack);
+    }
+    if (auto *manager = UndoManager::instance()) {
+        manager->notifyAnythingChanged();
+    }
+}
+
+void SetTextAnimatorStackCommand::undo() {
+    apply(beforeStack_);
+}
+
+void SetTextAnimatorStackCommand::redo() {
+    apply(afterStack_);
+}
+
+QString SetTextAnimatorStackCommand::label() const {
+    return label_;
+}
+
+size_t SetTextAnimatorStackCommand::estimatedMemoryBytes() const {
+    return sizeof(*this) +
+           static_cast<size_t>(
+               QJsonDocument(beforeStack_).toJson(QJsonDocument::Compact).size() +
+               QJsonDocument(afterStack_).toJson(QJsonDocument::Compact).size());
+}
+
+QJsonObject SetTextAnimatorStackCommand::serialize() const {
+    return QJsonObject{{QStringLiteral("layerId"), layerId_},
+                       {QStringLiteral("beforeStack"), beforeStack_},
+                       {QStringLiteral("afterStack"), afterStack_},
+                       {QStringLiteral("label"), label_}};
+}
+
+bool SetTextAnimatorStackCommand::deserialize(const QJsonObject& data) {
+    layerId_ = data.value(QStringLiteral("layerId")).toString();
+    beforeStack_ = data.value(QStringLiteral("beforeStack")).toArray();
+    afterStack_ = data.value(QStringLiteral("afterStack")).toArray();
     label_ = data.value(QStringLiteral("label")).toString();
     auto* manager = UndoManager::instance();
     if (!manager) return false;

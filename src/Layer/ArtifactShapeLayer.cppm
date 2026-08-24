@@ -30,6 +30,7 @@ import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.CloneEffectSupport;
 import Property.Types;
+import Property.Abstract;
 import Shape.Group;
 import Shape.TrimPaths;
 import Shape.Repeater;
@@ -41,6 +42,8 @@ import Physics.System;
 import Physics.SoftBody;
 import Physics.Mpm2D;
 import Artifact.Render.IRenderer;
+import Artifact.Composition.Abstract;
+import Time.Rational;
 
 namespace {
 
@@ -342,6 +345,104 @@ FloatColor normalizedShapeColor(const FloatColor& color) {
  };
  return FloatColor(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
                   channel(color.b(), 0.0f), channel(color.a(), 1.0f));
+}
+
+// Current composition timeline time used to evaluate animatable
+// shape.* properties during playback/rendering.
+ArtifactCore::RationalTime effectiveShapeTimelineTime(const ArtifactShapeLayer* layer) {
+ int64_t frame = 0;
+ int64_t fps = 30;
+ if (layer) {
+  if (auto* composition = dynamic_cast<Artifact::ArtifactAbstractComposition*>(
+          layer->compositionObject())) {
+   frame = composition->framePosition().framePosition();
+   fps = std::max<int64_t>(
+       1, static_cast<int64_t>(std::llround(composition->frameRate().framerate())));
+  } else {
+   frame = layer->currentFrame();
+  }
+ }
+ return ArtifactCore::RationalTime(frame, fps);
+}
+
+// Evaluate an animatable shape.* numeric property at the current time.
+// Falls back to the stored member value when the property has no keyframes.
+double animatedShapeNumber(const ArtifactShapeLayer* layer,
+                           const char* propertyPath,
+                           double fallback) {
+ if (!layer) {
+  return fallback;
+ }
+ const auto property = layer->getProperty(QString::fromLatin1(propertyPath));
+ if (!property || property->getKeyFrames().empty()) {
+  return fallback;
+ }
+ const QVariant value =
+     property->interpolateValue(effectiveShapeTimelineTime(layer));
+ return value.isValid() ? value.toDouble() : fallback;
+}
+
+// Effective primitive dimensions after keyframe evaluation. All render
+// pipelines (GPU / software / SVG / bounds / hit points) resolve geometry
+// through this so keyframed shape.* properties stay consistent.
+struct ShapeGeomDims {
+ int width;
+ int height;
+ float cornerRadius;
+ int starPoints;
+ float starInnerRadius;
+ int polygonSides;
+};
+
+inline bool sameShapeGeomDims(const ShapeGeomDims& a, const ShapeGeomDims& b) {
+ return a.width == b.width && a.height == b.height &&
+        a.cornerRadius == b.cornerRadius && a.starPoints == b.starPoints &&
+        a.starInnerRadius == b.starInnerRadius &&
+        a.polygonSides == b.polygonSides;
+}
+
+bool hasAnimatedShapeGeometry(const ArtifactShapeLayer* layer) {
+ static constexpr const char* kPaths[] = {
+     "shape.width", "shape.height", "shape.cornerRadius",
+     "shape.starPoints", "shape.starInnerRadius", "shape.polygonSides"};
+ if (!layer) {
+  return false;
+ }
+ for (const char* path : kPaths) {
+  const auto property = layer->getProperty(QString::fromLatin1(path));
+  if (property && !property->getKeyFrames().empty()) {
+   return true;
+  }
+ }
+ return false;
+}
+
+ShapeGeomDims resolveShapeGeomDims(const ArtifactShapeLayer* layer,
+                                   const int width,
+                                   const int height,
+                                   const float cornerRadius,
+                                   const int starPoints,
+                                   const float starInnerRadius,
+                                   const int polygonSides) {
+ return ShapeGeomDims{
+     static_cast<int>(std::clamp(
+         animatedShapeNumber(layer, "shape.width", width),
+         1.0, static_cast<double>(kMaxShapeDimension))),
+     static_cast<int>(std::clamp(
+         animatedShapeNumber(layer, "shape.height", height),
+         1.0, static_cast<double>(kMaxShapeDimension))),
+     static_cast<float>(
+         animatedShapeNumber(layer, "shape.cornerRadius", cornerRadius)),
+     static_cast<int>(std::clamp(
+         animatedShapeNumber(layer, "shape.starPoints", starPoints),
+         3.0, static_cast<double>(kMaxStarPoints))),
+     static_cast<float>(std::clamp(
+         animatedShapeNumber(layer, "shape.starInnerRadius", starInnerRadius),
+         0.0, 1.0)),
+     static_cast<int>(std::clamp(
+         animatedShapeNumber(layer, "shape.polygonSides", polygonSides),
+         3.0, 100.0)),
+ };
 }
 
 bool isSupportedShapePoint(const QPointF& point) {
@@ -1024,6 +1125,8 @@ public:
     double cachedNativeTolerance_ = -1.0;
     bool nativeGeometryCacheDirty_ = true;
     NativePathGeometry cachedShapeGeometry_;
+    ShapeGeomDims cachedShapeGeometryDims_{0, 0, 0.0f, 3, 0.0f, 3};
+    bool cachedShapeGeometryDimsValid_ = false;
     double cachedShapeTolerance_ = -1.0;
     bool shapeGeometryCacheDirty_ = true;
 
@@ -1038,52 +1141,64 @@ public:
    }
 
    const std::vector<NativePathGeometry>& nativeGeometry(
-       const std::vector<ArtifactCore::ShapePath>& paths, double tolerance) {
-    if (!nativeGeometryCacheDirty_ &&
-        std::abs(cachedNativeTolerance_ - tolerance) < 1.0e-9) {
-     return cachedNativeGeometry_;
+       const std::vector<ArtifactCore::ShapePath>& paths, double tolerance,
+       const bool cacheable = true) {
+    if (!(cacheable && !nativeGeometryCacheDirty_ &&
+          std::abs(cachedNativeTolerance_ - tolerance) < 1.0e-9)) {
+     cachedNativeGeometry_.clear();
+     cachedNativeGeometry_.reserve(paths.size());
+     for (const auto& path : paths) {
+      NativePathGeometry geometry;
+      geometry.triangles = path.triangulate(tolerance);
+      geometry.subpaths = path.flattenSubpaths(tolerance);
+      cachedNativeGeometry_.push_back(std::move(geometry));
+     }
+     cachedNativeTolerance_ = tolerance;
+     nativeGeometryCacheDirty_ = false;
     }
-    cachedNativeGeometry_.clear();
-    cachedNativeGeometry_.reserve(paths.size());
-    for (const auto& path : paths) {
-     NativePathGeometry geometry;
-     geometry.triangles = path.triangulate(tolerance);
-     geometry.subpaths = path.flattenSubpaths(tolerance);
-     cachedNativeGeometry_.push_back(std::move(geometry));
-    }
-    cachedNativeTolerance_ = tolerance;
-    nativeGeometryCacheDirty_ = false;
     return cachedNativeGeometry_;
    }
 
-   const NativePathGeometry& shapeGeometry(double tolerance) {
-    if (!shapeGeometryCacheDirty_ &&
+   const NativePathGeometry& shapeGeometry(const ShapeGeomDims& dims,
+                                           double tolerance) {
+    if (!shapeGeometryCacheDirty_ && cachedShapeGeometryDimsValid_ &&
+        sameShapeGeomDims(cachedShapeGeometryDims_, dims) &&
         std::abs(cachedShapeTolerance_ - tolerance) < 1.0e-9) {
      return cachedShapeGeometry_;
     }
     ShapePath path = buildLayerShapePath(
-        shapeType_, width_, height_, cornerRadius_, starPoints_,
-        starInnerRadius_, polygonSides_, customPolygonPoints_,
-        customPolygonClosed_, customPathVertices_, customPathClosed_);
+        shapeType_, dims.width, dims.height, dims.cornerRadius,
+        dims.starPoints, dims.starInnerRadius, dims.polygonSides,
+        customPolygonPoints_, customPolygonClosed_,
+        customPathVertices_, customPathClosed_);
     if (customPathVertices_.size() >= 3) {
      path.setFillRule(customPathFillRule_);
     }
     cachedShapeGeometry_.triangles = path.triangulate(tolerance);
     cachedShapeGeometry_.subpaths = path.flattenSubpaths(tolerance);
+    cachedShapeGeometryDims_ = dims;
+    cachedShapeGeometryDimsValid_ = true;
     cachedShapeTolerance_ = tolerance;
     shapeGeometryCacheDirty_ = false;
     return cachedShapeGeometry_;
    }
-  void rebuildCache() {
-    if (!cacheDirty_) return;
-    QImage img(width_, height_, QImage::Format_ARGB32_Premultiplied);
+  void rebuildCache(const ShapeGeomDims* dims = nullptr) {
+    if (!cacheDirty_ && !dims) return;
+    const int effW = dims ? dims->width : width_;
+    const int effH = dims ? dims->height : height_;
+    const float effCornerRadius = dims ? dims->cornerRadius : cornerRadius_;
+    const int effStarPoints = dims ? dims->starPoints : starPoints_;
+    const float effStarInnerRadius =
+        dims ? dims->starInnerRadius : starInnerRadius_;
+    const int effPolygonSides = dims ? dims->polygonSides : polygonSides_;
+    QImage img(effW, effH, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     QPainter painter(&img);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const auto paths = buildProcessedPainterPaths(shapeType_, width_, height_,
-                                                  cornerRadius_, starPoints_,
-                                                  starInnerRadius_, polygonSides_,
+    const auto paths = buildProcessedPainterPaths(shapeType_, effW, effH,
+                                                  effCornerRadius, effStarPoints,
+                                                  effStarInnerRadius, effPolygonSides,
                                                   customPolygonPoints_, customPolygonClosed_,
                                                   customPathVertices_, customPathClosed_,
                                                   shapeOperators_);
@@ -1092,8 +1207,8 @@ public:
      const bool isGradient = fillType_ != ArtifactSolidFillType::Solid;
      QBrush fillBrush;
      if (isGradient) {
-      const int w = width_;
-      const int h = height_;
+      const int w = effW;
+      const int h = effH;
       const float cx = static_cast<float>(w) * fillGradientCenterX_;
       const float cy = static_cast<float>(h) * fillGradientCenterY_;
       const float radius = static_cast<float>(std::max(w, h)) * fillGradientRadius_;
@@ -1192,7 +1307,7 @@ public:
         } else if (strokeAlign_ == StrokeAlign::Outside) {
          painter.save();
          QPainterPath outside;
-         outside.addRect(QRectF(-1, -1, width_ + 2, height_ + 2));
+         outside.addRect(QRectF(-1, -1, effW + 2, effH + 2));
          outside = outside.subtracted(path);
          painter.setClipPath(outside);
          QPen widePen = pen;
@@ -1405,11 +1520,23 @@ std::vector<QPointF> ArtifactShapeLayer::direct3DCardFillPoints() const {
   return {};
  }
  if (impl_->shapeContentCacheDirty_) {
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
   impl_->cachedShapePoints_ = buildRenderablePoints(
-      impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
-      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
       impl_->customPolygonPoints_, impl_->customPolygonClosed_);
   impl_->shapeContentCacheDirty_ = false;
+ }
+ if (hasAnimatedShapeGeometry(this)) {
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
+  return buildRenderablePoints(
+      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
+      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
  }
  return impl_->cachedShapePoints_;
 }
@@ -1426,11 +1553,23 @@ std::vector<QPointF> ArtifactShapeLayer::direct3DCardStrokePoints() const {
   return {};
  }
  if (impl_->shapeContentCacheDirty_) {
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
   impl_->cachedShapePoints_ = buildRenderablePoints(
-      impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
-      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
       impl_->customPolygonPoints_, impl_->customPolygonClosed_);
   impl_->shapeContentCacheDirty_ = false;
+ }
+ if (hasAnimatedShapeGeometry(this)) {
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
+  return buildRenderablePoints(
+      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
+      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
  }
  return impl_->cachedShapePoints_;
 }
@@ -1586,12 +1725,99 @@ void ArtifactShapeLayer::setCustomPathFillRule(ArtifactCore::PathFillRule rule) 
 
 std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() const
 {
+ // Animatable shape.* properties are evaluated at the current timeline
+ // time so keyframed geometry animates during playback/rendering.
+ const ShapeGeomDims dims = resolveShapeGeomDims(
+     this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+     impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
+
  return buildProcessedShapePaths(
-     impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
-     impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+     impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+     dims.starPoints, dims.starInnerRadius, dims.polygonSides,
      impl_->customPolygonPoints_, impl_->customPolygonClosed_,
      impl_->customPathVertices_, impl_->customPathClosed_,
      impl_->shapeOperators_);
+}
+
+ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
+{
+ ArtifactCore::ShapeLayer core;
+ core.setName(layerName());
+ core.setVisible(isVisible());
+ core.setOpacity(static_cast<double>(opacity()));
+
+ auto* group = core.content();
+ if (!group) {
+  return core;
+ }
+
+ // Core SVG output supports gradients via <defs>; placement/taper strokes
+ // are exported as outline geometry by the core exporter.
+ ArtifactCore::FillSettings fill;
+ fill.enabled = impl_->fillEnabled_;
+ if (impl_->fillType_ == ArtifactSolidFillType::Solid) {
+  fill.color = toQColor(impl_->fillColor_);
+ } else {
+  fill.gradientStart = toQColor(impl_->fillGradientStartColor_);
+  fill.gradientEnd = toQColor(impl_->fillGradientEndColor_);
+  fill.gradientAngleDegrees = impl_->fillGradientAngleDegrees_;
+  fill.gradientCenterX = impl_->fillGradientCenterX_;
+  fill.gradientCenterY = impl_->fillGradientCenterY_;
+  fill.gradientRadiusRatio = std::clamp(impl_->fillGradientRadius_, 0.01f, 100000.0f);
+  switch (impl_->fillType_) {
+   case ArtifactSolidFillType::LinearGradient:
+    fill.type = ArtifactCore::FillSettings::FillType::Linear; break;
+   case ArtifactSolidFillType::RadialGradient:
+    fill.type = ArtifactCore::FillSettings::FillType::Radial; break;
+   case ArtifactSolidFillType::ConicalGradient:
+    fill.type = ArtifactCore::FillSettings::FillType::Conic; break;
+   case ArtifactSolidFillType::RepeatingGradient:
+    fill.type = ArtifactCore::FillSettings::FillType::Repeating; break;
+   case ArtifactSolidFillType::MirroredGradient:
+    fill.type = ArtifactCore::FillSettings::FillType::Mirrored; break;
+   case ArtifactSolidFillType::Solid: break;
+  }
+ }
+
+ ArtifactCore::StrokeSettings stroke(
+     toQColor(impl_->strokeGradientEnabled_
+                  ? mixColor(impl_->strokeGradientStartColor_,
+                             impl_->strokeGradientEndColor_, 0.5f)
+                  : impl_->strokeColor_),
+     static_cast<double>(impl_->strokeWidth_));
+ stroke.enabled = impl_->strokeEnabled_ && impl_->strokeWidth_ > 0.0f;
+ stroke.placement =
+     impl_->strokeAlign_ == StrokeAlign::Inside
+         ? ArtifactCore::StrokePlacement::Inside
+         : (impl_->strokeAlign_ == StrokeAlign::Outside
+                ? ArtifactCore::StrokePlacement::Outside
+                : ArtifactCore::StrokePlacement::Center);
+ stroke.taperStartScale = impl_->strokeTaperStart_;
+ stroke.taperEndScale = impl_->strokeTaperEnd_;
+ switch (impl_->strokeCap_) {
+ case StrokeCap::Round: stroke.cap = ArtifactCore::LineCap::Round; break;
+ case StrokeCap::Square: stroke.cap = ArtifactCore::LineCap::Square; break;
+ case StrokeCap::Flat:
+ default: stroke.cap = ArtifactCore::LineCap::Butt; break;
+ }
+ switch (impl_->strokeJoin_) {
+ case StrokeJoin::Round: stroke.join = ArtifactCore::LineJoin::Round; break;
+ case StrokeJoin::Bevel: stroke.join = ArtifactCore::LineJoin::Bevel; break;
+ case StrokeJoin::Miter:
+ default: stroke.join = ArtifactCore::LineJoin::Miter; break;
+ }
+ stroke.dashPattern.reserve(impl_->dashPattern_.size());
+ for (const float dash : impl_->dashPattern_) {
+  stroke.dashPattern.push_back(static_cast<double>(dash));
+ }
+
+ for (const auto& path : nativeShapePaths()) {
+  auto shape = std::make_unique<ArtifactCore::PathShape>(path);
+  shape->setFill(fill);
+  shape->setStroke(stroke);
+  group->addChild(std::move(shape));
+ }
+ return core;
 }
 
 void ArtifactShapeLayer::addShapeOperator(ArtifactCore::ShapeOperatorType type)
@@ -1669,7 +1895,14 @@ bool ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
 // ============================================================
 
 QImage ArtifactShapeLayer::toQImage() const {
- impl_->rebuildCache();
+ if (hasAnimatedShapeGeometry(this)) {
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
+  impl_->rebuildCache(&dims);
+ } else {
+  impl_->rebuildCache();
+ }
  return impl_->cachedImage_;
 }
 
@@ -1686,10 +1919,14 @@ QImage ArtifactShapeLayer::getThumbnail(int width, int height) const
 
 QRectF ArtifactShapeLayer::localBounds() const
 {
-  if (!impl_->localBoundsCacheDirty_) {
+  const bool geomAnimated = hasAnimatedShapeGeometry(this);
+  if (!impl_->localBoundsCacheDirty_ && !geomAnimated) {
     return impl_->cachedLocalBounds_;
   }
 
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
   const auto boundsOfPoints = [](const std::vector<QPointF>& points) -> QRectF {
    if (points.empty()) {
     return QRectF();
@@ -1710,8 +1947,8 @@ QRectF ArtifactShapeLayer::localBounds() const
   QRectF bounds;
   if (!impl_->shapeOperators_.empty()) {
    const auto processedPaths = buildProcessedShapePaths(
-       impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
-       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+       impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+       dims.starPoints, dims.starInnerRadius, dims.polygonSides,
        impl_->customPolygonPoints_, impl_->customPolygonClosed_,
        impl_->customPathVertices_, impl_->customPathClosed_,
        impl_->shapeOperators_);
@@ -1732,9 +1969,9 @@ QRectF ArtifactShapeLayer::localBounds() const
   } else if (impl_->customPolygonPoints_.size() >= 2) {
    bounds = boundsOfPoints(impl_->customPolygonPoints_);
   } else {
-   bounds = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
-                           impl_->cornerRadius_, impl_->starPoints_,
-                           impl_->starInnerRadius_, impl_->polygonSides_)
+   bounds = buildShapePath(impl_->shapeType_, dims.width, dims.height,
+                           dims.cornerRadius, dims.starPoints,
+                           dims.starInnerRadius, dims.polygonSides)
                 .boundingRect();
   }
 
@@ -1772,6 +2009,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
+  const bool geomAnimated = hasAnimatedShapeGeometry(this);
+  const ShapeGeomDims geomDims = resolveShapeGeomDims(
+      this, impl->width_, impl->height_, impl->cornerRadius_,
+      impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_);
   const bool nativeOperatorCandidate =
       !impl->shapeOperators_.empty() &&
       (!impl->fillEnabled_ ||
@@ -1780,9 +2021,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
        (impl->strokeAlign_ == StrokeAlign::Center &&
         !impl->hasCustomStrokeEffects()));
   if (nativeOperatorCandidate) {
-   auto processedOperatorPaths = buildProcessedShapePaths(
-       impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
-       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
+    auto processedOperatorPaths = buildProcessedShapePaths(
+        impl->shapeType_, geomDims.width, geomDims.height, geomDims.cornerRadius,
+        geomDims.starPoints, geomDims.starInnerRadius, geomDims.polygonSides,
        impl->customPolygonPoints_, impl->customPolygonClosed_,
        impl->customPathVertices_, impl->customPathClosed_,
        impl->shapeOperators_);
@@ -1799,7 +2040,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    drawWithClonerEffect(
        this, baseTransform,
         [renderer, impl, processedPaths = processedOperatorPaths, fill, stroke,
-        contentFieldWeight, this](const QMatrix4x4& transform, float weight) {
+        contentFieldWeight, this, geomAnimated](const QMatrix4x4& transform, float weight) {
         const float opacity = this->opacity() * weight * contentFieldWeight;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
         const FloatColor drawStroke(stroke.r(), stroke.g(), stroke.b(), stroke.a() * opacity);
@@ -1809,7 +2050,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                                          static_cast<double>(transform(1, 1)));
         const double renderScale = std::max({1.0, scaleX, scaleY});
         const auto& geometry = impl->nativeGeometry(processedPaths,
-                                                    0.25 / renderScale);
+                                                    0.25 / renderScale,
+                                                    !geomAnimated);
         for (const auto& pathGeometry : geometry) {
          if (impl->fillEnabled_) {
           for (const auto& triangle : pathGeometry.triangles) {
@@ -1849,7 +2091,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         }
        });
    drawFractureOverlay(renderer, baseTransform,
-                       QSizeF(impl->width_, impl->height_),
+                       QSizeF(geomDims.width, geomDims.height),
                        opacity() * contentFieldWeight);
    return;
   }
@@ -1864,22 +2106,36 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
            << compatibilityFallbackName(fallback);
    impl->lastLoggedFallback_ = fallback;
   }
-  impl->rebuildCache();
+  if (geomAnimated) {
+   const ShapeGeomDims cacheDims = resolveShapeGeomDims(
+       this, impl->width_, impl->height_, impl->cornerRadius_,
+       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_);
+   impl->rebuildCache(&cacheDims);
+  } else {
+   impl->rebuildCache();
+  }
    const float layerOpacity = opacity() * contentFieldWeight;
+   const ShapeGeomDims spriteDims = geomAnimated
+       ? resolveShapeGeomDims(this, impl->width_, impl->height_,
+                              impl->cornerRadius_, impl->starPoints_,
+                              impl->starInnerRadius_, impl->polygonSides_)
+       : ShapeGeomDims{impl->width_, impl->height_, impl->cornerRadius_,
+                       impl->starPoints_, impl->starInnerRadius_,
+                       impl->polygonSides_};
   drawWithClonerEffect(this, baseTransform,
-       [renderer, impl, layerOpacity](const QMatrix4x4& transform, float weight) {
+       [renderer, impl, layerOpacity, spriteDims](const QMatrix4x4& transform, float weight) {
    renderer->drawSpriteTransformed(
        0.0f, 0.0f,
-       static_cast<float>(impl->width_),
-       static_cast<float>(impl->height_),
+       static_cast<float>(spriteDims.width),
+       static_cast<float>(spriteDims.height),
        transform, impl->cachedImage_,
        layerOpacity * weight);
   });
-  drawFractureOverlay(renderer, baseTransform, QSizeF(impl->width_, impl->height_), layerOpacity);
+  drawFractureOverlay(renderer, baseTransform, QSizeF(spriteDims.width, spriteDims.height), layerOpacity);
   return;
  }
   drawWithClonerEffect(this, baseTransform,
-                       [renderer, impl, this, contentFieldWeight](const QMatrix4x4& transform, float weight) {
+                       [renderer, impl, this, contentFieldWeight, geomDims](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
         impl->fillColor_.a() * this->opacity() * contentFieldWeight * weight);
@@ -1908,7 +2164,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
                                      static_cast<double>(transform(1, 1)));
     const double renderScale = std::max({1.0, scaleX, scaleY});
-    const auto& geometry = impl->shapeGeometry(0.25 / renderScale);
+    const auto& geometry = impl->shapeGeometry(geomDims, 0.25 / renderScale);
     if (geometry.subpaths.empty()) return;
 
     if (impl->fillEnabled_) {

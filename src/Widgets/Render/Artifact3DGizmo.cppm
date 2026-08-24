@@ -1828,9 +1828,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         renderer->drawGizmoTorus(centerPos, normal, radius, tubeRadius, coreColor);
     };
 
-    if (boundingBoxEnabled_ &&
-        ((impl_->drawingFullOverlay && mode_ == GizmoMode::Scale) ||
-         fullModeDrag_)) {
+    if (boundingBoxEnabled_ && mode_ == GizmoMode::Scale) {
         const BoundingBoxGeometry geometry = boundingBoxGeometryFor(
             boundingBoxMin_, boundingBoxMax_, impl_->position, impl_->scale,
             basis);

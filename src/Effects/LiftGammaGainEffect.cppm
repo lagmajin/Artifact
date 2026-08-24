@@ -18,6 +18,8 @@ module Artifact.Effect.LiftGammaGain;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
 import CvUtils;
@@ -40,14 +42,21 @@ static void applyLiftGammaGainCore(const ImageF32x4RGBAWithCache& src,
         return;
     }
 
+    // Backing storage follows colorDescriptor().channelOrder and may be BGRA
+    // (QImage-sourced buffers) or RGBA (OIIO-decoded buffers).
+    const bool bgrOrder = src.image().colorDescriptor().channelOrder ==
+                          ArtifactCore::SurfaceChannelOrder::BGRA;
+    const int rIndex = bgrOrder ? 2 : 0;
+    const int bIndex = bgrOrder ? 0 : 2;
+
     const int width = dst.image().width();
     const int height = dst.image().height();
     ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
         for (int x = 0; x < width; ++x) {
             float* p = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-            float& b = p[0];
+            float& r = p[rIndex];
             float& g = p[1];
-            float& r = p[2];
+            float& b = p[bIndex];
 
             r += liftR * 0.1f;
             g += liftG * 0.1f;
@@ -112,9 +121,11 @@ public:
     }
 private:
     struct ParamsCB { float liftR,liftG,liftB,pad1; float gammaR,gammaG,gammaB,pad2; float gainR,gainG,gainB,pad3; };
-    static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer LiftGammaGainParams:register(b0){float3 lift;float liftPad;float3 gamma;float gammaPad;float3 gain;float gainPad;float3 pad;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 px=g_InputTexture[id.xy];float3 c=float3(px.b,px.g,px.r);c+=lift*0.1;c.r=pow(max(c.r,0),1.0/max(gamma.r,0.0001));c.g=pow(max(c.g,0),1.0/max(gamma.g,0.0001));c.b=pow(max(c.b,0),1.0/max(gamma.b,0.0001));c*=gain;px.rgb=saturate(float3(c.b,c.g,c.r));g_OutputTexture[id.xy]=px;})";
-    bool createTexture(const ImageF32x4RGBAWithCache&src,Diligent::ITexture**out,const char*name){const auto&i=src.image();const float*data=i.rgba32fData();if(!out||!data||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(i.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
-    static bool readback(Diligent::IRenderDevice*dev,Diligent::IDeviceContext*ctx,Diligent::ITexture*src,ImageF32x4RGBAWithCache&dst,const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,const char*name){if(!dev||!ctx||!src)return false;auto d=src->GetDesc();Diligent::TextureDesc s;s.Type=Diligent::RESOURCE_DIM_TEX_2D;s.Width=d.Width;s.Height=d.Height;s.Format=d.Format;s.ArraySize=1;s.MipLevels=1;s.SampleCount=1;s.Usage=Diligent::USAGE_STAGING;s.CPUAccessFlags=Diligent::CPU_ACCESS_READ;s.Name=name;Diligent::RefCntAutoPtr<Diligent::ITexture>staging;dev->CreateTexture(s,nullptr,&staging);if(!staging)return false;ctx->CopyTexture(Diligent::CopyTextureAttribs(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));ctx->Flush();ctx->WaitForIdle();Diligent::MappedTextureSubresource m{};ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||!m.Stride)return false;cv::Mat temp((int)d.Height,(int)d.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(temp,colorDescriptor);ctx->UnmapTextureSubresource(staging,0,0);return true;}
+    static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer LiftGammaGainParams:register(b0){float3 lift;float liftPad;float3 gamma;float gammaPad;float3 gain;float gainPad;float3 pad;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 px=g_InputTexture[id.xy];float3 c=px.rgb;c+=lift*0.1;c.r=pow(max(c.r,0),1.0/max(gamma.r,0.0001));c.g=pow(max(c.g,0),1.0/max(gamma.g,0.0001));c.b=pow(max(c.b,0),1.0/max(gamma.b,0.0001));c*=gain;px.rgb=saturate(c);g_OutputTexture[id.xy]=px;})";
+    bool createTexture(const ImageF32x4RGBAWithCache&src,Diligent::ITexture**out,const char*name){const auto&i=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(i.surfaceView());if(!upload.isValid()||!out||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=upload.bytes.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
+    // Compute textures are always written in canonical RGBA order. Passing the
+    // source descriptor here would swap red and blue for BGRA-backed buffers.
+    static bool readback(Diligent::IRenderDevice*dev,Diligent::IDeviceContext*ctx,Diligent::ITexture*src,ImageF32x4RGBAWithCache&dst,const ArtifactCore::SurfaceColorDescriptor&,const char*name){if(!dev||!ctx||!src)return false;auto d=src->GetDesc();ArtifactCore::SurfaceColorDescriptor rgbaDescriptor=dst.image().colorDescriptor();rgbaDescriptor.channelOrder=ArtifactCore::SurfaceChannelOrder::RGBA;Diligent::TextureDesc s;s.Type=Diligent::RESOURCE_DIM_TEX_2D;s.Width=d.Width;s.Height=d.Height;s.Format=d.Format;s.ArraySize=1;s.MipLevels=1;s.SampleCount=1;s.Usage=Diligent::USAGE_STAGING;s.CPUAccessFlags=Diligent::CPU_ACCESS_READ;s.Name=name;Diligent::RefCntAutoPtr<Diligent::ITexture>staging;dev->CreateTexture(s,nullptr,&staging);if(!staging)return false;ctx->CopyTexture(Diligent::CopyTextureAttribs(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));ctx->Flush();ctx->WaitForIdle();Diligent::MappedTextureSubresource m{};ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||!m.Stride)return false;cv::Mat temp((int)d.Height,(int)d.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(temp,rgbaDescriptor);ctx->UnmapTextureSubresource(staging,0,0);return true;}
 };
 
 LiftGammaGainEffect::LiftGammaGainEffect() {

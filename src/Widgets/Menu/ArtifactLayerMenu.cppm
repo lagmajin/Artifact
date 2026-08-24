@@ -2832,7 +2832,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         menu_ ? menu_->window() : nullptr,
         QStringLiteral("3Dモデルを選択"),
         QString(),
-        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd *.pmx);;All Files (*.*)"));
+        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)"));
     if (filePath.isEmpty()) {
         return;
     }
