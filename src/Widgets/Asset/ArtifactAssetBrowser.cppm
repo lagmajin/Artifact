@@ -12,6 +12,7 @@ module;
 #include <functional>
 #include <QFileSystemModel>
 #include <QDir>
+#include <QDirIterator>
 #include <QLabel>
 #include <QLineEdit>
 #include <QCompleter>
@@ -1619,6 +1620,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
     QString currentFileTypeFilter_ = "all";
     QString currentStatusFilter_ = "all";
     QString currentSearchFilter_;
+    QString currentSearchScope_ = QStringLiteral("current");
     QString currentSortBy_ = "date";  // name, date, size, type
     bool sortAscending_ = false;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -1631,7 +1633,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   void handleDirectryChanged();
   void handleDoubleClicked();
   void defaultHandleMousePressEvent(QMouseEvent* event);
-  void applyFilters();
+ void applyFilters();
   void warmVisibleThumbnails();
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
@@ -2881,8 +2883,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   refreshImportedAssetPathCache();
 
-  QDir dir(currentDirectoryPath_);
-  if (!dir.exists()) return;
+   const QString searchRoot = currentSearchScope_ == QStringLiteral("current")
+       ? currentDirectoryPath_
+       : ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+   QDir dir(searchRoot.isEmpty() ? currentDirectoryPath_ : searchRoot);
+   if (!dir.exists()) return;
 
   const QString currentDirectoryPrefix =
       QDir::cleanPath(currentDirectoryPath_) + QDir::separator();
@@ -2897,7 +2902,17 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   }
 
    // Get both files and directories, excluding . and ..
-   QStringList entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+   QStringList entries;
+   if (currentSearchScope_ == QStringLiteral("current")) {
+    entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+   } else {
+    QDirIterator iterator(dir.absolutePath(), QDir::Files,
+                          QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+     const QString absolutePath = iterator.next();
+     entries.append(dir.relativeFilePath(absolutePath));
+    }
+   }
    QList<AssetMenuItem> items;
 
    // --- Phase 1: pre-filter directories ---
@@ -3021,7 +3036,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     AssetStatusSummary status = assetStatusForPaths(item.path.toQString(), item.sequencePaths);
     status.missing = status.missing || missingFrameCount > 0 ||
                      unreadableFrameCount > 0 || hasSizeMismatch;
-    if (!matchesStatusFilter(status)) {
+    if ((currentSearchScope_ == QStringLiteral("missing") && !status.missing) ||
+        (currentSearchScope_ == QStringLiteral("unused") && !status.unused) ||
+        !matchesStatusFilter(status)) {
      continue;
     }
 
@@ -3371,13 +3388,35 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    unusedBtn->setAccessibleDescription(QStringLiteral("Show assets not used by the project"));
    unusedBtn->setCheckable(true);
 
-   auto* statusGroup = new QButtonGroup(this);
+ auto* statusGroup = new QButtonGroup(this);
    statusGroup->setExclusive(true);
    statusGroup->addButton(statusAllBtn, 0);
    statusGroup->addButton(importedBtn, 1);
    statusGroup->addButton(favoriteBtn, 2);
    statusGroup->addButton(missingBtn, 3);
    statusGroup->addButton(unusedBtn, 4);
+   auto* scopeCurrentBtn = new QToolButton(this);
+   scopeCurrentBtn->setText(QStringLiteral("Current Folder"));
+   scopeCurrentBtn->setCheckable(true);
+   scopeCurrentBtn->setAccessibleName(QStringLiteral("Search current folder"));
+   auto* scopeProjectBtn = new QToolButton(this);
+   scopeProjectBtn->setText(QStringLiteral("Project Assets"));
+   scopeProjectBtn->setCheckable(true);
+   scopeProjectBtn->setAccessibleName(QStringLiteral("Search project assets"));
+   auto* scopeMissingBtn = new QToolButton(this);
+   scopeMissingBtn->setText(QStringLiteral("Missing"));
+   scopeMissingBtn->setCheckable(true);
+   scopeMissingBtn->setAccessibleName(QStringLiteral("Search missing assets"));
+   auto* scopeUnusedBtn = new QToolButton(this);
+   scopeUnusedBtn->setText(QStringLiteral("Unused"));
+   scopeUnusedBtn->setCheckable(true);
+   scopeUnusedBtn->setAccessibleName(QStringLiteral("Search unused assets"));
+   auto* scopeGroup = new QButtonGroup(this);
+   scopeGroup->setExclusive(true);
+   scopeGroup->addButton(scopeCurrentBtn, 0);
+   scopeGroup->addButton(scopeProjectBtn, 1);
+   scopeGroup->addButton(scopeMissingBtn, 2);
+   scopeGroup->addButton(scopeUnusedBtn, 3);
    auto& config = ArtifactCore::LayeredConfigStore::instance();
    const QString savedStatusFilter = config.valueString(
        QStringLiteral("AssetBrowser/StatusFilter"), QStringLiteral("all"));
@@ -3393,6 +3432,30 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    if (auto* savedStatusButton = statusGroup->button(savedStatusId)) {
     savedStatusButton->setChecked(true);
    }
+   const QString savedScope = config.valueString(
+       QStringLiteral("AssetBrowser/SearchScope"), QStringLiteral("current"));
+   const QHash<QString, int> scopeIds{{QStringLiteral("current"), 10},
+                                      {QStringLiteral("project"), 11},
+                                      {QStringLiteral("missing"), 12},
+                                      {QStringLiteral("unused"), 13}};
+   impl_->currentSearchScope_ = scopeIds.contains(savedScope)
+       ? savedScope : QStringLiteral("current");
+   if (auto* savedScopeButton = scopeGroup->button(
+           scopeIds.value(impl_->currentSearchScope_, 10) - 10)) {
+    savedScopeButton->setChecked(true);
+   }
+   for (auto* button : {scopeCurrentBtn, scopeProjectBtn, scopeMissingBtn,
+                        scopeUnusedBtn}) {
+    button->setAutoRaise(true);
+    button->setMinimumHeight(26);
+    button->setCursor(Qt::PointingHandCursor);
+    applyAssetBrowserFilterPalette(button);
+   }
+   assetToolBar->addSeparator();
+   assetToolBar->addWidget(scopeCurrentBtn);
+   assetToolBar->addWidget(scopeProjectBtn);
+   assetToolBar->addWidget(scopeMissingBtn);
+   assetToolBar->addWidget(scopeUnusedBtn);
    const QString savedTypeFilter = config.valueString(
        QStringLiteral("AssetBrowser/FileTypeFilter"), QStringLiteral("all"));
    const QHash<QString, int> typeIds{{QStringLiteral("all"), 0},
@@ -3492,6 +3555,17 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    }
     ArtifactCore::LayeredConfigStore::instance().setValue(
         QStringLiteral("AssetBrowser/StatusFilter"), impl_->currentStatusFilter_);
+    impl_->applyFilters();
+    impl_->refreshLeftHubSummary();
+   });
+   connect(scopeGroup, &QButtonGroup::idClicked, this, [this](int id) {
+    static const QStringList scopes = {QStringLiteral("current"),
+                                       QStringLiteral("project"),
+                                       QStringLiteral("missing"),
+                                       QStringLiteral("unused")};
+    impl_->currentSearchScope_ = scopes.at(id);
+    ArtifactCore::LayeredConfigStore::instance().setValue(
+        QStringLiteral("AssetBrowser/SearchScope"), impl_->currentSearchScope_);
     impl_->applyFilters();
     impl_->refreshLeftHubSummary();
    });

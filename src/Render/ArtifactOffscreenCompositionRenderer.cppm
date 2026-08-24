@@ -179,8 +179,10 @@ namespace Artifact
         
         // ピクセルデータのコピー (RGBA8 -> FloatRGBA)
         const uint8_t* pSrc = static_cast<const uint8_t*>(MappedData.pData);
-        ArtifactCore::Parallel::For(0, static_cast<int>(height_), static_cast<int>(width_ * height_), [&](int y) {
-            for (Uint32 x = 0; x < width_; ++x) {
+        ArtifactCore::Parallel::ForTiles(static_cast<int>(width_), static_cast<int>(height_), 32, 32,
+            [&](int x0, int y0, int x1, int y1) {
+            for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
                 const uint8_t* pPixel = pSrc + y * MappedData.Stride + x * 4;
                 float* destination = imagePixels +
                     (static_cast<size_t>(y) * width_ + x) * 4u;
@@ -188,6 +190,7 @@ namespace Artifact
                 destination[1] = pPixel[1] / 255.0f;
                 destination[2] = pPixel[2] / 255.0f;
                 destination[3] = pPixel[3] / 255.0f;
+            }
             }
         });
 
@@ -216,15 +219,18 @@ namespace Artifact
         ArtifactCore::ImageF32x4_RGBA img = captureImage();
         QImage qimg(width_, height_, QImage::Format_RGBA8888);
         const float* imagePixels = img.rgba32fData();
-        ArtifactCore::Parallel::For(0, static_cast<int>(height_), static_cast<int>(width_ * height_), [&](int y) {
+        ArtifactCore::Parallel::ForTiles(static_cast<int>(width_), static_cast<int>(height_), 32, 32,
+            [&](int x0, int y0, int x1, int y1) {
+            for (int y = y0; y < y1; ++y) {
             QRgb* scan = reinterpret_cast<QRgb*>(qimg.scanLine(y));
-            for (Uint32 x = 0; x < width_; ++x) {
+            for (int x = x0; x < x1; ++x) {
                 const float* col = imagePixels +
                     (static_cast<size_t>(y) * width_ + x) * 4u;
                 scan[x] = qRgba(static_cast<int>(col[0] * 255),
                                 static_cast<int>(col[1] * 255),
                                 static_cast<int>(col[2] * 255),
                                 static_cast<int>(col[3] * 255));
+            }
             }
         });
         ArtifactCore::ImageExporter exporter;
