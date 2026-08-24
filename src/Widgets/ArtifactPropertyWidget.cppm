@@ -4,6 +4,7 @@ module;
 #include <QApplication>
 #include <QCursor>
 #include <QPoint>
+#include <QPointer>
 #include <QFont>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -237,10 +238,10 @@ private:
     }
   }
 
-  QWidget *target_ = nullptr;
-};
+  QPointer<QWidget> target_;
+ };
 
-QStringList loadFavoriteProperties();
+ QStringList loadFavoriteProperties();
 void saveFavoriteProperties(const QStringList &favorites);
 bool isFavorite(const QString &propertyPath);
 void toggleFavorite(const QString &propertyPath);
