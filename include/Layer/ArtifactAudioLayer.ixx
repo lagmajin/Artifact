@@ -48,13 +48,12 @@ export namespace Artifact
 {
  using namespace ArtifactCore;
 
- class ArtifactAudioLayer :public ArtifactAbstractLayer
- {
-  private:
-   class Impl;
-   Impl* impl_;
-   bool decodeFrameToCache(qint64 frameNumber);
- public:
+  class ArtifactAudioLayer :public ArtifactAbstractLayer
+  {
+   private:
+    class Impl;
+    Impl* impl_;
+  public:
   ArtifactAudioLayer();
   ~ArtifactAudioLayer();
 
@@ -67,6 +66,24 @@ export namespace Artifact
   float fadeInSeconds() const;
   void setFadeOutSeconds(float seconds);
   float fadeOutSeconds() const;
+  // Fade shape: 0=Linear, 1=Exponential, 2=Logarithmic, 3=S-curve.
+  void setFadeInCurve(int curve);
+  int fadeInCurve() const;
+  void setFadeOutCurve(int curve);
+  int fadeOutCurve() const;
+  // Non-destructive source trim. Only [trimIn, duration - trimOut] of the
+  // source is played; fades are measured inside this trimmed window.
+  void setTrimInSeconds(float seconds);
+  float trimInSeconds() const;
+  void setTrimOutSeconds(float seconds);
+  float trimOutSeconds() const;
+  // Constant playback rate for the non-time-remap path (clamped 0.1 - 8.0).
+  void setPlaybackRate(float rate);
+  float playbackRate() const;
+  // Non-destructive reverse playback of the trimmed source window
+  // (non-time-remap path). Fades stay relative to the clip edges.
+  void setReversed(bool reversed);
+  bool isReversed() const;
   // Non-destructive source-sample repair ranges. Ranges are normalized and
   // merged on insertion, then persisted with the layer JSON.
   void addDeClickRange(qint64 startSample, qint64 endSample);
@@ -81,6 +98,8 @@ export namespace Artifact
   float pan() const;
   bool isMuted() const;
   void mute();
+  // Explicit mute state setter; mute() toggles for convenience.
+  void setMuted(bool muted);
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
   QUuid sourceAssetId() const;
@@ -99,9 +118,6 @@ export namespace Artifact
   bool buildLipSyncTrack(ArtifactCore::LipSyncTrack& track, double frameRate) const;
   bool applyLipSyncToSwitchLayer(ArtifactSwitchLayer* switchLayer, double frameRate) const;
 
-  // Cache information
-  size_t getCacheSize() const;
-  size_t getCacheMemoryUsage() const;
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject& obj) override;
 

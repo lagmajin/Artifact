@@ -117,9 +117,7 @@ void applyLayerMuted(const ArtifactAbstractLayerPtr& layer, const bool muted)
         return;
     }
     if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
-        if (audioLayer->isMuted() != muted) {
-            audioLayer->mute();
-        }
+        audioLayer->setMuted(muted);
         return;
     }
     if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {

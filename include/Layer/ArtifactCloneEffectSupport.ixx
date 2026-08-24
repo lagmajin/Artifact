@@ -264,8 +264,11 @@ inline void applyCrowdComponent(
     const float jitter = cloneComponentFloatProperty(
         layer, QStringLiteral("component.crowd.jitter"), 0.1f);
     const float timeSeconds =
-        static_cast<float>(layer->currentFrame()) / 30.0f;
-    const float maxFrameStep = maxSpeed / 30.0f;
+        static_cast<float>(static_cast<double>(layer->currentFrame()) /
+                           std::max(1.0, layer->compositionFrameRate()));
+    const float maxFrameStep =
+        maxSpeed / static_cast<float>(
+                       std::max(1.0, layer->compositionFrameRate()));
 
     for (std::size_t index = 0; index < instances.size(); ++index) {
         auto& instance = instances[index];
@@ -509,7 +512,8 @@ inline void applyCloneFields(
     }
 
     const float timeSeconds =
-        static_cast<float>(layer->currentFrame()) / 30.0f;
+        static_cast<float>(static_cast<double>(layer->currentFrame()) /
+                           std::max(1.0, layer->compositionFrameRate()));
     const QVector3D fieldOrigin =
         instances.front().transform.column(3).toVector3D();
     for (std::size_t index = 0; index < instances.size(); ++index) {
@@ -652,7 +656,8 @@ inline float clonerSequenceWeight(const ArtifactAbstractLayer* layer,
         0.01f, generatorSettingFloat(
                    settings, QStringLiteral("sequenceSoftness"), 1.0f));
     const float timeSeconds =
-        static_cast<float>(layer->currentFrame()) / 30.0f;
+        static_cast<float>(static_cast<double>(layer->currentFrame()) /
+                           std::max(1.0, layer->compositionFrameRate()));
     const float head = timeSeconds * rate;
     const float ramp = (head - static_cast<float>(cloneIndex)) / softness;
     return std::clamp(ramp, 0.0f, 1.0f);
@@ -683,7 +688,8 @@ inline float cloneModifierSequenceWeight(
                        modifier.settings.value(QStringLiteral("softness"))
                            .toDouble(1.0)));
         const float timeSeconds =
-            static_cast<float>(layer->currentFrame()) / 30.0f;
+            static_cast<float>(static_cast<double>(layer->currentFrame()) /
+                               std::max(1.0, layer->compositionFrameRate()));
         const float head = timeSeconds * rate;
         const float ramp =
             (head - static_cast<float>(cloneIndex)) / softness;
@@ -813,7 +819,9 @@ inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
         const auto clones = cloner->generateCloneData();
         legacyEffectInstances.reserve(legacyEffectInstances.size() + clones.size());
         for (const auto& clone : clones) {
-            if (!clone.visible || clone.transform.isIdentity()) {
+            // An identity transform is a legitimate placement (e.g. the first
+            // clone of an unoffset linear array); only drop invisible clones.
+            if (!clone.visible) {
                 continue;
             }
 

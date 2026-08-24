@@ -26,7 +26,6 @@ module;
 #include <QFileSystemWatcher>
 #include <QTimer>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
-#include <glm/ext/matrix_projection.hpp>
 #include <wobjectimpl.h>
 
 module Artifact.Service.Project;

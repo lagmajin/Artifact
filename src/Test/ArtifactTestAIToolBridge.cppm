@@ -177,6 +177,18 @@ int runAIToolBridgeTests()
     const QJsonObject getAudioDeClickSettingsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioDeClickSettings"));
     report.check(!getAudioDeClickSettingsTool.isEmpty(), QStringLiteral("workspace automation exposes audio de-click settings query"));
 
+    const QJsonObject setAudioLayerTrimTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setAudioLayerTrim"));
+    report.check(!setAudioLayerTrimTool.isEmpty(), QStringLiteral("workspace automation exposes audio layer trim edit"));
+
+    const QJsonObject getAudioLayerTrimTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioLayerTrim"));
+    report.check(!getAudioLayerTrimTool.isEmpty(), QStringLiteral("workspace automation exposes audio layer trim query"));
+
+    const QJsonObject setAudioLayerPlaybackRateTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setAudioLayerPlaybackRate"));
+    report.check(!setAudioLayerPlaybackRateTool.isEmpty(), QStringLiteral("workspace automation exposes audio layer playback rate edit"));
+
+    const QJsonObject getAudioLayerPlaybackRateTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getAudioLayerPlaybackRate"));
+    report.check(!getAudioLayerPlaybackRateTool.isEmpty(), QStringLiteral("workspace automation exposes audio layer playback rate query"));
+
     const QJsonObject playbackAudioDiagnosticsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getPlaybackAudioDiagnostics"));
     report.check(!playbackAudioDiagnosticsTool.isEmpty(), QStringLiteral("workspace automation exposes playback audio diagnostics"));
     report.check(playbackAudioDiagnosticsTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),

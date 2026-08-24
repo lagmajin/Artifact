@@ -171,6 +171,9 @@ public:
     // pipeline stage
     EffectPipelineStage pipelineStage() const;
     void setPipelineStage(EffectPipelineStage stage);
+    static bool isStageOrderValid(const std::vector<ArtifactAbstractEffectPtr>& effects);
+    static std::vector<ArtifactAbstractEffectPtr> sortedByStage(
+        const std::vector<ArtifactAbstractEffectPtr>& effects);
 
     // effect execution
     void applyCPUOnly(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
@@ -186,6 +189,8 @@ public:
     SharedPtr<ArtifactEffectImplBase> gpuImpl() const;
 
     // Property interface (use ArtifactCore::AbstractProperty)
+    // getProperties() は表示用スナップショット、editableProperties() が正本（キーフレーム保持）。
+    // 新規Effectは editableProperties() を正として実装し、getProperties() は互換のためのビューとする。
     virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
     virtual void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value);
     // Handles controls shared by every effect. Derived implementations should

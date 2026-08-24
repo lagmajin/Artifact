@@ -1195,7 +1195,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
       return;
     }
     if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
-      audioLayer->mute();
+      audioLayer->setMuted(!audioLayer->isMuted());
       if (panel) panel->updateLayout();
     }
   });

@@ -316,6 +316,9 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
             impl_->id.toQString(),
             QStringLiteral("cpu"),
             QStringLiteral("Effect GPU/output fallback: %1").arg(fallbackReason));
+        qInfo() << "[Effect] CPU fallback:" << impl_->id.toQString()
+                << "reason=" << fallbackReason
+                << "requested=" << static_cast<int>(impl_->mode);
         const ComputeMode previousMode = impl_->mode;
         impl_->mode = ComputeMode::CPU;
         apply(src, dst);
@@ -592,6 +595,29 @@ ArtifactAbstractEffect::editableProperty(const QString& name) {
                 name, Qt::CaseInsensitive) == 0;
         });
     return found != properties.end() ? *found : SharedPtr<AbstractProperty>{};
+}
+
+bool ArtifactAbstractEffect::isStageOrderValid(
+    const std::vector<ArtifactAbstractEffectPtr>& effects) {
+    int lastStage = -1;
+    for (const auto& eff : effects) {
+        if (!eff || !eff->isEnabled()) continue;
+        int stage = static_cast<int>(eff->pipelineStage());
+        if (stage < lastStage) return false;
+        lastStage = stage;
+    }
+    return true;
+}
+
+std::vector<ArtifactAbstractEffectPtr> ArtifactAbstractEffect::sortedByStage(
+    const std::vector<ArtifactAbstractEffectPtr>& effects) {
+    auto sorted = effects;
+    std::stable_sort(sorted.begin(), sorted.end(),
+        [](const ArtifactAbstractEffectPtr& a, const ArtifactAbstractEffectPtr& b) {
+            if (!a || !b) return false;
+            return static_cast<int>(a->pipelineStage()) < static_cast<int>(b->pipelineStage());
+        });
+    return sorted;
 }
 
 void ArtifactAbstractEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {

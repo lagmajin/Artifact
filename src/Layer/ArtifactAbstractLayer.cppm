@@ -957,6 +957,7 @@ public:
   Impl();
   ~Impl();
   void syncBuiltinComponentDescriptors();
+  void syncBuiltinBoolsFromHost();
   std::type_index type_index_ = typeid(void);
   void goToStartFrame();
   void goToEndFrame();
@@ -1125,6 +1126,39 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(fluidVorticity_);
   fluid.settings[QStringLiteral("solverIterations")] = fluidSolverIterations_;
   componentHost_.upsert(std::move(fluid));
+}
+
+void ArtifactAbstractLayer::Impl::syncBuiltinBoolsFromHost() {
+  auto boolFromHost = [this](const QString& typeId) -> bool {
+    const auto* d = componentHost_.findByType(typeId);
+    return d ? d->enabled : false;
+  };
+  clonerComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.cloner"));
+  layoutComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.layout"));
+  crowdComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.crowd"));
+  collisionComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.collision"));
+  particleEmitterComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.particle-emitter"));
+  fluidComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.fluid"));
+  scriptComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.script"));
+  if (auto* d = componentHost_.findByType(QStringLiteral("artifact.component.fracture"))) {
+    fractureEnabled_ = d->enabled;
+  }
+  if (auto* d = componentHost_.findByType(QStringLiteral("artifact.component.motion-dynamics"))) {
+    const bool layerSpring = d->settings.value(QStringLiteral("layerSpringEnabled")).toBool(false);
+    const bool follow = d->settings.value(QStringLiteral("followThroughEnabled")).toBool(false);
+    motionDynamicsEnabled_ = follow;
+    if (!layerSpring && !follow) {
+      motionDynamicsEnabled_ = false;
+    }
+  }
+  physicsComponent_.settings().collisionEnabled = collisionComponentEnabled_;
+  if (collisionComponentEnabled_ && !physicsComponent_.enabled()) {
+    physicsComponent_.setEnabled(true);
+    collisionOwnsPhysicsEnable_ = true;
+  } else if (!collisionComponentEnabled_ && collisionOwnsPhysicsEnable_) {
+    physicsComponent_.setEnabled(false);
+    collisionOwnsPhysicsEnable_ = false;
+  }
 }
 
 void ArtifactAbstractLayer::Impl::goToStartFrame()
@@ -4880,6 +4914,15 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           physicsObj.value(QStringLiteral("cloneMaxBounces"))
               .toInt(impl_->clonePhysicsMaxBounces_), 0, 32);
       impl_->physicsComponent_.reset();
+      // Seed the property cache so clone physics timing reads the loaded
+      // values even before the first Inspector rebuild.
+      persistentLayerProperty(
+          QStringLiteral("physics.initialVelocityY"), PropertyType::Float,
+          QVariant(static_cast<double>(impl_->clonePhysicsInitialVelocityY_)),
+          -92);
+      persistentLayerProperty(QStringLiteral("physics.maxBounces"),
+                              PropertyType::Integer,
+                              QVariant(impl_->clonePhysicsMaxBounces_), -91);
   }
   if (obj.contains(QStringLiteral("clonePhysicsInitialVelocityY"))) {
     const double value = obj.value(QStringLiteral("clonePhysicsInitialVelocityY"))
@@ -4888,11 +4931,18 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         std::isfinite(value)
             ? std::clamp(value, -5000.0, 5000.0)
             : impl_->clonePhysicsInitialVelocityY_);
+    persistentLayerProperty(
+        QStringLiteral("physics.initialVelocityY"), PropertyType::Float,
+        QVariant(static_cast<double>(impl_->clonePhysicsInitialVelocityY_)),
+        -92);
   }
   if (obj.contains(QStringLiteral("clonePhysicsMaxBounces"))) {
     impl_->clonePhysicsMaxBounces_ = std::clamp(
         obj.value(QStringLiteral("clonePhysicsMaxBounces"))
             .toInt(impl_->clonePhysicsMaxBounces_), 0, 32);
+    persistentLayerProperty(QStringLiteral("physics.maxBounces"),
+                            PropertyType::Integer,
+                            QVariant(impl_->clonePhysicsMaxBounces_), -91);
   }
   if (obj.contains("softBodyPhysicsEnabled") &&
       obj["softBodyPhysicsEnabled"].toBool(false)) {
@@ -5342,14 +5392,17 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         }
         impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
     }
-  if (obj.contains(QStringLiteral("componentGraph")) &&
-      obj.value(QStringLiteral("componentGraph")).isArray()) {
+  const bool hasComponentGraph =
+      obj.contains(QStringLiteral("componentGraph")) &&
+      obj.value(QStringLiteral("componentGraph")).isArray();
+  if (hasComponentGraph) {
     impl_->componentHost_.fromJson(
         obj.value(QStringLiteral("componentGraph")).toArray());
+    impl_->syncBuiltinBoolsFromHost();
   } else {
     impl_->componentHost_.fromJson(QJsonArray{});
+    impl_->syncBuiltinComponentDescriptors();
   }
-  impl_->syncBuiltinComponentDescriptors();
 
   if (obj.contains("variants") && obj["variants"].isArray()) {
       impl_->variants_.clear();
@@ -8122,6 +8175,32 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   for (auto &group : maskGroups) {
     groups.push_back(std::move(group));
   }
+  auto isComponentGroup = [](const PropertyGroup& g) {
+    const QString n = g.name();
+    return n == QStringLiteral("Components") || n == QStringLiteral("Collision") ||
+           n == QStringLiteral("Layout") || n == QStringLiteral("Cloner") ||
+           n == QStringLiteral("Crowd") || n == QStringLiteral("Particle Emitter") ||
+           n == QStringLiteral("Fluid") || n.startsWith(QStringLiteral("Generator")) ||
+           n.startsWith(QStringLiteral("Field")) || n.startsWith(QStringLiteral("Clone Modifier"));
+  };
+  groups.erase(std::remove_if(groups.begin(), groups.end(), isComponentGroup), groups.end());
+  return groups;
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentPropertyGroups() const {
+  std::vector<ArtifactCore::PropertyGroup> groups;
+  groups.reserve(16);
+  auto makeProp = [this](const QString& name, PropertyType type, const QVariant& value, int prio) {
+    return persistentLayerProperty(name, type, value, prio);
+  };
+  PropertyGroup componentGroup(QStringLiteral("Components"));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.script.enabled"), PropertyType::Boolean, impl_->scriptComponentEnabled_, -100));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.cloner.enabled"), PropertyType::Boolean, impl_->clonerComponentEnabled_, -90));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.collision.enabled"), PropertyType::Boolean, impl_->collisionComponentEnabled_, -89));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.crowd.enabled"), PropertyType::Boolean, impl_->crowdComponentEnabled_, -88));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.particleEmitter.enabled"), PropertyType::Boolean, impl_->particleEmitterComponentEnabled_, -87));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.fluid.enabled"), PropertyType::Boolean, impl_->fluidComponentEnabled_, -86));
+  groups.push_back(std::move(componentGroup));
   return groups;
 }
 
@@ -8495,10 +8574,19 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->clonePhysicsInitialVelocityY_ = finiteClampedValue(
         value.toDouble(), impl_->clonePhysicsInitialVelocityY_, -5000.0,
         5000.0);
+    // Keep the cached property in sync: applyClonePhysicsTiming reads this
+    // path through getProperty(), and programmatic writers bypass the
+    // editor's own propertyPtr->setValue() step.
+    persistentLayerProperty(propertyPath, PropertyType::Float,
+                            QVariant(static_cast<double>(
+                                impl_->clonePhysicsInitialVelocityY_)),
+                            -92);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.maxBounces")) {
     impl_->clonePhysicsMaxBounces_ = std::clamp(value.toInt(), 0, 32);
+    persistentLayerProperty(propertyPath, PropertyType::Integer,
+                            QVariant(impl_->clonePhysicsMaxBounces_), -91);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleFreq")) {

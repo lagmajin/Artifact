@@ -77,6 +77,7 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     class TransformCloneEffector : public AbstractCloneEffector {
     public:
+        QString effectorTypeName() const override { return QStringLiteral("transform"); }
         // オフセットパラメータ
         QVector3D positionOffset{0, 0, 0};
         QVector3D rotationOffset{0, 0, 0}; // Euler angles (pitch, yaw, roll)
@@ -98,7 +99,7 @@ export namespace Artifact {
                 float totalWeight = calculateFieldWeight(currentPos);
                 
                 // 本エフェクター自身の強度(0.0-1.0)と掛け合わせる
-                float finalWeight = clone.weight * totalWeight;
+                float finalWeight = clone.weight * totalWeight * strength;
 
                 if (finalWeight <= 0.001f) continue; // 影響なしならスキップ
 

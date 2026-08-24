@@ -4,6 +4,7 @@ module;
 #include <QRectF>
 #include <QImage>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QVariant>
 #include <QVector3D>
 #include <QMatrix4x4>
@@ -20,6 +21,7 @@ import Artifact.Layers;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Clone.Core;
 import Artifact.Effect.Clone.Basic;
+import Artifact.Effect.Clone.Advanced;
 import Artifact.Effect.Abstract;
 import Memory.SharedPtr;
 import Color.Float;
@@ -31,6 +33,8 @@ import Core.Parallel;
 
 // Mesh instancing (Phase 2) - convert CloneData to InstanceData
 import Graphics;
+import Math.Random;
+import Math.Interpolate;
 
 
 namespace Artifact {
@@ -70,6 +74,160 @@ float jitterSample(int seed, int index, int channel)
     x ^= x >> 16;
     const float normalized = static_cast<float>(x) / static_cast<float>(std::numeric_limits<quint32>::max());
     return normalized * 2.0f - 1.0f;
+}
+
+// ---------------------------------------------------------------------------
+// Effector chain serialization (Phase 5.1)
+// Each effector is tagged with a stable type string so the whole chain
+// survives save/load. The legacy front-transform keys remain as a read-only
+// fallback for older projects.
+// ---------------------------------------------------------------------------
+QString cloneEffectorTypeName(const AbstractCloneEffector& effector) {
+    if (dynamic_cast<const TransformCloneEffector*>(&effector)) return QStringLiteral("transform");
+    if (dynamic_cast<const StepCloneEffector*>(&effector)) return QStringLiteral("step");
+    if (dynamic_cast<const RandomCloneEffector*>(&effector)) return QStringLiteral("random");
+    if (dynamic_cast<const DelayCloneEffector*>(&effector)) return QStringLiteral("delay");
+    if (dynamic_cast<const SoundCloneEffector*>(&effector)) return QStringLiteral("sound");
+    if (dynamic_cast<const NoiseCloneEffector*>(&effector)) return QStringLiteral("noise");
+    return QString();
+}
+
+ArtifactCore::SharedPtr<AbstractCloneEffector> makeCloneEffectorByType(const QString& typeId) {
+    if (typeId == QLatin1String("transform")) return ArtifactCore::makeShared<TransformCloneEffector>();
+    if (typeId == QLatin1String("step")) return ArtifactCore::makeShared<StepCloneEffector>();
+    if (typeId == QLatin1String("random")) return ArtifactCore::makeShared<RandomCloneEffector>();
+    if (typeId == QLatin1String("delay")) return ArtifactCore::makeShared<DelayCloneEffector>();
+    if (typeId == QLatin1String("sound")) return ArtifactCore::makeShared<SoundCloneEffector>();
+    if (typeId == QLatin1String("noise")) return ArtifactCore::makeShared<NoiseCloneEffector>();
+    return {};
+}
+
+void writeVector3ToJson(QJsonObject& obj, const QString& prefix, const QVector3D& v) {
+    obj[prefix + QStringLiteral(".x")] = v.x();
+    obj[prefix + QStringLiteral(".y")] = v.y();
+    obj[prefix + QStringLiteral(".z")] = v.z();
+}
+
+void readVector3FromJson(const QJsonObject& obj, const QString& prefix, QVector3D& v) {
+    if (obj.contains(prefix + QStringLiteral(".x")))
+        v.setX(static_cast<float>(obj.value(prefix + QStringLiteral(".x")).toDouble(v.x())));
+    if (obj.contains(prefix + QStringLiteral(".y")))
+        v.setY(static_cast<float>(obj.value(prefix + QStringLiteral(".y")).toDouble(v.y())));
+    if (obj.contains(prefix + QStringLiteral(".z")))
+        v.setZ(static_cast<float>(obj.value(prefix + QStringLiteral(".z")).toDouble(v.z())));
+}
+
+QJsonObject cloneEffectorToJson(const AbstractCloneEffector& effector) {
+    QJsonObject entry;
+    const QString typeName = cloneEffectorTypeName(effector);
+    entry[QStringLiteral("type")] = typeName;
+    entry[QStringLiteral("strength")] = effector.strength;
+    entry[QStringLiteral("blendMode")] = static_cast<int>(effector.blendMode);
+    if (const auto* t = dynamic_cast<const TransformCloneEffector*>(&effector)) {
+        writeVector3ToJson(entry, QStringLiteral("position"), t->positionOffset);
+        writeVector3ToJson(entry, QStringLiteral("rotation"), t->rotationOffset);
+        writeVector3ToJson(entry, QStringLiteral("scale"), t->scaleOffset);
+        entry[QStringLiteral("useColor")] = t->useColor;
+        entry[QStringLiteral("color.r")] = t->colorOffset.redF();
+        entry[QStringLiteral("color.g")] = t->colorOffset.greenF();
+        entry[QStringLiteral("color.b")] = t->colorOffset.blueF();
+        entry[QStringLiteral("color.a")] = t->colorOffset.alphaF();
+    } else if (const auto* s = dynamic_cast<const StepCloneEffector*>(&effector)) {
+        writeVector3ToJson(entry, QStringLiteral("position"), s->positionStep);
+        writeVector3ToJson(entry, QStringLiteral("rotation"), s->rotationStep);
+        writeVector3ToJson(entry, QStringLiteral("scale"), s->scaleStep);
+        entry[QStringLiteral("timeOffsetStep")] = s->timeOffsetStep;
+        entry[QStringLiteral("easeType")] = static_cast<int>(s->easeType);
+    } else if (const auto* r = dynamic_cast<const RandomCloneEffector*>(&effector)) {
+        writeVector3ToJson(entry, QStringLiteral("position"), r->positionVariance);
+        writeVector3ToJson(entry, QStringLiteral("rotation"), r->rotationVariance);
+        entry[QStringLiteral("scaleVariance")] = r->scaleVariance;
+        entry[QStringLiteral("seed")] = r->seed;
+    } else if (const auto* d = dynamic_cast<const DelayCloneEffector*>(&effector)) {
+        entry[QStringLiteral("delayMode")] = static_cast<int>(d->delayMode);
+        entry[QStringLiteral("delayRate")] = d->delayRate;
+        entry[QStringLiteral("delayStrength")] = d->delayStrength;
+        writeVector3ToJson(entry, QStringLiteral("position"), d->positionDelay);
+        writeVector3ToJson(entry, QStringLiteral("rotation"), d->rotationDelay);
+        writeVector3ToJson(entry, QStringLiteral("scale"), d->scaleDelay);
+    } else if (const auto* snd = dynamic_cast<const SoundCloneEffector*>(&effector)) {
+        entry[QStringLiteral("attackMs")] = snd->attackMs;
+        entry[QStringLiteral("releaseMs")] = snd->releaseMs;
+        entry[QStringLiteral("frequencyMode")] = static_cast<int>(snd->frequencyMode);
+        writeVector3ToJson(entry, QStringLiteral("position"), snd->positionAmount);
+        writeVector3ToJson(entry, QStringLiteral("rotation"), snd->rotationAmount);
+        writeVector3ToJson(entry, QStringLiteral("scale"), snd->scaleAmount);
+        entry[QStringLiteral("cloneDelay")] = snd->cloneDelay;
+        entry[QStringLiteral("floorThreshold")] = snd->floorThreshold;
+    } else if (const auto* n = dynamic_cast<const NoiseCloneEffector*>(&effector)) {
+        writeVector3ToJson(entry, QStringLiteral("position"), n->positionAmplitude);
+        writeVector3ToJson(entry, QStringLiteral("rotation"), n->rotationAmplitude);
+        entry[QStringLiteral("scaleAmplitude")] = n->scaleAmplitude;
+        entry[QStringLiteral("frequency")] = n->frequency;
+        entry[QStringLiteral("timeSpeed")] = n->timeSpeed;
+        entry[QStringLiteral("seed")] = n->seed;
+    }
+    return entry;
+}
+
+void applyJsonToCloneEffector(AbstractCloneEffector& effector, const QJsonObject& entry) {
+    if (entry.contains(QStringLiteral("strength"))) {
+        effector.strength = std::clamp(
+            static_cast<float>(entry.value(QStringLiteral("strength")).toDouble(effector.strength)),
+            0.0f, 1.0f);
+    }
+    if (entry.contains(QStringLiteral("blendMode"))) {
+        effector.blendMode = static_cast<EffectorBlendMode>(
+            entry.value(QStringLiteral("blendMode")).toInt(static_cast<int>(effector.blendMode)));
+    }
+    if (auto* t = dynamic_cast<TransformCloneEffector*>(&effector)) {
+        readVector3FromJson(entry, QStringLiteral("position"), t->positionOffset);
+        readVector3FromJson(entry, QStringLiteral("rotation"), t->rotationOffset);
+        readVector3FromJson(entry, QStringLiteral("scale"), t->scaleOffset);
+        if (entry.contains(QStringLiteral("useColor"))) t->useColor = entry.value(QStringLiteral("useColor")).toBool(t->useColor);
+        if (entry.contains(QStringLiteral("color.a"))) {
+            QColor c;
+            c.setRgbF(static_cast<float>(entry.value(QStringLiteral("color.r")).toDouble(t->colorOffset.redF())),
+                      static_cast<float>(entry.value(QStringLiteral("color.g")).toDouble(t->colorOffset.greenF())),
+                      static_cast<float>(entry.value(QStringLiteral("color.b")).toDouble(t->colorOffset.blueF())),
+                      static_cast<float>(entry.value(QStringLiteral("color.a")).toDouble(t->colorOffset.alphaF())));
+            t->colorOffset = c;
+        }
+    } else if (auto* s = dynamic_cast<StepCloneEffector*>(&effector)) {
+        readVector3FromJson(entry, QStringLiteral("position"), s->positionStep);
+        readVector3FromJson(entry, QStringLiteral("rotation"), s->rotationStep);
+        readVector3FromJson(entry, QStringLiteral("scale"), s->scaleStep);
+        if (entry.contains(QStringLiteral("timeOffsetStep"))) s->timeOffsetStep = static_cast<float>(entry.value(QStringLiteral("timeOffsetStep")).toDouble(s->timeOffsetStep));
+        if (entry.contains(QStringLiteral("easeType"))) s->easeType = static_cast<ArtifactCore::InterpolationType>(entry.value(QStringLiteral("easeType")).toInt(static_cast<int>(s->easeType)));
+    } else if (auto* r = dynamic_cast<RandomCloneEffector*>(&effector)) {
+        readVector3FromJson(entry, QStringLiteral("position"), r->positionVariance);
+        readVector3FromJson(entry, QStringLiteral("rotation"), r->rotationVariance);
+        if (entry.contains(QStringLiteral("scaleVariance"))) r->scaleVariance = static_cast<float>(entry.value(QStringLiteral("scaleVariance")).toDouble(r->scaleVariance));
+        if (entry.contains(QStringLiteral("seed"))) r->seed = entry.value(QStringLiteral("seed")).toInt(r->seed);
+    } else if (auto* d = dynamic_cast<DelayCloneEffector*>(&effector)) {
+        if (entry.contains(QStringLiteral("delayMode"))) d->delayMode = static_cast<DelayCloneEffector::DelayMode>(entry.value(QStringLiteral("delayMode")).toInt(static_cast<int>(d->delayMode)));
+        if (entry.contains(QStringLiteral("delayRate"))) d->delayRate = static_cast<float>(entry.value(QStringLiteral("delayRate")).toDouble(d->delayRate));
+        if (entry.contains(QStringLiteral("delayStrength"))) d->delayStrength = static_cast<float>(entry.value(QStringLiteral("delayStrength")).toDouble(d->delayStrength));
+        readVector3FromJson(entry, QStringLiteral("position"), d->positionDelay);
+        readVector3FromJson(entry, QStringLiteral("rotation"), d->rotationDelay);
+        readVector3FromJson(entry, QStringLiteral("scale"), d->scaleDelay);
+    } else if (auto* snd = dynamic_cast<SoundCloneEffector*>(&effector)) {
+        if (entry.contains(QStringLiteral("attackMs"))) snd->attackMs = static_cast<float>(entry.value(QStringLiteral("attackMs")).toDouble(snd->attackMs));
+        if (entry.contains(QStringLiteral("releaseMs"))) snd->releaseMs = static_cast<float>(entry.value(QStringLiteral("releaseMs")).toDouble(snd->releaseMs));
+        if (entry.contains(QStringLiteral("frequencyMode"))) snd->frequencyMode = static_cast<SoundCloneEffector::FrequencyMode>(entry.value(QStringLiteral("frequencyMode")).toInt(static_cast<int>(snd->frequencyMode)));
+        readVector3FromJson(entry, QStringLiteral("position"), snd->positionAmount);
+        readVector3FromJson(entry, QStringLiteral("rotation"), snd->rotationAmount);
+        readVector3FromJson(entry, QStringLiteral("scale"), snd->scaleAmount);
+        if (entry.contains(QStringLiteral("cloneDelay"))) snd->cloneDelay = static_cast<float>(entry.value(QStringLiteral("cloneDelay")).toDouble(snd->cloneDelay));
+        if (entry.contains(QStringLiteral("floorThreshold"))) snd->floorThreshold = static_cast<float>(entry.value(QStringLiteral("floorThreshold")).toDouble(snd->floorThreshold));
+    } else if (auto* n = dynamic_cast<NoiseCloneEffector*>(&effector)) {
+        readVector3FromJson(entry, QStringLiteral("position"), n->positionAmplitude);
+        readVector3FromJson(entry, QStringLiteral("rotation"), n->rotationAmplitude);
+        if (entry.contains(QStringLiteral("scaleAmplitude"))) n->scaleAmplitude = static_cast<float>(entry.value(QStringLiteral("scaleAmplitude")).toDouble(n->scaleAmplitude));
+        if (entry.contains(QStringLiteral("frequency"))) n->frequency = static_cast<float>(entry.value(QStringLiteral("frequency")).toDouble(n->frequency));
+        if (entry.contains(QStringLiteral("timeSpeed"))) n->timeSpeed = static_cast<float>(entry.value(QStringLiteral("timeSpeed")).toDouble(n->timeSpeed));
+        if (entry.contains(QStringLiteral("seed"))) n->seed = entry.value(QStringLiteral("seed")).toInt(n->seed);
+    }
 }
 
     ArtifactCore::InstanceData cloneDataToInstanceData(const CloneData& clone) {
@@ -232,6 +390,12 @@ QJsonObject ArtifactCloneLayer::toJson() const {
             obj["clone.effector.color.b"] = transformEffector->colorOffset.blueF();
             obj["clone.effector.color.a"] = transformEffector->colorOffset.alphaF();
         }
+        QJsonArray effectorsArr;
+        for (const auto& effector : impl_->effectors_) {
+            if (!effector) continue;
+            effectorsArr.append(cloneEffectorToJson(*effector));
+        }
+        obj["clone.effectors"] = effectorsArr;
     }
     return obj;
 }
@@ -280,7 +444,27 @@ void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
     readStage(QStringLiteral("clone.transform1"), settings.transform1);
     readStage(QStringLiteral("clone.transform2"), settings.transform2);
     readStage(QStringLiteral("clone.transform3"), settings.transform3);
-    if (!impl_->effectors_.empty()) {
+    if (obj.contains(QStringLiteral("clone.effectors")) &&
+            obj.value(QStringLiteral("clone.effectors")).isArray()) {
+        // Full chain restore (Phase 5.1). Replaces the default front-only
+        // effector so multi-effector serial chains survive save/load.
+        impl_->effectors_.clear();
+        const auto effectorsArr =
+            obj.value(QStringLiteral("clone.effectors")).toArray();
+        impl_->effectors_.reserve(static_cast<size_t>(effectorsArr.size()));
+        for (const auto& entryValue : effectorsArr) {
+            if (!entryValue.isObject()) continue;
+            const auto entry = entryValue.toObject();
+            const QString typeId = entry.value(QStringLiteral("type")).toString();
+            auto effector = makeCloneEffectorByType(typeId);
+            if (!effector) continue;
+            applyJsonToCloneEffector(*effector, entry);
+            impl_->effectors_.push_back(std::move(effector));
+        }
+        if (impl_->effectors_.empty()) {
+            impl_->effectors_.push_back(ArtifactCore::makeShared<TransformCloneEffector>());
+        }
+    } else if (!impl_->effectors_.empty()) {
         if (const auto transformEffector =
                 ArtifactCore::dynamicPointerCast<TransformCloneEffector>(
                     impl_->effectors_.front())) {
@@ -374,11 +558,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
     } else if (impl_->settings_.mode == CloneMode::Random) {
         const int total = std::max(1, impl_->settings_.cloneCount);
         clones.reserve(static_cast<size_t>(total));
-        std::mt19937 rng(static_cast<uint32_t>(impl_->settings_.seed));
-        std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
-        std::uniform_real_distribution<float> zeroOne(0.0f, 1.0f);
-        std::uniform_real_distribution<float> rotDist(0.0f, 360.0f);
-        std::uniform_real_distribution<float> scaleDist(0.85f, 1.15f);
+        ArtifactCore::RandomStream rng(static_cast<uint64_t>(
+            static_cast<uint32_t>(impl_->settings_.seed)));
         const QVector3D spread = impl_->settings_.jitter;
         const float centerFalloff = 0.72f;
 
@@ -388,17 +569,17 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             clone.sourceIndex = impl_->settings_.sourceIndex;
             clone.transform.setToIdentity();
 
-            const float rx = unit(rng);
-            const float ry = unit(rng);
-            const float rz = unit(rng);
-            const float radialMix = std::pow(zeroOne(rng), 0.65f);
+            const float rx = rng.signedUnit();
+            const float ry = rng.signedUnit();
+            const float rz = rng.signedUnit();
+            const float radialMix = std::pow(rng.unitFloat(), 0.65f);
             QVector3D offset = impl_->settings_.offset +
                                QVector3D(rx * spread.x() * radialMix * centerFalloff,
                                          ry * spread.y() * radialMix * centerFalloff,
                                          rz * spread.z() * radialMix * centerFalloff);
             clone.transform.translate(offset);
 
-            const float randomRotation = rotDist(rng);
+            const float randomRotation = rng.range(0.0f, 360.0f);
             if (impl_->settings_.rotationStep != 0.0f) {
                 clone.transform.rotate(randomRotation + impl_->settings_.rotationStep * static_cast<float>(i),
                                        0.0f, 0.0f, 1.0f);
@@ -406,7 +587,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
                 clone.transform.rotate(randomRotation * 0.15f, 0.0f, 0.0f, 1.0f);
             }
 
-            const float scale = std::clamp(scaleDist(rng) * (1.0f - (1.0f - radialMix) * 0.10f), 0.5f, 1.5f);
+            const float scale = std::clamp(rng.range(0.85f, 1.15f) * (1.0f - (1.0f - radialMix) * 0.10f), 0.5f, 1.5f);
             clone.transform.scale(scale);
             clone.weight = std::clamp(1.0f - impl_->settings_.opacityDecay * static_cast<float>(i), 0.0f, 1.0f);
             clone.visible = true;
@@ -432,7 +613,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
                                                        y * impl_->settings_.gridSpacing.y(),
                                                        z * impl_->settings_.gridSpacing.z());
                     clone.transform.translate(pos);
-                    clone.weight = 1.0f;
+                    clone.weight = std::clamp(1.0f - impl_->settings_.opacityDecay * static_cast<float>(clone.index), 0.0f, 1.0f);
                     clone.visible = true;
                     clones.push_back(clone);
                 }
@@ -441,7 +622,11 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
     } else if (impl_->settings_.mode == CloneMode::Radial) {
         const int total = std::max(1, impl_->settings_.radialCount);
         clones.reserve(static_cast<size_t>(total));
-        float angleStep = (impl_->settings_.endAngle - impl_->settings_.startAngle) / total;
+        // Curve モードと同じ終端契約: 最後のクローンが endAngle に到達する。
+        const float angleStep = total > 1
+            ? (impl_->settings_.endAngle - impl_->settings_.startAngle) /
+                  static_cast<float>(total - 1)
+            : 0.0f;
         const QRectF bounds = localBounds();
         const QPointF center = bounds.isValid() ? bounds.center() : QPointF(0.0, 0.0);
 
@@ -456,8 +641,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             clone.transform.translate(center.x() + std::cos(rad) * impl_->settings_.radius,
                                       center.y() + std::sin(rad) * impl_->settings_.radius,
                                       0.0f);
-            clone.transform.rotate(angle, 0.0f, 0.0f, 1.0f);
-            clone.weight = 1.0f;
+            clone.transform.rotate(angle + impl_->settings_.rotationStep * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
+            clone.weight = std::clamp(1.0f - impl_->settings_.opacityDecay * static_cast<float>(i), 0.0f, 1.0f);
             clone.visible = true;
             clones.push_back(clone);
         }
@@ -465,9 +650,45 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
 
     // Apply effectors
     if (impl_->settings_.useEffector) {
+        // Time-driven effectors (Delay/Noise/Sound) read wall-clock values
+        // from public members; keep them in sync with the timeline so the
+        // wave/noise patterns actually animate instead of freezing at t=0.
+        const double fps = std::max(1.0, compositionFrameRate());
+        const float timeSeconds =
+            static_cast<float>(static_cast<double>(currentFrame()) / fps);
+        const float deltaSeconds = static_cast<float>(1.0 / fps);
         for (const auto& effector : impl_->effectors_) {
-            if (effector) {
+            if (!effector) {
+                continue;
+            }
+            if (auto* delay = dynamic_cast<DelayCloneEffector*>(effector.get())) {
+                delay->currentTime = timeSeconds;
+            } else if (auto* noise = dynamic_cast<NoiseCloneEffector*>(effector.get())) {
+                noise->currentTime = timeSeconds;
+            } else if (auto* sound = dynamic_cast<SoundCloneEffector*>(effector.get())) {
+                sound->deltaTime = deltaSeconds;
+            }
+        }
+        for (const auto& effector : impl_->effectors_) {
+            if (!effector) {
+                continue;
+            }
+            if (effector->blendMode == EffectorBlendMode::Add) {
+                // Default chain mode: direct in-place mutation, identical to
+                // the historical serial behavior.
                 effector->applyToClones(clones);
+                continue;
+            }
+            // Non-default blend modes evaluate the effector against a
+            // snapshot and blend its result into the running state.
+            // blendCloneData composes position, color and weight; rotation
+            // and scale fall back to the base values in these modes.
+            std::vector<CloneData> candidates = clones;
+            effector->applyToClones(candidates);
+            const size_t blendCount = std::min(clones.size(), candidates.size());
+            for (size_t i = 0; i < blendCount; ++i) {
+                Artifact::blendCloneData(clones[i], candidates[i],
+                                         effector->blendMode, 1.0f);
             }
         }
     }

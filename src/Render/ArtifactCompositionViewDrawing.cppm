@@ -759,12 +759,12 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
 
     const bool isAdjustment = targetLayer->isAdjustmentLayer();
 
-    for (const auto& effect : effects) {
+    const auto stageEffects = ArtifactAbstractEffect::sortedByStage(effects);
+    for (const auto& effect : stageEffects) {
       if (!effect || !effect->isEnabled() ||
           effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
         continue;
       }
-
       const EffectROIHint hint = effect->roiHint();
       if (isAdjustment && !hint.requiresFullFrame) {
         qDebug()
@@ -1303,7 +1303,8 @@ bool applyCompositionFinalEffectsToBuffer(
 
   ArtifactCore::ImageF32x4RGBAWithCache current(buffer);
 
-  for (const auto& effect : effects) {
+  const auto stageEffects = ArtifactAbstractEffect::sortedByStage(effects);
+  for (const auto& effect : stageEffects) {
     if (!effect || !effect->isEnabled() ||
         effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
       continue;

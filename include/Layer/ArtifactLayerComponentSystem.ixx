@@ -208,7 +208,12 @@ public:
     std::vector<LayerComponentDescriptor> components() const;
     std::vector<LayerComponentDescriptor> enabledForPhase(
         LayerComponentPhase phase) const;
+    std::vector<LayerComponentDescriptor> enabledForScope(
+        LayerComponentScope scope) const;
     std::vector<LayerComponentValidationIssue> validate() const;
+    int autoFixValidationIssues();
+    void clearTransientEventsForScope(LayerEvaluationState& state,
+                                      LayerComponentScope scope) const;
 
     QJsonArray toJson() const;
     void fromJson(const QJsonArray& array);
@@ -587,6 +592,73 @@ LayerComponentHost::validate() const {
         visit(descriptor.typeId.trimmed());
     }
     return issues;
+}
+
+inline int LayerComponentHost::autoFixValidationIssues() {
+    int fixed = 0;
+    auto issues = validate();
+    if (issues.empty()) return 0;
+    std::set<QString> toDisable;
+    std::set<QString> toRemove;
+    for (const auto& issue : issues) {
+        if (issue.message.contains(QStringLiteral("Duplicate component id"))) {
+            bool first = true;
+            for (auto it = components_.begin(); it != components_.end();) {
+                if (it->componentId == issue.componentId) {
+                    if (first) { first = false; ++it; }
+                    else { it = components_.erase(it); ++fixed; }
+                } else ++it;
+            }
+        } else if (issue.message.contains(QStringLiteral("requires")) && issue.message.contains(QStringLiteral("missing"))) {
+            toDisable.insert(issue.componentId);
+        } else if (issue.message.contains(QStringLiteral("dependency cycle"))) {
+            QString cycleId = issue.componentId;
+            if (auto* d = find(cycleId)) { d->enabled = false; ++fixed; }
+        } else if (issue.message.contains(QStringLiteral("evaluates later"))) {
+            toDisable.insert(issue.componentId);
+        }
+    }
+    for (const auto& id : toDisable) {
+        if (auto* d = find(id)) {
+            if (d->enabled) { d->enabled = false; ++fixed; }
+        }
+    }
+    return fixed;
+}
+
+inline std::vector<LayerComponentDescriptor>
+LayerComponentHost::enabledForScope(LayerComponentScope scope) const {
+    std::vector<LayerComponentDescriptor> result;
+    for (const auto& d : components_) {
+        if (d.enabled && d.scope == scope) result.push_back(d);
+    }
+    std::stable_sort(result.begin(), result.end(),
+        [](const LayerComponentDescriptor& a, const LayerComponentDescriptor& b){
+            if (a.order != b.order) return a.order < b.order;
+            return a.componentId < b.componentId;
+        });
+    return result;
+}
+
+inline void LayerComponentHost::clearTransientEventsForScope(
+    LayerEvaluationState& state, LayerComponentScope scope) const {
+    if (scope == LayerComponentScope::Composition) {
+        state.contacts.clear();
+        state.pendingFractures.clear();
+        state.pendingParticleSpawns.clear();
+        return;
+    }
+    if (scope == LayerComponentScope::InstanceSet) {
+        state.instances.clear();
+        state.fragments.clear();
+        state.fragmentGeometry.clear();
+        state.intents.clear();
+        state.contacts.clear();
+        state.pendingFractures.clear();
+        state.pendingParticleSpawns.clear();
+        return;
+    }
+    state.clearTransientEvents();
 }
 
 inline QJsonArray LayerComponentHost::toJson() const {

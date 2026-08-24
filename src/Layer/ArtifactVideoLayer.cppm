@@ -1535,7 +1535,8 @@ void ArtifactVideoLayer::stop()
 void ArtifactVideoLayer::seekToTime(double time)
 {
     if (!impl_->isLoaded_) return;
-    
+    if (impl_->streamInfo_.frameRate <= 0.0) return;
+
     int64_t frame = static_cast<int64_t>(time * impl_->streamInfo_.frameRate);
     seekToFrame(frame);
 }
@@ -1571,8 +1572,9 @@ VideoFrameInfo ArtifactVideoLayer::currentFrameInfo() const
     return info;
 }
 
-const ArtifactCore::ImageF32x4_RGBA& ArtifactVideoLayer::currentFrameBuffer() const
+ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameBuffer() const
 {
+    std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
     return impl_->currentFrameBuffer_;
 }
 
@@ -2720,10 +2722,15 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
     }
 
     bool audioFormatChanged = false;
-    if (impl_->playbackController_ && impl_->audioOutputSampleRate_ != sampleRate) {
+    {
+        std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+        audioFormatChanged = impl_->audioOutputSampleRate_ != sampleRate;
+    }
+    if (impl_->playbackController_ && audioFormatChanged) {
         if (!impl_->playbackController_->setAudioOutputSampleRate(sampleRate)) {
             return false;
         }
+        std::lock_guard<std::mutex> lock(impl_->audioMutex_);
         impl_->audioOutputSampleRate_ = sampleRate;
         audioFormatChanged = true;
     }

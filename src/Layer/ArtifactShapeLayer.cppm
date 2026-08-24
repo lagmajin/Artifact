@@ -2021,9 +2021,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
        (impl->strokeAlign_ == StrokeAlign::Center &&
         !impl->hasCustomStrokeEffects()));
   if (nativeOperatorCandidate) {
-   auto processedOperatorPaths = buildProcessedShapePaths(
-       impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
-       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
+    auto processedOperatorPaths = buildProcessedShapePaths(
+        impl->shapeType_, geomDims.width, geomDims.height, geomDims.cornerRadius,
+        geomDims.starPoints, geomDims.starInnerRadius, geomDims.polygonSides,
        impl->customPolygonPoints_, impl->customPolygonClosed_,
        impl->customPathVertices_, impl->customPathClosed_,
        impl->shapeOperators_);

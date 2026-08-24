@@ -20,13 +20,13 @@ import Property.Abstract;
 import Property.Group;
 import Audio.LipSyncTrack;
 import Audio.SimpleWav;
-import Audio.Cache;
 import Artifact.Audio.Waveform;
 import Artifact.Layer.Switch;
 import Artifact.Composition.Abstract;
 import Asset.Manager;
 import AssetType;
 import EnvironmentVariable.Expansion;
+import Time.Rational;
 
 namespace Artifact
 {
@@ -38,25 +38,29 @@ namespace Artifact
    float clipGainDb_ = 0.0f;
    float fadeInSeconds_ = 0.0f;
    float fadeOutSeconds_ = 0.0f;
+   int fadeInCurve_ = 0;   // 0=Linear, 1=Exponential, 2=Logarithmic, 3=S-curve
+   int fadeOutCurve_ = 0;
+   float trimInSeconds_ = 0.0f;
+   float trimOutSeconds_ = 0.0f;
+   float playbackRate_ = 1.0f;
+   bool reversed_ = false;
    std::vector<std::pair<qint64, qint64>> deClickRanges_;
    std::uint64_t deClickRevision_ = 0;
    float deClickThresholdDb_ = -20.0f;
    qint64 deClickMaxClickSamples_ = 64;
    float pan_ = 0.0f;
    bool muted_ = false;
-   QString sourcePath_;
-   QUuid sourceAssetId_;
-   std::uint64_t cachedSourceVersion_ = 0;
-   ArtifactCore::SimpleWav wav_;
-   SharedPtr<QVector<float>> sharedPcm_;
-   int sourceSampleRate_ = 0;
-   int sourceChannelCount_ = 0;
-   bool isLoaded_ = false;
+    QString sourcePath_;
+    QUuid sourceAssetId_;
+    std::uint64_t cachedSourceVersion_ = 0;
+    ArtifactCore::SimpleWav wav_;
+    SharedPtr<QVector<float>> sharedPcm_;
+    int sourceSampleRate_ = 0;
+    int sourceChannelCount_ = 0;
+    bool isLoaded_ = false;
 
-   // AudioCache 統合
-   ArtifactCore::AudioCache cache_;
-   double duration_ = 0.0;
-   qint64 totalFrames_ = 0;
+    double duration_ = 0.0;
+    qint64 totalFrames_ = 0;
 
    // 最終デコード結果のキャッシュ（シークバック・ループ時にリサンプリングを回避）
     struct ResampledCache {
@@ -65,7 +69,13 @@ namespace Artifact
         float volume = 1.0f;
         float clipGainDb = 0.0f;
         float fadeInSeconds = 0.0f;
-   float fadeOutSeconds = 0.0f;
+        float fadeOutSeconds = 0.0f;
+        int fadeInCurve = 0;
+        int fadeOutCurve = 0;
+        float trimInSeconds = 0.0f;
+        float trimOutSeconds = 0.0f;
+        float playbackRate = 1.0f;
+        bool reversed = false;
         std::uint64_t deClickRevision = 0;
         float deClickThresholdDb = -20.0f;
         qint64 deClickMaxClickSamples = 64;
@@ -106,10 +116,9 @@ namespace Artifact
        return false;
      }
 
-     cachedSourceVersion_ = currentVersion;
-     cache_.clear();
-     resetResampledCache();
-     if (sourcePath_.isEmpty() || !wav_.loadFromFile(sourcePath_)) {
+      cachedSourceVersion_ = currentVersion;
+      resetResampledCache();
+      if (sourcePath_.isEmpty() || !wav_.loadFromFile(sourcePath_)) {
        sharedPcm_.reset();
        isLoaded_ = false;
        return true;
@@ -192,6 +201,74 @@ float ArtifactAudioLayer::fadeOutSeconds() const
 {
   return impl_->fadeOutSeconds_;
 }
+
+void ArtifactAudioLayer::setFadeInCurve(int curve)
+{
+  const int clamped = std::clamp(curve, 0, 3);
+  if (impl_->fadeInCurve_ == clamped) return;
+  impl_->fadeInCurve_ = clamped;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
+int ArtifactAudioLayer::fadeInCurve() const { return impl_->fadeInCurve_; }
+
+void ArtifactAudioLayer::setFadeOutCurve(int curve)
+{
+  const int clamped = std::clamp(curve, 0, 3);
+  if (impl_->fadeOutCurve_ == clamped) return;
+  impl_->fadeOutCurve_ = clamped;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
+int ArtifactAudioLayer::fadeOutCurve() const { return impl_->fadeOutCurve_; }
+
+void ArtifactAudioLayer::setTrimInSeconds(float seconds)
+{
+  const float clamped = std::isfinite(seconds)
+      ? std::max(0.0f, seconds) : 0.0f;
+  if (impl_->trimInSeconds_ == clamped) return;
+  impl_->trimInSeconds_ = clamped;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::trimInSeconds() const { return impl_->trimInSeconds_; }
+
+void ArtifactAudioLayer::setTrimOutSeconds(float seconds)
+{
+  const float clamped = std::isfinite(seconds)
+      ? std::max(0.0f, seconds) : 0.0f;
+  if (impl_->trimOutSeconds_ == clamped) return;
+  impl_->trimOutSeconds_ = clamped;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::trimOutSeconds() const { return impl_->trimOutSeconds_; }
+
+void ArtifactAudioLayer::setPlaybackRate(float rate)
+{
+  const float clamped = std::isfinite(rate)
+      ? std::clamp(rate, 0.1f, 8.0f) : 1.0f;
+  if (impl_->playbackRate_ == clamped) return;
+  impl_->playbackRate_ = clamped;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::playbackRate() const { return impl_->playbackRate_; }
+
+void ArtifactAudioLayer::setReversed(bool reversed)
+{
+  if (impl_->reversed_ == reversed) return;
+  impl_->reversed_ = reversed;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
+bool ArtifactAudioLayer::isReversed() const { return impl_->reversed_; }
 
 void ArtifactAudioLayer::addDeClickRange(qint64 startSample, qint64 endSample)
 {
@@ -279,7 +356,13 @@ bool ArtifactAudioLayer::isMuted() const
 
 void ArtifactAudioLayer::mute()
 {
-  impl_->muted_ = !impl_->muted_;
+  setMuted(!impl_->muted_);
+}
+
+void ArtifactAudioLayer::setMuted(bool muted)
+{
+  if (impl_->muted_ == muted) return;
+  impl_->muted_ = muted;
   Q_EMIT changed();
 }
 
@@ -344,7 +427,6 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
    impl_->isLoaded_ = impl_->totalFrames_ > 0 && impl_->sourceSampleRate_ > 0;
 
    // 新規ロード時はキャッシュクリア
-   impl_->cache_.clear();
    impl_->deClickRanges_.clear();
    ++impl_->deClickRevision_;
    impl_->resetResampledCache();
@@ -412,6 +494,12 @@ QJsonObject ArtifactAudioLayer::toJson() const
   obj["audio.clipGainDb"] = static_cast<double>(impl_->clipGainDb_);
   obj["audio.fadeInSeconds"] = static_cast<double>(impl_->fadeInSeconds_);
   obj["audio.fadeOutSeconds"] = static_cast<double>(impl_->fadeOutSeconds_);
+  obj["audio.fadeInCurve"] = impl_->fadeInCurve_;
+  obj["audio.fadeOutCurve"] = impl_->fadeOutCurve_;
+  obj["audio.trimInSeconds"] = static_cast<double>(impl_->trimInSeconds_);
+  obj["audio.trimOutSeconds"] = static_cast<double>(impl_->trimOutSeconds_);
+  obj["audio.playbackRate"] = static_cast<double>(impl_->playbackRate_);
+  obj["audio.reversed"] = impl_->reversed_;
   QJsonArray deClickRanges;
   for (const auto& range : impl_->deClickRanges_) {
     QJsonObject item;
@@ -458,6 +546,24 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
   if (obj.contains("audio.fadeOutSeconds")) {
     setFadeOutSeconds(static_cast<float>(obj.value("audio.fadeOutSeconds").toDouble(0.0)));
   }
+  if (obj.contains("audio.fadeInCurve")) {
+    setFadeInCurve(obj.value("audio.fadeInCurve").toInt(0));
+  }
+  if (obj.contains("audio.fadeOutCurve")) {
+    setFadeOutCurve(obj.value("audio.fadeOutCurve").toInt(0));
+  }
+  if (obj.contains("audio.trimInSeconds")) {
+    setTrimInSeconds(static_cast<float>(obj.value("audio.trimInSeconds").toDouble(0.0)));
+  }
+  if (obj.contains("audio.trimOutSeconds")) {
+    setTrimOutSeconds(static_cast<float>(obj.value("audio.trimOutSeconds").toDouble(0.0)));
+  }
+  if (obj.contains("audio.playbackRate")) {
+    setPlaybackRate(static_cast<float>(obj.value("audio.playbackRate").toDouble(1.0)));
+  }
+  if (obj.contains("audio.reversed")) {
+    setReversed(obj.value("audio.reversed").toBool(false));
+  }
   clearDeClickRanges();
   const auto deClickRanges = obj.value("audio.deClickRanges").toArray();
   for (const auto& value : deClickRanges) {
@@ -475,7 +581,7 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
     setPan(static_cast<float>(obj.value("audio.pan").toDouble(0.0)));
   }
   if (obj.contains("audio.muted")) {
-    impl_->muted_ = obj.value("audio.muted").toBool(false);
+    setMuted(obj.value("audio.muted").toBool(false));
   }
 }
 
@@ -532,6 +638,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   fadeInProp->setStep(0.01);
   fadeInProp->setUnit(QStringLiteral("s"));
   audioGroup.addProperty(fadeInProp);
+  auto fadeInCurveProp = makeProp(QStringLiteral("audio.fadeInCurve"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  impl_->fadeInCurve_, -117);
+  fadeInCurveProp->setHardRange(0, 3);
+  fadeInCurveProp->setDisplayLabel(QStringLiteral("Fade In Curve"));
+  fadeInCurveProp->setTooltip(QStringLiteral(
+      "0=Linear, 1=Exponential, 2=Logarithmic, 3=S-curve"));
+  audioGroup.addProperty(fadeInCurveProp);
   auto fadeOutProp = makeProp(QStringLiteral("audio.fadeOutSeconds"), ArtifactCore::PropertyType::Float,
                               impl_->fadeOutSeconds_, -117);
   fadeOutProp->setDisplayLabel(QStringLiteral("Fade Out"));
@@ -540,6 +654,52 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   fadeOutProp->setStep(0.01);
   fadeOutProp->setUnit(QStringLiteral("s"));
   audioGroup.addProperty(fadeOutProp);
+  auto fadeOutCurveProp = makeProp(QStringLiteral("audio.fadeOutCurve"),
+                                   ArtifactCore::PropertyType::Integer,
+                                   impl_->fadeOutCurve_, -116);
+  fadeOutCurveProp->setHardRange(0, 3);
+  fadeOutCurveProp->setDisplayLabel(QStringLiteral("Fade Out Curve"));
+  fadeOutCurveProp->setTooltip(QStringLiteral(
+      "0=Linear, 1=Exponential, 2=Logarithmic, 3=S-curve"));
+  audioGroup.addProperty(fadeOutCurveProp);
+  auto trimInProp = makeProp(QStringLiteral("audio.trimInSeconds"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->trimInSeconds_, -114);
+  trimInProp->setDisplayLabel(QStringLiteral("Trim In"));
+  trimInProp->setHardRange(0.0, 3600.0);
+  trimInProp->setSoftRange(0.0, 30.0);
+  trimInProp->setStep(0.01);
+  trimInProp->setUnit(QStringLiteral("s"));
+  trimInProp->setTooltip(QStringLiteral("Non-destructive source trim from the head"));
+  audioGroup.addProperty(trimInProp);
+  auto trimOutProp = makeProp(QStringLiteral("audio.trimOutSeconds"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->trimOutSeconds_, -113);
+  trimOutProp->setDisplayLabel(QStringLiteral("Trim Out"));
+  trimOutProp->setHardRange(0.0, 3600.0);
+  trimOutProp->setSoftRange(0.0, 30.0);
+  trimOutProp->setStep(0.01);
+  trimOutProp->setUnit(QStringLiteral("s"));
+  trimOutProp->setTooltip(QStringLiteral("Non-destructive source trim from the tail"));
+  audioGroup.addProperty(trimOutProp);
+  auto rateProp = makeProp(QStringLiteral("audio.playbackRate"),
+                           ArtifactCore::PropertyType::Float,
+                           impl_->playbackRate_, -112);
+  rateProp->setDisplayLabel(QStringLiteral("Playback Rate"));
+  rateProp->setHardRange(0.1, 8.0);
+  rateProp->setSoftRange(0.25, 4.0);
+  rateProp->setStep(0.05);
+  rateProp->setUnit(QStringLiteral("x"));
+  rateProp->setTooltip(QStringLiteral(
+      "Constant playback speed; ignored while time remap is enabled"));
+  audioGroup.addProperty(rateProp);
+  auto reversedProp = makeProp(QStringLiteral("audio.reversed"),
+                               ArtifactCore::PropertyType::Boolean,
+                               impl_->reversed_, -111);
+  reversedProp->setDisplayLabel(QStringLiteral("Reversed"));
+  reversedProp->setTooltip(QStringLiteral(
+      "Play the trimmed source window backwards; fades stay on clip edges"));
+  audioGroup.addProperty(reversedProp);
   auto deClickThresholdProp = makeProp(
       QStringLiteral("audio.deClickThresholdDb"), ArtifactCore::PropertyType::Float,
       impl_->deClickThresholdDb_, -116);
@@ -593,6 +753,30 @@ bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, cons
     setFadeInSeconds(static_cast<float>(value.toDouble()));
     return true;
   }
+  if (propertyPath == QStringLiteral("audio.fadeInCurve")) {
+    setFadeInCurve(value.toInt());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.fadeOutCurve")) {
+    setFadeOutCurve(value.toInt());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.trimInSeconds")) {
+    setTrimInSeconds(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.trimOutSeconds")) {
+    setTrimOutSeconds(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.playbackRate")) {
+    setPlaybackRate(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.reversed")) {
+    setReversed(value.toBool());
+    return true;
+  }
   if (propertyPath == QStringLiteral("audio.fadeOutSeconds")) {
     setFadeOutSeconds(static_cast<float>(value.toDouble()));
     return true;
@@ -610,11 +794,7 @@ bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, cons
     return true;
   }
   if (propertyPath == QStringLiteral("audio.muted")) {
-    const bool target = value.toBool();
-    if (impl_->muted_ != target) {
-      impl_->muted_ = target;
-      Q_EMIT changed();
-    }
+    setMuted(value.toBool());
     return true;
   }
   return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
@@ -678,22 +858,42 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
   const double compositionFps =
       (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
 
-  const qint64 sourceStartFrame =
-      std::max<qint64>(0, startTime().framePosition());
   const qint64 sourceFrameCount =
       static_cast<qint64>(impl_->pcm().size() /
                           std::max(1, impl_->sourceChannelCount_));
 
+  // Mirror getAudio()'s audible window: trim + playback rate on the
+  // non-remap mapping, so the displayed region matches what is heard.
+  const qint64 winStartSample = std::clamp<qint64>(
+      static_cast<qint64>(std::llround(
+          static_cast<double>(impl_->trimInSeconds_) * impl_->sourceSampleRate_)),
+      static_cast<qint64>(0), std::max<qint64>(0, sourceFrameCount - 1));
+  const qint64 winEndSample = std::clamp<qint64>(
+      sourceFrameCount -
+          static_cast<qint64>(std::llround(
+              static_cast<double>(impl_->trimOutSeconds_) * impl_->sourceSampleRate_)),
+      winStartSample, sourceFrameCount);
+  if (winEndSample <= winStartSample) {
+    return data;
+  }
+  const float playbackRate = std::isfinite(impl_->playbackRate_)
+      ? std::clamp(impl_->playbackRate_, 0.1f, 8.0f) : 1.0f;
+
+  const qint64 sourceStartFrame =
+      std::max<qint64>(0, startTime().framePosition());
+
   const long double sourceStartSamples =
+      static_cast<long double>(winStartSample) +
       static_cast<long double>(sourceStartFrame) /
-      static_cast<long double>(compositionFps) * impl_->sourceSampleRate_;
+      static_cast<long double>(compositionFps) * impl_->sourceSampleRate_ *
+          static_cast<long double>(playbackRate);
   const long double durationFrames = std::max<long double>(
       1.0L,
       static_cast<long double>(outPoint().framePosition()) -
       static_cast<long double>(inPoint().framePosition()));
   const long double sourceDurationSamples =
       durationFrames / static_cast<long double>(compositionFps) *
-      impl_->sourceSampleRate_;
+      impl_->sourceSampleRate_ * static_cast<long double>(playbackRate);
   const auto clampRounded = [](long double value, qint64 lower, qint64 upper) {
     if (!std::isfinite(value)) return lower;
     const long double rounded = std::round(value);
@@ -702,9 +902,9 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
     return static_cast<qint64>(rounded);
   };
   const qint64 startSample = clampRounded(
-      sourceStartSamples, 0, std::max<qint64>(0, sourceFrameCount - 1));
+      sourceStartSamples, winStartSample, std::max<qint64>(winStartSample, winEndSample - 1));
   const qint64 sampleCount = clampRounded(
-      sourceDurationSamples, 1, std::max<qint64>(1, sourceFrameCount - startSample));
+      sourceDurationSamples, 1, std::max<qint64>(1, winEndSample - startSample));
 
   const int firstSample = static_cast<int>(std::clamp<qint64>(startSample, 0, sourceFrameCount));
   const int lastSample = static_cast<int>(std::clamp<qint64>(startSample + sampleCount, firstSample, sourceFrameCount));
@@ -822,65 +1022,47 @@ bool ArtifactAudioLayer::applyLipSyncToSwitchLayer(ArtifactSwitchLayer* switchLa
   return true;
 }
 
-size_t ArtifactAudioLayer::getCacheSize() const
-{
-  impl_->refreshSourceVersionIfNeeded();
-  return impl_->cache_.getCacheSize();
-}
+namespace {
 
-size_t ArtifactAudioLayer::getCacheMemoryUsage() const
-{
-  impl_->refreshSourceVersionIfNeeded();
-  return impl_->cache_.getMemoryUsage();
-}
-
-// フレーム単位のPCMをデコードしてキャッシュに追加
-bool ArtifactAudioLayer::decodeFrameToCache(qint64 frameNumber)
-{
-  impl_->refreshSourceVersionIfNeeded();
-  ArtifactCore::ScopedPerformanceTimer timer("Audio/Layer/decodeFrameToCache");
-  const int channelCount = std::max(1, impl_->sourceChannelCount_);
-  const qint64 pcmFrameCount = impl_->pcm().size() / channelCount;
-  const qint64 availableFrameCount = std::min(impl_->totalFrames_, pcmFrameCount);
-  if (frameNumber < 0 || frameNumber >= availableFrameCount ||
-      impl_->sourceSampleRate_ <= 0) {
-    return false;
+// Evaluate an animatable audio.* numeric property (volume/pan/clipGain
+// automation) at the requested composition block frame. Falls back to the
+// stored member value when the property has no keyframes.
+double animatedAudioNumber(const ArtifactAudioLayer* layer,
+                           const char* propertyPath,
+                           double fallback,
+                           int64_t blockFrame) {
+  if (!layer) {
+    return fallback;
   }
-
-  // フレームのサンプル範囲を計算
-  const qint64 startSample = frameNumber;
-  const qint64 requestedFrameCount = std::min<qint64>(
-      static_cast<qint64>(impl_->sourceSampleRate_),
-      availableFrameCount - startSample);
-  const qint64 endSample = startSample + requestedFrameCount;
-  const int frameSampleCount = static_cast<int>(endSample - startSample);
-
-  if (frameSampleCount <= 0) return false;
-
-  // AudioSegment を作成
-  ArtifactCore::AudioSegment segment;
-  segment.sampleRate = impl_->sourceSampleRate_;
-  segment.layout = (impl_->sourceChannelCount_ >= 2) ? ArtifactCore::AudioChannelLayout::Stereo : ArtifactCore::AudioChannelLayout::Mono;
-  segment.channelData.resize(impl_->sourceChannelCount_);
-  segment.setFrameCount(frameSampleCount);
-
-  // PCMデータをコピー
-  const qsizetype baseIndex = static_cast<qsizetype>(startSample) * channelCount;
-  for (int ch = 0; ch < channelCount; ++ch) {
-    for (int s = 0; s < segment.frameCount(); ++s) {
-      const qsizetype pcmIndex = baseIndex + static_cast<qsizetype>(s) * channelCount + ch;
-      if (pcmIndex < impl_->pcm().size()) {
-        segment.channelData[ch][s] = impl_->pcm()[pcmIndex];
-      } else {
-        segment.channelData[ch][s] = 0.0f;
-      }
-    }
+  const auto property = layer->getProperty(QString::fromLatin1(propertyPath));
+  if (!property || property->getKeyFrames().empty()) {
+    return fallback;
   }
-
-  // キャッシュに追加
-  impl_->cache_.addCache(frameNumber, std::move(segment));
-  return true;
+  int64_t fps = 30;
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          layer->compositionObject())) {
+    fps = std::max<int64_t>(
+        1, static_cast<int64_t>(
+               std::llround(composition->frameRate().framerate())));
+  }
+  const QVariant value =
+      property->interpolateValue(RationalTime(blockFrame, fps));
+  return value.isValid() ? value.toDouble() : fallback;
 }
+
+// Fade progress (0-1) to gain multiplier.
+// 0=Linear, 1=Exponential(t^2), 2=Logarithmic(sqrt), 3=S-curve(cos).
+float evalFadeCurve(double t, int curve) {
+  t = std::clamp(t, 0.0, 1.0);
+  switch (curve) {
+  case 1:  return static_cast<float>(t * t);
+  case 2:  return static_cast<float>(std::sqrt(t));
+  case 3:  return static_cast<float>(0.5 - 0.5 * std::cos(M_PI * t));
+  default: return static_cast<float>(t);
+  }
+}
+
+} // namespace
 
 bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
                                   const FramePosition& start,
@@ -899,8 +1081,44 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
 
   const qint64 sourceFrameCount = impl_->pcm().size() / std::max(1, impl_->sourceChannelCount_);
+
+  // Effective (animated) layer parameters, evaluated at this block's
+  // composition frame so preview and export agree per frame.
+  const int srcChannels = impl_->sourceChannelCount_;
+  const float effClipGainDb = static_cast<float>(animatedAudioNumber(
+      this, "audio.clipGainDb", impl_->clipGainDb_, start.framePosition()));
+  const float volume = static_cast<float>(animatedAudioNumber(
+      this, "audio.volume", impl_->volume_, start.framePosition()));
+  const float effPan = static_cast<float>(animatedAudioNumber(
+      this, "audio.pan", impl_->pan_, start.framePosition()));
+  const float clipGain = std::pow(10.0f, effClipGainDb / 20.0f);
+  const float playbackRate =
+      std::isfinite(impl_->playbackRate_) ? std::clamp(impl_->playbackRate_, 0.1f, 8.0f) : 1.0f;
+
+  // Non-destructive trim window in source samples. Fades are measured inside
+  // this window; output outside it is silence.
+  const qint64 winStartSample = std::clamp<qint64>(
+      static_cast<qint64>(std::llround(
+          static_cast<double>(impl_->trimInSeconds_) * impl_->sourceSampleRate_)),
+      static_cast<qint64>(0), std::max<qint64>(0, sourceFrameCount - 1));
+  const qint64 winEndSample = std::clamp<qint64>(
+      sourceFrameCount -
+          static_cast<qint64>(std::llround(
+              static_cast<double>(impl_->trimOutSeconds_) * impl_->sourceSampleRate_)),
+      winStartSample, sourceFrameCount);
+  if (winEndSample <= winStartSample) {
+    return false;
+  }
+  const double winStartSeconds =
+      static_cast<double>(winStartSample) / std::max(1, impl_->sourceSampleRate_);
+  const double winDurationSeconds =
+      static_cast<double>(winEndSample - winStartSample) /
+      std::max(1, impl_->sourceSampleRate_);
+
   // Time-remapped layers map each composition frame through the remap curve
-  // (same convention as the video layer); otherwise the layer-local offset applies.
+  // (same convention as the video layer); otherwise the layer-local offset
+  // applies, scaled by the constant playback rate. Reversed layers walk the
+  // trimmed window backwards from its end.
   const bool useTimeRemap = isTimeRemapEnabled();
   long double samplePosition;
   if (useTimeRemap) {
@@ -913,9 +1131,13 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
           static_cast<long double>(start.framePosition()) -
           static_cast<long double>(inPoint().framePosition()) +
           static_cast<long double>(startTime().framePosition());
-      samplePosition =
+      const long double windowOffset =
           localFrame / static_cast<long double>(compositionFps) *
-          static_cast<long double>(impl_->sourceSampleRate_);
+          static_cast<long double>(impl_->sourceSampleRate_) *
+          static_cast<long double>(playbackRate);
+      samplePosition = impl_->reversed_
+          ? static_cast<long double>(winEndSample - 1) - windowOffset
+          : static_cast<long double>(winStartSample) + windowOffset;
   }
 
   const int outChannels = std::max(1, impl_->sourceChannelCount_);
@@ -930,8 +1152,9 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   outSegment.setFrameCount(frameCount);
   outSegment.zero();
 
-  if (!std::isfinite(samplePosition) || samplePosition < 0.0L ||
-      samplePosition >= static_cast<long double>(sourceFrameCount)) {
+  if (!std::isfinite(samplePosition) ||
+      samplePosition < static_cast<long double>(winStartSample) ||
+      samplePosition >= static_cast<long double>(winEndSample)) {
     return false;
   }
   const qint64 startSample = static_cast<qint64>(std::floor(samplePosition));
@@ -943,10 +1166,16 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     std::lock_guard<std::mutex> cacheLock(impl_->resampledCacheMutex_);
     if (!useTimeRemap &&
         rc.startSample == startSample && rc.sampleRate == sampleRate &&
-        rc.volume == impl_->volume_ && rc.pan == impl_->pan_ &&
-        rc.clipGainDb == impl_->clipGainDb_ &&
+        rc.volume == volume && rc.pan == effPan &&
+        rc.clipGainDb == effClipGainDb &&
         rc.fadeInSeconds == impl_->fadeInSeconds_ &&
         rc.fadeOutSeconds == impl_->fadeOutSeconds_ &&
+        rc.fadeInCurve == impl_->fadeInCurve_ &&
+        rc.fadeOutCurve == impl_->fadeOutCurve_ &&
+        rc.trimInSeconds == impl_->trimInSeconds_ &&
+        rc.trimOutSeconds == impl_->trimOutSeconds_ &&
+        rc.playbackRate == playbackRate &&
+        rc.reversed == (impl_->reversed_ && !useTimeRemap) &&
         rc.deClickRevision == impl_->deClickRevision_ &&
         rc.deClickThresholdDb == impl_->deClickThresholdDb_ &&
         rc.deClickMaxClickSamples == impl_->deClickMaxClickSamples_ &&
@@ -960,25 +1189,31 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     }
   }
 
-  const int srcChannels = impl_->sourceChannelCount_;
-  const float volume = impl_->volume_;
-  const float clipGain = std::pow(10.0f, impl_->clipGainDb_ / 20.0f);
-  const double clipDurationSeconds = static_cast<double>(sourceFrameCount) /
-      std::max(1, impl_->sourceSampleRate_);
-
   int producedFrames = 0;
+  const double sourceStep =
+      static_cast<double>(impl_->sourceSampleRate_) * playbackRate /
+      std::max(1, sampleRate);
   for (int i = 0; i < frameCount; ++i) {
-    // Non-remap: constant-rate resample from the block start. Time-remap:
-    // each output frame maps through the remap curve (variable speed).
+    // Non-remap: constant-rate resample from the block start (backwards when
+    // reversed). Time-remap: each output frame maps through the remap curve.
     const double srcPos = useTimeRemap
         ? static_cast<double>(getSourceFrameAtCompFrame(
               start.framePosition() + i)) *
               impl_->sourceSampleRate_ / compositionFps
-        : static_cast<double>(startSample) +
-              (static_cast<double>(i) * impl_->sourceSampleRate_) / sampleRate;
+        : impl_->reversed_
+            ? static_cast<double>(startSample) - static_cast<double>(i) * sourceStep
+            : static_cast<double>(startSample) + static_cast<double>(i) * sourceStep;
+    if (!useTimeRemap && impl_->reversed_) {
+      if (srcPos >= static_cast<double>(winEndSample)) continue;
+      const qint64 srcFrameCheck = static_cast<qint64>(std::floor(srcPos));
+      if (srcFrameCheck < winStartSample) break;
+    } else {
+      if (srcPos < static_cast<double>(winStartSample)) continue;
+      const qint64 srcFrameCheck = static_cast<qint64>(std::floor(srcPos));
+      if (srcFrameCheck >= winEndSample) break;
+    }
     const qint64 srcFrame0 = static_cast<qint64>(std::floor(srcPos));
     if (srcFrame0 < 0) continue;
-    if (srcFrame0 >= sourceFrameCount) break;
 
     const qint64 srcFrame1 = srcFrame0 + 1;
     const float t = static_cast<float>(srcPos - static_cast<double>(srcFrame0));
@@ -989,13 +1224,17 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     const double sourceTimeSeconds = srcPos / std::max(1, impl_->sourceSampleRate_);
     float fade = 1.0f;
     if (impl_->fadeInSeconds_ > 0.0f) {
-      fade *= static_cast<float>(std::clamp(
-          sourceTimeSeconds / static_cast<double>(impl_->fadeInSeconds_), 0.0, 1.0));
+      const double t = std::clamp(
+          (sourceTimeSeconds - winStartSeconds) /
+              static_cast<double>(impl_->fadeInSeconds_), 0.0, 1.0);
+      fade *= evalFadeCurve(t, impl_->fadeInCurve_);
     }
     if (impl_->fadeOutSeconds_ > 0.0f) {
-      fade *= static_cast<float>(std::clamp(
-          (clipDurationSeconds - sourceTimeSeconds) /
-              static_cast<double>(impl_->fadeOutSeconds_), 0.0, 1.0));
+      const double t = std::clamp(
+          (winDurationSeconds -
+              (sourceTimeSeconds - winStartSeconds)) /
+              static_cast<double>(impl_->fadeOutSeconds_), 0.0, 1.0);
+      fade *= evalFadeCurve(t, impl_->fadeOutCurve_);
     }
     const float clipScale = clipGain * fade;
 
@@ -1024,22 +1263,24 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     producedFrames = i + 1;
   }
 
-  // Apply panning only for stereo/mono output (first 2 channels)
+  // Apply de-click ranges mapped from source samples into this block.
+  // Non-remap: source advances playbackRate samples per output sample.
   if (producedFrames > 0 && !impl_->deClickRanges_.empty()) {
+    const double sourceSamplesPerOutput = useTimeRemap
+        ? static_cast<double>(impl_->sourceSampleRate_) / std::max(1, sampleRate)
+        : static_cast<double>(impl_->sourceSampleRate_) * playbackRate /
+              std::max(1, sampleRate);
     AudioSyncTools deClickTools;
     for (const auto& range : impl_->deClickRanges_) {
       const qint64 rangeStart = std::max(range.first, startSample);
       const qint64 rangeEnd = std::min(range.second,
           startSample + static_cast<qint64>(std::ceil(
-              producedFrames * static_cast<double>(impl_->sourceSampleRate_) /
-              std::max(1, sampleRate))));
+              producedFrames * sourceSamplesPerOutput)));
       if (rangeEnd <= rangeStart) continue;
       const qint64 localStart = static_cast<qint64>(std::floor(
-          (rangeStart - startSample) * static_cast<double>(sampleRate) /
-          std::max(1, impl_->sourceSampleRate_)));
+          (rangeStart - startSample) / sourceSamplesPerOutput));
       const qint64 localEnd = static_cast<qint64>(std::ceil(
-          (rangeEnd - startSample) * static_cast<double>(sampleRate) /
-          std::max(1, impl_->sourceSampleRate_)));
+          (rangeEnd - startSample) / sourceSamplesPerOutput));
       const qint64 localCount = std::min<qint64>(producedFrames, localEnd) -
           std::max<qint64>(0, localStart);
       if (localCount > 0) {
@@ -1052,25 +1293,34 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
 
   // Apply panning only for stereo/mono output (first 2 channels)
   if (outChannels <= 2 && producedFrames > 0) {
-    const auto gains = ArtifactCore::AudioPanner::calculateConstantPowerGains(impl_->pan_);
+    const auto gains = ArtifactCore::AudioPanner::calculateConstantPowerGains(effPan);
     for (int i = 0; i < producedFrames; ++i) {
       if (outChannels >= 1) outSegment.channelData[0][i] *= gains.channelGains[0];
       if (outChannels >= 2) outSegment.channelData[1][i] *= gains.channelGains[1];
     }
   }
 
-  if (producedFrames > 0 && !useTimeRemap) {
+  if (producedFrames <= 0) {
+    return false;
+  }
+
+  if (!useTimeRemap) {
     std::lock_guard<std::mutex> cacheLock(impl_->resampledCacheMutex_);
     rc.startSample = startSample;
     rc.sampleRate = sampleRate;
-    rc.volume = impl_->volume_;
-    rc.clipGainDb = impl_->clipGainDb_;
+    rc.volume = volume;
+    rc.clipGainDb = effClipGainDb;
     rc.fadeInSeconds = impl_->fadeInSeconds_;
     rc.fadeOutSeconds = impl_->fadeOutSeconds_;
+    rc.fadeInCurve = impl_->fadeInCurve_;
+    rc.fadeOutCurve = impl_->fadeOutCurve_;
+    rc.trimInSeconds = impl_->trimInSeconds_;
+    rc.trimOutSeconds = impl_->trimOutSeconds_;
+    rc.playbackRate = playbackRate;
     rc.deClickRevision = impl_->deClickRevision_;
     rc.deClickThresholdDb = impl_->deClickThresholdDb_;
     rc.deClickMaxClickSamples = impl_->deClickMaxClickSamples_;
-    rc.pan = impl_->pan_;
+    rc.pan = effPan;
     rc.segment.sampleRate = sampleRate;
     rc.segment.layout = outLayout;
     rc.segment.channelData.resize(outChannels);
@@ -1079,10 +1329,10 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       std::copy_n(outSegment.channelData[ch].data(), producedFrames,
                   rc.segment.channelData[ch].data());
     }
-    return true;
   }
 
-  return false;
+  // Time-remapped blocks are produced too; only their caching is skipped.
+  return true;
 }
 
 } // namespace Artifact

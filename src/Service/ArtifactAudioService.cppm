@@ -270,12 +270,10 @@ bool ArtifactAudioService::setLayerBusMuted(
  const auto mixer = impl_->currentMixer();
  const auto bus = mixer ? mixer->findBusByName(layerBusName(layerId)) : nullptr;
  if (!bus) return false;
- if (const auto layer = impl_->currentLayer(layerId)) {
-  if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
-   if (audioLayer->isMuted() != muted) {
-    audioLayer->mute();
-   }
-  } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+  if (const auto layer = impl_->currentLayer(layerId)) {
+   if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
+    audioLayer->setMuted(muted);
+   } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
    videoLayer->setAudioMuted(muted);
    layer->changed();
   }
@@ -355,6 +353,48 @@ QVariantMap ArtifactAudioService::layerDeClickSettings(
          {QStringLiteral("maxClickSamples"),
           QVariant::fromValue(audioLayer->deClickMaxClickSamples())},
          {QStringLiteral("rangeCount"), audioLayer->deClickRangeCount()}};
+}
+
+bool ArtifactAudioService::setLayerTrim(
+    const ArtifactCore::LayerID& layerId,
+    double trimInSeconds, double trimOutSeconds)
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return false;
+ audioLayer->setTrimInSeconds(static_cast<float>(trimInSeconds));
+ audioLayer->setTrimOutSeconds(static_cast<float>(trimOutSeconds));
+ return true;
+}
+
+QVariantMap ArtifactAudioService::layerTrim(
+    const ArtifactCore::LayerID& layerId) const
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return {};
+ return {{QStringLiteral("trimInSeconds"),
+          static_cast<double>(audioLayer->trimInSeconds())},
+         {QStringLiteral("trimOutSeconds"),
+          static_cast<double>(audioLayer->trimOutSeconds())}};
+}
+
+bool ArtifactAudioService::setLayerPlaybackRate(
+    const ArtifactCore::LayerID& layerId, double rate)
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ if (!audioLayer) return false;
+ audioLayer->setPlaybackRate(static_cast<float>(rate));
+ return true;
+}
+
+double ArtifactAudioService::layerPlaybackRate(
+    const ArtifactCore::LayerID& layerId) const
+{
+ const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(
+     impl_->currentLayer(layerId));
+ return audioLayer ? static_cast<double>(audioLayer->playbackRate()) : 1.0;
 }
 
 };
