@@ -328,17 +328,22 @@ void updateCompositionColorButtonPreview(QPushButton* button, const QColor& colo
     if (!button) {
         return;
     }
-    QPixmap pix(button->size().isEmpty() ? QSize(40, 24) : button->size());
+    qreal dpr = button->devicePixelRatioF();
+    if (dpr < 1.0) dpr = 1.0;
+    QSize logicalSize = button->size().isEmpty() ? QSize(40, 24) : button->size();
+    QSize dprSize = logicalSize * dpr;
+    QPixmap pix(dprSize);
+    pix.setDevicePixelRatio(dpr);
     pix.fill(Qt::transparent);
     {
         QPainter painter(&pix);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(QPen(QColor(85, 85, 85), 1));
         painter.setBrush(color);
-        painter.drawRoundedRect(pix.rect().adjusted(1, 1, -2, -2), 3, 3);
+        painter.drawRoundedRect(QRect(QPoint(0,0), dprSize).adjusted(1, 1, -2, -2), 3, 3);
     }
     button->setIcon(QIcon(pix));
-    button->setIconSize(pix.size());
+    button->setIconSize(logicalSize);
     button->setToolTip(QStringLiteral("Background Color: %1").arg(color.name(QColor::HexArgb)));
     button->setAccessibleName(QStringLiteral("Composition background color"));
     button->setAccessibleDescription(
@@ -6612,7 +6617,7 @@ public:
             proxyJobs_.push_back({src.absoluteFilePath(), serviceOut, scale});
         }
         if (!proxyQueueTimer_) {
-            proxyQueueTimer_ = new QTimer();
+            proxyQueueTimer_ = new QTimer(owner_);
             proxyQueueTimer_->setInterval(5);
             QObject::connect(proxyQueueTimer_, &QTimer::timeout, [this]() {
                 processNextProxyJob();
