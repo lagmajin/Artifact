@@ -21,6 +21,7 @@ class ArtifactSolidImageLayer : public ArtifactAbstract2DLayer {
 private:
   class Impl;
   Impl *impl_;
+  const QImage &currentFillImage() const;
 
 public:
   ArtifactSolidImageLayer();

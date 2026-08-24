@@ -1267,6 +1267,7 @@ public:
 W_OBJECT_IMPL(ArtifactImageLayer)
 
 ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
+    setBuiltinLayerSourceComponentType(QStringLiteral("source-image"));
     QObject::connect(&impl_->prefetchWatcher_, &QFutureWatcher<Impl::PrefetchResult>::finished, this, [this]() {
         if (!impl_) {
             return;
@@ -2494,6 +2495,13 @@ bool ArtifactImageLayer::hasCurrentFrameBuffer() const
 {
     impl_->refreshSourceVersionIfNeeded();
     return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) || impl_->cache_);
+}
+
+const ArtifactCore::ImageF32x4_RGBA*
+ArtifactImageLayer::resolveLayerSourceOverride() const
+{
+    const ArtifactCore::ImageF32x4_RGBA& frameBuffer = currentFrameBuffer();
+    return frameBuffer.isEmpty() ? nullptr : &frameBuffer;
 }
 
 void ArtifactImageLayer::setFromQImage(const QImage& image)

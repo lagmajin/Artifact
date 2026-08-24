@@ -33,6 +33,11 @@ export namespace Artifact {
   QImage getThumbnail(int width = 128, int height = 128) const override;
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
   bool hasCurrentFrameBuffer() const;
+
+ protected:
+  const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const override;
+
+ public:
   bool loadFromPath(const QString& path);
   // PSD/OIIO subimage index.  -1 keeps the default flattened image (subimage 0).
   void setPsdSubimageIndex(int index);

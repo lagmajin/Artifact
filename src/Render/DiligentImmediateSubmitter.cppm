@@ -32,6 +32,8 @@ import Text.ShapingBackend;
 import Text.GlyphAtlas;
 import Font.FreeFont;
 import Artifact.Render.ShaderManager;
+import Artifact.Render.TextGlyphSubmitter.Contract;
+import Artifact.Render.TextGlyphPipelineAdapter;
 import Artifact.Render.RenderCommandBuffer;
 import Frame.Debug;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -482,13 +484,29 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
 
 void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
 {
+    // Glyph pipelines are acquired through the dedicated glyph-only provider
+    // boundary (text glyph submitter G2 migration). ShaderManager remains the
+    // backing implementation during migration; draw behaviour is unchanged.
+    const ArtifactTextGlyphPipelineProvider glyphProvider =
+        makeArtifactTextGlyphPipelineProvider(sm);
+    auto adoptGlyphPair = [](IPipelineState* pso, IShaderResourceBinding* srb) {
+        PSOAndSRB pair;
+        pair.pPSO = pso;
+        pair.pSRB = srb;
+        if (pair.pPSO) pair.pPSO->AddRef();
+        if (pair.pSRB) pair.pSRB->AddRef();
+        return pair;
+    };
+
     m_draw_sprite_pso_and_srb               = sm.spritePsoAndSrb();
     m_draw_sprite_transform_pso_and_srb     = sm.spriteTransformPsoAndSrb();
     m_draw_masked_sprite_pso_and_srb        = sm.maskedSpritePsoAndSrb();
-    m_draw_glyph_pso_and_srb                = sm.glyphQuadPsoAndSrb();
-    m_draw_glyph_transform_pso_and_srb      = sm.glyphQuadTransformPsoAndSrb();
+    m_draw_glyph_pso_and_srb                = adoptGlyphPair(glyphProvider.glyphPipeline,
+                                                             glyphProvider.glyphBinding);
+    m_draw_glyph_transform_pso_and_srb      = adoptGlyphPair(glyphProvider.transformedGlyphPipeline,
+                                                             glyphProvider.transformedGlyphBinding);
     m_sprite_sampler                        = sm.spriteSampler();
-    m_glyph_sampler                         = sm.glyphAtlasSampler();
+    m_glyph_sampler                         = glyphProvider.atlasSampler;
     m_draw_solid_rect_pso_and_srb           = sm.solidRectPsoAndSrb();
     m_draw_solid_rect_transform_pso_and_srb = sm.solidRectTransformPsoAndSrb();
     m_draw_gradient_rect_pso_and_srb         = sm.gradientRectPsoAndSrb();

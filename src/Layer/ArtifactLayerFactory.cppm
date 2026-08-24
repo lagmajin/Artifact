@@ -38,6 +38,7 @@ import Artifact.Layer.Composition;
 import Artifact.Layer.MaterialContainer;
 import Artifact.Layer.Switch;
 import Artifact.Layer.SandSim2D;
+import Artifact.Layers.Noise;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.EnvironmentMap;
 import Artifact.Layer.EnvironmentMapInitParams;
@@ -251,6 +252,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
   }
   case LayerType::SandSim2D:
      ptr = ArtifactCore::makeShared<ArtifactSandSim2DLayer>();
+    break;
+  case LayerType::Noise:
+     ptr = ArtifactCore::makeShared<ArtifactNoiseLayer>();
     break;
   case LayerType::EnvironmentMap:
      ptr = ArtifactCore::makeShared<ArtifactEnvironmentMapLayer>();

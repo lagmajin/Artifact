@@ -250,9 +250,7 @@ RationalTime effectiveTextTimelineTime(const ArtifactTextLayer *layer) {
                       effectiveTextTimelineFps(layer));
 }
 
-using ResolvedTextAnimatorStack =
-    std::vector<std::tuple<RangeSelector, WigglySelector, ExpressionSelector,
-                           AnimatorProperties>>;
+using ResolvedTextAnimatorStack = std::vector<AnimatorSelectorSet>;
 
 ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
     const ArtifactTextLayer *layer,
@@ -357,8 +355,13 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
                                            resolved.properties.blur,
                                            0.0f, 10000.0f);
 
-    stack.emplace_back(resolved.range, resolved.wiggly, resolved.expression,
-                       resolved.properties);
+    AnimatorSelectorSet resolvedSet;
+    resolvedSet.combine = SelectorCombineMode::Multiply;
+    resolvedSet.range = resolved.range;
+    resolvedSet.wiggly = resolved.wiggly;
+    resolvedSet.expression = resolved.expression;
+    resolvedSet.properties = resolved.properties;
+    stack.push_back(std::move(resolvedSet));
   }
   return stack;
 }
@@ -3319,7 +3322,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
             this, impl_->animators_, animatorTime);
         const std::vector<float> glyphFieldWeights =
             fieldDrivenGlyphWeights(this, evaluationGlyphs);
-        TextAnimatorEngine::applyAnimatorStack(
+        TextAnimatorEngine::applyAnimatorSets(
             evaluationGlyphs, animatorStack,
             static_cast<float>(animatorTime.toSeconds()), plainText,
             glyphFieldWeights);
@@ -4639,7 +4642,7 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
         this, impl_->animators_, time);
     const std::vector<float> glyphFieldWeights =
         fieldDrivenGlyphWeights(this, impl_->glyphs_);
-    TextAnimatorEngine::applyAnimatorStack(
+    TextAnimatorEngine::applyAnimatorSets(
         impl_->glyphs_, animatorStack, timeSeconds, displayText,
         glyphFieldWeights);
 

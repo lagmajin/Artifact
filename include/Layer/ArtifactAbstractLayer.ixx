@@ -47,6 +47,7 @@ import Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
 import Artifact.Render.IRenderer;
+import Image.ImageF32x4_RGBA;
 export import Property.Abstract;
 export import Property.Group;
 
@@ -164,6 +165,7 @@ enum class LayerType {
   Switch = 27,                  // Switch layer (Moho-style pose switching)
   Paint = 28,                   // Paint layer (frame-by-frame raster)
   SpatialAudio = 29,            // 3D spatial audio source
+  Noise = 30,                   // Procedural noise source layer
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -314,6 +316,8 @@ protected:
                           int priority = 0) const;
   void removePersistentLayerPropertiesWithPrefix(
       const QString &propertyPathPrefix) const;
+  void setBuiltinLayerSourceComponentType(const QString &componentType);
+  virtual const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const;
 
 public:
     ArtifactAbstractLayer();

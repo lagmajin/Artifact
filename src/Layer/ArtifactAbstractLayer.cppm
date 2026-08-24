@@ -866,6 +866,7 @@ public:
     mutable int64_t lastCollisionImpactFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerComponentHost componentHost_;
+    QString builtinSourceComponentType_;
     ArtifactCore::Optional<LayerEvaluationState> authoritativeComponentState_;
     int64_t authoritativeComponentFrame_ =
         std::numeric_limits<int64_t>::min();
@@ -1126,6 +1127,20 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(fluidVorticity_);
   fluid.settings[QStringLiteral("solverIterations")] = fluidSolverIterations_;
   componentHost_.upsert(std::move(fluid));
+
+  const QString& sourceComponentType = builtinSourceComponentType_;
+  if (!sourceComponentType.isEmpty()) {
+    LayerComponentDescriptor sourceDescriptor;
+    sourceDescriptor.componentId = QStringLiteral("builtin.") + sourceComponentType;
+    sourceDescriptor.typeId =
+        QStringLiteral("artifact.component.") + sourceComponentType;
+    sourceDescriptor.version = 1;
+    sourceDescriptor.enabled = true;
+    sourceDescriptor.phase = LayerComponentPhase::Source;
+    sourceDescriptor.scope = LayerComponentScope::Layer;
+    sourceDescriptor.order = 100;
+    componentHost_.upsert(std::move(sourceDescriptor));
+  }
 }
 
 void ArtifactAbstractLayer::Impl::syncBuiltinBoolsFromHost() {
@@ -1264,6 +1279,21 @@ void ArtifactAbstractLayer::setId(const LayerID& id) {
 QString ArtifactAbstractLayer::layerName() const { return impl_->name_; }
 
 UniString ArtifactAbstractLayer::className() const { return QString(""); }
+
+const ArtifactCore::ImageF32x4_RGBA*
+ArtifactAbstractLayer::resolveLayerSourceOverride() const {
+  return nullptr;
+}
+
+void ArtifactAbstractLayer::setBuiltinLayerSourceComponentType(
+    const QString &componentType) {
+  const QString normalized = componentType.trimmed();
+  if (impl_->builtinSourceComponentType_ == normalized) {
+    return;
+  }
+  impl_->builtinSourceComponentType_ = normalized;
+  impl_->syncBuiltinComponentDescriptors();
+}
 
 void ArtifactAbstractLayer::setLayerName(const QString &name) {
   if (!assignIfChanged(impl_->name_, name)) {

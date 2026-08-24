@@ -16,6 +16,7 @@ module;
 #include <QPainter>
 #include <QSize>
 #include <QVariant>
+#include <opencv2/core.hpp>
 
 
 module Artifact.Layers.SolidImage;
@@ -26,6 +27,9 @@ import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Image.ImageF32x4_RGBA;
+import Graphics.SurfaceColorContract;
+import CvUtils;
 import Property.Abstract;
 import Property.Group;
 import Property.SerializationBridge;
@@ -73,6 +77,28 @@ RationalTime effectiveSolidTimelineTime(const ArtifactSolidImageLayer *layer) {
 FloatColor toFloatColor(const QColor &color) {
   return FloatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF());
 }
+
+ArtifactCore::ImageF32x4_RGBA solidFillToFrameBuffer(const QImage &image) {
+  ArtifactCore::ImageF32x4_RGBA buffer;
+  if (image.isNull()) {
+    return buffer;
+  }
+  const QImage premultiplied =
+      image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(premultiplied, true);
+  if (mat.empty()) {
+    return buffer;
+  }
+  if (mat.type() != CV_32FC4) {
+    mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
+  }
+  buffer.setFromCVMat(
+      mat,
+      ArtifactCore::SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+          ArtifactCore::TransferFunction::sRGB,
+          ArtifactCore::SurfaceAlphaMode::Premultiplied));
+  return buffer;
+}
 } // namespace
 
 Artifact::ArtifactSolidImageLayerSettings::ArtifactSolidImageLayerSettings() = default;
@@ -103,6 +129,9 @@ public:
   mutable float cachedGradientCenterY_ = -1.0f;
   mutable float cachedGradientScale_ = -1.0f;
   mutable float cachedGradientOffset_ = -1000.0f;
+  mutable int64_t cachedImageGeneration_ = 0;
+  mutable ArtifactCore::ImageF32x4_RGBA sourceBuffer_;
+  mutable int64_t sourceBufferGeneration_ = 0;
 
   Impl() {
     // デフォルトのキーフレームを追加（フレーム0）
@@ -110,7 +139,9 @@ public:
   }
 };
 
-ArtifactSolidImageLayer::ArtifactSolidImageLayer() : impl_(new Impl()) {}
+ArtifactSolidImageLayer::ArtifactSolidImageLayer() : impl_(new Impl()) {
+  setBuiltinLayerSourceComponentType(QStringLiteral("source-solid-fill"));
+}
 
 ArtifactSolidImageLayer::~ArtifactSolidImageLayer() { delete impl_; }
 
@@ -530,6 +561,20 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   }
 
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  if (resolveLayerSourceOverride()) {
+    const QImage& overrideImage = currentFillImage();
+    drawWithClonerEffect(
+        this, baseTransform,
+        [renderer, size, overrideImage, this]
+        (const QMatrix4x4 &transform, float weight) {
+          renderer->drawSpriteTransformed(
+              0.0f, 0.0f, static_cast<float>(size.width),
+              static_cast<float>(size.height), transform, overrideImage,
+              opacity() * weight);
+        });
+    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
+    return;
+  }
   drawWithClonerEffect(
       this, baseTransform,
       [renderer, size, color, fillType, gradientStart, gradientEnd, gradientAngle,
@@ -559,6 +604,10 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
 }
 
 QImage ArtifactSolidImageLayer::toQImage() const {
+  return currentFillImage();
+}
+
+const QImage& ArtifactSolidImageLayer::currentFillImage() const {
   const auto source = sourceSize();
   const Size_2D size(std::clamp(source.width, 1, 16384),
                      std::clamp(source.height, 1, 16384));
@@ -609,7 +658,24 @@ QImage ArtifactSolidImageLayer::toQImage() const {
   impl_->cachedGradientCenterY_ = gradientCenterY();
   impl_->cachedGradientScale_ = gradientScale();
   impl_->cachedGradientOffset_ = gradientOffset();
+  ++impl_->cachedImageGeneration_;
   return impl_->cachedImage_;
+}
+
+const ArtifactCore::ImageF32x4_RGBA*
+ArtifactSolidImageLayer::resolveLayerSourceOverride() const {
+  if (fillType() == ArtifactSolidFillType::Solid) {
+    return nullptr;
+  }
+  const QImage& fillImage = currentFillImage();
+  if (fillImage.isNull()) {
+    return nullptr;
+  }
+  if (impl_->sourceBufferGeneration_ != impl_->cachedImageGeneration_) {
+    impl_->sourceBuffer_ = solidFillToFrameBuffer(fillImage);
+    impl_->sourceBufferGeneration_ = impl_->cachedImageGeneration_;
+  }
+  return &impl_->sourceBuffer_;
 }
 
 QImage ArtifactSolidImageLayer::getThumbnail(int width, int height) const
