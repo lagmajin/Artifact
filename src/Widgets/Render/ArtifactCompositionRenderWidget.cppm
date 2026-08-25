@@ -36,6 +36,7 @@ module Artifact.Widgets.CompositionRenderWidget;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Camera;
 import Artifact.Application.Manager;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Layers.Selection.Manager;
@@ -1006,6 +1007,18 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                   ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hit.layer);
                   
                   QMenu menu(this);
+                  // Two-node camera helper: promote a selected camera layer
+                  // to the composition render camera.
+                  if (dynamic_cast<ArtifactCameraLayer *>(hit.layer.get())) {
+                      menu.addAction("Set as Active Camera",
+                                     [layer = hit.layer]() {
+                          if (auto *camera = dynamic_cast<ArtifactCameraLayer *>(
+                                  layer.get())) {
+                              camera->setActiveCamera(true);
+                          }
+                      });
+                      menu.addSeparator();
+                  }
                   menu.addAction("Center in Comp", [layer = hit.layer, comp]() {
                       auto size = comp->settings().compositionSize();
                       auto& t3 = layer->transform3D();

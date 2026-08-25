@@ -262,6 +262,7 @@ import Time.Rational;
 
 import Artifact.Render.Pipeline;
 import Artifact.Render.MotionBlurPass;
+import Artifact.Render.DepthOfFieldPass;
 import Artifact.Render.FinalPostProcess;
 import Artifact.Color.OCIOManager;
 import Artifact.Widgets.ViewportColorPipeline;
@@ -5833,6 +5834,47 @@ struct MotionPathTangentSnapshot {
 
 
 
+class CameraPoiUndoCommand final : public UndoCommand {
+ public:
+  CameraPoiUndoCommand(ArtifactAbstractLayerPtr layer, QVector3D before,
+                       QVector3D after)
+      : layer_(layer), before_(before), after_(after) {}
+
+  void undo() override { apply(before_); }
+  void redo() override { apply(after_); }
+  QString label() const override {
+    return QStringLiteral("Move Camera Point of Interest");
+  }
+
+ private:
+  void apply(const QVector3D &poi) {
+    auto layer = layer_.lock();
+    if (!layer) return;
+    if (auto *camera = dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
+      camera->setPointOfInterest(poi);
+      publishLayerModifiedForCamera(layer);
+    }
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  static void publishLayerModifiedForCamera(
+      const ArtifactAbstractLayerPtr &layer) {
+    layer->changed();
+    if (auto *comp =
+            static_cast<ArtifactAbstractComposition *>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  QVector3D before_;
+  QVector3D after_;
+};
+
 class MotionPathUndoCommand final : public UndoCommand {
 
 public:
@@ -10182,6 +10224,7 @@ public:
       ArtifactCore::RotoBrushStrokeType::Foreground;
   std::unique_ptr<ViewportColorPipeline> viewportColorPipeline_;
   std::unique_ptr<MotionBlurPass> motionBlurPass_;
+  std::unique_ptr<DepthOfFieldPass> depthOfFieldPass_;
 
   Diligent::ITextureView *applyDisplayColorTransform(
       Diligent::ITextureView *source,
@@ -13452,6 +13495,13 @@ public:
 
   // A historical fixed-Plane frame is edited without moving the playhead.
   bool isDraggingPastPlaneFrame_ = false;
+  // Two-node camera POI handle drag state.
+  bool isDraggingCameraPoi_ = false;
+  ArtifactAbstractLayerWeak draggingCameraPoiLayer_;
+  QVector3D cameraPoiBefore_;
+  QVector3D cameraPoiDragPlanePoint_;
+  QVector3D cameraPoiDragPlaneNormal_;
+
   ArtifactAbstractLayerWeak draggingPastPlaneLayer_;
   int64_t draggingPastPlaneFrame_ = 0;
   MotionPathPositionSnapshot draggingPastPlaneBefore_;
@@ -14341,6 +14391,43 @@ public:
     draggingPastPlaneFrame_ = 0;
     draggingPastPlaneBefore_ = {};
     draggingPastPlaneStartHit_ = {};
+  }
+
+  void beginCameraPoiDrag(const ArtifactAbstractLayerPtr &layer,
+                          const QVector3D &before,
+                          const QVector3D &planePoint,
+                          const QVector3D &planeNormal) {
+    draggingCameraPoiLayer_ = layer;
+    cameraPoiBefore_ = before;
+    cameraPoiDragPlanePoint_ = planePoint;
+    cameraPoiDragPlaneNormal_ = planeNormal;
+    isDraggingCameraPoi_ = true;
+  }
+
+  void clearCameraPoiDrag() {
+    isDraggingCameraPoi_ = false;
+    draggingCameraPoiLayer_.reset();
+    cameraPoiBefore_ = {};
+    cameraPoiDragPlanePoint_ = {};
+    cameraPoiDragPlaneNormal_ = {};
+  }
+
+  // Intersect a picking ray with the POI drag plane. The plane passes through
+  // the POI start position and faces the viewing camera, so the drag maps
+  // pointer motion into the world plane the user sees.
+  bool applyCameraPoiDrag(const Ray &ray, QVector3D &outPoi) const {
+    auto layer = draggingCameraPoiLayer_.lock();
+    if (!isDraggingCameraPoi_ || !layer) return false;
+    const float denominator =
+        QVector3D::dotProduct(ray.direction, cameraPoiDragPlaneNormal_);
+    if (std::abs(denominator) <= 0.000001f) return false;
+    const float distance =
+        QVector3D::dotProduct(cameraPoiDragPlanePoint_ - ray.origin,
+                              cameraPoiDragPlaneNormal_) /
+        denominator;
+    if (distance <= 0.0f) return false;
+    outPoi = ray.origin + ray.direction * distance;
+    return true;
   }
 
   bool applyPastPlaneFrameDrag(const Ray &ray) {
@@ -23706,6 +23793,56 @@ if (event->button() == Qt::LeftButton &&
 
 
 
+  // Two-node camera POI handle drag. Tested before the motion-path block so
+  // the POI cross owns clicks near it when the camera layer is selected.
+  if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
+      selectedLayer && comp && impl_->renderer_ &&
+      selectedCameraPoiHoverable(selectedLayer)) {
+    const QMatrix4x4 &poiView =
+        impl_->viewportOrientationMatricesValid_
+            ? impl_->viewportOrientationViewForOverlay_
+            : impl_->gizmo3DCameraMatricesValid_
+                  ? impl_->gizmo3DViewMatrix_
+                  : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4 &poiProj =
+        impl_->viewportOrientationMatricesValid_
+            ? impl_->viewportOrientationProjectionForOverlay_
+            : impl_->gizmo3DCameraMatricesValid_
+                  ? impl_->gizmo3DProjectionMatrix_
+                  : impl_->renderer_->getProjectionMatrix();
+    const QRect poiViewport(
+        0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
+        std::max(1, static_cast<int>(impl_->hostHeight_)));
+    auto *camera =
+        dynamic_cast<ArtifactCameraLayer *>(selectedLayer.get());
+    const QVector3D poiWorld = camera->pointOfInterest();
+    const QPointF poiScreen =
+        cameraPoiHandleScreenPos(selectedLayer, poiView, poiProj, poiViewport);
+    if (!poiScreen.isNull()) {
+      const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
+      const float hitRadius =
+          18.0f * std::max(1.0f, impl_->devicePixelRatio_);
+      const float dx = static_cast<float>(physicalPos.x()) -
+                       static_cast<float>(poiScreen.x());
+      const float dy = static_cast<float>(physicalPos.y()) -
+                       static_cast<float>(poiScreen.y());
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        // Drag plane faces the viewing camera through the POI.
+        const QMatrix4x4 viewInverse = poiView.inverted();
+        const QVector3D planeNormal =
+            viewInverse.mapVector(QVector3D(0.0f, 0.0f, 1.0f)).normalized();
+        impl_->beginCameraPoiDrag(selectedLayer, poiWorld, poiWorld,
+                                  planeNormal);
+        setInfoOverlayText(QStringLiteral("Camera POI"),
+                           QStringLiteral("Drag to move Point of Interest"));
+        notifyViewportInteractionActivity();
+        markRenderDirty();
+        event->accept();
+        return;
+      }
+    }
+  }
+
   if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
 
       impl_->showMotionPathOverlay_ && selectedLayer && comp &&
@@ -25198,6 +25335,25 @@ void CompositionRenderController::handleMouseMove(
   }
 
 
+
+  if (impl_->isDraggingCameraPoi_) {
+    if (impl_->renderer_) {
+      const Ray poiRay = createPickingRay(viewportPos * impl_->devicePixelRatio_);
+      QVector3D nextPoi;
+      if (impl_->applyCameraPoiDrag(poiRay, nextPoi)) {
+        if (auto layer = impl_->draggingCameraPoiLayer_.lock()) {
+          if (auto *camera =
+                  dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
+            camera->setPointOfInterest(nextPoi);
+            impl_->publishLayerModified(layer, true);
+            notifyViewportInteractionActivity();
+            markRenderDirty();
+            return;
+          }
+        }
+      }
+    }
+  }
 
   if (impl_->isDraggingPastPlaneFrame_) {
     const Ray ray = createPickingRay(viewportPos * impl_->devicePixelRatio_);
@@ -26808,6 +26964,21 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 bool CompositionRenderController::cancelGizmoInteraction() {
+  // Cancel an in-progress POI drag, restoring the pre-drag value.
+  if (impl_->isDraggingCameraPoi_) {
+    if (auto layer = impl_->draggingCameraPoiLayer_.lock()) {
+      if (auto *camera =
+              dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
+        camera->setPointOfInterest(impl_->cameraPoiBefore_);
+      }
+    }
+    impl_->clearCameraPoiDrag();
+    impl_->invalidateOverlayComposite();
+    finishViewportInteraction();
+    markRenderDirty();
+    return true;
+  }
+
   if (impl_->gizmo_ && impl_->gizmo_->cancelInteraction()) {
     impl_->invalidateBaseComposite();
     impl_->invalidateOverlayComposite();
@@ -27306,6 +27477,26 @@ void CompositionRenderController::handleMouseRelease() {
     impl_->motionPathCache_.valid = false;
     impl_->invalidateOverlayComposite();
     markRenderDirty();
+  }
+
+  if (impl_->isDraggingCameraPoi_) {
+    auto poiLayer = impl_->draggingCameraPoiLayer_.lock();
+    if (poiLayer) {
+      if (auto *camera =
+              dynamic_cast<ArtifactCameraLayer *>(poiLayer.get())) {
+        const QVector3D after = camera->pointOfInterest();
+        if ((after - impl_->cameraPoiBefore_).lengthSquared() > 0.000001f) {
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<CameraPoiUndoCommand>(
+                poiLayer, impl_->cameraPoiBefore_, after));
+          }
+        }
+      }
+    }
+    impl_->clearCameraPoiDrag();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
   }
 
   if (impl_->isDraggingPastPlaneFrame_) {
@@ -30480,9 +30671,87 @@ bool CompositionRenderController::isDebugMode() const {
 
 
 
+namespace {
+
+// Shared POI-handle hit geometry for press/cursor paths. Returns the screen
+// position of the selected camera's POI, or a null point when not hoverable.
+QPointF cameraPoiHandleScreenPos(
+    const ArtifactAbstractLayerPtr &layer,
+    const QMatrix4x4 &view, const QMatrix4x4 &projection,
+    const QRect &viewport) {
+  auto *camera =
+      layer ? dynamic_cast<ArtifactCameraLayer *>(layer.get()) : nullptr;
+  if (!camera || !camera->pointOfInterestEnabled()) {
+    return {};
+  }
+  const QVector3D screen = ViewportMath::projectToTopDown(
+      camera->pointOfInterest(), view, projection, viewport);
+  if (!std::isfinite(screen.x()) || !std::isfinite(screen.y()) ||
+      screen.z() < 0.0f || screen.z() > 1.0f) {
+    return {};
+  }
+  return QPointF(static_cast<double>(screen.x()),
+                 static_cast<double>(screen.y()));
+}
+
+bool selectedCameraPoiHoverable(const ArtifactAbstractLayerPtr &layer) {
+  auto *camera =
+      layer ? dynamic_cast<ArtifactCameraLayer *>(layer.get()) : nullptr;
+  return camera && camera->pointOfInterestEnabled() && !layer->isLocked() &&
+         !layer->isSelectionLocked();
+}
+
+} // namespace
+
 Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
     const QPointF &viewportPos) const {
+
+  // Two-node camera POI handle cursor (checked first so it wins over gizmos).
+  {
+    auto *appManager = ArtifactApplicationManager::instance();
+    auto *toolManager = appManager ? appManager->toolManager() : nullptr;
+    const ToolType currentTool =
+        toolManager ? toolManager->activeTool() : ToolType::Selection;
+    auto compCursor = impl_->previewPipeline_.composition();
+    auto layerCursor =
+        (compCursor && !impl_->selectedLayerId_.isNil())
+            ? compCursor->layerById(impl_->selectedLayerId_)
+            : ArtifactAbstractLayerPtr{};
+    if (currentTool != ToolType::Pen && selectedCameraPoiHoverable(layerCursor) &&
+        impl_->renderer_) {
+      const QMatrix4x4 &poiView =
+          impl_->viewportOrientationMatricesValid_
+              ? impl_->viewportOrientationViewForOverlay_
+              : impl_->gizmo3DCameraMatricesValid_
+                    ? impl_->gizmo3DViewMatrix_
+                    : impl_->renderer_->getViewMatrix();
+      const QMatrix4x4 &poiProj =
+          impl_->viewportOrientationMatricesValid_
+              ? impl_->viewportOrientationProjectionForOverlay_
+              : impl_->gizmo3DCameraMatricesValid_
+                    ? impl_->gizmo3DProjectionMatrix_
+                    : impl_->renderer_->getProjectionMatrix();
+      const QRect poiViewport(
+          0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
+          std::max(1, static_cast<int>(impl_->hostHeight_)));
+      const QPointF hit = cameraPoiHandleScreenPos(
+          layerCursor, poiView, poiProj, poiViewport);
+      if (!hit.isNull()) {
+        const QPointF phys = viewportPos * impl_->devicePixelRatio_;
+        const float hitRadius =
+            18.0f * std::max(1.0f, impl_->devicePixelRatio_);
+        const float dx = static_cast<float>(phys.x()) -
+                         static_cast<float>(hit.x());
+        const float dy = static_cast<float>(phys.y()) -
+                         static_cast<float>(hit.y());
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+          return Qt::SizeAllCursor;
+        }
+      }
+    }
+  }
+
 
   const auto *app = ArtifactApplicationManager::instance();
 
@@ -32399,6 +32668,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const auto appSettings = ArtifactCore::ArtifactAppSettings::instance();
       return appSettings && appSettings->timelineMotionBlurActive();
     }();
+    // Camera-layer motion blur also consumes the velocity target.
+    const bool cameraMotionBlurRequested = [&]() {
+      for (const auto &l : layers) {
+        if (auto cam = dynamic_cast<ArtifactCameraLayer *>(l.get())) {
+          if (cam->motionBlur() && cam->blurAmount() > 0.0f) return true;
+        }
+      }
+      return false;
+    }();
+    // Depth of field consumes the active camera lens parameters.
+    const bool dofPassRequested =
+        activeCamera &&
+        activeCamera->depthOfFieldParameters().cocScale > 0.0f;
     // Anti-aliasing quality mode: 0=Off, 1=FXAA, 2=MSAA 4x.
     const int antiAliasingMode = []() {
       const auto appSettings = ArtifactCore::ArtifactAppSettings::instance();
@@ -32421,7 +32703,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             RenderConfig::PipelineFormatF16,
 
-            auxiliary3DChannelRequested || motionBlurVelocityRequested);
+            auxiliary3DChannelRequested || motionBlurVelocityRequested ||
+            cameraMotionBlurRequested);
 
         if (!initializedWithF16) {
           qWarning() << "[CompositionView] RGBA16_FLOAT pipeline unavailable;"
@@ -32436,7 +32719,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               RenderConfig::PipelineFormatF32,
 
-              auxiliary3DChannelRequested || motionBlurVelocityRequested);
+              auxiliary3DChannelRequested || motionBlurVelocityRequested ||
+              cameraMotionBlurRequested);
         }
 
         if (!ensurePreviewRenderPipelineDepthSlot(
@@ -34013,6 +34297,85 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 tempUAV = resources.tempUAV;
               }
               }
+
+            // Camera-layer motion blur: same velocity/depth contract,
+            // shutter driven by the active camera's Blur Amount.
+            const auto cameraPostDepthSRV =
+                (renderer_ && previewRenderSlot.depthTargetView)
+                    ? renderer_->offscreenTextureShaderResourceView(
+                          previewRenderSlot.depthTargetView)
+                    : nullptr;
+            if (has3DCamera && activeCamera && activeCamera->motionBlur() &&
+                cameraPostDepthSRV &&
+                resources.pipeline && resources.accumSRV &&
+                resources.pipeline->hasVelocityTarget() &&
+                renderer_ && renderer_->device() &&
+                renderer_->immediateContext()) {
+              MotionBlurSettings cameraMotionBlurSettings;
+              cameraMotionBlurSettings.enabled = true;
+              cameraMotionBlurSettings.shutterAngle =
+                  360.0f * std::clamp(activeCamera->blurAmount() / 100.0f,
+                                      0.0f, 1.0f);
+              cameraMotionBlurSettings.shutterPhase = 0.0f;
+              cameraMotionBlurSettings.sampleCount =
+                  static_cast<unsigned>(previewDownsample_ > 1 ? 4 : 8);
+              if (cameraMotionBlurSettings.shutterAngle > 0.0f &&
+                  motionBlurPass_->apply(
+                      renderer_->immediateContext(), resources.accumSRV,
+                      resources.pipeline->velocitySRV(), cameraPostDepthSRV,
+                      resources.pipeline->tempUAV(),
+                      static_cast<unsigned>(rcw), static_cast<unsigned>(rch),
+                      cameraMotionBlurSettings)) {
+                resources.pipeline->swapAccumAndTemp();
+                resources.accumSRV = resources.pipeline->accumSRV();
+                resources.tempUAV = resources.pipeline->tempUAV();
+                accumSRV = resources.accumSRV;
+                tempUAV = resources.tempUAV;
+              }
+            }
+
+            // Depth of field from the active camera lens parameters.
+            if (dofPassRequested && has3DCamera && cameraPostDepthSRV &&
+                resources.pipeline && renderer_ && renderer_->device() &&
+                renderer_->immediateContext()) {
+              if (!depthOfFieldPass_) {
+                depthOfFieldPass_ = std::make_unique<DepthOfFieldPass>();
+                depthOfFieldPass_->initialize(renderer_->device(),
+                                              renderer_->immediateContext());
+              }
+              const auto lensParams =
+                  activeCamera ? activeCamera->depthOfFieldParameters()
+                               : CameraDOFParameters{};
+              DepthOfFieldSettings dofSettings;
+              dofSettings.enabled = depthOfFieldPass_->ready();
+              dofSettings.focusDistance = lensParams.focusDistance;
+              dofSettings.nearClip =
+                  activeCamera ? activeCamera->nearClipPlane() : 1.0f;
+              dofSettings.farClip =
+                  activeCamera ? activeCamera->farClipPlane() : 100000.0f;
+              dofSettings.maxCocRadius = 16.0f;
+              dofSettings.cocScale = lensParams.cocScale;
+              // Thin-lens model: authored aperture acts as an f-stop scale
+              // and focal length comes from the camera's 35mm-equivalent.
+              dofSettings.fStop =
+                  activeCamera && activeCamera->depthOfField()
+                      ? activeCamera->aperture()
+                      : 0.0f;
+              dofSettings.focalLength =
+                  activeCamera ? activeCamera->focalLength() : 50.0f;
+              dofSettings.sampleCount = previewDownsample_ > 1 ? 8u : 16u;
+              if (depthOfFieldPass_->apply(
+                      renderer_->immediateContext(), resources.accumSRV,
+                      cameraPostDepthSRV, resources.pipeline->tempUAV(),
+                      static_cast<unsigned>(rcw), static_cast<unsigned>(rch),
+                      dofSettings)) {
+                resources.pipeline->swapAccumAndTemp();
+                resources.accumSRV = resources.pipeline->accumSRV();
+                resources.tempUAV = resources.pipeline->tempUAV();
+                accumSRV = resources.accumSRV;
+                tempUAV = resources.tempUAV;
+              }
+            }
 
             // Geometry resolves into a single-sample composition target.
             // Apply FXAA only when the frame contains visible 3D, after AO and
@@ -37524,6 +37887,12 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
         renderer_.get(), cameraOverlayVisual, cameraViewMatrix,
         cameraProjMatrix,
         activeCamera && activeCamera->id() == selectedLayerId_);
+
+    // Two-node camera POI handle for the selected camera layer.
+    if (selectedLayer && selectedLayer->is3D()) {
+      ::Artifact::drawCameraPoiOverlay(renderer_.get(), selectedLayer,
+                                       cameraViewMatrix, cameraProjMatrix);
+    }
 
     if (activeCamera) {
       const QString cameraHud =

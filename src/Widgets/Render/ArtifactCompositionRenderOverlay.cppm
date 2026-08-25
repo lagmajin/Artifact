@@ -1473,11 +1473,9 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                                ? QStringLiteral("Ortho %1 x %2")
                                      .arg(camera->orthoWidth(), 0, 'f', 0)
                                      .arg(camera->orthoHeight(), 0, 'f', 0)
-                               : (camera->useManualFov()
-                                      ? QStringLiteral("FOV %1 deg")
-                                            .arg(camera->fov(), 0, 'f', 1)
-                                      : QStringLiteral("Zoom %1 px")
-                                            .arg(camera->zoom(), 0, 'f', 0));
+                               : QStringLiteral("%1mm | FOV %2")
+                                     .arg(camera->focalLength(), 0, 'f', 1)
+                                     .arg(camera->fov(), 0, 'f', 1);
   const QString dofText =
       camera->depthOfField() ? QStringLiteral("DOF On") : QStringLiteral("DOF Off");
   const QString motionBlurText =
@@ -1499,6 +1497,46 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                      isActiveCamera ? FloatColor{0.74f, 0.94f, 0.82f, 1.0f}
                                     : FloatColor{0.74f, 0.82f, 0.90f, 1.0f},
                      Qt::AlignLeft | Qt::AlignVCenter);
+}
+
+void drawCameraPoiOverlay(ArtifactIRenderer *renderer,
+                          const ArtifactAbstractLayerPtr &layer,
+                          const QMatrix4x4 &cameraView,
+                          const QMatrix4x4 &cameraProj)
+{
+  if (!renderer || !layer) {
+    return;
+  }
+  const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
+  if (!camera || !camera->pointOfInterestEnabled()) {
+    return;
+  }
+
+  // The POI is authored in the camera's parent (usually world) space, which
+  // matches the space the camera transform maps into.
+  const QVector3D poi = camera->pointOfInterest();
+  renderer->set3DCameraMatrices(cameraView, cameraProj);
+
+  const FloatColor shadow{0.02f, 0.03f, 0.04f, 0.85f};
+  const FloatColor poiColor{0.55f, 0.95f, 1.0f, 0.98f};
+  constexpr float kCrossExtent = 12.0f;
+  const auto line = [&](float ax, float ay, float az,
+                        float bx, float by, float bz, float thickness) {
+    renderer->draw3DLine({ax, ay, az}, {bx, by, bz}, shadow, thickness * 2.4f);
+    renderer->draw3DLine({ax, ay, az}, {bx, by, bz}, poiColor, thickness);
+  };
+  line(poi.x() - kCrossExtent, poi.y(), poi.z(),
+       poi.x() + kCrossExtent, poi.y(), poi.z(), 1.6f);
+  line(poi.x(), poi.y() - kCrossExtent, poi.z(),
+       poi.x(), poi.y() + kCrossExtent, poi.z(), 1.6f);
+  line(poi.x(), poi.y(), poi.z() - kCrossExtent,
+       poi.x(), poi.y(), poi.z() + kCrossExtent, 1.6f);
+  renderer->drawGizmoRing(float3{poi.x(), poi.y(), poi.z()},
+                          float3{0.0f, 0.0f, 1.0f}, kCrossExtent * 0.8f,
+                          poiColor, 1.6f);
+
+  renderer->flushGizmo3D();
+  renderer->reset3DCameraMatrices();
 }
 
 void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,

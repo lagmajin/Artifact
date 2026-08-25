@@ -182,6 +182,27 @@ inline QRectF collisionLocalBounds(const ArtifactAbstractLayer* layer)
                       circleRadius * 2.0, circleRadius * 2.0);
     }
 
+    if (shape == 3) {
+        // Clone instances use the outline's bounding box as a conservative
+        // proxy; vertex-exact collision stays with the solvers.
+        const std::vector<QPointF> outline = layer->collisionOutlineLocalPoints();
+        if (outline.size() >= 3) {
+            qreal minX = outline.front().x();
+            qreal minY = outline.front().y();
+            qreal maxX = minX;
+            qreal maxY = minY;
+            for (const QPointF& point : outline) {
+                minX = std::min(minX, point.x());
+                minY = std::min(minY, point.y());
+                maxX = std::max(maxX, point.x());
+                maxY = std::max(maxY, point.y());
+            }
+            return QRectF(QPointF(minX, minY), QPointF(maxX, maxY))
+                .translated(static_cast<qreal>(offsetX),
+                            static_cast<qreal>(offsetY));
+        }
+    }
+
     return localBounds.translated(static_cast<qreal>(offsetX),
                                   static_cast<qreal>(offsetY));
 }

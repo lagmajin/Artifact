@@ -1,6 +1,7 @@
 module;
 #include <QVariant>
 #include <QString>
+#include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -11,6 +12,8 @@ import Artifact.Effect.Abstract;
 import Graphics.Effect.SurfaceFX;
 import Utils.String.UniString;
 import Property.Abstract;
+import Asset.Database;
+import AssetType;
 
 export namespace Artifact {
 
@@ -20,6 +23,22 @@ public:
 
     ArtifactCore::SurfaceFXData& data() noexcept { return data_; }
     const ArtifactCore::SurfaceFXData& data() const noexcept { return data_; }
+    void setData(const ArtifactCore::SurfaceFXData& data) {
+        data_ = data;
+        for (auto &element : data_.elements) {
+            if (element.type == ArtifactCore::SurfaceFXElementType::TextureDecal &&
+                element.assetId.isNull() && !element.texturePath.trimmed().isEmpty()) {
+                element.assetId = ArtifactCore::AssetDatabase::instance().registerAsset(
+                    element.texturePath, ArtifactCore::AssetType::Image);
+            }
+        }
+        selectedElementIndex_ = data_.elements.empty()
+            ? 0
+            : std::clamp(selectedElementIndex_, 0,
+                         static_cast<int>(data_.elements.size()) - 1);
+        presetName_ = QStringLiteral("custom");
+        syncImpl();
+    }
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override {
         std::vector<ArtifactCore::AbstractProperty> properties;
@@ -27,6 +46,13 @@ public:
             ArtifactCore::AbstractProperty property;
             property.setName(name);
             property.setType(ArtifactCore::PropertyType::Float);
+            property.setValue(value);
+            properties.push_back(property);
+        };
+        const auto addString = [&](const QString& name, const QString& value) {
+            ArtifactCore::AbstractProperty property;
+            property.setName(name);
+            property.setType(ArtifactCore::PropertyType::String);
             property.setValue(value);
             properties.push_back(property);
         };
@@ -58,7 +84,15 @@ public:
         elementCount.setValue(static_cast<int>(data_.elements.size()));
         properties.push_back(elementCount);
         if (!data_.elements.empty()) {
-            const auto& element = data_.elements.front();
+            ArtifactCore::AbstractProperty elementIndex;
+            elementIndex.setName(QStringLiteral("Surface Element Index"));
+            elementIndex.setType(ArtifactCore::PropertyType::Integer);
+            elementIndex.setValue(selectedElementIndex_);
+            properties.push_back(elementIndex);
+            const auto safeIndex = static_cast<std::size_t>(std::clamp(
+                selectedElementIndex_, 0,
+                static_cast<int>(data_.elements.size()) - 1));
+            const auto& element = data_.elements[safeIndex];
             ArtifactCore::AbstractProperty elementType;
             elementType.setName(QStringLiteral("Surface Element Type"));
             elementType.setType(ArtifactCore::PropertyType::String);
@@ -74,6 +108,21 @@ public:
             addFloat(QStringLiteral("Surface Element Roughness"), element.roughness);
             addFloat(QStringLiteral("Surface Element In Time"), element.inTime);
             addFloat(QStringLiteral("Surface Element Out Time"), element.outTime);
+            if (element.type == ArtifactCore::SurfaceFXElementType::TextureDecal) {
+                addString(QStringLiteral("Surface Element Texture Path"), element.texturePath);
+                addString(QStringLiteral("Surface Element Asset ID"),
+                          element.assetId.toString(QUuid::WithoutBraces));
+                addString(QStringLiteral("Surface Element Blend Mode"), element.blendMode);
+                addFloat(QStringLiteral("Surface Element Tint R"), element.tintR);
+                addFloat(QStringLiteral("Surface Element Tint G"), element.tintG);
+                addFloat(QStringLiteral("Surface Element Tint B"), element.tintB);
+                addFloat(QStringLiteral("Surface Element Tint A"), element.tintA);
+                addFloat(QStringLiteral("Surface Element Pivot X"), element.pivotX);
+                addFloat(QStringLiteral("Surface Element Pivot Y"), element.pivotY);
+                addFloat(QStringLiteral("Surface Element Fade In"), element.fadeIn);
+                addFloat(QStringLiteral("Surface Element Fade Out"), element.fadeOut);
+                addFloat(QStringLiteral("Surface Element Growth"), element.growth);
+            }
             ArtifactCore::AbstractProperty seedOffset;
             seedOffset.setName(QStringLiteral("Surface Element Seed Offset"));
             seedOffset.setType(ArtifactCore::PropertyType::Integer);
@@ -113,9 +162,21 @@ public:
                 element.id = QStringLiteral("surface-element-%1").arg(index + 1);
                 element.seedOffset = static_cast<int>(index);
             }
+            selectedElementIndex_ = data_.elements.empty()
+                ? 0
+                : std::clamp(selectedElementIndex_, 0,
+                             static_cast<int>(data_.elements.size()) - 1);
         }
+        else if (propertyName == QStringLiteral("Surface Element Index"))
+            selectedElementIndex_ = data_.elements.empty()
+                ? 0
+                : std::clamp(value.toInt(), 0,
+                             static_cast<int>(data_.elements.size()) - 1);
         else if (!data_.elements.empty()) {
-            auto& element = data_.elements.front();
+            const auto safeIndex = static_cast<std::size_t>(std::clamp(
+                selectedElementIndex_, 0,
+                static_cast<int>(data_.elements.size()) - 1));
+            auto& element = data_.elements[safeIndex];
             if (propertyName == QStringLiteral("Surface Element Type"))
                 element.type = elementTypeFromName(value.toString());
             else if (propertyName == QStringLiteral("Surface Element X"))
@@ -138,6 +199,42 @@ public:
                 element.inTime = std::isfinite(value.toFloat()) ? value.toFloat() : 0.0f;
             else if (propertyName == QStringLiteral("Surface Element Out Time"))
                 element.outTime = std::isfinite(value.toFloat()) ? value.toFloat() : -1.0f;
+            else if (propertyName == QStringLiteral("Surface Element Texture Path"))
+            {
+                element.texturePath = value.toString().trimmed().left(32768);
+                element.assetId = element.texturePath.isEmpty()
+                    ? QUuid{}
+                    : ArtifactCore::AssetDatabase::instance().registerAsset(
+                          element.texturePath, ArtifactCore::AssetType::Image);
+            }
+            else if (propertyName == QStringLiteral("Surface Element Asset ID"))
+                element.assetId = QUuid::fromString(value.toString().trimmed());
+            else if (propertyName == QStringLiteral("Surface Element Blend Mode")) {
+                const QString mode = value.toString().trimmed().toLower();
+                element.blendMode = mode == QStringLiteral("multiply") ||
+                                    mode == QStringLiteral("screen") ||
+                                    mode == QStringLiteral("add") ||
+                                    mode == QStringLiteral("darken")
+                    ? mode : QStringLiteral("normal");
+            }
+            else if (propertyName == QStringLiteral("Surface Element Tint R"))
+                element.tintR = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
+            else if (propertyName == QStringLiteral("Surface Element Tint G"))
+                element.tintG = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
+            else if (propertyName == QStringLiteral("Surface Element Tint B"))
+                element.tintB = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
+            else if (propertyName == QStringLiteral("Surface Element Tint A"))
+                element.tintA = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
+            else if (propertyName == QStringLiteral("Surface Element Pivot X"))
+                element.pivotX = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.5f);
+            else if (propertyName == QStringLiteral("Surface Element Pivot Y"))
+                element.pivotY = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.5f);
+            else if (propertyName == QStringLiteral("Surface Element Fade In"))
+                element.fadeIn = finiteClamp(value.toFloat(), 0.0f, 3600.0f, 0.0f);
+            else if (propertyName == QStringLiteral("Surface Element Fade Out"))
+                element.fadeOut = finiteClamp(value.toFloat(), 0.0f, 3600.0f, 0.0f);
+            else if (propertyName == QStringLiteral("Surface Element Growth"))
+                element.growth = finiteClamp(value.toFloat(), -1.0f, 4.0f, 0.0f);
             else if (propertyName == QStringLiteral("Surface Element Seed Offset"))
                 element.seedOffset = value.toInt();
 
@@ -161,7 +258,8 @@ public:
             if (element.outTime >= 0.0f && element.outTime < element.inTime)
                 element.outTime = element.inTime;
         }
-        if (propertyName != QStringLiteral("Surface Preset"))
+        if (propertyName != QStringLiteral("Surface Preset") &&
+            propertyName != QStringLiteral("Surface Element Index"))
             presetName_ = QStringLiteral("custom");
         syncImpl();
     }
@@ -173,6 +271,9 @@ private:
         const bool knownPreset =
             presetName == QStringLiteral("cameraLensFineScratches") ||
             presetName == QStringLiteral("cameraLensFingerSmudge") ||
+            presetName == QStringLiteral("cameraLensBloodFineSpray") ||
+            presetName == QStringLiteral("cameraLensBloodHeavySplash") ||
+            presetName == QStringLiteral("cameraLensMudHit") ||
             presetName == QStringLiteral("windowLightRain") ||
             presetName == QStringLiteral("windowHeavyRain") ||
             presetName == QStringLiteral("windowCondensation");
@@ -180,6 +281,7 @@ private:
             return;
         presetName_ = presetName;
         data_.elements.clear();
+        selectedElementIndex_ = 0;
         auto addElement = [&](const QString& id,
                               ArtifactCore::SurfaceFXElementType type,
                               float x, float y, float width, float height,
@@ -205,6 +307,44 @@ private:
         } else if (presetName == QStringLiteral("cameraLensFingerSmudge")) {
             addElement(QStringLiteral("lens-smudge"), ArtifactCore::SurfaceFXElementType::Dirt,
                        0.52f, 0.48f, 0.22f, 0.16f, 0.5f, 0.35f, 3);
+        } else if (presetName == QStringLiteral("cameraLensBloodFineSpray")) {
+            for (int i = 0; i < 9; ++i) {
+                addElement(QStringLiteral("blood-spray-%1").arg(i + 1),
+                           ArtifactCore::SurfaceFXElementType::TextureDecal,
+                           0.18f + 0.075f * static_cast<float>(i),
+                           0.22f + 0.055f * static_cast<float>((i * 5) % 7),
+                           0.018f + 0.006f * static_cast<float>(i % 3),
+                           0.022f + 0.008f * static_cast<float>((i + 1) % 3),
+                           0.75f, 0.72f, 30 + i);
+                auto& blood = data_.elements.back();
+                blood.tintR = 0.42f;
+                blood.tintG = 0.015f;
+                blood.tintB = 0.01f;
+                blood.blendMode = QStringLiteral("multiply");
+                blood.growth = 0.08f;
+            }
+        } else if (presetName == QStringLiteral("cameraLensBloodHeavySplash")) {
+            addElement(QStringLiteral("blood-heavy-main"),
+                       ArtifactCore::SurfaceFXElementType::TextureDecal,
+                       0.22f, 0.16f, 0.54f, 0.48f, 0.9f, 0.82f, 50);
+            auto& blood = data_.elements.back();
+            blood.tintR = 0.34f;
+            blood.tintG = 0.008f;
+            blood.tintB = 0.006f;
+            blood.blendMode = QStringLiteral("multiply");
+            blood.fadeIn = 0.08f;
+            blood.growth = 0.22f;
+        } else if (presetName == QStringLiteral("cameraLensMudHit")) {
+            addElement(QStringLiteral("mud-hit-main"),
+                       ArtifactCore::SurfaceFXElementType::TextureDecal,
+                       0.12f, 0.28f, 0.46f, 0.38f, 0.72f, 0.68f, 60);
+            auto& mud = data_.elements.back();
+            mud.tintR = 0.18f;
+            mud.tintG = 0.095f;
+            mud.tintB = 0.035f;
+            mud.blendMode = QStringLiteral("multiply");
+            mud.fadeIn = 0.1f;
+            mud.growth = 0.12f;
         } else if (presetName == QStringLiteral("windowLightRain")) {
             addElement(QStringLiteral("rain-drop-1"), ArtifactCore::SurfaceFXElementType::Droplet,
                        0.42f, 0.18f, 0.035f, 0.06f, 0.65f, 0.55f, 4);
@@ -229,6 +369,8 @@ private:
 
     static QString elementTypeName(ArtifactCore::SurfaceFXElementType type) {
         switch (type) {
+        case ArtifactCore::SurfaceFXElementType::TextureDecal:
+            return QStringLiteral("textureDecal");
         case ArtifactCore::SurfaceFXElementType::Droplet:
             return QStringLiteral("droplet");
         case ArtifactCore::SurfaceFXElementType::Streak:
@@ -244,6 +386,8 @@ private:
     }
 
     static ArtifactCore::SurfaceFXElementType elementTypeFromName(const QString& name) {
+        if (name == QStringLiteral("textureDecal"))
+            return ArtifactCore::SurfaceFXElementType::TextureDecal;
         if (name == QStringLiteral("droplet"))
             return ArtifactCore::SurfaceFXElementType::Droplet;
         if (name == QStringLiteral("streak"))
@@ -280,6 +424,7 @@ private:
     }
 
     QString presetName_ = QStringLiteral("custom");
+    int selectedElementIndex_ = 0;
     ArtifactCore::SurfaceFXData data_;
 };
 

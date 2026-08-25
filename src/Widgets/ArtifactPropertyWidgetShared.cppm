@@ -180,6 +180,7 @@ bool isComponentActivationProperty(const QString &propertyName) {
       QStringLiteral("component.layout.enabled"),
       QStringLiteral("component.cloner.enabled"),
       QStringLiteral("component.collision.enabled"),
+      QStringLiteral("component.joint.enabled"),
       QStringLiteral("component.crowd.enabled"),
       QStringLiteral("component.particleEmitter.enabled"),
       QStringLiteral("component.fluid.enabled"),

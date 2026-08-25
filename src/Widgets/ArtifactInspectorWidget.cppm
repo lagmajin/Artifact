@@ -1,5 +1,6 @@
 module;
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QAbstractScrollArea>
 #include <QApplication>
 #include <QAction>
@@ -124,6 +125,7 @@ import Artifact.Template.Document;
 import Widgets.CommonStyle;
 import Artifact.Widgets.Inspector.EffectTabSurface;
 import Artifact.Widgets.Inspector.ComponentTabSurface;
+import Artifact.Effect.SurfaceFX;
 import Settings.Accessibility;
 
 import Artifact.Service.Project;
@@ -227,6 +229,37 @@ constexpr int kInspectorRackMarginR = 6;
 constexpr int kInspectorRackMarginB = 6;
 constexpr auto kInspectorContext = "Panel.Inspector";
 
+class SurfaceFXElementSnapshotCommand final : public UndoCommand {
+ public:
+  SurfaceFXElementSnapshotCommand(ArtifactAbstractEffectPtr effect,
+                                  ArtifactCore::SurfaceFXData before,
+                                  ArtifactCore::SurfaceFXData after,
+                                  QString label)
+      : effect_(std::move(effect)), before_(std::move(before)),
+        after_(std::move(after)), label_(std::move(label)) {}
+
+  void redo() override { apply(after_); }
+  void undo() override { apply(before_); }
+  QString label() const override { return label_; }
+
+ private:
+  void apply(const ArtifactCore::SurfaceFXData &data) {
+    auto *surface = effect_
+        ? dynamic_cast<SurfaceFXEffect *>(effect_.get())
+        : nullptr;
+    if (!surface) return;
+    surface->setData(data);
+    if (auto *manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+  }
+
+  ArtifactAbstractEffectPtr effect_;
+  ArtifactCore::SurfaceFXData before_;
+  ArtifactCore::SurfaceFXData after_;
+  QString label_;
+};
+
 QColor themeColor(const QString &value, const QColor &fallback) {
   const QColor color(value);
   return color.isValid() ? color : fallback;
@@ -240,6 +273,7 @@ struct LayerTabComponentState {
   bool layoutEnabled = false;
   bool cloneEnabled = false;
   bool collisionEnabled = false;
+  bool jointEnabled = false;
   bool crowdEnabled = false;
   bool particleEmitterEnabled = false;
   bool fluidEnabled = false;
@@ -268,6 +302,8 @@ LayerTabComponentState collectLayerTabComponentState(
       layerBooleanProperty(layer, QStringLiteral("component.cloner.enabled"));
   state.collisionEnabled = state.hasLayer &&
       layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"));
+  state.jointEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.joint.enabled"));
   state.crowdEnabled = state.hasLayer &&
       layerBooleanProperty(layer, QStringLiteral("component.crowd.enabled"));
   state.particleEmitterEnabled = state.hasLayer &&
@@ -306,6 +342,9 @@ QString layerComponentSummaryText(const LayerTabComponentState &state) {
   }
   if (state.collisionEnabled) {
     active.push_back(QStringLiteral("Collision"));
+  }
+  if (state.jointEnabled) {
+    active.push_back(QStringLiteral("Joint"));
   }
   if (state.crowdEnabled) {
     active.push_back(QStringLiteral("Crowd"));
@@ -3058,6 +3097,9 @@ public:
   InspectorActionButton *effectEnableButton = nullptr;
   ArtifactPropertyWidget *effectPropertyWidget = nullptr;
   InspectorPropertySurface *effectPropertySurface = nullptr;
+  QWidget *surfaceElementPanel = nullptr;
+  InspectorSelectionList *surfaceElementListWidget = nullptr;
+  int surfaceElementIndex_ = 0;
   QPushButton *effectsQuickAddButton = nullptr;
   QString focusedEffectId_;
   ArtifactAbstractLayerPtr lastSyncedLayer_;
@@ -3137,6 +3179,7 @@ public:
   void syncEffectPropertyWidget();
   void syncTemplateParameters();
   void ensureEffectPropertyWidget();
+  void updateSurfaceElementEditor(const ArtifactAbstractEffectPtr &effect);
   void handleApplyLipSyncToSwitchLayer();
   void handleAddEffectClicked(int rackIndex);
   void handleRemoveEffectClicked(int rackIndex);
@@ -3303,6 +3346,60 @@ void ArtifactInspectorWidget::Impl::ensureEffectPropertyWidget() {
   effectPropertySurface->setEditor(effectPropertyWidget);
 }
 
+void ArtifactInspectorWidget::Impl::updateSurfaceElementEditor(
+    const ArtifactAbstractEffectPtr &effect) {
+  if (!surfaceElementPanel || !surfaceElementListWidget) {
+    return;
+  }
+  const auto *surface = effect
+      ? dynamic_cast<const SurfaceFXEffect *>(effect.get())
+      : nullptr;
+  if (!surface) {
+    surfaceElementPanel->setVisible(false);
+    return;
+  }
+
+  surfaceElementPanel->setVisible(true);
+  SelectionActionBlocker blocker(surfaceElementListWidget);
+  surfaceElementListWidget->clear();
+  const auto &elements = surface->data().elements;
+  const auto elementTypeLabel = [](ArtifactCore::SurfaceFXElementType type) {
+    switch (type) {
+    case ArtifactCore::SurfaceFXElementType::Droplet:
+      return QStringLiteral("Droplet");
+    case ArtifactCore::SurfaceFXElementType::Streak:
+      return QStringLiteral("Streak");
+    case ArtifactCore::SurfaceFXElementType::Condensation:
+      return QStringLiteral("Condensation");
+    case ArtifactCore::SurfaceFXElementType::Dirt:
+      return QStringLiteral("Dirt");
+    case ArtifactCore::SurfaceFXElementType::TextureDecal:
+      return QStringLiteral("Texture Decal");
+    case ArtifactCore::SurfaceFXElementType::Scratch:
+    default:
+      return QStringLiteral("Scratch");
+    }
+  };
+  for (int index = 0; index < static_cast<int>(elements.size()); ++index) {
+    const auto &element = elements[static_cast<std::size_t>(index)];
+    QString label = element.id.trimmed();
+    if (label.isEmpty()) {
+      label = QStringLiteral("Element %1").arg(index + 1);
+    }
+    auto *item = new QListWidgetItem(
+        QStringLiteral("%1  ·  %2").arg(label, elementTypeLabel(element.type)),
+        surfaceElementListWidget);
+    item->setData(Qt::UserRole, index);
+  }
+  if (surfaceElementListWidget->count() == 0) {
+    surfaceElementIndex_ = 0;
+    return;
+  }
+  surfaceElementIndex_ = std::clamp(surfaceElementIndex_, 0,
+                                    surfaceElementListWidget->count() - 1);
+  surfaceElementListWidget->setCurrentRow(surfaceElementIndex_);
+}
+
 void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   if (!effectPropertyWidget && focusedEffectId_.trimmed().isEmpty()) {
     if (effectPropertySurface) {
@@ -3336,6 +3433,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
 
   const auto showEffectGuidance = [this](const QString &text,
                                          const bool showPropertyWidget) {
+    if (surfaceElementPanel) {
+      surfaceElementPanel->setVisible(false);
+    }
     effectPropertyWidget->setVisible(showPropertyWidget);
     if (effectPropertySurface) {
       effectPropertySurface->setVisible(showPropertyWidget);
@@ -3410,6 +3510,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     lastEffectPropertyStateSignature_ = stateSignature;
     effectPropertyWidget->setCompositionEffects(comp->getEffects());
     effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
+    updateSurfaceElementEditor(effect);
     effectPropertyWidget->setFilterText(
         effectPropertyFilterEdit ? effectPropertyFilterEdit->text() : QString());
     const bool hasFocus = !resolvedFocusedEffectId.isEmpty();
@@ -3489,6 +3590,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     effectPropertyWidget->setLayer(layer);
   }
   effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
+  updateSurfaceElementEditor(currentEffectById(resolvedFocusedEffectId));
   effectPropertyWidget->setFilterText(
       effectPropertyFilterEdit ? effectPropertyFilterEdit->text() : QString());
 
@@ -3557,7 +3659,8 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
     return QStringLiteral(
         "physics.enabled|component.script.enabled|"
         "component.layout.enabled|component.cloner.enabled|"
-        "component.collision.enabled|component.crowd.enabled|"
+        "component.collision.enabled|component.joint.enabled|"
+        "component.crowd.enabled|"
         "component.particleEmitter.enabled|component.fluid.enabled");
   }
   QStringList filters = {
@@ -3566,6 +3669,7 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
       QStringLiteral("component.layout.enabled"),
       QStringLiteral("component.cloner.enabled"),
       QStringLiteral("component.collision.enabled"),
+      QStringLiteral("component.joint.enabled"),
       QStringLiteral("component.crowd.enabled"),
       QStringLiteral("component.particleEmitter.enabled"),
       QStringLiteral("component.fluid.enabled"),
@@ -3585,6 +3689,9 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   }
   if (layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"))) {
     filters.push_back(QStringLiteral("component.collision."));
+  }
+  if (layerBooleanProperty(layer, QStringLiteral("component.joint.enabled"))) {
+    filters.push_back(QStringLiteral("component.joint."));
   }
   if (layerBooleanProperty(layer, QStringLiteral("component.crowd.enabled"))) {
     filters.push_back(QStringLiteral("component.crowd."));
@@ -3616,6 +3723,9 @@ QString componentInspectorFilter(const QString &componentName) {
   }
   if (componentName == QStringLiteral("Fluid")) {
     return QStringLiteral("component.fluid.");
+  }
+  if (componentName == QStringLiteral("Joint")) {
+    return QStringLiteral("component.joint.");
   }
   return {};
 }
@@ -8295,6 +8405,186 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectEnableButton->setToolTip(
       QStringLiteral("Temporarily bypass the selected effect."));
   detailPanelLayout->addWidget(impl_->effectEnableButton);
+
+  impl_->surfaceElementPanel = new QWidget(detailPanel);
+  impl_->surfaceElementPanel->setVisible(false);
+  auto *surfaceElementLayout = new QVBoxLayout(impl_->surfaceElementPanel);
+  surfaceElementLayout->setContentsMargins(0, 2, 0, 2);
+  surfaceElementLayout->setSpacing(4);
+  auto *surfaceElementTitle = new InspectorChromeLabel(
+      QStringLiteral("Lens Surface Elements"),
+      InspectorChromeLabel::Role::Section, impl_->surfaceElementPanel);
+  surfaceElementTitle->setMinimumHeight(26);
+  applyInspectorLabelPalette(surfaceElementTitle, false);
+  surfaceElementLayout->addWidget(surfaceElementTitle);
+  auto *surfaceElementActions = new QHBoxLayout();
+  surfaceElementActions->setContentsMargins(0, 0, 0, 0);
+  surfaceElementActions->setSpacing(4);
+  auto *addSurfaceElementButton = new InspectorActionButton(
+      QStringLiteral("Add Decal"), impl_->surfaceElementPanel);
+  auto *duplicateSurfaceElementButton = new InspectorActionButton(
+      QStringLiteral("Duplicate"), impl_->surfaceElementPanel);
+  auto *deleteSurfaceElementButton = new InspectorActionButton(
+      QStringLiteral("Delete"), impl_->surfaceElementPanel);
+  auto *moveSurfaceElementUpButton = new InspectorActionButton(
+      QStringLiteral("Up"), impl_->surfaceElementPanel);
+  auto *moveSurfaceElementDownButton = new InspectorActionButton(
+      QStringLiteral("Down"), impl_->surfaceElementPanel);
+  for (auto *button : {addSurfaceElementButton, duplicateSurfaceElementButton,
+                       deleteSurfaceElementButton,
+                       moveSurfaceElementUpButton, moveSurfaceElementDownButton}) {
+    button->setOwnerDrawn(true);
+    button->setMinimumHeight(26);
+    applyInspectorButton(button, false);
+    surfaceElementActions->addWidget(button, 1);
+  }
+  surfaceElementLayout->addLayout(surfaceElementActions);
+  impl_->surfaceElementListWidget = new InspectorSelectionList(
+      impl_->surfaceElementPanel);
+  impl_->surfaceElementListWidget->setObjectName(
+      QStringLiteral("lensSurfaceElementList"));
+  impl_->surfaceElementListWidget->setSelectionMode(
+      QAbstractItemView::SingleSelection);
+  impl_->surfaceElementListWidget->setMinimumHeight(48);
+  impl_->surfaceElementListWidget->setMaximumHeight(132);
+  impl_->surfaceElementListWidget->setSelectionAction(
+      [this](QListWidgetItem *item) {
+        if (!item) {
+          return;
+        }
+        const int index = item->data(Qt::UserRole).toInt();
+        const auto effect = impl_->currentEffectById(impl_->focusedEffectId_);
+        auto *surface = effect
+            ? dynamic_cast<SurfaceFXEffect *>(effect.get())
+            : nullptr;
+        if (!surface) {
+          return;
+        }
+        impl_->surfaceElementIndex_ = std::clamp(index, 0,
+                                                 static_cast<int>(surface->data().elements.size()) - 1);
+        surface->setPropertyValue(
+            ArtifactCore::UniString::fromQString(QStringLiteral("Surface Element Index")),
+            impl_->surfaceElementIndex_);
+        if (impl_->effectPropertyWidget) {
+          impl_->effectPropertyWidget->updateProperties();
+        }
+      });
+  const auto selectedSurfaceElement = [this]() -> SurfaceFXEffect * {
+    const auto effect = impl_->currentEffectById(impl_->focusedEffectId_);
+    return effect ? dynamic_cast<SurfaceFXEffect *>(effect.get()) : nullptr;
+  };
+  const auto refreshSurfaceElementEditor = [this]() {
+    const auto effect = impl_->currentEffectById(impl_->focusedEffectId_);
+    impl_->updateSurfaceElementEditor(effect);
+    if (impl_->effectPropertyWidget) {
+      impl_->effectPropertyWidget->updateProperties();
+    }
+    impl_->scheduleRefresh(ArtifactInspectorWidget::Impl::EffectsDirty);
+  };
+  addSurfaceElementButton->setAction([this, refreshSurfaceElementEditor]() {
+    auto *surface = [&]() -> SurfaceFXEffect * {
+      const auto effect = impl_->currentEffectById(impl_->focusedEffectId_);
+      return effect ? dynamic_cast<SurfaceFXEffect *>(effect.get()) : nullptr;
+    }();
+    if (!surface || surface->data().elements.size() >= 128) return;
+    const auto before = surface->data();
+    auto after = before;
+    ArtifactCore::SurfaceFXElement element;
+    const int index = static_cast<int>(after.elements.size());
+    element.id = QStringLiteral("surface-decal-%1").arg(index + 1);
+    element.type = ArtifactCore::SurfaceFXElementType::TextureDecal;
+    element.x = 0.42f;
+    element.y = 0.42f;
+    element.width = 0.16f;
+    element.height = 0.16f;
+    element.opacity = 0.75f;
+    element.tintR = 0.55f;
+    element.tintG = 0.08f;
+    element.tintB = 0.04f;
+    element.blendMode = QStringLiteral("multiply");
+    element.seedOffset = index;
+    after.elements.push_back(std::move(element));
+    impl_->surfaceElementIndex_ = index;
+    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
+        QStringLiteral("Add Lens Surface Decal")));
+    refreshSurfaceElementEditor();
+  });
+  duplicateSurfaceElementButton->setAction([this, selectedSurfaceElement,
+                                             refreshSurfaceElementEditor]() {
+    auto *surface = selectedSurfaceElement();
+    if (!surface || surface->data().elements.empty()) return;
+    const auto before = surface->data();
+    auto after = before;
+    auto &elements = after.elements;
+    const int index = std::clamp(impl_->surfaceElementIndex_, 0,
+                                 static_cast<int>(elements.size()) - 1);
+    auto copy = elements[static_cast<std::size_t>(index)];
+    copy.id = QStringLiteral("%1-copy").arg(copy.id.trimmed().isEmpty()
+                                                ? QStringLiteral("surface-element-%1").arg(index + 1)
+                                                : copy.id);
+    copy.seedOffset += 1000 + index;
+    elements.insert(elements.begin() + index + 1, copy);
+    impl_->surfaceElementIndex_ = index + 1;
+    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
+        QStringLiteral("Duplicate Lens Surface Element")));
+    refreshSurfaceElementEditor();
+  });
+  deleteSurfaceElementButton->setAction([this, selectedSurfaceElement,
+                                          refreshSurfaceElementEditor]() {
+    auto *surface = selectedSurfaceElement();
+    if (!surface || surface->data().elements.empty()) return;
+    const auto before = surface->data();
+    auto after = before;
+    auto &elements = after.elements;
+    const int index = std::clamp(impl_->surfaceElementIndex_, 0,
+                                 static_cast<int>(elements.size()) - 1);
+    elements.erase(elements.begin() + index);
+    impl_->surfaceElementIndex_ = std::max(0, index - 1);
+    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
+        QStringLiteral("Delete Lens Surface Element")));
+    refreshSurfaceElementEditor();
+  });
+  moveSurfaceElementUpButton->setAction([this, selectedSurfaceElement,
+                                         refreshSurfaceElementEditor]() {
+    auto *surface = selectedSurfaceElement();
+    if (!surface || surface->data().elements.empty()) return;
+    const auto before = surface->data();
+    auto after = before;
+    auto &elements = after.elements;
+    const int index = std::clamp(impl_->surfaceElementIndex_, 0,
+                                 static_cast<int>(elements.size()) - 1);
+    if (index <= 0) return;
+    std::swap(elements[static_cast<std::size_t>(index)],
+              elements[static_cast<std::size_t>(index - 1)]);
+    impl_->surfaceElementIndex_ = index - 1;
+    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
+        QStringLiteral("Move Lens Surface Element Up")));
+    refreshSurfaceElementEditor();
+  });
+  moveSurfaceElementDownButton->setAction([this, selectedSurfaceElement,
+                                           refreshSurfaceElementEditor]() {
+    auto *surface = selectedSurfaceElement();
+    if (!surface || surface->data().elements.empty()) return;
+    const auto before = surface->data();
+    auto after = before;
+    auto &elements = after.elements;
+    const int index = std::clamp(impl_->surfaceElementIndex_, 0,
+                                 static_cast<int>(elements.size()) - 1);
+    if (index >= static_cast<int>(elements.size()) - 1) return;
+    std::swap(elements[static_cast<std::size_t>(index)],
+              elements[static_cast<std::size_t>(index + 1)]);
+    impl_->surfaceElementIndex_ = index + 1;
+    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
+        QStringLiteral("Move Lens Surface Element Down")));
+    refreshSurfaceElementEditor();
+  });
+  surfaceElementLayout->addWidget(impl_->surfaceElementListWidget);
+  detailPanelLayout->addWidget(impl_->surfaceElementPanel);
 
   impl_->effectParametersHintLabel = new InspectorChromeLabel(
       QStringLiteral("Select an effect above to reveal its parameters here."),

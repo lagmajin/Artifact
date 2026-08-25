@@ -15,6 +15,7 @@ set(ARTIFACT_RENDER_IMPLEMENTATION_MODULE_REFERENCES
     "src/Render/ArtifactOffscreenRenderer2D.cppm|Artifact.Render.Offscreen|include/Render/ArtifactOffscreenRenderer2D.ixx"
     "src/Render/ArtifactIRenderer.cppm|Artifact.Render.IRenderer|include/Render/ArtifactIRenderer.ixx"
     "src/Render/ArtifactMotionBlurPass.cppm|Artifact.Render.MotionBlurPass|include/Render/ArtifactMotionBlurPass.ixx"
+    "src/Render/ArtifactDepthOfFieldPass.cppm|Artifact.Render.DepthOfFieldPass|include/Render/ArtifactDepthOfFieldPass.ixx"
     "src/Render/GPUTextureCacheManager.cppm|Artifact.Render.GPUTextureCacheManager|include/Render/GPUTextureCacheManager.ixx"
     "src/LOD/ArtifactLODManager.cppm|Artifact.LOD.Manager|include/LOD/ArtifactLODManager.ixx"
 )

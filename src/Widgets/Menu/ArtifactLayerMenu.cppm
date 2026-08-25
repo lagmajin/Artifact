@@ -2726,8 +2726,9 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
     camera->setDepthOfField(dialog.depthOfFieldEnabled());
     camera->setMotionBlur(dialog.motionBlur());
     camera->setBlurAmount(dialog.blurAmount());
-    camera->setUseManualFov(true);
-    camera->setFov(dialog.fov());
+    // Focal length (35mm-equivalent) drives manual FOV, keeping the dialog
+    // preset unit system intact through to the layer.
+    camera->setFocalLength(dialog.focalLength());
     const QVector3D cameraPosition = camera->position3D();
     camera->setPosition3D(QVector3D(cameraPosition.x(), cameraPosition.y(),
                                     std::max(1.0f, dialog.zoom())));

@@ -27,10 +27,12 @@ module;
 #include <QRectF>
 #include <QMatrix4x4>
 #include <QTransform>
+#include <QVector2D>
 #include <QVector3D>
 #include <QVector4D>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <vector>
 
 module Artifact.Composition.Abstract;
@@ -536,6 +538,17 @@ float layerFloatProperty(const ArtifactAbstractLayerPtr& layer,
   return property ? property->getValue().toFloat() : fallback;
 }
 
+QString layerStringProperty(const ArtifactAbstractLayerPtr& layer,
+                            const QString& propertyPath,
+                            const QString& fallback = {})
+{
+  if (!layer) {
+    return fallback;
+  }
+  const auto property = layer->getProperty(propertyPath);
+  return property ? property->getValue().toString() : fallback;
+}
+
 QJsonObject simulationEntityIdToJson(const SimulationEntityId& id)
 {
   return {{QStringLiteral("ownerLayerId"), id.ownerLayerId},
@@ -970,8 +983,8 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   }
   if (const auto surfaceFx = ArtifactCore::dynamicPointerCast<SurfaceFXEffect>(effect);
       surfaceFx && eobj.value(QStringLiteral("surfaceFX")).isObject()) {
-    surfaceFx->data() = ArtifactCore::SurfaceFXData::fromJson(
-        eobj.value(QStringLiteral("surfaceFX")).toObject());
+    surfaceFx->setData(ArtifactCore::SurfaceFXData::fromJson(
+        eobj.value(QStringLiteral("surfaceFX")).toObject()));
   }
   return effect;
 }
@@ -1222,10 +1235,12 @@ class ArtifactAbstractComposition::Impl {
 
     bool isPlaying_ = false;
     QSet<QString> activeCollisionPairs_;
+    std::map<QString, QString> jointSignatures_;
 
     // Asset usage tracking
     QVector<ArtifactCore::AssetID> getUsedAssets() const;
   void evaluateLayerCollisionPairs();
+  void evaluateJointConstraints();
   void evaluateLayerComponentSimulation(const FramePosition& frame,
                                         bool interactive);
   void resetLayerComponentSimulation();
@@ -1402,6 +1417,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     // Layer propagation is handled by goToFrame() for explicit timeline edits/seeks.
     position_ = position;
     evaluateLayerCollisionPairs();
+    evaluateJointConstraints();
 
     auto& physics = ArtifactCore::PhysicsSystem::instance();
     const int64_t advancedFrames = nextFrame - previousFrame;
@@ -1451,6 +1467,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     }
     ArtifactCore::PhysicsSystem::instance().restoreSoftBodySnapshots(frame);
     evaluateLayerCollisionPairs();
+    evaluateJointConstraints();
   }
 
 void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
@@ -1499,16 +1516,44 @@ void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
       collider.y = static_cast<float>(localBounds.center().y());
       const int sourceShape = layerIntProperty(
           source, QStringLiteral("component.collision.shape"), 0);
-      if (sourceShape == 2) {
-        // A transformed circle can become an ellipse. The material solver's
-        // circle proxy deliberately uses the outer radius for stable contact.
-        collider.type = ArtifactCore::MpmCollider2D::Type::Circle;
-        collider.radius = static_cast<float>(
-            std::max(localBounds.width(), localBounds.height()) * 0.5);
-      } else {
-        collider.type = ArtifactCore::MpmCollider2D::Type::Box;
-        collider.width = static_cast<float>(localBounds.width());
-        collider.height = static_cast<float>(localBounds.height());
+      bool polygonCollider = false;
+      if (sourceShape == 3) {
+        // A transformed outline maps vertex-exact into the material target's
+        // local space; fall back to the box proxy when no outline exists.
+        const auto outline = source->collisionOutlineLocalPoints();
+        if (outline.size() >= 3) {
+          const float sourceOffsetX = layerFloatProperty(
+              source, QStringLiteral("component.collision.offsetX"), 0.0f);
+          const float sourceOffsetY = layerFloatProperty(
+              source, QStringLiteral("component.collision.offsetY"), 0.0f);
+          const QPointF sourceOffset(static_cast<qreal>(sourceOffsetX),
+                                     static_cast<qreal>(sourceOffsetY));
+          const QTransform sourceGlobal = source->getGlobalTransform();
+          collider.type = ArtifactCore::MpmCollider2D::Type::Polygon;
+          collider.polygonPoints.reserve(outline.size() * 2U);
+          for (const QPointF& point : outline) {
+            const QPointF mapped = inverseTarget.map(
+                sourceGlobal.map(point + sourceOffset));
+            collider.polygonPoints.push_back(
+                static_cast<float>(mapped.x()));
+            collider.polygonPoints.push_back(
+                static_cast<float>(mapped.y()));
+          }
+          polygonCollider = true;
+        }
+      }
+      if (!polygonCollider) {
+        if (sourceShape == 2) {
+          // A transformed circle can become an ellipse. The material solver's
+          // circle proxy deliberately uses the outer radius for stable contact.
+          collider.type = ArtifactCore::MpmCollider2D::Type::Circle;
+          collider.radius = static_cast<float>(
+              std::max(localBounds.width(), localBounds.height()) * 0.5);
+        } else {
+          collider.type = ArtifactCore::MpmCollider2D::Type::Box;
+          collider.width = static_cast<float>(localBounds.width());
+          collider.height = static_cast<float>(localBounds.height());
+        }
       }
       collider.restitution = std::clamp(
           layerFloatProperty(source, QStringLiteral("physics.restitution"), 0.1f),
@@ -1549,6 +1594,148 @@ void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
   activeCollisionPairs_ = std::move(nextPairs);
 }
 
+void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
+{
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  const auto& layers = layerMultiIndex_.all();
+
+  for (const auto& owner : layers) {
+    if (!owner) {
+      continue;
+    }
+    auto world = physics.getRigidWorld(owner->id());
+    if (!world) {
+      jointSignatures_.erase(owner->id().toString());
+      continue;
+    }
+
+    ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> proxy;
+    ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> primary;
+    for (const auto& candidate : world->getBodies()) {
+      if (!candidate) {
+        continue;
+      }
+      // cloneIndex == -2 marks joint static proxies.
+      if (candidate->cloneIndex == -2) {
+        proxy = candidate;
+      } else if (!primary) {
+        primary = candidate;
+      }
+    }
+
+    const bool jointEnabled = layerBooleanProperty(
+        owner, QStringLiteral("component.joint.enabled"), false);
+    const QString targetName = layerStringProperty(
+        owner, QStringLiteral("component.joint.targetLayer")).trimmed();
+    ArtifactAbstractLayerPtr target;
+    if (jointEnabled && !targetName.isEmpty()) {
+      for (const auto& candidate : layers) {
+        if (candidate && candidate != owner &&
+            candidate->layerName() == targetName) {
+          target = candidate;
+          break;
+        }
+      }
+    }
+
+    // A restored or freshly-enabled joint may have no body yet; create it
+    // from the authored transform once. Existing bodies are left alone so
+    // the simulation keeps integrating between frames.
+    if (jointEnabled && target && !primary) {
+      owner->syncRigidBodyPhysicsToBounds();
+      for (const auto& candidate : world->getBodies()) {
+        if (!candidate) {
+          continue;
+        }
+        if (candidate->cloneIndex == -2) {
+          proxy = candidate;
+        } else if (!primary) {
+          primary = candidate;
+        }
+      }
+    }
+
+    if (!jointEnabled || !target || !primary) {
+      // Destroying the proxy body would also destroy its attached joints;
+      // clear ids explicitly so signature tracking stays consistent.
+      if (!world->getJoints().empty()) {
+        world->clearJoints();
+      }
+      if (proxy) {
+        world->removeBody(proxy);
+        proxy.reset();
+      }
+      jointSignatures_.erase(owner->id().toString());
+      continue;
+    }
+
+    bool invertible = false;
+    const QTransform inverseOwner =
+        owner->getGlobalTransform().inverted(&invertible);
+    const QRectF targetBounds = compositionCollisionBounds(target);
+    if (!invertible || !targetBounds.isValid()) {
+      continue;
+    }
+    const QPointF anchorLocal =
+        inverseOwner.map(targetBounds.center());
+
+    if (!proxy) {
+      proxy = world->addStaticAnchor(
+          static_cast<float>(anchorLocal.x()),
+          static_cast<float>(anchorLocal.y()));
+      if (!proxy) {
+        continue;
+      }
+      proxy->cloneIndex = -2;
+    } else {
+      proxy->setTransform(
+          QVector2D(static_cast<float>(anchorLocal.x()),
+                    static_cast<float>(anchorLocal.y())),
+          0.0f);
+    }
+
+    const int type = layerIntProperty(
+        owner, QStringLiteral("component.joint.type"), 0);
+    const float length = layerFloatProperty(
+        owner, QStringLiteral("component.joint.length"), 0.0f);
+    const float stiffness = layerFloatProperty(
+        owner, QStringLiteral("component.joint.stiffness"), 5.0f);
+    const float damping = layerFloatProperty(
+        owner, QStringLiteral("component.joint.damping"), 0.7f);
+    const QString signature = QStringLiteral("%1|%2|%3|%4|%5")
+                                  .arg(type)
+                                  .arg(length)
+                                  .arg(stiffness)
+                                  .arg(damping)
+                                  .arg(targetName);
+
+    const QString ownerKey = owner->id().toString();
+    const auto knownSignature = jointSignatures_.find(ownerKey);
+    const bool needsJoint = world->getJoints().empty() ||
+                            knownSignature == jointSignatures_.end() ||
+                            *knownSignature != signature;
+    if (needsJoint) {
+      if (!world->getJoints().empty()) {
+        world->clearJoints();
+      }
+      const QVector2D anchor(anchorLocal.x(), anchorLocal.y());
+      if (type == 1) {
+        world->addRevoluteJoint(primary, proxy, anchor);
+      } else {
+        // length <= 0 captures the current owner-to-target separation.
+        const float currentSeparation =
+            (primary->position() - proxy->position()).length();
+        world->addDistanceJoint(
+            primary, proxy,
+            std::max(0.0f, length) > 0.0f ? std::max(0.0f, length)
+                                          : currentSeparation,
+            damping, stiffness);
+      }
+      jointSignatures_[ownerKey] = signature;
+    }
+  }
+}
+
 void ArtifactAbstractComposition::Impl::resetLayerComponentSimulation()
 {
   for (const auto& layer : layerMultiIndex_) {
@@ -1562,6 +1749,7 @@ void ArtifactAbstractComposition::Impl::resetLayerComponentSimulation()
   componentSimulation_.snapshotInterval = 1;
   componentSimulation_.frame = std::numeric_limits<int64_t>::min();
   componentSimulation_.valid = false;
+  jointSignatures_.clear();
 }
 
 void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(

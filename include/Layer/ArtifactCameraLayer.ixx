@@ -86,6 +86,12 @@ export namespace Artifact {
   void setUseManualFov(bool enable);
   void resetFovToZoom();
 
+  // 35mm-equivalent focal length (AE-compatible unit system). Horizontal
+  // FOV over a 36mm sensor width: fov = 2*atan(18/focalLength).
+  // Reading derives from the effective FOV; writing switches to manual FOV.
+  float focalLength() const;
+  void setFocalLength(float mm);
+
   // Orthographic-specific
   float orthoWidth() const;
   void setOrthoWidth(float width);
@@ -110,6 +116,18 @@ export namespace Artifact {
   void setActiveCamera(bool active);
   int cameraPriority() const;
   void setCameraPriority(int priority);
+
+  // Two-node camera: aim the camera at an explicit Point of Interest.
+  // When enabled, the camera orientation is derived from the transform
+  // position toward the POI instead of the authored rotation values.
+  bool pointOfInterestEnabled() const;
+  void setPointOfInterestEnabled(bool enabled);
+  QVector3D pointOfInterest() const;
+  void setPointOfInterest(const QVector3D& poi);
+
+  // Global transform with POI orientation applied (identity-equivalent to
+  // getGlobalTransform4x4() when the POI is disabled).
+  QMatrix4x4 effectiveGlobalTransform() const;
 
   // Projection / View
   QMatrix4x4 viewMatrix() const;

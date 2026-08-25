@@ -410,6 +410,9 @@ public:
   void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
   void disableSoftBodyPhysics();
   void syncSoftBodyPhysicsColliderToBounds();
+  // Layer-local outline used by the Polygon collision shape (3). Empty means
+  // the layer has no outline and collision falls back to auto bounds.
+  virtual std::vector<QPointF> collisionOutlineLocalPoints() const;
   void enableMaterialPhysics(int preset = 0);
   void disableMaterialPhysics();
   void enableRigidBodyPhysics();

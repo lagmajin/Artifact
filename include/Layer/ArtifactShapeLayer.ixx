@@ -156,6 +156,7 @@ public:
 
   // Layer interface
   QRectF localBounds() const override;
+  std::vector<QPointF> collisionOutlineLocalPoints() const override;
   std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString &propertyPath,

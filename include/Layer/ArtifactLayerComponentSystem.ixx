@@ -808,6 +808,20 @@ inline LayerComponentDescriptor makeCollisionComponentDescriptor(bool enabled) {
     };
 }
 
+inline LayerComponentDescriptor makeJointComponentDescriptor(bool enabled) {
+    return {
+        QStringLiteral("builtin.joint"),
+        QStringLiteral("artifact.component.joint"),
+        1,
+        enabled,
+        LayerComponentPhase::Dynamics,
+        LayerComponentScope::Composition,
+        510,
+        {QStringLiteral("artifact.component.collision")},
+        {},
+    };
+}
+
 inline LayerComponentDescriptor makeFractureComponentDescriptor(bool enabled) {
     return {
         QStringLiteral("builtin.fracture"),

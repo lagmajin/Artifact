@@ -72,6 +72,13 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                                 const ArtifactAbstractLayerPtr &layer,
                                 bool isActiveCamera);
 
+// Point-of-interest handle for a two-node camera. Drawn in world space via
+// the buffered 3D gizmo path so it tracks the active scene camera exactly.
+void drawCameraPoiOverlay(ArtifactIRenderer *renderer,
+                          const ArtifactAbstractLayerPtr &layer,
+                          const QMatrix4x4 &cameraView,
+                          const QMatrix4x4 &cameraProj);
+
 void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
                                  const ArtifactAbstractLayerPtr &layer,
                                  int overlayW,

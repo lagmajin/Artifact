@@ -1998,6 +1998,41 @@ QRectF ArtifactShapeLayer::localBounds() const
   impl_->localBoundsCacheDirty_ = false;
   return impl_->cachedLocalBounds_;
 }
+
+std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
+{
+  // Operator stacks reshape the outline; a stale proxy would misrepresent the
+  // collision shape, so fall back to the auto-bounds path instead.
+  if (!impl_->shapeOperators_.empty()) {
+    return {};
+  }
+
+  if (impl_->customPathVertices_.size() >= 3) {
+   std::vector<QPointF> points;
+   points.reserve(impl_->customPathVertices_.size());
+   for (const auto& vertex : impl_->customPathVertices_) {
+    points.push_back(vertex.pos);
+   }
+   return points;
+  }
+
+  if (impl_->customPolygonPoints_.size() >= 3) {
+    return impl_->customPolygonPoints_;
+  }
+
+  if (impl_->shapeType_ == Artifact::ShapeType::Line) {
+    return {};
+  }
+
+  const ShapeGeomDims dims = resolveShapeGeomDims(
+      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
+  return buildRenderablePoints(impl_->shapeType_, dims.width, dims.height,
+                               dims.cornerRadius, dims.starPoints,
+                               dims.starInnerRadius, dims.polygonSides,
+                               impl_->customPolygonPoints_,
+                               impl_->customPolygonClosed_);
+}
 // ============================================================
 // draw (GPU rendering)
 // ============================================================

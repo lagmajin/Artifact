@@ -4,6 +4,7 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <QMatrix4x4>
+#include <QVector4D>
 #include <QJsonObject>
 #include <QVariant>
 #include <wobjectimpl.h>
@@ -56,6 +57,10 @@ struct ArtifactCameraLayer::Impl {
     float ipd_ = 0.064f;
     bool activeCamera_ = true;
     int cameraPriority_ = 0;
+
+    // Two-node camera (Point of Interest)
+    bool poiEnabled_ = false;
+    QVector3D pointOfInterest_{0.0f, 0.0f, 0.0f};
 
     // Perspective-specific
     float fov_ = 0.0f; // 0 = auto from zoom, >0 = manual FOV
@@ -122,7 +127,7 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
 
     // 2. Draw Lens Direction
     // QMatrix4x4's perspective convention looks down local -Z.
-    QMatrix4x4 globalMat = getGlobalTransform4x4();
+    QMatrix4x4 globalMat = effectiveGlobalTransform();
     QVector3D forward = globalMat.mapVector(QVector3D(0, 0, -1)).normalized();
     QVector3D right = globalMat.mapVector(QVector3D(1, 0, 0)).normalized();
     QVector3D up = globalMat.mapVector(QVector3D(0, 1, 0)).normalized();
@@ -282,6 +287,27 @@ void ArtifactCameraLayer::resetFovToZoom() {
     changed();
 }
 
+float ArtifactCameraLayer::focalLength() const {
+    // 35mm-equivalent: horizontal FOV over a 36mm sensor width.
+    // fov = 2*atan(18/fl)  ->  fl = 18/tan(fov/2)
+    const float fovDegrees = fov();
+    if (fovDegrees <= 0.0f || fovDegrees >= 179.0f) {
+        return 35.0f;
+    }
+    const double radians = static_cast<double>(fovDegrees) * 0.5 *
+                           3.14159265358979;
+    return static_cast<float>(18.0 / std::tan(radians));
+}
+
+void ArtifactCameraLayer::setFocalLength(float mm) {
+    if (!std::isfinite(mm) || mm <= 0.0f) {
+        return;
+    }
+    setFov(static_cast<float>(
+        2.0 * std::atan(18.0 / static_cast<double>(mm)) * 180.0 /
+        3.14159265358979));
+}
+
 float ArtifactCameraLayer::orthoWidth() const { return camImpl_->orthoWidth_; }
 void ArtifactCameraLayer::setOrthoWidth(float w) { camImpl_->orthoWidth_ = std::isfinite(w) ? std::clamp(w, 10.0f, 100000.0f) : 1920.0f; changed(); }
 
@@ -327,10 +353,66 @@ void ArtifactCameraLayer::setCameraPriority(int priority)
     changed();
 }
 
+bool ArtifactCameraLayer::pointOfInterestEnabled() const { return camImpl_->poiEnabled_; }
+void ArtifactCameraLayer::setPointOfInterestEnabled(bool enabled) {
+    if (camImpl_->poiEnabled_ == enabled) return;
+    camImpl_->poiEnabled_ = enabled;
+    changed();
+}
+
+QVector3D ArtifactCameraLayer::pointOfInterest() const { return camImpl_->pointOfInterest_; }
+void ArtifactCameraLayer::setPointOfInterest(const QVector3D& poi) {
+    const auto safe = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, -1000000.0f, 1000000.0f) : 0.0f;
+    };
+    camImpl_->pointOfInterest_ = QVector3D(safe(poi.x()), safe(poi.y()), safe(poi.z()));
+    changed();
+}
+
+QMatrix4x4 ArtifactCameraLayer::effectiveGlobalTransform() const
+{
+    // Two-node camera: rebuild the orientation from the authored position so
+    // the camera looks at the Point of Interest. The authored rotation is
+    // ignored while the POI is enabled (AE 2-node camera behavior).
+    const QMatrix4x4 global = getGlobalTransform4x4();
+    if (!camImpl_->poiEnabled_) {
+        return global;
+    }
+
+    const auto frameTime = RationalTime(currentFrame(), cameraTimelineFps(this));
+    const auto &t3 = transform3D();
+    const QVector3D eye(t3.positionXAt(frameTime),
+                        t3.positionYAt(frameTime),
+                        t3.positionZAt(frameTime));
+    const QVector3D target = camImpl_->pointOfInterest_;
+    QVector3D forward = target - eye;
+    if (forward.lengthSquared() < 1e-12f) {
+        // Degenerate: keep the authored transform.
+        return global;
+    }
+    forward.normalize();
+
+    // Camera convention looks down local -Z; choose a world-up-based basis
+    // that stays stable when looking straight up/down.
+    QVector3D up(0.0f, 1.0f, 0.0f);
+    if (std::abs(QVector3D::dotProduct(forward, up)) > 0.999f) {
+        up = QVector3D(0.0f, 0.0f, 1.0f);
+    }
+    const QVector3D right = QVector3D::crossProduct(forward, up).normalized();
+    const QVector3D realUp = QVector3D::crossProduct(right, forward).normalized();
+
+    QMatrix4x4 basis;
+    basis.setRow(0, QVector4D(right, 0.0f));
+    basis.setRow(1, QVector4D(realUp, 0.0f));
+    basis.setRow(2, QVector4D(-forward, 0.0f));
+    basis.setRow(3, QVector4D(eye, 1.0f));
+    return basis;
+}
+
 QMatrix4x4 ArtifactCameraLayer::viewMatrix() const
 {
     // The view matrix is the inverse of the camera's global transform.
-    const QMatrix4x4 global = getGlobalTransform4x4();
+    const QMatrix4x4 global = effectiveGlobalTransform();
     if (camImpl_->shakeOffset_.isNull() &&
         camImpl_->shakeRotation_.isNull()) {
         return global.inverted();
@@ -538,6 +620,38 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     cameraPriorityProp->setTooltip(QStringLiteral("Higher active-camera priority wins; layer order breaks ties"));
     projectionOptions.addProperty(cameraPriorityProp);
 
+    // Two-node camera (Point of Interest)
+    auto poiEnabledProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Point Of Interest Enabled"),
+        ArtifactCore::PropertyType::Boolean, camImpl_->poiEnabled_, -146);
+    poiEnabledProp->setTooltip(QStringLiteral(
+        "Aim the camera at the Point of Interest instead of the authored rotation"));
+    projectionOptions.addProperty(poiEnabledProp);
+
+    auto poiXProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/POI X"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->pointOfInterest_.x()), -144);
+    poiXProp->setHardRange(-100000.0, 100000.0);
+    poiXProp->setSoftRange(-5000.0, 5000.0);
+    poiXProp->setUnit(QStringLiteral("px"));
+    projectionOptions.addProperty(poiXProp);
+
+    auto poiYProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/POI Y"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->pointOfInterest_.y()), -143);
+    poiYProp->setHardRange(-100000.0, 100000.0);
+    poiYProp->setSoftRange(-5000.0, 5000.0);
+    poiYProp->setUnit(QStringLiteral("px"));
+    projectionOptions.addProperty(poiYProp);
+
+    auto poiZProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/POI Z"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->pointOfInterest_.z()), -142);
+    poiZProp->setHardRange(-100000.0, 100000.0);
+    poiZProp->setSoftRange(-5000.0, 5000.0);
+    poiZProp->setUnit(QStringLiteral("px"));
+    projectionOptions.addProperty(poiZProp);
+
     auto manualFovProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Manual FOV"),
         ArtifactCore::PropertyType::Boolean,
@@ -563,6 +677,19 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     fovProp->setUnit(QStringLiteral("deg"));
     fovProp->setTooltip(QStringLiteral("Manual perspective field of view"));
     projectionOptions.addProperty(fovProp);
+
+    // 35mm-equivalent focal length (AE unit system). Editing switches the
+    // camera to manual FOV derived from the focal length.
+    auto focalLengthProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Focal Length"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(focalLength()), -134);
+    focalLengthProp->setHardRange(1.0, 2000.0);
+    focalLengthProp->setSoftRange(10.0, 200.0);
+    focalLengthProp->setUnit(QStringLiteral("mm"));
+    focalLengthProp->setTooltip(QStringLiteral(
+        "35mm-equivalent focal length (36mm sensor, horizontal FOV)"));
+    projectionOptions.addProperty(focalLengthProp);
 
     // Orthographic: Width / Height
     auto orthoWProp = persistentLayerProperty(QStringLiteral("Camera Options/Ortho Width"),
@@ -705,6 +832,21 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
     } else if (propertyPath == "Camera Options/Priority") {
         setCameraPriority(value.toInt());
         return true;
+    } else if (propertyPath == "Camera Options/Point Of Interest Enabled") {
+        setPointOfInterestEnabled(value.toBool());
+        return true;
+    } else if (propertyPath == "Camera Options/POI X") {
+        setPointOfInterest(QVector3D(value.toFloat(), camImpl_->pointOfInterest_.y(),
+                                     camImpl_->pointOfInterest_.z()));
+        return true;
+    } else if (propertyPath == "Camera Options/POI Y") {
+        setPointOfInterest(QVector3D(camImpl_->pointOfInterest_.x(), value.toFloat(),
+                                     camImpl_->pointOfInterest_.z()));
+        return true;
+    } else if (propertyPath == "Camera Options/POI Z") {
+        setPointOfInterest(QVector3D(camImpl_->pointOfInterest_.x(),
+                                     camImpl_->pointOfInterest_.y(), value.toFloat()));
+        return true;
     } else if (propertyPath == "Camera Options/Manual FOV") {
         setUseManualFov(value.toBool());
         return true;
@@ -713,6 +855,9 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
         return true;
     } else if (propertyPath == "Camera Options/FOV") {
         setFov(value.toFloat());
+        return true;
+    } else if (propertyPath == "Camera Options/Focal Length") {
+        setFocalLength(value.toFloat());
         return true;
     } else if (propertyPath == "Camera Options/Ortho Width") {
         setOrthoWidth(value.toFloat());
@@ -791,6 +936,10 @@ QJsonObject ArtifactCameraLayer::toJson() const
     obj["cameraIpd"] = static_cast<double>(camImpl_->ipd_);
     obj["cameraActive"] = camImpl_->activeCamera_;
     obj["cameraPriority"] = camImpl_->cameraPriority_;
+    obj["cameraPoiEnabled"] = camImpl_->poiEnabled_;
+    obj["cameraPoiX"] = static_cast<double>(camImpl_->pointOfInterest_.x());
+    obj["cameraPoiY"] = static_cast<double>(camImpl_->pointOfInterest_.y());
+    obj["cameraPoiZ"] = static_cast<double>(camImpl_->pointOfInterest_.z());
     obj["cameraShakeTrauma"] = static_cast<double>(camImpl_->trauma_);
     obj["cameraShakeTraumaDecay"] = static_cast<double>(camImpl_->traumaDecay_);
     obj["cameraShakeFrequency"] = static_cast<double>(camImpl_->shakeFrequency_);
@@ -854,6 +1003,17 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     }
     if (obj.contains("cameraPriority")) {
         setCameraPriority(obj.value("cameraPriority").toInt());
+    }
+    if (obj.contains("cameraPoiEnabled")) {
+        setPointOfInterestEnabled(obj.value("cameraPoiEnabled").toBool());
+    }
+    if (obj.contains("cameraPoiX") || obj.contains("cameraPoiY") ||
+        obj.contains("cameraPoiZ")) {
+        const QVector3D poi(
+            static_cast<float>(obj.value("cameraPoiX").toDouble(camImpl_->pointOfInterest_.x())),
+            static_cast<float>(obj.value("cameraPoiY").toDouble(camImpl_->pointOfInterest_.y())),
+            static_cast<float>(obj.value("cameraPoiZ").toDouble(camImpl_->pointOfInterest_.z())));
+        setPointOfInterest(poi);
     }
     if (obj.contains("cameraShakeTrauma")) {
         const float trauma = static_cast<float>(obj.value("cameraShakeTrauma").toDouble(camImpl_->trauma_));
