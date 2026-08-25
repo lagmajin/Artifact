@@ -31631,6 +31631,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   // those lights continue to illuminate without being selected as casters.
   QMatrix4x4 shadowLightViewProjection;
   const ArtifactCore::Light* shadowMapLight = nullptr;
+  float shadowSoftness = 0.0f;
   for (const auto& entry : sceneLights) {
     if (!entry.source || !entry.source->castsShadows() ||
         !entry.light.enabled()) {
@@ -31669,10 +31670,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // the active 3D camera matrices used by MeshRenderer.
     shadowProjection(1, 1) = -shadowProjection(1, 1);
     shadowLightViewProjection = shadowProjection * shadowView;
+    shadowSoftness = entry.source->shadowRadius() / 100.0f;
     shadowMapLight = &entry.light;
     break;
   }
-  renderer_->beginShadowMapFrame(shadowLightViewProjection, shadowMapLight);
+  renderer_->beginShadowMapFrame(shadowLightViewProjection, shadowMapLight,
+                                 shadowSoftness);
 
 
 

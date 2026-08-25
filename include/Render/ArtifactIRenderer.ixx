@@ -534,7 +534,8 @@ public:
   void drawEnvironmentSkybox();
   const std::vector<ArtifactCore::Light> &getSceneLights() const;
   void beginShadowMapFrame(const QMatrix4x4 &lightViewProjection,
-                           const ArtifactCore::Light *shadowLight);
+                           const ArtifactCore::Light *shadowLight,
+                           float shadowSoftness = 0.0f);
   void renderShadowMapFrame();
 
 private:

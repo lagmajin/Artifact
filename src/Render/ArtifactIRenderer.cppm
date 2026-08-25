@@ -474,6 +474,7 @@ namespace {
   std::vector<ArtifactCore::MeshRenderer*> m_shadowCasters;
   bool m_shadowMapEnabled = false;
   bool m_shadowMapReady = false;
+  float m_shadowSoftness = 0.0f;
   static constexpr Uint32 kShadowMapResolution = 1024;
   ITextureView* m_overrideColorRTV = nullptr;
   ITextureView* m_overrideDepthDSV = nullptr;
@@ -638,12 +639,16 @@ namespace {
   }
 
   void beginShadowMapFrame(const QMatrix4x4& lightViewProjection,
-                           const ArtifactCore::Light* shadowLight)
+                           const ArtifactCore::Light* shadowLight,
+                           float shadowSoftness = 0.0f)
   {
     m_shadowLightViewProjection = lightViewProjection;
     m_shadowLight = shadowLight ? std::optional<ArtifactCore::Light>(*shadowLight)
                                 : std::nullopt;
     m_shadowMapEnabled = m_shadowLight.has_value();
+    m_shadowSoftness =
+        (std::isfinite(shadowSoftness) ? std::clamp(shadowSoftness, 0.0f, 2.0f)
+                                       : 0.0f);
     m_shadowCasters.clear();
   }
 
@@ -1067,7 +1072,7 @@ namespace {
                            m_shadowLightViewProjection.constData(),
                            m_shadowMapEnabled && m_shadowMapReady &&
                                shadowLightIndex >= 0,
-                           shadowLightIndex);
+                           shadowLightIndex, 0.0015f, m_shadowSoftness);
     if (m_shadowMapEnabled && shadowLightIndex >= 0 && alpha >= 0.9999f &&
         !material.hasOpacityTexture() &&
         std::find(m_shadowCasters.begin(), m_shadowCasters.end(), renderer) ==
@@ -3901,8 +3906,9 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
 { return impl_->m_sceneLights; }
 void ArtifactIRenderer::beginShadowMapFrame(
     const QMatrix4x4& lightViewProjection,
-    const ArtifactCore::Light* shadowLight)
-{ impl_->beginShadowMapFrame(lightViewProjection, shadowLight); }
+    const ArtifactCore::Light* shadowLight,
+    float shadowSoftness)
+{ impl_->beginShadowMapFrame(lightViewProjection, shadowLight, shadowSoftness); }
 void ArtifactIRenderer::renderShadowMapFrame()
 { impl_->renderShadowMapFrame(); }
 
