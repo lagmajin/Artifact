@@ -3006,6 +3006,7 @@ public:
   QString focusedTransformId_;
   QString focusedModifierId_;
   LayerID focusedComponentLayerId_;
+  bool componentEditorExpanded_ = false;
   InspectorActionButton *addComponentButton = nullptr;
   InspectorActionButton *physicsComponentButton = nullptr;
   InspectorActionButton *scriptComponentButton = nullptr;
@@ -3750,6 +3751,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     focusedTransformId_.clear();
     focusedModifierId_.clear();
     focusedComponentLayerId_ = LayerID{};
+    componentEditorExpanded_ = false;
   }
   if (focusedComponentName_ == QStringLiteral("Generator") &&
       state.generatorCount > 0) {
@@ -3801,23 +3803,26 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         activeName == QStringLiteral("Field") ||
         activeName == QStringLiteral("Clone Modifier");
     clonerStructureWidget->setVisible(
-        hasLayer && state.cloneEnabled && showsClonerStructure);
+        componentEditorExpanded_ && hasLayer && state.cloneEnabled &&
+        showsClonerStructure);
   }
   if (activeComponentLabel) {
     activeComponentLabel->setText(
         activeName.isEmpty()
             ? QStringLiteral("Active Component  |  None")
             : QStringLiteral("Active Component  |  %1").arg(activeName));
-    activeComponentLabel->setVisible(hasLayer);
+    activeComponentLabel->setVisible(false);
   }
   if (physicsComponentButton) {
     physicsComponentButton->setEnabled(canEditComponents);
-    physicsComponentButton->setChecked(activeName == QStringLiteral("Physics"));
+    physicsComponentButton->setChecked(
+        componentEditorExpanded_ && activeName == QStringLiteral("Physics"));
     physicsComponentButton->setProperty("artifactComponentEnabled",
                                         state.physicsEnabled);
     physicsComponentButton->setText(QStringLiteral("Physics"));
-    applyInspectorComponentStateButton(physicsComponentButton,
-                                       activeName == QStringLiteral("Physics"));
+    applyInspectorComponentStateButton(
+        physicsComponentButton,
+        componentEditorExpanded_ && activeName == QStringLiteral("Physics"));
     physicsComponentButton->setVisible(state.physicsEnabled);
     physicsComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Show the Physics component settings.")
@@ -3825,12 +3830,14 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
   if (scriptComponentButton) {
     scriptComponentButton->setEnabled(canEditComponents);
-    scriptComponentButton->setChecked(activeName == QStringLiteral("Script"));
+    scriptComponentButton->setChecked(
+        componentEditorExpanded_ && activeName == QStringLiteral("Script"));
     scriptComponentButton->setProperty("artifactComponentEnabled",
                                        state.scriptEnabled);
     scriptComponentButton->setText(QStringLiteral("Script"));
-    applyInspectorComponentStateButton(scriptComponentButton,
-                                       activeName == QStringLiteral("Script"));
+    applyInspectorComponentStateButton(
+        scriptComponentButton,
+        componentEditorExpanded_ && activeName == QStringLiteral("Script"));
     scriptComponentButton->setVisible(state.scriptEnabled);
     scriptComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Show the Script component settings.")
@@ -3838,12 +3845,14 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
   if (layoutComponentButton) {
     layoutComponentButton->setEnabled(canEditComponents);
-    layoutComponentButton->setChecked(activeName == QStringLiteral("Layout"));
+    layoutComponentButton->setChecked(
+        componentEditorExpanded_ && activeName == QStringLiteral("Layout"));
     layoutComponentButton->setProperty("artifactComponentEnabled",
                                        state.layoutEnabled);
     layoutComponentButton->setText(QStringLiteral("Layout"));
-    applyInspectorComponentStateButton(layoutComponentButton,
-                                       activeName == QStringLiteral("Layout"));
+    applyInspectorComponentStateButton(
+        layoutComponentButton,
+        componentEditorExpanded_ && activeName == QStringLiteral("Layout"));
     layoutComponentButton->setVisible(state.layoutEnabled);
     layoutComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Show the Layout component settings.")
@@ -3851,12 +3860,14 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
   if (cloneComponentButton) {
     cloneComponentButton->setEnabled(canEditComponents);
-    cloneComponentButton->setChecked(activeName == QStringLiteral("Cloner"));
+    cloneComponentButton->setChecked(
+        componentEditorExpanded_ && activeName == QStringLiteral("Cloner"));
     cloneComponentButton->setProperty("artifactComponentEnabled",
                                       state.cloneEnabled);
     cloneComponentButton->setText(QStringLiteral("Cloner"));
-    applyInspectorComponentStateButton(cloneComponentButton,
-                                       activeName == QStringLiteral("Cloner"));
+    applyInspectorComponentStateButton(
+        cloneComponentButton,
+        componentEditorExpanded_ && activeName == QStringLiteral("Cloner"));
     cloneComponentButton->setVisible(state.cloneEnabled);
     cloneComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Show the Cloner component settings.")
@@ -3864,12 +3875,14 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
   if (fluidComponentButton) {
     fluidComponentButton->setEnabled(canEditComponents);
-    fluidComponentButton->setChecked(activeName == QStringLiteral("Fluid"));
+    fluidComponentButton->setChecked(
+        componentEditorExpanded_ && activeName == QStringLiteral("Fluid"));
     fluidComponentButton->setProperty("artifactComponentEnabled",
                                       state.fluidEnabled);
     fluidComponentButton->setText(QStringLiteral("Fluid"));
-    applyInspectorComponentStateButton(fluidComponentButton,
-                                       activeName == QStringLiteral("Fluid"));
+    applyInspectorComponentStateButton(
+        fluidComponentButton,
+        componentEditorExpanded_ && activeName == QStringLiteral("Fluid"));
     fluidComponentButton->setVisible(state.fluidEnabled);
     fluidComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Show the Fluid component settings.")
@@ -4220,7 +4233,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     }
     componentsSummaryLabel->setText(summaryText);
     componentsSummaryLabel->setVisible(
-        !hasLayer || !state.validationIssues.empty());
+        hasLayer && !state.validationIssues.empty());
     const bool mutedSummary = !hasLayer || (summaryText == QStringLiteral("Components: none"));
     applyInspectorLabelPalette(componentsSummaryLabel, !mutedSummary);
     if (hasLayer && !state.validationIssues.empty()) {
@@ -4338,10 +4351,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
                              : QStringLiteral("Select an audio layer to enable Lip Sync.")));
   }
   if (componentUtilitiesLabel) {
-    const bool hasVisibleUtility =
-        (openScriptButton && !openScriptButton->isHidden()) ||
-        (applyLipSyncButton && !applyLipSyncButton->isHidden());
-    componentUtilitiesLabel->setVisible(hasVisibleUtility);
+    componentUtilitiesLabel->setVisible(false);
   }
 }
 
@@ -4349,6 +4359,7 @@ void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
     const ArtifactAbstractLayerPtr &layer, const QString &filterText) {
   if (!layer) {
     lastComponentPropertyStateSignature_.clear();
+    componentEditorExpanded_ = false;
     if (componentPropertyWidget) {
       componentPropertyWidget->clear();
       componentPropertyWidget->setVisible(false);
@@ -4382,9 +4393,11 @@ void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
       .arg(layer->id().toString(), selectedLayerIds.join(QLatin1Char(',')),
            normalizedFilter);
   componentPropertyWidget->setVisible(true);
+  componentEditorExpanded_ = true;
   if (componentPropertySurface) {
     componentPropertySurface->setVisible(true);
   }
+  updateComponentControls(layer);
   if (stateSignature == lastComponentPropertyStateSignature_) {
     return;
   }
@@ -6858,7 +6871,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                 impl_->layoutComponentButton,
                                 impl_->cloneComponentButton,
                                 impl_->fluidComponentButton}) {
-    componentButton->setMinimumHeight(42);
+    componentButton->setMinimumHeight(32);
     componentButton->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Preferred);
   }
@@ -6966,6 +6979,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   componentsStack->appendWidget(impl_->fluidComponentButton);
   componentsStack->appendWidget(impl_->scriptComponentButton);
 
+  // Show the selected component's parameters before secondary management
+  // controls so the edit loop stays next to the component rows.
+  impl_->componentPropertySurface = new InspectorPropertySurface(
+      nullptr, impl_->componentsGroup);
+  impl_->componentPropertySurface->setObjectName(
+      QStringLiteral("inspectorComponentPropertySurface"));
+  impl_->componentPropertySurface->setVisible(false);
+  componentsStack->appendWidget(impl_->componentPropertySurface, true);
+
   auto* effectorRow = new InspectorCanvasSurface(componentsStack);
   auto* effectorLayout = new QHBoxLayout(effectorRow);
   effectorLayout->setContentsMargins(0, 0, 0, 0);
@@ -6990,15 +7012,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorPalette(componentDivider, false);
   componentsStack->appendWidget(componentDivider);
   componentsStack->appendWidget(impl_->activeComponentLabel);
-  // The embedded editor is expensive and has no value until a concrete
-  // component is selected. Keep the visual surface ready, then create the
-  // editor on that first selection.
-  impl_->componentPropertySurface = new InspectorPropertySurface(
-      nullptr, impl_->componentsGroup);
-  impl_->componentPropertySurface->setObjectName(
-      QStringLiteral("inspectorComponentPropertySurface"));
-  impl_->componentPropertySurface->setVisible(false);
-  componentsStack->appendWidget(impl_->componentPropertySurface, true);
 
   impl_->clonerStructureWidget =
       new InspectorCanvasSurface(impl_->componentsGroup);
@@ -7196,6 +7209,18 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     auto layer = comp ? comp->layerById(impl_->currentLayerId_)
                       : ArtifactAbstractLayerPtr{};
     if (!layer) {
+      return;
+    }
+    if (impl_->componentEditorExpanded_ &&
+        impl_->focusedComponentName_ == displayName) {
+      impl_->componentEditorExpanded_ = false;
+      if (impl_->componentPropertyWidget) {
+        impl_->componentPropertyWidget->setVisible(false);
+      }
+      if (impl_->componentPropertySurface) {
+        impl_->componentPropertySurface->setVisible(false);
+      }
+      impl_->updateComponentControls(layer);
       return;
     }
     impl_->focusedComponentName_ = displayName;

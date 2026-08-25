@@ -8,6 +8,8 @@ module;
 #include <QMatrix4x4>
 #include <QSize>
 #include <QVariant>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
 
 module Artifact.Layers.Noise;
 
@@ -18,6 +20,7 @@ import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4_RGBA;
 import ImageProcessing.ProceduralTexture;
+import Graphics.GPUcomputeContext;
 import Property.Abstract;
 import Property.Group;
 
@@ -162,6 +165,58 @@ public:
   mutable QImage cachedImage_;
   mutable QSize cachedSize_;
   mutable QString cachedSignature_;
+  mutable ArtifactCore::GpuContext* gpuContext_ = nullptr;
+  mutable ArtifactCore::ProceduralTextureComputePipeline* gpuPipeline_ = nullptr;
+  mutable Diligent::RefCntAutoPtr<Diligent::ITexture> gpuTexture_;
+  mutable QString gpuSignature_;
+  mutable Diligent::IRenderDevice* gpuDevice_ = nullptr;
+
+  ~Impl() {
+    delete gpuPipeline_;
+    delete gpuContext_;
+  }
+
+  Diligent::ITextureView* gpuView(ArtifactIRenderer* renderer,
+                                 const QSize& size,
+                                 const ArtifactCore::ProceduralTextureSettings& settings) const {
+    if (!renderer || settings.width <= 0 || settings.height <= 0) return nullptr;
+    if (settings.width != size.width() || settings.height != size.height()) return nullptr;
+    const QString signature = noiseSignatureKey(settings, false, colorA_, colorB_);
+    if (gpuSignature_ == signature && gpuTexture_) {
+      return gpuTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+    }
+    auto device = renderer->device();
+    auto context = renderer->immediateContext();
+    if (!device || !context) return nullptr;
+    if (gpuDevice_ && gpuDevice_ != device.RawPtr()) {
+      gpuTexture_.Release();
+      delete gpuPipeline_;
+      delete gpuContext_;
+      gpuPipeline_ = nullptr;
+      gpuContext_ = nullptr;
+      gpuSignature_.clear();
+    }
+    gpuDevice_ = device.RawPtr();
+    if (!gpuContext_) gpuContext_ = new ArtifactCore::GpuContext(device.RawPtr(), context.RawPtr());
+    if (!gpuPipeline_) {
+      gpuPipeline_ = new ArtifactCore::ProceduralTextureComputePipeline(*gpuContext_);
+      if (!gpuPipeline_->initialize()) return nullptr;
+    }
+    auto* texture = ArtifactCore::ProceduralTextureComputePipeline::createOutputTexture(
+        device.RawPtr(), static_cast<std::uint32_t>(settings.width),
+        static_cast<std::uint32_t>(settings.height),
+        Diligent::TEX_FORMAT_RGBA16_FLOAT, "ArtifactNoiseLayer/ComputeOutput");
+    if (!texture) return nullptr;
+    gpuTexture_.Attach(texture);
+    auto* outputUAV = gpuTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS);
+    if (!gpuPipeline_->generate(context.RawPtr(), outputUAV, settings)) {
+      gpuTexture_.Release();
+      gpuSignature_.clear();
+      return nullptr;
+    }
+    gpuSignature_ = signature;
+    return gpuTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+  }
 };
 
 ArtifactNoiseLayer::ArtifactNoiseLayer() : impl_(new Impl()) {
@@ -271,6 +326,27 @@ void ArtifactNoiseLayer::draw(ArtifactIRenderer* renderer) {
   const Size_2D size(std::clamp(source.width, 1, 16384),
                      std::clamp(source.height, 1, 16384));
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  if (!impl_->colorMappingEnabled_) {
+    auto gpuSettings = impl_->settings_;
+    gpuSettings.width = size.width;
+    gpuSettings.height = size.height;
+    if (auto* gpuTexture = impl_->gpuView(renderer,
+                                          QSize(size.width, size.height),
+                                          gpuSettings)) {
+      drawWithClonerEffect(
+          this, baseTransform,
+          [renderer, size, gpuTexture, this]
+          (const QMatrix4x4& transform, float weight) {
+            renderer->drawSpriteTransformed(
+                0.0f, 0.0f, static_cast<float>(size.width),
+                static_cast<float>(size.height), transform, gpuTexture,
+                opacity() * weight);
+          });
+      drawFractureOverlay(renderer, baseTransform,
+                          QSizeF(size.width, size.height), opacity());
+      return;
+    }
+  }
   if (const auto* sourceOverride = resolveLayerSourceOverride()) {
     const auto& overrideImage = *sourceOverride;
     drawWithClonerEffect(

@@ -581,6 +581,46 @@ void ArtifactPropertyEditorRowWidget::setExpressionReferenceDropHandler(
   setAcceptDrops(static_cast<bool>(expressionReferenceDropHandler_));
 }
 
+void ArtifactPropertyEditorRowWidget::setExpanded(const bool expanded) {
+  if (expanded_ == expanded) {
+    return;
+  }
+  expanded_ = expanded;
+  // Reserve the additional row height for an inline editor host. The host is
+  // intentionally owned by the property panel and can be attached later
+  // without changing the row's public editing callbacks.
+  setMinimumHeight(expanded_ ? kPropertyRowMinHeight + 180
+                             : kPropertyRowMinHeight);
+  setMaximumHeight(expanded_ ? QWIDGETSIZE_MAX : kPropertyRowMinHeight);
+  updateOwnedGeometry();
+  update();
+}
+
+bool ArtifactPropertyEditorRowWidget::isExpanded() const { return expanded_; }
+
+void ArtifactPropertyEditorRowWidget::setInlineEditorWidget(
+    QWidget* editorWidget) {
+  if (inlineEditorWidget_ == editorWidget) {
+    return;
+  }
+  if (inlineEditorWidget_) {
+    inlineEditorWidget_->hide();
+    inlineEditorWidget_->setParent(nullptr);
+  }
+  inlineEditorWidget_ = editorWidget;
+  if (!inlineEditorWidget_) {
+    if (expanded_) {
+      setExpanded(false);
+    }
+    return;
+  }
+  inlineEditorWidget_->setParent(this);
+  inlineEditorWidget_->setSizePolicy(QSizePolicy::Expanding,
+                                     QSizePolicy::Expanding);
+  inlineEditorWidget_->setVisible(expanded_);
+  updateOwnedGeometry();
+}
+
 void ArtifactPropertyEditorRowWidget::setResetHandler(
     std::function<void()> handler) {
   resetHandler_ = std::move(handler);
@@ -848,7 +888,8 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
       favoriteButton_ && favoriteButton_->property("baseVisible").toBool();
 
   resetButton_->setEnabled(resetVisible && hover);
-  expressionButton_->setEnabled(exprVisible && hover);
+  const bool expressionActive = property("expressionActive").toBool();
+  expressionButton_->setEnabled(exprVisible && (hover || expressionActive));
   if (favoriteButton_) {
     favoriteButton_->setEnabled(favVisible && hover);
   }
@@ -874,6 +915,13 @@ void ArtifactPropertyEditorRowWidget::updateOwnedGeometry() {
       40, width() - editorLeft - actions.width - margin);
   editor_->setGeometry(editorLeft, kPropertyRowMarginV, editorWidth,
                        std::max(1, height() - 2 * kPropertyRowMarginV));
+  if (inlineEditorWidget_) {
+    const int inlineTop = kPropertyRowMinHeight;
+    inlineEditorWidget_->setGeometry(0, inlineTop, width(),
+                                     std::max(0, height() - inlineTop));
+    inlineEditorWidget_->setVisible(expanded_);
+    inlineEditorWidget_->raise();
+  }
 }
 
 void ArtifactPropertyEditorRowWidget::resizeEvent(QResizeEvent *event) {
@@ -1175,7 +1223,8 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
     const QRect actionRect(actions.start + actions.slots[i] * step,
                            (height() - kPropertyKeyButtonSize) / 2,
                            kPropertyKeyButtonSize, kPropertyKeyButtonSize);
-    const bool selected = i == 1 && currentFrameKeyframed_;
+    const bool selected = (i == 1 && currentFrameKeyframed_) ||
+                          (i == 4 && property("expressionActive").toBool());
     painter.setPen(Qt::NoPen);
     painter.setBrush(selected ? accent : blendColor(background, accent, hovered ? 0.10 : 0.04));
     painter.drawRoundedRect(actionRect, 4, 4);

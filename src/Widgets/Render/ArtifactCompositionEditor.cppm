@@ -147,6 +147,7 @@ import Artifact.Tool.Manager;
 import Artifact.Tool.PuppetTool;
 import FloatColorPickerDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
+import Artifact.Widgets.CreateNoiseLayerDialog;
 import Clipboard.ClipboardManager;
 import Utils.Path;
 import Utils.String.UniString;
@@ -4693,6 +4694,49 @@ public:
                                        LayerType::Adjustment);
         service->addLayerToCurrentComposition(params);
       });
+      add(QStringLiteral("New Noise Layer..."), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        const auto compNow = currentComposition();
+        if (!service || !compNow) {
+          return;
+        }
+        CreateNoiseLayerDialog dialog(this);
+        const QSize compSize = compNow->settings().compositionSize();
+        dialog.setCompositionSize(compSize.width(), compSize.height());
+        if (dialog.exec() != QDialog::Accepted) {
+          return;
+        }
+        ArtifactNoiseLayerInitParams params(dialog.layerName().isEmpty()
+                                                ? QStringLiteral("Noise Layer 1")
+                                                : dialog.layerName());
+        params.setWidth(dialog.width());
+        params.setHeight(dialog.height());
+        params.setSeed(dialog.seed());
+        params.setKind(dialog.kind());
+        service->addLayerToCurrentComposition(params);
+      });
+      const auto addNoisePreset = [this, &add](const QString& label,
+                                         ArtifactCore::ProceduralTexturePreset preset) {
+        add(label, [this, preset]() {
+          auto *service = ArtifactProjectService::instance();
+          const auto compNow = currentComposition();
+          if (!service || !compNow) {
+            return;
+          }
+          ArtifactNoiseLayerInitParams params(QStringLiteral("Noise Layer 1"));
+          const QSize compSize = compNow->settings().compositionSize();
+          params.setWidth(compSize.width());
+          params.setHeight(compSize.height());
+          params.setPreset(preset);
+          service->addLayerToCurrentComposition(params);
+        });
+      };
+      addNoisePreset(QStringLiteral("Noise: Marble"), ArtifactCore::ProceduralTexturePreset::Marble);
+      addNoisePreset(QStringLiteral("Noise: Clouds"), ArtifactCore::ProceduralTexturePreset::Clouds);
+      addNoisePreset(QStringLiteral("Noise: Cellular"), ArtifactCore::ProceduralTexturePreset::Cellular);
+      addNoisePreset(QStringLiteral("Noise: Fabric"), ArtifactCore::ProceduralTexturePreset::Fabric);
+      addNoisePreset(QStringLiteral("Noise: Terrain"), ArtifactCore::ProceduralTexturePreset::Terrain);
+      addNoisePreset(QStringLiteral("Noise: Metal"), ArtifactCore::ProceduralTexturePreset::Metal);
       add(QStringLiteral("New Camera Layer"), [this]() {
         auto *service = ArtifactProjectService::instance();
         if (!service) {

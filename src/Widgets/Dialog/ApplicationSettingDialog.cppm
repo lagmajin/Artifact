@@ -33,6 +33,7 @@ module;
 #include <QSlider>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QVariant>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
@@ -627,6 +628,9 @@ public:
 
   // GPU Acceleration
   QCheckBox *enableGPUCheckBox_;
+  QComboBox *antiAliasingModeCombo_;
+  QSpinBox *shutterPhaseSpinBox_;
+  QDoubleSpinBox *shutterAngleSpinBox_;
   QComboBox *gpuDeviceCombo_;
 };
 
@@ -681,6 +685,38 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
                      impl_->resolutionLabel_->setText(QString::number(value) +
                                                       "%");
                    });
+
+  // Anti-aliasing mode
+  auto *aaLayout = new QHBoxLayout();
+  aaLayout->addWidget(new QLabel("Anti-aliasing:", this));
+  impl_->antiAliasingModeCombo_ = new QComboBox(this);
+  impl_->antiAliasingModeCombo_->setAccessibleName(QStringLiteral("Anti-aliasing mode"));
+  impl_->antiAliasingModeCombo_->setAccessibleDescription(QStringLiteral("Choose the viewport anti-aliasing mode for 3D content"));
+  impl_->antiAliasingModeCombo_->addItem(QStringLiteral("Off"), 0);
+  impl_->antiAliasingModeCombo_->addItem(QStringLiteral("FXAA"), 1);
+  impl_->antiAliasingModeCombo_->addItem(QStringLiteral("MSAA 4x"), 2);
+  aaLayout->addWidget(impl_->antiAliasingModeCombo_);
+  aaLayout->addStretch();
+  qualityLayout->addLayout(aaLayout);
+
+  // Motion blur shutter
+  auto *shutterLayout = new QHBoxLayout();
+  shutterLayout->addWidget(new QLabel("Motion Blur Shutter Angle:", this));
+  impl_->shutterAngleSpinBox_ = new QDoubleSpinBox(this);
+  impl_->shutterAngleSpinBox_->setAccessibleName(QStringLiteral("Motion blur shutter angle"));
+  impl_->shutterAngleSpinBox_->setAccessibleDescription(QStringLiteral("Shutter angle in degrees used by timeline motion blur"));
+  impl_->shutterAngleSpinBox_->setRange(0.0, 720.0);
+  impl_->shutterAngleSpinBox_->setSuffix(QString::fromUtf8("°"));
+  shutterLayout->addWidget(impl_->shutterAngleSpinBox_);
+  shutterLayout->addWidget(new QLabel("Phase:", this));
+  impl_->shutterPhaseSpinBox_ = new QDoubleSpinBox(this);
+  impl_->shutterPhaseSpinBox_->setAccessibleName(QStringLiteral("Motion blur shutter phase"));
+  impl_->shutterPhaseSpinBox_->setAccessibleDescription(QStringLiteral("Shutter phase offset in degrees applied to motion blur samples"));
+  impl_->shutterPhaseSpinBox_->setRange(-360.0, 360.0);
+  impl_->shutterPhaseSpinBox_->setSuffix(QString::fromUtf8("°"));
+  shutterLayout->addWidget(impl_->shutterPhaseSpinBox_);
+  shutterLayout->addStretch();
+  qualityLayout->addLayout(shutterLayout);
 
   mainLayout->addWidget(qualityGroup);
 
@@ -1441,6 +1477,13 @@ void PreviewSettingPage::loadSettings() {
   impl_->thumbnailQualityCombo_->setCurrentText(settings->previewThumbnailQualityText());
   impl_->enableGPUCheckBox_->setChecked(settings->previewEnableGpuAcceleration());
   impl_->gpuDeviceCombo_->setCurrentText(settings->previewGpuDeviceText());
+  {
+    const int aaIndex = impl_->antiAliasingModeCombo_->findData(
+        settings->compositionAntiAliasingMode());
+    impl_->antiAliasingModeCombo_->setCurrentIndex(aaIndex < 0 ? 1 : aaIndex);
+  }
+  impl_->shutterAngleSpinBox_->setValue(settings->timelineMotionBlurShutterAngle());
+  impl_->shutterPhaseSpinBox_->setValue(settings->timelineMotionBlurShutterPhase());
 }
 
 void PreviewSettingPage::saveSettings() {
@@ -1457,6 +1500,11 @@ void PreviewSettingPage::saveSettings() {
   settings->setPreviewThumbnailQualityText(impl_->thumbnailQualityCombo_->currentText());
   settings->setPreviewEnableGpuAcceleration(impl_->enableGPUCheckBox_->isChecked());
   settings->setPreviewGpuDeviceText(impl_->gpuDeviceCombo_->currentText());
+  if (const QVariant aaData = impl_->antiAliasingModeCombo_->currentData(); aaData.isValid()) {
+    settings->setCompositionAntiAliasingMode(aaData.toInt());
+  }
+  settings->setTimelineMotionBlurShutterAngle(impl_->shutterAngleSpinBox_->value());
+  settings->setTimelineMotionBlurShutterPhase(impl_->shutterPhaseSpinBox_->value());
 }
 QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
   if (!impl_) return {};
@@ -1469,6 +1517,9 @@ QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
       {QStringLiteral("Generate thumbnails"), QStringLiteral("Generate asset preview thumbnails"), QStringLiteral("Preview"), impl_->generateThumbnailsCheckBox_, "Preview/GenerateThumbnails"},
       {QStringLiteral("Thumbnail quality"), QStringLiteral("Quality used for generated thumbnails"), QStringLiteral("Preview"), impl_->thumbnailQualityCombo_, "Preview/ThumbnailQualityText"},
       {QStringLiteral("GPU acceleration"), QStringLiteral("Use GPU acceleration for previews"), QStringLiteral("Preview"), impl_->enableGPUCheckBox_, "Preview/EnableGpuAcceleration"},
+      {QStringLiteral("Anti-aliasing mode"), QStringLiteral("Viewport anti-aliasing mode for 3D content"), QStringLiteral("Preview"), impl_->antiAliasingModeCombo_, "UI/Composition/AntiAliasingMode"},
+      {QStringLiteral("Motion blur shutter angle"), QStringLiteral("Shutter angle in degrees used by timeline motion blur"), QStringLiteral("Preview"), impl_->shutterAngleSpinBox_, "UI/Timeline/MotionBlurShutterAngle"},
+      {QStringLiteral("Motion blur shutter phase"), QStringLiteral("Shutter phase offset in degrees for motion blur samples"), QStringLiteral("Preview"), impl_->shutterPhaseSpinBox_, "UI/Timeline/MotionBlurShutterPhase"},
       {QStringLiteral("GPU device"), QStringLiteral("GPU device selected for preview rendering"), QStringLiteral("Preview"), impl_->gpuDeviceCombo_, "Preview/GpuDeviceText"},
   };
 }

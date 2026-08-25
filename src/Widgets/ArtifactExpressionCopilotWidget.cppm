@@ -13,6 +13,12 @@ module;
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QFrame>
+#include <QFile>
+#include <QFileDialog>
+#include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QStandardPaths>
 #include <QAbstractItemView>
 #include <QLabel>
 #include <QLineEdit>
@@ -272,6 +278,10 @@ public:
     QListWidget* referenceList = nullptr;
     QPushButton* generateBtn = nullptr;
     QPushButton* applyBtn = nullptr;
+    QPushButton* revertBtn = nullptr;
+    QPushButton* removeBtn = nullptr;
+    QPushButton* saveSnippetBtn = nullptr;
+    QPushButton* loadSnippetBtn = nullptr;
     QPushButton* copyBtn = nullptr;
     QPushButton* clearBtn = nullptr;
     QPushButton* wiggleBtn = nullptr;
@@ -286,6 +296,9 @@ public:
     QStringList previewLayerNames;
     int previewLayerIndex = -1;
     QString previewLayerName;
+    QString originalExpression;
+    bool expressionValid = false;
+    bool inlineMode = false;
     QVariant previewValue;
     QVariantMap previewLayerSnapshots;
     QVariantList previewCompositionMarkers;
@@ -587,6 +600,10 @@ public:
         }
 
         const QString text = expressionEdit->toPlainText();
+        expressionValid = false;
+        if (applyBtn) {
+            applyBtn->setEnabled(false);
+        }
         const std::string expr = text.toStdString();
         if (expr.empty()) {
             setStatus(QStringLiteral("Expression is empty"), QColor(148, 163, 184));
@@ -627,6 +644,7 @@ public:
                         .arg(QString::fromStdString(evaluator.getError())),
                     QColor(248, 113, 113));
             } else {
+                expressionValid = true;
                 setStatus(
                     QStringLiteral("Runtime OK: %1")
                         .arg(QString::fromStdString(
@@ -636,6 +654,9 @@ public:
             }
             setHint(currentHintText(text), QColor(96, 165, 250));
             applyErrorSelection(-1, 0, text);
+            if (applyBtn) {
+                applyBtn->setEnabled(expressionValid);
+            }
             return;
         }
 
@@ -721,7 +742,7 @@ public:
 
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(QString::fromUtf8("fx"));
-        auto* titleLabel = new QLabel(QStringLiteral("Expression Copilot"));
+        auto* titleLabel = new QLabel(QStringLiteral("Expression Editor"));
         {
             QFont font = titleLabel->font();
             font.setBold(true);
@@ -815,11 +836,19 @@ public:
         auto* btnLayout = new QHBoxLayout();
         generateBtn = new QPushButton(QStringLiteral("Generate"));
         applyBtn = new QPushButton(QStringLiteral("Apply"));
+        revertBtn = new QPushButton(QStringLiteral("Revert"));
+        removeBtn = new QPushButton(QStringLiteral("Remove Expression"));
         copyBtn = new QPushButton(QStringLiteral("Copy"));
         clearBtn = new QPushButton(QStringLiteral("Clear"));
         btnLayout->addStretch();
         btnLayout->addWidget(generateBtn);
         btnLayout->addWidget(applyBtn);
+        btnLayout->addWidget(revertBtn);
+        btnLayout->addWidget(removeBtn);
+        saveSnippetBtn = new QPushButton(QStringLiteral("Save Snippet"));
+        loadSnippetBtn = new QPushButton(QStringLiteral("Load Snippet"));
+        btnLayout->addWidget(saveSnippetBtn);
+        btnLayout->addWidget(loadSnippetBtn);
         btnLayout->addWidget(copyBtn);
         btnLayout->addWidget(clearBtn);
         layout->addLayout(btnLayout);
@@ -892,12 +921,85 @@ ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent
     connect(impl_->applyBtn, &QPushButton::clicked, this, [this]() {
         impl_->validateExpression();
         const QString text = impl_->expressionEdit->toPlainText().trimmed();
-        if (!text.isEmpty()) {
+        if (impl_->expressionValid && !text.isEmpty()) {
             if (impl_->applyHandler) {
                 impl_->applyHandler(text);
             }
+            impl_->originalExpression = text;
             QApplication::clipboard()->setText(text);
         }
+    });
+
+    connect(impl_->revertBtn, &QPushButton::clicked, this, [this]() {
+        impl_->expressionEdit->setPlainText(impl_->originalExpression);
+        impl_->expressionEdit->moveCursor(QTextCursor::End);
+        impl_->validateExpression();
+        impl_->setStatus(QStringLiteral("Reverted to the saved expression"),
+                         QColor(148, 163, 184));
+    });
+
+    connect(impl_->removeBtn, &QPushButton::clicked, this, [this]() {
+        if (impl_->applyHandler) {
+            impl_->applyHandler(QString());
+        }
+        impl_->originalExpression.clear();
+        impl_->expressionEdit->clear();
+        impl_->setStatus(QStringLiteral("Expression removed"),
+                         QColor(74, 222, 128));
+        impl_->applyErrorSelection(-1, 0, QString());
+    });
+
+    connect(impl_->saveSnippetBtn, &QPushButton::clicked, this, [this]() {
+        const QString expression = impl_->expressionEdit->toPlainText().trimmed();
+        if (expression.isEmpty()) {
+            return;
+        }
+        const QString dir = QStandardPaths::writableLocation(
+            QStandardPaths::AppDataLocation) + QStringLiteral("/expression-snippets");
+        QDir().mkpath(dir);
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Save Expression Snippet"), dir,
+            QStringLiteral("Expression Snippet (*.json)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            impl_->setStatus(QStringLiteral("Could not save snippet"), QColor(248, 113, 113));
+            return;
+        }
+        QJsonObject object;
+        object[QStringLiteral("kind")] = QStringLiteral("artifact.expression-snippet");
+        object[QStringLiteral("expression")] = expression;
+        file.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
+        impl_->setStatus(QStringLiteral("Snippet saved"), QColor(74, 222, 128));
+    });
+
+    connect(impl_->loadSnippetBtn, &QPushButton::clicked, this, [this]() {
+        const QString dir = QStandardPaths::writableLocation(
+            QStandardPaths::AppDataLocation) + QStringLiteral("/expression-snippets");
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Load Expression Snippet"), dir,
+            QStringLiteral("Expression Snippet (*.json)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            impl_->setStatus(QStringLiteral("Could not load snippet"), QColor(248, 113, 113));
+            return;
+        }
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+        const QString expression = document.object().value(QStringLiteral("expression"))
+                                       .toString().trimmed();
+        if (expression.isEmpty()) {
+            impl_->setStatus(QStringLiteral("Snippet is empty or invalid"), QColor(248, 113, 113));
+            return;
+        }
+        impl_->expressionEdit->setPlainText(expression);
+        impl_->expressionEdit->moveCursor(QTextCursor::End);
+        impl_->validateExpression();
+        impl_->setStatus(QStringLiteral("Snippet loaded"), QColor(74, 222, 128));
     });
 
     connect(impl_->clearBtn, &QPushButton::clicked, this, [this]() {
@@ -1036,10 +1138,47 @@ void ArtifactExpressionCopilotWidget::setExpressionText(const QString& expressio
     if (!impl_ || !impl_->expressionEdit) {
         return;
     }
+    impl_->originalExpression = expression.trimmed();
     impl_->expressionEdit->setPlainText(expression);
     impl_->expressionEdit->moveCursor(QTextCursor::End);
     impl_->validateExpression();
     impl_->showSuggestions(impl_->currentCompletionPrefix());
+}
+
+void ArtifactExpressionCopilotWidget::setInlineMode(const bool inlineMode) {
+    if (!impl_ || impl_->inlineMode == inlineMode) {
+        return;
+    }
+    impl_->inlineMode = inlineMode;
+    if (inlineMode) {
+        setWindowFlags(Qt::Widget);
+        setAttribute(Qt::WA_DeleteOnClose, false);
+        if (impl_->promptInput) {
+            impl_->promptInput->hide();
+        }
+        if (impl_->referenceList) {
+            impl_->referenceList->hide();
+        }
+        if (impl_->generateBtn) {
+            impl_->generateBtn->hide();
+        }
+        if (impl_->wiggleBtn) {
+            impl_->wiggleBtn->hide();
+        }
+        if (impl_->loopBtn) {
+            impl_->loopBtn->hide();
+        }
+        if (impl_->driftBtn) {
+            impl_->driftBtn->hide();
+        }
+        if (impl_->saveSnippetBtn) {
+            impl_->saveSnippetBtn->hide();
+        }
+        if (impl_->loadSnippetBtn) {
+            impl_->loadSnippetBtn->hide();
+        }
+        adjustSize();
+    }
 }
 
 void ArtifactExpressionCopilotWidget::setApplyHandler(std::function<void(const QString& expression)> handler) {

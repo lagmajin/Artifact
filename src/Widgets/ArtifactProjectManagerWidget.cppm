@@ -155,6 +155,7 @@ import Clipboard.ClipboardManager;
 import Composition.ParametricComposition;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Widgets.CreateNoiseLayerDialog;
 import Artifact.Menu.Layer;
 import Artifact.Widgets.AppDialogs;
 import Dialog.Composition;
@@ -4796,6 +4797,53 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
         }
     }, loadProjectViewIcon(QStringLiteral("Studio/palette.svg")));
+    addTrackedNewAction(newMenu, QStringLiteral("new_noise"), QStringLiteral("Noise Layer..."), [this, svc]() {
+        if (!svc) return;
+        if (!svc->currentComposition().lock()) {
+            if (svc->hasProject()) {
+                svc->createComposition(UniString(QStringLiteral("Composition")));
+            }
+        }
+        if (!svc->currentComposition().lock()) {
+            QMessageBox::warning(this, QStringLiteral("Layer"), QStringLiteral("コンポジションが選択されていません。"));
+            return;
+        }
+        CreateNoiseLayerDialog dialog(this);
+        const QSize compSize = svc->currentComposition().lock()->settings().compositionSize();
+        dialog.setCompositionSize(compSize.width(), compSize.height());
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+        ArtifactNoiseLayerInitParams params(dialog.layerName().isEmpty()
+                                                ? QStringLiteral("Noise Layer")
+                                                : dialog.layerName());
+        params.setWidth(dialog.width());
+        params.setHeight(dialog.height());
+        params.setSeed(dialog.seed());
+        params.setKind(dialog.kind());
+        svc->addLayerToCurrentComposition(params, true, false);
+    }, loadProjectViewIcon(QStringLiteral("Studio/effect_ops_noise.svg")));
+    const auto addNoisePreset = [this, svc, newMenu, &addTrackedNewAction](const QString& id,
+                                                      const QString& label,
+                                                      ArtifactCore::ProceduralTexturePreset preset) {
+        addTrackedNewAction(newMenu, id, label, [this, svc, preset]() {
+            if (!svc) return;
+            const auto comp = svc->currentComposition().lock();
+            if (!comp) return;
+            ArtifactNoiseLayerInitParams params(QStringLiteral("Noise Layer"));
+            const QSize compSize = comp->settings().compositionSize();
+            params.setWidth(compSize.width());
+            params.setHeight(compSize.height());
+            params.setPreset(preset);
+            svc->addLayerToCurrentComposition(params, true, false);
+        }, loadProjectViewIcon(QStringLiteral("Studio/effect_ops_noise.svg")));
+    };
+    addNoisePreset(QStringLiteral("new_noise_marble"), QStringLiteral("Noise: Marble"), ArtifactCore::ProceduralTexturePreset::Marble);
+    addNoisePreset(QStringLiteral("new_noise_clouds"), QStringLiteral("Noise: Clouds"), ArtifactCore::ProceduralTexturePreset::Clouds);
+    addNoisePreset(QStringLiteral("new_noise_cellular"), QStringLiteral("Noise: Cellular"), ArtifactCore::ProceduralTexturePreset::Cellular);
+    addNoisePreset(QStringLiteral("new_noise_fabric"), QStringLiteral("Noise: Fabric"), ArtifactCore::ProceduralTexturePreset::Fabric);
+    addNoisePreset(QStringLiteral("new_noise_terrain"), QStringLiteral("Noise: Terrain"), ArtifactCore::ProceduralTexturePreset::Terrain);
+    addNoisePreset(QStringLiteral("new_noise_metal"), QStringLiteral("Noise: Metal"), ArtifactCore::ProceduralTexturePreset::Metal);
     addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [this]() {
         impl_->createFolderAtSelection(this);
     }, loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));

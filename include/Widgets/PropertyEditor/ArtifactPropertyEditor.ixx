@@ -501,6 +501,9 @@ public:
     QString propertyName() const;
     void setExpressionHandler(std::function<void()> handler);
     void setExpressionReferenceDropHandler(std::function<void(const QString&)> handler);
+    void setExpanded(bool expanded);
+    bool isExpanded() const;
+    void setInlineEditorWidget(QWidget* editorWidget);
     void setResetHandler(std::function<void()> handler);
     void setAuxAction(std::function<void()> handler, const QString& label);
     void setKeyframeHandler(KeyFrameHandler handler);
@@ -558,6 +561,8 @@ private:
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
     std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
     bool currentFrameKeyframed_ = false;
+    bool expanded_ = false;
+    QPointer<QWidget> inlineEditorWidget_;
     bool keyframeModeEnabled_ = false;
     QString auxActionLabel_;
     

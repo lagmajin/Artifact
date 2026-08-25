@@ -697,7 +697,7 @@ bool openNewExpressionCopilot(QWidget* root)
 
  auto* copilot = new ArtifactExpressionCopilotWidget(root);
  copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
- copilot->setWindowTitle(QStringLiteral("Expression Copilot"));
+ copilot->setWindowTitle(QStringLiteral("Expression Editor"));
  copilot->setAttribute(Qt::WA_DeleteOnClose);
  copilot->move(QCursor::pos() - QPoint(150, 200));
  copilot->show();

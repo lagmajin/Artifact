@@ -940,11 +940,15 @@ void launchExpressionCopilot(
     const QString &initialExpression,
     const ArtifactAbstractLayerPtr &layer,
     const RationalTime &currentTime,
-    const std::function<void(const QString &)> &applyHandler = {}) {
+    const std::function<void(const QString &)> &applyHandler = {},
+    ArtifactPropertyEditorRowWidget *inlineRow = nullptr) {
   auto *copilot = new ArtifactExpressionCopilotWidget(parent);
-  copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
-  copilot->setWindowTitle(
-      QStringLiteral("Expression Copilot: %1").arg(propertyName));
+  if (!inlineRow) {
+    copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+    copilot->setWindowTitle(
+        QStringLiteral("Expression Editor: %1").arg(propertyName));
+  }
+  copilot->setInlineMode(inlineRow != nullptr);
   copilot->setExpressionText(initialExpression);
   if (layer) {
     auto *composition =
@@ -1026,8 +1030,14 @@ void launchExpressionCopilot(
     });
   }
   copilot->setAttribute(Qt::WA_DeleteOnClose);
-  copilot->move(QCursor::pos() - QPoint(150, 200));
-  copilot->show();
+  if (inlineRow) {
+    inlineRow->setInlineEditorWidget(copilot);
+    inlineRow->setExpanded(true);
+    copilot->show();
+  } else {
+    copilot->move(QCursor::pos() - QPoint(150, 200));
+    copilot->show();
+  }
 }
 
 ArtifactPropertyEditorRowWidget *createPropertyRow(
@@ -1425,13 +1435,19 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const bool showExpressionButton = animatable;
   row->setShowExpressionButton(showExpressionButton);
+  row->setProperty("expressionActive",
+                   propertyPtr && propertyPtr->hasExpression());
   if (showExpressionButton) {
     const QString initialExpression = propertyPtr && propertyPtr->hasExpression()
         ? propertyPtr->getExpression()
         : (editor ? editor->value().toString() : QString{});
     row->setExpressionHandler(
-        [parent, propertyName = property.getName(), propertyPtr, layer, keyframeChanged,
+        [parent, row, propertyName = property.getName(), propertyPtr, layer, keyframeChanged,
          initialExpression, currentTimeProvider, playback]() {
+          if (row->isExpanded()) {
+            row->setExpanded(false);
+            return;
+          }
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);
@@ -1449,7 +1465,8 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
                 if (layer) {
                   notifyLayerPropertyAnimationChanged(layer);
                 }
-              });
+              },
+              row);
         });
     row->setExpressionReferenceDropHandler(
         [parent, propertyName = property.getName(), propertyPtr, layer,

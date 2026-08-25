@@ -22,6 +22,7 @@ export namespace Artifact {
         ~ArtifactExpressionCopilotWidget() override;
 
         void setExpressionText(const QString& expression);
+        void setInlineMode(bool inlineMode);
         QString expressionText() const;
         void setApplyHandler(std::function<void(const QString& expression)> handler);
         void setReferenceItems(const QStringList& layerNames,

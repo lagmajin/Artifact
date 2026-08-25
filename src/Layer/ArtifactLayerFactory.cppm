@@ -255,6 +255,18 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
     break;
   case LayerType::Noise:
      ptr = ArtifactCore::makeShared<ArtifactNoiseLayer>();
+    if (auto* noiseParams = dynamic_cast<const ArtifactNoiseLayerInitParams*>(&params)) {
+      auto* noiseLayer = static_cast<ArtifactNoiseLayer*>(ptr.get());
+      noiseLayer->setSize(noiseParams->width(), noiseParams->height());
+      auto settings = noiseParams->hasPreset()
+          ? ArtifactCore::ProceduralTextureGenerator::makePreset(noiseParams->preset(), noiseParams->seed())
+          : noiseLayer->settings();
+      settings.primary.seed = noiseParams->seed();
+      if (!noiseParams->hasPreset()) {
+        settings.primary.kind = noiseParams->kind();
+      }
+      noiseLayer->setSettings(settings);
+    }
     break;
   case LayerType::EnvironmentMap:
      ptr = ArtifactCore::makeShared<ArtifactEnvironmentMapLayer>();

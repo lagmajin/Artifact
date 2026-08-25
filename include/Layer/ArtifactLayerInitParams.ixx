@@ -44,6 +44,7 @@ import Utils.String.UniString;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Model3D;
 import Color.Float;
+import ImageProcessing.ProceduralTexture;
 
 export namespace Artifact {
 
@@ -121,6 +122,31 @@ export namespace Artifact {
  public:
   explicit ArtifactTextLayerInitParams(const QString& name);
   ~ArtifactTextLayerInitParams() = default;
+ };
+
+ class ArtifactNoiseLayerInitParams : public ArtifactLayerInitParams
+ {
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ArtifactNoiseLayerInitParams(const QString& name);
+  ArtifactNoiseLayerInitParams(const ArtifactNoiseLayerInitParams& other);
+  ArtifactNoiseLayerInitParams(ArtifactNoiseLayerInitParams&& other) noexcept;
+  ArtifactNoiseLayerInitParams& operator=(const ArtifactNoiseLayerInitParams& other);
+  ArtifactNoiseLayerInitParams& operator=(ArtifactNoiseLayerInitParams&& other) noexcept;
+  ~ArtifactNoiseLayerInitParams();
+  int width() const;
+  void setWidth(int width);
+  int height() const;
+  void setHeight(int height);
+  std::uint32_t seed() const;
+  void setSeed(std::uint32_t seed);
+  ArtifactCore::ProceduralTextureGeneratorKind kind() const;
+  void setKind(ArtifactCore::ProceduralTextureGeneratorKind kind);
+  bool hasPreset() const;
+  ArtifactCore::ProceduralTexturePreset preset() const;
+  void setPreset(ArtifactCore::ProceduralTexturePreset preset);
  };
 
  class ArtifactNullLayerInitParams : public ArtifactLayerInitParams

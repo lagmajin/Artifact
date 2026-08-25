@@ -126,6 +126,62 @@ LayerType ArtifactLayerInitParams::layerType() const
  return impl_->layerType();
 }
 
+class ArtifactNoiseLayerInitParams::Impl {
+public:
+  int width_ = 1920;
+  int height_ = 1080;
+  std::uint32_t seed_ = 42;
+  ArtifactCore::ProceduralTextureGeneratorKind kind_ = ArtifactCore::ProceduralTextureGeneratorKind::Perlin;
+  bool presetEnabled_ = false;
+  ArtifactCore::ProceduralTexturePreset preset_ = ArtifactCore::ProceduralTexturePreset::Marble;
+};
+
+ArtifactNoiseLayerInitParams::ArtifactNoiseLayerInitParams(const QString& name)
+  : ArtifactLayerInitParams(name, LayerType::Noise), impl_(new Impl()) {}
+
+ArtifactNoiseLayerInitParams::ArtifactNoiseLayerInitParams(
+    const ArtifactNoiseLayerInitParams& other)
+  : ArtifactLayerInitParams(other), impl_(new Impl(*other.impl_)) {}
+
+ArtifactNoiseLayerInitParams::ArtifactNoiseLayerInitParams(
+    ArtifactNoiseLayerInitParams&& other) noexcept
+  : ArtifactLayerInitParams(std::move(other)), impl_(other.impl_) {
+  other.impl_ = nullptr;
+}
+
+ArtifactNoiseLayerInitParams& ArtifactNoiseLayerInitParams::operator=(
+    const ArtifactNoiseLayerInitParams& other) {
+  if (this != &other) {
+    ArtifactLayerInitParams::operator=(other);
+    *impl_ = *other.impl_;
+  }
+  return *this;
+}
+
+ArtifactNoiseLayerInitParams& ArtifactNoiseLayerInitParams::operator=(
+    ArtifactNoiseLayerInitParams&& other) noexcept {
+  if (this != &other) {
+    ArtifactLayerInitParams::operator=(std::move(other));
+    delete impl_;
+    impl_ = other.impl_;
+    other.impl_ = nullptr;
+  }
+  return *this;
+}
+
+ArtifactNoiseLayerInitParams::~ArtifactNoiseLayerInitParams() { delete impl_; }
+int ArtifactNoiseLayerInitParams::width() const { return impl_->width_; }
+void ArtifactNoiseLayerInitParams::setWidth(int value) { impl_->width_ = std::clamp(value, 1, 32768); }
+int ArtifactNoiseLayerInitParams::height() const { return impl_->height_; }
+void ArtifactNoiseLayerInitParams::setHeight(int value) { impl_->height_ = std::clamp(value, 1, 32768); }
+std::uint32_t ArtifactNoiseLayerInitParams::seed() const { return impl_->seed_; }
+void ArtifactNoiseLayerInitParams::setSeed(std::uint32_t value) { impl_->seed_ = value; }
+ArtifactCore::ProceduralTextureGeneratorKind ArtifactNoiseLayerInitParams::kind() const { return impl_->kind_; }
+void ArtifactNoiseLayerInitParams::setKind(ArtifactCore::ProceduralTextureGeneratorKind value) { impl_->kind_ = value; }
+bool ArtifactNoiseLayerInitParams::hasPreset() const { return impl_->presetEnabled_; }
+ArtifactCore::ProceduralTexturePreset ArtifactNoiseLayerInitParams::preset() const { return impl_->preset_; }
+void ArtifactNoiseLayerInitParams::setPreset(ArtifactCore::ProceduralTexturePreset value) { impl_->preset_ = value; impl_->presetEnabled_ = true; }
+
  class ArtifactSolidLayerInitParams::Impl {
  public:
   int width_ = 1920;

@@ -32392,6 +32392,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
+    // Motion blur reads the velocity target, so the emission-family targets
+    // must exist whenever timeline motion blur is active even without any
+    // auxiliary debug channel requested.
+    const bool motionBlurVelocityRequested = []() {
+      const auto appSettings = ArtifactCore::ArtifactAppSettings::instance();
+      return appSettings && appSettings->timelineMotionBlurActive();
+    }();
+    // Anti-aliasing quality mode: 0=Off, 1=FXAA, 2=MSAA 4x.
+    const int antiAliasingMode = []() {
+      const auto appSettings = ArtifactCore::ArtifactAppSettings::instance();
+      return appSettings ? appSettings->compositionAntiAliasingMode() : 1;
+    }();
+
     // Avoid paying render-pipeline setup cost when GPU blending is disabled.
 
     if (gpuBlendPathRequested) {
@@ -32408,7 +32421,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             RenderConfig::PipelineFormatF16,
 
-            auxiliary3DChannelRequested);
+            auxiliary3DChannelRequested || motionBlurVelocityRequested);
 
         if (!initializedWithF16) {
           qWarning() << "[CompositionView] RGBA16_FLOAT pipeline unavailable;"
@@ -32423,7 +32436,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               RenderConfig::PipelineFormatF32,
 
-              auxiliary3DChannelRequested);
+              auxiliary3DChannelRequested || motionBlurVelocityRequested);
         }
 
         if (!ensurePreviewRenderPipelineDepthSlot(
@@ -33631,8 +33644,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // MSAA is isolated per 3D layer.  A shared-depth scene and AOV
           // capture stay on the established single-sample path because their
           // depth/color attachments must remain mutually compatible.
-          const bool useLayerMsaa = layer->is3D() && !preserveSceneDepth &&
-              !auxiliary3DChannelRequested &&
+          const bool useLayerMsaa = antiAliasingMode == 2 && layer->is3D() && !preserveSceneDepth &&
+              !auxiliary3DChannelRequested && !motionBlurVelocityRequested &&
               ensurePreviewRenderPipelineMsaaSlot(
                   previewRenderSlot, previewRenderWidth, previewRenderHeight);
 
@@ -34004,7 +34017,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             // Geometry resolves into a single-sample composition target.
             // Apply FXAA only when the frame contains visible 3D, after AO and
             // motion blur, so 2D/text content keeps its exact pixels.
-            if (hasVisible3DLayer && resources.pipeline && renderer_ &&
+            if (antiAliasingMode == 1 && hasVisible3DLayer && resources.pipeline &&
+                renderer_ &&
                 renderer_->immediateContext() &&
                 resources.pipeline->applyFastApproximateAntiAliasing(
                     renderer_->immediateContext(), resources.accumSRV,

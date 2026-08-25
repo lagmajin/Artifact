@@ -64,6 +64,7 @@ import Utils.String.UniString;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Layer.Solid2D;
+import Artifact.Layers.Noise;
 import Composition.ExportMatrix;
 
 export namespace Artifact {
@@ -354,6 +355,8 @@ public:
             {"dryRunRemoveAllRenderQueues", IDescribable::loc("Preview clearing the render queue without changing it.", "Preview clearing the render queue without changing it.", {}), "QVariantMap"},
             {"removeAllRenderQueuesConfirmed", IDescribable::loc("Clear the render queue after explicit confirmation.", "Clear the render queue after explicit confirmation.", {}), "bool", {QStringLiteral("bool")}, {QStringLiteral("confirmed")}},
             {"createSolidLayer", IDescribable::loc("Create a solid 2D layer and append it to the composition.", "Create a solid 2D layer and append it to the composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("name"), QStringLiteral("colorHex"), QStringLiteral("width"), QStringLiteral("height")}},
+            {"createNoiseLayer", IDescribable::loc("Create a procedural noise 2D layer and append it to the composition.", "Create a procedural noise 2D layer and append it to the composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("seed"), QStringLiteral("kind")}},
+            {"addNoiseLayer", IDescribable::loc("Alias for createNoiseLayer.", "Alias for createNoiseLayer.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("seed"), QStringLiteral("kind")}},
             {"replaceLayerSource", IDescribable::loc("Replace a video/audio layer's media source file.", "Replace a video/audio layer's media source file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("footageItemId")}},
             {"splitLayerAtTime", IDescribable::loc("Split a layer into two layers at the specified frame time.", "Split a layer into two layers at the specified frame time.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("frameTime")}},
             {"rippleDeleteLayer", IDescribable::loc("Delete a layer and shift all subsequent layers earlier in time.", "Delete a layer and shift all subsequent layers earlier in time.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
@@ -1036,6 +1039,12 @@ public:
         }
         if (name == QStringLiteral("createSolidLayer")) {
             return createSolidLayer(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), intArg(args, 3, 0), intArg(args, 4, 0));
+        }
+        if (name == QStringLiteral("createNoiseLayer")) {
+            return createNoiseLayer(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), intArg(args, 3, 0), intArg(args, 4, 42), args.size() > 5 ? stringArg(args, 5) : QStringLiteral("perlin"));
+        }
+        if (name == QStringLiteral("addNoiseLayer")) {
+            return createNoiseLayer(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), intArg(args, 3, 0), intArg(args, 4, 42), args.size() > 5 ? stringArg(args, 5) : QStringLiteral("perlin"));
         }
         if (name == QStringLiteral("replaceLayerSource")) {
             return replaceLayerSource(stringArg(args, 0), stringArg(args, 1));
@@ -4675,6 +4684,59 @@ private:
             {QStringLiteral("success"), true},
             {QStringLiteral("layerId"), solidLayer->id().toString()}
         };
+    }
+
+    static QVariant createNoiseLayer(const QString& compositionId, const QString& name, int width, int height, int seed, const QString& kind)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}, {QStringLiteral("error"), QStringLiteral("ProjectService not available")}};
+        }
+
+        ArtifactCompositionPtr comp;
+        if (compositionId.isEmpty() || compositionId == QStringLiteral("current")) {
+            comp = service->currentComposition().lock();
+        } else {
+            auto result = service->findComposition(CompositionID(compositionId));
+            if (result.success) comp = result.ptr.lock();
+        }
+        if (!comp) {
+            return QVariantMap{{QStringLiteral("success"), false}, {QStringLiteral("error"), QStringLiteral("Composition not found")}};
+        }
+
+        ArtifactNoiseLayerInitParams params(name.isEmpty() ? QStringLiteral("Noise Layer") : name);
+        QSize compSize = comp->settings().compositionSize();
+        params.setWidth(width > 0 ? width : compSize.width());
+        params.setHeight(height > 0 ? height : compSize.height());
+        params.setSeed(static_cast<std::uint32_t>(std::clamp(seed, 0, 9999)));
+        const QString normalizedKind = kind.trimmed().toLower();
+        if (normalizedKind == QStringLiteral("simplex")) params.setKind(ArtifactCore::ProceduralTextureGeneratorKind::Simplex);
+        else if (normalizedKind == QStringLiteral("fbm")) params.setKind(ArtifactCore::ProceduralTextureGeneratorKind::FBM);
+        else if (normalizedKind == QStringLiteral("voronoi")) params.setKind(ArtifactCore::ProceduralTextureGeneratorKind::Voronoi);
+        else if (normalizedKind == QStringLiteral("white")) params.setKind(ArtifactCore::ProceduralTextureGeneratorKind::White);
+        else if (normalizedKind == QStringLiteral("value")) params.setKind(ArtifactCore::ProceduralTextureGeneratorKind::Value);
+        else if (normalizedKind == QStringLiteral("gradient")) params.setKind(ArtifactCore::ProceduralTextureGeneratorKind::Gradient);
+        else if (normalizedKind == QStringLiteral("marble")) params.setPreset(ArtifactCore::ProceduralTexturePreset::Marble);
+        else if (normalizedKind == QStringLiteral("clouds")) params.setPreset(ArtifactCore::ProceduralTexturePreset::Clouds);
+        else if (normalizedKind == QStringLiteral("cellular")) params.setPreset(ArtifactCore::ProceduralTexturePreset::Cellular);
+        else if (normalizedKind == QStringLiteral("fabric")) params.setPreset(ArtifactCore::ProceduralTexturePreset::Fabric);
+        else if (normalizedKind == QStringLiteral("terrain")) params.setPreset(ArtifactCore::ProceduralTexturePreset::Terrain);
+        else if (normalizedKind == QStringLiteral("metal")) params.setPreset(ArtifactCore::ProceduralTexturePreset::Metal);
+
+        auto noiseLayer = ArtifactCore::makeShared<ArtifactNoiseLayer>();
+        noiseLayer->setLayerName(params.name().toQString());
+        noiseLayer->setSize(params.width(), params.height());
+        auto settings = noiseLayer->settings();
+        settings.primary.seed = params.seed();
+        noiseLayer->setSettings(settings);
+        auto result = comp->appendLayerTop(noiseLayer);
+        if (!result.success) {
+            return QVariantMap{{QStringLiteral("success"), false}, {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}};
+        }
+        comp->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), noiseLayer->id().toString(), LayerChangedEvent::ChangeType::Created});
+        return QVariantMap{{QStringLiteral("success"), true}, {QStringLiteral("compositionId"), comp->id().toString()}, {QStringLiteral("layerId"), noiseLayer->id().toString()}, {QStringLiteral("layerName"), noiseLayer->layerName()}};
     }
 
     // Replace a video/audio layer's media source file

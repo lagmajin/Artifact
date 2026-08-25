@@ -129,7 +129,8 @@ void launchExpressionCopilot(
     const AbstractPropertyPtr &propertyPtr,
     const QString &initialExpression, const ArtifactAbstractLayerPtr &layer,
     const RationalTime &currentTime,
-    const std::function<void(const QString &)> &applyHandler);
+    const std::function<void(const QString &)> &applyHandler,
+    ArtifactPropertyEditorRowWidget *inlineRow = nullptr);
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
 void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer);
 
