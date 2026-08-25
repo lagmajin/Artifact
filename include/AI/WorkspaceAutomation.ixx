@@ -4726,8 +4726,15 @@ private:
         auto noiseLayer = ArtifactCore::makeShared<ArtifactNoiseLayer>();
         noiseLayer->setLayerName(params.name().toQString());
         noiseLayer->setSize(params.width(), params.height());
-        auto settings = noiseLayer->settings();
+        auto settings = params.hasPreset()
+            ? ArtifactCore::ProceduralTextureGenerator::makePreset(params.preset(), params.seed())
+            : noiseLayer->settings();
+        settings.width = params.width();
+        settings.height = params.height();
         settings.primary.seed = params.seed();
+        if (!params.hasPreset()) {
+            settings.primary.kind = params.kind();
+        }
         noiseLayer->setSettings(settings);
         auto result = comp->appendLayerTop(noiseLayer);
         if (!result.success) {
