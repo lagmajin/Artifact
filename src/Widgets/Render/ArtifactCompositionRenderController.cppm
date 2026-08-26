@@ -5834,6 +5834,57 @@ struct MotionPathTangentSnapshot {
 
 
 
+class ShapePathVertexEditCommand final : public UndoCommand {
+
+ public:
+
+  ShapePathVertexEditCommand(
+      ArtifactAbstractLayerPtr layer,
+      std::vector<CustomPathVertex> before,
+      std::vector<CustomPathVertex> after, bool beforeClosed,
+      bool afterClosed)
+      : layer_(std::move(layer)),
+        before_(std::move(before)),
+        after_(std::move(after)),
+        beforeClosed_(beforeClosed),
+        afterClosed_(afterClosed) {}
+
+  void undo() override { apply(before_, beforeClosed_); }
+
+  void redo() override { apply(after_, afterClosed_); }
+
+  QString label() const override {
+    return QStringLiteral("Edit Path Vertices");
+  }
+
+ private:
+  void apply(const std::vector<CustomPathVertex> &verts, bool closed) {
+    auto layer = layer_.lock();
+    if (!layer) return;
+    auto *shape = dynamic_cast<ArtifactShapeLayer *>(layer.get());
+    if (!shape) return;
+    if (verts.size() >= 3) {
+      shape->setCustomPathVertices(verts, closed);
+    } else {
+      shape->clearCustomPath();
+    }
+    shape->setDirty(LayerDirtyFlag::Source);
+    layer->changed();
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  std::vector<CustomPathVertex> before_;
+  std::vector<CustomPathVertex> after_;
+  bool beforeClosed_;
+  bool afterClosed_;
+};
 class CameraPoiUndoCommand final : public UndoCommand {
  public:
   CameraPoiUndoCommand(ArtifactAbstractLayerPtr layer, QVector3D before,
@@ -12356,6 +12407,11 @@ public:
   QPointF motionSketchLastCanvasPos_;
 
   bool pendingMaskCreation_ = false;
+  // Pen-tool custom shape path creation (active when the selected layer is a
+  // shape layer). Mirrors the pending-mask creation flow.
+  bool pendingShapePathCreation_ = false;
+  LayerID pendingShapePathLayerId_;
+  std::vector<CustomPathVertex> pendingShapePathVertices_;
 
   LayerID pendingMaskLayerId_;
 
@@ -12408,8 +12464,13 @@ public:
   void clearPendingMaskCreation();
 
   void beginPendingMaskCreation(const ArtifactAbstractLayerPtr &layer,
+                                     const QPointF &localPos);
 
-                                const QPointF &localPos);
+  void beginPendingShapePathCreation(const ArtifactAbstractLayerPtr &layer,
+                                     const QPointF &localPos);
+  void clearPendingShapePathCreation();
+  bool finalizePendingShapePathCreation(const ArtifactAbstractLayerPtr &layer);
+  bool removeLastPendingShapePathVertex();
 
   bool finalizePendingMaskCreation(const ArtifactAbstractLayerPtr &layer);
 
@@ -13497,6 +13558,17 @@ public:
   bool isDraggingPastPlaneFrame_ = false;
   // Two-node camera POI handle drag state.
   bool isDraggingCameraPoi_ = false;
+  // Main-VP custom path vertex editing (Pen/Selection on shape layers).
+  bool isDraggingShapePathVertex_ = false;
+  int draggingShapePathVertexIndex_ = -1;
+  int draggingShapePathTangent_ = 0; // 0=vertex, 1=inTangent, 2=outTangent
+  int hoveredShapePathVertex_ = -1;
+  int hoveredShapePathTangent_ = 0;
+  bool shapePathEditPending_ = false;
+  bool shapePathEditDirty_ = false;
+  ArtifactAbstractLayerWeak shapePathEditLayer_;
+  std::vector<CustomPathVertex> shapePathEditBefore_;
+  bool shapePathEditBeforeClosed_ = true;
   ArtifactAbstractLayerWeak draggingCameraPoiLayer_;
   QVector3D cameraPoiBefore_;
   QVector3D cameraPoiDragPlanePoint_;
@@ -23283,6 +23355,59 @@ if (event->button() == Qt::LeftButton &&
       return;
     }
 
+    // Shape layer + Pen tool creates a custom shape path instead of a mask.
+    if (dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())) {
+      const auto cShapePos = impl_->renderer_->viewportToCanvas(
+          {(float)viewportPos.x(), (float)viewportPos.y()});
+      const QTransform shapeGlobalTransform =
+          selectedLayer->getGlobalTransform();
+      bool shapeInvertible = false;
+      const QTransform shapeInv =
+          shapeGlobalTransform.inverted(&shapeInvertible);
+      if (!shapeInvertible) {
+        event->accept();
+        return;
+      }
+      const QPointF localShapePos =
+          shapeInv.map(QPointF(cShapePos.x, cShapePos.y));
+      impl_->penMaskPreviewCanvasPos_ = {cShapePos.x, cShapePos.y};
+      impl_->penMaskPreviewValid_ = true;
+
+      // Clicking near the first vertex closes and finalizes the path.
+      if (impl_->pendingShapePathCreation_ &&
+          impl_->pendingShapePathLayerId_ == selectedLayer->id() &&
+          impl_->pendingShapePathVertices_.size() >= 2) {
+        const float closeThreshold =
+            12.0f / impl_->renderer_->getZoom();
+        const QPointF &first =
+            impl_->pendingShapePathVertices_.front().pos;
+        const float dx =
+            static_cast<float>(first.x() - localShapePos.x());
+        const float dy =
+            static_cast<float>(first.y() - localShapePos.y());
+        if (dx * dx + dy * dy <= closeThreshold * closeThreshold) {
+          if (impl_->finalizePendingShapePathCreation(selectedLayer)) {
+            setInfoOverlayText(
+                QStringLiteral("Shape Path"),
+                QStringLiteral("Custom path created"));
+          }
+          event->accept();
+          return;
+        }
+      }
+
+      impl_->beginPendingShapePathCreation(selectedLayer,
+                                           localShapePos);
+      setInfoOverlayText(
+          QStringLiteral("Shape Path"),
+          QStringLiteral(
+              "%1 vertices - click first point or press Enter to close")
+              .arg(impl_->pendingShapePathVertices_.size()));
+      markRenderDirty();
+      event->accept();
+      return;
+    }
+
     if (event->modifiers().testFlag(Qt::ControlModifier) &&
         resetHoveredMaskTangent()) {
       event->accept();
@@ -23323,6 +23448,14 @@ if (event->button() == Qt::LeftButton &&
           impl_->pendingMaskLayerId_ != selectedLayer->id()) {
 
         impl_->clearPendingMaskCreation();
+
+      }
+
+      if (impl_->pendingShapePathCreation_ &&
+
+          impl_->pendingShapePathLayerId_ != selectedLayer->id()) {
+
+        impl_->clearPendingShapePathCreation();
 
       }
 
@@ -23793,6 +23926,15 @@ if (event->button() == Qt::LeftButton &&
 
 
 
+  // Main-VP custom path vertex editing (Selection tool on shape layers).
+  if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
+      activeTool != ToolType::Rectangle && impl_->renderer_) {
+    if (beginShapePathVertexDrag(viewportPos)) {
+      notifyViewportInteractionActivity();
+      event->accept();
+      return;
+    }
+  }
   // Two-node camera POI handle drag. Tested before the motion-path block so
   // the POI cross owns clicks near it when the camera layer is selected.
   if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
@@ -25336,6 +25478,11 @@ void CompositionRenderController::handleMouseMove(
 
 
 
+  if (impl_->isDraggingShapePathVertex_) {
+    updateShapePathVertexDrag(viewportPos);
+    notifyViewportInteractionActivity();
+    return;
+  }
   if (impl_->isDraggingCameraPoi_) {
     if (impl_->renderer_) {
       const Ray poiRay = createPickingRay(viewportPos * impl_->devicePixelRatio_);
@@ -27479,6 +27626,10 @@ void CompositionRenderController::handleMouseRelease() {
     markRenderDirty();
   }
 
+  if (impl_->isDraggingShapePathVertex_) {
+    endShapePathVertexDrag();
+    return;
+  }
   if (impl_->isDraggingCameraPoi_) {
     auto poiLayer = impl_->draggingCameraPoiLayer_.lock();
     if (poiLayer) {
@@ -28234,6 +28385,307 @@ bool CompositionRenderController::hasPendingMaskEdit() const {
 
 }
 
+
+bool CompositionRenderController::hasPendingShapePathCreation() const {
+
+  return impl_ && impl_->pendingShapePathCreation_;
+
+}
+
+bool CompositionRenderController::finalizePendingShapePathCreation() {
+
+  if (!impl_) {
+
+    return false;
+
+  }
+
+  auto comp = impl_->previewPipeline_.composition();
+
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+
+  if (!impl_->finalizePendingShapePathCreation(selectedLayer)) {
+
+    return false;
+
+  }
+
+
+
+  if (comp && !impl_->selectedLayerId_.isNil()) {
+
+    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+
+        comp->id().toString(), impl_->selectedLayerId_.toString(),
+
+        LayerChangedEvent::ChangeType::Modified});
+
+  }
+
+  impl_->invalidateOverlayComposite();
+
+  markRenderDirty();
+
+  return true;
+
+}
+
+bool CompositionRenderController::removeLastPendingShapePathVertex() {
+
+  if (!impl_) {
+
+    return false;
+
+  }
+
+  const bool removed = impl_->removeLastPendingShapePathVertex();
+
+  if (removed) {
+
+    impl_->invalidateOverlayComposite();
+
+    markRenderDirty();
+
+  }
+
+  return removed;
+
+}
+
+void CompositionRenderController::cancelPendingShapePathCreation() {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  impl_->clearPendingShapePathCreation();
+
+  impl_->invalidateOverlayComposite();
+
+  markRenderDirty();
+
+}
+
+bool CompositionRenderController::beginShapePathVertexDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_) {
+
+    return false;
+
+  }
+
+  auto comp = impl_->previewPipeline_.composition();
+
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+
+  auto *shape =
+      selectedLayer ? dynamic_cast<ArtifactShapeLayer *>(
+                          selectedLayer.get())
+                    : nullptr;
+  if (!shape || !shape->hasCustomPath() || selectedLayer->isLocked() ||
+      selectedLayer->isSelectionLocked()) {
+
+    return false;
+
+  }
+
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  const QTransform globalTransform = selectedLayer->getGlobalTransform();
+  bool invertible = false;
+  const QTransform invTransform = globalTransform.inverted(&invertible);
+  if (!invertible) {
+
+    return false;
+
+  }
+  const QPointF canvasPoint(cPos.x, cPos.y);
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const float hitRadius = 12.0f / zoom;
+  const auto verts = shape->customPathVertices();
+  int hitVertex = -1;
+  int hitTangent = 0;
+  for (int vI = 0; vI < static_cast<int>(verts.size()); ++vI) {
+    const QPointF tangentPoints[2] = {
+        verts[static_cast<size_t>(vI)].pos +
+            verts[static_cast<size_t>(vI)].inTangent,
+        verts[static_cast<size_t>(vI)].pos +
+            verts[static_cast<size_t>(vI)].outTangent};
+    for (int t = 0; t < 2; ++t) {
+      if (verts[static_cast<size_t>(vI)].smooth ||
+          verts[static_cast<size_t>(vI)].inTangent != QPointF(0, 0) ||
+          verts[static_cast<size_t>(vI)].outTangent != QPointF(0, 0)) {
+        const QPointF worldTangent = globalTransform.map(tangentPoints[t]);
+        const float dx = static_cast<float>(
+            worldTangent.x() - canvasPoint.x());
+        const float dy = static_cast<float>(
+            worldTangent.y() - canvasPoint.y());
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+          hitVertex = vI;
+          hitTangent = t == 0 ? 1 : 2;
+          break;
+        }
+      }
+    }
+    if (hitVertex >= 0) break;
+    const QPointF worldPos =
+        globalTransform.map(verts[static_cast<size_t>(vI)].pos);
+    const float dx =
+        static_cast<float>(worldPos.x() - canvasPoint.x());
+    const float dy =
+        static_cast<float>(worldPos.y() - canvasPoint.y());
+    if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+      hitVertex = vI;
+      hitTangent = 0;
+      break;
+    }
+  }
+  if (hitVertex < 0) {
+
+    return false;
+
+  }
+  impl_->shapePathEditPending_ = true;
+  impl_->shapePathEditDirty_ = false;
+  impl_->shapePathEditLayer_ = selectedLayer;
+  impl_->shapePathEditBefore_ = verts;
+  impl_->shapePathEditBeforeClosed_ = shape->customPathClosed();
+  impl_->isDraggingShapePathVertex_ = true;
+  impl_->draggingShapePathVertexIndex_ = hitVertex;
+  impl_->draggingShapePathTangent_ = hitTangent;
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::updateShapePathVertexDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_ || !impl_->isDraggingShapePathVertex_) {
+
+    return;
+
+  }
+  auto layer = impl_->shapePathEditLayer_.lock();
+  auto *shape = layer ? dynamic_cast<ArtifactShapeLayer *>(
+                            layer.get())
+                      : nullptr;
+  if (!shape) {
+
+    return;
+
+  }
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  const QTransform globalTransform = layer->getGlobalTransform();
+  bool invertible = false;
+  const QTransform invTransform = globalTransform.inverted(&invertible);
+  if (!invertible) {
+
+    return;
+
+  }
+  const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+  auto verts = shape->customPathVertices();
+  const int index = impl_->draggingShapePathVertexIndex_;
+  if (index < 0 || index >= static_cast<int>(verts.size())) {
+
+    return;
+
+  }
+  const int tangentKind = impl_->draggingShapePathTangent_;
+  if (tangentKind == 0) {
+    const QPointF delta =
+        localPos - verts[static_cast<size_t>(index)].pos;
+    verts[static_cast<size_t>(index)].pos = localPos;
+    if (impl_->shapePathEditDirty_) {
+      verts[static_cast<size_t>(index)].inTangent -= delta;
+      verts[static_cast<size_t>(index)].outTangent -= delta;
+    }
+  } else if (tangentKind == 1) {
+    verts[static_cast<size_t>(index)].inTangent =
+        localPos - verts[static_cast<size_t>(index)].pos;
+    if (verts[static_cast<size_t>(index)].smooth) {
+      const float outLen = static_cast<float>(std::hypot(
+          verts[static_cast<size_t>(index)].outTangent.x(),
+          verts[static_cast<size_t>(index)].outTangent.y()));
+      const float inLen = static_cast<float>(std::hypot(
+          verts[static_cast<size_t>(index)].inTangent.x(),
+          verts[static_cast<size_t>(index)].inTangent.y()));
+      if (inLen > 0.0001f && outLen > 0.0001f) {
+        verts[static_cast<size_t>(index)].outTangent = QPointF(
+            -verts[static_cast<size_t>(index)].inTangent.x(),
+            -verts[static_cast<size_t>(index)].inTangent.y()) *
+            (outLen / inLen);
+      }
+    }
+  } else {
+    verts[static_cast<size_t>(index)].outTangent =
+        localPos - verts[static_cast<size_t>(index)].pos;
+    if (verts[static_cast<size_t>(index)].smooth) {
+      const float inLen = static_cast<float>(std::hypot(
+          verts[static_cast<size_t>(index)].inTangent.x(),
+          verts[static_cast<size_t>(index)].inTangent.y()));
+      const float outLen = static_cast<float>(std::hypot(
+          verts[static_cast<size_t>(index)].outTangent.x(),
+          verts[static_cast<size_t>(index)].outTangent.y()));
+      if (inLen > 0.0001f && outLen > 0.0001f) {
+        verts[static_cast<size_t>(index)].inTangent = QPointF(
+            -verts[static_cast<size_t>(index)].outTangent.x(),
+            -verts[static_cast<size_t>(index)].outTangent.y()) *
+            (inLen / outLen);
+      }
+    }
+  }
+  shape->setCustomPathVertices(verts, shape->customPathClosed());
+  shape->setDirty(LayerDirtyFlag::Source);
+  impl_->shapePathEditDirty_ = true;
+  markRenderDirty();
+}
+
+void CompositionRenderController::endShapePathVertexDrag() {
+  if (!impl_ || !impl_->isDraggingShapePathVertex_) {
+
+    return;
+
+  }
+  impl_->isDraggingShapePathVertex_ = false;
+  impl_->draggingShapePathVertexIndex_ = -1;
+  impl_->draggingShapePathTangent_ = 0;
+  auto layer = impl_->shapePathEditLayer_.lock();
+  if (layer && impl_->shapePathEditDirty_) {
+    auto *shape = dynamic_cast<ArtifactShapeLayer *>(layer.get());
+    if (shape) {
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<ShapePathVertexEditCommand>(
+            layer, impl_->shapePathEditBefore_,
+            shape->customPathVertices(),
+            impl_->shapePathEditBeforeClosed_,
+            shape->customPathClosed()));
+      }
+      publishLayerModified(layer, true);
+    }
+  }
+  impl_->shapePathEditPending_ = false;
+  impl_->shapePathEditDirty_ = false;
+  impl_->shapePathEditLayer_.reset();
+  impl_->shapePathEditBefore_.clear();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isEditingShapePathVertices() const {
+
+  return impl_ && impl_->isDraggingShapePathVertex_;
+
+}
+
 void CompositionRenderController::setPointerPressure(float pressure) {
   if (auto *brushTool = ArtifactApplicationManager::instance()
                             ? ArtifactApplicationManager::instance()->brushTool()
@@ -28269,6 +28721,7 @@ void CompositionRenderController::cancelMaskInteraction() {
     return;
   }
   impl_->clearPendingMaskCreation();
+  impl_->clearPendingShapePathCreation();
   impl_->clearRectangleToolSession();
   impl_->maskRubberBandCandidate_ = false;
   impl_->isMaskRubberBandSelecting_ = false;
@@ -31256,6 +31709,115 @@ bool CompositionRenderController::Impl::finalizePendingMaskCreation(
   return true;
 
 }
+
+void CompositionRenderController::Impl::beginPendingShapePathCreation(
+    const ArtifactAbstractLayerPtr &layer, const QPointF &localPos) {
+
+  if (!layer) {
+
+    return;
+
+  }
+
+
+
+  if (!pendingShapePathCreation_ ||
+      pendingShapePathLayerId_ != layer->id()) {
+
+    clearPendingShapePathCreation();
+
+    pendingShapePathCreation_ = true;
+
+    pendingShapePathLayerId_ = layer->id();
+
+  }
+
+
+  CustomPathVertex vertex;
+
+  vertex.pos = localPos;
+
+  vertex.inTangent = QPointF(0, 0);
+
+  vertex.outTangent = QPointF(0, 0);
+
+  vertex.smooth = false;
+
+  pendingShapePathVertices_.push_back(vertex);
+
+}
+
+
+
+void CompositionRenderController::Impl::clearPendingShapePathCreation() {
+
+  pendingShapePathCreation_ = false;
+
+  pendingShapePathLayerId_ = LayerID();
+
+  pendingShapePathVertices_.clear();
+
+  penMaskPreviewValid_ = false;
+
+}
+
+
+
+bool CompositionRenderController::Impl::finalizePendingShapePathCreation(
+    const ArtifactAbstractLayerPtr &layer) {
+
+  if (!layer || !pendingShapePathCreation_ ||
+      pendingShapePathLayerId_ != layer->id()) {
+
+    return false;
+
+  }
+
+
+  auto *shape = dynamic_cast<ArtifactShapeLayer *>(layer.get());
+
+  if (!shape || pendingShapePathVertices_.size() < 2) {
+
+    return false;
+
+  }
+
+
+  shape->setCustomPathVertices(pendingShapePathVertices_, true);
+
+  shape->setDirty(LayerDirtyFlag::Source);
+
+  publishLayerModified(layer, true);
+
+
+  clearPendingShapePathCreation();
+
+  return true;
+
+}
+
+
+
+bool CompositionRenderController::Impl::removeLastPendingShapePathVertex() {
+
+  if (!pendingShapePathCreation_ || pendingShapePathVertices_.empty()) {
+
+    return false;
+
+  }
+
+  pendingShapePathVertices_.pop_back();
+
+  if (pendingShapePathVertices_.empty()) {
+
+    clearPendingShapePathCreation();
+
+  }
+
+  return true;
+
+}
+
 
 
 
@@ -35783,6 +36345,92 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
 
+
+        // Pending custom shape path preview (Pen tool on shape layers).
+        // Custom path vertices + tangent handles for the selected shape.
+        if (!pendingShapePathCreation_) {
+          if (auto *selectedShape = dynamic_cast<ArtifactShapeLayer *>(
+                  selectedLayer.get());
+              selectedShape && selectedShape->hasCustomPath()) {
+            const QTransform pathGlobal =
+                selectedLayer->getGlobalTransform();
+            const auto verts = selectedShape->customPathVertices();
+            const FloatColor vertexColor = {0.55f, 0.95f, 1.0f, 0.95f};
+            const FloatColor vertexShadow = {0.0f, 0.0f, 0.0f, 0.36f};
+            const FloatColor tangentColor = {0.85f, 0.9f, 1.0f, 0.8f};
+            const FloatColor handleLinkColor =
+                {0.7f, 0.85f, 1.0f, 0.45f};
+            for (size_t vI = 0; vI < verts.size(); ++vI) {
+              const auto &vertex = verts[vI];
+              const QPointF worldPos = pathGlobal.map(vertex.pos);
+              const Detail::float2 vertexCanvas = {
+                  static_cast<float>(worldPos.x()),
+                  static_cast<float>(worldPos.y())};
+              if (vertex.inTangent != QPointF(0, 0) ||
+                  vertex.outTangent != QPointF(0, 0)) {
+                const QPointF inWorld =
+                    pathGlobal.map(vertex.pos + vertex.inTangent);
+                const QPointF outWorld =
+                    pathGlobal.map(vertex.pos + vertex.outTangent);
+                renderer_->drawSolidLine(
+                    vertexCanvas,
+                    {static_cast<float>(inWorld.x()),
+                     static_cast<float>(inWorld.y())},
+                    handleLinkColor, 1.2f);
+                renderer_->drawSolidLine(
+                    vertexCanvas,
+                    {static_cast<float>(outWorld.x()),
+                     static_cast<float>(outWorld.y())},
+                    handleLinkColor, 1.2f);
+                drawMaskSquareMarker(
+                    renderer_.get(),
+                    {static_cast<float>(inWorld.x()),
+                     static_cast<float>(inWorld.y())},
+                    5.5f, tangentColor, nullptr, 0.0f);
+                drawMaskSquareMarker(
+                    renderer_.get(),
+                    {static_cast<float>(outWorld.x()),
+                     static_cast<float>(outWorld.y())},
+                    5.5f, tangentColor, nullptr, 0.0f);
+              }
+              drawMaskSquareMarker(renderer_.get(), vertexCanvas, 7.0f,
+                                   vertexColor, &vertexShadow, 4.0f);
+            }
+          }
+        }
+
+        if (pendingShapePathCreation_ &&
+            pendingShapePathLayerId_ == selectedLayer->id() &&
+            !pendingShapePathVertices_.empty()) {
+          const QTransform shapeGlobal =
+              selectedLayer->getGlobalTransform();
+          const FloatColor pendingLineColor = {0.55f, 0.95f, 1.0f, 0.9f};
+          const FloatColor pendingPointShadowColor = {0.0f, 0.0f, 0.0f, 0.36f};
+          const FloatColor pendingPointColor = {0.62f, 0.98f, 1.0f, 0.92f};
+          Detail::float2 previousCanvasPos{};
+          for (size_t v = 0; v < pendingShapePathVertices_.size(); ++v) {
+            const QPointF canvasPos = shapeGlobal.map(
+                pendingShapePathVertices_[v].pos);
+            const Detail::float2 currentCanvasPos = {
+                static_cast<float>(canvasPos.x()),
+                static_cast<float>(canvasPos.y())};
+            if (v > 0) {
+              renderer_->drawThickLineLocal(
+                  previousCanvasPos, currentCanvasPos, 5.8f,
+                  pendingLineColor);
+            }
+            drawMaskSquareMarker(renderer_.get(), currentCanvasPos, 7.0f,
+                                 pendingPointColor,
+                                 &pendingPointShadowColor, 4.0f);
+            previousCanvasPos = currentCanvasPos;
+          }
+          if (penMaskPreviewValid_) {
+            renderer_->drawThickLineLocal(
+                previousCanvasPos, penMaskPreviewCanvasPos_, 3.4f,
+                FloatColor{pendingLineColor.r(), pendingLineColor.g(),
+                           pendingLineColor.b(), 0.45f});
+          }
+        }
 
         if (pendingMaskCreation_ &&
 

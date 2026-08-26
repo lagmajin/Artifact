@@ -130,6 +130,13 @@ public:
   bool customPolygonClosed() const;
 
   // Bezier vertex path — Phase 5
+  // Path keyframe animation. Vertices are stored per frame on the
+  // animatable property "shape.path.keyframes"; drawing evaluates the
+  // interpolated vertex set at the current timeline frame.
+  void setPathKeyframe(int64_t frame,
+                       const std::vector<CustomPathVertex>& verts);
+  bool hasPathKeyframes() const;
+  std::vector<CustomPathVertex> evaluatePathAt(int64_t frame) const;
   bool hasCustomPath() const;
   void setCustomPathVertices(const std::vector<CustomPathVertex>& vertices, bool closed = true);
   void clearCustomPath();

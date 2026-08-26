@@ -6616,6 +6616,24 @@ protected:
         modalTransformNumericInput_.clear();
       }
     }
+    if (!event->isAutoRepeat() &&
+        (event->key() == Qt::Key_Return ||
+         event->key() == Qt::Key_Enter) &&
+        event->modifiers() == Qt::NoModifier && controller_ &&
+        controller_->hasPendingShapePathCreation() &&
+        controller_->finalizePendingShapePathCreation()) {
+      clearNavigationFeedback();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->hasPendingShapePathCreation()) {
+      controller_->cancelPendingShapePathCreation();
+      clearNavigationFeedback();
+      controller_->finishViewportInteraction();
+      event->accept();
+      return;
+    }
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         controller_ && controller_->hasPendingMaskEdit()) {
       controller_->cancelMaskInteraction();
@@ -6722,6 +6740,11 @@ protected:
                                   ? ArtifactApplicationManager::instance()->toolManager()
                                   : nullptr;
           toolManager && toolManager->activeTool() == ToolType::Pen &&
+          controller_->removeLastPendingShapePathVertex()) {
+        event->accept();
+        return;
+      }
+      if (toolManager && toolManager->activeTool() == ToolType::Pen &&
           controller_->removeLastPendingMaskVertex()) {
         event->accept();
         return;

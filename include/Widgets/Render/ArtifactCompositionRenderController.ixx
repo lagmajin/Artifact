@@ -339,7 +339,17 @@ void handleMouseMove(const QPointF& viewportPos);
   float maskProportionalEditRadius() const;
   void setMaskProportionalEditRadius(float radius);
   void cancelMaskInteraction();
+  // Pen-tool custom shape path creation on shape layers.
+  bool hasPendingShapePathCreation() const;
+  bool finalizePendingShapePathCreation();
+  void cancelPendingShapePathCreation();
   bool removeLastPendingMaskVertex();
+  bool removeLastPendingShapePathVertex();
+  // Main-VP custom shape path vertex editing.
+  bool beginShapePathVertexDrag(const QPointF& viewportPos);
+  void updateShapePathVertexDrag(const QPointF& viewportPos);
+  void endShapePathVertexDrag();
+  bool isEditingShapePathVertices() const;
   bool cancelTextToolInteraction();
   bool deleteSelectedPuppetPin();
   bool resetSelectedPuppetPinRotation();

@@ -1,5 +1,6 @@
 module;
 #include <cstddef>
+#include <map>
 #include <array>
 #include <numeric>
 #include <utility>
@@ -415,6 +416,234 @@ bool hasAnimatedShapeGeometry(const ArtifactShapeLayer* layer) {
   }
  }
  return false;
+}
+
+// Path keyframe animation: vertices are stored as a JSON document on the
+// animatable layer property "shape.path.keyframes". Each entry maps a frame
+// number to a serialized CustomPathVertex array. Between frames, matching
+// vertices are interpolated (position and tangents) with linear blending.
+namespace {
+
+QJsonArray serializePathVertices(const std::vector<CustomPathVertex>& verts) {
+ QJsonArray arr;
+ for (const auto& v : verts) {
+  QJsonObject o;
+  o["px"] = v.pos.x();   o["py"] = v.pos.y();
+  o["ix"] = v.inTangent.x(); o["iy"] = v.inTangent.y();
+  o["ox"] = v.outTangent.x(); o["oy"] = v.outTangent.y();
+  o["smooth"] = v.smooth;
+  arr.push_back(o);
+ }
+ return arr;
+}
+
+std::vector<CustomPathVertex> deserializePathVertices(const QJsonArray& arr) {
+ std::vector<CustomPathVertex> verts;
+ verts.reserve(static_cast<size_t>(arr.size()));
+ for (const auto& val : arr) {
+  const QJsonObject o = val.toObject();
+  CustomPathVertex v;
+  v.pos = QPointF(o["px"].toDouble(), o["py"].toDouble());
+  v.inTangent = QPointF(o["ix"].toDouble(), o["iy"].toDouble());
+  v.outTangent = QPointF(o["ox"].toDouble(), o["oy"].toDouble());
+  v.smooth = o["smooth"].toBool(false);
+  if (isSupportedCustomPathVertex(v)) {
+   verts.push_back(v);
+  }
+ }
+ return verts;
+}
+
+CustomPathVertex lerpPathVertex(const CustomPathVertex& a,
+                                const CustomPathVertex& b, double t) {
+ CustomPathVertex out;
+ out.pos = a.pos + (b.pos - a.pos) * t;
+ out.inTangent =
+     a.inTangent + (b.inTangent - a.inTangent) * t;
+ out.outTangent =
+     a.outTangent + (b.outTangent - a.outTangent) * t;
+ out.smooth = t < 0.5 ? a.smooth : b.smooth;
+ return out;
+}
+
+} // namespace
+
+void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
+                                         const std::vector<CustomPathVertex>& verts) {
+ auto property = getProperty(QStringLiteral("shape.path.keyframes"));
+ if (!property) {
+  return;
+ }
+ QJsonDocument doc =
+     QJsonDocument::fromJson(
+         property->getValue().toString().toUtf8());
+ QJsonObject root = doc.object();
+ root[QString::number(static_cast<qint64>(frame))] =
+     serializePathVertices(verts);
+ property->setValue(QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+
+bool ArtifactShapeLayer::hasPathKeyframes() const {
+ auto property = getProperty(QStringLiteral("shape.path.keyframes"));
+ if (!property) {
+  return false;
+ }
+ // The property itself is the animation carrier; presence of any stored
+ // frame marks an animated path. Keyframes live on this dedicated property
+ // so the timeline can treat it like any other animatable channel.
+ return !property->getValue().toString().isEmpty() ||
+        !property->getKeyFrames().empty();
+}
+
+std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) const {
+ if (!hasPathKeyframes()) {
+  return impl_->customPathVertices_;
+ }
+ auto property = getProperty(QStringLiteral("shape.path.keyframes"));
+ if (!property) {
+  return impl_->customPathVertices_;
+ }
+ QJsonDocument doc =
+     QJsonDocument::fromJson(
+         property->getValue().toString().toUtf8());
+ const QJsonObject root = doc.object();
+ if (root.isEmpty()) {
+  return impl_->customPathVertices_;
+ }
+ std::map<int64_t, std::vector<CustomPathVertex>> samples;
+ for (auto it = root.begin(); it != root.end(); ++it) {
+  const int64_t sampleFrame = static_cast<int64_t>(it.key().toLongLong());
+  samples[sampleFrame] =
+      deserializePathVertices(it.value().toArray());
+ }
+ if (samples.empty()) {
+  return impl_->customPathVertices_;
+ }
+ auto lower = samples.lower_bound(frame);
+ if (lower != samples.end() && lower->first == frame) {
+  return lower->second;
+ }
+ auto upper = lower;
+ if (lower == samples.begin()) {
+  return lower->second; // Before first key: hold.
+ }
+ --lower;
+ if (upper == samples.end()) {
+  return lower->second; // After last key: hold.
+ }
+ const int64_t f0 = lower->first;
+ const int64_t f1 = upper->first;
+ if (f1 <= f0) {
+  return lower->second;
+ }
+ const double t = static_cast<double>(frame - f0) /
+                  static_cast<double>(f1 - f0);
+ const auto& a = lower->second;
+ const auto& b = upper->second;
+ if (a.size() != b.size()) {
+  // Topology change between keys: snap instead of blending mismatched sets.
+  return t < 0.5 ? a : b;
+ }
+ std::vector<CustomPathVertex> blended;
+ blended.reserve(a.size());
+ for (size_t i = 0; i < a.size(); ++i) {
+  blended.push_back(lerpPathVertex(a[i], b[i], t));
+ }
+ return blended;
+}
+
+// True when any shape operator parameter has keyframes. Animated operator
+// parameters must bypass the geometry caches so TrimPaths / Repeater values
+// evaluate per frame.
+bool hasAnimatedShapeOperators(const ArtifactShapeLayer* layer) {
+ if (!layer) {
+  return false;
+ }
+ for (int i = 0; i < layer->shapeOperatorCount(); ++i) {
+  const QString prefix =
+      QStringLiteral("shape.operator.%1.").arg(i);
+  static const char* kFloatFields[] = {"start", "end", "offset", "copies",
+                                       "rotation", "amount", "radius",
+                                       "startOpacity", "endOpacity"};
+  for (const char* field : kFloatFields) {
+   const auto property =
+       layer->getProperty(prefix + QString::fromLatin1(field));
+   if (property && !property->getKeyFrames().empty()) {
+    return true;
+   }
+  }
+ }
+ return false;
+}
+
+// Apply keyframed operator parameters onto the operator instances before
+// path processing. Static values stay as authored via setLayerPropertyValue.
+void applyAnimatedOperatorParameters(const ArtifactShapeLayer* layer,
+                                     std::vector<
+                                         std::unique_ptr<ArtifactCore::ShapeOperator>>&
+                                         operators) {
+ if (!layer) {
+  return;
+ }
+ for (int i = 0; i < static_cast<int>(operators.size()); ++i) {
+  ArtifactCore::ShapeOperator& op = *operators[static_cast<size_t>(i)];
+  const QString prefix = QStringLiteral("shape.operator.%1.").arg(i);
+  auto applyFloat = [&](const char* field, auto setter) {
+   const auto property =
+       layer->getProperty(prefix + QString::fromLatin1(field));
+   if (property && !property->getKeyFrames().empty()) {
+    const QVariant value =
+        property->interpolateValue(effectiveShapeTimelineTime(layer));
+    if (value.isValid()) {
+     setter(value.toDouble());
+    }
+   }
+  };
+  if (auto* trim = dynamic_cast<ArtifactCore::TrimPaths*>(&op)) {
+   applyFloat("start", [&](double v) { trim->setStart(static_cast<float>(v)); });
+   applyFloat("end", [&](double v) { trim->setEnd(static_cast<float>(v)); });
+   applyFloat("offset", [&](double v) { trim->setOffset(static_cast<float>(v)); });
+  } else if (auto* repeater = dynamic_cast<ArtifactCore::Repeater*>(&op)) {
+   applyFloat("offset",
+              [&](double v) { repeater->setOffset(static_cast<float>(v)); });
+   applyFloat("rotation",
+              [&](double v) { repeater->setRotation(static_cast<float>(v)); });
+   applyFloat("startOpacity", [&](double v) {
+    repeater->setStartOpacity(static_cast<float>(v));
+   });
+   applyFloat("endOpacity", [&](double v) {
+    repeater->setEndOpacity(static_cast<float>(v));
+   });
+   const auto copiesProperty =
+       layer->getProperty(prefix + QStringLiteral("copies"));
+   if (copiesProperty && !copiesProperty->getKeyFrames().empty()) {
+    const QVariant value =
+        copiesProperty->interpolateValue(effectiveShapeTimelineTime(layer));
+    if (value.isValid()) {
+     repeater->setCopies(std::clamp(value.toInt(), 1, 1000));
+    }
+   }
+  } else if (auto* offsetOp = dynamic_cast<ArtifactCore::OffsetPaths*>(&op)) {
+   applyFloat("offset", [&](double v) {
+    offsetOp->setOffset(
+        std::isfinite(static_cast<float>(v))
+            ? std::clamp(static_cast<float>(v), -100000.0f, 100000.0f)
+            : 0.0f);
+   });
+  } else if (auto* pucker = dynamic_cast<ArtifactCore::PuckerBloat*>(&op)) {
+   applyFloat("amount", [&](double v) {
+    pucker->setAmount(static_cast<float>(v));
+   });
+  } else if (auto* rounded = dynamic_cast<ArtifactCore::RoundedCorners*>(&op)) {
+   applyFloat("radius", [&](double v) {
+    rounded->setRadius(static_cast<float>(v));
+   });
+  }
+ }
 }
 
 ShapeGeomDims resolveShapeGeomDims(const ArtifactShapeLayer* layer,
@@ -1731,11 +1960,18 @@ std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() cons
      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
 
+ // Keyframed path animation overrides the static authored vertices.
+ std::vector<CustomPathVertex> pathVertices = impl_->customPathVertices_;
+ bool pathClosed = impl_->customPathClosed_;
+ if (hasPathKeyframes()) {
+  pathVertices = evaluatePathAt(currentFrame());
+ }
+
  return buildProcessedShapePaths(
      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
      impl_->customPolygonPoints_, impl_->customPolygonClosed_,
-     impl_->customPathVertices_, impl_->customPathClosed_,
+     pathVertices, pathClosed,
      impl_->shapeOperators_);
 }
 
@@ -2055,13 +2291,26 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
       (!impl->strokeEnabled_ || impl->strokeWidth_ <= 0.0f ||
        (impl->strokeAlign_ == StrokeAlign::Center &&
         !impl->hasCustomStrokeEffects()));
+  const bool operatorsAnimated = hasAnimatedShapeOperators(this);
+  std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>
+      animatedOperatorClones;
   if (nativeOperatorCandidate) {
+    if (operatorsAnimated) {
+     // Evaluate keyframed operator parameters on clones so the authored
+     // operator instances keep their static values for the Inspector.
+     animatedOperatorClones.reserve(impl->shapeOperators_.size());
+     for (const auto& op : impl->shapeOperators_) {
+      animatedOperatorClones.push_back(op->clone());
+     }
+     applyAnimatedOperatorParameters(this, animatedOperatorClones);
+    }
     auto processedOperatorPaths = buildProcessedShapePaths(
         impl->shapeType_, geomDims.width, geomDims.height, geomDims.cornerRadius,
         geomDims.starPoints, geomDims.starInnerRadius, geomDims.polygonSides,
        impl->customPolygonPoints_, impl->customPolygonClosed_,
        impl->customPathVertices_, impl->customPathClosed_,
-       impl->shapeOperators_);
+       operatorsAnimated ? animatedOperatorClones
+                         : impl->shapeOperators_);
    if (impl->customPathVertices_.size() >= 3) {
     for (auto& path : processedOperatorPaths) {
      path.setFillRule(impl->customPathFillRule_);
