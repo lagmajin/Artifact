@@ -95,6 +95,11 @@ export int runLayerGroupTests()
     report.check(groupNode && groupNode->properties.value(QStringLiteral("activeChildId")).toString() ==
                      childResult.layer->id().toString(),
                  QStringLiteral("group active child syncs to node properties"));
+    GroupContainerNode storedContainer;
+    report.check(composition->nodeStore().getGroupContainer(group->id().toString(), storedContainer),
+                 QStringLiteral("group container can be read from node store"));
+    report.check(storedContainer.containsChild(childResult.layer->id().toString()),
+                 QStringLiteral("node store group container exposes children"));
 
     ArtifactLayerInitParams secondChildParams(QStringLiteral("Second Child"), LayerType::Null);
     auto secondChildResult = factory.createLayer(secondChildParams);

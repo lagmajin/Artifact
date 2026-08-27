@@ -223,6 +223,25 @@ bool CompositionNodeStore::setProperties(const QString& id, const QJsonObject& p
   return true;
 }
 
+bool CompositionNodeStore::getGroupContainer(const QString& id,
+                                             GroupContainerNode& out) const {
+  const auto* stored = node(id);
+  if (!stored || stored->kind != CompositionNodeKind::GroupContainer) return false;
+
+  GroupContainerNode result(*stored);
+  for (const auto& childId : childrenOf(id)) result.addChild(childId);
+  const auto& properties = stored->properties;
+  result.setOutputMode(static_cast<GroupContainerOutputMode>(
+      properties.value(QStringLiteral("outputMode")).toInt(0)));
+  result.setActiveChildId(
+      properties.value(QStringLiteral("activeChildId")).toString());
+  result.setEnabled(properties.value(QStringLiteral("enabled")).toBool(true));
+  result.setOpacity(properties.value(QStringLiteral("opacity")).toDouble(1.0));
+  result.setBlendMode(properties.value(QStringLiteral("blendMode")).toString());
+  out = std::move(result);
+  return true;
+}
+
 bool CompositionNodeStore::removeNode(const QString& id) {
   const auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                [&id](const CompositionNode& value) { return value.id == id; });

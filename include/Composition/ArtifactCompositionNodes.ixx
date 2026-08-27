@@ -80,6 +80,7 @@ public:
   bool setParent(const QString& id, const QString& parentId);
   bool setOrder(const QString& id, int order);
   bool setProperties(const QString& id, const QJsonObject& properties);
+  bool getGroupContainer(const QString& id, GroupContainerNode& out) const;
   std::vector<QString> childrenOf(const QString& parentId) const;
   const std::vector<CompositionNode>& nodes() const;
   QJsonArray toJson() const;
