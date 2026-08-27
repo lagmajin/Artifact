@@ -32,7 +32,16 @@ enum class GroupOutputMode {
     Share = 2
 };
 
-class ArtifactGroupLayer : public ArtifactAbstractLayer {
+class ArtifactContainerLayer : public ArtifactAbstractLayer {
+public:
+    ~ArtifactContainerLayer() override = default;
+
+    // Container identity is intentionally separate from the concrete UI name
+    // (Group, Precomp, Switch, etc.).
+    virtual bool isContainerLayer() const { return true; }
+};
+
+class ArtifactGroupLayer : public ArtifactContainerLayer {
 public:
     ArtifactGroupLayer();
     ~ArtifactGroupLayer() override;

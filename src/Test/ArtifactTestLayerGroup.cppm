@@ -49,7 +49,10 @@ export int runLayerGroupTests()
     report.check(childResult.success && childResult.layer, QStringLiteral("child layer can be created"));
 
     auto group = ArtifactCore::dynamicPointerCast<ArtifactGroupContainer>(groupResult.layer);
+    auto container = ArtifactCore::dynamicPointerCast<ArtifactContainerLayer>(groupResult.layer);
     report.check(static_cast<bool>(group), QStringLiteral("group layer casts correctly"));
+    report.check(static_cast<bool>(container) && container->isContainerLayer(),
+                 QStringLiteral("group exposes container identity"));
 
     if (!group || !childResult.layer) {
         qInfo().noquote() << "[LayerGroup Test] failures:" << report.failures;
