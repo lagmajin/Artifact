@@ -11753,14 +11753,6 @@ public:
       batchRefs.push_back(matteRef);
     }
 
-    if (!missingMatteSource && batchRefs.size() > 3) {
-      qWarning() << "[CompositionView] GPU track matte supports at most three"
-                 << "sources per layer; using unmasked layer"
-                 << "layer=" << layer->id().toString()
-                 << "sourceCount=" << batchRefs.size();
-      return layerFloatSRV;
-    }
-
     const auto shaderModeFor = [](const LayerMatteReference& matteRef) {
       switch (matteRef.type) {
       case MatteType::Alpha: return matteRef.invert ? 2u : 0u;
