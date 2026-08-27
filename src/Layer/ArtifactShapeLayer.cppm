@@ -472,8 +472,11 @@ void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
                                          const std::vector<CustomPathVertex>& verts) {
  auto property = getProperty(QStringLiteral("shape.path.keyframes"));
  if (!property) {
-  return;
+  property = persistentLayerProperty(
+      QStringLiteral("shape.path.keyframes"),
+      ArtifactCore::PropertyType::String, QString{}, -190);
  }
+ property->setAnimatable(true);
  QJsonDocument doc =
      QJsonDocument::fromJson(
          property->getValue().toString().toUtf8());

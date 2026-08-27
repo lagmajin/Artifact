@@ -578,6 +578,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestLayerGroup.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPreCompose.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPropertyKeyframe.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestShapePath.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestTimingEventView.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Tool/AIDSL/include/AIToolDSL/DSLTypes.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Tool/AIDSL/src/DSLParser.cppm"
