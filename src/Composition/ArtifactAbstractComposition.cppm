@@ -1317,6 +1317,10 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
   node.order = layerMultiIndex_.indexOf(layer);
   node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
                                    : CompositionNodeKind::Layer;
+  if (layer->isGroupLayer()) {
+    node.properties[QStringLiteral("enabled")] = layer->isVisible();
+    node.properties[QStringLiteral("opacity")] = static_cast<double>(layer->opacity());
+  }
   nodeStore_.addNode(node);
   const auto parentId = layer->parentLayerId().toString();
   if (!parentId.trimmed().isEmpty()) nodeStore_.setParent(node.id, parentId);
@@ -2275,9 +2279,13 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       CompositionNode node;
       node.id = layer->id().toString();
       node.order = layerMultiIndex_.indexOf(layer);
-      node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
-                                        : CompositionNodeKind::Layer;
-      nodeStore_.addNode(node);
+  node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
+                                   : CompositionNodeKind::Layer;
+  if (layer->isGroupLayer()) {
+    node.properties[QStringLiteral("enabled")] = layer->isVisible();
+    node.properties[QStringLiteral("opacity")] = static_cast<double>(layer->opacity());
+  }
+  nodeStore_.addNode(node);
       const auto parentId = layer->parentLayerId().toString();
       if (!parentId.trimmed().isEmpty()) nodeStore_.setParent(node.id, parentId);
       invalidateThumbnailCache();

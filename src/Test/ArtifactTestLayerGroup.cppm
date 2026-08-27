@@ -5,6 +5,7 @@ module;
 #include <QDebug>
 #include <QJsonDocument>
 #include <QString>
+#include <QtGlobal>
 
 export module Artifact.Test.LayerGroup;
 
@@ -74,6 +75,12 @@ export int runLayerGroupTests()
                  QStringLiteral("group is registered in composition node store"));
     report.check(composition->nodeStore().contains(childResult.layer->id().toString()),
                  QStringLiteral("child is registered in composition node store"));
+    const auto* initialGroupNode = composition->nodeStore().node(group->id().toString());
+    report.check(initialGroupNode && initialGroupNode->properties.value(QStringLiteral("enabled")).toBool(),
+                 QStringLiteral("group enabled state is registered in node store"));
+    report.check(initialGroupNode && qFuzzyCompare(
+                     initialGroupNode->properties.value(QStringLiteral("opacity")).toDouble(), 1.0),
+                 QStringLiteral("group opacity is registered in node store"));
     const auto containerNode = group->toContainerNode();
     report.check(containerNode.containsChild(childResult.layer->id().toString()),
                  QStringLiteral("group converts child to container node"));
