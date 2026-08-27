@@ -618,8 +618,10 @@ bool ArtifactGroupLayer::applyContainerNode(const ContainerNode& node) {
 
 bool ArtifactGroupLayer::applyGroupContainerNode(const GroupContainerNode& node) {
     if (!applyContainerNode(node)) return false;
+    const QString activeChildId = node.activeChildId();
+    if (!activeChildId.isEmpty() && !node.containsChild(activeChildId)) return false;
     setOutputMode(static_cast<GroupOutputMode>(static_cast<int>(node.outputMode())));
-    setActiveChildId(LayerID(node.activeChildId()));
+    setActiveChildId(LayerID(activeChildId));
     return true;
 }
 
