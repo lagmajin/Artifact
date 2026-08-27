@@ -458,7 +458,12 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
         if (!composition->containsLayerById(layer->id())) {
             composition->appendLayerTop(layer);
         }
-        composition->nodeStore().setParent(layer->id().toString(), id().toString());
+        if (!composition->nodeStore().setParent(layer->id().toString(), id().toString())) {
+            return;
+        }
+        const auto children = composition->childLayersOf(id());
+        const int clampedIndex = std::clamp(index, 0, static_cast<int>(children.size()) - 1);
+        composition->moveLayerToIndex(layer->id(), clampedIndex);
     } else {
         layer->setComposition(compositionObject());
         groupImpl_->children.push_back(layer);
