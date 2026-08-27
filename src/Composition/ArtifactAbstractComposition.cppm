@@ -3578,6 +3578,13 @@ ArtifactAbstractComposition::childLayersOf(const LayerID& parentId) const
       children.append(layer);
     }
   }
+  std::stable_sort(children.begin(), children.end(), [this](
+      const ArtifactAbstractLayerPtr& left, const ArtifactAbstractLayerPtr& right) {
+    const auto* leftNode = impl_->nodeStore_.node(left->id().toString());
+    const auto* rightNode = impl_->nodeStore_.node(right->id().toString());
+    if (!leftNode || !rightNode || leftNode->order == rightNode->order) return false;
+    return leftNode->order < rightNode->order;
+  });
   return children;
 }
 

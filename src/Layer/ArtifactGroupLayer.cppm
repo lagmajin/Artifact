@@ -650,6 +650,12 @@ void ArtifactGroupLayer::setOutputMode(const GroupOutputMode mode) {
         std::clamp(static_cast<int>(mode), 0, 2));
     if (groupImpl_->outputMode == normalized) return;
     groupImpl_->outputMode = normalized;
+    if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        QJsonObject properties;
+        properties[QStringLiteral("outputMode")] = static_cast<int>(normalized);
+        properties[QStringLiteral("activeChildId")] = groupImpl_->activeChildId.toString();
+        composition->nodeStore().setProperties(id().toString(), properties);
+    }
     groupImpl_->cachedTexture = nullptr;
     Q_EMIT changed();
 }
@@ -666,6 +672,12 @@ void ArtifactGroupLayer::setActiveChildId(const LayerID& id) {
         return;
     }
     groupImpl_->activeChildId = id;
+    if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        QJsonObject properties;
+        properties[QStringLiteral("outputMode")] = static_cast<int>(groupImpl_->outputMode);
+        properties[QStringLiteral("activeChildId")] = id.toString();
+        composition->nodeStore().setProperties(this->id().toString(), properties);
+    }
     groupImpl_->cachedTexture = nullptr;
     Q_EMIT changed();
 }

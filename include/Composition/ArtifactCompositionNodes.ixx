@@ -19,6 +19,7 @@ struct CompositionNode {
   QString parentId;
   CompositionNodeKind kind = CompositionNodeKind::Layer;
   int order = 0;
+  QJsonObject properties;
 
   bool isValid() const;
   QJsonObject toJson() const;
@@ -78,6 +79,7 @@ public:
   const CompositionNode* node(const QString& id) const;
   bool setParent(const QString& id, const QString& parentId);
   bool setOrder(const QString& id, int order);
+  bool setProperties(const QString& id, const QJsonObject& properties);
   std::vector<QString> childrenOf(const QString& parentId) const;
   const std::vector<CompositionNode>& nodes() const;
   QJsonArray toJson() const;

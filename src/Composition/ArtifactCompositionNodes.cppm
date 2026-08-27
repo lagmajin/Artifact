@@ -16,6 +16,7 @@ QJsonObject CompositionNode::toJson() const {
   obj[QStringLiteral("parentId")] = parentId;
   obj[QStringLiteral("kind")] = static_cast<int>(kind);
   obj[QStringLiteral("order")] = order;
+  obj[QStringLiteral("properties")] = properties;
   return obj;
 }
 
@@ -28,6 +29,7 @@ CompositionNode CompositionNode::fromJson(const QJsonObject& obj) {
       ? static_cast<CompositionNodeKind>(rawKind)
       : CompositionNodeKind::Layer;
   node.order = obj.value(QStringLiteral("order")).toInt(0);
+  node.properties = obj.value(QStringLiteral("properties")).toObject();
   return node;
 }
 
@@ -208,6 +210,14 @@ bool CompositionNodeStore::setOrder(const QString& id, int order) {
                          [&id](const CompositionNode& value) { return value.id == id; });
   if (it == nodes_.end() || order < 0) return false;
   it->order = order;
+  return true;
+}
+
+bool CompositionNodeStore::setProperties(const QString& id, const QJsonObject& properties) {
+  auto it = std::find_if(nodes_.begin(), nodes_.end(),
+                         [&id](const CompositionNode& value) { return value.id == id; });
+  if (it == nodes_.end()) return false;
+  it->properties = properties;
   return true;
 }
 
