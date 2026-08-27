@@ -39,14 +39,6 @@ public:
     // Container identity is intentionally separate from the concrete UI name
     // (Group, Precomp, Switch, etc.).
     virtual bool isContainerLayer() const { return true; }
-
-    virtual void addChild(ArtifactAbstractLayerPtr layer) = 0;
-    virtual void removeChild(const LayerID& id) = 0;
-    virtual void clearChildren() = 0;
-    virtual const std::vector<ArtifactAbstractLayerPtr>& children() const = 0;
-    virtual void insertChildAt(int index, ArtifactAbstractLayerPtr layer) = 0;
-    virtual int childIndex(const LayerID& id) const = 0;
-    virtual bool containsChild(const LayerID& id) const = 0;
 };
 
 class ArtifactGroupLayer : public ArtifactContainerLayer {
@@ -63,13 +55,13 @@ public:
     void draw(ArtifactIRenderer* renderer) override;
 
     // Child management
-    void addChild(ArtifactAbstractLayerPtr layer) override;
-    void removeChild(const LayerID& id) override;
-    void clearChildren() override;
-    const std::vector<ArtifactAbstractLayerPtr>& children() const override;
-    void insertChildAt(int index, ArtifactAbstractLayerPtr layer) override;
-    int childIndex(const LayerID& id) const override;
-    bool containsChild(const LayerID& id) const override;
+    void addChild(ArtifactAbstractLayerPtr layer);
+    void removeChild(const LayerID& id);
+    void clearChildren();
+    const std::vector<ArtifactAbstractLayerPtr>& children() const;
+    void insertChildAt(int index, ArtifactAbstractLayerPtr layer);
+    int childIndex(const LayerID& id) const;
+    bool containsChild(const LayerID& id) const;
 
     // Group state
     bool isCollapsed() const;
