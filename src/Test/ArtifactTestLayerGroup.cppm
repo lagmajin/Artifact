@@ -96,6 +96,19 @@ export int runLayerGroupTests()
                      childResult.layer->id().toString(),
                  QStringLiteral("group active child syncs to node properties"));
 
+    ArtifactLayerInitParams secondChildParams(QStringLiteral("Second Child"), LayerType::Null);
+    auto secondChildResult = factory.createLayer(secondChildParams);
+    report.check(secondChildResult.success && secondChildResult.layer,
+                 QStringLiteral("second child layer can be created"));
+    if (secondChildResult.layer) {
+        composition->appendLayerTop(secondChildResult.layer);
+        group->insertChildAt(0, secondChildResult.layer);
+        const auto orderedChildren = composition->childLayersOf(group->id());
+        report.check(!orderedChildren.empty() && orderedChildren.front() &&
+                         orderedChildren.front()->id() == secondChildResult.layer->id(),
+                     QStringLiteral("group insertChildAt preserves requested order"));
+    }
+
     const QJsonDocument json = composition->toJson();
     auto loaded = ArtifactAbstractComposition::fromJson(json);
     report.check(static_cast<bool>(loaded), QStringLiteral("composition roundtrip loads"));
@@ -104,7 +117,7 @@ export int runLayerGroupTests()
         auto loadedGroupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(loaded->layerById(group->id()));
         report.check(static_cast<bool>(loadedGroupLayer), QStringLiteral("loaded group layer is preserved"));
         if (loadedGroupLayer) {
-            report.check(loadedGroupLayer->children().size() == 1, QStringLiteral("loaded group preserves child count"));
+            report.check(loadedGroupLayer->children().size() == 2, QStringLiteral("loaded group preserves child count"));
             const auto loadedChild = loadedGroupLayer->children().front();
             report.check(static_cast<bool>(loadedChild), QStringLiteral("loaded child exists"));
             if (loadedChild) {
