@@ -30,6 +30,7 @@ import Artifact.Test.PreCompose;
 import Artifact.Test.PropertyKeyframe;
 import Artifact.Test.TimingEventView;
 import Artifact.Test.CommandLine;
+import Artifact.Test.CompositionNode;
 import Artifact.Service.Playback;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
@@ -348,6 +349,7 @@ int runAllTests()
     failures += runAIToolBridgeTests();
     failures += runAdjustmentLayerTests();
     failures += runLayerGroupTests();
+ failures += runCompositionNodeTests();
     failures += runNullLayerTests();
     failures += runPreComposeTests();
     failures += runPropertyKeyframeTests();
