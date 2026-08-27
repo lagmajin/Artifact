@@ -1,5 +1,6 @@
 module;
 #include <vector>
+#include <memory>
 
 export module Artifact.Composition.Node;
 
@@ -39,6 +40,17 @@ public:
 
 private:
     std::vector<ArtifactCore::Id> children_;
+};
+
+class ArtifactCompositionNodeStore {
+public:
+    bool add(std::unique_ptr<ArtifactCompositionNode> node);
+    bool remove(const ArtifactCore::Id& id);
+    ArtifactCompositionNode* find(const ArtifactCore::Id& id) const;
+    std::size_t size() const;
+
+private:
+    std::vector<std::unique_ptr<ArtifactCompositionNode>> nodes_;
 };
 
 using ArtifactGroupContainer = ArtifactContainerNode;

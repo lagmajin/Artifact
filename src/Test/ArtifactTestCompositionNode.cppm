@@ -1,4 +1,5 @@
 module;
+#include <memory>
 #include <QDebug>
 #include <QString>
 
@@ -27,6 +28,15 @@ export int runCompositionNodeTests() {
     check(container.removeChild(childId), QStringLiteral("child can be removed"));
     check(!container.containsChild(childId), QStringLiteral("removed child is absent"));
     check(!container.removeChild(childId), QStringLiteral("missing child removal is rejected"));
+
+    ArtifactCompositionNodeStore store;
+    auto stored = std::make_unique<ArtifactContainerNode>();
+    const auto storedId = stored->id();
+    check(store.add(std::move(stored)), QStringLiteral("node store accepts a container"));
+    check(store.size() == 1 && store.find(storedId), QStringLiteral("node store finds by id"));
+    check(!store.add(std::make_unique<ArtifactContainerNode>(storedId)),
+          QStringLiteral("node store rejects duplicate ids"));
+    check(store.remove(storedId) && store.size() == 0, QStringLiteral("node store removes by id"));
 
     return failures;
 }

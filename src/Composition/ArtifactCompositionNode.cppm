@@ -36,4 +36,26 @@ bool ArtifactContainerNode::containsChild(const ArtifactCore::Id& childId) const
 
 const std::vector<ArtifactCore::Id>& ArtifactContainerNode::children() const { return children_; }
 
+bool ArtifactCompositionNodeStore::add(std::unique_ptr<ArtifactCompositionNode> node) {
+    if (!node || node->id().isNil() || find(node->id())) return false;
+    nodes_.push_back(std::move(node));
+    return true;
+}
+
+bool ArtifactCompositionNodeStore::remove(const ArtifactCore::Id& id) {
+    const auto it = std::find_if(nodes_.begin(), nodes_.end(),
+        [&id](const auto& node) { return node && node->id() == id; });
+    if (it == nodes_.end()) return false;
+    nodes_.erase(it);
+    return true;
+}
+
+ArtifactCompositionNode* ArtifactCompositionNodeStore::find(const ArtifactCore::Id& id) const {
+    const auto it = std::find_if(nodes_.begin(), nodes_.end(),
+        [&id](const auto& node) { return node && node->id() == id; });
+    return it == nodes_.end() ? nullptr : it->get();
+}
+
+std::size_t ArtifactCompositionNodeStore::size() const { return nodes_.size(); }
+
 } // namespace Artifact
