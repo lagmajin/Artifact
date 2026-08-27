@@ -93,9 +93,4 @@ private:
     std::unique_ptr<GroupImpl> groupImpl_;
 };
 
-// Compatibility name for the higher-level container abstraction.  The
-// concrete implementation remains ArtifactGroupLayer until hierarchy and
-// render-boundary responsibilities are migrated in later phases.
-using ArtifactGroupContainer = ArtifactGroupLayer;
-
 } // namespace Artifact
