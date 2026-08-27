@@ -65,6 +65,7 @@ import Event.Bus;
 import Audio.Mixer;
 import Audio.Bus;
 import Artifact.Composition.InOutPoints;
+import Artifact.Composition.Nodes;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
@@ -1138,6 +1139,7 @@ class ArtifactAbstractComposition::Impl {
   ~Impl();
   ArtifactAbstractComposition* owner_;
   MultiIndexLayerContainer layerMultiIndex_;
+  CompositionNodeStore nodeStore_;
   CompositionSettings settings_;
   CompositionContext context_;
   FramePosition position_;
@@ -1310,6 +1312,14 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
   }
   
   layerMultiIndex_.add(layer,id,layer->type_index());
+  CompositionNode node;
+  node.id = id.toString();
+  node.order = layerMultiIndex_.indexOf(layer);
+  node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
+                                   : CompositionNodeKind::Layer;
+  nodeStore_.addNode(node);
+  const auto parentId = layer->parentLayerId().toString();
+  if (!parentId.trimmed().isEmpty()) nodeStore_.setParent(node.id, parentId);
   invalidateThumbnailCache();
   recalculateFrameRange();
   owner_->changed();
@@ -1347,6 +1357,7 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
    }
   }
    layerMultiIndex_.clear();
+   nodeStore_ = CompositionNodeStore{};
    invalidateThumbnailCache();
    owner_->changed();
    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
@@ -1380,6 +1391,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
        }
    }
     layerMultiIndex_.removeById(id);
+    nodeStore_.removeNode(id.toString());
     if (removedLayer) {
      removedLayer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
      invalidateThumbnailCache();
@@ -2260,6 +2272,14 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       }
       
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
+      CompositionNode node;
+      node.id = layer->id().toString();
+      node.order = layerMultiIndex_.indexOf(layer);
+      node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
+                                        : CompositionNodeKind::Layer;
+      nodeStore_.addNode(node);
+      const auto parentId = layer->parentLayerId().toString();
+      if (!parentId.trimmed().isEmpty()) nodeStore_.setParent(node.id, parentId);
       invalidateThumbnailCache();
       recalculateFrameRange();
       owner_->changed();
@@ -2278,6 +2298,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, newIndex);
+      nodeStore_.setOrder(id.toString(), layerMultiIndex_.indexOf(layer));
       invalidateThumbnailCache();
       owner_->changed();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
@@ -2292,6 +2313,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
+      nodeStore_.setOrder(id.toString(), layerMultiIndex_.indexOf(layer));
       invalidateThumbnailCache();
       owner_->changed();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
@@ -2306,6 +2328,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, 0);
+      nodeStore_.setOrder(id.toString(), layerMultiIndex_.indexOf(layer));
       invalidateThumbnailCache();
       owner_->changed();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
@@ -3525,6 +3548,16 @@ QList<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer(
 {
   QList<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
   return layers;
+}
+
+const CompositionNodeStore& ArtifactAbstractComposition::nodeStore() const
+{
+  return impl_->nodeStore_;
+}
+
+CompositionNodeStore& ArtifactAbstractComposition::nodeStore()
+{
+  return impl_->nodeStore_;
 }
 
 const QList<Artifact::ArtifactAbstractLayerPtr>&
@@ -4972,6 +5005,7 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
         }
     }
     obj["layers"] = layersArray;
+    obj["compositionNodes"] = impl_->nodeStore_.toJson();
     // 必要に応じて他のプロパティも追加可能
     return QJsonDocument(obj);
 }
@@ -5031,6 +5065,8 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
     }
     auto comp = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
     comp->setColorPipelineVersion(colorPipelineVersion);
+    comp->impl_->nodeStore_ = CompositionNodeStore::fromJson(
+        obj.value(QStringLiteral("compositionNodes")).toArray());
     comp->impl_->suppressLayerChangedEvents_ = true;
     if (obj.contains("audioMixer") && obj.value("audioMixer").isObject()) {
         comp->ensureAudioMixer();

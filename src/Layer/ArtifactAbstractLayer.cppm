@@ -62,6 +62,7 @@ import Physics.System;
 import Physics.Mpm2D;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.Nodes;
 import Artifact.Effect.Abstract;
 import Artifact.Render.ROI;
 import Artifact.Effect.ImplBase;
@@ -3523,6 +3524,9 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
   }
 
   impl_->parentLayerId_ = id;
+  if (auto *composition = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data())) {
+    composition->nodeStore().setParent(this->id().toString(), id.toString());
+  }
   setDirty(LayerDirtyFlag::Transform);
   addDirtyReason(LayerDirtyReason::TransformChanged);
   qDebug() << "[Layer] Parent set to:" << id.toString();
@@ -3538,6 +3542,9 @@ void ArtifactAbstractLayer::clearParent() {
     return;
   }
   impl_->parentLayerId_ = LayerID();
+  if (auto *composition = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data())) {
+    composition->nodeStore().setParent(this->id().toString(), QString{});
+  }
   setDirty(LayerDirtyFlag::Transform);
   addDirtyReason(LayerDirtyReason::TransformChanged);
   Q_EMIT changed();

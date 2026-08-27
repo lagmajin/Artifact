@@ -14,6 +14,7 @@ import Artifact.Layer.Abstract;
 import Utils.Id;
 import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
+import Artifact.Composition.Nodes;
 
 export namespace Artifact {
 
@@ -53,6 +54,9 @@ public:
     void insertChildAt(int index, ArtifactAbstractLayerPtr layer);
     int childIndex(const LayerID& id) const;
     bool containsChild(const LayerID& id) const;
+    GroupContainerNode toContainerNode() const;
+    bool applyContainerNode(const ContainerNode& node);
+    bool applyGroupContainerNode(const GroupContainerNode& node);
 
     // Group state
     bool isCollapsed() const;

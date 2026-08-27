@@ -35,6 +35,7 @@ import Audio.Analyze;
 import Audio.Segment;
 import Audio.Mixer;
 import Artifact.Composition.InOutPoints;
+import Artifact.Composition.Nodes;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Layer.Abstract;
@@ -372,6 +373,8 @@ export namespace Artifact {
 
   QList<ArtifactAbstractLayerPtr> allLayer();
   QList<ArtifactAbstractLayerPtr> allLayer() const;
+  const CompositionNodeStore& nodeStore() const;
+  CompositionNodeStore& nodeStore();
   const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
   QList<ArtifactAbstractLayerPtr> childLayersOf(const LayerID& parentId) const;
   bool shouldEvaluateLayer(const LayerID& layerId) const;

@@ -438,6 +438,7 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
         if (!composition->containsLayerById(layer->id())) {
             composition->appendLayerTop(layer);
         }
+        composition->nodeStore().setParent(layer->id().toString(), id().toString());
     } else {
         layer->setComposition(compositionObject());
         groupImpl_->children.push_back(layer);
@@ -459,6 +460,7 @@ void ArtifactGroupLayer::removeChild(const LayerID& id) {
         const auto child = composition->layerById(id);
         if (child && child->parentLayerId() == this->id()) {
             child->clearParent();
+            composition->nodeStore().setParent(id.toString(), QString{});
             removedCompositionChild = true;
         }
     }
@@ -494,6 +496,7 @@ void ArtifactGroupLayer::clearChildren() {
         for (const auto& child : composition->childLayersOf(id())) {
             if (child) {
                 child->clearParent();
+                composition->nodeStore().setParent(child->id().toString(), QString{});
             }
         }
     }
@@ -538,6 +541,7 @@ void ArtifactGroupLayer::insertChildAt(int index, ArtifactAbstractLayerPtr layer
         if (!composition->containsLayerById(layer->id())) {
             composition->appendLayerTop(layer);
         }
+        composition->nodeStore().setParent(layer->id().toString(), id().toString());
     } else {
         layer->setComposition(compositionObject());
         if (index < 0) index = 0;
@@ -570,6 +574,53 @@ int ArtifactGroupLayer::childIndex(const LayerID& id) const {
 
 bool ArtifactGroupLayer::containsChild(const LayerID& id) const {
     return childIndex(id) >= 0;
+}
+
+GroupContainerNode ArtifactGroupLayer::toContainerNode() const {
+    CompositionNode node;
+    node.id = id().toString();
+    node.kind = CompositionNodeKind::GroupContainer;
+    GroupContainerNode result(node);
+    for (const auto& child : children()) {
+        if (child) result.addChild(child->id().toString());
+    }
+    result.setOutputMode(static_cast<GroupContainerOutputMode>(
+        static_cast<int>(outputMode())));
+    result.setActiveChildId(activeChildId().toString());
+    return result;
+}
+
+bool ArtifactGroupLayer::applyContainerNode(const ContainerNode& node) {
+    if (node.node().id != id().toString()) return false;
+    auto* composition = dynamic_cast<ArtifactAbstractComposition*>(compositionObject());
+    if (!composition) return false;
+
+    const auto& childIds = node.children();
+    for (const auto& currentChild : children()) {
+        if (!currentChild) continue;
+        if (std::find(childIds.begin(), childIds.end(), currentChild->id().toString()) == childIds.end()) {
+            const auto currentId = currentChild->id();
+            currentChild->clearParent();
+            composition->nodeStore().setParent(currentId.toString(), QString{});
+        }
+    }
+    for (int index = 0; index < static_cast<int>(childIds.size()); ++index) {
+        const LayerID childId(childIds[static_cast<size_t>(index)]);
+        const auto child = composition->layerById(childId);
+        if (!child || childId == id()) return false;
+        if (!composition->nodeStore().setParent(childId.toString(), id().toString())) {
+            return false;
+        }
+        composition->moveLayerToIndex(childId, index);
+    }
+    return true;
+}
+
+bool ArtifactGroupLayer::applyGroupContainerNode(const GroupContainerNode& node) {
+    if (!applyContainerNode(node)) return false;
+    setOutputMode(static_cast<GroupOutputMode>(static_cast<int>(node.outputMode())));
+    setActiveChildId(LayerID(node.activeChildId()));
+    return true;
 }
 
 bool ArtifactGroupLayer::isCollapsed() const {
