@@ -3674,6 +3674,21 @@ std::size_t ArtifactAbstractComposition::compositionNodeCount() const
     return impl_->nodeStore_.size();
 }
 
+bool ArtifactAbstractComposition::addLayerToCompositionContainer(const LayerID& layerId, const ArtifactCore::Id& containerId)
+{
+    if (!layerById(layerId)) return false;
+    auto* node = impl_->nodeStore_.find(containerId);
+    auto* container = dynamic_cast<ArtifactContainerNode*>(node);
+    return container && container->addChild(layerId);
+}
+
+bool ArtifactAbstractComposition::removeLayerFromCompositionContainer(const LayerID& layerId, const ArtifactCore::Id& containerId)
+{
+    auto* node = impl_->nodeStore_.find(containerId);
+    auto* container = dynamic_cast<ArtifactContainerNode*>(node);
+    return container && container->removeChild(layerId);
+}
+
 bool ArtifactAbstractComposition::isAudioOnly() const
 {
  return false;

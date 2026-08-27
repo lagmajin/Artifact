@@ -217,6 +217,8 @@ export namespace Artifact {
   ArtifactCompositionNode* compositionNodeById(const ArtifactCore::Id& id) const;
   bool removeCompositionNode(const ArtifactCore::Id& id);
   std::size_t compositionNodeCount() const;
+  bool addLayerToCompositionContainer(const LayerID& layerId, const ArtifactCore::Id& containerId);
+  bool removeLayerFromCompositionContainer(const LayerID& layerId, const ArtifactCore::Id& containerId);
   
   CompositionSettings settings() const;
   CompositionContext& compositionContext();
