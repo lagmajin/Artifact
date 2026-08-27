@@ -107,6 +107,25 @@ export int runLayerGroupTests()
         report.check(!orderedChildren.empty() && orderedChildren.front() &&
                          orderedChildren.front()->id() == secondChildResult.layer->id(),
                      QStringLiteral("group insertChildAt preserves requested order"));
+
+        CompositionNode applyNode;
+        applyNode.id = group->id().toString();
+        GroupContainerNode requestedContainer(applyNode);
+        requestedContainer.addChild(childResult.layer->id().toString());
+        requestedContainer.addChild(secondChildResult.layer->id().toString());
+        requestedContainer.setOutputMode(GroupContainerOutputMode::Single);
+        requestedContainer.setActiveChildId(childResult.layer->id().toString());
+        requestedContainer.setEnabled(false);
+        requestedContainer.setOpacity(0.5);
+        requestedContainer.setBlendMode(QStringLiteral("add"));
+        report.check(group->applyGroupContainerNode(requestedContainer),
+                     QStringLiteral("group applies container state"));
+        const auto appliedChildren = composition->childLayersOf(group->id());
+        report.check(appliedChildren.size() == 2 && appliedChildren.front() &&
+                         appliedChildren.front()->id() == childResult.layer->id(),
+                     QStringLiteral("group applies container child order"));
+        report.check(!group->isVisible() && qFuzzyCompare(group->opacity(), 0.5f),
+                     QStringLiteral("group applies container visibility and opacity"));
     }
 
     const QJsonDocument json = composition->toJson();
