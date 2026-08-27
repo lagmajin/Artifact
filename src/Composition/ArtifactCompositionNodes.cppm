@@ -217,7 +217,9 @@ bool CompositionNodeStore::setProperties(const QString& id, const QJsonObject& p
   auto it = std::find_if(nodes_.begin(), nodes_.end(),
                          [&id](const CompositionNode& value) { return value.id == id; });
   if (it == nodes_.end()) return false;
-  it->properties = properties;
+  for (auto property = properties.constBegin(); property != properties.constEnd(); ++property) {
+    it->properties.insert(property.key(), property.value());
+  }
   return true;
 }
 

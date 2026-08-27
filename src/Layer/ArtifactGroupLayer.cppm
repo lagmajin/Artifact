@@ -600,6 +600,17 @@ bool ArtifactGroupLayer::applyContainerNode(const ContainerNode& node) {
     if (!composition) return false;
 
     const auto& childIds = node.children();
+    std::vector<ArtifactAbstractLayerPtr> resolvedChildren;
+    resolvedChildren.reserve(childIds.size());
+    for (const auto& childIdText : childIds) {
+        const LayerID childId(childIdText);
+        const auto child = composition->layerById(childId);
+        if (!child || childId == id() || child->parentLayerId() == childId) {
+            return false;
+        }
+        resolvedChildren.push_back(child);
+    }
+
     for (const auto& currentChild : children()) {
         if (!currentChild) continue;
         if (std::find(childIds.begin(), childIds.end(), currentChild->id().toString()) == childIds.end()) {
@@ -610,8 +621,7 @@ bool ArtifactGroupLayer::applyContainerNode(const ContainerNode& node) {
     }
     for (int index = 0; index < static_cast<int>(childIds.size()); ++index) {
         const LayerID childId(childIds[static_cast<size_t>(index)]);
-        const auto child = composition->layerById(childId);
-        if (!child || childId == id()) return false;
+        const auto& child = resolvedChildren[static_cast<size_t>(index)];
         if (!composition->nodeStore().setParent(childId.toString(), id().toString())) {
             return false;
         }
@@ -621,9 +631,13 @@ bool ArtifactGroupLayer::applyContainerNode(const ContainerNode& node) {
 }
 
 bool ArtifactGroupLayer::applyGroupContainerNode(const GroupContainerNode& node) {
-    if (!applyContainerNode(node)) return false;
     const QString activeChildId = node.activeChildId();
     if (!activeChildId.isEmpty() && !node.containsChild(activeChildId)) return false;
+    if (!applyContainerNode(node)) return false;
+    setVisible(node.enabled());
+    setOpacity(static_cast<float>(node.opacity()));
+    setBlendMode(ArtifactCore::toLegacyBlendType(
+        ArtifactCore::BlendModeUtils::fromString(node.blendMode())));
     setOutputMode(static_cast<GroupOutputMode>(static_cast<int>(node.outputMode())));
     setActiveChildId(LayerID(activeChildId));
     return true;
