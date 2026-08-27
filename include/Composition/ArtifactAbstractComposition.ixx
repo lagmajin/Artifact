@@ -38,6 +38,7 @@ import Artifact.Composition.InOutPoints;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Node;
 
 import Geometry.ResolutionRemap;
 import Artifact.Effect.Abstract;
@@ -211,6 +212,11 @@ export namespace Artifact {
   void removeAllLayers();
   CompositionID id() const;
   int layerCount() const;
+
+  bool addCompositionNode(std::unique_ptr<ArtifactCompositionNode> node);
+  ArtifactCompositionNode* compositionNodeById(const ArtifactCore::Id& id) const;
+  bool removeCompositionNode(const ArtifactCore::Id& id);
+  std::size_t compositionNodeCount() const;
   
   CompositionSettings settings() const;
   CompositionContext& compositionContext();

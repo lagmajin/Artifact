@@ -1138,6 +1138,7 @@ class ArtifactAbstractComposition::Impl {
   ~Impl();
   ArtifactAbstractComposition* owner_;
   MultiIndexLayerContainer layerMultiIndex_;
+  ArtifactCompositionNodeStore nodeStore_;
   CompositionSettings settings_;
   CompositionContext context_;
   FramePosition position_;
@@ -3651,6 +3652,26 @@ CompositionID ArtifactAbstractComposition::id() const
 int ArtifactAbstractComposition::layerCount() const
 {
     return impl_->layerMultiIndex_.all().size();
+}
+
+bool ArtifactAbstractComposition::addCompositionNode(std::unique_ptr<ArtifactCompositionNode> node)
+{
+    return impl_->nodeStore_.add(std::move(node));
+}
+
+ArtifactCompositionNode* ArtifactAbstractComposition::compositionNodeById(const ArtifactCore::Id& id) const
+{
+    return impl_->nodeStore_.find(id);
+}
+
+bool ArtifactAbstractComposition::removeCompositionNode(const ArtifactCore::Id& id)
+{
+    return impl_->nodeStore_.remove(id);
+}
+
+std::size_t ArtifactAbstractComposition::compositionNodeCount() const
+{
+    return impl_->nodeStore_.size();
 }
 
 bool ArtifactAbstractComposition::isAudioOnly() const
