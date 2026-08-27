@@ -79,6 +79,15 @@ export int runLayerGroupTests()
                  QStringLiteral("group converts child to container node"));
     report.check(containerNode.outputMode() == GroupContainerOutputMode::All,
                  QStringLiteral("group converts output mode to container node"));
+    group->setOutputMode(GroupOutputMode::Single);
+    group->setActiveChildId(childResult.layer->id());
+    const auto* groupNode = composition->nodeStore().node(group->id().toString());
+    report.check(groupNode && groupNode->properties.value(QStringLiteral("outputMode")).toInt(-1) ==
+                     static_cast<int>(GroupOutputMode::Single),
+                 QStringLiteral("group output mode syncs to node properties"));
+    report.check(groupNode && groupNode->properties.value(QStringLiteral("activeChildId")).toString() ==
+                     childResult.layer->id().toString(),
+                 QStringLiteral("group active child syncs to node properties"));
 
     const QJsonDocument json = composition->toJson();
     auto loaded = ArtifactAbstractComposition::fromJson(json);
