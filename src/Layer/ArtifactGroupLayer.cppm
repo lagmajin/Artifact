@@ -587,6 +587,10 @@ GroupContainerNode ArtifactGroupLayer::toContainerNode() const {
     result.setOutputMode(static_cast<GroupContainerOutputMode>(
         static_cast<int>(outputMode())));
     result.setActiveChildId(activeChildId().toString());
+    result.setEnabled(isVisible());
+    result.setOpacity(opacity());
+    result.setBlendMode(ArtifactCore::BlendModeUtils::toString(
+        ArtifactCore::toBlendMode(layerBlendType())).toLower());
     return result;
 }
 
