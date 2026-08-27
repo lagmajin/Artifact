@@ -143,14 +143,22 @@ float ArtifactGroupLayer::childEvaluationGain(const LayerID& childId) const {
 std::vector<ArtifactAbstractLayerPtr> ArtifactGroupLayer::childrenForRender() const {
     std::vector<ArtifactAbstractLayerPtr> result;
     std::vector<ArtifactAbstractLayerPtr> compositionChildren;
+    GroupOutputMode renderMode = groupImpl_->outputMode;
+    LayerID renderActiveChild = groupImpl_->activeChildId;
     if (auto* composition =
             dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
         const auto children = composition->childLayersOf(id());
         compositionChildren.assign(children.begin(), children.end());
+        GroupContainerNode container;
+        if (composition->nodeStore().getGroupContainer(id().toString(), container)) {
+            renderMode = static_cast<GroupOutputMode>(
+                static_cast<int>(container.outputMode()));
+            renderActiveChild = LayerID(container.activeChildId());
+        }
     }
     const auto& children = compositionChildren.empty()
         ? groupImpl_->children : compositionChildren;
-    if (groupImpl_->outputMode != GroupOutputMode::Single) {
+    if (renderMode != GroupOutputMode::Single) {
         for (const auto& child : children) {
             if (child && child->isVisible()) {
                 result.push_back(child);
@@ -159,9 +167,13 @@ std::vector<ArtifactAbstractLayerPtr> ArtifactGroupLayer::childrenForRender() co
         return result;
     }
 
-    const auto active = activeChild();
-    if (active && active->isVisible()) {
-        result.push_back(active);
+    const auto active = std::find_if(children.begin(), children.end(),
+        [&renderActiveChild](const auto& child) {
+            return child && !renderActiveChild.isNil() &&
+                   child->id() == renderActiveChild;
+        });
+    if (active != children.end() && *active && (*active)->isVisible()) {
+        result.push_back(*active);
         return result;
     }
     for (const auto& child : children) {
