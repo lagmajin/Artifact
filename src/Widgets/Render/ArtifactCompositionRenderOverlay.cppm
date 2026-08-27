@@ -1053,6 +1053,22 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                               nodeColor);
         }
       }
+    } else if (type == ShapeType::Line) {
+      // Line uses the existing width/height + Transform model.  Expose its
+      // two local endpoints before adding drag semantics.
+      const QPointF localStart(0.0, static_cast<qreal>(shape->shapeHeight()) * 0.5);
+      const QPointF localEnd(static_cast<qreal>(shape->shapeWidth()),
+                             static_cast<qreal>(shape->shapeHeight()) * 0.5);
+      const QPointF start = globalTransform.map(localStart);
+      const QPointF end = globalTransform.map(localEnd);
+      renderer->drawSolidLine(
+          {static_cast<float>(start.x()), static_cast<float>(start.y())},
+          {static_cast<float>(end.x()), static_cast<float>(end.y())},
+          outerColor, 1.2f);
+      renderer->drawPoint(static_cast<float>(start.x()),
+                          static_cast<float>(start.y()), nodeSize, nodeColor);
+      renderer->drawPoint(static_cast<float>(end.x()),
+                          static_cast<float>(end.y()), nodeSize, nodeColor);
     } else if (!shape->customPathVertices().empty()) {
       const auto vertices = shape->customPathVertices();
       const int nv = static_cast<int>(vertices.size());

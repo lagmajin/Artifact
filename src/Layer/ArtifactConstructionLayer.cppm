@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <cmath>
 #include <QVariant>
+#include <QJsonArray>
 
 module Artifact.Layer.Construction;
 
@@ -34,6 +35,7 @@ public:
   bool renderAsDesign = false;
   bool includeInFinalRender = false;
   GuideSet guideSet;
+  std::vector<ConstructionItem> items;
 
   FloatColor guideColor() const
   {
@@ -41,6 +43,32 @@ public:
                           : FloatColor{0.20f, 0.78f, 1.0f, 0.90f};
   }
 };
+
+QJsonObject ConstructionItem::toJson() const {
+  QJsonObject obj;
+  obj["id"] = id; obj["type"] = static_cast<int>(type);
+  obj["start.x"] = start.x(); obj["start.y"] = start.y();
+  obj["end.x"] = end.x(); obj["end.y"] = end.y();
+  obj["center.x"] = center.x(); obj["center.y"] = center.y();
+  obj["radius"] = radius; obj["text"] = text;
+  obj["enabled"] = enabled; obj["opacity"] = opacity;
+  return obj;
+}
+
+ConstructionItem ConstructionItem::fromJson(const QJsonObject& obj) {
+  ConstructionItem item;
+  item.id = obj["id"].toString();
+  const int rawType = obj["type"].toInt(0);
+  item.type = rawType >= 0 && rawType <= 2 ? static_cast<ConstructionItemType>(rawType) : ConstructionItemType::Line;
+  item.start = QPointF(obj["start.x"].toDouble(), obj["start.y"].toDouble());
+  item.end = QPointF(obj["end.x"].toDouble(), obj["end.y"].toDouble());
+  item.center = QPointF(obj["center.x"].toDouble(), obj["center.y"].toDouble());
+  item.radius = std::max(0.0, obj["radius"].toDouble(item.radius));
+  item.text = obj["text"].toString();
+  item.enabled = obj["enabled"].toBool(true);
+  item.opacity = std::clamp(obj["opacity"].toDouble(1.0), 0.0, 1.0);
+  return item;
+}
 
 ArtifactConstructionLayer::ArtifactConstructionLayer()
     : impl_(new Impl()) {
@@ -159,6 +187,9 @@ QJsonObject ArtifactConstructionLayer::toJson() const {
   obj["construction.renderAsDesign"] = impl_->renderAsDesign;
   obj["construction.includeInFinalRender"] = impl_->includeInFinalRender;
   obj["construction.guideSet"] = guideSet.toJson();
+  QJsonArray itemArray;
+  for (const auto& item : impl_->items) itemArray.append(item.toJson());
+  obj["construction.items"] = itemArray;
   return obj;
 }
 
@@ -198,6 +229,9 @@ void ArtifactConstructionLayer::fromJsonProperties(const QJsonObject& obj) {
   impl_->renderAsDesign = obj.value(QStringLiteral("construction.renderAsDesign")).toBool(impl_->renderAsDesign);
   impl_->includeInFinalRender = obj.value(QStringLiteral("construction.includeInFinalRender")).toBool(impl_->includeInFinalRender);
   impl_->guideSet = GuideSet::fromJson(obj.value(QStringLiteral("construction.guideSet")).toObject());
+  impl_->items.clear();
+  for (const auto value : obj.value(QStringLiteral("construction.items")).toArray())
+    if (value.isObject()) impl_->items.push_back(ConstructionItem::fromJson(value.toObject()));
   if (impl_->guideSet.ownerId.trimmed().isEmpty()) {
     impl_->guideSet.ownerId = id().toString();
   }
@@ -337,5 +371,10 @@ void ArtifactConstructionLayer::clearConstructionGuides() {
     impl_->guideSet.ownerId = id().toString();
   }
 }
+
+const std::vector<ConstructionItem>& ArtifactConstructionLayer::constructionItems() const { return impl_->items; }
+void ArtifactConstructionLayer::setConstructionItems(const std::vector<ConstructionItem>& items) { impl_->items = items; }
+void ArtifactConstructionLayer::addConstructionItem(const ConstructionItem& item) { impl_->items.push_back(item); }
+void ArtifactConstructionLayer::clearConstructionItems() { impl_->items.clear(); }
 
 } // namespace Artifact

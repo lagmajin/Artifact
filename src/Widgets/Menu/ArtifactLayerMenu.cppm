@@ -3005,7 +3005,7 @@ void ArtifactLayerMenu::Impl::handleCycleShapeCreation(bool reverse)
     const auto now = std::chrono::steady_clock::now();
     const bool armed = lastAt.time_since_epoch().count() > 0 &&
                        (now - lastAt) <= std::chrono::seconds(4);
-    constexpr int count = 6;
+    constexpr int count = 7;
     if (!armed) {
         lastIndex = reverse ? count - 1 : 0;
     } else {
@@ -3020,6 +3020,7 @@ void ArtifactLayerMenu::Impl::handleCycleShapeCreation(bool reverse)
     case 3: handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); return;
     case 4: handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); return;
     case 5: handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return;
+    case 6: handleCreateShape(ShapeType::Line, QStringLiteral("Line 1")); return;
     }
 }
 

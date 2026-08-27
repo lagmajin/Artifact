@@ -749,8 +749,13 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
       LayerMask mask = targetLayer->mask(m);
+      std::int64_t maskFrame = targetLayer->currentFrame();
+      if (auto *maskComposition = static_cast<ArtifactAbstractComposition *>(
+              targetLayer->composition())) {
+        maskFrame = maskComposition->framePosition().framePosition();
+      }
       mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
-                        scaleX, scaleY);
+                        scaleX, scaleY, maskFrame);
     }
   }
 

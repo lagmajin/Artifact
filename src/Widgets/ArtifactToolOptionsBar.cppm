@@ -1347,28 +1347,36 @@ void ArtifactToolOptionsBar::setShapeOptions(
     impl_->shapeTypeCombo->setEnabled(enabled);
   }
 
+  const bool isLine =
+      static_cast<Artifact::ShapeType>(shapeType) == Artifact::ShapeType::Line;
+
   if (impl_->shapeWidthSpin) {
     QSignalBlocker blocker(*impl_->shapeWidthSpin);
     impl_->shapeWidthSpin->setValue(std::clamp(width, 1, 8192));
+    impl_->shapeWidthSpin->setSuffix(isLine ? QStringLiteral("L")
+                                            : QStringLiteral("W"));
     impl_->shapeWidthSpin->setEnabled(enabled);
   }
 
   if (impl_->shapeHeightSpin) {
     QSignalBlocker blocker(*impl_->shapeHeightSpin);
     impl_->shapeHeightSpin->setValue(std::clamp(height, 1, 8192));
-    impl_->shapeHeightSpin->setEnabled(enabled);
+    // A primitive line has no independent height; its thickness is Stroke Width.
+    impl_->shapeHeightSpin->setEnabled(enabled && !isLine);
   }
 
   if (impl_->shapeFillCheck) {
     QSignalBlocker blocker(*impl_->shapeFillCheck);
     impl_->shapeFillCheck->setChecked(fillEnabled);
-    impl_->shapeFillCheck->setEnabled(enabled);
+    // Lines are stroke-only primitives.
+    impl_->shapeFillCheck->setEnabled(enabled && !isLine);
   }
 
   if (impl_->shapeStrokeCheck) {
     QSignalBlocker blocker(*impl_->shapeStrokeCheck);
     impl_->shapeStrokeCheck->setChecked(strokeEnabled);
-    impl_->shapeStrokeCheck->setEnabled(enabled);
+    // Keep Line stroke enabled; users edit its width/style below.
+    impl_->shapeStrokeCheck->setEnabled(enabled && !isLine);
   }
 
   if (impl_->shapeStrokeWidthSpin) {
@@ -1388,14 +1396,16 @@ void ArtifactToolOptionsBar::setShapeOptions(
     QSignalBlocker blocker(*impl_->strokeJoinCombo);
     const int idx = impl_->strokeJoinCombo->findData(strokeJoin);
     if (idx >= 0) impl_->strokeJoinCombo->setCurrentIndex(idx);
-    impl_->strokeJoinCombo->setEnabled(enabled);
+    // Open lines have no join; the renderer's join setting is for corners.
+    impl_->strokeJoinCombo->setEnabled(enabled && !isLine);
   }
 
   if (impl_->strokeAlignCombo) {
     QSignalBlocker blocker(*impl_->strokeAlignCombo);
     const int idx = impl_->strokeAlignCombo->findData(strokeAlign);
     if (idx >= 0) impl_->strokeAlignCombo->setCurrentIndex(idx);
-    impl_->strokeAlignCombo->setEnabled(enabled);
+    // GPU PolylineStyle currently renders centered strokes only.
+    impl_->strokeAlignCombo->setEnabled(enabled && !isLine);
   }
 
   if (impl_->dashEdit) {

@@ -1590,6 +1590,15 @@ void ArtifactShapeLayer::setShapeType(Artifact::ShapeType type) {
   } else {
    impl_->shapeType_ = type;
   }
+  if (impl_->shapeType_ == Artifact::ShapeType::Line) {
+   // A line is stroke-only by default; otherwise a newly created line is
+   // invisible because the shared shape defaults are fill-on / stroke-off.
+   impl_->fillEnabled_ = false;
+   impl_->strokeEnabled_ = true;
+   if (impl_->strokeWidth_ <= 0.0f) {
+    impl_->strokeWidth_ = 1.0f;
+   }
+  }
   if (impl_->shapeType_ != Artifact::ShapeType::Polygon) {
    impl_->customPolygonPoints_.clear();
    impl_->customPolygonClosed_ = true;
@@ -2924,6 +2933,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
    }
 
    groups.push_back(opGroup);
+ }
+
+ if (impl_->shapeType_ == Artifact::ShapeType::Line) {
+  for (auto& group : groups) {
+   group.removeProperty(QStringLiteral("shape.height"));
+   for (const auto& property : {
+            QStringLiteral("shape.fillColor"),
+            QStringLiteral("shape.fillEnabled"),
+            QStringLiteral("shape.fillType"),
+            QStringLiteral("shape.fillGradientStartColor"),
+            QStringLiteral("shape.fillGradientEndColor"),
+            QStringLiteral("shape.fillGradientAngle"),
+            QStringLiteral("shape.fillGradientCenterX"),
+            QStringLiteral("shape.fillGradientCenterY"),
+            QStringLiteral("shape.fillGradientRadius")}) {
+    group.removeProperty(property);
+   }
+  }
+  groups.erase(std::remove_if(groups.begin(), groups.end(), [](const auto& group) {
+    return group.name() == QStringLiteral("Shape Parameters");
+  }), groups.end());
  }
 
  return groups;

@@ -1,4 +1,5 @@
 ﻿module;
+#include <cstdint>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -94,7 +95,8 @@ void LayerMask::setLocked(bool locked) { impl_->locked = locked; }
 
 void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
                                    float offsetX, float offsetY,
-                                   float scaleX, float scaleY) const
+                                   float scaleX, float scaleY,
+                                   std::int64_t frame) const
 {
     if (!outMat) {
         return;
@@ -113,7 +115,12 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
 
     bool hasEffectivePath = false;
 
-    for (const auto& path : impl_->paths) {
+    for (const auto& sourcePath : impl_->paths) {
+        // Animated mask paths: evaluate vertices at the requested frame.
+        // frame < 0 keeps legacy behavior (static authored geometry).
+        const MaskPath path = (frame >= 0 && sourcePath.hasAnimationKeyframes())
+                                  ? sourcePath.sampleAtFrame(frame)
+                                  : sourcePath;
         if (!path.isClosed() || path.vertexCount() < 3) {
             continue;
         }
@@ -171,7 +178,8 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
 
 void LayerMask::applyToImage(int width, int height, void* imageMat,
                              float offsetX, float offsetY,
-                             float scaleX, float scaleY) const
+                             float scaleX, float scaleY,
+                             std::int64_t frame) const
 {
     if (!imageMat || width <= 0 || height <= 0) return;
     cv::Mat& img = *static_cast<cv::Mat*>(imageMat);
@@ -180,7 +188,7 @@ void LayerMask::applyToImage(int width, int height, void* imageMat,
     if (!impl_->enabled || impl_->paths.empty()) return;
 
     cv::Mat alphaMask;
-    compositeAlphaMask(width, height, &alphaMask, offsetX, offsetY, scaleX, scaleY);
+    compositeAlphaMask(width, height, &alphaMask, offsetX, offsetY, scaleX, scaleY, frame);
 
     // For CV_32FC4, OpenCV stores as BGRA in memory
     // Split preserves this order: [B, G, R, A]

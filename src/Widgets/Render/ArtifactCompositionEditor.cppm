@@ -515,7 +515,9 @@ QString shapeSelectionDetail(const ArtifactCore::SharedPtr<ArtifactShapeLayer> &
     detail += QStringLiteral(" - %1 ops").arg(shape->shapeOperatorCount());
   }
 
-  detail += QStringLiteral(" - vertex/segment edit ready");
+  if (type != ShapeType::Line) {
+    detail += QStringLiteral(" - vertex/segment edit ready");
+  }
   return detail;
 }
 

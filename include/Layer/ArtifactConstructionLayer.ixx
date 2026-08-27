@@ -3,6 +3,7 @@ module;
 #include <QString>
 #include <QJsonObject>
 #include <QVariant>
+#include <QPointF>
 #include <vector>
 
 export module Artifact.Layer.Construction;
@@ -11,6 +12,22 @@ import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 
 export namespace Artifact {
+
+enum class ConstructionItemType { Line, Circle, Annotation };
+
+struct ConstructionItem {
+  QString id;
+  ConstructionItemType type = ConstructionItemType::Line;
+  QPointF start;
+  QPointF end;
+  QPointF center;
+  double radius = 24.0;
+  QString text;
+  bool enabled = true;
+  double opacity = 1.0;
+  QJsonObject toJson() const;
+  static ConstructionItem fromJson(const QJsonObject& obj);
+};
 
 class ArtifactConstructionLayer : public ArtifactAbstract2DLayer {
 private:
@@ -34,6 +51,10 @@ public:
   void setConstructionGuideSet(const GuideSet& guideSet);
   void addConstructionGuide(const GuideDefinition& guide);
   void clearConstructionGuides();
+  const std::vector<ConstructionItem>& constructionItems() const;
+  void setConstructionItems(const std::vector<ConstructionItem>& items);
+  void addConstructionItem(const ConstructionItem& item);
+  void clearConstructionItems();
 };
 
 } // namespace Artifact

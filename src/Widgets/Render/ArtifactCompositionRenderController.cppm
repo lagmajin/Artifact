@@ -4175,9 +4175,15 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
 
+      std::int64_t maskFrame = targetLayer->currentFrame();
+      if (auto *maskComposition = static_cast<ArtifactAbstractComposition *>(
+              targetLayer->composition())) {
+        maskFrame = maskComposition->framePosition().framePosition();
+      }
       LayerMask mask = targetLayer->mask(m);
 
-      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY, scaleX, scaleY);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
+                        scaleX, scaleY, maskFrame);
 
     }
 
@@ -5885,6 +5891,33 @@ class ShapePathVertexEditCommand final : public UndoCommand {
   bool beforeClosed_;
   bool afterClosed_;
 };
+class LineEndpointUndoCommand final : public UndoCommand {
+ public:
+  LineEndpointUndoCommand(ArtifactAbstractLayerPtr layer, int bw, int bh,
+                          QPointF bp, float br, int aw, int ah, QPointF ap,
+                          float ar)
+      : layer_(std::move(layer)), bw_(bw), bh_(bh), bp_(bp), br_(br),
+        aw_(aw), ah_(ah), ap_(ap), ar_(ar) {}
+  void undo() override { apply(bw_, bh_, bp_, br_); }
+  void redo() override { apply(aw_, ah_, ap_, ar_); }
+  QString label() const override { return QStringLiteral("Edit Line Endpoint"); }
+ private:
+  void apply(int w, int h, const QPointF &pos, float rot) {
+    auto layer = layer_.lock();
+    auto *shape = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+    if (!shape || shape->shapeType() != ShapeType::Line) return;
+    shape->setSize(std::max(1, w), std::max(1, h));
+    auto &t = shape->transform3D();
+    const auto time = gizmoTransformTime(layer, layer->currentFrame());
+    t.setPosition(time, static_cast<float>(pos.x()), static_cast<float>(pos.y()));
+    t.setRotation(time, rot);
+    shape->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+  }
+  ArtifactAbstractLayerWeak layer_; int bw_, bh_, aw_, ah_;
+  QPointF bp_, ap_; float br_, ar_;
+};
+
 class CameraPoiUndoCommand final : public UndoCommand {
  public:
   CameraPoiUndoCommand(ArtifactAbstractLayerPtr layer, QVector3D before,
@@ -13560,6 +13593,14 @@ public:
   bool isDraggingCameraPoi_ = false;
   // Main-VP custom path vertex editing (Pen/Selection on shape layers).
   bool isDraggingShapePathVertex_ = false;
+  // Line endpoint editing uses the existing shape width/height and 2D transform.
+  bool isDraggingLineEndpoint_ = false;
+  int draggingLineEndpoint_ = -1; // 0=start, 1=end
+  ArtifactAbstractLayerWeak draggingLineLayer_;
+  int draggingLineBeforeWidth_ = 0;
+  int draggingLineBeforeHeight_ = 0;
+  QPointF draggingLineBeforePosition_;
+  float draggingLineBeforeRotation_ = 0.0f;
   int draggingShapePathVertexIndex_ = -1;
   int draggingShapePathTangent_ = 0; // 0=vertex, 1=inTangent, 2=outTangent
   int hoveredShapePathVertex_ = -1;
@@ -23926,6 +23967,26 @@ if (event->button() == Qt::LeftButton &&
 
 
 
+  // Line endpoints take precedence over custom paths and the transform gizmo.
+  if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen && selectedLayer && impl_->renderer_) {
+    if (auto *line = dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get()); line && line->shapeType() == ShapeType::Line) {
+      const QTransform global = line->getGlobalTransform();
+      const QPointF a = global.map(QPointF(0.0, line->shapeHeight() * 0.5));
+      const QPointF b = global.map(QPointF(line->shapeWidth(), line->shapeHeight() * 0.5));
+      const QPointF canvas = impl_->renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+      const float threshold = 14.0f / std::max(0.001f, impl_->renderer_->getZoom());
+      const float da = static_cast<float>(QLineF(QPointF(canvas.x, canvas.y), a).length());
+      const float db = static_cast<float>(QLineF(QPointF(canvas.x, canvas.y), b).length());
+      if (std::min(da, db) <= threshold) {
+        impl_->isDraggingLineEndpoint_ = true; impl_->draggingLineEndpoint_ = da <= db ? 0 : 1;
+        impl_->draggingLineLayer_ = selectedLayer; impl_->draggingLineBeforeWidth_ = line->shapeWidth(); impl_->draggingLineBeforeHeight_ = line->shapeHeight();
+        const auto time = gizmoTransformTime(selectedLayer, selectedLayer->currentFrame()); const auto &t = line->transform3D();
+        impl_->draggingLineBeforePosition_ = QPointF(t.positionXAt(time), t.positionYAt(time)); impl_->draggingLineBeforeRotation_ = t.rotationAt(time);
+        handleMouseMove(event->position()); event->accept(); return;
+      }
+    }
+  }
+
   // Main-VP custom path vertex editing (Selection tool on shape layers).
   if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
       activeTool != ToolType::Rectangle && impl_->renderer_) {
@@ -25143,6 +25204,14 @@ void CompositionRenderController::handleMouseMove(
   // pipeline
 
   const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
+  if (impl_->isDraggingLineEndpoint_ && impl_->renderer_) {
+    auto layer = impl_->draggingLineLayer_.lock(); auto *line = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+    if (line && line->shapeType() == ShapeType::Line) {
+      const QPointF canvas = impl_->renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())}); bool ok = false; const QTransform inv = line->getGlobalTransform().inverted(&ok);
+      if (ok) { const QPointF p = inv.map(QPointF(canvas.x, canvas.y)); const QPointF fixed = impl_->draggingLineEndpoint_ == 0 ? QPointF(line->shapeWidth(), line->shapeHeight() * 0.5) : QPointF(0.0, line->shapeHeight() * 0.5); QPointF d = p - fixed; if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) { if (std::abs(d.x()) >= std::abs(d.y())) d.setY(0.0); else d.setX(0.0); } const int w = std::max(1, static_cast<int>(std::round(std::hypot(d.x(), d.y())))); line->setSize(w, line->shapeHeight()); const auto time = gizmoTransformTime(layer, layer->currentFrame()); line->transform3D().setRotation(time, static_cast<float>(std::atan2(-d.y(), d.x()) * 180.0 / 3.14159265358979323846)); line->setDirty(LayerDirtyFlag::Transform); layer->changed(); impl_->invalidateBaseComposite(); impl_->invalidateOverlayComposite(); markRenderDirty(); }
+    } return;
+  }
+
 
   auto toolManager = ArtifactApplicationManager::instance()->toolManager();
 
@@ -27111,6 +27180,11 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 bool CompositionRenderController::cancelGizmoInteraction() {
+  if (impl_->isDraggingLineEndpoint_) {
+    if (auto layer = impl_->draggingLineLayer_.lock()) if (auto *line = dynamic_cast<ArtifactShapeLayer *>(layer.get())) { const auto time = gizmoTransformTime(layer, layer->currentFrame()); line->setSize(impl_->draggingLineBeforeWidth_, impl_->draggingLineBeforeHeight_); line->transform3D().setPosition(time, static_cast<float>(impl_->draggingLineBeforePosition_.x()), static_cast<float>(impl_->draggingLineBeforePosition_.y())); line->transform3D().setRotation(time, impl_->draggingLineBeforeRotation_); line->changed(); }
+    impl_->isDraggingLineEndpoint_ = false; impl_->draggingLineEndpoint_ = -1; impl_->draggingLineLayer_.reset(); impl_->invalidateBaseComposite(); impl_->invalidateOverlayComposite(); finishViewportInteraction(); markRenderDirty(); return true;
+  }
+
   // Cancel an in-progress POI drag, restoring the pre-drag value.
   if (impl_->isDraggingCameraPoi_) {
     if (auto layer = impl_->draggingCameraPoiLayer_.lock()) {
@@ -27249,6 +27323,12 @@ bool CompositionRenderController::cancelGizmoInteraction() {
 void CompositionRenderController::handleMouseRelease() {
 
   qCDebug(compositionViewLog) << "[MouseRelease] ENTER";
+  if (impl_->isDraggingLineEndpoint_) {
+    auto layer = impl_->draggingLineLayer_.lock(); auto *line = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+    if (line && UndoManager::instance()) { const auto time = gizmoTransformTime(layer, layer->currentFrame()); const auto &t = line->transform3D(); UndoManager::instance()->push(std::make_unique<LineEndpointUndoCommand>(layer, impl_->draggingLineBeforeWidth_, impl_->draggingLineBeforeHeight_, impl_->draggingLineBeforePosition_, impl_->draggingLineBeforeRotation_, line->shapeWidth(), line->shapeHeight(), QPointF(t.positionXAt(time), t.positionYAt(time)), t.rotationAt(time))); }
+    impl_->isDraggingLineEndpoint_ = false; impl_->draggingLineEndpoint_ = -1; impl_->draggingLineLayer_.reset(); finishViewportInteraction(); markRenderDirty(); return;
+  }
+
 
   if (impl_->rigWeightPainting_) {
     if (auto layer = impl_->rigWeightLayer_.lock()) {

@@ -377,7 +377,15 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
             for (int mi = 0; mi < mCount; ++mi) {
                 LayerMask m = mask(mi);
                 if (!m.isEnabled()) continue;
-                m.applyToImage(maskW, maskH, &maskMat);
+                std::int64_t maskFrame = currentFrame();
+                if (auto *maskComposition =
+                        static_cast<ArtifactAbstractComposition *>(
+                            composition())) {
+                  maskFrame =
+                      maskComposition->framePosition().framePosition();
+                }
+                m.applyToImage(maskW, maskH, &maskMat, 0.0f, 0.0f, 1.0f,
+                               1.0f, maskFrame);
             }
             groupImpl_->cachedMaskImage = ArtifactCore::CvUtils::cvMatToQImage(maskMat);
             groupImpl_->cachedMaskWidth = maskW;

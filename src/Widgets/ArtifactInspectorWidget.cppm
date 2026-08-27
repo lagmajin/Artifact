@@ -5073,7 +5073,13 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       if (!sourceMask.isEnabled()) {
         continue;
       }
-      sourceMask.applyToImage(maskW, maskH, &maskMat);
+      std::int64_t maskFrame = sourceLayer->currentFrame();
+      if (auto *maskComposition = static_cast<ArtifactAbstractComposition *>(
+              sourceLayer->composition())) {
+        maskFrame = maskComposition->framePosition().framePosition();
+      }
+      sourceMask.applyToImage(maskW, maskH, &maskMat, 0.0f, 0.0f, 1.0f,
+                              1.0f, maskFrame);
     }
 
     auto maskImage = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
