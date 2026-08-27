@@ -6,6 +6,11 @@ module;
 export module Artifact.Test.CompositionNode;
 
 import Artifact.Composition.Node;
+import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
+import Artifact.Layer.Factory;
+import Artifact.Layer.InitParams;
+import Color.Float;
 import Utils.Id;
 
 namespace Artifact {
@@ -37,6 +42,32 @@ export int runCompositionNodeTests() {
     check(!store.add(std::make_unique<ArtifactContainerNode>(storedId)),
           QStringLiteral("node store rejects duplicate ids"));
     check(store.remove(storedId) && store.size() == 0, QStringLiteral("node store removes by id"));
+
+    ArtifactCompositionInitParams compositionParams(
+        QStringLiteral("Container Migration Test"),
+        FloatColor{0.1f, 0.1f, 0.1f, 1.0f});
+    auto composition = ArtifactCore::makeShared<ArtifactAbstractComposition>(
+        CompositionID(QStringLiteral("container-migration-test")), compositionParams);
+    ArtifactLayerFactory factory;
+    auto layerResult = factory.createLayer(
+        ArtifactLayerInitParams(QStringLiteral("Child"), LayerType::Null));
+    auto migrationContainer = std::make_unique<ArtifactContainerNode>();
+    const auto migrationContainerId = migrationContainer->id();
+    check(composition && layerResult.layer &&
+              composition->appendLayerTop(layerResult.layer).success,
+          QStringLiteral("composition accepts migration test layer"));
+    check(composition->addCompositionNode(std::move(migrationContainer)),
+          QStringLiteral("composition stores independent container"));
+    check(composition->addLayerToCompositionContainer(
+              layerResult.layer->id(), migrationContainerId),
+          QStringLiteral("composition links layer id to container"));
+    auto linkedContainer = dynamic_cast<ArtifactContainerNode*>(
+        composition->compositionNodeById(migrationContainerId));
+    check(linkedContainer && linkedContainer->containsChild(layerResult.layer->id()),
+          QStringLiteral("composition exposes linked child"));
+    check(composition->removeLayerFromCompositionContainer(
+              layerResult.layer->id(), migrationContainerId),
+          QStringLiteral("composition unlinks layer id from container"));
 
     return failures;
 }
