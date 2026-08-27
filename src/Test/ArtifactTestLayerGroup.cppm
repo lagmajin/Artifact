@@ -14,6 +14,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Group;
 import Artifact.Layer.InitParams;
+import Artifact.Composition.Nodes;
 import Memory.SharedPtr;
 
 namespace Artifact {
@@ -69,6 +70,15 @@ export int runLayerGroupTests()
     composition->appendLayerTop(group);
     report.check(group->composition() == composition.get(), QStringLiteral("group gets composition pointer"));
     report.check(childResult.layer->composition() == composition.get(), QStringLiteral("child inherits composition pointer"));
+    report.check(composition->nodeStore().contains(group->id().toString()),
+                 QStringLiteral("group is registered in composition node store"));
+    report.check(composition->nodeStore().contains(childResult.layer->id().toString()),
+                 QStringLiteral("child is registered in composition node store"));
+    const auto containerNode = group->toContainerNode();
+    report.check(containerNode.containsChild(childResult.layer->id().toString()),
+                 QStringLiteral("group converts child to container node"));
+    report.check(containerNode.outputMode() == GroupContainerOutputMode::All,
+                 QStringLiteral("group converts output mode to container node"));
 
     const QJsonDocument json = composition->toJson();
     auto loaded = ArtifactAbstractComposition::fromJson(json);
