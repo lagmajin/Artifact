@@ -628,6 +628,13 @@ bool ArtifactGroupLayer::applyContainerNode(const ContainerNode& node) {
         if (!child || childId == id() || child->parentLayerId() == childId) {
             return false;
         }
+        auto ancestor = child->parentLayerId();
+        while (!ancestor.isNil()) {
+            if (ancestor == id()) return false;
+            const auto ancestorLayer = composition->layerById(ancestor);
+            if (!ancestorLayer) break;
+            ancestor = ancestorLayer->parentLayerId();
+        }
         resolvedChildren.push_back(child);
     }
 
