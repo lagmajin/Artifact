@@ -25,6 +25,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Test.AIToolBridge;
 import Artifact.Test.AdjustmentLayer;
 import Artifact.Test.LayerGroup;
+import Artifact.Test.NullLayer;
 import Artifact.Test.PreCompose;
 import Artifact.Test.PropertyKeyframe;
 import Artifact.Test.TimingEventView;
@@ -347,6 +348,7 @@ int runAllTests()
     failures += runAIToolBridgeTests();
     failures += runAdjustmentLayerTests();
     failures += runLayerGroupTests();
+    failures += runNullLayerTests();
     failures += runPreComposeTests();
     failures += runPropertyKeyframeTests();
     failures += runCommandLineTests();

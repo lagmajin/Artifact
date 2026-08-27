@@ -575,6 +575,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestAIToolBridge.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestCommandLine.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestLayerGroup.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestNullLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPreCompose.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPropertyKeyframe.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestTimingEventView.cppm"
