@@ -239,6 +239,16 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     if (!isVisible() || opacity() <= 0.0f) return;
     if (!renderer) return;
 
+    GroupOutputMode renderMode = groupImpl_->outputMode;
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        GroupContainerNode container;
+        if (composition->nodeStore().getGroupContainer(id().toString(), container)) {
+            renderMode = static_cast<GroupOutputMode>(
+                static_cast<int>(container.outputMode()));
+        }
+    }
+
     // Prefer offscreen composite: render children into a temporary RT and blit
     // the result into the provided layer render target. This lets the composition
     // controller treat the group as a single layer (blend mode / opacity / mask).
@@ -338,7 +348,7 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     renderer->setClearColor(oldClear);
     renderer->clear();
     const auto renderChildren = childrenForRender();
-    if (groupImpl_->outputMode == GroupOutputMode::Share && !renderChildren.empty()) {
+    if (renderMode == GroupOutputMode::Share && !renderChildren.empty()) {
         auto scratchTex = groupImpl_->cachedShareScratchTexture;
         if (!scratchTex || !cachedMatch) {
             Diligent::RefCntAutoPtr<Diligent::ITexture> newScratch;
