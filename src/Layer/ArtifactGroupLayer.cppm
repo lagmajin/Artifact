@@ -176,11 +176,31 @@ std::vector<ArtifactAbstractLayerPtr> ArtifactGroupLayer::childrenForRender() co
 void ArtifactGroupLayer::setComposition(QObject *comp) {
     ArtifactAbstractLayer::setComposition(comp);
     promoteEmbeddedChildrenToComposition();
+    if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        QJsonObject properties;
+        properties[QStringLiteral("outputMode")] = static_cast<int>(groupImpl_->outputMode);
+        properties[QStringLiteral("activeChildId")] = groupImpl_->activeChildId.toString();
+        properties[QStringLiteral("enabled")] = isVisible();
+        properties[QStringLiteral("opacity")] = static_cast<double>(opacity());
+        properties[QStringLiteral("blendMode")] = ArtifactCore::BlendModeUtils::toString(
+            ArtifactCore::toBlendMode(layerBlendType())).toLower();
+        composition->nodeStore().setProperties(id().toString(), properties);
+    }
 }
 
 void ArtifactGroupLayer::setComposition(void *comp) {
     ArtifactAbstractLayer::setComposition(comp);
     promoteEmbeddedChildrenToComposition();
+    if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        QJsonObject properties;
+        properties[QStringLiteral("outputMode")] = static_cast<int>(groupImpl_->outputMode);
+        properties[QStringLiteral("activeChildId")] = groupImpl_->activeChildId.toString();
+        properties[QStringLiteral("enabled")] = isVisible();
+        properties[QStringLiteral("opacity")] = static_cast<double>(opacity());
+        properties[QStringLiteral("blendMode")] = ArtifactCore::BlendModeUtils::toString(
+            ArtifactCore::toBlendMode(layerBlendType())).toLower();
+        composition->nodeStore().setProperties(id().toString(), properties);
+    }
 }
 
 void ArtifactGroupLayer::promoteEmbeddedChildrenToComposition() {

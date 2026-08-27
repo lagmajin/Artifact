@@ -1318,8 +1318,11 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
   node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
                                    : CompositionNodeKind::Layer;
   if (layer->isGroupLayer()) {
+    node.properties[QStringLiteral("outputMode")] = 0;
+    node.properties[QStringLiteral("activeChildId")] = QString{};
     node.properties[QStringLiteral("enabled")] = layer->isVisible();
     node.properties[QStringLiteral("opacity")] = static_cast<double>(layer->opacity());
+    node.properties[QStringLiteral("blendMode")] = QStringLiteral("normal");
   }
   nodeStore_.addNode(node);
   const auto parentId = layer->parentLayerId().toString();
@@ -2282,8 +2285,11 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
   node.kind = layer->isGroupLayer() ? CompositionNodeKind::GroupContainer
                                    : CompositionNodeKind::Layer;
   if (layer->isGroupLayer()) {
+    node.properties[QStringLiteral("outputMode")] = 0;
+    node.properties[QStringLiteral("activeChildId")] = QString{};
     node.properties[QStringLiteral("enabled")] = layer->isVisible();
     node.properties[QStringLiteral("opacity")] = static_cast<double>(layer->opacity());
+    node.properties[QStringLiteral("blendMode")] = QStringLiteral("normal");
   }
   nodeStore_.addNode(node);
       const auto parentId = layer->parentLayerId().toString();
