@@ -1,6 +1,6 @@
 # Asset System Milestone
 
-**最終更新:** 2026-08-15
+**最終更新:** 2026-08-29
 
 日付: 2026-03-12
 
@@ -181,3 +181,18 @@ Project View／Project Model の tree、folder/bin、検索、type／unused／mi
 ## Update 2026-08-15
 
 `AppMain` の selection guard 付き Project View ↔ Asset Browser 双方向同期、Asset Browser／Project View の sync chip、imported／missing／unused status、metadata／waveform 表示、selected／bulk relink と Undo、Project View import の非同期経路を追加確認した。統合基盤は実装済み相当だが、import／relink／missing／unused の cross-view 即時反映、再読込後の選択・active composition 維持、実データでの通し runtime 受入れは未検証とする。
+
+## Update 2026-08-28 — Input Sources
+
+Project View の Footage に `Production`／`Render Input` の用途分類と、Alpha Matte／Luma Matte／Displacement／Depth／Normal／Texture の入力役割を追加した。分類は既存の Project Item ID と source path を維持したまま JSON 保存・復元され、コピー／送信バンドルにも含まれる。Render Input はレイヤーを自動生成せず、Project View の専用フィルター、一覧／タイルの用途表示、右クリックの `Input Source Role` から管理し、通常の unused 判定から除外する。
+
+Inspector の既存 Matte 行から Input Source を新規 matte として追加、または既存 matte source と置換できる導線を接続した。参照は `ChangeLayerMatteReferencesCommand` を通るため Undo／Redo 対象となり、Project Item ID と明示的な互換 source path を layer JSON に保存する。Alpha Matte／Luma Matte の用途分類は初回選択時の MatteType 既定値にも反映する。
+
+Composition Preview と Render Queue の既存 matte source resolver は、composition layer が見つからない場合に Project Item ID から Render Input を解決し、`ImageF32x4_RGBA`／OIIO decode と明示的な既存 QImage upload 境界を経て、既存の Diligent track-matte pipeline へ渡す。D3D12／Vulkan固有コード、shader、resource lifetime、同期方式は変更していない。runtime の保存再読込、Inspector操作、Preview／Render Queue parity は未検証。
+### 2026-08-29: Timeline transition quick-add
+
+- Timeline のレイヤーコンテキストメニューに「トランジションを追加」を追加。2 レイヤー選択時、現在フレームをカット中心として Crossfade / Wipe / Slide を 1 秒 span で `CompositionTimelineTransition` に登録する。
+- 追加データは既存の composition timeline metadata と JSON 保存経路を再利用し、レイヤーは新規作成しない。
+- 各トランジションは安定した ID を持つ独立編集単位になり、ID 指定の削除と enabled 切替 API を提供する。
+- ID 指定の範囲変更 API (`setTimelineTransitionRange`) を追加し、将来のタイムライン trim／長さ編集を同じオブジェクトに接続できるようにした。
+- UI/runtime のビルド検証は未実施（ユーザー許可待ち）。

@@ -35,6 +35,7 @@ class ArtifactTimelineWidget :public QWidget {
   void syncTimelineVerticalOffset(double offset);
   void syncWorkAreaFromCurrentComposition();
   void syncPainterSelectionState(bool forceRefresh = false);
+  void syncGpuTimelineSnapshot();
   void refreshCurveEditorTracks();
   void updateCurvePropertyList();
   void updateSearchState();
@@ -64,6 +65,9 @@ class ArtifactTimelineWidget :public QWidget {
   void setSelectedPropertyPaths(const QSet<QString>& propertyPaths);
   QSet<QString> selectedPropertyPaths() const;
   double currentFrame() const;
+  void setGpuTimelinePreviewEnabled(bool enabled);
+  bool gpuTimelinePreviewEnabled() const;
+  bool gpuTimelinePreviewReady() const;
 
   // Layer management
   void onLayerCreated(const CompositionID& compId, const LayerID& layerId);

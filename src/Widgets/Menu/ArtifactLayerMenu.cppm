@@ -909,6 +909,9 @@ public:
     QAction* createSphere3DAction = nullptr;
     QAction* createCylinder3DAction = nullptr;
     QAction* createCone3DAction = nullptr;
+    QAction* createTorus3DAction = nullptr;
+    QAction* createCapsule3DAction = nullptr;
+    QAction* createPyramid3DAction = nullptr;
     QAction* placementAtCompStartAction = nullptr;
     QAction* placementAtPlayheadAction = nullptr;
     QAction* startHiddenAction = nullptr;
@@ -1033,6 +1036,9 @@ public:
     void handleCreateSphere3D();
     void handleCreateCylinder3D();
     void handleCreateCone3D();
+    void handleCreateTorus3D();
+    void handleCreateCapsule3D();
+    void handleCreatePyramid3D();
     void handleCycleLayerCreation(bool reverse);
     void handleCycleShapeCreation(bool reverse);
     void handleCreateShape(ShapeType type, const QString& nameBase);
@@ -1189,6 +1195,15 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createCone3DAction = new QAction("3D Coneレイヤー(&N)", createMenu);
     createCone3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createCone3DAction->setToolTip(QStringLiteral("Create a fixed cone as a 3D layer"));
+    createTorus3DAction = new QAction("3D Torusレイヤー(&T)", createMenu);
+    createTorus3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createTorus3DAction->setToolTip(QStringLiteral("Create a fixed torus as a 3D layer"));
+    createCapsule3DAction = new QAction("3D Capsuleレイヤー(&A)", createMenu);
+    createCapsule3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createCapsule3DAction->setToolTip(QStringLiteral("Create a fixed capsule as a 3D layer"));
+    createPyramid3DAction = new QAction("3D Pyramidレイヤー(&R)", createMenu);
+    createPyramid3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createPyramid3DAction->setToolTip(QStringLiteral("Create a fixed pyramid as a 3D layer"));
     createPlacementMenu = new QMenu("作成位置(&O)", createMenu);
     createPlacementMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     auto* placementGroup = new QActionGroup(createPlacementMenu);
@@ -1278,6 +1293,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     create3DMenu->addAction(createSphere3DAction);
     create3DMenu->addAction(createCylinder3DAction);
     create3DMenu->addAction(createCone3DAction);
+    create3DMenu->addAction(createTorus3DAction);
+    create3DMenu->addAction(createCapsule3DAction);
+    create3DMenu->addAction(createPyramid3DAction);
     create3DMenu->addSeparator();
     create3DMenu->addAction(createTerrainAction);
     create3DMenu->addAction(createPathTubeAction);
@@ -1632,6 +1650,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createSphere3DAction) { handleCreateSphere3D(); return; }
         if (action == createCylinder3DAction) { handleCreateCylinder3D(); return; }
         if (action == createCone3DAction) { handleCreateCone3D(); return; }
+        if (action == createTorus3DAction) { handleCreateTorus3D(); return; }
+        if (action == createCapsule3DAction) { handleCreateCapsule3D(); return; }
+        if (action == createPyramid3DAction) { handleCreatePyramid3D(); return; }
         if (action == placementAtCompStartAction) {
             layerCreationPlacementMode() = LayerCreationPlacementMode::CompositionStart;
             placementAtCompStartAction->setChecked(true);
@@ -2083,6 +2104,9 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createSphere3DAction->setEnabled(hasProject);
     createCylinder3DAction->setEnabled(hasProject);
     createCone3DAction->setEnabled(hasProject);
+    createTorus3DAction->setEnabled(hasProject);
+    createCapsule3DAction->setEnabled(hasProject);
+    createPyramid3DAction->setEnabled(hasProject);
     startHiddenAction->setEnabled(hasProject);
     if (service) {
         startHiddenAction->setChecked(service->defaultNewLayerHidden());
@@ -2940,6 +2964,51 @@ void ArtifactLayerMenu::Impl::handleCreateCone3D()
     }
     ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Cone 1")),
                                                   FixedGeometry3D::Cone);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateTorus3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Torus 1")),
+                                                  FixedGeometry3D::Torus);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateCapsule3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Capsule 1")),
+                                                  FixedGeometry3D::Capsule);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreatePyramid3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Pyramid 1")),
+                                                  FixedGeometry3D::Pyramid);
     service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 

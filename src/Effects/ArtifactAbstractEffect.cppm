@@ -54,6 +54,7 @@ import Property.Abstract;
 import Time.Rational;
 import Core.Parallel;
 import Core.Diagnostics.FallbackPolicy;
+import Audio.Modulation.Router;
 
 namespace Artifact {
 
@@ -81,6 +82,7 @@ public:
     bool maskInverted = false;
     float maskOpacity = 1.0f;
     std::vector<SharedPtr<AbstractProperty>> editableProperties_;
+    Audio::Modulation::ModulationRouter modulationRouter_;
 };
 
 namespace {
@@ -454,13 +456,26 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     const auto frameRate = std::max<std::int64_t>(
         1, static_cast<std::int64_t>(std::llround(context.frameRate)));
     const RationalTime time(context.compositionFrame, frameRate);
+    impl_->modulationRouter_.processAtFrame(context.compositionFrame,
+        static_cast<float>(frameRate));
+    if (impl_->editableProperties_.empty()) {
+        editableProperties();
+    }
     for (const auto& property : impl_->editableProperties_) {
-        if (!property ||
-            (property->getKeyFrames().empty() && !property->hasExpression() &&
-             !property->hasEnvelopes())) {
+        if (!property) {
             continue;
         }
-        const QVariant value = property->evaluateValue(time);
+        const QString modulationPath = modulationPropertyPath(property->getName());
+        const bool hasModulation = !modulationPath.isEmpty() &&
+            impl_->modulationRouter_.hasTarget(
+                Audio::Modulation::modulationTargetId(modulationPath.toStdString()));
+        if (property->getKeyFrames().empty() && !property->hasExpression() &&
+            !property->hasEnvelopes() && !hasModulation) {
+            continue;
+        }
+        const QVariant value = property->evaluateValue(
+            time, nullptr, std::nullopt, &impl_->modulationRouter_,
+            modulationPath.toStdString());
         if (value.isValid()) {
             const QString name = property->getName();
             if (name == QStringLiteral("Effect Region Enabled")) {
@@ -495,6 +510,19 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     if (impl_->gpuImpl_) {
         impl_->gpuImpl_->setContext(context);
     }
+}
+
+Audio::Modulation::ModulationRouter& ArtifactAbstractEffect::modulationRouter() {
+    return impl_->modulationRouter_;
+}
+
+QString ArtifactAbstractEffect::modulationPropertyPath(const QString& propertyName) const {
+    const QString effectId = impl_->id.toQString().trimmed();
+    const QString property = propertyName.trimmed();
+    if (effectId.isEmpty() || property.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral("effect.%1.%2").arg(effectId, property);
 }
 
 std::vector<SharedPtr<AbstractProperty>>

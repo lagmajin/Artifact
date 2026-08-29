@@ -32,50 +32,79 @@
 #include <QString>
 export module Artifact.Effect.Transform.Twist;
 
-
-
-
 import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
 import Utils.String.UniString;
-import Artifact.Effect.Field;
 
 export namespace Artifact {
 
     using namespace ArtifactCore;
 
+    class TwistTransformCPUImpl : public ArtifactEffectImplBase {
+    private:
+        float angle_ = 45.0f;
+        float centerX_ = 0.5f;
+        float centerY_ = 0.5f;
+
+    public:
+        TwistTransformCPUImpl() = default;
+
+        void setAngle(float angle) { angle_ = std::isfinite(angle) ? std::clamp(angle, -720.0f, 720.0f) : 45.0f; }
+        float angle() const { return angle_; }
+
+        void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
+        float centerX() const { return centerX_; }
+
+        void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
+        float centerY() const { return centerY_; }
+
+        void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    };
+
+    class TwistTransformGPUImpl : public ArtifactEffectImplBase {
+    private:
+        float angle_ = 45.0f;
+        float centerX_ = 0.5f;
+        float centerY_ = 0.5f;
+
+    public:
+        TwistTransformGPUImpl() = default;
+
+        void setAngle(float angle) { angle_ = std::isfinite(angle) ? std::clamp(angle, -720.0f, 720.0f) : 45.0f; }
+        float angle() const { return angle_; }
+
+        void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
+        float centerX() const { return centerX_; }
+
+        void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
+        float centerY() const { return centerY_; }
+
+        void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    };
+
     class TwistTransform : public ArtifactAbstractEffect {
     private:
-        ArtifactAbstractFieldPtr field_;
-        float angle_ = 45.0f;
+        class Impl;
+        Impl* impl_;
+
     public:
-        TwistTransform() {
-            setDisplayName(ArtifactCore::UniString("Twist (Geo Transform)"));
-            setPipelineStage(EffectPipelineStage::GeometryTransform);
-        }
-        virtual ~TwistTransform() = default;
+        TwistTransform();
+        ~TwistTransform();
 
-        void setField(ArtifactAbstractFieldPtr field) { field_ = field; }
+        std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+        void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) override;
 
-        std::vector<AbstractProperty> getProperties() const override {
-            std::vector<AbstractProperty> props;
-            props.reserve(1);
+        void setAngle(float angle);
+        float angle() const;
 
-            auto& angleProp = props.emplace_back();
-            angleProp.setName("Angle");
-            angleProp.setType(PropertyType::Float);
-            angleProp.setValue(angle_);
-            angleProp.setMinValue(QVariant(-720.0));
-            angleProp.setMaxValue(QVariant(720.0));
+        void setCenterX(float cx);
+        float centerX() const;
 
-            return props;
-        }
+        void setCenterY(float cy);
+        float centerY() const;
 
-        void setPropertyValue(const UniString& name, const QVariant& value) override {
-            if (name == UniString("Angle")) {
-                const float angle = value.toFloat();
-                angle_ = std::isfinite(angle) ? std::clamp(angle, -720.0f, 720.0f) : 45.0f;
-                // trigger repaint update...
-            }
+        bool supportsGPU() const override {
+            return true;
         }
     };
 

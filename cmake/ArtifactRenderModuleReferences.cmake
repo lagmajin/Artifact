@@ -4,6 +4,8 @@
 
 set(ARTIFACT_RENDER_IMPLEMENTATION_MODULE_REFERENCES
     "src/Render/ArtifactTextGlyphPipelineAdapter.cppm|Artifact.Render.TextGlyphPipelineAdapter|include/Render/ArtifactTextGlyphPipelineAdapter.ixx"
+    "src/Render/Artifact3DPrimitivePipelineAdapter.cppm|Artifact.Render.ThreeDPrimitivePipelineAdapter|include/Render/Artifact3DPrimitivePipelineAdapter.ixx"
+    "src/Render/Artifact3DPrimitiveSubmitter.cppm|Artifact.Render.ThreeDPrimitiveSubmitter|include/Render/Artifact3DPrimitiveSubmitter.ixx"
     "src/Render/DiligentDeviceManager.cppm|Artifact.Render.DiligentDeviceManager|include/Render/DiligentDeviceManager.ixx"
     "src/Render/ShaderManager.cppm|Artifact.Render.ShaderManager|include/Render/ShaderManager.ixx"
     "src/Render/RenderCommandBuffer.cppm|Artifact.Render.RenderCommandBuffer|include/Render/RenderCommandBuffer.ixx"

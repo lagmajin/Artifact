@@ -58,6 +58,161 @@ import Artifact.Color.Palette;
 namespace Artifact {
 
 namespace {
+ArtifactCreationPreset makeCreationPreset(const char* id, const char* name,
+    const char* description, ArtifactCreationPresetKind kind,
+    ArtifactCreationLayerKind layer, ArtifactCreationMaskKind mask,
+    int width = 1920, int height = 1080, float inset = 0.0f)
+{
+    ArtifactCreationPreset preset;
+    preset.id = QString::fromUtf8(id);
+    preset.displayName = QString::fromUtf8(name);
+    preset.description = QString::fromUtf8(description);
+    preset.kind = kind;
+    preset.layerKind = layer;
+    preset.maskKind = mask;
+    preset.width = width;
+    preset.height = height;
+    preset.maskInset = inset;
+    return preset;
+}
+
+ArtifactCreationPreset makeCompositionPreset()
+{
+    auto preset = makeCreationPreset("composition.default", "空のコンポジション",
+        "標準サイズの空コンポジション", ArtifactCreationPresetKind::Composition,
+        ArtifactCreationLayerKind::Solid, ArtifactCreationMaskKind::None);
+    preset.backgroundColor = QStringLiteral("#00000000");
+    preset.frameRate = 30.0;
+    preset.durationFrames = 300;
+    return preset;
+}
+
+ArtifactCreationPreset makeCircleCompositionPreset()
+{
+    auto preset = makeCreationPreset("composition.circle-card", "円形カード",
+        "背景と円形マスク平面を含むコンポジション",
+        ArtifactCreationPresetKind::Composition, ArtifactCreationLayerKind::Solid,
+        ArtifactCreationMaskKind::None, 1080, 1080);
+    preset.backgroundColor = QStringLiteral("#20232AFF");
+    preset.frameRate = 30.0;
+    preset.durationFrames = 150;
+    preset.layers.push_back(makeCreationPreset("layer.background", "背景",
+        "コンポジション背景", ArtifactCreationPresetKind::Layer,
+        ArtifactCreationLayerKind::Solid, ArtifactCreationMaskKind::None,
+        1080, 1080));
+    preset.layers.push_back(makeCreationPreset("layer.image.circle", "円形画像",
+        "円形マスク付き平面", ArtifactCreationPresetKind::Layer,
+        ArtifactCreationLayerKind::Image, ArtifactCreationMaskKind::Circle,
+        1080, 1080, 0.08f));
+    return preset;
+}
+}
+
+std::vector<ArtifactCreationPreset> ArtifactPresetManager::standardCreationPresets()
+{
+    return {
+        makeCompositionPreset(),
+        makeCircleCompositionPreset(),
+        makeCreationPreset("layer.solid", "平面", "マスクなしの矩形平面", ArtifactCreationPresetKind::Layer, ArtifactCreationLayerKind::Solid, ArtifactCreationMaskKind::None),
+        makeCreationPreset("layer.solid.circle", "円形マスク平面", "円形マスクを持つ平面", ArtifactCreationPresetKind::Layer, ArtifactCreationLayerKind::Solid, ArtifactCreationMaskKind::Circle, 1920, 1080, 0.08f),
+        makeCreationPreset("layer.solid.rounded", "角丸マスク平面", "角丸矩形マスクを持つ平面", ArtifactCreationPresetKind::Layer, ArtifactCreationLayerKind::Solid, ArtifactCreationMaskKind::RoundedRectangle, 1920, 1080, 0.08f),
+        makeCreationPreset("layer.shape", "シェイプ", "シェイプ編集用のレイヤー", ArtifactCreationPresetKind::Layer, ArtifactCreationLayerKind::Shape, ArtifactCreationMaskKind::None),
+        makeCreationPreset("layer.text", "テキスト", "テキスト編集用のレイヤー", ArtifactCreationPresetKind::Layer, ArtifactCreationLayerKind::Text, ArtifactCreationMaskKind::None)
+    };
+}
+
+std::optional<ArtifactCreationPreset> ArtifactPresetManager::creationPreset(const QString& id)
+{
+    const QString normalized = id.trimmed();
+    for (const auto& preset : standardCreationPresets()) {
+        if (preset.id == normalized) return preset;
+    }
+    return std::nullopt;
+}
+
+QJsonObject ArtifactPresetManager::creationPresetToJson(const ArtifactCreationPreset& preset)
+{
+    QJsonObject json;
+    json["schema_version"] = 1;
+    json["id"] = preset.id;
+    json["display_name"] = preset.displayName;
+    json["description"] = preset.description;
+    json["kind"] = static_cast<int>(preset.kind);
+    json["layer_kind"] = static_cast<int>(preset.layerKind);
+    json["mask_kind"] = static_cast<int>(preset.maskKind);
+    json["width"] = preset.width;
+    json["height"] = preset.height;
+    json["mask_inset"] = preset.maskInset;
+    json["background_color"] = preset.backgroundColor;
+    json["frame_rate"] = preset.frameRate;
+    json["duration_frames"] = preset.durationFrames;
+    QJsonArray layers;
+    for (const auto& layer : preset.layers) {
+        layers.append(creationPresetToJson(layer));
+    }
+    json["layers"] = layers;
+    return json;
+}
+
+std::optional<ArtifactCreationPreset> ArtifactPresetManager::creationPresetFromJson(const QJsonObject& json)
+{
+    if (json.isEmpty() || json.value("id").toString().trimmed().isEmpty()) return std::nullopt;
+    ArtifactCreationPreset preset;
+    preset.id = json.value("id").toString().trimmed();
+    preset.displayName = json.value("display_name").toString(preset.id);
+    preset.description = json.value("description").toString();
+    preset.kind = static_cast<ArtifactCreationPresetKind>(std::clamp(json.value("kind").toInt(1), 0, 1));
+    preset.layerKind = static_cast<ArtifactCreationLayerKind>(std::clamp(json.value("layer_kind").toInt(0), 0, 3));
+    preset.maskKind = static_cast<ArtifactCreationMaskKind>(std::clamp(json.value("mask_kind").toInt(0), 0, 4));
+    preset.width = std::clamp(json.value("width").toInt(1920), 1, 16384);
+    preset.height = std::clamp(json.value("height").toInt(1080), 1, 16384);
+    preset.maskInset = std::clamp(static_cast<float>(json.value("mask_inset").toDouble(0.0)), 0.0f, 1.0f);
+    preset.backgroundColor = json.value("background_color").toString(QStringLiteral("#00000000"));
+    preset.frameRate = std::clamp(json.value("frame_rate").toDouble(30.0), 1.0, 240.0);
+    preset.durationFrames = std::clamp(json.value("duration_frames").toInt(300), 1, 1000000);
+    const QJsonArray layers = json.value("layers").toArray();
+    for (const auto& value : layers) {
+        if (value.isObject()) {
+            if (auto layer = creationPresetFromJson(value.toObject())) {
+                preset.layers.push_back(*layer);
+            }
+        }
+    }
+    return preset;
+}
+
+bool ArtifactPresetManager::isValidCreationPreset(const ArtifactCreationPreset& preset)
+{
+    if (preset.id.trimmed().isEmpty() || preset.displayName.trimmed().isEmpty() ||
+        preset.width <= 0 || preset.height <= 0 ||
+        preset.width > 16384 || preset.height > 16384 ||
+        !std::isfinite(preset.frameRate) || preset.frameRate < 1.0 ||
+        preset.frameRate > 240.0 || preset.durationFrames <= 0 ||
+        preset.durationFrames > 1000000 || !std::isfinite(preset.maskInset) ||
+        preset.maskInset < 0.0f || preset.maskInset > 1.0f) {
+        return false;
+    }
+    if (preset.kind == ArtifactCreationPresetKind::Layer && !preset.layers.empty()) {
+        return false;
+    }
+    for (const auto& layer : preset.layers) {
+        if (!isValidCreationPreset(layer) ||
+            layer.kind != ArtifactCreationPresetKind::Layer) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<ArtifactCreationPreset> ArtifactPresetManager::layerCreationPlan(
+    const ArtifactCreationPreset& preset)
+{
+    if (!isValidCreationPreset(preset)) return {};
+    if (preset.kind == ArtifactCreationPresetKind::Layer) return {preset};
+    return preset.layers;
+}
+
+namespace {
 constexpr qint64 kMaxPresetFileBytes = 16LL * 1024LL * 1024LL;
 }
 

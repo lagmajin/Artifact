@@ -22,6 +22,8 @@ import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
 import Artifact.Event.Types;
 import Event.Bus;
+import Undo.UndoManager;
+import Audio.Modulation.Router;
 import Core.Diagnostics.FallbackPolicy;
 import BrightnessEffect;
 import Artifact.Effect.Creative;
@@ -1549,6 +1551,67 @@ W_OBJECT_IMPL(ArtifactEffectService)
    return EffectServiceResult::ok(effectId);
   }
 
+  return EffectServiceResult::fail("Effect not found");
+ }
+
+ EffectServiceResult ArtifactEffectService::setEffectModulationSnapshot(
+  const LayerID& layerId, const QString& effectId,
+  const Audio::Modulation::ModulationRouterSnapshot& snapshot)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+  auto comp = ps->currentComposition().lock();
+  if (!comp || layerId.isNil()) return EffectServiceResult::fail("Composition not available");
+  auto layer = comp->layerById(layerId);
+  if (!layer) return EffectServiceResult::fail("Layer not available");
+  for (const auto& effect : layer->getEffects()) {
+   if (!effect || effect->effectID().toQString() != effectId) continue;
+   const auto before = effect->modulationRouter().snapshot();
+   if (auto* undo = UndoManager::instance()) {
+    undo->push(std::make_unique<EffectModulationSnapshotCommand>(
+        effect, before, snapshot));
+   } else {
+    effect->modulationRouter().restoreSnapshot(snapshot);
+   }
+   ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
+       comp->id().toString(), layerId.toString(),
+       LayerChangedEvent::ChangeType::Modified});
+   if (auto project = ps->getCurrentProjectSharedPtr()) {
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    project->projectChanged();
+   }
+   Q_EMIT effectChanged(layerId, effectId);
+   return EffectServiceResult::ok(effectId);
+  }
+  return EffectServiceResult::fail("Effect not found");
+ }
+
+ EffectServiceResult ArtifactEffectService::setCompositionEffectModulationSnapshot(
+  const QString& effectId,
+  const Audio::Modulation::ModulationRouterSnapshot& snapshot)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+  auto comp = ps->currentComposition().lock();
+  if (!comp || effectId.trimmed().isEmpty()) {
+   return EffectServiceResult::fail("Composition not available");
+  }
+  for (const auto& effect : comp->getEffects()) {
+   if (!effect || effect->effectID().toQString() != effectId) continue;
+   const auto before = effect->modulationRouter().snapshot();
+   if (auto* undo = UndoManager::instance()) {
+    undo->push(std::make_unique<EffectModulationSnapshotCommand>(
+        effect, before, snapshot, QStringLiteral("Edit Composition Effect Modulation")));
+   } else {
+    effect->modulationRouter().restoreSnapshot(snapshot);
+   }
+   comp->changed();
+   if (auto project = ps->getCurrentProjectSharedPtr()) {
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    project->projectChanged();
+   }
+   return EffectServiceResult::ok(effectId);
+  }
   return EffectServiceResult::fail("Effect not found");
  }
 

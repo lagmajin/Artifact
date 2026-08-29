@@ -280,6 +280,7 @@ import Core.Diagnostics.Trace;
 
 
 import Artifact.Service.Project;
+import Artifact.Project.Items;
 import Artifact.Layer.InitParams;
 
 import Artifact.Service.Playback; // 追加
@@ -323,6 +324,37 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 namespace {
+QImage resolveProjectRenderInputImage(const ArtifactCore::Id& projectItemId,
+                                      const std::int64_t frameNumber) {
+  if (projectItemId.isNil()) return {};
+  auto* service = ArtifactProjectService::instance();
+  auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return {};
+  FootageItem* matched = nullptr;
+  std::function<void(ProjectItem*)> find = [&](ProjectItem* item) {
+    if (!item || matched) return;
+    if (item->id == projectItemId && item->type() == eProjectItemType::Footage) {
+      auto* footage = static_cast<FootageItem*>(item);
+      if (footage->assetUsage == ProjectAssetUsage::RenderInput) matched = footage;
+      return;
+    }
+    for (auto* child : item->children) find(child);
+  };
+  for (auto* root : project->projectItems()) find(root);
+  if (!matched) return {};
+  QString path = matched->filePath;
+  if (matched->isSequence && !matched->sequencePaths.isEmpty()) {
+    const auto count = static_cast<std::int64_t>(matched->sequencePaths.size());
+    const auto index = static_cast<int>(((frameNumber % count) + count) % count);
+    path = matched->sequencePaths.at(index);
+  }
+  ArtifactCore::ImageF32x4_RGBA decoded;
+  if (path.trimmed().isEmpty() || !decoded.load(path)) return {};
+  // Explicit compatibility boundary: the established matte resolver uploads
+  // RGBA8 QImage data to Diligent. Decoding remains ImageF32x4_RGBA/OIIO.
+  return decoded.toQImage();
+}
+
 ArtifactCore::Id hitTestRigBone(ArtifactCore::Bone2D *bone,
                                 const QPointF &localPoint, float threshold);
 ArtifactCore::Id hitTestRigControl(const ArtifactCore::Rig2D &rig,
@@ -2397,8 +2429,10 @@ void drawEffectHitboxOverlay(ArtifactIRenderer *renderer,
                               maskFill, 1.0f);
 
       const FloatColor effectiveMaskColor = mask.isLocked()
+
           ? FloatColor{0.72f, 0.72f, 0.76f, 0.82f}
-          : maskColor;
+
+          : mask.color();
       drawRectOutline(renderer, maskBounds, effectiveMaskColor, 1.4f);
 
     }
@@ -3571,7 +3605,7 @@ enum class RectangleToolMode { None, Mask, Shape, EllipseMask, EllipseShape };
 
 
 
-enum class MaskHandleType { None, InTangent, OutTangent };
+enum class MaskHandleType { None, InTangent, OutTangent, FeatherHandle };
 
 QRectF dragRectFromPoints(const QPointF &start, const QPointF &end);
 
@@ -4315,6 +4349,37 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
 
     return vertex.position + vertex.outTangent;
 
+  case MaskHandleType::FeatherHandle: {
+
+    const int count = path.vertexCount();
+
+    if (count < 2) return vertex.position;
+
+    // 隣接頂点への方向を計算して法線を求める
+    const int prevIdx = (v > 0) ? v - 1 : (path.isClosed() ? count - 1 : v);
+
+    const int nextIdx = (v < count - 1) ? v + 1 : (path.isClosed() ? 0 : v);
+
+    const QPointF prevPos = path.vertex(prevIdx).position;
+
+    const QPointF nextPos = path.vertex(nextIdx).position;
+
+    QPointF tangent = nextPos - prevPos;
+
+    const qreal len = std::hypot(tangent.x(), tangent.y());
+
+    if (len < 1e-6) return vertex.position;
+
+    tangent /= len;
+
+    // 外法線（時計回り90度）— パスが時計回りの場合外側
+
+    QPointF normal(-tangent.y(), tangent.x());
+
+    return vertex.position + normal * static_cast<qreal>(path.feather());
+
+  }
+
   case MaskHandleType::None:
 
     break;
@@ -4439,11 +4504,17 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
 
         const MaskVertex vertex = path.vertex(v);
 
-        for (MaskHandleType handleType : {MaskHandleType::InTangent, MaskHandleType::OutTangent}) {
+        for (MaskHandleType handleType : {MaskHandleType::InTangent, MaskHandleType::OutTangent, MaskHandleType::FeatherHandle}) {
 
           if ((handleType == MaskHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
 
               (handleType == MaskHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) {
+
+            continue;
+
+          }
+
+          if (handleType == MaskHandleType::FeatherHandle && path.feather() < 0.01f) {
 
             continue;
 
@@ -26243,6 +26314,28 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
             MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
 
+            if (handleType == MaskHandleType::FeatherHandle) {
+
+              const MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+
+              const QPointF delta = localPos - vertex.position;
+
+              path.setFeather(std::max(0.0f, static_cast<float>(
+
+                  std::hypot(delta.x(), delta.y()))));
+
+              mask.setMaskPath(impl_->draggingPathIndex_, path);
+
+              selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
+
+              impl_->markMaskEditDirty();
+
+              impl_->publishLayerModified(selectedLayer);
+
+              return;
+
+            }
+
             MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
 
             setMaskVertexHandle(vertex, handleType, localPos - vertex.position,
@@ -28453,7 +28546,7 @@ void CompositionRenderController::handleMouseRelease() {
 
 bool CompositionRenderController::hasPendingMaskEdit() const {
 
-  return impl_ && impl_->maskEditPending_;
+  return impl_ && (impl_->maskEditPending_ || impl_->pendingMaskCreation_);
 
 }
 
@@ -29808,6 +29901,25 @@ bool CompositionRenderController::adjustHoveredMaskOpacity(float opacityDelta) {
   impl_->markMaskEditDirty();
   impl_->publishLayerModified(layer, true);
   impl_->commitMaskEditTransaction();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::setHoveredMaskColor(const FloatColor& color) {
+  if (!impl_ || impl_->hoveredMaskIndex_ < 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto layer = comp ? comp->layerById(impl_->selectedLayerId_) : nullptr;
+  if (!layer || impl_->hoveredMaskIndex_ >= layer->maskCount()) {
+    return false;
+  }
+  LayerMask mask = layer->mask(impl_->hoveredMaskIndex_);
+  mask.setColor(color);
+  layer->setMask(impl_->hoveredMaskIndex_, mask);
+  impl_->markMaskEditDirty();
+  impl_->publishLayerModified(layer, true);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -32649,6 +32761,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           }
 
+      }
+
+      if (resolved.isNull()) {
+          resolved = resolveProjectRenderInputImage(
+              layerId, currentFrame.framePosition());
       }
 
       matteSourceFrameCache.insert(layerId, resolved);
@@ -36223,6 +36340,58 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                   }
 
+                  // フェザーハンドル: feather 値が 0.01 以上のとき表示
+
+                  if (showMaskHandle && path.feather() > 0.01f) {
+
+                    const QPointF featherLocalPos =
+
+                        maskHandlePosition(path, v, MaskHandleType::FeatherHandle);
+
+                    const QPointF featherCanvasPt =
+
+                        globalTransform.map(featherLocalPos);
+
+                    const Detail::float2 featherCanvas = {
+
+                        (float)featherCanvasPt.x(), (float)featherCanvasPt.y()};
+
+                    FloatColor featherStroke = isActiveMask
+
+                        ? activeMaskStrokeColor : handleStrokeColor;
+
+                    renderer_->drawThickLineLocal(currentCanvasPos, featherCanvas,
+
+                                                  1.0f, featherStroke);
+
+                    FloatColor featherColor = {0.32f, 0.72f, 1.0f, 0.95f};
+
+                    if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+
+                        draggingVertexIndex_ == v &&
+
+                        draggingMaskHandleType_ == static_cast<int>(MaskHandleType::FeatherHandle)) {
+
+                      featherColor = handleDragColor;
+
+                    } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
+
+                               hoveredVertexIndex_ == v &&
+
+                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::FeatherHandle)) {
+
+                      featherColor = handleHoverColor;
+
+                    }
+
+                    drawMaskSquareMarker(renderer_.get(), featherCanvas, 6.0f,
+
+                                         featherColor, &maskPointShadowColor,
+
+                                         3.0f);
+
+                  }
+
 
 
                   if (showMaskPath && v > 0) {
@@ -36664,9 +36833,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     std::abs(hudVertex.inTangent.y() +
                              hudVertex.outTangent.y()) < 0.001;
                 const QString handleName =
+
                     hudHandleType == MaskHandleType::InTangent
+
                         ? QStringLiteral("In handle")
-                        : QStringLiteral("Out handle");
+
+                        : hudHandleType == MaskHandleType::OutTangent
+
+                              ? QStringLiteral("Out handle")
+
+                              : hudHandleType == MaskHandleType::FeatherHandle
+
+                                    ? QStringLiteral("Feather")
+
+                                    : QStringLiteral("Handle");
                 const QString relation = linked
                                              ? QStringLiteral("Linked")
                                              : QStringLiteral("Broken");
@@ -36684,14 +36864,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 renderer_->drawText(
                     QRectF(hudX + 5.0f / zoom, hudY + 2.0f / zoom,
                            hudWidth - 10.0f / zoom, 13.0f / zoom),
-                    QStringLiteral("Bezier %1  •  %2")
-                        .arg(handleName, relation),
+                    hudHandleType == MaskHandleType::FeatherHandle
+                        ? QStringLiteral("Feather %1").arg(
+                              hudPath.feather(), 0, 'f', 1)
+                        : QStringLiteral("Bezier %1  •  %2")
+                              .arg(handleName, relation),
                     hudFont, FloatColor{0.92f, 0.97f, 1.0f, 0.98f},
                     Qt::AlignLeft | Qt::AlignVCenter);
+                const QString hudHint =
+                    hudHandleType == MaskHandleType::FeatherHandle
+                        ? QStringLiteral("Drag: adjust feather")
+                        : QStringLiteral("Alt: break  •  Ctrl: reset");
                 renderer_->drawText(
                     QRectF(hudX + 5.0f / zoom, hudY + 16.0f / zoom,
                            hudWidth - 10.0f / zoom, 12.0f / zoom),
-                    QStringLiteral("Alt: break  •  Ctrl: reset"), hudFont,
+                    hudHint, hudFont,
                     FloatColor{0.70f, 0.82f, 0.92f, 0.94f},
                     Qt::AlignLeft | Qt::AlignVCenter);
               }

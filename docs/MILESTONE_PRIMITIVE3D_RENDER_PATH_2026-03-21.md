@@ -1,10 +1,27 @@
 # Primitive 3D Render Path Milestone
 
-**進捗状態:** P3D-1〜4 は実装済み、P3D-5 は backend 側の基盤実装済みで parity の runtime 検証待ち。
+**進捗状態:** P3D-1〜4 は実装済み、P3D-5 は backend 側の基盤実装済みで parity の runtime 検証待ち。3D primitive 形状は Plane/Box/Sphere/Cylinder/Cone + Torus/Capsule/Pyramid (2026-08-29 追加)。
 
 ### 実装状況（2026-07-25 確認）
 
 責務分離、Solid/Wireframe mesh 描画、Material／Depth pass、mesh geometry cache、camera／gizmo／selection overlay、offline depth 出力と Diligent 経路を確認した。残課題は software fallback と backend の画素単位 parity、診断 widget を使った比較、複雑 mesh／透明境界の実機検証。
+
+### 2026-08-29 — Torus / Capsule / Pyramid を `FixedGeometry3D` に追加
+
+- 3D レイヤーの固定形状プリミティブに Torus / Capsule / Pyramid を追加し、メニュー (Layer → New → 3D) と Composition Editor の右クリック New 3D メニューから生成可能にした。
+- Torus: `width/height` を主半径 (X/Y 楕円可)、`depth` を管半径、`segments` を管円周分割、`rings` を主円周分割。法線は中心方向 + 軸方向の合成で算出、UV は (u, v) = (管円, 主円) に対応。
+- Capsule: `width/depth` を半径、`height` を全体高さ (両半球含む) として解釈、円筒と上下半球のリングで構成。Rings は内部で segments 連動。`height < 2*radius` の極端入力はクランプ。
+- Pyramid: `width/height/depth` で底面サイズと頂点高さを指定、`segments` で多角形底面 (3=三角錐、4=四角錐、5=五角錐 …) の側面数を指定。側面は平均ベース頂点 + 頂点から法線を計算。
+- JSON `fromJsonProperties` の範囲チェック、Property Widget の `geometry.type` tooltip、Segments/Rings の露出条件、Torus/Capsule/Pyramid 用の `create*Mesh()` 関数を `Artifact3DLayer` に追加。
+- 既存範囲チェックは `FixedGeometry3D::Pyramid` 上限まで拡張。
+- ビルド・ランタイム検証はユーザー指示待ちで未実施。
+
+### 2026-08-29 — 3D Shader Variant Phase 1 (L1) 境界を導入
+
+- 3D Primitive mesh 描画を Provider 境界の先に置くため、`Artifact3DPrimitiveSubmitter` (Contract) / `Artifact3DPrimitivePipelineAdapter` を追加。先行例 (Text Glyph G2 移行) と同一形状の境界で、Submitter は ShaderManager を知らず、Adapter が薄い bridge になる。
+- 想定 variant: `Unlit` / `FlatLit` / `Wire`。`Stage` enum と `SubmitPacket` (position/normal/index/model/view/projection + BaseColor/Emission/Opacity) を Contract に固定。Phase 1 では `uploadMesh` のみ動作し `submit` は no-op (provider が空のため)。
+- `Artifact3DLayer::draw()` には **未接続**。既存 `draw3DLine` 経由の line 描画のみが活きており、回帰リスクなし。Phase 2 (L2) で ShaderManager に PSO getter を足し、Adapter を実体化、Phase 3 (L3) で Material 全部 PBR + ユーザシェーダ設計レビュー、のロードマップ。
+- ビルド・ランタイム検証はユーザー指示待ちで未実施。CMake 登録 (`ArtifactSources.cmake` 4ファイル + `ArtifactRenderModuleReferences.cmake` 2エントリ) も反映済み。
 
 `primitive2d` 側で行っている「描画の下請け化」を、3D でも同じ思想で扱えるようにするためのマイルストーン。
 2D の延長で 3D を雑に載せるのではなく、`mesh / camera / material / light / pass / overlay` を分けて、後から editor へ接続しやすい形に整理する。

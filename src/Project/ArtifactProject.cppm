@@ -486,6 +486,24 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
       footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
       footageUp->subimageIndex = std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
       footageUp->frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
+      if (obj.value(QStringLiteral("assetUsage")).toString().compare(
+              QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
+        footageUp->assetUsage = ProjectAssetUsage::RenderInput;
+        const QString role = obj.value(QStringLiteral("renderInputRole")).toString();
+        if (role.compare(QStringLiteral("alphaMatte"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::AlphaMatte;
+        } else if (role.compare(QStringLiteral("lumaMatte"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::LumaMatte;
+        } else if (role.compare(QStringLiteral("displacementMap"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::DisplacementMap;
+        } else if (role.compare(QStringLiteral("depthMap"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::DepthMap;
+        } else if (role.compare(QStringLiteral("normalMap"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::NormalMap;
+        } else if (role.compare(QStringLiteral("texture"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::Texture;
+        }
+      }
       const QJsonArray sequenceArray = obj.value(QStringLiteral("sequencePaths")).toArray();
       if (!sequenceArray.isEmpty()) {
         QStringList sequencePaths;
@@ -860,6 +878,18 @@ QJsonArray compsArray;
        }
        if (footage->frameRate > 0.0) {
         obj["frameRate"] = footage->frameRate;
+       }
+       if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
+        obj["assetUsage"] = "renderInput";
+        switch (footage->renderInputRole) {
+        case ProjectRenderInputRole::AlphaMatte: obj["renderInputRole"] = "alphaMatte"; break;
+        case ProjectRenderInputRole::LumaMatte: obj["renderInputRole"] = "lumaMatte"; break;
+        case ProjectRenderInputRole::DisplacementMap: obj["renderInputRole"] = "displacementMap"; break;
+        case ProjectRenderInputRole::DepthMap: obj["renderInputRole"] = "depthMap"; break;
+        case ProjectRenderInputRole::NormalMap: obj["renderInputRole"] = "normalMap"; break;
+        case ProjectRenderInputRole::Texture: obj["renderInputRole"] = "texture"; break;
+        default: obj["renderInputRole"] = "generic"; break;
+        }
        }
        break;
       }
@@ -1892,6 +1922,24 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
       footageUp->name.setQString(name);
       footageUp->tags = tags;
       footageUp->filePath = obj["filePath"].toString();
+      if (obj.value(QStringLiteral("assetUsage")).toString().compare(
+              QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
+        footageUp->assetUsage = ProjectAssetUsage::RenderInput;
+        const QString role = obj.value(QStringLiteral("renderInputRole")).toString();
+        if (role.compare(QStringLiteral("alphaMatte"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::AlphaMatte;
+        } else if (role.compare(QStringLiteral("lumaMatte"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::LumaMatte;
+        } else if (role.compare(QStringLiteral("displacementMap"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::DisplacementMap;
+        } else if (role.compare(QStringLiteral("depthMap"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::DepthMap;
+        } else if (role.compare(QStringLiteral("normalMap"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::NormalMap;
+        } else if (role.compare(QStringLiteral("texture"), Qt::CaseInsensitive) == 0) {
+          footageUp->renderInputRole = ProjectRenderInputRole::Texture;
+        }
+      }
       if (!idStr.isEmpty()) {
         footageUp->id = Id(idStr);
       }

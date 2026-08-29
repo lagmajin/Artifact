@@ -20,6 +20,7 @@ module;
 #include <QHBoxLayout>
 #include <QMenu>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QDir>
@@ -93,6 +94,7 @@ import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Audio.Modulation.Router;
 import Event.Bus;
 import Artifact.Event.Types;
 import Time.Rational;
@@ -133,6 +135,63 @@ void launchExpressionCopilot(
     ArtifactPropertyEditorRowWidget *inlineRow = nullptr);
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
 void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer);
+
+bool editEffectPropertyModulation(
+    QWidget *parent, const ArtifactAbstractLayerPtr &layer,
+    const ArtifactAbstractEffectPtr &effect, const QString &propertyName) {
+  if (!parent || !layer || !effect || propertyName.isEmpty()) {
+    return false;
+  }
+  QStringList sourceOptions{QStringLiteral("LFO"), QStringLiteral("Random"),
+                            QStringLiteral("Macro")};
+  bool accepted = false;
+  const QString sourceType = QInputDialog::getItem(
+      parent, QStringLiteral("Add Modulation"), QStringLiteral("Source"),
+      sourceOptions, 0, false, &accepted);
+  if (!accepted) {
+    return false;
+  }
+  const double depth = QInputDialog::getDouble(
+      parent, QStringLiteral("Add Modulation"), QStringLiteral("Depth"),
+      1.0, -100.0, 100.0, 3, &accepted);
+  if (!accepted) {
+    return false;
+  }
+  const QString mode = QInputDialog::getItem(
+      parent, QStringLiteral("Add Modulation"), QStringLiteral("Mix mode"),
+      {QStringLiteral("Add"), QStringLiteral("Multiply")}, 0, false,
+      &accepted);
+  if (!accepted) {
+    return false;
+  }
+
+  auto snapshot = effect->modulationRouter().snapshot();
+  std::unique_ptr<ArtifactCore::Audio::Modulation::IModulatorSource> source;
+  if (sourceType == QStringLiteral("Random")) {
+    source = std::make_unique<ArtifactCore::Audio::Modulation::RandomSource>();
+  } else if (sourceType == QStringLiteral("Macro")) {
+    auto macro = std::make_unique<ArtifactCore::Audio::Modulation::MacroSource>();
+    macro->setValue(0.5f);
+    source = std::move(macro);
+  } else {
+    source = std::make_unique<ArtifactCore::Audio::Modulation::LfoSource>();
+  }
+  const auto sourceId = effect->modulationRouter().addSource(std::move(source));
+  auto assignment = ArtifactCore::Audio::Modulation::ModulationAssignment::forPropertyPath(
+      sourceId, effect->modulationPropertyPath(propertyName).toStdString(),
+      static_cast<float>(depth),
+      mode == QStringLiteral("Multiply")
+          ? ArtifactCore::Audio::Modulation::ModulationMixMode::Multiply
+          : ArtifactCore::Audio::Modulation::ModulationMixMode::Add);
+  if (!effect->modulationRouter().addAssignment(assignment)) {
+    return false;
+  }
+  snapshot = effect->modulationRouter().snapshot();
+  effect->modulationRouter().restoreSnapshot(snapshot);
+  const auto result = ArtifactEffectService::instance()->setEffectModulationSnapshot(
+      layer->id(), effect->effectID().toQString(), snapshot);
+  return result.success;
+}
 
 constexpr std::array<LayerStateToggleDef, 8> kLayerStateToggleDefs = {{
     {"layer.visible", "Visible", "Show or hide the layer"},
@@ -2871,7 +2930,23 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         notifyLayerKeyframeChanged,
         layer,
         &addedGroupProperties, presentation.headingText, &propertyEditors, &effectRows,
-        decorateLayerRow);
+        [this, layer, effect, decorateLayerRow](ArtifactPropertyEditorRowWidget *row,
+                              const AbstractPropertyPtr &property) {
+          decorateLayerRow(row, property);
+          if (!row || !property || !property->isAnimatable()) {
+            return;
+          }
+          const QString propertyName = property->getName();
+          row->setAuxAction(
+              [this, layer, effect, propertyName]() {
+                if (editEffectPropertyModulation(owner, layer, effect,
+                                                  propertyName)) {
+                  scheduleRebuild(0);
+                  scheduleUpdateValues();
+                }
+              },
+              QStringLiteral("Add Modulation…"));
+        });
 
     if (addedGroupProperties) {
         alignPropertyRowLabels(effectRows, kPropertyRowLabelMinWidth,

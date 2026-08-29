@@ -44,6 +44,7 @@ module Artifact.Mask.LayerMask;
 
 
 import Artifact.Mask.Path;
+import Color.Float;
 
 namespace Artifact {
 
@@ -52,6 +53,7 @@ public:
     std::vector<MaskPath> paths;
     bool enabled = true;
     bool locked = false;
+    FloatColor color{0.28f, 0.88f, 1.0f, 0.95f}; // シアン系デフォルト
 };
 
 LayerMask::LayerMask() : impl_(new Impl()) {}
@@ -92,6 +94,9 @@ bool LayerMask::isEnabled() const { return impl_->enabled; }
 void LayerMask::setEnabled(bool enabled) { impl_->enabled = enabled; }
 bool LayerMask::isLocked() const { return impl_->locked; }
 void LayerMask::setLocked(bool locked) { impl_->locked = locked; }
+
+FloatColor LayerMask::color() const { return impl_->color; }
+void LayerMask::setColor(const FloatColor& color) { impl_->color = color; }
 
 void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
                                    float offsetX, float offsetY,

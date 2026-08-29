@@ -1943,6 +1943,10 @@ QString matteSummaryLabel(const ArtifactCompositionPtr& comp,
    }
   }
  }
+ if (sourceName == QStringLiteral("<missing source>") &&
+     !ref.sourceAssetPath.isEmpty()) {
+  sourceName = QFileInfo(ref.sourceAssetPath).fileName();
+ }
  QStringList tags;
  tags << QStringLiteral("Source: %1").arg(sourceName);
  tags << matteTypeToText(ref.type);
@@ -1976,7 +1980,9 @@ QString matteSourceBadgeLabel(const ArtifactCompositionPtr& comp, const Artifact
   }
   auto source = comp->layerById(ref.sourceLayerId);
   if (!source) {
-   return QStringLiteral("<missing>");
+   return ref.sourceAssetPath.isEmpty()
+       ? QStringLiteral("<missing>")
+       : QFileInfo(ref.sourceAssetPath).fileName();
   }
   const QString name = source->layerName().trimmed();
   return name.isEmpty() ? ref.sourceLayerId.toString() : name;
@@ -4808,6 +4814,172 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                             {QStringLiteral("type"), typeIndex}});
           }
         }
+      }
+    }
+    // Composition-level transitions are authored from the two selected layers,
+    // so they remain timeline metadata rather than introducing another layer.
+    // The current frame is the cut center and the default span is one second.
+    if (comp) {
+      const auto selectedForTransition = currentLayerSelectionManager()
+          ? currentLayerSelectionManager()->selectedLayersInOrder()
+          : QVector<ArtifactAbstractLayerPtr>{};
+      if (selectedForTransition.size() >= 2) {
+        QMenu* transitionMenu = allMenu->addMenu(QStringLiteral("トランジションを追加"));
+        const qint64 centerFrame = comp->framePosition().framePosition();
+        const qint64 halfSpan = std::max<qint64>(1, comp->frameRate().fps() / 2);
+        const qint64 startFrame = std::max<qint64>(comp->frameRange().start().framePosition(), centerFrame - halfSpan);
+        const qint64 endFrame = std::min<qint64>(comp->frameRange().end().framePosition(), centerFrame + halfSpan);
+        const QString leftName = selectedForTransition[0]->layerName();
+        const QString rightName = selectedForTransition[1]->layerName();
+        const auto addTransition = [comp, leftName, rightName, startFrame, endFrame](const QString& kind) {
+          CompositionTimelineTransition transition;
+          transition.kind = kind;
+          transition.leftClipName = leftName;
+          transition.rightClipName = rightName;
+          transition.range = FrameRange(FramePosition(startFrame), FramePosition(endFrame));
+          comp->addTimelineTransition(transition);
+        };
+        transitionMenu->addAction(QStringLiteral("クロスフェード (1秒)"), [addTransition]() {
+          addTransition(QStringLiteral("Crossfade"));
+        });
+        transitionMenu->addAction(QStringLiteral("ワイプ (1秒)"), [addTransition]() {
+          addTransition(QStringLiteral("Wipe"));
+        });
+        transitionMenu->addAction(QStringLiteral("スライド (1秒)"), [addTransition]() {
+          addTransition(QStringLiteral("Slide"));
+        });
+        const auto existingTransitions = comp->timelineTransitions();
+        if (!existingTransitions.isEmpty()) {
+          transitionMenu->addSeparator();
+          QMenu* manageMenu = transitionMenu->addMenu(QStringLiteral("既存トランジション"));
+          for (const auto& existing : existingTransitions) {
+            QMenu* itemMenu = manageMenu->addMenu(
+                QStringLiteral("%1 — %2  [%3-%4]")
+                    .arg(existing.name)
+                    .arg(existing.kind)
+                    .arg(existing.range.start().framePosition())
+                    .arg(existing.range.end().framePosition()));
+            itemMenu->addAction(
+                existing.enabled ? QStringLiteral("無効化") : QStringLiteral("有効化"),
+                [comp, id = existing.id, enabled = existing.enabled]() {
+                  comp->setTimelineTransitionEnabled(id, !enabled);
+                });
+            itemMenu->addAction(QStringLiteral("名前を変更..."), [this, comp, existing]() {
+              bool accepted = false;
+              const QString name = QInputDialog::getText(
+                  this, QStringLiteral("トランジション名"), QStringLiteral("名前"),
+                  QLineEdit::Normal, existing.name, &accepted);
+              if (accepted) comp->setTimelineTransitionName(existing.id, name);
+            });
+            itemMenu->addAction(QStringLiteral("種類を変更..."), [this, comp, existing]() {
+              const QStringList kinds = {QStringLiteral("Crossfade"), QStringLiteral("Dissolve"),
+                                         QStringLiteral("Wipe"), QStringLiteral("Slide")};
+              bool accepted = false;
+              const QString kind = QInputDialog::getItem(
+                  this, QStringLiteral("トランジション種類"), QStringLiteral("種類"), kinds,
+                  qMax(0, static_cast<int>(kinds.indexOf(existing.kind))), false, &accepted);
+              if (accepted && !kind.isEmpty()) {
+                comp->setTimelineTransitionKind(existing.id, kind);
+              }
+            });
+            itemMenu->addAction(QStringLiteral("イージングを変更..."), [this, comp, existing]() {
+              const QStringList easings = {QStringLiteral("Linear"), QStringLiteral("Ease In"),
+                                           QStringLiteral("Ease Out"), QStringLiteral("Ease In-Out")};
+              bool accepted = false;
+              const QString easing = QInputDialog::getItem(
+                  this, QStringLiteral("イージング"), QStringLiteral("カーブ"), easings,
+                  qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
+              if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
+            });
+            itemMenu->addAction(QStringLiteral("範囲を編集..."), [this, comp, existing]() {
+              bool accepted = false;
+              const int start = QInputDialog::getInt(
+                  this, QStringLiteral("トランジション範囲"), QStringLiteral("開始フレーム"),
+                  static_cast<int>(existing.range.start().framePosition()), -1000000, 1000000, 1, &accepted);
+              if (!accepted) return;
+              const int end = QInputDialog::getInt(
+                  this, QStringLiteral("トランジション範囲"), QStringLiteral("終了フレーム"),
+                  static_cast<int>(existing.range.end().framePosition()), start + 1, 1000000, 1, &accepted);
+              if (accepted) comp->setTimelineTransitionRange(
+                  existing.id, FrameRange(FramePosition(start), FramePosition(end)));
+            });
+            itemMenu->addAction(QStringLiteral("削除"), [comp, id = existing.id]() {
+              comp->removeTimelineTransition(id);
+            });
+            itemMenu->addAction(QStringLiteral("複製"), [comp, id = existing.id]() {
+              comp->duplicateTimelineTransition(id);
+            });
+          }
+          manageMenu->addSeparator();
+          manageMenu->addAction(QStringLiteral("すべて削除"), [comp]() {
+            comp->clearTimelineTransitions();
+          });
+        }
+      }
+      if (selectedForTransition.size() < 2 && !comp->timelineTransitions().isEmpty()) {
+        QMenu* manageMenu = allMenu->addMenu(QStringLiteral("トランジションを管理"));
+        for (const auto& existing : comp->timelineTransitions()) {
+          QMenu* itemMenu = manageMenu->addMenu(
+              QStringLiteral("%1 — %2  [%3-%4]")
+                  .arg(existing.name)
+                  .arg(existing.kind)
+                  .arg(existing.range.start().framePosition())
+                  .arg(existing.range.end().framePosition()));
+          itemMenu->addAction(
+              existing.enabled ? QStringLiteral("無効化") : QStringLiteral("有効化"),
+              [comp, id = existing.id, enabled = existing.enabled]() {
+                comp->setTimelineTransitionEnabled(id, !enabled);
+              });
+          itemMenu->addAction(QStringLiteral("名前を変更..."), [this, comp, existing]() {
+            bool accepted = false;
+            const QString name = QInputDialog::getText(
+                this, QStringLiteral("トランジション名"), QStringLiteral("名前"),
+                QLineEdit::Normal, existing.name, &accepted);
+            if (accepted) comp->setTimelineTransitionName(existing.id, name);
+          });
+          itemMenu->addAction(QStringLiteral("種類を変更..."), [this, comp, existing]() {
+            const QStringList kinds = {QStringLiteral("Crossfade"), QStringLiteral("Dissolve"),
+                                       QStringLiteral("Wipe"), QStringLiteral("Slide")};
+            bool accepted = false;
+            const QString kind = QInputDialog::getItem(
+                this, QStringLiteral("トランジション種類"), QStringLiteral("種類"), kinds,
+                qMax(0, static_cast<int>(kinds.indexOf(existing.kind))), false, &accepted);
+            if (accepted && !kind.isEmpty()) {
+              comp->setTimelineTransitionKind(existing.id, kind);
+            }
+          });
+          itemMenu->addAction(QStringLiteral("イージングを変更..."), [this, comp, existing]() {
+            const QStringList easings = {QStringLiteral("Linear"), QStringLiteral("Ease In"),
+                                         QStringLiteral("Ease Out"), QStringLiteral("Ease In-Out")};
+            bool accepted = false;
+            const QString easing = QInputDialog::getItem(
+                this, QStringLiteral("イージング"), QStringLiteral("カーブ"), easings,
+                qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
+            if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
+          });
+          itemMenu->addAction(QStringLiteral("範囲を編集..."), [this, comp, existing]() {
+            bool accepted = false;
+            const int start = QInputDialog::getInt(
+                this, QStringLiteral("トランジション範囲"), QStringLiteral("開始フレーム"),
+                static_cast<int>(existing.range.start().framePosition()), -1000000, 1000000, 1, &accepted);
+            if (!accepted) return;
+            const int end = QInputDialog::getInt(
+                this, QStringLiteral("トランジション範囲"), QStringLiteral("終了フレーム"),
+                static_cast<int>(existing.range.end().framePosition()), start + 1, 1000000, 1, &accepted);
+            if (accepted) comp->setTimelineTransitionRange(
+                existing.id, FrameRange(FramePosition(start), FramePosition(end)));
+          });
+          itemMenu->addAction(QStringLiteral("削除"), [comp, id = existing.id]() {
+            comp->removeTimelineTransition(id);
+          });
+          itemMenu->addAction(QStringLiteral("複製"), [comp, id = existing.id]() {
+            comp->duplicateTimelineTransition(id);
+          });
+        }
+        manageMenu->addSeparator();
+        manageMenu->addAction(QStringLiteral("すべて削除"), [comp]() {
+          comp->clearTimelineTransitions();
+        });
       }
     }
     QMenu* stateMenu = frequentMenu->addMenu(QStringLiteral("状態"));

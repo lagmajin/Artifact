@@ -133,6 +133,7 @@ import Artifact.Service.Effect;
 import Memory.SharedPtr;
 import Clipboard.ClipboardManager;
 import Artifact.Project.PresetManager;
+import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Component.System;
@@ -1894,8 +1895,32 @@ QString matteReferenceSummary(const ArtifactCompositionPtr &comp,
         sourceName = source->layerName().trimmed().isEmpty()
                          ? ref.sourceLayerId.toString()
                          : source->layerName();
-      } else if (ref.enabled && hasInvalid) {
-        *hasInvalid = true;
+      } else if (auto *service = ArtifactProjectService::instance()) {
+        if (auto project = service->getCurrentProjectSharedPtr()) {
+          std::function<FootageItem*(ProjectItem*)> findInput =
+              [&](ProjectItem* item) -> FootageItem* {
+            if (!item) return nullptr;
+            if (item->id == ref.sourceLayerId &&
+                item->type() == eProjectItemType::Footage) {
+              auto* footage = static_cast<FootageItem*>(item);
+              return footage->assetUsage == ProjectAssetUsage::RenderInput
+                  ? footage : nullptr;
+            }
+            for (auto* child : item->children) {
+              if (auto* found = findInput(child)) return found;
+            }
+            return nullptr;
+          };
+          for (auto* root : project->projectItems()) {
+            if (auto* footage = findInput(root)) {
+              sourceName = footage->name.toQString();
+              break;
+            }
+          }
+        }
+        if (sourceName == QStringLiteral("<missing>") && ref.enabled && hasInvalid) {
+          *hasInvalid = true;
+        }
       }
     } else if (ref.enabled && hasInvalid) {
       *hasInvalid = true;
@@ -2083,6 +2108,7 @@ bool setMatteSourceToLayer(const CompositionID &compositionId,
   }
 
   ref.sourceLayerId = sourceLayerId;
+  ref.sourceAssetPath.clear();
   ref.enabled = true;
 
   auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
@@ -2114,6 +2140,7 @@ bool addMatteSourceToLayer(const CompositionID &compositionId,
 
   LayerMatteReference ref;
   ref.sourceLayerId = sourceLayerId;
+  ref.sourceAssetPath.clear();
   ref.enabled = true;
   ref.type = MatteType::Alpha;
   ref.blendMode = MatteBlendMode::Add;
@@ -2126,6 +2153,77 @@ bool addMatteSourceToLayer(const CompositionID &compositionId,
                                                     std::move(beforeRefs),
                                                     std::move(afterRefs));
   UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+  return true;
+}
+
+QVector<FootageItem*> projectRenderInputSources() {
+  QVector<FootageItem*> result;
+  auto* service = ArtifactProjectService::instance();
+  auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return result;
+  std::function<void(ProjectItem*)> collect = [&](ProjectItem* item) {
+    if (!item) return;
+    if (item->type() == eProjectItemType::Footage) {
+      auto* footage = static_cast<FootageItem*>(item);
+      if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
+        result.push_back(footage);
+      }
+    }
+    for (auto* child : item->children) collect(child);
+  };
+  for (auto* root : project->projectItems()) collect(root);
+  return result;
+}
+
+bool setMatteSourceToProjectInput(const CompositionID& compositionId,
+                                  const LayerID& layerId,
+                                  int matteIndex,
+                                  const ArtifactCore::Id& projectItemId,
+                                  bool append) {
+  auto comp = resolveCompositionForId(compositionId);
+  auto layer = comp && !layerId.isNil() ? comp->layerById(layerId) : nullptr;
+  if (!layer || projectItemId.isNil()) return false;
+  const auto inputs = projectRenderInputSources();
+  if (std::none_of(inputs.begin(), inputs.end(), [&](const FootageItem* footage) {
+        return footage && footage->id == projectItemId;
+      })) {
+    return false;
+  }
+  auto beforeRefs = layer->matteReferences();
+  auto afterRefs = beforeRefs;
+  if (append) {
+    LayerMatteReference ref;
+    ref.sourceLayerId = projectItemId;
+    const auto matched = std::find_if(inputs.begin(), inputs.end(), [&](const FootageItem* footage) {
+      return footage && footage->id == projectItemId;
+    });
+    ref.sourceAssetPath = matched != inputs.end() ? (*matched)->filePath : QString();
+    ref.type = matched != inputs.end() &&
+                       (*matched)->renderInputRole == ProjectRenderInputRole::LumaMatte
+                   ? MatteType::Luma
+                   : MatteType::Alpha;
+    afterRefs.push_back(ref);
+  } else {
+    if (matteIndex < 0 || matteIndex >= static_cast<int>(afterRefs.size())) return false;
+    afterRefs[matteIndex].sourceLayerId = projectItemId;
+    const auto matched = std::find_if(inputs.begin(), inputs.end(), [&](const FootageItem* footage) {
+      return footage && footage->id == projectItemId;
+    });
+    afterRefs[matteIndex].sourceAssetPath =
+        matched != inputs.end() ? (*matched)->filePath : QString();
+    if (matched != inputs.end()) {
+      if ((*matched)->renderInputRole == ProjectRenderInputRole::LumaMatte) {
+        afterRefs[matteIndex].type = MatteType::Luma;
+      } else if ((*matched)->renderInputRole == ProjectRenderInputRole::AlphaMatte) {
+        afterRefs[matteIndex].type = MatteType::Alpha;
+      }
+    }
+    afterRefs[matteIndex].enabled = true;
+  }
+  auto* cmd = new ChangeLayerMatteReferencesCommand(
+      layer, std::move(beforeRefs), std::move(afterRefs));
+  UndoManager::instance()->push(
+      std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
   return true;
 }
 
@@ -2216,8 +2314,10 @@ protected:
           return;
         }
       }
-      QLabel::mousePressEvent(event);
-      return;
+      if (event->button() != Qt::RightButton) {
+        QLabel::mousePressEvent(event);
+        return;
+      }
     }
 
     if (event->button() == Qt::LeftButton) {
@@ -2247,6 +2347,17 @@ protected:
           addAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("add_selected")},
                                          {QStringLiteral("selectedLayerId"), selectedLayer->id().toString()}});
         }
+        const auto inputSources = projectRenderInputSources();
+        if (!inputSources.isEmpty()) {
+          QMenu* inputMenu = menu.addMenu(QStringLiteral("Use Input Source"));
+          for (const auto* footage : inputSources) {
+            if (!footage) continue;
+            QAction* inputAction = inputMenu->addAction(footage->name.toQString());
+            inputAction->setData(QVariantMap{
+                {QStringLiteral("kind"), QStringLiteral("input_append")},
+                {QStringLiteral("projectItemId"), footage->id.toString()}});
+          }
+        }
       }
 
       for (int i = 0; i < refs.size(); ++i) {
@@ -2257,7 +2368,14 @@ protected:
             const QString name = source->layerName().trimmed();
             sourceName = name.isEmpty() ? ref.sourceLayerId.toString() : name;
           } else {
-            sourceName = ref.sourceLayerId.toString();
+            const auto inputSources = projectRenderInputSources();
+            const auto found = std::find_if(
+                inputSources.begin(), inputSources.end(), [&](const FootageItem* footage) {
+                  return footage && footage->id == ref.sourceLayerId;
+                });
+            sourceName = found != inputSources.end()
+                ? (*found)->name.toQString()
+                : ref.sourceLayerId.toString();
           }
         }
 
@@ -2288,6 +2406,19 @@ protected:
         clearAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("clear")},
                                          {QStringLiteral("index"), i}});
 
+        const auto inputSources = projectRenderInputSources();
+        if (!inputSources.isEmpty()) {
+          QMenu* inputMenu = refMenu->addMenu(QStringLiteral("Use Input Source"));
+          for (const auto* footage : inputSources) {
+            if (!footage) continue;
+            QAction* inputAction = inputMenu->addAction(footage->name.toQString());
+            inputAction->setData(QVariantMap{
+                {QStringLiteral("kind"), QStringLiteral("input_replace")},
+                {QStringLiteral("index"), i},
+                {QStringLiteral("projectItemId"), footage->id.toString()}});
+          }
+        }
+
         QMenu *typeMenu = refMenu->addMenu(QStringLiteral("Set matte type"));
         for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
           QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
@@ -2301,15 +2432,22 @@ protected:
               accessibilityMenuPosition(menu, QCursor::pos()))) {
         const QVariantMap data = chosen->data().toMap();
         const QString kind = data.value(QStringLiteral("kind")).toString();
-        bool indexOk = false;
-        const int index = data.value(QStringLiteral("index")).toInt(&indexOk);
-        if (!indexOk) {
-          return;
-        }
         if (kind == QStringLiteral("add_selected")) {
           const auto selectedLayerId = LayerID(data.value(QStringLiteral("selectedLayerId")).toString());
           addMatteSourceToLayer(compositionId_, layerId_, selectedLayerId);
           event->accept();
+          return;
+        }
+        if (kind == QStringLiteral("input_append")) {
+          setMatteSourceToProjectInput(
+              compositionId_, layerId_, -1,
+              ArtifactCore::Id(data.value(QStringLiteral("projectItemId")).toString()), true);
+          event->accept();
+          return;
+        }
+        bool indexOk = false;
+        const int index = data.value(QStringLiteral("index")).toInt(&indexOk);
+        if (!indexOk) {
           return;
         }
         if (kind == QStringLiteral("focus")) {
@@ -2326,6 +2464,10 @@ protected:
           if (index >= 0 && index < static_cast<int>(refs.size())) {
             setMatteSourceToLayer(compositionId_, layerId_, index, selectedLayerId);
           }
+        } else if (kind == QStringLiteral("input_replace")) {
+          setMatteSourceToProjectInput(
+              compositionId_, layerId_, index,
+              ArtifactCore::Id(data.value(QStringLiteral("projectItemId")).toString()), false);
         } else if (kind == QStringLiteral("clear")) {
           if (index >= 0 && index < static_cast<int>(refs.size())) {
             clearMatteReferenceFromLayer(compositionId_, layerId_, index);

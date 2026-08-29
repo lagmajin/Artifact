@@ -58,6 +58,7 @@ import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Geometry.ResolutionRemap;
 import Image.ImageF32x4_RGBA;
+import Audio.Modulation.Router;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -114,6 +115,42 @@ private:
     QString layerId_;
     QJsonObject before_;
     QJsonObject after_;
+};
+
+class EffectModulationSnapshotCommand : public UndoCommand {
+public:
+    EffectModulationSnapshotCommand(
+        ArtifactAbstractEffectPtr effect,
+        ArtifactCore::Audio::Modulation::ModulationRouterSnapshot before,
+        ArtifactCore::Audio::Modulation::ModulationRouterSnapshot after,
+        QString label = QStringLiteral("Edit Effect Modulation"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+private:
+    ArtifactAbstractEffectWeakPtr effect_;
+    ArtifactCore::Audio::Modulation::ModulationRouterSnapshot before_;
+    ArtifactCore::Audio::Modulation::ModulationRouterSnapshot after_;
+    QString label_;
+};
+
+class LayerModulationSnapshotCommand : public UndoCommand {
+public:
+    LayerModulationSnapshotCommand(
+        ArtifactAbstractLayerPtr layer,
+        ArtifactCore::Audio::Modulation::ModulationRouterSnapshot before,
+        ArtifactCore::Audio::Modulation::ModulationRouterSnapshot after,
+        QString label = QStringLiteral("Edit Layer Modulation"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    ArtifactCore::Audio::Modulation::ModulationRouterSnapshot before_;
+    ArtifactCore::Audio::Modulation::ModulationRouterSnapshot after_;
+    QString label_;
 };
 
 class MoveLayerCommand : public UndoCommand {

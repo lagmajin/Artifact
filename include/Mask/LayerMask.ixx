@@ -36,6 +36,7 @@ export module Artifact.Mask.LayerMask;
 
 
 import Artifact.Mask.Path;
+import Color.Float;
 
 export namespace Artifact {
 
@@ -64,6 +65,10 @@ public:
     void setEnabled(bool enabled);
     bool isLocked() const;
     void setLocked(bool locked);
+
+    // マスクの表示色（VP上のオーバーレイ色）
+    FloatColor color() const;
+    void setColor(const FloatColor& color);
 
     /// 全マスクパスを合成して単一アルファマスク (CV_32FC1) を生成
     /// offsetX/offsetY: レイヤーローカル空間→ピクセル空間変換オフセット

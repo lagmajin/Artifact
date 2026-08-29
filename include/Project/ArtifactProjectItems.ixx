@@ -53,6 +53,21 @@ export namespace Artifact {
   Solid
  };
 
+ enum class ProjectAssetUsage {
+  Production,
+  RenderInput
+ };
+
+ enum class ProjectRenderInputRole {
+  Generic,
+  AlphaMatte,
+  LumaMatte,
+  DisplacementMap,
+  DepthMap,
+  NormalMap,
+  Texture
+ };
+
 
 
  class ProjectItem {
@@ -79,6 +94,8 @@ export namespace Artifact {
   int subimageIndex = -1;
   QString inputColorSpace;
   QString inputTransferFunction;
+  ProjectAssetUsage assetUsage = ProjectAssetUsage::Production;
+  ProjectRenderInputRole renderInputRole = ProjectRenderInputRole::Generic;
   
  };
 

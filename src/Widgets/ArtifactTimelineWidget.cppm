@@ -66,6 +66,7 @@ import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
 import Settings.Accessibility;
 import Artifact.Timeline.TrackPainterView;
+import Artifact.Widgets.Timeline.DiligentRenderWindow;
 import Artifact.Timeline.TimeCodeWidget;
 import Artifact.Widgets.Timeline.EasingLab;
 import Artifact.Widgets.Timeline.KeyPatternDialog;
@@ -4477,6 +4478,7 @@ public:
                           ArtifactTimelineScrubBar *scrubBar,
                           WorkAreaControl *workArea,
                           ArtifactTimelineTrackPainterView *painterTrackView,
+                          QWidget *gpuTimelineContainer,
                           QWidget *curveHeader,
                           ArtifactCurveEditorWidget *curveEditor,
                           QWidget *parent = nullptr)
@@ -4499,6 +4501,15 @@ public:
       timelinePainterLayout->addWidget(painterTrackView_, 1);
     }
 
+    timelineGpuPage_ = new QWidget(this);
+    timelineGpuPage_->setObjectName(QStringLiteral("timelineGpuPreviewPage"));
+    auto *timelineGpuLayout = new QVBoxLayout(timelineGpuPage_);
+    timelineGpuLayout->setContentsMargins(0, 0, 0, 0);
+    timelineGpuLayout->setSpacing(0);
+    if (gpuTimelineContainer) {
+      timelineGpuLayout->addWidget(gpuTimelineContainer, 1);
+    }
+
     curveEditorPage_ = new QWidget(this);
     curveEditorPage_->setObjectName(QStringLiteral("timelineCurveEditorPage"));
     auto *curvePanelLayout = new QVBoxLayout(curveEditorPage_);
@@ -4513,6 +4524,7 @@ public:
 
     timelineModeStack_ = new QStackedWidget(this);
     timelineModeStack_->addWidget(timelinePainterPage_);
+    timelineModeStack_->addWidget(timelineGpuPage_);
     timelineModeStack_->addWidget(curveEditorPage_);
     timelineModeStack_->setCurrentWidget(timelinePainterPage_);
 
@@ -4534,6 +4546,7 @@ public:
   }
 
   QWidget *timelinePainterPage() const { return timelinePainterPage_; }
+  QWidget *timelineGpuPage() const { return timelineGpuPage_; }
   QWidget *curveEditorPage() const { return curveEditorPage_; }
   QStackedWidget *timelineModeStack() const { return timelineModeStack_; }
   void syncPlayheadOverlay() {
@@ -4593,6 +4606,7 @@ private:
   WorkAreaControl *workArea_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
   QWidget *timelinePainterPage_ = nullptr;
+  QWidget *timelineGpuPage_ = nullptr;
   QWidget *curveEditorPage_ = nullptr;
   QStackedWidget *timelineModeStack_ = nullptr;
   TimelinePlayheadOverlayWidget *playheadOverlay_ = nullptr;
@@ -4692,6 +4706,11 @@ public:
   ArtifactLayerTimelinePanelWrapper *layerTimelinePanel_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
   QWidget *timelinePainterPage_ = nullptr;
+  ArtifactDiligentTimelineRenderWindow *gpuTimelineWindow_ = nullptr;
+  QWidget *gpuTimelineContainer_ = nullptr;
+  QWidget *timelineGpuPage_ = nullptr;
+  bool gpuTimelinePreviewEnabled_ = false;
+  quint64 gpuTimelineSnapshotGeneration_ = 0;
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
   QWidget *curveEditorPage_ = nullptr;
   QStackedWidget *timelineModeStack_ = nullptr;
@@ -7278,10 +7297,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      impl_->graphEditorVisible_ = active;
                      if (impl_->timelineModeStack_) {
                        impl_->timelineModeStack_->setCurrentWidget(
-                           active ? impl_->curveEditorPage_ : impl_->timelinePainterPage_);
+                           active ? impl_->curveEditorPage_
+                                  : (impl_->gpuTimelinePreviewEnabled_
+                                         ? impl_->timelineGpuPage_
+                                         : impl_->timelinePainterPage_));
                      }
                      if (impl_->rightPanel_) {
-                       impl_->rightPanel_->setPlayheadOverlayEnabled(!active);
+                       impl_->rightPanel_->setPlayheadOverlayEnabled(
+                           !active && !impl_->gpuTimelinePreviewEnabled_);
                      }
                      if (impl_->curvePropertyPanel_) {
                        impl_->curvePropertyPanel_->setVisible(active);
@@ -7516,11 +7539,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // layerTimelinePanel->setMinimumWidth(220);
   // layerTimelinePanel->setMaximumWidth(320);
 
+  impl_->gpuTimelineWindow_ = new ArtifactDiligentTimelineRenderWindow();
+  impl_->gpuTimelineContainer_ = QWidget::createWindowContainer(
+      impl_->gpuTimelineWindow_, this);
+  impl_->gpuTimelineContainer_->setFocusPolicy(Qt::NoFocus);
+
   auto rightPanel = new TimelineRightPanelWidget(
       timeNavigatorWidget, scrubBar, workAreaWidget, painterTrackView,
-      curveHeader, curveEditor);
+      impl_->gpuTimelineContainer_, curveHeader, curveEditor);
   impl_->rightPanel_ = rightPanel;
   impl_->timelinePainterPage_ = rightPanel->timelinePainterPage();
+  impl_->timelineGpuPage_ = rightPanel->timelineGpuPage();
   impl_->curveEditorPage_ = rightPanel->curveEditorPage();
   impl_->timelineModeStack_ = rightPanel->timelineModeStack();
 
@@ -7900,6 +7929,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               updateKeyframeState();
             }
           }));
+  if (qEnvironmentVariableIntValue("ARTIFACT_GPU_TIMELINE_PREVIEW") > 0) {
+    setGpuTimelinePreviewEnabled(true);
+  }
   qInfo() << "[TimelineWidget][Ctor] total ms=" << ctorTimer.elapsed();
 }
 
@@ -9593,6 +9625,7 @@ void ArtifactTimelineWidget::syncPainterSelectionState(const bool forceRefresh)
   const auto composition = safeCompositionLookup(impl_->compositionId_);
   impl_->painterTrackView_->syncSelectionState(
       composition, selection, impl_->trackRows_, forceRefresh);
+  syncGpuTimelineSnapshot();
 }
 
 void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
@@ -9612,6 +9645,7 @@ void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
     impl_->workArea_->setRulerHorizontalOffset(clampedOffset);
   }
   syncPlayheadOverlay();
+  syncGpuTimelineSnapshot();
 }
 
 void ArtifactTimelineWidget::syncTimelineVerticalOffset(const double offset)
@@ -9639,6 +9673,7 @@ void ArtifactTimelineWidget::syncTimelineVerticalOffset(const double offset)
     }
   }
   impl_->syncingVerticalOffset_ = false;
+  syncGpuTimelineSnapshot();
 }
 
 void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
@@ -9673,6 +9708,164 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
       impl_->navigator_->startValue() * duration * newZoom;
   syncTimelineHorizontalOffset(offset);
   syncPlayheadOverlay();
+}
+
+void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
+{
+  if (!impl_ || !impl_->gpuTimelineWindow_ ||
+      !impl_->painterTrackView_ || !impl_->gpuTimelinePreviewEnabled_) {
+    return;
+  }
+
+  DiligentTimelineVisualSnapshot snapshot;
+  snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  snapshot.background = QColor(theme.backgroundColor);
+
+  const auto *view = impl_->painterTrackView_;
+  const double ppf = std::max(0.001, view->pixelsPerFrame());
+  const double horizontalOffset = view->horizontalOffset();
+  const double verticalOffset = view->verticalOffset();
+  const int viewportWidth = std::max(
+      1, impl_->gpuTimelineContainer_
+             ? impl_->gpuTimelineContainer_->width()
+             : view->width());
+  const int viewportHeight = std::max(
+      1, impl_->gpuTimelineContainer_
+             ? impl_->gpuTimelineContainer_->height()
+             : view->height());
+
+  QVector<double> trackTops(view->trackCount() + 1, -verticalOffset);
+  for (int track = 0; track < view->trackCount(); ++track) {
+    const double top = trackTops[track];
+    const double height = std::max(1, view->trackHeight(track));
+    trackTops[track + 1] = top + height;
+    if (top + height < 0.0 || top > viewportHeight) {
+      continue;
+    }
+    QColor rowColor = QColor(theme.secondaryBackgroundColor);
+    if ((track & 1) != 0) {
+      rowColor = rowColor.darker(106);
+    }
+    snapshot.rects.push_back({QRectF(0.0, top, viewportWidth, height),
+                              rowColor});
+    snapshot.lines.push_back({QPointF(0.0, top + height - 0.5),
+                              QPointF(viewportWidth, top + height - 0.5),
+                              QColor(theme.borderColor), 1.0f});
+  }
+
+  const double firstFrame = horizontalOffset / ppf;
+  const double lastFrame = (horizontalOffset + viewportWidth) / ppf;
+  const double targetGridPixels = 72.0;
+  const double rawStep = targetGridPixels / ppf;
+  const double magnitude = std::pow(10.0, std::floor(std::log10(
+      std::max(1.0, rawStep))));
+  const double normalized = rawStep / magnitude;
+  const double gridStep = (normalized <= 1.0 ? 1.0
+                           : normalized <= 2.0 ? 2.0
+                           : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
+  const double firstGridFrame = std::floor(firstFrame / gridStep) * gridStep;
+  QColor gridColor(theme.borderColor);
+  gridColor.setAlpha(118);
+  for (double frame = firstGridFrame; frame <= lastFrame + gridStep;
+       frame += gridStep) {
+    const double x = frame * ppf - horizontalOffset;
+    snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
+                              gridColor, 1.0f});
+  }
+
+  for (const auto& clip : view->clips()) {
+    if (clip.trackIndex < 0 || clip.trackIndex >= view->trackCount()) {
+      continue;
+    }
+    const double x = clip.startFrame * ppf - horizontalOffset;
+    const double width = std::max(1.0, clip.durationFrame * ppf);
+    const double top = trackTops[clip.trackIndex] + 2.0;
+    const double height = std::max(1.0,
+        static_cast<double>(view->trackHeight(clip.trackIndex)) - 4.0);
+    if (x + width < 0.0 || x > viewportWidth ||
+        top + height < 0.0 || top > viewportHeight) {
+      continue;
+    }
+    QColor fill = clip.fillColor;
+    if (clip.selected) {
+      fill = fill.lighter(125);
+    }
+    snapshot.rects.push_back({QRectF(x, top, width, height), fill});
+    if (clip.selected) {
+      snapshot.lines.push_back({QPointF(x, top), QPointF(x + width, top),
+                                QColor(theme.accentColor), 2.0f});
+    }
+  }
+
+  for (const auto& marker : view->keyframeMarkers()) {
+    if (marker.trackIndex < 0 || marker.trackIndex >= view->trackCount()) {
+      continue;
+    }
+    const double x = marker.frame * ppf - horizontalOffset;
+    const double y = trackTops[marker.trackIndex] +
+                     view->trackHeight(marker.trackIndex) * 0.5;
+    constexpr double radius = 4.0;
+    if (x < -radius || x > viewportWidth + radius ||
+        y < -radius || y > viewportHeight + radius) {
+      continue;
+    }
+    QColor color = marker.selected ? QColor(theme.accentColor) : marker.color;
+    snapshot.triangles.push_back({QPointF(x, y - radius),
+                                  QPointF(x + radius, y),
+                                  QPointF(x, y + radius), color});
+    snapshot.triangles.push_back({QPointF(x, y - radius),
+                                  QPointF(x, y + radius),
+                                  QPointF(x - radius, y), color});
+  }
+
+  const double playheadX = view->currentFrame() * ppf - horizontalOffset;
+  snapshot.lines.push_back({QPointF(playheadX, 0.0),
+                            QPointF(playheadX, viewportHeight),
+                            QColor(theme.accentColor), 2.0f});
+  impl_->gpuTimelineWindow_->setSnapshot(snapshot);
+}
+
+void ArtifactTimelineWidget::setGpuTimelinePreviewEnabled(const bool enabled)
+{
+  if (!impl_ || !impl_->timelineModeStack_ || !impl_->timelineGpuPage_ ||
+      !impl_->timelinePainterPage_) {
+    return;
+  }
+  if (!enabled) {
+    impl_->gpuTimelinePreviewEnabled_ = false;
+    if (!impl_->graphEditorVisible_) {
+      impl_->timelineModeStack_->setCurrentWidget(impl_->timelinePainterPage_);
+    }
+    if (impl_->rightPanel_) {
+      impl_->rightPanel_->setPlayheadOverlayEnabled(!impl_->graphEditorVisible_);
+    }
+    return;
+  }
+
+  impl_->gpuTimelinePreviewEnabled_ = true;
+  syncGpuTimelineSnapshot();
+  impl_->timelineModeStack_->setCurrentWidget(impl_->timelineGpuPage_);
+  if (!impl_->gpuTimelineWindow_->initialize()) {
+    impl_->timelineModeStack_->setCurrentWidget(impl_->timelinePainterPage_);
+    impl_->gpuTimelinePreviewEnabled_ = false;
+    return;
+  }
+  if (impl_->rightPanel_) {
+    impl_->rightPanel_->setPlayheadOverlayEnabled(false);
+  }
+  syncGpuTimelineSnapshot();
+}
+
+bool ArtifactTimelineWidget::gpuTimelinePreviewEnabled() const
+{
+  return impl_ && impl_->gpuTimelinePreviewEnabled_;
+}
+
+bool ArtifactTimelineWidget::gpuTimelinePreviewReady() const
+{
+  return impl_ && impl_->gpuTimelineWindow_ &&
+         impl_->gpuTimelineWindow_->isGpuReady();
 }
 
 double ArtifactTimelineWidget::currentFrame() const
@@ -9718,6 +9911,7 @@ void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
   if (impl_->workArea_) {
     impl_->workArea_->setCurrentFrame(static_cast<float>(clamped));
   }
+  syncGpuTimelineSnapshot();
 }
 
 void ArtifactTimelineWidget::syncPlayheadOverlay()

@@ -81,6 +81,7 @@ import Graphics.ParticleData;
 import Property.Abstract;
 import Property.Group;
 import Property.SerializationBridge;
+import Audio.Modulation.Router;
 import Artifact.Event.Types;
 import Event.Bus;
 
@@ -96,6 +97,90 @@ std::mutex g_layerJsonFactoryMutex;
 void setArtifactLayerJsonFactory(ArtifactLayerJsonFactory factory) {
   std::lock_guard lock(g_layerJsonFactoryMutex);
   g_layerJsonFactory = factory;
+}
+
+QJsonObject serializeLayerModulationRouter(
+    const Audio::Modulation::ModulationRouter& router) {
+  QJsonObject result;
+  QJsonArray sources;
+  for (const auto& source : router.sourceDefinitions()) {
+    QJsonObject item;
+    item[QStringLiteral("id")] = static_cast<double>(source.id);
+    item[QStringLiteral("type")] = static_cast<int>(source.type);
+    item[QStringLiteral("waveform")] = static_cast<int>(source.waveform);
+    item[QStringLiteral("frequency")] = source.frequency;
+    item[QStringLiteral("phaseOffset")] = source.phaseOffset;
+    item[QStringLiteral("pulseWidth")] = source.pulseWidth;
+    item[QStringLiteral("attack")] = source.attack;
+    item[QStringLiteral("decay")] = source.decay;
+    item[QStringLiteral("sustain")] = source.sustain;
+    item[QStringLiteral("release")] = source.release;
+    item[QStringLiteral("rate")] = source.rate;
+    item[QStringLiteral("smoothing")] = source.smoothing;
+    item[QStringLiteral("seed")] = static_cast<double>(source.seed);
+    item[QStringLiteral("macroValue")] = source.macroValue;
+    item[QStringLiteral("unipolar")] = source.unipolar;
+    sources.append(item);
+  }
+  QJsonArray assignments;
+  for (const auto& assignment : router.assignments()) {
+    if (assignment.sourceId == 0 || assignment.targetPath.empty()) continue;
+    QJsonObject item;
+    item[QStringLiteral("sourceId")] = static_cast<double>(assignment.sourceId);
+    item[QStringLiteral("targetPath")] = QString::fromStdString(assignment.targetPath);
+    item[QStringLiteral("depth")] = assignment.depth;
+    item[QStringLiteral("enabled")] = assignment.enabled;
+    item[QStringLiteral("mode")] = static_cast<int>(assignment.mode);
+    assignments.append(item);
+  }
+  if (!sources.isEmpty()) result[QStringLiteral("sources")] = sources;
+  if (!assignments.isEmpty()) result[QStringLiteral("assignments")] = assignments;
+  return result;
+}
+
+void restoreLayerModulationRouter(const QJsonObject& object,
+                                  Audio::Modulation::ModulationRouter& router) {
+  std::vector<Audio::Modulation::ModulationSourceDefinition> sources;
+  for (const auto& value : object.value(QStringLiteral("sources")).toArray()) {
+    if (!value.isObject()) continue;
+    const QJsonObject item = value.toObject();
+    const int type = item.value(QStringLiteral("type")).toInt(-1);
+    if (type < 0 || type > 3) continue;
+    Audio::Modulation::ModulationSourceDefinition source;
+    source.id = static_cast<std::uint32_t>(item.value(QStringLiteral("id")).toVariant().toUInt());
+    source.type = static_cast<Audio::Modulation::ModulatorSourceType>(type);
+    source.waveform = static_cast<Audio::Modulation::LfoWaveform>(
+        std::clamp(item.value(QStringLiteral("waveform")).toInt(0), 0, 4));
+    source.frequency = static_cast<float>(item.value(QStringLiteral("frequency")).toDouble(1.0));
+    source.phaseOffset = static_cast<float>(item.value(QStringLiteral("phaseOffset")).toDouble(0.0));
+    source.pulseWidth = static_cast<float>(item.value(QStringLiteral("pulseWidth")).toDouble(0.5));
+    source.attack = static_cast<float>(item.value(QStringLiteral("attack")).toDouble(0.01));
+    source.decay = static_cast<float>(item.value(QStringLiteral("decay")).toDouble(0.1));
+    source.sustain = static_cast<float>(item.value(QStringLiteral("sustain")).toDouble(0.7));
+    source.release = static_cast<float>(item.value(QStringLiteral("release")).toDouble(0.2));
+    source.rate = static_cast<float>(item.value(QStringLiteral("rate")).toDouble(1.0));
+    source.smoothing = static_cast<float>(item.value(QStringLiteral("smoothing")).toDouble(0.005));
+    source.seed = static_cast<std::uint32_t>(item.value(QStringLiteral("seed")).toVariant().toUInt());
+    source.macroValue = static_cast<float>(item.value(QStringLiteral("macroValue")).toDouble(0.0));
+    source.unipolar = item.value(QStringLiteral("unipolar")).toBool(false);
+    sources.push_back(source);
+  }
+  router.clearAssignments();
+  router.restoreSources(sources);
+  for (const auto& value : object.value(QStringLiteral("assignments")).toArray()) {
+    if (!value.isObject()) continue;
+    const QJsonObject item = value.toObject();
+    const auto sourceId = static_cast<std::uint32_t>(item.value(QStringLiteral("sourceId")).toVariant().toUInt());
+    const QString targetPath = item.value(QStringLiteral("targetPath")).toString().trimmed();
+    const int mode = item.value(QStringLiteral("mode")).toInt(0);
+    if (sourceId == 0 || targetPath.isEmpty() || mode < 0 || mode > 1) continue;
+    auto assignment = Audio::Modulation::ModulationAssignment::forPropertyPath(
+        sourceId, targetPath.toStdString(),
+        static_cast<float>(item.value(QStringLiteral("depth")).toDouble(1.0)),
+        static_cast<Audio::Modulation::ModulationMixMode>(mode));
+    assignment.enabled = item.value(QStringLiteral("enabled")).toBool(true);
+    router.addAssignment(assignment);
+  }
 }
 
 using float4x4 = Diligent::float4x4;
@@ -1192,6 +1277,7 @@ public:
   FramePosition outPoint_ = FramePosition(300); // Default 10s at 30fps
   FramePosition startTime_ = FramePosition(0);
   int64_t currentFrame_ = 0; // 現在のフレーム位置
+  Audio::Modulation::ModulationRouter modulationRouter_;
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   int64_t currentFrame() const { return currentFrame_; }
@@ -1869,6 +1955,8 @@ void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/) {
   // relativeFrame = globalFrame - inPoint + startTime
   impl_->currentFrame_ = frameNumber - impl_->inPoint_.framePosition() +
                          impl_->startTime_.framePosition();
+  impl_->modulationRouter_.processAtFrame(
+      frameNumber, static_cast<float>(effectiveLayerFrameRate(this)));
 }
 
 int64_t ArtifactAbstractLayer::currentFrame() const {
@@ -5191,6 +5279,11 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     animationPropertyLayers[it.key()] = it.value().toJson();
   }
   obj["animationPropertyLayers"] = animationPropertyLayers;
+  const QJsonObject modulation = serializeLayerModulationRouter(
+      impl_->modulationRouter_);
+  if (!modulation.isEmpty()) {
+    obj[QStringLiteral("modulation")] = modulation;
+  }
 
   // Mattes
   QJsonArray mattesArr;
@@ -5624,6 +5717,15 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       QJsonObject mobj;
       mobj["enabled"] = layerMask.isEnabled();
       mobj["locked"] = layerMask.isLocked();
+      {
+        const auto c = layerMask.color();
+        QJsonObject cobj;
+        cobj["r"] = c.r();
+        cobj["g"] = c.g();
+        cobj["b"] = c.b();
+        cobj["a"] = c.a();
+        mobj["color"] = cobj;
+      }
 
       QJsonArray pathsArr;
       for (int pathIndex = 0; pathIndex < layerMask.maskPathCount();
@@ -5822,6 +5924,10 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
 }
 
 void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
+  if (obj.value(QStringLiteral("modulation")).isObject()) {
+    restoreLayerModulationRouter(obj.value(QStringLiteral("modulation")).toObject(),
+                                 impl_->modulationRouter_);
+  }
   if (obj.contains("animationLayers") && obj["animationLayers"].isObject())
     impl_->animationLayers_.fromJson(obj["animationLayers"].toObject());
   if (obj.contains("animationPropertyLayers") &&
@@ -6746,6 +6852,14 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       }
       if (mobj.contains("locked")) {
         layerMask.setLocked(mobj["locked"].toBool(false));
+      }
+      if (mobj.contains("color") && mobj["color"].isObject()) {
+        const auto cobj = mobj["color"].toObject();
+        const float r = static_cast<float>(cobj.value("r").toDouble(0.28));
+        const float g = static_cast<float>(cobj.value("g").toDouble(0.88));
+        const float b = static_cast<float>(cobj.value("b").toDouble(1.0));
+        const float a = static_cast<float>(cobj.value("a").toDouble(0.95));
+        layerMask.setColor(FloatColor{r, g, b, a});
       }
 
       if (mobj.contains("paths") && mobj["paths"].isArray()) {
@@ -12107,12 +12221,43 @@ float ArtifactAbstractLayer::opacity() const {
     baseOpacity = impl_->animationLayers_.evaluateWithBase(
         FramePosition(impl_->currentFrame_), baseOpacity);
   }
+  const QString modulationPath = modulationPropertyPath(
+      QStringLiteral("layer.opacity"));
+  if (!modulationPath.isEmpty()) {
+    const auto frame = currentTimelineFrame(this);
+    const auto frameRate = effectiveLayerFrameRate(this);
+    impl_->modulationRouter_.processAtFrame(
+        frame, static_cast<float>(frameRate));
+    const auto target = Audio::Modulation::modulationTargetId(
+        modulationPath.toStdString());
+    if (impl_->modulationRouter_.hasTarget(target)) {
+      const float modulated = impl_->modulationRouter_.targetValue(
+          target, baseOpacity);
+      if (std::isfinite(modulated)) {
+        baseOpacity = modulated;
+      }
+    }
+  }
   const float evaluatedOpacity = applyLayerEffectEnvelopeOpacity(
       impl_->effectEnvelope_, baseOpacity, impl_->currentFrame_,
       impl_->inPoint_, impl_->outPoint_, impl_->startTime_);
   return std::isfinite(evaluatedOpacity)
              ? std::clamp(evaluatedOpacity, 0.0f, 1.0f)
              : 1.0f;
+}
+
+Audio::Modulation::ModulationRouter& ArtifactAbstractLayer::modulationRouter() {
+  return impl_->modulationRouter_;
+}
+
+QString ArtifactAbstractLayer::modulationPropertyPath(
+    const QString& propertyPath) const {
+  const QString layerId = impl_->id.toString().trimmed();
+  const QString property = propertyPath.trimmed();
+  if (layerId.isEmpty() || property.isEmpty()) {
+    return {};
+  }
+  return QStringLiteral("layer.%1.%2").arg(layerId, property);
 }
 
 void ArtifactAbstractLayer::setOpacity(float value) {

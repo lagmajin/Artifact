@@ -4481,6 +4481,7 @@ public:
   QVector<int> trackHeights_;
   QVector<int> trackTops_;
   QVector<TrackClipVisual> clips_;
+  QVector<QVector<int>> clipIndicesByTrack_;
   QVector<CompositionMarkerVisual> compositionMarkers_;
   QVector<TimelineRowDescriptor> trackRows_;
 
@@ -4552,6 +4553,7 @@ public:
   QVector<int> selectedLayerMarkerFrameSortedIndices_;
   QVector<int> normalMarkerFrameSortedIndices_;
   QVector<int> keyframeCountsByTrack_;
+  QVector<QVector<int>> markerIndicesByTrack_;
   QSet<int> selectedMarkerTracks_;
   QSet<int> selectedKeyframeTracks_;
   QVector<KeyframeAreaVisual> keyframeAreaCache_;
@@ -4575,6 +4577,7 @@ public:
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   void rebuildTrackTopCache();
+  void rebuildClipCaches();
   void rebuildMarkerCaches();
   int nearestMarkerIndexForFrame(const double frame) const;
 };
@@ -4609,6 +4612,18 @@ void ArtifactTimelineTrackPainterView::Impl::rebuildTrackTopCache() {
     currentY += trackHeights_[i] + kTrackSpacing;
   }
   keyframeAreaCacheValid_ = false;
+  rebuildClipCaches();
+}
+
+void ArtifactTimelineTrackPainterView::Impl::rebuildClipCaches() {
+  clipIndicesByTrack_.clear();
+  clipIndicesByTrack_.resize(trackHeights_.size());
+  for (int i = 0; i < clips_.size(); ++i) {
+    const int trackIndex = clips_[i].trackIndex;
+    if (trackIndex >= 0 && trackIndex < clipIndicesByTrack_.size()) {
+      clipIndicesByTrack_[trackIndex].push_back(i);
+    }
+  }
 }
 
 void ArtifactTimelineTrackPainterView::Impl::rebuildMarkerCaches() {
@@ -4620,11 +4635,14 @@ void ArtifactTimelineTrackPainterView::Impl::rebuildMarkerCaches() {
   normalMarkerFrameSortedIndices_.clear();
   selectedMarkerTracks_.clear();
   selectedKeyframeTracks_.clear();
+  markerIndicesByTrack_.clear();
+  markerIndicesByTrack_.resize(trackHeights_.size());
 
   for (int i = 0; i < keyframeMarkers_.size(); ++i) {
     const auto &marker = keyframeMarkers_[i];
     if (marker.trackIndex >= 0 && marker.trackIndex < keyframeCountsByTrack_.size()) {
       ++keyframeCountsByTrack_[marker.trackIndex];
+      markerIndicesByTrack_[marker.trackIndex].push_back(i);
     }
     if (marker.selected) {
       selectedKeyframeTracks_.insert(marker.trackIndex);
@@ -4915,6 +4933,7 @@ void ArtifactTimelineTrackPainterView::clearClips() {
     return;
   }
   impl_->clips_.clear();
+  impl_->rebuildClipCaches();
   impl_->selectionSyncDirty_ = true;
   update();
 }
@@ -4925,6 +4944,7 @@ void ArtifactTimelineTrackPainterView::setClips(
     return;
   }
   impl_->clips_ = clips;
+  impl_->rebuildClipCaches();
   impl_->selectionSyncDirty_ = true;
   update();
 }
@@ -6210,6 +6230,18 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     --lastVisibleTrack;
   }
 
+  QVector<int> visibleClipIndices;
+  QVector<int> visibleMarkerIndices;
+  for (int trackIndex = firstVisibleTrack; trackIndex <= lastVisibleTrack;
+       ++trackIndex) {
+    if (trackIndex >= 0 && trackIndex < impl_->clipIndicesByTrack_.size()) {
+      visibleClipIndices += impl_->clipIndicesByTrack_[trackIndex];
+    }
+    if (trackIndex >= 0 && trackIndex < impl_->markerIndicesByTrack_.size()) {
+      visibleMarkerIndices += impl_->markerIndicesByTrack_[trackIndex];
+    }
+  }
+
   for (int i = firstVisibleTrack; i <= lastVisibleTrack; ++i) {
     const int rowH = impl_->trackHeights_[i];
     const double rowTop = impl_->trackTops_.value(i) - yOffset;
@@ -6297,7 +6329,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   // Clips.
   p.setRenderHint(QPainter::Antialiasing, true);
   const QFontMetrics metrics = p.fontMetrics();
-  for (int i = 0; i < impl_->clips_.size(); ++i) {
+  for (const int i : visibleClipIndices) {
+    if (i < 0 || i >= impl_->clips_.size()) {
+      continue;
+    }
     const auto &clip = impl_->clips_[i];
 
     // クリップの描画範囲を計算
@@ -6460,7 +6495,11 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
 
   // Keyframe markers.
   QVector<int> currentFrameKeyframeCountsByTrack(impl_->trackHeights_.size(), 0);
-  for (const auto &marker : impl_->keyframeMarkers_) {
+  for (const int markerIndex : visibleMarkerIndices) {
+    if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+      continue;
+    }
+    const auto &marker = impl_->keyframeMarkers_[markerIndex];
     if (marker.trackIndex >= 0 &&
         marker.trackIndex < currentFrameKeyframeCountsByTrack.size()) {
       if (markerAtCurrentFrame(marker, impl_->currentFrame_)) {
@@ -6529,7 +6568,11 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   LayerID miniEditorLayerId = impl_->contextLayerId_;
   QString miniEditorPropertyPath = impl_->contextPropertyPath_.trimmed();
   if (miniEditorPropertyPath.isEmpty()) {
-    for (const auto &marker : impl_->keyframeMarkers_) {
+    for (const int markerIndex : visibleMarkerIndices) {
+      if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+        continue;
+      }
+      const auto &marker = impl_->keyframeMarkers_[markerIndex];
       if (!marker.selected) {
         continue;
       }
@@ -6541,8 +6584,12 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   QVector<KeyframeMarkerVisual> miniEditorMarkers;
   if (miniEditorEnabled && !miniEditorLayerId.isNil() &&
       !miniEditorPropertyPath.isEmpty()) {
-    miniEditorMarkers.reserve(impl_->keyframeMarkers_.size());
-    for (const auto &marker : impl_->keyframeMarkers_) {
+    miniEditorMarkers.reserve(visibleMarkerIndices.size());
+    for (const int markerIndex : visibleMarkerIndices) {
+      if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+        continue;
+      }
+      const auto &marker = impl_->keyframeMarkers_[markerIndex];
       if (marker.layerId == miniEditorLayerId &&
           marker.propertyPath.trimmed() == miniEditorPropertyPath) {
         miniEditorMarkers.push_back(marker);
@@ -6576,7 +6623,11 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                        : 0.18;
   if (timelineGhostingEnabled && timelineGhostFrameCount > 0) {
     const qreal ghostRadius = 1.0 + static_cast<qreal>(timelineGhostFrameCount);
-    for (const auto &marker : impl_->keyframeMarkers_) {
+    for (const int markerIndex : visibleMarkerIndices) {
+      if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+        continue;
+      }
+      const auto &marker = impl_->keyframeMarkers_[markerIndex];
       if (marker.trackIndex < 0 ||
           marker.trackIndex >= impl_->trackHeights_.size()) {
         continue;
@@ -6767,8 +6818,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   const int nearestMarkerIndex =
       impl_->nearestMarkerIndexForFrame(impl_->currentFrame_);
 
-  for (int markerIndex = 0; markerIndex < impl_->keyframeMarkers_.size();
-       ++markerIndex) {
+  for (const int markerIndex : visibleMarkerIndices) {
+    if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+      continue;
+    }
     const auto &marker = impl_->keyframeMarkers_[markerIndex];
     if (marker.trackIndex < 0 ||
         marker.trackIndex >= impl_->trackHeights_.size()) {

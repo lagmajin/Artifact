@@ -237,7 +237,9 @@ void collectProjectItemAssetPaths(const QJsonArray& items,
         if (item.value(QStringLiteral("type")).toString().compare(
                 QStringLiteral("footage"), Qt::CaseInsensitive) == 0) {
             const QString path = item.value(QStringLiteral("filePath")).toString().trimmed();
-            if (!path.isEmpty()) {
+            const bool renderInput = item.value(QStringLiteral("assetUsage")).toString().compare(
+                QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0;
+            if (!path.isEmpty() && !renderInput) {
                 assetPaths.insert(path);
             }
         }
@@ -575,6 +577,8 @@ int projectItemSourceUseCount(ProjectItem* item)
 }
 }
 
+QString projectRenderInputRoleLabel(ProjectRenderInputRole role);
+
 QString projectItemTileBadgeText(ProjectItem* item)
 {
     if (!item) {
@@ -590,6 +594,9 @@ QString projectItemTileBadgeText(ProjectItem* item)
         return QStringLiteral("Solid");
     case eProjectItemType::Footage: {
         const auto* footage = static_cast<FootageItem*>(item);
+        if (footage && footage->assetUsage == ProjectAssetUsage::RenderInput) {
+            return projectRenderInputRoleLabel(footage->renderInputRole);
+        }
         const QFileInfo info(footage ? footage->filePath : QString());
         bool missing = !info.exists();
         if (footage && footage->isSequence) {
@@ -904,6 +911,32 @@ QString projectItemTypeLabel(eProjectItemType type)
         return QStringLiteral("Solid");
     default:
         return QStringLiteral("Item");
+    }
+}
+
+QString projectRenderInputRoleLabel(const ProjectRenderInputRole role)
+{
+    switch (role) {
+    case ProjectRenderInputRole::AlphaMatte: return QStringLiteral("Alpha Matte");
+    case ProjectRenderInputRole::LumaMatte: return QStringLiteral("Luma Matte");
+    case ProjectRenderInputRole::DisplacementMap: return QStringLiteral("Displacement");
+    case ProjectRenderInputRole::DepthMap: return QStringLiteral("Depth");
+    case ProjectRenderInputRole::NormalMap: return QStringLiteral("Normal");
+    case ProjectRenderInputRole::Texture: return QStringLiteral("Texture");
+    default: return QStringLiteral("Render Input");
+    }
+}
+
+QString projectRenderInputRoleKey(const ProjectRenderInputRole role)
+{
+    switch (role) {
+    case ProjectRenderInputRole::AlphaMatte: return QStringLiteral("alphaMatte");
+    case ProjectRenderInputRole::LumaMatte: return QStringLiteral("lumaMatte");
+    case ProjectRenderInputRole::DisplacementMap: return QStringLiteral("displacementMap");
+    case ProjectRenderInputRole::DepthMap: return QStringLiteral("depthMap");
+    case ProjectRenderInputRole::NormalMap: return QStringLiteral("normalMap");
+    case ProjectRenderInputRole::Texture: return QStringLiteral("texture");
+    default: return QStringLiteral("generic");
     }
 }
 
@@ -1288,6 +1321,12 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         QFileInfo info(path);
         const bool exists = info.exists();
         lines << QStringLiteral("Type: %1").arg(projectItemFootageKindLabel(path));
+        if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
+            lines << QStringLiteral("Usage: Input Source • %1")
+                         .arg(projectRenderInputRoleLabel(footage->renderInputRole));
+        } else {
+            lines << QStringLiteral("Usage: Production Source");
+        }
         if (exists) {
             lines << QStringLiteral("Status: Ready");
             lines << QStringLiteral("File Size: %1 KB").arg(info.size() / 1024);
@@ -1769,7 +1808,8 @@ public:
         if (item && item->type() == eProjectItemType::Footage) {
             const auto* footage = static_cast<const FootageItem*>(item);
             const QString path = QDir::cleanPath(footage->filePath);
-            const bool unused = unusedAssetPaths_.contains(path);
+            const bool renderInput = footage->assetUsage == ProjectAssetUsage::RenderInput;
+            const bool unused = !renderInput && unusedAssetPaths_.contains(path);
             bool missing = !QFileInfo(path).exists();
             if (footage->isSequence) {
                 for (const QString& sequencePath : footage->sequencePaths) {
@@ -1779,7 +1819,8 @@ public:
                     }
                 }
             }
-            if (role == Qt::DisplayRole && index.column() == 0 && (unused || missing)) {
+            if (role == Qt::DisplayRole && index.column() == 0 &&
+                (unused || missing || renderInput)) {
                 QString text = QSortFilterProxyModel::data(index, role).toString();
                 if (missing && !text.startsWith(QStringLiteral("[Missing] "))) {
                     text = QStringLiteral("[Missing] %1").arg(text);
@@ -1787,11 +1828,16 @@ public:
                 if (unused && !text.contains(QStringLiteral("[Unused] "))) {
                     text = QStringLiteral("[Unused] %1").arg(text);
                 }
+                if (renderInput && !text.contains(QStringLiteral("[Input: "))) {
+                    text = QStringLiteral("[Input: %1] %2")
+                               .arg(projectRenderInputRoleLabel(footage->renderInputRole), text);
+                }
                 return text;
             }
             if (role == Qt::ForegroundRole) {
                 if (missing) return QColor(220, 105, 105);
                 if (unused) return QColor(150, 150, 60);
+                if (renderInput) return QColor(79, 196, 214);
             }
         }
         return QSortFilterProxyModel::data(index, role);
@@ -1944,7 +1990,7 @@ private:
         }
     }
 
-    bool typeMatches(const eProjectItemType itemType) const {
+    bool typeMatches(const eProjectItemType itemType, const ProjectItem* item) const {
         if (typeFilter_.isEmpty() || typeFilter_ == "all") {
             return true;
         }
@@ -1966,15 +2012,25 @@ private:
             } else if (normalizedType == QStringLiteral("solid")) {
                 recognizedType = true;
                 if (itemType == eProjectItemType::Solid) return true;
+            } else if (normalizedType == QStringLiteral("input source") ||
+                       normalizedType == QStringLiteral("input") ||
+                       normalizedType == QStringLiteral("renderinput")) {
+                recognizedType = true;
+                if (itemType == eProjectItemType::Footage && item) {
+                    const auto* footage = static_cast<const FootageItem*>(item);
+                    if (footage->assetUsage == ProjectAssetUsage::RenderInput) return true;
+                }
             }
         }
         return !recognizedType;
     }
 
     bool matchesAdvanced(const QModelIndex& idx0, const eProjectItemType itemType, ProjectItem* item) const {
-        if (!typeMatches(itemType)) return false;
+        if (!typeMatches(itemType, item)) return false;
 
-        if (usedOnly_ && (!item || projectItemUsageCount(item) <= 0)) {
+        const bool classifiedRenderInput = item && itemType == eProjectItemType::Footage &&
+            static_cast<const FootageItem*>(item)->assetUsage == ProjectAssetUsage::RenderInput;
+        if (usedOnly_ && (!item || (!classifiedRenderInput && projectItemUsageCount(item) <= 0))) {
             return false;
         }
 
@@ -1988,6 +2044,13 @@ private:
             const QString path = footage->filePath;
             const QString normalizedPath = QDir::cleanPath(path);
             searchBlob += QStringLiteral(" ") + path;
+            if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
+                searchBlob += QStringLiteral(" input source render input ") +
+                    projectRenderInputRoleLabel(footage->renderInputRole);
+            }
+            if (unusedOnly_ && classifiedRenderInput) {
+                return false;
+            }
             if (unusedOnly_ && !unusedAssetPaths_.contains(normalizedPath) &&
                 projectItemUsageCount(item) > 0) {
                 return false;
@@ -3800,6 +3863,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     if (footage->frameRate > 0.0) {
                         obj[QStringLiteral("frameRate")] = footage->frameRate;
                     }
+                    if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
+                        obj[QStringLiteral("assetUsage")] = QStringLiteral("renderInput");
+                        obj[QStringLiteral("renderInputRole")] =
+                            projectRenderInputRoleKey(footage->renderInputRole);
+                    }
                     break;
                 }
                 case eProjectItemType::Solid: {
@@ -4463,6 +4531,49 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             addTrackedAction(QStringLiteral("preview_in_contents_viewer"), QStringLiteral("Preview in Contents Viewer"), [this, idx]() {
                 itemDoubleClicked(idx);
             }, loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
+            if (contextItem && contextItem->type() == eProjectItemType::Footage) {
+                auto* footageItem = static_cast<FootageItem*>(contextItem);
+                addTrackedAction(QStringLiteral("set_input_source_role"),
+                                 QStringLiteral("Set Input Source Role..."),
+                                 [this, footageItem, svc]() {
+                    const QStringList choices{
+                        QStringLiteral("Production Source"),
+                        QStringLiteral("Generic Render Input"),
+                        QStringLiteral("Alpha Matte"),
+                        QStringLiteral("Luma Matte"),
+                        QStringLiteral("Displacement Map"),
+                        QStringLiteral("Depth Map"),
+                        QStringLiteral("Normal Map"),
+                        QStringLiteral("Texture")};
+                    int currentIndex = 0;
+                    if (footageItem->assetUsage == ProjectAssetUsage::RenderInput) {
+                        currentIndex = static_cast<int>(footageItem->renderInputRole) + 1;
+                    }
+                    bool accepted = false;
+                    const QString choice = QInputDialog::getItem(
+                        this, QStringLiteral("Input Source Role"),
+                        QStringLiteral("Use this project asset as:"), choices,
+                        std::clamp(currentIndex, 0, static_cast<int>(choices.size()) - 1),
+                        false, &accepted);
+                    if (!accepted) return;
+                    const int selectedIndex = choices.indexOf(choice);
+                    if (selectedIndex <= 0) {
+                        footageItem->assetUsage = ProjectAssetUsage::Production;
+                        footageItem->renderInputRole = ProjectRenderInputRole::Generic;
+                    } else {
+                        footageItem->assetUsage = ProjectAssetUsage::RenderInput;
+                        footageItem->renderInputRole =
+                            static_cast<ProjectRenderInputRole>(selectedIndex - 1);
+                    }
+                    if (svc) {
+                        if (auto project = svc->getCurrentProjectSharedPtr()) {
+                            project->setDirty(true);
+                            project->projectChanged();
+                        }
+                    }
+                    refreshVisibleContent();
+                }, loadProjectViewIcon(QStringLiteral("Studio/link.svg")));
+            }
             const bool isPsd = QFileInfo(footagePath).suffix().compare(
                 QStringLiteral("psd"), Qt::CaseInsensitive) == 0;
             if (isPsd) {
@@ -7340,7 +7451,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->typeFilterBox->setAccessibleName(QStringLiteral("Project item type filter"));
     impl_->typeFilterBox->setAccessibleDescription(
         QStringLiteral("Limit the project view to a selected item type."));
-    impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
+    impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage"
+                                                 << "Input Source" << "Folder" << "Solid");
     impl_->viewModeBox = new QComboBox(filterBarHost);
     impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
     impl_->viewModeBox->setAccessibleName(QStringLiteral("Project view mode"));

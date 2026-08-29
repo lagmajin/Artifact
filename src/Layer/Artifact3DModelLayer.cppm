@@ -425,7 +425,7 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     const int geometry = obj.value("fixedGeometry").toInt(
         static_cast<int>(FixedGeometry3D::Auto));
     if (geometry >= static_cast<int>(FixedGeometry3D::Auto) &&
-        geometry <= static_cast<int>(FixedGeometry3D::Cone)) {
+        geometry <= static_cast<int>(FixedGeometry3D::Pyramid)) {
       if (geometry == static_cast<int>(FixedGeometry3D::Auto) &&
           sourcePath.isEmpty()) {
         // Reusing a layer instance for source-less JSON must not retain the
@@ -892,11 +892,284 @@ void Artifact3DLayer::createFixedGeometryMesh(FixedGeometry3D geometry)
   case FixedGeometry3D::Cone:
     createConeMesh();
     break;
+  case FixedGeometry3D::Torus:
+    createTorusMesh();
+    break;
+  case FixedGeometry3D::Capsule:
+    createCapsuleMesh();
+    break;
+  case FixedGeometry3D::Pyramid:
+    createPyramidMesh();
+    break;
   case FixedGeometry3D::Auto:
   default:
     createCubeMesh();
     break;
   }
+}
+
+void Artifact3DLayer::createTorusMesh()
+{
+  const int kSegments = std::clamp(impl_->geometrySegments_, 3, 128);
+  const int kRings = std::clamp(impl_->geometryRings_, 2, 128);
+  const float majorRadiusX = std::max(0.01f, impl_->geometryWidth_ * 0.5f);
+  const float majorRadiusY = std::max(0.01f, impl_->geometryHeight_ * 0.5f);
+  const float tubeRadius = std::max(0.01f, impl_->geometryDepth_ * 0.25f);
+
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+  positions.reserve((kRings + 1) * (kSegments + 1));
+  normals.reserve((kRings + 1) * (kSegments + 1));
+  uvs.reserve((kRings + 1) * (kSegments + 1));
+
+  for (int ring = 0; ring <= kRings; ++ring) {
+    const float v = static_cast<float>(ring) / static_cast<float>(kRings);
+    const float phi = static_cast<float>(M_PI * 2.0) * v;
+    const float cosPhi = std::cos(phi);
+    const float sinPhi = std::sin(phi);
+    for (int segment = 0; segment <= kSegments; ++segment) {
+      const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+      const float theta = static_cast<float>(M_PI * 2.0) * u;
+      const float cosTheta = std::cos(theta);
+      const float sinTheta = std::sin(theta);
+
+      const float centerX = cosPhi * majorRadiusX;
+      const float centerY = sinPhi * majorRadiusY;
+      const float positionX = (majorRadiusX + tubeRadius * cosTheta) * cosPhi;
+      const float positionY = (majorRadiusY + tubeRadius * cosTheta) * sinPhi;
+      const float positionZ = tubeRadius * sinTheta;
+      positions.push_back(QVector3D(positionX, positionY, positionZ));
+
+      const QVector3D outward(centerX, centerY, 0.0f);
+      const QVector3D up(0.0f, 0.0f, 1.0f);
+      const QVector3D tubeNormal = cosTheta * outward.normalized()
+          + sinTheta * up;
+      normals.push_back(tubeNormal.normalized());
+      uvs.push_back(QVector2D(u, v));
+    }
+  }
+
+  impl_->mesh_.setVertexCount(positions.size());
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  positionAttr->data() = positions;
+  normalAttr->data() = normals;
+  uvAttr->data() = uvs;
+
+  const int stride = kSegments + 1;
+  for (int ring = 0; ring < kRings; ++ring) {
+    for (int segment = 0; segment < kSegments; ++segment) {
+      const int a = ring * stride + segment;
+      const int b = a + 1;
+      const int c = a + stride;
+      const int d = c + 1;
+      impl_->mesh_.addPolygon({a, c, d, b});
+    }
+  }
+}
+
+void Artifact3DLayer::createCapsuleMesh()
+{
+  const int kSegments = std::clamp(impl_->geometrySegments_, 3, 128);
+  const float kRadiusX = std::max(0.01f, impl_->geometryWidth_ * 0.5f);
+  const float kRadiusZ = std::max(0.01f, impl_->geometryDepth_ * 0.5f);
+  const float kTotalHeight = std::max(2.01f, impl_->geometryHeight_);
+  const float kCylinderHalfHeight =
+      std::max(0.0f, (kTotalHeight * 0.5f) - kRadiusX);
+  const float kMaxRing = std::max(2, std::min(32, kSegments));
+
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+
+  auto appendVertex = [&](const QVector3D& position,
+                          const QVector3D& normal,
+                          const QVector2D& uv) {
+    positions.push_back(position);
+    normals.push_back(normal);
+    uvs.push_back(uv);
+    return positions.size() - 1;
+  };
+
+  QVector<int> bottomRing;
+  QVector<int> topRing;
+  bottomRing.reserve(kSegments);
+  topRing.reserve(kSegments);
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kRadiusX;
+    const float z = std::sin(theta) * kRadiusZ;
+    const QVector3D sideNormal = QVector3D(
+        kRadiusZ > 0.0f ? x / kRadiusZ : x,
+        0.0f,
+        kRadiusX > 0.0f ? z / kRadiusX : z).normalized();
+    bottomRing.push_back(
+        appendVertex(QVector3D(x, -kCylinderHalfHeight, z), sideNormal,
+                     QVector2D(u, 1.0f)));
+    topRing.push_back(
+        appendVertex(QVector3D(x, kCylinderHalfHeight, z), sideNormal,
+                     QVector2D(u, 0.0f)));
+  }
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const int next = (segment + 1) % kSegments;
+    const int b0 = bottomRing[segment];
+    const int b1 = bottomRing[next];
+    const int t0 = topRing[segment];
+    const int t1 = topRing[next];
+    impl_->mesh_.addPolygon({b0, t0, t1, b1});
+  }
+
+  const auto buildHemisphere =
+      [&](float sign, const QVector<int>& baseRing) {
+        QVector<QVector<int>> rings;
+        rings.reserve(kMaxRing + 1);
+        rings.push_back(baseRing);
+        for (int ring = 1; ring <= kMaxRing; ++ring) {
+          const float t = static_cast<float>(ring) / static_cast<float>(kMaxRing);
+          const float phi = (M_PI * 0.5f) * t;
+          const float yOffset = sign * kRadiusX * std::cos(phi);
+          const float ringRadius = std::sin(phi);
+          QVector<int> ringIndices;
+          ringIndices.reserve(kSegments);
+          for (int segment = 0; segment < kSegments; ++segment) {
+            const float u = static_cast<float>(segment) /
+                static_cast<float>(kSegments);
+            const float theta = static_cast<float>(M_PI * 2.0) * u;
+            const float x = std::cos(theta) * kRadiusX * ringRadius;
+            const float z = std::sin(theta) * kRadiusZ * ringRadius;
+            const QVector3D normal = QVector3D(
+                kRadiusZ > 0.0f ? x / kRadiusZ : x,
+                sign * std::cos(phi),
+                kRadiusX > 0.0f ? z / kRadiusX : z).normalized();
+            ringIndices.push_back(appendVertex(
+                QVector3D(x, yOffset, z), normal, QVector2D(u, 0.5f - 0.5f * sign * t)));
+          }
+          rings.push_back(ringIndices);
+        }
+        const int poleIndex = appendVertex(
+            QVector3D(0.0f, sign * kCylinderHalfHeight + sign * kRadiusX,
+                      0.0f),
+            QVector3D(0.0f, sign, 0.0f),
+            QVector2D(0.5f, sign > 0.0f ? 0.0f : 1.0f));
+        for (int ring = 0; ring < kMaxRing; ++ring) {
+          const auto& current = rings[ring];
+          const auto& next = rings[ring + 1];
+          for (int segment = 0; segment < kSegments; ++segment) {
+            const int nextSegment = (segment + 1) % kSegments;
+            const int a = current[segment];
+            const int b = current[nextSegment];
+            const int c = next[segment];
+            const int d = next[nextSegment];
+            if (ring + 1 == kMaxRing) {
+              impl_->mesh_.addPolygon({a, c, poleIndex});
+              impl_->mesh_.addPolygon({c, d, poleIndex});
+            } else {
+              impl_->mesh_.addPolygon({a, c, d, b});
+            }
+          }
+        }
+      };
+
+  buildHemisphere(-1.0f, bottomRing);
+  buildHemisphere(1.0f, topRing);
+
+  impl_->mesh_.setVertexCount(positions.size());
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  positionAttr->data() = positions;
+  normalAttr->data() = normals;
+  uvAttr->data() = uvs;
+}
+
+void Artifact3DLayer::createPyramidMesh()
+{
+  const int kSides = std::clamp(impl_->geometrySegments_, 3, 128);
+  const float kHalfWidth = std::max(0.01f, impl_->geometryWidth_ * 0.5f);
+  const float kHalfDepth = std::max(0.01f, impl_->geometryDepth_ * 0.5f);
+  const float kHalfHeight = std::max(0.01f, impl_->geometryHeight_ * 0.5f);
+
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+
+  auto appendVertex = [&](const QVector3D& position,
+                          const QVector3D& normal,
+                          const QVector2D& uv) {
+    positions.push_back(position);
+    normals.push_back(normal);
+    uvs.push_back(uv);
+    return positions.size() - 1;
+  };
+
+  const QVector3D apex(0.0f, kHalfHeight, 0.0f);
+  QVector<int> baseRing;
+  baseRing.reserve(kSides);
+
+  for (int side = 0; side < kSides; ++side) {
+    const float u = static_cast<float>(side) / static_cast<float>(kSides);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kHalfWidth;
+    const float z = std::sin(theta) * kHalfDepth;
+    baseRing.push_back(appendVertex(QVector3D(x, -kHalfHeight, z),
+                                    QVector3D(0.0f, -1.0f, 0.0f),
+                                    QVector2D(u, 1.0f)));
+  }
+
+  for (int side = 0; side < kSides; ++side) {
+    const int next = (side + 1) % kSides;
+    const float midU = (static_cast<float>(side) + 0.5f) /
+        static_cast<float>(kSides);
+    const QVector3D midBase = (positions[baseRing[side]]
+        + positions[baseRing[next]]) * 0.5f;
+    const QVector3D slope = apex - midBase;
+    const QVector3D tangent = positions[baseRing[next]]
+        - positions[baseRing[side]];
+    QVector3D sideNormal = QVector3D::crossProduct(tangent, slope);
+    if (sideNormal.lengthSquared() <= 1.0e-10f) {
+      sideNormal = QVector3D(midBase.x(), 0.0f, midBase.z()).normalized();
+    } else {
+      sideNormal.normalize();
+    }
+    const int apexIndex = appendVertex(apex, sideNormal, QVector2D(midU, 0.0f));
+    impl_->mesh_.addPolygon({baseRing[side], apexIndex, baseRing[next]});
+  }
+
+  QVector<int> baseCap;
+  baseCap.reserve(kSides);
+  for (int side = 0; side < kSides; ++side) {
+    const float u = static_cast<float>(side) / static_cast<float>(kSides);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kHalfWidth;
+    const float z = std::sin(theta) * kHalfDepth;
+    baseCap.push_back(appendVertex(
+        QVector3D(x, -kHalfHeight, z), QVector3D(0.0f, -1.0f, 0.0f),
+        QVector2D(kHalfWidth > 0.0f ? x / (kHalfWidth * 2.0f) + 0.5f : 0.5f,
+                  kHalfDepth > 0.0f ? z / (kHalfDepth * 2.0f) + 0.5f : 0.5f)));
+  }
+  const int baseCenter = appendVertex(
+      QVector3D(0.0f, -kHalfHeight, 0.0f), QVector3D(0.0f, -1.0f, 0.0f),
+      QVector2D(0.5f, 0.5f));
+  for (int side = 0; side < kSides; ++side) {
+    const int next = (side + 1) % kSides;
+    impl_->mesh_.addPolygon({baseCenter, baseCap[next], baseCap[side]});
+  }
+
+  impl_->mesh_.setVertexCount(positions.size());
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  positionAttr->data() = positions;
+  normalAttr->data() = normals;
+  uvAttr->data() = uvs;
 }
 
 void Artifact3DLayer::updateSourceSizeFromMesh() {
@@ -1400,8 +1673,8 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   geometryTypeProp->setDisplayLabel(QStringLiteral("Primitive Type"));
   geometryTypeProp->setTooltip(
       fixedGeometry() == FixedGeometry3D::Auto
-          ? QStringLiteral("0=Imported Model, 1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone")
-          : QStringLiteral("1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone"));
+          ? QStringLiteral("0=Imported Model, 1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone, 6=Torus, 7=Capsule, 8=Pyramid")
+          : QStringLiteral("1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone, 6=Torus, 7=Capsule, 8=Pyramid"));
   geometryGroup.addProperty(geometryTypeProp);
 
   const FixedGeometry3D geometry = fixedGeometry();
@@ -1431,7 +1704,10 @@ Artifact3DLayer::getLayerPropertyGroups() const {
 
     if (geometry == FixedGeometry3D::Sphere ||
         geometry == FixedGeometry3D::Cylinder ||
-        geometry == FixedGeometry3D::Cone) {
+        geometry == FixedGeometry3D::Cone ||
+        geometry == FixedGeometry3D::Torus ||
+        geometry == FixedGeometry3D::Capsule ||
+        geometry == FixedGeometry3D::Pyramid) {
       auto geometrySegmentsProp = persistentLayerProperty(
           QStringLiteral("geometry.segments"), PropertyType::Integer,
           impl_->geometrySegments_, -56);
@@ -1440,7 +1716,8 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       geometryGroup.addProperty(geometrySegmentsProp);
     }
 
-    if (geometry == FixedGeometry3D::Sphere) {
+    if (geometry == FixedGeometry3D::Sphere ||
+        geometry == FixedGeometry3D::Torus) {
       auto geometryRingsProp = persistentLayerProperty(
           QStringLiteral("geometry.rings"), PropertyType::Integer,
           impl_->geometryRings_, -55);
@@ -1730,7 +2007,7 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
   if (propertyPath == QStringLiteral("geometry.type")) {
     int geometryInt = value.toInt();
     if (geometryInt >= static_cast<int>(FixedGeometry3D::Auto) &&
-        geometryInt <= static_cast<int>(FixedGeometry3D::Cone)) {
+        geometryInt <= static_cast<int>(FixedGeometry3D::Pyramid)) {
       setFixedGeometry(static_cast<FixedGeometry3D>(geometryInt));
       return true;
     }

@@ -4,6 +4,7 @@ module;
 #include <utility>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QString>
 
 export module Artifact.Layer.Matte;
 
@@ -40,6 +41,7 @@ export namespace Artifact {
     struct LayerMatteReference {
         ArtifactCore::Id id;               // マット自体のユニークID (UI操作用)
         ArtifactCore::Id sourceLayerId;    // 参照するレイヤーのID (AEのトラックマット)
+        QString sourceAssetPath;           // Project Input Source の明示的な互換パス
         bool enabled = true;
         MatteType type = MatteType::Alpha;
         MatteBlendMode blendMode = MatteBlendMode::Add;
@@ -55,6 +57,7 @@ export namespace Artifact {
             QJsonObject obj;
             obj["id"] = id.toString();
             obj["sourceLayerId"] = sourceLayerId.toString();
+            if (!sourceAssetPath.isEmpty()) obj["sourceAssetPath"] = sourceAssetPath;
             obj["enabled"] = enabled;
             obj["type"] = static_cast<int>(type);
             obj["blendMode"] = static_cast<int>(blendMode);
@@ -82,6 +85,7 @@ export namespace Artifact {
             } else {
                 sourceLayerId = ArtifactCore::Id();
             }
+            sourceAssetPath = obj["sourceAssetPath"].toString().trimmed();
             enabled = obj["enabled"].toBool(true);
             const auto validEnumValue = [](const QJsonValue& value,
                                            int count, int fallback) {

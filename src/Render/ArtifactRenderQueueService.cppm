@@ -132,6 +132,39 @@ namespace Artifact
     static QString deriveContainerFromJob(const ArtifactRenderJob& job);
 
     namespace {
+        FootageItem* findProjectRenderInput(const ArtifactCore::Id& projectItemId) {
+            if (projectItemId.isNil()) return {};
+            auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+            if (!project) return {};
+            FootageItem* matched = nullptr;
+            std::function<void(ProjectItem*)> find = [&](ProjectItem* item) {
+                if (!item || matched) return;
+                if (item->id == projectItemId && item->type() == eProjectItemType::Footage) {
+                    auto* footage = static_cast<FootageItem*>(item);
+                    if (footage->assetUsage == ProjectAssetUsage::RenderInput) matched = footage;
+                    return;
+                }
+                for (auto* child : item->children) find(child);
+            };
+            for (auto* root : project->projectItems()) find(root);
+            return matched;
+        }
+
+        QImage resolveProjectRenderInputImage(const ArtifactCore::Id& projectItemId,
+                                              const std::int64_t frameNumber) {
+            FootageItem* matched = findProjectRenderInput(projectItemId);
+            if (!matched) return {};
+            QString path = matched->filePath;
+            if (matched->isSequence && !matched->sequencePaths.isEmpty()) {
+                const auto count = static_cast<std::int64_t>(matched->sequencePaths.size());
+                const auto index = static_cast<int>(((frameNumber % count) + count) % count);
+                path = matched->sequencePaths.at(index);
+            }
+            ArtifactCore::ImageF32x4_RGBA decoded;
+            if (path.trimmed().isEmpty() || !decoded.load(path)) return {};
+            return decoded.toQImage();
+        }
+
         struct EffectiveRenderFrameRange {
             int startFrame = 0;
             int endFrame = 100;
@@ -556,7 +589,10 @@ namespace Artifact
                     }
 
                     const QString sourceId = ref.sourceLayerId.toString();
-                    if (!layerMap.contains(sourceId)) {
+                    if (!layerMap.contains(sourceId) &&
+                        !findProjectRenderInput(ref.sourceLayerId) &&
+                        (ref.sourceAssetPath.isEmpty() ||
+                         !QFileInfo::exists(ref.sourceAssetPath))) {
                         result.addDiagnostic(makePreflightDiagnostic(
                             ArtifactCore::DiagnosticSeverity::Error,
                             ArtifactCore::DiagnosticCategory::Matte,
@@ -4346,6 +4382,12 @@ namespace Artifact
                         if (!source.isNull()) {
                             softwareMatteSources.insert(matteRef.sourceLayerId, source);
                         }
+                    } else {
+                        const QImage source = resolveProjectRenderInputImage(
+                            matteRef.sourceLayerId, frameNumber);
+                        if (!source.isNull()) {
+                            softwareMatteSources.insert(matteRef.sourceLayerId, source);
+                        }
                     }
                 }
             }
@@ -4575,6 +4617,12 @@ namespace Artifact
                         }
                         sourceLayer->goToFrame(job.startFrame);
                         const QImage source = renderLayerSurface(sourceLayer);
+                        if (!source.isNull()) {
+                            matteSourceImages.insert(matteRef.sourceLayerId, source);
+                        }
+                    } else {
+                        const QImage source = resolveProjectRenderInputImage(
+                            matteRef.sourceLayerId, job.startFrame);
                         if (!source.isNull()) {
                             matteSourceImages.insert(matteRef.sourceLayerId, source);
                         }
@@ -6571,6 +6619,12 @@ namespace Artifact
                         }
                         sourceLayer->goToFrame(snap.frameNumber);
                         const QImage source = renderLayerSurface(sourceLayer);
+                        if (!source.isNull()) {
+                            matteSourceImages.insert(matteRef.sourceLayerId, source);
+                        }
+                    } else {
+                        const QImage source = resolveProjectRenderInputImage(
+                            matteRef.sourceLayerId, snap.frameNumber);
                         if (!source.isNull()) {
                             matteSourceImages.insert(matteRef.sourceLayerId, source);
                         }

@@ -8,6 +8,7 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
+#include <QUuid>
 #include <QVector>
 #include <QVariant>
 #include <vector>
@@ -181,8 +182,14 @@ export namespace Artifact {
   bool valid = false;
  };
 
+ // A transition is an addressable timeline object, not a layer.  Keeping it
+ // value-semantic lets existing composition snapshots remain cheap while the
+ // stable id gives the UI/undo layer an independent editing target.
  struct CompositionTimelineTransition {
+  QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  QString name = QStringLiteral("Transition");
   QString kind = QStringLiteral("Crossfade");
+  QString easing = QStringLiteral("Linear");
   QString leftClipName;
   QString rightClipName;
   FrameRange range = FrameRange::zero();
@@ -312,6 +319,16 @@ export namespace Artifact {
       const QVector<CompositionAudioReactiveBinding>& bindings);
   void addTimelineTransition(const CompositionTimelineTransition& transition);
   QVector<CompositionTimelineTransition> timelineTransitions() const;
+  void setTimelineTransitions(const QVector<CompositionTimelineTransition>& transitions);
+  std::optional<CompositionTimelineTransition> timelineTransitionById(const QString& transitionId) const;
+  bool removeTimelineTransition(const QString& transitionId);
+  bool setTimelineTransitionEnabled(const QString& transitionId, bool enabled);
+  bool setTimelineTransitionRange(const QString& transitionId, const FrameRange& range);
+  bool setTimelineTransitionName(const QString& transitionId, const QString& name);
+  bool setTimelineTransitionKind(const QString& transitionId, const QString& kind);
+  bool setTimelineTransitionEasing(const QString& transitionId, const QString& easing);
+  bool duplicateTimelineTransition(const QString& transitionId,
+                                   CompositionTimelineTransition* outDuplicate = nullptr);
   bool timelineTransitionAtFrame(qint64 frame,
                                  CompositionTimelineTransition* outTransition = nullptr) const;
   double timelineTransitionProgressAtFrame(

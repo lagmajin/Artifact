@@ -71,6 +71,7 @@ import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
+import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
 
@@ -804,6 +805,90 @@ QString collisionPairKey(const ArtifactAbstractLayerPtr& a,
                     : QStringLiteral("%1|%2").arg(idB, idA);
 }
 
+QJsonObject serializeModulationRouter(
+    const Audio::Modulation::ModulationRouter& router) {
+  QJsonObject result;
+  QJsonArray sources;
+  for (const auto& source : router.sourceDefinitions()) {
+    QJsonObject object;
+    object[QStringLiteral("id")] = static_cast<double>(source.id);
+    object[QStringLiteral("type")] = static_cast<int>(source.type);
+    object[QStringLiteral("waveform")] = static_cast<int>(source.waveform);
+    object[QStringLiteral("frequency")] = source.frequency;
+    object[QStringLiteral("phaseOffset")] = source.phaseOffset;
+    object[QStringLiteral("pulseWidth")] = source.pulseWidth;
+    object[QStringLiteral("attack")] = source.attack;
+    object[QStringLiteral("decay")] = source.decay;
+    object[QStringLiteral("sustain")] = source.sustain;
+    object[QStringLiteral("release")] = source.release;
+    object[QStringLiteral("rate")] = source.rate;
+    object[QStringLiteral("smoothing")] = source.smoothing;
+    object[QStringLiteral("seed")] = static_cast<double>(source.seed);
+    object[QStringLiteral("macroValue")] = source.macroValue;
+    object[QStringLiteral("unipolar")] = source.unipolar;
+    sources.append(object);
+  }
+  QJsonArray assignments;
+  for (const auto& assignment : router.assignments()) {
+    if (assignment.sourceId == 0 || assignment.targetPath.empty()) continue;
+    QJsonObject object;
+    object[QStringLiteral("sourceId")] = static_cast<double>(assignment.sourceId);
+    object[QStringLiteral("targetPath")] = QString::fromStdString(assignment.targetPath);
+    object[QStringLiteral("depth")] = assignment.depth;
+    object[QStringLiteral("enabled")] = assignment.enabled;
+    object[QStringLiteral("mode")] = static_cast<int>(assignment.mode);
+    assignments.append(object);
+  }
+  if (!sources.isEmpty()) result[QStringLiteral("sources")] = sources;
+  if (!assignments.isEmpty()) result[QStringLiteral("assignments")] = assignments;
+  return result;
+}
+
+void restoreModulationRouter(const QJsonObject& object,
+                             Audio::Modulation::ModulationRouter& router) {
+  std::vector<Audio::Modulation::ModulationSourceDefinition> sources;
+  for (const auto& value : object.value(QStringLiteral("sources")).toArray()) {
+    if (!value.isObject()) continue;
+    const QJsonObject item = value.toObject();
+    const int type = item.value(QStringLiteral("type")).toInt(-1);
+    if (type < 0 || type > 3) continue;
+    Audio::Modulation::ModulationSourceDefinition source;
+    source.id = static_cast<std::uint32_t>(item.value(QStringLiteral("id")).toVariant().toUInt());
+    source.type = static_cast<Audio::Modulation::ModulatorSourceType>(type);
+    source.waveform = static_cast<Audio::Modulation::LfoWaveform>(
+        std::clamp(item.value(QStringLiteral("waveform")).toInt(0), 0, 4));
+    source.frequency = static_cast<float>(item.value(QStringLiteral("frequency")).toDouble(1.0));
+    source.phaseOffset = static_cast<float>(item.value(QStringLiteral("phaseOffset")).toDouble(0.0));
+    source.pulseWidth = static_cast<float>(item.value(QStringLiteral("pulseWidth")).toDouble(0.5));
+    source.attack = static_cast<float>(item.value(QStringLiteral("attack")).toDouble(0.01));
+    source.decay = static_cast<float>(item.value(QStringLiteral("decay")).toDouble(0.1));
+    source.sustain = static_cast<float>(item.value(QStringLiteral("sustain")).toDouble(0.7));
+    source.release = static_cast<float>(item.value(QStringLiteral("release")).toDouble(0.2));
+    source.rate = static_cast<float>(item.value(QStringLiteral("rate")).toDouble(1.0));
+    source.smoothing = static_cast<float>(item.value(QStringLiteral("smoothing")).toDouble(0.005));
+    source.seed = static_cast<std::uint32_t>(item.value(QStringLiteral("seed")).toVariant().toUInt());
+    source.macroValue = static_cast<float>(item.value(QStringLiteral("macroValue")).toDouble(0.0));
+    source.unipolar = item.value(QStringLiteral("unipolar")).toBool(false);
+    sources.push_back(source);
+  }
+  router.clearAssignments();
+  router.restoreSources(sources);
+  for (const auto& value : object.value(QStringLiteral("assignments")).toArray()) {
+    if (!value.isObject()) continue;
+    const QJsonObject item = value.toObject();
+    const auto sourceId = static_cast<std::uint32_t>(item.value(QStringLiteral("sourceId")).toVariant().toUInt());
+    const QString targetPath = item.value(QStringLiteral("targetPath")).toString().trimmed();
+    const int mode = item.value(QStringLiteral("mode")).toInt(0);
+    if (sourceId == 0 || targetPath.isEmpty() || mode < 0 || mode > 1) continue;
+    auto assignment = Audio::Modulation::ModulationAssignment::forPropertyPath(
+        sourceId, targetPath.toStdString(),
+        static_cast<float>(item.value(QStringLiteral("depth")).toDouble(1.0)),
+        static_cast<Audio::Modulation::ModulationMixMode>(mode));
+    assignment.enabled = item.value(QStringLiteral("enabled")).toBool(true);
+    router.addAssignment(assignment);
+  }
+}
+
 QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
 {
   QJsonObject eobj;
@@ -879,6 +964,10 @@ QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
     propsArr.append(pobj);
   }
   eobj["properties"] = propsArr;
+  const QJsonObject modulation = serializeModulationRouter(effect->modulationRouter());
+  if (!modulation.isEmpty()) {
+    eobj[QStringLiteral("modulation")] = modulation;
+  }
   return eobj;
 }
 
@@ -986,6 +1075,10 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
       surfaceFx && eobj.value(QStringLiteral("surfaceFX")).isObject()) {
     surfaceFx->setData(ArtifactCore::SurfaceFXData::fromJson(
         eobj.value(QStringLiteral("surfaceFX")).toObject()));
+  }
+  if (eobj.value(QStringLiteral("modulation")).isObject()) {
+    restoreModulationRouter(eobj.value(QStringLiteral("modulation")).toObject(),
+                            effect->modulationRouter());
   }
   return effect;
 }
@@ -2659,7 +2752,10 @@ QJsonObject CompositionAudioReactiveBinding::toJson() const
 QJsonObject CompositionTimelineTransition::toJson() const
 {
     QJsonObject object;
+    object.insert(QStringLiteral("id"), id);
+    object.insert(QStringLiteral("name"), name);
     object.insert(QStringLiteral("kind"), kind);
+    object.insert(QStringLiteral("easing"), easing);
     object.insert(QStringLiteral("leftClipName"), leftClipName);
     object.insert(QStringLiteral("rightClipName"), rightClipName);
     object.insert(QStringLiteral("range"), range.toJson());
@@ -2671,6 +2767,14 @@ CompositionTimelineTransition CompositionTimelineTransition::fromJson(
     const QJsonObject& object)
 {
     CompositionTimelineTransition transition;
+    transition.id = object.value(QStringLiteral("id")).toString().trimmed();
+    if (transition.id.isEmpty()) {
+        transition.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
+    transition.name = object.value(QStringLiteral("name")).toString(QStringLiteral("Transition")).trimmed();
+    if (transition.name.isEmpty()) transition.name = QStringLiteral("Transition");
+    transition.easing = object.value(QStringLiteral("easing")).toString(QStringLiteral("Linear")).trimmed();
+    if (transition.easing.isEmpty()) transition.easing = QStringLiteral("Linear");
     transition.kind = object.value(QStringLiteral("kind"))
                          .toString(QStringLiteral("Crossfade"));
     transition.leftClipName = object.value(QStringLiteral("leftClipName")).toString();
@@ -4548,12 +4652,22 @@ void ArtifactAbstractComposition::addTimelineTransition(
         return;
     }
     CompositionTimelineTransition normalized = transition;
+    if (normalized.id.trimmed().isEmpty()) {
+        normalized.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
     normalized.kind = normalized.kind.trimmed();
     if (normalized.kind.isEmpty()) {
         normalized.kind = QStringLiteral("Crossfade");
     }
     normalized.leftClipName = normalized.leftClipName.trimmed();
     normalized.rightClipName = normalized.rightClipName.trimmed();
+    for (const auto& existing : impl_->timelineTransitions_) {
+        const bool samePair = existing.leftClipName == normalized.leftClipName &&
+                              existing.rightClipName == normalized.rightClipName;
+        const bool overlaps = existing.range.start().framePosition() < normalized.range.end().framePosition() &&
+                              normalized.range.start().framePosition() < existing.range.end().framePosition();
+        if (samePair && overlaps) return;
+    }
     impl_->timelineTransitions_.append(std::move(normalized));
     Q_EMIT changed();
 }
@@ -4562,6 +4676,159 @@ QVector<CompositionTimelineTransition>
 ArtifactAbstractComposition::timelineTransitions() const
 {
     return impl_->timelineTransitions_;
+}
+
+void ArtifactAbstractComposition::setTimelineTransitions(
+    const QVector<CompositionTimelineTransition>& transitions)
+{
+    QVector<CompositionTimelineTransition> normalized;
+    normalized.reserve(transitions.size());
+    for (const auto& transition : transitions) {
+        if (transition.range.duration() <= 0 ||
+            transition.leftClipName.trimmed().isEmpty() ||
+            transition.rightClipName.trimmed().isEmpty()) continue;
+        auto value = transition;
+        if (value.id.trimmed().isEmpty()) {
+            value.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        }
+        if (value.name.trimmed().isEmpty()) value.name = QStringLiteral("Transition");
+        if (value.kind.trimmed().isEmpty()) value.kind = QStringLiteral("Crossfade");
+        if (value.easing.trimmed().isEmpty()) value.easing = QStringLiteral("Linear");
+        normalized.append(std::move(value));
+    }
+    impl_->timelineTransitions_ = std::move(normalized);
+    Q_EMIT changed();
+}
+
+std::optional<CompositionTimelineTransition>
+ArtifactAbstractComposition::timelineTransitionById(const QString& transitionId) const
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty()) return std::nullopt;
+    for (const auto& transition : impl_->timelineTransitions_) {
+        if (transition.id == normalizedId) return transition;
+    }
+    return std::nullopt;
+}
+
+bool ArtifactAbstractComposition::removeTimelineTransition(const QString& transitionId)
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty()) return false;
+    for (qsizetype index = 0; index < impl_->timelineTransitions_.size(); ++index) {
+        if (impl_->timelineTransitions_[index].id != normalizedId) continue;
+        impl_->timelineTransitions_.removeAt(index);
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::setTimelineTransitionEnabled(
+    const QString& transitionId, bool enabled)
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty()) return false;
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        if (transition.enabled == enabled) return true;
+        transition.enabled = enabled;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::setTimelineTransitionRange(
+    const QString& transitionId, const FrameRange& range)
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty() || range.duration() <= 0) return false;
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        for (const auto& other : impl_->timelineTransitions_) {
+            if (other.id == normalizedId ||
+                other.leftClipName != transition.leftClipName ||
+                other.rightClipName != transition.rightClipName) continue;
+            const bool overlaps = other.range.start().framePosition() < range.end().framePosition() &&
+                                  range.start().framePosition() < other.range.end().framePosition();
+            if (overlaps) return false;
+        }
+        transition.range = range;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::setTimelineTransitionName(
+    const QString& transitionId, const QString& name)
+{
+    const QString normalizedId = transitionId.trimmed();
+    const QString normalizedName = name.trimmed();
+    if (normalizedId.isEmpty() || normalizedName.isEmpty()) return false;
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        if (transition.name == normalizedName) return true;
+        transition.name = normalizedName;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::setTimelineTransitionKind(
+    const QString& transitionId, const QString& kind)
+{
+    const QString normalizedId = transitionId.trimmed();
+    const QString normalizedKind = kind.trimmed();
+    if (normalizedId.isEmpty() || normalizedKind.isEmpty()) return false;
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        if (transition.kind == normalizedKind) return true;
+        transition.kind = normalizedKind;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::setTimelineTransitionEasing(
+    const QString& transitionId, const QString& easing)
+{
+    const QString normalizedId = transitionId.trimmed();
+    const QString normalizedEasing = easing.trimmed();
+    if (normalizedId.isEmpty() || normalizedEasing.isEmpty()) return false;
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        if (transition.easing == normalizedEasing) return true;
+        transition.easing = normalizedEasing;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::duplicateTimelineTransition(
+    const QString& transitionId, CompositionTimelineTransition* outDuplicate)
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty()) return false;
+    for (const auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        CompositionTimelineTransition duplicate = transition;
+        duplicate.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        duplicate.name = transition.name + QStringLiteral(" Copy");
+        const qint64 offset = std::max<qint64>(1, transition.range.duration());
+        duplicate.range = FrameRange(
+            FramePosition(transition.range.start().framePosition() + offset),
+            FramePosition(transition.range.end().framePosition() + offset));
+        impl_->timelineTransitions_.append(duplicate);
+        if (outDuplicate) *outDuplicate = duplicate;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
 }
 
 bool ArtifactAbstractComposition::timelineTransitionAtFrame(
@@ -4585,10 +4852,22 @@ double ArtifactAbstractComposition::timelineTransitionProgressAtFrame(
     if (outTransition) *outTransition = transition;
     const qint64 duration = transition.range.duration();
     if (duration <= 1) return 1.0;
-    return std::clamp(
+    const double linearProgress = std::clamp(
         static_cast<double>(frame - transition.range.start()) /
             static_cast<double>(duration - 1),
         0.0, 1.0);
+    if (transition.easing.compare(QStringLiteral("Ease In"), Qt::CaseInsensitive) == 0) {
+        return linearProgress * linearProgress;
+    }
+    if (transition.easing.compare(QStringLiteral("Ease Out"), Qt::CaseInsensitive) == 0) {
+        return 1.0 - (1.0 - linearProgress) * (1.0 - linearProgress);
+    }
+    if (transition.easing.compare(QStringLiteral("Ease In-Out"), Qt::CaseInsensitive) == 0) {
+        return linearProgress < 0.5
+            ? 2.0 * linearProgress * linearProgress
+            : 1.0 - std::pow(-2.0 * linearProgress + 2.0, 2.0) / 2.0;
+    }
+    return linearProgress;
 }
 
 void ArtifactAbstractComposition::clearTimelineTransitions()

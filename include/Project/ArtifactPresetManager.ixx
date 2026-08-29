@@ -50,8 +50,37 @@ export namespace Artifact {
 
 using namespace ArtifactCore;
 
+enum class ArtifactCreationPresetKind { Composition, Layer };
+enum class ArtifactCreationLayerKind { Solid, Image, Shape, Text };
+enum class ArtifactCreationMaskKind { None, Circle, RoundedRectangle, Ellipse, Polygon };
+
+struct ArtifactCreationPreset {
+    QString id;
+    QString displayName;
+    QString description;
+    ArtifactCreationPresetKind kind = ArtifactCreationPresetKind::Layer;
+    ArtifactCreationLayerKind layerKind = ArtifactCreationLayerKind::Solid;
+    ArtifactCreationMaskKind maskKind = ArtifactCreationMaskKind::None;
+    int width = 1920;
+    int height = 1080;
+    float maskInset = 0.0f;
+    QString backgroundColor = QStringLiteral("#00000000");
+    double frameRate = 30.0;
+    int durationFrames = 300;
+    std::vector<ArtifactCreationPreset> layers;
+    bool hasMask() const noexcept { return maskKind != ArtifactCreationMaskKind::None; }
+};
+
 class ArtifactPresetManager {
 public:
+    // Disconnected creation definitions; these do not mutate editor objects.
+    static std::vector<ArtifactCreationPreset> standardCreationPresets();
+    static std::optional<ArtifactCreationPreset> creationPreset(const QString& id);
+    static QJsonObject creationPresetToJson(const ArtifactCreationPreset& preset);
+    static std::optional<ArtifactCreationPreset> creationPresetFromJson(const QJsonObject& json);
+    static bool isValidCreationPreset(const ArtifactCreationPreset& preset);
+    static std::vector<ArtifactCreationPreset> layerCreationPlan(const ArtifactCreationPreset& preset);
+
     static bool saveEffectPreset(const ArtifactAbstractEffectPtr& effect, const QString& filePath);
     static bool loadEffectPreset(ArtifactAbstractEffectPtr& effect, const QString& filePath);
 

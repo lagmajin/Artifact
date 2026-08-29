@@ -15,6 +15,7 @@ import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Effects.Manager;
 import Utils.Id;
+import Audio.Modulation.Router;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
@@ -71,6 +72,12 @@ export namespace Artifact
    const QString& propertyName, const QVariant& value);
   EffectServiceResult setCompositionEffectProperty(const QString& effectId,
    const QString& propertyName, const QVariant& value);
+  EffectServiceResult setEffectModulationSnapshot(
+   const LayerID& layerId, const QString& effectId,
+   const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& snapshot);
+  EffectServiceResult setCompositionEffectModulationSnapshot(
+   const QString& effectId,
+   const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& snapshot);
 
   // Preset operations
   bool saveEffectPreset(const ArtifactAbstractEffectPtr& effect, const QString& filePath) const;

@@ -405,6 +405,7 @@ void clearRigPoseSlots();
                                                    float expansionDelta);
   bool adjustHoveredMaskOpacity(float opacityDelta);
   bool adjustHoveredMaskOpacityForSelectedLayers(float opacityDelta);
+  bool setHoveredMaskColor(const FloatColor& color);
   bool createTextLayerAtCanvas(const QPointF& canvasPos,
                                const QSizeF& boxSize = QSizeF());
   bool editTextAtViewport(const QPointF& viewportPos);

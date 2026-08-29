@@ -136,7 +136,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
             const QString sourceId = ref.sourceLayerId.toString();
 
             // Check 1: missing source
-            if (!layerMap.contains(sourceId)) {
+            if (!layerMap.contains(sourceId) && ref.sourceAssetPath.isEmpty()) {
                 auto diagnostic = ArtifactCore::ProjectDiagnostic::createMissingMatte(
                     QStringLiteral("Matte source '%1' not found").arg(sourceId),
                     layerId);

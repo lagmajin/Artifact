@@ -66,6 +66,7 @@ import Event.Bus;
 import Animation.Transform3D;
 import Time.Rational;
 import Artifact.Layers.Selection.Manager;
+import Audio.Modulation.Router;
 
 namespace Artifact {
 
@@ -302,6 +303,66 @@ void AnimationLayerStackSnapshotCommand::redo() {
 
 QString AnimationLayerStackSnapshotCommand::label() const {
     return QStringLiteral("Change Animation Layers");
+}
+
+namespace {
+size_t modulationSnapshotBytes(
+    const Audio::Modulation::ModulationRouterSnapshot& snapshot) {
+    size_t bytes = sizeof(snapshot);
+    for (const auto& source : snapshot.sources) bytes += sizeof(source);
+    for (const auto& assignment : snapshot.assignments) {
+        bytes += sizeof(assignment) + assignment.targetPath.size();
+    }
+    return bytes;
+}
+}
+
+EffectModulationSnapshotCommand::EffectModulationSnapshotCommand(
+    ArtifactAbstractEffectPtr effect,
+    Audio::Modulation::ModulationRouterSnapshot before,
+    Audio::Modulation::ModulationRouterSnapshot after, QString label)
+    : effect_(effect), before_(std::move(before)), after_(std::move(after)),
+      label_(std::move(label)) {}
+
+void EffectModulationSnapshotCommand::undo() {
+    if (auto effect = effect_.lock()) effect->modulationRouter().restoreSnapshot(before_);
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+void EffectModulationSnapshotCommand::redo() {
+    if (auto effect = effect_.lock()) effect->modulationRouter().restoreSnapshot(after_);
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+QString EffectModulationSnapshotCommand::label() const { return label_; }
+
+size_t EffectModulationSnapshotCommand::estimatedMemoryBytes() const {
+    return sizeof(*this) + modulationSnapshotBytes(before_) +
+           modulationSnapshotBytes(after_) + static_cast<size_t>(label_.size()) * sizeof(QChar);
+}
+
+LayerModulationSnapshotCommand::LayerModulationSnapshotCommand(
+    ArtifactAbstractLayerPtr layer,
+    Audio::Modulation::ModulationRouterSnapshot before,
+    Audio::Modulation::ModulationRouterSnapshot after, QString label)
+    : layer_(layer), before_(std::move(before)), after_(std::move(after)),
+      label_(std::move(label)) {}
+
+void LayerModulationSnapshotCommand::undo() {
+    if (auto layer = layer_.lock()) layer->modulationRouter().restoreSnapshot(before_);
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+void LayerModulationSnapshotCommand::redo() {
+    if (auto layer = layer_.lock()) layer->modulationRouter().restoreSnapshot(after_);
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+QString LayerModulationSnapshotCommand::label() const { return label_; }
+
+size_t LayerModulationSnapshotCommand::estimatedMemoryBytes() const {
+    return sizeof(*this) + modulationSnapshotBytes(before_) +
+           modulationSnapshotBytes(after_) + static_cast<size_t>(label_.size()) * sizeof(QChar);
 }
 
 QJsonObject AnimationLayerStackSnapshotCommand::serialize() const {

@@ -47,6 +47,10 @@ import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Render.ROI;
 
+namespace ArtifactCore::Audio::Modulation {
+class ModulationRouter;
+}
+
 export namespace Artifact {
 
 using namespace ArtifactCore;
@@ -181,6 +185,11 @@ public:
 
     // context
     void setContext(const EffectContext& context);
+
+    // A per-effect control-rate router. Callers configure sources and
+    // mappings explicitly; the router advances from EffectContext frame time.
+    ArtifactCore::Audio::Modulation::ModulationRouter& modulationRouter();
+    QString modulationPropertyPath(const QString& propertyName) const;
 
     // implementation management
     void setCPUImpl(SharedPtr<ArtifactEffectImplBase> impl);

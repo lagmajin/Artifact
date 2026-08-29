@@ -4846,6 +4846,42 @@ public:
           controller_->markRenderDirty();
         }
       });
+      add(QStringLiteral("New 3D Torus Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Torus 1"),
+                                                      FixedGeometry3D::Torus);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
+      add(QStringLiteral("New 3D Capsule Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Capsule 1"),
+                                                      FixedGeometry3D::Capsule);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
+      add(QStringLiteral("New 3D Pyramid Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Pyramid 1"),
+                                                      FixedGeometry3D::Pyramid);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
       add(QStringLiteral("New SVG Layer..."), [this]() {
         auto *service = ArtifactProjectService::instance();
         if (!service) {
@@ -5608,6 +5644,8 @@ protected:
                                     QStringLiteral("deleteSelected"));
         QAction *lock = maskMenu.addAction(QStringLiteral("Toggle Locked"));
         lock->setProperty("artifactMaskAction", QStringLiteral("lock"));
+        QAction *colorPicker = maskMenu.addAction(QStringLiteral("Change Mask Color…"));
+        colorPicker->setProperty("artifactMaskAction", QStringLiteral("colorPicker"));
         QAction *duplicate = maskMenu.addAction(QStringLiteral("Duplicate Mask"));
         duplicate->setProperty("artifactMaskAction", QStringLiteral("duplicate"));
         QAction *duplicateSelected = maskMenu.addAction(
@@ -5695,6 +5733,14 @@ protected:
               controller_->deleteHoveredMaskForSelectedLayers();
             } else if (action == QStringLiteral("lock")) {
               controller_->toggleHoveredMaskLocked();
+            } else if (action == QStringLiteral("colorPicker")) {
+              if (auto *dialog = new ArtifactWidgets::FloatColorPicker(this)) {
+                dialog->setWindowTitle(QStringLiteral("Mask Color"));
+                dialog->exec();
+                const auto c = dialog->getColor();
+                controller_->setHoveredMaskColor(c);
+                dialog->deleteLater();
+              }
             } else if (action == QStringLiteral("duplicate")) {
               controller_->duplicateHoveredMask();
             } else if (action == QStringLiteral("duplicateSelected")) {

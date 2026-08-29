@@ -51,6 +51,10 @@ import Image.ImageF32x4_RGBA;
 export import Property.Abstract;
 export import Property.Group;
 
+namespace ArtifactCore::Audio::Modulation {
+class ModulationRouter;
+}
+
 export namespace Artifact {
 
  struct LayerFieldChannelSample {
@@ -525,6 +529,8 @@ public:
   // Opacity
   float opacity() const;
   void setOpacity(float value);
+  ArtifactCore::Audio::Modulation::ModulationRouter& modulationRouter();
+  QString modulationPropertyPath(const QString& propertyPath) const;
   const LayerEffectEnvelope& effectEnvelope() const;
   void setEffectEnvelope(const LayerEffectEnvelope& envelope);
 

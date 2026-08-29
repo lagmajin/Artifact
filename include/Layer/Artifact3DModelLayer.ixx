@@ -20,26 +20,32 @@ export namespace Artifact {
    Solid
  };
 
- enum class FixedGeometry3D {
-   Auto = 0,
-   Plane,
-   Cube,
-   Sphere,
-   Cylinder,
-   Cone
- };
+  enum class FixedGeometry3D {
+    Auto = 0,
+    Plane,
+    Cube,
+    Sphere,
+    Cylinder,
+    Cone,
+    Torus,
+    Capsule,
+    Pyramid
+  };
 
  class Artifact3DLayer : public ArtifactAbstractLayer
  {
  private:
    class Impl;
    Impl* impl_;
-   void createCubeMesh();
-   void createPlaneMesh();
-   void createSphereMesh();
-   void createCylinderMesh();
-   void createConeMesh();
-   void createFixedGeometryMesh(FixedGeometry3D geometry);
+    void createCubeMesh();
+    void createPlaneMesh();
+    void createSphereMesh();
+    void createCylinderMesh();
+    void createConeMesh();
+    void createTorusMesh();
+    void createCapsuleMesh();
+    void createPyramidMesh();
+    void createFixedGeometryMesh(FixedGeometry3D geometry);
    void updateSourceSizeFromMesh();
 
  public:
