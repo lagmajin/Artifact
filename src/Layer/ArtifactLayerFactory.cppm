@@ -170,6 +170,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
   case LayerType::Particle:
    ptr = createParticleLayer(QStringLiteral("fire"));
    break;
+  case LayerType::Particle3D:
+   ptr = createParticle3DLayer(QStringLiteral("fire"));
+   break;
   case LayerType::FormParticle:
    ptr = createFormParticleLayer(QStringLiteral("dotGrid"));
    break;
@@ -338,6 +341,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           legacyLayerType == QStringLiteral("GroupLayer") ||
           legacyLayerType == QStringLiteral("Particle") ||
           legacyLayerType == QStringLiteral("ParticleLayer") ||
+          legacyLayerType == QStringLiteral("Particle3D") ||
+          legacyLayerType == QStringLiteral("Particle3DLayer") ||
           legacyLayerType == QStringLiteral("Clone") ||
           legacyLayerType == QStringLiteral("CloneLayer") ||
           legacyLayerType == QStringLiteral("Precomp") ||
@@ -420,6 +425,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       } else if (serializedType == QStringLiteral("Particle") ||
                  serializedType == QStringLiteral("ParticleLayer")) {
           type = LayerType::Particle;
+      } else if (serializedType == QStringLiteral("Particle3D") ||
+                 serializedType == QStringLiteral("Particle3DLayer")) {
+          type = LayerType::Particle3D;
       } else if (serializedType == QStringLiteral("Clone") ||
                  serializedType == QStringLiteral("CloneLayer")) {
           type = LayerType::Clone;
@@ -493,6 +501,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       } else if (legacyLayerType == QStringLiteral("Particle") ||
                  legacyLayerType == QStringLiteral("ParticleLayer")) {
           type = LayerType::Particle;
+      } else if (legacyLayerType == QStringLiteral("Particle3D") ||
+                 legacyLayerType == QStringLiteral("Particle3DLayer")) {
+          type = LayerType::Particle3D;
       } else if (legacyLayerType == QStringLiteral("Clone") ||
                  legacyLayerType == QStringLiteral("CloneLayer")) {
           type = LayerType::Clone;
@@ -550,6 +561,11 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       QString name = json.value("name").toString();
       if (name.isEmpty()) {
           name = json.value("layerName").toString("Layer");
+      }
+      // Migrate the former mode-switch representation to the dedicated 3D
+      // layer identity. Particle remains the canonical 2D serialized type.
+      if (type == LayerType::Particle && json.value("is3D").toBool(false)) {
+          type = LayerType::Particle3D;
       }
   ArtifactLayerFactory factory;
       const auto restoreSerializedId = [&json](ArtifactAbstractLayerPtr layer) {

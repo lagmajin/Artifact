@@ -894,6 +894,7 @@ public:
     QAction* createAdjustAction = nullptr;
     QAction* createTextAction = nullptr;
     QAction* createParticleAction = nullptr;
+    QAction* createParticle3DAction = nullptr;
     QAction* createPaintAction = nullptr;
     QAction* createFormParticleAction = nullptr;
     QAction* createTerrainAction = nullptr;
@@ -1018,6 +1019,7 @@ public:
     void handleCreateAdjust();
     void handleCreateText();
     void handleCreateParticle();
+    void handleCreateParticle3D();
     void handleCreatePaint();
     void handleCreateFormParticle();
     void handleCreateProcedural3D(Procedural3DLayerKind kind);
@@ -1139,8 +1141,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateText));
     createTextAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_title.svg")));
 
-    createParticleAction = new QAction("パーティクル(&P)", createMenu);
+    createParticleAction = new QAction("2D パーティクル(&P)", createMenu);
     createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createParticleAction->setToolTip(QStringLiteral("コンポジション平面で動作する2Dパーティクルレイヤーを追加します"));
+    createParticle3DAction = new QAction("3D パーティクル", createMenu);
+    createParticle3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createParticle3DAction->setToolTip(QStringLiteral("3Dカメラと深度を使うパーティクルレイヤーを追加します"));
     createPaintAction = new QAction("ペイントレイヤー(&R)...", createMenu);
     createPaintAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_paint.svg")));
     createPaintAction->setToolTip(QStringLiteral("Create a frame-by-frame Paint Layer for brush work."));
@@ -1256,6 +1262,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createAdjustAction);
     createMenu->addAction(createTextAction);
     createMenu->addAction(createParticleAction);
+    createMenu->addAction(createParticle3DAction);
     createMenu->addAction(createPaintAction);
     createMenu->addAction(createFormParticleAction);
     createMenu->addAction(createCameraAction);
@@ -1610,6 +1617,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
         if (action == createTextAction) { handleCreateText(); return; }
         if (action == createParticleAction) { handleCreateParticle(); return; }
+        if (action == createParticle3DAction) { handleCreateParticle3D(); return; }
         if (action == createPaintAction) { handleCreatePaint(); return; }
         if (action == createFormParticleAction) { handleCreateFormParticle(); return; }
         if (action == createTerrainAction) { handleCreateProcedural3D(Procedural3DLayerKind::Terrain); return; }
@@ -2063,6 +2071,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createAdjustAction->setEnabled(hasProject);
     createTextAction->setEnabled(hasProject);
     createParticleAction->setEnabled(hasProject);
+    createParticle3DAction->setEnabled(hasProject);
     createPaintAction->setEnabled(hasProject);
     createCameraAction->setEnabled(hasProject);
     createLightAction->setEnabled(hasProject);
@@ -2614,7 +2623,17 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    ArtifactLayerInitParams params(uniqueLayerName(u8"Particle 1"), LayerType::Particle);
+    ArtifactLayerInitParams params(uniqueLayerName(u8"2D Particle 1"), LayerType::Particle);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateParticle3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    ArtifactLayerInitParams params(uniqueLayerName(u8"3D Particle 1"), LayerType::Particle3D);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
@@ -2979,7 +2998,7 @@ void ArtifactLayerMenu::Impl::handleCycleLayerCreation(bool reverse)
         break;
     }
     case Preset::Particle: {
-        ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Particle 1")),
+        ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("2D Particle 1")),
                                       LayerType::Particle);
         service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;

@@ -1,7 +1,6 @@
-﻿module;
+module;
 #include <QObject>
 #include <QImage>
-#include <QDebug>
 #include <QString>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -37,6 +36,7 @@
 #include <any>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <queue>
 #include <deque>
 #include <list>
@@ -145,6 +145,10 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         ? static_cast<float>(std::hypot(safeTransform.m12(), safeTransform.m22()))
         : 1.0f;
     const float scale = std::clamp(std::max(scaleX, scaleY), 0.001f, 1000000.0f);
+    const QPointF mappedOrigin = safeTransform.map(QPointF(0.0, 0.0));
+    const float rotationOffsetDegrees = static_cast<float>(
+        std::atan2(safeTransform.m12(), safeTransform.m11()) *
+        180.0 / 3.14159265358979323846);
     const float safeOpacity = std::isfinite(opacity)
         ? std::clamp(opacity, 0.0f, 1.0f)
         : 0.0f;
@@ -156,19 +160,6 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
             ? static_cast<float>(std::clamp(value, -10000000.0, 10000000.0))
             : fallback;
     };
-
-    qInfo() << "[ParticleLayer] transform"
-            << "m11=" << transform.m11()
-            << "m12=" << transform.m12()
-            << "m21=" << transform.m21()
-            << "m22=" << transform.m22()
-            << "dx=" << transform.dx()
-            << "dy=" << transform.dy()
-            << "scaleX=" << scaleX
-            << "scaleY=" << scaleY
-            << "scale=" << scale
-            << "opacity=" << safeOpacity
-            << "sourceCount=" << source.particles.size();
 
     ArtifactCore::Parallel::For(0, static_cast<int>(source.particles.size()),
                                 static_cast<int>(source.particles.size()),
@@ -194,10 +185,19 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.spriteRows = src.spriteRows;
         v.spriteCols = src.spriteCols;
         const QPointF mapped = safeTransform.map(QPointF(src.px, src.py));
+        const QPointF mappedVelocityPoint =
+            safeTransform.map(QPointF(src.vx, src.vy));
+        const QPointF mappedVelocity = mappedVelocityPoint - mappedOrigin;
         const float safeSourceX = std::isfinite(src.px) ? src.px : 0.0f;
         const float safeSourceY = std::isfinite(src.py) ? src.py : 0.0f;
         v.px = safeCoordinate(mapped.x(), safeSourceX);
         v.py = safeCoordinate(mapped.y(), safeSourceY);
+        v.vx = safeCoordinate(mappedVelocity.x(), 0.0f);
+        v.vy = safeCoordinate(mappedVelocity.y(), 0.0f);
+        v.rotation = std::isfinite(src.rotation)
+            ? std::clamp(src.rotation + rotationOffsetDegrees,
+                         -1000000.0f, 1000000.0f)
+            : rotationOffsetDegrees;
         v.a = std::isfinite(v.a)
             ? std::clamp(v.a * safeOpacity, 0.0f, 1.0f)
             : 0.0f;
@@ -208,26 +208,14 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         // rely on size reaching 0 to make particles disappear at end of life.
         v.size = std::clamp(sourceSize * scale, 0.0f, 1000000.0f);
         if (!std::isfinite(v.stretch) || v.stretch <= 0.0f) {
-            const float speed = std::isfinite(std::hypot(src.vx, src.vy))
-                ? static_cast<float>(std::hypot(src.vx, src.vy))
+            const float speed = std::isfinite(std::hypot(v.vx, v.vy))
+                ? static_cast<float>(std::hypot(v.vx, v.vy))
                 : 0.0f;
             v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
         } else {
             v.stretch = std::clamp(v.stretch, 1.0f, 1000000.0f);
         }
     });
-
-    if (!source.particles.empty()) {
-        const auto& src = source.particles.front();
-        const auto& v = transformed.particles.front();
-        const QPointF mapped = safeTransform.map(QPointF(src.px, src.py));
-        qInfo() << "[ParticleLayer] particle0"
-                << "src=(" << src.px << "," << src.py << ")"
-                << "mapped=(" << mapped.x() << "," << mapped.y() << ")"
-                << "size=" << src.size << "->" << v.size
-                << "alpha=" << src.a << "->" << v.a
-                << "stretch=" << src.stretch << "->" << v.stretch;
-    }
 
     return transformed;
 }
@@ -438,6 +426,9 @@ ArtifactParticleLayer::ArtifactParticleLayer()
     : ArtifactAbstractLayer()
     , impl_(new Impl())
 {
+    // This class is the canonical 2D identity. The JSON factory migrates old
+    // Particle + is3D=true documents to ArtifactParticle3DLayer.
+    setIs3D(false);
     createParticleSystem();
 }
 
@@ -446,22 +437,36 @@ ArtifactParticleLayer::~ArtifactParticleLayer()
     delete impl_;
 }
 
+ArtifactParticle3DLayer::ArtifactParticle3DLayer()
+{
+    setIs3D(true);
+}
+
+ArtifactParticle3DLayer::~ArtifactParticle3DLayer() = default;
+
+QJsonObject ArtifactParticle3DLayer::toJson() const
+{
+    QJsonObject json = ArtifactParticleLayer::toJson();
+    json[QStringLiteral("type")] = static_cast<int>(LayerType::Particle3D);
+    json[QStringLiteral("layerType")] = QStringLiteral("Particle3DLayer");
+    json[QStringLiteral("is3D")] = true;
+    return json;
+}
+
+void ArtifactParticle3DLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    ArtifactParticleLayer::fromJsonProperties(obj);
+    setIs3D(true);
+}
+
 void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer || !impl_->particleSystem) {
-        qWarning() << "[ParticleLayer] draw() early exit: renderer=" << (renderer ? "ok" : "null")
-                   << "particleSystem=" << (impl_->particleSystem ? "ok" : "null");
         return;
     }
 
     const int64_t frameNumber = currentFrame();
     const bool rendererReady = renderer->isInitialized();
-    const int emitterCount = impl_->particleSystem->emitterCount();
-    
-    qInfo() << "[ParticleLayer] draw() frame=" << frameNumber
-            << "rendererInitialized=" << rendererReady
-            << "emitters=" << emitterCount;
-
     // 1. 決定論的なシミュレーション状態の更新
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
@@ -474,6 +479,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // 2. GPU レンダリングパス
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (rendererReady) {
+        const auto sourceData = impl_->particleSystem->captureRenderData();
         auto coreData = toCoreParticleRenderData(sourceData);
         coreData.options = coreRenderOptionsFromSettings(
             impl_->particleSystem->renderSettings());
@@ -482,14 +488,10 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
         const auto lodData = applyParticleRenderLOD(
             std::move(coreData), screenScale);
-        qInfo() << "[ParticleLayer] GPU path: particleCount=" << lodData.particles.size()
-                << "sourceCount=" << sourceData.particles.size();
         if (!lodData.particles.empty()) {
             const ArtifactCore::ParticleRenderData renderData =
                 transformParticleRenderData(lodData, globalTransform, opacity());
             renderer->drawParticles(renderData);
-        } else {
-            qWarning() << "[ParticleLayer] GPU path: NO PARTICLES - emitter may not generate";
         }
         const auto size = sourceSize();
         drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
@@ -498,10 +500,6 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 
     // 3. ソフトウェアフォールバックパス
     // renderer が未初期化のときだけ従来の QPainter 描画を使う
-    qInfo() << "[ParticleLayer] Fallback path: cachedFrame=" << impl_->cachedFrameNumber
-            << "currentFrame=" << frameNumber
-            << "cachedNull=" << impl_->cachedFrame.isNull();
-    
     if (frameNumber != impl_->cachedFrameNumber || impl_->cachedFrame.isNull()) {
         float fallbackFps = 30.0f;
         if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
@@ -512,17 +510,12 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                                          std::max(1, impl_->height),
                                          time);
         impl_->cachedFrameNumber = frameNumber;
-        qInfo() << "[ParticleLayer] Fallback rendered: size=" << impl_->cachedFrame.size()
-                << "null=" << impl_->cachedFrame.isNull();
     }
 
     if (impl_->cachedFrame.isNull()) {
-        qWarning() << "[ParticleLayer] Fallback draw skipped: cachedFrame is null";
         return;
     }
 
-    qInfo() << "[ParticleLayer] drawSprite: w=" << impl_->cachedFrame.width()
-            << "h=" << impl_->cachedFrame.height() << "opacity=" << opacity();
     renderer->drawSprite(
         0.0f,
         0.0f,
@@ -752,6 +745,16 @@ QJsonObject ArtifactParticleLayer::toJson() const
         emitterJson["worldSpace"] = params.worldSpace;
         emitterJson["preWarm"] = params.preWarm;
         emitterJson["maxParticles"] = safeEmitterInt(params.maxParticles, 1, 10000000);
+        emitterJson["deterministic"] = params.deterministic;
+        emitterJson["randomSeed"] = static_cast<double>(params.randomSeed);
+        emitterJson["fixedTimeStep"] = safeEmitterValue(
+            params.fixedTimeStep, 1.0 / 120.0, 0.000001, 1.0);
+        emitterJson["maxSubSteps"] = safeEmitterInt(params.maxSubSteps, 1, 256);
+        emitterJson["enableSelfCollision"] = params.enableSelfCollision;
+        emitterJson["selfCollisionRadius"] = safeEmitterValue(
+            params.selfCollisionRadius, 4.0, 0.001, 1000000.0);
+        emitterJson["selfCollisionResponse"] = safeEmitterValue(
+            params.selfCollisionResponse, 0.35, 0.0, 1.0);
         emitterJson["auxEnabled"] = params.auxEnabled;
         emitterJson["auxTrigger"] = safeEmitterInt(
             static_cast<int>(params.auxTrigger), 0, 2);
@@ -878,6 +881,7 @@ ArtifactAbstractLayerPtr ArtifactParticleLayer::fromJson(const QJsonObject& obj)
 {
     auto layer = ArtifactCore::makeShared<ArtifactParticleLayer>();
     layer->ArtifactAbstractLayer::fromJsonProperties(obj);
+    layer->setIs3D(false);
     layer->applyPropertiesFromJson(obj);
     return layer;
 }
@@ -885,6 +889,7 @@ ArtifactAbstractLayerPtr ArtifactParticleLayer::fromJson(const QJsonObject& obj)
 void ArtifactParticleLayer::fromJsonProperties(const QJsonObject& obj)
 {
     ArtifactAbstractLayer::fromJsonProperties(obj);
+    setIs3D(false);
     applyPropertiesFromJson(obj);
 }
 
@@ -1188,6 +1193,31 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             if (emitterJson.contains("maxParticles")) {
                 params.maxParticles = emitterJson["maxParticles"].toInt();
             }
+            if (emitterJson.contains("deterministic")) {
+                params.deterministic = emitterJson["deterministic"].toBool(true);
+            }
+            if (emitterJson.contains("randomSeed")) {
+                params.randomSeed = static_cast<std::uint32_t>(
+                    emitterJson["randomSeed"].toVariant().toULongLong());
+            }
+            if (emitterJson.contains("fixedTimeStep")) {
+                params.fixedTimeStep = emitterJson["fixedTimeStep"].toDouble();
+            }
+            if (emitterJson.contains("maxSubSteps")) {
+                params.maxSubSteps = emitterJson["maxSubSteps"].toInt();
+            }
+            if (emitterJson.contains("enableSelfCollision")) {
+                params.enableSelfCollision =
+                    emitterJson["enableSelfCollision"].toBool(false);
+            }
+            if (emitterJson.contains("selfCollisionRadius")) {
+                params.selfCollisionRadius =
+                    emitterJson["selfCollisionRadius"].toDouble();
+            }
+            if (emitterJson.contains("selfCollisionResponse")) {
+                params.selfCollisionResponse =
+                    emitterJson["selfCollisionResponse"].toDouble();
+            }
             if (emitterJson.contains("auxEnabled")) {
                 params.auxEnabled = emitterJson["auxEnabled"].toBool();
             }
@@ -1234,6 +1264,13 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             params.frameRate = safeEmitterValue(params.frameRate, 30.0, 0.001, 1000.0);
             params.mass = safeEmitterValue(params.mass, 1.0, 0.0, 1000000.0);
             params.maxParticles = std::clamp(params.maxParticles, 1, 10000000);
+            params.fixedTimeStep = safeEmitterValue(
+                params.fixedTimeStep, 1.0 / 120.0, 0.000001, 1.0);
+            params.maxSubSteps = std::clamp(params.maxSubSteps, 1, 256);
+            params.selfCollisionRadius = safeEmitterValue(
+                params.selfCollisionRadius, 4.0, 0.001, 1000000.0);
+            params.selfCollisionResponse = safeEmitterValue(
+                params.selfCollisionResponse, 0.35, 0.0, 1.0);
             params.burstCount = std::clamp(params.burstCount, 0, 10000000);
             params.auxCount = std::clamp(params.auxCount, 0, 1000000);
             params.auxInterval = safeEmitterValue(params.auxInterval, 0.0, 0.0, 1000000.0);
@@ -1886,6 +1923,9 @@ QStringList ArtifactParticleLayer::availablePresets() const
 std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerPropertyGroups() const
 {
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    for (auto& group : groups) {
+        group.removeProperty(QStringLiteral("layer.is3D"));
+    }
     ArtifactCore::PropertyGroup particleGroup(QStringLiteral("Particle System"));
 
     auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
@@ -2164,6 +2204,67 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     emitterGroup.addProperty(preWarmProp);
 
     groups.push_back(emitterGroup);
+
+    ArtifactCore::PropertyGroup simulationGroup(QStringLiteral("Simulation"));
+    auto deterministicProp = makeProp(
+        QStringLiteral("particle.simulation.deterministic"),
+        ArtifactCore::PropertyType::Boolean, emitter.deterministic, -240);
+    deterministicProp->setDisplayLabel(QStringLiteral("Deterministic"));
+    deterministicProp->setTooltip(QStringLiteral(
+        "Use fixed-step simulation and a stable random seed for repeatable seeking."));
+    simulationGroup.addProperty(deterministicProp);
+
+    auto seedProp = makeProp(
+        QStringLiteral("particle.simulation.randomSeed"),
+        ArtifactCore::PropertyType::Integer,
+        static_cast<qlonglong>(emitter.randomSeed), -239);
+    seedProp->setDisplayLabel(QStringLiteral("Random Seed"));
+    seedProp->setHardRange(0, 2147483647);
+    simulationGroup.addProperty(seedProp);
+
+    auto fixedStepProp = makeProp(
+        QStringLiteral("particle.simulation.fixedTimeStep"),
+        ArtifactCore::PropertyType::Float, emitter.fixedTimeStep, -238);
+    fixedStepProp->setDisplayLabel(QStringLiteral("Fixed Time Step"));
+    fixedStepProp->setUnit(QStringLiteral("s"));
+    fixedStepProp->setHardRange(0.000001, 1.0);
+    fixedStepProp->setSoftRange(1.0 / 240.0, 1.0 / 30.0);
+    fixedStepProp->setStep(1.0 / 120.0);
+    simulationGroup.addProperty(fixedStepProp);
+
+    auto maxSubStepsProp = makeProp(
+        QStringLiteral("particle.simulation.maxSubSteps"),
+        ArtifactCore::PropertyType::Integer, emitter.maxSubSteps, -237);
+    maxSubStepsProp->setDisplayLabel(QStringLiteral("Max Substeps"));
+    maxSubStepsProp->setHardRange(1, 256);
+    maxSubStepsProp->setSoftRange(1, 32);
+    simulationGroup.addProperty(maxSubStepsProp);
+
+    auto selfCollisionProp = makeProp(
+        QStringLiteral("particle.simulation.selfCollision"),
+        ArtifactCore::PropertyType::Boolean, emitter.enableSelfCollision, -236);
+    selfCollisionProp->setDisplayLabel(QStringLiteral("Self Collision"));
+    simulationGroup.addProperty(selfCollisionProp);
+
+    auto selfCollisionRadiusProp = makeProp(
+        QStringLiteral("particle.simulation.selfCollisionRadius"),
+        ArtifactCore::PropertyType::Float, emitter.selfCollisionRadius, -235);
+    selfCollisionRadiusProp->setDisplayLabel(
+        QStringLiteral("Collision Radius"));
+    selfCollisionRadiusProp->setUnit(QStringLiteral("px"));
+    selfCollisionRadiusProp->setHardRange(0.001, 1000000.0);
+    selfCollisionRadiusProp->setSoftRange(0.1, 100.0);
+    simulationGroup.addProperty(selfCollisionRadiusProp);
+
+    auto selfCollisionResponseProp = makeProp(
+        QStringLiteral("particle.simulation.selfCollisionResponse"),
+        ArtifactCore::PropertyType::Float, emitter.selfCollisionResponse, -234);
+    selfCollisionResponseProp->setDisplayLabel(
+        QStringLiteral("Collision Response"));
+    selfCollisionResponseProp->setHardRange(0.0, 1.0);
+    selfCollisionResponseProp->setSoftRange(0.0, 1.0);
+    simulationGroup.addProperty(selfCollisionResponseProp);
+    groups.push_back(simulationGroup);
 
     ArtifactCore::PropertyGroup particleLookGroup(QStringLiteral("Particle"));
 
@@ -2473,6 +2574,9 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
 bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
+    if (propertyPath == QStringLiteral("layer.is3D")) {
+        return false;
+    }
     auto applyPrimaryEmitterValue = [this](const std::function<void(EmitterParams&)>& mutator) {
         if (!impl_->applyPrimaryEmitterParams(mutator)) {
             return false;
@@ -2764,6 +2868,50 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     if (propertyPath == QStringLiteral("particle.emitter.preWarm")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
             params.preWarm = value.toBool();
+        });
+    }
+    if (propertyPath ==
+        QStringLiteral("particle.simulation.deterministic")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.deterministic = value.toBool();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.simulation.randomSeed")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            const auto raw = value.toLongLong();
+            params.randomSeed = static_cast<std::uint32_t>(
+                std::clamp<qlonglong>(raw, 0, 2147483647));
+        });
+    }
+    if (propertyPath ==
+        QStringLiteral("particle.simulation.fixedTimeStep")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.fixedTimeStep = safeParticleFloat(
+                value, 1.0f / 120.0f, 0.000001f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.simulation.maxSubSteps")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.maxSubSteps = std::clamp(value.toInt(), 1, 256);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.simulation.selfCollision")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.enableSelfCollision = value.toBool();
+        });
+    }
+    if (propertyPath ==
+        QStringLiteral("particle.simulation.selfCollisionRadius")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.selfCollisionRadius = safeParticleFloat(
+                value, 4.0f, 0.001f, 1000000.0f);
+        });
+    }
+    if (propertyPath ==
+        QStringLiteral("particle.simulation.selfCollisionResponse")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.selfCollisionResponse = safeParticleFloat(
+                value, 0.35f, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.lifeMin") ||
@@ -3065,26 +3213,29 @@ SharedPtr<ArtifactParticleLayer> createParticleLayer(const QString& preset)
     return layer;
 }
 
+SharedPtr<ArtifactParticle3DLayer> createParticle3DLayer()
+{
+    return ArtifactCore::makeShared<ArtifactParticle3DLayer>();
+}
+
+SharedPtr<ArtifactParticle3DLayer> createParticle3DLayer(const QString& preset)
+{
+    auto layer = ArtifactCore::makeShared<ArtifactParticle3DLayer>();
+    layer->loadPreset(preset);
+    return layer;
+}
+
 ArtifactParticleDebugLayer::ArtifactParticleDebugLayer() = default;
 ArtifactParticleDebugLayer::~ArtifactParticleDebugLayer() = default;
 
 void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer || !particleSystem()) {
-        qWarning() << "[ParticleDebugLayer] draw() early exit: renderer="
-                   << (renderer ? "ok" : "null")
-                   << "particleSystem=" << (particleSystem() ? "ok" : "null");
         return;
     }
 
     const int64_t frameNumber = currentFrame();
     const bool rendererReady = renderer->isInitialized();
-    const int emitterCount = this->emitterCount();
-
-    qInfo() << "[ParticleDebugLayer] draw() frame=" << frameNumber
-            << "rendererInitialized=" << rendererReady
-            << "emitters=" << emitterCount;
-
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
         fps = safeParticleFps(comp->frameRate().framerate());
@@ -3101,15 +3252,11 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
         const auto lodData = applyParticleRenderLOD(
             std::move(coreData), screenScale);
-        qInfo() << "[ParticleDebugLayer] GPU path: particleCount=" << lodData.particles.size()
-                << "sourceCount=" << sourceData.particles.size();
         if (!lodData.particles.empty()) {
             ArtifactCore::ParticleRenderData renderData =
                 transformParticleRenderData(lodData, globalTransform, opacity());
             boostDebugParticleRenderData(renderData);
             renderer->drawParticles(renderData);
-        } else {
-            qWarning() << "[ParticleDebugLayer] GPU path: NO PARTICLES - emitter may not generate";
         }
         return;
     }
@@ -3120,7 +3267,6 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
     QImage fallbackFrame =
         renderFrame(fallbackWidth, fallbackHeight, safeParticleFrameTime(frameNumber, fps));
     if (fallbackFrame.isNull()) {
-        qWarning() << "[ParticleDebugLayer] Fallback draw skipped: frame is null";
         return;
     }
     renderer->drawSprite(0.0f,

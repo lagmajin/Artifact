@@ -56,7 +56,7 @@ import Utils.String.UniString;
 export namespace Artifact {
 
 /**
- * @brief Particle layer - a layer that renders particle systems
+ * @brief 2D particle layer rendered in composition space
  */
 class ArtifactParticleLayer : public ArtifactAbstractLayer {
     W_OBJECT(ArtifactParticleLayer)
@@ -158,6 +158,21 @@ signals:
 };
 
 /**
+ * @brief 3D particle layer rendered through the composition camera/depth path
+ *
+ * Simulation and GPU particle rendering are shared with ArtifactParticleLayer,
+ * while layer identity and persistence remain explicitly 3D.
+ */
+class ArtifactParticle3DLayer : public ArtifactParticleLayer {
+public:
+    ArtifactParticle3DLayer();
+    ~ArtifactParticle3DLayer() override;
+
+    QJsonObject toJson() const override;
+    void fromJsonProperties(const QJsonObject& obj) override;
+};
+
+/**
  * @brief Debug particle layer - renders the same particle system with stronger
  * visibility so visibility issues can be inspected independently from the
  * production particle layer.
@@ -173,6 +188,8 @@ public:
 // Factory function for creating particle layers
 SharedPtr<ArtifactParticleLayer> createParticleLayer();
 SharedPtr<ArtifactParticleLayer> createParticleLayer(const QString& preset);
+SharedPtr<ArtifactParticle3DLayer> createParticle3DLayer();
+SharedPtr<ArtifactParticle3DLayer> createParticle3DLayer(const QString& preset);
 SharedPtr<ArtifactParticleDebugLayer> createParticleDebugLayer();
 
 } // namespace Artifact

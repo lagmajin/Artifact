@@ -166,6 +166,7 @@ enum class LayerType {
   Paint = 28,                   // Paint layer (frame-by-frame raster)
   SpatialAudio = 29,            // 3D spatial audio source
   Noise = 30,                   // Procedural noise source layer
+  Particle3D = 31,              // 3D camera/depth particle layer
 };
 
 enum class LayerDirtyFlag : uint32_t {

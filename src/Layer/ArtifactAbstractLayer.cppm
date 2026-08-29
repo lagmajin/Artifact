@@ -510,6 +510,75 @@ std::vector<QPointF> layerCollisionPolygonLocalPoints(
   return points;
 }
 
+bool configureLiquidContainerPolygon(
+    const ArtifactAbstractLayer* layer, ArtifactCore::LiquidSolver2D& liquid,
+    int requestedOpeningEdge = -1,
+    std::vector<QPointF>* configuredPoints = nullptr,
+    std::size_t* configuredOpeningEdge = nullptr) {
+  if (configuredPoints) configuredPoints->clear();
+  if (configuredOpeningEdge) *configuredOpeningEdge = 0;
+  if (!layer) {
+    liquid.clearContainerPolygon();
+    return false;
+  }
+  const auto enabledProperty =
+      layer->getProperty(QStringLiteral("component.collision.enabled"));
+  const auto shapeProperty =
+      layer->getProperty(QStringLiteral("component.collision.shape"));
+  if (!enabledProperty || !enabledProperty->getValue().toBool() ||
+      !shapeProperty || shapeProperty->getValue().toInt() != 3) {
+    liquid.clearContainerPolygon();
+    return false;
+  }
+
+  const QRectF bounds = layer->localBounds();
+  const auto points = layerCollisionPolygonLocalPoints(layer);
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0 ||
+      points.size() < 3) {
+    liquid.clearContainerPolygon();
+    return false;
+  }
+
+  std::vector<ArtifactCore::LiquidContainerPoint2D> normalized;
+  normalized.reserve(points.size());
+  for (const QPointF& point : points) {
+    normalized.push_back({
+        static_cast<float>((point.x() - bounds.left()) / bounds.width()),
+        static_cast<float>((point.y() - bounds.top()) / bounds.height())});
+  }
+
+  std::size_t openingEdge = 0;
+  double openingMidpointY = std::numeric_limits<double>::max();
+  double openingLengthSquared = -1.0;
+  for (std::size_t i = 0; i < normalized.size(); ++i) {
+    const auto& a = normalized[i];
+    const auto& b = normalized[(i + 1) % normalized.size()];
+    const double midpointY = (static_cast<double>(a.y) + b.y) * 0.5;
+    const double dx = static_cast<double>(b.x) - a.x;
+    const double dy = static_cast<double>(b.y) - a.y;
+    const double lengthSquared = dx * dx + dy * dy;
+    if (midpointY < openingMidpointY - 1.0e-8 ||
+        (std::abs(midpointY - openingMidpointY) <= 1.0e-8 &&
+         lengthSquared > openingLengthSquared)) {
+      openingEdge = i;
+      openingMidpointY = midpointY;
+      openingLengthSquared = lengthSquared;
+    }
+  }
+  if (requestedOpeningEdge >= 0) {
+    openingEdge = std::min(
+        static_cast<std::size_t>(requestedOpeningEdge),
+        normalized.size() - 1);
+  }
+  if (!liquid.setContainerPolygon(normalized, openingEdge)) {
+    liquid.clearContainerPolygon();
+    return false;
+  }
+  if (configuredPoints) *configuredPoints = points;
+  if (configuredOpeningEdge) *configuredOpeningEdge = openingEdge;
+  return true;
+}
+
 QRectF layerCollisionLocalBounds(const ArtifactAbstractLayer* layer) {
   if (!layer) {
     return QRectF();
@@ -591,6 +660,269 @@ QRectF layerCollisionLocalBounds(const ArtifactAbstractLayer* layer) {
 
   return localBounds.translated(static_cast<qreal>(offsetX),
                                 static_cast<qreal>(offsetY));
+}
+
+bool pointInsideCollisionPolygon(const QPointF& point,
+                                 const std::vector<QPointF>& polygon) {
+  bool inside = false;
+  if (polygon.size() < 3) return false;
+  for (std::size_t i = 0, j = polygon.size() - 1; i < polygon.size();
+       j = i++) {
+    const QPointF& a = polygon[i];
+    const QPointF& b = polygon[j];
+    const bool crosses = ((a.y() > point.y()) != (b.y() > point.y())) &&
+        (point.x() < (b.x() - a.x()) * (point.y() - a.y()) /
+                             ((b.y() - a.y()) + 1.0e-12) +
+                         a.x());
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+QPointF closestPointOnCollisionSegment(const QPointF& point,
+                                       const QPointF& a,
+                                       const QPointF& b) {
+  const QPointF edge = b - a;
+  const double lengthSquared = QPointF::dotProduct(edge, edge);
+  if (lengthSquared <= 1.0e-12) return a;
+  const double t = std::clamp(
+      QPointF::dotProduct(point - a, edge) / lengthSquared, 0.0, 1.0);
+  return a + edge * t;
+}
+
+bool liquidSegmentIntersection(const QPointF& start, const QPointF& end,
+                               const QPointF& a, const QPointF& b,
+                               double& hitT) {
+  const QPointF motion = end - start;
+  const QPointF edge = b - a;
+  const double cross = motion.x() * edge.y() - motion.y() * edge.x();
+  if (std::abs(cross) <= 1.0e-12) return false;
+  const QPointF offset = a - start;
+  const double t = (offset.x() * edge.y() - offset.y() * edge.x()) / cross;
+  const double u = (offset.x() * motion.y() - offset.y() * motion.x()) / cross;
+  if (t < 0.0 || t > 1.0 || u < 0.0 || u > 1.0) return false;
+  hitT = t;
+  return true;
+}
+
+bool resolveLiquidPointAgainstCollisionLayer(
+    const ArtifactAbstractLayer* layer, int64_t frameNumber,
+    float particleRadius, float previousWorldX, float previousWorldY,
+    float& worldX, float& worldY,
+    float& worldVx, float& worldVy, float& collisionImpact) {
+  if (!layer || particleRadius <= 0.0f) return false;
+  const auto enabledProperty =
+      layer->getProperty(QStringLiteral("component.collision.enabled"));
+  if (!enabledProperty || !enabledProperty->getValue().toBool()) return false;
+
+  bool invertible = false;
+  const QTransform layerTransform = layer->getGlobalTransformAt(frameNumber);
+  const QTransform inverseTransform = layerTransform.inverted(&invertible);
+  if (!invertible) return false;
+
+  const QPointF worldPoint(worldX, worldY);
+  const QPointF localPoint = inverseTransform.map(worldPoint);
+  const QPointF previousLocalPoint =
+      inverseTransform.map(QPointF(previousWorldX, previousWorldY));
+  const QPointF localMotion = localPoint - previousLocalPoint;
+  const double scaleX = std::hypot(layerTransform.m11(), layerTransform.m12());
+  const double scaleY = std::hypot(layerTransform.m21(), layerTransform.m22());
+  const double minScale = std::max(1.0e-6, std::min(scaleX, scaleY));
+  const double localRadius = static_cast<double>(particleRadius) / minScale;
+  const auto shapeProperty =
+      layer->getProperty(QStringLiteral("component.collision.shape"));
+  const int shape = shapeProperty
+                        ? std::clamp(shapeProperty->getValue().toInt(), 0, 3)
+                        : 0;
+
+  QPointF correctedLocal = localPoint;
+  QPointF localNormal(0.0, -1.0);
+  bool collided = false;
+  if (shape == 2) {
+    const QRectF bounds = layerCollisionLocalBounds(layer);
+    if (!bounds.isValid()) return false;
+    const QPointF center = bounds.center();
+    QPointF delta = localPoint - center;
+    double distance = std::hypot(delta.x(), delta.y());
+    const double collisionRadius = bounds.width() * 0.5 + localRadius;
+    if (distance < collisionRadius) {
+      if (distance < 1.0e-8) {
+        delta = QPointF(0.0, -1.0);
+        distance = 1.0;
+      }
+      localNormal = delta / distance;
+      correctedLocal = center + localNormal * collisionRadius;
+      collided = true;
+    } else {
+      const QPointF offset = previousLocalPoint - center;
+      const double a = QPointF::dotProduct(localMotion, localMotion);
+      const double b = 2.0 * QPointF::dotProduct(offset, localMotion);
+      const double c = QPointF::dotProduct(offset, offset) -
+                       collisionRadius * collisionRadius;
+      const double discriminant = b * b - 4.0 * a * c;
+      if (a > 1.0e-12 && c > 0.0 && discriminant >= 0.0) {
+        const double hitT = (-b - std::sqrt(discriminant)) / (2.0 * a);
+        if (hitT >= 0.0 && hitT <= 1.0) {
+          const QPointF hit = previousLocalPoint + localMotion * hitT;
+          const QPointF hitDelta = hit - center;
+          const double hitLength = std::hypot(hitDelta.x(), hitDelta.y());
+          if (hitLength > 1.0e-8) {
+            localNormal = hitDelta / hitLength;
+            correctedLocal = center + localNormal * collisionRadius;
+            collided = true;
+          }
+        }
+      }
+    }
+  } else if (shape == 3) {
+    const auto polygon = layerCollisionPolygonLocalPoints(layer);
+    if (polygon.size() < 3) return false;
+    QPointF closest;
+    double closestDistance = std::numeric_limits<double>::max();
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+      const QPointF candidate = closestPointOnCollisionSegment(
+          localPoint, polygon[i], polygon[(i + 1) % polygon.size()]);
+      const double distance = std::hypot(candidate.x() - localPoint.x(),
+                                         candidate.y() - localPoint.y());
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = candidate;
+      }
+    }
+    const bool inside = pointInsideCollisionPolygon(localPoint, polygon);
+    if (inside || closestDistance < localRadius) {
+      QPointF direction = inside ? closest - localPoint : localPoint - closest;
+      double directionLength = std::hypot(direction.x(), direction.y());
+      if (directionLength < 1.0e-8) {
+        direction = QPointF(0.0, -1.0);
+        directionLength = 1.0;
+      }
+      localNormal = direction / directionLength;
+      correctedLocal = closest + localNormal * localRadius;
+      collided = true;
+    } else {
+      double earliestT = std::numeric_limits<double>::max();
+      QPointF earliestA;
+      QPointF earliestB;
+      for (std::size_t i = 0; i < polygon.size(); ++i) {
+        double hitT = 0.0;
+        const QPointF& a = polygon[i];
+        const QPointF& b = polygon[(i + 1) % polygon.size()];
+        if (liquidSegmentIntersection(previousLocalPoint, localPoint,
+                                      a, b, hitT) && hitT < earliestT) {
+          earliestT = hitT;
+          earliestA = a;
+          earliestB = b;
+        }
+      }
+      if (earliestT <= 1.0) {
+        const QPointF hit = previousLocalPoint + localMotion * earliestT;
+        const QPointF edge = earliestB - earliestA;
+        localNormal = QPointF(-edge.y(), edge.x());
+        double normalLength = std::hypot(localNormal.x(), localNormal.y());
+        if (normalLength > 1.0e-8) {
+          localNormal /= normalLength;
+          if (QPointF::dotProduct(localNormal, localMotion) > 0.0) {
+            localNormal = -localNormal;
+          }
+          correctedLocal = hit + localNormal * localRadius;
+          collided = true;
+        }
+      }
+    }
+  } else {
+    const QRectF bounds = layerCollisionLocalBounds(layer);
+    if (!bounds.isValid()) return false;
+    const QRectF expanded = bounds.adjusted(-localRadius, -localRadius,
+                                             localRadius, localRadius);
+    if (expanded.contains(localPoint)) {
+      const double left = localPoint.x() - expanded.left();
+      const double right = expanded.right() - localPoint.x();
+      const double top = localPoint.y() - expanded.top();
+      const double bottom = expanded.bottom() - localPoint.y();
+      const double nearest = std::min({left, right, top, bottom});
+      if (nearest == left) {
+        localNormal = QPointF(-1.0, 0.0);
+        correctedLocal.setX(expanded.left());
+      } else if (nearest == right) {
+        localNormal = QPointF(1.0, 0.0);
+        correctedLocal.setX(expanded.right());
+      } else if (nearest == top) {
+        localNormal = QPointF(0.0, -1.0);
+        correctedLocal.setY(expanded.top());
+      } else {
+        localNormal = QPointF(0.0, 1.0);
+        correctedLocal.setY(expanded.bottom());
+      }
+      collided = true;
+    } else {
+      double entryT = 0.0;
+      double exitT = 1.0;
+      QPointF entryNormal;
+      const auto clipAxis = [&](double start, double delta, double minimum,
+                                double maximum, const QPointF& minimumNormal,
+                                const QPointF& maximumNormal) {
+        if (std::abs(delta) <= 1.0e-12) {
+          return start >= minimum && start <= maximum;
+        }
+        double nearT = (minimum - start) / delta;
+        double farT = (maximum - start) / delta;
+        QPointF nearNormal = minimumNormal;
+        if (nearT > farT) {
+          std::swap(nearT, farT);
+          nearNormal = maximumNormal;
+        }
+        if (nearT > entryT) {
+          entryT = nearT;
+          entryNormal = nearNormal;
+        }
+        exitT = std::min(exitT, farT);
+        return entryT <= exitT;
+      };
+      if (!expanded.contains(previousLocalPoint) &&
+          clipAxis(previousLocalPoint.x(), localMotion.x(), expanded.left(),
+                   expanded.right(), QPointF(-1.0, 0.0), QPointF(1.0, 0.0)) &&
+          clipAxis(previousLocalPoint.y(), localMotion.y(), expanded.top(),
+                   expanded.bottom(), QPointF(0.0, -1.0), QPointF(0.0, 1.0)) &&
+          entryT >= 0.0 && entryT <= 1.0) {
+        localNormal = entryNormal;
+        correctedLocal = previousLocalPoint + localMotion * entryT;
+        collided = true;
+      }
+    }
+  }
+
+  if (!collided) return false;
+  const QPointF correctedWorld = layerTransform.map(correctedLocal);
+  const QPointF worldOrigin = layerTransform.map(QPointF(0.0, 0.0));
+  QPointF worldNormalPoint = layerTransform.map(localNormal) - worldOrigin;
+  const double normalLength =
+      std::hypot(worldNormalPoint.x(), worldNormalPoint.y());
+  if (normalLength < 1.0e-8) return false;
+  worldNormalPoint /= normalLength;
+  worldX = static_cast<float>(correctedWorld.x());
+  worldY = static_cast<float>(correctedWorld.y());
+
+  const double normalVelocity =
+      static_cast<double>(worldVx) * worldNormalPoint.x() +
+      static_cast<double>(worldVy) * worldNormalPoint.y();
+  if (normalVelocity < 0.0) {
+    collisionImpact = std::max(
+        collisionImpact, static_cast<float>(-normalVelocity));
+    constexpr double restitution = 0.05;
+    constexpr double tangentRetention = 0.88;
+    const double tangentVx =
+        static_cast<double>(worldVx) - normalVelocity * worldNormalPoint.x();
+    const double tangentVy =
+        static_cast<double>(worldVy) - normalVelocity * worldNormalPoint.y();
+    worldVx = static_cast<float>(
+        tangentVx * tangentRetention -
+        normalVelocity * restitution * worldNormalPoint.x());
+    worldVy = static_cast<float>(
+        tangentVy * tangentRetention -
+        normalVelocity * restitution * worldNormalPoint.y());
+  }
+  return true;
 }
 
 void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
@@ -793,11 +1125,59 @@ void submitFractureRenderElement(ArtifactIRenderer *renderer,
     renderer->drawSolidPolygonLocal(shard.polygon, shard.color);
   }
 }
+
+ArtifactCore::ParticleRenderData makeLiquid2DRenderData(
+    const ArtifactCore::LiquidSnapshot2D& snapshot, const QRectF& bounds,
+    float particleSpacing, int64_t frameNumber) {
+  ArtifactCore::ParticleRenderData result;
+  result.frameNumber = frameNumber;
+  result.options.blend = ArtifactCore::ParticleBlendPolicy::Alpha;
+  result.options.billboard =
+      ArtifactCore::ParticleBillboardPolicy::ScreenAligned;
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    return result;
+  }
+
+  const float velocityScale = static_cast<float>(
+      std::min(bounds.width(), bounds.height()));
+  const float particleSize = std::max(
+      2.0f, velocityScale * std::clamp(particleSpacing, 0.025f, 0.2f) *
+                1.35f);
+  result.particles.reserve(snapshot.particles.size());
+  for (const auto& source : snapshot.particles) {
+    ArtifactCore::ParticleVertex particle{};
+    particle.px = static_cast<float>(bounds.left() +
+                                      source.x * bounds.width());
+    particle.py = static_cast<float>(bounds.top() +
+                                      source.y * bounds.height());
+    particle.pz = 0.0f;
+    particle.vx = source.vx * velocityScale;
+    particle.vy = source.vy * velocityScale;
+    particle.vz = 0.0f;
+    particle.r = 0.12f;
+    particle.g = 0.52f;
+    particle.b = 0.95f;
+    particle.a = 0.82f;
+    particle.size = particleSize;
+    particle.stretch = 1.0f;
+    particle.rotation = 0.0f;
+    particle.age = 0.0f;
+    particle.lifetime = 1.0f;
+    result.particles.push_back(particle);
+  }
+  return result;
+}
 } // namespace
 
 
 class ArtifactAbstractLayer::Impl {
 public:
+  using LiquidSpillParticle = ArtifactCore::LiquidSpillParticle2D;
+  struct LiquidLayerCheckpoint {
+    ArtifactCore::LiquidSnapshot2D container;
+    std::vector<LiquidSpillParticle> spillParticles;
+    double inflowCarry = 0.0;
+  };
    bool is3D_ = false;
   bool isVisible_ = true;
   Id id;
@@ -912,6 +1292,7 @@ public:
     float particleEmitterSpeed_ = 120.0f;
     float particleEmitterLifetime_ = 1.0f;
     bool fluidComponentEnabled_ = false;
+    int fluidMode_ = 0; // 0=Smoke/Ink, 1=Liquid Container
     int fluidGridWidth_ = 128;
     int fluidGridHeight_ = 128;
     float fluidViscosity_ = 0.00001f;
@@ -919,9 +1300,50 @@ public:
     float fluidBuoyancy_ = 0.05f;
     float fluidVorticity_ = 0.1f;
     int fluidSolverIterations_ = 20;
+    float liquidFillAmount_ = 0.55f;
+    float liquidInflowRate_ = 0.0f;
+    float liquidInflowWidth_ = 0.25f;
+    float liquidInflowSpeed_ = 0.8f;
+    float liquidInflowPosition_ = 0.5f;
+    int liquidOpeningEdge_ = -1;
+    float liquidSpillCullMargin_ = 1024.0f;
+    float liquidGravity_ = 1.8f;
+    float liquidSurfaceTension_ = 0.15f;
+    float liquidParticleSpacing_ = 0.055f;
+    int liquidSubsteps_ = 3;
+    float liquidSurfaceOpacity_ = 0.64f;
+    float liquidEdgeOpacity_ = 0.42f;
+    float liquidFoamAmount_ = 1.0f;
+    float liquidContainerOpacity_ = 0.58f;
+    float liquidContainerWidth_ = 2.5f;
+    FloatColor liquidColor_ = FloatColor(0.10f, 0.50f, 0.98f, 1.0f);
+    FloatColor liquidFoamColor_ = FloatColor(0.78f, 0.93f, 1.0f, 1.0f);
     std::unique_ptr<ArtifactCore::FluidSolver2D> fluidSolver_;
+    std::unique_ptr<ArtifactCore::LiquidSolver2D> liquidSolver_;
+    std::map<int64_t, LiquidLayerCheckpoint> liquidCheckpoints_;
+    std::vector<LiquidSpillParticle> liquidSpillParticles_;
+    double liquidInflowCarry_ = 0.0;
+    ArtifactCore::LiquidSurfaceSnapshot2D liquidSurfaceSnapshot_;
+    int64_t liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
+    double liquidCheckpointFps_ = 0.0;
+    uint64_t liquidCheckpointCompositionRevision_ = 0;
     std::vector<ArtifactCore::ParticleVertex> fluidPreviewParticles_;
     mutable int64_t fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+    void invalidateLiquidSurface() {
+      liquidSurfaceSnapshot_ = {};
+      liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
+    }
+    void invalidateLiquidSimulation() {
+      liquidSolver_.reset();
+      liquidCheckpoints_.clear();
+      liquidSpillParticles_.clear();
+      liquidInflowCarry_ = 0.0;
+      invalidateLiquidSurface();
+      liquidCheckpointFps_ = 0.0;
+      liquidCheckpointCompositionRevision_ = 0;
+      fluidPreviewParticles_.clear();
+      fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+    }
     std::vector<ArtifactCore::ParticleVertex> componentParticles_;
     mutable int64_t componentParticlesLastFrame_ =
         std::numeric_limits<int64_t>::min();
@@ -1188,6 +1610,7 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   componentHost_.upsert(std::move(emitter));
 
   auto fluid = makeFluidComponentDescriptor(fluidComponentEnabled_);
+  fluid.settings[QStringLiteral("mode")] = fluidMode_;
   fluid.settings[QStringLiteral("gridWidth")] = fluidGridWidth_;
   fluid.settings[QStringLiteral("gridHeight")] = fluidGridHeight_;
   fluid.settings[QStringLiteral("viscosity")] =
@@ -1199,6 +1622,48 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   fluid.settings[QStringLiteral("vorticity")] =
       static_cast<double>(fluidVorticity_);
   fluid.settings[QStringLiteral("solverIterations")] = fluidSolverIterations_;
+  fluid.settings[QStringLiteral("liquidFillAmount")] =
+      static_cast<double>(liquidFillAmount_);
+  fluid.settings[QStringLiteral("liquidInflowRate")] =
+      static_cast<double>(liquidInflowRate_);
+  fluid.settings[QStringLiteral("liquidInflowWidth")] =
+      static_cast<double>(liquidInflowWidth_);
+  fluid.settings[QStringLiteral("liquidInflowSpeed")] =
+      static_cast<double>(liquidInflowSpeed_);
+  fluid.settings[QStringLiteral("liquidInflowPosition")] =
+      static_cast<double>(liquidInflowPosition_);
+  fluid.settings[QStringLiteral("liquidOpeningEdge")] = liquidOpeningEdge_;
+  fluid.settings[QStringLiteral("liquidSpillCullMargin")] =
+      static_cast<double>(liquidSpillCullMargin_);
+  fluid.settings[QStringLiteral("liquidGravity")] =
+      static_cast<double>(liquidGravity_);
+  fluid.settings[QStringLiteral("liquidSurfaceTension")] =
+      static_cast<double>(liquidSurfaceTension_);
+  fluid.settings[QStringLiteral("liquidParticleSpacing")] =
+      static_cast<double>(liquidParticleSpacing_);
+  fluid.settings[QStringLiteral("liquidSubsteps")] = liquidSubsteps_;
+  fluid.settings[QStringLiteral("liquidSurfaceOpacity")] =
+      static_cast<double>(liquidSurfaceOpacity_);
+  fluid.settings[QStringLiteral("liquidEdgeOpacity")] =
+      static_cast<double>(liquidEdgeOpacity_);
+  fluid.settings[QStringLiteral("liquidFoamAmount")] =
+      static_cast<double>(liquidFoamAmount_);
+  fluid.settings[QStringLiteral("liquidContainerOpacity")] =
+      static_cast<double>(liquidContainerOpacity_);
+  fluid.settings[QStringLiteral("liquidContainerWidth")] =
+      static_cast<double>(liquidContainerWidth_);
+  QJsonObject descriptorLiquidColor;
+  descriptorLiquidColor[QStringLiteral("r")] = liquidColor_.r();
+  descriptorLiquidColor[QStringLiteral("g")] = liquidColor_.g();
+  descriptorLiquidColor[QStringLiteral("b")] = liquidColor_.b();
+  descriptorLiquidColor[QStringLiteral("a")] = liquidColor_.a();
+  fluid.settings[QStringLiteral("liquidColor")] = descriptorLiquidColor;
+  QJsonObject descriptorFoamColor;
+  descriptorFoamColor[QStringLiteral("r")] = liquidFoamColor_.r();
+  descriptorFoamColor[QStringLiteral("g")] = liquidFoamColor_.g();
+  descriptorFoamColor[QStringLiteral("b")] = liquidFoamColor_.b();
+  descriptorFoamColor[QStringLiteral("a")] = liquidFoamColor_.a();
+  fluid.settings[QStringLiteral("liquidFoamColor")] = descriptorFoamColor;
   componentHost_.upsert(std::move(fluid));
 
   const QString& sourceComponentType = builtinSourceComponentType_;
@@ -2697,7 +3162,466 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   appendAndDrawMotionTrail(QStringLiteral("layer"), layerTrailPosition, 1.0f);
   if (impl_->fluidComponentEnabled_) {
     const double fps = std::max(1.0, effectiveLayerFrameRate(this));
-    const bool solverMismatch =
+    if (impl_->fluidMode_ == 1) {
+      impl_->fluidSolver_.reset();
+      const auto* liquidComposition =
+          dynamic_cast<const ArtifactAbstractComposition*>(compositionObject());
+      const uint64_t compositionRevision =
+          liquidComposition ? liquidComposition->revision() : 0;
+      if (!impl_->liquidSolver_) {
+        impl_->liquidSolver_ =
+            std::make_unique<ArtifactCore::LiquidSolver2D>();
+        impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->liquidCheckpoints_.clear();
+        impl_->liquidSpillParticles_.clear();
+        impl_->liquidInflowCarry_ = 0.0;
+        impl_->liquidSurfaceSnapshot_ = {};
+        impl_->liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->liquidCheckpointFps_ = fps;
+        impl_->liquidCheckpointCompositionRevision_ = compositionRevision;
+        impl_->fluidPreviewParticles_.clear();
+      }
+      auto& liquid = *impl_->liquidSolver_;
+      std::vector<QPointF> liquidContainerPoints;
+      std::size_t liquidContainerOpeningEdge = 0;
+      const bool hasPolygonLiquidContainer = configureLiquidContainerPolygon(
+          this, liquid, impl_->liquidOpeningEdge_, &liquidContainerPoints,
+          &liquidContainerOpeningEdge);
+      if (std::abs(impl_->liquidCheckpointFps_ - fps) > 1.0e-6 ||
+          impl_->liquidCheckpointCompositionRevision_ != compositionRevision) {
+        impl_->liquidCheckpoints_.clear();
+        impl_->liquidSpillParticles_.clear();
+        impl_->liquidInflowCarry_ = 0.0;
+        impl_->liquidSurfaceSnapshot_ = {};
+        impl_->liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->liquidCheckpointFps_ = fps;
+        impl_->liquidCheckpointCompositionRevision_ = compositionRevision;
+      }
+      liquid.setViscosity(impl_->fluidViscosity_);
+      liquid.setSurfaceTension(impl_->liquidSurfaceTension_);
+      liquid.setSubsteps(impl_->liquidSubsteps_);
+      liquid.setSolverIterations(
+          std::clamp(impl_->fluidSolverIterations_, 1, 12));
+
+      const auto setGravityForFrame = [&](int64_t simulationFrame) {
+        bool invertible = false;
+        const QTransform inverseTransform =
+            getGlobalTransformAt(simulationFrame).inverted(&invertible);
+        QPointF localDown(0.0, 1.0);
+        if (invertible) {
+          const QPointF localOrigin = inverseTransform.map(QPointF(0.0, 0.0));
+          const QPointF localWorldDown =
+              inverseTransform.map(QPointF(0.0, 1.0));
+          localDown = localWorldDown - localOrigin;
+        }
+        const double length = std::hypot(localDown.x(), localDown.y());
+        if (!std::isfinite(length) || length < 1.0e-8) {
+          localDown = QPointF(0.0, 1.0);
+        } else {
+          localDown /= length;
+        }
+        liquid.setGravity(
+            static_cast<float>(localDown.x()) * impl_->liquidGravity_,
+            static_cast<float>(localDown.y()) * impl_->liquidGravity_);
+      };
+
+      const auto storeCheckpoint = [&](int64_t checkpointFrame) {
+        constexpr int64_t checkpointInterval = 30;
+        constexpr std::size_t maxCheckpoints = 256;
+        if (checkpointFrame < 0 || checkpointFrame % checkpointInterval != 0) {
+          return;
+        }
+        impl_->liquidCheckpoints_[checkpointFrame] =
+            {liquid.snapshot(), impl_->liquidSpillParticles_,
+             impl_->liquidInflowCarry_};
+        while (impl_->liquidCheckpoints_.size() > maxCheckpoints) {
+          auto oldest = impl_->liquidCheckpoints_.begin();
+          if (oldest != impl_->liquidCheckpoints_.end() && oldest->first == 0) {
+            ++oldest;
+          }
+          if (oldest == impl_->liquidCheckpoints_.end()) break;
+          impl_->liquidCheckpoints_.erase(oldest);
+        }
+      };
+
+      const int64_t targetFrame = std::max<int64_t>(0, frame);
+      const bool randomAccess =
+          impl_->fluidLastFrame_ == std::numeric_limits<int64_t>::min() ||
+          targetFrame < impl_->fluidLastFrame_ ||
+          targetFrame - impl_->fluidLastFrame_ > 10;
+      const float dt = 1.0f / static_cast<float>(fps);
+      QRectF liquidSpillCullBounds;
+      const QSizeF liquidCompositionSize = compositionSizeHint();
+      if (impl_->liquidSpillCullMargin_ > 0.0f &&
+          liquidCompositionSize.isValid() &&
+          liquidCompositionSize.width() > 0.0 &&
+          liquidCompositionSize.height() > 0.0) {
+        const qreal margin = impl_->liquidSpillCullMargin_;
+        liquidSpillCullBounds =
+            QRectF(QPointF(0.0, 0.0), liquidCompositionSize)
+                .adjusted(-margin, -margin, margin, margin);
+      }
+      const auto advanceLiquidFrame = [&](int64_t simulationFrame) {
+        impl_->liquidInflowCarry_ +=
+            static_cast<double>(impl_->liquidInflowRate_) * dt;
+        const double wholeInflow = std::floor(impl_->liquidInflowCarry_);
+        const auto requestedInflow = static_cast<std::size_t>(
+            std::min(wholeInflow, 4096.0));
+        impl_->liquidInflowCarry_ -= wholeInflow;
+        if (requestedInflow > 0) {
+          liquid.emitFromOpening(
+              requestedInflow, impl_->liquidInflowWidth_,
+              impl_->liquidInflowSpeed_, impl_->liquidInflowPosition_);
+        }
+        const float impactRetention = std::exp(-6.0f * dt);
+        for (auto& spill : impl_->liquidSpillParticles_) {
+          spill.collisionImpact *= impactRetention;
+          if (!std::isfinite(spill.collisionImpact) ||
+              spill.collisionImpact < 0.0f) {
+            spill.collisionImpact = 0.0f;
+          }
+        }
+        ArtifactCore::LiquidSolver2D::applySpillInteractions(
+            impl_->liquidSpillParticles_, dt,
+            impl_->liquidSurfaceTension_, impl_->fluidViscosity_);
+        for (auto& spill : impl_->liquidSpillParticles_) {
+          spill.previousX = spill.x;
+          spill.previousY = spill.y;
+          spill.vy += spill.gravityY * dt;
+          spill.x += spill.vx * dt;
+          spill.y += spill.vy * dt;
+        }
+        impl_->liquidSpillParticles_.erase(
+            std::remove_if(
+                impl_->liquidSpillParticles_.begin(),
+                impl_->liquidSpillParticles_.end(),
+                [&liquidSpillCullBounds](
+                    const Impl::LiquidSpillParticle& spill) {
+                  constexpr float worldLimit = 10000000.0f;
+                  const bool outsideCullBounds =
+                      liquidSpillCullBounds.isValid() &&
+                      !liquidSpillCullBounds.contains(spill.x, spill.y);
+                  return !std::isfinite(spill.x) || !std::isfinite(spill.y) ||
+                         !std::isfinite(spill.vx) || !std::isfinite(spill.vy) ||
+                         !std::isfinite(spill.collisionImpact) ||
+                         std::abs(spill.x) > worldLimit ||
+                         std::abs(spill.y) > worldLimit ||
+                         outsideCullBounds;
+                }),
+            impl_->liquidSpillParticles_.end());
+        if (liquidComposition) {
+          const auto& collisionLayers = liquidComposition->allLayerRef();
+          for (auto& spill : impl_->liquidSpillParticles_) {
+            for (const auto& collisionLayer : collisionLayers) {
+              if (!collisionLayer || collisionLayer.get() == this) continue;
+              if (resolveLiquidPointAgainstCollisionLayer(
+                      collisionLayer.get(), simulationFrame,
+                      spill.size * 0.5f, spill.previousX, spill.previousY,
+                      spill.x, spill.y, spill.vx, spill.vy,
+                      spill.collisionImpact)) {
+                spill.previousX = spill.x;
+                spill.previousY = spill.y;
+              }
+            }
+          }
+        }
+
+        setGravityForFrame(simulationFrame);
+        liquid.update(dt);
+        auto escaped = liquid.takeEscapedParticles();
+        if (escaped.empty()) return;
+
+        const QRectF bounds = localBounds();
+        if (!bounds.isValid() || bounds.width() <= 0.0 ||
+            bounds.height() <= 0.0) {
+          return;
+        }
+        const QTransform frameTransform =
+            getGlobalTransformAt(simulationFrame);
+        const QPointF mappedOrigin = frameTransform.map(QPointF(0.0, 0.0));
+        const double scaleX = std::hypot(frameTransform.m11(),
+                                         frameTransform.m12());
+        const double scaleY = std::hypot(frameTransform.m21(),
+                                         frameTransform.m22());
+        const float screenScale = static_cast<float>(
+            std::max(0.0001, std::min(scaleX, scaleY)));
+        const float velocityScale = static_cast<float>(
+            std::min(bounds.width(), bounds.height())) * screenScale;
+        const float spillSize = std::max(
+            2.0f, velocityScale * impl_->liquidParticleSpacing_ * 1.35f);
+        constexpr std::size_t maxSpillParticles = 100000;
+        for (const auto& source : escaped) {
+          if (impl_->liquidSpillParticles_.size() >= maxSpillParticles) break;
+          const QPointF localPosition(
+              bounds.left() + source.x * bounds.width(),
+              bounds.top() + source.y * bounds.height());
+          const QPointF localVelocity(source.vx * bounds.width(),
+                                      source.vy * bounds.height());
+          const QPointF worldPosition = frameTransform.map(localPosition);
+          const QPointF worldVelocityPoint = frameTransform.map(localVelocity);
+          const QPointF worldVelocity = worldVelocityPoint - mappedOrigin;
+          impl_->liquidSpillParticles_.push_back({
+              static_cast<float>(worldPosition.x()),
+              static_cast<float>(worldPosition.y()),
+              static_cast<float>(worldPosition.x()),
+              static_cast<float>(worldPosition.y()),
+              static_cast<float>(worldVelocity.x()),
+              static_cast<float>(worldVelocity.y()),
+              impl_->liquidGravity_ * velocityScale,
+              spillSize,
+              source.collisionImpact * velocityScale});
+        }
+      };
+      if (randomAccess) {
+        int64_t replayFrame = 0;
+        auto checkpoint = impl_->liquidCheckpoints_.upper_bound(targetFrame);
+        if (checkpoint != impl_->liquidCheckpoints_.begin()) {
+          --checkpoint;
+          if (liquid.restore(checkpoint->second.container)) {
+            replayFrame = checkpoint->first;
+            impl_->liquidSpillParticles_ = checkpoint->second.spillParticles;
+            impl_->liquidInflowCarry_ = checkpoint->second.inflowCarry;
+          } else {
+            impl_->liquidCheckpoints_.clear();
+            impl_->liquidSpillParticles_.clear();
+            impl_->liquidInflowCarry_ = 0.0;
+          }
+        }
+        if (impl_->liquidCheckpoints_.empty()) {
+          liquid.reset(impl_->liquidFillAmount_,
+                       impl_->liquidParticleSpacing_);
+          impl_->liquidSpillParticles_.clear();
+          impl_->liquidInflowCarry_ = 0.0;
+          impl_->liquidCheckpoints_[0] = {liquid.snapshot(), {}, 0.0};
+          replayFrame = 0;
+        }
+        for (; replayFrame < targetFrame; ++replayFrame) {
+          advanceLiquidFrame(replayFrame + 1);
+          storeCheckpoint(replayFrame + 1);
+        }
+        impl_->fluidLastFrame_ = targetFrame;
+      } else if (targetFrame > impl_->fluidLastFrame_) {
+        for (int64_t stepFrame = impl_->fluidLastFrame_ + 1;
+             stepFrame <= targetFrame; ++stepFrame) {
+          advanceLiquidFrame(stepFrame);
+          storeCheckpoint(stepFrame);
+        }
+        impl_->fluidLastFrame_ = targetFrame;
+      }
+
+      auto renderData = makeLiquid2DRenderData(
+          liquid.snapshot(), localBounds(), impl_->liquidParticleSpacing_,
+          frame);
+      const QVector3D mappedVelocityOrigin =
+          baseTransform.map(QVector3D(0.0f, 0.0f, 0.0f));
+      const QVector3D mappedVelocityX =
+          baseTransform.map(QVector3D(1.0f, 0.0f, 0.0f)) -
+          mappedVelocityOrigin;
+      const QVector3D mappedVelocityY =
+          baseTransform.map(QVector3D(0.0f, 1.0f, 0.0f)) -
+          mappedVelocityOrigin;
+      const float containerImpactScale = static_cast<float>(
+          std::min(localBounds().width(), localBounds().height())) *
+          std::max(0.0001f, std::min(mappedVelocityX.length(),
+                                     mappedVelocityY.length()));
+      for (auto& particle : renderData.particles) {
+        const QVector3D mapped = baseTransform.map(
+            QVector3D(particle.px, particle.py, particle.pz));
+        particle.px = mapped.x();
+        particle.py = mapped.y();
+        particle.pz = mapped.z();
+        const QVector3D mappedVelocity = baseTransform.map(
+            QVector3D(particle.vx, particle.vy, particle.vz)) -
+            mappedVelocityOrigin;
+        particle.vx = mappedVelocity.x();
+        particle.vy = mappedVelocity.y();
+        particle.vz = mappedVelocity.z();
+        particle.r = impl_->liquidColor_.r();
+        particle.g = impl_->liquidColor_.g();
+        particle.b = impl_->liquidColor_.b();
+        particle.a *= impl_->liquidColor_.a();
+        particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
+      }
+      const std::size_t containerParticleCount = renderData.particles.size();
+      renderData.particles.reserve(renderData.particles.size() +
+                                   impl_->liquidSpillParticles_.size());
+      for (const auto& spill : impl_->liquidSpillParticles_) {
+        ArtifactCore::ParticleVertex particle{};
+        particle.px = spill.x;
+        particle.py = spill.y;
+        particle.pz = 0.0f;
+        particle.vx = spill.vx;
+        particle.vy = spill.vy;
+        particle.vz = 0.0f;
+        particle.r = impl_->liquidColor_.r();
+        particle.g = impl_->liquidColor_.g();
+        particle.b = impl_->liquidColor_.b();
+        particle.a = 0.82f * impl_->liquidColor_.a() *
+            std::clamp(opacityScale, 0.0f, 1.0f);
+        particle.size = spill.size;
+        particle.stretch = 1.0f;
+        particle.rotation = 0.0f;
+        particle.age = 0.0f;
+        particle.lifetime = 1.0f;
+        renderData.particles.push_back(particle);
+      }
+      constexpr std::size_t maximumLiquidDetailParticles = 95000;
+      if (renderData.particles.size() > maximumLiquidDetailParticles) {
+        renderData.particles.resize(maximumLiquidDetailParticles);
+      }
+      std::vector<ArtifactCore::LiquidSurfaceSample2D> surfaceSamples;
+      surfaceSamples.reserve(renderData.particles.size());
+      for (std::size_t particleIndex = 0;
+           particleIndex < renderData.particles.size(); ++particleIndex) {
+        const auto& particle = renderData.particles[particleIndex];
+        if (particle.a <= 0.0f || particle.size <= 0.0f) continue;
+        const float foamBias =
+            (particleIndex < containerParticleCount ? 0.45f : 1.0f) *
+            impl_->liquidFoamAmount_;
+        float collisionImpact = 0.0f;
+        if (particleIndex < containerParticleCount) {
+          const auto& containerParticles = liquid.particles();
+          if (particleIndex < containerParticles.size()) {
+            collisionImpact =
+                containerParticles[particleIndex].collisionImpact *
+                containerImpactScale;
+          }
+        } else {
+          const std::size_t spillIndex =
+              particleIndex - containerParticleCount;
+          if (spillIndex < impl_->liquidSpillParticles_.size()) {
+            collisionImpact =
+                impl_->liquidSpillParticles_[spillIndex].collisionImpact;
+          }
+        }
+        surfaceSamples.push_back({particle.px, particle.py, particle.size,
+                                  particle.vx, particle.vy, foamBias,
+                                  collisionImpact});
+      }
+      if (impl_->liquidSurfaceFrame_ != frame) {
+        impl_->liquidSurfaceSnapshot_ =
+            ArtifactCore::LiquidSolver2D::buildSurfaceSnapshot(surfaceSamples);
+        impl_->liquidSurfaceFrame_ = frame;
+      }
+      const auto& surface = impl_->liquidSurfaceSnapshot_;
+      if (!surface.triangles.empty()) {
+        const float layerAlpha = std::clamp(opacityScale, 0.0f, 1.0f);
+        const bool drawSurface = impl_->liquidSurfaceOpacity_ > 0.0f;
+        const bool drawEdge = impl_->liquidEdgeOpacity_ > 0.0f;
+        if (drawSurface) {
+          for (const auto& triangle : surface.triangles) {
+            const float thickness =
+                std::clamp(triangle.thickness, 0.0f, 1.0f);
+            const float lighten = (1.0f - thickness) * 0.10f;
+            const float darken = 1.0f - thickness * 0.18f;
+            const FloatColor surfaceColor(
+                std::clamp(impl_->liquidColor_.r() * darken + lighten,
+                           0.0f, 1.0f),
+                std::clamp(impl_->liquidColor_.g() * darken + lighten,
+                           0.0f, 1.0f),
+                std::clamp(impl_->liquidColor_.b() * darken + lighten,
+                           0.0f, 1.0f),
+                impl_->liquidColor_.a() *
+                    impl_->liquidSurfaceOpacity_ * layerAlpha *
+                    (0.38f + thickness * 0.62f));
+            renderer->drawSolidTriangleLocal(
+                {triangle.a.x, triangle.a.y},
+                {triangle.b.x, triangle.b.y},
+                {triangle.c.x, triangle.c.y}, surfaceColor);
+          }
+        }
+        if (drawEdge) {
+          const FloatColor surfaceEdgeColor(
+              impl_->liquidColor_.r() +
+                  (1.0f - impl_->liquidColor_.r()) * 0.62f,
+              impl_->liquidColor_.g() +
+                  (1.0f - impl_->liquidColor_.g()) * 0.62f,
+              impl_->liquidColor_.b() +
+                  (1.0f - impl_->liquidColor_.b()) * 0.62f,
+              impl_->liquidColor_.a() *
+                  impl_->liquidEdgeOpacity_ * layerAlpha);
+          for (const auto& segment : surface.contourSegments) {
+            renderer->drawThickLineLocal(
+                {segment.a.x, segment.a.y},
+                {segment.b.x, segment.b.y}, 1.35f, surfaceEdgeColor);
+          }
+        }
+        if (drawSurface || drawEdge) {
+          for (auto& particle : renderData.particles) {
+            particle.a *= 0.32f;
+            particle.size *= 0.72f;
+          }
+        }
+        const std::size_t foamCapacity =
+            100000 - std::min<std::size_t>(renderData.particles.size(), 100000);
+        const std::size_t foamCount =
+            std::min(foamCapacity, surface.foamPoints.size());
+        renderData.particles.reserve(renderData.particles.size() + foamCount);
+        for (std::size_t foamIndex = 0; foamIndex < foamCount; ++foamIndex) {
+          const auto& foam = surface.foamPoints[foamIndex];
+          ArtifactCore::ParticleVertex particle{};
+          particle.px = foam.position.x;
+          particle.py = foam.position.y;
+          particle.pz = 0.0f;
+          particle.r = impl_->liquidFoamColor_.r();
+          particle.g = impl_->liquidFoamColor_.g();
+          particle.b = impl_->liquidFoamColor_.b();
+          particle.a = foam.alpha * impl_->liquidFoamColor_.a() *
+              std::clamp(opacityScale, 0.0f, 1.0f);
+          particle.size = foam.size;
+          particle.stretch = 1.0f;
+          particle.lifetime = 1.0f;
+          renderData.particles.push_back(particle);
+        }
+      }
+      if (impl_->liquidContainerOpacity_ > 0.0f &&
+          impl_->liquidContainerWidth_ > 0.0f) {
+        if (!hasPolygonLiquidContainer) {
+          const QRectF bounds = localBounds();
+          if (bounds.isValid() && bounds.width() > 0.0 &&
+              bounds.height() > 0.0) {
+            liquidContainerPoints = {
+                bounds.topLeft(), bounds.topRight(),
+                bounds.bottomRight(), bounds.bottomLeft()};
+            liquidContainerOpeningEdge = 0;
+          }
+        }
+        if (liquidContainerPoints.size() >= 3) {
+          const float containerAlpha =
+              impl_->liquidContainerOpacity_ *
+              std::clamp(opacityScale, 0.0f, 1.0f);
+          const FloatColor containerColor(
+              std::clamp(impl_->liquidColor_.r() * 0.32f + 0.54f, 0.0f, 1.0f),
+              std::clamp(impl_->liquidColor_.g() * 0.32f + 0.54f, 0.0f, 1.0f),
+              std::clamp(impl_->liquidColor_.b() * 0.32f + 0.54f, 0.0f, 1.0f),
+              containerAlpha);
+          for (std::size_t edge = 0;
+               edge < liquidContainerPoints.size(); ++edge) {
+            if (edge == liquidContainerOpeningEdge) continue;
+            const QPointF& localA = liquidContainerPoints[edge];
+            const QPointF& localB = liquidContainerPoints[
+                (edge + 1) % liquidContainerPoints.size()];
+            const QVector3D worldA = baseTransform.map(QVector3D(
+                static_cast<float>(localA.x()),
+                static_cast<float>(localA.y()), 0.0f));
+            const QVector3D worldB = baseTransform.map(QVector3D(
+                static_cast<float>(localB.x()),
+                static_cast<float>(localB.y()), 0.0f));
+            renderer->drawThickLineLocal(
+                {worldA.x(), worldA.y()}, {worldB.x(), worldB.y()},
+                impl_->liquidContainerWidth_, containerColor);
+          }
+        }
+      }
+      if (!renderData.particles.empty()) {
+        renderer->drawParticles(renderData);
+      }
+    } else {
+      if (impl_->liquidSolver_ || !impl_->liquidCheckpoints_.empty()) {
+        impl_->invalidateLiquidSimulation();
+      }
+      const bool solverMismatch =
         !impl_->fluidSolver_ ||
         impl_->fluidSolver_->width() != impl_->fluidGridWidth_ ||
         impl_->fluidSolver_->height() != impl_->fluidGridHeight_;
@@ -2802,10 +3726,10 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         renderer->drawParticles(renderData);
       }
     }
+    }
   } else {
     impl_->fluidSolver_.reset();
-    impl_->fluidPreviewParticles_.clear();
-    impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+    impl_->invalidateLiquidSimulation();
   }
 
   if (impl_->particleEmitterComponentEnabled_ &&
@@ -4530,6 +5454,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["particleEmitterLifetime"] =
       static_cast<double>(impl_->particleEmitterLifetime_);
   componentsObj["fluidEnabled"] = impl_->fluidComponentEnabled_;
+  componentsObj["fluidMode"] = impl_->fluidMode_;
   componentsObj["fluidGridWidth"] = impl_->fluidGridWidth_;
   componentsObj["fluidGridHeight"] = impl_->fluidGridHeight_;
   componentsObj["fluidViscosity"] = static_cast<double>(impl_->fluidViscosity_);
@@ -4537,6 +5462,48 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["fluidBuoyancy"] = static_cast<double>(impl_->fluidBuoyancy_);
   componentsObj["fluidVorticity"] = static_cast<double>(impl_->fluidVorticity_);
   componentsObj["fluidSolverIterations"] = impl_->fluidSolverIterations_;
+  componentsObj["liquidFillAmount"] =
+      static_cast<double>(impl_->liquidFillAmount_);
+  componentsObj["liquidInflowRate"] =
+      static_cast<double>(impl_->liquidInflowRate_);
+  componentsObj["liquidInflowWidth"] =
+      static_cast<double>(impl_->liquidInflowWidth_);
+  componentsObj["liquidInflowSpeed"] =
+      static_cast<double>(impl_->liquidInflowSpeed_);
+  componentsObj["liquidInflowPosition"] =
+      static_cast<double>(impl_->liquidInflowPosition_);
+  componentsObj["liquidOpeningEdge"] = impl_->liquidOpeningEdge_;
+  componentsObj["liquidSpillCullMargin"] =
+      static_cast<double>(impl_->liquidSpillCullMargin_);
+  componentsObj["liquidGravity"] =
+      static_cast<double>(impl_->liquidGravity_);
+  componentsObj["liquidSurfaceTension"] =
+      static_cast<double>(impl_->liquidSurfaceTension_);
+  componentsObj["liquidParticleSpacing"] =
+      static_cast<double>(impl_->liquidParticleSpacing_);
+  componentsObj["liquidSubsteps"] = impl_->liquidSubsteps_;
+  componentsObj["liquidSurfaceOpacity"] =
+      static_cast<double>(impl_->liquidSurfaceOpacity_);
+  componentsObj["liquidEdgeOpacity"] =
+      static_cast<double>(impl_->liquidEdgeOpacity_);
+  componentsObj["liquidFoamAmount"] =
+      static_cast<double>(impl_->liquidFoamAmount_);
+  componentsObj["liquidContainerOpacity"] =
+      static_cast<double>(impl_->liquidContainerOpacity_);
+  componentsObj["liquidContainerWidth"] =
+      static_cast<double>(impl_->liquidContainerWidth_);
+  QJsonObject liquidColorObj;
+  liquidColorObj["r"] = impl_->liquidColor_.r();
+  liquidColorObj["g"] = impl_->liquidColor_.g();
+  liquidColorObj["b"] = impl_->liquidColor_.b();
+  liquidColorObj["a"] = impl_->liquidColor_.a();
+  componentsObj["liquidColor"] = liquidColorObj;
+  QJsonObject liquidFoamColorObj;
+  liquidFoamColorObj["r"] = impl_->liquidFoamColor_.r();
+  liquidFoamColorObj["g"] = impl_->liquidFoamColor_.g();
+  liquidFoamColorObj["b"] = impl_->liquidFoamColor_.b();
+  liquidFoamColorObj["a"] = impl_->liquidFoamColor_.a();
+  componentsObj["liquidFoamColor"] = liquidFoamColorObj;
   componentsObj["layoutMode"] = impl_->layoutMode_;
   componentsObj["layoutAnchorMode"] = impl_->layoutAnchorMode_;
   componentsObj["layoutHorizontalPin"] = impl_->layoutHorizontalPin_;
@@ -5326,6 +6293,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             1.0, 0.01, 3600.0));
         impl_->fluidComponentEnabled_ =
             componentsObj.value(QStringLiteral("fluidEnabled")).toBool(false);
+        impl_->fluidMode_ = std::clamp(
+            componentsObj.value(QStringLiteral("fluidMode")).toInt(0), 0, 1);
         impl_->fluidGridWidth_ = std::clamp(
             componentsObj.value(QStringLiteral("fluidGridWidth")).toInt(128),
             8, 4096);
@@ -5351,6 +6320,86 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->fluidSolverIterations_ = std::clamp(
             componentsObj.value(QStringLiteral("fluidSolverIterations")).toInt(20),
             1, 256);
+        impl_->liquidFillAmount_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidFillAmount")).toDouble(0.55),
+            0.55, 0.0, 1.0));
+        impl_->liquidInflowRate_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidInflowRate")).toDouble(0.0),
+            0.0, 0.0, 10000.0));
+        impl_->liquidInflowWidth_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidInflowWidth")).toDouble(0.25),
+            0.25, 0.0, 1.0));
+        impl_->liquidInflowSpeed_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidInflowSpeed")).toDouble(0.8),
+            0.8, 0.0, 20.0));
+        impl_->liquidInflowPosition_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidInflowPosition"))
+                .toDouble(0.5),
+            0.5, 0.0, 1.0));
+        impl_->liquidOpeningEdge_ = std::clamp(
+            componentsObj.value(QStringLiteral("liquidOpeningEdge")).toInt(-1),
+            -1, 511);
+        impl_->liquidSpillCullMargin_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidSpillCullMargin"))
+                .toDouble(1024.0),
+            1024.0, 0.0, 1000000.0));
+        impl_->liquidGravity_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidGravity")).toDouble(1.8),
+            1.8, 0.0, 20.0));
+        impl_->liquidSurfaceTension_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidSurfaceTension")).toDouble(0.15),
+            0.15, 0.0, 1.0));
+        impl_->liquidParticleSpacing_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidParticleSpacing")).toDouble(0.055),
+            0.055, 0.025, 0.2));
+        impl_->liquidSubsteps_ = std::clamp(
+            componentsObj.value(QStringLiteral("liquidSubsteps")).toInt(3),
+            1, 8);
+        impl_->liquidSurfaceOpacity_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidSurfaceOpacity"))
+                .toDouble(0.64),
+            0.64, 0.0, 1.0));
+        impl_->liquidEdgeOpacity_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidEdgeOpacity"))
+                .toDouble(0.42),
+            0.42, 0.0, 1.0));
+        impl_->liquidFoamAmount_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidFoamAmount"))
+                .toDouble(1.0),
+            1.0, 0.0, 1.0));
+        impl_->liquidContainerOpacity_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidContainerOpacity"))
+                .toDouble(0.58),
+            0.58, 0.0, 1.0));
+        impl_->liquidContainerWidth_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("liquidContainerWidth"))
+                .toDouble(2.5),
+            2.5, 0.0, 64.0));
+        const auto restoreLiquidColor = [&](const QString& key,
+                                            const FloatColor& fallback) {
+          const QJsonObject color =
+              componentsObj.value(key).toObject();
+          return FloatColor(
+              static_cast<float>(finiteClamped(
+                  color.value(QStringLiteral("r")).toDouble(fallback.r()),
+                  fallback.r(), 0.0, 1.0)),
+              static_cast<float>(finiteClamped(
+                  color.value(QStringLiteral("g")).toDouble(fallback.g()),
+                  fallback.g(), 0.0, 1.0)),
+              static_cast<float>(finiteClamped(
+                  color.value(QStringLiteral("b")).toDouble(fallback.b()),
+                  fallback.b(), 0.0, 1.0)),
+              static_cast<float>(finiteClamped(
+                  color.value(QStringLiteral("a")).toDouble(fallback.a()),
+                  fallback.a(), 0.0, 1.0)));
+        };
+        impl_->liquidColor_ = restoreLiquidColor(
+            QStringLiteral("liquidColor"),
+            FloatColor(0.10f, 0.50f, 0.98f, 1.0f));
+        impl_->liquidFoamColor_ = restoreLiquidColor(
+            QStringLiteral("liquidFoamColor"),
+            FloatColor(0.78f, 0.93f, 1.0f, 1.0f));
+        impl_->invalidateLiquidSimulation();
         impl_->layoutMode_ = std::clamp(
             componentsObj.value(QStringLiteral("layoutMode")).toInt(0), 0, 2);
         impl_->layoutAnchorMode_ = std::clamp(
@@ -7308,6 +8357,15 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   particleLifetimeProp->setHardRange(0.01, 3600.0);
   particleLifetimeProp->setSoftRange(0.1, 30.0);
   particleEmitterGroup.addProperty(particleLifetimeProp);
+  auto fluidModeProp =
+      makeProp(QStringLiteral("component.fluid.mode"),
+               PropertyType::Integer, impl_->fluidMode_, -79);
+  fluidModeProp->setDisplayLabel(QStringLiteral("Mode"));
+  fluidModeProp->setTooltip(
+      QStringLiteral("0=Smoke / Ink, 1=Liquid Container."));
+  fluidModeProp->setHardRange(0.0, 1.0);
+  fluidModeProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(fluidModeProp);
   auto fluidGridWidthProp =
       makeProp(QStringLiteral("component.fluid.gridWidth"),
                PropertyType::Integer, impl_->fluidGridWidth_, -78);
@@ -7358,6 +8416,164 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   fluidSolverIterationsProp->setHardRange(1.0, 256.0);
   fluidSolverIterationsProp->setSoftRange(1.0, 64.0);
   fluidGroup.addProperty(fluidSolverIterationsProp);
+  auto liquidFillProp =
+      makeProp(QStringLiteral("component.fluid.liquidFillAmount"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidFillAmount_), -71);
+  liquidFillProp->setDisplayLabel(QStringLiteral("Liquid Fill"));
+  liquidFillProp->setHardRange(0.0, 1.0);
+  liquidFillProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidFillProp);
+  auto liquidInflowRateProp =
+      makeProp(QStringLiteral("component.fluid.liquidInflowRate"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidInflowRate_), -70);
+  liquidInflowRateProp->setDisplayLabel(QStringLiteral("Inflow Rate"));
+  liquidInflowRateProp->setUnit(QStringLiteral("particles/s"));
+  liquidInflowRateProp->setHardRange(0.0, 10000.0);
+  liquidInflowRateProp->setSoftRange(0.0, 1000.0);
+  fluidGroup.addProperty(liquidInflowRateProp);
+  auto liquidInflowWidthProp =
+      makeProp(QStringLiteral("component.fluid.liquidInflowWidth"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidInflowWidth_), -69);
+  liquidInflowWidthProp->setDisplayLabel(QStringLiteral("Inflow Width"));
+  liquidInflowWidthProp->setHardRange(0.0, 1.0);
+  liquidInflowWidthProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidInflowWidthProp);
+  auto liquidInflowSpeedProp =
+      makeProp(QStringLiteral("component.fluid.liquidInflowSpeed"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidInflowSpeed_), -68);
+  liquidInflowSpeedProp->setDisplayLabel(QStringLiteral("Inflow Speed"));
+  liquidInflowSpeedProp->setHardRange(0.0, 20.0);
+  liquidInflowSpeedProp->setSoftRange(0.0, 5.0);
+  fluidGroup.addProperty(liquidInflowSpeedProp);
+  auto liquidInflowPositionProp =
+      makeProp(QStringLiteral("component.fluid.liquidInflowPosition"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidInflowPosition_), -67);
+  liquidInflowPositionProp->setDisplayLabel(
+      QStringLiteral("Inflow Position"));
+  liquidInflowPositionProp->setTooltip(QStringLiteral(
+      "開口辺の始点を0、終点を1とした流入口中心位置。"));
+  liquidInflowPositionProp->setHardRange(0.0, 1.0);
+  liquidInflowPositionProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidInflowPositionProp);
+  auto liquidOpeningEdgeProp =
+      makeProp(QStringLiteral("component.fluid.liquidOpeningEdge"),
+               PropertyType::Integer, impl_->liquidOpeningEdge_, -67);
+  liquidOpeningEdgeProp->setDisplayLabel(QStringLiteral("Opening Edge"));
+  liquidOpeningEdgeProp->setTooltip(QStringLiteral(
+      "Collision Polygonの開口辺index。-1で最上辺を自動選択。"));
+  liquidOpeningEdgeProp->setHardRange(-1.0, 511.0);
+  liquidOpeningEdgeProp->setSoftRange(-1.0, 32.0);
+  fluidGroup.addProperty(liquidOpeningEdgeProp);
+  auto liquidSpillCullMarginProp =
+      makeProp(QStringLiteral("component.fluid.liquidSpillCullMargin"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidSpillCullMargin_), -67);
+  liquidSpillCullMarginProp->setDisplayLabel(
+      QStringLiteral("Spill Cull Margin"));
+  liquidSpillCullMarginProp->setTooltip(
+      QStringLiteral("Composition外でspillを保持する余白。0で無効。"));
+  liquidSpillCullMarginProp->setUnit(QStringLiteral("px"));
+  liquidSpillCullMarginProp->setHardRange(0.0, 1000000.0);
+  liquidSpillCullMarginProp->setSoftRange(0.0, 4096.0);
+  fluidGroup.addProperty(liquidSpillCullMarginProp);
+  auto liquidGravityProp =
+      makeProp(QStringLiteral("component.fluid.liquidGravity"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidGravity_), -70);
+  liquidGravityProp->setDisplayLabel(QStringLiteral("Liquid Gravity"));
+  liquidGravityProp->setHardRange(0.0, 20.0);
+  liquidGravityProp->setSoftRange(0.0, 5.0);
+  fluidGroup.addProperty(liquidGravityProp);
+  auto liquidSurfaceTensionProp =
+      makeProp(QStringLiteral("component.fluid.liquidSurfaceTension"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidSurfaceTension_), -69);
+  liquidSurfaceTensionProp->setDisplayLabel(
+      QStringLiteral("Surface Tension"));
+  liquidSurfaceTensionProp->setHardRange(0.0, 1.0);
+  liquidSurfaceTensionProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidSurfaceTensionProp);
+  auto liquidSpacingProp =
+      makeProp(QStringLiteral("component.fluid.liquidParticleSpacing"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidParticleSpacing_), -68);
+  liquidSpacingProp->setDisplayLabel(QStringLiteral("Particle Spacing"));
+  liquidSpacingProp->setHardRange(0.025, 0.2);
+  liquidSpacingProp->setSoftRange(0.035, 0.12);
+  fluidGroup.addProperty(liquidSpacingProp);
+  auto liquidSubstepsProp =
+      makeProp(QStringLiteral("component.fluid.liquidSubsteps"),
+               PropertyType::Integer, impl_->liquidSubsteps_, -67);
+  liquidSubstepsProp->setDisplayLabel(QStringLiteral("Liquid Substeps"));
+  liquidSubstepsProp->setHardRange(1.0, 8.0);
+  liquidSubstepsProp->setSoftRange(1.0, 5.0);
+  fluidGroup.addProperty(liquidSubstepsProp);
+  auto liquidSurfaceOpacityProp =
+      makeProp(QStringLiteral("component.fluid.liquidSurfaceOpacity"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidSurfaceOpacity_), -66);
+  liquidSurfaceOpacityProp->setDisplayLabel(QStringLiteral("Surface Opacity"));
+  liquidSurfaceOpacityProp->setHardRange(0.0, 1.0);
+  liquidSurfaceOpacityProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidSurfaceOpacityProp);
+  auto liquidEdgeOpacityProp =
+      makeProp(QStringLiteral("component.fluid.liquidEdgeOpacity"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidEdgeOpacity_), -65);
+  liquidEdgeOpacityProp->setDisplayLabel(QStringLiteral("Edge Opacity"));
+  liquidEdgeOpacityProp->setHardRange(0.0, 1.0);
+  liquidEdgeOpacityProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidEdgeOpacityProp);
+  auto liquidFoamAmountProp =
+      makeProp(QStringLiteral("component.fluid.liquidFoamAmount"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidFoamAmount_), -64);
+  liquidFoamAmountProp->setDisplayLabel(QStringLiteral("Foam Amount"));
+  liquidFoamAmountProp->setHardRange(0.0, 1.0);
+  liquidFoamAmountProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidFoamAmountProp);
+  auto liquidContainerOpacityProp =
+      makeProp(QStringLiteral("component.fluid.liquidContainerOpacity"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidContainerOpacity_), -63);
+  liquidContainerOpacityProp->setDisplayLabel(
+      QStringLiteral("Container Opacity"));
+  liquidContainerOpacityProp->setHardRange(0.0, 1.0);
+  liquidContainerOpacityProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(liquidContainerOpacityProp);
+  auto liquidContainerWidthProp =
+      makeProp(QStringLiteral("component.fluid.liquidContainerWidth"),
+               PropertyType::Float,
+               static_cast<double>(impl_->liquidContainerWidth_), -62);
+  liquidContainerWidthProp->setDisplayLabel(
+      QStringLiteral("Container Width"));
+  liquidContainerWidthProp->setUnit(QStringLiteral("px"));
+  liquidContainerWidthProp->setHardRange(0.0, 64.0);
+  liquidContainerWidthProp->setSoftRange(0.0, 12.0);
+  fluidGroup.addProperty(liquidContainerWidthProp);
+  const QColor liquidColor = QColor::fromRgbF(
+      impl_->liquidColor_.r(), impl_->liquidColor_.g(),
+      impl_->liquidColor_.b(), impl_->liquidColor_.a());
+  auto liquidColorProp =
+      makeProp(QStringLiteral("component.fluid.liquidColor"),
+               PropertyType::Color, liquidColor, -63);
+  liquidColorProp->setColorValue(liquidColor);
+  liquidColorProp->setDisplayLabel(QStringLiteral("Liquid Color"));
+  fluidGroup.addProperty(liquidColorProp);
+  const QColor liquidFoamColor = QColor::fromRgbF(
+      impl_->liquidFoamColor_.r(), impl_->liquidFoamColor_.g(),
+      impl_->liquidFoamColor_.b(), impl_->liquidFoamColor_.a());
+  auto liquidFoamColorProp =
+      makeProp(QStringLiteral("component.fluid.liquidFoamColor"),
+               PropertyType::Color, liquidFoamColor, -62);
+  liquidFoamColorProp->setColorValue(liquidFoamColor);
+  liquidFoamColorProp->setDisplayLabel(QStringLiteral("Foam Color"));
+  fluidGroup.addProperty(liquidFoamColorProp);
   auto layoutComponentEnabledProp =
       makeProp(QStringLiteral("component.layout.enabled"),
                PropertyType::Boolean, impl_->layoutComponentEnabled_, -89);
@@ -10038,11 +11254,19 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fluidComponentEnabled_ = value.toBool();
       if (!impl_->fluidComponentEnabled_) {
         impl_->fluidSolver_.reset();
-        impl_->fluidPreviewParticles_.clear();
-        impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->invalidateLiquidSimulation();
       }
       impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.mode")) {
+      impl_->fluidMode_ = std::clamp(value.toInt(), 0, 1);
+      impl_->fluidSolver_.reset();
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.fluid.gridWidth")) {
@@ -10062,6 +11286,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.viscosity")) {
       impl_->fluidViscosity_ = finiteClampedValue(
           value.toDouble(), impl_->fluidViscosity_, 0.0, 1.0);
+      if (impl_->fluidMode_ == 1) impl_->invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -10093,6 +11318,174 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.fluid.solverIterations")) {
       impl_->fluidSolverIterations_ = std::clamp(value.toInt(), 1, 256);
+      if (impl_->fluidMode_ == 1) impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidFillAmount")) {
+      impl_->liquidFillAmount_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidFillAmount_, 0.0, 1.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidInflowRate")) {
+      impl_->liquidInflowRate_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidInflowRate_, 0.0, 10000.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidInflowWidth")) {
+      impl_->liquidInflowWidth_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidInflowWidth_, 0.0, 1.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidInflowSpeed")) {
+      impl_->liquidInflowSpeed_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidInflowSpeed_, 0.0, 20.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidInflowPosition")) {
+      impl_->liquidInflowPosition_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidInflowPosition_, 0.0, 1.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidOpeningEdge")) {
+      impl_->liquidOpeningEdge_ = std::clamp(value.toInt(), -1, 511);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidSpillCullMargin")) {
+      impl_->liquidSpillCullMargin_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidSpillCullMargin_, 0.0, 1000000.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidGravity")) {
+      impl_->liquidGravity_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidGravity_, 0.0, 20.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidSurfaceTension")) {
+      impl_->liquidSurfaceTension_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidSurfaceTension_, 0.0, 1.0);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidParticleSpacing")) {
+      impl_->liquidParticleSpacing_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidParticleSpacing_, 0.025, 0.2);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidSubsteps")) {
+      impl_->liquidSubsteps_ = std::clamp(value.toInt(), 1, 8);
+      impl_->invalidateLiquidSimulation();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidSurfaceOpacity")) {
+      impl_->liquidSurfaceOpacity_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidSurfaceOpacity_, 0.0, 1.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidEdgeOpacity")) {
+      impl_->liquidEdgeOpacity_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidEdgeOpacity_, 0.0, 1.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidFoamAmount")) {
+      impl_->liquidFoamAmount_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidFoamAmount_, 0.0, 1.0);
+      impl_->invalidateLiquidSurface();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidContainerOpacity")) {
+      impl_->liquidContainerOpacity_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidContainerOpacity_, 0.0, 1.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.fluid.liquidContainerWidth")) {
+      impl_->liquidContainerWidth_ = finiteClampedValue(
+          value.toDouble(), impl_->liquidContainerWidth_, 0.0, 64.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidColor")) {
+      const QColor color = value.value<QColor>();
+      if (!color.isValid()) return false;
+      impl_->liquidColor_ = FloatColor(
+          color.redF(), color.greenF(), color.blueF(), color.alphaF());
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.liquidFoamColor")) {
+      const QColor color = value.value<QColor>();
+      if (!color.isValid()) return false;
+      impl_->liquidFoamColor_ = FloatColor(
+          color.redF(), color.greenF(), color.blueF(), color.alphaF());
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -10351,6 +11744,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return property && property->isAnimatable() &&
            !property->getKeyFrames().empty();
   };
+
+  if (impl_->fluidComponentEnabled_ && impl_->fluidMode_ == 1 &&
+      propertyPath.startsWith(QStringLiteral("transform."))) {
+    impl_->invalidateLiquidSimulation();
+  }
 
   if (propertyPath == QStringLiteral("transform.initialRotation")) {
     t3.setInitialRotation(
