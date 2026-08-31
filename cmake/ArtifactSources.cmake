@@ -960,6 +960,7 @@ set(ARTIFACT_APP_IMPL_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactClipBufferWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactColorPaletteWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionAudioMixerWidget.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionAudioMixerPresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionGraphWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactContextShortcutHelperWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactContextShortcutProvider.cppm"
