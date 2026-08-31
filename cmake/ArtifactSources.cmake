@@ -610,6 +610,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionTextPuppetUndoCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionLayerUndoCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionEditUndoCommands.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionGizmoUndoCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Effect/ArtifactEffectPalette.ixx"
 )
 
