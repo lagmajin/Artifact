@@ -73,6 +73,7 @@ import Frame.Position;
 import Property.Abstract;
 import Undo.UndoManager;
 import Artifact.Timeline.KeyframeUndoCommand;
+import Artifact.Timeline.KeyframeApplyCommands;
 import Time.Rational;
 import UI.ShortcutBindings;
 import Utils.Path;
@@ -697,8 +698,6 @@ bool applyKeyframePropertySnapshots(
 void restorePropertyKeyframes(
     const ArtifactCore::AbstractPropertyPtr &property,
     const std::vector<ArtifactCore::KeyFrame> &keyframes);
-
-struct InterpolationChangeRecord;
 
 QSet<QString> keyframeSelectionSetForArea(const KeyframeAreaVisual &area) {
   QSet<QString> selection;
@@ -2576,80 +2575,6 @@ bool applySelectedKeyframeRangeTransform(
   return changed;
 }
 
-struct InterpolationChangeRecord {
-  ArtifactAbstractLayerWeak layer;
-  QString propertyPath;
-  RationalTime time;
-  ArtifactCore::KeyFrame before;
-  ArtifactCore::KeyFrame after;
-};
-
-class ApplyInterpolationCommand final : public UndoCommand {
-public:
-  explicit ApplyInterpolationCommand(QVector<InterpolationChangeRecord> records)
-      : records_(std::move(records)) {}
-
-  void undo() override { lastOperationSucceeded_ = apply(false); }
-  void redo() override { lastOperationSucceeded_ = apply(true); }
-  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
-  QString label() const override { return QStringLiteral("Apply Interpolation"); }
-
-private:
-  bool apply(const bool useAfter) {
-    bool succeeded = true;
-    QSet<QString> changedLayerIds;
-    for (const auto &record : records_) {
-      auto layer = record.layer.lock();
-      if (!layer) {
-        succeeded = false;
-        continue;
-      }
-      const auto property = findLayerPropertyByPath(layer, record.propertyPath);
-      if (!property) {
-        succeeded = false;
-        continue;
-      }
-      const auto &keyframe = useAfter ? record.after : record.before;
-      property->addKeyFrame(keyframe.time,
-                            keyframe.value.isValid() ? keyframe.value : property->getValue(),
-                            keyframe.interpolation,
-                            keyframe.cp1_x,
-                            keyframe.cp1_y,
-                            keyframe.cp2_x,
-                            keyframe.cp2_y,
-                            keyframe.roving);
-      property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
-      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
-      layer->changed();
-      changedLayerIds.insert(layer->id().toString());
-    }
-
-    for (const auto &record : records_) {
-      auto layer = record.layer.lock();
-      if (!layer) {
-        continue;
-      }
-      const QString layerKey = layer->id().toString();
-      if (!changedLayerIds.contains(layerKey)) {
-        continue;
-      }
-      if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
-      }
-    }
-
-    if (auto *mgr = UndoManager::instance()) {
-      mgr->notifyAnythingChanged();
-    }
-    return succeeded && !changedLayerIds.isEmpty();
-  }
-
-  QVector<InterpolationChangeRecord> records_;
-  bool lastOperationSucceeded_ = true;
-};
-
 int applyInterpolationToSelectedKeyframesImpl(
     const ArtifactCompositionPtr &composition,
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
@@ -2743,80 +2668,6 @@ int applyInterpolationToSelectedKeyframesImpl(
   }
   return 0;
 }
-
-struct RovingChangeRecord {
-  ArtifactAbstractLayerWeak layer;
-  QString propertyPath;
-  RationalTime time;
-  ArtifactCore::KeyFrame before;
-  ArtifactCore::KeyFrame after;
-};
-
-class ApplyRovingCommand final : public UndoCommand {
-public:
-  explicit ApplyRovingCommand(QVector<RovingChangeRecord> records)
-      : records_(std::move(records)) {}
-
-  void undo() override { lastOperationSucceeded_ = apply(false); }
-  void redo() override { lastOperationSucceeded_ = apply(true); }
-  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
-  QString label() const override { return QStringLiteral("Apply Roving"); }
-
-private:
-  bool apply(const bool useAfter) {
-    bool succeeded = true;
-    QSet<QString> changedLayerIds;
-    for (const auto &record : records_) {
-      auto layer = record.layer.lock();
-      if (!layer) {
-        succeeded = false;
-        continue;
-      }
-      const auto property = findLayerPropertyByPath(layer, record.propertyPath);
-      if (!property) {
-        succeeded = false;
-        continue;
-      }
-      const auto &keyframe = useAfter ? record.after : record.before;
-      property->addKeyFrame(keyframe.time,
-                            keyframe.value.isValid() ? keyframe.value : property->getValue(),
-                            keyframe.interpolation,
-                            keyframe.cp1_x,
-                            keyframe.cp1_y,
-                            keyframe.cp2_x,
-                            keyframe.cp2_y,
-                            keyframe.roving);
-      property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
-      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
-      layer->changed();
-      changedLayerIds.insert(layer->id().toString());
-    }
-
-    for (const auto &record : records_) {
-      auto layer = record.layer.lock();
-      if (!layer) {
-        continue;
-      }
-      const QString layerKey = layer->id().toString();
-      if (!changedLayerIds.contains(layerKey)) {
-        continue;
-      }
-      if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
-      }
-    }
-
-    if (auto *mgr = UndoManager::instance()) {
-      mgr->notifyAnythingChanged();
-    }
-    return succeeded && !changedLayerIds.isEmpty();
-  }
-
-  QVector<RovingChangeRecord> records_;
-  bool lastOperationSucceeded_ = true;
-};
 
 int applyRovingToSelectedKeyframesImpl(
     const ArtifactCompositionPtr &composition,
