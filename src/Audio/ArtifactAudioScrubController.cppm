@@ -19,6 +19,7 @@ module Artifact.Audio.ScrubController;
 import Audio.Cache;
 import Audio.Segment;
 import AudioRenderer;
+import Event.Bus;
 import Frame.Position;
 import Artifact.Composition.Abstract;
 import Core.Diagnostics.ProjectDiagnostic;
@@ -27,6 +28,14 @@ import Core.FastSettingsStore;
 namespace Artifact
 {
     using namespace ArtifactCore;
+
+    static void publishAudioScrubChanged(AudioScrubChangeKind kind,
+                                         FramePosition frame = FramePosition{},
+                                         int latencyMs = 0)
+    {
+        globalEventBus().publish(AudioScrubChangedEvent{
+            kind, std::move(frame), latencyMs});
+    }
 
     static constexpr int kScrubFrameCount = 2400;
     static constexpr int kScrubSampleRate = 48000;
@@ -130,8 +139,6 @@ namespace Artifact
 
         bool deviceOpenFailed_ = false;
 
-        ArtifactAudioScrubController* owner = nullptr;
-
         void onDebounceTick()
         {
             if (!scrubActive || pendingFrame_ < 0) return;
@@ -152,7 +159,8 @@ namespace Artifact
             AudioSegment segment;
             if (!composition_->getAudio(segment, FramePosition(f),
                                         kScrubFrameCount, kScrubSampleRate)) {
-                Q_EMIT owner->cacheMiss(FramePosition(f));
+                publishAudioScrubChanged(AudioScrubChangeKind::CacheMiss,
+                                         FramePosition(f));
                 return;
             }
 
@@ -255,7 +263,6 @@ namespace Artifact
     ArtifactAudioScrubController::ArtifactAudioScrubController(QObject* parent)
         : QObject(parent), impl_(new Impl)
     {
-        impl_->owner = this;
         impl_->worker = new ScrubWorker();
         impl_->worker->moveToThread(&impl_->workerThread);
 
@@ -267,7 +274,9 @@ namespace Artifact
 
         QObject::connect(impl_->worker, &ScrubWorker::cacheMiss,
                          this, [this](FramePosition frame) {
-                             Q_EMIT cacheMiss(frame);
+                             publishAudioScrubChanged(
+                                 AudioScrubChangeKind::CacheMiss,
+                                 std::move(frame));
                          });
 
         impl_->audioRenderer_ = std::make_unique<AudioRenderer>();
@@ -339,7 +348,7 @@ namespace Artifact
         impl_->pendingFrame_ = -1;
         impl_->lastFrameTime_ = 0;
         impl_->currentSpeedFps_ = 0.0f;
-        Q_EMIT scrubStarted();
+        publishAudioScrubChanged(AudioScrubChangeKind::Started);
     }
 
     void ArtifactAudioScrubController::stopScrub()
@@ -353,7 +362,7 @@ namespace Artifact
         if (impl_->audioRenderer_) {
             impl_->audioRenderer_->clearBuffer();
         }
-        Q_EMIT scrubStopped();
+        publishAudioScrubChanged(AudioScrubChangeKind::Stopped);
     }
 
     void ArtifactAudioScrubController::updateScrubPosition(FramePosition frame)
@@ -370,7 +379,9 @@ namespace Artifact
             const qint64 elapsed = now - impl_->lastFrameTime_;
             impl_->measureLatencyMs_ = static_cast<int>(std::clamp<qint64>(
                 elapsed, 0, std::numeric_limits<int>::max()));
-            Q_EMIT latencyUpdated(impl_->measureLatencyMs_);
+            publishAudioScrubChanged(AudioScrubChangeKind::LatencyUpdated,
+                                     FramePosition{},
+                                     impl_->measureLatencyMs_);
         }
         impl_->lastFrame_ = f;
         impl_->lastFrameTime_ = now;

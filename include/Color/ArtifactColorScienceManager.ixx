@@ -111,12 +111,6 @@ public:
   // Access the current LUT for GPU upload
   const ArtifactCore::ColorLUT* currentLUT() const;
 
-  // Signals
-  void settingsChanged() W_SIGNAL(settingsChanged);
-  void lutChanged() W_SIGNAL(lutChanged);
-  void compositionSettingsChanged(const QString &compositionId)
-      W_SIGNAL(compositionSettingsChanged, compositionId);
-
 private:
   void applySettings();
 };

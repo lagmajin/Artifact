@@ -79,6 +79,22 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+namespace {
+void recordInOutPointsMutation(ArtifactInOutPoints* points,
+                               const QJsonObject& before,
+                               const QJsonObject& after) {
+  if (!points || before == after) {
+    return;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!undo->push(std::make_unique<InOutPointsSnapshotCommand>(
+            points, before, after))) {
+      points->fromJson(before);
+    }
+  }
+}
+}
+
 QString ramPreviewStatusNote(const ArtifactRamPreviewFrameCacheState &state) {
   if (state.failed) {
     return QStringLiteral("failed");
@@ -678,7 +694,6 @@ public:
 
             ArtifactCore::globalEventBus().publish<PlaybackStateChangedEvent>(
                 PlaybackStateChangedEvent{state});
-            Q_EMIT owner_->playbackStateChanged(state);
           };
           QMetaObject::invokeMethod(owner_, publishState, Qt::QueuedConnection);
         },
@@ -786,34 +801,6 @@ public:
         },
         Qt::DirectConnection);
 
-    QObject::connect(
-        engine_, &ArtifactPlaybackEngine::playbackSpeedChanged, owner_,
-        [this](float speed) {
-          ArtifactCore::globalEventBus().publish<PlaybackSpeedChangedEvent>(
-              PlaybackSpeedChangedEvent{speed});
-          Q_EMIT owner_->playbackSpeedChanged(speed);
-        },
-        Qt::DirectConnection);
-
-    QObject::connect(
-        engine_, &ArtifactPlaybackEngine::loopingChanged, owner_,
-        [this](bool loop) {
-          ArtifactCore::globalEventBus().publish<PlaybackLoopingChangedEvent>(
-              PlaybackLoopingChangedEvent{loop});
-          Q_EMIT owner_->loopingChanged(loop);
-        },
-        Qt::DirectConnection);
-
-    QObject::connect(
-        engine_, &ArtifactPlaybackEngine::frameRangeChanged, owner_,
-        [this](const FrameRange &range) {
-          ArtifactCore::globalEventBus()
-              .publish<PlaybackFrameRangeChangedEvent>(
-                  PlaybackFrameRangeChangedEvent{range.start(), range.end()});
-          Q_EMIT owner_->frameRangeChanged(range);
-        },
-        Qt::DirectConnection);
-
     QObject::connect(engine_, &ArtifactPlaybackEngine::droppedFrameDetected,
                      owner_, [this](int64_t count) {
                        droppedFrameCount_ += count;
@@ -824,36 +811,10 @@ public:
     QObject::connect(
         engine_, &ArtifactPlaybackEngine::audioLevelChanged, owner_,
         [this](float leftRms, float rightRms, float leftPeak, float rightPeak) {
-          Q_EMIT owner_->audioLevelChanged(leftRms, rightRms, leftPeak,
-                                           rightPeak);
+          ArtifactCore::globalEventBus().publish<AudioLevelChangedEvent>(
+              AudioLevelChangedEvent{leftRms, rightRms, leftPeak, rightPeak});
         },
         Qt::QueuedConnection);
-
-    // コントローラーのシグナルも転送（後方互換性）
-    // NOTE: controller は現在 engine
-    // に置き換えられているため、シグナル転送を無効化して二重通知を防止
-    /*
-    QObject::connect(controller_,
-    &ArtifactCompositionPlaybackController::playbackStateChanged, owner_,
-    &ArtifactPlaybackService::playbackStateChanged, Qt::DirectConnection);
-
-    QObject::connect(controller_,
-    &ArtifactCompositionPlaybackController::frameChanged, owner_, [this](const
-    FramePosition& position) { syncCurrentCompositionFrame(position); },
-                     Qt::DirectConnection);
-
-    QObject::connect(controller_,
-    &ArtifactCompositionPlaybackController::playbackSpeedChanged, owner_,
-    &ArtifactPlaybackService::playbackSpeedChanged, Qt::DirectConnection);
-
-    QObject::connect(controller_,
-    &ArtifactCompositionPlaybackController::loopingChanged, owner_,
-    &ArtifactPlaybackService::loopingChanged, Qt::DirectConnection);
-
-    QObject::connect(controller_,
-    &ArtifactCompositionPlaybackController::frameRangeChanged, owner_,
-    &ArtifactPlaybackService::frameRangeChanged, Qt::DirectConnection);
-    */
 
     // オーディオクロックプロバイダーを設定
     controller_->setAudioClockProvider([this]() -> double {
@@ -1005,8 +966,16 @@ public:
   }
 
   void emitRamPreviewStats() {
-    Q_EMIT owner_->ramPreviewStatsChanged(ramPreviewHitRate(),
-                                          ramPreviewCachedFrameCount());
+    ArtifactCore::globalEventBus().publish<PlaybackRamPreviewStatsChangedEvent>(
+        PlaybackRamPreviewStatsChangedEvent{ramPreviewHitRate(),
+                                             ramPreviewCachedFrameCount()});
+  }
+
+  void publishRamPreviewStateChanged(const bool enabled,
+                                     const FrameRange &range) {
+    ArtifactCore::globalEventBus().publish<PlaybackRamPreviewStateChangedEvent>(
+        PlaybackRamPreviewStateChangedEvent{enabled, range.start(),
+                                             range.end()});
   }
 
   void touchRamPreviewImageLru(const int64_t frame) {
@@ -2049,7 +2018,7 @@ public:
     cancelRamPreviewBuild(reason);
     clearPreviewDiskCacheForCurrentComposition();
     resetRamPreviewCache();
-    Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+    publishRamPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
   }
 
   void invalidateRamPreviewRangeForCurrentComposition(const FrameRange &range,
@@ -2081,7 +2050,7 @@ public:
       }
     }
     emitRamPreviewStats();
-    Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+    publishRamPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
   }
 
   FrameRange clampedRamPreviewRange(const FramePosition &center) const {
@@ -2123,7 +2092,7 @@ public:
       hydrateFramesFromDiskNear(position.framePosition(), range,
                                 maxHydrationFrames);
       emitRamPreviewStats();
-      Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, range);
+      publishRamPreviewStateChanged(ramPreviewEnabled_, range);
       seekPreviewMaintenanceClock_.restart();
     };
     constexpr int kSeekMaintenanceIntervalMs = 40;
@@ -2479,7 +2448,7 @@ ArtifactRamPreviewPriorityState ramPreviewPriorityState(
       hydrateFramesFromDiskNear(current, ramPreviewRange_, maxHydrationFrames);
     }
     emitRamPreviewStats();
-    Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+    publishRamPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
   }
 };
 
@@ -2507,7 +2476,6 @@ void ArtifactPlaybackService::setPlaybackRangeMode(PlaybackRangeMode mode) {
 
   ArtifactCore::globalEventBus().publish<PlaybackRangeModeChangedEvent>(
       PlaybackRangeModeChangedEvent{mode});
-  Q_EMIT playbackRangeModeChanged(mode);
 }
 
 PlaybackRangeMode ArtifactPlaybackService::playbackRangeMode() const {
@@ -2520,7 +2488,6 @@ void ArtifactPlaybackService::setPlaybackSkipMode(PlaybackSkipMode mode) {
   }
   ArtifactCore::globalEventBus().publish<PlaybackSkipModeChangedEvent>(
       PlaybackSkipModeChangedEvent{mode});
-  Q_EMIT playbackSkipModeChanged(mode);
 }
 
 PlaybackSkipMode ArtifactPlaybackService::playbackSkipMode() const {
@@ -2566,7 +2533,7 @@ void ArtifactPlaybackService::play() {
     impl_->requestRamPreviewBuild(previewRange,
                                   QStringLiteral("playback-auto-preview"));
     impl_->emitRamPreviewStats();
-    Q_EMIT ramPreviewStateChanged(true, previewRange);
+    impl_->publishRamPreviewStateChanged(true, previewRange);
   }
 
   impl_->startAudioClock();
@@ -2799,7 +2766,6 @@ void ArtifactPlaybackService::setCurrentFrame(const FramePosition &position) {
                                  : QString();
   ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
       FrameChangedEvent{compositionId, position.framePosition()});
-  Q_EMIT frameChanged(position);
   if (!wasPlaying) {
     impl_->prewarmRamPreviewAround(position);
   }
@@ -2823,8 +2789,8 @@ void ArtifactPlaybackService::setFrameRange(const FrameRange &range) {
   impl_->ramPreviewRange_ = range;
   impl_->cancelRamPreviewBuild(QStringLiteral("frame-range-changed"));
   impl_->emitRamPreviewStats();
-  Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_,
-                                impl_->ramPreviewRange_);
+  impl_->publishRamPreviewStateChanged(impl_->ramPreviewEnabled_,
+                                       impl_->ramPreviewRange_);
 }
 
 FrameRate ArtifactPlaybackService::frameRate() const {
@@ -2842,18 +2808,49 @@ void ArtifactPlaybackService::setFrameRate(const FrameRate &rate) {
   }
 }
 
+void ArtifactPlaybackService::syncWorkAreaAfterUndo(
+    const ArtifactCompositionPtr &composition) {
+  if (!impl_ || !composition || impl_->currentComposition_ != composition) {
+    return;
+  }
+  const auto range = composition->workAreaRange();
+  ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
+      composition->id().toString(), range.start(), range.end()});
+  impl_->applyCurrentPlaybackFrameRangeToEngine();
+}
+
 void ArtifactPlaybackService::setWorkAreaStartAtCurrentFrame() {
   if (!impl_->currentComposition_) {
     return;
   }
   const int64_t activeFrame = currentFrame().framePosition();
-  const int64_t outPoint = impl_->currentComposition_->workAreaRange().end();
-  impl_->currentComposition_->setWorkAreaRange(
-      FrameRange(activeFrame, std::max<int64_t>(activeFrame + 1, outPoint)));
+  const auto composition = impl_->currentComposition_;
+  const auto before = composition->workAreaRange();
+  const int64_t outPoint = before.end();
+  const int64_t afterStart = activeFrame;
+  const int64_t afterEnd = std::max<int64_t>(activeFrame + 1, outPoint);
+  if (before.start() == afterStart && before.end() == afterEnd) {
+    return;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!undo->push(std::make_unique<SetCompositionWorkAreaCommand>(
+            composition, before.start(), before.end(), afterStart, afterEnd,
+            [this](const ArtifactCompositionPtr &changed, qint64, qint64) {
+              syncWorkAreaAfterUndo(changed);
+            }))) {
+      return;
+    }
+    return;
+  }
+  composition->setWorkAreaRange(FrameRange(afterStart, afterEnd));
+  if (composition->workAreaRange().start() != afterStart ||
+      composition->workAreaRange().end() != afterEnd) {
+    composition->setWorkAreaRange(before);
+    return;
+  }
   ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
-      impl_->currentComposition_->id().toString(),
-      impl_->currentComposition_->workAreaRange().start(),
-      impl_->currentComposition_->workAreaRange().end()});
+      composition->id().toString(), composition->workAreaRange().start(),
+      composition->workAreaRange().end()});
   impl_->applyCurrentPlaybackFrameRangeToEngine();
 }
 
@@ -2862,14 +2859,33 @@ void ArtifactPlaybackService::setWorkAreaEndAtCurrentFrame() {
     return;
   }
   const int64_t activeFrame = currentFrame().framePosition();
-  const int64_t inPoint = impl_->currentComposition_->workAreaRange().start();
-  impl_->currentComposition_->setWorkAreaRange(
-      FrameRange(std::min<int64_t>(inPoint, activeFrame),
-                 std::max<int64_t>(activeFrame + 1, inPoint)));
+  const auto composition = impl_->currentComposition_;
+  const auto before = composition->workAreaRange();
+  const int64_t inPoint = before.start();
+  const int64_t afterStart = std::min<int64_t>(inPoint, activeFrame);
+  const int64_t afterEnd = std::max<int64_t>(activeFrame + 1, inPoint);
+  if (before.start() == afterStart && before.end() == afterEnd) {
+    return;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!undo->push(std::make_unique<SetCompositionWorkAreaCommand>(
+            composition, before.start(), before.end(), afterStart, afterEnd,
+            [this](const ArtifactCompositionPtr &changed, qint64, qint64) {
+              syncWorkAreaAfterUndo(changed);
+            }))) {
+      return;
+    }
+    return;
+  }
+  composition->setWorkAreaRange(FrameRange(afterStart, afterEnd));
+  if (composition->workAreaRange().start() != afterStart ||
+      composition->workAreaRange().end() != afterEnd) {
+    composition->setWorkAreaRange(before);
+    return;
+  }
   ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
-      impl_->currentComposition_->id().toString(),
-      impl_->currentComposition_->workAreaRange().start(),
-      impl_->currentComposition_->workAreaRange().end()});
+      composition->id().toString(), composition->workAreaRange().start(),
+      composition->workAreaRange().end()});
   impl_->applyCurrentPlaybackFrameRangeToEngine();
 }
 
@@ -2877,15 +2893,34 @@ void ArtifactPlaybackService::moveWorkAreaToCurrentFrame() {
   if (!impl_->currentComposition_) {
     return;
   }
-  const auto range = impl_->currentComposition_->workAreaRange();
+  const auto composition = impl_->currentComposition_;
+  const auto range = composition->workAreaRange();
   const int64_t duration = std::max<int64_t>(1, range.end() - range.start());
   const int64_t activeFrame = currentFrame().framePosition();
-  impl_->currentComposition_->setWorkAreaRange(
-      FrameRange(activeFrame, activeFrame + duration));
+  const int64_t afterStart = activeFrame;
+  const int64_t afterEnd = activeFrame + duration;
+  if (range.start() == afterStart && range.end() == afterEnd) {
+    return;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!undo->push(std::make_unique<SetCompositionWorkAreaCommand>(
+            composition, range.start(), range.end(), afterStart, afterEnd,
+            [this](const ArtifactCompositionPtr &changed, qint64, qint64) {
+              syncWorkAreaAfterUndo(changed);
+            }))) {
+      return;
+    }
+    return;
+  }
+  composition->setWorkAreaRange(FrameRange(afterStart, afterEnd));
+  if (composition->workAreaRange().start() != afterStart ||
+      composition->workAreaRange().end() != afterEnd) {
+    composition->setWorkAreaRange(range);
+    return;
+  }
   ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
-      impl_->currentComposition_->id().toString(),
-      impl_->currentComposition_->workAreaRange().start(),
-      impl_->currentComposition_->workAreaRange().end()});
+      composition->id().toString(), composition->workAreaRange().start(),
+      composition->workAreaRange().end()});
   impl_->applyCurrentPlaybackFrameRangeToEngine();
 }
 
@@ -3029,7 +3064,6 @@ void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCore::globalEventBus().publish<PlaybackCompositionChangedEvent>(
         PlaybackCompositionChangedEvent{
             composition ? composition->id().toString() : QString()});
-    Q_EMIT currentCompositionChanged();
     if (impl_->ramPreviewEnabled_) {
       impl_->prewarmRamPreviewAround(composition ? composition->framePosition()
                                                  : currentFrame());
@@ -3126,31 +3160,41 @@ bool ArtifactPlaybackService::hasOutPoint() const {
 
 void ArtifactPlaybackService::setInPointAtCurrentFrame() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->setInPoint(currentFrame());
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
 void ArtifactPlaybackService::setOutPointAtCurrentFrame() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->setOutPoint(currentFrame());
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
 void ArtifactPlaybackService::clearInPoint() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->clearInPoint();
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
 void ArtifactPlaybackService::clearOutPoint() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->clearOutPoint();
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
 void ArtifactPlaybackService::clearInOutPoints() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->clearAllPoints();
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
@@ -3174,10 +3218,7 @@ void ArtifactPlaybackService::addMarkerAtCurrentFrame(const QString &comment) {
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->addMarker(currentFrame(), comment, MarkerType::Comment);
-    const QJsonObject after = points->toJson();
-    if (before != after) {
-      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
-    }
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
@@ -3185,10 +3226,7 @@ void ArtifactPlaybackService::addChapterMarkerAtCurrentFrame(const QString &name
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->addMarker(currentFrame(), name, MarkerType::Chapter);
-    const QJsonObject after = points->toJson();
-    if (before != after) {
-      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
-    }
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
@@ -3196,10 +3234,7 @@ void ArtifactPlaybackService::deleteMarkerAtCurrentFrame() {
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->removeMarker(currentFrame());
-    const QJsonObject after = points->toJson();
-    if (before != after) {
-      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
-    }
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
@@ -3207,10 +3242,7 @@ void ArtifactPlaybackService::clearAllMarkers() {
   if (auto *points = inOutPoints()) {
     const QJsonObject before = points->toJson();
     points->clearAllMarkers();
-    const QJsonObject after = points->toJson();
-    if (before != after) {
-      UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, after));
-    }
+    recordInOutPointsMutation(points, before, points->toJson());
   }
 }
 
@@ -3274,13 +3306,13 @@ void ArtifactPlaybackService::setRamPreviewEnabled(bool enabled) {
   if (!enabled) {
     impl_->cancelRamPreviewBuild(QStringLiteral("ram-preview-disabled"));
     impl_->emitRamPreviewStats();
-    Q_EMIT ramPreviewStateChanged(false, impl_->ramPreviewRange_);
+    impl_->publishRamPreviewStateChanged(false, impl_->ramPreviewRange_);
     return;
   }
 
   prewarmRamPreviewAroundCurrentFrame();
   if (!impl_->currentComposition_) {
-    Q_EMIT ramPreviewStateChanged(true, impl_->ramPreviewRange_);
+    impl_->publishRamPreviewStateChanged(true, impl_->ramPreviewRange_);
   }
 }
 
@@ -3361,7 +3393,7 @@ void ArtifactPlaybackService::setRamPreviewRange(const FrameRange &range) {
   } else {
     impl_->cancelRamPreviewBuild(QStringLiteral("ram-preview-range-changed"));
     impl_->emitRamPreviewStats();
-    Q_EMIT ramPreviewStateChanged(false, range);
+    impl_->publishRamPreviewStateChanged(false, range);
   }
 }
 
@@ -3418,7 +3450,7 @@ void ArtifactPlaybackService::requestRamPreviewBuild(
   impl_->requestRamPreviewBuild(range, reason);
   impl_->ramPreviewRange_ = range;
   impl_->emitRamPreviewStats();
-  Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_, range);
+  impl_->publishRamPreviewStateChanged(impl_->ramPreviewEnabled_, range);
 }
 
 void ArtifactPlaybackService::cancelRamPreviewBuild(const QString &reason) {

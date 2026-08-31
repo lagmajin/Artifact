@@ -72,8 +72,8 @@ export namespace Artifact
   void setFps(int fps);
   int fps() const;
 
-  void frameChanged(const FramePosition& frame) W_SIGNAL(frameChanged, frame);
-  void frameDragStarted() W_SIGNAL(frameDragStarted);
-  void frameDragFinished() W_SIGNAL(frameDragFinished);
+  void frameChanged(const FramePosition& frame);
+  void frameDragStarted();
+  void frameDragFinished();
  };
 }

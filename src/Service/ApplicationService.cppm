@@ -66,15 +66,12 @@ bool ApplicationService::initialize()
 
  impl_->initialized_ = true;
  qDebug() << "[ApplicationService] initialized";
- initialized();
  return true;
 }
 
 void ApplicationService::shutdown()
 {
  if (!impl_->initialized_) return;
-
- shutdownRequested();
 
  impl_->toolService_.reset();
  impl_->clipboardService_.reset();

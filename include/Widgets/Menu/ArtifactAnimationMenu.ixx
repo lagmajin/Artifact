@@ -54,40 +54,6 @@ export namespace Artifact {
    QAction* getCopyKeyframesAction() const;
    QAction* getPasteKeyframesAction() const;
 
-   void addKeyframeRequested() W_SIGNAL(addKeyframeRequested);
-   void removeKeyframeRequested() W_SIGNAL(removeKeyframeRequested);
-   void selectAllKeyframesRequested() W_SIGNAL(selectAllKeyframesRequested);
-   void reverseSelectedKeyframesRequested() W_SIGNAL(reverseSelectedKeyframesRequested);
-   void reverseAllKeyframesInLayerRequested() W_SIGNAL(reverseAllKeyframesInLayerRequested);
-   void reverseAllKeyframesInSelectedLayersRequested() W_SIGNAL(reverseAllKeyframesInSelectedLayersRequested);
-   void reverseAllKeyframesInCompositionRequested() W_SIGNAL(reverseAllKeyframesInCompositionRequested);
-   void copyKeyframesRequested() W_SIGNAL(copyKeyframesRequested);
-   void pasteKeyframesRequested() W_SIGNAL(pasteKeyframesRequested);
-
-   void applyInterpolationRequested(ArtifactCore::InterpolationType type) W_SIGNAL(applyInterpolationRequested, type);
-
-   void toggleVelocityGraphRequested() W_SIGNAL(toggleVelocityGraphRequested);
-   void toggleValueGraphRequested() W_SIGNAL(toggleValueGraphRequested);
-   void showGraphEditorRequested() W_SIGNAL(showGraphEditorRequested);
-
-   void goToNextKeyframeRequested() W_SIGNAL(goToNextKeyframeRequested);
-   void goToPreviousKeyframeRequested() W_SIGNAL(goToPreviousKeyframeRequested);
-   void goToFirstKeyframeRequested() W_SIGNAL(goToFirstKeyframeRequested);
-   void goToLastKeyframeRequested() W_SIGNAL(goToLastKeyframeRequested);
-
-   void enableTimeRemapRequested() W_SIGNAL(enableTimeRemapRequested);
-   void freezeFrameRequested() W_SIGNAL(freezeFrameRequested);
-   void timeReverseRequested() W_SIGNAL(timeReverseRequested);
-
-   void addExpressionRequested() W_SIGNAL(addExpressionRequested);
-   void editExpressionRequested() W_SIGNAL(editExpressionRequested);
-   void removeExpressionRequested() W_SIGNAL(removeExpressionRequested);
-   void convertToKeyframesRequested() W_SIGNAL(convertToKeyframesRequested);
-
-   void saveAnimationPresetRequested() W_SIGNAL(saveAnimationPresetRequested);
-   void loadAnimationPresetRequested() W_SIGNAL(loadAnimationPresetRequested);
   };
 
 } // namespace Artifact
-
-W_REGISTER_ARGTYPE(ArtifactCore::InterpolationType)

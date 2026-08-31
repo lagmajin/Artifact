@@ -168,6 +168,12 @@ export namespace Artifact {
   bool moveEffectInCurrentComposition(const QString& effectId, int direction);
   QString layerRemovalConfirmationMessage(const CompositionID& compositionId, const LayerID& layerId) const;
   bool removeProjectItem(ProjectItem* item);
+  bool projectItemRemovalUndoAvailable(ProjectItem* item) const;
+  bool createProjectFolder(const UniString& name, FolderItem* parentFolder = nullptr);
+  bool renameProjectItem(ProjectItem* item, const UniString& name);
+  bool setProjectItemTags(ProjectItem* item, const QStringList& tags);
+  bool setFootageAssetRole(FootageItem* item, ProjectAssetUsage usage,
+                           ProjectRenderInputRole role);
   bool moveProjectItem(ProjectItem* item, ProjectItem* newParent);
   QString projectItemRemovalConfirmationMessage(ProjectItem* item) const;
   bool removeComposition(const CompositionID& id);
@@ -244,25 +250,6 @@ export namespace Artifact {
        const QString& oldFilePath, const QString& searchRoot,
        int maxCandidates = 32) const;
    FootageItem* findFootageItemByPath(const QString& filePath) const;
- public /*signals*/:
-  void layerRemoved(const CompositionID& compId, const LayerID& layerId)
-   W_SIGNAL(layerRemoved, compId, layerId);
- public/*signals*/:
-  void projectCreated()
-  W_SIGNAL(projectCreated);
-  void compositionCreated(const CompositionID& id)
-   W_SIGNAL(compositionCreated, id);
-  void compositionRemoved(const CompositionID& id)
-   W_SIGNAL(compositionRemoved, id);
-  void currentCompositionChanged(const CompositionID& id)
-   W_SIGNAL(currentCompositionChanged, id);
-  void layerCreated(const CompositionID& compId, const LayerID& layerId)
-    W_SIGNAL(layerCreated, compId, layerId);
-
-  void projectChanged()
-   W_SIGNAL(projectChanged);
-  void previewQualityPresetChanged(PreviewQualityPreset preset)
-   W_SIGNAL(previewQualityPresetChanged, preset);
   public:
    void selectLayer(const LayerID& id);
    void projectSettingChanged(const ArtifactProjectSettings& setting);

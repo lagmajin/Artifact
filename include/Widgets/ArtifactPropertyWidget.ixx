@@ -34,6 +34,7 @@
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QFocusEvent>
 #include <QFocusFrame>
 #include <QGroupBox>
 #include <QLabel>
@@ -115,6 +116,8 @@ public:
     Artifact::ArtifactAbstractLayerPtr activePropertyLayer() const;
 
 protected:
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
     void showEvent(QShowEvent* event) override;
 };
 

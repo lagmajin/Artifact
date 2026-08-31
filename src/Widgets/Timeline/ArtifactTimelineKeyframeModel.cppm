@@ -17,6 +17,7 @@ import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
 import Property.Abstract;
 import Time.Rational;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -258,6 +259,41 @@ void restorePropertyKeyframes(const ArtifactCore::AbstractPropertyPtr& property,
     }
 }
 
+bool commitKeyframeChange(
+    const ArtifactAbstractLayerPtr& layer,
+    const QString& propertyPath,
+    const std::vector<KeyFrame>& beforeKeyframes,
+    const std::vector<KeyFrame>& afterKeyframes,
+    const bool beforeAnimatable,
+    const bool afterAnimatable,
+    const QString& label) {
+    if (!layer) {
+        return false;
+    }
+    if (auto* undo = UndoManager::instance()) {
+        if (!undo->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                layer, propertyPath, beforeKeyframes, afterKeyframes, label,
+                beforeAnimatable, afterAnimatable))) {
+            const auto property = layer->getProperty(propertyPath);
+            restorePropertyKeyframes(property, beforeKeyframes);
+            if (property) {
+                property->setAnimatable(beforeAnimatable);
+            }
+            layer->changed();
+            return false;
+        }
+    }
+    return true;
+}
+
+struct DopeSheetPropertyChange {
+    ArtifactAbstractLayerPtr layer;
+    QString propertyPath;
+    std::vector<KeyFrame> beforeKeyframes;
+    std::vector<KeyFrame> afterKeyframes;
+    bool animatable = false;
+};
+
 bool applyDopeSheetTransform(const CompositionID& compId,
                              const std::vector<DopeSheetKeyframeRef>& refs,
                              const std::function<RationalTime(const RationalTime&)>& remapTime) {
@@ -293,6 +329,7 @@ bool applyDopeSheetTransform(const CompositionID& compId,
 
     bool changed = false;
     QHash<QString, ArtifactAbstractLayerPtr> changedLayers;
+    std::vector<DopeSheetPropertyChange> propertyChanges;
 
     for (const auto& propertyKey : propertyOrder) {
         const int sep = propertyKey.indexOf(QLatin1Char('|'));
@@ -358,6 +395,9 @@ bool applyDopeSheetTransform(const CompositionID& compId,
         }
 
         restorePropertyKeyframes(property, deduped);
+        propertyChanges.push_back(DopeSheetPropertyChange{
+            layer, propertyPath, originalKeyframes, deduped,
+            property->isAnimatable()});
         changedLayers.insert(layer->id().toString(), layer);
         changed = true;
     }
@@ -368,6 +408,33 @@ bool applyDopeSheetTransform(const CompositionID& compId,
             continue;
         }
         notifyLayerChanged(layer, compId, layer->id());
+    }
+
+    if (!propertyChanges.empty()) {
+        auto macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Edit Dope Sheet Keyframes"));
+        for (const auto& change : propertyChanges) {
+            macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                change.layer, change.propertyPath, change.beforeKeyframes,
+                change.afterKeyframes, QStringLiteral("Edit Dope Sheet Keyframes"),
+                change.animatable, change.animatable));
+        }
+        if (auto* undo = UndoManager::instance()) {
+            for (const auto& change : propertyChanges) {
+                restorePropertyKeyframes(change.layer->getProperty(
+                                             change.propertyPath),
+                                         change.beforeKeyframes);
+            }
+            if (!undo->push(std::move(macro))) {
+                for (const auto& change : propertyChanges) {
+                    restorePropertyKeyframes(change.layer->getProperty(
+                                                 change.propertyPath),
+                                             change.beforeKeyframes);
+                    change.layer->changed();
+                }
+                return false;
+            }
+        }
     }
 
     return changed;
@@ -391,8 +458,17 @@ bool ArtifactTimelineKeyframeModel::addKeyframe(const CompositionID& compId,
     const QVariant& value,
     InterpolationType interpolation) {
     if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        const auto beforeKeyframes = lookup.prop->getKeyFrames();
+        const bool beforeAnimatable = lookup.prop->isAnimatable();
         lookup.prop->setAnimatable(true);
         lookup.prop->addKeyFrame(time, value, interpolation);
+        const auto afterKeyframes = lookup.prop->getKeyFrames();
+        if (!commitKeyframeChange(lookup.layer, propertyPath, beforeKeyframes,
+                                  afterKeyframes, beforeAnimatable, true,
+                                  QStringLiteral("Add Keyframe"))) {
+            return false;
+        }
+        notifyLayerChanged(lookup.layer, compId, layerId);
         return true;
     }
     return false;
@@ -405,8 +481,16 @@ bool ArtifactTimelineKeyframeModel::addKeyframeWithBezier(const CompositionID& c
     const QVariant& value,
     float cp1_x, float cp1_y, float cp2_x, float cp2_y) {
     if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        const auto beforeKeyframes = lookup.prop->getKeyFrames();
+        const bool beforeAnimatable = lookup.prop->isAnimatable();
         lookup.prop->setAnimatable(true);
         lookup.prop->addKeyFrame(time, value, InterpolationType::Bezier, cp1_x, cp1_y, cp2_x, cp2_y, false);
+        const auto afterKeyframes = lookup.prop->getKeyFrames();
+        if (!commitKeyframeChange(lookup.layer, propertyPath, beforeKeyframes,
+                                  afterKeyframes, beforeAnimatable, true,
+                                  QStringLiteral("Add Bezier Keyframe"))) {
+            return false;
+        }
         notifyLayerChanged(lookup.layer, compId, layerId);
         return true;
     }
@@ -424,8 +508,16 @@ bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
         const auto it = std::find_if(keyframes.begin(), keyframes.end(),
             [&fromTime](const KeyFrame& kf) { return kf.time == fromTime; });
         if (it == keyframes.end()) return false;
+        const bool beforeAnimatable = lookup.prop->isAnimatable();
         lookup.prop->removeKeyFrame(fromTime);
         lookup.prop->addKeyFrame(toTime, it->value, it->interpolation, it->cp1_x, it->cp1_y, it->cp2_x, it->cp2_y, it->roving);
+        const auto afterKeyframes = lookup.prop->getKeyFrames();
+        if (!commitKeyframeChange(lookup.layer, propertyPath, keyframes,
+                                  afterKeyframes, beforeAnimatable,
+                                  beforeAnimatable,
+                                  QStringLiteral("Move Keyframe"))) {
+            return false;
+        }
         notifyLayerChanged(lookup.layer, compId, layerId);
         return true;
     }
@@ -437,11 +529,23 @@ bool ArtifactTimelineKeyframeModel::removeKeyframe(const CompositionID& compId,
     const QString& propertyPath,
     const RationalTime& time) {
     if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        const auto beforeKeyframes = lookup.prop->getKeyFrames();
+        if (!lookup.prop->hasKeyFrameAt(time)) {
+            return false;
+        }
+        const bool beforeAnimatable = lookup.prop->isAnimatable();
         lookup.prop->removeKeyFrame(time);
+        const auto afterKeyframes = lookup.prop->getKeyFrames();
+        if (!commitKeyframeChange(lookup.layer, propertyPath, beforeKeyframes,
+                                  afterKeyframes, beforeAnimatable,
+                                  beforeAnimatable,
+                                  QStringLiteral("Remove Keyframe"))) {
+            return false;
+        }
         notifyLayerChanged(lookup.layer, compId, layerId);
         return true;
     }
-return false;
+    return false;
 }
 
 std::vector<DopeSheetKeyframeEntry>

@@ -11,12 +11,14 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMetaObject>
 #include <QPalette>
 #include <QSlider>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QString>
 #include <QStringList>
+#include <QThread>
 #include <QToolButton>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -31,10 +33,26 @@ import Text.Style;
 import Settings.Accessibility;
 import FloatColorPickerDialog;
 import Color.Float;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactToolOptionsBar)
+
+void ArtifactToolOptionsBar::optionChanged(const QString &toolName,
+                                           const QString &optionName,
+                                           const QVariant &value) {
+  const auto publish = [toolName, optionName, value]() {
+    ArtifactCore::globalEventBus().publish<ToolOptionChangedEvent>(
+        ToolOptionChangedEvent{toolName, optionName, value});
+  };
+  if (QThread::currentThread() == thread()) {
+    publish();
+    return;
+  }
+  QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
+}
 
 // ツール種別定義
 enum OptionRow : int {
@@ -707,7 +725,7 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
 void ArtifactToolOptionsBar::Impl::connectSignals() {
   auto emitOpt = [this](const QString &tool, const QString &key,
                         const QVariant &v) {
-    emit toolOptionsBar->optionChanged(tool, key, v);
+    toolOptionsBar->optionChanged(tool, key, v);
   };
 
   if (snapModeCombo)

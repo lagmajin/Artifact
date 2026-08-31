@@ -96,6 +96,10 @@ public:
     void removeEmitter(int index);
     void clearEmitters();
     int emitterCount() const;
+    QVector3D emitterPosition() const;
+    bool setEmitterPosition(const QVector3D& position);
+    QVector3D emitterDirection() const;
+    bool setEmitterDirection(const QVector3D& direction);
     
     // Effector management
     void addForceEffector(const QVector3D& force);
@@ -103,6 +107,17 @@ public:
     void addTurbulenceEffector(float frequency, float amplitude);
     void addAttractorEffector(const QVector3D& position, float radius, float strength);
     void addWindEffector(const QVector3D& direction, float strength);
+    int effectorCount() const;
+    int selectedEffectorIndex() const;
+    bool setEffectorEnabled(int index, bool enabled);
+    float effectorStrength(int index) const;
+    bool setEffectorStrength(int index, float strength);
+    QVector3D effectorPosition(int index) const;
+    bool setEffectorPosition(int index, const QVector3D& position);
+    float effectorInfluenceRadius(int index) const;
+    bool setEffectorInfluenceRadius(int index, float radius);
+    bool moveEffector(int fromIndex, int toIndex);
+    void removeEffector(int index);
     void clearEffectors();
     
     // Rendering settings

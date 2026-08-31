@@ -1,4 +1,5 @@
 module;
+#include <memory>
 #include <wobjectimpl.h>
 #include <QWidget>
 #include <QPushButton>
@@ -17,6 +18,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Application.Manager;
 import Time.Rational;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -142,7 +144,8 @@ void ArtifactAnchorPointTool::onApplyToSelected()
 
 void ArtifactAnchorPointTool::applyToCurrentSelection(AnchorPoint anchorPoint)
 {
-    auto* selectionManager = ArtifactApplicationManager::instance()->layerSelectionManager();
+    auto* application = ArtifactApplicationManager::instance();
+    auto* selectionManager = application ? application->layerSelectionManager() : nullptr;
     if (!selectionManager) return;
 
     const auto selectedSet = selectionManager->selectedLayers();
@@ -167,6 +170,8 @@ void ArtifactAnchorPointTool::moveAnchorPoint(ArtifactAbstractLayerPtr layer, An
     // 現在のアンカーポイント
     float currentAnchorX = transform.anchorX();
     float currentAnchorY = transform.anchorY();
+    const float currentPositionX = transform.positionX();
+    const float currentPositionY = transform.positionY();
 
     // 新しいアンカーポイントを計算
     float newAnchorX = 0.0f;
@@ -224,6 +229,53 @@ void ArtifactAnchorPointTool::moveAnchorPoint(ArtifactAbstractLayerPtr layer, An
     }
 
     layer->changed();
+
+    if (auto* undo = UndoManager::instance()) {
+        const float afterAnchorX = transform.anchorX();
+        const float afterAnchorY = transform.anchorY();
+        const float afterPositionX = transform.positionX();
+        const float afterPositionY = transform.positionY();
+        if (currentAnchorX == afterAnchorX && currentAnchorY == afterAnchorY &&
+            currentPositionX == afterPositionX &&
+            currentPositionY == afterPositionY) {
+            return;
+        }
+        auto macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Move Anchor Point"));
+        if (currentAnchorX != afterAnchorX) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, QStringLiteral("transform.anchor.x"),
+                QVariant(currentAnchorX), QVariant(afterAnchorX),
+                QStringLiteral("Move Anchor Point X")));
+        }
+        if (currentAnchorY != afterAnchorY) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, QStringLiteral("transform.anchor.y"),
+                QVariant(currentAnchorY), QVariant(afterAnchorY),
+                QStringLiteral("Move Anchor Point Y")));
+        }
+        if (currentPositionX != afterPositionX) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, QStringLiteral("transform.position.x"),
+                QVariant(currentPositionX), QVariant(afterPositionX),
+                QStringLiteral("Move Anchor Position X")));
+        }
+        if (currentPositionY != afterPositionY) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, QStringLiteral("transform.position.y"),
+                QVariant(currentPositionY), QVariant(afterPositionY),
+                QStringLiteral("Move Anchor Position Y")));
+        }
+        transform.setAnchor(time, currentAnchorX, currentAnchorY,
+                            transform.anchorZ());
+        transform.setPosition(time, currentPositionX, currentPositionY);
+        if (!undo->push(std::move(macro))) {
+            transform.setAnchor(time, currentAnchorX, currentAnchorY,
+                                transform.anchorZ());
+            transform.setPosition(time, currentPositionX, currentPositionY);
+            layer->changed();
+        }
+    }
 }
 
 } // namespace Artifact

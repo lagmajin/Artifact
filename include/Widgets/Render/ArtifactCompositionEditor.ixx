@@ -47,9 +47,6 @@ public /*slots*/:
 
 private:
   void refreshEnabledState();
-
-signals:
-  void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
  };
 
 export void openContentsViewerCompareSurface();

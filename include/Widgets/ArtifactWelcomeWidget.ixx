@@ -17,10 +17,10 @@ public:
 
     void refreshRecentProjects();
 
-    void openRecentProject(const QString& path) W_SIGNAL(openRecentProject, path);
-    void createNewComposition() W_SIGNAL(createNewComposition);
-    void importAsset() W_SIGNAL(importAsset);
-    void openProject() W_SIGNAL(openProject);
+    void openRecentProject(const QString& path);
+    void createNewComposition();
+    void importAsset();
+    void openProject();
 
 private:
     class Impl;

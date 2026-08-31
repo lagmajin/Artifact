@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <utility>
 #include <QDir>
 #include <QColor>
@@ -282,6 +283,7 @@ namespace Artifact {
 class ArtifactProjectManager::Impl {
 public:
   QString currentProjectPath_;
+  std::uint64_t projectOperationGeneration_ = 0;
 public:
   Impl();
   ~Impl();
@@ -522,6 +524,7 @@ ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :Q
 
 bool ArtifactProjectManager::closeCurrentProject()
 {
+ ++impl_->projectOperationGeneration_;
  impl_->currentProjectPtr_.reset();
  impl_->currentProjectPath_.clear();
  impl_->projectRootPath_.clear();
@@ -537,6 +540,8 @@ void ArtifactProjectManager::createProject()
 void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
 {
  qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
+
+ ++impl_->projectOperationGeneration_;
 
  impl_->createProject(projectName, force);
 
@@ -617,6 +622,7 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
 
 bool ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
+  ++impl_->projectOperationGeneration_;
   const QString trimmedPath = fullpath.trimmed();
   const QString normalizedPath = trimmedPath.isEmpty()
       ? QString()
@@ -826,6 +832,7 @@ namespace {
 
 ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
  {
+  ++impl_->projectOperationGeneration_;
   ArtifactProjectExporterResult result;
   result.success = false;
 
@@ -945,6 +952,8 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
                                                ProjectLoadFinishedFn onFinished,
                                                ProjectProgressFn onProgress)
 {
+  const std::uint64_t requestGeneration =
+      ++impl_->projectOperationGeneration_;
   const QString trimmedPath = fullpath.trimmed();
   const QString normalizedPath = trimmedPath.isEmpty()
       ? QString()
@@ -960,9 +969,14 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
   auto* watcher = new QFutureWatcher<ArtifactProjectImporterResult>(this);
 
   QObject::connect(watcher, &QFutureWatcher<ArtifactProjectImporterResult>::finished,
-                   this, [this, watcher, normalizedPath, onFinished]() {
+                   this, [this, watcher, normalizedPath, onFinished,
+                          requestGeneration]() {
     auto importResult = watcher->result();
     watcher->deleteLater();
+
+    if (requestGeneration != impl_->projectOperationGeneration_) {
+      return;
+    }
 
     if (!importResult.success || !importResult.project) {
       if (onFinished) onFinished(importResult);
@@ -970,7 +984,11 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
     }
 
       // Switch to main thread for UI updates
-    QMetaObject::invokeMethod(this, [this, importResult, normalizedPath, onFinished]() {
+    QMetaObject::invokeMethod(this, [this, importResult, normalizedPath,
+                                     onFinished, requestGeneration]() {
+      if (!impl_ || requestGeneration != impl_->projectOperationGeneration_) {
+        return;
+      }
       impl_->currentProjectPtr_.reset();
       impl_->currentProjectPtr_ = importResult.project;
       impl_->currentProjectPath_ = normalizedPath;
@@ -1034,6 +1052,8 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
                                              ProjectSaveFinishedFn onFinished,
                                              ProjectProgressFn onProgress)
 {
+  const std::uint64_t requestGeneration =
+      ++impl_->projectOperationGeneration_;
   const QString trimmedPath = fullpath.trimmed();
   const QString normalizedPath = trimmedPath.isEmpty()
       ? QString()
@@ -1055,12 +1075,24 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
   auto* watcher = new QFutureWatcher<ArtifactProjectExporterResult>(this);
 
   QObject::connect(watcher, &QFutureWatcher<ArtifactProjectExporterResult>::finished,
-                   this, [this, watcher, normalizedPath, onFinished]() {
+                   this, [this, watcher, normalizedPath, onFinished,
+                          requestGeneration, projectPtr]() {
     auto result = watcher->result();
     watcher->deleteLater();
 
+    if (!impl_ || requestGeneration != impl_->projectOperationGeneration_ ||
+        impl_->currentProjectPtr_ != projectPtr) {
+      return;
+    }
+
     if (result.success) {
-      QMetaObject::invokeMethod(this, [this, normalizedPath, result, onFinished]() {
+      QMetaObject::invokeMethod(this, [this, normalizedPath, result, onFinished,
+                                       requestGeneration, projectPtr]() {
+        if (!impl_ ||
+            requestGeneration != impl_->projectOperationGeneration_ ||
+            impl_->currentProjectPtr_ != projectPtr) {
+          return;
+        }
         impl_->currentProjectPath_ = normalizedPath;
         impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
         if (impl_->currentProjectPtr_) {
@@ -1072,7 +1104,11 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
         }
       }, Qt::QueuedConnection);
     } else {
-      QMetaObject::invokeMethod(this, [normalizedPath]() {
+      QMetaObject::invokeMethod(
+          this, [this, normalizedPath, requestGeneration]() {
+        if (!impl_ || requestGeneration != impl_->projectOperationGeneration_) {
+          return;
+        }
         runProjectHookScript(QStringLiteral("on_project_save_failed"), normalizedPath);
       }, Qt::QueuedConnection);
     }
@@ -1197,9 +1233,10 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
    return;
   }
 
-  // Create a composition using default init params and emit the created ID
+  // Create a composition using default init params. The project publishes
+  // the creation event through the internal EventBus.
  ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings(impl_->currentProjectPtr_);
-  // Ensure a project exists so UI/model get updated and signals are wired
+  // Ensure a project exists before mutating the model.
   if (!impl_->currentProjectPtr_) {
    createProject();
   }
@@ -1233,7 +1270,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const ArtifactCompositionInitParams& params)
  {
-  // Ensure a project exists so UI/model get updated and signals are wired
+  // Ensure a project exists before mutating the model.
   if (!impl_->currentProjectPtr_) {
    // Temporarily suppress default composition creation during project creation
    bool prevSuppress = impl_->suppressDefaultCreate_;

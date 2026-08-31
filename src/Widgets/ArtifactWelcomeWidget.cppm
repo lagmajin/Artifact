@@ -15,6 +15,8 @@ module Artifact.Widgets.Welcome;
 
 import Widgets.Utils.CSS;
 import Application.AppSettings;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -116,7 +118,7 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     QObject::connect(impl_->recentList, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
         const QString path = item->data(Qt::UserRole).toString();
         if (!path.isEmpty()) {
-            Q_EMIT openRecentProject(path);
+            openRecentProject(path);
         }
     });
     center->addWidget(impl_->recentList);
@@ -172,6 +174,30 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
 ArtifactWelcomeWidget::~ArtifactWelcomeWidget()
 {
     delete impl_;
+}
+
+void ArtifactWelcomeWidget::createNewComposition()
+{
+    ArtifactCore::globalEventBus().publish<CreateCompositionRequestedEvent>({});
+}
+
+void ArtifactWelcomeWidget::openRecentProject(const QString& path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    ArtifactCore::globalEventBus().publish<OpenRecentProjectRequestedEvent>(
+        OpenRecentProjectRequestedEvent{path});
+}
+
+void ArtifactWelcomeWidget::openProject()
+{
+    ArtifactCore::globalEventBus().publish<OpenProjectRequestedEvent>({});
+}
+
+void ArtifactWelcomeWidget::importAsset()
+{
+    ArtifactCore::globalEventBus().publish<ImportAssetsRequestedEvent>({});
 }
 
 void ArtifactWelcomeWidget::refreshRecentProjects()

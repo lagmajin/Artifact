@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <cmath>
 #include <QColor>
 #include <QChar>
 #include <QMenu>
@@ -238,29 +239,39 @@ public:
  }
 
  void undo() override {
-  apply(beforeStates_, beforeActiveId_, beforeComparisonAId_,
-        beforeComparisonBId_);
+  lastOperationSucceeded_ = apply(beforeStates_, beforeActiveId_,
+                                  beforeComparisonAId_, beforeComparisonBId_);
  }
  void redo() override {
-  apply(afterStates_, afterActiveId_, afterComparisonAId_,
-        afterComparisonBId_);
+  lastOperationSucceeded_ = apply(afterStates_, afterActiveId_,
+                                  afterComparisonAId_, afterComparisonBId_);
  }
  QString label() const override { return label_; }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
- void apply(const QVector<CompositionStateVariant>& states,
+ bool apply(const QVector<CompositionStateVariant>& states,
             const QString& activeId, const QString& comparisonAId,
             const QString& comparisonBId)
  {
-  if (const auto composition = composition_.lock()) {
-   composition->setActiveStateVariantId(QString());
-   composition->setStateVariants(states);
-   composition->setStateComparisonPair(comparisonAId, comparisonBId);
-   composition->setActiveStateVariantId(activeId);
-   if (auto* manager = UndoManager::instance()) {
-    manager->notifyAnythingChanged();
-   }
+  const auto composition = composition_.lock();
+  if (!composition) return false;
+  composition->setActiveStateVariantId(QString());
+  composition->setStateVariants(states);
+  composition->setStateComparisonPair(comparisonAId, comparisonBId);
+  composition->setActiveStateVariantId(activeId);
+  const auto appliedStates = composition->stateVariants();
+  if (appliedStates.size() != states.size()) return false;
+  for (int index = 0; index < states.size(); ++index) {
+   if (appliedStates[index].toJson() != states[index].toJson()) return false;
   }
+  if (composition->activeStateVariantId() != activeId ||
+      composition->stateComparisonAId() != comparisonAId ||
+      composition->stateComparisonBId() != comparisonBId) return false;
+  if (auto* manager = UndoManager::instance()) {
+   manager->notifyAnythingChanged();
+  }
+  return true;
  }
 
  ArtifactCompositionWeakPtr composition_;
@@ -273,6 +284,7 @@ private:
  QString afterComparisonAId_;
  QString afterComparisonBId_;
  QString label_;
+ bool lastOperationSucceeded_ = true;
 };
 
 struct MasterPropertyRegistryChange {
@@ -290,36 +302,46 @@ public:
                                QString label)
   : changes_(std::move(changes)), label_(std::move(label)) {}
 
- void undo() override { apply(false); }
- void redo() override { apply(true); }
+ void undo() override { lastOperationSucceeded_ = apply(false); }
+ void redo() override { lastOperationSucceeded_ = apply(true); }
  QString label() const override { return label_; }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
- void apply(const bool useAfter) {
+ bool apply(const bool useAfter) {
   auto* service = ArtifactProjectService::instance();
   if (!service) {
-   return;
+   return false;
   }
+  bool applied = true;
   for (const auto& change : changes_) {
    const auto parent = service->findComposition(change.parentCompositionId).ptr.lock();
    const auto layer = parent
     ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(
        parent->layerById(change.precompLayerId))
-    : ArtifactCore::SharedPtr<ArtifactCompositionLayer>{};
+   : ArtifactCore::SharedPtr<ArtifactCompositionLayer>{};
    if (layer) {
     layer->setExposedProperties(useAfter ? change.after : change.before);
     const auto& overrides = useAfter
      ? change.afterOverrides
      : change.beforeOverrides;
     for (auto it = overrides.cbegin(); it != overrides.cend(); ++it) {
-     layer->setExposedPropertyOverride(it.key(), it.value());
+     applied = layer->setExposedPropertyOverride(it.key(), it.value()) && applied;
     }
+    } else {
+     applied = false;
    }
   }
+  if (!applied) return false;
+  if (auto* manager = UndoManager::instance()) {
+   manager->notifyAnythingChanged();
+  }
+  return true;
  }
 
  QVector<MasterPropertyRegistryChange> changes_;
  QString label_;
+ bool lastOperationSucceeded_ = true;
 };
 
 QString masterPropertyId(const LayerID& layerId, const QString& propertyPath)
@@ -683,6 +705,10 @@ void ArtifactCompositionMenu::Impl::showSettings()
  contentLayout->addWidget(nameEdit);
 
  const QSize initialSize = current->effectiveCompositionSize();
+ const ResponsiveLayoutSet initialResponsiveLayout = current->responsiveLayout();
+ const FrameRate initialFrameRate = current->frameRate();
+ const FrameRange initialFrameRange = current->frameRange();
+ const FloatColor initialBackground = current->backgroundColor();
  auto* sizeLabel = new QLabel(QStringLiteral("Size"), &dialog);
  contentLayout->addWidget(sizeLabel);
  auto* sizeLayout = new QHBoxLayout();
@@ -1148,7 +1174,6 @@ void ArtifactCompositionMenu::Impl::showSettings()
    return;
   }
 
-  current->setCompositionName(UniString::fromQString(trimmedName));
   ResponsiveLayoutSet responsiveLayout = normalizedResponsiveLayoutForDialog(current);
   const QString selectedVariantId = responsiveCombo->currentData().toString();
   const QSize requestedSize(std::max(1, widthSpin->value()),
@@ -1171,6 +1196,12 @@ void ArtifactCompositionMenu::Impl::showSettings()
    responsiveLayout.activeVariantId = selectedVariantId;
   }
 	  current->setResponsiveLayout(responsiveLayout);
+	  if (current->responsiveLayout().toJson() != responsiveLayout.toJson()) {
+	   QMessageBox::warning(
+	    &dialog, QStringLiteral("Composition Settings"),
+	    QStringLiteral("Failed to apply the responsive layout."));
+	   return;
+	  }
 
 	  // --- Resolution remap wizard (consistent with ArtifactProjectManagerWidget) ---
 	  {
@@ -1198,16 +1229,32 @@ void ArtifactCompositionMenu::Impl::showSettings()
 	              oldSize, chosenSize, hasMasks, maskVerts > 0, hasAnchors);
 	          impact.maskVertexCount = maskVerts;
 
-	          ArtifactResolutionRemapDialog remapDialog(oldSize, chosenSize, impact);
-	          if (remapDialog.exec() == QDialog::Accepted && remapDialog.remapRequested()) {
-	              if (auto* mgr = UndoManager::instance()) {
-	                  mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
-	                      current, oldSize, chosenSize, remapDialog.selectedPolicy()));
-	              } else {
-	                  current->applyResolutionRemap(chosenSize, remapDialog.selectedPolicy());
-	              }
+          ArtifactResolutionRemapDialog remapDialog(oldSize, chosenSize, impact);
+          if (remapDialog.exec() == QDialog::Accepted && remapDialog.remapRequested()) {
+              bool applied = false;
+              if (auto* mgr = UndoManager::instance()) {
+                  applied = mgr->push(
+                      std::make_unique<ChangeCompositionResolutionCommand>(
+                          current, oldSize, chosenSize,
+                          remapDialog.selectedPolicy()));
+              } else {
+                  current->applyResolutionRemap(chosenSize, remapDialog.selectedPolicy());
+                  applied = current->effectiveCompositionSize() == chosenSize;
+              }
+              if (!applied) {
+                  QMessageBox::warning(
+                      &dialog, QStringLiteral("Composition Settings"),
+                      QStringLiteral("Failed to apply the resolution remap."));
+                  return;
+              }
 	          } else {
 	              current->setCompositionSize(chosenSize);
+	              if (current->effectiveCompositionSize() != chosenSize) {
+	                  QMessageBox::warning(
+	                      &dialog, QStringLiteral("Composition Settings"),
+	                      QStringLiteral("Failed to apply the composition size."));
+	                  return;
+	              }
 	          }
 	      }
 	  }
@@ -1215,10 +1262,34 @@ void ArtifactCompositionMenu::Impl::showSettings()
 
 	  current->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
   current->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
- current->setBackGroundColor(FloatColor(backgroundColor.redF(),
+  current->setBackGroundColor(FloatColor(backgroundColor.redF(),
                                          backgroundColor.greenF(),
                                          backgroundColor.blueF(),
                                          backgroundColor.alphaF()));
+  const FloatColor appliedBackground = current->backgroundColor();
+  const FloatColor requestedBackground(
+   backgroundColor.redF(), backgroundColor.greenF(),
+   backgroundColor.blueF(), backgroundColor.alphaF());
+  const auto sameBackground = [](const FloatColor& lhs, const FloatColor& rhs) {
+   constexpr float epsilon = 0.0001F;
+   return std::abs(lhs.r() - rhs.r()) <= epsilon &&
+          std::abs(lhs.g() - rhs.g()) <= epsilon &&
+          std::abs(lhs.b() - rhs.b()) <= epsilon &&
+          std::abs(lhs.a() - rhs.a()) <= epsilon;
+  };
+  if (current->frameRate() != FrameRate(static_cast<float>(fpsSpin->value())) ||
+      current->frameRange() != FrameRange(FramePosition(startFrame),
+                                          FramePosition(endFrame)) ||
+      !sameBackground(appliedBackground, requestedBackground)) {
+   current->setResponsiveLayout(initialResponsiveLayout);
+   current->setFrameRate(initialFrameRate);
+   current->setFrameRange(initialFrameRange);
+   current->setBackGroundColor(initialBackground);
+   QMessageBox::warning(
+    &dialog, QStringLiteral("Composition Settings"),
+    QStringLiteral("Failed to apply one or more composition settings."));
+   return;
+  }
 
   const QString stateOperation = stateOperationCombo->currentData().toString();
   if (stateOperation != QStringLiteral("none")) {
@@ -1310,11 +1381,16 @@ void ArtifactCompositionMenu::Impl::showSettings()
 
    if (!stateCommandLabel.isEmpty()) {
     if (auto* manager = UndoManager::instance()) {
-     manager->push(std::make_unique<ChangeCompositionStatesCommand>(
-     current, initialStates, initialActiveStateId, afterStates,
-      afterActiveStateId, current->stateComparisonAId(),
-      current->stateComparisonBId(), afterComparisonAId,
-      afterComparisonBId, stateCommandLabel));
+     if (!manager->push(std::make_unique<ChangeCompositionStatesCommand>(
+             current, initialStates, initialActiveStateId, afterStates,
+             afterActiveStateId, current->stateComparisonAId(),
+             current->stateComparisonBId(), afterComparisonAId,
+             afterComparisonBId, stateCommandLabel))) {
+      QMessageBox::warning(
+          &dialog, QStringLiteral("Composition State"),
+          QStringLiteral("Failed to apply the composition state change."));
+      return;
+     }
     } else {
      current->setActiveStateVariantId(QString());
      current->setStateVariants(afterStates);
@@ -1326,8 +1402,13 @@ void ArtifactCompositionMenu::Impl::showSettings()
 
   if (!masterPropertyChanges.isEmpty()) {
    if (auto* manager = UndoManager::instance()) {
-    manager->push(std::make_unique<ChangeMasterPropertiesCommand>(
-     masterPropertyChanges, masterPropertyCommandLabel));
+    if (!manager->push(std::make_unique<ChangeMasterPropertiesCommand>(
+            masterPropertyChanges, masterPropertyCommandLabel))) {
+     QMessageBox::warning(
+         &dialog, QStringLiteral("Master Properties"),
+         QStringLiteral("Failed to apply the master property change."));
+     return;
+    }
    } else {
     for (const auto& change : masterPropertyChanges) {
      const auto parent = service->findComposition(change.parentCompositionId).ptr.lock();
@@ -1353,7 +1434,12 @@ void ArtifactCompositionMenu::Impl::showSettings()
    return;
   }
 
-  service->finalizeCompositionSettingsChange(current->id());
+  if (!service->finalizeCompositionSettingsChange(current->id())) {
+   QMessageBox::warning(
+    &dialog, QStringLiteral("Composition Settings"),
+    QStringLiteral("Failed to finalize the composition settings."));
+   return;
+  }
 
  dialog.accept();
  });

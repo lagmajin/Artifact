@@ -101,7 +101,6 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
         if (idx >= 0 && idx < (int)impl_->swatch.count()) {
             const auto &entry = impl_->swatch.at(idx);
             impl_->eventBus_.post<ColorSwatchSelectedEvent>(ColorSwatchSelectedEvent{entry.color.r(), entry.color.g(), entry.color.b(), entry.color.a()});
-            Q_EMIT colorSelected(entry.color);
         }
     });
 
@@ -113,7 +112,6 @@ void ArtifactColorSwatchWidget::setSwatch(const ArtifactCore::ColorSwatch& sw) {
     impl_->swatch = sw;
     updateListView();
     impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
-    Q_EMIT swatchChanged();
 }
 
 const ArtifactCore::ColorSwatch& ArtifactColorSwatchWidget::getSwatch() const {
@@ -149,7 +147,6 @@ void ArtifactColorSwatchWidget::onLoadGPL() {
         if (impl_->swatch.importGPL(path.toStdString())) {
             updateListView();
             impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
-            Q_EMIT swatchChanged();
         }
     }
 }
@@ -166,7 +163,6 @@ void ArtifactColorSwatchWidget::onClear() {
     impl_->swatch.clear();
     updateListView();
     impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
-    Q_EMIT swatchChanged();
 }
 
 void ArtifactColorSwatchWidget::onColorDoubleClicked(const QModelIndex& index) {

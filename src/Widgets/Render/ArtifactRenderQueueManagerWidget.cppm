@@ -39,6 +39,8 @@ module;
 #include <QApplication>
 #include <QMenu>
 #include <QClipboard>
+#include <QFont>
+#include <QFontDatabase>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QToolButton>
@@ -425,9 +427,10 @@ namespace Artifact
   std::map<int, qint64> progressStartedAtMsByJob;
   QElapsedTimer progressClock_;
   int progressLogStepPercent = 25;
-  QFont fixedFont_{"Consolas", 10};
+  QFont fixedFont_ = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 
   Impl() {
+    fixedFont_.setPointSize(10);
     progressClock_.start();
     service = ArtifactRenderQueueService::instance();
     const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -2416,48 +2419,41 @@ namespace Artifact
           }
           impl_->logServiceEvent(event.message, event.sourceIndex, event.alsoHistory);
         }));
-    connect(impl_->service, &ArtifactRenderQueueService::jobAdded, this, [this](int index) {
-        Q_UNUSED(index);
-        if (!impl_) {
-          return;
-        }
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<RenderQueueServiceChangedEvent>(
+            [this](const RenderQueueServiceChangedEvent &event) {
+      if (!impl_ || !impl_->service) {
+        return;
+      }
+      switch (event.kind) {
+      case RenderQueueServiceChangeKind::JobAdded:
         impl_->postQueueChanged(QStringLiteral("Job added"));
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::jobRemoved, this, [this](int index) {
-        Q_UNUSED(index);
-        if (!impl_) {
-          return;
-        }
+        break;
+      case RenderQueueServiceChangeKind::JobRemoved:
         impl_->progressStartedAtMsByJob.clear();
         impl_->postQueueChanged(QStringLiteral("Job removed"));
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::jobUpdated, this, [this](int index) {
-        Q_UNUSED(index);
-        if (!impl_) {
-          return;
-        }
+        break;
+      case RenderQueueServiceChangeKind::JobUpdated:
         impl_->postQueueChanged(QStringLiteral("Job updated"));
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int index, int progress) {
-        if (!impl_ || !impl_->service) return;
-        if (index >= 0 && index < static_cast<int>(impl_->jobs.size())) {
+        break;
+      case RenderQueueServiceChangeKind::JobProgressChanged:
+        if (event.index >= 0 &&
+            event.index < static_cast<int>(impl_->jobs.size())) {
           const bool progressRolledBack =
-              progress < impl_->jobs[index].progress;
-          if (impl_->progressStartedAtMsByJob.find(index) ==
-                  impl_->progressStartedAtMsByJob.end() || progressRolledBack) {
-            impl_->progressStartedAtMsByJob[index] =
+              event.value < impl_->jobs[event.index].progress;
+          if (impl_->progressStartedAtMsByJob.find(event.index) ==
+                  impl_->progressStartedAtMsByJob.end() ||
+              progressRolledBack) {
+            impl_->progressStartedAtMsByJob[event.index] =
                 impl_->progressClock_.elapsed();
           }
-          impl_->jobs[index].progress = progress;
-          impl_->updateJobItemAtIndex(index);
+          impl_->jobs[event.index].progress = event.value;
+          impl_->updateJobItemAtIndex(event.index);
           impl_->updateSummary();
         }
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::jobStatusChanged, this, [this](int index, int status) {
-        Q_UNUSED(status);
-        if (!impl_ || !impl_->service) {
-          return;
-        }
+        break;
+      case RenderQueueServiceChangeKind::JobStatusChanged: {
+        const int index = event.index;
         const QString jobName = impl_->service->jobCompositionNameAt(index);
         const QString jobStatus = impl_->service->jobStatusAt(index);
         if (jobStatus == QStringLiteral("Rendering")) {
@@ -2470,38 +2466,42 @@ namespace Artifact
         }
         if (jobStatus == "Failed") {
           const QString error = impl_->service->jobErrorMessageAt(index);
-          impl_->postHistoryMessage(QString("Job failed: %1%2")
-              .arg(jobName)
-              .arg(error.trimmed().isEmpty() ? QString() : QString(" | %1").arg(error)), index);
+          impl_->postHistoryMessage(
+              QString("Job failed: %1%2")
+                  .arg(jobName)
+                  .arg(error.trimmed().isEmpty()
+                           ? QString()
+                           : QString(" | %1").arg(error)),
+              index);
         } else if (jobStatus == "Completed") {
-          impl_->postHistoryMessage(QString("Job completed: %1").arg(jobName), index);
+          impl_->postHistoryMessage(
+              QString("Job completed: %1").arg(jobName), index);
         } else if (jobStatus == "Rendering") {
-          impl_->postHistoryMessage(QString("Job started: %1").arg(jobName), index);
+          impl_->postHistoryMessage(
+              QString("Job started: %1").arg(jobName), index);
         } else {
-          impl_->postHistoryMessage(QString("Job status -> %1: %2").arg(jobName, jobStatus), index, false);
+          impl_->postHistoryMessage(
+              QString("Job status -> %1: %2").arg(jobName, jobStatus),
+              index, false);
         }
         impl_->postQueueChanged(QStringLiteral("Job status changed"));
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::queueReordered, this, [this](int fromIndex, int toIndex) {
-        Q_UNUSED(fromIndex);
-        Q_UNUSED(toIndex);
-        if (!impl_) {
-          return;
-        }
+        break;
+      }
+      case RenderQueueServiceChangeKind::QueueReordered:
         impl_->progressStartedAtMsByJob.clear();
         impl_->postQueueChanged(QStringLiteral("Queue reordered"));
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::allJobsCompleted, this, [this]() {
+        break;
+      case RenderQueueServiceChangeKind::AllJobsCompleted:
 #ifdef _WIN32
         ::MessageBeep(MB_OK);
 #else
         QApplication::beep();
 #endif
-        if (impl_) {
-          impl_->postHistoryMessage(QStringLiteral("All jobs completed"));
-        }
-    });
-    connect(impl_->service, &ArtifactRenderQueueService::previewFrameReady, this, [this](int jobIndex, int frameNumber) {
+        impl_->postHistoryMessage(QStringLiteral("All jobs completed"));
+        break;
+      case RenderQueueServiceChangeKind::PreviewFrameReady: {
+        const int jobIndex = event.index;
+        const int frameNumber = event.value;
         QImage frame = impl_->service->lastRenderedFrame();
         if (!frame.isNull() && impl_->previewLabel) {
             const QPixmap pixmap = QPixmap::fromImage(frame);
@@ -2518,7 +2518,12 @@ namespace Artifact
               }
             }
         }
-    });
+        break;
+      }
+      case RenderQueueServiceChangeKind::AllJobsRemoved:
+        break;
+      }
+    }));
   }
 
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {

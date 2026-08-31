@@ -42,12 +42,6 @@ export namespace Artifact {
   QString applicationVersion() const;
   bool isProjectOpen() const;
 
- signals:
-  void initialized() W_SIGNAL(initialized);
-  void shutdownRequested() W_SIGNAL(shutdownRequested);
-  void projectOpened(const QString& projectPath) W_SIGNAL(projectOpened, projectPath);
-  void projectClosed() W_SIGNAL(projectClosed);
-
  private:
   void connectServices();
  };

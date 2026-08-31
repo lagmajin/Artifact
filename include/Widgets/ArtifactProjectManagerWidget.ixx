@@ -204,9 +204,9 @@ public:
   void setFilter();
   void triggerUpdate();
   void setThumbnailEnabled(bool b = true);
-  public /*signals*/:
-  void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list);
-  void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
+  // Cross-widget activation is published as ProjectItemActivatedEvent.
+  // ProjectView -> ProjectManager remains an internal widget connection.
+  void itemDoubleClicked(const QModelIndex& index);
    
  public/*Slots*/:
   void updateRequested();

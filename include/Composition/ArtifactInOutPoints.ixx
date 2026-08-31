@@ -64,7 +64,7 @@ enum class MarkerType {
     Color         // Color correction point
 };
 
-// Register MarkerType for use as signal/slot parameter
+// Marker changes are propagated through the internal event bus.
 
 /**
  * @brief Timeline marker with position, comment, and type
@@ -116,14 +116,6 @@ public:
     bool operator<(const ArtifactMarker& other) const;
     bool operator==(const ArtifactMarker& other) const;
     
-signals:
-    void positionChanged(FramePosition position) W_SIGNAL(positionChanged, position);
-    void commentChanged(QString comment) W_SIGNAL(commentChanged, comment);
-    void typeChanged(MarkerType type) W_SIGNAL(typeChanged, type);
-    void colorChanged(QColor color) W_SIGNAL(colorChanged, color);
-    void webLinkChanged(QString link) W_SIGNAL(webLinkChanged, link);
-    void tagsChanged(QStringList tags) W_SIGNAL(tagsChanged, tags);
-    void markerChanged() W_SIGNAL(markerChanged);
 };
 
 /**
@@ -347,19 +339,9 @@ public:
     QString typeName() const override { return QStringLiteral("ArtifactInOutPoints"); }
     int schemaVersion() const override { return 1; }
     
-public: // signals
-    // Marker signals
-    void markerAdded(ArtifactMarker* marker) W_SIGNAL(markerAdded, marker);
-    void markerRemoved(ArtifactMarker* marker) W_SIGNAL(markerRemoved, marker);
-    void markerChanged(ArtifactMarker* marker) W_SIGNAL(markerChanged, marker);
-    void allMarkersCleared() W_SIGNAL(allMarkersCleared);
-    
-    // Navigation signals
-    void navigatedToMarker(FramePosition position) W_SIGNAL(navigatedToMarker, position);
 };
 
 } // namespace Artifact
 
 W_REGISTER_ARGTYPE(Artifact::MarkerType)
 W_REGISTER_ARGTYPE(ArtifactCore::Optional<ArtifactCore::FramePosition>)
-W_REGISTER_ARGTYPE(Artifact::ArtifactMarker*)

@@ -19,6 +19,7 @@ module;
 #include <QElapsedTimer>
 
 #include <QFont>
+#include <QFontDatabase>
 
 #include <QFontMetrics>
 #include <QFileInfo>
@@ -157,6 +158,7 @@ import Core.Diagnostics.Trace;
 import Artifact.Composition.Abstract;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Particle;
 import Artifact.Layer.EnvironmentMap;
 import Artifact.Layers.Abstract._2D;
 
@@ -329,6 +331,12 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 namespace {
+QFont fixedWidthFont(const int pointSize) {
+  QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  font.setPointSize(pointSize);
+  return font;
+}
+
 QImage resolveProjectRenderInputImage(const ArtifactCore::Id& projectItemId,
                                       const std::int64_t frameNumber) {
   if (projectItemId.isNil()) return {};
@@ -364,6 +372,18 @@ ArtifactCore::Id hitTestRigBone(ArtifactCore::Bone2D *bone,
                                 const QPointF &localPoint, float threshold);
 ArtifactCore::Id hitTestRigControl(const ArtifactCore::Rig2D &rig,
                                    const QPointF &localPoint, float threshold);
+
+void restoreLayerMasks(const ArtifactAbstractLayerPtr &layer,
+                       const std::vector<LayerMask> &masks) {
+  if (!layer) return;
+  while (layer->maskCount() > 0) {
+    layer->removeMask(layer->maskCount() - 1);
+  }
+  for (const auto &mask : masks) {
+    layer->addMask(mask);
+  }
+  layer->changed();
+}
 }
 
 struct GizmoTransformSnapshot {
@@ -640,18 +660,19 @@ class RigBoneTransformUndoCommand final : public UndoCommand {
                               ArtifactCore::BoneTransform after)
       : layer_(layer), boneId_(std::move(boneId)), before_(before), after_(after) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Rig Bone Rotation"); }
 
  private:
-  void apply(const ArtifactCore::BoneTransform &transform) {
+  bool apply(const ArtifactCore::BoneTransform &transform) {
     auto layer = layer_.lock();
     auto *rigLayer = layer
         ? dynamic_cast<ArtifactAbstract2DLayer *>(layer.get())
         : nullptr;
     if (!rigLayer || !rigLayer->setRigBoneLocalTransform(boneId_, transform)) {
-      return;
+      return false;
     }
     if (rigLayer->rig2D().rootBone()) {
       rigLayer->rig2D().rootBone()->updateHierarchy();
@@ -661,12 +682,14 @@ class RigBoneTransformUndoCommand final : public UndoCommand {
     if (auto *manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   ArtifactCore::Id boneId_;
   ArtifactCore::BoneTransform before_;
   ArtifactCore::BoneTransform after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RigControlValueUndoCommand final : public UndoCommand {
@@ -677,31 +700,36 @@ class RigControlValueUndoCommand final : public UndoCommand {
       : layer_(layer), controlId_(std::move(controlId)),
         before_(std::move(before)), after_(std::move(after)) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Rig Control Value"); }
 
  private:
-  void apply(const QVariant &value) {
+  bool apply(const QVariant &value) {
     auto layer = layer_.lock();
     auto *rigLayer = layer
         ? dynamic_cast<ArtifactAbstract2DLayer *>(layer.get())
         : nullptr;
-    if (!rigLayer) return;
+    if (!rigLayer) return false;
     if (auto *control = rigLayer->rig2D().findControl(controlId_)) {
       control->setValue(value);
+      if (control->value() != value) return false;
       rigLayer->setDirty(LayerDirtyFlag::Transform);
       rigLayer->changed();
       if (auto *manager = UndoManager::instance()) {
         manager->notifyAnythingChanged();
       }
+      return true;
     }
+    return false;
   }
 
   ArtifactAbstractLayerWeak layer_;
   ArtifactCore::Id controlId_;
   QVariant before_;
   QVariant after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RigSkinWeightsUndoCommand final : public UndoCommand {
@@ -711,28 +739,34 @@ class RigSkinWeightsUndoCommand final : public UndoCommand {
                             std::vector<ArtifactCore::SkinVertex> after)
       : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Rig Weight Paint"); }
 
  private:
-  void apply(const std::vector<ArtifactCore::SkinVertex> &vertices) {
+  bool apply(const std::vector<ArtifactCore::SkinVertex> &vertices) {
     auto layer = layer_.lock();
     auto *rigLayer = layer
         ? dynamic_cast<ArtifactAbstract2DLayer *>(layer.get())
         : nullptr;
-    if (!rigLayer || !rigLayer->rig2D().skinMesh()) return;
+    if (!rigLayer || !rigLayer->rig2D().skinMesh()) return false;
     rigLayer->rig2D().skinMesh()->setVertices(vertices);
+    if (rigLayer->rig2D().skinMesh()->vertices().size() != vertices.size()) {
+      return false;
+    }
     rigLayer->setDirty(LayerDirtyFlag::Transform);
     rigLayer->changed();
     if (auto *manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   std::vector<ArtifactCore::SkinVertex> before_;
   std::vector<ArtifactCore::SkinVertex> after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RigPoseUndoCommand final : public UndoCommand {
@@ -742,27 +776,30 @@ class RigPoseUndoCommand final : public UndoCommand {
                      ArtifactCore::PoseSnapshot after)
       : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Rig Pose"); }
 
  private:
-  void apply(const ArtifactCore::PoseSnapshot &pose) {
+  bool apply(const ArtifactCore::PoseSnapshot &pose) {
     auto layer = layer_.lock();
     auto *rigLayer = layer
         ? dynamic_cast<ArtifactAbstract2DLayer *>(layer.get())
         : nullptr;
-    if (!rigLayer) return;
+    if (!rigLayer) return false;
     ArtifactCore::applyPose(rigLayer->rig2D(), pose);
     if (rigLayer->rig2D().rootBone()) rigLayer->rig2D().rootBone()->updateHierarchy();
     rigLayer->setDirty(LayerDirtyFlag::Transform);
     rigLayer->changed();
     if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   ArtifactCore::PoseSnapshot before_;
   ArtifactCore::PoseSnapshot after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 QVariantMap rigPoseToVariantMap(const ArtifactCore::PoseSnapshot &pose) {
@@ -833,14 +870,15 @@ class GizmoTransformUndoCommand final : public UndoCommand {
                             GizmoTransformSnapshot after)
       : layer_(layer), frame_(frame), before_(before), after_(after) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("3D Gizmo Transform"); }
 
  private:
-  void apply(const GizmoTransformSnapshot& snapshot) {
+  bool apply(const GizmoTransformSnapshot& snapshot) {
     auto layer = layer_.lock();
-    if (!layer) return;
+    if (!layer) return false;
     if (snapshot.is3D) {
       auto &transform = layer->transform3D();
       const auto time = gizmoTransformTime(layer, frame_);
@@ -895,12 +933,14 @@ class GizmoTransformUndoCommand final : public UndoCommand {
                             LayerChangedEvent::ChangeType::Modified});
     }
     if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   int64_t frame_ = 0;
   GizmoTransformSnapshot before_;
   GizmoTransformSnapshot after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 struct GizmoGroupUndoEntry {
@@ -916,17 +956,22 @@ class GizmoGroupTransformUndoCommand final : public UndoCommand {
       std::vector<GizmoGroupUndoEntry> entries)
       : entries_(std::move(entries)) {}
 
-  void undo() override { apply(false); }
-  void redo() override { apply(true); }
+  void undo() override { lastOperationSucceeded_ = apply(false); }
+  void redo() override { lastOperationSucceeded_ = apply(true); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override {
     return QStringLiteral("Transform Selected Layers");
   }
 
  private:
-  void apply(bool useAfter) {
+  bool apply(bool useAfter) {
+    bool succeeded = true;
     for (const auto &entry : entries_) {
       auto layer = entry.layer.lock();
-      if (!layer) continue;
+      if (!layer) {
+        succeeded = false;
+        continue;
+      }
       const auto &snapshot = useAfter ? entry.after : entry.before;
       if (snapshot.is3D) {
         auto &transform = layer->transform3D();
@@ -988,9 +1033,11 @@ class GizmoGroupTransformUndoCommand final : public UndoCommand {
     if (auto *manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return succeeded;
   }
 
   std::vector<GizmoGroupUndoEntry> entries_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class TextContentUndoCommand final : public UndoCommand {
@@ -999,18 +1046,20 @@ class TextContentUndoCommand final : public UndoCommand {
                          QString after)
       : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Edit Text"); }
 
  private:
-  void apply(const QString& value) {
+  bool apply(const QString& value) {
     auto layer = layer_.lock();
     auto* textLayer = layer
         ? dynamic_cast<ArtifactTextLayer*>(layer.get())
         : nullptr;
-    if (!textLayer) return;
+    if (!textLayer) return false;
     textLayer->setText(UniString(value));
+    if (textLayer->text().toQString() != value) return false;
     textLayer->changed();
     if (auto* comp = static_cast<ArtifactAbstractComposition*>(
             textLayer->composition())) {
@@ -1021,11 +1070,13 @@ class TextContentUndoCommand final : public UndoCommand {
     if (auto* manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   QString before_;
   QString after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class PuppetPinUndoCommand final : public UndoCommand {
@@ -1039,19 +1090,25 @@ class PuppetPinUndoCommand final : public UndoCommand {
         afterPosition_(afterPosition), beforeRotation_(beforeRotation),
         afterRotation_(afterRotation) {}
 
-  void undo() override { apply(beforePosition_, beforeRotation_); }
-  void redo() override { apply(afterPosition_, afterRotation_); }
+  void undo() override {
+    lastOperationSucceeded_ = apply(beforePosition_, beforeRotation_);
+  }
+  void redo() override {
+    lastOperationSucceeded_ = apply(afterPosition_, afterRotation_);
+  }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Move Puppet Pin"); }
 
  private:
-  void apply(const QPointF &position, float rotation) {
-    if (!tool_) return;
+  bool apply(const QPointF &position, float rotation) {
+    if (!tool_) return false;
     tool_->movePin(pinId_, position);
     tool_->setPinRotation(pinId_, rotation);
     tool_->deformLayer(layerId_, renderer_);
     if (auto *manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactPuppetTool *tool_ = nullptr;
@@ -1062,6 +1119,7 @@ class PuppetPinUndoCommand final : public UndoCommand {
   QPointF afterPosition_;
   float beforeRotation_ = 0.0f;
   float afterRotation_ = 0.0f;
+  bool lastOperationSucceeded_ = true;
 };
 
 class PuppetPinScalarUndoCommand final : public UndoCommand {
@@ -1071,21 +1129,23 @@ class PuppetPinScalarUndoCommand final : public UndoCommand {
       : tool_(tool), pinId_(std::move(pinId)), weight_(weight),
         before_(before), after_(after) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override {
     return weight_ ? QStringLiteral("Adjust Puppet Starch")
                    : QStringLiteral("Adjust Puppet Overlap");
   }
 
  private:
-  void apply(float value) {
-    if (!tool_) return;
+  bool apply(float value) {
+    if (!tool_) return false;
     if (weight_) tool_->setPinWeight(pinId_, value);
     else tool_->setPinDepth(pinId_, value);
     if (auto *manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactPuppetTool *tool_ = nullptr;
@@ -1093,6 +1153,7 @@ class PuppetPinScalarUndoCommand final : public UndoCommand {
   bool weight_ = false;
   float before_ = 0.0f;
   float after_ = 0.0f;
+  bool lastOperationSucceeded_ = true;
 };
 
 class AnchorPointUndoCommand final : public UndoCommand {
@@ -1104,17 +1165,31 @@ class AnchorPointUndoCommand final : public UndoCommand {
         beforePosition_(beforePosition), afterAnchor_(afterAnchor),
         afterPosition_(afterPosition) {}
 
-  void undo() override { apply(beforeAnchor_, beforePosition_); }
-  void redo() override { apply(afterAnchor_, afterPosition_); }
+  void undo() override {
+    lastOperationSucceeded_ = apply(beforeAnchor_, beforePosition_);
+  }
+  void redo() override {
+    lastOperationSucceeded_ = apply(afterAnchor_, afterPosition_);
+  }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Reset Anchor Point"); }
 
  private:
-  void apply(const QVector3D &anchor, const QVector3D &position) {
+  bool apply(const QVector3D &anchor, const QVector3D &position) {
     auto layer = layer_.lock();
-    if (!layer) return;
+    if (!layer || !layer->is3D()) return false;
     const auto time = gizmoTransformTime(layer, frame_);
-    layer->transform3D().setAnchor(time, anchor.x(), anchor.y(), anchor.z());
-    layer->transform3D().setPosition(time, position.x(), position.y());
+    auto &transform = layer->transform3D();
+    transform.setAnchor(time, anchor.x(), anchor.y(), anchor.z());
+    transform.setPosition(time, position.x(), position.y());
+    const auto actual = transform.snapshotAt(time);
+    if (std::abs(actual.anchorX - anchor.x()) > 0.000001f ||
+        std::abs(actual.anchorY - anchor.y()) > 0.000001f ||
+        std::abs(actual.anchorZ - anchor.z()) > 0.000001f ||
+        std::abs(actual.positionX - position.x()) > 0.000001f ||
+        std::abs(actual.positionY - position.y()) > 0.000001f) {
+      return false;
+    }
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
     if (auto *comp =
@@ -1124,6 +1199,7 @@ class AnchorPointUndoCommand final : public UndoCommand {
                             LayerChangedEvent::ChangeType::Modified});
     }
     if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
@@ -1132,6 +1208,7 @@ class AnchorPointUndoCommand final : public UndoCommand {
   QVector3D beforePosition_;
   QVector3D afterAnchor_;
   QVector3D afterPosition_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class AnchorPoint2DUndoCommand final : public UndoCommand {
@@ -1143,14 +1220,19 @@ class AnchorPoint2DUndoCommand final : public UndoCommand {
         beforePosition_(beforePosition), afterAnchor_(afterAnchor),
         afterPosition_(afterPosition) {}
 
-  void undo() override { apply(beforeAnchor_, beforePosition_); }
-  void redo() override { apply(afterAnchor_, afterPosition_); }
+  void undo() override {
+    lastOperationSucceeded_ = apply(beforeAnchor_, beforePosition_);
+  }
+  void redo() override {
+    lastOperationSucceeded_ = apply(afterAnchor_, afterPosition_);
+  }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Reset Anchor Point"); }
 
  private:
-  void apply(const QPointF &anchor, const QPointF &position) {
+  bool apply(const QPointF &anchor, const QPointF &position) {
     auto layer = layer_.lock();
-    if (!layer || layer->is3D()) return;
+    if (!layer || layer->is3D()) return false;
     auto &transform = layer->transform2D();
     (void)anchor;
     transform.setPosition(static_cast<float>(position.x()),
@@ -1164,6 +1246,7 @@ class AnchorPoint2DUndoCommand final : public UndoCommand {
                             LayerChangedEvent::ChangeType::Modified});
     }
     if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
@@ -1171,6 +1254,7 @@ class AnchorPoint2DUndoCommand final : public UndoCommand {
   QPointF beforePosition_;
   QPointF afterAnchor_;
   QPointF afterPosition_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class ShapeCornerRadiusUndoCommand final : public UndoCommand {
@@ -1179,20 +1263,22 @@ class ShapeCornerRadiusUndoCommand final : public UndoCommand {
                                float after)
       : layer_(layer), before_(before), after_(after) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override {
     return QStringLiteral("Adjust Shape Corner Radius");
   }
 
  private:
-  void apply(float radius) {
+  bool apply(float radius) {
     auto layer = layer_.lock();
     auto shape = layer
                      ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)
                      : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
-    if (!shape) return;
+    if (!shape) return false;
     shape->setCornerRadius(radius);
+    if (std::abs(shape->cornerRadius() - radius) > 0.000001f) return false;
     shape->setDirty(LayerDirtyFlag::Property);
     shape->changed();
     if (auto *comp = static_cast<ArtifactAbstractComposition *>(
@@ -1202,11 +1288,13 @@ class ShapeCornerRadiusUndoCommand final : public UndoCommand {
                             LayerChangedEvent::ChangeType::Modified});
     }
     if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   float before_ = 0.0f;
   float after_ = 0.0f;
+  bool lastOperationSucceeded_ = true;
 };
 
 
@@ -5861,16 +5949,17 @@ public:
                              QVector<MotionPathKeySnapshot> after)
       : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override {
     return QStringLiteral("Transform Motion Path Keys");
   }
 
 private:
-  void apply(const QVector<MotionPathKeySnapshot> &snapshots) {
+  bool apply(const QVector<MotionPathKeySnapshot> &snapshots) {
     auto layer = layer_.lock();
-    if (!layer) return;
+    if (!layer) return false;
     auto &transform = layer->transform3D();
     for (const auto &snapshot : snapshots) {
       const auto time = ArtifactCore::RationalTime(snapshot.frame, 24);
@@ -5887,11 +5976,13 @@ private:
     }
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   QVector<MotionPathKeySnapshot> before_;
   QVector<MotionPathKeySnapshot> after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 
@@ -5931,21 +6022,22 @@ class ShapePathVertexEditCommand final : public UndoCommand {
         beforeClosed_(beforeClosed),
         afterClosed_(afterClosed) {}
 
-  void undo() override { apply(before_, beforeClosed_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_, beforeClosed_); }
 
-  void redo() override { apply(after_, afterClosed_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_, afterClosed_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
   QString label() const override {
     return QStringLiteral("Edit Path Vertices");
   }
 
  private:
-  void apply(const std::vector<CustomPathVertex> &verts, bool closed) {
+  bool apply(const std::vector<CustomPathVertex> &verts, bool closed) {
     auto layer = layer_.lock();
-    if (!layer) return;
+    if (!layer) return false;
     auto *shape = dynamic_cast<ArtifactShapeLayer *>(layer.get());
-    if (!shape) return;
-    if (verts.size() >= 3) {
+    if (!shape) return false;
+    if (verts.size() >= 2) {
       shape->setCustomPathVertices(verts, closed);
     } else {
       shape->clearCustomPath();
@@ -5959,6 +6051,7 @@ class ShapePathVertexEditCommand final : public UndoCommand {
                             LayerChangedEvent::ChangeType::Modified});
     }
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
@@ -5966,6 +6059,7 @@ class ShapePathVertexEditCommand final : public UndoCommand {
   std::vector<CustomPathVertex> after_;
   bool beforeClosed_;
   bool afterClosed_;
+  bool lastOperationSucceeded_ = true;
 };
 class LineEndpointUndoCommand final : public UndoCommand {
  public:
@@ -5974,24 +6068,27 @@ class LineEndpointUndoCommand final : public UndoCommand {
                           float ar)
       : layer_(std::move(layer)), bw_(bw), bh_(bh), bp_(bp), br_(br),
         aw_(aw), ah_(ah), ap_(ap), ar_(ar) {}
-  void undo() override { apply(bw_, bh_, bp_, br_); }
-  void redo() override { apply(aw_, ah_, ap_, ar_); }
+   void undo() override { lastOperationSucceeded_ = apply(bw_, bh_, bp_, br_); }
+   void redo() override { lastOperationSucceeded_ = apply(aw_, ah_, ap_, ar_); }
+   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Edit Line Endpoint"); }
  private:
-  void apply(int w, int h, const QPointF &pos, float rot) {
+   bool apply(int w, int h, const QPointF &pos, float rot) {
     auto layer = layer_.lock();
     auto *shape = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
-    if (!shape || shape->shapeType() != ShapeType::Line) return;
+     if (!shape || shape->shapeType() != ShapeType::Line) return false;
     shape->setSize(std::max(1, w), std::max(1, h));
     auto &t = shape->transform3D();
     const auto time = gizmoTransformTime(layer, layer->currentFrame());
     t.setPosition(time, static_cast<float>(pos.x()), static_cast<float>(pos.y()));
     t.setRotation(time, rot);
-    shape->setDirty(LayerDirtyFlag::Transform);
-    layer->changed();
-  }
-  ArtifactAbstractLayerWeak layer_; int bw_, bh_, aw_, ah_;
-  QPointF bp_, ap_; float br_, ar_;
+     shape->setDirty(LayerDirtyFlag::Transform);
+     layer->changed();
+     return true;
+   }
+   ArtifactAbstractLayerWeak layer_; int bw_, bh_, aw_, ah_;
+   QPointF bp_, ap_; float br_, ar_;
+   bool lastOperationSucceeded_ = true;
 };
 
 class CameraPoiUndoCommand final : public UndoCommand {
@@ -6000,23 +6097,27 @@ class CameraPoiUndoCommand final : public UndoCommand {
                        QVector3D after)
       : layer_(layer), before_(before), after_(after) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+   void undo() override { lastOperationSucceeded_ = apply(before_); }
+   void redo() override { lastOperationSucceeded_ = apply(after_); }
+   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override {
     return QStringLiteral("Move Camera Point of Interest");
   }
 
  private:
-  void apply(const QVector3D &poi) {
-    auto layer = layer_.lock();
-    if (!layer) return;
-    if (auto *camera = dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
-      camera->setPointOfInterest(poi);
-      publishLayerModifiedForCamera(layer);
-    }
+   bool apply(const QVector3D &poi) {
+     auto layer = layer_.lock();
+     if (!layer) return false;
+     if (auto *camera = dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
+       camera->setPointOfInterest(poi);
+       publishLayerModifiedForCamera(layer);
+     } else {
+       return false;
+     }
     if (auto *mgr = UndoManager::instance()) {
-      mgr->notifyAnythingChanged();
-    }
+       mgr->notifyAnythingChanged();
+     }
+     return true;
   }
 
   static void publishLayerModifiedForCamera(
@@ -6031,9 +6132,10 @@ class CameraPoiUndoCommand final : public UndoCommand {
   }
 
   ArtifactAbstractLayerWeak layer_;
-  QVector3D before_;
-  QVector3D after_;
-};
+   QVector3D before_;
+   QVector3D after_;
+   bool lastOperationSucceeded_ = true;
+ };
 
 class MotionPathUndoCommand final : public UndoCommand {
 
@@ -6049,9 +6151,10 @@ public:
 
 
 
-  void undo() override { apply(before_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
 
-  void redo() override { apply(after_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
   QString label() const override { return QStringLiteral("Move Motion Path Keyframe"); }
 
@@ -6059,13 +6162,13 @@ public:
 
 private:
 
-  void apply(const MotionPathPositionSnapshot &snapshot) {
+  bool apply(const MotionPathPositionSnapshot &snapshot) {
 
     auto layer = layer_.lock();
 
     if (!layer) {
 
-      return;
+      return false;
 
     }
 
@@ -6104,6 +6207,7 @@ private:
       mgr->notifyAnythingChanged();
 
     }
+    return true;
 
   }
 
@@ -6116,6 +6220,7 @@ private:
   MotionPathPositionSnapshot before_;
 
   MotionPathPositionSnapshot after_;
+  bool lastOperationSucceeded_ = true;
 
 };
 
@@ -6126,14 +6231,15 @@ public:
                                MotionPathTangentSnapshot after)
       : layer_(layer), frame_(frame), before_(before), after_(after) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Edit Motion Path Tangent"); }
 
 private:
-  void apply(const MotionPathTangentSnapshot &snapshot) {
+  bool apply(const MotionPathTangentSnapshot &snapshot) {
     auto layer = layer_.lock();
-    if (!layer) return;
+    if (!layer) return false;
     const ArtifactCore::RationalTime time(frame_, 24);
     auto &t3d = layer->transform3D();
     if (snapshot.present) {
@@ -6149,12 +6255,14 @@ private:
                             LayerChangedEvent::ChangeType::Modified});
     }
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   int64_t frame_ = 0;
   MotionPathTangentSnapshot before_;
   MotionPathTangentSnapshot after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 
@@ -6172,9 +6280,10 @@ public:
   {
   }
 
-  void undo() override { apply(before_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
 
-  void redo() override { apply(after_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
   QString label() const override
   {
@@ -6182,20 +6291,29 @@ public:
   }
 
 private:
-  void apply(const CompositionTransformField &field)
+  bool apply(const CompositionTransformField &field)
   {
-    if (const auto composition = composition_.lock()) {
-      composition->addTransformField(field);
-      composition->changed();
-      if (auto *mgr = UndoManager::instance()) {
-        mgr->notifyAnythingChanged();
-      }
+    const auto composition = composition_.lock();
+    if (!composition) return false;
+    composition->addTransformField(field);
+    const auto fields = composition->transformFields();
+    const bool present = std::any_of(
+        fields.cbegin(), fields.cend(),
+        [&field](const CompositionTransformField &candidate) {
+          return candidate.fieldId == field.fieldId;
+        });
+    if (!present) return false;
+    composition->changed();
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactCompositionWeakPtr composition_;
   CompositionTransformField before_;
   CompositionTransformField after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 
@@ -6216,9 +6334,10 @@ public:
 
 
 
-  void undo() override { apply(before_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
 
-  void redo() override { apply(after_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
   QString label() const override {
 
@@ -6230,13 +6349,13 @@ public:
 
 private:
 
-  void apply(const MotionPathInterpolationSnapshot &snapshot) {
+  bool apply(const MotionPathInterpolationSnapshot &snapshot) {
 
     auto layer = layer_.lock();
 
     if (!layer) {
 
-      return;
+      return false;
 
     }
 
@@ -6250,7 +6369,7 @@ private:
 
         !t3d.hasPositionKeyFrameAt(time)) {
 
-      return;
+      return false;
 
     }
 
@@ -6287,6 +6406,7 @@ private:
       mgr->notifyAnythingChanged();
 
     }
+    return true;
 
   }
 
@@ -6299,6 +6419,7 @@ private:
   MotionPathInterpolationSnapshot before_;
 
   MotionPathInterpolationSnapshot after_;
+  bool lastOperationSucceeded_ = true;
 
 };
 
@@ -7282,6 +7403,33 @@ bool hitTestPastFixedPlaneFrameCenter(
   }
   return hit;
 }
+
+class RendererPanZoomScope final {
+ public:
+  explicit RendererPanZoomScope(ArtifactIRenderer* renderer)
+      : renderer_(renderer) {
+    if (renderer_) {
+      zoom_ = renderer_->getZoom();
+      renderer_->getPan(panX_, panY_);
+    }
+  }
+
+  ~RendererPanZoomScope() {
+    if (renderer_) {
+      renderer_->setZoom(zoom_);
+      renderer_->setPan(panX_, panY_);
+    }
+  }
+
+  RendererPanZoomScope(const RendererPanZoomScope&) = delete;
+  RendererPanZoomScope& operator=(const RendererPanZoomScope&) = delete;
+
+ private:
+  ArtifactIRenderer* renderer_ = nullptr;
+  float zoom_ = 1.0f;
+  float panX_ = 0.0f;
+  float panY_ = 0.0f;
+};
 
 void drawPastFixedPlaneMotionFrames(
     ArtifactIRenderer *renderer, const ArtifactAbstractLayerPtr &layer,
@@ -13440,14 +13588,16 @@ public:
 
 
   // Motion path cache: avoids 300x getGlobalTransformAt() calls per frame.
-
-  // Invalidated when layer, frame position, or overlay serial changes.
+  // The single entry remains the active hit-test snapshot; the per-layer map
+  // keeps selected layers warm when one overlay pass visits several layers.
 
   struct MotionPathCacheEntry {
 
     LayerID layerId;
 
     int64_t framePos = INT64_MIN;
+
+    float zoom = 1.0f;
 
     quint64 overlaySerial = UINT64_MAX;
 
@@ -13481,6 +13631,8 @@ public:
   };
 
   MotionPathCacheEntry motionPathCache_;
+
+  QHash<QString, MotionPathCacheEntry> motionPathCacheByLayer_;
 
   bool isDraggingMotionPathKeyframe_ = false;
 
@@ -13970,11 +14122,11 @@ public:
 
 
 
-  void commitMaskEditTransaction() {
+  bool commitMaskEditTransaction() {
 
     if (!maskEditPending_) {
 
-      return;
+      return true;
 
     }
 
@@ -13994,7 +14146,7 @@ public:
 
       maskEditDirty_ = false;
 
-      return;
+      return true;
 
     }
 
@@ -14012,11 +14164,18 @@ public:
 
 
 
-    if (auto *undo = UndoManager::instance()) {
+    auto *undo = UndoManager::instance();
 
-      undo->push(std::make_unique<MaskEditCommand>(layer, maskEditBefore_,
+    const bool pushed =
+        !undo || undo->push(std::make_unique<MaskEditCommand>(
+                              layer, maskEditBefore_, std::move(afterMasks)));
 
-                                                   std::move(afterMasks)));
+    if (!pushed) {
+      restoreLayerMasks(layer, maskEditBefore_);
+
+      invalidateBaseComposite();
+
+      invalidateOverlayComposite();
 
     }
 
@@ -14025,6 +14184,8 @@ public:
     maskEditBefore_.clear();
 
     maskEditDirty_ = false;
+
+    return pushed;
 
   }
 
@@ -14152,7 +14313,7 @@ public:
 
     markMaskEditDirty();
 
-    commitMaskEditTransaction();
+    if (!commitMaskEditTransaction()) return false;
 
     publishLayerModified(layer, true);
 
@@ -15227,6 +15388,19 @@ public:
 
     lastRenderKeyState_ = {};
 
+    invalidateMotionPathCache();
+
+  }
+
+
+
+  void invalidateMotionPathCache() {
+
+    // Clear both snapshots so a composition-wide or in-progress edit cannot
+    // retain stale vectors for layers that are not visited in the next pass.
+    motionPathCache_.valid = false;
+    motionPathCacheByLayer_.clear();
+
   }
 
 
@@ -15855,6 +16029,11 @@ CompositionRenderController::~CompositionRenderController() {
 }
 
 
+
+void CompositionRenderController::videoDebugMessage(const QString &msg) {
+  ArtifactCore::globalEventBus().publish<TimelineDebugMessageEvent>(
+      TimelineDebugMessageEvent{msg});
+}
 
 void CompositionRenderController::initialize(QWidget *hostWidget) {
 
@@ -17635,13 +17814,23 @@ bool CompositionRenderController::nudgeSelectedRigBoneRotation(float deltaDegree
   if (rigLayer->rig2D().rootBone()) rigLayer->rig2D().rootBone()->updateHierarchy();
   rigLayer->setDirty(LayerDirtyFlag::Transform);
   rigLayer->changed();
+  auto *manager = UndoManager::instance();
+  const bool pushed =
+      !manager || manager->push(std::make_unique<RigBoneTransformUndoCommand>(
+                                   layer, bone->id(), before, after));
+  if (!pushed) {
+    rigLayer->setRigBoneLocalTransform(bone->id(), before);
+    if (rigLayer->rig2D().rootBone()) rigLayer->rig2D().rootBone()->updateHierarchy();
+    rigLayer->setDirty(LayerDirtyFlag::Transform);
+    rigLayer->changed();
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return false;
+  }
   impl_->invalidateBaseComposite();
   impl_->invalidateOverlayComposite();
   impl_->publishLayerModified(layer, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<RigBoneTransformUndoCommand>(
-        layer, bone->id(), before, after));
-  }
   markRenderDirty();
   return true;
 }
@@ -17665,13 +17854,23 @@ bool CompositionRenderController::nudgeSelectedRigControl(const QVector2D &delta
   rigLayer->goToFrame(rigLayer->currentFrame());
   rigLayer->setDirty(LayerDirtyFlag::Transform);
   rigLayer->changed();
+  auto *manager = UndoManager::instance();
+  const bool pushed =
+      !manager || manager->push(std::make_unique<RigControlValueUndoCommand>(
+                                   layer, control->id(), before, after));
+  if (!pushed) {
+    control->setValue(before);
+    rigLayer->goToFrame(rigLayer->currentFrame());
+    rigLayer->setDirty(LayerDirtyFlag::Transform);
+    rigLayer->changed();
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return false;
+  }
   impl_->invalidateBaseComposite();
   impl_->invalidateOverlayComposite();
   impl_->publishLayerModified(layer, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<RigControlValueUndoCommand>(
-        layer, control->id(), before, after));
-  }
   markRenderDirty();
   return true;
 }
@@ -17742,13 +17941,22 @@ bool CompositionRenderController::normalizeRigWeights() {
   mesh->setVertices(after);
   rigLayer->setDirty(LayerDirtyFlag::Transform);
   rigLayer->changed();
+  auto *manager = UndoManager::instance();
+  const bool pushed =
+      !manager || manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
+                                   layer, before, after));
+  if (!pushed) {
+    mesh->setVertices(before);
+    rigLayer->setDirty(LayerDirtyFlag::Transform);
+    rigLayer->changed();
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return false;
+  }
   impl_->invalidateBaseComposite();
   impl_->invalidateOverlayComposite();
   impl_->publishLayerModified(layer, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
-        layer, before, after));
-  }
   markRenderDirty();
   return true;
 }
@@ -17809,13 +18017,22 @@ bool CompositionRenderController::smoothRigWeights() {
   mesh->setVertices(after);
   rigLayer->setDirty(LayerDirtyFlag::Transform);
   rigLayer->changed();
+  auto *manager = UndoManager::instance();
+  const bool pushed =
+      !manager || manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
+                                   layer, before, after));
+  if (!pushed) {
+    mesh->setVertices(before);
+    rigLayer->setDirty(LayerDirtyFlag::Transform);
+    rigLayer->changed();
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return false;
+  }
   impl_->invalidateBaseComposite();
   impl_->invalidateOverlayComposite();
   impl_->publishLayerModified(layer, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
-        layer, before, after));
-  }
   markRenderDirty();
   return true;
 }
@@ -17890,13 +18107,22 @@ bool CompositionRenderController::mirrorRigWeights() {
   mesh->setVertices(after);
   rigLayer->setDirty(LayerDirtyFlag::Transform);
   rigLayer->changed();
+  auto *manager = UndoManager::instance();
+  const bool pushed =
+      !manager || manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
+                                   layer, before, after));
+  if (!pushed) {
+    mesh->setVertices(before);
+    rigLayer->setDirty(LayerDirtyFlag::Transform);
+    rigLayer->changed();
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return false;
+  }
   impl_->invalidateBaseComposite();
   impl_->invalidateOverlayComposite();
   impl_->publishLayerModified(layer, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
-        layer, before, after));
-  }
   markRenderDirty();
   return true;
 }
@@ -17950,12 +18176,23 @@ bool CompositionRenderController::applyCapturedRigPose(float blendWeight) {
   const auto after = ArtifactCore::capturePose(rigLayer->rig2D());
   rigLayer->setDirty(LayerDirtyFlag::Transform);
   rigLayer->changed();
+  auto *manager = UndoManager::instance();
+  const bool pushed =
+      !manager || manager->push(std::make_unique<RigPoseUndoCommand>(
+                                   layer, before, after));
+  if (!pushed) {
+    ArtifactCore::applyPose(rigLayer->rig2D(), before);
+    if (rigLayer->rig2D().rootBone()) rigLayer->rig2D().rootBone()->updateHierarchy();
+    rigLayer->setDirty(LayerDirtyFlag::Transform);
+    rigLayer->changed();
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return false;
+  }
   impl_->invalidateBaseComposite();
   impl_->invalidateOverlayComposite();
   impl_->publishLayerModified(layer, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<RigPoseUndoCommand>(layer, before, after));
-  }
   markRenderDirty();
   return true;
 }
@@ -18359,12 +18596,15 @@ bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFra
 
 
 
-  if (auto *mgr = UndoManager::instance()) {
-
-    mgr->push(std::make_unique<MotionPathUndoCommand>(
-
-        layer, currentFrame.framePosition(), before, after));
-
+  auto *mgr = UndoManager::instance();
+  if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
+                            layer, currentFrame.framePosition(), before, after))) {
+    if (before.hasPositionKey) {
+      t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
+    } else {
+      t3d.removePositionKeyFrameAt(time);
+    }
+    return false;
   }
 
   layer->setDirty(LayerDirtyFlag::Transform);
@@ -18461,12 +18701,13 @@ bool CompositionRenderController::removeSelectedLayerMotionPathKeyframeAtCurrent
 
 
 
-  if (auto *mgr = UndoManager::instance()) {
-
-    mgr->push(std::make_unique<MotionPathUndoCommand>(
-
-        layer, currentFrame.framePosition(), before, after));
-
+  auto *mgr = UndoManager::instance();
+  if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
+                            layer, currentFrame.framePosition(), before, after))) {
+    t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    return false;
   }
 
   layer->setDirty(LayerDirtyFlag::Transform);
@@ -18587,12 +18828,16 @@ bool CompositionRenderController::setSelectedLayerMotionPathInterpolationAtCurre
 
 
 
-  if (auto *mgr = UndoManager::instance()) {
-
-    mgr->push(std::make_unique<MotionPathInterpolationUndoCommand>(
-
-        layer, currentFrame.framePosition(), before, after));
-
+  auto *mgr = UndoManager::instance();
+  if (mgr && !mgr->push(std::make_unique<MotionPathInterpolationUndoCommand>(
+                            layer, currentFrame.framePosition(), before, after))) {
+    t3d.setPositionKeyFrameInterpolationAt(
+        time,
+        static_cast<ArtifactCore::InterpolationType>(before.xInterpolation),
+        static_cast<ArtifactCore::InterpolationType>(before.yInterpolation));
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    return false;
   }
 
   layer->setDirty(LayerDirtyFlag::Transform);
@@ -19078,11 +19323,14 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   }
 
   const auto &t3d = layer->transform3D();
+  const QString layerCacheKey = comp->id().toString() + QLatin1Char(':') +
+                                layer->id().toString();
   const int motionPathFps =
       std::max(1, static_cast<int>(std::round(comp->frameRate().framerate())));
   const auto posTimes = motionPathPositionKeyTimes(layer, motionPathFps);
   if (posTimes.empty()) {
     motionPathCache_.valid = false;
+    motionPathCacheByLayer_.remove(layerCacheKey);
     return;
   }
 
@@ -19157,16 +19405,24 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   const float lineThickness = std::max(1.0f, 1.5f * invZoom);
   const float dotRadius = std::max(1.5f, 2.5f * invZoom);
   const bool hasPathSegment = posTimes.size() >= 2;
+  const auto cachedLayer = motionPathCacheByLayer_.constFind(layerCacheKey);
+  if (cachedLayer != motionPathCacheByLayer_.cend()) {
+    motionPathCache_ = cachedLayer.value();
+  } else {
+    motionPathCache_.valid = false;
+  }
   const bool cacheHit =
       motionPathCache_.valid &&
       motionPathCache_.layerId == layer->id() &&
       motionPathCache_.framePos == static_cast<int64_t>(currentFrameNum) &&
+      std::abs(motionPathCache_.zoom - zoom) <= 0.00001f &&
       motionPathCache_.overlaySerial == overlayInvalidationSerial;
 
   if (!cacheHit) {
     motionPathCache_.valid = false;
     motionPathCache_.layerId = layer->id();
     motionPathCache_.framePos = static_cast<int64_t>(currentFrameNum);
+    motionPathCache_.zoom = zoom;
     motionPathCache_.overlaySerial = overlayInvalidationSerial;
     motionPathCache_.pathPoints.clear();
     motionPathCache_.timeDotPoints.clear();
@@ -19279,6 +19535,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       motionPathCache_.keyPoints.push_back(pt);
     }
     motionPathCache_.valid = true;
+    motionPathCacheByLayer_.insert(layerCacheKey, motionPathCache_);
   }
 
   if (viewportOrientationMatricesValid_) {
@@ -19448,7 +19705,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   if (!selectedMotionPathFrames_.isEmpty() ||
       hoveredMotionPathFrame_ >= 0) {
     renderer_->setUseExternalMatrices(false);
-    const QFont frameLabelFont(QStringLiteral("Consolas"), 8);
+    const QFont frameLabelFont = fixedWidthFont(8);
     const FloatColor frameLabelColor{0.96f, 0.98f, 1.0f, 0.92f};
     for (const auto &pt : motionPathCache_.keyPoints) {
       if (!selectedMotionPathFrames_.contains(pt.frame) &&
@@ -21978,9 +22235,11 @@ bool CompositionRenderController::resetProjectedFrameHandleAt(
 
   applyLiveGizmoTransform(layer, layer->currentFrame(), before, after);
   captureGizmoKeyState(layer, layer->currentFrame(), after);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<GizmoTransformUndoCommand>(
-        layer, layer->currentFrame(), before, after));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<GizmoTransformUndoCommand>(
+                            layer, layer->currentFrame(), before, after))) {
+    applyLiveGizmoTransform(layer, layer->currentFrame(), after, before);
+    return false;
   }
   if (auto *composition =
           static_cast<ArtifactAbstractComposition *>(layer->composition())) {
@@ -22038,10 +22297,16 @@ bool CompositionRenderController::resetSelected3DAnchorToCenter() {
   transform.setPositionZ(time, afterPosition.z());
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<AnchorPointUndoCommand>(
-        layer, layer->currentFrame(), beforeAnchor, beforePosition, afterAnchor,
-        afterPosition));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<AnchorPointUndoCommand>(
+                            layer, layer->currentFrame(), beforeAnchor,
+                            beforePosition, afterAnchor, afterPosition))) {
+    transform.setAnchor(time, beforeAnchor.x(), beforeAnchor.y(), beforeAnchor.z());
+    transform.setPosition(time, beforePosition.x(), beforePosition.y());
+    transform.setPositionZ(time, beforePosition.z());
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    return false;
   }
   impl_->publishLayerModified(layer, true);
   impl_->invalidateOverlayComposite();
@@ -22080,9 +22345,11 @@ bool CompositionRenderController::setSelected3DTransform(
   }
   applyLiveGizmoTransform(layer, layer->currentFrame(), before, after);
   captureGizmoKeyState(layer, layer->currentFrame(), after);
-  if (auto* manager = UndoManager::instance()) {
-    manager->push(std::make_unique<GizmoTransformUndoCommand>(
-        layer, layer->currentFrame(), before, after));
+  auto* manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<GizmoTransformUndoCommand>(
+                           layer, layer->currentFrame(), before, after))) {
+    applyLiveGizmoTransform(layer, layer->currentFrame(), after, before);
+    return false;
   }
   impl_->publishLayerModified(layer);
   impl_->invalidateBaseComposite();
@@ -22118,9 +22385,11 @@ bool CompositionRenderController::resetSelected3DTransform() {
   }
   applyLiveGizmoTransform(layer, layer->currentFrame(), before, after);
   captureGizmoKeyState(layer, layer->currentFrame(), after);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<GizmoTransformUndoCommand>(
-        layer, layer->currentFrame(), before, after));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<GizmoTransformUndoCommand>(
+                            layer, layer->currentFrame(), before, after))) {
+    applyLiveGizmoTransform(layer, layer->currentFrame(), after, before);
+    return false;
   }
   impl_->publishLayerModified(layer);
   impl_->invalidateBaseComposite();
@@ -22186,19 +22455,34 @@ bool CompositionRenderController::resetSelectedTransformComponent(
     applyLiveGizmoTransform(layer, frame, before, after);
     captureGizmoKeyState(layer, frame, after);
     undoEntries.push_back(GizmoGroupUndoEntry{layer, frame, before, after});
-    impl_->publishLayerModified(layer);
   }
   if (undoEntries.empty()) {
     return !targets.isEmpty();
   }
-  if (auto *manager = UndoManager::instance()) {
+  const auto rollbackEntries = undoEntries;
+  auto *manager = UndoManager::instance();
+  bool pushed = manager == nullptr;
+  if (manager) {
     if (undoEntries.size() == 1) {
       const auto &entry = undoEntries.front();
-      manager->push(std::make_unique<GizmoTransformUndoCommand>(
+      pushed = manager->push(std::make_unique<GizmoTransformUndoCommand>(
           entry.layer.lock(), entry.frame, entry.before, entry.after));
     } else {
-      manager->push(std::make_unique<GizmoGroupTransformUndoCommand>(
+      pushed = manager->push(std::make_unique<GizmoGroupTransformUndoCommand>(
           std::move(undoEntries)));
+    }
+  }
+  if (!pushed) {
+    for (const auto &entry : rollbackEntries) {
+      if (const auto target = entry.layer.lock()) {
+        applyLiveGizmoTransform(target, entry.frame, entry.after, entry.before);
+      }
+    }
+    return false;
+  }
+  for (const auto &entry : rollbackEntries) {
+    if (const auto target = entry.layer.lock()) {
+      impl_->publishLayerModified(target);
     }
   }
   impl_->invalidateBaseComposite();
@@ -22258,10 +22542,15 @@ bool CompositionRenderController::resetSelected2DAnchorToCenter() {
   transform.setPosition(time, afterPosition.x(), afterPosition.y());
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<AnchorPointUndoCommand>(
-        layer, layer->currentFrame(), beforeAnchor, beforePosition, afterAnchor,
-        afterPosition));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<AnchorPointUndoCommand>(
+                            layer, layer->currentFrame(), beforeAnchor,
+                            beforePosition, afterAnchor, afterPosition))) {
+    transform.setAnchor(time, beforeAnchor.x(), beforeAnchor.y(), beforeAnchor.z());
+    transform.setPosition(time, beforePosition.x(), beforePosition.y());
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    return false;
   }
   impl_->publishLayerModified(layer, true);
   impl_->invalidateBaseComposite();
@@ -23488,11 +23777,12 @@ if (event->button() == Qt::LeftButton &&
 
                 qDebug() << "[PenTool] Closed path" << p;
 
-                ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-
-                    comp->id().toString(), selectedLayer->id().toString(),
-
-                    LayerChangedEvent::ChangeType::Modified});
+                const bool committed = impl_->commitMaskEditTransaction();
+                if (committed) {
+                  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+                      comp->id().toString(), selectedLayer->id().toString(),
+                      LayerChangedEvent::ChangeType::Modified});
+                }
 
                 impl_->isDraggingVertex_ = false;
 
@@ -23622,8 +23912,6 @@ if (event->button() == Qt::LeftButton &&
 
           if (impl_->finalizePendingMaskCreation(selectedLayer)) {
 
-            impl_->markMaskEditDirty();
-
             qDebug() << "[PenTool] Finalized pending mask path"
 
                      << "layer:" << selectedLayer->id().toString();
@@ -23727,12 +24015,6 @@ if (event->button() == Qt::LeftButton &&
                    << "path:" << segmentPathIndex
 
                    << "vertex:" << insertedVertexIndex;
-
-          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-
-              comp->id().toString(), selectedLayer->id().toString(),
-
-              LayerChangedEvent::ChangeType::Modified});
 
         }
 
@@ -24107,12 +24389,22 @@ if (event->button() == Qt::LeftButton &&
 
           after.y = mutableT3d.positionYAt(time);
 
-          if (auto *mgr = UndoManager::instance()) {
-
-            mgr->push(std::make_unique<MotionPathUndoCommand>(
-
-                selectedLayer, hitSample.framePosition, before, after));
-
+          auto *mgr = UndoManager::instance();
+          if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
+                                    selectedLayer, hitSample.framePosition,
+                                    before, after))) {
+            mutableT3d.setPositionKeyFrameValueAt(
+                time, before.x, before.y);
+            if (!before.hasPositionKey) {
+              mutableT3d.removePositionKeyFrameAt(time);
+            }
+            selectedLayer->setDirty(LayerDirtyFlag::Transform);
+            selectedLayer->changed();
+            impl_->motionPathCache_.valid = false;
+            impl_->invalidateOverlayComposite();
+            markRenderDirty();
+            event->accept();
+            return;
           }
 
           selectedLayer->setDirty(LayerDirtyFlag::Transform);
@@ -25505,7 +25797,7 @@ void CompositionRenderController::handleMouseMove(
 
                 selectedLayer, QPointF(canvasPos.x, canvasPos.y))) {
 
-          impl_->motionPathCache_.valid = false;
+          impl_->invalidateMotionPathCache();
 
           markRenderDirty();
 
@@ -27243,8 +27535,37 @@ void CompositionRenderController::handleMouseRelease() {
 
   qCDebug(compositionViewLog) << "[MouseRelease] ENTER";
   if (impl_->isDraggingLineEndpoint_) {
-    auto layer = impl_->draggingLineLayer_.lock(); auto *line = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
-    if (line && UndoManager::instance()) { const auto time = gizmoTransformTime(layer, layer->currentFrame()); const auto &t = line->transform3D(); UndoManager::instance()->push(std::make_unique<LineEndpointUndoCommand>(layer, impl_->draggingLineBeforeWidth_, impl_->draggingLineBeforeHeight_, impl_->draggingLineBeforePosition_, impl_->draggingLineBeforeRotation_, line->shapeWidth(), line->shapeHeight(), QPointF(t.positionXAt(time), t.positionYAt(time)), t.rotationAt(time))); }
+    auto layer = impl_->draggingLineLayer_.lock();
+    auto *line = layer
+        ? dynamic_cast<ArtifactShapeLayer *>(layer.get())
+        : nullptr;
+    if (line) {
+      const auto time = gizmoTransformTime(layer, layer->currentFrame());
+      const auto &transform = line->transform3D();
+      const auto afterPosition =
+          QPointF(transform.positionXAt(time), transform.positionYAt(time));
+      const bool pushed =
+          !UndoManager::instance() || UndoManager::instance()->push(
+              std::make_unique<LineEndpointUndoCommand>(
+                  layer, impl_->draggingLineBeforeWidth_,
+                  impl_->draggingLineBeforeHeight_,
+                  impl_->draggingLineBeforePosition_,
+                  impl_->draggingLineBeforeRotation_, line->shapeWidth(),
+                  line->shapeHeight(), afterPosition,
+                  transform.rotationAt(time)));
+      if (!pushed) {
+        line->setSize(impl_->draggingLineBeforeWidth_,
+                      impl_->draggingLineBeforeHeight_);
+        line->transform3D().setPosition(
+            time,
+            static_cast<float>(impl_->draggingLineBeforePosition_.x()),
+            static_cast<float>(impl_->draggingLineBeforePosition_.y()));
+        line->transform3D().setRotation(
+            time, impl_->draggingLineBeforeRotation_);
+        line->setDirty(LayerDirtyFlag::Transform);
+        line->changed();
+      }
+    }
     impl_->isDraggingLineEndpoint_ = false; impl_->draggingLineEndpoint_ = -1; impl_->draggingLineLayer_.reset(); finishViewportInteraction(); markRenderDirty(); return;
   }
 
@@ -27269,9 +27590,14 @@ void CompositionRenderController::handleMouseRelease() {
             }
           }
           if (changed) {
-            if (auto *manager = UndoManager::instance()) {
-              manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
-                  layer, impl_->rigWeightBeforeVertices_, after));
+            auto *manager = UndoManager::instance();
+            const bool pushed =
+                !manager || manager->push(std::make_unique<RigSkinWeightsUndoCommand>(
+                    layer, impl_->rigWeightBeforeVertices_, after));
+            if (!pushed) {
+              mesh->setVertices(impl_->rigWeightBeforeVertices_);
+              rigLayer->setDirty(LayerDirtyFlag::Transform);
+              rigLayer->changed();
             }
           }
         }
@@ -27293,10 +27619,19 @@ void CompositionRenderController::handleMouseRelease() {
             const auto after = bone->localTransform();
             if (!qFuzzyCompare(after.rotation,
                                impl_->rigDragStartTransform_.rotation)) {
-              if (auto *manager = UndoManager::instance()) {
-                manager->push(std::make_unique<RigBoneTransformUndoCommand>(
-                    layer, impl_->selectedRigBoneId_,
-                    impl_->rigDragStartTransform_, after));
+              auto *manager = UndoManager::instance();
+              const bool pushed =
+                  !manager || manager->push(std::make_unique<RigBoneTransformUndoCommand>(
+                      layer, impl_->selectedRigBoneId_,
+                      impl_->rigDragStartTransform_, after));
+              if (!pushed) {
+                rigLayer->setRigBoneLocalTransform(
+                    impl_->selectedRigBoneId_, impl_->rigDragStartTransform_);
+                if (rigLayer->rig2D().rootBone()) {
+                  rigLayer->rig2D().rootBone()->updateHierarchy();
+                }
+                rigLayer->setDirty(LayerDirtyFlag::Transform);
+                rigLayer->changed();
               }
             }
           }
@@ -27309,10 +27644,16 @@ void CompositionRenderController::handleMouseRelease() {
                   impl_->selectedRigControlId_)) {
             const QVariant after = control->value();
             if (after != impl_->rigDragStartControlValue_) {
-              if (auto *manager = UndoManager::instance()) {
-                manager->push(std::make_unique<RigControlValueUndoCommand>(
-                    layer, impl_->selectedRigControlId_,
-                    impl_->rigDragStartControlValue_, after));
+              auto *manager = UndoManager::instance();
+              const bool pushed =
+                  !manager || manager->push(std::make_unique<RigControlValueUndoCommand>(
+                      layer, impl_->selectedRigControlId_,
+                      impl_->rigDragStartControlValue_, after));
+              if (!pushed) {
+                control->setValue(impl_->rigDragStartControlValue_);
+                rigLayer->goToFrame(rigLayer->currentFrame());
+                rigLayer->setDirty(LayerDirtyFlag::Transform);
+                rigLayer->changed();
               }
             }
           }
@@ -27336,12 +27677,20 @@ void CompositionRenderController::handleMouseRelease() {
       if (afterPosition != impl_->puppetPinUndoBeforePosition_ ||
           std::abs(afterRotation - impl_->puppetPinUndoBeforeRotation_) >
               0.001f) {
-        if (auto *manager = UndoManager::instance()) {
-          manager->push(std::make_unique<PuppetPinUndoCommand>(
-              app->puppetTool(), impl_->renderer_.get(),
-              impl_->selectedLayerId_, impl_->puppetPinUndoId_,
-              impl_->puppetPinUndoBeforePosition_, afterPosition,
-              impl_->puppetPinUndoBeforeRotation_, afterRotation));
+        auto *manager = UndoManager::instance();
+        const bool pushed =
+            !manager || manager->push(std::make_unique<PuppetPinUndoCommand>(
+                app->puppetTool(), impl_->renderer_.get(),
+                impl_->selectedLayerId_, impl_->puppetPinUndoId_,
+                impl_->puppetPinUndoBeforePosition_, afterPosition,
+                impl_->puppetPinUndoBeforeRotation_, afterRotation));
+        if (!pushed) {
+          app->puppetTool()->movePin(impl_->puppetPinUndoId_,
+                                     impl_->puppetPinUndoBeforePosition_);
+          app->puppetTool()->setPinRotation(
+              impl_->puppetPinUndoId_, impl_->puppetPinUndoBeforeRotation_);
+          app->puppetTool()->deformLayer(
+              impl_->selectedLayerId_, impl_->renderer_.get());
         }
       }
     }
@@ -27613,9 +27962,21 @@ void CompositionRenderController::handleMouseRelease() {
           std::abs(before.tangents.outTangent.x - after.tangents.outTangent.x) > 0.0001f ||
           std::abs(before.tangents.outTangent.y - after.tangents.outTangent.y) > 0.0001f;
       if (changed) {
-        if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<MotionPathTangentUndoCommand>(
-              layer, impl_->draggingMotionPathTangentFrame_, before, after));
+        auto *mgr = UndoManager::instance();
+        if (mgr && !mgr->push(std::make_unique<MotionPathTangentUndoCommand>(
+                                  layer, impl_->draggingMotionPathTangentFrame_,
+                                  before, after))) {
+          const auto restoreTime = ArtifactCore::RationalTime(
+              impl_->draggingMotionPathTangentFrame_, 24);
+          auto &transform = layer->transform3D();
+          if (before.present) {
+            transform.setPositionKeyFrameSpatialTangentsAt(
+                restoreTime, before.tangents);
+          } else {
+            transform.removePositionKeyFrameSpatialTangentsAt(restoreTime);
+          }
+          layer->setDirty(LayerDirtyFlag::Transform);
+          layer->changed();
         }
       }
     }
@@ -27636,9 +27997,11 @@ void CompositionRenderController::handleMouseRelease() {
               dynamic_cast<ArtifactCameraLayer *>(poiLayer.get())) {
         const QVector3D after = camera->pointOfInterest();
         if ((after - impl_->cameraPoiBefore_).lengthSquared() > 0.000001f) {
-          if (auto *mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<CameraPoiUndoCommand>(
-                poiLayer, impl_->cameraPoiBefore_, after));
+          auto *mgr = UndoManager::instance();
+          if (mgr && !mgr->push(std::make_unique<CameraPoiUndoCommand>(
+                                    poiLayer, impl_->cameraPoiBefore_, after))) {
+            camera->setPointOfInterest(impl_->cameraPoiBefore_);
+            impl_->publishLayerModified(poiLayer, true);
           }
         }
       }
@@ -27659,10 +28022,19 @@ void CompositionRenderController::handleMouseRelease() {
       after.hasPositionKey = transform.hasPositionKeyFrameAt(time);
       after.x = transform.positionXAt(time);
       after.y = transform.positionYAt(time);
-      if (auto *mgr = UndoManager::instance()) {
-        mgr->push(std::make_unique<MotionPathUndoCommand>(
-            layer, impl_->draggingPastPlaneFrame_,
-            impl_->draggingPastPlaneBefore_, after));
+      auto *mgr = UndoManager::instance();
+      if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
+                                layer, impl_->draggingPastPlaneFrame_,
+                                impl_->draggingPastPlaneBefore_, after))) {
+        const auto &before = impl_->draggingPastPlaneBefore_;
+        auto &mutableTransform = layer->transform3D();
+        if (before.hasPositionKey) {
+          mutableTransform.setPositionKeyFrameValueAt(time, before.x, before.y);
+        } else {
+          mutableTransform.removePositionKeyFrameAt(time);
+        }
+        layer->setDirty(LayerDirtyFlag::Transform);
+        layer->changed();
       }
     }
     impl_->clearPastPlaneFrameDrag();
@@ -27699,8 +28071,9 @@ void CompositionRenderController::handleMouseRelease() {
                            std::abs(impl_->draggingMotionPathBefore_.y - after.y) > 0.0001f;
 
       if (changed) {
-
-        if (auto *mgr = UndoManager::instance()) {
+        auto *mgr = UndoManager::instance();
+        bool pushed = mgr == nullptr;
+        if (mgr) {
           if (impl_->draggingMotionPathGroupBefore_.size() > 1) {
             QVector<MotionPathKeySnapshot> groupAfter;
             for (const auto &beforeKey :
@@ -27711,31 +28084,51 @@ void CompositionRenderController::handleMouseRelease() {
               current.value.hasPositionKey = t3d.hasPositionKeyFrameAt(keyTime);
               current.value.x = t3d.positionXAt(keyTime);
               current.value.y = t3d.positionYAt(keyTime);
-              current.hasTangents =
-                  t3d.positionKeyFrameSpatialTangentsAt(keyTime,
-                                                        current.tangents);
-              groupAfter.push_back(current);
-            }
-            mgr->push(std::make_unique<MotionPathGroupUndoCommand>(
+               current.hasTangents =
+                   t3d.positionKeyFrameSpatialTangentsAt(keyTime,
+                                                         current.tangents);
+               groupAfter.push_back(current);
+             }
+            pushed = mgr->push(std::make_unique<MotionPathGroupUndoCommand>(
                 layer, impl_->draggingMotionPathGroupBefore_, groupAfter));
           } else {
-            mgr->push(std::make_unique<MotionPathUndoCommand>(
+            pushed = mgr->push(std::make_unique<MotionPathUndoCommand>(
                 layer, impl_->draggingMotionPathFrame_,
                 impl_->draggingMotionPathBefore_, after));
           }
-
         }
-
-        if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
-
+        if (!pushed) {
+          auto &mutableTransform = layer->transform3D();
+          if (impl_->draggingMotionPathGroupBefore_.size() > 1) {
+            for (const auto &beforeKey : impl_->draggingMotionPathGroupBefore_) {
+              const auto keyTime = ArtifactCore::RationalTime(beforeKey.frame, 24);
+              if (beforeKey.value.hasPositionKey) {
+                mutableTransform.setPositionKeyFrameValueAt(
+                    keyTime, beforeKey.value.x, beforeKey.value.y);
+                if (beforeKey.hasTangents) {
+                  mutableTransform.setPositionKeyFrameSpatialTangentsAt(
+                      keyTime, beforeKey.tangents);
+                }
+              } else {
+                mutableTransform.removePositionKeyFrameAt(keyTime);
+              }
+            }
+          } else {
+            const auto &before = impl_->draggingMotionPathBefore_;
+            if (before.hasPositionKey) {
+              mutableTransform.setPositionKeyFrameValueAt(
+                  time, before.x, before.y);
+            } else {
+              mutableTransform.removePositionKeyFrameAt(time);
+            }
+          }
+          layer->setDirty(LayerDirtyFlag::Transform);
+          layer->changed();
+        } else if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
           ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-
               LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-
                                 LayerChangedEvent::ChangeType::Modified});
-
         }
-
       }
 
     }
@@ -27784,14 +28177,16 @@ void CompositionRenderController::handleMouseRelease() {
             field.coordinateParentLayerId !=
                 impl_->draggingTransformFieldBefore_.coordinateParentLayerId ||
             field.targetLayerIds !=
-                impl_->draggingTransformFieldBefore_.targetLayerIds ||
+                 impl_->draggingTransformFieldBefore_.targetLayerIds ||
             field.shape != impl_->draggingTransformFieldBefore_.shape ||
             field.displayName != impl_->draggingTransformFieldBefore_.displayName;
         if (changed) {
-          if (auto *mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<TransformFieldUndoCommand>(
-                ArtifactCompositionWeakPtr(comp),
-                impl_->draggingTransformFieldBefore_, field));
+          auto *mgr = UndoManager::instance();
+          if (mgr && !mgr->push(std::make_unique<TransformFieldUndoCommand>(
+                                    ArtifactCompositionWeakPtr(comp),
+                                    impl_->draggingTransformFieldBefore_, field))) {
+            comp->addTransformField(impl_->draggingTransformFieldBefore_);
+            comp->changed();
           }
         }
         break;
@@ -27976,6 +28371,7 @@ void CompositionRenderController::handleMouseRelease() {
     const bool meaningfulRect = isMeaningfulDragRect(rect);
 
 
+    ArtifactAbstractLayerPtr committedMaskLayer;
 
     if (impl_->rectangleToolMode_ == RectangleToolMode::Mask ||
         impl_->rectangleToolMode_ == RectangleToolMode::EllipseMask) {
@@ -28037,12 +28433,14 @@ void CompositionRenderController::handleMouseRelease() {
         layer->addMask(mask);
 
         impl_->markMaskEditDirty();
-
-        impl_->publishLayerModified(layer, true);
+        committedMaskLayer = layer;
 
       }
 
-      impl_->commitMaskEditTransaction();
+      const bool committed = impl_->commitMaskEditTransaction();
+      if (committed && committedMaskLayer) {
+        impl_->publishLayerModified(committedMaskLayer, true);
+      }
 
     } else if ((impl_->rectangleToolMode_ == RectangleToolMode::Shape ||
                 impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape) &&
@@ -28232,9 +28630,19 @@ void CompositionRenderController::handleMouseRelease() {
         }
       }
       if (!entries.empty()) {
+        const auto rollbackEntries = entries;
+        bool pushed = UndoManager::instance() == nullptr;
         if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<GizmoGroupTransformUndoCommand>(
+          pushed = mgr->push(std::make_unique<GizmoGroupTransformUndoCommand>(
               std::move(entries)));
+        }
+        if (!pushed) {
+          for (const auto &entry : rollbackEntries) {
+            if (const auto target = entry.layer.lock()) {
+              applyLiveGizmoTransform(target, entry.frame, entry.after,
+                                      entry.before);
+            }
+          }
         }
       }
       impl_->gizmoGroupTransformActive_ = false;
@@ -28274,10 +28682,14 @@ void CompositionRenderController::handleMouseRelease() {
                lhs.hasScaleKey != rhs.hasScaleKey;
       };
       if (changed(before, after)) {
-        if (auto* mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<GizmoTransformUndoCommand>(
-              impl_->gizmoUndoLayer_.lock(), impl_->gizmoUndoFrame_,
-              before, after));
+        auto* mgr = UndoManager::instance();
+        if (mgr && !mgr->push(std::make_unique<GizmoTransformUndoCommand>(
+                                  impl_->gizmoUndoLayer_.lock(),
+                                  impl_->gizmoUndoFrame_, before, after))) {
+          if (const auto layer = impl_->gizmoUndoLayer_.lock()) {
+            applyLiveGizmoTransform(layer, impl_->gizmoUndoFrame_, after,
+                                    before);
+          }
         }
       }
       impl_->gizmoUndoLayer_.reset();
@@ -28412,16 +28824,6 @@ bool CompositionRenderController::finalizePendingShapePathCreation() {
   }
 
 
-
-  if (comp && !impl_->selectedLayerId_.isNil()) {
-
-    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-
-        comp->id().toString(), impl_->selectedLayerId_.toString(),
-
-        LayerChangedEvent::ChangeType::Modified});
-
-  }
 
   impl_->invalidateOverlayComposite();
 
@@ -28661,14 +29063,21 @@ void CompositionRenderController::endShapePathVertexDrag() {
   if (layer && impl_->shapePathEditDirty_) {
     auto *shape = dynamic_cast<ArtifactShapeLayer *>(layer.get());
     if (shape) {
-      if (auto *mgr = UndoManager::instance()) {
-        mgr->push(std::make_unique<ShapePathVertexEditCommand>(
-            layer, impl_->shapePathEditBefore_,
-            shape->customPathVertices(),
-            impl_->shapePathEditBeforeClosed_,
-            shape->customPathClosed()));
+      auto *mgr = UndoManager::instance();
+      const auto afterVertices = shape->customPathVertices();
+      const bool afterClosed = shape->customPathClosed();
+      const bool pushed = !mgr || mgr->push(
+          std::make_unique<ShapePathVertexEditCommand>(
+              layer, impl_->shapePathEditBefore_, afterVertices,
+              impl_->shapePathEditBeforeClosed_, afterClosed));
+      if (!pushed) {
+        shape->setCustomPathVertices(impl_->shapePathEditBefore_,
+                                     impl_->shapePathEditBeforeClosed_);
+        shape->setDirty(LayerDirtyFlag::Source);
+        shape->changed();
+      } else {
+        publishLayerModified(layer, true);
       }
-      publishLayerModified(layer, true);
     }
   }
   impl_->shapePathEditPending_ = false;
@@ -28802,8 +29211,8 @@ bool CompositionRenderController::deleteHoveredMaskVertex() {
     layer->setMask(impl_->hoveredMaskIndex_, mask);
   }
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->hoveredVertexIndex_ = -1;
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -28844,8 +29253,8 @@ bool CompositionRenderController::resetHoveredMaskTangent() {
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -28881,8 +29290,8 @@ bool CompositionRenderController::resetHoveredMaskVertexTangents() {
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -28964,8 +29373,8 @@ bool CompositionRenderController::setHoveredMaskVertexType(int type) {
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29027,8 +29436,8 @@ bool CompositionRenderController::deleteSelectedMaskVertices() {
   }
   impl_->selectedMaskVertices_.clear();
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29167,8 +29576,8 @@ bool CompositionRenderController::deleteHoveredMask() {
   impl_->beginMaskEditTransaction(layer);
   layer->removeMask(impl_->hoveredMaskIndex_);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->hoveredMaskIndex_ = -1;
   impl_->hoveredPathIndex_ = -1;
   impl_->hoveredVertexIndex_ = -1;
@@ -29230,8 +29639,8 @@ bool CompositionRenderController::setHoveredMaskMode(int modeValue) {
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29259,8 +29668,8 @@ bool CompositionRenderController::toggleHoveredMaskEnabled() {
   mask.setEnabled(!mask.isEnabled());
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29296,6 +29705,8 @@ bool CompositionRenderController::deleteHoveredMaskForSelectedLayers() {
   const int maskIndex = impl_->hoveredMaskIndex_;
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Delete Mask on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   bool changed = false;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
@@ -29308,18 +29719,25 @@ bool CompositionRenderController::deleteHoveredMaskForSelectedLayers() {
       beforeMasks.push_back(layer->mask(index));
     }
     layer->removeMask(maskIndex);
-    impl_->publishLayerModified(layer, true);
     std::vector<LayerMask> afterMasks;
     for (int index = 0; index < layer->maskCount(); ++index) {
       afterMasks.push_back(layer->mask(index));
     }
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(afterMasks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->hoveredMaskIndex_ = std::max(0, maskIndex - 1);
     impl_->invalidateOverlayComposite();
@@ -29347,6 +29765,8 @@ bool CompositionRenderController::toggleHoveredMaskEnabledForSelectedLayers() {
   bool changed = false;
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Toggle Mask Enabled on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
         maskIndex >= layer->maskCount() || layer->mask(maskIndex).isLocked()) {
@@ -29360,19 +29780,26 @@ bool CompositionRenderController::toggleHoveredMaskEnabledForSelectedLayers() {
     auto mask = layer->mask(maskIndex);
     mask.setEnabled(enabled);
     layer->setMask(maskIndex, mask);
-    impl_->publishLayerModified(layer, true);
     std::vector<LayerMask> afterMasks;
     afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
     for (int index = 0; index < layer->maskCount(); ++index) {
       afterMasks.push_back(layer->mask(index));
     }
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(afterMasks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -29394,8 +29821,8 @@ bool CompositionRenderController::toggleHoveredMaskLocked() {
   mask.setLocked(!mask.isLocked());
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29413,8 +29840,8 @@ bool CompositionRenderController::duplicateHoveredMask() {
   impl_->beginMaskEditTransaction(layer);
   layer->addMask(layer->mask(impl_->hoveredMaskIndex_));
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29448,8 +29875,8 @@ bool CompositionRenderController::moveHoveredMask(int direction) {
     layer->addMask(mask);
   }
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->hoveredMaskIndex_ = target;
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -29481,8 +29908,8 @@ bool CompositionRenderController::pasteMask() {
   impl_->beginMaskEditTransaction(layer);
   layer->addMask(*g_maskClipboard);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29508,8 +29935,8 @@ bool CompositionRenderController::toggleHoveredMaskInverted() {
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29527,6 +29954,8 @@ bool CompositionRenderController::duplicateHoveredMaskForSelectedLayers() {
   const int maskIndex = impl_->hoveredMaskIndex_;
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Duplicate Mask on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   bool changed = false;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
@@ -29539,18 +29968,25 @@ bool CompositionRenderController::duplicateHoveredMaskForSelectedLayers() {
       beforeMasks.push_back(layer->mask(index));
     }
     layer->addMask(layer->mask(maskIndex));
-    impl_->publishLayerModified(layer, true);
     std::vector<LayerMask> afterMasks;
     for (int index = 0; index < layer->maskCount(); ++index) {
       afterMasks.push_back(layer->mask(index));
     }
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(afterMasks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -29571,6 +30007,8 @@ bool CompositionRenderController::moveHoveredMaskForSelectedLayers(int direction
   const int step = direction < 0 ? -1 : 1;
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Move Mask on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   bool changed = false;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
@@ -29596,14 +30034,21 @@ bool CompositionRenderController::moveHoveredMaskForSelectedLayers(int direction
     for (const auto &mask : masks) {
       layer->addMask(mask);
     }
-    impl_->publishLayerModified(layer, true);
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(masks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->hoveredMaskIndex_ = sourceIndex + step;
     impl_->invalidateOverlayComposite();
@@ -29635,6 +30080,8 @@ bool CompositionRenderController::toggleHoveredMaskInvertedForSelectedLayers() {
   bool changed = false;
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Toggle Mask Inverted on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
         maskIndex >= layer->maskCount()) {
@@ -29653,19 +30100,26 @@ bool CompositionRenderController::toggleHoveredMaskInvertedForSelectedLayers() {
     path.setInverted(inverted);
     mask.setMaskPath(pathIndex, path);
     layer->setMask(maskIndex, mask);
-    impl_->publishLayerModified(layer, true);
     std::vector<LayerMask> afterMasks;
     afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
     for (int index = 0; index < layer->maskCount(); ++index) {
       afterMasks.push_back(layer->mask(index));
     }
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(afterMasks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -29699,8 +30153,8 @@ bool CompositionRenderController::adjustHoveredMaskGeometry(
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29733,8 +30187,8 @@ bool CompositionRenderController::adjustHoveredMaskOpacity(float opacityDelta) {
       QStringLiteral("Mask Opacity"),
       QStringLiteral("%1%").arg(QString::number(nextOpacity * 100.0f, 'f', 0)));
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
-  impl_->commitMaskEditTransaction();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -29750,9 +30204,14 @@ bool CompositionRenderController::setHoveredMaskColor(const FloatColor& color) {
     return false;
   }
   LayerMask mask = layer->mask(impl_->hoveredMaskIndex_);
+  if (mask.isLocked()) {
+    return false;
+  }
+  impl_->beginMaskEditTransaction(layer);
   mask.setColor(color);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
+  if (!impl_->commitMaskEditTransaction()) return false;
   impl_->publishLayerModified(layer, true);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -29781,6 +30240,8 @@ bool CompositionRenderController::adjustHoveredMaskGeometryForSelectedLayers(
   }
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Adjust Mask Geometry on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   bool changed = false;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
@@ -29806,18 +30267,25 @@ bool CompositionRenderController::adjustHoveredMaskGeometryForSelectedLayers(
     path.setExpansion(nextExpansion);
     mask.setMaskPath(pathIndex, path);
     layer->setMask(maskIndex, mask);
-    impl_->publishLayerModified(layer, true);
     std::vector<LayerMask> afterMasks;
     for (int index = 0; index < layer->maskCount(); ++index) {
       afterMasks.push_back(layer->mask(index));
     }
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(afterMasks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -29846,6 +30314,8 @@ bool CompositionRenderController::adjustHoveredMaskOpacityForSelectedLayers(
   }
   auto macro = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Adjust Mask Opacity on Selected Layers"));
+  std::vector<std::pair<ArtifactAbstractLayerPtr, std::vector<LayerMask>>>
+      rollback;
   bool changed = false;
   for (const auto &layer : selection->selectedLayersInOrder()) {
     if (!layer || layer->isLocked() || layer->isSelectionLocked() ||
@@ -29868,18 +30338,25 @@ bool CompositionRenderController::adjustHoveredMaskOpacityForSelectedLayers(
     path.setOpacity(nextOpacity);
     mask.setMaskPath(pathIndex, path);
     layer->setMask(maskIndex, mask);
-    impl_->publishLayerModified(layer, true);
     std::vector<LayerMask> afterMasks;
     for (int index = 0; index < layer->maskCount(); ++index) {
       afterMasks.push_back(layer->mask(index));
     }
+    rollback.emplace_back(layer, beforeMasks);
     macro->addChild(std::make_unique<MaskEditCommand>(
         layer, std::move(beforeMasks), std::move(afterMasks)));
     changed = true;
   }
   if (changed) {
-    if (auto *undo = UndoManager::instance()) {
-      undo->push(std::move(macro));
+    auto *undo = UndoManager::instance();
+    if (undo && !undo->push(std::move(macro))) {
+      for (const auto &[layer, masks] : rollback) {
+        restoreLayerMasks(layer, masks);
+      }
+      return false;
+    }
+    for (const auto &[layer, masks] : rollback) {
+      impl_->publishLayerModified(layer, true);
     }
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -30245,9 +30722,12 @@ bool CompositionRenderController::editTextAtViewport(const QPointF& viewportPos)
   if (!accepted || edited == textLayer->text().toQString()) return accepted;
 
   const QString before = textLayer->text().toQString();
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<TextContentUndoCommand>(
-        layer, before, edited));
+  auto *manager = UndoManager::instance();
+  if (manager) {
+    if (!manager->push(std::make_unique<TextContentUndoCommand>(
+            layer, before, edited))) {
+      return false;
+    }
   } else {
     textLayer->setText(UniString(edited));
   }
@@ -30259,6 +30739,7 @@ bool CompositionRenderController::editTextAtViewport(const QPointF& viewportPos)
 }
 
 bool CompositionRenderController::resetSelectedPuppetPinRotation() {
+  if (!impl_) return false;
   auto *app = ArtifactApplicationManager::instance();
   if (!app || !app->puppetTool()) return false;
   const QString pinId = app->puppetTool()->selectedPinId();
@@ -30266,20 +30747,45 @@ bool CompositionRenderController::resetSelectedPuppetPinRotation() {
   const int pinType = app->puppetTool()->pinTypeFor(pinId);
   if (pinType == 0) return false;
   if (pinType == 1) {
-    if (std::abs(app->puppetTool()->pinWeight(pinId) - 1.0f) < 0.001f) {
+    const float before = app->puppetTool()->pinWeight(pinId);
+    if (std::abs(before - 1.0f) < 0.001f) {
       return true;
     }
     app->puppetTool()->setPinWeight(pinId, 1.0f);
+    auto *manager = UndoManager::instance();
+    if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
+            app->puppetTool(), pinId, true, before,
+            app->puppetTool()->pinWeight(pinId)))) {
+      app->puppetTool()->setPinWeight(pinId, before);
+      return false;
+    }
   } else if (pinType == 2) {
-    if (std::abs(app->puppetTool()->pinRotation(pinId)) < 0.001f) {
+    const float before = app->puppetTool()->pinRotation(pinId);
+    if (std::abs(before) < 0.001f) {
       return true;
     }
+    const QPointF position = app->puppetTool()->pinPosition(pinId);
     app->puppetTool()->setPinRotation(pinId, 0.0f);
+    auto *manager = UndoManager::instance();
+    if (manager && !manager->push(std::make_unique<PuppetPinUndoCommand>(
+            app->puppetTool(), impl_->renderer_.get(), impl_->selectedLayerId_,
+            pinId, position, position, before, 0.0f))) {
+      app->puppetTool()->setPinRotation(pinId, before);
+      return false;
+    }
   } else if (pinType == 3) {
-    if (std::abs(app->puppetTool()->pinDepth(pinId)) < 0.001f) {
+    const float before = app->puppetTool()->pinDepth(pinId);
+    if (std::abs(before) < 0.001f) {
       return true;
     }
     app->puppetTool()->setPinDepth(pinId, 0.0f);
+    auto *manager = UndoManager::instance();
+    if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
+            app->puppetTool(), pinId, false, before,
+            app->puppetTool()->pinDepth(pinId)))) {
+      app->puppetTool()->setPinDepth(pinId, before);
+      return false;
+    }
   }
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -30302,10 +30808,12 @@ bool CompositionRenderController::adjustSelectedPuppetPinWeightAt(
   const float before = app->puppetTool()->pinWeight(hitId);
   const float after = before + delta;
   app->puppetTool()->setPinWeight(hitId, after);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
-        app->puppetTool(), hitId, true, before,
-        app->puppetTool()->pinWeight(hitId)));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
+          app->puppetTool(), hitId, true, before,
+          app->puppetTool()->pinWeight(hitId)))) {
+    app->puppetTool()->setPinWeight(hitId, before);
+    return false;
   }
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -30328,10 +30836,12 @@ bool CompositionRenderController::adjustSelectedPuppetPinDepthAt(
   const float before = app->puppetTool()->pinDepth(hitId);
   const float after = before + delta;
   app->puppetTool()->setPinDepth(hitId, after);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
-        app->puppetTool(), hitId, false, before,
-        app->puppetTool()->pinDepth(hitId)));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
+          app->puppetTool(), hitId, false, before,
+          app->puppetTool()->pinDepth(hitId)))) {
+    app->puppetTool()->setPinDepth(hitId, before);
+    return false;
   }
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -30376,11 +30886,15 @@ bool CompositionRenderController::adjustSelectedShapeCornerRadius(float delta) {
   shape->setCornerRadius(after);
   shape->setDirty(LayerDirtyFlag::Property);
   shape->changed();
-  impl_->publishLayerModified(shape, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<ShapeCornerRadiusUndoCommand>(
-        shape, before, after));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<ShapeCornerRadiusUndoCommand>(
+                           shape, before, after))) {
+    shape->setCornerRadius(before);
+    shape->setDirty(LayerDirtyFlag::Property);
+    shape->changed();
+    return false;
   }
+  impl_->publishLayerModified(shape, true);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -30400,11 +30914,15 @@ bool CompositionRenderController::resetSelectedShapeCornerRadius() {
   shape->setCornerRadius(0.0f);
   shape->setDirty(LayerDirtyFlag::Property);
   shape->changed();
-  impl_->publishLayerModified(shape, true);
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<ShapeCornerRadiusUndoCommand>(
-        shape, before, 0.0f));
+  auto *manager = UndoManager::instance();
+  if (manager && !manager->push(std::make_unique<ShapeCornerRadiusUndoCommand>(
+                           shape, before, 0.0f))) {
+    shape->setCornerRadius(before);
+    shape->setDirty(LayerDirtyFlag::Property);
+    shape->changed();
+    return false;
   }
+  impl_->publishLayerModified(shape, true);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
@@ -31721,6 +32239,9 @@ bool CompositionRenderController::Impl::finalizePendingMaskCreation(
   markMaskEditDirty();
 
 
+  if (!commitMaskEditTransaction()) {
+    return false;
+  }
 
   clearPendingMaskCreation();
 
@@ -31801,12 +32322,24 @@ bool CompositionRenderController::Impl::finalizePendingShapePathCreation(
   }
 
 
+  const auto beforeVertices = shape->customPathVertices();
+  const bool beforeClosed = shape->customPathClosed();
+  const auto afterVertices = pendingShapePathVertices_;
+
   shape->setCustomPathVertices(pendingShapePathVertices_, true);
 
   shape->setDirty(LayerDirtyFlag::Source);
 
-  publishLayerModified(layer, true);
-
+  auto *undo = UndoManager::instance();
+   const bool pushed = !undo || undo->push(
+      std::make_unique<ShapePathVertexEditCommand>(
+          layer, beforeVertices, afterVertices, beforeClosed, true));
+  if (!pushed) {
+    shape->setCustomPathVertices(beforeVertices, beforeClosed);
+    shape->setDirty(LayerDirtyFlag::Source);
+    shape->changed();
+    return false;
+  }
 
   clearPendingShapePathCreation();
 
@@ -35569,132 +36102,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-    // Temporarily disable motion path overlay while debugging stray
-
-    // frame-like rectangles in the viewport.
-
-    // if (renderer_ && showMotionPathOverlay_ && comp &&
-
-    //     !selectedLayerId_.isNil()) {
-
-    //   ArtifactCore::ProfileScope _profMotion1(
-
-    //       "MotionPath1", ArtifactCore::ProfileCategory::Render);
-
-    //   if (auto selectedLayer = comp->layerById(selectedLayerId_)) {
-
-    //     const auto motionPath = buildMotionPathSamples(selectedLayer, comp);
-
-    //     QVector<MotionPathSample> keyframes;
-
-    //     keyframes.reserve(motionPath.size());
-
-    //     const MotionPathSample *currentSample = nullptr;
-
-    //     for (const auto &sample : motionPath) {
-
-    //       if (sample.kind == MotionPathSampleKind::Current) {
-
-    //         currentSample = &sample;
-
-    //       } else {
-
-    //         keyframes.push_back(sample);
-
-    //       }
-
-    //     }
-
-    //
-
-    //     auto samePoint = [](const QPointF &a, const QPointF &b) {
-
-    //       return qFuzzyCompare(a.x(), b.x()) && qFuzzyCompare(a.y(), b.y());
-
-    //     };
-
-    //
-
-    //     const bool currentMatchesKeyframe =
-
-    //         currentSample &&
-
-    //         std::any_of(keyframes.begin(), keyframes.end(),
-
-    //                     [&](const MotionPathSample &sample) {
-
-    //                       return samePoint(sample.position,
-
-    //                                        currentSample->position);
-
-    //                     });
-
-    //
-
-    //     const bool hasMotion = keyframes.size() >= 2 ||
-
-    //                            (currentSample != nullptr &&
-
-    //                             !keyframes.empty() && !currentMatchesKeyframe);
-
-    //
-
-    //     if (hasMotion) {
-
-    //       const FloatColor pathColor{0.95f, 0.65f, 0.22f, 0.85f};
-
-    //       const FloatColor keyColor{1.0f, 0.92f, 0.28f, 1.0f};
-
-    //       const FloatColor currentColor{0.28f, 0.9f, 1.0f, 1.0f};
-
-    //       QPointF prev = keyframes[0].position;
-
-    //       for (int i = 1; i < keyframes.size(); ++i) {
-
-    //         const QPointF cur = keyframes[i].position;
-
-    //         renderer_->drawSolidLine(
-
-    //             {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
-
-    //             {static_cast<float>(cur.x()), static_cast<float>(cur.y())},
-
-    //             pathColor, 1.2f);
-
-    //         prev = cur;
-
-    //       }
-
-    //       for (const auto &sample : keyframes) {
-
-    //         renderer_->drawPoint(static_cast<float>(sample.position.x()),
-
-    //                              static_cast<float>(sample.position.y()), 6.0f,
-
-    //                              keyColor);
-
-    //       }
-
-    //       if (currentSample && !currentMatchesKeyframe) {
-
-    //         renderer_->drawPoint(
-
-    //             static_cast<float>(currentSample->position.x()),
-
-    //             static_cast<float>(currentSample->position.y()), 4.0f,
-
-    //             currentColor);
-
-    //       }
-
-    //     }
-
-    //   }
-
-    // }
-
-
-
     const std::vector<ArtifactAbstractLayerPtr> layerVector(layers.cbegin(),
 
                                                             layers.cend());
@@ -35895,7 +36302,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               viewportW - panelWidth - 12.0f, 8.0f,
               std::max(8.0f, viewportW - panelWidth - 8.0f));
           const float panelY = 12.0f;
-          const QFont hudFont(QStringLiteral("Consolas"), 9);
+          const QFont hudFont = fixedWidthFont(9);
           renderer_->drawRoundedPanel(
               panelX, panelY, panelWidth, panelHeight, 7.0f,
               FloatColor{0.03f, 0.04f, 0.06f, 0.88f},
@@ -36726,7 +37133,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                    38.0f / zoom;
                 const float hudWidth = 172.0f / zoom;
                 const float hudHeight = 32.0f / zoom;
-                const QFont hudFont(QStringLiteral("Consolas"), 8);
+                const QFont hudFont = fixedWidthFont(8);
                 renderer_->drawSolidRect(
                     hudX, hudY, hudWidth, hudHeight,
                     FloatColor{0.03f, 0.04f, 0.06f, 0.82f}, 0.8f);
@@ -36774,7 +37181,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             const float zoom = std::max(0.001f, renderer_->getZoom());
             const float hudX = static_cast<float>(anchor.x()) + 12.0f / zoom;
             const float hudY = static_cast<float>(anchor.y()) + 12.0f / zoom;
-            const QFont hudFont(QStringLiteral("Consolas"), 8);
+            const QFont hudFont = fixedWidthFont(8);
             renderer_->drawSolidRect(
                 hudX, hudY, 186.0f / zoom, 32.0f / zoom,
                 FloatColor{0.03f, 0.04f, 0.06f, 0.74f}, 0.8f);
@@ -37406,7 +37813,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       qDebug() << lastVideoDebug_;
 
-      Q_EMIT owner->videoDebugMessage(lastVideoDebug_);
+      owner->videoDebugMessage(lastVideoDebug_);
 
     }
 
@@ -37461,7 +37868,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         qDebug() << presentResult.presentedVideoDebug;
 
-        Q_EMIT owner->videoDebugMessage(presentResult.presentedVideoDebug);
+        owner->videoDebugMessage(presentResult.presentedVideoDebug);
 
       }
 
@@ -38354,6 +38761,127 @@ int CompositionRenderController::Impl::viewportOverlayItemAt(
 
 
 
+void drawParticle2DControlOverlay(ArtifactIRenderer* renderer,
+                                  ArtifactParticleLayer* layer,
+                                  float zoom)
+{
+  if (!renderer || !layer || layer->is3D()) return;
+  const QTransform transform = layer->getGlobalTransform();
+  const QPointF emitter = transform.map(QPointF(layer->emitterPosition().x(),
+                                                 layer->emitterPosition().y()));
+  const float inverseZoom = 1.0f / std::max(0.001f, zoom);
+  const FloatColor emitterColor{0.20f, 0.92f, 1.0f, 0.95f};
+  const float handleRadius = std::max(4.0f, 7.0f * inverseZoom);
+  renderer->drawCircle(static_cast<float>(emitter.x()),
+                       static_cast<float>(emitter.y()), handleRadius,
+                       emitterColor, 1.5f, true);
+  renderer->drawSolidLine(
+      {static_cast<float>(emitter.x() - 10.0f * inverseZoom),
+       static_cast<float>(emitter.y())},
+      {static_cast<float>(emitter.x() + 10.0f * inverseZoom),
+       static_cast<float>(emitter.y())},
+      emitterColor, std::max(1.0f, inverseZoom));
+  renderer->drawSolidLine(
+      {static_cast<float>(emitter.x()),
+       static_cast<float>(emitter.y() - 10.0f * inverseZoom)},
+      {static_cast<float>(emitter.x()),
+       static_cast<float>(emitter.y() + 10.0f * inverseZoom)},
+      emitterColor, std::max(1.0f, inverseZoom));
+  const QVector3D direction = layer->emitterDirection().normalized();
+  if (direction.lengthSquared() > 0.0001f) {
+    const QPointF directionPoint = transform.map(
+        QPointF(layer->emitterPosition().x() + direction.x() * 72.0f,
+                layer->emitterPosition().y() + direction.y() * 72.0f));
+    renderer->drawSolidLine(
+        {static_cast<float>(emitter.x()), static_cast<float>(emitter.y())},
+        {static_cast<float>(directionPoint.x()), static_cast<float>(directionPoint.y())},
+        FloatColor{0.25f, 1.0f, 0.66f, 0.78f},
+        std::max(1.0f, 1.4f * inverseZoom));
+    renderer->drawCircle(static_cast<float>(directionPoint.x()),
+                         static_cast<float>(directionPoint.y()),
+                         std::max(3.0f, 5.0f * inverseZoom),
+                         FloatColor{0.25f, 1.0f, 0.66f, 0.92f}, 1.0f, true);
+  }
+
+  const auto* particle = layer->particleSystem();
+  const auto* emitterObject = particle && !particle->emitters().empty()
+      ? particle->emitters().front().get() : nullptr;
+  if (!emitterObject) return;
+  const auto& effectors = emitterObject->effectors();
+  for (int i = 0; i < static_cast<int>(effectors.size()); ++i) {
+    const auto& effector = effectors[static_cast<size_t>(i)];
+    if (!effector || !effector->enabled) continue;
+    const QPointF point = transform.map(QPointF(effector->position.x(),
+                                                 effector->position.y()));
+    const bool selected = i == layer->selectedEffectorIndex();
+    const FloatColor color = selected
+        ? FloatColor{1.0f, 0.72f, 0.22f, 0.98f}
+        : FloatColor{0.95f, 0.45f, 0.22f, 0.86f};
+    renderer->drawCircle(static_cast<float>(point.x()),
+                         static_cast<float>(point.y()),
+                         std::max(3.0f, (selected ? 6.0f : 4.5f) * inverseZoom),
+                         color, 1.2f, true);
+    QVector3D effectorDirection;
+    float directionStrength = 0.0f;
+    if (const auto* force = dynamic_cast<const ForceEffector*>(effector.get())) {
+      effectorDirection = force->force;
+      directionStrength = force->force.length();
+    } else if (const auto* wind = dynamic_cast<const WindEffector*>(effector.get())) {
+      effectorDirection = wind->windDirection;
+      directionStrength = wind->windStrength;
+    }
+    if (effectorDirection.lengthSquared() > 0.0001f) {
+      const QVector3D direction = effectorDirection.normalized();
+      const float length = std::clamp(28.0f + directionStrength * 0.12f,
+                                      28.0f, 96.0f);
+      const QPointF arrowPoint = transform.map(
+          QPointF(effector->position.x() + direction.x() * length,
+                  effector->position.y() + direction.y() * length));
+      renderer->drawSolidLine(
+          {static_cast<float>(point.x()), static_cast<float>(point.y())},
+          {static_cast<float>(arrowPoint.x()), static_cast<float>(arrowPoint.y())},
+          color, std::max(1.0f, 1.3f * inverseZoom));
+      renderer->drawCircle(static_cast<float>(arrowPoint.x()),
+                           static_cast<float>(arrowPoint.y()),
+                           std::max(2.5f, 4.0f * inverseZoom),
+                           color, 1.0f, true);
+    }
+    float influenceRadius = 0.0f;
+    if (const auto* vortex = dynamic_cast<const VortexEffector*>(effector.get())) {
+      influenceRadius = vortex->radius;
+    } else if (const auto* attractor = dynamic_cast<const AttractorEffector*>(effector.get())) {
+      influenceRadius = attractor->radius;
+    } else if (const auto* repeller = dynamic_cast<const RepellerEffector*>(effector.get())) {
+      influenceRadius = repeller->radius;
+    }
+    if (std::isfinite(influenceRadius) && influenceRadius > 0.0f) {
+      const QPointF radiusPoint = transform.map(
+          QPointF(effector->position.x() + influenceRadius,
+                  effector->position.y()));
+      const float radiusHandleRadius = std::max(
+          3.0f, (selected ? 6.0f : 4.0f) * inverseZoom);
+      renderer->drawCircle(static_cast<float>(point.x()),
+                           static_cast<float>(point.y()),
+                           influenceRadius * std::max(0.001f, layer->getGlobalTransform().m11()),
+                           FloatColor{color.r(), color.g(), color.b(), selected ? 0.34f : 0.18f},
+                           std::max(1.0f, inverseZoom), false);
+      renderer->drawSolidLine(
+          {static_cast<float>(point.x()), static_cast<float>(point.y())},
+          {static_cast<float>(radiusPoint.x()), static_cast<float>(radiusPoint.y())},
+          FloatColor{color.r(), color.g(), color.b(), selected ? 0.55f : 0.30f},
+          std::max(1.0f, inverseZoom));
+      renderer->drawCircle(static_cast<float>(radiusPoint.x()),
+                           static_cast<float>(radiusPoint.y()),
+                           radiusHandleRadius, color, 1.2f, true);
+    }
+    renderer->drawSolidLine(
+        {static_cast<float>(emitter.x()), static_cast<float>(emitter.y())},
+        {static_cast<float>(point.x()), static_cast<float>(point.y())},
+        FloatColor{color.r(), color.g(), color.b(), 0.28f},
+        std::max(1.0f, inverseZoom));
+  }
+}
+
 void CompositionRenderController::Impl::drawPieMenuOverlay() {
 
   if (!renderer_ || !pieMenuVisible_ || pieMenuModel_.items.empty()) {
@@ -38485,6 +39013,13 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
   drawReferenceOverlayImage(cw, ch);
 
   drawOnionSkinOverlay(comp, currentFrame, cw, ch);
+
+  if (auto* particleLayer = selectedLayer
+          ? dynamic_cast<ArtifactParticleLayer*>(selectedLayer.get())
+          : nullptr) {
+    drawParticle2DControlOverlay(renderer_.get(), particleLayer,
+                                  renderer_->getZoom());
+  }
 
   if (viewportOrientationMatricesValid_) {
     const float borderThickness =
@@ -38682,7 +39217,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
                                               : QString());
       renderer_->drawText(
           QRectF(12.0, 12.0, 420.0, 20.0), cameraHud,
-          QFont(QStringLiteral("Consolas"), 9),
+          fixedWidthFont(9),
           FloatColor{0.82f, 0.95f, 1.0f, 0.92f}, Qt::AlignLeft | Qt::AlignTop);
     }
 
@@ -38780,7 +39315,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     const auto &transform3D = selectedLayer->transform3D();
     const QPointF anchorValue(transform3D.anchorXAt(anchorTime),
                               transform3D.anchorYAt(anchorTime));
-    const QFont anchorFont(QStringLiteral("Consolas"), 9);
+    const QFont anchorFont = fixedWidthFont(9);
     const bool anchorIs3D = selectedLayer->is3D();
     const float anchorPanelWidth = anchorIs3D ? 232.0f : 178.0f;
     const float anchorPanelHeight = 38.0f;
@@ -41396,6 +41931,22 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
       }
 
+      // The next pointer event uses the single snapshot for tangent
+      // hit-testing. The draw loop may have ended on a different selected
+      // layer, so restore the active layer's snapshot explicitly.
+      if (!selectedLayerId_.isNil()) {
+        const QString selectedCacheKey =
+            comp->id().toString() + QLatin1Char(':') +
+            selectedLayerId_.toString();
+        const auto selectedCache =
+            motionPathCacheByLayer_.constFind(selectedCacheKey);
+        if (selectedCache != motionPathCacheByLayer_.cend()) {
+          motionPathCache_ = selectedCache.value();
+        } else {
+          motionPathCache_.valid = false;
+        }
+      }
+
       // Historical Plane frames are a transform-only motion aid, not an
       // onion-skin of rendered pixels. Draw them in viewport pixel space so
       // their dotted outline follows the same camera projection as the frame.
@@ -41413,10 +41964,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           std::max(1, static_cast<int>(hostHeight_)));
       const int motionFrameFps = std::max(
           1, static_cast<int>(std::round(comp->frameRate().framerate())));
-      const float previousZoom = renderer_->getZoom();
-      float previousPanX = 0.0f;
-      float previousPanY = 0.0f;
-      renderer_->getPan(previousPanX, previousPanY);
+      RendererPanZoomScope motionFrameViewScope(renderer_.get());
       renderer_->setUseExternalMatrices(false);
       renderer_->setCanvasSize(std::max(1.0f, hostWidth_),
                                std::max(1.0f, hostHeight_));
@@ -41434,9 +41982,6 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             renderer_.get(), layer, currentFrame.framePosition(), motionFrameFps,
             motionFrameView, motionFrameProjection, motionFrameViewport);
       }
-      renderer_->setZoom(previousZoom);
-      renderer_->setPan(previousPanX, previousPanY);
-
     }
 
 

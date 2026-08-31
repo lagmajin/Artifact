@@ -49,7 +49,5 @@ export namespace Artifact
   void trimLayerOutAtCurrentTime(); W_SLOT(trimLayerOutAtCurrentTime);
   void splitLayerAtCurrentTime(); W_SLOT(splitLayerAtCurrentTime);
 
-  void activeCompositionChanged() W_SIGNAL(activeCompositionChanged);
-
  };
 };

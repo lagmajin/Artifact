@@ -57,9 +57,12 @@ int64_t effectiveSolidTimelineFps(const ArtifactSolidImageLayer *layer) {
   }
   if (auto *composition = static_cast<ArtifactAbstractComposition *>(
           layer->composition())) {
-    return std::max<int64_t>(
-        1, static_cast<int64_t>(
-               std::llround(composition->frameRate().framerate())));
+    const double rawFps = composition->frameRate().framerate();
+    if (std::isfinite(rawFps) && rawFps > 0.0) {
+      return std::max<int64_t>(
+          1, static_cast<int64_t>(std::llround(
+                 std::clamp(rawFps, 1.0, 10000.0))));
+    }
   }
   return 30;
 }

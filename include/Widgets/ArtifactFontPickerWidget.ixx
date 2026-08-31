@@ -24,9 +24,6 @@ public:
     void setCurrentFont(const QString& family);
     QString currentFont() const;
 
-    // 信号
-    void fontChanged(const QString& family) W_SIGNAL(fontChanged, family);
-
 private:
     void setupUi();
     void updateFontList();

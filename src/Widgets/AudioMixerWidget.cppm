@@ -14,6 +14,7 @@ module;
 #include <QShowEvent>
 #include <QHideEvent>
 #include <QFont>
+#include <QFontDatabase>
 #include <QPalette>
 #include <QColor>
 #include <QDialog>
@@ -733,8 +734,7 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
         {-48.0f, true  },
     };
     {
-        QFont scaleFont;
-        scaleFont.setFamily(QStringLiteral("Consolas"));
+        QFont scaleFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         scaleFont.setPixelSize(8);
         painter.setFont(scaleFont);
 

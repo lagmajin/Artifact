@@ -30,12 +30,14 @@ module;
 #include <cmath>
 #include <algorithm>
 #include <thread>
+#include <tuple>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionRenderWidget;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Camera;
 import Artifact.Application.Manager;
 import Artifact.Widgets.CompositionEditor;
@@ -217,10 +219,23 @@ int compositionPreviewIntervalMs(
     const ArtifactCompositionPtr& comp)
 {
   const double fps = comp ? comp->frameRate().framerate() : 0.0;
-  if (fps <= 0.0) {
+  if (!std::isfinite(fps) || fps <= 0.0) {
     return 16;
   }
-  return std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
+  const double safeFps = std::clamp(fps, 1.0, 10000.0);
+  return std::max(1, static_cast<int>(std::lround(1000.0 / safeFps)));
+}
+
+int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
+{
+  constexpr double kFallbackFps = 30.0;
+  constexpr double kMinFps = 1.0;
+  constexpr double kMaxFps = 10000.0;
+  const double rawFps = comp ? comp->frameRate().framerate() : kFallbackFps;
+  const double fps = std::isfinite(rawFps) && rawFps > 0.0
+                         ? std::clamp(rawFps, kMinFps, kMaxFps)
+                         : kFallbackFps;
+  return std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
 }
   } // namespace
 
@@ -257,6 +272,17 @@ int compositionPreviewIntervalMs(
   QPointF lastMousePos_;
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
   bool isDraggingLayer_ = false;
+  bool isDraggingParticleEmitter_ = false;
+  bool isDraggingParticleDirection_ = false;
+  bool isDraggingParticleEffector_ = false;
+  bool isDraggingParticleInfluenceRadius_ = false;
+  int particleEffectorDragIndex_ = -1;
+  float particleEmitterDragStartX_ = 0.0f;
+  float particleEmitterDragStartY_ = 0.0f;
+  QVector3D particleEmitterDragStartDirection_{0.0f, -1.0f, 0.0f};
+  float particleEffectorDragStartX_ = 0.0f;
+  float particleEffectorDragStartY_ = 0.0f;
+  float particleEffectorDragStartRadius_ = 0.0f;
   bool isPanningViewport_ = false;
   bool isRotatingViewport_ = false;
   bool spaceHandActive_ = false;
@@ -1022,7 +1048,12 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                   menu.addAction("Center in Comp", [layer = hit.layer, comp]() {
                       auto size = comp->settings().compositionSize();
                       auto& t3 = layer->transform3D();
-                      t3.setPosition(ArtifactCore::RationalTime(comp->framePosition().framePosition(), 30000), size.width() / 2.0f, size.height() / 2.0f);
+                      t3.setPosition(ArtifactCore::RationalTime(
+                                         comp->framePosition().framePosition(),
+                                         compositionTransformTimeScale(comp)),
+                                     size.width() / 2.0f, size.height() / 2.0f);
+                      layer->setDirty(LayerDirtyFlag::Transform);
+                      layer->addDirtyReason(LayerDirtyReason::TransformChanged);
                       layer->changed();
                   });
                   menu.addSeparator();
@@ -1052,6 +1083,85 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       }
       impl_->selectedLayerId_ = hit.layer->id();
       impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
+
+      if (auto* particleLayer = dynamic_cast<ArtifactParticleLayer*>(hit.layer.get())) {
+        bool invertible = false;
+        const QTransform inverse = particleLayer->getGlobalTransform().inverted(&invertible);
+        if (invertible && impl_->renderer_) {
+          const auto canvas = impl_->renderer_->viewportToCanvas(
+              {static_cast<float>(event->position().x()),
+               static_cast<float>(event->position().y())});
+          const QPointF emitterCanvas = particleLayer->getGlobalTransform().map(
+              QPointF(particleLayer->emitterPosition().x(),
+                      particleLayer->emitterPosition().y()));
+          const float hitRadius = std::max(10.0f, 14.0f /
+              std::max(0.001f, impl_->renderer_->getZoom()));
+          if (std::hypot(static_cast<float>(canvas.x - emitterCanvas.x()),
+                        static_cast<float>(canvas.y - emitterCanvas.y())) <= hitRadius) {
+            impl_->isDraggingParticleEmitter_ = true;
+            impl_->particleEmitterDragStartX_ = particleLayer->emitterPosition().x();
+            impl_->particleEmitterDragStartY_ = particleLayer->emitterPosition().y();
+            impl_->lastMousePos_ = event->position();
+            grabMouse();
+            event->accept();
+            return;
+          }
+          const QVector3D direction = particleLayer->emitterDirection().normalized();
+          const QPointF directionCanvas = particleLayer->getGlobalTransform().map(
+              QPointF(particleLayer->emitterPosition().x() + direction.x() * 72.0f,
+                      particleLayer->emitterPosition().y() + direction.y() * 72.0f));
+          if (std::hypot(static_cast<float>(canvas.x - directionCanvas.x()),
+                        static_cast<float>(canvas.y - directionCanvas.y())) <= hitRadius) {
+            impl_->isDraggingParticleDirection_ = true;
+            impl_->particleEmitterDragStartDirection_ = particleLayer->emitterDirection();
+            grabMouse();
+            event->accept();
+            return;
+          }
+          const auto* particleSystem = particleLayer->particleSystem();
+          const auto* particleEmitter = particleSystem &&
+              !particleSystem->emitters().empty()
+              ? particleSystem->emitters().front().get() : nullptr;
+          if (particleEmitter) {
+            for (int i = static_cast<int>(particleEmitter->effectors().size()) - 1;
+                 i >= 0; --i) {
+              const auto& effector = particleEmitter->effectors()[static_cast<size_t>(i)];
+              if (!effector || !effector->enabled) continue;
+              const QPointF effectorCanvas = particleLayer->getGlobalTransform().map(
+                  QPointF(effector->position.x(), effector->position.y()));
+              if (std::hypot(static_cast<float>(canvas.x - effectorCanvas.x()),
+                             static_cast<float>(canvas.y - effectorCanvas.y())) <= hitRadius) {
+                particleLayer->setLayerPropertyValue(
+                    QStringLiteral("particle.effectors.selectedIndex"), i);
+                impl_->isDraggingParticleEffector_ = true;
+                impl_->particleEffectorDragIndex_ = i;
+                impl_->particleEffectorDragStartX_ = effector->position.x();
+                impl_->particleEffectorDragStartY_ = effector->position.y();
+                grabMouse();
+                event->accept();
+                return;
+              }
+              const float influenceRadius = particleLayer->effectorInfluenceRadius(i);
+              if (influenceRadius > 0.0f) {
+                const QPointF radiusCanvas = particleLayer->getGlobalTransform().map(
+                    QPointF(effector->position.x() + influenceRadius,
+                            effector->position.y()));
+                if (std::hypot(static_cast<float>(canvas.x - radiusCanvas.x()),
+                               static_cast<float>(canvas.y - radiusCanvas.y())) <= hitRadius) {
+                  particleLayer->setLayerPropertyValue(
+                      QStringLiteral("particle.effectors.selectedIndex"), i);
+                  impl_->isDraggingParticleInfluenceRadius_ = true;
+                  impl_->particleEffectorDragIndex_ = i;
+                  impl_->particleEffectorDragStartRadius_ = influenceRadius;
+                  grabMouse();
+                  event->accept();
+                  return;
+                }
+              }
+            }
+          }
+        }
+      }
 
       if (tm->activeTool() != ToolType::Selection &&
           tm->activeTool() != ToolType::Move &&
@@ -1100,6 +1210,119 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
   qCDebug(compositionWidgetLog) << "[MouseRelease] ENTER pos:" << event->position()
                                 << "button:" << event->button();
+
+  if (event->button() == Qt::LeftButton &&
+      (impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||
+       impl_->isDraggingParticleEffector_ ||
+       impl_->isDraggingParticleInfluenceRadius_)) {
+   if (impl_->renderer_) {
+    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+    auto comp = impl_->previewPipeline_.composition();
+    auto layer = comp && !impl_->selectedLayerId_.isNil()
+        ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
+    auto* particleLayer = layer
+        ? dynamic_cast<ArtifactParticleLayer*>(layer.get()) : nullptr;
+    if (particleLayer && impl_->isDraggingParticleEmitter_) {
+     const QVector3D current = particleLayer->emitterPosition();
+     if (std::abs(current.x() - impl_->particleEmitterDragStartX_) > 0.001f ||
+         std::abs(current.y() - impl_->particleEmitterDragStartY_) > 0.001f) {
+      auto macro = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Move Particle Emitter"));
+      macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+          layer, QStringLiteral("particle.emitter.positionX"),
+          QVariant(impl_->particleEmitterDragStartX_), QVariant(current.x()),
+          QStringLiteral("Move Particle Emitter X")));
+      macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+          layer, QStringLiteral("particle.emitter.positionY"),
+          QVariant(impl_->particleEmitterDragStartY_), QVariant(current.y()),
+          QStringLiteral("Move Particle Emitter Y")));
+      if (auto* manager = UndoManager::instance();
+          manager && !manager->push(std::move(macro))) {
+        particleLayer->setEmitterPosition(QVector3D(
+            impl_->particleEmitterDragStartX_,
+            impl_->particleEmitterDragStartY_,
+            particleLayer->emitterPosition().z()));
+       }
+      }
+     }
+    }
+    if (particleLayer && impl_->isDraggingParticleDirection_) {
+     const QVector3D current = particleLayer->emitterDirection();
+     const QVector3D start = impl_->particleEmitterDragStartDirection_;
+     if ((current - start).lengthSquared() > 0.000001f) {
+      auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Aim Particle Emitter"));
+      for (const auto [path, before, after] : {
+          std::tuple<QString, float, float>{QStringLiteral("particle.emitter.directionX"), start.x(), current.x()},
+          std::tuple<QString, float, float>{QStringLiteral("particle.emitter.directionY"), start.y(), current.y()},
+          std::tuple<QString, float, float>{QStringLiteral("particle.emitter.directionZ"), start.z(), current.z()}}) {
+       macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+           layer, path, QVariant(before), QVariant(after), QStringLiteral("Aim Particle Emitter")));
+      }
+      if (auto* manager = UndoManager::instance();
+          manager && !manager->push(std::move(macro))) {
+        particleLayer->setEmitterDirection(
+            impl_->particleEmitterDragStartDirection_);
+       }
+      }
+     }
+    }
+    if (particleLayer && impl_->isDraggingParticleEffector_ &&
+        impl_->particleEffectorDragIndex_ >= 0) {
+     const QVector3D current = particleLayer->effectorPosition(
+         impl_->particleEffectorDragIndex_);
+     if (std::abs(current.x() - impl_->particleEffectorDragStartX_) > 0.001f ||
+         std::abs(current.y() - impl_->particleEffectorDragStartY_) > 0.001f) {
+      auto macro = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Move Particle Effector"));
+      const QString prefix = QStringLiteral("particle.effectors.selectedPosition");
+      macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+          layer, prefix + QStringLiteral("X"),
+          QVariant(impl_->particleEffectorDragStartX_), QVariant(current.x()),
+          QStringLiteral("Move Particle Effector X")));
+      macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+          layer, prefix + QStringLiteral("Y"),
+          QVariant(impl_->particleEffectorDragStartY_), QVariant(current.y()),
+          QStringLiteral("Move Particle Effector Y")));
+      if (auto* manager = UndoManager::instance();
+          manager && !manager->push(std::move(macro))) {
+        particleLayer->setEffectorPosition(
+            impl_->particleEffectorDragIndex_,
+            QVector3D(impl_->particleEffectorDragStartX_,
+                      impl_->particleEffectorDragStartY_,
+                      particleLayer->effectorPosition(
+                          impl_->particleEffectorDragIndex_).z()));
+       }
+      }
+     }
+    }
+    if (particleLayer && impl_->isDraggingParticleInfluenceRadius_ &&
+        impl_->particleEffectorDragIndex_ >= 0) {
+     const float current = particleLayer->effectorInfluenceRadius(
+         impl_->particleEffectorDragIndex_);
+     if (std::abs(current - impl_->particleEffectorDragStartRadius_) > 0.001f) {
+      if (auto* manager = UndoManager::instance();
+          manager && !manager->push(std::make_unique<SetLayerPropertyValueCommand>(
+           layer, QStringLiteral("particle.effectors.selectedInfluenceRadius"),
+           QVariant(impl_->particleEffectorDragStartRadius_), QVariant(current),
+           QStringLiteral("Resize Particle Effector Influence")))) {
+        particleLayer->setEffectorInfluenceRadius(
+            impl_->particleEffectorDragIndex_,
+            impl_->particleEffectorDragStartRadius_);
+       }
+      }
+     }
+    }
+   }
+   impl_->isDraggingParticleEmitter_ = false;
+   impl_->isDraggingParticleDirection_ = false;
+   impl_->isDraggingParticleEffector_ = false;
+   impl_->isDraggingParticleInfluenceRadius_ = false;
+   impl_->particleEffectorDragIndex_ = -1;
+   releaseMouse();
+   impl_->requestRender();
+   event->accept();
+   return;
+  }
 
   if (event->button() == Qt::LeftButton &&
       ArtifactApplicationManager::instance()->toolManager()->activeTool() == ToolType::Zoom &&
@@ -1160,7 +1383,9 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
      if (layer) {
       // Final position snapshot for undo
       auto& t3 = layer->transform3D();
-      ArtifactCore::RationalTime t0(comp->framePosition().framePosition(), 30000);
+      const ArtifactCore::RationalTime t0(
+          comp->framePosition().framePosition(),
+          compositionTransformTimeScale(comp));
       
       // Since it was already moving in real-time in mouseMove, 
       // we need to calculate the REAL delta from drag start.
@@ -1173,11 +1398,25 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       
       // Revert the real-time move before pushing so redo() applies it cleanly
       t3.setPosition(t0, t3.positionX() - (float)totalDelta.x(), t3.positionY() - (float)totalDelta.y());
-      UndoManager::instance()->push(std::move(cmd));
-      layer->changed(); // Final notification
-      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                            LayerChangedEvent::ChangeType::Modified});
+      bool pushed = false;
+      auto* manager = UndoManager::instance();
+      if (manager) {
+       pushed = manager->push(std::move(cmd));
+      } else {
+       t3.setPosition(t0, t3.positionX() + (float)totalDelta.x(),
+                      t3.positionY() + (float)totalDelta.y());
+       pushed = true;
+      }
+      if (!pushed && manager) {
+       t3.setPosition(t0, t3.positionX() + (float)totalDelta.x(),
+                      t3.positionY() + (float)totalDelta.y());
+      }
+      if (pushed) {
+       layer->changed(); // Final notification
+       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+           LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                             LayerChangedEvent::ChangeType::Modified});
+      }
      }
     }
     impl_->dragAppliedDelta_ = totalDelta;
@@ -1218,6 +1457,50 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   qCDebug(compositionWidgetLog) << "[MouseMove] ENTER pos:" << event->position()
                                 << "buttons:" << event->buttons();
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+
+  if ((impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||
+       impl_->isDraggingParticleEffector_ ||
+       impl_->isDraggingParticleInfluenceRadius_) &&
+      (event->buttons() & Qt::LeftButton) && impl_->renderer_) {
+   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+   auto comp = impl_->previewPipeline_.composition();
+   auto layer = comp && !impl_->selectedLayerId_.isNil()
+       ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
+   auto* particleLayer = layer
+       ? dynamic_cast<ArtifactParticleLayer*>(layer.get()) : nullptr;
+   if (particleLayer) {
+    bool invertible = false;
+    const QTransform inverse = particleLayer->getGlobalTransform().inverted(&invertible);
+    if (invertible) {
+     const auto canvas = impl_->renderer_->viewportToCanvas(
+         {static_cast<float>(event->position().x()),
+          static_cast<float>(event->position().y())});
+     const QPointF local = inverse.map(QPointF(canvas.x, canvas.y));
+     if (impl_->isDraggingParticleEmitter_) {
+      particleLayer->setEmitterPosition(local);
+     } else if (impl_->isDraggingParticleDirection_) {
+      const QVector3D emitter = particleLayer->emitterPosition();
+      particleLayer->setEmitterDirection(QVector3D(
+          static_cast<float>(local.x() - emitter.x()),
+          static_cast<float>(local.y() - emitter.y()), 0.0f));
+     } else if (impl_->isDraggingParticleInfluenceRadius_ &&
+                impl_->particleEffectorDragIndex_ >= 0) {
+      const QVector3D center = particleLayer->effectorPosition(
+          impl_->particleEffectorDragIndex_);
+      particleLayer->setEffectorInfluenceRadius(
+          impl_->particleEffectorDragIndex_,
+          static_cast<float>(std::hypot(local.x() - center.x(),
+                                        local.y() - center.y())));
+     } else if (impl_->particleEffectorDragIndex_ >= 0) {
+      particleLayer->setEffectorPosition(impl_->particleEffectorDragIndex_,
+                                         QVector3D(local.x(), local.y(), 0.0f));
+     }
+    }
+   }
+   impl_->requestRender();
+   event->accept();
+   return;
+  }
 
   if ((event->buttons() & Qt::LeftButton) &&
       ArtifactApplicationManager::instance()->toolManager()->activeTool() == ToolType::Zoom &&
@@ -1428,6 +1711,44 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   auto& shortcuts = ShortcutBindings::instance();
   auto* renderController = editor ? editor->renderController() : nullptr;
   const auto activeTool = tm ? tm->activeTool() : ToolType::Selection;
+  if (event && !event->isAutoRepeat() && event->key() == Qt::Key_Escape &&
+      (impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||
+       impl_->isDraggingParticleEffector_ ||
+       impl_->isDraggingParticleInfluenceRadius_)) {
+    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+    auto comp = impl_->previewPipeline_.composition();
+    auto layer = comp && !impl_->selectedLayerId_.isNil()
+        ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
+    if (auto* particleLayer = layer
+            ? dynamic_cast<ArtifactParticleLayer*>(layer.get()) : nullptr) {
+      if (impl_->isDraggingParticleEmitter_) {
+        particleLayer->setEmitterPosition(QVector3D(
+            impl_->particleEmitterDragStartX_,
+            impl_->particleEmitterDragStartY_, 0.0f));
+      } else if (impl_->isDraggingParticleDirection_) {
+        particleLayer->setEmitterDirection(
+            impl_->particleEmitterDragStartDirection_);
+      } else if (impl_->isDraggingParticleInfluenceRadius_ &&
+                 impl_->particleEffectorDragIndex_ >= 0) {
+        particleLayer->setEffectorInfluenceRadius(
+            impl_->particleEffectorDragIndex_,
+            impl_->particleEffectorDragStartRadius_);
+      } else if (impl_->particleEffectorDragIndex_ >= 0) {
+        particleLayer->setEffectorPosition(impl_->particleEffectorDragIndex_,
+            QVector3D(impl_->particleEffectorDragStartX_,
+                      impl_->particleEffectorDragStartY_, 0.0f));
+      }
+    }
+    impl_->isDraggingParticleEmitter_ = false;
+    impl_->isDraggingParticleDirection_ = false;
+    impl_->isDraggingParticleEffector_ = false;
+    impl_->isDraggingParticleInfluenceRadius_ = false;
+    impl_->particleEffectorDragIndex_ = -1;
+    releaseMouse();
+    impl_->requestRender();
+    event->accept();
+    return;
+  }
   if (event && !event->isAutoRepeat() && renderController &&
       activeTool == ToolType::Pen) {
     if (event->key() == Qt::Key_Escape) {
@@ -1594,16 +1915,18 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
               float step = (event->modifiers() & Qt::ShiftModifier) ? 10.0f : 1.0f;
               auto& t3 = l->transform3D();
               auto comp = am->activeContextService()->activeComposition();
-              ArtifactCore::RationalTime t0(comp ? comp->framePosition().framePosition() : 0, 30000);
               float dx = 0, dy = 0;
               if (event->key() == Qt::Key_Left) dx = -step;
               if (event->key() == Qt::Key_Right) dx = step;
               if (event->key() == Qt::Key_Up) dy = -step;
               if (event->key() == Qt::Key_Down) dy = step;
               
-              auto cmd = std::make_unique<MoveLayerCommand>(l, dx, dy, t0.value());
-              UndoManager::instance()->push(std::move(cmd));
-              l->changed();
+              const int64_t frame = comp ? comp->framePosition().framePosition() : 0;
+              auto cmd = std::make_unique<MoveLayerCommand>(l, dx, dy, frame);
+              if (auto* manager = UndoManager::instance();
+                  manager && manager->push(std::move(cmd))) {
+                  l->changed();
+              }
           }
       }
   }

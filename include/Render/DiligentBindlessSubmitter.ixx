@@ -1,5 +1,6 @@
 module;
 #include <array>
+#include <cstdint>
 #include <DeviceContext.h>
 #include <Buffer.h>
 #include <Common/interface/BasicMath.hpp>
@@ -28,6 +29,12 @@ using namespace Diligent;
 
 class DiligentBindlessSubmitter final : public IRenderSubmitter {
 public:
+    struct SubmitStats {
+        std::uint64_t attempted = 0;
+        std::uint64_t accepted = 0;
+        std::uint64_t fallback = 0;
+        std::uint64_t rejected = 0;
+    };
     DiligentBindlessSubmitter() = default;
     ~DiligentBindlessSubmitter() override = default;
 
@@ -40,6 +47,12 @@ public:
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
 
     bool isSupported() const;
+    void setEnabled(bool enabled) noexcept { enabled_ = enabled; }
+    bool isEnabled() const noexcept { return enabled_; }
+    void setFallbackOnFailure(bool enabled) noexcept { fallbackOnFailure_ = enabled; }
+    bool fallbackOnFailure() const noexcept { return fallbackOnFailure_; }
+    const SubmitStats& submitStats() const noexcept { return stats_; }
+    void resetSubmitStats() noexcept { stats_ = {}; }
     QString debugState() const;
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
@@ -78,6 +91,9 @@ private:
     float2 spriteBatchScreenSize_ = {0.0f, 0.0f};
     bool spriteBatchUsesNdc_ = false;
     bool supported_ = false;
+    bool enabled_ = false;
+    bool fallbackOnFailure_ = true;
+    SubmitStats stats_;
 };
 
 } // namespace Artifact

@@ -6,6 +6,7 @@ module;
 #include <QFileInfo>
 #include <QIcon>
 #include <QList>
+#include <QMetaObject>
 #include <QMenu>
 #include <QPoint>
 #include <QSignalBlocker>
@@ -13,6 +14,7 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QStyle>
+#include <QThread>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -542,7 +544,11 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
 
   // Connect signals
   QObject::connect(impl_->homeAction_, &QAction::triggered, this,
-                   [this]() { homeRequested(); });
+                   []() {
+                     ArtifactCore::globalEventBus().publish(
+                         CompositionViewCommandRequestedEvent{
+                             CompositionViewCommandKind::Reset});
+                   });
 
   auto setTool = [](ToolType type) {
     if (auto *app = Artifact::ApplicationService::instance()) {
@@ -586,53 +592,38 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                        return;
                      }
                      if (action == impl_->selectTool_) {
-                       selectToolRequested();
                        setTool(ToolType::Selection);
                      } else if (action == impl_->handTool_) {
-                       handToolRequested();
                        setTool(ToolType::Hand);
                      } else if (action == impl_->zoomTool_) {
-                       zoomToolRequested();
                        setTool(ToolType::Zoom);
                      } else if (action == impl_->moveTool_) {
-                       moveToolRequested();
                        setTool(ToolType::Move);
                      } else if (action == impl_->rotationTool_) {
-                       rotationToolRequested();
                        setTool(ToolType::Rotation);
                      } else if (action == impl_->scaleTool_) {
-                       scaleToolRequested();
                        setTool(ToolType::Scale);
                      } else if (action == impl_->cameraTool_) {
                        cameraToolRequested();
                      } else if (action == impl_->panBehindTool_) {
-                       panBehindToolRequested();
                        setTool(ToolType::AnchorPoint);
                      } else if (action == impl_->shapeTool_) {
-                       shapeToolRequested();
                        setTool(ToolType::Rectangle);
                      } else if (action == impl_->ellipseTool_) {
-                       shapeToolRequested();
                        setTool(ToolType::Ellipse);
                      } else if (action == impl_->penTool_) {
-                       penToolRequested();
                        setTool(ToolType::Pen);
                      } else if (action == impl_->textTool_) {
-                       textToolRequested();
                        setTool(ToolType::Text);
                     } else if (action == impl_->brushTool_) {
-                       brushToolRequested();
                        setTool(ToolType::Brush);
                     } else if (action == impl_->rotoBrushTool_) {
                        setTool(ToolType::RotoBrush);
-                    } else if (action == impl_->cloneStampTool_) {
-                      cloneStampToolRequested();
+                     } else if (action == impl_->cloneStampTool_) {
                       setTool(ToolType::Clone);
                      } else if (action == impl_->eraserTool_) {
-                       eraserToolRequested();
                        setTool(ToolType::Eraser);
                      } else if (action == impl_->puppetTool_) {
-                       puppetToolRequested();
                        setTool(ToolType::Puppet);
                      } else if (action == impl_->rigSelectTool_) {
                        setTool(ToolType::RigSelect);
@@ -641,25 +632,39 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      } else if (action == impl_->trackPointTool_) {
                        setTool(ToolType::TrackPoint);
                      } else if (action == impl_->motionSketchTool_) {
-                       motionSketchToolRequested();
                        setTool(ToolType::MotionSketch);
                      } else if (action == impl_->scrubPreviewTool_) {
-                       scrubPreviewToolRequested();
                        setTool(ToolType::ScrubPreview);
                      }
                    });
 
   QObject::connect(impl_->zoomInAction_, &QAction::triggered, this,
-                   [this]() { zoomInRequested(); });
+                   []() {
+                     ArtifactCore::globalEventBus().publish(
+                         CompositionViewCommandRequestedEvent{
+                             CompositionViewCommandKind::ZoomIn});
+                   });
 
   QObject::connect(impl_->zoomOutAction_, &QAction::triggered, this,
-                   [this]() { zoomOutRequested(); });
+                   []() {
+                     ArtifactCore::globalEventBus().publish(
+                         CompositionViewCommandRequestedEvent{
+                             CompositionViewCommandKind::ZoomOut});
+                   });
 
   QObject::connect(impl_->zoom100Action_, &QAction::triggered, this,
-                   [this]() { zoom100Requested(); });
+                   []() {
+                     ArtifactCore::globalEventBus().publish(
+                         CompositionViewCommandRequestedEvent{
+                             CompositionViewCommandKind::Zoom100});
+                   });
 
   QObject::connect(impl_->zoomFitAction_, &QAction::triggered, this,
-                   [this]() { zoomFitRequested(); });
+                   []() {
+                     ArtifactCore::globalEventBus().publish(
+                         CompositionViewCommandRequestedEvent{
+                             CompositionViewCommandKind::ZoomFit});
+                   });
 
   QObject::connect(
       impl_->gridToggleAction_, &QAction::triggered, this,
@@ -667,7 +672,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
         impl_->gridToggleAction_->setIcon(loadIconWithFallback(
             checked ? QString::fromLatin1(kToolbarIconGridOn)
                     : QString::fromLatin1(kToolbarIconGridOff)));
-        gridToggled(checked);
+        ArtifactCore::globalEventBus().publish(
+            CompositionViewCommandRequestedEvent{
+                CompositionViewCommandKind::SetGridVisible, checked});
         if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
           settings->setToolbarShowGrid(checked);
         }
@@ -678,7 +685,10 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      impl_->guideToggleAction_->setIcon(loadIconWithFallback(
                          checked ? QString::fromLatin1(kToolbarIconGuidesOn)
                                  : QString::fromLatin1(kToolbarIconGuidesOff)));
-                     guideToggled(checked);
+                     ArtifactCore::globalEventBus().publish(
+                         CompositionViewCommandRequestedEvent{
+                             CompositionViewCommandKind::SetGuidesVisible,
+                             checked});
                      if (auto *settings =
                              ArtifactCore::ArtifactAppSettings::instance()) {
                        settings->setToolbarShowGuide(checked);
@@ -910,7 +920,6 @@ void ArtifactToolBar::setDisplayMode(ToolBarDisplayMode mode) {
   }
   impl_->displayMode_ = mode;
   impl_->updateDisplayMode();
-  emit displayModeChanged(mode);
 }
 
 ToolBarDisplayMode ArtifactToolBar::displayMode() const {
@@ -964,7 +973,20 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
     settings->setProjectDefaultWorkspaceModeText(
         Artifact::workspaceModeText(mode));
   }
-  emit workspaceModeChanged(mode);
+  workspaceModeChanged(mode);
+}
+
+void ArtifactToolBar::workspaceModeChanged(WorkspaceMode mode) {
+  const int modeValue = static_cast<int>(mode);
+  const auto publish = [modeValue]() {
+    ArtifactCore::globalEventBus().publish<WorkspaceModeChangedEvent>(
+        WorkspaceModeChangedEvent{modeValue});
+  };
+  if (QThread::currentThread() == thread()) {
+    publish();
+    return;
+  }
+  QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
 }
 
 WorkspaceMode ArtifactToolBar::workspaceMode() const {
@@ -976,7 +998,6 @@ void ArtifactToolBar::setCurrentTool(const QString &toolName) {
   for (const auto &info : impl_->toolInfos_) {
     if (info.toolName == toolName) {
       info.action->setChecked(true);
-      emit currentToolChanged(toolName);
 
       // Update tool options bar
       if (impl_->toolOptionsBar_) {

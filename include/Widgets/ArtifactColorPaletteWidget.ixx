@@ -67,9 +67,6 @@ public Q_SLOTS:
     void onSmartExtractPalette();
     void onLoadPalettes();
     void onSavePalettes();
-
-Q_SIGNALS:
-    void paletteSelected(const ArtifactCore::Color::ColorPalette& palette) W_SIGNAL(paletteSelected, palette);
 };
 
 } // namespace Artifact

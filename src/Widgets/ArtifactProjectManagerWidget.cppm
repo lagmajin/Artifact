@@ -656,6 +656,26 @@ QString uniqueResponsiveVariantId(const ResponsiveLayoutSet& layout, const QStri
     return QStringLiteral("%1_%2").arg(trimmed, QString::number(layout.variants.size() + 1));
 }
 
+bool applyResponsiveLayoutWithUndo(const ArtifactCompositionPtr& composition,
+                                   const ResponsiveLayoutSet& before,
+                                   const ResponsiveLayoutSet& after)
+{
+    if (!composition) return false;
+    const QJsonObject beforeJson = before.toJson();
+    const QJsonObject afterJson = after.toJson();
+    if (beforeJson == afterJson) return true;
+    if (auto* undo = UndoManager::instance()) {
+        return undo->push(std::make_unique<SetCompositionResponsiveLayoutCommand>(
+            composition, beforeJson, afterJson));
+    }
+    composition->setResponsiveLayout(after);
+    if (composition->responsiveLayout().toJson() != afterJson) return false;
+    if (auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr()) {
+        project->projectChanged();
+    }
+    return true;
+}
+
 ResponsiveLayoutVariant responsiveLayoutVariantTemplate(const ResponsiveLayoutVariant* source,
                                                         const QSize& fallbackSize)
 {
@@ -2124,13 +2144,7 @@ bool renameProjectItem(ProjectItem* item, const QString& newName) {
         auto* compItem = static_cast<CompositionItem*>(item);
         return svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmed));
     }
-    auto shared = svc->getCurrentProjectSharedPtr();
-    if (!shared) {
-        return false;
-    }
-    item->name = UniString::fromQString(trimmed);
-    shared->projectChanged();
-    return true;
+    return svc->renameProjectItem(item, UniString::fromQString(trimmed));
 }
 
 void scheduleProjectViewRefresh(ArtifactProjectView* view)
@@ -2449,8 +2463,8 @@ public:
             return;
         }
 
-        project->createFolder(UniString::fromQString(name), currentFolderTarget(view));
-        // createFolder notifies projectChanged() internally
+        svc->createProjectFolder(UniString::fromQString(name),
+                                 currentFolderTarget(view));
     }
 
     void handleFileDrop(const QString& str) {
@@ -3987,8 +4001,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                         break;
                                     }
                                 }
-                            }
-                            if (!addResponsiveLayoutVariantDialog(this,
+                             }
+                             const ResponsiveLayoutSet beforeLayout = layout;
+                             if (!addResponsiveLayoutVariantDialog(this,
                                                                   &layout,
                                                                   templateVariant,
                                                                   fallbackSize,
@@ -3996,10 +4011,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                                                   false)) {
                                 return;
                             }
-                            comp->setResponsiveLayout(layout);
-                            if (auto project = service->getCurrentProjectSharedPtr()) {
-                                project->projectChanged();
-                            }
+                             if (!applyResponsiveLayoutWithUndo(comp, beforeLayout, layout)) {
+                                 QMessageBox::warning(this, QStringLiteral("Responsive Layout"),
+                                     QStringLiteral("Could not add the responsive variant."));
+                             }
                         });
 
                         QAction* duplicateAction = responsiveMenu->addAction(QStringLiteral("Duplicate Active Variant..."), [this, compositionId, fallbackSize]() {
@@ -4012,8 +4027,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                             if (!foundComp.success || !comp) {
                                 return;
                             }
-                            ResponsiveLayoutSet layout = comp->responsiveLayout();
-                            const QString activeId = comp->activeResponsiveLayoutVariantId();
+                             ResponsiveLayoutSet layout = comp->responsiveLayout();
+                             const ResponsiveLayoutSet beforeLayout = layout;
+                             const QString activeId = comp->activeResponsiveLayoutVariantId();
                             const ResponsiveLayoutVariant* templateVariant = nullptr;
                             for (const auto& candidate : layout.variants) {
                                 if (candidate.variantId == activeId) {
@@ -4035,10 +4051,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                                                   true)) {
                                 return;
                             }
-                            comp->setResponsiveLayout(layout);
-                            if (auto project = service->getCurrentProjectSharedPtr()) {
-                                project->projectChanged();
-                            }
+                             if (!applyResponsiveLayoutWithUndo(comp, beforeLayout, layout)) {
+                                 QMessageBox::warning(this, QStringLiteral("Responsive Layout"),
+                                     QStringLiteral("Could not duplicate the responsive variant."));
+                             }
                         });
                         duplicateAction->setEnabled(activeVariant != nullptr);
                         responsiveMenu->addSeparator();
@@ -4052,7 +4068,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                     if (auto* service = ArtifactProjectService::instance()) {
                                         const auto foundComp = service->findComposition(compositionId);
                                         if (auto comp = foundComp.ptr.lock()) {
-                                            comp->setActiveResponsiveLayoutVariantId(variant.variantId);
+                                            ResponsiveLayoutSet before = comp->responsiveLayout();
+                                            ResponsiveLayoutSet after = before;
+                                            after.activeVariantId = variant.variantId;
+                                            if (!applyResponsiveLayoutWithUndo(comp, before, after)) {
+                                                QMessageBox::warning(nullptr,
+                                                    QStringLiteral("Responsive Layout"),
+                                                    QStringLiteral("Could not activate the responsive variant."));
+                                            }
                                         }
                                     }
                                 });
@@ -4078,14 +4101,15 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                                          QStringLiteral("Responsive Layout"),
                                                          QStringLiteral("This composition has no responsive variant to edit."));
                                 return;
-                            }
-                            if (!editResponsiveLayoutVariantDialog(this, &layout, activeId)) {
-                                return;
-                            }
-                            comp->setResponsiveLayout(layout);
-                            if (auto project = service->getCurrentProjectSharedPtr()) {
-                                project->projectChanged();
-                            }
+                             }
+                             const ResponsiveLayoutSet beforeLayout = layout;
+                             if (!editResponsiveLayoutVariantDialog(this, &layout, activeId)) {
+                                 return;
+                             }
+                             if (!applyResponsiveLayoutWithUndo(comp, beforeLayout, layout)) {
+                                 QMessageBox::warning(this, QStringLiteral("Responsive Layout"),
+                                     QStringLiteral("Could not edit the responsive variant."));
+                             }
                         });
                     }
                 }
@@ -4203,7 +4227,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         originalBackgroundColor.alphaF()));
                 });
                 QObject::connect(buttons.cancelButton, &QPushButton::clicked, dialog, &QDialog::reject);
-                QObject::connect(buttons.okButton, &QPushButton::clicked, dialog, [this, dialog, svc, compositionId, composition, nameEdit, widthSpin, heightSpin, fpsSpin, startSpin, endSpin, bgButton]() {
+                QObject::connect(buttons.okButton, &QPushButton::clicked, dialog, [this, dialog, svc, compositionId, composition, originalBackgroundColor, nameEdit, widthSpin, heightSpin, fpsSpin, startSpin, endSpin, bgButton]() {
                     const QString trimmedName = nameEdit->text().trimmed();
                     if (trimmedName.isEmpty()) {
                         QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),
@@ -4219,11 +4243,25 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         return;
                     }
 
-                    composition->setCompositionName(UniString::fromQString(trimmedName));
-                    {
-                        const QSize newSize(widthSpin->value(), heightSpin->value());
-                        const QSize oldSize = composition->settings().compositionSize();
-                        if (oldSize != newSize) {
+                    const QString oldName = composition->settings().compositionName().toQString();
+                    const QSize oldSize = composition->settings().compositionSize();
+                    const float oldFrameRate = composition->frameRate().framerate();
+                    const FrameRange oldRange = composition->frameRange().normalized();
+                    const FloatColor oldBackground(
+                        originalBackgroundColor.redF(), originalBackgroundColor.greenF(),
+                        originalBackgroundColor.blueF(), originalBackgroundColor.alphaF());
+                    const QSize newSize(widthSpin->value(), heightSpin->value());
+                    const float newFrameRate = static_cast<float>(fpsSpin->value());
+                    const FrameRange newRange(FramePosition(startFrame), FramePosition(endFrame));
+                    const QColor selectedBg = bgButton ? bgButton->selectedColor()
+                                                        : QColor::fromRgbF(
+                                                              oldBackground.r(), oldBackground.g(),
+                                                              oldBackground.b(), oldBackground.a());
+                    const FloatColor newBackground(selectedBg.redF(), selectedBg.greenF(),
+                                                   selectedBg.blueF(), selectedBg.alphaF());
+                    bool remapRequested = false;
+                    ArtifactCore::RemapPolicy remapPolicy = ArtifactCore::RemapPolicy::CenterLocked;
+                    if (oldSize != newSize) {
                             bool hasMasks = false;
                             bool hasAnchors = false;
                             int maskVerts = 0;
@@ -4246,40 +4284,42 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                 oldSize, newSize, hasMasks, maskVerts > 0, hasAnchors);
                             impact.maskVertexCount = maskVerts;
 
-                            Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
-                            if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
-                                // remap は Undo 可能なコマンド経由で実行する。
-                                // コマンドのコンストラクタが before snapshot を採取し、
-                                // push() 内の redo() で applyResolutionRemap を呼ぶ。
-                                if (auto* mgr = UndoManager::instance()) {
-                                    mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
-                                        composition, oldSize, newSize, dialog.selectedPolicy()));
-                                } else {
-                                    composition->applyResolutionRemap(newSize, dialog.selectedPolicy());
-                                }
-                            } else {
-                                composition->setCompositionSize(newSize);
+                            Artifact::ArtifactResolutionRemapDialog remapDialog(oldSize, newSize, impact);
+                            if (remapDialog.exec() == QDialog::Accepted && remapDialog.remapRequested()) {
+                                remapRequested = true;
+                                remapPolicy = remapDialog.selectedPolicy();
                             }
+                    }
+
+                    auto settingsMacro = std::make_unique<MacroUndoCommand>(
+                        QStringLiteral("Set Composition Settings"));
+                    if (remapRequested) {
+                        settingsMacro->addChild(std::make_unique<ChangeCompositionResolutionCommand>(
+                            composition, oldSize, newSize, remapPolicy));
+                    }
+                    if (!remapRequested ||
+                        std::abs(oldFrameRate - newFrameRate) >= 0.0001f ||
+                        oldRange.start() != newRange.start() || oldRange.end() != newRange.end() ||
+                        oldBackground.r() != newBackground.r() ||
+                        oldBackground.g() != newBackground.g() ||
+                        oldBackground.b() != newBackground.b() ||
+                        oldBackground.a() != newBackground.a()) {
+                        settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
+                            composition, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
+                            oldBackground, newSize, newFrameRate, newRange.start(), newRange.end(),
+                            newBackground));
+                    }
+                    if (oldName != trimmedName) {
+                        settingsMacro->addChild(std::make_unique<RenameCompositionCommand>(
+                            composition, oldName, trimmedName));
+                    }
+                    if (settingsMacro->canSerialize()) {
+                        if (auto* undo = UndoManager::instance()) {
+                            if (!undo->push(std::move(settingsMacro))) return;
                         } else {
-                            composition->setCompositionSize(newSize);
+                            settingsMacro->redo();
+                            if (!settingsMacro->lastOperationSucceeded()) return;
                         }
-                    }
-                    composition->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
-                    composition->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
-                    if (bgButton) {
-                        const QColor bg = bgButton->selectedColor();
-                        composition->setBackGroundColor(FloatColor(
-                            bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
-                    }
-
-                    if (!svc->renameComposition(compositionId, UniString::fromQString(trimmedName))) {
-                        QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),
-                            QStringLiteral("Failed to update composition name."));
-                        return;
-                    }
-
-                    if (auto project = svc->getCurrentProjectSharedPtr()) {
-                        project->projectChanged();
                     }
                     if (auto current = svc->currentComposition().lock()) {
                         if (current->id() == compositionId) {
@@ -4494,7 +4534,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 }
 
                 if (updatedAny) {
-                    projectService->projectChanged();
+                    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                        ProjectChangedEvent{QString(), QString()});
                 }
             }, loadProjectViewIcon(QStringLiteral("Studio/info.svg")));
         }
@@ -4558,17 +4599,20 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     if (!accepted) return;
                     const int selectedIndex = choices.indexOf(choice);
                     if (selectedIndex <= 0) {
-                        footageItem->assetUsage = ProjectAssetUsage::Production;
-                        footageItem->renderInputRole = ProjectRenderInputRole::Generic;
+                        if (!svc->setFootageAssetRole(
+                                footageItem, ProjectAssetUsage::Production,
+                                ProjectRenderInputRole::Generic)) {
+                            QMessageBox::warning(this, QStringLiteral("Input Source Role"),
+                                QStringLiteral("Could not update the input source role."));
+                            return;
+                        }
                     } else {
-                        footageItem->assetUsage = ProjectAssetUsage::RenderInput;
-                        footageItem->renderInputRole =
-                            static_cast<ProjectRenderInputRole>(selectedIndex - 1);
-                    }
-                    if (svc) {
-                        if (auto project = svc->getCurrentProjectSharedPtr()) {
-                            project->setDirty(true);
-                            project->projectChanged();
+                        if (!svc->setFootageAssetRole(
+                                footageItem, ProjectAssetUsage::RenderInput,
+                                static_cast<ProjectRenderInputRole>(selectedIndex - 1))) {
+                            QMessageBox::warning(this, QStringLiteral("Input Source Role"),
+                                QStringLiteral("Could not update the input source role."));
+                            return;
                         }
                     }
                     refreshVisibleContent();
@@ -4666,7 +4710,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 targets.append(static_cast<FootageItem*>(contextItem));
                 const int relinked = Impl::relinkMissingFootage(root, targets);
                 if (relinked > 0) {
-                    svc->projectChanged();
+                    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                        ProjectChangedEvent{QString(), QString()});
                 }
                 QMessageBox::information(this, "Relink Result",
                                          QString("Relinked %1 file(s).").arg(relinked));
@@ -4713,7 +4758,13 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     return;
                 }
                 ProjectItem* targetParent = resolvePasteParent();
-                if (!project->addProjectItemsFromJson(items, targetParent)) {
+                bool pasted = false;
+                if (auto* undo = UndoManager::instance()) {
+                    pasted = undo->push(std::make_unique<AddProjectItemsCommand>(items, targetParent));
+                } else {
+                    pasted = project->addProjectItemsFromJson(items, targetParent);
+                }
+                if (!pasted) {
                     QMessageBox::warning(this, QStringLiteral("Paste Items"),
                         QStringLiteral("Could not paste the copied project items."));
                 }
@@ -4752,8 +4803,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     tags.append(tag);
                 }
             }
-            contextItem->tags = tags;
-            svc->projectChanged();
+            if (!svc->setProjectItemTags(contextItem, tags)) {
+                QMessageBox::warning(this, QStringLiteral("Edit Tags Failed"),
+                    QStringLiteral("Could not update the selected item's tags."));
+            }
         }, loadProjectViewIcon(QStringLiteral("Studio/edit.svg")));
 
         QMenu* moveToFolderMenu = menu.addMenu(QStringLiteral("Move to Folder"));
@@ -4876,10 +4929,17 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         QJsonObject item;
         item.insert(QStringLiteral("type"), QStringLiteral("composition"));
         item.insert(QStringLiteral("name"), name);
+        item.insert(QStringLiteral("id"), Id().toString());
         item.insert(QStringLiteral("compositionId"), compositionId.toString());
         item.insert(QStringLiteral("compositionJson"), compositionJson);
 
-        const bool ok = project->addProjectItemsFromJson(QJsonArray{item}, nullptr);
+        bool ok = false;
+        if (auto* undo = UndoManager::instance()) {
+            ok = undo->push(std::make_unique<AddProjectItemsCommand>(
+                QJsonArray{item}, nullptr, compositionId.toString()));
+        } else {
+            ok = project->addProjectItemsFromJson(QJsonArray{item}, nullptr);
+        }
         if (ok) {
             project->setCurrentCompositionId(compositionId, false);
             project->projectChanged();
@@ -4983,7 +5043,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
         const int relinked = Impl::relinkMissingFootage(root, targets);
         if (relinked > 0) {
-            svc->projectChanged();
+            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                ProjectChangedEvent{QString(), QString()});
         }
         QMessageBox::information(this, "Relink Result",
                                  QString("Relinked %1 missing footage item(s).").arg(relinked));
@@ -5606,6 +5667,9 @@ public:
         }
 
         bool applied = false;
+        const float targetFrameRate = static_cast<float>(std::max(1.0, frameRate));
+        auto settingsMacro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Set Composition Frame Rate"));
         for (auto* compItem : items) {
             if (!compItem) {
                 continue;
@@ -5615,21 +5679,38 @@ public:
             if (!found.success || !comp) {
                 continue;
             }
-            comp->setFrameRate(FrameRate(static_cast<float>(std::max(1.0, frameRate))));
+            const QSize oldSize = comp->settings().compositionSize();
+            const float oldFrameRate = comp->frameRate().framerate();
+            const FrameRange oldRange = comp->frameRange().normalized();
+            const FloatColor oldBackground = comp->backgroundColor();
+            if (std::abs(oldFrameRate - targetFrameRate) < 0.0001f) continue;
+            settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
+                comp, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
+                oldBackground, oldSize, targetFrameRate, oldRange.start(), oldRange.end(),
+                oldBackground));
             applied = true;
-            if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
+        }
+
+        if (!applied) return true;
+        if (auto* undo = UndoManager::instance()) {
+            if (!undo->push(std::move(settingsMacro))) return false;
+        } else {
+            settingsMacro->redo();
+            if (!settingsMacro->lastOperationSucceeded()) return false;
+        }
+        for (auto* compItem : items) {
+            if (!compItem) continue;
+            const auto found = svc->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (!found.success || !comp) continue;
+            if (auto current = svc->currentComposition().lock();
+                current && current->id() == comp->id()) {
                 if (auto* playback = ArtifactPlaybackService::instance()) {
                     playback->setFrameRate(comp->frameRate());
                 }
             }
         }
-
-        if (applied) {
-            if (auto project = svc->getCurrentProjectSharedPtr()) {
-                project->projectChanged();
-            }
-        }
-        return applied;
+        return true;
     }
 
     bool applySelectedCompositionSettings() {
@@ -5665,58 +5746,78 @@ public:
                 return false;
             }
 
-            comp->setCompositionName(UniString::fromQString(trimmedName));
-            {
-                const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
-                const QSize oldSize = comp->settings().compositionSize();
-                if (oldSize != newSize) {
-                    bool hasMasks = false;
-                    bool hasAnchors = false;
-                    int maskVerts = 0;
-                    int layerCount = 0;
-                    for (const auto& layer : comp->allLayerRef()) {
-                        if (!layer) continue;
-                        ++layerCount;
-                        if (layer->hasMasks()) {
-                            hasMasks = true;
-                            for (int mi = 0; mi < layer->maskCount(); ++mi) {
-                                const auto lm = layer->mask(mi);
-                                for (int pi = 0; pi < lm.maskPathCount(); ++pi) {
-                                    maskVerts += lm.maskPath(pi).vertexCount();
-                                }
+            const QString oldName = comp->settings().compositionName().toQString();
+            const QSize oldSize = comp->settings().compositionSize();
+            const float oldFrameRate = comp->frameRate().framerate();
+            const FrameRange oldRange = comp->frameRange().normalized();
+            const FloatColor oldBackground = comp->backgroundColor();
+            const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
+            const float newFrameRate = static_cast<float>(
+                std::max(1.0, compositionFrameRateSpin->value()));
+            const FrameRange newRange(FramePosition(startFrame), FramePosition(endFrame));
+            const QColor bg = compositionBackgroundButton->selectedColor();
+            const FloatColor newBackground(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF());
+            bool remapRequested = false;
+            ArtifactCore::RemapPolicy remapPolicy = ArtifactCore::RemapPolicy::CenterLocked;
+            if (oldSize != newSize) {
+                bool hasMasks = false;
+                bool hasAnchors = false;
+                int maskVerts = 0;
+                int layerCount = 0;
+                for (const auto& layer : comp->allLayerRef()) {
+                    if (!layer) continue;
+                    ++layerCount;
+                    if (layer->hasMasks()) {
+                        hasMasks = true;
+                        for (int mi = 0; mi < layer->maskCount(); ++mi) {
+                            const auto lm = layer->mask(mi);
+                            for (int pi = 0; pi < lm.maskPathCount(); ++pi) {
+                                maskVerts += lm.maskPath(pi).vertexCount();
                             }
                         }
                     }
-                    hasAnchors = layerCount > 0;
-                    auto impact = ArtifactCore::ResolutionRemap::calculateImpact(
-                        oldSize, newSize, hasMasks, maskVerts > 0, hasAnchors);
-                    impact.maskVertexCount = maskVerts;
+                }
+                hasAnchors = layerCount > 0;
+                auto impact = ArtifactCore::ResolutionRemap::calculateImpact(
+                    oldSize, newSize, hasMasks, maskVerts > 0, hasAnchors);
+                impact.maskVertexCount = maskVerts;
 
-                    Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
-                    if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
-                        if (auto* mgr = UndoManager::instance()) {
-                            mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
-                                comp, oldSize, newSize, dialog.selectedPolicy()));
-                        } else {
-                            comp->applyResolutionRemap(newSize, dialog.selectedPolicy());
-                        }
-                    } else {
-                        comp->setCompositionSize(newSize);
-                    }
-                } else {
-                    comp->setCompositionSize(newSize);
+                Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
+                if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
+                    remapRequested = true;
+                    remapPolicy = dialog.selectedPolicy();
                 }
             }
-            comp->setFrameRate(FrameRate(static_cast<float>(std::max(1.0, compositionFrameRateSpin->value()))));
-            comp->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
-            const QColor bg = compositionBackgroundButton->selectedColor();
-            comp->setBackGroundColor(FloatColor(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
 
-            if (!svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmedName))) {
-                return false;
+            auto settingsMacro = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Set Composition Settings"));
+            if (remapRequested) {
+                settingsMacro->addChild(std::make_unique<ChangeCompositionResolutionCommand>(
+                    comp, oldSize, newSize, remapPolicy));
             }
-
-            svc->finalizeCompositionSettingsChange(comp->id());
+            if (!remapRequested || oldFrameRate != newFrameRate ||
+                oldRange.start() != newRange.start() || oldRange.end() != newRange.end() ||
+                oldBackground.r() != newBackground.r() ||
+                oldBackground.g() != newBackground.g() ||
+                oldBackground.b() != newBackground.b() ||
+                oldBackground.a() != newBackground.a()) {
+                settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
+                    comp, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
+                    oldBackground, newSize, newFrameRate, newRange.start(), newRange.end(),
+                    newBackground));
+            }
+            if (oldName != trimmedName) {
+                settingsMacro->addChild(std::make_unique<RenameCompositionCommand>(
+                    comp, oldName, trimmedName));
+            }
+            if (settingsMacro->canSerialize()) {
+                if (auto* undo = UndoManager::instance()) {
+                    if (!undo->push(std::move(settingsMacro))) return false;
+                } else {
+                    settingsMacro->redo();
+                    if (!settingsMacro->lastOperationSucceeded()) return false;
+                }
+            }
             return true;
         }
 
@@ -5731,6 +5832,8 @@ public:
         const FloatColor floatBg(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF());
 
         bool applied = false;
+        auto settingsMacro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Set Composition Settings"));
         for (auto* compItem : items) {
             if (!compItem) {
                 continue;
@@ -5741,18 +5844,55 @@ public:
                 continue;
             }
 
-            comp->setCompositionSize(newSize);
-            comp->setFrameRate(FrameRate(frameRate));
-            comp->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
-            comp->setBackGroundColor(floatBg);
+            const QSize oldSize = comp->settings().compositionSize();
+            const float oldFrameRate = comp->frameRate().framerate();
+            const FrameRange oldRange = comp->frameRange().normalized();
+            const FloatColor oldBackground = comp->backgroundColor();
+            const FrameRange newRange(FramePosition(startFrame), FramePosition(endFrame));
+            if (oldSize == newSize &&
+                std::abs(oldFrameRate - frameRate) < 0.0001f &&
+                oldRange.start() == newRange.start() &&
+                oldRange.end() == newRange.end() &&
+                oldBackground.r() == floatBg.r() &&
+                oldBackground.g() == floatBg.g() &&
+                oldBackground.b() == floatBg.b() &&
+                oldBackground.a() == floatBg.a()) {
+                continue;
+            }
+            settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
+                comp, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
+                oldBackground, newSize, frameRate, newRange.start(), newRange.end(),
+                floatBg));
             applied = true;
-
-            svc->finalizeCompositionSettingsChange(comp->id());
         }
 
-        // finalizeCompositionSettingsChange() also marks the project dirty;
-        // each changed composition follows the same path as the single-edit UI.
-        return applied;
+        if (!applied) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            if (!undo->push(std::move(settingsMacro))) {
+                return false;
+            }
+        } else {
+            settingsMacro->redo();
+            if (!settingsMacro->lastOperationSucceeded()) {
+                return false;
+            }
+        }
+        for (auto* compItem : items) {
+            if (!compItem) continue;
+            const auto found = svc->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (!found.success || !comp) continue;
+            if (auto current = svc->currentComposition().lock();
+                current && current->id() == comp->id()) {
+                if (auto* playback = ArtifactPlaybackService::instance()) {
+                    playback->setFrameRange(comp->frameRange());
+                    playback->setFrameRate(comp->frameRate());
+                }
+            }
+        }
+        return true;
     }
 
     void refreshCompositionEditor() {
@@ -6090,8 +6230,8 @@ public:
             return;
         }
 
-        project->createFolder(UniString::fromQString(name), currentFolderTarget());
-        // createFolder notifies projectChanged() internally
+        svc->createProjectFolder(UniString::fromQString(name),
+                                 currentFolderTarget());
     }
 
     bool renameSelectedItem(QWidget* parent) {
@@ -6168,8 +6308,37 @@ public:
     SelectionChangedEvent makeSelectionChangedEvent() const {
         SelectionChangedEvent event;
         event.selectedItemIds = selectedItemIds();
-        event.currentItemId = currentSelectedItem() ? currentSelectedItem()->id.toString() : QString();
+        auto* currentItem = currentSelectedItem();
+        event.currentItemId = currentItem ? currentItem->id.toString() : QString();
         event.selectedCount = event.selectedItemIds.size();
+        if (currentItem && currentItem->type() == eProjectItemType::Composition) {
+            event.currentCompositionId = static_cast<CompositionItem*>(currentItem)
+                ->compositionId.toString();
+        } else if (currentItem && currentItem->type() == eProjectItemType::Footage) {
+            event.currentFootagePath = static_cast<FootageItem*>(currentItem)->filePath;
+        }
+        if (projectView_ && projectView_->selectionModel()) {
+            const auto rows = projectView_->selectionModel()->selectedRows(0);
+            event.selectedFootagePaths.reserve(rows.size());
+            for (const auto& row : rows) {
+                QModelIndex sourceIdx = row;
+                if (auto* proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                    sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+                }
+                const QVariant pointerValue = sourceIdx.data(
+                    Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                auto* item = pointerValue.isValid()
+                    ? reinterpret_cast<ProjectItem*>(pointerValue.value<quintptr>())
+                    : nullptr;
+                if (item && item->type() == eProjectItemType::Footage) {
+                    const QString path = static_cast<FootageItem*>(item)->filePath;
+                    if (!path.isEmpty()) {
+                        event.selectedFootagePaths.append(path);
+                    }
+                }
+            }
+            event.selectedFootagePaths.removeDuplicates();
+        }
         return event;
     }
 
@@ -6645,7 +6814,8 @@ public:
         targets.append(static_cast<FootageItem*>(item));
         const int relinked = Impl::relinkMissingFootage(root, targets);
         if (relinked > 0) {
-            svc->projectChanged();
+            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                ProjectChangedEvent{QString(), QString()});
         }
         QMessageBox::information(parent, QStringLiteral("Relink Result"),
                                  QStringLiteral("Relinked %1 file(s).").arg(relinked));
@@ -7836,6 +8006,53 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 }
 
 ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() { delete impl_; }
+
+void ArtifactProjectManagerWidget::itemDoubleClicked(const QModelIndex& index)
+{
+    if (!index.isValid()) {
+        return;
+    }
+
+    QModelIndex sourceIndex = index.siblingAtColumn(0);
+    if (auto* proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIndex.model())) {
+        sourceIndex = proxy->mapToSource(sourceIndex).siblingAtColumn(0);
+    }
+    if (!sourceIndex.isValid()) {
+        return;
+    }
+
+    const auto typeRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType);
+    const auto pointerRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
+    const auto compositionRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId);
+    const QVariant typeValue = sourceIndex.data(typeRole);
+    if (!typeValue.isValid()) {
+        return;
+    }
+
+    ProjectItemActivatedEvent event;
+    const auto itemType = static_cast<eProjectItemType>(typeValue.toInt());
+    const QVariant pointerValue = sourceIndex.data(pointerRole);
+    if (pointerValue.isValid()) {
+        auto* item = reinterpret_cast<ProjectItem*>(pointerValue.value<quintptr>());
+        if (item) {
+            event.itemId = item->id.toString();
+        }
+        if (item && item->type() == eProjectItemType::Footage) {
+            event.filePath = static_cast<FootageItem*>(item)->filePath;
+        }
+    }
+
+    if (itemType == eProjectItemType::Composition) {
+        event.kind = ProjectItemActivationKind::Composition;
+        event.compositionId = sourceIndex.data(compositionRole).toString();
+    } else if (itemType == eProjectItemType::Footage) {
+        event.kind = ProjectItemActivationKind::Footage;
+    } else {
+        return;
+    }
+
+    ArtifactCore::globalEventBus().publish<ProjectItemActivatedEvent>(event);
+}
 
 ArtifactProjectView* ArtifactProjectManagerWidget::projectView() const
 {

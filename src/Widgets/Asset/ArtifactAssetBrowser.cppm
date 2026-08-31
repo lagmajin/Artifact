@@ -266,15 +266,25 @@ public:
       : project_(std::move(project)), path_(path) {}
 
   void undo() override {
-    if (project_) project_->removeAssetByPath(path_);
+    lastOperationSucceeded_ = project_ && project_->removeAssetByPath(path_);
   }
 
   void redo() override {
     if (firstRedo_) {
       firstRedo_ = false;
+      lastOperationSucceeded_ = true;
       return;
     }
+    lastOperationSucceeded_ = static_cast<bool>(project_);
     if (project_) project_->addAssetFromPath(path_);
+  }
+
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
+  }
+
+  size_t estimatedMemoryBytes() const override {
+    return sizeof(*this) + static_cast<size_t>(path_.size()) * sizeof(QChar);
   }
 
   QString label() const override {
@@ -285,6 +295,7 @@ private:
   ArtifactProjectPtr project_;
   QString path_;
   bool firstRedo_ = true;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RelinkAssetCommand final : public UndoCommand {
@@ -293,19 +304,31 @@ public:
       : oldPath_(std::move(oldPath)), newPath_(std::move(newPath)) {}
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     if (auto* service = ArtifactProjectService::instance()) {
-      service->relinkFootageByPath(newPath_, oldPath_);
+      lastOperationSucceeded_ = service->relinkFootageByPath(newPath_, oldPath_);
     }
   }
 
   void redo() override {
     if (firstRedo_) {
       firstRedo_ = false;
+      lastOperationSucceeded_ = true;
       return;
     }
+    lastOperationSucceeded_ = false;
     if (auto* service = ArtifactProjectService::instance()) {
-      service->relinkFootageByPath(oldPath_, newPath_);
+      lastOperationSucceeded_ = service->relinkFootageByPath(oldPath_, newPath_);
     }
+  }
+
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
+  }
+
+  size_t estimatedMemoryBytes() const override {
+    return sizeof(*this) + static_cast<size_t>(
+        oldPath_.size() + newPath_.size()) * sizeof(QChar);
   }
 
   QString label() const override {
@@ -316,6 +339,7 @@ private:
   QString oldPath_;
   QString newPath_;
   bool firstRedo_ = true;
+  bool lastOperationSucceeded_ = true;
 };
 
 struct RelinkLayerSourceChange {
@@ -333,33 +357,108 @@ public:
         layerChanges_(std::move(layerChanges)) {}
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto* service = ArtifactProjectService::instance();
     if (!service) return;
-    for (auto it = layerChanges_.crbegin(); it != layerChanges_.crend(); ++it) {
-      if (auto layer = it->layer.lock()) {
-        layer->setLayerPropertyValue(it->propertyPath, it->oldPath);
+    QVector<ArtifactAbstractLayerPtr> layers;
+    layers.reserve(layerChanges_.size());
+    for (const auto& change : layerChanges_) {
+      auto layer = change.layer.lock();
+      if (!layer) return;
+      layers.push_back(std::move(layer));
+    }
+    for (int i = layers.size() - 1; i >= 0; --i) {
+      if (!layers[i]->setLayerPropertyValue(layerChanges_[i].propertyPath,
+                                             layerChanges_[i].oldPath)) {
+        for (int rollback = i + 1; rollback < layers.size(); ++rollback) {
+          layers[rollback]->setLayerPropertyValue(
+              layerChanges_[rollback].propertyPath,
+              layerChanges_[rollback].newPath);
+        }
+        return;
       }
     }
+    QVector<QPair<QString, QString>> appliedChanges;
     for (auto it = changes_.crbegin(); it != changes_.crend(); ++it) {
-      service->relinkFootageByPath(it->second, it->first);
+      if (!service->relinkFootageByPath(it->second, it->first)) {
+        for (auto rollback = appliedChanges.crbegin();
+             rollback != appliedChanges.crend(); ++rollback) {
+          service->relinkFootageByPath(rollback->first, rollback->second);
+        }
+        for (int rollback = 0; rollback < layers.size(); ++rollback) {
+          layers[rollback]->setLayerPropertyValue(
+              layerChanges_[rollback].propertyPath,
+              layerChanges_[rollback].newPath);
+        }
+        return;
+      }
+      appliedChanges.push_back(*it);
     }
+    lastOperationSucceeded_ = true;
   }
 
   void redo() override {
     if (firstRedo_) {
       firstRedo_ = false;
+      lastOperationSucceeded_ = true;
       return;
     }
+    lastOperationSucceeded_ = false;
     auto* service = ArtifactProjectService::instance();
     if (!service) return;
-    for (const auto& change : changes_) {
-      service->relinkFootageByPath(change.first, change.second);
-    }
+    QVector<ArtifactAbstractLayerPtr> layers;
+    layers.reserve(layerChanges_.size());
     for (const auto& change : layerChanges_) {
-      if (auto layer = change.layer.lock()) {
-        layer->setLayerPropertyValue(change.propertyPath, change.newPath);
+      auto layer = change.layer.lock();
+      if (!layer) return;
+      layers.push_back(std::move(layer));
+    }
+    QVector<QPair<QString, QString>> appliedChanges;
+    for (const auto& change : changes_) {
+      if (!service->relinkFootageByPath(change.first, change.second)) {
+        for (auto rollback = appliedChanges.crbegin();
+             rollback != appliedChanges.crend(); ++rollback) {
+          service->relinkFootageByPath(rollback->second, rollback->first);
+        }
+        return;
+      }
+      appliedChanges.push_back(change);
+    }
+    for (int i = 0; i < layers.size(); ++i) {
+      const auto& change = layerChanges_[i];
+      if (!layers[i]->setLayerPropertyValue(change.propertyPath,
+                                             change.newPath)) {
+        for (int rollback = i - 1; rollback >= 0; --rollback) {
+          layers[rollback]->setLayerPropertyValue(
+              layerChanges_[rollback].propertyPath,
+              layerChanges_[rollback].oldPath);
+        }
+        for (auto rollback = appliedChanges.crbegin();
+             rollback != appliedChanges.crend(); ++rollback) {
+          service->relinkFootageByPath(rollback->second, rollback->first);
+        }
+        return;
       }
     }
+    lastOperationSucceeded_ = true;
+  }
+
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
+  }
+
+  size_t estimatedMemoryBytes() const override {
+    size_t bytes = sizeof(*this);
+    for (const auto& change : changes_) {
+      bytes += sizeof(change) + static_cast<size_t>(
+          change.first.size() + change.second.size()) * sizeof(QChar);
+    }
+    for (const auto& change : layerChanges_) {
+      bytes += sizeof(change) + static_cast<size_t>(
+          change.propertyPath.size() + change.oldPath.size() +
+          change.newPath.size()) * sizeof(QChar);
+    }
+    return bytes;
   }
 
   QString label() const override { return QStringLiteral("Relink Assets"); }
@@ -368,6 +467,7 @@ private:
   QVector<QPair<QString, QString>> changes_;
   QVector<RelinkLayerSourceChange> layerChanges_;
   bool firstRedo_ = true;
+  bool lastOperationSucceeded_ = true;
 };
 
 bool copyAssetTree(const QString& sourcePath, const QString& destinationPath) {
@@ -432,31 +532,67 @@ public:
                                       QStringLiteral(".asset"));
   }
 
-  void undo() override {
-    if (QFileInfo::exists(backupPath_) && !QFileInfo::exists(path_) &&
-        copyAssetTree(backupPath_, path_)) {
-      if (project_) {
-        for (const QString& file : deletedFiles_) {
-          const auto registration = registrationMetadata_.value(file);
-          project_->addAssetFromPath(file, registration.first, registration.second);
-        }
-      }
+  ~DeleteAssetFileCommand() override {
+    if (QFileInfo(backupPath_).isDir()) {
+      QDir(backupPath_).removeRecursively();
+    } else {
+      QFile::remove(backupPath_);
     }
   }
 
-  void redo() override {
-    if (!QFileInfo::exists(path_)) return;
-    if (deletedFiles_.isEmpty()) collectAssetFiles(path_, deletedFiles_);
-    if (registrationMetadata_.isEmpty()) {
-      collectAssetRegistrationMetadata(project_, deletedFiles_, registrationMetadata_);
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
+  }
+
+  void undo() override {
+    lastOperationSucceeded_ = false;
+    if (!backupReady_ || !QFileInfo::exists(backupPath_) ||
+        QFileInfo::exists(path_) || !copyAssetTree(backupPath_, path_)) {
+      if (QFileInfo::exists(path_)) {
+        QFileInfo restoredInfo(path_);
+        if (restoredInfo.isDir()) {
+          QDir(path_).removeRecursively();
+        } else {
+          QFile::remove(path_);
+        }
+      }
+      return;
     }
-    const bool copied = copyAssetTree(path_, backupPath_);
+    if (project_) {
+      for (const QString& file : deletedFiles_) {
+        const auto registration = registrationMetadata_.value(file);
+        project_->addAssetFromPath(file, registration.first, registration.second);
+      }
+    }
+    lastOperationSucceeded_ = true;
+  }
+
+  void redo() override {
+    lastOperationSucceeded_ = false;
+    if (!QFileInfo::exists(path_)) return;
+    if (!backupReady_) {
+      if (deletedFiles_.isEmpty()) collectAssetFiles(path_, deletedFiles_);
+      if (registrationMetadata_.isEmpty()) {
+        collectAssetRegistrationMetadata(project_, deletedFiles_, registrationMetadata_);
+      }
+      if (!copyAssetTree(path_, backupPath_)) {
+        if (QFileInfo(backupPath_).isDir()) {
+          QDir(backupPath_).removeRecursively();
+        } else {
+          QFile::remove(backupPath_);
+        }
+        return;
+      }
+      backupReady_ = true;
+    }
     const bool removed = QFileInfo(path_).isDir()
                              ? QDir(path_).removeRecursively()
                              : QFile::remove(path_);
-    if (copied && removed && project_) {
+    if (!removed) return;
+    if (project_) {
       for (const QString& file : deletedFiles_) project_->removeAssetByPath(file);
     }
+    lastOperationSucceeded_ = true;
   }
 
   QString label() const override {
@@ -469,6 +605,8 @@ private:
   QString backupPath_;
   QStringList deletedFiles_;
   QHash<QString, QPair<QStringList, double>> registrationMetadata_;
+  bool backupReady_ = false;
+  bool lastOperationSucceeded_ = true;
 };
 
 constexpr int kAssetThumbnailMinPx = 25;
@@ -4140,6 +4278,18 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
  W_OBJECT_IMPL(ArtifactAssetBrowser)
 
+ void ArtifactAssetBrowser::selectionChanged(const QStringList& selectedFiles)
+ {
+  ArtifactCore::globalEventBus().publish<AssetBrowserSelectionChangedEvent>(
+      AssetBrowserSelectionChangedEvent{selectedFiles});
+ }
+
+ void ArtifactAssetBrowser::itemDoubleClicked(const QString& itemPath)
+ {
+  ArtifactCore::globalEventBus().publish<AssetBrowserItemDoubleClickedEvent>(
+      AssetBrowserItemDoubleClickedEvent{itemPath});
+ }
+
  void ArtifactAssetBrowser::mousePressEvent(QMouseEvent* event)
  {
   impl_->defaultHandleMousePressEvent(event);
@@ -4360,7 +4510,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   if (firstSelected.isValid()) {
    impl_->fileView_->setCurrentIndex(firstSelected);
    updateFileInfo(normalizedPaths.first());
-   emit selectionChanged(normalizedPaths);
+   selectionChanged(normalizedPaths);
   }
   impl_->refreshLeftHubSummary();
 }
@@ -4383,12 +4533,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (!filePaths.isEmpty()) {
     auto* svc = ArtifactProjectService::instance();
     if (svc) {
-     QPointer<ArtifactAssetBrowser> owner(this);
-     svc->importAssetsFromPathsAsync(filePaths, [owner](QStringList imported) {
-      if (owner && !imported.isEmpty()) {
-       owner->filesDropped(imported);
-      }
-     });
+     svc->importAssetsFromPathsAsync(filePaths, {});
     }
     // Refresh file view
     impl_->applyFilters();
@@ -4467,8 +4612,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   impl_->applyFilters();
   impl_->syncDirectorySelection();
   impl_->refreshLeftHubSummary();
-  folderChanged(folderPath);
- }
+}
 
  void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)
  {
@@ -4768,13 +4912,27 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     }
     if (auto* service = ArtifactProjectService::instance()) {
      if (auto project = service->getCurrentProjectSharedPtr()) {
-      for (const QString& importedPath : imported) {
-       UndoManager::instance()->push(
-           std::make_unique<AssetRegistrationCommand>(project, importedPath));
+       QStringList unrecorded;
+       for (const QString& importedPath : imported) {
+        auto* undo = UndoManager::instance();
+        if (undo) {
+         if (!undo->push(std::make_unique<AssetRegistrationCommand>(
+                 project, importedPath))) {
+          project->removeAssetByPath(importedPath);
+          unrecorded.append(importedPath);
+         }
+        } else {
+         project->addAssetFromPath(importedPath);
+        }
+      }
+      if (!unrecorded.isEmpty()) {
+       QMessageBox::warning(
+           owner, QStringLiteral("Import Undo Not Recorded"),
+           QStringLiteral("%1 imported asset(s) could not be added to Undo history and were removed from the project.")
+               .arg(unrecorded.size()));
       }
      }
     }
-    owner->filesDropped(imported);
     owner->impl_->applyFilters();
     // Keep the info/preview pane in sync with the refreshed row status.
     owner->updateFileInfo(filePath.isEmpty() ? imported.first() : filePath);
@@ -4811,7 +4969,6 @@ if (item.isFolder) {
      impl_->clearThumbnailCache();
      impl_->applyFilters();
      impl_->syncDirectorySelection();
-     folderChanged(filePath);
     });
    }
 
@@ -4825,10 +4982,17 @@ if (!item.isFolder) {
     // Relink the footage item by path
     auto* svc = ArtifactProjectService::instance();
     if (!svc) return;
-    bool success = svc->relinkFootageByPath(filePath, newPath);
+      bool success = svc->relinkFootageByPath(filePath, newPath);
     if (success) {
-      UndoManager::instance()->push(
-          std::make_unique<RelinkAssetCommand>(filePath, newPath));
+      auto* undo = UndoManager::instance();
+      if (undo && !undo->push(
+              std::make_unique<RelinkAssetCommand>(filePath, newPath))) {
+        svc->relinkFootageByPath(newPath, filePath);
+        QMessageBox::warning(
+            this, QStringLiteral("Relink Not Recorded"),
+            QStringLiteral("The relink could not be recorded in Undo history and was reverted."));
+        return;
+      }
       impl_->applyFilters();
       // Keep the info/preview pane in sync with the refreshed row status.
       updateFileInfo(newPath);
@@ -4888,8 +5052,15 @@ if (!item.isFolder) {
                            QStringLiteral("The selected candidate could not be relinked."));
       return;
     }
-    UndoManager::instance()->push(
-        std::make_unique<RelinkAssetCommand>(filePath, newPath));
+    auto* undo = UndoManager::instance();
+    if (undo && !undo->push(
+            std::make_unique<RelinkAssetCommand>(filePath, newPath))) {
+      svc->relinkFootageByPath(newPath, filePath);
+      QMessageBox::warning(
+          this, QStringLiteral("Relink Not Recorded"),
+          QStringLiteral("The relink could not be recorded in Undo history and was reverted."));
+      return;
+    }
     impl_->applyFilters();
     updateFileInfo(newPath);
   });
@@ -5058,9 +5229,26 @@ if (!item.isFolder) {
         }
         appliedLayers.append(change);
       }
-      UndoManager::instance()->push(
-          std::make_unique<RelinkAssetBatchCommand>(std::move(applied),
-                                                    std::move(layerChanges)));
+      const auto rollbackApplied = [&]() {
+        for (auto it = layerChanges.crbegin(); it != layerChanges.crend(); ++it) {
+          if (auto layer = it->layer.lock()) {
+            layer->setLayerPropertyValue(it->propertyPath, it->oldPath);
+          }
+        }
+        for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
+          svc->relinkFootageByPath(it->second, it->first);
+        }
+      };
+      auto command = std::make_unique<RelinkAssetBatchCommand>(
+          applied, layerChanges);
+      auto* undo = UndoManager::instance();
+      if (undo && !undo->push(std::move(command))) {
+        rollbackApplied();
+        QMessageBox::warning(
+            this, QStringLiteral("Batch Relink Not Recorded"),
+            QStringLiteral("The relink could not be recorded in Undo history and was reverted."));
+        return;
+      }
       impl_->applyFilters();
     });
   }
@@ -5212,10 +5400,28 @@ if (!item.isFolder) {
           QStringLiteral("マスクを置換しますか？\n\n"
                          "Yes: 置換\nNo: 追加"),
           QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-      if (choice == QMessageBox::Yes) {
-        layer->clearMasks();
+      std::vector<LayerMask> before;
+      before.reserve(static_cast<std::size_t>(layer->maskCount()));
+      for (int index = 0; index < layer->maskCount(); ++index) {
+        before.push_back(layer->mask(index));
       }
-      layer->addMask(mask);
+      std::vector<LayerMask> after;
+      if (choice != QMessageBox::Yes) {
+        after = before;
+      }
+      after.push_back(mask);
+      auto command = std::make_unique<MaskEditCommand>(
+          layer, std::move(before), std::move(after));
+      if (auto* undo = UndoManager::instance()) {
+        if (!undo->push(std::move(command))) {
+          return;
+        }
+      } else {
+        command->redo();
+        if (!command->lastOperationSucceeded()) {
+          return;
+        }
+      }
       layer->changed();
     });
   }
@@ -5604,10 +5810,21 @@ void ArtifactAssetBrowser::Impl::renameSelected()
 
   QString newPath = fi.absolutePath() + "/" + newName;
   if (!QFileInfo::exists(newPath)) {
-    UndoManager::instance()->push(std::make_unique<MoveAssetFileCommand>(oldPath, newPath));
+    auto *undo = UndoManager::instance();
+    auto command = std::make_unique<MoveAssetFileCommand>(oldPath, newPath);
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      return;
+    }
     if (!QFileInfo::exists(oldPath) && QFileInfo::exists(newPath)) {
-    clearThumbnailCache();
-    applyFilters();
+      clearThumbnailCache();
+      applyFilters();
     }
   }
 }
@@ -5633,7 +5850,17 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
         std::make_unique<DeleteAssetFileCommand>(project, path));
   }
   if (!deleteCandidates.isEmpty()) {
-    UndoManager::instance()->push(std::move(deleteBatch));
+    auto *undo = UndoManager::instance();
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(deleteBatch));
+    } else {
+      deleteBatch->redo();
+      applied = deleteBatch->lastOperationSucceeded();
+    }
+    if (!applied) {
+      return;
+    }
   }
   for (const QString& path : deleteCandidates) {
     if (!QFileInfo::exists(path)) {

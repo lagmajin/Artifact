@@ -57,10 +57,6 @@ public:
     void setUpdateRate(int fps);
     int updateRate() const;
 
-    signals:
-    void closed() W_SIGNAL(closed);
-    void fullscreenToggled(bool enabled) W_SIGNAL(fullscreenToggled, enabled);
-
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void closeEvent(QCloseEvent* event) override;

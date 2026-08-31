@@ -112,10 +112,11 @@ class ArtifactTimelineWidget :public QWidget {
   void jumpToLastKeyframe();
   bool handleTimelineAction(ArtifactTimelineAction action);
 
-  /*signals:*/
+  // Internal timeline-to-parent notifications. Cross-widget consumers use
+  // TimelineZoomLevelChangedEvent / TimelineDebugMessageEvent instead.
  public:
-  void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
-  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
+  void zoomLevelChanged(double zoomPercent);
+  void timelineDebugMessage(const QString& message);
   
  public slots:
   void onSearchTextChanged(const QString& text);

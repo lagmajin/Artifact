@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <QAction>
 #include <QFont>
 #include <QFontMetrics>
@@ -21,6 +22,7 @@ module Menu.MenuBar;
 import Application.AppSettings;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
@@ -42,6 +44,7 @@ import Menu.Help;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Math.Interpolate;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -157,6 +160,7 @@ public:
  ArtifactOptionMenu* optionMenu = nullptr;
  ArtifactTestMenu* testMenu = nullptr;
  ArtifactHelpMenu* helpMenu = nullptr;
+ std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 };
 
 ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
@@ -211,47 +215,68 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
                     addPanelMenu->clear();
                     auto *window = dynamic_cast<ArtifactMainWindow*>(mainWindow);
                     if (!window) return;
-                    const auto titles = window->dockTitles();
+                    const auto dockIds = window->dockIds();
                     QSettings settings;
-                    const QStringList favorites = settings.value(
-                        QStringLiteral("Workspace/FavoriteDockIds")).toStringList();
-                    const QStringList recent = settings.value(
-                        QStringLiteral("Workspace/RecentDockIds")).toStringList();
-                    auto addActivate = [window](QMenu* menu, const QString& title) {
+                    const auto normalizeDockIds = [window, &dockIds](
+                                                     const QStringList& storedIds) {
+                      QStringList normalized;
+                      for (const QString& storedId : storedIds) {
+                        const QString dockId = window->resolveDockId(storedId);
+                        if (!dockId.isEmpty() && dockIds.contains(dockId) &&
+                            !normalized.contains(dockId)) {
+                          normalized.append(dockId);
+                        }
+                      }
+                      return normalized;
+                    };
+                    const QString favoriteKey = QStringLiteral("Workspace/FavoriteDockIds");
+                    const QString recentKey = QStringLiteral("Workspace/RecentDockIds");
+                    const QStringList storedFavorites = settings.value(favoriteKey).toStringList();
+                    const QStringList favorites = normalizeDockIds(storedFavorites);
+                    if (favorites != storedFavorites) {
+                      settings.setValue(favoriteKey, favorites);
+                    }
+                    const QStringList storedRecent = settings.value(recentKey).toStringList();
+                    const QStringList recent = normalizeDockIds(storedRecent);
+                    if (recent != storedRecent) {
+                      settings.setValue(recentKey, recent);
+                    }
+                    auto addActivate = [window](QMenu* menu, const QString& dockId) {
+                      const QString title = window->dockDisplayTitle(dockId);
                       QAction* action = menu->addAction(title);
                       action->setToolTip(QStringLiteral("Show and activate %1").arg(title));
                       QObject::connect(action, &QAction::triggered, window,
-                                       [window, title]() {
-                                         window->setDockVisible(title, true);
-                                         window->activateDock(title);
+                                       [window, dockId]() {
+                                         window->setDockVisible(dockId, true);
+                                         window->activateDock(dockId);
                                          QSettings settings;
                                          QStringList ids = settings.value(
                                              QStringLiteral("Workspace/RecentDockIds")).toStringList();
-                                         ids.removeAll(title);
-                                         ids.prepend(title);
+                                         ids.removeAll(dockId);
+                                         ids.prepend(dockId);
                                          while (ids.size() > 8) ids.removeLast();
                                          settings.setValue(QStringLiteral("Workspace/RecentDockIds"), ids);
                                        });
                     };
                     auto *recentMenu = addPanelMenu->addMenu(QStringLiteral("最近使ったパネル"));
-                    for (const auto& title : recent) {
-                      if (titles.contains(title)) addActivate(recentMenu, title);
+                    for (const auto& dockId : recent) {
+                      if (dockIds.contains(dockId)) addActivate(recentMenu, dockId);
                     }
                     if (recentMenu->actions().isEmpty()) {
                       recentMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
                     }
                     auto *favoriteMenu = addPanelMenu->addMenu(QStringLiteral("お気に入り"));
-                    for (const auto& title : titles) {
-                      if (favorites.contains(title)) addActivate(favoriteMenu, title);
+                    for (const auto& dockId : dockIds) {
+                      if (favorites.contains(dockId)) addActivate(favoriteMenu, dockId);
                     }
                     if (favoriteMenu->actions().isEmpty()) {
                       favoriteMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
                     }
                     addPanelMenu->addSeparator();
-                    for (const auto& title : titles) {
-                      addActivate(addPanelMenu, title);
+                    for (const auto& dockId : dockIds) {
+                      addActivate(addPanelMenu, dockId);
                     }
-                    if (titles.isEmpty()) {
+                    if (dockIds.isEmpty()) {
                       addPanelMenu->addAction(QStringLiteral("(no panels)"))->setEnabled(false);
                     }
                   });
@@ -278,136 +303,140 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
   menuBar->setFont(menuFont);
  }
 
- connect(animationMenu, &ArtifactAnimationMenu::addKeyframeRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->addKeyframeAtPlayhead();
-  }
- });
-connect(animationMenu, &ArtifactAnimationMenu::applyInterpolationRequested, menuBar,
-         [this](const ArtifactCore::InterpolationType type) {
+ auto& eventBus = ArtifactCore::globalEventBus();
+ eventBusSubscriptions_.push_back(
+     eventBus.subscribe<TimelineInterpolationCommandRequestedEvent>(
+         [this](const TimelineInterpolationCommandRequestedEvent& event) {
           if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-           timeline->applyInterpolationToSelectedKeyframes(type);
+           timeline->applyInterpolationToSelectedKeyframes(event.type);
           }
-         });
- connect(animationMenu, &ArtifactAnimationMenu::showGraphEditorRequested, menuBar, [this]() {
-  if (auto* switches = activeTimelineGlobalSwitches(mainWindow_)) {
-   switches->setGraphEditorActive(true);
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::toggleValueGraphRequested, menuBar,
-         [this]() {
+         }));
+ eventBusSubscriptions_.push_back(
+     eventBus.subscribe<TimelineTimeRemapCommandRequestedEvent>(
+         [this](const TimelineTimeRemapCommandRequestedEvent& event) {
+          auto layer = activeTimelineLayer();
+          if (!layer) {
+           return;
+          }
+          switch (event.kind) {
+          case TimelineTimeRemapCommandKind::Enable:
+           if (!layer->isTimeRemapEnabled()) {
+            layer->setTimeRemapEnabled(true);
+           }
+           break;
+          case TimelineTimeRemapCommandKind::Freeze: {
+           auto comp = currentComposition();
+           if (!comp) {
+            return;
+           }
+           const int64_t compFrame = comp->framePosition().framePosition();
+           const int64_t sourceFrame = static_cast<int64_t>(
+               std::llround(layer->getSourceFrameAtCompFrame(compFrame)));
+           layer->clearTimeRemap();
+           layer->setTimeRemapEnabled(true);
+           layer->setTimeRemapKey(compFrame, static_cast<double>(sourceFrame));
+           break;
+          }
+          case TimelineTimeRemapCommandKind::Reverse: {
+           auto comp = currentComposition();
+           if (!comp) {
+            return;
+           }
+           const int64_t compFrame = comp->framePosition().framePosition();
+           const int64_t clipStartSourceFrame = layer->startTime().framePosition();
+           const int64_t clipFrameCount = std::max<int64_t>(
+               1, layer->outPoint().framePosition() - layer->inPoint().framePosition());
+           const int64_t clipEndSourceFrame = clipStartSourceFrame + clipFrameCount - 1;
+           layer->clearTimeRemap();
+           layer->setTimeRemapEnabled(true);
+           if (clipFrameCount <= 1) {
+            layer->setTimeRemapKey(compFrame, static_cast<double>(clipStartSourceFrame));
+            return;
+           }
+           layer->setTimeRemapKey(layer->inPoint().framePosition(),
+                                  static_cast<double>(clipEndSourceFrame));
+           layer->setTimeRemapKey(layer->outPoint().framePosition() - 1,
+                                  static_cast<double>(clipStartSourceFrame));
+           break;
+          }
+          }
+         }));
+ eventBusSubscriptions_.push_back(
+     eventBus.subscribe<TimelineGraphCommandRequestedEvent>(
+         [this](const TimelineGraphCommandRequestedEvent& event) {
+          switch (event.kind) {
+          case TimelineGraphCommandKind::ShowEditor:
+           if (auto* switches = activeTimelineGlobalSwitches(mainWindow_)) {
+            switches->setGraphEditorActive(true);
+           }
+           break;
+          case TimelineGraphCommandKind::ShowValue:
+           if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+            timeline->showValueGraph();
+           }
+           break;
+          case TimelineGraphCommandKind::ShowSpeed:
+           if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+            timeline->showSpeedGraph();
+           }
+           break;
+          }
+         }));
+ eventBusSubscriptions_.push_back(
+     eventBus.subscribe<TimelineKeyframeEditCommandRequestedEvent>(
+         [this](const TimelineKeyframeEditCommandRequestedEvent& event) {
           if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-           timeline->showValueGraph();
+           switch (event.kind) {
+           case TimelineKeyframeEditCommandKind::Add:
+            timeline->addKeyframeAtPlayhead();
+            break;
+           case TimelineKeyframeEditCommandKind::Remove:
+            timeline->removeKeyframeAtPlayhead();
+            break;
+           case TimelineKeyframeEditCommandKind::SelectAll:
+            timeline->selectAllKeyframes();
+            break;
+           case TimelineKeyframeEditCommandKind::Copy:
+            timeline->copySelectedKeyframes();
+            break;
+           case TimelineKeyframeEditCommandKind::Paste:
+            timeline->pasteKeyframesAtPlayhead();
+            break;
+           case TimelineKeyframeEditCommandKind::ReverseSelected:
+            timeline->reverseSelectedKeyframes();
+            break;
+           case TimelineKeyframeEditCommandKind::ReverseCurrentLayer:
+            timeline->reverseAllKeyframesInCurrentLayer();
+            break;
+           case TimelineKeyframeEditCommandKind::ReverseSelectedLayers:
+            timeline->reverseAllKeyframesInSelectedLayers();
+            break;
+           case TimelineKeyframeEditCommandKind::ReverseComposition:
+            timeline->reverseAllKeyframesInComposition();
+            break;
+           }
           }
-         });
- connect(animationMenu, &ArtifactAnimationMenu::toggleVelocityGraphRequested, menuBar,
-         [this]() {
+         }));
+ eventBusSubscriptions_.push_back(
+     eventBus.subscribe<TimelineKeyframeNavigationRequestedEvent>(
+         [this](const TimelineKeyframeNavigationRequestedEvent& event) {
           if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-           timeline->showSpeedGraph();
+           switch (event.kind) {
+           case TimelineKeyframeNavigationKind::Next:
+            timeline->jumpToKeyframeHit(+1);
+            break;
+           case TimelineKeyframeNavigationKind::Previous:
+            timeline->jumpToKeyframeHit(-1);
+            break;
+           case TimelineKeyframeNavigationKind::First:
+            timeline->jumpToFirstKeyframe();
+            break;
+           case TimelineKeyframeNavigationKind::Last:
+            timeline->jumpToLastKeyframe();
+            break;
+           }
           }
-         });
- connect(animationMenu, &ArtifactAnimationMenu::enableTimeRemapRequested, menuBar, [this]() {
-  auto layer = activeTimelineLayer();
-  if (!layer) {
-   return;
-  }
-  if (!layer->isTimeRemapEnabled()) {
-   layer->setTimeRemapEnabled(true);
-  }
- });
-connect(animationMenu, &ArtifactAnimationMenu::freezeFrameRequested, menuBar, [this]() {
-  auto layer = activeTimelineLayer();
-  auto comp = currentComposition();
-  if (!layer || !comp) {
-   return;
-  }
-  const int64_t compFrame = comp->framePosition().framePosition();
-  const int64_t sourceFrame = static_cast<int64_t>(
-      std::llround(layer->getSourceFrameAtCompFrame(compFrame)));
-  layer->clearTimeRemap();
-  layer->setTimeRemapEnabled(true);
-  layer->setTimeRemapKey(compFrame, static_cast<double>(sourceFrame));
- });
- connect(animationMenu, &ArtifactAnimationMenu::timeReverseRequested, menuBar, [this]() {
-  auto layer = activeTimelineLayer();
-  auto comp = currentComposition();
-  if (!layer || !comp) {
-   return;
-  }
-  const int64_t compFrame = comp->framePosition().framePosition();
-  const int64_t clipStartSourceFrame = layer->startTime().framePosition();
-  const int64_t clipFrameCount =
-      std::max<int64_t>(1, layer->outPoint().framePosition() - layer->inPoint().framePosition());
-  const int64_t clipEndSourceFrame = clipStartSourceFrame + clipFrameCount - 1;
-  layer->clearTimeRemap();
-  layer->setTimeRemapEnabled(true);
-  if (clipFrameCount <= 1) {
-   layer->setTimeRemapKey(compFrame, static_cast<double>(clipStartSourceFrame));
-   return;
-  }
-  layer->setTimeRemapKey(layer->inPoint().framePosition(), static_cast<double>(clipEndSourceFrame));
-  layer->setTimeRemapKey(layer->outPoint().framePosition() - 1, static_cast<double>(clipStartSourceFrame));
- });
- connect(animationMenu, &ArtifactAnimationMenu::removeKeyframeRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->removeKeyframeAtPlayhead();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::selectAllKeyframesRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->selectAllKeyframes();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::reverseSelectedKeyframesRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->reverseSelectedKeyframes();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::reverseAllKeyframesInLayerRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->reverseAllKeyframesInCurrentLayer();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::reverseAllKeyframesInSelectedLayersRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->reverseAllKeyframesInSelectedLayers();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::reverseAllKeyframesInCompositionRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->reverseAllKeyframesInComposition();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::copyKeyframesRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->copySelectedKeyframes();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::pasteKeyframesRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->pasteKeyframesAtPlayhead();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::goToNextKeyframeRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->jumpToKeyframeHit(+1);
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::goToPreviousKeyframeRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->jumpToKeyframeHit(-1);
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::goToFirstKeyframeRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->jumpToFirstKeyframe();
-  }
- });
- connect(animationMenu, &ArtifactAnimationMenu::goToLastKeyframeRequested, menuBar, [this]() {
-  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
-   timeline->jumpToLastKeyframe();
-  }
- });
+         }));
 }
 
 ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)

@@ -69,49 +69,14 @@ public:
   void refreshFromSettings();
 
 public:
-  void homeRequested() W_SIGNAL(homeRequested);
-  void selectToolRequested() W_SIGNAL(selectToolRequested);
-  void handToolRequested() W_SIGNAL(handToolRequested);
-  void zoomToolRequested() W_SIGNAL(zoomToolRequested);
-  void moveToolRequested() W_SIGNAL(moveToolRequested);
-  void rotationToolRequested() W_SIGNAL(rotationToolRequested);
-  void scaleToolRequested() W_SIGNAL(scaleToolRequested);
   void cameraToolRequested() W_SIGNAL(cameraToolRequested);
-  void panBehindToolRequested() W_SIGNAL(panBehindToolRequested);
-  void shapeToolRequested() W_SIGNAL(shapeToolRequested);
-  void penToolRequested() W_SIGNAL(penToolRequested);
-  void textToolRequested() W_SIGNAL(textToolRequested);
-  void brushToolRequested() W_SIGNAL(brushToolRequested);
-  void cloneStampToolRequested() W_SIGNAL(cloneStampToolRequested);
-  void eraserToolRequested() W_SIGNAL(eraserToolRequested);
-  void puppetToolRequested() W_SIGNAL(puppetToolRequested);
-  void motionSketchToolRequested() W_SIGNAL(motionSketchToolRequested);
-  void scrubPreviewToolRequested() W_SIGNAL(scrubPreviewToolRequested);
-
-  // Zoom signals
-  void zoomInRequested() W_SIGNAL(zoomInRequested);
-  void zoomOutRequested() W_SIGNAL(zoomOutRequested);
-  void zoomFitRequested() W_SIGNAL(zoomFitRequested);
-  void zoom100Requested() W_SIGNAL(zoom100Requested);
-
-  // Grid/Guide signals
-  void gridToggled(bool visible) W_SIGNAL(gridToggled, visible);
-  void guideToggled(bool visible) W_SIGNAL(guideToggled, visible);
 
   // View mode signals
   void viewModeChanged(const QString &mode) W_SIGNAL(viewModeChanged, mode);
 
-  // Display mode signal
-  void displayModeChanged(ToolBarDisplayMode mode)
-      W_SIGNAL(displayModeChanged, mode);
+  // Workspace state notification
+  void workspaceModeChanged(WorkspaceMode mode);
 
-  // Workspace signal
-  void workspaceModeChanged(WorkspaceMode mode)
-      W_SIGNAL(workspaceModeChanged, mode);
-
-  // Current tool signal
-  void currentToolChanged(const QString &toolName)
-      W_SIGNAL(currentToolChanged, toolName);
 };
 
 }; // namespace Artifact

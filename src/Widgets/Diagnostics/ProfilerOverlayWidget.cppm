@@ -9,6 +9,7 @@ module;
 
 #include <QColor>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QMetaObject>
 #include <QPainter>
@@ -141,8 +142,7 @@ void ProfilerOverlayWidget::paintEvent(QPaintEvent*) {
     p.setRenderHint(QPainter::Antialiasing, false);
     p.fillRect(rect(), kBgColor);
 
-    QFont font;
-    font.setFamily(QStringLiteral("Consolas"));
+    QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     font.setPointSize(8);
     p.setFont(font);
     QFontMetrics fm(font);

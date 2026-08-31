@@ -357,8 +357,12 @@ ArtifactCore::RationalTime effectiveShapeTimelineTime(const ArtifactShapeLayer* 
   if (auto* composition = dynamic_cast<Artifact::ArtifactAbstractComposition*>(
           layer->compositionObject())) {
    frame = composition->framePosition().framePosition();
-   fps = std::max<int64_t>(
-       1, static_cast<int64_t>(std::llround(composition->frameRate().framerate())));
+   const double rawFps = composition->frameRate().framerate();
+   fps = std::isfinite(rawFps) && rawFps > 0.0
+             ? std::max<int64_t>(
+                   1, static_cast<int64_t>(std::llround(
+                          std::clamp(rawFps, 1.0, 10000.0))))
+             : 30;
   } else {
    frame = layer->currentFrame();
   }

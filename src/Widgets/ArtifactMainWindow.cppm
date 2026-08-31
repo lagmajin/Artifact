@@ -39,6 +39,7 @@ module;
 #include <QLayout>
 #include <QList>
 #include <cmath>
+#include <QMetaObject>
 #include <QMessageBox>
 #include <QMenu>
 #include <QObject>
@@ -49,6 +50,7 @@ module;
 #include <QShowEvent>
 #include <QStatusBar>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -66,6 +68,7 @@ import Widgets.Common.DialogPlacement;
 import Artifact.Application.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Tool.Brush;
+import Artifact.Tool.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layers.Selection.Manager;
@@ -600,12 +603,15 @@ void pushDockLayoutSnapshot(ArtifactMainWindow *window,
 
   const QPointer<ArtifactMainWindow> windowGuard(window);
   if (auto *mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<LayoutSnapshotCommand>(
+    const bool pushed = mgr->push(std::make_unique<LayoutSnapshotCommand>(
         label, beforeState, afterState,
         [windowGuard](const QByteArray &state) -> bool {
           return windowGuard ? windowGuard->restoreDockManagerState(state)
                              : false;
         }));
+    if (!pushed && windowGuard) {
+      windowGuard->restoreDockManagerState(beforeState);
+    }
   }
 }
 
@@ -672,6 +678,80 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
   scheduleFloatingRefresh(floatingWidget);
 }
 #endif
+
+constexpr auto kUnsavedCloseGuardSatisfiedProperty =
+    "artifactUnsavedCloseGuardSatisfied";
+
+bool confirmUnsavedChangesForClose(QWidget *parent)
+{
+  auto *service = ArtifactProjectService::instance();
+  if (!service || !service->hasProject()) {
+    return true;
+  }
+
+  auto project = service->getCurrentProjectSharedPtr();
+  if (!project) {
+    return true;
+  }
+
+  bool hasUnsavedChanges = project->isDirty();
+  if (!hasUnsavedChanges) {
+    if (auto *undoManager = UndoManager::instance()) {
+      hasUnsavedChanges = undoManager->hasUnsavedChanges();
+    }
+  }
+  if (!hasUnsavedChanges) {
+    return true;
+  }
+
+  QMessageBox box(parent);
+  box.setWindowTitle(QStringLiteral("保存の確認"));
+  box.setIcon(QMessageBox::Warning);
+  box.setText(QStringLiteral(
+      "プロジェクトに変更があります。終了前に保存しますか？"));
+  box.setInformativeText(QStringLiteral(
+      "未保存の変更は失われる可能性があります。"));
+  auto *saveButton = box.addButton(QStringLiteral("保存"),
+                                    QMessageBox::AcceptRole);
+  auto *discardButton = box.addButton(QStringLiteral("破棄"),
+                                       QMessageBox::DestructiveRole);
+  auto *cancelButton = box.addButton(QStringLiteral("キャンセル"),
+                                      QMessageBox::RejectRole);
+  box.setDefaultButton(saveButton);
+  box.exec();
+
+  if (box.clickedButton() == cancelButton) {
+    return false;
+  }
+  if (box.clickedButton() == discardButton) {
+    return true;
+  }
+
+  auto &manager = ArtifactProjectManager::getInstance();
+  QString path = manager.currentProjectPath();
+  if (path.isEmpty()) {
+    path = QFileDialog::getSaveFileName(
+        parent, QStringLiteral("プロジェクトを保存"), QString(),
+        QStringLiteral("Artifact Project (*.artifact *.json);;All Files (*.*)"));
+    if (path.isEmpty()) {
+      return false;
+    }
+  }
+
+  const auto result = manager.saveToFile(path);
+  if (result.success) {
+    return true;
+  }
+
+  const QString error = result.errorMessage.trimmed();
+  QMessageBox::warning(
+      parent, QStringLiteral("保存できませんでした"),
+      error.isEmpty()
+          ? QStringLiteral(
+                "変更を保存できませんでした。保存先とプロジェクトの状態を確認してください。")
+          : QStringLiteral("変更を保存できませんでした。\n%1").arg(error));
+  return false;
+}
 } // namespace
 
 W_OBJECT_IMPL(ArtifactMainWindow)
@@ -1099,11 +1179,40 @@ public:
   bool recordLayoutMutations = true;
   ArtifactAICloudWidget *aiCloudWidget_ = nullptr;
   QLabel *previewResolutionLabel = nullptr;
+  QPointer<QLabel> statusZoomLabel;
+  QPointer<QLabel> statusCoordinatesLabel;
+  QPointer<QLabel> statusMemoryLabel;
+  QPointer<QLabel> statusFpsLabel;
+  bool hasStatusZoomLevel = false;
+  float statusZoomLevel = 100.0f;
+  bool hasStatusCoordinates = false;
+  int statusCoordinateX = 0;
+  int statusCoordinateY = 0;
+  bool hasStatusMemoryUsage = false;
+  uint64_t statusMemoryUsageMB = 0;
+  bool hasStatusFPS = false;
+  double statusFPS = 0.0;
+
+  QLabel *ensureStatusLabel(QPointer<QLabel> &label,
+                            const QString &objectName,
+                            const QString &accessibleName) {
+    if (!statusBar) {
+      return nullptr;
+    }
+    if (!label) {
+      label = statusBar->findChild<QLabel *>(objectName);
+    }
+    if (!label || label->parent() != statusBar) {
+      label = new QLabel(statusBar);
+      label->setObjectName(objectName);
+      label->setAccessibleName(accessibleName);
+      statusBar->addPermanentWidget(label);
+    }
+    return label;
+  }
 #if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   QHash<CDockWidget *, std::function<QWidget *()>> lazyDockFactories;
 #endif
-  QMetaObject::Connection currentTextLayerChangedConnection;
-  QMetaObject::Connection currentShapeLayerChangedConnection;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
@@ -1234,10 +1343,6 @@ public:
       return;
     }
 
-    if (currentTextLayerChangedConnection) {
-      QObject::disconnect(currentTextLayerChangedConnection);
-    }
-
     auto *app = ArtifactApplicationManager::instance();
     auto *selection = app ? app->layerSelectionManager() : nullptr;
     const auto current =
@@ -1258,21 +1363,11 @@ public:
         static_cast<int>(textLayer->wrapMode()),
         static_cast<int>(textLayer->layoutMode()), true);
 
-    currentTextLayerChangedConnection = QObject::connect(
-        current.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
-          if (owner && owner->impl_) {
-            owner->impl_->syncTextToolOptions(owner);
-          }
-        });
   }
 
   void syncShapeToolOptions(ArtifactMainWindow *owner) {
     if (!owner || !toolOptionsBar) {
       return;
-    }
-
-    if (currentShapeLayerChangedConnection) {
-      QObject::disconnect(currentShapeLayerChangedConnection);
     }
 
     auto *app = ArtifactApplicationManager::instance();
@@ -1310,12 +1405,6 @@ public:
                    0, 100),
         std::max(3, shapeLayer->polygonSides()), true);
 
-    currentShapeLayerChangedConnection = QObject::connect(
-        current.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
-          if (owner && owner->impl_) {
-            owner->impl_->syncShapeToolOptions(owner);
-          }
-        });
   }
 };
 
@@ -1406,31 +1495,56 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->rootLayout->addWidget(impl_->toolOptionsHost);
   toolBar->setToolOptionsBar(impl_->toolOptionsBar);
   toolBar->refreshFromApplicationState();
-  QObject::connect(toolBar, &ArtifactToolBar::workspaceModeChanged, this,
-                   [this](WorkspaceMode mode) {
-                     if (impl_) {
-                       impl_->workspaceMode_ = mode;
-                       if (impl_->workspaceButton) {
-                         impl_->workspaceButton->setText(Artifact::workspaceModeText(mode));
-                       }
-                     }
-                   });
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<WorkspaceModeChangedEvent>(
+          [this](const WorkspaceModeChangedEvent &event) {
+            const int modeValue = event.mode;
+            const auto apply = [this, modeValue]() {
+              if (!impl_ ||
+                  modeValue < static_cast<int>(WorkspaceMode::Default) ||
+                  modeValue > static_cast<int>(WorkspaceMode::Audio)) {
+                return;
+              }
+              const auto mode = static_cast<WorkspaceMode>(modeValue);
+              impl_->workspaceMode_ = mode;
+              if (impl_->workspaceButton) {
+                impl_->workspaceButton->setText(
+                    Artifact::workspaceModeText(mode));
+              }
+            };
+            if (QThread::currentThread() == thread()) {
+              apply();
+            } else {
+              QMetaObject::invokeMethod(this, apply, Qt::QueuedConnection);
+            }
+          }));
 
-  // Tool signal routing
-  QObject::connect(
-      toolBar, &ArtifactToolBar::moveToolRequested, this,
-      [this]() { qDebug() << "[MainWindow] Move tool selected (W)"; });
-  QObject::connect(
-      toolBar, &ArtifactToolBar::rotationToolRequested, this,
-      [this]() { qDebug() << "[MainWindow] Rotate tool selected (E)"; });
-  QObject::connect(
-      toolBar, &ArtifactToolBar::scaleToolRequested, this,
-      [this]() { qDebug() << "[MainWindow] Scale tool selected (R)"; });
+  // Tool diagnostics use the existing internal tool state event. The toolbar
+  // action itself remains a local widget boundary.
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ToolChangedEvent>(
+          [](const ToolChangedEvent &event) {
+            switch (event.toolType) {
+            case ToolType::Move:
+              qDebug() << "[MainWindow] Move tool selected (W)";
+              break;
+            case ToolType::Rotation:
+              qDebug() << "[MainWindow] Rotate tool selected (E)";
+              break;
+            case ToolType::Scale:
+              qDebug() << "[MainWindow] Scale tool selected (R)";
+              break;
+            default:
+              break;
+            }
+          }));
 
-  QObject::connect(
-      impl_->toolOptionsBar, &ArtifactToolOptionsBar::optionChanged, this,
-      [this](const QString &toolName, const QString &optionName,
-             const QVariant &value) {
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ToolOptionChangedEvent>(
+          [this](const ToolOptionChangedEvent &event) {
+        const QString &toolName = event.toolName;
+        const QString &optionName = event.optionName;
+        const QVariant &value = event.value;
         auto *app = ArtifactApplicationManager::instance();
         auto *selection = app ? app->layerSelectionManager() : nullptr;
         const auto current =
@@ -1787,7 +1901,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                                 shapeLayer->id().toString(),
                                 LayerChangedEvent::ChangeType::Modified});
         }
-      });
+      }));
 
   // Restore the shared brush profile after the option route is established.
   // The toolbar widgets may be recreated independently, so the BrushTool is
@@ -1903,6 +2017,29 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
           impl_->syncShapeToolOptions(this);
         }
       }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerChangedEvent>(
+          [this](const LayerChangedEvent &event) {
+            const auto refresh = [this, layerId = event.layerId]() {
+              if (!impl_) {
+                return;
+              }
+              auto *app = ArtifactApplicationManager::instance();
+              auto *selection = app ? app->layerSelectionManager() : nullptr;
+              const auto current = selection ? selection->currentLayer()
+                                             : ArtifactAbstractLayerPtr{};
+              if (!current || current->id().toString() != layerId) {
+                return;
+              }
+              impl_->syncTextToolOptions(this);
+              impl_->syncShapeToolOptions(this);
+            };
+            if (QThread::currentThread() == thread()) {
+              refresh();
+            } else {
+              QMetaObject::invokeMethod(this, refresh, Qt::QueuedConnection);
+            }
+          }));
   impl_->syncTextToolOptions(this);
   impl_->syncShapeToolOptions(this);
 
@@ -1935,8 +2072,10 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->welcomeWidget->hide();
   // Sync welcome widget size with central host when it resizes
   impl_->centralWidgetHost->installEventFilter(this);
-  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::openRecentProject, this,
-      [this](const QString& path) {
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<OpenRecentProjectRequestedEvent>(
+      [this](const OpenRecentProjectRequestedEvent& event) {
+          const QString path = event.path;
           if (!path.isEmpty()) {
               const QPointer<ArtifactMainWindow> windowGuard(this);
               ArtifactProjectManager::getInstance().loadFromFileAsync(
@@ -1953,63 +2092,66 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                               : QStringLiteral("Failed to open project.\n%1").arg(error));
                   });
           }
-      });
-  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::createNewComposition, this,
-      [this]() {
-          auto* svc = ArtifactProjectService::instance();
-          if (!svc) return;
-          if (!svc->ensureProject()) return;
-          svc->createComposition(ArtifactCompositionInitParams::hdPreset());
-      });
-  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::importAsset, this,
-      [this]() {
-          auto* svc = ArtifactProjectService::instance();
-          if (!svc || !svc->ensureProject()) return;
-          if (svc) {
-              const QStringList files = QFileDialog::getOpenFileNames(
-                  this, QStringLiteral("Import Assets"));
-              if (!files.isEmpty()) {
-                  ArtifactImportAssetsDialog dialog(files, this);
-                  if (dialog.exec() == QDialog::Accepted) {
-                      const QStringList filtered = dialog.selectedPaths();
-                      if (!filtered.isEmpty()) {
-                          const QPointer<ArtifactMainWindow> windowGuard(this);
-                          svc->importAssetsFromPathsAsync(
-                              filtered,
-                              [windowGuard](const QStringList& imported) {
-                                  if (!windowGuard || !imported.isEmpty()) {
-                                      return;
-                                  }
-                                  QMessageBox::warning(
-                                      windowGuard, QStringLiteral("Import Assets"),
-                                      QStringLiteral("No assets could be imported."));
-                              });
-                      }
-                  }
-              }
-          }
-      });
-  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::openProject, this,
-      [this]() {
-          const QString path = QFileDialog::getOpenFileName(
-              this, QStringLiteral("Open Project"));
-          if (!path.isEmpty()) {
-              const QPointer<ArtifactMainWindow> windowGuard(this);
-              ArtifactProjectManager::getInstance().loadFromFileAsync(
-                  path,
-                  [windowGuard, path](const ArtifactProjectImporterResult& result) {
-                      if (!windowGuard || result.success) {
-                          return;
-                      }
-                      const QString error = result.errorMessage.toQString();
-                      QMessageBox::warning(
-                          windowGuard, QStringLiteral("Open Project"),
-                          error.isEmpty()
-                              ? QStringLiteral("Failed to open project.\n%1").arg(path)
-                              : QStringLiteral("Failed to open project.\n%1").arg(error));
-                  });
-          }
-      });
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CreateCompositionRequestedEvent>(
+          [this](const CreateCompositionRequestedEvent&) {
+            auto* svc = ArtifactProjectService::instance();
+            if (!svc) return;
+            if (!svc->ensureProject()) return;
+            svc->createComposition(ArtifactCompositionInitParams::hdPreset());
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ImportAssetsRequestedEvent>(
+          [this](const ImportAssetsRequestedEvent&) {
+            auto* svc = ArtifactProjectService::instance();
+            if (!svc || !svc->ensureProject()) return;
+            if (svc) {
+                const QStringList files = QFileDialog::getOpenFileNames(
+                    this, QStringLiteral("Import Assets"));
+                if (!files.isEmpty()) {
+                    ArtifactImportAssetsDialog dialog(files, this);
+                    if (dialog.exec() == QDialog::Accepted) {
+                        const QStringList filtered = dialog.selectedPaths();
+                        if (!filtered.isEmpty()) {
+                            const QPointer<ArtifactMainWindow> windowGuard(this);
+                            svc->importAssetsFromPathsAsync(
+                                filtered,
+                                [windowGuard](const QStringList& imported) {
+                                    if (!windowGuard || !imported.isEmpty()) {
+                                        return;
+                                    }
+                                    QMessageBox::warning(
+                                        windowGuard, QStringLiteral("Import Assets"),
+                                        QStringLiteral("No assets could be imported."));
+                                });
+                        }
+                    }
+                }
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<OpenProjectRequestedEvent>(
+          [this](const OpenProjectRequestedEvent&) {
+            const QString path = QFileDialog::getOpenFileName(
+                this, QStringLiteral("Open Project"));
+            if (!path.isEmpty()) {
+                const QPointer<ArtifactMainWindow> windowGuard(this);
+                ArtifactProjectManager::getInstance().loadFromFileAsync(
+                    path,
+                    [windowGuard, path](const ArtifactProjectImporterResult& result) {
+                        if (!windowGuard || result.success) {
+                            return;
+                        }
+                        const QString error = result.errorMessage.toQString();
+                        QMessageBox::warning(
+                            windowGuard, QStringLiteral("Open Project"),
+                            error.isEmpty()
+                                ? QStringLiteral("Failed to open project.\n%1").arg(path)
+                                : QStringLiteral("Failed to open project.\n%1").arg(error));
+                    });
+            }
+          }));
   // Keep recent-project data fresh without covering Composition Viewer.
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>(
@@ -3080,27 +3222,78 @@ WorkspaceMode ArtifactMainWindow::workspaceMode() const {
 
 QStringList ArtifactMainWindow::dockTitles() const {
   QStringList titles;
-  if (!impl_)
-    return titles;
-  for (auto *dock : impl_->dockWidgets) {
-    if (dock) {
-      const QString name = dock->objectName();
-      const QString title = dock->windowTitle();
-      titles.append(title.isEmpty() ? name : title);
-    }
-  }
-  if (impl_->nativeDockSurface) {
-    for (auto it = impl_->nativeDockWidgets.cbegin();
-         it != impl_->nativeDockWidgets.cend(); ++it) {
-      const auto &dockId = it.key();
-      const QString title = impl_->nativeDockSurface->dockTitle(dockId);
-      if (!title.isEmpty()) {
-        titles.append(title);
-      }
+  for (const QString &dockId : dockIds()) {
+    const QString title = dockDisplayTitle(dockId);
+    if (!title.isEmpty()) {
+      titles.append(title);
     }
   }
   titles.removeDuplicates();
   return titles;
+}
+
+QStringList ArtifactMainWindow::dockIds() const {
+  QStringList ids;
+  if (!impl_)
+    return ids;
+  if (impl_->nativeDockSurface) {
+    for (auto it = impl_->nativeDockWidgets.cbegin();
+         it != impl_->nativeDockWidgets.cend(); ++it) {
+      if (!it.key().isEmpty()) {
+        ids.append(it.key());
+      }
+    }
+  } else {
+    for (auto *dock : impl_->dockWidgets) {
+      if (!dock)
+        continue;
+      const QString dockId = dock->objectName().trimmed();
+      const QString title = dock->windowTitle().trimmed();
+      if (!dockId.isEmpty()) {
+        ids.append(dockId);
+      } else if (!title.isEmpty()) {
+        ids.append(title);
+      }
+    }
+  }
+  ids.removeDuplicates();
+  return ids;
+}
+
+QString ArtifactMainWindow::dockDisplayTitle(const QString &dockId) const {
+  if (!impl_ || dockId.isEmpty())
+    return {};
+  if (impl_->nativeDockSurface &&
+      impl_->nativeDockWidgets.contains(dockId)) {
+    const QString title = impl_->nativeDockSurface->dockTitle(dockId);
+    return title.isEmpty() ? dockId : title;
+  }
+  if (impl_->nativeDockSurface)
+    return {};
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && dock->objectName() == dockId) {
+      const QString title = dock->windowTitle();
+      return title.isEmpty() ? dockId : title;
+    }
+  }
+  return {};
+}
+
+QString ArtifactMainWindow::resolveDockId(const QString &dockIdOrTitle) const {
+  if (dockIdOrTitle.isEmpty())
+    return {};
+  const QStringList ids = dockIds();
+  if (ids.contains(dockIdOrTitle))
+    return dockIdOrTitle;
+  QString matchedId;
+  for (const QString &dockId : ids) {
+    if (dockDisplayTitle(dockId) != dockIdOrTitle)
+      continue;
+    if (!matchedId.isEmpty())
+      return {};
+    matchedId = dockId;
+  }
+  return matchedId;
 }
 
 bool ArtifactMainWindow::isDockVisible(const QString &title) const {
@@ -3150,25 +3343,58 @@ bool ArtifactMainWindow::hasDock(const QString &title) const {
 }
 
 void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent) {
-  if (!impl_ || !impl_->statusBar) return;
-  impl_->statusBar->showMessage(
-      QStringLiteral("Zoom: %1%").arg(static_cast<int>(zoomPercent)), 1000);
+  if (!impl_) return;
+  const float normalized = std::isfinite(zoomPercent)
+      ? std::clamp(zoomPercent, 0.0f, 100000.0f)
+      : 100.0f;
+  impl_->statusZoomLevel = normalized;
+  impl_->hasStatusZoomLevel = true;
+  if (!impl_->statusBar) return;
+  if (auto *label = impl_->ensureStatusLabel(
+          impl_->statusZoomLabel, QStringLiteral("ZoomStatusLabel"),
+          QStringLiteral("Viewport zoom"))) {
+    label->setText(QStringLiteral("Zoom: %1%").arg(
+        QString::number(normalized, 'f', normalized < 100.0f ? 1 : 0)));
+  }
 }
 
 void ArtifactMainWindow::setStatusCoordinates(int x, int y) {
-  if (!impl_ || !impl_->statusBar) return;
-  impl_->statusBar->showMessage(QStringLiteral("X: %1 Y: %2").arg(x).arg(y), 1000);
+  if (!impl_) return;
+  impl_->statusCoordinateX = x;
+  impl_->statusCoordinateY = y;
+  impl_->hasStatusCoordinates = true;
+  if (!impl_->statusBar) return;
+  if (auto *label = impl_->ensureStatusLabel(
+          impl_->statusCoordinatesLabel, QStringLiteral("CoordinatesStatusLabel"),
+          QStringLiteral("Viewport coordinates"))) {
+    label->setText(QStringLiteral("X: %1  Y: %2").arg(x).arg(y));
+  }
 }
 
 void ArtifactMainWindow::setStatusMemoryUsage(uint64_t memoryMB) {
-  if (!impl_ || !impl_->statusBar) return;
-  impl_->statusBar->showMessage(QStringLiteral("Memory: %1 MB").arg(memoryMB), 1000);
+  if (!impl_) return;
+  impl_->statusMemoryUsageMB = memoryMB;
+  impl_->hasStatusMemoryUsage = true;
+  if (!impl_->statusBar) return;
+  if (auto *label = impl_->ensureStatusLabel(
+          impl_->statusMemoryLabel, QStringLiteral("MemoryStatusLabel"),
+          QStringLiteral("Memory usage"))) {
+    label->setText(QStringLiteral("Memory: %1 MB").arg(memoryMB));
+  }
 }
 
 void ArtifactMainWindow::setStatusFPS(double fps) {
-  if (!impl_ || !impl_->statusBar) return;
-  impl_->statusBar->showMessage(
-      QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', 1)), 1000);
+  if (!impl_) return;
+  const double normalized = std::isfinite(fps) ? std::max(0.0, fps) : 0.0;
+  impl_->statusFPS = normalized;
+  impl_->hasStatusFPS = true;
+  if (!impl_->statusBar) return;
+  if (auto *label = impl_->ensureStatusLabel(
+          impl_->statusFpsLabel, QStringLiteral("FpsStatusLabel"),
+          QStringLiteral("Frames per second"))) {
+    label->setText(QStringLiteral("FPS: %1")
+                       .arg(QString::number(normalized, 'f', 1)));
+  }
 }
 
 void ArtifactMainWindow::setStatusPreviewResolution(int percent) {
@@ -3205,6 +3431,18 @@ void ArtifactMainWindow::setStatusBar(QStatusBar *statusBar) {
   statusBar->setParent(this);
   impl_->statusBar = statusBar;
   impl_->rootLayout->addWidget(statusBar);
+  if (impl_->hasStatusZoomLevel) {
+    setStatusZoomLevel(impl_->statusZoomLevel);
+  }
+  if (impl_->hasStatusCoordinates) {
+    setStatusCoordinates(impl_->statusCoordinateX, impl_->statusCoordinateY);
+  }
+  if (impl_->hasStatusMemoryUsage) {
+    setStatusMemoryUsage(impl_->statusMemoryUsageMB);
+  }
+  if (impl_->hasStatusFPS) {
+    setStatusFPS(impl_->statusFPS);
+  }
 }
 
 void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
@@ -3599,6 +3837,13 @@ void ArtifactMainWindow::keyReleaseEvent(QKeyEvent *event) {
 }
 
 void ArtifactMainWindow::closeEvent(QCloseEvent *event) {
+  const bool unsavedGuardSatisfied =
+      property(kUnsavedCloseGuardSatisfiedProperty).toBool();
+  setProperty(kUnsavedCloseGuardSatisfiedProperty, false);
+  if (!unsavedGuardSatisfied && !confirmUnsavedChangesForClose(this)) {
+    event->ignore();
+    return;
+  }
   if (ArtifactMessageBox::confirmAction(
           this, QStringLiteral("終了"),
           QStringLiteral("Artifact を終了しますか？"))) {

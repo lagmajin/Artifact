@@ -15,8 +15,8 @@ public:
     ~ArtifactClipBufferWidget();
 
 public:
-    // Event/Signal to request paste of stored item
-    void clipPasteRequested(const QVariant &data) W_SIGNAL(clipPasteRequested, data);
+    // Cross-widget paste is published as ClipPasteRequestedEvent.
+    void clipPasteRequested(const QVariant &data);
 
 private:
     class Impl;

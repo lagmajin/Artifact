@@ -505,6 +505,7 @@ public:
     bool isExpanded() const;
     void setInlineEditorWidget(QWidget* editorWidget);
     void setResetHandler(std::function<void()> handler);
+    void setCancelHandler(std::function<void()> handler);
     void setAuxAction(std::function<void()> handler, const QString& label);
     void setKeyframeHandler(KeyFrameHandler handler);
     void setNavigationHandler(NavigationHandler handler);
@@ -553,6 +554,7 @@ private:
     std::function<void()> expressionHandler_;
     std::function<void(const QString&)> expressionReferenceDropHandler_;
     std::function<void()> resetHandler_;
+    std::function<void()> cancelHandler_;
     std::function<void()> auxActionHandler_;
     std::function<void(bool)> favoriteHandler_;
     KeyFrameHandler keyframeHandler_;

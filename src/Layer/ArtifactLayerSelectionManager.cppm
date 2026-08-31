@@ -42,6 +42,8 @@ module Artifact.Layers.Selection.Manager;
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -90,7 +92,8 @@ namespace Artifact {
    impl_->currentLayer_.reset();
   }
   if (!sameSingleSelection || currentChanged) {
-   selectionChanged();
+   ArtifactCore::globalEventBus().publish<
+       Artifact::LayerSelectionManagerSelectionChangedEvent>({});
   }
  }
 
@@ -105,7 +108,8 @@ namespace Artifact {
   }
   impl_->currentLayer_ = layer;
   if (changed || currentChanged) {
-   selectionChanged();
+   ArtifactCore::globalEventBus().publish<
+       Artifact::LayerSelectionManagerSelectionChangedEvent>({});
   }
  }
 
@@ -121,7 +125,8 @@ namespace Artifact {
                                ? ArtifactAbstractLayerPtr{}
                                : impl_->selectedLayerOrder_.last();
    }
-   selectionChanged();
+   ArtifactCore::globalEventBus().publish<
+       Artifact::LayerSelectionManagerSelectionChangedEvent>({});
   }
  }
 
@@ -130,7 +135,8 @@ namespace Artifact {
    impl_->selectedLayers_.clear();
    impl_->selectedLayerOrder_.clear();
    impl_->currentLayer_.reset();
-   selectionChanged();
+   ArtifactCore::globalEventBus().publish<
+       Artifact::LayerSelectionManagerSelectionChangedEvent>({});
   }
  }
 
@@ -156,8 +162,7 @@ namespace Artifact {
  void ArtifactLayerSelectionManager::setActiveComposition(const ArtifactCompositionPtr& comp) {
   if (impl_->activeComp_ == comp) return;
   impl_->activeComp_ = comp;
-  activeCompositionChanged();
- }
+}
 
  ArtifactCompositionPtr ArtifactLayerSelectionManager::activeComposition() const {
   return impl_->activeComp_;

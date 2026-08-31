@@ -6,6 +6,7 @@
 #include <QSettings>
 
 #include <iostream>
+#include <cstddef>
 #include <vector>
 #include <string>
 #include <map>
@@ -172,6 +173,34 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         const QVariantMap preflight = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("agentPreflight"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(preflight).toJson(QJsonDocument::Compact));
     });
+    registerWorkspaceMethod("workspaceDiagnostics", []() {
+        const QVariantMap diagnostics = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("workspaceDiagnostics"), {}).toMap();
+        return QString::fromUtf8(QJsonDocument::fromVariant(diagnostics).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("agentContract", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("agentContract"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("commandVocabulary", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("commandVocabulary"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("selectionSnapshot", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("selectionSnapshot"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("get_selected_layers", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("get_selected_layers"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("renderQueueSnapshot", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("renderQueueSnapshot"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("get_render_queue_summary", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("get_render_queue_summary"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
     registerWorkspaceMethod("projectSnapshot", []() {
         const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("projectSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
@@ -179,6 +208,14 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
     registerWorkspaceMethod("currentCompositionSnapshot", []() {
         const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("currentCompositionSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("get_project_overview", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("get_project_overview"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
+    registerWorkspaceMethod("get_active_composition", []() {
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("get_active_composition"), {});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("currentCompositionThumbnailAtFrame", [](const std::vector<std::string>& args) -> QString {
         int frame = args.size() > 0 ? QString::fromStdString(args[0]).toInt() : 0;
@@ -196,6 +233,332 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         const QVariantList layers = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("listCurrentCompositionLayers"), {}).toList();
         return QString::fromUtf8(QJsonDocument::fromVariant(layers).toJson(QJsonDocument::Compact));
     });
+
+    // Read-only discovery and verification methods. Keep these on the same
+    // JSON bridge as the existing workspace snapshots so Python hooks can
+    // inspect state without reimplementing C++-side lookup rules.
+    const auto jsonWorkspaceResult = [](QStringView method,
+                                        const QVariantList& args) -> QString {
+        const QVariant result =
+            WorkspaceAutomation::instance().invokeMethod(method, args);
+        return QString::fromUtf8(
+            QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    };
+    const auto workspaceStringArg = [](const std::vector<std::string>& args,
+                                       const std::size_t index) -> QString {
+        return index < args.size() ? QString::fromStdString(args[index]) : QString{};
+    };
+    const auto workspaceIntArg = [](const std::vector<std::string>& args,
+                                    const std::size_t index,
+                                    const int fallback = 0) -> int {
+        return index < args.size()
+                   ? QString::fromStdString(args[index]).toInt()
+                   : fallback;
+    };
+    const auto workspaceJsonMapArg =
+        [](const std::vector<std::string>& args,
+           const std::size_t index) -> QVariantMap {
+        if (index >= args.size()) {
+            return {};
+        }
+        const QJsonDocument document = QJsonDocument::fromJson(
+            QString::fromStdString(args[index]).toUtf8());
+        return document.isObject() ? document.object().toVariantMap()
+                                   : QVariantMap{};
+    };
+
+    registerWorkspaceMethod("safeWriteAuditLogSnapshot",
+                            [jsonWorkspaceResult]() {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("safeWriteAuditLogSnapshot"), {});
+                            });
+    registerWorkspaceMethod("getViewportSettings", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("getViewportSettings"), {});
+    });
+    registerWorkspaceMethod("describeViewportSettings", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("describeViewportSettings"), {});
+    });
+    registerWorkspaceMethod("listProjectItems", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("listProjectItems"), {});
+    });
+    registerWorkspaceMethod("listRenderQueueJobs", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("listRenderQueueJobs"), {});
+    });
+    registerWorkspaceMethod("getEffectRegistryMetadata", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("getEffectRegistryMetadata"), {});
+    });
+    registerWorkspaceMethod("getPlaybackAudioDiagnostics", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("getPlaybackAudioDiagnostics"), {});
+    });
+    registerWorkspaceMethod("getSupportedExportFormats", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("getSupportedExportFormats"), {});
+    });
+    registerWorkspaceMethod("playbackGetState", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetState"), {});
+    });
+    registerWorkspaceMethod("playbackGetCurrentFrame", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetCurrentFrame"), {});
+    });
+    registerWorkspaceMethod("playbackGetDuration", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetDuration"), {});
+    });
+    registerWorkspaceMethod("playbackGetFrameRange", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetFrameRange"), {});
+    });
+    registerWorkspaceMethod("playbackGetFrameRate", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetFrameRate"), {});
+    });
+    registerWorkspaceMethod("playbackGetSpeed", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetSpeed"), {});
+    });
+    registerWorkspaceMethod("playbackGetLooping", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("playbackGetLooping"), {});
+    });
+    registerWorkspaceMethod("getLayerPosition",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerPosition"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getLayerScale",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerScale"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getLayerRotation",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerRotation"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getLayerOpacity",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerOpacity"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getLayerEffects",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerEffects"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getLayerEffectParameters",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerEffectParameters"),
+                                    {workspaceStringArg(args, 0),
+                                     workspaceStringArg(args, 1)});
+                            });
+    registerWorkspaceMethod("getLayerEffectParameterKeyframes",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerEffectParameterKeyframes"),
+                                    {workspaceStringArg(args, 0),
+                                     workspaceStringArg(args, 1),
+                                     workspaceStringArg(args, 2)});
+                            });
+    registerWorkspaceMethod("getLayerKeyframeSummary",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerKeyframeSummary"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getLayerNote",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getLayerNote"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getCompositionNote",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getCompositionNote"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getAudioDeClickRanges",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getAudioDeClickRanges"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getAudioDeClickSettings",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getAudioDeClickSettings"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getAudioLayerTrim",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getAudioLayerTrim"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getAudioLayerPlaybackRate",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getAudioLayerPlaybackRate"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getDefaultCodecForFormat",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("getDefaultCodecForFormat"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("findProjectItemById",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("findProjectItemById"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("projectItemPathById",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("projectItemPathById"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("renderQueueJobByIndex",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("renderQueueJobByIndex"),
+                                    {workspaceIntArg(args, 0)});
+                            });
+    registerWorkspaceMethod("renderQueueJobById",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("renderQueueJobById"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("renderQueueJobStatusAt",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("renderQueueJobStatusAt"),
+                                    {workspaceIntArg(args, 0)});
+                            });
+    registerWorkspaceMethod("renderQueueJobProgressAt",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("renderQueueJobProgressAt"),
+                                    {workspaceIntArg(args, 0)});
+                            });
+    registerWorkspaceMethod("renderQueueJobErrorMessageAt",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("renderQueueJobErrorMessageAt"),
+                                    {workspaceIntArg(args, 0)});
+                            });
+    registerWorkspaceMethod("getRenderQueueJobSelectiveSettingsAt",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral(
+                                        "getRenderQueueJobSelectiveSettingsAt"),
+                                    {workspaceIntArg(args, 0)});
+                            });
+    registerWorkspaceMethod("listLayerEffectPresets",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("listLayerEffectPresets"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("recentLayerEffectPresets",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("recentLayerEffectPresets"),
+                                    {workspaceIntArg(args, 0, 20)});
+                            });
+    registerWorkspaceMethod("validateViewportSettings",
+                            [jsonWorkspaceResult, workspaceJsonMapArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("validateViewportSettings"),
+                                    {workspaceJsonMapArg(args, 0)});
+                            });
+    registerWorkspaceMethod("validateCommand",
+                            [jsonWorkspaceResult, workspaceJsonMapArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("validateCommand"),
+                                    {workspaceJsonMapArg(args, 0)});
+                            });
+    registerWorkspaceMethod("dryRunRemoveAllAssets", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(QStringLiteral("dryRunRemoveAllAssets"), {});
+    });
+    registerWorkspaceMethod("dryRunRemoveAllRenderQueues", [jsonWorkspaceResult]() {
+        return jsonWorkspaceResult(
+            QStringLiteral("dryRunRemoveAllRenderQueues"), {});
+    });
+    registerWorkspaceMethod("dryRunRemoveComposition",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("dryRunRemoveComposition"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("dryRunRemoveLayerFromCurrentComposition",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral(
+                                        "dryRunRemoveLayerFromCurrentComposition"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("dryRunRemoveProjectItemById",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("dryRunRemoveProjectItemById"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("dryRunRemoveRenderQueueAt",
+                            [jsonWorkspaceResult, workspaceIntArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral("dryRunRemoveRenderQueueAt"),
+                                    {workspaceIntArg(args, 0)});
+                            });
+    registerWorkspaceMethod("compositionRemovalConfirmationMessage",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral(
+                                        "compositionRemovalConfirmationMessage"),
+                                    {workspaceStringArg(args, 0)});
+                            });
+    registerWorkspaceMethod("projectItemRemovalConfirmationMessage",
+                            [jsonWorkspaceResult, workspaceStringArg](
+                                const std::vector<std::string>& args) {
+                                return jsonWorkspaceResult(
+                                    QStringLiteral(
+                                        "projectItemRemovalConfirmationMessage"),
+                                    {workspaceStringArg(args, 0)});
+                            });
 
     // Layer manipulation methods (with arguments)
     registerWorkspaceMethod("selectLayer", [](const std::vector<std::string>& args) -> QString {
@@ -241,6 +604,33 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addSolidLayerToCurrentComposition"), {name, w, h});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
+    const auto createNoiseLayerPython = [](const std::vector<std::string>& args) -> QString {
+        const QString compositionId = args.empty()
+                                          ? QStringLiteral("current")
+                                          : QString::fromStdString(args[0]);
+        const QString name = args.size() > 1
+                                 ? QString::fromStdString(args[1])
+                                 : QStringLiteral("Noise Layer");
+        const int width = args.size() > 2
+                              ? QString::fromStdString(args[2]).toInt()
+                              : 0;
+        const int height = args.size() > 3
+                               ? QString::fromStdString(args[3]).toInt()
+                               : 0;
+        const int seed = args.size() > 4
+                             ? QString::fromStdString(args[4]).toInt()
+                             : 42;
+        const QString kind = args.size() > 5
+                                 ? QString::fromStdString(args[5])
+                                 : QStringLiteral("perlin");
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(
+            QStringLiteral("createNoiseLayer"),
+            {compositionId, name, width, height, seed, kind});
+        return QString::fromUtf8(
+            QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    };
+    registerWorkspaceMethod("createNoiseLayer", createNoiseLayerPython);
+    registerWorkspaceMethod("addNoiseLayer", createNoiseLayerPython);
     registerWorkspaceMethod("renameLayer", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString newName = args.size() < 2 ? QString() : QString::fromStdString(args[1]);

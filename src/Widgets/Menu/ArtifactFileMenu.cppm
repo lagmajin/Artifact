@@ -33,6 +33,8 @@ module Artifact.Menu.File;
 import std;
 
 import Artifact.Project.Manager;
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Project.Packager;
 import Artifact.Project.Statistics;
 import Artifact.Composition.InitParams;
@@ -183,7 +185,17 @@ bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
         if (path.isEmpty()) return false;
     }
     auto result = manager.saveToFile(path);
-    return result.success;
+    if (result.success) {
+        return true;
+    }
+
+    const QString error = result.errorMessage.trimmed();
+    QMessageBox::warning(
+        parent, QStringLiteral("保存できませんでした"),
+        error.isEmpty()
+            ? QStringLiteral("変更を保存できませんでした。保存先とプロジェクトの状態を確認してください。")
+            : QStringLiteral("変更を保存できませんでした。\n%1").arg(error));
+    return false;
 }
 }
 
@@ -1147,7 +1159,8 @@ void ArtifactFileMenu::projectClosed()
     }
     ArtifactProjectManager::getInstance().closeCurrentProject();
     if (auto* svc = ArtifactProjectService::instance()) {
-        svc->projectChanged();
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+            ProjectChangedEvent{QString(), QString()});
     }
 }
 
@@ -1157,6 +1170,9 @@ void ArtifactFileMenu::quitApplication()
         if (!confirmUnsavedChanges(this, QStringLiteral("終了"))) {
             return;
         }
+    }
+    if (auto *owner = window()) {
+        owner->setProperty("artifactUnsavedCloseGuardSatisfied", true);
     }
     QApplication::quit();
 }
@@ -1178,6 +1194,9 @@ void ArtifactFileMenu::restartApplication()
     if (!launched) {
         qWarning() << "Failed to restart application:" << program;
         return;
+    }
+    if (auto *owner = window()) {
+        owner->setProperty("artifactUnsavedCloseGuardSatisfied", true);
     }
     QTimer::singleShot(0, []() {
         QApplication::quit();

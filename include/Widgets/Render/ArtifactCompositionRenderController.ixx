@@ -464,8 +464,8 @@ public /*slots*/:
   // to avoid the forced 16ms scheduling delay.
   void markRenderDirty();
 
-signals:
-  void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
+  void videoDebugMessage(const QString& msg);
+
  };
 }
 

@@ -10,6 +10,8 @@
 #include <QColor>
 #include <QFont>
 #include <QPalette>
+#include <QMetaObject>
+#include <QThread>
 
 #include <iostream>
 #include <vector>
@@ -48,6 +50,8 @@ module Artifact.Widgets.UndoHistoryWidget;
 
 import Undo.UndoManager;
 import Widgets.Utils.CSS;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -61,6 +65,8 @@ public:
  QPushButton* undoButton = nullptr;
  QPushButton* redoButton = nullptr;
  QPushButton* clearButton = nullptr;
+ ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+ std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 };
 
 ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
@@ -156,7 +162,19 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
   if (mgr) mgr->clearHistory();
  });
  if (mgr) {
-  connect(mgr, &UndoManager::historyChanged, this, &ArtifactUndoHistoryWidget::refreshHistory);
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<UndoManagerChangedEvent>(
+          [this](const UndoManagerChangedEvent& event) {
+            if (event.kind != UndoManagerChangeKind::HistoryChanged) return;
+            const auto refresh = [this]() {
+              if (impl_) refreshHistory();
+            };
+            if (QThread::currentThread() == thread()) {
+              refresh();
+            } else {
+              QMetaObject::invokeMethod(this, refresh, Qt::QueuedConnection);
+            }
+          }));
  }
 
  refreshHistory();

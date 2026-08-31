@@ -18,6 +18,8 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
 
+import Event.Bus;
+import Artifact.Event.Types;
 import Widgets.Utils.CSS;
 
 namespace Artifact
@@ -91,6 +93,12 @@ namespace Artifact
   delete impl_;
  }
 
+ void WorkAreaControl::workAreaChanged()
+ {
+  ArtifactCore::globalEventBus().publish<TimelineWorkAreaChangeRequestedEvent>(
+      TimelineWorkAreaChangeRequestedEvent{start, end});
+ }
+
  void WorkAreaControl::setStart(float s) {
   if (start != s) {
     start = s;
@@ -98,7 +106,6 @@ namespace Artifact
         "Work area from %1 to %2. Drag the bar to move it, Ctrl-drag to scale it, or drag its handles to trim it")
         .arg(QString::number(start * 100.0f, 'f', 1) + QStringLiteral("%"))
         .arg(QString::number(end * 100.0f, 'f', 1) + QStringLiteral("%")));
-    startChanged(s);
     update();
   }
  }
@@ -110,14 +117,14 @@ namespace Artifact
         "Work area from %1 to %2. Drag the bar to move it, Ctrl-drag to scale it, or drag its handles to trim it")
         .arg(QString::number(start * 100.0f, 'f', 1) + QStringLiteral("%"))
         .arg(QString::number(end * 100.0f, 'f', 1) + QStringLiteral("%")));
-    endChanged(e);
     update();
   }
  }
 
  void WorkAreaControl::setCurrentFrame(float frame) {
   const float maxFrame = std::max(0.0f, totalFrames - 1.0f);
-  const float clamped = std::clamp(frame, 0.0f, maxFrame);
+  const float finiteFrame = std::isfinite(frame) ? frame : 0.0f;
+  const float clamped = std::clamp(finiteFrame, 0.0f, maxFrame);
   if (currentFrame != clamped) {
     currentFrame = clamped;
     update();
@@ -125,7 +132,8 @@ namespace Artifact
  }
 
  void WorkAreaControl::setTotalFrames(float frames) {
-  const float clamped = std::max(1.0f, frames);
+  const float finiteFrames = std::isfinite(frames) ? frames : 1.0f;
+  const float clamped = std::max(1.0f, finiteFrames);
   if (totalFrames != clamped) {
     totalFrames = clamped;
     currentFrame = std::clamp(currentFrame, 0.0f, std::max(0.0f, totalFrames - 1.0f));
@@ -134,7 +142,8 @@ namespace Artifact
  }
 
  void WorkAreaControl::setFrameRate(double fps) {
-  const double sanitized = std::max(1.0, fps);
+  const double sanitized =
+      std::isfinite(fps) ? std::max(1.0, fps) : 1.0;
   if (std::abs(impl_->frameRate - sanitized) > 0.0001) {
     impl_->frameRate = sanitized;
     update();
@@ -142,7 +151,8 @@ namespace Artifact
  }
 
  void WorkAreaControl::setRulerPixelsPerFrame(double ppf) {
-  const double sanitized = std::max(0.0, ppf);
+  const double sanitized =
+      std::isfinite(ppf) ? std::max(0.0, ppf) : 0.0;
   if (std::abs(impl_->rulerPixelsPerFrame - sanitized) > 0.0001) {
     impl_->rulerPixelsPerFrame = sanitized;
     update();
@@ -150,7 +160,8 @@ namespace Artifact
  }
 
  void WorkAreaControl::setRulerHorizontalOffset(double offset) {
-  const double sanitized = std::max(0.0, offset);
+  const double sanitized =
+      std::isfinite(offset) ? std::max(0.0, offset) : 0.0;
   if (std::abs(impl_->rulerHorizontalOffset - sanitized) > 0.0001) {
     impl_->rulerHorizontalOffset = sanitized;
     update();
@@ -160,7 +171,7 @@ namespace Artifact
  void WorkAreaControl::paintEvent(QPaintEvent*)
  {
   QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing);
+  TimelinePlayheadDraw::enableTimelinePainterHints(p);
   const TimelineTheme theme = timelineTheme();
 
   // Background
@@ -304,6 +315,9 @@ namespace Artifact
    return;
   }
 
+  const float oldStart = start;
+  const float oldEnd = end;
+
   if (impl_->dragMode == Impl::DragMode::LeftHandle || impl_->draggingLeft) {
    float newStart = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    setStart(qBound(0.0f, newStart, end - 0.01f));
@@ -337,6 +351,9 @@ namespace Artifact
    left = qBound(0.0f, left, 1.0f - range);
    setStart(left);
    setEnd(left + range);
+  }
+  if (start != oldStart || end != oldEnd) {
+   workAreaChanged();
   }
  }
 

@@ -58,6 +58,7 @@ module;
 #include <QStringList>
 #include <QTabWidget>
 #include <QTimer>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QVariant>
 #include <QVector>
@@ -230,6 +231,21 @@ constexpr int kInspectorRackMarginR = 6;
 constexpr int kInspectorRackMarginB = 6;
 constexpr auto kInspectorContext = "Panel.Inspector";
 
+bool applyLayerMaskSnapshotDirect(const ArtifactAbstractLayerPtr &layer,
+                                  const std::vector<LayerMask> &masks) {
+  if (!layer) {
+    return false;
+  }
+  layer->clearMasks();
+  for (const auto &mask : masks) {
+    layer->addMask(mask);
+  }
+  if (layer->maskCount() != static_cast<int>(masks.size())) {
+    return false;
+  }
+  return true;
+}
+
 class SurfaceFXElementSnapshotCommand final : public UndoCommand {
  public:
   SurfaceFXElementSnapshotCommand(ArtifactAbstractEffectPtr effect,
@@ -239,26 +255,34 @@ class SurfaceFXElementSnapshotCommand final : public UndoCommand {
       : effect_(std::move(effect)), before_(std::move(before)),
         after_(std::move(after)), label_(std::move(label)) {}
 
-  void redo() override { apply(after_); }
-  void undo() override { apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_, before_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_, after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return label_; }
 
  private:
-  void apply(const ArtifactCore::SurfaceFXData &data) {
+  bool apply(const ArtifactCore::SurfaceFXData &data,
+             const ArtifactCore::SurfaceFXData &compensation) {
     auto *surface = effect_
         ? dynamic_cast<SurfaceFXEffect *>(effect_.get())
         : nullptr;
-    if (!surface) return;
+    if (!surface) return false;
     surface->setData(data);
+    if (surface->data().toJson() != data.toJson()) {
+      surface->setData(compensation);
+      return false;
+    }
     if (auto *manager = UndoManager::instance()) {
       manager->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactAbstractEffectPtr effect_;
   ArtifactCore::SurfaceFXData before_;
   ArtifactCore::SurfaceFXData after_;
   QString label_;
+  bool lastOperationSucceeded_ = true;
 };
 
 QColor themeColor(const QString &value, const QColor &fallback) {
@@ -2042,6 +2066,22 @@ bool matteSourceWouldCreateCycle(const ArtifactCompositionPtr& comp,
   return false;
 }
 
+bool applyMatteReferenceChange(
+    const ArtifactAbstractLayerPtr& layer,
+    std::vector<LayerMatteReference> beforeRefs,
+    std::vector<LayerMatteReference> afterRefs) {
+  if (!layer) {
+    return false;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    return undo->push(std::make_unique<ChangeLayerMatteReferencesCommand>(
+        layer, std::move(beforeRefs), std::move(afterRefs)));
+  }
+  layer->setMatteReferences(afterRefs);
+  layer->changed();
+  return true;
+}
+
 bool applyMatteTypeToLayer(const CompositionID &compositionId,
                            const LayerID &layerId,
                            int matteIndex,
@@ -2071,11 +2111,8 @@ bool applyMatteTypeToLayer(const CompositionID &compositionId,
     return false;
   }
 
-  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
-                                                    std::move(beforeRefs),
-                                                    std::move(afterRefs));
-  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-  return true;
+  return applyMatteReferenceChange(layer, std::move(beforeRefs),
+                                   std::move(afterRefs));
 }
 
 bool setMatteSourceToLayer(const CompositionID &compositionId,
@@ -2111,11 +2148,8 @@ bool setMatteSourceToLayer(const CompositionID &compositionId,
   ref.sourceAssetPath.clear();
   ref.enabled = true;
 
-  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
-                                                    std::move(beforeRefs),
-                                                    std::move(afterRefs));
-  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-  return true;
+  return applyMatteReferenceChange(layer, std::move(beforeRefs),
+                                   std::move(afterRefs));
 }
 
 bool addMatteSourceToLayer(const CompositionID &compositionId,
@@ -2149,11 +2183,8 @@ bool addMatteSourceToLayer(const CompositionID &compositionId,
   ref.invert = false;
   afterRefs.push_back(ref);
 
-  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
-                                                    std::move(beforeRefs),
-                                                    std::move(afterRefs));
-  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-  return true;
+  return applyMatteReferenceChange(layer, std::move(beforeRefs),
+                                   std::move(afterRefs));
 }
 
 QVector<FootageItem*> projectRenderInputSources() {
@@ -2220,11 +2251,8 @@ bool setMatteSourceToProjectInput(const CompositionID& compositionId,
     }
     afterRefs[matteIndex].enabled = true;
   }
-  auto* cmd = new ChangeLayerMatteReferencesCommand(
-      layer, std::move(beforeRefs), std::move(afterRefs));
-  UndoManager::instance()->push(
-      std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-  return true;
+  return applyMatteReferenceChange(layer, std::move(beforeRefs),
+                                   std::move(afterRefs));
 }
 
 bool clearMatteReferenceFromLayer(const CompositionID &compositionId,
@@ -2248,11 +2276,8 @@ bool clearMatteReferenceFromLayer(const CompositionID &compositionId,
   auto afterRefs = beforeRefs;
   afterRefs.erase(afterRefs.begin() + matteIndex);
 
-  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
-                                                    std::move(beforeRefs),
-                                                    std::move(afterRefs));
-  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-  return true;
+  return applyMatteReferenceChange(layer, std::move(beforeRefs),
+                                   std::move(afterRefs));
 }
 
 class MatteInfoLabel final : public QLabel {
@@ -3262,7 +3287,6 @@ public:
   CompositionID currentCompositionId_;
   LayerID currentLayerId_;
   QMetaObject::Connection compositionNoteConnection_;
-  QMetaObject::Connection layerNoteConnection_;
   ArtifactCore::EventBus::Subscription compositionNoteSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -4878,10 +4902,28 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
         QStringLiteral("マスクを置換しますか？\n\n"
                        "Yes: 置換\nNo: 追加"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-    if (choice == QMessageBox::Yes) {
-      layer->clearMasks();
+    std::vector<LayerMask> before;
+    std::vector<LayerMask> after;
+    before.reserve(static_cast<std::size_t>(layer->maskCount()));
+    after.reserve(static_cast<std::size_t>(layer->maskCount() + 1));
+    for (int index = 0; index < layer->maskCount(); ++index) {
+      before.push_back(layer->mask(index));
     }
-    layer->addMask(mask);
+    if (choice != QMessageBox::Yes) {
+      after = before;
+    }
+    after.push_back(mask);
+    if (auto *mgr = UndoManager::instance()) {
+      if (!mgr->push(std::make_unique<MaskEditCommand>(
+              layer, std::move(before), std::move(after)))) {
+        return;
+      }
+    } else {
+      if (choice == QMessageBox::Yes) {
+        layer->clearMasks();
+      }
+      layer->addMask(mask);
+    }
     layer->changed();
   });
 
@@ -4913,9 +4955,14 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
           after.push_back(next);
         }
         if (changed) {
-          if (auto *mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<MaskEditCommand>(layer, std::move(before),
-                                                        std::move(after)));
+          auto *mgr = UndoManager::instance();
+          if (mgr) {
+            if (!mgr->push(std::make_unique<MaskEditCommand>(
+                    layer, std::move(before), std::move(after)))) {
+              return;
+            }
+          } else if (!applyLayerMaskSnapshotDirect(layer, after)) {
+            return;
           }
           layer->changed();
         }
@@ -4935,9 +4982,14 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
           after.push_back(next);
         }
         if (changed) {
-          if (auto *mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<MaskEditCommand>(layer, std::move(before),
-                                                        std::move(after)));
+          auto *mgr = UndoManager::instance();
+          if (mgr) {
+            if (!mgr->push(std::make_unique<MaskEditCommand>(
+                    layer, std::move(before), std::move(after)))) {
+              return;
+            }
+          } else if (!applyLayerMaskSnapshotDirect(layer, after)) {
+            return;
           }
           layer->changed();
         }
@@ -4954,9 +5006,14 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
           before.push_back(mask);
           after.push_back(next);
         }
-        if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<MaskEditCommand>(layer, std::move(before),
-                                                      std::move(after)));
+        auto *mgr = UndoManager::instance();
+        if (mgr) {
+          if (!mgr->push(std::make_unique<MaskEditCommand>(
+                  layer, std::move(before), std::move(after)))) {
+            return;
+          }
+        } else if (!applyLayerMaskSnapshotDirect(layer, after)) {
+          return;
         }
         layer->changed();
       });
@@ -4983,9 +5040,14 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
           if (!changed) {
             return;
           }
-          if (auto *mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<MaskEditCommand>(
-                layer, std::move(before), std::move(after)));
+          auto *mgr = UndoManager::instance();
+          if (mgr) {
+            if (!mgr->push(std::make_unique<MaskEditCommand>(
+                    layer, std::move(before), std::move(after)))) {
+              return;
+            }
+          } else if (!applyLayerMaskSnapshotDirect(layer, after)) {
+            return;
           }
           layer->changed();
         });
@@ -4999,22 +5061,32 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
           const int targetIndex = index - 1;
           menu.addAction(QStringLiteral("Mask %1 Up").arg(index + 1),
                          [layer, index, targetIndex]() {
-                           if (auto *mgr = UndoManager::instance()) {
-                             mgr->push(std::make_unique<MoveMaskCommand>(
-                                 layer, index, targetIndex));
-                           }
-                           layer->changed();
+                            auto *mgr = UndoManager::instance();
+                            if (mgr) {
+                              if (!mgr->push(std::make_unique<MoveMaskCommand>(
+                                      layer, index, targetIndex))) {
+                                return;
+                              }
+                            } else if (!layer->moveMask(index, targetIndex)) {
+                              return;
+                            }
+                            layer->changed();
                          });
         }
         if (index + 1 < layer->maskCount()) {
           const int targetIndex = index + 1;
           menu.addAction(QStringLiteral("Mask %1 Down").arg(index + 1),
                          [layer, index, targetIndex]() {
-                           if (auto *mgr = UndoManager::instance()) {
-                             mgr->push(std::make_unique<MoveMaskCommand>(
-                                 layer, index, targetIndex));
-                           }
-                           layer->changed();
+                            auto *mgr = UndoManager::instance();
+                            if (mgr) {
+                              if (!mgr->push(std::make_unique<MoveMaskCommand>(
+                                      layer, index, targetIndex))) {
+                                return;
+                              }
+                            } else if (!layer->moveMask(index, targetIndex)) {
+                              return;
+                            }
+                            layer->changed();
                          });
         }
       }
@@ -5295,8 +5367,11 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
     afterMasks.clear();
     afterMasks.push_back(maskImage);
     if (auto *mgr = UndoManager::instance()) {
-      mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
-          effect, beforeMasks, afterMasks, QStringLiteral("Apply Layer Mask To Effect")));
+      if (!mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
+              effect, beforeMasks, afterMasks,
+              QStringLiteral("Apply Layer Mask To Effect")))) {
+        return;
+      }
     } else {
       effect->clearEffectMaskImages();
       effect->addEffectMaskImage(maskImage);
@@ -5353,8 +5428,11 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       }
       const std::vector<ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> afterMasks;
       if (auto *mgr = UndoManager::instance()) {
-        mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
-            effect, beforeMasks, afterMasks, QStringLiteral("Clear Effect Mask Images")));
+        if (!mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
+                effect, beforeMasks, afterMasks,
+                QStringLiteral("Clear Effect Mask Images")))) {
+          return;
+        }
       } else {
         effect->clearEffectMaskImages();
       }
@@ -5426,11 +5504,13 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                      }
                      afterMasks.push_back(maskImage);
                      if (auto *mgr = UndoManager::instance()) {
-                       mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
-                           effect, beforeMasks, afterMasks,
-                           applyMode == QMessageBox::Yes
-                               ? QStringLiteral("Replace Effect Mask Images")
-                               : QStringLiteral("Append Effect Mask Image")));
+                       if (!mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
+                               effect, beforeMasks, afterMasks,
+                               applyMode == QMessageBox::Yes
+                                   ? QStringLiteral("Replace Effect Mask Images")
+                                   : QStringLiteral("Append Effect Mask Image")))) {
+                         return;
+                       }
                      } else {
                        if (applyMode == QMessageBox::Yes) {
                          effect->clearEffectMaskImages();
@@ -5501,12 +5581,27 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                        return;
                      }
 
+                     const QJsonObject beforePreset =
+                         ArtifactPresetManager::effectToPresetJson(effect);
                      if (!ArtifactPresetManager::loadEffectPreset(effect,
                                                                    filePath)) {
                        QMessageBox::warning(
                            containerWidget, QStringLiteral("Effect Preset"),
                            QStringLiteral("エフェクトプリセットを読み込めませんでした。"));
                        return;
+                     }
+
+                     const QJsonObject afterPreset =
+                         ArtifactPresetManager::effectToPresetJson(effect);
+                     auto command = std::make_unique<EffectPresetSnapshotCommand>(
+                         effect, beforePreset, afterPreset);
+                     if (auto *undo = UndoManager::instance()) {
+                       if (!undo->push(std::move(command))) {
+                         auto restoreTarget = effect;
+                         ArtifactPresetManager::applyPresetJsonToEffect(
+                             restoreTarget, beforePreset);
+                         return;
+                       }
                      }
 
                      updateEffectsList();
@@ -5788,13 +5883,6 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
 }
 
 void ArtifactInspectorWidget::Impl::updateLayerNote() {
-  auto disconnectNoteConnection = [this]() {
-    if (layerNoteConnection_) {
-      QObject::disconnect(layerNoteConnection_);
-      layerNoteConnection_ = {};
-    }
-  };
-
   if (!layerNoteEdit) {
     return;
   }
@@ -5802,7 +5890,6 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
   auto projectService = ArtifactProjectService::instance();
   if (!projectService || currentCompositionId_.isNil() ||
       currentLayerId_.isNil()) {
-    disconnectNoteConnection();
     layerNoteEdit->blockSignals(true);
     layerNoteEdit->clear();
     layerNoteEdit->setEnabled(false);
@@ -5816,7 +5903,6 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
 
   auto findResult = projectService->findComposition(currentCompositionId_);
   if (!findResult.success) {
-    disconnectNoteConnection();
     layerNoteEdit->blockSignals(true);
     layerNoteEdit->clear();
     layerNoteEdit->setEnabled(false);
@@ -5830,7 +5916,6 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
 
   auto comp = findResult.ptr.lock();
   if (!comp || !comp->containsLayerById(currentLayerId_)) {
-    disconnectNoteConnection();
     layerNoteEdit->blockSignals(true);
     layerNoteEdit->clear();
     layerNoteEdit->setEnabled(false);
@@ -5844,7 +5929,6 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
 
   auto layer = comp->layerById(currentLayerId_);
   if (!layer) {
-    disconnectNoteConnection();
     layerNoteEdit->blockSignals(true);
     layerNoteEdit->clear();
     layerNoteEdit->setEnabled(false);
@@ -5855,22 +5939,6 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
     }
     return;
   }
-
-  disconnectNoteConnection();
-  layerNoteConnection_ =
-      QObject::connect(layer.get(), &ArtifactAbstractLayer::layerNoteChanged,
-                       layerNoteEdit, [this](const QString &note) {
-                         if (!layerNoteEdit) {
-                           return;
-                         }
-                         QSignalBlocker blocker(layerNoteEdit);
-                         layerNoteEdit->setPlainText(note);
-                         layerNoteEdit->setEnabled(true);
-                         if (layerNoteGroup) {
-                           layerNoteGroup->setEnabled(true);
-                           layerNoteGroup->hide();
-                         }
-                       });
 
   const QString note = layer->layerNote();
   if (note == lastLayerNoteText_) {
@@ -6021,10 +6089,6 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
     QObject::disconnect(compositionNoteConnection_);
     compositionNoteConnection_ = {};
   }
-  if (layerNoteConnection_) {
-    QObject::disconnect(layerNoteConnection_);
-    layerNoteConnection_ = {};
-  }
   if (compositionNoteEdit) {
     compositionNoteEdit->blockSignals(true);
     compositionNoteEdit->clear();
@@ -6112,10 +6176,6 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   updateComponentControls(ArtifactAbstractLayerPtr{});
   statusLabel->setText("Status: Select a layer to inspect details");
   currentLayerId_ = LayerID();
-  if (layerNoteConnection_) {
-    QObject::disconnect(layerNoteConnection_);
-    layerNoteConnection_ = {};
-  }
   if (layerNoteEdit) {
     layerNoteEdit->blockSignals(true);
     layerNoteEdit->clear();
@@ -7431,7 +7491,22 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       return;
     }
     const bool nextEnabled = !layerBooleanProperty(layer, propertyPath);
-    if (layer->setLayerPropertyValue(propertyPath, nextEnabled)) {
+    const auto property = layer->getProperty(propertyPath);
+    if (!property) {
+      return;
+    }
+    const QVariant beforeValue = property->getValue();
+    auto command = std::make_unique<SetLayerPropertyValueCommand>(
+        layer, propertyPath, beforeValue, QVariant(nextEnabled),
+        QStringLiteral("Toggle %1 Component").arg(displayName));
+    bool applied = false;
+    if (auto *manager = UndoManager::instance()) {
+      applied = manager->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (applied) {
       impl_->focusedComponentName_ = displayName;
       impl_->focusedGeneratorId_.clear();
       impl_->focusedTransformId_.clear();
@@ -7566,9 +7641,33 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      selectComponent(QStringLiteral("Cloner"));
                    });
   impl_->fluidComponentButton->setAction([selectComponent]() {
-                     selectComponent(QStringLiteral("Fluid"));
-                   });
-  impl_->generatorComponentButton->setAction([this]() {
+    selectComponent(QStringLiteral("Fluid"));
+  });
+  auto applyComponentDescriptorMutation =
+      [](const ArtifactAbstractLayerPtr &layer, const QString &label,
+         const std::function<void()> &mutation) {
+        if (!layer || !mutation) {
+          return false;
+        }
+        const auto before = layer->componentDescriptorSnapshot();
+        mutation();
+        const auto after = layer->componentDescriptorSnapshot();
+        if (before == after) {
+          return true;
+        }
+        auto command = std::make_unique<LayerComponentDescriptorSnapshotCommand>(
+            layer, before, after);
+        if (auto *manager = UndoManager::instance()) {
+          if (manager->push(std::move(command))) {
+            return true;
+          }
+          layer->restoreComponentDescriptorSnapshot(before);
+          return false;
+        }
+        return true;
+      };
+  impl_->generatorComponentButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil()) {
                        return;
@@ -7603,9 +7702,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      if (!accepted || generatorChoice.trimmed().isEmpty()) {
                        return;
                      }
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.generators.add"),
-                             generatorChoice)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Add Generator"),
+                             [layer, generatorChoice]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.generators.add"),
+                                   generatorChoice);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -7624,7 +7727,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                        }
                      }
                    });
-  impl_->removeGeneratorComponentButton->setAction([this]() {
+  impl_->removeGeneratorComponentButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil()) {
                        return;
@@ -7653,9 +7757,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                          ->data(Qt::UserRole)
                                          .toString();
                      }
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.generators.remove"),
-                             generatorId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Remove Generator"),
+                             [layer, generatorId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.generators.remove"),
+                                   generatorId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -7675,7 +7783,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                       }
                     });
   const auto resolveInspectorCloneLayer =
-      [this]() -> ArtifactCloneLayer* {
+      [this]() -> ArtifactAbstractLayerPtr {
     if (impl_->currentCompositionId_.isNil() ||
         impl_->currentLayerId_.isNil()) {
       return nullptr;
@@ -7692,7 +7800,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     if (!comp) {
       return nullptr;
     }
-    return dynamic_cast<ArtifactCloneLayer*>(comp->layerById(impl_->currentLayerId_).get());
+    return comp->layerById(impl_->currentLayerId_);
   };
   const auto refreshAfterEffectorChange = [this](ArtifactCloneLayer* cloneLayer) {
     if (!cloneLayer) {
@@ -7719,9 +7827,40 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
               .arg(cloneLayer->effectorCount()));
     }
   };
+  const auto applyEffectorStackMutation =
+      [](const ArtifactAbstractLayerPtr &layer, const QString &label,
+         const std::function<void(ArtifactCloneLayer&)> &mutation) {
+        if (!layer || !mutation) {
+          return false;
+        }
+        auto *cloneLayer = dynamic_cast<ArtifactCloneLayer*>(layer.get());
+        if (!cloneLayer) {
+          return false;
+        }
+        const auto before = cloneLayer->effectorStackSnapshot();
+        mutation(*cloneLayer);
+        const auto after = cloneLayer->effectorStackSnapshot();
+        if (before == after) {
+          return true;
+        }
+        auto command = std::make_unique<CloneEffectorStackSnapshotCommand>(
+            layer, before, after);
+        if (auto *manager = UndoManager::instance()) {
+          if (manager->push(std::move(command))) {
+            return true;
+          }
+          cloneLayer->restoreEffectorStackSnapshot(before);
+          return false;
+        }
+        return true;
+      };
   impl_->addEffectorButton->setAction([this, resolveInspectorCloneLayer,
-                                       refreshAfterEffectorChange]() {
-                     auto* cloneLayer = resolveInspectorCloneLayer();
+                                       refreshAfterEffectorChange,
+                                       applyEffectorStackMutation]() {
+                     const auto cloneLayerObject = resolveInspectorCloneLayer();
+                     auto* cloneLayer = cloneLayerObject
+                         ? dynamic_cast<ArtifactCloneLayer*>(cloneLayerObject.get())
+                         : nullptr;
                      if (!cloneLayer) {
                        return;
                      }
@@ -7758,12 +7897,21 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      if (!effector) {
                        return;
                      }
-                     cloneLayer->addEffector(std::move(effector));
+                     applyEffectorStackMutation(
+                         cloneLayerObject, QStringLiteral("Add Clone Effector"),
+                         [effector = std::move(effector)](
+                             ArtifactCloneLayer& layer) mutable {
+                           layer.addEffector(std::move(effector));
+                         });
                      refreshAfterEffectorChange(cloneLayer);
                    });
   impl_->removeEffectorButton->setAction([this, resolveInspectorCloneLayer,
-                                          refreshAfterEffectorChange]() {
-                     auto* cloneLayer = resolveInspectorCloneLayer();
+                                          refreshAfterEffectorChange,
+                                          applyEffectorStackMutation]() {
+                     const auto cloneLayerObject = resolveInspectorCloneLayer();
+                     auto* cloneLayer = cloneLayerObject
+                         ? dynamic_cast<ArtifactCloneLayer*>(cloneLayerObject.get())
+                         : nullptr;
                      if (!cloneLayer || cloneLayer->effectorCount() == 0) {
                        return;
                      }
@@ -7793,10 +7941,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      if (index < 0 || index >= count) {
                        return;
                      }
-                     cloneLayer->removeEffector(index);
+                     applyEffectorStackMutation(
+                         cloneLayerObject, QStringLiteral("Remove Clone Effector"),
+                         [index](ArtifactCloneLayer& layer) {
+                           layer.removeEffector(index);
+                         });
                      refreshAfterEffectorChange(cloneLayer);
                    });
-  impl_->generatorMoveUpButton->setAction([this]() {
+  impl_->generatorMoveUpButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (!impl_->generatorListWidget ||
                          !impl_->generatorListWidget->currentItem()) {
                        return;
@@ -7826,9 +7979,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                                      ->currentItem()
                                                      ->data(Qt::UserRole)
                                                      .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.generators.moveUp"),
-                             generatorId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Move Generator Up"),
+                             [layer, generatorId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.generators.moveUp"),
+                                   generatorId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -7836,7 +7993,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                impl_->generatorListWidget->currentItem()));
                      }
                    });
-  impl_->generatorMoveDownButton->setAction([this]() {
+  impl_->generatorMoveDownButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (!impl_->generatorListWidget ||
                          !impl_->generatorListWidget->currentItem()) {
                        return;
@@ -7866,9 +8024,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                                      ->currentItem()
                                                      ->data(Qt::UserRole)
                                                      .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.generators.moveDown"),
-                             generatorId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Move Generator Down"),
+                             [layer, generatorId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.generators.moveDown"),
+                                   generatorId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -7933,11 +8095,38 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     impl_->scheduleRefresh(ArtifactInspectorWidget::Impl::LayerInfoDirty |
                            ArtifactInspectorWidget::Impl::EffectsDirty);
   };
+  auto applyClonerTransformMutation =
+      [](const ArtifactAbstractLayerPtr &layer, const QString &label,
+         const std::function<void()> &mutation) {
+        if (!layer || !mutation) {
+          return false;
+        }
+        const auto before = layer->clonerTransformsSnapshot();
+        mutation();
+        const auto after = layer->clonerTransformsSnapshot();
+        if (before == after) {
+          return true;
+        }
+        auto command = std::make_unique<ClonerTransformStackSnapshotCommand>(
+            layer, before, after);
+        if (auto *manager = UndoManager::instance()) {
+          if (manager->push(std::move(command))) {
+            return true;
+          }
+          layer->restoreClonerTransformsSnapshot(before);
+          return false;
+        }
+        return true;
+      };
   impl_->transformComponentButton->setAction([this, resolveCurrentInspectorLayer,
-                                               refreshTransformStack]() {
+                                               refreshTransformStack,
+                                               applyClonerTransformMutation]() {
     const auto layer = resolveCurrentInspectorLayer();
-    if (!layer || !layer->setLayerPropertyValue(
-                      QStringLiteral("component.cloner.transforms.add"), true)) {
+    if (!layer || !applyClonerTransformMutation(
+                      layer, QStringLiteral("Add Cloner Transform"), [layer]() {
+                        layer->setLayerPropertyValue(
+                            QStringLiteral("component.cloner.transforms.add"), true);
+                      })) {
       return;
     }
     const auto names = layer->clonerTransformNames();
@@ -7949,41 +8138,56 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     refreshTransformStack(layer);
   });
   impl_->removeTransformComponentButton->setAction(
-      [this, resolveCurrentInspectorLayer, refreshTransformStack]() {
+      [this, resolveCurrentInspectorLayer, refreshTransformStack,
+       applyClonerTransformMutation]() {
         const auto layer = resolveCurrentInspectorLayer();
         const auto* item = impl_->transformListWidget
                                ? impl_->transformListWidget->currentItem()
                                : nullptr;
         if (!layer || !item) return;
         const int index = item->data(Qt::UserRole).toString().section(QLatin1Char('.'), -1).toInt();
-        if (layer->setLayerPropertyValue(
-                QStringLiteral("component.cloner.transforms.remove"), index)) {
+        if (applyClonerTransformMutation(
+                layer, QStringLiteral("Remove Cloner Transform"),
+                [layer, index]() {
+                  layer->setLayerPropertyValue(
+                      QStringLiteral("component.cloner.transforms.remove"), index);
+                })) {
           impl_->focusedTransformId_.clear();
           refreshTransformStack(layer);
         }
       });
   auto transformMoveAction = [this, resolveCurrentInspectorLayer,
-                               refreshTransformStack](const QString& property) {
+                               refreshTransformStack,
+                               applyClonerTransformMutation](const QString& property) {
     const auto layer = resolveCurrentInspectorLayer();
     const auto* item = impl_->transformListWidget
                            ? impl_->transformListWidget->currentItem()
                            : nullptr;
     if (!layer || !item) return;
     const int index = item->data(Qt::UserRole).toString().section(QLatin1Char('.'), -1).toInt();
-    if (layer->setLayerPropertyValue(property, index)) {
+    if (applyClonerTransformMutation(
+            layer, QStringLiteral("Move Cloner Transform"),
+            [layer, property, index]() {
+              layer->setLayerPropertyValue(property, index);
+            })) {
       refreshTransformStack(layer);
     }
   };
   impl_->transformDuplicateButton->setAction(
-      [this, resolveCurrentInspectorLayer, refreshTransformStack]() {
+      [this, resolveCurrentInspectorLayer, refreshTransformStack,
+       applyClonerTransformMutation]() {
         const auto layer = resolveCurrentInspectorLayer();
         const auto* item = impl_->transformListWidget
                                ? impl_->transformListWidget->currentItem()
                                : nullptr;
         if (!layer || !item) return;
         const int index = item->data(Qt::UserRole).toString().section(QLatin1Char('.'), -1).toInt();
-        if (layer->setLayerPropertyValue(
-                QStringLiteral("component.cloner.transforms.duplicate"), index)) {
+        if (applyClonerTransformMutation(
+                layer, QStringLiteral("Duplicate Cloner Transform"),
+                [layer, index]() {
+                  layer->setLayerPropertyValue(
+                      QStringLiteral("component.cloner.transforms.duplicate"), index);
+                })) {
           refreshTransformStack(layer);
         }
       });
@@ -8005,7 +8209,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         impl_->updateComponentControls(layer);
         impl_->focusComponentProperties(layer, transformItemFilterText(current));
       });
-  impl_->fieldComponentButton->setAction([this]() {
+  impl_->fieldComponentButton->setAction([this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil()) {
                        return;
@@ -8040,9 +8244,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      if (!accepted || fieldChoice.trimmed().isEmpty()) {
                        return;
                      }
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.fields.add"),
-                             fieldChoice)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Add Field"),
+                             [layer, fieldChoice]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.fields.add"),
+                                   fieldChoice);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer, fieldItemFilterText(
@@ -8051,7 +8259,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                           : nullptr));
                      }
                    });
-  impl_->removeFieldComponentButton->setAction([this]() {
+  impl_->removeFieldComponentButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil()) {
                        return;
@@ -8078,16 +8287,21 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          impl_->fieldListWidget->currentItem()
                              ->data(Qt::UserRole)
                              .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.fields.remove"),
-                             fieldId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Remove Field"),
+                             [layer, fieldId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.fields.remove"),
+                                   fieldId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer, fieldItemFilterText(
                                       impl_->fieldListWidget->currentItem()));
                      }
                    });
-  impl_->fieldMoveUpButton->setAction([this]() {
+  impl_->fieldMoveUpButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil() || !impl_->fieldListWidget ||
                          !impl_->fieldListWidget->currentItem()) {
@@ -8114,16 +8328,21 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          impl_->fieldListWidget->currentItem()
                              ->data(Qt::UserRole)
                              .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.fields.moveUp"),
-                             fieldId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Move Field Up"),
+                             [layer, fieldId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.fields.moveUp"),
+                                   fieldId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer, fieldItemFilterText(
                                       impl_->fieldListWidget->currentItem()));
                      }
                    });
-  impl_->fieldMoveDownButton->setAction([this]() {
+  impl_->fieldMoveDownButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil() || !impl_->fieldListWidget ||
                          !impl_->fieldListWidget->currentItem()) {
@@ -8150,9 +8369,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          impl_->fieldListWidget->currentItem()
                              ->data(Qt::UserRole)
                              .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.fields.moveDown"),
-                             fieldId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Move Field Down"),
+                             [layer, fieldId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.fields.moveDown"),
+                                   fieldId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer, fieldItemFilterText(
@@ -8187,7 +8410,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         impl_->updateComponentControls(layer);
         impl_->focusComponentProperties(layer, filterText);
       });
-  impl_->cloneModifierButton->setAction([this]() {
+  impl_->cloneModifierButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil()) {
                        return;
@@ -8226,9 +8450,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      if (!accepted || modifierChoice.trimmed().isEmpty()) {
                        return;
                      }
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.cloneModifiers.add"),
-                             modifierChoice)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Add Clone Modifier"),
+                             [layer, modifierChoice]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.cloneModifiers.add"),
+                                   modifierChoice);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -8238,7 +8466,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                    : nullptr));
                      }
                    });
-  impl_->removeCloneModifierButton->setAction([this]() {
+  impl_->removeCloneModifierButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil() ||
                          !impl_->cloneModifierListWidget ||
@@ -8266,9 +8495,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          impl_->cloneModifierListWidget->currentItem()
                              ->data(Qt::UserRole)
                              .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.cloneModifiers.remove"),
-                             modifierId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Remove Clone Modifier"),
+                             [layer, modifierId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.cloneModifiers.remove"),
+                                   modifierId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -8276,7 +8509,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                impl_->cloneModifierListWidget->currentItem()));
                      }
                    });
-  impl_->cloneModifierMoveUpButton->setAction([this]() {
+  impl_->cloneModifierMoveUpButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil() ||
                          !impl_->cloneModifierListWidget ||
@@ -8304,9 +8538,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          impl_->cloneModifierListWidget->currentItem()
                              ->data(Qt::UserRole)
                              .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.cloneModifiers.moveUp"),
-                             modifierId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Move Clone Modifier Up"),
+                             [layer, modifierId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.cloneModifiers.moveUp"),
+                                   modifierId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -8314,7 +8552,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                impl_->cloneModifierListWidget->currentItem()));
                      }
                    });
-  impl_->cloneModifierMoveDownButton->setAction([this]() {
+  impl_->cloneModifierMoveDownButton->setAction(
+      [this, applyComponentDescriptorMutation]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil() ||
                          !impl_->cloneModifierListWidget ||
@@ -8342,9 +8581,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          impl_->cloneModifierListWidget->currentItem()
                              ->data(Qt::UserRole)
                              .toString();
-                     if (layer->setLayerPropertyValue(
-                             QStringLiteral("component.cloneModifiers.moveDown"),
-                             modifierId)) {
+                     if (applyComponentDescriptorMutation(
+                             layer, QStringLiteral("Move Clone Modifier Down"),
+                             [layer, modifierId]() {
+                               layer->setLayerPropertyValue(
+                                   QStringLiteral("component.cloneModifiers.moveDown"),
+                                   modifierId);
+                             })) {
                        impl_->updateComponentControls(layer);
                        impl_->focusComponentProperties(
                            layer,
@@ -8652,10 +8895,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     element.blendMode = QStringLiteral("multiply");
     element.seedOffset = index;
     after.elements.push_back(std::move(element));
+    const int previousSurfaceElementIndex = impl_->surfaceElementIndex_;
     impl_->surfaceElementIndex_ = index;
-    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
-        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
-        QStringLiteral("Add Lens Surface Decal")));
+    auto *undo = UndoManager::instance();
+    auto command = std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before,
+        std::move(after), QStringLiteral("Add Lens Surface Decal"));
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      impl_->surfaceElementIndex_ = previousSurfaceElementIndex;
+      return;
+    }
     refreshSurfaceElementEditor();
   });
   duplicateSurfaceElementButton->setAction([this, selectedSurfaceElement,
@@ -8673,10 +8929,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                                 : copy.id);
     copy.seedOffset += 1000 + index;
     elements.insert(elements.begin() + index + 1, copy);
+    const int previousSurfaceElementIndex = impl_->surfaceElementIndex_;
     impl_->surfaceElementIndex_ = index + 1;
-    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
-        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
-        QStringLiteral("Duplicate Lens Surface Element")));
+    auto *undo = UndoManager::instance();
+    auto command = std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before,
+        std::move(after), QStringLiteral("Duplicate Lens Surface Element"));
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      impl_->surfaceElementIndex_ = previousSurfaceElementIndex;
+      return;
+    }
     refreshSurfaceElementEditor();
   });
   deleteSurfaceElementButton->setAction([this, selectedSurfaceElement,
@@ -8689,10 +8958,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     const int index = std::clamp(impl_->surfaceElementIndex_, 0,
                                  static_cast<int>(elements.size()) - 1);
     elements.erase(elements.begin() + index);
+    const int previousSurfaceElementIndex = impl_->surfaceElementIndex_;
     impl_->surfaceElementIndex_ = std::max(0, index - 1);
-    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
-        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
-        QStringLiteral("Delete Lens Surface Element")));
+    auto *undo = UndoManager::instance();
+    auto command = std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before,
+        std::move(after), QStringLiteral("Delete Lens Surface Element"));
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      impl_->surfaceElementIndex_ = previousSurfaceElementIndex;
+      return;
+    }
     refreshSurfaceElementEditor();
   });
   moveSurfaceElementUpButton->setAction([this, selectedSurfaceElement,
@@ -8707,10 +8989,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     if (index <= 0) return;
     std::swap(elements[static_cast<std::size_t>(index)],
               elements[static_cast<std::size_t>(index - 1)]);
+    const int previousSurfaceElementIndex = impl_->surfaceElementIndex_;
     impl_->surfaceElementIndex_ = index - 1;
-    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
-        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
-        QStringLiteral("Move Lens Surface Element Up")));
+    auto *undo = UndoManager::instance();
+    auto command = std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before,
+        std::move(after), QStringLiteral("Move Lens Surface Element Up"));
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      impl_->surfaceElementIndex_ = previousSurfaceElementIndex;
+      return;
+    }
     refreshSurfaceElementEditor();
   });
   moveSurfaceElementDownButton->setAction([this, selectedSurfaceElement,
@@ -8725,10 +9020,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     if (index >= static_cast<int>(elements.size()) - 1) return;
     std::swap(elements[static_cast<std::size_t>(index)],
               elements[static_cast<std::size_t>(index + 1)]);
+    const int previousSurfaceElementIndex = impl_->surfaceElementIndex_;
     impl_->surfaceElementIndex_ = index + 1;
-    UndoManager::instance()->push(std::make_unique<SurfaceFXElementSnapshotCommand>(
-        impl_->currentEffectById(impl_->focusedEffectId_), before, std::move(after),
-        QStringLiteral("Move Lens Surface Element Down")));
+    auto *undo = UndoManager::instance();
+    auto command = std::make_unique<SurfaceFXElementSnapshotCommand>(
+        impl_->currentEffectById(impl_->focusedEffectId_), before,
+        std::move(after), QStringLiteral("Move Lens Surface Element Down"));
+    bool applied = false;
+    if (undo) {
+      applied = undo->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      impl_->surfaceElementIndex_ = previousSurfaceElementIndex;
+      return;
+    }
     refreshSurfaceElementEditor();
   });
   surfaceElementLayout->addWidget(impl_->surfaceElementListWidget);
@@ -9084,6 +9392,33 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                   event.compositionId,
                   event.layerId,
                   LayerSelectionChangeReason::SelectionBridgeSync});
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerNoteChangedEvent>(
+          [this](const LayerNoteChangedEvent &event) {
+            const QString compositionId = event.compositionId;
+            const QString layerId = event.layerId;
+            const QString note = event.note;
+            const auto apply = [this, compositionId, layerId, note]() {
+              if (!impl_ || !impl_->layerNoteEdit ||
+                  impl_->currentCompositionId_.toString() != compositionId ||
+                  impl_->currentLayerId_.toString() != layerId) {
+                return;
+              }
+              impl_->lastLayerNoteText_ = note;
+              QSignalBlocker blocker(impl_->layerNoteEdit);
+              impl_->layerNoteEdit->setPlainText(note);
+              impl_->layerNoteEdit->setEnabled(true);
+              if (impl_->layerNoteGroup) {
+                impl_->layerNoteGroup->setEnabled(true);
+                impl_->layerNoteGroup->hide();
+              }
+            };
+            if (QThread::currentThread() == thread()) {
+              apply();
+            } else {
+              QMetaObject::invokeMethod(this, apply, Qt::QueuedConnection);
             }
           }));
   impl_->eventBusSubscriptions_.push_back(

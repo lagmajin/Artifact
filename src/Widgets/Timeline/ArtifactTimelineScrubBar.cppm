@@ -16,6 +16,8 @@ module Artifact.Timeline.ScrubBar;
 
 import std;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Event.Bus;
+import Artifact.Event.Types;
 
 import Frame.Position;
 import Widgets.Utils.CSS;
@@ -159,6 +161,24 @@ namespace Artifact
   delete impl_;
  }
 
+ void ArtifactTimelineScrubBar::frameChanged(const FramePosition& frame)
+ {
+  ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
+      TimelineSeekRequestedEvent{static_cast<double>(frame.framePosition())});
+ }
+
+ void ArtifactTimelineScrubBar::frameDragStarted()
+ {
+  ArtifactCore::globalEventBus().publish<TimelineScrubStartedEvent>(
+      TimelineScrubStartedEvent{});
+ }
+
+ void ArtifactTimelineScrubBar::frameDragFinished()
+ {
+  ArtifactCore::globalEventBus().publish<TimelineScrubFinishedEvent>(
+      TimelineScrubFinishedEvent{});
+ }
+
  QSize ArtifactTimelineScrubBar::sizeHint() const
  {
   return QSize(640, 20);
@@ -185,9 +205,6 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    impl_->currentFrame_ = FramePosition(frameValue);
   }
   impl_->visualFrame_ = static_cast<double>(frameValue);
-  if (isFrameChanged) {
-   Q_EMIT frameChanged(impl_->currentFrame_);
-  }
   update();
  }
 
@@ -195,7 +212,8 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
  {
   const double maxFrame =
       std::max(0.0, static_cast<double>(impl_->totalFrames_ - 1));
-  const double clamped = std::clamp(frame, 0.0, maxFrame);
+  const double finiteFrame = std::isfinite(frame) ? frame : 0.0;
+  const double clamped = std::clamp(finiteFrame, 0.0, maxFrame);
   if (std::abs(impl_->visualFrame_ - clamped) > 0.0001) {
    impl_->visualFrame_ = clamped;
    update();
@@ -382,23 +400,25 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    impl_->currentFrame_ = FramePosition(nextFrame);
    impl_->visualFrame_ = static_cast<double>(nextFrame);
    update();
-   Q_EMIT frameChanged(impl_->currentFrame_);
+   frameChanged(impl_->currentFrame_);
   }
   event->accept();
  }
 
-  void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)
+ void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)
  {
-  if (std::abs(impl_->rulerPixelsPerFrame_ - ppf) > 0.0001) {
-   impl_->rulerPixelsPerFrame_ = ppf;
+  const double sanitized = std::isfinite(ppf) ? std::max(0.0, ppf) : 0.0;
+  if (std::abs(impl_->rulerPixelsPerFrame_ - sanitized) > 0.0001) {
+   impl_->rulerPixelsPerFrame_ = sanitized;
    update();
   }
  }
 
  void ArtifactTimelineScrubBar::setRulerHorizontalOffset(double offset)
  {
-  if (std::abs(impl_->rulerHorizontalOffset_ - offset) > 0.0001) {
-   impl_->rulerHorizontalOffset_ = offset;
+  const double sanitized = std::isfinite(offset) ? std::max(0.0, offset) : 0.0;
+  if (std::abs(impl_->rulerHorizontalOffset_ - sanitized) > 0.0001) {
+   impl_->rulerHorizontalOffset_ = sanitized;
    update();
   }
  }
@@ -417,7 +437,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
                                         ArtifactCore::ProfileCategory::UI);
   Q_UNUSED(event);
   QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing, true);
+  TimelinePlayheadDraw::enableTimelinePainterHints(p);
   const TimelineTheme theme = timelineTheme();
 
   const QRect r = rect();
@@ -651,7 +671,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
     impl_->currentFrame_ = FramePosition(newFrame);
     impl_->visualFrame_ = static_cast<double>(newFrame);
     update();
-    Q_EMIT frameChanged(impl_->currentFrame_);
+    frameChanged(impl_->currentFrame_);
    }
 
    const int currentX = impl_->resolveFrameToX(impl_->currentFrame_.framePosition(), width());
@@ -660,7 +680,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
     event->pos().y() >= 0 && event->pos().y() <= impl_->handleHeight_ + 4;
    if (onHandle) {
     impl_->dragging_ = true;
-    Q_EMIT frameDragStarted();
+    frameDragStarted();
    } else {
     impl_->dragging_ = false;
    }
@@ -682,7 +702,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
     impl_->currentFrame_ = FramePosition(newFrame);
     impl_->visualFrame_ = static_cast<double>(newFrame);
     update();
-    Q_EMIT frameChanged(impl_->currentFrame_);
+    frameChanged(impl_->currentFrame_);
    }
    event->accept();
   } else {
@@ -710,7 +730,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   if (event->button() == Qt::LeftButton && impl_->dragging_) {
    impl_->dragging_ = false;
    impl_->hover_ = false;
-   Q_EMIT frameDragFinished();
+   frameDragFinished();
    event->accept();
    update();
   }

@@ -124,3 +124,11 @@ Blender, After Effects, Unity 等の標準的な操作体系に準拠し、X/Y/Z
 - GIZ-4: 2D/3D context switching, depth visibility, hover state, and controller input routing are connected.
 - GIZ-5: ホバー／ドラッグの個別ハイライト、既存の数値HUD、BBハンドル種別表示を接続。実機確認は未完了。
 - 2026-08-09: 体積3Dレイヤー向けに、bounding box の8角・12辺中央・6面中央ハンドル、3Dレイ判定、非均等／反対面固定スケール、モーダル軸拘束、World/Local/View空間切替を追加。実機での操作確認は未完了。
+- 2026-08-31: LightLayer Gizmo の整合性修正 (5点 / 影インジケータの3点)。
+  - **問題1 (高) `forward` 計算の Parallel Light 取扱**: 旧コードは `forward = m.mapVector(QVector3D(0,0,1))` を全 LightType で共有し、Parallel Light でも position 起点の矢印 (tip = pos + forward * 2.4) を描いていた。Parallel Light は本来 position-less で、入射方向 (= local +Z の逆方向) を視覚化する必要がある。修正: `forward` は維持しつつ、Parallel 分岐で `incoming = -forward` を使い、layer position を起点に「太陽マーク + 入射方向矢印 + 十字クロスバー」を描画。
+  - **問題2 (中) `coneAngle` full/half 解釈**: Property tooltip に `"full apex angle, degrees"` を明記。Gizmo (line 280 `tan(angle * π/360)`) と Core (`makeSceneLightFromLayer` line 5235 `* 0.5f`) は両者 full angle 扱いで仕様一致していたが、tooltip で明示していなかった。
+  - **問題3 (中) Spot `coneLength` の `range` クランプ撤廃**: 旧コード `std::min(coneLength_, range_)` は Property 値と Gizmo 表示の乖離を生む。修正: Gizmo は `coneLength_` そのまま使用。`range_` は `range_ > coneLength` のときだけ外側に薄い attenuation range リングを追加表示してユーザに減衰有効距離を通知。
+  - **問題4 (低〜中) Feather Ring 判定**: 旧コードは `featherAngle > 0.1f` で表示・非表示を切替、Property range 0.0-179.0 と不整合。修正: `coneFeather_ > 0.0f` で常時表示。Property tooltip を `"degrees inward from the outer cone edge"` に統一。
+  - **問題5 (低) Area Disk radius**: 別 `areaRadius` プロパティ追加は別マイルストーン。Property tooltip に `"radius = min(width, height) / 2"` を明記。
+  - **問題8 (低) 影インジケータ**: 旧コードは Y 軸方向のリング 1 個を全 LightType に共通描画。修正: Point=3 軸リング、Spot=cone 内側、Area=面内側、Parallel/Ambient=描画なし (影概念が異なる)。
+  - ビルド・実機検証はユーザー指示待ち。変更ファイル: `Artifact/src/Layer/ArtifactLightLayer.cppm` (1 ファイル、`draw()` 関数 + Property tooltip 3 箇所のみ)。

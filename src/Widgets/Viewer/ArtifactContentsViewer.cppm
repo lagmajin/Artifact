@@ -104,6 +104,8 @@ import File.TypeDetector;
 import File.Preview;
 import Platform.QuickLook;
 import Artifact.Widgets.ModelViewer;
+import Event.Bus;
+import Artifact.Event.Types;
 import Utils.Path;
 import Utils.String.UniString;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -675,6 +677,7 @@ namespace Artifact
    QLabel* compareFinalHeader = nullptr;
    QLabel* infoLabel = nullptr;
    Artifact3DModelViewer* modelViewer = nullptr;
+   ArtifactCore::EventBus::Subscription modelViewerDisplayModeSubscription_;
    bool videoWidgetsReady = false;
    bool modelViewerReady = false;
   bool audioWidgetsReady = false;
@@ -1522,10 +1525,15 @@ namespace Artifact
    }
 
    modelViewer = new Artifact3DModelViewer(owner_);
-   QObject::connect(modelViewer, &Artifact3DModelViewer::displayModeChanged, owner_, [this](int) {
-    updateHeader();
-    updateSurfaceMeta();
-   });
+   modelViewerDisplayModeSubscription_ =
+       ArtifactCore::globalEventBus().subscribe<Artifact::ModelViewerDisplayModeChangedEvent>(
+           [this](const Artifact::ModelViewerDisplayModeChangedEvent& event) {
+            if (event.source != modelViewer) {
+             return;
+            }
+            updateHeader();
+            updateSurfaceMeta();
+           });
    auto* resetShortcut = new QShortcut(
        ArtifactCore::ShortcutBindings::instance().shortcut(
            ArtifactCore::ShortcutId::ContentsViewerReset),

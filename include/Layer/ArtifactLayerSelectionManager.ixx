@@ -65,8 +65,6 @@ export namespace Artifact {
   void setActiveComposition(const ArtifactCompositionPtr& comp);
   ArtifactCompositionPtr activeComposition() const;
 
-  void selectionChanged() W_SIGNAL(selectionChanged);
-  void activeCompositionChanged() W_SIGNAL(activeCompositionChanged);
  };
 
 }

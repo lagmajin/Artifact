@@ -20,6 +20,8 @@ module;
 #include <QTableWidgetItem>
 #include <QTabWidget>
 #include <QTimer>
+#include <QMetaObject>
+#include <QThread>
 #include <QApplication>
 #include <QPainter>
 #include <QPixmap>
@@ -41,6 +43,8 @@ import Color.ScienceManager;
 import Color.LUT;
 import Artifact.Color.Palette;
 import Artifact.Color.OCIOManager;
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.CompositionRenderController;
 import Color.LUTWriter;
@@ -52,6 +56,7 @@ namespace Artifact {
 
 class ArtifactColorSciencePanel::Impl {
 public:
+  ArtifactColorSciencePanel *owner_ = nullptr;
   struct ColorRuleRow {
     QString target;
     QString op;
@@ -109,6 +114,8 @@ public:
 
   std::vector<LutEntry> lutEntries_;
   std::vector<ColorRuleRow> colorRules_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   void setupUI(QWidget *parent);
   void updateUI();
@@ -160,6 +167,7 @@ static ArtifactCompositionEditor *findActiveCompositionEditor(QWidget *origin) {
 
 ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  impl_->owner_ = this;
   setAccessibleName(QStringLiteral("Color science panel"));
   setAccessibleDescription(QStringLiteral("Configure color spaces, LUTs, OCIO color management, HDR, and color constraints"));
   impl_->manager_ = new ArtifactColorScienceManager();
@@ -785,12 +793,21 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
     }
   });
 
-  // Listen for OCIO config changes
-  if (auto* ocio = ArtifactOCIOManager::instance()) {
-    connect(ocio, &ArtifactOCIOManager::configChanged, [this]() {
-      updateUI();
-    });
-  }
+  // Listen for OCIO changes through the internal event boundary.
+  eventBusSubscriptions_.push_back(
+      eventBus_.subscribe<OCIOManagerChangedEvent>(
+          [this](const OCIOManagerChangedEvent& event) {
+            if (event.kind != OCIOManagerChangeKind::ConfigChanged) return;
+            const auto refresh = [this]() {
+              if (manager_) updateUI();
+            };
+            if (!owner_) return;
+            if (QThread::currentThread() == owner_->thread()) {
+              refresh();
+            } else {
+              QMetaObject::invokeMethod(owner_, refresh, Qt::QueuedConnection);
+            }
+          }));
 }
 
 void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent) {

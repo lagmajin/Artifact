@@ -232,15 +232,31 @@ double timelineOverscrollPaddingPx(const QWidget *widget) {
   return std::clamp(std::max(96.0, widthHint * 0.25), 96.0, 320.0);
 }
 
+double safeTimelineFrameRate(const double raw, const double fallback = 1.0)
+{
+  if (!std::isfinite(raw) || raw <= 0.0) {
+    return fallback;
+  }
+  return std::clamp(raw, 1.0, 10000.0);
+}
+
 double timelineFrameRateFallback(const ArtifactCompositionPtr& composition)
 {
   if (composition) {
-    return std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+    return safeTimelineFrameRate(
+        static_cast<double>(composition->frameRate().framerate()));
   }
   if (auto* playback = ArtifactPlaybackService::instance()) {
-    return std::max(1.0, static_cast<double>(playback->frameRate().framerate()));
+    return safeTimelineFrameRate(
+        static_cast<double>(playback->frameRate().framerate()));
   }
   return 1.0;
+}
+
+int64_t timelineFrameRateScale(const ArtifactCompositionPtr& composition)
+{
+  return std::max<int64_t>(1, static_cast<int64_t>(std::llround(
+      timelineFrameRateFallback(composition))));
 }
 
 double clampTimelineHorizontalOffset(const ArtifactTimelineTrackPainterView *trackView,
@@ -729,6 +745,7 @@ struct KeyframePropertySnapshot {
   LayerID layerId;
   QString propertyPath;
   std::vector<ArtifactCore::KeyFrame> keyframes;
+  bool animatable = false;
 };
 
 QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
@@ -975,7 +992,7 @@ QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
     const ArtifactCompositionPtr& composition,
     const QVector<KeyframePropertyRef>& refs);
 
-void applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
+bool applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
                                     const QVector<KeyframePropertySnapshot>& snapshots);
 
 bool selectedMarkersFormFlatArea(
@@ -1081,29 +1098,30 @@ QString selectedAreaSummaryText(
 
 class TimelineKeyframeSnapshotCommand final : public UndoCommand {
 public:
-  TimelineKeyframeSnapshotCommand(QString label, std::function<void()> redoFunc,
-                                  std::function<void()> undoFunc)
+  using Operation = std::function<bool()>;
+
+  TimelineKeyframeSnapshotCommand(QString label, Operation redoFunc,
+                                  Operation undoFunc)
       : label_(std::move(label)), redoFunc_(std::move(redoFunc)),
         undoFunc_(std::move(undoFunc)) {}
 
   void undo() override {
-    if (undoFunc_) {
-      undoFunc_();
-    }
+    lastOperationSucceeded_ = undoFunc_ && undoFunc_();
   }
 
   void redo() override {
-    if (redoFunc_) {
-      redoFunc_();
-    }
+    lastOperationSucceeded_ = redoFunc_ && redoFunc_();
   }
+
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
   QString label() const override { return label_; }
 
 private:
   QString label_;
-  std::function<void()> redoFunc_;
-  std::function<void()> undoFunc_;
+  Operation redoFunc_;
+  Operation undoFunc_;
+  bool lastOperationSucceeded_ = false;
 };
 
 bool applyKeyPatternToTargets(
@@ -1127,8 +1145,7 @@ bool applyKeyPatternToTargets(
   }
   const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
 
-  const int frameScale = std::max(
-      1, static_cast<int>(std::llround(composition->frameRate().framerate())));
+  const int frameScale = static_cast<int>(timelineFrameRateScale(composition));
   bool appliedAny = false;
   int targetIndex = 0;
   for (const auto& target : targets) {
@@ -1183,26 +1200,43 @@ bool applyKeyPatternToTargets(
     return false;
   }
 
+  bool undoAccepted = true;
   if (auto* mgr = UndoManager::instance()) {
     const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
-    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+    undoAccepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
         QStringLiteral("Generate Key Pattern"),
-        [composition, afterSnapshots, afterChange]() {
-          applyKeyframePropertySnapshots(composition, afterSnapshots);
-          if (afterChange) {
-            afterChange();
-          }
-        },
-        [composition, beforeSnapshots, afterChange]() {
-          applyKeyframePropertySnapshots(composition, beforeSnapshots);
-          if (afterChange) {
-            afterChange();
-          }
-        }));
+        TimelineKeyframeSnapshotCommand::Operation{
+            [composition, afterSnapshots, afterChange]() {
+              const bool applied =
+                  applyKeyframePropertySnapshots(composition, afterSnapshots);
+              if (afterChange) {
+                afterChange();
+              }
+              return applied;
+            }},
+        TimelineKeyframeSnapshotCommand::Operation{
+            [composition, beforeSnapshots, afterChange]() {
+              const bool applied =
+                  applyKeyframePropertySnapshots(composition, beforeSnapshots);
+              if (afterChange) {
+                afterChange();
+              }
+              return applied;
+            }}));
+    if (!undoAccepted) {
+      applyKeyframePropertySnapshots(composition, beforeSnapshots);
+    }
   }
 
   if (afterChange) {
     afterChange();
+  }
+
+  if (!undoAccepted) {
+    if (outMessage) {
+      *outMessage = QStringLiteral("Unable to record the generated key pattern.");
+    }
+    return false;
   }
 
   if (outMessage) {
@@ -1239,42 +1273,46 @@ QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
       continue;
     }
 
-    snapshots.push_back(
-        KeyframePropertySnapshot{ref.layerId, ref.propertyPath, property->getKeyFrames()});
+    snapshots.push_back(KeyframePropertySnapshot{
+        ref.layerId, ref.propertyPath, property->getKeyFrames(), property->isAnimatable()});
   }
 
   return snapshots;
 }
 
-void applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
+bool applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
                                     const QVector<KeyframePropertySnapshot>& snapshots)
 {
   if (!composition || snapshots.isEmpty()) {
-    return;
+    return false;
+  }
+
+  for (const auto& snapshot : snapshots) {
+    const auto layer = composition->layerById(snapshot.layerId);
+    if (!layer || !findLayerPropertyByPath(layer, snapshot.propertyPath)) {
+      return false;
+    }
   }
 
   QSet<QString> changedLayerKeys;
   QVector<LayerID> changedLayers;
   for (const auto& snapshot : snapshots) {
     const auto layer = composition->layerById(snapshot.layerId);
-    if (!layer) {
-      continue;
-    }
     const auto property = findLayerPropertyByPath(layer, snapshot.propertyPath);
-    if (!property) {
-      continue;
-    }
 
     property->clearKeyFrames();
-    const double fps =
-        std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
     for (const auto& keyframe : snapshot.keyframes) {
-      const int64_t scale = static_cast<int64_t>(std::llround(fps));
+      const int64_t scale = timelineFrameRateScale(composition);
       property->addKeyFrame(RationalTime(keyframe.time.rescaledTo(scale), scale), keyframe.value,
                             keyframe.interpolation, keyframe.cp1_x,
                             keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
                             keyframe.roving);
+      const RationalTime restoredTime(keyframe.time.rescaledTo(scale), scale);
+      property->setKeyFrameAnchorAt(restoredTime, keyframe.anchor);
+      property->setKeyFrameColorLabelAt(restoredTime, keyframe.colorLabel);
     }
+    property->setAnimatable(snapshot.animatable);
+    layer->setDirty(LayerDirtyFlag::Property);
     const QString layerKey = layer->id().toString();
     if (!changedLayerKeys.contains(layerKey)) {
       changedLayerKeys.insert(layerKey);
@@ -1284,14 +1322,13 @@ void applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
 
   for (const auto& layerId : changedLayers) {
     const auto layer = composition->layerById(layerId);
-    if (!layer) {
-      continue;
-    }
+    if (!layer) return false;
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{composition->id().toString(), layer->id().toString(),
                           LayerChangedEvent::ChangeType::Modified});
   }
+  return true;
 }
 
 void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
@@ -1302,9 +1339,7 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
     return;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
-  const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
+  const int64_t frameScale = timelineFrameRateScale(composition);
 
   for (const auto& group : layer->getLayerPropertyGroups()) {
     for (const auto& property : group.sortedProperties()) {
@@ -1322,11 +1357,13 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
         const int64_t oldFrame = keyframe.time.rescaledTo(frameScale);
         const int64_t newFrame =
             std::max<int64_t>(0, oldFrame + frameDelta);
+        const RationalTime shiftedTime(newFrame, frameScale);
         property->addKeyFrame(
-            RationalTime(newFrame, frameScale),
-            keyframe.value.isValid() ? keyframe.value : property->getValue(),
+            shiftedTime, keyframe.value.isValid() ? keyframe.value : property->getValue(),
             keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
             keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
+        property->setKeyFrameAnchorAt(shiftedTime, keyframe.anchor);
+        property->setKeyFrameColorLabelAt(shiftedTime, keyframe.colorLabel);
       }
     }
   }
@@ -1379,47 +1416,73 @@ QVector<TimelineLayerStateSnapshot> captureTimelineLayerStateSnapshots(
   return snapshots;
 }
 
-void restoreTimelineLayerStateSnapshot(const ArtifactCompositionPtr& composition,
-                                      const TimelineLayerStateSnapshot& snapshot)
+bool restoreTimelineLayerStateSnapshot(const ArtifactCompositionPtr& composition,
+                                       const TimelineLayerStateSnapshot& snapshot)
 {
   if (!composition || snapshot.layerId.isNil()) {
-    return;
+    return false;
   }
 
   const auto layer = composition->layerById(snapshot.layerId);
   if (!layer) {
-    return;
+    return false;
   }
   if (layer->isTimingLocked()) {
-    return;
+    return false;
+  }
+  for (const auto& keyframe : snapshot.keyframes) {
+    if (!findLayerPropertyByPath(layer, keyframe.propertyPath)) {
+      return false;
+    }
   }
 
+  const int64_t oldInPoint = layer->inPoint().framePosition();
+  const int64_t oldOutPoint = layer->outPoint().framePosition();
+  const int64_t oldStartTime = layer->startTime().framePosition();
   layer->setInPoint(FramePosition(snapshot.inPoint));
   layer->setOutPoint(FramePosition(snapshot.outPoint));
   layer->setStartTime(FramePosition(snapshot.startTime));
+  if (layer->inPoint().framePosition() != snapshot.inPoint ||
+      layer->outPoint().framePosition() != snapshot.outPoint ||
+      layer->startTime().framePosition() != snapshot.startTime) {
+    layer->setInPoint(FramePosition(oldInPoint));
+    layer->setOutPoint(FramePosition(oldOutPoint));
+    layer->setStartTime(FramePosition(oldStartTime));
+    layer->changed();
+    return false;
+  }
 
   if (!snapshot.keyframes.isEmpty()) {
-    applyKeyframePropertySnapshots(composition, snapshot.keyframes);
-    return;
+    if (applyKeyframePropertySnapshots(composition, snapshot.keyframes)) {
+      return true;
+    }
+    layer->setInPoint(FramePosition(oldInPoint));
+    layer->setOutPoint(FramePosition(oldOutPoint));
+    layer->setStartTime(FramePosition(oldStartTime));
+    layer->changed();
+    return false;
   }
 
   layer->changed();
   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
       LayerChangedEvent{composition->id().toString(), layer->id().toString(),
                         LayerChangedEvent::ChangeType::Modified});
+  return true;
 }
 
-void restoreTimelineLayerStateSnapshots(
+bool restoreTimelineLayerStateSnapshots(
     const ArtifactCompositionPtr& composition,
     const QVector<TimelineLayerStateSnapshot>& snapshots)
 {
   if (!composition || snapshots.isEmpty()) {
-    return;
+    return false;
   }
 
+  bool restored = true;
   for (const auto& snapshot : snapshots) {
-    restoreTimelineLayerStateSnapshot(composition, snapshot);
+    restored = restoreTimelineLayerStateSnapshot(composition, snapshot) && restored;
   }
+  return restored;
 }
 
 QVector<ArtifactAbstractLayerPtr> collectRippleLaterLayers(
@@ -1535,12 +1598,15 @@ public:
 
   void undo() override
   {
+    lastOperationSucceeded_ = false;
     auto comp = safeCompositionLookup(compositionId_);
     if (!comp) {
       return;
     }
 
-    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    lastOperationSucceeded_ =
+        restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (!lastOperationSucceeded_) return;
     if (auto* mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -1548,8 +1614,10 @@ public:
 
   void redo() override
   {
-    if (applyTimelineRippleTrimOut(compositionId_, layerId_.toString(),
-                                   currentFrame_)) {
+    lastOperationSucceeded_ =
+        applyTimelineRippleTrimOut(compositionId_, layerId_.toString(),
+                                   currentFrame_);
+    if (lastOperationSucceeded_) {
       if (auto* mgr = UndoManager::instance()) {
         mgr->notifyAnythingChanged();
       }
@@ -1557,12 +1625,14 @@ public:
   }
 
   QString label() const override { return QStringLiteral("Ripple Trim Out"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   CompositionID compositionId_;
   LayerID layerId_;
   qint64 currentFrame_ = 0;
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+  bool lastOperationSucceeded_ = true;
 };
 
 // Phase 2: Ripple Trim In
@@ -1742,11 +1812,14 @@ public:
 
   void undo() override
   {
+    lastOperationSucceeded_ = false;
     auto comp = safeCompositionLookup(compositionId_);
     if (!comp) {
       return;
     }
-    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    lastOperationSucceeded_ =
+        restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (!lastOperationSucceeded_) return;
     if (auto* mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -1754,8 +1827,10 @@ public:
 
   void redo() override
   {
-    if (applyTimelineRippleTrimIn(compositionId_, layerId_.toString(),
-                                  currentFrame_)) {
+    lastOperationSucceeded_ =
+        applyTimelineRippleTrimIn(compositionId_, layerId_.toString(),
+                                  currentFrame_);
+    if (lastOperationSucceeded_) {
       if (auto* mgr = UndoManager::instance()) {
         mgr->notifyAnythingChanged();
       }
@@ -1763,12 +1838,14 @@ public:
   }
 
   QString label() const override { return QStringLiteral("Ripple Trim In"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   CompositionID compositionId_;
   LayerID layerId_;
   qint64 currentFrame_ = 0;
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RippleDeleteCommand final : public UndoCommand {
@@ -1781,11 +1858,14 @@ public:
 
   void undo() override
   {
+    lastOperationSucceeded_ = false;
     auto comp = safeCompositionLookup(compositionId_);
     if (!comp) {
       return;
     }
-    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    lastOperationSucceeded_ =
+        restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (!lastOperationSucceeded_) return;
     if (auto* mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -1793,7 +1873,9 @@ public:
 
   void redo() override
   {
-    if (applyTimelineRippleDelete(compositionId_, layerId_.toString())) {
+    lastOperationSucceeded_ =
+        applyTimelineRippleDelete(compositionId_, layerId_.toString());
+    if (lastOperationSucceeded_) {
       if (auto* mgr = UndoManager::instance()) {
         mgr->notifyAnythingChanged();
       }
@@ -1801,11 +1883,13 @@ public:
   }
 
   QString label() const override { return QStringLiteral("Ripple Delete"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   CompositionID compositionId_;
   LayerID layerId_;
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+  bool lastOperationSucceeded_ = true;
 };
 
 bool applyTimelineLayerSlide(const CompositionID& compositionId,
@@ -1839,13 +1923,16 @@ bool applyTimelineLayerSlide(const CompositionID& compositionId,
         const auto keyframes = property->getKeyFrames();
         if (keyframes.empty()) continue;
         property->clearKeyFrames();
-        const int64_t fps = static_cast<int64_t>(std::llround(comp->frameRate().framerate()));
+        const int64_t fps = timelineFrameRateScale(comp);
         for (const auto &keyframe : keyframes) {
+          const RationalTime shiftedTime(
+              std::max<int64_t>(0, keyframe.time.rescaledTo(fps) + inPointDelta), fps);
           property->addKeyFrame(
-              RationalTime(std::max<int64_t>(0, keyframe.time.rescaledTo(fps) + inPointDelta), fps),
-              keyframe.value.isValid() ? keyframe.value : property->getValue(),
+              shiftedTime, keyframe.value.isValid() ? keyframe.value : property->getValue(),
               keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
               keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
+          property->setKeyFrameAnchorAt(shiftedTime, keyframe.anchor);
+          property->setKeyFrameColorLabelAt(shiftedTime, keyframe.colorLabel);
         }
       }
     }
@@ -1869,9 +1956,12 @@ public:
 
   void undo() override
   {
+    lastOperationSucceeded_ = false;
     auto comp = safeCompositionLookup(compositionId_);
     if (!comp) return;
-    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    lastOperationSucceeded_ =
+        restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (!lastOperationSucceeded_) return;
     if (auto* mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -1879,8 +1969,10 @@ public:
 
   void redo() override
   {
-    if (applyTimelineLayerSlide(compositionId_, layerId_.toString(),
-                                newStartFrame_)) {
+    lastOperationSucceeded_ =
+        applyTimelineLayerSlide(compositionId_, layerId_.toString(),
+                                newStartFrame_);
+    if (lastOperationSucceeded_) {
       if (auto* mgr = UndoManager::instance()) {
         mgr->notifyAnythingChanged();
       }
@@ -1888,12 +1980,14 @@ public:
   }
 
   QString label() const override { return QStringLiteral("Slide Clip"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   CompositionID compositionId_;
   LayerID layerId_;
   qint64 newStartFrame_ = 0;
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+  bool lastOperationSucceeded_ = true;
 };
 
 bool propertyValueAsCurveNumber(const ArtifactCore::AbstractProperty &property,
@@ -2122,8 +2216,7 @@ QVector<qint64> collectSelectedKeyframeFrames(
     return frames;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   QSet<qint64> seenFrames;
   for (const auto& layer : layers) {
     if (!layer) {
@@ -2162,8 +2255,7 @@ QJsonArray serializeSelectedKeyframes(
     return keyframes;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   QSet<QString> seen;
   for (const auto& marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
@@ -2219,8 +2311,7 @@ QJsonArray serializeSelectedKeyframeEasing(
     return easing;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   QSet<QString> seen;
   for (const auto& marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
@@ -2276,8 +2367,7 @@ QVector<InterpolationChangeRecord> buildKeyframeEasingChangeRecords(
     return records;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   QSet<QString> seen;
   QVector<QJsonObject> sources;
   sources.reserve(easingRecords.size());
@@ -2381,8 +2471,7 @@ bool pasteKeyframesToLayers(
     return false;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   if (outSelectionKeys) {
     outSelectionKeys->clear();
   }
@@ -2438,6 +2527,7 @@ bool pasteKeyframesToLayers(
       layerChanged = true;
     }
     if (layerChanged) {
+      layer->setDirty(LayerDirtyFlag::Property);
       layer->changed();
       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
           LayerChangedEvent{composition->id().toString(),
@@ -2463,8 +2553,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
     return false;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
 
   bool changed = false;
@@ -2489,6 +2578,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
   }
 
   if (changed) {
+    layer->setDirty(LayerDirtyFlag::Property);
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{composition->id().toString(), layer->id().toString(),
@@ -2507,8 +2597,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
     return false;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
   const auto property = findLayerPropertyByPath(layer, propertyPath);
   if (!property || !property->isAnimatable()) {
@@ -2530,6 +2619,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
   }
 
   if (changed) {
+    layer->setDirty(LayerDirtyFlag::Property);
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{composition->id().toString(), layer->id().toString(),
@@ -2592,21 +2682,22 @@ bool timelinePropertyAllowedByKeyingSet(const QString& propertyName)
   return true;
 }
 
-void applyInterpolationChangeRecords(
+bool applyInterpolationChangeRecords(
     const QVector<InterpolationChangeRecord>& records,
     const bool useAfter,
     const bool notifyUndoManager)
 {
+  if (records.isEmpty()) return false;
+  for (const auto& record : records) {
+    const auto layer = record.layer.lock();
+    if (!layer || !findLayerPropertyByPath(layer, record.propertyPath)) {
+      return false;
+    }
+  }
   QSet<QString> changedLayerIds;
   for (const auto& record : records) {
     auto layer = record.layer.lock();
-    if (!layer) {
-      continue;
-    }
     const auto property = findLayerPropertyByPath(layer, record.propertyPath);
-    if (!property) {
-      continue;
-    }
     const auto& keyframe = useAfter ? record.after : record.before;
     property->addKeyFrame(keyframe.time,
                           keyframe.value.isValid() ? keyframe.value : property->getValue(),
@@ -2618,6 +2709,7 @@ void applyInterpolationChangeRecords(
                           keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    layer->setDirty(LayerDirtyFlag::Property);
     layer->changed();
     changedLayerIds.insert(layer->id().toString());
   }
@@ -2643,6 +2735,7 @@ void applyInterpolationChangeRecords(
       mgr->notifyAnythingChanged();
     }
   }
+  return !changedLayerIds.isEmpty();
 }
 
 class ApplyInterpolationCommand final : public UndoCommand {
@@ -2651,18 +2744,20 @@ public:
                                      QString label = QStringLiteral("Apply Interpolation"))
       : records_(std::move(records)), label_(std::move(label)) {}
 
-  void undo() override { apply(false); }
-  void redo() override { apply(true); }
+  void undo() override { lastOperationSucceeded_ = apply(false); }
+  void redo() override { lastOperationSucceeded_ = apply(true); }
   QString label() const override { return label_; }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   QString label_;
-  void apply(const bool useAfter)
+  bool apply(const bool useAfter)
   {
-    applyInterpolationChangeRecords(records_, useAfter, true);
+    return applyInterpolationChangeRecords(records_, useAfter, true);
   }
 
   QVector<InterpolationChangeRecord> records_;
+  bool lastOperationSucceeded_ = true;
 };
 
 namespace {
@@ -2763,8 +2858,7 @@ int applyInterpolationToSelectedKeyframesImpl(
     return 0;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   QSet<QString> seen;
   QVector<InterpolationChangeRecord> records;
 
@@ -2843,10 +2937,13 @@ int applyInterpolationToSelectedKeyframesImpl(
 
   const int appliedCount = static_cast<int>(records.size());
   if (auto* mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<ApplyInterpolationCommand>(std::move(records)));
-    return appliedCount;
+    return mgr->push(std::make_unique<ApplyInterpolationCommand>(std::move(records)))
+               ? appliedCount
+               : 0;
   }
-  return 0;
+  return applyInterpolationChangeRecords(records, true, false)
+             ? appliedCount
+             : 0;
 }
 
 bool moveTimelineKeyframe(const ArtifactCompositionPtr& composition,
@@ -2863,8 +2960,7 @@ bool moveTimelineKeyframe(const ArtifactCompositionPtr& composition,
     return false;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const auto frameRange = composition->frameRange();
   const qint64 minFrame = frameRange.start();
   const qint64 maxFrame = std::max(minFrame, frameRange.end());
@@ -2895,8 +2991,7 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
     return false;
   }
 
-  const double fps = std::max(
-      1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const RationalTime nowTime(static_cast<int64_t>(std::llround(
                                 std::max<int64_t>(0, composition->framePosition().framePosition()))),
                              static_cast<int64_t>(std::llround(fps)));
@@ -2923,6 +3018,7 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
   }
 
   if (changed) {
+    layer->setDirty(LayerDirtyFlag::Property);
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{composition->id().toString(), layer->id().toString(),
@@ -2988,8 +3084,7 @@ ArtifactCore::InterpolationType selectedKeyframeInterpolationType(
     return ArtifactCore::InterpolationType::EaseInOut;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   QHash<int, int> interpolationCounts;
   for (const auto& marker : markers) {
     const auto layer = composition->layerById(marker.layerId);
@@ -3073,8 +3168,7 @@ CurveEditorPayload collectCurveEditorPayload(
     return payload;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
 
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
@@ -3250,8 +3344,7 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
     return payload;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
 
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
@@ -3436,8 +3529,7 @@ bool applyCurveEditorMove(
   }
 
   const CurveKey& oldKey = track.keys[keyIndex];
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const RationalTime oldTime(oldKey.frame, static_cast<int64_t>(std::llround(fps)));
   const RationalTime newTime(newFrame, static_cast<int64_t>(std::llround(fps)));
 
@@ -3459,6 +3551,9 @@ bool applyCurveEditorMove(
                         preservedKeyframe.interpolation, preservedKeyframe.cp1_x,
                         preservedKeyframe.cp1_y, preservedKeyframe.cp2_x,
                         preservedKeyframe.cp2_y, preservedKeyframe.roving);
+  property->setKeyFrameAnchorAt(newTime, preservedKeyframe.anchor);
+  property->setKeyFrameColorLabelAt(newTime, preservedKeyframe.colorLabel);
+  layer->setDirty(LayerDirtyFlag::Property);
   layer->changed();
   return true;
 }
@@ -3489,8 +3584,7 @@ bool applyCurveEditorTrackToProperty(
     return false;
   }
 
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   std::vector<ArtifactCore::KeyFrame> updatedKeyframes = originalKeyframes;
   for (int i = 0; i < static_cast<int>(track.keys.size()); ++i) {
     const auto& trackKey = track.keys[static_cast<size_t>(i)];
@@ -3544,7 +3638,10 @@ bool applyCurveEditorTrackToProperty(
     property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
                           keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
                           keyframe.cp2_y, keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
   }
+  layer->setDirty(LayerDirtyFlag::Property);
   layer->changed();
   return true;
 }
@@ -3613,8 +3710,7 @@ int writeBackCurveEditorStructureDiffs(
     return 0;
   }
   int written = 0;
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const int64_t fpsInt = static_cast<int64_t>(std::llround(fps));
   const int count = std::min<int>({static_cast<int>(bindings.size()),
                                   static_cast<int>(cachedTracks.size()),
@@ -4352,7 +4448,8 @@ protected:
             (mouseEvent->position().x() + trackView_->horizontalOffset()) / ppf,
             0.0, std::max(0.0, trackView_->durationFrames() - 1.0));
         trackView_->setCurrentFrame(frame);
-        trackView_->seekRequested(frame);
+        ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
+            TimelineSeekRequestedEvent{frame});
         updatePlayhead();
         return true;
       }
@@ -4399,7 +4496,8 @@ protected:
     trackView_->setCurrentFrame(frame);
     scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(std::llround(frame))));
     scrubBar_->setVisualFrame(frame);
-    trackView_->seekRequested(frame);
+    ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
+        TimelineSeekRequestedEvent{frame});
     updatePlayhead();
     event->accept();
   }
@@ -4603,6 +4701,7 @@ protected:
 private:
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
+  ArtifactTimeCodeWidget *timeCodeWidget_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
   QWidget *timelinePainterPage_ = nullptr;
@@ -5137,10 +5236,12 @@ void ArtifactTimelineWidget::showKeyPatternDialog()
       selectedMarkers);
   const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
   if (targets.isEmpty()) {
-    Q_EMIT timelineDebugMessage(QStringLiteral("Key Pattern Dialog needs a selected property and at least one layer."));
+    timelineDebugMessage(QStringLiteral("Key Pattern Dialog needs a selected property and at least one layer."));
     return;
   }
 
+  const double compositionBpmFps = safeTimelineFrameRate(
+      static_cast<double>(composition->frameRate().framerate()), 60.0);
   ArtifactCore::KeyframePatternRequest request;
   request.preset = ArtifactCore::KeyframePatternPreset::Ramp;
   request.startFrame = std::max(0.0, impl_->currentFrame_);
@@ -5149,16 +5250,13 @@ void ArtifactTimelineWidget::showKeyPatternDialog()
   request.amplitude = 60.0;
   request.phase = 0.0;
   request.delayFrames = 2.0;
-  request.bpm = composition->frameRate().framerate() > 0.0
-                    ? composition->frameRate().framerate() * 2.0
-                    : 120.0;
+  request.bpm = compositionBpmFps * 2.0;
   request.damping = 4.0;
   request.settleOscillation = 3.0;
   request.stepCount = 6;
   request.sampleCount = 12;
   request.seed = 1;
-  request.frameScale = std::max(
-      1, static_cast<int>(std::llround(composition->frameRate().framerate())));
+  request.frameScale = static_cast<int>(timelineFrameRateScale(composition));
 
   if (const auto firstLayer = targets.front().layer) {
     if (const auto property = firstLayer->getProperty(propertyPath)) {
@@ -5189,10 +5287,10 @@ void ArtifactTimelineWidget::showKeyPatternDialog()
                   self->updateSelectionState();
                 })) {
           if (!message.isEmpty()) {
-            Q_EMIT timelineDebugMessage(message);
+            timelineDebugMessage(message);
           }
         } else if (!message.isEmpty()) {
-          Q_EMIT timelineDebugMessage(message);
+          timelineDebugMessage(message);
         }
       },
       request);
@@ -5229,11 +5327,13 @@ void ArtifactTimelineWidget::applyAnimationPreset(
       selectedMarkers);
   const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
   if (targets.isEmpty()) {
-    Q_EMIT timelineDebugMessage(
+    timelineDebugMessage(
         QStringLiteral("Animation preset needs a selected property and at least one layer."));
     return;
   }
 
+  const double compositionBpmFps = safeTimelineFrameRate(
+      static_cast<double>(composition->frameRate().framerate()), 60.0);
   ArtifactCore::KeyframePatternRequest request;
   request.preset = preset;
   request.startFrame = std::max(0.0, impl_->currentFrame_);
@@ -5242,16 +5342,13 @@ void ArtifactTimelineWidget::applyAnimationPreset(
   request.amplitude = 60.0;
   request.phase = 0.0;
   request.delayFrames = 2.0;
-  request.bpm = composition->frameRate().framerate() > 0.0
-                    ? composition->frameRate().framerate() * 2.0
-                    : 120.0;
+  request.bpm = compositionBpmFps * 2.0;
   request.damping = 4.0;
   request.settleOscillation = 3.0;
   request.stepCount = 6;
   request.sampleCount = 12;
   request.seed = 1;
-  request.frameScale = std::max(
-      1, static_cast<int>(std::llround(composition->frameRate().framerate())));
+  request.frameScale = static_cast<int>(timelineFrameRateScale(composition));
 
   switch (preset) {
   case ArtifactCore::KeyframePatternPreset::Stagger:
@@ -5297,9 +5394,7 @@ void ArtifactTimelineWidget::applyAnimationPreset(
     break;
   case ArtifactCore::KeyframePatternPreset::BeatSync:
     request.sampleCount = 8;
-    request.bpm = composition->frameRate().framerate() > 0.0
-                      ? composition->frameRate().framerate() * 2.0
-                      : 120.0;
+    request.bpm = compositionBpmFps * 2.0;
     request.endFrame = request.startFrame + 24.0;
     break;
   case ArtifactCore::KeyframePatternPreset::Ramp:
@@ -5347,10 +5442,10 @@ void ArtifactTimelineWidget::applyAnimationPreset(
             self->updateSelectionState();
           })) {
     if (!message.isEmpty()) {
-      Q_EMIT timelineDebugMessage(message);
+      timelineDebugMessage(message);
     }
   } else if (!message.isEmpty()) {
-    Q_EMIT timelineDebugMessage(message);
+    timelineDebugMessage(message);
   }
 }
 
@@ -5394,9 +5489,9 @@ void ArtifactTimelineWidget::applyKeyPattern(
             self->updateKeyframeState();
             self->updateSelectionState();
           })) {
-    Q_EMIT timelineDebugMessage(message);
+    timelineDebugMessage(message);
   } else if (!message.isEmpty()) {
-    Q_EMIT timelineDebugMessage(message);
+    timelineDebugMessage(message);
   }
 }
 
@@ -5441,32 +5536,42 @@ bool ArtifactTimelineWidget::applyTrajectoryToProperty(
   layer->setDirty();
   layer->changed();
 
+  bool undoAccepted = true;
   if (auto* manager = UndoManager::instance()) {
     const auto after = captureKeyframePropertySnapshots(composition, refs);
     QPointer<ArtifactTimelineWidget> self(this);
-    manager->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+    undoAccepted = manager->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
         QStringLiteral("Apply Motion Trajectory"),
+        TimelineKeyframeSnapshotCommand::Operation{
         [composition, after, self]() {
-          applyKeyframePropertySnapshots(composition, after);
+          const bool applied =
+              applyKeyframePropertySnapshots(composition, after);
           if (self) {
             self->refreshTracks();
             self->updateKeyframeState();
             self->updateSelectionState();
           }
-        },
+          return applied;
+        }},
+        TimelineKeyframeSnapshotCommand::Operation{
         [composition, before, self]() {
-          applyKeyframePropertySnapshots(composition, before);
+          const bool applied =
+              applyKeyframePropertySnapshots(composition, before);
           if (self) {
             self->refreshTracks();
             self->updateKeyframeState();
             self->updateSelectionState();
           }
-        }));
+          return applied;
+        }}));
+    if (!undoAccepted) {
+      applyKeyframePropertySnapshots(composition, before);
+    }
   }
   refreshTracks();
   updateKeyframeState();
   updateSelectionState();
-  return true;
+  return undoAccepted;
 }
 
 bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) const
@@ -5789,6 +5894,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->zoomSummaryLabel_ = zoomSummaryLabel;
   impl_->selectionSummaryLabel_ = selectionSummaryLabel;
   impl_->globalSwitches_ = globalSwitches;
+  impl_->timeCodeWidget_ = leftHeader;
 
   keyframeStatusLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   keyframeStatusLabel->setMinimumWidth(260);
@@ -6171,15 +6277,55 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(8, 1);
   searchBarLayout->setStretch(9, 0);
 
-  // legacy direct signal connection disabled — prefer EventBus
-  if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
-                   this, &ArtifactTimelineWidget::onShyChanged);
-
   // Subscribe to global timeline switches via EventBus
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineShyChangedEvent>([this](const TimelineShyChangedEvent& e) {
         QMetaObject::invokeMethod(this, [this, e]() { onShyChanged(e.shy); }, Qt::QueuedConnection);
       }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineGraphEditorToggledEvent>(
+          [this](const TimelineGraphEditorToggledEvent &event) {
+            QMetaObject::invokeMethod(
+                this, [this, active = event.enabled]() {
+                  if (!impl_ || !impl_->curveEditor_) {
+                    return;
+                  }
+                  impl_->graphEditorVisible_ = active;
+                  if (impl_->timelineModeStack_) {
+                    impl_->timelineModeStack_->setCurrentWidget(
+                        active ? impl_->curveEditorPage_
+                               : (impl_->gpuTimelinePreviewEnabled_
+                                      ? impl_->timelineGpuPage_
+                                      : impl_->timelinePainterPage_));
+                  }
+                  if (impl_->rightPanel_) {
+                    impl_->rightPanel_->setPlayheadOverlayEnabled(
+                        !active && !impl_->gpuTimelinePreviewEnabled_);
+                  }
+                  if (impl_->curvePropertyPanel_) {
+                    impl_->curvePropertyPanel_->setVisible(active);
+                  }
+                  if (!active) {
+                    impl_->curveEditorDragging_ = false;
+                    impl_->focusedCurveTrackIndex_ = -1;
+                    impl_->curveFocusPinned_ = false;
+                    if (impl_->curveEditorRefreshTimer_) {
+                      impl_->curveEditorRefreshTimer_->stop();
+                    }
+                  } else {
+                    impl_->graphEditorNeedsFit_ = true;
+                  }
+                  if (active) {
+                    refreshCurveEditorTracks();
+                    if (impl_->curveEditor_) {
+                      impl_->curveEditor_->focusTrack(
+                          impl_->focusedCurveTrackIndex_);
+                    }
+                    updateCurvePropertyList();
+                  }
+                },
+                Qt::QueuedConnection);
+          }));
   // Migrated to EventBus — subscribe to TimelineVisibleRowsChangedEvent instead
   // of the Qt visibleRowsChanged signal, so the connection survives widget
   // identity changes and avoids Qt signal cross-threading issues.
@@ -6373,7 +6519,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                                         ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                                         : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
                        if (!composition || selectedMarkers.isEmpty()) {
-                         Q_EMIT timelineDebugMessage(
+                         timelineDebugMessage(
                              QStringLiteral("Select keyframes before generating a fringe."));
                          return;
                        }
@@ -6381,7 +6527,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        QHash<QString, FringeRange> ranges;
                        QVector<KeyframePropertyRef> refs;
                        QSet<QString> seenRefs;
-                       const double fps = std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+                       const double fps = timelineFrameRateFallback(composition);
                        for (const auto& marker : selectedMarkers) {
                          const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
                          const QString key = QStringLiteral("%1|%2").arg(marker.layerId.toString(), marker.propertyPath);
@@ -6419,17 +6565,26 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        }
                        if (generated > 0) {
                          const auto after = captureKeyframePropertySnapshots(composition, refs);
-                         if (auto* undo = UndoManager::instance()) {
-                           undo->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
-                               QStringLiteral("Generate Keyframe Fringe"),
-                               [composition, after]() { applyKeyframePropertySnapshots(composition, after); },
-                               [composition, before]() { applyKeyframePropertySnapshots(composition, before); }));
-                         }
+                          if (auto* undo = UndoManager::instance()) {
+                            if (!undo->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+                                QStringLiteral("Generate Keyframe Fringe"),
+                                TimelineKeyframeSnapshotCommand::Operation{
+                                [composition, after]() {
+                                  return applyKeyframePropertySnapshots(composition, after);
+                                }},
+                                TimelineKeyframeSnapshotCommand::Operation{
+                                [composition, before]() {
+                                  return applyKeyframePropertySnapshots(composition, before);
+                                }}))) {
+                              applyKeyframePropertySnapshots(composition, before);
+                              generated = 0;
+                            }
+                          }
                          refreshTracks();
                          refreshCurveEditorTracks();
                          updateKeyframeState();
                        }
-                       Q_EMIT timelineDebugMessage(
+                       timelineDebugMessage(
                            QStringLiteral("Generated %1 fringe keyframe%2.").arg(generated).arg(generated == 1 ? QString() : QStringLiteral("s")));
                        return;
                      }
@@ -6446,11 +6601,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      const auto layers = selectedTimelineLayers(selection);
                      const auto range = composition->workAreaRange();
                      if (layers.isEmpty() || !range.isValid() || range.isEmpty()) {
-                       Q_EMIT timelineDebugMessage(
+                       timelineDebugMessage(
                            QStringLiteral("Select at least one layer and a valid work area before baking."));
                        return;
                      }
                      int bakedCount = 0;
+                     auto* undo = UndoManager::instance();
+                     auto bakeMacro = undo
+                                          ? std::make_unique<MacroUndoCommand>(
+                                                QStringLiteral("Bake Animation Layers"))
+                                          : nullptr;
                      for (const auto& layer : layers) {
                        if (!layer) {
                          continue;
@@ -6461,12 +6621,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        if (before == after) {
                          continue;
                        }
-                       if (auto* undo = UndoManager::instance()) {
-                         layer->restoreAnimationLayersSnapshot(before);
-                         undo->push(std::make_unique<AnimationLayerStackSnapshotCommand>(
-                             layer, before, after));
-                       }
+                        if (undo) {
+                          layer->restoreAnimationLayersSnapshot(before);
+                          bakeMacro->addChild(
+                              std::make_unique<AnimationLayerStackSnapshotCommand>(
+                                  layer, before, after));
+                        }
                        ++bakedCount;
+                     }
+                     if (undo && bakedCount > 0 &&
+                         !undo->push(std::move(bakeMacro))) {
+                       bakedCount = 0;
                      }
                      if (bakedCount > 0) {
                        refreshTracks();
@@ -6474,7 +6639,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        updateKeyframeState();
                        updateSelectionState();
                      }
-                     Q_EMIT timelineDebugMessage(
+                     timelineDebugMessage(
                          QStringLiteral("Baked animation layers for %1 selected layer%2.")
                              .arg(bakedCount)
                              .arg(bakedCount == 1 ? QString() : QStringLiteral("s")));
@@ -6767,23 +6932,31 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     const auto afterSnapshots =
         captureCurveEditorPropertySnapshots(composition, impl_->curveBindings_);
     if (!sameCurveEditorSnapshots(beforeSnapshots, afterSnapshots)) {
-      if (auto* mgr = UndoManager::instance()) {
-        QPointer<ArtifactTimelineWidget> self(this);
-        mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
-            label,
+        if (auto* mgr = UndoManager::instance()) {
+          QPointer<ArtifactTimelineWidget> self(this);
+          if (!mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+              label,
+            TimelineKeyframeSnapshotCommand::Operation{
             [self, composition, afterSnapshots]() {
-              applyKeyframePropertySnapshots(composition, afterSnapshots);
+              const bool applied =
+                  applyKeyframePropertySnapshots(composition, afterSnapshots);
               if (self && self->impl_ && self->impl_->curveEditor_) {
                 self->refreshCurveEditorTracks();
               }
-            },
+              return applied;
+            }},
+            TimelineKeyframeSnapshotCommand::Operation{
             [self, composition, beforeSnapshots]() {
-              applyKeyframePropertySnapshots(composition, beforeSnapshots);
+              const bool applied =
+                  applyKeyframePropertySnapshots(composition, beforeSnapshots);
               if (self && self->impl_ && self->impl_->curveEditor_) {
                 self->refreshCurveEditorTracks();
               }
-            }));
-      }
+              return applied;
+            }}))) {
+            applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          }
+        }
     }
     refreshCurveEditorTracks();
   };
@@ -6920,15 +7093,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   syncWorkAreaFromCurrentComposition();
 
-  QObject::connect(timeNavigatorWidget,
-                   &ArtifactTimelineNavigatorWidget::startChanged, this,
-                   updateZoom);
-  QObject::connect(timeNavigatorWidget,
-                   &ArtifactTimelineNavigatorWidget::endChanged, this,
-                   updateZoom);
-  QObject::connect(
-      workAreaWidget, &WorkAreaControl::startChanged, this,
-      [this, workAreaWidget](float) {
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineNavigatorRangeChangedEvent>(
+          [updateZoom](const TimelineNavigatorRangeChangedEvent&) {
+            updateZoom();
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineWorkAreaChangeRequestedEvent>(
+          [this](const TimelineWorkAreaChangeRequestedEvent &event) {
         const auto comp = safeCompositionLookup(impl_->compositionId_);
         if (!comp) {
           return;
@@ -6936,36 +7108,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         const int64_t totalFrames =
             std::max<int64_t>(1, comp->frameRange().duration());
         const int64_t startFrame = std::clamp<int64_t>(
-            static_cast<int64_t>(
-                std::llround(workAreaWidget->startValue() * totalFrames)),
+            static_cast<int64_t>(std::llround(event.start * totalFrames)),
             0, totalFrames);
-        const int64_t endFrame =
-            std::clamp<int64_t>(static_cast<int64_t>(std::llround(
-                                    workAreaWidget->endValue() * totalFrames)),
-                                startFrame, totalFrames);
+        const int64_t endFrame = std::clamp<int64_t>(
+            static_cast<int64_t>(std::llround(event.end * totalFrames)),
+            startFrame, totalFrames);
         comp->setWorkAreaRange(FrameRange(
             startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
-      });
-  QObject::connect(
-      workAreaWidget, &WorkAreaControl::endChanged, this,
-      [this, workAreaWidget](float) {
-        const auto comp = safeCompositionLookup(impl_->compositionId_);
-        if (!comp) {
-          return;
-        }
-        const int64_t totalFrames =
-            std::max<int64_t>(1, comp->frameRange().duration());
-        const int64_t startFrame = std::clamp<int64_t>(
-            static_cast<int64_t>(
-                std::llround(workAreaWidget->startValue() * totalFrames)),
-            0, totalFrames);
-        const int64_t endFrame =
-            std::clamp<int64_t>(static_cast<int64_t>(std::llround(
-                                    workAreaWidget->endValue() * totalFrames)),
-                                startFrame, totalFrames);
-        comp->setWorkAreaRange(FrameRange(
-            startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
-      });
+      }));
   auto applyTimelineSeek = [this, scrubBar, painterTrackView](double frame) {
     if (!impl_ || !painterTrackView || !scrubBar) {
       return;
@@ -7011,13 +7161,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   };
 
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::seekRequested, this,
-      [applyTimelineSeek](double frame) {
-        applyTimelineSeek(frame);
-      });
-  QObject::connect(
-      scrubBar, &ArtifactTimelineScrubBar::frameDragStarted, this, [this]() {
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSeekRequestedEvent>(
+          [applyTimelineSeek](const TimelineSeekRequestedEvent &event) {
+            applyTimelineSeek(event.frame);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineScrubStartedEvent>([this](const TimelineScrubStartedEvent&) {
         if (!impl_) {
           return;
         }
@@ -7026,22 +7176,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           impl_->audioPreviewStopTimer_->stop();
         }
         ArtifactAudioScrubController::instance().startScrub();
-      });
-  QObject::connect(
-      scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
-      [applyTimelineSeek](const FramePosition& frame) {
-        applyTimelineSeek(static_cast<double>(frame.framePosition()));
-      });
-  QObject::connect(
-      scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
-      [](const FramePosition& frame) {
-        auto& ctrl = ArtifactAudioScrubController::instance();
-        if (ctrl.isScrubbing()) {
-          ctrl.updateScrubPosition(frame);
-        }
-      });
-  QObject::connect(
-      scrubBar, &ArtifactTimelineScrubBar::frameDragFinished, this, [this]() {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSeekRequestedEvent>(
+          [](const TimelineSeekRequestedEvent& event) {
+            auto& ctrl = ArtifactAudioScrubController::instance();
+            if (ctrl.isScrubbing()) {
+              ctrl.updateScrubPosition(FramePosition(static_cast<int64_t>(std::llround(event.frame))));
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineScrubFinishedEvent>([this](const TimelineScrubFinishedEvent&) {
         if (!impl_) {
           return;
         }
@@ -7070,59 +7215,58 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (impl_->audioPreviewStopTimer_) {
           impl_->audioPreviewStopTimer_->start(350);
         }
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
-      [this](const QString& clipId, const ArtifactCore::LayerID& layerId) {
-        Q_UNUSED(clipId);
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineLayerSelectionRequestedEvent>(
+      [this](const TimelineLayerSelectionRequestedEvent &event) {
         if (impl_->syncingLayerSelection_) {
           return;
         }
         if (auto* svc = ArtifactProjectService::instance()) {
-          svc->selectLayer(layerId);
+          svc->selectLayer(LayerID(event.layerId));
         }
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipDeselected, this,
-      [this]() {
-        Q_UNUSED(this);
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipMoved, this,
-      [this](const QString &clipId, const double startFrame) {
-        applyTimelineLayerMove(impl_->compositionId_, clipId, startFrame, 0.0);
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipSlid, this,
-      [this](const QString &clipId, const double startFrame) {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipMoveRequestedEvent>(
+      [this](const TimelineClipMoveRequestedEvent &event) {
+        applyTimelineLayerMove(impl_->compositionId_, event.clipId,
+                               event.startFrame, 0.0);
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipSlideRequestedEvent>(
+      [this](const TimelineClipSlideRequestedEvent &event) {
         auto comp = safeCompositionLookup(impl_->compositionId_);
         if (!comp) return;
-        const auto layer = comp->layerById(LayerID(clipId));
+        const auto layer = comp->layerById(LayerID(event.clipId));
         if (!layer || layer->isTimingLocked()) return;
         const QVector<ArtifactAbstractLayerPtr> layers{layer};
         const auto beforeSnapshots = captureTimelineLayerStateSnapshots(comp, layers);
         auto cmd = std::make_unique<SlideClipCommand>(
-            impl_->compositionId_, LayerID(clipId),
-            static_cast<qint64>(std::llround(startFrame)),
+            impl_->compositionId_, LayerID(event.clipId),
+            static_cast<qint64>(std::llround(event.startFrame)),
             std::move(beforeSnapshots));
+        bool applied = false;
         if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::move(cmd));
+          applied = mgr->push(std::move(cmd));
         } else {
           cmd->redo();
+          applied = cmd->lastOperationSucceeded();
         }
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipResized, this,
-      [this](const QString &clipId, const double startFrame,
-             const double durationFrame) {
-        applyTimelineLayerTrim(impl_->compositionId_, clipId, startFrame,
-                               durationFrame);
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::keyframeMoveRequested,
-      this,
-      [this](const LayerID &layerId, const QString &propertyPath,
-             const qint64 fromFrame, const qint64 toFrame) {
+        if (!applied) return;
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipResizeRequestedEvent>(
+      [this](const TimelineClipResizeRequestedEvent &event) {
+        applyTimelineLayerTrim(impl_->compositionId_, event.clipId,
+                               event.startFrame, event.durationFrame);
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineKeyframeMoveRequestedEvent>(
+      [this](const TimelineKeyframeMoveRequestedEvent &event) {
+        const LayerID layerId(event.layerId);
+        const QString &propertyPath = event.propertyPath;
+        const qint64 fromFrame = event.fromFrame;
+        const qint64 toFrame = event.toFrame;
         const auto schedulePostMoveRefresh = [this]() {
           if (!impl_->pendingKeyframeMoveRefresh_) {
             impl_->pendingKeyframeMoveRefresh_ = true;
@@ -7146,14 +7290,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         const auto composition = safeCompositionLookup(impl_->compositionId_);
         if (!composition || layerId.isNil() || propertyPath.trimmed().isEmpty()) {
           schedulePostMoveRefresh();
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Failed to move keyframe for invalid timeline target"));
           return;
         }
         const auto layer = composition->layerById(layerId);
         if (!layer) {
           schedulePostMoveRefresh();
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Failed to move keyframe because the layer was not found"));
           return;
         }
@@ -7170,14 +7314,19 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                  toFrame, &mergedExistingKeyframe)) {
           const auto afterSnapshots =
               captureKeyframePropertySnapshots(composition, refs);
+          bool undoAccepted = true;
           if (auto* mgr = UndoManager::instance()) {
             QPointer<ArtifactTimelineWidget> self(this);
-            mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+            const QString safeFrom = QString::number(fromFrame);
+            const QString safeTo = QString::number(toFrame);
+            undoAccepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
                 QStringLiteral("Move Keyframe"),
+                TimelineKeyframeSnapshotCommand::Operation{
                 [self, composition, afterSnapshots, afterSelectionKeys]() {
-                  applyKeyframePropertySnapshots(composition, afterSnapshots);
+                  const bool applied =
+                      applyKeyframePropertySnapshots(composition, afterSnapshots);
                   if (!self) {
-                    return;
+                    return applied;
                   }
                   self->refreshTracks();
                   if (self->impl_ && self->impl_->painterTrackView_) {
@@ -7186,11 +7335,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   }
                   self->updateKeyframeState();
                   self->updateSelectionState();
-                },
+                  return applied;
+                }},
+                TimelineKeyframeSnapshotCommand::Operation{
                 [self, composition, beforeSnapshots, beforeSelectionKeys]() {
-                  applyKeyframePropertySnapshots(composition, beforeSnapshots);
+                  const bool applied =
+                      applyKeyframePropertySnapshots(composition, beforeSnapshots);
                   if (!self) {
-                    return;
+                    return applied;
                   }
                   self->refreshTracks();
                   if (self->impl_ && self->impl_->painterTrackView_) {
@@ -7199,51 +7351,61 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   }
                   self->updateKeyframeState();
                   self->updateSelectionState();
-                }));
+                  return applied;
+                }}));
+            if (!undoAccepted) {
+              applyKeyframePropertySnapshots(composition, beforeSnapshots);
+            }
           }
-          const QString safeFrom = QString::number(fromFrame);
-          const QString safeTo = QString::number(toFrame);
+          if (!undoAccepted) {
+            schedulePostMoveRefresh();
+            timelineDebugMessage(
+                QStringLiteral("Failed to move keyframe ") +
+                safeFrom + QStringLiteral(" -> ") + safeTo +
+                QStringLiteral(" for ") + safePropertyPath);
+            return;
+          }
           const QString mergeNote = mergedExistingKeyframe
                                         ? QStringLiteral(" (merged existing keyframe at destination)")
                                         : QString();
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Moved keyframe ") + safeFrom +
               QStringLiteral(" -> ") + safeTo +
               QStringLiteral(" for ") + safePropertyPath + mergeNote);
         } else {
           schedulePostMoveRefresh();
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Failed to move keyframe ") +
               QString::number(fromFrame) + QStringLiteral(" -> ") +
               QString::number(toFrame) + QStringLiteral(" for ") +
               safePropertyPath);
         }
-      });
-  QObject::connect(
-      painterTrackView,
-      &ArtifactTimelineTrackPainterView::keyframeSelectionChanged, this,
-      [this](int) {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineKeyframeSelectionChangedEvent>(
+      [this](const TimelineKeyframeSelectionChangedEvent &) {
         updateKeyframeState();
         updateSelectionState();
-      });
-  QObject::connect(
-      layerTreeView, &ArtifactLayerTimelinePanelWrapper::propertyFocusChanged,
-      painterTrackView,
-      [painterTrackView](const LayerID &layerId, const QString &propertyPath) {
-        if (painterTrackView) {
-          painterTrackView->setKeyframeContext(layerId, propertyPath);
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelinePropertyFocusChangedEvent>(
+      [this, painterTrackView](const TimelinePropertyFocusChangedEvent &event) {
+        if (!impl_ ||
+            (!event.compositionId.isEmpty() &&
+             event.compositionId != impl_->compositionId_.toString())) {
+          return;
         }
-      });
-  QObject::connect(
-      layerTreeView, &ArtifactLayerTimelinePanelWrapper::propertyFocusChanged, this,
-      [this](const LayerID &, const QString &) {
+        if (painterTrackView) {
+          painterTrackView->setKeyframeContext(LayerID(event.layerId),
+                                               event.propertyPath);
+        }
         updateSelectionState();
-      });
+      }));
   painterTrackView->setKeyframeContext(layerTreeView->selectedLayerId(),
                                        layerTreeView->currentPropertyPath());
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::zoomLevelChanged, this,
-      [this](double zoomPercent) {
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineZoomLevelChangedEvent>(
+      [this](const TimelineZoomLevelChangedEvent &event) {
         if (!impl_ || !impl_->painterTrackView_) {
           return;
         }
@@ -7274,65 +7436,26 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (impl_->zoomSummaryLabel_) {
           impl_->zoomSummaryLabel_->setText(
               QStringLiteral("Zoom: %1%")
-                  .arg(QString::number(std::clamp(zoomPercent, 1.0, 6400.0), 'f', 0)));
+                  .arg(QString::number(std::clamp(event.zoomPercent, 1.0, 6400.0), 'f', 0)));
         }
 
         syncPlayheadOverlay();
-        Q_EMIT zoomLevelChanged(zoomPercent);
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::trackRowHeightChanged, this,
-      [this](int rowHeight) {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineTrackRowHeightChangedEvent>(
+      [this](const TimelineTrackRowHeightChangedEvent &event) {
         if (!impl_ || !impl_->layerTimelinePanel_) {
           return;
         }
-        impl_->layerTimelinePanel_->setRowHeight(std::max(16, rowHeight));
-      });
-  QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
-  QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::graphEditorToggled,
-                   this, [this](bool active) {
-                     if (!impl_ || !impl_->curveEditor_) {
-                       return;
-                     }
-                     impl_->graphEditorVisible_ = active;
-                     if (impl_->timelineModeStack_) {
-                       impl_->timelineModeStack_->setCurrentWidget(
-                           active ? impl_->curveEditorPage_
-                                  : (impl_->gpuTimelinePreviewEnabled_
-                                         ? impl_->timelineGpuPage_
-                                         : impl_->timelinePainterPage_));
-                     }
-                     if (impl_->rightPanel_) {
-                       impl_->rightPanel_->setPlayheadOverlayEnabled(
-                           !active && !impl_->gpuTimelinePreviewEnabled_);
-                     }
-                     if (impl_->curvePropertyPanel_) {
-                       impl_->curvePropertyPanel_->setVisible(active);
-                     }
-                     if (!active) {
-                       impl_->curveEditorDragging_ = false;
-                       impl_->focusedCurveTrackIndex_ = -1;
-                       impl_->curveFocusPinned_ = false;
-                       if (impl_->curveEditorRefreshTimer_) {
-                         impl_->curveEditorRefreshTimer_->stop();
-                       }
-                     } else {
-                       impl_->graphEditorNeedsFit_ = true;
-                     }
-                     if (active) {
-                       refreshCurveEditorTracks();
-                       if (impl_->curveEditor_) {
-                         impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
-                       }
-                       updateCurvePropertyList();
-                     }
-                   });
+        impl_->layerTimelinePanel_->setRowHeight(std::max(16, event.rowHeight));
+      }));
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     globalSwitches->setShyActive(settings->timelineShyActive());
     globalSwitches->setGraphEditorActive(settings->timelineGraphEditorActive());
   }
-  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::interactionStarted, this,
-                   [this]() {
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurveEditorInteractionStartedEvent>(
+      [this](const CurveEditorInteractionStartedEvent &) {
                      if (!impl_) {
                        return;
                      }
@@ -7355,25 +7478,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      if (impl_->curveEditorRefreshTimer_) {
                        impl_->curveEditorRefreshTimer_->stop();
                      }
-                   });
-  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keySelected, this,
-                   [this](int trackIndex, int /*keyIndex*/) {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurveEditorKeySelectedEvent>(
+      [this](const CurveEditorKeySelectedEvent &event) {
                      if (!impl_ || !impl_->curvePropertyList_) {
                        return;
                      }
-                     impl_->focusedCurveTrackIndex_ = trackIndex;
+                     impl_->focusedCurveTrackIndex_ = event.trackIndex;
                      impl_->curveFocusPinned_ =
                          impl_->focusedCurveTrackIndex_ >= 0;
                      updateCurvePropertyList();
-                     if (trackIndex >= 0 &&
-                         trackIndex < impl_->curvePropertyList_->count()) {
-                       if (auto *item = impl_->curvePropertyList_->item(trackIndex)) {
+                     if (event.trackIndex >= 0 &&
+                         event.trackIndex < impl_->curvePropertyList_->count()) {
+                       if (auto *item = impl_->curvePropertyList_->item(event.trackIndex)) {
                          impl_->curvePropertyList_->scrollToItem(item);
                        }
                      }
-                   });
-  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::interactionFinished, this,
-                   [this]() {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurveEditorInteractionFinishedEvent>(
+      [this](const CurveEditorInteractionFinishedEvent &) {
                      if (!impl_) {
                        return;
                      }
@@ -7381,7 +7506,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      const auto composition = safeCompositionLookup(impl_->compositionId_);
                      const auto beforeSnapshots = impl_->curveEditorUndoBeforeSnapshots_;
                      const auto beforeSelectionKeys = impl_->curveEditorUndoBeforeSelectionKeys_;
-                     bool pushedUndo = false;
+                      bool finalizedEdit = false;
                      if (composition && impl_->curveEditorUndoPending_) {
                        // CE-1: persist widget-local tangent/handle edits so the
                        // after snapshot covers them in the same undo command.
@@ -7399,12 +7524,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                          if (auto *mgr = UndoManager::instance()) {
                            QPointer<ArtifactTimelineWidget> self(this);
                            const auto trackRows = impl_->trackRows_;
-                           mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
-                               QStringLiteral("Edit Curve Keyframes"),
+                            const bool accepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+                                QStringLiteral("Edit Curve Keyframes"),
+                               TimelineKeyframeSnapshotCommand::Operation{
                                [self, composition, afterSnapshots, beforeSelectionKeys, trackRows]() {
-                                 applyKeyframePropertySnapshots(composition, afterSnapshots);
+                                 const bool applied =
+                                     applyKeyframePropertySnapshots(composition, afterSnapshots);
                                  if (!self) {
-                                   return;
+                                   return applied;
                                  }
                                  ArtifactLayerSelectionManager *selectionManager = nullptr;
                                  if (auto *app = ArtifactApplicationManager::instance()) {
@@ -7421,11 +7548,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                    self->impl_->painterTrackView_->setSelectedKeyframeKeys(
                                        beforeSelectionKeys);
                                  }
-                               },
+                                 return applied;
+                               }},
+                               TimelineKeyframeSnapshotCommand::Operation{
                                [self, composition, beforeSnapshots, beforeSelectionKeys, trackRows]() {
-                                 applyKeyframePropertySnapshots(composition, beforeSnapshots);
+                                 const bool applied =
+                                     applyKeyframePropertySnapshots(composition, beforeSnapshots);
                                  if (!self) {
-                                   return;
+                                   return applied;
                                  }
                                  ArtifactLayerSelectionManager *selectionManager = nullptr;
                                  if (auto *app = ArtifactApplicationManager::instance()) {
@@ -7442,18 +7572,31 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                    self->impl_->painterTrackView_->setSelectedKeyframeKeys(
                                        beforeSelectionKeys);
                                  }
-                               }));
-                           pushedUndo = true;
-                         }
+                                 return applied;
+                                }}));
+                            if (!accepted) {
+                              applyKeyframePropertySnapshots(composition, beforeSnapshots);
+                              if (impl_->painterTrackView_) {
+                                impl_->painterTrackView_->setSelectedKeyframeKeys(
+                                    beforeSelectionKeys);
+                              }
+                            }
+                            finalizedEdit = true;
+                          }
                        }
                      }
                      refreshCurveEditorTracks();
-                     if (pushedUndo) {
-                       impl_->curveEditorUndoPending_ = false;
+                      if (finalizedEdit) {
+                        impl_->curveEditorUndoPending_ = false;
                      }
-                   });
-  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keyMoved, this,
-                   [this](int trackIndex, int keyIndex, int64_t newFrame, float newValue) {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurveEditorKeyMovedEvent>(
+      [this](const CurveEditorKeyMovedEvent &event) {
+                     const int trackIndex = event.trackIndex;
+                     const int keyIndex = event.keyIndex;
+                     const int64_t newFrame = event.newFrame;
+                     const float newValue = event.newValue;
                      if (!impl_ || trackIndex < 0 ||
                          trackIndex >= static_cast<int>(impl_->curveBindings_.size()) ||
                          trackIndex >= static_cast<int>(impl_->curveTracks_.size())) {
@@ -7480,9 +7623,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      if (impl_->curveEditorRefreshTimer_) {
                        impl_->curveEditorRefreshTimer_->start(180);
                      }
-                   });
-  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keyDeleted, this,
-                   [this](int trackIndex, int keyIndex) {
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurveEditorKeyDeletedEvent>(
+      [this](const CurveEditorKeyDeletedEvent &event) {
+                     const int trackIndex = event.trackIndex;
+                     const int keyIndex = event.keyIndex;
                      if (!impl_ || trackIndex < 0 ||
                          trackIndex >= static_cast<int>(impl_->curveBindings_.size()) ||
                          trackIndex >= static_cast<int>(impl_->curveTracks_.size())) {
@@ -7509,26 +7655,55 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        return;
                      }
                      const auto& key = track.keys[keyIndex];
-                     const double fps = std::max(
-                         1.0, static_cast<double>(composition->frameRate().framerate()));
+                     const double fps = timelineFrameRateFallback(composition);
                      const RationalTime time(
                          static_cast<int64_t>(std::llround(key.frame)),
                          static_cast<int64_t>(std::llround(fps)));
-                     if (property->hasKeyFrameAt(time)) {
-                       property->removeKeyFrame(time);
+                     if (!property->hasKeyFrameAt(time)) {
+                       return;
+                     }
+                     const QVector<KeyframePropertyRef> refs = {
+                         KeyframePropertyRef{binding.layerId, binding.propertyPath}};
+                     const auto beforeSnapshots =
+                         captureKeyframePropertySnapshots(composition, refs);
+                     property->removeKeyFrame(time);
+                     layer->setDirty(LayerDirtyFlag::Property);
+                     layer->changed();
+                     const auto afterSnapshots =
+                         captureKeyframePropertySnapshots(composition, refs);
+                     bool accepted = true;
+                     if (auto* mgr = UndoManager::instance()) {
+                       accepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+                           QStringLiteral("Delete Curve Keyframe"),
+                           [composition, afterSnapshots]() {
+                             return applyKeyframePropertySnapshots(composition,
+                                                                    afterSnapshots);
+                           },
+                           [composition, beforeSnapshots]() {
+                             return applyKeyframePropertySnapshots(composition,
+                                                                    beforeSnapshots);
+                           }));
+                       if (!accepted) {
+                         applyKeyframePropertySnapshots(composition, beforeSnapshots);
+                       }
+                     }
+                     if (!accepted) {
+                       refreshCurveEditorTracks();
+                       return;
                      }
                      refreshCurveEditorTracks();
-                   });
-  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::currentFrameChanged, this,
-                   [this](int64_t frame) {
-                     setCurrentFrameForAll(static_cast<double>(frame));
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurveEditorCurrentFrameChangedEvent>(
+      [this](const CurveEditorCurrentFrameChangedEvent &event) {
+                     setCurrentFrameForAll(static_cast<double>(event.frame));
                      syncPlayheadOverlay();
                      if (auto *app = ArtifactApplicationManager::instance()) {
                        if (auto *ctx = app->activeContextService()) {
-                         ctx->seekToFrame(frame);
+                         ctx->seekToFrame(event.frame);
                        }
                      }
-                   });
+      }));
   if (!impl_->curveEditorRefreshTimer_) {
     impl_->curveEditorRefreshTimer_ = new QTimer(this);
     impl_->curveEditorRefreshTimer_->setSingleShot(true);
@@ -7557,7 +7732,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       new HeaderSeekFilter(painterTrackView, scrubBar, applyTimelineSeek,
                            rightPanel);
   headerSeekFilter->setDebugCallback([this](const QString &msg) {
-    Q_EMIT timelineDebugMessage(msg);
+    timelineDebugMessage(msg);
   });
   timeNavigatorWidget->installEventFilter(headerSeekFilter);
   scrubBar->installEventFilter(headerSeekFilter);
@@ -7643,14 +7818,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   };
   QObject::connect(impl_->playbackVisualTimer_, &QTimer::timeout, this,
                    updateSmoothPlaybackPlayhead);
-  if (auto *playback = ArtifactPlaybackService::instance()) {
-    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStateChanged,
-                     this, [this](bool, const FrameRange &) {
-                       updateCacheVisuals();
-                     });
-    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStatsChanged,
-                     this, [this](float, int) { updateCacheVisuals(); });
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackRamPreviewStateChangedEvent>(
+          [this](const PlaybackRamPreviewStateChangedEvent &) {
+            updateCacheVisuals();
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackRamPreviewStatsChangedEvent>(
+          [this](const PlaybackRamPreviewStatsChangedEvent &) {
+            updateCacheVisuals();
+          }));
 
   const auto restartSmoothPlaybackPlayhead = [this]() {
     if (!impl_) {
@@ -7662,8 +7839,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
     impl_->playbackVisualBaseFrame_ =
         static_cast<double>(playback->currentFrame().framePosition());
-    impl_->playbackVisualRateFps_ =
-        std::max(1.0, static_cast<double>(playback->frameRate().framerate()));
+    impl_->playbackVisualRateFps_ = safeTimelineFrameRate(
+        static_cast<double>(playback->frameRate().framerate()));
     impl_->playbackVisualSpeed_ =
         static_cast<double>(playback->playbackSpeed());
     impl_->playbackVisualClock_.restart();
@@ -7939,6 +8116,16 @@ ArtifactTimelineWidget::~ArtifactTimelineWidget() {
   delete impl_;
 }
 
+void ArtifactTimelineWidget::zoomLevelChanged(const double zoomPercent) {
+  ArtifactCore::globalEventBus().publish<TimelineZoomLevelChangedEvent>(
+      TimelineZoomLevelChangedEvent{zoomPercent});
+}
+
+void ArtifactTimelineWidget::timelineDebugMessage(const QString& message) {
+  ArtifactCore::globalEventBus().publish<TimelineDebugMessageEvent>(
+      TimelineDebugMessageEvent{message});
+}
+
 void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   impl_->compositionId_ = id;
   impl_->audioWaveformCache_.clear();
@@ -8044,7 +8231,15 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
           impl_->scrubBar_->setCurrentFrame(FramePosition(0));
           // FPS をスクラブバーに反映
           if (comp) {
-            impl_->scrubBar_->setFps(static_cast<int>(comp->frameRate().framerate()));
+            const double rawFps = comp->frameRate().framerate();
+            const double safeFps = std::isfinite(rawFps) && rawFps > 0.0
+                                       ? std::clamp(rawFps, 1.0, 10000.0)
+                                       : 30.0;
+            impl_->scrubBar_->setFps(
+                static_cast<int>(std::llround(safeFps)));
+          }
+          if (impl_->timeCodeWidget_) {
+            impl_->timeCodeWidget_->setFps(impl_->scrubBar_->fps());
           }
         }
         if (impl_->navigator_) {
@@ -8452,11 +8647,11 @@ void ArtifactTimelineWidget::refreshTracks() {
                                                  : QStringLiteral(" | %1").arg(firstWaveformPreview));
     if (waveformSummary != impl_->audioWaveformSummary_) {
       impl_->audioWaveformSummary_ = waveformSummary;
-      Q_EMIT timelineDebugMessage(waveformSummary);
+      timelineDebugMessage(waveformSummary);
     }
   } else if (!impl_->audioWaveformSummary_.isEmpty()) {
     impl_->audioWaveformSummary_.clear();
-    Q_EMIT timelineDebugMessage(QStringLiteral("Audio waveform preview: none"));
+    timelineDebugMessage(QStringLiteral("Audio waveform preview: none"));
   }
   if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
     refreshCurveEditorTracks();
@@ -8543,10 +8738,10 @@ void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
     double newPos = impl_->painterTrackView_->currentFrame() + frameDelta;
     impl_->painterTrackView_->setCurrentFrame(std::max(0.0, newPos));
     syncPlayheadOverlay();
-    impl_->painterTrackView_->seekRequested(
-        std::clamp(newPos, 0.0,
-                   std::max(0.0, impl_->painterTrackView_->durationFrames() -
-                                        1.0)));
+    ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
+        TimelineSeekRequestedEvent{std::clamp(
+            newPos, 0.0,
+            std::max(0.0, impl_->painterTrackView_->durationFrames() - 1.0))});
   }
   event->accept();
 }
@@ -8559,9 +8754,7 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
   const auto comp = safeCompositionLookup(impl_->compositionId_);
   const double totalFrames = static_cast<double>(
       timelineCompositionFrameCount(comp, kDefaultTimelineFrames));
-  const double fps = comp ? std::max(1.0, static_cast<double>(
-                                             comp->frameRate().framerate()))
-                          : 30.0;
+  const double fps = comp ? timelineFrameRateFallback(comp) : 30.0;
   const FrameRange workArea =
       comp ? comp->workAreaRange()
            : FrameRange(0, static_cast<int64_t>(totalFrames));
@@ -8594,7 +8787,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         (anchorX + impl_->painterTrackView_->horizontalOffset()) / oldPpf;
     impl_->painterTrackView_->setPixelsPerFrame(newPpf);
     impl_->painterTrackView_->setHorizontalOffset(anchorFrame * newPpf - anchorX);
-    Q_EMIT zoomLevelChanged(newPpf * 100.0);
+    zoomLevelChanged(newPpf * 100.0);
     return true;
   };
   const auto resetTimelineZoom = [this, &zoomTimelineBy]() {
@@ -8969,10 +9162,9 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
           const auto beforeSnapshots =
               captureTimelineLayerStateSnapshots(comp, snapshotLayers);
           if (auto* mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<RippleTrimOutCommand>(
+            changed = mgr->push(std::make_unique<RippleTrimOutCommand>(
                 impl_->compositionId_, rippleTarget->id(), currentFrame,
                 std::move(beforeSnapshots)));
-            changed = true;
           } else {
             changed = applyTimelineRippleTrimOut(
                 impl_->compositionId_, rippleTarget->id().toString(),
@@ -8981,7 +9173,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         }
 
         if (changed) {
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Ripple trimmed later layers at F%1")
                   .arg(currentFrame));
         }
@@ -9010,10 +9202,9 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
           const auto beforeSnapshots =
               captureTimelineLayerStateSnapshots(comp, snapshotLayers);
           if (auto* mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<RippleTrimInCommand>(
+            changed = mgr->push(std::make_unique<RippleTrimInCommand>(
                 impl_->compositionId_, rippleTarget->id(), currentFrame,
                 std::move(beforeSnapshots)));
-            changed = true;
           } else {
             changed = applyTimelineRippleTrimIn(
                 impl_->compositionId_, rippleTarget->id().toString(),
@@ -9022,7 +9213,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         }
 
         if (changed) {
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Ripple Trim In at F%1").arg(currentFrame));
         }
         event->accept();
@@ -9051,10 +9242,9 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
           const auto beforeSnapshots =
               captureTimelineLayerStateSnapshots(comp, snapshotLayers);
           if (auto* mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<RippleDeleteCommand>(
+            changed = mgr->push(std::make_unique<RippleDeleteCommand>(
                 impl_->compositionId_, rippleTarget->id(),
                 std::move(beforeSnapshots)));
-            changed = true;
           } else {
             changed = applyTimelineRippleDelete(
                 impl_->compositionId_, rippleTarget->id().toString());
@@ -9062,7 +9252,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         }
 
         if (changed) {
-          Q_EMIT timelineDebugMessage(
+          timelineDebugMessage(
               QStringLiteral("Ripple Delete (Close Gap) at F%1")
                   .arg(currentFrame));
         }
@@ -9099,7 +9289,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
 
       if (changed) {
         // applyTimelineLayerMove / applyTimelineLayerRangeEdit の中で
-        // emit layer->changed() が発火済みのため、ここでは何もしない。
+        // layer->changed() が発火済みのため、ここでは何もしない。
         // svc->projectChanged() は廃止済み。
       }
       event->accept();
@@ -9150,13 +9340,19 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
       }
 
       if (commandCount > 0) {
-        if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::move(macro));
+          bool recorded = false;
+          if (auto *mgr = UndoManager::instance()) {
+            recorded = mgr->push(std::move(macro));
+          } else {
+            macro->redo();
+            recorded = macro->lastOperationSucceeded();
+          }
+        if (recorded) {
+          timelineDebugMessage(
+              QStringLiteral("Slid %1 layer(s) by %2 frame(s)")
+                  .arg(commandCount)
+                  .arg(delta));
         }
-        Q_EMIT timelineDebugMessage(
-            QStringLiteral("Slid %1 layer(s) by %2 frame(s)")
-                .arg(commandCount)
-                .arg(delta));
       }
     }
     event->accept();
@@ -9702,7 +9898,7 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
     impl_->workArea_->setRulerPixelsPerFrame(newZoom);
   }
 
-  Q_EMIT zoomLevelChanged(newZoom * 100.0);
+  zoomLevelChanged(newZoom * 100.0);
 
   const double offset =
       impl_->navigator_->startValue() * duration * newZoom;
@@ -9876,8 +10072,17 @@ double ArtifactTimelineWidget::currentFrame() const
 void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
 {
   if (!impl_) return;
-  const double clamped = std::max(0.0, frame);
+  const double finiteFrame = std::isfinite(frame) ? frame : 0.0;
+  const double clamped = std::clamp(
+      finiteFrame, 0.0, static_cast<double>(std::numeric_limits<int>::max()));
   impl_->currentFrame_ = clamped;
+  if (impl_->timeCodeWidget_) {
+    const qint64 roundedFrame = static_cast<qint64>(std::llround(clamped));
+    const qint64 safeFrame = std::clamp<qint64>(
+        roundedFrame, std::numeric_limits<int>::min(),
+        std::numeric_limits<int>::max());
+    impl_->timeCodeWidget_->updateTimeCode(static_cast<int>(safeFrame));
+  }
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setCurrentFrame(clamped);
     // Keep the playhead visible after seeking from the header, scrub bar,
@@ -10167,31 +10372,49 @@ void ArtifactTimelineWidget::addKeyframeAtPlayhead()
   }
   if (changed) {
     const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
+    bool undoAccepted = true;
     if (auto* mgr = UndoManager::instance()) {
       QPointer<ArtifactTimelineWidget> self(this);
-      mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+      undoAccepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
           QStringLiteral("Add Keyframe at Playhead"),
+          TimelineKeyframeSnapshotCommand::Operation{
           [self, composition, afterSnapshots]() {
-            applyKeyframePropertySnapshots(composition, afterSnapshots);
+            const bool applied =
+                applyKeyframePropertySnapshots(composition, afterSnapshots);
             if (!self) {
-              return;
+              return applied;
             }
             self->refreshTracks();
             self->updateKeyframeState();
             self->updateSelectionState();
-          },
+            return applied;
+          }},
+          TimelineKeyframeSnapshotCommand::Operation{
           [self, composition, beforeSnapshots]() {
-            applyKeyframePropertySnapshots(composition, beforeSnapshots);
+            const bool applied =
+                applyKeyframePropertySnapshots(composition, beforeSnapshots);
             if (!self) {
-              return;
+              return applied;
             }
             self->refreshTracks();
             self->updateKeyframeState();
             self->updateSelectionState();
-          }));
+            return applied;
+          }}));
+      if (!undoAccepted) {
+        applyKeyframePropertySnapshots(composition, beforeSnapshots);
+      }
+    }
+    if (!undoAccepted) {
+      refreshTracks();
+      updateKeyframeState();
+      updateSelectionState();
+      timelineDebugMessage(
+          QStringLiteral("Unable to record the added keyframe at F%1").arg(frame));
+      return;
     }
     updateKeyframeState();
-    Q_EMIT timelineDebugMessage(
+    timelineDebugMessage(
         QStringLiteral("Added keyframe at F%1 for %2 layer(s)")
             .arg(frame)
             .arg(layers.size()));
@@ -10253,31 +10476,49 @@ void ArtifactTimelineWidget::removeKeyframeAtPlayhead()
   }
   if (changed) {
     const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
+    bool undoAccepted = true;
     if (auto* mgr = UndoManager::instance()) {
       QPointer<ArtifactTimelineWidget> self(this);
-      mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+      undoAccepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
           QStringLiteral("Remove Keyframe at Playhead"),
+          TimelineKeyframeSnapshotCommand::Operation{
           [self, composition, afterSnapshots]() {
-            applyKeyframePropertySnapshots(composition, afterSnapshots);
+            const bool applied =
+                applyKeyframePropertySnapshots(composition, afterSnapshots);
             if (!self) {
-              return;
+              return applied;
             }
             self->refreshTracks();
             self->updateKeyframeState();
             self->updateSelectionState();
-          },
+            return applied;
+          }},
+          TimelineKeyframeSnapshotCommand::Operation{
           [self, composition, beforeSnapshots]() {
-            applyKeyframePropertySnapshots(composition, beforeSnapshots);
+            const bool applied =
+                applyKeyframePropertySnapshots(composition, beforeSnapshots);
             if (!self) {
-              return;
+              return applied;
             }
             self->refreshTracks();
             self->updateKeyframeState();
             self->updateSelectionState();
-          }));
+            return applied;
+          }}));
+      if (!undoAccepted) {
+        applyKeyframePropertySnapshots(composition, beforeSnapshots);
+      }
+    }
+    if (!undoAccepted) {
+      refreshTracks();
+      updateKeyframeState();
+      updateSelectionState();
+      timelineDebugMessage(
+          QStringLiteral("Unable to record the removed keyframe at F%1").arg(frame));
+      return;
     }
     updateKeyframeState();
-    Q_EMIT timelineDebugMessage(
+    timelineDebugMessage(
         QStringLiteral("Removed keyframe at F%1 for %2 layer(s)")
             .arg(frame)
             .arg(layers.size()));
@@ -10311,7 +10552,7 @@ void ArtifactTimelineWidget::applyInterpolationToSelectedKeyframes(
 
   refreshTracks();
   updateKeyframeState();
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Applied %1 interpolation to %2 %3")
           .arg(interpolationTypeLabel(type))
           .arg(applied)
@@ -10400,7 +10641,7 @@ void ArtifactTimelineWidget::copySelectedKeyframes()
 
   const QString layerId = markers.isEmpty() ? QString() : markers.front().layerId.toString();
   ClipboardManager::instance().copyKeyframes(QStringLiteral("timeline"), keyframes, layerId);
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Copied %1 %2 to clipboard")
           .arg(keyframes.size())
           .arg(keyframes.size() == 1 ? QStringLiteral("keyframe")
@@ -10431,7 +10672,7 @@ bool ArtifactTimelineWidget::saveKeyframeSnippet(const QString& name)
     return false;
   }
   impl_->keyframeSnippets_.insert(normalizedName, snapshot);
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Saved keyframe snippet: %1 (%2 keyframes)")
           .arg(normalizedName)
           .arg(snapshot.size()));
@@ -10450,7 +10691,7 @@ bool ArtifactTimelineWidget::applyKeyframeSnippet(const QString& name)
   ClipboardManager::instance().copyKeyframes(
       QStringLiteral("timeline-snippet"), *it, QString());
   pasteKeyframesAtPlayhead();
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Applied keyframe snippet: %1").arg(name.trimmed()));
   return true;
 }
@@ -10497,7 +10738,7 @@ void ArtifactTimelineWidget::copySelectedKeyframeEasing()
   const QString layerId = markers.isEmpty() ? QString() : markers.front().layerId.toString();
   const QString propertyPath = markers.isEmpty() ? QString() : markers.front().propertyPath;
   ClipboardManager::instance().copyKeyframeEasing(propertyPath, easing, layerId);
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Copied %1 %2 easing block%3 to clipboard")
           .arg(easing.size())
           .arg(easing.size() == 1 ? QStringLiteral("keyframe")
@@ -10552,22 +10793,18 @@ void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
   }
   const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
 
-  if (auto* svc = ArtifactProjectService::instance()) {
-    svc->projectChanged();
-  }
-  refreshTracks();
-  if (impl_->painterTrackView_ && !selectionKeys.isEmpty()) {
-    impl_->painterTrackView_->setSelectedKeyframeKeys(selectionKeys);
-  }
+  bool undoAccepted = true;
   if (auto* mgr = UndoManager::instance()) {
     QPointer<ArtifactTimelineWidget> self(this);
     const QSet<QString> afterSelectionKeys = selectionKeys;
-    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+    undoAccepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
         QStringLiteral("Paste Keyframes at Playhead"),
+        TimelineKeyframeSnapshotCommand::Operation{
         [self, composition, afterSnapshots, afterSelectionKeys]() {
-          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          const bool applied =
+              applyKeyframePropertySnapshots(composition, afterSnapshots);
           if (!self) {
-            return;
+            return applied;
           }
           self->refreshTracks();
           if (self->impl_ && self->impl_->painterTrackView_) {
@@ -10575,11 +10812,14 @@ void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
           }
           self->updateKeyframeState();
           self->updateSelectionState();
-        },
+          return applied;
+        }},
+        TimelineKeyframeSnapshotCommand::Operation{
         [self, composition, beforeSnapshots, beforeSelectionKeys]() {
-          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          const bool applied =
+              applyKeyframePropertySnapshots(composition, beforeSnapshots);
           if (!self) {
-            return;
+            return applied;
           }
           self->refreshTracks();
           if (self->impl_ && self->impl_->painterTrackView_) {
@@ -10587,7 +10827,26 @@ void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
           }
           self->updateKeyframeState();
           self->updateSelectionState();
-        }));
+          return applied;
+        }}));
+    if (!undoAccepted) {
+      applyKeyframePropertySnapshots(composition, beforeSnapshots);
+      refreshTracks();
+      if (impl_->painterTrackView_) {
+        impl_->painterTrackView_->setSelectedKeyframeKeys(beforeSelectionKeys);
+      }
+      updateKeyframeState();
+      updateSelectionState();
+      return;
+    }
+  }
+  if (auto* svc = ArtifactProjectService::instance()) {
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+        ProjectChangedEvent{QString(), QString()});
+  }
+  refreshTracks();
+  if (impl_->painterTrackView_ && !selectionKeys.isEmpty()) {
+    impl_->painterTrackView_->setSelectedKeyframeKeys(selectionKeys);
   }
   updateKeyframeState();
   const QString mergeNote = mergedExistingKeyframeCount > 0
@@ -10596,7 +10855,7 @@ void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
                                        : QStringLiteral(" (merged %1 existing keyframes at destination)")
                                              .arg(mergedExistingKeyframeCount))
                                 : QString();
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Pasted %1 %3 at F%2%4")
           .arg(keyframes.size())
           .arg(frame)
@@ -10665,8 +10924,7 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
     return false;
   }
   auto afterSnapshots = beforeSnapshots;
-  const double fps =
-      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double fps = timelineFrameRateFallback(composition);
   const int64_t scale = static_cast<int64_t>(std::llround(fps));
   for (auto& snapshot : afterSnapshots) {
     if (snapshot.layerId != layerId || snapshot.propertyPath != propertyPath) {
@@ -10683,15 +10941,20 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
   }
 
   const auto selectionKeys = keyframeSelectionKeysFromMarkers(selectedMarkers);
-  applyKeyframePropertySnapshots(composition, afterSnapshots);
+  if (!applyKeyframePropertySnapshots(composition, afterSnapshots)) {
+    return false;
+  }
+  bool undoAccepted = true;
   if (auto* mgr = UndoManager::instance()) {
     QPointer<ArtifactTimelineWidget> self(this);
-    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+    undoAccepted = mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
         QStringLiteral("Set Keyframe Area Value"),
+        TimelineKeyframeSnapshotCommand::Operation{
         [self, composition, afterSnapshots, selectionKeys]() {
-          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          const bool applied =
+              applyKeyframePropertySnapshots(composition, afterSnapshots);
           if (!self) {
-            return;
+            return applied;
           }
           self->refreshTracks();
           if (self->impl_ && self->impl_->painterTrackView_) {
@@ -10699,11 +10962,14 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
           }
           self->updateKeyframeState();
           self->updateSelectionState();
-        },
+          return applied;
+        }},
+        TimelineKeyframeSnapshotCommand::Operation{
         [self, composition, beforeSnapshots, selectionKeys]() {
-          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          const bool applied =
+              applyKeyframePropertySnapshots(composition, beforeSnapshots);
           if (!self) {
-            return;
+            return applied;
           }
           self->refreshTracks();
           if (self->impl_ && self->impl_->painterTrackView_) {
@@ -10711,7 +10977,20 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
           }
           self->updateKeyframeState();
           self->updateSelectionState();
-        }));
+          return applied;
+        }}));
+    if (!undoAccepted) {
+      applyKeyframePropertySnapshots(composition, beforeSnapshots);
+    }
+  }
+  if (!undoAccepted) {
+    refreshTracks();
+    if (impl_->painterTrackView_) {
+      impl_->painterTrackView_->setSelectedKeyframeKeys(selectionKeys);
+    }
+    updateKeyframeState();
+    updateSelectionState();
+    return false;
   }
 
   refreshTracks();
@@ -10720,7 +10999,7 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
   }
   updateKeyframeState();
   updateSelectionState();
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Applied area value to 2 keyframes for %1").arg(propertyPath));
   return true;
 }
@@ -10757,8 +11036,10 @@ void ArtifactTimelineWidget::pasteKeyframeEasingToSelectedKeyframes()
 
   const auto selectionKeys = keyframeSelectionKeysFromMarkers(targets);
   if (auto* mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<ApplyInterpolationCommand>(
-        records, QStringLiteral("Paste Keyframe Easing")));
+    if (!mgr->push(std::make_unique<ApplyInterpolationCommand>(
+            records, QStringLiteral("Paste Keyframe Easing")))) {
+      return;
+    }
   } else {
     applyInterpolationChangeRecords(records, true, false);
   }
@@ -10769,7 +11050,7 @@ void ArtifactTimelineWidget::pasteKeyframeEasingToSelectedKeyframes()
   }
   updateKeyframeState();
   updateSelectionState();
-  Q_EMIT timelineDebugMessage(
+  timelineDebugMessage(
       QStringLiteral("Pasted easing to %1 selected %2")
           .arg(targets.size())
           .arg(targets.size() == 1 ? QStringLiteral("keyframe")
@@ -10777,4 +11058,3 @@ void ArtifactTimelineWidget::pasteKeyframeEasingToSelectedKeyframes()
 }
 
 }; // namespace Artifact
-

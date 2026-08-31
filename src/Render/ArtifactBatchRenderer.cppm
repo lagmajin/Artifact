@@ -2,6 +2,7 @@ module;
 
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -26,6 +27,37 @@ public:
     ArtifactProjectManager* projectManager = nullptr;
 };
 
+bool BatchTemplate::isValid() const noexcept
+{
+    return !name.trimmed().isEmpty() &&
+           !name.contains(QRegularExpression(R"([\\/:*?\"<>|])")) &&
+           !outputDirectory.trimmed().isEmpty() &&
+           !fileNamePattern.trimmed().isEmpty() &&
+           overrideWidth >= 0 && overrideHeight >= 0 &&
+           overrideFps >= 0.0 && overrideFps <= 240.0 &&
+           ((startFrame < 0 && endFrame < 0) ||
+            (startFrame >= 0 && endFrame >= startFrame)) &&
+           overrideBitrate >= 0 && framePadding >= 1 && framePadding <= 12;
+}
+
+bool ArtifactBatchRenderer::validateTemplate(const BatchTemplate& tmpl, QString* error)
+{
+    auto fail = [error](const QString& message) {
+        if (error) *error = message;
+        return false;
+    };
+    if (tmpl.name.trimmed().isEmpty()) return fail(QStringLiteral("Template name is empty"));
+    if (tmpl.name.contains(QRegularExpression(R"([\\/:*?\"<>|])"))) return fail(QStringLiteral("Template name contains an invalid path character"));
+    if (tmpl.outputDirectory.trimmed().isEmpty()) return fail(QStringLiteral("Output directory is empty"));
+    if (tmpl.fileNamePattern.trimmed().isEmpty()) return fail(QStringLiteral("File name pattern is empty"));
+    if (tmpl.overrideWidth < 0 || tmpl.overrideHeight < 0) return fail(QStringLiteral("Override dimensions must be non-negative"));
+    if (tmpl.overrideFps < 0.0 || tmpl.overrideFps > 240.0) return fail(QStringLiteral("Override FPS is outside the supported range"));
+    if ((tmpl.startFrame < 0) != (tmpl.endFrame < 0) || (tmpl.endFrame >= 0 && tmpl.endFrame < tmpl.startFrame)) return fail(QStringLiteral("Frame range is invalid"));
+    if (tmpl.overrideBitrate < 0) return fail(QStringLiteral("Override bitrate must be non-negative"));
+    if (tmpl.framePadding < 1 || tmpl.framePadding > 12) return fail(QStringLiteral("Frame padding must be between 1 and 12"));
+    return true;
+}
+
 ArtifactBatchRenderer::ArtifactBatchRenderer(QObject* parent)
     : QObject(parent)
     , impl_(new Impl())
@@ -37,6 +69,9 @@ ArtifactBatchRenderer::~ArtifactBatchRenderer()
 {
     delete impl_;
 }
+
+QStringList ArtifactBatchRenderer::lastBatchErrors() const { return lastBatchErrors_; }
+void ArtifactBatchRenderer::clearBatchErrors() { lastBatchErrors_.clear(); }
 
 ArtifactBatchRenderer* ArtifactBatchRenderer::instance()
 {
@@ -81,6 +116,7 @@ int ArtifactBatchRenderer::addAllCompositions(
     const QString& outputDir,
     const QString& fileNamePattern)
 {
+    clearBatchErrors();
     auto& pm = ArtifactProjectManager::getInstance();
     const auto items = pm.projectItems();
     QVector<ArtifactCore::CompositionID> compIds;
@@ -100,6 +136,7 @@ int ArtifactBatchRenderer::addCompositions(
     const QString& outputDir,
     const QString& fileNamePattern)
 {
+    clearBatchErrors();
     auto* queue = impl_->queueService;
     if (!queue || outputDir.trimmed().isEmpty() || fileNamePattern.trimmed().isEmpty()) return 0;
 
@@ -186,7 +223,7 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
     const BatchTemplate& tmpl)
 {
     auto* queue = impl_->queueService;
-    if (!queue) return 0;
+    if (!queue || !validateTemplate(tmpl)) return 0;
 
     int added = 0;
     auto& pm = ArtifactProjectManager::getInstance();
@@ -214,15 +251,19 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
         const int idx = queue->jobCount() - 1;
         if (idx >= 0) {
             queue->setJobOutputPathAt(idx, outputPath);
-            QString outFmt, codec, codecProfile;
-            int w, h, bitrate;
-            double fps;
-            QString useFormat = tmpl.format.isEmpty() ? outFmt : tmpl.format;
-            QString useCodec = tmpl.codec.isEmpty() ? codec : tmpl.codec;
-            QString useProfile = tmpl.codecProfile.isEmpty() ? codecProfile : tmpl.codecProfile;
-            int useBitrate = tmpl.overrideBitrate > 0 ? tmpl.overrideBitrate : bitrate;
+            QString outFmt;
+            QString codec;
+            QString codecProfile;
+            int w = 0;
+            int h = 0;
+            int bitrate = 0;
+            double fps = 0.0;
             queue->setJobFramePaddingAt(idx, tmpl.framePadding);
             if (queue->jobOutputSettingsAt(idx, &outFmt, &codec, &codecProfile, &w, &h, &fps, &bitrate)) {
+                const QString useFormat = tmpl.format.isEmpty() ? outFmt : tmpl.format;
+                const QString useCodec = tmpl.codec.isEmpty() ? codec : tmpl.codec;
+                const QString useProfile = tmpl.codecProfile.isEmpty() ? codecProfile : tmpl.codecProfile;
+                const int useBitrate = tmpl.overrideBitrate > 0 ? tmpl.overrideBitrate : bitrate;
                 queue->setJobOutputSettingsAt(idx, useFormat, useCodec, useProfile,
                     tmpl.overrideWidth > 0 ? tmpl.overrideWidth : w,
                     tmpl.overrideHeight > 0 ? tmpl.overrideHeight : h,
@@ -289,6 +330,10 @@ QVector<BatchTemplate> ArtifactBatchRenderer::availableTemplates() const
 
 bool ArtifactBatchRenderer::saveTemplate(const BatchTemplate& tmpl)
 {
+    const QString templateName = tmpl.name.trimmed();
+    if (!validateTemplate(tmpl)) {
+        return false;
+    }
     QDir dir(resolveTemplateDir());
     if (!dir.exists()) dir.mkpath(".");
 
@@ -308,11 +353,14 @@ bool ArtifactBatchRenderer::saveTemplate(const BatchTemplate& tmpl)
     obj["overrideBitrate"] = tmpl.overrideBitrate;
     obj["framePadding"] = tmpl.framePadding;
 
-    QFile file(dir.filePath(tmpl.name + ".json"));
+    QSaveFile file(dir.filePath(templateName + ".json"));
     if (!file.open(QIODevice::WriteOnly)) return false;
-    file.write(QJsonDocument(obj).toJson());
-    file.close();
-    return true;
+    const QByteArray payload = QJsonDocument(obj).toJson();
+    if (file.write(payload) != payload.size()) {
+        file.cancelWriting();
+        return false;
+    }
+    return file.commit();
 }
 
 bool ArtifactBatchRenderer::deleteTemplate(const QString& name)

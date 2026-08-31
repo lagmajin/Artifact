@@ -1,4 +1,4 @@
-# 3D Particle 完成度マイルストーン (2026-08-29)
+﻿# 3D Particle 完成度マイルストーン (2026-08-29)
 
 **最終更新:** 2026-08-30
 
@@ -222,3 +222,11 @@ Done:
   - AOV (emission / normal) gate (line 11613/11642) を Particle が pass するか
   - Property Widget からの `is3D` 切替 UI は未実装 (追加する場合は `getLayerPropertyGroups` 露出設計を別途設計レビュー)
 - 次着手: P4-2 (`transformParticleRenderData` の 2D/3D 分岐 + `ParticleRenderData.modelMatrix` + `ParticleRenderer::setModelMatrix`)。`ArtifactCore::ParticleRenderData` は ABI 共有のため全利用箇所 (ArtifactCore/src/Graphics/ParticleRenderer.cppm を含む) を grep で確認してから着手。
+
+
+### P4-2 着手 (2026-08-30) — ArtifactParticleLayer::draw() で 3D 時に 2D QTransform 適用を抑止
+
+- 観察: 3D camera 行列は CompositionRenderController の if (layer->is3D()) gate (line 8913) 経由で set3DCameraMatrices() が呼ばれ、particle3DCameraActive_ が true になる (ArtifactIRenderer.cppm:1285)。ArtifactParticle3DLayer は ArtifactParticleLayer を継承し draw() をオーバーライドしないため、親 draw() (ArtifactParticleLayer.cppm:441) がそのまま実行される。L465 で QTransform globalTransform = getGlobalTransform() (2D) を取得し、L472 で 	ransformParticleRenderData(lodData, globalTransform, opacity()) を呼ぶ。この関数は L187-L196 で QTransform により src.px/src.py を 2D map し、L193-L196 で v.px/v.py/v.vx/v.vy を 2D 値で上書きする。v.pz/v.vz は L171/L174 で保持されるが、layer 自身の world 位置が 2D 扱いになり 3D camera orbit に追従しない。
+- 対応: ArtifactParticleLayer.cppm:470-484 で is3D() による分岐を追加し、3D パーティクルは transformParticleRenderData をスキップして lodData をそのまま drawParticles に渡す。2D パーティクルは従来通り transformParticleRenderData で 2D QTransform を適用。AGENTS.md 2026-08-15「D3D12 / Diligent backend 触るときは慎重」「QImage の本流投入禁止」「QPainter::CompositionMode による合成実装禁止」を守り、.cppm のみの変更、.ixx 宣言追加なし、CMake 変更なし、module import 追加なし。
+- 未検証 (AGENTS.md に従いビルド・runtime はユーザー指示待ち): (1) 3D camera orbit 時に Particle billboard が立体的に動くか (2) 既存 2D particle プロジェクトの表示が回帰しないか (3) AOV (emission / normal) gate (line 11613/11642) を Particle が pass するか。
+- 次着手: P4-3 (model matrix 経路) — set3DCameraMatrices は view/proj のみ受け、model matrix を含まない。getGlobalTransform4x4() から取った model を ParticleRenderData に追加し、ParticleRenderer::setModelMatrix API を新設する。これは ArtifactCore::ParticleRenderData の ABI 共有を伴うため、grep で全利用箇所を確認してから着手。

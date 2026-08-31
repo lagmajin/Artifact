@@ -46,12 +46,6 @@ public:
     // Returns the id of the currently applied preset, or empty string.
     QString appliedPresetId() const;
 
-signals:
-    void presetApplied(const QString& presetId)
-        W_SIGNAL(presetApplied, presetId);
-
-    void presetFavorited(const QString& presetId, bool fav)
-        W_SIGNAL(presetFavorited, presetId, fav);
 };
 
 } // namespace Artifact

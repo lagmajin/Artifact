@@ -121,14 +121,6 @@ ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(
   layout->addWidget(fontPicker_);
 
   setValueFromVariant(property.getValue());
-  if (false) {
-    QObject::connect(fontPicker_, &FontPickerWidget::fontChanged, this,
-                     [this](const QString &family) {
-                       commitValue(
-                           ArtifactCore::FontManager::resolvedFamily(family));
-                     });
-  }
-
   fontChangeSubscription_ =
       ArtifactCore::globalEventBus().subscribe<FontChangedEvent>(
           [this](const FontChangedEvent &ev) {

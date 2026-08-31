@@ -32,6 +32,8 @@ struct BatchTemplate {
     QString codecProfile;          // "hq", "4444", "high" など
     int overrideBitrate = 0;       // 0 = preset の値を使う
     int framePadding = 4;          // 画像シーケンスのフレーム番号ゼロ埋め桁数
+
+    bool isValid() const noexcept;
 };
 
 class ArtifactBatchRenderer : public QObject {
@@ -59,6 +61,9 @@ public:
     bool saveTemplate(const BatchTemplate& tmpl);
     bool deleteTemplate(const QString& name);
     BatchTemplate defaultTemplate() const;
+    static bool validateTemplate(const BatchTemplate& tmpl, QString* error = nullptr);
+    QStringList lastBatchErrors() const;
+    void clearBatchErrors();
 
     // ファイル名パターン補完
     static QString resolveFileNamePattern(const QString& pattern,
@@ -71,6 +76,7 @@ private:
     class Impl;
     Impl* impl_;
     QString resolveTemplateDir() const;
+    QStringList lastBatchErrors_;
 };
 
 } // namespace Artifact

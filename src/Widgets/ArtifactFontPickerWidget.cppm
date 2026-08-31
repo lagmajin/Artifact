@@ -41,7 +41,6 @@ void FontPickerWidget::setupUi() {
     layout->addWidget(fontCombo_, 1);
 
     connect(fontCombo_, &QComboBox::currentTextChanged, this, [this](const QString& text) {
-        Q_EMIT fontChanged(text);
         ArtifactCore::globalEventBus().post<FontChangedEvent>(FontChangedEvent{text});
     });
 }

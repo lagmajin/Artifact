@@ -425,9 +425,23 @@ namespace Artifact {
     if (!sourcePath.startsWith(rootPrefix, Qt::CaseInsensitive)) continue;
     if (sourceInfo.absolutePath().compare(targetDir, Qt::CaseInsensitive) == 0) continue;
     const QString destination = QDir(targetDir).filePath(sourceInfo.fileName());
-    if (QFileInfo::exists(destination)) continue;
-    UndoManager::instance()->push(std::make_unique<MoveAssetFileCommand>(sourcePath, destination));
-    if (!QFileInfo::exists(sourcePath) && QFileInfo::exists(destination)) moved = true;
+     if (QFileInfo::exists(destination)) continue;
+     auto* undo = UndoManager::instance();
+     auto command = std::make_unique<MoveAssetFileCommand>(
+         sourcePath, destination);
+     if (undo) {
+       if (!undo->push(std::move(command))) {
+         continue;
+       }
+     } else {
+       command->redo();
+       if (!command->lastOperationSucceeded()) {
+         continue;
+       }
+     }
+     if (!QFileInfo::exists(sourcePath) && QFileInfo::exists(destination)) {
+      moved = true;
+    }
    }
    if (moved) {
     beginResetModel();

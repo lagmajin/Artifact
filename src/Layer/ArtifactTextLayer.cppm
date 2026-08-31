@@ -101,6 +101,7 @@ using namespace ArtifactCore;
 struct TextAnimatorState {
   QString name;
   bool enabled = true;
+  SelectorCombineMode combine = SelectorCombineMode::Multiply;
   RangeSelector range;
   WigglySelector wiggly;
   ExpressionSelector expression;
@@ -356,7 +357,7 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
                                            0.0f, 10000.0f);
 
     AnimatorSelectorSet resolvedSet;
-    resolvedSet.combine = SelectorCombineMode::Multiply;
+    resolvedSet.combine = resolved.combine;
     resolvedSet.range = resolved.range;
     resolvedSet.wiggly = resolved.wiggly;
     resolvedSet.expression = resolved.expression;
@@ -449,6 +450,11 @@ QString selectorOrderTooltip() {
 QString anchorGroupingTooltip() {
   return QStringLiteral(
       "0=Character, 1=Cluster, 2=Word, 3=Line, 4=Paragraph, 5=Span, 6=All");
+}
+
+QString selectorCombineTooltip() {
+  return QStringLiteral(
+      "0=Multiply, 1=Add, 2=Subtract, 3=Min, 4=Max");
 }
 
 QVector<float> selectorWeightPreviewForAnimators(
@@ -1315,6 +1321,7 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
   QJsonObject obj;
   obj["name"] = animator.name;
   obj["enabled"] = animator.enabled;
+  obj["combine"] = static_cast<int>(animator.combine);
 
   QJsonObject rangeObj;
   rangeObj["start"] = animator.range.start;
@@ -1378,6 +1385,10 @@ TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) 
     animator.name = animator.name.left(256);
   }
   animator.enabled = obj.value("enabled").toBool(true);
+  animator.combine = static_cast<SelectorCombineMode>(
+      std::clamp(obj.value("combine").toInt(
+                     static_cast<int>(animator.combine)),
+                 0, 4));
 
   if (obj.contains("range") && obj.value("range").isObject()) {
     const QJsonObject rangeObj = obj.value("range").toObject();
@@ -3862,6 +3873,16 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
     animatorGroup.addProperty(enabledProp);
 
+    auto combineProp = makeAnimatorProp(
+        QStringLiteral("combine"), ArtifactCore::PropertyType::Integer,
+        static_cast<int>(animator.combine), -118);
+    combineProp->setDisplayLabel(QStringLiteral("Selector Combine"));
+    combineProp->setHardRange(0, 4);
+    combineProp->setSoftRange(0, 4);
+    combineProp->setStep(1);
+    combineProp->setTooltip(selectorCombineTooltip());
+    animatorGroup.addProperty(combineProp);
+
     auto expressionEnabledProp = makeAnimatorProp(
         QStringLiteral("expressionEnabled"), ArtifactCore::PropertyType::Boolean,
         animator.expression.enabled, -118);
@@ -4448,6 +4469,9 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       }
     } else if (field == QStringLiteral("enabled")) {
       animator.enabled = value.toBool();
+    } else if (field == QStringLiteral("combine")) {
+      animator.combine = static_cast<SelectorCombineMode>(
+          std::clamp(value.toInt(), 0, 4));
     } else if (field == QStringLiteral("expressionEnabled")) {
       animator.expression.enabled = value.toBool();
       if (animator.expression.enabled &&

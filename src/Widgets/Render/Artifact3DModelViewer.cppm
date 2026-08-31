@@ -57,6 +57,8 @@ import MeshImporter;
 import Mesh;
 import ArtifactDiligentEngineRenderWindow;
 import Memory.SharedPtr;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -694,7 +696,8 @@ void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
             impl_->modeCombo->setCurrentIndex(desiredIndex);
         }
     }
-    Q_EMIT displayModeChanged(static_cast<int>(mode));
+    ArtifactCore::globalEventBus().publish<Artifact::ModelViewerDisplayModeChangedEvent>(
+        Artifact::ModelViewerDisplayModeChangedEvent{this, static_cast<int>(mode)});
 }
 
 void Artifact3DModelViewer::setPbrMaterial(

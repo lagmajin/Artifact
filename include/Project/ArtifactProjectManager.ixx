@@ -110,21 +110,6 @@ export namespace Artifact {
   void addAssetsFromFilePaths(const QStringList& filePaths);
   void removeAllAssets();
 
- public:
-  void projectCreated()
-   W_SIGNAL(projectCreated);
-  void projectClosed()
-   W_SIGNAL(projectClosed);
-  void projectChanged()
-   W_SIGNAL(projectChanged);
-
-  void compositionCreated(const CompositionID& id)
-   W_SIGNAL(compositionCreated, id);
-
-  void layerCreated(const CompositionID& compId, const LayerID& id)
-   W_SIGNAL(layerCreated, compId, id);
-  void layerRemoved(const CompositionID& compId, const LayerID& id)
-   W_SIGNAL(layerRemoved, compId, id);
  };
 
 extern "C" {

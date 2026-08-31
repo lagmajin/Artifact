@@ -17,6 +17,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Application.Manager;
 import Time.Rational;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -83,7 +84,9 @@ void AlignmentWidget::setupUi() {
 }
 
 void AlignmentWidget::onAlignClicked(int type) {
-    auto* selection = ArtifactApplicationManager::instance()->layerSelectionManager();
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selection = app ? app->layerSelectionManager() : nullptr;
+    if (!selection) return;
     const auto selectedSet = selection->selectedLayers();
     QVector<ArtifactAbstractLayerPtr> selectedLayers;
     selectedLayers.reserve(selectedSet.size());
@@ -92,8 +95,13 @@ void AlignmentWidget::onAlignClicked(int type) {
     }
     if (selectedLayers.isEmpty()) return;
 
+    auto composition = selection->activeComposition();
+    if (!composition) return;
+
     // 1. データを AlignmentObject に変換
     std::vector<ArtifactCore::AlignmentObject> objects;
+    std::vector<AlignLayerSnapshot> snapshots;
+    snapshots.reserve(static_cast<size_t>(selectedLayers.size()));
     for (int i = 0; i < selectedLayers.size(); ++i) {
         auto& layer = selectedLayers[static_cast<size_t>(i)];
         ArtifactCore::AlignmentObject obj;
@@ -101,6 +109,14 @@ void AlignmentWidget::onAlignClicked(int type) {
         obj.bounds = layer->transformedBoundingBox();
         obj.currentPosition = QPointF(layer->transform3D().positionX(), layer->transform3D().positionY());
         objects.push_back(obj);
+        const float positionX = static_cast<float>(obj.currentPosition.x());
+        const float positionY = static_cast<float>(obj.currentPosition.y());
+        snapshots.push_back({layer->id().toString(), positionX, positionY,
+                             positionX, positionY,
+                             layer->transform3D().scaleX(),
+                             layer->transform3D().scaleY(),
+                             layer->transform3D().scaleX(),
+                             layer->transform3D().scaleY()});
     }
 
     // 2. ロジック適用 (Selection基準)
@@ -117,11 +133,27 @@ void AlignmentWidget::onAlignClicked(int type) {
         selectedLayers[static_cast<size_t>(sourceIndex)]->transform3D().setPosition(
             time, objects[i].currentPosition.x(), objects[i].currentPosition.y());
         selectedLayers[static_cast<size_t>(sourceIndex)]->changed();
+        snapshots[static_cast<size_t>(sourceIndex)].afterX =
+            static_cast<float>(objects[i].currentPosition.x());
+        snapshots[static_cast<size_t>(sourceIndex)].afterY =
+            static_cast<float>(objects[i].currentPosition.y());
+    }
+
+    if (auto* undo = UndoManager::instance();
+        undo && !undo->push(std::make_unique<AlignLayersUndoCommand>(
+                      snapshots, QStringLiteral("Align Layers")))) {
+        for (size_t i = 0; i < snapshots.size() && i < static_cast<size_t>(selectedLayers.size()); ++i) {
+            selectedLayers[i]->transform3D().setPosition(
+                time, snapshots[i].beforeX, snapshots[i].beforeY);
+            selectedLayers[i]->changed();
+        }
     }
 }
 
 void AlignmentWidget::onDistributeClicked(int type) {
-    auto* selection = ArtifactApplicationManager::instance()->layerSelectionManager();
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selection = app ? app->layerSelectionManager() : nullptr;
+    if (!selection) return;
     const auto selectedSet = selection->selectedLayers();
     QVector<ArtifactAbstractLayerPtr> selectedLayers;
     selectedLayers.reserve(selectedSet.size());
@@ -130,7 +162,12 @@ void AlignmentWidget::onDistributeClicked(int type) {
     }
     if (selectedLayers.size() < 3) return;
 
+    auto composition = selection->activeComposition();
+    if (!composition) return;
+
     std::vector<ArtifactCore::AlignmentObject> objects;
+    std::vector<AlignLayerSnapshot> snapshots;
+    snapshots.reserve(static_cast<size_t>(selectedLayers.size()));
     for (int i = 0; i < selectedLayers.size(); ++i) {
         auto& layer = selectedLayers[static_cast<size_t>(i)];
         ArtifactCore::AlignmentObject obj;
@@ -138,6 +175,14 @@ void AlignmentWidget::onDistributeClicked(int type) {
         obj.bounds = layer->transformedBoundingBox();
         obj.currentPosition = QPointF(layer->transform3D().positionX(), layer->transform3D().positionY());
         objects.push_back(obj);
+        const float positionX = static_cast<float>(obj.currentPosition.x());
+        const float positionY = static_cast<float>(obj.currentPosition.y());
+        snapshots.push_back({layer->id().toString(), positionX, positionY,
+                             positionX, positionY,
+                             layer->transform3D().scaleX(),
+                             layer->transform3D().scaleY(),
+                             layer->transform3D().scaleX(),
+                             layer->transform3D().scaleY()});
     }
 
     ArtifactCore::LayerAlignment::distribute(objects, (ArtifactCore::DistributeType)type);
@@ -151,6 +196,20 @@ void AlignmentWidget::onDistributeClicked(int type) {
         selectedLayers[static_cast<size_t>(sourceIndex)]->transform3D().setPosition(
             time, objects[i].currentPosition.x(), objects[i].currentPosition.y());
         selectedLayers[static_cast<size_t>(sourceIndex)]->changed();
+        snapshots[static_cast<size_t>(sourceIndex)].afterX =
+            static_cast<float>(objects[i].currentPosition.x());
+        snapshots[static_cast<size_t>(sourceIndex)].afterY =
+            static_cast<float>(objects[i].currentPosition.y());
+    }
+
+    if (auto* undo = UndoManager::instance();
+        undo && !undo->push(std::make_unique<AlignLayersUndoCommand>(
+                      snapshots, QStringLiteral("Distribute Layers")))) {
+        for (size_t i = 0; i < snapshots.size() && i < static_cast<size_t>(selectedLayers.size()); ++i) {
+            selectedLayers[i]->transform3D().setPosition(
+                time, snapshots[i].beforeX, snapshots[i].beforeY);
+            selectedLayers[i]->changed();
+        }
     }
 }
 

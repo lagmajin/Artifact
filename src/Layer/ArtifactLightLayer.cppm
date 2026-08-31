@@ -215,7 +215,12 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   }
 
   QMatrix4x4 m = getGlobalTransform4x4();
-  QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
+  // The local-space +Z axis, transformed by the layer's 3D transform, gives
+  // the light's "outgoing" axis for Point/Spot/Area. Parallel (Directional)
+  // light is intentionally position-less: its forward is the *opposite* of
+  // +Z (the direction the light travels), so the gizmo points the way the
+  // rays go. See "Parallel light gizmo" below.
+  QVector3D forward = m.mapVector(QVector3D(0, 0, 1.0f));
   if (forward.lengthSquared() <= 0.000001f) {
     forward = QVector3D(0, 0, 1);
   } else {
@@ -225,8 +230,43 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   const QVector3D side = m.mapVector(QVector3D(1, 0, 0)).normalized() * (baseSize * 0.7f);
   const QVector3D up = m.mapVector(QVector3D(0, 1, 0)).normalized() * (baseSize * 0.7f);
 
+  // Shadow cue: render a soft secondary shape near the bulb whose placement
+  // and form depend on the light type, instead of a single Y-axis ring that
+  // exists for every type. Point: 3-axis wider ring; Spot: a thin inner cone
+  // surface; Area: a thin inner disk on the same normal; Parallel/Ambient:
+  // no shadow cue (the concept does not apply in their reference frame).
+  if (lightImpl_->castsShadows_) {
+    const ArtifactCore::FloatColor shadowTint{
+        lightColor.r(), lightColor.g(), lightColor.b(), 0.18f};
+    const float shadowSize =
+        baseSize + std::max(2.0f, lightImpl_->shadowRadius_ * 0.05f);
+    if (type == LightType::Point) {
+      renderer->drawGizmoRing(p, float3{1, 0, 0}, shadowSize, shadowTint, 0.9f);
+      renderer->drawGizmoRing(p, float3{0, 1, 0}, shadowSize, shadowTint, 0.9f);
+      renderer->drawGizmoRing(p, float3{0, 0, 1}, shadowSize, shadowTint, 0.9f);
+    } else if (type == LightType::Spot) {
+      const float coneLength = std::max(1.0f, lightImpl_->coneLength_);
+      const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_,
+                                                    0.1f, 179.0f) *
+                                        3.14159265f / 360.0f) * coneLength;
+      const QVector3D coneCenter = pos + forward * coneLength;
+      renderer->drawGizmoRing(
+          float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
+          float3{forward.x(), forward.y(), forward.z()},
+          coneRadius * 0.95f, shadowTint, 0.9f);
+    } else if (type == LightType::Area) {
+      const float shadowRadius = std::max(
+          1.0f, std::min(lightImpl_->areaWidth_, lightImpl_->areaHeight_) * 0.5f);
+      const QVector3D normal = m.mapVector(QVector3D(0, 0, 1)).normalized();
+      renderer->drawGizmoRing(
+          float3{pos.x(), pos.y(), pos.z()},
+          float3{normal.x(), normal.y(), normal.z()},
+          shadowRadius * 0.95f, shadowTint, 0.9f);
+    }
+  }
+
   // Direction indicators for oriented lights.
-  if (type == LightType::Spot || type == LightType::Parallel) {
+  if (type == LightType::Spot) {
     renderer->drawGizmoArrow(p, float3{tip.x(), tip.y(), tip.z()}, tintColor, baseSize);
   }
 
@@ -275,10 +315,16 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     renderer->drawGizmoRing(float3{tip.x(), tip.y(), tip.z()}, float3{0, 1, 0},
                             baseSize * 0.75f, tintColor, 1.0f);
 
-    const float coneLength = std::max(1.0f, std::min(lightImpl_->coneLength_,
-                                                      lightImpl_->range_));
-    const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_, 0.1f, 179.0f)
-                                      * 3.14159265f / 360.0f) * coneLength;
+    // Spot cone: the gizmo always honors the user-authored coneLength_.
+    // The attenuation range_ is shown as a separate, lighter ring only when
+    // coneLength_ is shorter than range_, so the user can see whether the
+    // attenuation kicks in before the cone ends. (Previously coneLength was
+    // silently clamped to range_, which made the gizmo and the property
+    // value disagree.)
+    const float coneLength = std::max(1.0f, lightImpl_->coneLength_);
+    const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_,
+                                                  0.1f, 179.0f) *
+                                      3.14159265f / 360.0f) * coneLength;
     QVector3D coneSide = m.mapVector(QVector3D(1, 0, 0));
     QVector3D coneUp = m.mapVector(QVector3D(0, 1, 0));
     if (coneSide.lengthSquared() <= 0.000001f) coneSide = QVector3D(1, 0, 0);
@@ -286,10 +332,13 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     coneSide.normalize();
     coneUp.normalize();
     const QVector3D coneCenter = pos + forward * coneLength;
-    const ArtifactCore::FloatColor coneColor{lightColor.r(), lightColor.g(), lightColor.b(), 0.72f};
-    const ArtifactCore::FloatColor featherColor{lightColor.r(), lightColor.g(), lightColor.b(), 0.30f};
+    const ArtifactCore::FloatColor coneColor{lightColor.r(), lightColor.g(),
+                                             lightColor.b(), 0.72f};
+    const ArtifactCore::FloatColor featherColor{lightColor.r(), lightColor.g(),
+                                                 lightColor.b(), 0.30f};
     renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
-                            float3{forward.x(), forward.y(), forward.z()}, coneRadius, coneColor, 1.2f);
+                            float3{forward.x(), forward.y(), forward.z()}, coneRadius,
+                            coneColor, 1.2f);
     for (const float signX : {-1.0f, 1.0f}) {
       for (const float signY : {-1.0f, 1.0f}) {
         const QVector3D edge = coneCenter + coneSide * (coneRadius * signX)
@@ -298,19 +347,61 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
                                 float3{edge.x(), edge.y(), edge.z()}, coneColor, 1.0f);
       }
     }
-    const float featherAngle = std::max(0.0f, lightImpl_->coneAngle_ - lightImpl_->coneFeather_);
-    if (featherAngle > 0.1f && featherAngle < lightImpl_->coneAngle_) {
-      const float innerRadius = std::tan(featherAngle * 3.14159265f / 360.0f) * coneLength;
-      renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
-                              float3{forward.x(), forward.y(), forward.z()}, innerRadius,
-                              featherColor, 1.0f);
+    // Feather ring: inner edge = outer edge - feather angle (inward). Always
+    // shown when feather is non-zero, even if it is very small, so the user
+    // can see the soft band develop live as they drag the property.
+    if (lightImpl_->coneFeather_ > 0.0f) {
+      const float featherAngle =
+          std::max(0.0f, lightImpl_->coneAngle_ - lightImpl_->coneFeather_);
+      if (featherAngle < lightImpl_->coneAngle_) {
+        const float innerRadius = std::tan(featherAngle * 3.14159265f / 360.0f) *
+                                  coneLength;
+        renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
+                                float3{forward.x(), forward.y(), forward.z()},
+                                innerRadius, featherColor, 1.0f);
+      }
+    }
+    // Attenuation range indicator: only when range_ extends past the cone.
+    if (lightImpl_->range_ > coneLength + 0.5f) {
+      const ArtifactCore::FloatColor rangeColor{lightColor.r(), lightColor.g(),
+                                                 lightColor.b(), 0.16f};
+      const float rangeRadius = std::tan(std::clamp(lightImpl_->coneAngle_,
+                                                    0.1f, 179.0f) *
+                                        3.14159265f / 360.0f) *
+                                 lightImpl_->range_;
+      const QVector3D rangeCenter = pos + forward * lightImpl_->range_;
+      renderer->drawGizmoRing(float3{rangeCenter.x(), rangeCenter.y(), rangeCenter.z()},
+                              float3{forward.x(), forward.y(), forward.z()}, rangeRadius,
+                              rangeColor, 0.9f);
     }
   } else if (type == LightType::Parallel) {
+    // Parallel (Directional) light is position-less. Draw the sun-style
+    // gizmo at the layer's position with an arrow that points along the
+    // *incoming* ray direction (i.e. the opposite of the layer's local +Z,
+    // which is the direction rays travel). The crossbar at the tip marks
+    // the incoming ray plane.
+    const QVector3D incoming = -forward;
     renderer->drawGizmoLine(float3{pos.x(), pos.y(), pos.z()},
-                            float3{tip.x(), tip.y(), tip.z()}, tintColor, 1.0f);
-    renderer->drawGizmoLine(float3{tip.x() - side.x(), tip.y() - side.y(), tip.z() - side.z()},
-                            float3{tip.x() + side.x(), tip.y() + side.y(), tip.z() + side.z()},
-                            tintColor, 0.9f);
+                            float3{pos.x() + incoming.x() * (baseSize * 2.4f),
+                                   pos.y() + incoming.y() * (baseSize * 2.4f),
+                                   pos.z() + incoming.z() * (baseSize * 2.4f)},
+                            tintColor, 1.0f);
+    renderer->drawGizmoLine(
+        float3{pos.x() + incoming.x() * (baseSize * 2.4f) - side.x(),
+               pos.y() + incoming.y() * (baseSize * 2.4f) - side.y(),
+               pos.z() + incoming.z() * (baseSize * 2.4f) - side.z()},
+        float3{pos.x() + incoming.x() * (baseSize * 2.4f) + side.x(),
+               pos.y() + incoming.y() * (baseSize * 2.4f) + side.y(),
+               pos.z() + incoming.z() * (baseSize * 2.4f) + side.z()},
+        tintColor, 0.9f);
+    renderer->drawGizmoLine(
+        float3{pos.x() + incoming.x() * (baseSize * 2.4f) - up.x(),
+               pos.y() + incoming.y() * (baseSize * 2.4f) - up.y(),
+               pos.z() + incoming.z() * (baseSize * 2.4f) - up.z()},
+        float3{pos.x() + incoming.x() * (baseSize * 2.4f) + up.x(),
+               pos.y() + incoming.y() * (baseSize * 2.4f) + up.y(),
+               pos.z() + incoming.z() * (baseSize * 2.4f) + up.z()},
+        tintColor, 0.9f);
   }
 }
 
@@ -484,7 +575,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto shapeProp = persistentLayerProperty(QStringLiteral("Light/Area Shape"),
                                              ArtifactCore::PropertyType::Integer,
                                              static_cast<int>(lightImpl_->areaShape_), -136);
-    shapeProp->setTooltip(QStringLiteral("0: Rectangle, 1: Disk"));
+    shapeProp->setTooltip(QStringLiteral("0: Rectangle, 1: Disk (radius = min(width, height) / 2)"));
     lightOptions.addProperty(shapeProp);
     }
 
@@ -495,7 +586,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     coneAngleProp->setHardRange(0.1, 179.0);
     coneAngleProp->setSoftRange(1.0, 120.0);
     coneAngleProp->setUnit(QStringLiteral("deg"));
-    coneAngleProp->setTooltip(QStringLiteral("Spot-light outer cone angle"));
+    coneAngleProp->setTooltip(QStringLiteral("Spot-light outer cone angle (full apex angle, degrees)"));
     lightOptions.addProperty(coneAngleProp);
 
     auto coneFeatherProp = persistentLayerProperty(QStringLiteral("Light/Cone Feather"),
@@ -504,7 +595,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     coneFeatherProp->setHardRange(0.0, 179.0);
     coneFeatherProp->setSoftRange(0.0, 60.0);
     coneFeatherProp->setUnit(QStringLiteral("deg"));
-    coneFeatherProp->setTooltip(QStringLiteral("Soft edge width inside the spot cone"));
+    coneFeatherProp->setTooltip(QStringLiteral("Soft edge width (degrees inward from the outer cone edge)"));
     lightOptions.addProperty(coneFeatherProp);
 
     auto coneLengthProp = persistentLayerProperty(QStringLiteral("Light/Cone Length"),

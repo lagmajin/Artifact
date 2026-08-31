@@ -6,6 +6,7 @@ module;
 #include <QDesktopServices>
 #include <QFile>
 #include <QInputDialog>
+#include <QList>
 #include <QKeySequence>
 #include <QDialog>
 #include <QLineEdit>
@@ -93,6 +94,47 @@ using namespace ArtifactCore;
 
 namespace {
 
+bool applyLayerMenuUndoCommand(std::unique_ptr<UndoCommand> command)
+{
+    if (!command) {
+        return false;
+    }
+    if (auto* manager = UndoManager::instance()) {
+        return manager->push(std::move(command));
+    }
+    command->redo();
+    return command->lastOperationSucceeded();
+}
+
+bool compositionTransformFieldsEqual(
+    const QVector<CompositionTransformField>& actual,
+    const QVector<CompositionTransformField>& expected)
+{
+    if (actual.size() != expected.size()) {
+        return false;
+    }
+    for (int index = 0; index < actual.size(); ++index) {
+        if (actual[index].toJson() != expected[index].toJson()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool compositionHasTransformField(
+    const ArtifactCompositionPtr& composition, const QString& fieldId)
+{
+    if (!composition) {
+        return false;
+    }
+    const auto fields = composition->transformFields();
+    return std::any_of(
+        fields.cbegin(), fields.cend(),
+        [&fieldId](const CompositionTransformField& field) {
+            return field.fieldId == fieldId;
+        });
+}
+
 class SetLayerEffectEnvelopeCommand final : public UndoCommand {
 public:
     SetLayerEffectEnvelopeCommand(ArtifactAbstractLayerPtr layer,
@@ -100,24 +142,40 @@ public:
                                   LayerEffectEnvelope after)
         : layer_(std::move(layer)), before_(before), after_(after) {}
 
-    void undo() override {
-        if (const auto layer = layer_.lock()) {
-            layer->setEffectEnvelope(before_);
-        }
-    }
+    void undo() override { lastOperationSucceeded_ = apply(before_); }
 
-    void redo() override {
-        if (const auto layer = layer_.lock()) {
-            layer->setEffectEnvelope(after_);
-        }
-    }
+    void redo() override { lastOperationSucceeded_ = apply(after_); }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override { return QStringLiteral("Set Layer Envelope"); }
 
 private:
+    bool apply(const LayerEffectEnvelope& envelope) {
+        const auto layer = layer_.lock();
+        if (!layer) {
+            return false;
+        }
+        layer->setEffectEnvelope(envelope);
+        const auto& actual = layer->effectEnvelope();
+        if (actual.enabled != envelope.enabled || actual.entry != envelope.entry ||
+            actual.exit != envelope.exit || actual.timing != envelope.timing ||
+            actual.curve != envelope.curve ||
+            actual.durationFrames != envelope.durationFrames ||
+            std::abs(actual.effectStart - envelope.effectStart) > 0.000001f ||
+            std::abs(actual.effectEnd - envelope.effectEnd) > 0.000001f) {
+            return false;
+        }
+        layer->changed();
+        if (auto* manager = UndoManager::instance()) {
+            manager->notifyAnythingChanged();
+        }
+        return true;
+    }
     ArtifactAbstractLayerWeak layer_;
     LayerEffectEnvelope before_;
     LayerEffectEnvelope after_;
+    bool lastOperationSucceeded_ = true;
 };
 
 LayerMask quickLayerMask(const QuickLayerCreationOptions& options) {
@@ -373,15 +431,14 @@ public:
     {
     }
 
-    void undo() override
-    {
-        apply(true);
-    }
+    void undo() override { lastOperationSucceeded_ = apply(true); }
 
     void redo() override
     {
-        apply(false);
+        lastOperationSucceeded_ = apply(false);
     }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -389,11 +446,13 @@ public:
     }
 
 private:
-    void apply(const bool before)
+    bool apply(const bool before)
     {
+        bool succeeded = true;
         for (const auto& snapshot : snapshots_) {
             const auto layer = snapshot.layer.lock();
             if (!layer) {
+                succeeded = false;
                 continue;
             }
             auto& transform = layer->transform3D();
@@ -410,11 +469,37 @@ private:
         if (auto* manager = UndoManager::instance()) {
             manager->notifyAnythingChanged();
         }
+        return succeeded;
     }
 
     RationalTime time_;
     std::vector<RadialTransformSnapshot> snapshots_;
+    bool lastOperationSucceeded_ = true;
 };
+
+void restoreAlignmentSnapshotState(
+    const ArtifactCompositionPtr& composition,
+    const std::vector<AlignLayerSnapshot>& snapshots)
+{
+    if (!composition) {
+        return;
+    }
+    const RationalTime time(0, 30000);
+    for (const auto& snapshot : snapshots) {
+        const auto layer = composition->layerById(
+            ArtifactCore::LayerID(snapshot.layerId));
+        if (!layer) {
+            continue;
+        }
+        auto& transform = layer->transform3D();
+        transform.setPosition(time, snapshot.beforeX, snapshot.beforeY);
+        transform.setScale(time, snapshot.beforeScaleX, snapshot.beforeScaleY);
+        layer->changed();
+    }
+    if (auto* manager = UndoManager::instance()) {
+        manager->notifyAnythingChanged();
+    }
+}
 
 class AddLayerMaskCommand final : public UndoCommand {
 public:
@@ -422,30 +507,47 @@ public:
                         LayerMask mask, int index)
         : layer_(std::move(layer)), mask_(std::move(mask)), index_(index) {}
 
-    void undo() override {
-        if (layer_ && index_ >= 0 && index_ < layer_->maskCount()) {
-            layer_->removeMask(index_);
-            layer_->setDirty(LayerDirtyFlag::Mask);
-            layer_->changed();
-        }
-    }
+    void undo() override { lastOperationSucceeded_ = undoApply(); }
 
-    void redo() override {
-        if (layer_) {
-            layer_->addMask(mask_);
-            layer_->setDirty(LayerDirtyFlag::Mask);
-            layer_->changed();
-        }
-    }
+    void redo() override { lastOperationSucceeded_ = redoApply(); }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override {
         return QStringLiteral("Create Text Mask");
     }
 
 private:
+    bool undoApply() {
+        if (!layer_ || index_ < 0 || index_ >= layer_->maskCount()) {
+            return false;
+        }
+        layer_->removeMask(index_);
+        if (layer_->maskCount() == index_) {
+            layer_->setDirty(LayerDirtyFlag::Mask);
+            layer_->changed();
+            return true;
+        }
+        return false;
+    }
+
+    bool redoApply() {
+        if (!layer_) {
+            return false;
+        }
+        layer_->addMask(mask_);
+        if (layer_->maskCount() != index_ + 1) {
+            return false;
+        }
+        layer_->setDirty(LayerDirtyFlag::Mask);
+        layer_->changed();
+        return true;
+    }
+
     ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer_;
     LayerMask mask_;
     int index_ = 0;
+    bool lastOperationSucceeded_ = true;
 };
 
 class AddCompositionTransformFieldCommand final : public UndoCommand {
@@ -456,20 +558,11 @@ public:
     {
     }
 
-    void undo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->removeTransformField(field_.fieldId);
-        }
-    }
+    void undo() override { lastOperationSucceeded_ = removeField(); }
 
-    void redo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->addTransformField(field_);
-            composition->setActiveTransformFieldId(field_.fieldId);
-        }
-    }
+    void redo() override { lastOperationSucceeded_ = addField(); }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -477,8 +570,25 @@ public:
     }
 
 private:
+    bool addField() {
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        composition->addTransformField(field_);
+        composition->setActiveTransformFieldId(field_.fieldId);
+        return compositionHasTransformField(composition, field_.fieldId) &&
+               composition->activeTransformFieldId() == field_.fieldId;
+    }
+
+    bool removeField() {
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        if (!composition->removeTransformField(field_.fieldId)) return false;
+        return !compositionHasTransformField(composition, field_.fieldId);
+    }
+
     ArtifactCompositionWeakPtr composition_;
     CompositionTransformField field_;
+    bool lastOperationSucceeded_ = true;
 };
 
 class UpdateCompositionTransformFieldCommand final : public UndoCommand {
@@ -492,19 +602,11 @@ public:
     {
     }
 
-    void undo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->addTransformField(before_);
-        }
-    }
+    void undo() override { lastOperationSucceeded_ = apply(before_); }
 
-    void redo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->addTransformField(after_);
-        }
-    }
+    void redo() override { lastOperationSucceeded_ = apply(after_); }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -512,9 +614,17 @@ public:
     }
 
 private:
+    bool apply(const CompositionTransformField& field) {
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        composition->addTransformField(field);
+        return compositionHasTransformField(composition, field.fieldId);
+    }
+
     ArtifactCompositionWeakPtr composition_;
     CompositionTransformField before_;
     CompositionTransformField after_;
+    bool lastOperationSucceeded_ = true;
 };
 
 class RemoveCompositionTransformFieldCommand final : public UndoCommand {
@@ -528,25 +638,11 @@ public:
     {
     }
 
-    void undo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->addTransformField(field_);
-            if (activeFieldIdBefore_ == field_.fieldId) {
-                composition->setActiveTransformFieldId(activeFieldIdBefore_);
-            }
-        }
-    }
+    void undo() override { lastOperationSucceeded_ = restoreField(); }
 
-    void redo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->removeTransformField(field_.fieldId);
-            if (activeFieldIdBefore_ == field_.fieldId) {
-                composition->setActiveTransformFieldId(QString());
-            }
-        }
-    }
+    void redo() override { lastOperationSucceeded_ = removeField(); }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -554,9 +650,34 @@ public:
     }
 
 private:
+    bool restoreField() {
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        composition->addTransformField(field_);
+        if (activeFieldIdBefore_ == field_.fieldId) {
+            composition->setActiveTransformFieldId(activeFieldIdBefore_);
+        }
+        return compositionHasTransformField(composition, field_.fieldId) &&
+               (activeFieldIdBefore_ != field_.fieldId ||
+                composition->activeTransformFieldId() == activeFieldIdBefore_);
+    }
+
+    bool removeField() {
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        if (!composition->removeTransformField(field_.fieldId)) return false;
+        if (activeFieldIdBefore_ == field_.fieldId) {
+            composition->setActiveTransformFieldId(QString());
+        }
+        return !compositionHasTransformField(composition, field_.fieldId) &&
+               (activeFieldIdBefore_ != field_.fieldId ||
+                composition->activeTransformFieldId().isEmpty());
+    }
+
     ArtifactCompositionWeakPtr composition_;
     CompositionTransformField field_;
     QString activeFieldIdBefore_;
+    bool lastOperationSucceeded_ = true;
 };
 
 class ReorderCompositionTransformFieldsCommand final : public UndoCommand {
@@ -571,15 +692,14 @@ public:
     {
     }
 
-    void undo() override
-    {
-        apply(before_);
-    }
+    void undo() override { lastOperationSucceeded_ = apply(before_); }
 
     void redo() override
     {
-        apply(after_);
+        lastOperationSucceeded_ = apply(after_);
     }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -587,20 +707,25 @@ public:
     }
 
 private:
-    void apply(const QVector<CompositionTransformField>& fields)
+    bool apply(const QVector<CompositionTransformField>& fields)
     {
-        if (const auto composition = composition_.lock()) {
-            composition->setTransformFields(fields);
-            if (auto* mgr = UndoManager::instance()) {
-                mgr->notifyAnythingChanged();
-            }
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        composition->setTransformFields(fields);
+        if (!compositionTransformFieldsEqual(composition->transformFields(), fields)) {
+            return false;
         }
+        if (auto* mgr = UndoManager::instance()) {
+            mgr->notifyAnythingChanged();
+        }
+        return true;
     }
 
     ArtifactCompositionWeakPtr composition_;
     QVector<CompositionTransformField> before_;
     QVector<CompositionTransformField> after_;
     QString label_;
+    bool lastOperationSucceeded_ = true;
 };
 
 class SetActiveCompositionTransformFieldCommand final : public UndoCommand {
@@ -614,19 +739,11 @@ public:
     {
     }
 
-    void undo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->setActiveTransformFieldId(beforeFieldId_);
-        }
-    }
+    void undo() override { lastOperationSucceeded_ = apply(beforeFieldId_); }
 
-    void redo() override
-    {
-        if (const auto composition = composition_.lock()) {
-            composition->setActiveTransformFieldId(afterFieldId_);
-        }
-    }
+    void redo() override { lastOperationSucceeded_ = apply(afterFieldId_); }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -634,9 +751,17 @@ public:
     }
 
 private:
+    bool apply(const QString& fieldId) {
+        const auto composition = composition_.lock();
+        if (!composition) return false;
+        composition->setActiveTransformFieldId(fieldId);
+        return composition->activeTransformFieldId() == fieldId;
+    }
+
     ArtifactCompositionWeakPtr composition_;
     QString beforeFieldId_;
     QString afterFieldId_;
+    bool lastOperationSucceeded_ = true;
 };
 
 class SetParametricDefinitionCommand final : public UndoCommand {
@@ -653,15 +778,14 @@ public:
     {
     }
 
-    void undo() override
-    {
-        apply(before_);
-    }
+    void undo() override { lastOperationSucceeded_ = apply(before_); }
 
     void redo() override
     {
-        apply(after_);
+        lastOperationSucceeded_ = apply(after_);
     }
+
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
     QString label() const override
     {
@@ -669,23 +793,31 @@ public:
     }
 
 private:
-    void apply(const ArtifactCore::SharedPtr<const ParametricCompositionDefinition>& definition)
+    bool apply(const ArtifactCore::SharedPtr<const ParametricCompositionDefinition>& definition)
     {
         const auto layer = ArtifactCore::dynamicPointerCast<ArtifactParametricCompositionLayer>(
             layer_.lock());
         if (!layer) {
-            return;
+            return false;
         }
         layer->setDefinition(definition);
+        const auto actual = layer->definition();
+        if (static_cast<bool>(actual) != static_cast<bool>(definition) ||
+            (actual && definition &&
+             actual->definitionId() != definition->definitionId())) {
+            return false;
+        }
         if (auto* manager = UndoManager::instance()) {
             manager->notifyAnythingChanged();
         }
+        return true;
     }
 
     ArtifactAbstractLayerWeak layer_;
     ArtifactCore::SharedPtr<const ParametricCompositionDefinition> before_;
     ArtifactCore::SharedPtr<const ParametricCompositionDefinition> after_;
     QString label_;
+    bool lastOperationSucceeded_ = true;
 };
 
 QStringList transformFieldBlendModeChoices()
@@ -1912,11 +2044,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 layer->setStartTime(FramePosition(activeFrame));
             }
 
-            auto appendResult = comp->appendLayerTop(layer);
-            if (!appendResult.success) {
+            if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerCommand>(
+                    comp, layer, true))) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     QStringLiteral("レイヤーの追加に失敗しました: %1")
-                                         .arg(appendResult.message));
+                                     QStringLiteral("レイヤーの追加に失敗しました。"));
                 return;
             }
 
@@ -2562,6 +2693,8 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
 
     // The project service owns layer construction. Repackage its initial append and
     // all requested additions into one existing undo macro before exposing it.
+    const int createdLayerIndex =
+        composition->allLayerRef().indexOf(createdLayer);
     composition->removeLayer(createdLayer->id());
     auto transaction = std::make_unique<MacroUndoCommand>(
         QStringLiteral("Create Quick Layer"));
@@ -2586,7 +2719,20 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
         transaction->addChild(std::make_unique<SetLayerEffectEnvelopeCommand>(
             createdLayer, createdLayer->effectEnvelope(), options.envelope));
     }
-    UndoManager::instance()->push(std::move(transaction));
+    bool pushed = false;
+    if (auto* manager = UndoManager::instance()) {
+        pushed = manager->push(std::move(transaction));
+    }
+    if (!pushed) {
+        if (!composition->containsLayerById(createdLayer->id())) {
+            composition->appendLayerTop(createdLayer);
+            if (createdLayerIndex >= 0) {
+                composition->moveLayerToIndex(createdLayer->id(),
+                                              createdLayerIndex);
+            }
+            composition->changed();
+        }
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
@@ -2603,9 +2749,6 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
         params.setHeight(size.height());
     }
     service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
-    if (menu_) {
-        Q_EMIT menu_->nullLayerCreated();
-    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateConstruction()
@@ -3189,8 +3332,14 @@ void ArtifactLayerMenu::Impl::handleToggleVisible()
     if (!comp) return;
     auto layer = comp->layerById(selectedLayerId_);
     if (!layer) return;
-    UndoManager::instance()->push(
-        std::make_unique<SetLayerVisibilityCommand>(layer, !layer->isVisible()));
+    auto command = std::make_unique<SetLayerVisibilityCommand>(
+        layer, !layer->isVisible());
+    if (auto* manager = UndoManager::instance()) {
+        if (!manager->push(std::move(command))) return;
+    } else {
+        command->redo();
+        if (!command->lastOperationSucceeded()) return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleToggleLock()
@@ -3201,8 +3350,14 @@ void ArtifactLayerMenu::Impl::handleToggleLock()
     if (!comp) return;
     auto layer = comp->layerById(selectedLayerId_);
     if (!layer) return;
-    UndoManager::instance()->push(
-        std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked()));
+    auto command = std::make_unique<SetLayerLockCommand>(
+        layer, !layer->isLocked());
+    if (auto* manager = UndoManager::instance()) {
+        if (!manager->push(std::move(command))) return;
+    } else {
+        command->redo();
+        if (!command->lastOperationSucceeded()) return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleToggleSolo()
@@ -3213,8 +3368,14 @@ void ArtifactLayerMenu::Impl::handleToggleSolo()
     if (!comp) return;
     auto layer = comp->layerById(selectedLayerId_);
     if (!layer) return;
-    UndoManager::instance()->push(
-        std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo()));
+    auto command = std::make_unique<SetLayerSoloCommand>(
+        layer, !layer->isSolo());
+    if (auto* manager = UndoManager::instance()) {
+        if (!manager->push(std::move(command))) return;
+    } else {
+        command->redo();
+        if (!command->lastOperationSucceeded()) return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleToggleShy()
@@ -3225,8 +3386,14 @@ void ArtifactLayerMenu::Impl::handleToggleShy()
     if (!comp) return;
     auto layer = comp->layerById(selectedLayerId_);
     if (!layer) return;
-    UndoManager::instance()->push(
-        std::make_unique<SetLayerShyCommand>(layer, !layer->isShy()));
+    auto command = std::make_unique<SetLayerShyCommand>(
+        layer, !layer->isShy());
+    if (auto* manager = UndoManager::instance()) {
+        if (!manager->push(std::move(command))) return;
+    } else {
+        command->redo();
+        if (!command->lastOperationSucceeded()) return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleSetLayerCachePolicy(int policy)
@@ -3243,7 +3410,26 @@ void ArtifactLayerMenu::Impl::handleSetLayerCachePolicy(int policy)
     if (!layer) {
         return;
     }
-    layer->setLayerPropertyValue(QStringLiteral("layer.cachePolicy"), policy);
+    const QString propertyPath = QStringLiteral("layer.cachePolicy");
+    const auto property = layer->getProperty(propertyPath);
+    if (!property) {
+        return;
+    }
+    const QVariant before = property->getValue();
+    const QVariant after = policy;
+    if (before == after) {
+        return;
+    }
+    auto* manager = UndoManager::instance();
+    if (manager) {
+        if (!manager->push(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, propertyPath, before, after,
+                QStringLiteral("Change Layer Cache Policy")))) {
+            return;
+        }
+    } else if (!layer->setLayerPropertyValue(propertyPath, after)) {
+        return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleSoloOnlySelected()
@@ -3268,8 +3454,23 @@ void ArtifactLayerMenu::Impl::handleSetProxyQuality(ProxyQuality quality)
     if (!videoLayer || videoLayer->proxyQuality() == quality) {
         return;
     }
-    videoLayer->setLayerPropertyValue(QStringLiteral("video.proxyQuality"),
-                                      QVariant::fromValue(static_cast<int>(quality)));
+    const QString propertyPath = QStringLiteral("video.proxyQuality");
+    const auto property = videoLayer->getProperty(propertyPath);
+    if (!property) {
+        return;
+    }
+    const QVariant before = property->getValue();
+    const QVariant after = static_cast<int>(quality);
+    auto* manager = UndoManager::instance();
+    if (manager) {
+        if (!manager->push(std::make_unique<SetLayerPropertyValueCommand>(
+                videoLayer, propertyPath, before, after,
+                QStringLiteral("Change Proxy Quality")))) {
+            return;
+        }
+    } else if (!videoLayer->setLayerPropertyValue(propertyPath, after)) {
+        return;
+    }
     videoLayer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
@@ -3570,13 +3771,12 @@ void ArtifactLayerMenu::Impl::handleCreateMaskFromText()
     }
 
     const int maskIndex = textLayer->maskCount();
-    if (auto* undo = UndoManager::instance()) {
-        undo->push(std::make_unique<AddLayerMaskCommand>(
-            textLayer, mask, maskIndex));
-    } else {
-        textLayer->addMask(mask);
-        textLayer->setDirty(LayerDirtyFlag::Mask);
-        textLayer->changed();
+    if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerMaskCommand>(
+            textLayer, mask, maskIndex))) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("テキストマスク"),
+            QStringLiteral("テキストマスクを適用できませんでした。"));
+        return;
     }
 }
 
@@ -3610,13 +3810,12 @@ void ArtifactLayerMenu::Impl::handleConvertShapeToMask()
     }
 
     const int maskIndex = shapeLayer->maskCount();
-    if (auto* undo = UndoManager::instance()) {
-        undo->push(std::make_unique<AddLayerMaskCommand>(
-            shapeLayer, convertedMask, maskIndex));
-    } else {
-        shapeLayer->addMask(convertedMask);
-        shapeLayer->setDirty(LayerDirtyFlag::Mask);
-        shapeLayer->changed();
+    if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerMaskCommand>(
+            shapeLayer, convertedMask, maskIndex))) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("シェイプをマスクに変換"),
+            QStringLiteral("シェイプをマスクへ変換できませんでした。"));
+        return;
     }
 }
 
@@ -3678,7 +3877,12 @@ void ArtifactLayerMenu::Impl::handleConvertMaskToShape()
                                  QStringLiteral("変換可能なマスクパスがありません。"));
         return;
     }
-    UndoManager::instance()->push(std::move(transaction));
+    if (!applyLayerMenuUndoCommand(std::move(transaction))) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("マスクをシェイプに変換"),
+            QStringLiteral("マスクをシェイプへ変換できませんでした。"));
+        return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleLoadMaskPreset()
@@ -3713,8 +3917,17 @@ void ArtifactLayerMenu::Impl::handleLoadMaskPreset()
         return;
     }
 
-    layer->clearMasks();
-    layer->addMask(mask);
+    std::vector<LayerMask> before;
+    before.reserve(static_cast<std::size_t>(layer->maskCount()));
+    for (int index = 0; index < layer->maskCount(); ++index) {
+        before.push_back(layer->mask(index));
+    }
+    std::vector<LayerMask> after;
+    after.push_back(mask);
+    if (!applyLayerMenuUndoCommand(std::make_unique<MaskEditCommand>(
+            layer, std::move(before), std::move(after)))) {
+        return;
+    }
     layer->changed();
 }
 
@@ -4058,80 +4271,127 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
                                  .arg(tracker->id()));
 }
 
+namespace {
+
+enum class LayerOrderOperation {
+    BringToFront,
+    BringForward,
+    SendBackward,
+    SendToBack,
+};
+
+bool pushLayerOrderMacro(const ArtifactCompositionPtr& composition,
+                         const QVector<ArtifactAbstractLayerPtr>& selectedLayers,
+                         LayerOrderOperation operation) {
+    if (!composition || selectedLayers.isEmpty()) return false;
+    auto* undo = UndoManager::instance();
+
+    QList<ArtifactAbstractLayerPtr> simulated = composition->allLayerRef();
+    QList<ArtifactAbstractLayerPtr> orderedSelected;
+    orderedSelected.reserve(selectedLayers.size());
+    for (const auto& layer : simulated) {
+        if (layer && selectedLayers.contains(layer)) {
+            orderedSelected.push_back(layer);
+        }
+    }
+    if (orderedSelected.isEmpty()) return false;
+
+    QString label;
+    switch (operation) {
+    case LayerOrderOperation::BringToFront:
+        label = QStringLiteral("Bring Layers to Front");
+        break;
+    case LayerOrderOperation::BringForward:
+        label = QStringLiteral("Bring Layers Forward");
+        break;
+    case LayerOrderOperation::SendBackward:
+        label = QStringLiteral("Send Layers Backward");
+        break;
+    case LayerOrderOperation::SendToBack:
+        label = QStringLiteral("Send Layers to Back");
+        break;
+    }
+
+    auto macro = std::make_unique<MacroUndoCommand>(label);
+    bool changed = false;
+    const auto moveLayer = [&](const ArtifactAbstractLayerPtr& layer, int newIndex) {
+        const int oldIndex = simulated.indexOf(layer);
+        if (oldIndex < 0 || newIndex < 0 || newIndex >= simulated.size() ||
+            oldIndex == newIndex) return;
+        macro->addChild(std::make_unique<MoveLayerIndexCommand>(
+            composition, layer, oldIndex, newIndex));
+        simulated.move(oldIndex, newIndex);
+        changed = true;
+    };
+
+    switch (operation) {
+    case LayerOrderOperation::BringToFront:
+        for (const auto& layer : orderedSelected) {
+            moveLayer(layer, simulated.size() - 1);
+        }
+        break;
+    case LayerOrderOperation::BringForward:
+        for (int i = orderedSelected.size() - 1; i >= 0; --i) {
+            const auto& layer = orderedSelected.at(i);
+            const int oldIndex = simulated.indexOf(layer);
+            if (oldIndex >= 0 && oldIndex < simulated.size() - 1) {
+                moveLayer(layer, oldIndex + 1);
+            }
+        }
+        break;
+    case LayerOrderOperation::SendBackward:
+        for (const auto& layer : orderedSelected) {
+            const int oldIndex = simulated.indexOf(layer);
+            if (oldIndex > 0) moveLayer(layer, oldIndex - 1);
+        }
+        break;
+    case LayerOrderOperation::SendToBack:
+        for (int i = orderedSelected.size() - 1; i >= 0; --i) {
+            moveLayer(orderedSelected.at(i), 0);
+        }
+        break;
+    }
+
+    if (!changed) return false;
+    if (undo) {
+        return undo->push(std::move(macro));
+    }
+    macro->redo();
+    return macro->lastOperationSucceeded();
+}
+
+} // namespace
+
 void ArtifactLayerMenu::Impl::handleBringToFront()
 {
     auto* sel = ArtifactLayerSelectionManager::instance();
     if (!sel) return;
-    auto comp = sel->activeComposition();
-    if (!comp) return;
-    const auto layers = sel->selectedLayersInOrder();
-    if (layers.isEmpty()) return;
-    const auto allLayers = comp->allLayerRef();
-    // Move from topmost selected first to preserve relative order
-    for (int i = layers.size() - 1; i >= 0; --i) {
-        auto layer = layers[i];
-        if (!layer) continue;
-        const int idx = allLayers.indexOf(layer);
-        if (idx < 0 || idx >= allLayers.size() - 1) continue;
-        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, allLayers.size() - 1));
-    }
+    pushLayerOrderMacro(sel->activeComposition(), sel->selectedLayersInOrder(),
+                        LayerOrderOperation::BringToFront);
 }
 
 void ArtifactLayerMenu::Impl::handleBringForward()
 {
     auto* sel = ArtifactLayerSelectionManager::instance();
     if (!sel) return;
-    auto comp = sel->activeComposition();
-    if (!comp) return;
-    const auto layers = sel->selectedLayersInOrder();
-    if (layers.isEmpty()) return;
-    const auto allLayers = comp->allLayerRef();
-    // Move from topmost selected first
-    for (int i = layers.size() - 1; i >= 0; --i) {
-        auto layer = layers[i];
-        if (!layer) continue;
-        const int idx = allLayers.indexOf(layer);
-        if (idx < 0 || idx >= allLayers.size() - 1) continue;
-        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, idx + 1));
-    }
+    pushLayerOrderMacro(sel->activeComposition(), sel->selectedLayersInOrder(),
+                        LayerOrderOperation::BringForward);
 }
 
 void ArtifactLayerMenu::Impl::handleSendBackward()
 {
     auto* sel = ArtifactLayerSelectionManager::instance();
     if (!sel) return;
-    auto comp = sel->activeComposition();
-    if (!comp) return;
-    const auto layers = sel->selectedLayersInOrder();
-    if (layers.isEmpty()) return;
-    const auto allLayers = comp->allLayerRef();
-    // Move from bottommost selected first
-    for (int i = 0; i < layers.size(); ++i) {
-        auto layer = layers[i];
-        if (!layer) continue;
-        const int idx = allLayers.indexOf(layer);
-        if (idx <= 0) continue;
-        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, idx - 1));
-    }
+    pushLayerOrderMacro(sel->activeComposition(), sel->selectedLayersInOrder(),
+                        LayerOrderOperation::SendBackward);
 }
 
 void ArtifactLayerMenu::Impl::handleSendToBack()
 {
     auto* sel = ArtifactLayerSelectionManager::instance();
     if (!sel) return;
-    auto comp = sel->activeComposition();
-    if (!comp) return;
-    const auto layers = sel->selectedLayersInOrder();
-    if (layers.isEmpty()) return;
-    const auto allLayers = comp->allLayerRef();
-    // Move from bottommost selected first to preserve relative order
-    for (int i = 0; i < layers.size(); ++i) {
-        auto layer = layers[i];
-        if (!layer) continue;
-        const int idx = allLayers.indexOf(layer);
-        if (idx <= 0) continue;
-        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, 0));
-    }
+    pushLayerOrderMacro(sel->activeComposition(), sel->selectedLayersInOrder(),
+                        LayerOrderOperation::SendToBack);
 }
 
 void ArtifactLayerMenu::Impl::handleAlign(ArtifactCore::AlignType type)
@@ -4178,7 +4438,11 @@ void ArtifactLayerMenu::Impl::handleAlign(ArtifactCore::AlignType type)
         snapshots[i].afterY = static_cast<float>(obj.currentPosition.y());
     }
 
-    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Align Layers")));
+    if (auto* manager = UndoManager::instance();
+        manager && !manager->push(std::make_unique<AlignLayersUndoCommand>(
+                         snapshots, QStringLiteral("Align Layers")))) {
+        restoreAlignmentSnapshotState(comp, snapshots);
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleDistribute(ArtifactCore::DistributeType type)
@@ -4221,7 +4485,11 @@ void ArtifactLayerMenu::Impl::handleDistribute(ArtifactCore::DistributeType type
         snapshots[i].afterY = static_cast<float>(obj.currentPosition.y());
     }
 
-    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Distribute Layers")));
+    if (auto* manager = UndoManager::instance();
+        manager && !manager->push(std::make_unique<AlignLayersUndoCommand>(
+                         snapshots, QStringLiteral("Distribute Layers")))) {
+        restoreAlignmentSnapshotState(comp, snapshots);
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleDistributeSpacing()
@@ -4270,7 +4538,11 @@ void ArtifactLayerMenu::Impl::handleDistributeSpacing()
         snapshots[i].afterY = static_cast<float>(obj.currentPosition.y());
     }
 
-    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Distribute Spacing")));
+    if (auto* manager = UndoManager::instance();
+        manager && !manager->push(std::make_unique<AlignLayersUndoCommand>(
+                         snapshots, QStringLiteral("Distribute Spacing")))) {
+        restoreAlignmentSnapshotState(comp, snapshots);
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleResolveLayoutCollisions()
@@ -4323,8 +4595,11 @@ void ArtifactLayerMenu::Impl::handleResolveLayoutCollisions()
         snapshots[i].afterScaleX = scaledX;
         snapshots[i].afterScaleY = scaledY;
     }
-    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(
-        snapshots, QStringLiteral("Resolve Layout Collisions")));
+    if (auto* manager = UndoManager::instance();
+        manager && !manager->push(std::make_unique<AlignLayersUndoCommand>(
+                         snapshots, QStringLiteral("Resolve Layout Collisions")))) {
+        restoreAlignmentSnapshotState(composition, snapshots);
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleRadialTransform()
@@ -4404,8 +4679,12 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     }
 
     const qint64 frame = playback ? playback->currentFrame().framePosition() : 0;
-    const qint64 timeScale = std::max<qint64>(
-        1, static_cast<qint64>(std::llround(composition->frameRate().framerate())));
+    const double rawFps = composition->frameRate().framerate();
+    const qint64 timeScale = std::isfinite(rawFps) && rawFps > 0.0
+                                 ? std::max<qint64>(
+                                       1, static_cast<qint64>(std::llround(
+                                              std::clamp(rawFps, 1.0, 10000.0))))
+                                 : 30;
     const RationalTime time(frame, timeScale);
     const double expansion = expansionPercent / 100.0;
     const double edgeScale = edgeScalePercent / 100.0;
@@ -4441,9 +4720,13 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
         snapshots.push_back(snapshot);
     }
 
+    auto command = std::make_unique<RadialTransformLayersCommand>(
+        time, std::move(snapshots));
     if (auto* manager = UndoManager::instance()) {
-        manager->push(
-            std::make_unique<RadialTransformLayersCommand>(time, std::move(snapshots)));
+        if (!manager->push(std::move(command))) return;
+    } else {
+        command->redo();
+        if (!command->lastOperationSucceeded()) return;
     }
 }
 
@@ -4608,12 +4891,10 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
                                 ? secondaryRadius
                                 : radius;
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<AddCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), std::move(field)));
-    } else {
-        composition->addTransformField(field);
-        composition->setActiveTransformFieldId(field.fieldId);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<AddCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), std::move(field)))) {
+        return;
     }
 }
 
@@ -4634,12 +4915,11 @@ void ArtifactLayerMenu::Impl::handleSelectLiveRadialField()
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetActiveCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), beforeFieldId,
-            selected->fieldId));
-    } else {
-        composition->setActiveTransformFieldId(selected->fieldId);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetActiveCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), beforeFieldId,
+                selected->fieldId))) {
+        return;
     }
 }
 
@@ -4683,11 +4963,11 @@ void ArtifactLayerMenu::Impl::handleActivateLiveRadialField(const int direction)
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetActiveCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), beforeFieldId, afterFieldId));
-    } else {
-        composition->setActiveTransformFieldId(afterFieldId);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetActiveCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), beforeFieldId,
+                afterFieldId))) {
+        return;
     }
 }
 
@@ -4707,12 +4987,11 @@ void ArtifactLayerMenu::Impl::handleActivateLiveFieldById(const QString& fieldId
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetActiveCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), beforeFieldId,
-            afterFieldId));
-    } else {
-        composition->setActiveTransformFieldId(afterFieldId);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetActiveCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), beforeFieldId,
+                afterFieldId))) {
+        return;
     }
 }
 
@@ -4812,11 +5091,11 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
         edited.invert ? QMessageBox::Yes : QMessageBox::No);
     edited.invert = invertChoice == QMessageBox::Yes;
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<UpdateCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), *selected, std::move(edited)));
-    } else {
-        composition->addTransformField(std::move(edited));
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<UpdateCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), *selected,
+                std::move(edited)))) {
+        return;
     }
 }
 
@@ -4833,11 +5112,11 @@ void ArtifactLayerMenu::Impl::handleToggleLiveRadialField()
     }
     CompositionTransformField edited = *selected;
     edited.enabled = !edited.enabled;
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<UpdateCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), *selected, std::move(edited)));
-    } else {
-        composition->addTransformField(std::move(edited));
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<UpdateCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), *selected,
+                std::move(edited)))) {
+        return;
     }
 }
 
@@ -4881,13 +5160,12 @@ void ArtifactLayerMenu::Impl::handleMoveActiveLiveRadialField(const int directio
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<ReorderCompositionTransformFieldsCommand>(
-            ArtifactCompositionWeakPtr(composition), before, after,
-            direction < 0 ? QStringLiteral("Move Active Live Field Up")
-                          : QStringLiteral("Move Active Live Field Down")));
-    } else {
-        composition->setTransformFields(after);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<ReorderCompositionTransformFieldsCommand>(
+                ArtifactCompositionWeakPtr(composition), before, after,
+                direction < 0 ? QStringLiteral("Move Active Live Field Up")
+                              : QStringLiteral("Move Active Live Field Down")))) {
+        return;
     }
 }
 
@@ -4927,13 +5205,12 @@ void ArtifactLayerMenu::Impl::handleMoveLiveRadialField(const int direction)
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<ReorderCompositionTransformFieldsCommand>(
-            ArtifactCompositionWeakPtr(composition), before, after,
-            direction < 0 ? QStringLiteral("Move Live Field Up")
-                          : QStringLiteral("Move Live Field Down")));
-    } else {
-        composition->setTransformFields(after);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<ReorderCompositionTransformFieldsCommand>(
+                ArtifactCompositionWeakPtr(composition), before, after,
+                direction < 0 ? QStringLiteral("Move Live Field Up")
+                              : QStringLiteral("Move Live Field Down")))) {
+        return;
     }
 }
 
@@ -4949,12 +5226,11 @@ void ArtifactLayerMenu::Impl::handleRemoveLiveRadialField()
         return;
     }
     const QString activeFieldId = composition ? composition->activeTransformFieldId() : QString();
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<RemoveCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), std::move(*selected),
-            activeFieldId));
-    } else {
-        composition->removeTransformField(selected->fieldId);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<RemoveCompositionTransformFieldCommand>(
+                ArtifactCompositionWeakPtr(composition), std::move(*selected),
+                activeFieldId))) {
+        return;
     }
 }
 
@@ -5005,12 +5281,11 @@ void ArtifactLayerMenu::Impl::handleAddParametricParameter()
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetParametricDefinitionCommand>(
-            ArtifactAbstractLayerWeak(layer), before, after,
-            QStringLiteral("Add Parametric Parameter")));
-    } else {
-        layer->setDefinition(after);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetParametricDefinitionCommand>(
+                ArtifactAbstractLayerWeak(layer), before, after,
+                QStringLiteral("Add Parametric Parameter")))) {
+        return;
     }
 }
 
@@ -5071,12 +5346,11 @@ void ArtifactLayerMenu::Impl::handlePublishParametricParameter()
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetParametricDefinitionCommand>(
-            ArtifactAbstractLayerWeak(layer), before, after,
-            QStringLiteral("Publish Parametric Control")));
-    } else {
-        layer->setDefinition(after);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetParametricDefinitionCommand>(
+                ArtifactAbstractLayerWeak(layer), before, after,
+                QStringLiteral("Publish Parametric Control")))) {
+        return;
     }
 }
 
@@ -5166,12 +5440,11 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetParametricDefinitionCommand>(
-            ArtifactAbstractLayerWeak(layer), before, after,
-            QStringLiteral("Edit Published Control")));
-    } else {
-        layer->setDefinition(after);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetParametricDefinitionCommand>(
+                ArtifactAbstractLayerWeak(layer), before, after,
+                QStringLiteral("Edit Published Control")))) {
+        return;
     }
 }
 
@@ -5215,12 +5488,11 @@ void ArtifactLayerMenu::Impl::handleUnpublishParametricControl()
         return;
     }
 
-    if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<SetParametricDefinitionCommand>(
-            ArtifactAbstractLayerWeak(layer), before, after,
-            QStringLiteral("Unpublish Parametric Control")));
-    } else {
-        layer->setDefinition(after);
+    if (!applyLayerMenuUndoCommand(
+            std::make_unique<SetParametricDefinitionCommand>(
+                ArtifactAbstractLayerWeak(layer), before, after,
+                QStringLiteral("Unpublish Parametric Control")))) {
+        return;
     }
 }
 
@@ -5288,4 +5560,3 @@ QMenu* ArtifactLayerMenu::newLayerMenu() const
 }
 
 } // namespace Artifact
-

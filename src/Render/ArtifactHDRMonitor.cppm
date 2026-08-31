@@ -6,6 +6,7 @@ module;
 import Color.Float;
 import Color.Luminance;
 import Core.Parallel;
+import Event.Bus;
 
 module Render.HDRMonitor;
 
@@ -31,7 +32,7 @@ ArtifactHDRMonitor::~ArtifactHDRMonitor()
 
 void ArtifactHDRMonitor::setSettings(const HDRMonitorSettings &settings) {
   impl_->settings_ = settings;
-  Q_EMIT settingsChanged();
+  ArtifactCore::globalEventBus().publish<HDRMonitorSettingsChangedEvent>({});
 }
 
 HDRMonitorSettings ArtifactHDRMonitor::getSettings() const {
@@ -126,7 +127,7 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
     }
   }
 
-  Q_EMIT analysisComplete(result);
+  ArtifactCore::globalEventBus().publish<HDRAnalysisCompletedEvent>({result});
   return result;
 }
 

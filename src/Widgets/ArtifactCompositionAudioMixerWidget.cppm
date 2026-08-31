@@ -43,6 +43,7 @@ import Audio.Mixer;
 import Memory.SharedPtr;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
+import Artifact.Layer.Video;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Service.Effect;
@@ -68,17 +69,33 @@ namespace {
 class AudioMixerSnapshotUndoCommand final : public UndoCommand {
 public:
   AudioMixerSnapshotUndoCommand(ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> mixer,
-                                const QJsonObject& before, const QJsonObject& after)
-      : mixer_(std::move(mixer)), before_(before), after_(after) {}
+                                const QJsonObject& before, const QJsonObject& after,
+                                QString label = QStringLiteral("Audio Routing Change"))
+      : mixer_(std::move(mixer)), before_(before), after_(after),
+        label_(std::move(label)) {}
 
-  void undo() override { if (mixer_) mixer_->deserialize(before_); }
-  void redo() override { if (mixer_) mixer_->deserialize(after_); }
-  QString label() const override { return QStringLiteral("Audio Routing Change"); }
+  void undo() override { lastOperationSucceeded_ = apply(before_, after_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_, before_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QString label() const override { return label_; }
 
 private:
+  bool apply(const QJsonObject& target, const QJsonObject& compensation) {
+    if (!mixer_ || !mixer_->deserialize(target) || mixer_->serialize() != target) {
+      if (mixer_) mixer_->deserialize(compensation);
+      return false;
+    }
+    if (auto* manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+    return true;
+  }
+
   ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> mixer_;
   QJsonObject before_;
   QJsonObject after_;
+  QString label_;
+  bool lastOperationSucceeded_ = true;
 };
 
 struct AudioFxChipInfo {
@@ -130,6 +147,71 @@ QString volumeToDisplayText(const float volume) {
   const QString dbText = QString::number(db, 'f', 1);
   return (db > 0.0f ? QStringLiteral("+") : QString()) + dbText +
          QStringLiteral(" dB");
+}
+
+ArtifactAbstractLayerPtr mixerLayerForStrip(AudioMixerChannelStrip* strip) {
+  if (!strip) return {};
+  auto* service = ArtifactProjectService::instance();
+  const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+  return composition ? composition->layerById(strip->layerId())
+                     : ArtifactAbstractLayerPtr{};
+}
+
+QString mixerPropertyPathForLayer(const ArtifactAbstractLayerPtr& layer,
+                                  const QString& audioName,
+                                  const QString& videoName) {
+  if (ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
+    return audioName;
+  }
+  if (ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+    return videoName;
+  }
+  return {};
+}
+
+bool recordMixerLayerPropertyChange(const ArtifactAbstractLayerPtr& layer,
+                                    const QString& propertyPath,
+                                    const QVariant& before,
+                                    const QVariant& after,
+                                    const QString& label) {
+  if (!layer || propertyPath.isEmpty() || before == after) return true;
+  auto* manager = UndoManager::instance();
+  if (!manager) return true;
+
+  if (!layer->setLayerPropertyValue(propertyPath, before)) return false;
+  layer->changed();
+  const bool accepted = manager->push(std::make_unique<SetLayerPropertyValueCommand>(
+      layer, propertyPath, before, after, label));
+  if (!accepted) {
+    layer->setLayerPropertyValue(propertyPath, before);
+    layer->changed();
+  }
+  return accepted;
+}
+
+ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> currentCoreAudioMixer() {
+  auto* service = ArtifactProjectService::instance();
+  const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+  return composition ? composition->getAudioMixer()
+                     : ArtifactCore::SharedPtr<ArtifactCore::AudioMixer>{};
+}
+
+bool recordMixerSnapshotChange(
+    const ArtifactCore::SharedPtr<ArtifactCore::AudioMixer>& mixer,
+    const QJsonObject& before, const QJsonObject& after,
+    const QString& label) {
+  if (!mixer || before == after) return true;
+  auto* manager = UndoManager::instance();
+  if (!manager) return true;
+  if (!mixer->deserialize(before) || mixer->serialize() != before) return false;
+  const bool accepted = manager->push(std::make_unique<AudioMixerSnapshotUndoCommand>(
+      mixer, before, after, label));
+  if (!accepted) {
+    mixer->deserialize(before);
+  }
+  return accepted;
 }
 
 QColor mixerAccentForName(const QString &name, const bool master = false) {
@@ -1569,11 +1651,13 @@ public:
     QObject::connect(volumeSlider_, &QSlider::sliderPressed, this, [this]() {
       draggingVolume_ = true;
       pendingVolume_ = sliderValueToVolume(volumeSlider_->value());
+      captureVolumeBefore();
     });
     QObject::connect(volumeSlider_, &QSlider::sliderReleased, this, [this]() {
       draggingVolume_ = false;
       pendingVolume_ = sliderValueToVolume(volumeSlider_->value());
       commitPendingVolume();
+      recordVolumeChange();
       syncFromStrip();
     });
     QObject::connect(volumeSlider_, &QSlider::valueChanged, this,
@@ -1581,7 +1665,9 @@ public:
                        pendingVolume_ = sliderValueToVolume(value);
                        updateVolumePresentation(pendingVolume_);
                        if (!draggingVolume_) {
+                         captureVolumeBefore();
                          commitPendingVolume();
+                         recordVolumeChange();
                          return;
                        }
                        volumeCommitTimer_->start();
@@ -1589,19 +1675,48 @@ public:
     QObject::connect(muteButton_, &QPushButton::toggled, this,
                      [this](const bool checked) {
                        if (strip_) {
+                         const auto layer = mixerLayerForStrip(strip_);
+                         const auto path = mixerPropertyPathForLayer(
+                             layer, QStringLiteral("audio.muted"),
+                             QStringLiteral("video.audioMuted"));
+                         const QVariant before = layer && layer->getProperty(path)
+                             ? layer->getProperty(path)->getValue()
+                             : QVariant();
                          strip_->setMuted(checked);
+                         if (before.isValid()) {
+                           recordMixerLayerPropertyChange(
+                               layer, path, before, QVariant(checked),
+                               QStringLiteral("Toggle Audio Mute"));
+                         }
                        }
                      });
     QObject::connect(soloButton_, &QPushButton::toggled, this,
                      [this](const bool checked) {
                        if (strip_) {
-                         strip_->setSolo(checked);
+                         if (auto* service = ArtifactProjectService::instance()) {
+                           if (!service->setLayerSoloInCurrentComposition(
+                                   strip_->layerId(), checked)) {
+                             syncFromStrip();
+                           }
+                         } else {
+                           syncFromStrip();
+                         }
                        }
                      });
     if (panKnob_) {
       panKnob_->setPanChangedCallback([this](const float pan) {
         if (strip_) {
+          const auto layer = mixerLayerForStrip(strip_);
+          const auto path = mixerPropertyPathForLayer(
+              layer, QStringLiteral("audio.pan"), QStringLiteral("video.audioPan"));
+          const QVariant before = layer && layer->getProperty(path)
+              ? layer->getProperty(path)->getValue() : QVariant();
           strip_->setPan(pan);
+          if (before.isValid()) {
+            recordMixerLayerPropertyChange(
+                layer, path, before, QVariant(pan),
+                QStringLiteral("Change Audio Pan"));
+          }
         }
       });
     }
@@ -1779,6 +1894,31 @@ private:
     volumeValueLabel_->setText(volumeToDisplayText(volume));
   }
 
+  void captureVolumeBefore() {
+    volumeBeforeCaptured_ = false;
+    const auto layer = mixerLayerForStrip(strip_);
+    const auto path = mixerPropertyPathForLayer(
+        layer, QStringLiteral("audio.volume"), QStringLiteral("video.audioVolume"));
+    const auto property = layer && !path.isEmpty() ? layer->getProperty(path) : nullptr;
+    if (!property) return;
+    volumeBefore_ = property->getValue().toFloat();
+    volumeBeforeCaptured_ = true;
+  }
+
+  void recordVolumeChange() {
+    if (!volumeBeforeCaptured_) return;
+    const auto layer = mixerLayerForStrip(strip_);
+    const auto path = mixerPropertyPathForLayer(
+        layer, QStringLiteral("audio.volume"), QStringLiteral("video.audioVolume"));
+    const auto property = layer && !path.isEmpty() ? layer->getProperty(path) : nullptr;
+    if (property) {
+      recordMixerLayerPropertyChange(
+          layer, path, QVariant(volumeBefore_), property->getValue(),
+          QStringLiteral("Change Audio Volume"));
+    }
+    volumeBeforeCaptured_ = false;
+  }
+
   void commitPendingVolume() {
     if (!strip_) {
       return;
@@ -1906,6 +2046,8 @@ private:
   QTimer *volumeCommitTimer_ = nullptr;
   QColor accentColor_;
   float pendingVolume_ = 1.0f;
+  float volumeBefore_ = 1.0f;
+  bool volumeBeforeCaptured_ = false;
   bool draggingVolume_ = false;
 };
 
@@ -1996,11 +2138,13 @@ public:
     QObject::connect(volumeSlider_, &QSlider::sliderPressed, this, [this]() {
       draggingVolume_ = true;
       pendingVolume_ = sliderValueToVolume(volumeSlider_->value());
+      captureMasterBefore();
     });
     QObject::connect(volumeSlider_, &QSlider::sliderReleased, this, [this]() {
       draggingVolume_ = false;
       pendingVolume_ = sliderValueToVolume(volumeSlider_->value());
       commitPendingVolume();
+      recordMasterChange();
       syncFromMaster();
     });
     QObject::connect(volumeSlider_, &QSlider::valueChanged, this,
@@ -2008,7 +2152,9 @@ public:
                        pendingVolume_ = sliderValueToVolume(value);
                        updateVolumePresentation(pendingVolume_);
                        if (!draggingVolume_) {
+                         captureMasterBefore();
                          commitPendingVolume();
+                         recordMasterChange();
                          return;
                        }
                        volumeCommitTimer_->start();
@@ -2016,7 +2162,12 @@ public:
     QObject::connect(muteButton_, &QPushButton::toggled, this,
                      [this](const bool checked) {
                        if (masterBus_) {
+                         const auto mixer = currentCoreAudioMixer();
+                         const auto before = mixer ? mixer->serialize() : QJsonObject{};
                          masterBus_->setMuted(checked);
+                         const auto after = mixer ? mixer->serialize() : QJsonObject{};
+                         recordMixerSnapshotChange(
+                             mixer, before, after, QStringLiteral("Toggle Master Mute"));
                        }
                      });
     QObject::connect(masterBus_, &AudioMixerMasterBus::volumeChanged, this,
@@ -2111,6 +2262,25 @@ private:
     }
   }
 
+  void captureMasterBefore() {
+    masterBeforeCaptured_ = false;
+    const auto mixer = currentCoreAudioMixer();
+    if (!mixer) return;
+    masterBefore_ = mixer->serialize();
+    masterBeforeCaptured_ = true;
+  }
+
+  void recordMasterChange() {
+    if (!masterBeforeCaptured_) return;
+    const auto mixer = currentCoreAudioMixer();
+    if (mixer) {
+      const auto after = mixer->serialize();
+      recordMixerSnapshotChange(
+          mixer, masterBefore_, after, QStringLiteral("Change Master Volume"));
+    }
+    masterBeforeCaptured_ = false;
+  }
+
   void commitPendingVolume() {
     if (!masterBus_) {
       return;
@@ -2131,6 +2301,8 @@ private:
   QTimer *volumeCommitTimer_ = nullptr;
   QColor accentColor_;
   float pendingVolume_ = 1.0f;
+  QJsonObject masterBefore_;
+  bool masterBeforeCaptured_ = false;
   bool draggingVolume_ = false;
 };
 } // namespace
@@ -2185,13 +2357,12 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
       ArtifactAudioService::instance()->setMasterMuted(masterBus->isMuted());
     }
 
-    QObject::connect(
-        playbackService, &ArtifactPlaybackService::audioLevelChanged, this,
-        [this](float leftRms, float rightRms, float leftPeak, float rightPeak) {
-          Q_UNUSED(leftPeak);
-          Q_UNUSED(rightPeak);
-          impl_->mixer_->updatePlaybackLevels(leftRms, rightRms);
-        });
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<AudioLevelChangedEvent>(
+            [this](const AudioLevelChangedEvent& event) {
+              impl_->mixer_->updatePlaybackLevels(event.leftRms,
+                                                   event.rightRms);
+            }));
   }
 
   auto *rootLayout = new QVBoxLayout(this);
@@ -2271,16 +2442,41 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     dialog.resize(760, 540);
     auto *dialogLayout = new QVBoxLayout(&dialog);
     dialogLayout->setContentsMargins(10, 10, 10, 10);
-    auto routingUndo = [coreMixer](const QJsonObject& before, const QJsonObject& after) {
-      if (auto* manager = UndoManager::instance()) {
-        manager->push(std::make_unique<AudioMixerSnapshotUndoCommand>(
-            coreMixer, before, after));
+    bool routingChangeAttempted = false;
+    bool routingUndoAccepted = true;
+    auto routingUndo = [&routingChangeAttempted, &routingUndoAccepted, coreMixer](
+                           const QJsonObject& before, const QJsonObject& after) {
+      routingChangeAttempted = true;
+      auto* manager = UndoManager::instance();
+      if (manager) {
+        routingUndoAccepted = manager->push(
+            std::make_unique<AudioMixerSnapshotUndoCommand>(
+                coreMixer, before, after));
+      } else {
+        // The editor has already applied the live change. Keep that change
+        // when history is unavailable, but verify the resulting mixer state.
+        routingUndoAccepted = coreMixer->serialize() == after;
+      }
+      if (!routingUndoAccepted) {
+        coreMixer->deserialize(before);
       }
     };
     auto *routingWidget = new Artifact::AudioMixerWidget(
         coreMixer.get(), &dialog, std::move(routingUndo));
     dialogLayout->addWidget(routingWidget, 1);
     dialog.exec();
+
+    if (!routingChangeAttempted) {
+      refreshFromCurrentComposition();
+      return;
+    }
+    if (!routingUndoAccepted) {
+      refreshFromCurrentComposition();
+      QMessageBox::warning(
+          this, QStringLiteral("Audio routing update failed"),
+          QStringLiteral("The routing change could not be recorded in Undo history."));
+      return;
+    }
 
     // Routing lives in the composition mixer serialization. Mark the owning
     // composition changed after the existing editor closes, then rebuild the

@@ -149,7 +149,6 @@ void ArtifactProjectMemoWidget::Impl::onDoubleClicked(const QModelIndex &index) 
   if (it == memos.cend()) {
     return;
   }
-  widget->memoJumpRequested(it->frame);
 }
 
 ArtifactProjectMemoWidget::ArtifactProjectMemoWidget(QWidget *parent)

@@ -92,11 +92,9 @@ public:
   void navigateToFolder(const QString& folderPath);
   void selectAssetPaths(const QStringList& filePaths);
 
-signals:
-  void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath);
-  void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles);
-  void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath);
-  void filesDropped(const QStringList& filePaths) W_SIGNAL(filesDropped, filePaths);
+public:
+  void selectionChanged(const QStringList& selectedFiles);
+  void itemDoubleClicked(const QString& itemPath);
 
 protected:
   void showContextMenu(const QPoint& pos);

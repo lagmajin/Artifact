@@ -88,11 +88,6 @@ public:
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& obj);
 
-    // Signals
-    void configChanged() W_SIGNAL(configChanged);
-    void workingSpaceChanged(const QString& cs) W_SIGNAL(workingSpaceChanged, cs);
-    void displayViewChanged(const QString& display, const QString& view) W_SIGNAL(displayViewChanged, display, view);
-
 private:
     ArtifactOCIOManager();
 

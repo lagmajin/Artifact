@@ -98,9 +98,9 @@ public:
         // カメラレイヤーの作成
         ArtifactLayerInitParams camParams(QString("Tracked Camera"), LayerType::Camera);
         auto cameraLayer = factory.createNewLayer(camParams);
-        if (cameraLayer) {
-            comp->appendLayerTop(cameraLayer);
-        }
+        if (!cameraLayer) return false;
+        const auto cameraAppendResult = comp->appendLayerTop(cameraLayer);
+        if (!cameraAppendResult.success) return false;
 
         // 3D特徴点の作成 (Nullレイヤー)
         int createdFeatureLayers = 0;
@@ -111,8 +111,8 @@ public:
             ArtifactLayerInitParams nullParams(QString("Track Point %1").arg(pt.id), LayerType::Null);
             auto nullLayer = factory.createNewLayer(nullParams);
             if (nullLayer) {
-                comp->appendLayerTop(nullLayer);
-                ++createdFeatureLayers;
+                const auto appendResult = comp->appendLayerTop(nullLayer);
+                if (appendResult.success) ++createdFeatureLayers;
             }
         }
 

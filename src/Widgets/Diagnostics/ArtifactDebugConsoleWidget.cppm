@@ -13,9 +13,12 @@ module;
 #include <QSpinBox>
 #include <QSettings>
 #include <QFont>
+#include <QFontDatabase>
 #include <QSignalBlocker>
 #include <QDateTime>
 #include <QDateTimeEdit>
+#include <QMetaObject>
+#include <QThread>
 #include <QComboBox>
 #include <QStringList>
 #include <QIcon>
@@ -47,6 +50,8 @@ import Utils;
 import Widgets.Utils.CSS;
 import Settings.Accessibility;
 import Artifact.Service.Playback;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace {
 
@@ -196,6 +201,10 @@ public:
     int totalWarningCount_ = 0;
     int totalErrorCount_ = 0;
     std::vector<DisplayLogEntry> displayEntries_;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    ArtifactCore::EventBus::Subscription logAddedSubscription_;
+    ArtifactCore::EventBus::Subscription logsClearedSubscription_;
+    ArtifactCore::EventBus::Subscription playbackStateSubscription_;
 
     Impl(ArtifactDebugConsoleWidget* owner) : owner_(owner) {
         loadSettings();
@@ -658,34 +667,53 @@ public:
             menu.exec(QPoint(menuX, menuY));
         });
 
-        // Initialize Logger Signal
-        QObject::connect(Logger::instance(), &Logger::logAdded, owner_, [this](int level, const QString& msg, const QString& context, const QDateTime& ts) {
-            onLogAdded(static_cast<LogLevel>(level), msg, context, ts);
-        });
+        logAddedSubscription_ = eventBus_.subscribe<LogAddedEvent>(
+            [this](const LogAddedEvent& event) {
+                const auto dispatch = [this, event]() {
+                    onLogAdded(event.level, event.message, event.context,
+                               event.timestamp);
+                };
+                if (QThread::currentThread() == owner_->thread()) {
+                    dispatch();
+                } else {
+                    QMetaObject::invokeMethod(owner_, dispatch,
+                                              Qt::QueuedConnection);
+                }
+            });
 
-        QObject::connect(Logger::instance(), &Logger::logsCleared, owner_, [this]() {
-            logList_->clear();
-            displayEntries_.clear();
-            if (detailView_) {
-                detailView_->clear();
-            }
-            pendingWhilePaused_ = 0;
-            totalDebugCount_ = 0;
-            totalInfoCount_ = 0;
-            totalWarningCount_ = 0;
-            totalErrorCount_ = 0;
-            updateFilterSummary();
-            updateStatus();
-        });
+        logsClearedSubscription_ = eventBus_.subscribe<LogsClearedEvent>(
+            [this](const LogsClearedEvent&) {
+                const auto dispatch = [this]() {
+                    logList_->clear();
+                    displayEntries_.clear();
+                    if (detailView_) {
+                        detailView_->clear();
+                    }
+                    pendingWhilePaused_ = 0;
+                    totalDebugCount_ = 0;
+                    totalInfoCount_ = 0;
+                    totalWarningCount_ = 0;
+                    totalErrorCount_ = 0;
+                    updateFilterSummary();
+                    updateStatus();
+                };
+                if (QThread::currentThread() == owner_->thread()) {
+                    dispatch();
+                } else {
+                    QMetaObject::invokeMethod(owner_, dispatch,
+                                              Qt::QueuedConnection);
+                }
+            });
 
         // Playback Service for "Clear on Play"
-        if (auto* svc = ArtifactPlaybackService::instance()) {
-            QObject::connect(svc, &ArtifactPlaybackService::playbackStateChanged, owner_, [this](::Artifact::PlaybackState state) {
-                if (state == ::Artifact::PlaybackState::Playing && clearOnPlayCheck_->isChecked()) {
+        playbackStateSubscription_ = eventBus_.subscribe<PlaybackStateChangedEvent>(
+            [this](const PlaybackStateChangedEvent& event) {
+                const auto state = event.state;
+                if (state == ::Artifact::PlaybackState::Playing &&
+                    clearOnPlayCheck_->isChecked()) {
                     Logger::instance()->clearLogs();
                 }
             });
-        }
 
         connectFontControls();
         applyFontPointSize(consoleFontPointSize_, false);
@@ -711,8 +739,7 @@ public:
     }
 
     QFont monoFont() const {
-        QFont font(QStringLiteral("Consolas"));
-        font.setStyleHint(QFont::Monospace);
+        QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         font.setPointSize(consoleFontPointSize_);
         return font;
     }

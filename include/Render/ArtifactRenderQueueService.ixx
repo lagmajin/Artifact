@@ -196,23 +196,8 @@ public:
   static auto formatPreflightDetails(const ArtifactCore::DiagnosticResult& result) -> QStringList;
 
 public:
-  void jobAdded(int index) W_SIGNAL(jobAdded, index) void jobRemoved(int index)
-      W_SIGNAL(jobRemoved, index) void jobUpdated(int index) W_SIGNAL(
-          jobUpdated, index) void jobStatusChanged(int index, int status)
-          W_SIGNAL(jobStatusChanged, index,
-                   status) void jobProgressChanged(int index, int progress)
-              W_SIGNAL(jobProgressChanged, index,
-                       progress) void allJobsCompleted()
-                  W_SIGNAL(allJobsCompleted) void allJobsRemoved() W_SIGNAL(
-                      allJobsRemoved) void queueReordered(int fromIndex,
-                                                          int toIndex)
-                      W_SIGNAL(queueReordered, fromIndex,
-                               toIndex) void previewFrameReady(int jobIndex,
-                                                               int frameNumber)
-                          W_SIGNAL(previewFrameReady, jobIndex, frameNumber)
-
-      // Callback setters (Deprecated, use signals)
-      void setJobAddedCallback(std::function<void(int)> callback);
+  // Callback setters retained for compatibility with non-UI integrations.
+  void setJobAddedCallback(std::function<void(int)> callback);
   void setJobRemovedCallback(std::function<void(int)> callback);
   void setJobUpdatedCallback(std::function<void(int)> callback);
   void setJobStatusChangedCallback(std::function<void(int, int)> callback);

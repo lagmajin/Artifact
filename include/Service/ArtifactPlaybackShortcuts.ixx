@@ -130,12 +130,6 @@ public: // Actions - can be triggered manually
     void scrubTo(int frame);
     void endScrub();
     
-signals:
-    // Signals for UI feedback
-    void inPointSet(int frame) W_SIGNAL(inPointSet, frame);
-    void outPointSet(int frame) W_SIGNAL(outPointSet, frame);
-    void markerAdded(int frame, const QString& comment) W_SIGNAL(markerAdded, frame, comment);
-    void shortcutExecuted(const QString& actionId) W_SIGNAL(shortcutExecuted, actionId);
 };
 
 } // namespace Artifact

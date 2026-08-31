@@ -52,6 +52,12 @@ namespace Artifact {
     ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
   }
 
+  inline void publishProjectDirtyChangedEvent(bool dirty)
+  {
+    ArtifactCore::globalEventBus().publish<ProjectDirtyChangedEvent>(
+        ProjectDirtyChangedEvent{dirty});
+  }
+
   inline void publishCompositionCreatedEvent(const CompositionID& id)
   {
     ArtifactCore::globalEventBus().publish<CompositionCreatedEvent>(
@@ -486,6 +492,10 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
       footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
       footageUp->subimageIndex = std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
       footageUp->frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
+      footageUp->inputColorSpace =
+          obj.value(QStringLiteral("inputColorSpace")).toString();
+      footageUp->inputTransferFunction =
+          obj.value(QStringLiteral("inputTransferFunction")).toString();
       if (obj.value(QStringLiteral("assetUsage")).toString().compare(
               QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
         footageUp->assetUsage = ProjectAssetUsage::RenderInput;
@@ -1412,8 +1422,13 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   const bool before = impl_->isDirty();
   impl_->setDirty(dirty);
   if (before != dirty) {
-   Q_EMIT projectDirtyChanged(dirty);
+   publishProjectDirtyChangedEvent(dirty);
   }
+ }
+
+ void ArtifactProject::projectChanged()
+ {
+  publishProjectChangedEvent();
  }
 
  bool ArtifactProject::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)

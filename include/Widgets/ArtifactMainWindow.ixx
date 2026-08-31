@@ -92,6 +92,9 @@ public /*slots*/:
 
   // Dock enumeration
   QStringList dockTitles() const;
+  QStringList dockIds() const;
+  QString dockDisplayTitle(const QString &dockId) const;
+  QString resolveDockId(const QString &dockIdOrTitle) const;
   bool isDockVisible(const QString &title) const;
   bool hasDock(const QString &title) const;
 

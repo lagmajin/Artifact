@@ -29,7 +29,6 @@
 #include <numeric>
 #include <regex>
 #include <random>
-#include <wobjectdefs.h>
 #include <QObject>
 #include <QString>
 export module AI.Client;
@@ -45,10 +44,9 @@ using namespace ArtifactCore;
 
 /**
  * @brief AI Client for communication with LLM backends.
- * Refactored to be asynchronous using Qt signals.
+ * Refactored to be asynchronous using internal events.
  */
 class AIClient : public QObject {
-    W_OBJECT(AIClient)
 private:
     class Impl;
     Impl* impl_;
@@ -82,12 +80,6 @@ public:
     // Cancel the currently running message generation
     void cancelMessage();
 
-    // Signals
-    void messageReceived(QString message) W_SIGNAL(messageReceived, message);
-    void partialMessageReceived(QString partialText) W_SIGNAL(partialMessageReceived, partialText);
-    void errorOccurred(QString error) W_SIGNAL(errorOccurred, error);
-    void initializationFinished(bool success, QString modelPath) W_SIGNAL(initializationFinished, success, modelPath);
-    void messageCancelled() W_SIGNAL(messageCancelled);
 };
 
 }

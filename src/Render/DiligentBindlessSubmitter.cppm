@@ -148,6 +148,8 @@ void DiligentBindlessSubmitter::destroy()
     resetTextureTable();
     device_ = nullptr;
     supported_ = false;
+    enabled_ = false;
+    stats_ = {};
 }
 
 void DiligentBindlessSubmitter::setFrameCostStats(ArtifactCore::RenderCostStats* stats)
@@ -178,14 +180,26 @@ bool DiligentBindlessSubmitter::isSupported() const
 
 QString DiligentBindlessSubmitter::debugState() const
 {
-    return supported_
-               ? QStringLiteral("mode=bindless state=sprite+xform fallback=legacy")
-               : QStringLiteral("mode=bindless state=unsupported fallback=legacy");
+    return QStringLiteral("mode=bindless enabled=%1 supported=%2 fallback=%3 attempted=%4 accepted=%5 fallback_count=%6 rejected=%7")
+        .arg(enabled_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(supported_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(fallbackOnFailure_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(static_cast<qulonglong>(stats_.attempted))
+        .arg(static_cast<qulonglong>(stats_.accepted))
+        .arg(static_cast<qulonglong>(stats_.fallback))
+        .arg(static_cast<qulonglong>(stats_.rejected));
 }
 
 void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext* ctx)
 {
+    if (!enabled_) {
+        fallback_.submit(buf, ctx);
+        return;
+    }
+    ++stats_.attempted;
     if (!supported_ || !ctx || buf.empty() || !buf.targetRTV || !spritePso_ || !spriteSrb_) {
+        ++stats_.rejected;
+        ++stats_.fallback;
         fallback_.submit(buf, ctx);
         return;
     }
@@ -197,6 +211,8 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
                    std::holds_alternative<SpriteXformPkt>(packet);
         });
     if (!spriteOnly) {
+        ++stats_.rejected;
+        ++stats_.fallback;
         fallback_.submit(buf, ctx);
         return;
     }
@@ -206,13 +222,20 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
         const auto* spriteXform = std::get_if<SpriteXformPkt>(&packet);
         if (!((sprite && submitSprite(*sprite, ctx, rtv)) ||
               (spriteXform && submitSpriteXform(*spriteXform, ctx, rtv)))) {
+            ++stats_.rejected;
             flushSpriteBatch(ctx, rtv);
-            fallback_.submit(buf, ctx);
+            if (fallbackOnFailure_) {
+                ++stats_.fallback;
+                fallback_.submit(buf, ctx);
+            } else {
+                buf.reset();
+            }
             return;
         }
     }
 
     flushSpriteBatch(ctx, rtv);
+    ++stats_.accepted;
     buf.reset();
 }
 

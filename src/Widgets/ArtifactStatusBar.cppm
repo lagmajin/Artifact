@@ -1,5 +1,7 @@
 module;
 
+#include <algorithm>
+#include <cmath>
 #include <QAction>
 #include <QColor>
 #include <QFont>
@@ -8,11 +10,14 @@ module;
 #include <QPalette>
 #include <QSizePolicy>
 #include <QString>
+#include <QMetaObject>
+#include <QThread>
 
 module ArtifactStatusBar;
 
 import Widgets.Utils.CSS;
 import Settings.Accessibility;
+import Artifact.Event.Types;
 
 namespace Artifact
 {
@@ -36,6 +41,8 @@ namespace Artifact
    return QStringLiteral("PROJECT: READY");
   case ArtifactStatusBar::Item::Layer:
    return QStringLiteral("LAYER: -");
+  case ArtifactStatusBar::Item::Selection:
+   return QStringLiteral("SEL: 0");
   case ArtifactStatusBar::Item::Drops:
    return QStringLiteral("DROP: -");
   case ArtifactStatusBar::Item::TimelineDebug:
@@ -59,12 +66,33 @@ namespace Artifact
   case ArtifactStatusBar::Item::Memory: return QStringLiteral("Memory status");
   case ArtifactStatusBar::Item::Project: return QStringLiteral("Project status");
   case ArtifactStatusBar::Item::Layer: return QStringLiteral("Layer status");
+  case ArtifactStatusBar::Item::Selection: return QStringLiteral("Selection count status");
   case ArtifactStatusBar::Item::Drops: return QStringLiteral("Dropped frames status");
   case ArtifactStatusBar::Item::TimelineDebug: return QStringLiteral("Timeline debug status");
   case ArtifactStatusBar::Item::Console: return QStringLiteral("Console status");
   case ArtifactStatusBar::Item::Accessibility: return QStringLiteral("Accessibility status");
   }
   return QStringLiteral("Application status");
+ }
+
+ QString objectNameForItem(const ArtifactStatusBar::Item item)
+ {
+  switch (item)
+  {
+  case ArtifactStatusBar::Item::Zoom: return QStringLiteral("ZoomStatusLabel");
+  case ArtifactStatusBar::Item::Coordinates: return QStringLiteral("CoordinatesStatusLabel");
+  case ArtifactStatusBar::Item::Frame: return QStringLiteral("FrameStatusLabel");
+  case ArtifactStatusBar::Item::FPS: return QStringLiteral("FpsStatusLabel");
+  case ArtifactStatusBar::Item::Memory: return QStringLiteral("MemoryStatusLabel");
+  case ArtifactStatusBar::Item::Project: return QStringLiteral("ProjectStatusLabel");
+  case ArtifactStatusBar::Item::Layer: return QStringLiteral("LayerStatusLabel");
+  case ArtifactStatusBar::Item::Selection: return QStringLiteral("SelectionStatusLabel");
+  case ArtifactStatusBar::Item::Drops: return QStringLiteral("DropsStatusLabel");
+  case ArtifactStatusBar::Item::TimelineDebug: return QStringLiteral("TimelineDebugStatusLabel");
+  case ArtifactStatusBar::Item::Console: return QStringLiteral("ConsoleStatusLabel");
+  case ArtifactStatusBar::Item::Accessibility: return QStringLiteral("AccessibilityStatusLabel");
+  }
+  return QStringLiteral("StatusLabel");
  }
  }
 
@@ -96,6 +124,8 @@ namespace Artifact
 
   for (int i = 0; i < kItemCount; ++i) {
       labels_[i] = new QLabel(defaultTextForItem(static_cast<Item>(i)), this);
+      labels_[i]->setObjectName(
+          objectNameForItem(static_cast<Item>(i)));
       labels_[i]->setAccessibleName(
           accessibleNameForItem(static_cast<Item>(i)));
       labels_[i]->setAccessibleDescription(
@@ -117,6 +147,7 @@ namespace Artifact
   labels_[itemIndex(Item::FPS)]->setMinimumWidth(80);
   labels_[itemIndex(Item::Zoom)]->setMinimumWidth(80);
   labels_[itemIndex(Item::Coordinates)]->setMinimumWidth(110);
+  labels_[itemIndex(Item::Selection)]->setMinimumWidth(60);
   labels_[itemIndex(Item::Console)]->setFont(boldFont);
   {
       QPalette p = labels_[itemIndex(Item::TimelineDebug)]->palette();
@@ -136,20 +167,49 @@ namespace Artifact
   addPermanentWidget(labels_[itemIndex(Item::Console)]);
   addPermanentWidget(labels_[itemIndex(Item::Coordinates)]);
   addPermanentWidget(labels_[itemIndex(Item::Frame)]);
+  addPermanentWidget(labels_[itemIndex(Item::Selection)]);
   addPermanentWidget(labels_[itemIndex(Item::Zoom)]);
   addPermanentWidget(labels_[itemIndex(Item::FPS)]);
   addPermanentWidget(labels_[itemIndex(Item::Memory)]);
   addPermanentWidget(labels_[itemIndex(Item::Drops)]);
   addPermanentWidget(labels_[itemIndex(Item::Accessibility)]);
+
+  eventBusSubscriptions_.push_back(
+      eventBus_.subscribe<TimelineZoomLevelChangedEvent>(
+          [this](const TimelineZoomLevelChangedEvent& event) {
+            const auto dispatch = [this, zoomPercent = event.zoomPercent]() {
+              setZoomPercent(static_cast<float>(zoomPercent));
+            };
+            if (QThread::currentThread() == thread()) {
+              dispatch();
+            } else {
+              QMetaObject::invokeMethod(this, dispatch, Qt::QueuedConnection);
+            }
+          }));
+  eventBusSubscriptions_.push_back(
+      eventBus_.subscribe<TimelineDebugMessageEvent>(
+          [this](const TimelineDebugMessageEvent& event) {
+            const auto dispatch = [this, message = event.message]() {
+              setTimelineDebugText(message);
+            };
+            if (QThread::currentThread() == thread()) {
+              dispatch();
+            } else {
+              QMetaObject::invokeMethod(this, dispatch, Qt::QueuedConnection);
+            }
+          }));
  }
 
  ArtifactStatusBar::~ArtifactStatusBar() = default;
 
  void ArtifactStatusBar::setZoomPercent(const float zoomPercent)
  {
+  const float normalized = std::isfinite(zoomPercent)
+      ? std::clamp(zoomPercent, 0.0f, 100000.0f)
+      : 100.0f;
   if (auto* label = itemLabel(Item::Zoom))
   {
-   label->setText(QStringLiteral("ZOOM: %1%").arg(static_cast<int>(zoomPercent)));
+   label->setText(QStringLiteral("ZOOM: %1%").arg(static_cast<int>(normalized)));
   }
  }
 
@@ -171,9 +231,10 @@ namespace Artifact
 
  void ArtifactStatusBar::setFPS(const double fps)
  {
+  const double normalized = std::isfinite(fps) ? std::max(0.0, fps) : 0.0;
   if (auto* label = itemLabel(Item::FPS))
   {
-   label->setText(QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', 1)));
+   label->setText(QStringLiteral("FPS: %1").arg(QString::number(normalized, 'f', 1)));
   }
  }
 
@@ -198,6 +259,14 @@ namespace Artifact
   if (auto* label = itemLabel(Item::Layer))
   {
    label->setText(QStringLiteral("LAYER: %1").arg(text.isEmpty() ? "-" : text.toUpper()));
+  }
+ }
+
+ void ArtifactStatusBar::setSelectionCount(const int count)
+ {
+  if (auto* label = itemLabel(Item::Selection))
+  {
+   label->setText(QStringLiteral("SEL: %1").arg(std::max(0, count)));
   }
  }
 
@@ -270,7 +339,7 @@ namespace Artifact
 
  void ArtifactStatusBar::setAllItemsVisible(const bool visible)
  {
-  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Layer, Item::Drops, Item::TimelineDebug, Item::Console, Item::Accessibility })
+  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Layer, Item::Selection, Item::Drops, Item::TimelineDebug, Item::Console, Item::Accessibility })
   {
    setItemVisible(item, visible);
   }
@@ -313,10 +382,11 @@ namespace Artifact
   case Item::Memory: return 4;
   case Item::Project: return 5;
   case Item::Layer: return 6;
-  case Item::Drops: return 7;
-  case Item::TimelineDebug: return 8;
-  case Item::Console: return 9;
-  case Item::Accessibility: return 10;
+  case Item::Selection: return 7;
+  case Item::Drops: return 8;
+  case Item::TimelineDebug: return 9;
+  case Item::Console: return 10;
+  case Item::Accessibility: return 11;
   }
   return -1;
  }
@@ -332,6 +402,7 @@ namespace Artifact
   case Item::Memory: return QStringLiteral("Memory");
   case Item::Project: return QStringLiteral("Project");
   case Item::Layer: return QStringLiteral("Layer");
+  case Item::Selection: return QStringLiteral("Selection");
   case Item::Drops: return QStringLiteral("Drops");
   case Item::TimelineDebug: return QStringLiteral("Timeline Debug");
   case Item::Console: return QStringLiteral("Console");
@@ -342,7 +413,7 @@ namespace Artifact
 
  void ArtifactStatusBar::rebuildVisibilityMenu(QMenu& menu)
  {
-  for (const auto item : { Item::Project, Item::Layer, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops, Item::TimelineDebug, Item::Console })
+  for (const auto item : { Item::Project, Item::Layer, Item::Selection, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops, Item::TimelineDebug, Item::Console })
   {
    QAction* action = menu.addAction(itemTitle(item));
    action->setCheckable(true);

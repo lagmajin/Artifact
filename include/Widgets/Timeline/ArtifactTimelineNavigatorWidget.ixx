@@ -39,7 +39,6 @@ export namespace Artifact
   void setCurrentFrame(double frame);
   void setTotalFrames(int totalFrames);
 
-  void startChanged(float value) W_SIGNAL(startChanged, value)
-  void endChanged(float value) W_SIGNAL(endChanged, value)
+  void rangeChanged();
  };
 }

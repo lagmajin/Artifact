@@ -88,6 +88,7 @@ export namespace Artifact
   // merged on insertion, then persisted with the layer JSON.
   void addDeClickRange(qint64 startSample, qint64 endSample);
   void clearDeClickRanges();
+  void setDeClickRanges(const std::vector<std::pair<qint64, qint64>>& ranges);
   int deClickRangeCount() const;
   std::vector<std::pair<qint64, qint64>> deClickRanges() const;
   void setDeClickThresholdDb(float thresholdDb);

@@ -11,6 +11,7 @@ module;
 #include <QColor>
 #include <QHash>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QMetaObject>
@@ -208,10 +209,9 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
     p.setPen(kBorder);
     p.drawRect(rect().adjusted(0,0,-1,-1));
 
-    QFont fontMono, fontBold;
-    fontMono.setFamily(QStringLiteral("Consolas"));
+    QFont fontMono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     fontMono.setPointSize(8);
-    fontBold.setFamily(QStringLiteral("Consolas"));
+    QFont fontBold = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     fontBold.setPointSize(9);
     fontBold.setBold(true);
 

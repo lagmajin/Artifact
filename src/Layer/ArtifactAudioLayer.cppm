@@ -301,6 +301,35 @@ void ArtifactAudioLayer::clearDeClickRanges()
   Q_EMIT changed();
 }
 
+void ArtifactAudioLayer::setDeClickRanges(
+    const std::vector<std::pair<qint64, qint64>>& ranges)
+{
+  std::vector<std::pair<qint64, qint64>> normalized;
+  normalized.reserve(ranges.size());
+  for (const auto& range : ranges) {
+    const qint64 start = std::max<qint64>(0, std::min(range.first, range.second));
+    const qint64 end = std::max<qint64>(start, std::max(range.first, range.second));
+    if (end > start) {
+      normalized.emplace_back(start, end);
+    }
+  }
+  std::sort(normalized.begin(), normalized.end());
+  std::vector<std::pair<qint64, qint64>> merged;
+  merged.reserve(normalized.size());
+  for (const auto& range : normalized) {
+    if (!merged.empty() && range.first <= merged.back().second) {
+      merged.back().second = std::max(merged.back().second, range.second);
+    } else {
+      merged.push_back(range);
+    }
+  }
+  if (impl_->deClickRanges_ == merged) return;
+  impl_->deClickRanges_ = std::move(merged);
+  ++impl_->deClickRevision_;
+  impl_->resetResampledCache();
+  Q_EMIT changed();
+}
+
 int ArtifactAudioLayer::deClickRangeCount() const
 {
   return static_cast<int>(impl_->deClickRanges_.size());
@@ -856,7 +885,9 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
   auto *composition = static_cast<ArtifactAbstractComposition *>(this->composition());
   const double requestedFps = composition ? composition->frameRate().framerate() : 0.0;
   const double compositionFps =
-      (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
+      (std::isfinite(requestedFps) && requestedFps > 0.0)
+          ? std::clamp(requestedFps, 1.0, 10000.0)
+          : 30.0;
 
   const qint64 sourceFrameCount =
       static_cast<qint64>(impl_->pcm().size() /
@@ -1041,9 +1072,12 @@ double animatedAudioNumber(const ArtifactAudioLayer* layer,
   int64_t fps = 30;
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           layer->compositionObject())) {
-    fps = std::max<int64_t>(
-        1, static_cast<int64_t>(
-               std::llround(composition->frameRate().framerate())));
+    const double rawFps = composition->frameRate().framerate();
+    fps = std::isfinite(rawFps) && rawFps > 0.0
+              ? std::max<int64_t>(
+                    1, static_cast<int64_t>(std::llround(
+                           std::clamp(rawFps, 1.0, 10000.0))))
+              : 30;
   }
   const QVariant value =
       property->interpolateValue(RationalTime(blockFrame, fps));
@@ -1078,7 +1112,9 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   auto* composition = static_cast<ArtifactAbstractComposition*>(this->composition());
   const double requestedFps = composition ? composition->frameRate().framerate() : 0.0;
   const double compositionFps =
-      (std::isfinite(requestedFps) && requestedFps > 0.0) ? requestedFps : 30.0;
+      (std::isfinite(requestedFps) && requestedFps > 0.0)
+          ? std::clamp(requestedFps, 1.0, 10000.0)
+          : 30.0;
 
   const qint64 sourceFrameCount = impl_->pcm().size() / std::max(1, impl_->sourceChannelCount_);
 

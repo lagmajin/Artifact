@@ -120,6 +120,7 @@ class ArtifactPlaybackService : public QObject {
 private:
   class Impl;
   Impl *impl_;
+  void syncWorkAreaAfterUndo(const ArtifactCompositionPtr &composition);
 
 public:
   explicit ArtifactPlaybackService(QObject *parent = nullptr);
@@ -301,25 +302,6 @@ public:
   ArtifactCompositionPlaybackController *controller() const;
 
 public: // signals
-  void playbackStateChanged(PlaybackState state)
-      W_SIGNAL(playbackStateChanged, state);
-  void frameChanged(const FramePosition &position)
-      W_SIGNAL(frameChanged, position);
-  void playbackSpeedChanged(float speed) W_SIGNAL(playbackSpeedChanged, speed);
-  void playbackRangeModeChanged(PlaybackRangeMode mode) W_SIGNAL(playbackRangeModeChanged, mode);
-  void playbackSkipModeChanged(PlaybackSkipMode mode) W_SIGNAL(playbackSkipModeChanged, mode);
-  void loopingChanged(bool loop) W_SIGNAL(loopingChanged, loop);
-  void frameRangeChanged(const FrameRange &range)
-      W_SIGNAL(frameRangeChanged, range);
-  void currentCompositionChanged()
-      W_SIGNAL(currentCompositionChanged);
-  void ramPreviewStateChanged(bool enabled, const FrameRange &range)
-      W_SIGNAL(ramPreviewStateChanged, enabled, range);
-  void ramPreviewStatsChanged(float hitRate, int cachedFrameCount)
-      W_SIGNAL(ramPreviewStatsChanged, hitRate, cachedFrameCount);
-  void audioLevelChanged(float leftRms, float rightRms, float leftPeak,
-                         float rightPeak)
-      W_SIGNAL(audioLevelChanged, leftRms, rightRms, leftPeak, rightPeak);
 };
 
 } // namespace Artifact

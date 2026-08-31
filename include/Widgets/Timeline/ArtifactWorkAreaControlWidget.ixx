@@ -42,8 +42,7 @@ export namespace Artifact
   void setRulerHorizontalOffset(double offset);
 
  public:
-   void startChanged(float value) W_SIGNAL(startChanged, value)
-   void endChanged(float value) W_SIGNAL(endChanged, value)
+   void workAreaChanged();
 
  public: 
  

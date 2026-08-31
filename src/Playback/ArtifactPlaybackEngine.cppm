@@ -34,6 +34,8 @@ import Audio.Segment;
 import Playback.State;
 import Core.Diagnostics.Trace;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -320,7 +322,7 @@ public:
 
     void publishPlaybackSpeedChanged(const float speed) {
         QMetaObject::invokeMethod(owner_, [this, speed]() {
-            Q_EMIT owner_->playbackSpeedChanged(speed);
+            owner_->playbackSpeedChanged(speed);
         }, Qt::QueuedConnection);
     }
 
@@ -1071,7 +1073,7 @@ ArtifactPlaybackEngine::~ArtifactPlaybackEngine() {
 
 void ArtifactPlaybackEngine::setFrameRate(const FrameRate& rate) {
     impl_->frameRate_ = rate;
-    Q_EMIT frameRangeChanged(impl_->frameRange_);
+    frameRangeChanged(impl_->frameRange_);
 }
 
 FrameRate ArtifactPlaybackEngine::frameRate() const {
@@ -1080,7 +1082,20 @@ FrameRate ArtifactPlaybackEngine::frameRate() const {
 
 void ArtifactPlaybackEngine::setFrameRange(const FrameRange& range) {
     impl_->frameRange_ = range;
-    Q_EMIT frameRangeChanged(range);
+    frameRangeChanged(range);
+}
+
+void ArtifactPlaybackEngine::frameRangeChanged(const FrameRange& range) {
+    const PlaybackFrameRangeChangedEvent event{range.start(), range.end()};
+    const auto publish = [event]() {
+        ArtifactCore::globalEventBus().publish<PlaybackFrameRangeChangedEvent>(
+            event);
+    };
+    if (QThread::currentThread() == thread()) {
+        publish();
+        return;
+    }
+    QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
 }
 
 FrameRange ArtifactPlaybackEngine::frameRange() const {
@@ -1092,7 +1107,19 @@ void ArtifactPlaybackEngine::setPlaybackSpeed(float speed) {
         ? std::clamp(speed, -8.0f, 8.0f)
         : 1.0f;
     impl_->playbackSpeed_.store(safeSpeed);
-    Q_EMIT playbackSpeedChanged(safeSpeed);
+    playbackSpeedChanged(safeSpeed);
+}
+
+void ArtifactPlaybackEngine::playbackSpeedChanged(float speed) {
+    const auto publish = [speed]() {
+        ArtifactCore::globalEventBus().publish<PlaybackSpeedChangedEvent>(
+            PlaybackSpeedChangedEvent{speed});
+    };
+    if (QThread::currentThread() == thread()) {
+        publish();
+        return;
+    }
+    QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
 }
 
 float ArtifactPlaybackEngine::playbackSpeed() const {
@@ -1101,7 +1128,19 @@ float ArtifactPlaybackEngine::playbackSpeed() const {
 
 void ArtifactPlaybackEngine::setLooping(bool loop) {
     impl_->looping_ = loop;
-    Q_EMIT loopingChanged(loop);
+    loopingChanged(loop);
+}
+
+void ArtifactPlaybackEngine::loopingChanged(bool loop) {
+    const auto publish = [loop]() {
+        ArtifactCore::globalEventBus().publish<PlaybackLoopingChangedEvent>(
+            PlaybackLoopingChangedEvent{loop});
+    };
+    if (QThread::currentThread() == thread()) {
+        publish();
+        return;
+    }
+    QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
 }
 
 bool ArtifactPlaybackEngine::isLooping() const {

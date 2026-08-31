@@ -13,6 +13,7 @@ module;
 #include <QToolButton>
 #include <QVariant>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <utility>
 
@@ -47,6 +48,25 @@ namespace detail {
 constexpr int kPropertyLabelMinWidth = 132;
 constexpr int kPropertyLabelMaxWidth = 184;
 using AbstractPropertyPtr = ArtifactCore::AbstractPropertyPtr;
+
+void restorePropertyKeyframesShared(
+    const AbstractPropertyPtr &property,
+    const std::vector<ArtifactCore::KeyFrame> &keyframes,
+    const bool animatable) {
+  if (!property) {
+    return;
+  }
+  property->clearKeyFrames();
+  for (const auto &keyframe : keyframes) {
+    property->addKeyFrame(
+        keyframe.time, keyframe.value, keyframe.interpolation,
+        keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+        keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+  }
+  property->setAnimatable(animatable);
+}
 
 
 QColor propertyWidgetThemeColor(const QString &value, const QColor &fallback) {
@@ -401,10 +421,37 @@ std::vector<AbstractPropertyPtr> filteredGroupProperties(
   return visibleProperties;
 }
 
+int64_t safeFrameRateScale(const double raw, const int64_t fallback = 30) {
+  if (!std::isfinite(raw) || raw <= 0.0) {
+    return fallback;
+  }
+  return std::max<int64_t>(
+      1, static_cast<int64_t>(std::llround(std::clamp(raw, 1.0, 10000.0))));
+}
+
+bool sameKeyframeSequence(
+    const std::vector<ArtifactCore::KeyFrame> &lhs,
+    const std::vector<ArtifactCore::KeyFrame> &rhs) {
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.size(); ++i) {
+    const auto &a = lhs[i];
+    const auto &b = rhs[i];
+    if (a.time != b.time || a.value != b.value ||
+        a.interpolation != b.interpolation || a.cp1_x != b.cp1_x ||
+        a.cp1_y != b.cp1_y || a.cp2_x != b.cp2_x ||
+        a.cp2_y != b.cp2_y || a.roving != b.roving ||
+        a.anchor != b.anchor || a.colorLabel != b.colorLabel) {
+      return false;
+    }
+  }
+  return true;
+}
+
 int64_t playbackFrameRateValue(ArtifactPlaybackService *playback) {
   const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
-  return std::max<int64_t>(
-      1, static_cast<int64_t>(std::llround(frameRate.framerate())));
+  return safeFrameRateScale(frameRate.framerate());
 }
 
 int64_t compositionFrameRateValue(
@@ -412,9 +459,7 @@ int64_t compositionFrameRateValue(
   if (!composition) {
     return 30;
   }
-  return std::max<int64_t>(
-      1, static_cast<int64_t>(
-             std::llround(composition->frameRate().framerate())));
+  return safeFrameRateScale(composition->frameRate().framerate());
 }
 
 RationalTime currentPlaybackTime(ArtifactPlaybackService *playback) {
@@ -1024,9 +1069,8 @@ void launchExpressionCopilot(
     copilot->clearPreviewContext();
   }
   if (propertyPtr && applyHandler) {
-    copilot->setApplyHandler([propertyPtr, applyHandler](const QString &expr) {
+    copilot->setApplyHandler([applyHandler](const QString &expr) {
       const QString normalized = expr.trimmed().left(16384);
-      propertyPtr->setExpression(normalized);
       applyHandler(normalized);
     });
   }
@@ -1054,7 +1098,10 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     const std::function<void(
         ArtifactPropertyEditorRowWidget *,
         const AbstractPropertyPtr &,
-        const QVariant &)> &rowValueChanged = {}) {
+    const QVariant &)> &rowValueChanged = {},
+    const std::function<void(
+        const QString &, const AbstractPropertyPtr &, const QVariant &)> &beginValueEdit = {},
+    const std::function<void(const QString &)> &cancelValueEdit = {}) {
   if (!propertyPtr)
     return nullptr;
   const auto &property = *propertyPtr;
@@ -1118,7 +1165,10 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr,
-       propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
+       propertyName = property.getName(), row, rowValueChanged, beginValueEdit](const QVariant &value) {
+        if (beginValueEdit) {
+          beginValueEdit(propertyName, propertyPtr, value);
+        }
         if (propertyPtr) {
           propertyPtr->setValue(value);
         }
@@ -1130,7 +1180,10 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const auto applyCommitValue =
       [commitValue, propertyPtr, playback, currentTimeProvider,
        propertyName = property.getName(), row, rowValueChanged,
-       keyframeChanged, layer](const QVariant &value) {
+       keyframeChanged, layer, beginValueEdit](const QVariant &value) {
+        if (beginValueEdit) {
+          beginValueEdit(propertyName, propertyPtr, value);
+        }
         if (propertyPtr) {
           propertyPtr->setValue(value);
           if (row && layer) {
@@ -1171,6 +1224,11 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       };
   editor->setPreviewHandler(applyPreviewValue);
   editor->setCommitHandler(applyCommitValue);
+  if (cancelValueEdit) {
+    row->setCancelHandler([cancelValueEdit, propertyName = property.getName()]() {
+      cancelValueEdit(propertyName);
+    });
+  }
 
   QString editorTooltip = meta.tooltip;
   if (property.getName().compare(QStringLiteral("text.value"), Qt::CaseInsensitive) == 0) {
@@ -1205,6 +1263,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           const auto beforeKeyframes =
               textProperty ? textProperty->getKeyFrames()
                            : std::vector<ArtifactCore::KeyFrame>{};
+          const bool animatable = textProperty && textProperty->isAnimatable();
           const QString editedText = QInputDialog::getMultiLineText(
               row, QStringLiteral("Edit Source Text"),
               QStringLiteral("Source text at the playhead:"), currentText, &ok);
@@ -1226,9 +1285,14 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
             afterKeyframes.push_back(editedKeyframe);
           }
           if (auto *mgr = UndoManager::instance()) {
-            mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
-                layer, QStringLiteral("text.value"), beforeKeyframes,
-                afterKeyframes, QStringLiteral("Edit Source Text")));
+            if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                    layer, QStringLiteral("text.value"), beforeKeyframes,
+                    afterKeyframes, QStringLiteral("Edit Source Text"), animatable,
+                    animatable))) {
+              restorePropertyKeyframesShared(textProperty, beforeKeyframes, animatable);
+              notifyLayerPropertyAnimationChanged(layer);
+              return;
+            }
           } else if (textLayer) {
             textLayer->setSourceTextAtFrame(frame, editedText);
           }
@@ -1282,6 +1346,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       const auto beforeKeyframes = propertyPtr
                                        ? propertyPtr->getKeyFrames()
                                        : std::vector<ArtifactCore::KeyFrame>{};
+      const bool animatable = propertyPtr && propertyPtr->isAnimatable();
       if (layer && propertyPtr && !beforeKeyframes.empty()) {
         if (auto *mgr = UndoManager::instance()) {
           auto macro = std::make_unique<MacroUndoCommand>(
@@ -1289,19 +1354,28 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
               layer, propertyPtr->getName(), beforeKeyframes,
               std::vector<ArtifactCore::KeyFrame>{},
-              QStringLiteral("Reset Property Keyframes")));
+              QStringLiteral("Reset Property Keyframes"), animatable,
+              animatable));
           macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
               layer, propertyPtr->getName(), beforeValue, defaultValue,
               QStringLiteral("Reset Property Value")));
-          mgr->push(std::move(macro));
+          if (!mgr->push(std::move(macro))) {
+            editor->setValueFromVariant(beforeValue);
+            return;
+          }
         } else {
           propertyPtr->clearKeyFrames();
+          propertyPtr->setValue(defaultValue);
+          notifyLayerPropertyAnimationChanged(layer);
         }
       } else if (layer && propertyPtr && beforeValue != defaultValue) {
         if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<SetLayerPropertyValueCommand>(
-              layer, propertyPtr->getName(), beforeValue, defaultValue,
-              QStringLiteral("Reset Property Value")));
+          if (!mgr->push(std::make_unique<SetLayerPropertyValueCommand>(
+                  layer, propertyPtr->getName(), beforeValue, defaultValue,
+                  QStringLiteral("Reset Property Value")))) {
+            editor->setValueFromVariant(beforeValue);
+            return;
+          }
         } else {
           propertyPtr->setValue(defaultValue);
         }
@@ -1343,6 +1417,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
                                    : currentPlaybackTime(playback);
 
           const auto beforeKeyframes = propertyPtr->getKeyFrames();
+          const bool beforeAnimatable = propertyPtr->isAnimatable();
           const bool hadKeyAtTime = propertyPtr->hasKeyFrameAt(nowTime);
           if (checked) {
             propertyPtr->setAnimatable(true);
@@ -1350,12 +1425,20 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           } else {
             propertyPtr->removeKeyFrame(nowTime);
           }
-          if (checked || hadKeyAtTime) {
+          const bool afterAnimatable = propertyPtr->isAnimatable();
+          const bool isLayerProperty =
+              layer && layer->getProperty(propertyName) == propertyPtr;
+          if ((checked || hadKeyAtTime) && isLayerProperty) {
+            const auto afterKeyframes = propertyPtr->getKeyFrames();
             if (auto *mgr = UndoManager::instance()) {
-              mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
-                  layer, propertyName, beforeKeyframes,
-                  propertyPtr->getKeyFrames(),
-                  QStringLiteral("Toggle Keyframe")));
+              if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                      layer, propertyName, beforeKeyframes, afterKeyframes,
+                      QStringLiteral("Toggle Keyframe"), beforeAnimatable,
+                      afterAnimatable))) {
+                restorePropertyKeyframesShared(propertyPtr, beforeKeyframes,
+                                               beforeAnimatable);
+                notifyLayerPropertyAnimationChanged(layer);
+              }
             }
           }
           row->setKeyframeModeEnabled(!propertyPtr->getKeyFrames().empty());
@@ -1366,14 +1449,32 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           }
         });
 
-    row->setKeyframeAnchorHandler([propertyPtr, keyframeChanged, propertyName](
+    row->setKeyframeAnchorHandler([propertyPtr, keyframeChanged, propertyName,
+                                   layer](
                                       ArtifactCore::KeyFrame::Anchor anchor) {
       if (!propertyPtr) {
         return;
       }
+      const auto beforeKeyframes = propertyPtr->getKeyFrames();
+      const bool animatable = propertyPtr->isAnimatable();
+      const bool isLayerProperty =
+          layer && layer->getProperty(propertyName) == propertyPtr;
       const auto keyframes = propertyPtr->getKeyFrames();
       for (const auto &keyframe : keyframes) {
         propertyPtr->setKeyFrameAnchorAt(keyframe.time, anchor);
+      }
+      const auto afterKeyframes = propertyPtr->getKeyFrames();
+      if (isLayerProperty &&
+          !sameKeyframeSequence(beforeKeyframes, afterKeyframes)) {
+        if (auto *mgr = UndoManager::instance()) {
+          if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                  layer, propertyName, beforeKeyframes, afterKeyframes,
+                  QStringLiteral("Set Keyframe Anchor"), animatable,
+                  animatable))) {
+            restorePropertyKeyframesShared(propertyPtr, beforeKeyframes, animatable);
+            notifyLayerPropertyAnimationChanged(layer);
+          }
+        }
       }
       if (keyframeChanged) {
         keyframeChanged(propertyName);
@@ -1381,14 +1482,31 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     });
 
     row->setKeyframeColorLabelHandler(
-        [propertyPtr, keyframeChanged, propertyName](
+        [propertyPtr, keyframeChanged, propertyName, layer](
             ArtifactCore::KeyFrame::ColorLabel label) {
           if (!propertyPtr) {
             return;
           }
+          const auto beforeKeyframes = propertyPtr->getKeyFrames();
+          const bool animatable = propertyPtr->isAnimatable();
+          const bool isLayerProperty =
+              layer && layer->getProperty(propertyName) == propertyPtr;
           const auto keyframes = propertyPtr->getKeyFrames();
           for (const auto &keyframe : keyframes) {
             propertyPtr->setKeyFrameColorLabelAt(keyframe.time, label);
+          }
+          const auto afterKeyframes = propertyPtr->getKeyFrames();
+          if (isLayerProperty &&
+              !sameKeyframeSequence(beforeKeyframes, afterKeyframes)) {
+            if (auto *mgr = UndoManager::instance()) {
+              if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                      layer, propertyName, beforeKeyframes, afterKeyframes,
+                      QStringLiteral("Set Keyframe Color Label"), animatable,
+                      animatable))) {
+                restorePropertyKeyframesShared(propertyPtr, beforeKeyframes, animatable);
+                notifyLayerPropertyAnimationChanged(layer);
+              }
+            }
           }
           if (keyframeChanged) {
             keyframeChanged(propertyName);
@@ -1459,7 +1577,27 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
               initialExpression,
               layer,
               nowTime,
-              [layer, keyframeChanged, propertyName](const QString &) {
+              [propertyPtr, layer, keyframeChanged, propertyName](
+                  const QString &expression) {
+                const QString beforeExpression = propertyPtr->getExpression();
+                if (beforeExpression == expression) {
+                  return;
+                }
+                const bool isLayerProperty =
+                    layer && layer->getProperty(propertyName) == propertyPtr;
+                if (isLayerProperty) {
+                  if (auto *mgr = UndoManager::instance()) {
+                    if (!mgr->push(std::make_unique<SetLayerPropertyExpressionCommand>(
+                            layer, propertyName, beforeExpression, expression,
+                            QStringLiteral("Edit Expression")))) {
+                      return;
+                    }
+                  } else {
+                    propertyPtr->setExpression(expression);
+                  }
+                } else {
+                  propertyPtr->setExpression(expression);
+                }
                 if (keyframeChanged) {
                   keyframeChanged(propertyName);
                 }
@@ -1477,7 +1615,27 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
                                    : currentPlaybackTime(playback);
           launchExpressionCopilot(
               parent, propertyName, propertyPtr, reference, layer, nowTime,
-              [layer, keyframeChanged, propertyName](const QString&) {
+              [propertyPtr, layer, keyframeChanged, propertyName](
+                  const QString &expression) {
+                const QString beforeExpression = propertyPtr->getExpression();
+                if (beforeExpression == expression) {
+                  return;
+                }
+                const bool isLayerProperty =
+                    layer && layer->getProperty(propertyName) == propertyPtr;
+                if (isLayerProperty) {
+                  if (auto *mgr = UndoManager::instance()) {
+                    if (!mgr->push(std::make_unique<SetLayerPropertyExpressionCommand>(
+                            layer, propertyName, beforeExpression, expression,
+                            QStringLiteral("Edit Expression")))) {
+                      return;
+                    }
+                  } else {
+                    propertyPtr->setExpression(expression);
+                  }
+                } else {
+                  propertyPtr->setExpression(expression);
+                }
                 if (keyframeChanged) {
                   keyframeChanged(propertyName);
                 }
@@ -1538,7 +1696,10 @@ void addRowsFromProperties(
     const std::function<void(
         ArtifactPropertyEditorRowWidget *,
         const AbstractPropertyPtr &,
-        const QVariant &)> &rowValueChanged = {}) {
+    const QVariant &)> &rowValueChanged = {},
+    const std::function<void(
+        const QString &, const AbstractPropertyPtr &, const QVariant &)> &beginValueEdit = {},
+    const std::function<void(const QString &)> &cancelValueEdit = {}) {
   for (const auto &ptr : properties) {
     if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
       continue;
@@ -1547,7 +1708,8 @@ void addRowsFromProperties(
             createPropertyRow(parent, ptr, commitValue, previewValue,
                               currentTimeProvider,
                               keyframeChanged, layer, registryScope,
-                              rowValueChanged)) {
+                              rowValueChanged, beginValueEdit,
+                              cancelValueEdit)) {
       if (decorateRow) {
         decorateRow(row, ptr);
       }

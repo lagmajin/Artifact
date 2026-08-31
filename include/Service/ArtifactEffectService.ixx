@@ -83,15 +83,6 @@ export namespace Artifact
   bool saveEffectPreset(const ArtifactAbstractEffectPtr& effect, const QString& filePath) const;
   bool loadEffectPreset(ArtifactAbstractEffectPtr& effect, const QString& filePath) const;
 
- public /*signals*/:
-  void effectAdded(const LayerID& layerId, const QString& effectId)
-   W_SIGNAL(effectAdded, layerId, effectId);
-  void effectRemoved(const LayerID& layerId, const QString& effectId)
-   W_SIGNAL(effectRemoved, layerId, effectId);
-  void effectChanged(const LayerID& layerId, const QString& effectId)
-   W_SIGNAL(effectChanged, layerId, effectId);
-  void effectOrderChanged(const LayerID& layerId)
-   W_SIGNAL(effectOrderChanged, layerId);
  };
 
 };

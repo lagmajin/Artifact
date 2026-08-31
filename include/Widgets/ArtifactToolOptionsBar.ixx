@@ -35,9 +35,8 @@ public:
                        int polygonSides, bool enabled = true);
   void clearShapeOptions();
 
-signals:
   void optionChanged(const QString &toolName, const QString &optionName,
-                     const QVariant &value) W_SIGNAL(optionChanged, toolName, optionName, value);
+                     const QVariant &value);
 
 private:
   class Impl;

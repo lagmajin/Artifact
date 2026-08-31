@@ -4,6 +4,7 @@ module;
 #include <QPainter>
 #include <QLinearGradient>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QPalette>
 #include <QClipboard>
@@ -226,7 +227,7 @@ protected:
         rowNameFont.setPointSize(10);
         rowNameFont.setWeight(QFont::Medium);
 
-        QFont monoFont(QStringLiteral("Consolas"));
+        QFont monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         monoFont.setPointSize(9);
 
         QFontMetrics titleFm(titleFont);

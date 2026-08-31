@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +36,7 @@
 #include <QMetaObject>
 #include <qlogging.h>
 #include <QDebug>
+#include <QVariant>
 
 module Artifact.Service.ActiveContext;
 import Artifact.Service.Project;
@@ -45,6 +46,7 @@ import Artifact.Service.Project;
 
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
+import Undo.UndoManager;
 
 namespace Artifact
 {
@@ -82,8 +84,7 @@ namespace Artifact
   if (auto* playback = ArtifactPlaybackService::instance()) {
    playback->setCurrentComposition(comp);
   }
-  activeCompositionChanged();
- }
+}
 
  ArtifactCompositionPtr ArtifactActiveContextService::activeComposition() const {
   return impl_->activeComp_;
@@ -148,15 +149,53 @@ namespace Artifact
  void ArtifactActiveContextService::setLayerInAtCurrentTime() {
   auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
-   l->setInPoint(impl_->activeComp_->framePosition());
-   qDebug() << "[ActiveContext] Set In for" << l->layerName() << "to" << impl_->activeComp_->framePosition().framePosition();
+   const auto now = impl_->activeComp_->framePosition();
+   if (l->isTimingLocked() ||
+       l->inPoint().framePosition() == now.framePosition()) {
+    return;
+   }
+    const qint64 oldIn = l->inPoint().framePosition();
+    const qint64 newIn = now.framePosition();
+    if (auto* undo = UndoManager::instance()) {
+     if (!undo->push(std::make_unique<SetLayerPropertyValueCommand>(
+             l, QStringLiteral("time.inPoint"),
+             QVariant::fromValue(oldIn), QVariant::fromValue(newIn),
+             QStringLiteral("Set Layer In")))) {
+      return;
+     }
+    } else {
+     l->setInPoint(now);
+     if (l->inPoint().framePosition() != newIn) {
+      return;
+     }
+   }
+   qDebug() << "[ActiveContext] Set In for" << l->layerName() << "to" << newIn;
   }
  }
 
  void ArtifactActiveContextService::setLayerOutAtCurrentTime() {
   auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
-   l->setOutPoint(impl_->activeComp_->framePosition());
+   const auto now = impl_->activeComp_->framePosition();
+   if (l->isTimingLocked() ||
+       l->outPoint().framePosition() == now.framePosition()) {
+    return;
+   }
+    const qint64 oldOut = l->outPoint().framePosition();
+    const qint64 newOut = now.framePosition();
+    if (auto* undo = UndoManager::instance()) {
+     if (!undo->push(std::make_unique<SetLayerPropertyValueCommand>(
+             l, QStringLiteral("time.outPoint"),
+             QVariant::fromValue(oldOut), QVariant::fromValue(newOut),
+             QStringLiteral("Set Layer Out")))) {
+      return;
+     }
+    } else {
+     l->setOutPoint(now);
+     if (l->outPoint().framePosition() != newOut) {
+      return;
+     }
+   }
   }
  }
 
@@ -164,8 +203,43 @@ namespace Artifact
   auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
    auto now = impl_->activeComp_->framePosition();
-   l->setInPoint(now);
-   l->setStartTime(now);
+   if (l->isTimingLocked()) {
+    return;
+   }
+   const qint64 oldIn = l->inPoint().framePosition();
+   const qint64 oldStart = l->startTime().framePosition();
+   const qint64 newFrame = now.framePosition();
+   if (oldIn == newFrame && oldStart == newFrame) {
+    return;
+   }
+   if (auto* undo = UndoManager::instance()) {
+    auto macro = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Trim Layer In"));
+    if (oldIn != newFrame) {
+     macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+         l, QStringLiteral("time.inPoint"),
+         QVariant::fromValue(oldIn), QVariant::fromValue(newFrame),
+         QStringLiteral("Trim Layer In Point")));
+    }
+    if (oldStart != newFrame) {
+     macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+         l, QStringLiteral("time.startTime"),
+         QVariant::fromValue(oldStart), QVariant::fromValue(newFrame),
+         QStringLiteral("Trim Layer Source Start")));
+    }
+     if (!undo->push(std::move(macro))) {
+      return;
+     }
+    } else {
+     l->setInPoint(now);
+     l->setStartTime(now);
+     if (l->inPoint().framePosition() != newFrame ||
+         l->startTime().framePosition() != newFrame) {
+      l->setInPoint(FramePosition(oldIn));
+      l->setStartTime(FramePosition(oldStart));
+      return;
+     }
+   }
    qDebug() << "[ActiveContext] Trim In for" << l->layerName() << "to" << now.framePosition();
   }
  }
@@ -174,7 +248,25 @@ namespace Artifact
   auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
    auto now = impl_->activeComp_->framePosition();
-   l->setOutPoint(now);
+   if (l->isTimingLocked() ||
+       l->outPoint().framePosition() == now.framePosition()) {
+    return;
+   }
+    const qint64 oldOut = l->outPoint().framePosition();
+    const qint64 newOut = now.framePosition();
+    if (auto* undo = UndoManager::instance()) {
+     if (!undo->push(std::make_unique<SetLayerPropertyValueCommand>(
+             l, QStringLiteral("time.outPoint"),
+             QVariant::fromValue(oldOut), QVariant::fromValue(newOut),
+             QStringLiteral("Trim Layer Out")))) {
+      return;
+     }
+    } else {
+     l->setOutPoint(now);
+     if (l->outPoint().framePosition() != newOut) {
+      return;
+     }
+   }
    qDebug() << "[ActiveContext] Trim Out for" << l->layerName() << "to" << now.framePosition();
   }
  }
@@ -183,30 +275,8 @@ namespace Artifact
   auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   auto comp = impl_->activeComp_;
   if (l && comp) {
-   auto now = comp->framePosition();
-   if (now.framePosition() <= l->inPoint().framePosition() || 
-       now.framePosition() >= l->outPoint().framePosition()) {
-    return; // 再生ヘッドがレイヤーの範囲外なら何もしない
-   }
-
-   // 1. 元のレイヤーのアウトポイントを現在時間に設定
-   auto oldOut = l->outPoint();
-   l->setOutPoint(now);
-
-   // 2. レイヤーを複製（同じコンポジションに追加）
-   // 実際には ArtifactProjectService を通じて複製するのが確実
    if (auto* svc = ArtifactProjectService::instance()) {
-    if (auto project = svc->getCurrentProjectSharedPtr()) {
-     auto result = project->duplicateLayerInComposition(comp->id(), l->id());
-     if (result.success && result.layer) {
-      auto newLayer = result.layer;
-      // 3. 複製されたレイヤーのインポイントを現在時間に設定
-      newLayer->setInPoint(now);
-      newLayer->setOutPoint(oldOut);
-      // 名前を AE 風に "Layer Name 2" とかにしてもいいが、現状はそのまま
-      qDebug() << "[ActiveContext] Split layer" << l->layerName() << "at" << now.framePosition();
-     }
-    }
+    svc->splitLayerWithUndo(comp->id(), l->id());
    }
   }
  }

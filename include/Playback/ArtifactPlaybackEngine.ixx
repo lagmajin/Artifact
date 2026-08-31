@@ -178,12 +178,9 @@ public: // signals
         W_SIGNAL(frameChanged, position, frame);
     void playbackStateChanged(PlaybackState state)
         W_SIGNAL(playbackStateChanged, state);
-    void playbackSpeedChanged(float speed)
-        W_SIGNAL(playbackSpeedChanged, speed);
-    void loopingChanged(bool loop)
-        W_SIGNAL(loopingChanged, loop);
-    void frameRangeChanged(const FrameRange& range)
-        W_SIGNAL(frameRangeChanged, range);
+    void playbackSpeedChanged(float speed);
+    void loopingChanged(bool loop);
+    void frameRangeChanged(const FrameRange& range);
     void droppedFrameDetected(int64_t count)
         W_SIGNAL(droppedFrameDetected, count);
     void audioLevelChanged(float leftRms, float rightRms, float leftPeak, float rightPeak)

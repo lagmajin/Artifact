@@ -11,6 +11,7 @@ module;
 #include <wobjectdefs.h>
 #include <QHash>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
@@ -586,6 +587,10 @@ public:
   std::vector<LayerFieldDescriptor> layerFields() const;
   std::vector<LayerModifierDescriptor> layerCloneModifiers() const;
   std::vector<QString> clonerTransformNames() const;
+  QJsonArray clonerTransformsSnapshot() const;
+  bool restoreClonerTransformsSnapshot(const QJsonArray &snapshot);
+  QJsonObject componentDescriptorSnapshot() const;
+  bool restoreComponentDescriptorSnapshot(const QJsonObject &snapshot);
   std::vector<LayerComponentValidationIssue>
   validateLayerComponents() const;
   void setAuthoritativeComponentEvaluationState(
@@ -647,9 +652,11 @@ public:
   // LOD (Level of Detail) rendering
   virtual void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod);
 
-  void changed() W_SIGNAL(changed);
-  void layerNoteChanged(QString note)
-    W_SIGNAL(layerNoteChanged, note);
+  // Internal layer mutation notifications. The implementation publishes typed
+  // EventBus events and marshals worker-thread notifications to the layer's
+  // QObject thread; these are intentionally not Qt signals.
+  void changed();
+  void layerNoteChanged(QString note);
 
 public:
 };

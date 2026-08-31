@@ -171,15 +171,10 @@ export namespace Artifact
   void scrollToLayer(const LayerID& id);
   LayerID selectedLayerId() const;
   QString currentPropertyPath() const;
+  void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath);
 
  private:
   void performUpdateLayout();
-
-  public /*signals*/:
-  void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
-  void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
-  void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath)
-      W_SIGNAL(propertyFocusChanged, layerId, propertyPath);
 
  };
 
@@ -220,12 +215,6 @@ export namespace Artifact
   LayerID selectedLayerId() const;
   QString currentPropertyPath() const;
 
- public /*signals*/:
-  void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
-  void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
-  void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath)
-      W_SIGNAL(propertyFocusChanged, layerId, propertyPath);
- 	
   };
 
 };

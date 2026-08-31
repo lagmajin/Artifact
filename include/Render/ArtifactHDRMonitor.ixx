@@ -44,6 +44,13 @@ struct HDRAnalysisResult {
   int broadcastSafeViolations = 0;
 };
 
+struct HDRMonitorSettingsChangedEvent {
+};
+
+struct HDRAnalysisCompletedEvent {
+  HDRAnalysisResult result;
+};
+
 class ArtifactHDRMonitor : public QObject {
   W_OBJECT(ArtifactHDRMonitor)
 
@@ -77,10 +84,6 @@ public:
   static FloatColor getFalseColorForLuminance(float luminance);
   static bool isColorInGamut(const FloatColor &color);
 
-  // Signals
-  void analysisComplete(const HDRAnalysisResult &result)
-      W_SIGNAL(analysisComplete, result);
-  void settingsChanged() W_SIGNAL(settingsChanged);
 };
 
 } // namespace Artifact

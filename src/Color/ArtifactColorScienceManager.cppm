@@ -15,6 +15,8 @@ import Color.LUT;
 import Color.ACES;
 import Color.ColorSpace;
 import Color.GamutConversion;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -22,6 +24,13 @@ using namespace ArtifactCore;
 
 namespace {
 constexpr const char* kBuiltinLutPrefix = "builtin:";
+
+void publishColorScienceChanged(
+    ColorScienceManagerChangeKind kind,
+    const QString& compositionId = {}) {
+  ArtifactCore::globalEventBus().publish<ColorScienceManagerChangedEvent>(
+      {kind, compositionId});
+}
 }
 
 class ArtifactColorScienceManager::Impl {
@@ -60,7 +69,7 @@ void ArtifactColorScienceManager::setSettings(
     const ColorScienceSettings &settings) {
   impl_->globalSettings_ = settings;
   applySettings();
-  Q_EMIT settingsChanged();
+  publishColorScienceChanged(ColorScienceManagerChangeKind::SettingsChanged);
 }
 
 ColorScienceSettings ArtifactColorScienceManager::getSettings() const {
@@ -84,7 +93,7 @@ bool ArtifactColorScienceManager::loadLUT(const std::string &path) {
     }
     impl_->lutLoaded_ = true;
     impl_->globalSettings_.lutPath = path;
-    Q_EMIT lutChanged();
+    publishColorScienceChanged(ColorScienceManagerChangeKind::LutChanged);
     return true;
   } catch (const std::exception &e) {
     qWarning() << "Failed to load LUT:" << e.what();
@@ -110,13 +119,13 @@ bool ArtifactColorScienceManager::loadBuiltinLUT(const std::string &name) {
   impl_->currentLUT_->setName(qName);
   impl_->lutLoaded_ = true;
   impl_->globalSettings_.lutPath = std::string(kBuiltinLutPrefix) + name;
-  Q_EMIT lutChanged();
+  publishColorScienceChanged(ColorScienceManagerChangeKind::LutChanged);
   return true;
 }
 
 void ArtifactColorScienceManager::setLUTIntensity(float intensity) {
   impl_->globalSettings_.lutIntensity = std::clamp(intensity, 0.0f, 1.0f);
-  Q_EMIT settingsChanged();
+  publishColorScienceChanged(ColorScienceManagerChangeKind::SettingsChanged);
 }
 
 float ArtifactColorScienceManager::getLUTIntensity() const {
@@ -132,7 +141,7 @@ void ArtifactColorScienceManager::clearLUT() {
   impl_->lutLoaded_ = false;
   impl_->globalSettings_.lutPath.clear();
   impl_->globalSettings_.lutIntensity = 1.0f;
-  Q_EMIT lutChanged();
+  publishColorScienceChanged(ColorScienceManagerChangeKind::LutChanged);
 }
 
 bool ArtifactColorScienceManager::hasActiveLUT() const {
@@ -263,7 +272,7 @@ bool ArtifactColorScienceManager::isHDREnabled() const {
 
 void ArtifactColorScienceManager::setHDREnabled(bool enabled) {
   impl_->globalSettings_.enableHDR = enabled;
-  Q_EMIT settingsChanged();
+  publishColorScienceChanged(ColorScienceManagerChangeKind::SettingsChanged);
 }
 
 std::vector<std::string> ArtifactColorScienceManager::getAvailableLUTs() const {
@@ -317,8 +326,8 @@ void ArtifactColorScienceManager::applySettings() {
   // Apply current settings to the rendering pipeline
  
   impl_->conversionCache_.clear();
-  Q_EMIT settingsChanged();
-  Q_EMIT lutChanged();
+  publishColorScienceChanged(ColorScienceManagerChangeKind::SettingsChanged);
+  publishColorScienceChanged(ColorScienceManagerChangeKind::LutChanged);
  
 }
 
@@ -327,7 +336,9 @@ void ArtifactColorScienceManager::setCompositionSettings(
     const std::string &compositionId,
     const CompositionColorSettings &settings) {
   impl_->compositionSettings_[compositionId] = settings;
-  Q_EMIT compositionSettingsChanged(QString::fromStdString(compositionId));
+  publishColorScienceChanged(
+      ColorScienceManagerChangeKind::CompositionSettingsChanged,
+      QString::fromStdString(compositionId));
 }
 
 CompositionColorSettings ArtifactColorScienceManager::getCompositionSettings(
@@ -345,7 +356,9 @@ void ArtifactColorScienceManager::removeCompositionSettings(
   auto it = impl_->compositionSettings_.find(compositionId);
   if (it != impl_->compositionSettings_.end()) {
     impl_->compositionSettings_.erase(it);
-    Q_EMIT compositionSettingsChanged(QString::fromStdString(compositionId));
+    publishColorScienceChanged(
+        ColorScienceManagerChangeKind::CompositionSettingsChanged,
+        QString::fromStdString(compositionId));
   }
 }
 

@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QLabel>
@@ -9,6 +10,7 @@ module;
 #include <QtGui/QContextMenuEvent>
 export module ArtifactStatusBar;
 
+import Event.Bus;
 
 
 export namespace Artifact
@@ -25,6 +27,7 @@ export namespace Artifact
    Memory,
    Project,
    Layer,
+   Selection,
    Drops,
    TimelineDebug,
    Console,
@@ -41,6 +44,7 @@ export namespace Artifact
   void setMemoryMB(quint64 memoryMB);
   void setProjectText(const QString& text);
   void setLayerText(const QString& text);
+  void setSelectionCount(int count);
   void setDropSummaryText(const QString& text);
   void setTimelineDebugText(const QString& text);
   void setConsoleSummary(int errors, int warnings);
@@ -57,11 +61,14 @@ export namespace Artifact
   void contextMenuEvent(QContextMenuEvent* event) override;
 
  private:
-  static constexpr int kItemCount = 11;
+  static constexpr int kItemCount = 12;
   static int itemIndex(Item item);
   QLabel* itemLabel(Item item) const;
   QString itemTitle(Item item) const;
   void rebuildVisibilityMenu(QMenu& menu);
+
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
  private:
   std::array<QLabel*, kItemCount> labels_ {};

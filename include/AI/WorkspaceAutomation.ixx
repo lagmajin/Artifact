@@ -2,7 +2,9 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <limits>
 #include <utility>
+#include <vector>
 
 #include <QJsonArray>
 #include <QFileInfo>
@@ -19,6 +21,7 @@ module;
 #include <QBuffer>
 #include <QImage>
 #include <QSet>
+#include <QPair>
 #include <QMetaType>
 #include <QString>
 #include <QStringList>
@@ -34,6 +37,7 @@ export module Artifact.AI.WorkspaceAutomation;
 import Memory.SharedPtr;
 import Core.AI.Describable;
 import Core.AI.CommandIR;
+import Input.Operator;
 import Artifact.Application.Manager;
 import Application.AppSettings;
 import Artifact.Service.ActiveContext;
@@ -42,12 +46,14 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Audio;
 import Artifact.Layer.Factory;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Group;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
+import Artifact.Project.PresetManager;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
@@ -1746,6 +1752,32 @@ private:
         const QVariantMap selection = selectionSnapshot();
         const QVariantMap comp = currentCompositionSnapshot();
         const QVariantMap queue = renderQueueSnapshot();
+        auto* app = ArtifactApplicationManager::instance();
+        auto* projectService = app ? app->projectService() : nullptr;
+        auto* activeContext = app ? app->activeContextService() : nullptr;
+        auto* playback = ArtifactPlaybackService::instance();
+        const auto projectComposition = projectService
+            ? projectService->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+        const auto activeComposition = activeContext
+            ? activeContext->activeComposition()
+            : ArtifactCompositionPtr{};
+        const auto playbackComposition = playback
+            ? playback->currentComposition()
+            : ArtifactCompositionPtr{};
+        const QString projectCompositionId = projectComposition
+            ? projectComposition->id().toString()
+            : QString();
+        const QString activeContextCompositionId = activeComposition
+            ? activeComposition->id().toString()
+            : QString();
+        const QString playbackCompositionId = playbackComposition
+            ? playbackComposition->id().toString()
+            : QString();
+        const bool compositionStateAvailable = projectService && activeContext && playback;
+        const bool compositionStateConsistent = compositionStateAvailable
+            && projectCompositionId == activeContextCompositionId
+            && projectCompositionId == playbackCompositionId;
 
         diag.insert(QStringLiteral("available"), true);
         diag.insert(QStringLiteral("schemaVersion"), 1);
@@ -1758,6 +1790,18 @@ private:
         diag.insert(QStringLiteral("projectName"), project.value(QStringLiteral("projectName")).toString());
         diag.insert(QStringLiteral("activeCompositionName"), comp.value(QStringLiteral("name")).toString());
         diag.insert(QStringLiteral("activeCompositionId"), comp.value(QStringLiteral("id")).toString());
+        diag.insert(QStringLiteral("operationState"), QVariantMap{
+            {QStringLiteral("projectCompositionId"), projectCompositionId},
+            {QStringLiteral("activeContextCompositionId"), activeContextCompositionId},
+            {QStringLiteral("playbackCompositionId"), playbackCompositionId},
+            {QStringLiteral("currentLayerId"), selection.value(QStringLiteral("currentLayerId"))},
+            {QStringLiteral("selectedLayerCount"), selection.value(QStringLiteral("selectedLayerCount"))},
+            {QStringLiteral("inputContext"), ArtifactCore::InputOperator::instance()
+                ? ArtifactCore::InputOperator::instance()->activeContext()
+                : QString()},
+            {QStringLiteral("compositionStateAvailable"), compositionStateAvailable},
+            {QStringLiteral("compositionStateConsistent"), compositionStateConsistent}
+        });
 
         QVariantList effectIds;
         QVariantList effectNames;
@@ -1843,6 +1887,10 @@ private:
         if (diag.value(QStringLiteral("renderQueueJobCount")).toInt() == 0) {
             warningCodes.append(QStringLiteral("RENDER_QUEUE_EMPTY"));
             warnings.append(QStringLiteral("Render queue is empty."));
+        }
+        if (compositionStateAvailable && !compositionStateConsistent) {
+            warningCodes.append(QStringLiteral("COMPOSITION_STATE_MISMATCH"));
+            warnings.append(QStringLiteral("Project, active-context, and playback composition state differ."));
         }
         diag.insert(QStringLiteral("warnings"), warnings);
         diag.insert(QStringLiteral("warningCodes"), warningCodes);
@@ -1977,6 +2025,79 @@ private:
         return {};
     }
 
+    template <typename Predicate>
+    static bool pushUndoCommandAndVerify(std::unique_ptr<UndoCommand> command,
+                                         Predicate&& predicate)
+    {
+        auto* undo = UndoManager::instance();
+        if (!undo || !command || !command->canSerialize() ||
+            command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+            return false;
+        }
+        const size_t undoCountBefore = undo->undoCount();
+        if (!undo->push(std::move(command))) {
+            return false;
+        }
+        const bool applied = predicate();
+        if (!applied && undo->undoCount() == undoCountBefore + 1) {
+            undo->undo();
+        }
+        return applied;
+    }
+
+    static bool setAudioLayerPropertyWithUndo(const ArtifactAbstractLayerPtr& layer,
+                                              const QString& propertyPath,
+                                              const QVariant& afterValue,
+                                              const QString& label)
+    {
+        const auto property = findLayerProperty(layer, propertyPath);
+        if (!layer || !property) {
+            return false;
+        }
+        const QVariant beforeValue = property->getValue();
+        if (beforeValue == afterValue ||
+            beforeValue.toDouble() == afterValue.toDouble()) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            auto command = std::make_unique<SetLayerPropertyValueCommand>(
+                layer, propertyPath, beforeValue, afterValue, label);
+            return pushUndoCommandAndVerify(std::move(command), [&]() {
+                const QVariant appliedValue = property->getValue();
+                return appliedValue == afterValue ||
+                       appliedValue.toDouble() == afterValue.toDouble();
+            });
+        }
+        return layer->setLayerPropertyValue(propertyPath, afterValue);
+    }
+
+    static std::vector<std::pair<qint64, qint64>> normalizeAudioDeClickRanges(
+        const std::vector<std::pair<qint64, qint64>>& ranges)
+    {
+        std::vector<std::pair<qint64, qint64>> normalized;
+        normalized.reserve(ranges.size());
+        for (const auto& range : ranges) {
+            const qint64 start = std::max<qint64>(
+                0, std::min(range.first, range.second));
+            const qint64 end = std::max<qint64>(
+                start, std::max(range.first, range.second));
+            if (end > start) {
+                normalized.emplace_back(start, end);
+            }
+        }
+        std::sort(normalized.begin(), normalized.end());
+        std::vector<std::pair<qint64, qint64>> merged;
+        merged.reserve(normalized.size());
+        for (const auto& range : normalized) {
+            if (!merged.empty() && range.first <= merged.back().second) {
+                merged.back().second = std::max(merged.back().second, range.second);
+            } else {
+                merged.push_back(range);
+            }
+        }
+        return merged;
+    }
+
     static QVariantList propertyKeyframesToVariantList(const ArtifactCore::AbstractPropertyPtr& prop)
     {
         QVariantList frames;
@@ -1995,65 +2116,87 @@ private:
             item.insert(QStringLiteral("cp2_x"), kf.cp2_x);
             item.insert(QStringLiteral("cp2_y"), kf.cp2_y);
             item.insert(QStringLiteral("roving"), kf.roving);
+            item.insert(QStringLiteral("anchor"), static_cast<int>(kf.anchor));
+            item.insert(QStringLiteral("colorLabel"), static_cast<int>(kf.colorLabel));
             frames.append(item);
         }
         return frames;
     }
 
-    static void applyKeyframeSnapshot(const ArtifactAbstractLayerPtr& layer, const QString& propertyPath, const QVariantList& snapshot)
+    static bool keyframeStateMatches(
+        const ArtifactCore::AbstractPropertyPtr& property,
+        const std::vector<ArtifactCore::KeyFrame>& expected,
+        bool expectedAnimatable)
     {
-        auto prop = findLayerProperty(layer, propertyPath);
-        if (!prop) {
-            return;
+        if (!property || property->isAnimatable() != expectedAnimatable) {
+            return false;
         }
-        prop->clearKeyFrames();
-        prop->setAnimatable(!snapshot.isEmpty());
+        const auto actual = property->getKeyFrames();
+        if (actual.size() != expected.size()) {
+            return false;
+        }
+        std::vector<bool> matched(actual.size(), false);
+        for (const auto& expectedKeyframe : expected) {
+            size_t matchIndex = actual.size();
+            for (size_t index = 0; index < actual.size(); ++index) {
+                const auto& actualKeyframe = actual[index];
+                if (!matched[index] &&
+                    actualKeyframe.time == expectedKeyframe.time &&
+                    actualKeyframe.value == expectedKeyframe.value &&
+                    actualKeyframe.interpolation == expectedKeyframe.interpolation &&
+                    actualKeyframe.cp1_x == expectedKeyframe.cp1_x &&
+                    actualKeyframe.cp1_y == expectedKeyframe.cp1_y &&
+                    actualKeyframe.cp2_x == expectedKeyframe.cp2_x &&
+                    actualKeyframe.cp2_y == expectedKeyframe.cp2_y &&
+                    actualKeyframe.roving == expectedKeyframe.roving &&
+                    actualKeyframe.anchor == expectedKeyframe.anchor &&
+                    actualKeyframe.colorLabel == expectedKeyframe.colorLabel) {
+                    matchIndex = index;
+                    break;
+                }
+            }
+            if (matchIndex == actual.size()) {
+                return false;
+            }
+            matched[matchIndex] = true;
+        }
+        return true;
+    }
+
+    static std::vector<ArtifactCore::KeyFrame> keyframesFromSnapshot(const QVariantList& snapshot)
+    {
+        std::vector<ArtifactCore::KeyFrame> keyframes;
+        keyframes.reserve(static_cast<size_t>(snapshot.size()));
         for (const QVariant& entryValue : snapshot) {
             const QVariantMap entry = entryValue.toMap();
             const qint64 timeValue = entry.contains(QStringLiteral("timeValue"))
                 ? entry.value(QStringLiteral("timeValue")).toLongLong()
                 : entry.value(QStringLiteral("frameNumber")).toLongLong();
-            const qint64 timeScale = entry.contains(QStringLiteral("timeScale"))
+            const qint64 timeScale = entry.contains(QStringLiteral("timeScale")) &&
+                                     entry.value(QStringLiteral("timeScale")).toLongLong() > 0
                 ? entry.value(QStringLiteral("timeScale")).toLongLong()
                 : 30;
-            const QVariant value = entry.value(QStringLiteral("value"));
-            bool ok = false;
-            int interpolationValue = entry.value(QStringLiteral("interpolation")).toInt(&ok);
-            if (!ok) {
-                interpolationValue = static_cast<int>(InterpolationType::Linear);
-            }
-            const auto interpolation = static_cast<InterpolationType>(interpolationValue);
-            const float cp1_x = static_cast<float>(entry.value(QStringLiteral("cp1_x")).toDouble(&ok));
-            const float cp1_y = static_cast<float>(entry.value(QStringLiteral("cp1_y")).toDouble(&ok));
-            const float cp2_x = static_cast<float>(entry.value(QStringLiteral("cp2_x")).toDouble(&ok));
-            const float cp2_y = static_cast<float>(entry.value(QStringLiteral("cp2_y")).toDouble(&ok));
-            const bool roving = entry.value(QStringLiteral("roving")).toBool();
-            prop->addKeyFrame(RationalTime(timeValue, timeScale), value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y, roving);
+            ArtifactCore::KeyFrame keyframe;
+            keyframe.time = RationalTime(timeValue, timeScale);
+            keyframe.value = entry.value(QStringLiteral("value"));
+            keyframe.interpolation = static_cast<InterpolationType>(
+                entry.value(QStringLiteral("interpolation"),
+                            static_cast<int>(InterpolationType::Linear)).toInt());
+            keyframe.cp1_x = entry.value(QStringLiteral("cp1_x"), 0.42).toFloat();
+            keyframe.cp1_y = entry.value(QStringLiteral("cp1_y"), 0.0).toFloat();
+            keyframe.cp2_x = entry.value(QStringLiteral("cp2_x"), 0.58).toFloat();
+            keyframe.cp2_y = entry.value(QStringLiteral("cp2_y"), 1.0).toFloat();
+            keyframe.roving = entry.value(QStringLiteral("roving"), false).toBool();
+            keyframe.anchor = static_cast<ArtifactCore::KeyFrame::Anchor>(
+                entry.value(QStringLiteral("anchor"),
+                            static_cast<int>(ArtifactCore::KeyFrame::Anchor::Absolute)).toInt());
+            keyframe.colorLabel = static_cast<ArtifactCore::KeyFrame::ColorLabel>(
+                entry.value(QStringLiteral("colorLabel"),
+                            static_cast<int>(ArtifactCore::KeyFrame::ColorLabel::None)).toInt());
+            keyframes.push_back(keyframe);
         }
+        return keyframes;
     }
-
-    class KeyframeSnapshotUndoCommand final : public UndoCommand {
-    public:
-        KeyframeSnapshotUndoCommand(ArtifactAbstractLayerPtr layer, QString propertyPath,
-                                    QVariantList beforeSnapshot, QVariantList afterSnapshot,
-                                    QString label)
-            : layer_(std::move(layer)),
-              propertyPath_(std::move(propertyPath)),
-              beforeSnapshot_(std::move(beforeSnapshot)),
-              afterSnapshot_(std::move(afterSnapshot)),
-              label_(std::move(label)) {}
-
-        void undo() override { applyKeyframeSnapshot(layer_.lock(), propertyPath_, beforeSnapshot_); }
-        void redo() override { applyKeyframeSnapshot(layer_.lock(), propertyPath_, afterSnapshot_); }
-        QString label() const override { return label_; }
-
-    private:
-        ArtifactAbstractLayerWeak layer_;
-        QString propertyPath_;
-        QVariantList beforeSnapshot_;
-        QVariantList afterSnapshot_;
-        QString label_;
-    };
 
     class CommandExecutorImpl final : public ArtifactCore::CommandExecutor {
     public:
@@ -2072,9 +2215,75 @@ private:
             const QVariantMap target = request.target;
             const QString layerId = target.value(QStringLiteral("layerId")).toString().trimmed();
             const QString propertyPath = target.value(QStringLiteral("propertyPath")).toString().trimmed();
+            const auto invalidCommand = [&validation](const QString& message,
+                                                       const QString& field) {
+                auto result = validation;
+                result.success = false;
+                result.valid = false;
+                result.executed = false;
+                result.error = message;
+                result.errorCode = QStringLiteral("COMMAND_INVALID");
+                result.retryable = true;
+                result.diagnostics.insert(field, message);
+                return result;
+            };
+            const auto keyframePayloadError = [](const QVariantList& keys) {
+                for (int index = 0; index < keys.size(); ++index) {
+                    const QVariantMap key = keys.at(index).toMap();
+                    const bool hasTime = key.contains(QStringLiteral("timeValue")) ||
+                                         key.contains(QStringLiteral("time"));
+                    bool timeOk = false;
+                    const qint64 timeValue = key.contains(QStringLiteral("timeValue"))
+                        ? key.value(QStringLiteral("timeValue")).toLongLong(&timeOk)
+                        : key.value(QStringLiteral("time")).toLongLong(&timeOk);
+                    if (!hasTime || !timeOk || timeValue < 0) {
+                        return QStringLiteral("keys[%1].time must be a non-negative integer")
+                            .arg(index);
+                    }
+                    if (key.contains(QStringLiteral("timeScale"))) {
+                        bool scaleOk = false;
+                        const qint64 timeScale = key.value(QStringLiteral("timeScale"))
+                            .toLongLong(&scaleOk);
+                        if (!scaleOk || timeScale <= 0) {
+                            return QStringLiteral("keys[%1].timeScale must be positive")
+                                .arg(index);
+                        }
+                    }
+                    if (!key.value(QStringLiteral("value")).isValid()) {
+                        return QStringLiteral("keys[%1].value is required").arg(index);
+                    }
+                }
+                return QString();
+            };
 
             if (type == QStringLiteral("set_property")) {
-                QVariantMap map = WorkspaceAutomation::setGenericLayerProperty(layerId, propertyPath, request.arguments.value(QStringLiteral("value")));
+                const QVariant value = request.arguments.value(QStringLiteral("value"));
+                const QString effectId = target.value(QStringLiteral("effectId"))
+                                             .toString().trimmed();
+                QVariantMap map;
+                const QString normalizedPath = propertyPath.toLower();
+                if (effectId.isEmpty() ||
+                    !normalizedPath.startsWith(QStringLiteral("effect."))) {
+                    map = WorkspaceAutomation::setGenericLayerProperty(
+                        layerId, propertyPath, value);
+                } else if (normalizedPath == QStringLiteral("effect.enabled")) {
+                    const bool success = WorkspaceAutomation::setLayerEffectEnabled(
+                        layerId, effectId, value.toBool()).toBool();
+                    map = QVariantMap{
+                        {QStringLiteral("success"), success},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), success}};
+                } else {
+                    const QString paramName = propertyPath.trimmed().mid(
+                        QStringLiteral("effect.").size());
+                    const bool success = !paramName.isEmpty() &&
+                        WorkspaceAutomation::setLayerEffectParameter(
+                            layerId, effectId, paramName, value).toBool();
+                    map = QVariantMap{
+                        {QStringLiteral("success"), success},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), success}};
+                }
                 map.insert(QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type));
                 map.insert(QStringLiteral("type"), type);
                 return ArtifactCore::commandResultFromVariantMap(map);
@@ -2095,8 +2304,17 @@ private:
                     });
                 }
                 const QVariantList before = propertyKeyframesToVariantList(prop);
-                QVariantList after;
+                const auto beforeKeyframes = keyframesFromSnapshot(before);
                 const QVariantList keys = request.arguments.value(QStringLiteral("keys")).toList();
+                if (keys.isEmpty()) {
+                    return invalidCommand(QStringLiteral("set_keyframes requires at least one keyframe"),
+                                          QStringLiteral("keys"));
+                }
+                const QString payloadError = keyframePayloadError(keys);
+                if (!payloadError.isEmpty()) {
+                    return invalidCommand(payloadError, QStringLiteral("keys"));
+                }
+                QVariantList after;
                 for (const QVariant& keyValue : keys) {
                     const QVariantMap key = keyValue.toMap();
                     const qint64 timeValue = key.contains(QStringLiteral("timeValue"))
@@ -2118,7 +2336,40 @@ private:
                     item.insert(QStringLiteral("roving"), false);
                     after.append(item);
                 }
-                undo->push(std::make_unique<KeyframeSnapshotUndoCommand>(layer, propertyPath, before, after, ArtifactCore::CommandIR::undoLabelForType(type)));
+                const auto afterKeyframes = keyframesFromSnapshot(after);
+                auto command = std::make_unique<SetLayerPropertyKeyframesCommand>(
+                    layer, propertyPath, beforeKeyframes, afterKeyframes,
+                    ArtifactCore::CommandIR::undoLabelForType(type),
+                    prop->isAnimatable(), !after.isEmpty());
+                if (!command->canSerialize() ||
+                    command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+                    return invalidCommand(QStringLiteral("Keyframe command exceeds the active Undo budget"),
+                                          QStringLiteral("keys"));
+                }
+                const size_t undoCountBefore = undo->undoCount();
+                if (!undo->push(std::move(command))) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Keyframe command was rejected by Undo manager")}
+                    });
+                }
+                if (!keyframeStateMatches(prop, afterKeyframes, !after.isEmpty())) {
+                    if (undo->undoCount() == undoCountBefore + 1) {
+                        undo->undo();
+                    }
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Keyframe command was not applied")}
+                    });
+                }
                 return ArtifactCore::commandResultFromVariantMap(QVariantMap{
                     {QStringLiteral("success"), true},
                     {QStringLiteral("valid"), true},
@@ -2141,18 +2392,52 @@ private:
                         {QStringLiteral("error"), QStringLiteral("Undo manager, composition, or layer unavailable")}
                     });
                 }
-                auto macro = std::make_unique<MacroUndoCommand>(ArtifactCore::CommandIR::undoLabelForType(type));
                 const QVariantList batches = request.arguments.value(QStringLiteral("batches")).toList();
+                if (batches.isEmpty()) {
+                    return invalidCommand(QStringLiteral("batch_set_keyframes requires at least one batch"),
+                                          QStringLiteral("batches"));
+                }
+                struct ExpectedKeyframeState {
+                    ArtifactCore::AbstractPropertyPtr property;
+                    std::vector<ArtifactCore::KeyFrame> before;
+                    std::vector<ArtifactCore::KeyFrame> after;
+                };
+                std::vector<ExpectedKeyframeState> expectedStates;
+                expectedStates.reserve(static_cast<size_t>(batches.size()));
+                QSet<QString> propertyPaths;
+                auto macro = std::make_unique<MacroUndoCommand>(ArtifactCore::CommandIR::undoLabelForType(type));
                 for (const QVariant& batchValue : batches) {
                     const QVariantMap batch = batchValue.toMap();
                     const QString batchPropertyPath = batch.value(QStringLiteral("propertyPath")).toString().trimmed();
+                    if (batchPropertyPath.isEmpty()) {
+                        return invalidCommand(QStringLiteral("Each batch requires propertyPath"),
+                                              QStringLiteral("batches"));
+                    }
+                    if (propertyPaths.contains(batchPropertyPath)) {
+                        return invalidCommand(
+                            QStringLiteral("Each propertyPath may appear only once per batch"),
+                            QStringLiteral("batches"));
+                    }
+                    propertyPaths.insert(batchPropertyPath);
                     const auto prop = findLayerProperty(layer, batchPropertyPath);
                     if (!prop) {
-                        continue;
+                        return invalidCommand(
+                            QStringLiteral("Property not found: %1").arg(batchPropertyPath),
+                            QStringLiteral("batches"));
                     }
                     const QVariantList before = propertyKeyframesToVariantList(prop);
+                    const auto beforeKeyframes = keyframesFromSnapshot(before);
                     QVariantList after;
                     const QVariantList keys = batch.value(QStringLiteral("keys")).toList();
+                    if (keys.isEmpty()) {
+                        return invalidCommand(
+                            QStringLiteral("Each batch requires a non-empty keys list"),
+                            QStringLiteral("batches"));
+                    }
+                    const QString payloadError = keyframePayloadError(keys);
+                    if (!payloadError.isEmpty()) {
+                        return invalidCommand(payloadError, QStringLiteral("batches"));
+                    }
                     for (const QVariant& keyValue : keys) {
                         const QVariantMap key = keyValue.toMap();
                         const qint64 timeValue = key.contains(QStringLiteral("timeValue"))
@@ -2174,10 +2459,52 @@ private:
                         item.insert(QStringLiteral("roving"), false);
                         after.append(item);
                     }
-                    macro->addChild(std::make_unique<KeyframeSnapshotUndoCommand>(
-                        layer, batchPropertyPath, before, after, ArtifactCore::CommandIR::undoLabelForType(type)));
+                    expectedStates.push_back(ExpectedKeyframeState{
+                        prop, beforeKeyframes, keyframesFromSnapshot(after)});
+                    macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                        layer, batchPropertyPath, expectedStates.back().before,
+                        expectedStates.back().after,
+                        ArtifactCore::CommandIR::undoLabelForType(type),
+                        prop->isAnimatable(), !after.isEmpty()));
                 }
-                undo->push(std::move(macro));
+                if (!macro->canSerialize() ||
+                    macro->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+                    return invalidCommand(QStringLiteral("Batch keyframe command exceeds the active Undo budget"),
+                                          QStringLiteral("batches"));
+                }
+                const size_t undoCountBefore = undo->undoCount();
+                if (!undo->push(std::move(macro))) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Batch keyframe command was rejected by Undo manager")}
+                    });
+                }
+                bool applied = true;
+                for (const auto& expectedState : expectedStates) {
+                    if (!keyframeStateMatches(expectedState.property,
+                                              expectedState.after,
+                                              !expectedState.after.empty())) {
+                        applied = false;
+                        break;
+                    }
+                }
+                if (!applied) {
+                    if (undo->undoCount() == undoCountBefore + 1) {
+                        undo->undo();
+                    }
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Batch keyframe command was not applied")}
+                    });
+                }
                 return ArtifactCore::commandResultFromVariantMap(QVariantMap{
                     {QStringLiteral("success"), true},
                     {QStringLiteral("valid"), true},
@@ -2209,7 +2536,49 @@ private:
                     }
                 }
                 const int newIndex = request.arguments.value(QStringLiteral("newIndex")).toInt();
-                undo->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, oldIndex, newIndex));
+                if (oldIndex < 0 || newIndex < 0 || newIndex >= layers.size()) {
+                    return invalidCommand(QStringLiteral("newIndex is outside the layer list"),
+                                          QStringLiteral("newIndex"));
+                }
+                auto command = std::make_unique<MoveLayerIndexCommand>(
+                    comp, layer, oldIndex, newIndex);
+                if (!command->canSerialize() ||
+                    command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+                    return invalidCommand(QStringLiteral("Move layer command exceeds the active Undo budget"),
+                                          QStringLiteral("newIndex"));
+                }
+                const size_t undoCountBefore = undo->undoCount();
+                if (!undo->push(std::move(command))) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Move layer command was rejected by Undo manager")}
+                    });
+                }
+                const auto movedLayers = comp->allLayer();
+                int actualIndex = -1;
+                for (int index = 0; index < movedLayers.size(); ++index) {
+                    if (movedLayers[index] && movedLayers[index]->id() == layer->id()) {
+                        actualIndex = index;
+                        break;
+                    }
+                }
+                if (actualIndex != newIndex) {
+                    if (undo->undoCount() == undoCountBefore + 1) {
+                        undo->undo();
+                    }
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Move layer command was not applied")}
+                    });
+                }
                 return ArtifactCore::commandResultFromVariantMap(QVariantMap{
                     {QStringLiteral("success"), true},
                     {QStringLiteral("valid"), true},
@@ -2234,7 +2603,40 @@ private:
                 }
                 const QString oldName = layer->layerName();
                 const QString newName = request.arguments.value(QStringLiteral("newName")).toString().trimmed();
-                undo->push(std::make_unique<RenameLayerCommand>(layer, oldName, newName));
+                if (newName.isEmpty()) {
+                    return invalidCommand(QStringLiteral("newName must not be empty"),
+                                          QStringLiteral("newName"));
+                }
+                auto command = std::make_unique<RenameLayerCommand>(layer, oldName, newName);
+                if (!command->canSerialize() ||
+                    command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+                    return invalidCommand(QStringLiteral("Rename layer command exceeds the active Undo budget"),
+                                          QStringLiteral("newName"));
+                }
+                const size_t undoCountBefore = undo->undoCount();
+                if (!undo->push(std::move(command))) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Rename layer command was rejected by Undo manager")}
+                    });
+                }
+                if (layer->layerName() != newName) {
+                    if (undo->undoCount() == undoCountBefore + 1) {
+                        undo->undo();
+                    }
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Rename layer command was not applied")}
+                    });
+                }
                 return ArtifactCore::commandResultFromVariantMap(QVariantMap{
                     {QStringLiteral("success"), true},
                     {QStringLiteral("valid"), true},
@@ -2307,43 +2709,53 @@ private:
 
     static QVariantMap setGenericLayerProperty(const QString& layerId, const QString& propertyPath, const QVariant& value)
     {
-        if (propertyPath == QStringLiteral("transform.position") || propertyPath == QStringLiteral("position")) {
+        const QString normalizedPath = propertyPath.trimmed().toLower();
+        if (normalizedPath == QStringLiteral("transform.position") || normalizedPath == QStringLiteral("position")) {
             const QVariantMap point = value.toMap();
+            const bool success = setLayerPosition(
+                layerId, point.value(QStringLiteral("x")).toDouble(),
+                point.value(QStringLiteral("y")).toDouble()).toBool();
             return QVariantMap{
-                {QStringLiteral("success"), setLayerPosition(layerId, point.value(QStringLiteral("x")).toDouble(), point.value(QStringLiteral("y")).toDouble()).toBool()},
+                {QStringLiteral("success"), success},
                 {QStringLiteral("valid"), true},
-                {QStringLiteral("executed"), true},
+                {QStringLiteral("executed"), success},
                 {QStringLiteral("type"), QStringLiteral("set_property")},
                 {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
                 {QStringLiteral("propertyPath"), propertyPath}
             };
         }
-        if (propertyPath == QStringLiteral("transform.scale") || propertyPath == QStringLiteral("scale")) {
+        if (normalizedPath == QStringLiteral("transform.scale") || normalizedPath == QStringLiteral("scale")) {
             const QVariantMap point = value.toMap();
+            const bool success = setLayerScale(
+                layerId, point.value(QStringLiteral("x")).toDouble(),
+                point.value(QStringLiteral("y")).toDouble()).toBool();
             return QVariantMap{
-                {QStringLiteral("success"), setLayerScale(layerId, point.value(QStringLiteral("x")).toDouble(), point.value(QStringLiteral("y")).toDouble()).toBool()},
+                {QStringLiteral("success"), success},
                 {QStringLiteral("valid"), true},
-                {QStringLiteral("executed"), true},
+                {QStringLiteral("executed"), success},
                 {QStringLiteral("type"), QStringLiteral("set_property")},
                 {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
                 {QStringLiteral("propertyPath"), propertyPath}
             };
         }
-        if (propertyPath == QStringLiteral("transform.rotation") || propertyPath == QStringLiteral("rotation")) {
+        if (normalizedPath == QStringLiteral("transform.rotation") || normalizedPath == QStringLiteral("rotation")) {
+            const bool success = setLayerRotation(layerId, value.toDouble()).toBool();
             return QVariantMap{
-                {QStringLiteral("success"), setLayerRotation(layerId, value.toDouble()).toBool()},
+                {QStringLiteral("success"), success},
                 {QStringLiteral("valid"), true},
-                {QStringLiteral("executed"), true},
+                {QStringLiteral("executed"), success},
                 {QStringLiteral("type"), QStringLiteral("set_property")},
                 {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
                 {QStringLiteral("propertyPath"), propertyPath}
             };
         }
-        if (propertyPath == QStringLiteral("opacity")) {
+        if (normalizedPath == QStringLiteral("transform.opacity") ||
+            normalizedPath == QStringLiteral("opacity")) {
+            const bool success = setLayerOpacity(layerId, value.toDouble()).toBool();
             return QVariantMap{
-                {QStringLiteral("success"), setLayerOpacity(layerId, value.toDouble()).toBool()},
+                {QStringLiteral("success"), success},
                 {QStringLiteral("valid"), true},
-                {QStringLiteral("executed"), true},
+                {QStringLiteral("executed"), success},
                 {QStringLiteral("type"), QStringLiteral("set_property")},
                 {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
                 {QStringLiteral("propertyPath"), propertyPath}
@@ -2394,8 +2806,11 @@ private:
             results.append(result);
         }
         return QVariantMap{
-            {QStringLiteral("success"), failureCount == 0 && !operations.isEmpty()},
-            {QStringLiteral("partial"), successCount > 0 && failureCount > 0},
+            {QStringLiteral("success"), successCount > 0 &&
+                                         failureCount == 0 &&
+                                         skippedCount == 0},
+            {QStringLiteral("partial"), successCount > 0 &&
+                                         (failureCount > 0 || skippedCount > 0)},
             {QStringLiteral("requestedCount"), operations.size()},
             {QStringLiteral("successCount"), successCount},
             {QStringLiteral("failureCount"), failureCount},
@@ -2452,7 +2867,7 @@ private:
         return QVariantMap{
             {QStringLiteral("success"), result.value(QStringLiteral("success")).toBool()},
             {QStringLiteral("valid"), true},
-            {QStringLiteral("executed"), true},
+            {QStringLiteral("executed"), result.value(QStringLiteral("success")).toBool()},
             {QStringLiteral("type"), QStringLiteral("set_keyframes")},
             {QStringLiteral("undoLabel"), QStringLiteral("Set Keyframes")},
             {QStringLiteral("addedCount"), result.value(QStringLiteral("addedCount"))},
@@ -2481,7 +2896,7 @@ private:
         return QVariantMap{
             {QStringLiteral("success"), result.value(QStringLiteral("success")).toBool()},
             {QStringLiteral("valid"), true},
-            {QStringLiteral("executed"), true},
+            {QStringLiteral("executed"), result.value(QStringLiteral("success")).toBool()},
             {QStringLiteral("type"), QStringLiteral("batch_set_keyframes")},
             {QStringLiteral("undoLabel"), QStringLiteral("Batch Set Keyframes")},
             {QStringLiteral("addedCount"), result.value(QStringLiteral("addedCount"))},
@@ -2571,23 +2986,86 @@ private:
     static QVariant importAssetsFromPaths(const QStringList& paths)
     {
         auto& manager = projectManager();
+        bool createdProject = false;
         if (!manager.isProjectCreated()) {
-            manager.createProject(QStringLiteral("Untitled"), false);
+            const auto createResult = manager.createProject(
+                ArtifactCore::UniString::fromQString(QStringLiteral("Untitled")), false);
+            if (!createResult.isSuccess) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("requestedCount"), static_cast<int>(paths.size())},
+                    {QStringLiteral("importedCount"), 0},
+                    {QStringLiteral("failedCount"), static_cast<int>(paths.size())},
+                    {QStringLiteral("partial"), false},
+                    {QStringLiteral("createdProject"), false},
+                    {QStringLiteral("importedPaths"), QVariantList{}},
+                    {QStringLiteral("error"), QStringLiteral("Failed to create a project for asset import")}
+                };
+            }
+            createdProject = true;
         }
         auto* app = ArtifactApplicationManager::instance();
         auto* service = app ? app->projectService() : nullptr;
         if (!service) {
-            return QVariantMap{{QStringLiteral("requestedCount"), static_cast<int>(paths.size())},
+            return QVariantMap{{QStringLiteral("success"), false},
+                               {QStringLiteral("requestedCount"), static_cast<int>(paths.size())},
                                {QStringLiteral("importedCount"), 0},
+                               {QStringLiteral("failedCount"), static_cast<int>(paths.size())},
+                               {QStringLiteral("partial"), false},
+                               {QStringLiteral("createdProject"), createdProject},
                                {QStringLiteral("importedPaths"), QVariantList{}}};
         }
 
         const QStringList importedPaths = service->importAssetsFromPaths(paths);
+        const int requestedCount = static_cast<int>(paths.size());
+        const int importedCount = static_cast<int>(importedPaths.size());
         QJsonObject obj;
-        obj[QStringLiteral("requestedCount")] = static_cast<int>(paths.size());
-        obj[QStringLiteral("importedCount")] = static_cast<int>(importedPaths.size());
+        obj[QStringLiteral("success")] = requestedCount > 0 && importedCount == requestedCount;
+        obj[QStringLiteral("requestedCount")] = requestedCount;
+        obj[QStringLiteral("importedCount")] = importedCount;
+        obj[QStringLiteral("failedCount")] = std::max(0, requestedCount - importedCount);
+        obj[QStringLiteral("partial")] = importedCount > 0 && importedCount < requestedCount;
+        obj[QStringLiteral("createdProject")] = createdProject;
         obj[QStringLiteral("importedPaths")] = stringListToJsonArray(importedPaths);
+        if (importedCount < requestedCount) {
+            obj[QStringLiteral("error")] = QStringLiteral("One or more assets could not be imported");
+        }
         return toVariantMap(obj);
+    }
+
+    static QVariant addLayerToCurrentCompositionAndReport(
+        ArtifactProjectService* service, const ArtifactLayerInitParams& params)
+    {
+        const auto beforeComposition = currentComposition();
+        if (!service || !beforeComposition) {
+            return QVariantMap{{QStringLiteral("success"), false},
+                               {QStringLiteral("error"),
+                                QStringLiteral("Active composition is not available")}};
+        }
+        QSet<QString> beforeLayerIds;
+        for (const auto& layer : beforeComposition->allLayer()) {
+            if (layer) {
+                beforeLayerIds.insert(layer->id().toString());
+            }
+        }
+
+        service->addLayerToCurrentComposition(params);
+
+        const auto afterComposition = currentComposition();
+        if (!afterComposition || afterComposition->id() != beforeComposition->id()) {
+            return QVariantMap{{QStringLiteral("success"), false},
+                               {QStringLiteral("error"),
+                                QStringLiteral("Active composition changed during layer creation")}};
+        }
+        for (const auto& layer : afterComposition->allLayer()) {
+            if (layer && !beforeLayerIds.contains(layer->id().toString())) {
+                return QVariantMap{{QStringLiteral("success"), true},
+                                   {QStringLiteral("layerId"), layer->id().toString()}};
+            }
+        }
+        return QVariantMap{{QStringLiteral("success"), false},
+                           {QStringLiteral("error"),
+                            QStringLiteral("Layer creation did not add a layer")}};
     }
 
     static QVariant addImageLayerToCurrentComposition(const QString& name, const QString& path)
@@ -2598,8 +3076,7 @@ private:
         }
         ArtifactImageInitParams params(name.isEmpty() ? QStringLiteral("Image") : name);
         params.setImagePath(path);
-        service->addLayerToCurrentComposition(params);
-        return QVariantMap{{QStringLiteral("success"), true}};
+        return addLayerToCurrentCompositionAndReport(service, params);
     }
 
     static QVariant addSvgLayerToCurrentComposition(const QString& name, const QString& path)
@@ -2610,8 +3087,7 @@ private:
         }
         ArtifactSvgInitParams params(name.isEmpty() ? QStringLiteral("SVG") : name);
         params.setSvgPath(path);
-        service->addLayerToCurrentComposition(params);
-        return QVariantMap{{QStringLiteral("success"), true}};
+        return addLayerToCurrentCompositionAndReport(service, params);
     }
 
     static QVariant addAudioLayerToCurrentComposition(const QString& name, const QString& path)
@@ -2622,22 +3098,57 @@ private:
         }
         ArtifactAudioInitParams params(name.isEmpty() ? QStringLiteral("Audio") : name);
         params.setAudioPath(path);
-        service->addLayerToCurrentComposition(params);
-        return QVariantMap{{QStringLiteral("success"), true}};
+        return addLayerToCurrentCompositionAndReport(service, params);
     }
 
     static QVariant addAudioDeClickRange(const QString& layerId,
                                          qint64 startSample, qint64 endSample)
     {
-        auto* audio = ArtifactAudioService::instance();
-        return audio && audio->addLayerDeClickRange(ArtifactCore::LayerID(layerId),
-                                                    startSample, endSample);
+        const auto comp = currentComposition();
+        const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId))
+                                : ArtifactAbstractLayerPtr{};
+        const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+        if (!audioLayer) {
+            return false;
+        }
+        const auto before = audioLayer->deClickRanges();
+        auto requested = before;
+        requested.emplace_back(startSample, endSample);
+        const auto after = normalizeAudioDeClickRanges(requested);
+        if (after == before) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<SetAudioDeClickRangesCommand>(
+                    layer, before, after, QStringLiteral("Add Audio De-click Range")),
+                [&]() { return audioLayer->deClickRanges() == after; });
+        }
+        audioLayer->setDeClickRanges(after);
+        return true;
     }
 
     static QVariant clearAudioDeClickRanges(const QString& layerId)
     {
-        auto* audio = ArtifactAudioService::instance();
-        return audio && audio->clearLayerDeClickRanges(ArtifactCore::LayerID(layerId));
+        const auto comp = currentComposition();
+        const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId))
+                                : ArtifactAbstractLayerPtr{};
+        const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+        if (!audioLayer) {
+            return false;
+        }
+        const auto before = audioLayer->deClickRanges();
+        if (before.empty()) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<SetAudioDeClickRangesCommand>(
+                    layer, before, {}, QStringLiteral("Clear Audio De-click Ranges")),
+                [&]() { return audioLayer->deClickRanges().empty(); });
+        }
+        audioLayer->clearDeClickRanges();
+        return true;
     }
 
     static QVariant getAudioDeClickRanges(const QString& layerId)
@@ -2650,9 +3161,61 @@ private:
     static QVariant setAudioDeClickSettings(const QString& layerId,
                                             float thresholdDb, qint64 maxClickSamples)
     {
-        auto* audio = ArtifactAudioService::instance();
-        return audio && audio->setLayerDeClickSettings(
-            ArtifactCore::LayerID(layerId), thresholdDb, maxClickSamples);
+        const auto comp = currentComposition();
+        const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId))
+                                : ArtifactAbstractLayerPtr{};
+        const auto thresholdProperty = findLayerProperty(
+            layer, QStringLiteral("audio.deClickThresholdDb"));
+        const auto widthProperty = findLayerProperty(
+            layer, QStringLiteral("audio.deClickMaxClickSamples"));
+        if (!layer || !thresholdProperty || !widthProperty) {
+            return false;
+        }
+        const float normalizedThreshold = std::isfinite(thresholdDb)
+            ? std::clamp(thresholdDb, -80.0f, 0.0f) : -20.0f;
+        const qint64 normalizedWidth = std::clamp<qint64>(maxClickSamples, 1, 4096);
+        const float oldThreshold = thresholdProperty->getValue().toFloat();
+        const qint64 oldWidth = widthProperty->getValue().toLongLong();
+        const bool thresholdChanged = oldThreshold != normalizedThreshold;
+        const bool widthChanged = oldWidth != normalizedWidth;
+        if (!thresholdChanged && !widthChanged) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            auto macro = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Set Audio De-click Settings"));
+            if (thresholdChanged) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("audio.deClickThresholdDb"),
+                    oldThreshold, normalizedThreshold,
+                    QStringLiteral("Set De-click Threshold")));
+            }
+            if (widthChanged) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("audio.deClickMaxClickSamples"),
+                    oldWidth, normalizedWidth,
+                    QStringLiteral("Set De-click Max Width")));
+            }
+            return pushUndoCommandAndVerify(std::move(macro), [&]() {
+                return (!thresholdChanged ||
+                        thresholdProperty->getValue().toFloat() == normalizedThreshold) &&
+                       (!widthChanged ||
+                        widthProperty->getValue().toLongLong() == normalizedWidth);
+            });
+        }
+        if (thresholdChanged && !layer->setLayerPropertyValue(
+                QStringLiteral("audio.deClickThresholdDb"), normalizedThreshold)) {
+            return false;
+        }
+        if (widthChanged && !layer->setLayerPropertyValue(
+                QStringLiteral("audio.deClickMaxClickSamples"), normalizedWidth)) {
+            if (thresholdChanged) {
+                layer->setLayerPropertyValue(
+                    QStringLiteral("audio.deClickThresholdDb"), oldThreshold);
+            }
+            return false;
+        }
+        return true;
     }
 
     static QVariant getAudioDeClickSettings(const QString& layerId)
@@ -2665,9 +3228,59 @@ private:
     static QVariant setAudioLayerTrim(const QString& layerId,
                                       double trimInSeconds, double trimOutSeconds)
     {
-        auto* audio = ArtifactAudioService::instance();
-        return audio && audio->setLayerTrim(
-            ArtifactCore::LayerID(layerId), trimInSeconds, trimOutSeconds);
+        const auto comp = currentComposition();
+        const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId))
+                                : ArtifactAbstractLayerPtr{};
+        const auto trimInProperty = findLayerProperty(
+            layer, QStringLiteral("audio.trimInSeconds"));
+        const auto trimOutProperty = findLayerProperty(
+            layer, QStringLiteral("audio.trimOutSeconds"));
+        if (!layer || !trimInProperty || !trimOutProperty) {
+            return false;
+        }
+        const double normalizedIn = std::isfinite(trimInSeconds)
+            ? std::max(0.0, trimInSeconds) : 0.0;
+        const double normalizedOut = std::isfinite(trimOutSeconds)
+            ? std::max(0.0, trimOutSeconds) : 0.0;
+        const double oldIn = trimInProperty->getValue().toDouble();
+        const double oldOut = trimOutProperty->getValue().toDouble();
+        const bool inChanged = oldIn != normalizedIn;
+        const bool outChanged = oldOut != normalizedOut;
+        if (!inChanged && !outChanged) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Set Audio Trim"));
+            if (inChanged) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("audio.trimInSeconds"), oldIn, normalizedIn,
+                    QStringLiteral("Set Audio Trim In")));
+            }
+            if (outChanged) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("audio.trimOutSeconds"), oldOut, normalizedOut,
+                    QStringLiteral("Set Audio Trim Out")));
+            }
+            return pushUndoCommandAndVerify(std::move(macro), [&]() {
+                return (!inChanged ||
+                        trimInProperty->getValue().toDouble() == normalizedIn) &&
+                       (!outChanged ||
+                        trimOutProperty->getValue().toDouble() == normalizedOut);
+            });
+        }
+        if (inChanged && !layer->setLayerPropertyValue(
+                QStringLiteral("audio.trimInSeconds"), normalizedIn)) {
+            return false;
+        }
+        if (outChanged && !layer->setLayerPropertyValue(
+                QStringLiteral("audio.trimOutSeconds"), normalizedOut)) {
+            if (inChanged) {
+                layer->setLayerPropertyValue(
+                    QStringLiteral("audio.trimInSeconds"), oldIn);
+            }
+            return false;
+        }
+        return true;
     }
 
     static QVariant getAudioLayerTrim(const QString& layerId)
@@ -2679,8 +3292,14 @@ private:
 
     static QVariant setAudioLayerPlaybackRate(const QString& layerId, double rate)
     {
-        auto* audio = ArtifactAudioService::instance();
-        return audio && audio->setLayerPlaybackRate(ArtifactCore::LayerID(layerId), rate);
+        const double normalizedRate = std::isfinite(rate)
+            ? std::clamp(rate, 0.1, 8.0) : 1.0;
+        const auto comp = currentComposition();
+        const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId))
+                                : ArtifactAbstractLayerPtr{};
+        return setAudioLayerPropertyWithUndo(
+            layer, QStringLiteral("audio.playbackRate"), normalizedRate,
+            QStringLiteral("Set Audio Playback Rate"));
     }
 
     static QVariant getAudioLayerPlaybackRate(const QString& layerId)
@@ -2722,8 +3341,7 @@ private:
             return QVariantMap{{QStringLiteral("success"), false}};
         }
         ArtifactTextLayerInitParams params(name.isEmpty() ? QStringLiteral("Text") : name);
-        service->addLayerToCurrentComposition(params);
-        return QVariantMap{{QStringLiteral("success"), true}};
+        return addLayerToCurrentCompositionAndReport(service, params);
     }
 
     static QVariant addNullLayerToCurrentComposition(const QString& name, int width, int height)
@@ -2735,57 +3353,109 @@ private:
         ArtifactNullLayerInitParams params(name.isEmpty() ? QStringLiteral("Null") : name);
         params.setWidth(std::max(1, width));
         params.setHeight(std::max(1, height));
-        service->addLayerToCurrentComposition(params);
-        return QVariantMap{{QStringLiteral("success"), true}};
+        return addLayerToCurrentCompositionAndReport(service, params);
     }
 
     static QVariant addSolidLayerToCurrentComposition(const QString& name, int width, int height)
     {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
-            return QVariantMap{{QStringLiteral("success"), false}};
-        }
-        ArtifactSolidLayerInitParams params(name.isEmpty() ? QStringLiteral("Solid") : name);
-        params.setWidth(std::max(1, width));
-        params.setHeight(std::max(1, height));
-        service->addLayerToCurrentComposition(params);
-        return QVariantMap{{QStringLiteral("success"), true}};
+        return createSolidLayer(QStringLiteral("current"), name,
+                                QStringLiteral("#ffffff"), width, height);
     }
 
     static QVariant setLayerVisibleInCurrentComposition(const QString& layerId, bool visible)
     {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
+        const auto comp = currentComposition();
+        if (!comp) {
             return false;
         }
-        return service->setLayerVisibleInCurrentComposition(LayerID(layerId), visible);
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer || layer->isVisible() == visible) {
+            return static_cast<bool>(layer);
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<SetLayerVisibilityCommand>(layer, visible),
+                [&]() { return layer->isVisible() == visible; });
+        } else {
+            layer->setVisible(visible);
+            if (layer->isVisible() != visible) {
+                layer->setVisible(!visible);
+                return false;
+            }
+        }
+        return true;
     }
 
     static QVariant setLayerLockedInCurrentComposition(const QString& layerId, bool locked)
     {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
+        const auto comp = currentComposition();
+        if (!comp) {
             return false;
         }
-        return service->setLayerLockedInCurrentComposition(LayerID(layerId), locked);
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer || layer->isLocked() == locked) {
+            return static_cast<bool>(layer);
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<SetLayerLockCommand>(layer, locked),
+                [&]() { return layer->isLocked() == locked; });
+        } else {
+            layer->setLocked(locked);
+            if (layer->isLocked() != locked) {
+                layer->setLocked(!locked);
+                return false;
+            }
+        }
+        return true;
     }
 
     static QVariant setLayerSoloInCurrentComposition(const QString& layerId, bool solo)
     {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
+        const auto comp = currentComposition();
+        if (!comp) {
             return false;
         }
-        return service->setLayerSoloInCurrentComposition(LayerID(layerId), solo);
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer || layer->isSolo() == solo) {
+            return static_cast<bool>(layer);
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<SetLayerSoloCommand>(layer, solo),
+                [&]() { return layer->isSolo() == solo; });
+        } else {
+            layer->setSolo(solo);
+            if (layer->isSolo() != solo) {
+                layer->setSolo(!solo);
+                return false;
+            }
+        }
+        return true;
     }
 
     static QVariant setLayerShyInCurrentComposition(const QString& layerId, bool shy)
     {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
+        const auto comp = currentComposition();
+        if (!comp) {
             return false;
         }
-        return service->setLayerShyInCurrentComposition(LayerID(layerId), shy);
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer || layer->isShy() == shy) {
+            return static_cast<bool>(layer);
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<SetLayerShyCommand>(layer, shy),
+                [&]() { return layer->isShy() == shy; });
+        } else {
+            layer->setShy(shy);
+            if (layer->isShy() != shy) {
+                layer->setShy(!shy);
+                return false;
+            }
+        }
+        return true;
     }
 
     static QVariant setLayerBlendModeInCurrentComposition(const QString& layerId, const QVariant& blendModeValue)
@@ -2807,11 +3477,59 @@ private:
         } else if (!modeText.isEmpty()) {
             mode = ArtifactCore::BlendModeUtils::fromString(modeText);
         }
-        layer->setBlendMode(ArtifactCore::toLegacyBlendType(mode));
+        const auto newMode = ArtifactCore::toLegacyBlendType(mode);
+        const auto oldMode = layer->layerBlendType();
+        if (oldMode == newMode) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<ChangeLayerBlendModeCommand>(layer, newMode),
+                [&]() { return layer->layerBlendType() == newMode; });
+        } else {
+            layer->setBlendMode(newMode);
+            if (layer->layerBlendType() != newMode) {
+                layer->setBlendMode(oldMode);
+                return false;
+            }
+        }
         return true;
     }
 
     static QVariant setLayerOpacityInCurrentComposition(const QString& layerId, double opacity)
+    {
+        if (!std::isfinite(opacity)) {
+            return false;
+        }
+        const auto comp = currentComposition();
+        if (!comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        const float newOpacity = static_cast<float>(std::clamp(opacity, 0.0, 1.0));
+        const float oldOpacity = layer->opacity();
+        if (oldOpacity == newOpacity) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<ChangeLayerOpacityCommand>(
+                    layer, oldOpacity, newOpacity),
+                [&]() { return layer->opacity() == newOpacity; });
+        } else {
+            layer->setOpacity(newOpacity);
+            if (layer->opacity() != newOpacity) {
+                layer->setOpacity(oldOpacity);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static QVariant setLayerParentInCurrentComposition(const QString& layerId, const QString& parentLayerId)
     {
         const auto comp = currentComposition();
         if (!comp) {
@@ -2821,26 +3539,52 @@ private:
         if (!layer) {
             return false;
         }
-        layer->setOpacity(static_cast<float>(std::clamp(opacity, 0.0, 1.0)));
-        return true;
-    }
-
-    static QVariant setLayerParentInCurrentComposition(const QString& layerId, const QString& parentLayerId)
-    {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
+        const LayerID newParentId(parentLayerId.trimmed());
+        if (layer->parentLayerId() == newParentId) {
+            return true;
+        }
+        if (!newParentId.isNil()) {
+            const auto parent = comp->layerById(newParentId);
+            if (!parent || parent->id() == layer->id()) {
+                return false;
+            }
+            auto ancestor = newParentId;
+            while (!ancestor.isNil()) {
+                if (ancestor == layer->id()) {
+                    return false;
+                }
+                const auto ancestorLayer = comp->layerById(ancestor);
+                if (!ancestorLayer) {
+                    return false;
+                }
+                ancestor = ancestorLayer->parentLayerId();
+            }
+        }
+        const LayerID oldParentId = layer->parentLayerId();
+        if (auto* undo = UndoManager::instance()) {
+            return pushUndoCommandAndVerify(
+                std::make_unique<ChangeLayerParentCommand>(
+                    layer, oldParentId, newParentId),
+                [&]() { return layer->parentLayerId() == newParentId; });
+        } else if (newParentId.isNil()) {
+            layer->clearParent();
+        } else {
+            layer->setParentById(newParentId);
+        }
+        if (layer->parentLayerId() != newParentId) {
+            if (oldParentId.isNil()) {
+                layer->clearParent();
+            } else {
+                layer->setParentById(oldParentId);
+            }
             return false;
         }
-        return service->setLayerParentInCurrentComposition(LayerID(layerId), LayerID(parentLayerId));
+        return true;
     }
 
     static QVariant clearLayerParentInCurrentComposition(const QString& layerId)
     {
-        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
-            return false;
-        }
-        return service->clearLayerParentInCurrentComposition(LayerID(layerId));
+        return setLayerParentInCurrentComposition(layerId, QString());
     }
 
     static QVariant splitLayerAtCurrentTime(const QString& layerId)
@@ -2854,8 +3598,7 @@ private:
         if (id.isNil()) {
             return false;
         }
-        service->splitLayerAtCurrentTime(comp->id(), id);
-        return true;
+        return service->splitLayerWithUndo(comp->id(), id);
     }
 
     static QVariant selectLayer(const QString& layerId)
@@ -2870,7 +3613,7 @@ private:
             return false;
         }
         selection->selectLayer(layer);
-        return true;
+        return selection->isSelected(layer) && selection->currentLayer() == layer;
     }
 
     static QVariant renameLayerInCurrentComposition(const QString& layerId, const QString& newName)
@@ -3043,7 +3786,7 @@ private:
         plan.confirmation.operationName = plan.dryRun.operationName;
         plan.confirmation.targetIds = plan.dryRun.targetIds;
         plan.confirmation.required = true;
-        plan.confirmation.undoAvailable = true;
+        plan.confirmation.undoAvailable = false;
         auto* service = ArtifactApplicationManager::instance()
             ? ArtifactApplicationManager::instance()->projectService() : nullptr;
         bool exists = false;
@@ -3094,7 +3837,7 @@ private:
         confirmation.targetIds = dryRun.targetIds;
         confirmation.reason = QStringLiteral("Composition removal requires explicit confirmation.");
         confirmation.previewMessage = QStringLiteral("Remove the composition and related queue jobs?");
-        confirmation.undoAvailable = true;
+        confirmation.undoAvailable = false;
         QString error;
         if (!ArtifactCore::SafeWriteRemovalGate::authorize(
                 dryRun, confirmation, confirmed, &error)) {
@@ -3127,11 +3870,23 @@ private:
     static QVariant removeAllAssets()
     {
         auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        if (!service) {
+        const auto project = service ? service->getCurrentProjectSharedPtr() : ArtifactProjectPtr{};
+        if (!service || !project) {
+            return false;
+        }
+        int beforeCount = 0;
+        for (const auto* root : project->projectItems()) {
+            beforeCount += projectAssetCount(root);
+        }
+        if (beforeCount == 0) {
             return false;
         }
         service->removeAllAssets();
-        return true;
+        int afterCount = 0;
+        for (const auto* root : service->projectItems()) {
+            afterCount += projectAssetCount(root);
+        }
+        return afterCount == 0 && afterCount < beforeCount;
     }
 
     static QVariant dryRunRemoveAllAssets()
@@ -3139,9 +3894,21 @@ private:
         ArtifactCore::SafeWriteExecutionPlan plan;
         plan.dryRun.operationName = QStringLiteral("removeAllAssets");
         plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
-        plan.dryRun.wouldChange = true;
-        plan.dryRun.affectedCounts = {{QStringLiteral("assets"), -1}};
-        plan.dryRun.warnings << QStringLiteral("All imported assets will be removed; exact dependent references require a project snapshot.");
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        const auto project = service ? service->getCurrentProjectSharedPtr() : ArtifactProjectPtr{};
+        int assetCount = 0;
+        if (project) {
+            for (const auto* root : project->projectItems()) {
+                assetCount += projectAssetCount(root);
+            }
+        }
+        plan.dryRun.wouldChange = project && assetCount > 0;
+        plan.dryRun.wouldFail = !project || assetCount == 0;
+        plan.dryRun.affectedCounts = {{QStringLiteral("assets"), assetCount}};
+        plan.dryRun.warnings << (project
+            ? QStringLiteral("All %1 imported assets will be removed; exact dependent references require a project snapshot.").arg(assetCount)
+            : QStringLiteral("No current project is available."));
         plan.confirmation.operationName = plan.dryRun.operationName;
         plan.confirmation.required = true;
         plan.confirmation.undoAvailable = false;
@@ -3158,9 +3925,18 @@ private:
         dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
         auto* service = ArtifactApplicationManager::instance()
             ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        dryRun.wouldChange = service != nullptr;
-        dryRun.wouldFail = service == nullptr;
-        dryRun.warnings << QStringLiteral("All imported assets will be removed; exact count is unavailable.");
+        const auto project = service ? service->getCurrentProjectSharedPtr() : ArtifactProjectPtr{};
+        int assetCount = 0;
+        if (project) {
+            for (const auto* root : project->projectItems()) {
+                assetCount += projectAssetCount(root);
+            }
+        }
+        dryRun.wouldChange = project && assetCount > 0;
+        dryRun.wouldFail = !project || assetCount == 0;
+        dryRun.warnings << (project
+            ? QStringLiteral("All %1 imported assets will be removed; exact dependent references require a project snapshot.").arg(assetCount)
+            : QStringLiteral("No current project is available."));
         ArtifactCore::SafeWriteConfirmationPayload confirmation;
         confirmation.operationName = dryRun.operationName;
         confirmation.reason = QStringLiteral("Removing all assets requires explicit confirmation.");
@@ -3217,7 +3993,25 @@ private:
         if (!composition) {
             return false;
         }
-        composition->setCompositionNote(note);
+        const QString oldNote = composition->compositionNote();
+        if (oldNote == note) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetCompositionNoteCommand>(
+                    composition, oldNote, note),
+                [&]() { return composition->compositionNote() == note; });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            composition->setCompositionNote(note);
+            if (composition->compositionNote() != note) {
+                composition->setCompositionNote(oldNote);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3252,7 +4046,26 @@ private:
         if (!layer) {
             return false;
         }
-        layer->setLayerNote(note);
+        const QString oldNote = layer->layerNote();
+        if (oldNote == note) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("layer.note"), oldNote, note,
+                    QStringLiteral("Set Layer Note")),
+                [&]() { return layer->layerNote() == note; });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            layer->setLayerNote(note);
+            if (layer->layerNote() != note) {
+                layer->setLayerNote(oldNote);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3300,7 +4113,42 @@ private:
             return false;
         }
         auto& transform = layer->transform2D();
-        transform.setPosition(static_cast<float>(x), static_cast<float>(y));
+        float oldX = 0.0f;
+        float oldY = 0.0f;
+        transform.position(oldX, oldY);
+        const float newX = static_cast<float>(x);
+        const float newY = static_cast<float>(y);
+        if (oldX == newX && oldY == newY) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Set Layer Position"));
+            if (oldX != newX) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("transform.position.x"), oldX, newX,
+                    QStringLiteral("Set Position X")));
+            }
+            if (oldY != newY) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("transform.position.y"), oldY, newY,
+                    QStringLiteral("Set Position Y")));
+            }
+            return pushUndoCommandAndVerify(std::move(macro), [&]() {
+                float appliedX = 0.0f;
+                float appliedY = 0.0f;
+                transform.position(appliedX, appliedY);
+                return appliedX == newX && appliedY == newY;
+            });
+        } else {
+            transform.setPosition(newX, newY);
+            float appliedX = 0.0f;
+            float appliedY = 0.0f;
+            transform.position(appliedX, appliedY);
+            if (appliedX != newX || appliedY != newY) {
+                transform.setPosition(oldX, oldY);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3346,7 +4194,42 @@ private:
             return false;
         }
         auto& transform = layer->transform2D();
-        transform.setScale(static_cast<float>(sx), static_cast<float>(sy));
+        float oldSx = 1.0f;
+        float oldSy = 1.0f;
+        transform.scale(oldSx, oldSy);
+        const float newSx = static_cast<float>(sx);
+        const float newSy = static_cast<float>(sy);
+        if (oldSx == newSx && oldSy == newSy) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Set Layer Scale"));
+            if (oldSx != newSx) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("transform.scale.x"), oldSx, newSx,
+                    QStringLiteral("Set Scale X")));
+            }
+            if (oldSy != newSy) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("transform.scale.y"), oldSy, newSy,
+                    QStringLiteral("Set Scale Y")));
+            }
+            return pushUndoCommandAndVerify(std::move(macro), [&]() {
+                float appliedSx = 1.0f;
+                float appliedSy = 1.0f;
+                transform.scale(appliedSx, appliedSy);
+                return appliedSx == newSx && appliedSy == newSy;
+            });
+        } else {
+            transform.setScale(newSx, newSy);
+            float appliedSx = 1.0f;
+            float appliedSy = 1.0f;
+            transform.scale(appliedSx, appliedSy);
+            if (appliedSx != newSx || appliedSy != newSy) {
+                transform.setScale(oldSx, oldSy);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3386,7 +4269,27 @@ private:
             return false;
         }
         auto& transform = layer->transform2D();
-        transform.setRotation(static_cast<float>(rotation));
+        const float oldRotation = transform.rotation();
+        const float newRotation = static_cast<float>(rotation);
+        if (oldRotation == newRotation) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("transform.rotation"), oldRotation,
+                    newRotation, QStringLiteral("Set Layer Rotation")),
+                [&]() { return transform.rotation() == newRotation; });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            transform.setRotation(newRotation);
+            if (transform.rotation() != newRotation) {
+                transform.setRotation(oldRotation);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3425,7 +4328,26 @@ private:
         if (!layer) {
             return false;
         }
-        layer->setOpacity(static_cast<float>(opacity / 100.0));
+        const float oldOpacity = layer->opacity();
+        const float newOpacity = static_cast<float>(opacity / 100.0);
+        if (oldOpacity == newOpacity) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<ChangeLayerOpacityCommand>(
+                    layer, oldOpacity, newOpacity),
+                [&]() { return layer->opacity() == newOpacity; });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            layer->setOpacity(newOpacity);
+            if (layer->opacity() != newOpacity) {
+                layer->setOpacity(oldOpacity);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3606,7 +4528,50 @@ private:
             return false;
         }
         const auto rate = std::max<double>(1.0, playback->frameRate().framerate());
-        property->addKeyFrame(RationalTime(frame, rate), value);
+        const RationalTime time(frame, rate);
+        const auto before = property->getKeyFrames();
+        auto after = before;
+        const auto existing = std::find_if(
+            before.begin(), before.end(),
+            [&time](const auto& keyframe) { return keyframe.time == time; });
+        if (existing != before.end() && existing->value == value) {
+            return true;
+        }
+        ArtifactCore::KeyFrame keyframe;
+        if (existing != before.end()) {
+            keyframe = *existing;
+        }
+        after.erase(std::remove_if(after.begin(), after.end(),
+                                   [&time](const auto& keyframe) {
+                                       return keyframe.time == time;
+                                   }),
+                    after.end());
+        keyframe.time = time;
+        keyframe.value = value;
+        after.push_back(keyframe);
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetEffectPropertyKeyframesCommand>(
+                    effect, paramName.trimmed(), before, after,
+                    QStringLiteral("Set Effect Parameter Keyframe")),
+                [&]() { return keyframeStateMatches(property, after, true); });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            property->addKeyFrame(time, value);
+            if (!keyframeStateMatches(property, after, true)) {
+                property->clearKeyFrames();
+                for (const auto& keyframe : before) {
+                    property->addKeyFrame(keyframe.time, keyframe.value,
+                                          static_cast<int>(keyframe.interpolation),
+                                          keyframe.cp1_x, keyframe.cp1_y,
+                                          keyframe.cp2_x, keyframe.cp2_y,
+                                          keyframe.roving);
+                }
+                return false;
+            }
+        }
         ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
             comp->id().toString(), layer->id().toString(),
             LayerChangedEvent::ChangeType::Modified});
@@ -3671,7 +4636,37 @@ private:
         if (it == keyframes.end()) {
             return false;
         }
-        property->removeKeyFrame(it->time);
+        const auto before = keyframes;
+        const RationalTime removedTime = it->time;
+        auto after = before;
+        after.erase(std::remove_if(after.begin(), after.end(),
+                                   [&removedTime](const auto& keyframe) {
+                                       return keyframe.time == removedTime;
+                                   }),
+                     after.end());
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetEffectPropertyKeyframesCommand>(
+                    effect, paramName.trimmed(), before, after,
+                    QStringLiteral("Remove Effect Parameter Keyframe")),
+                [&]() { return keyframeStateMatches(property, after, property->isAnimatable()); });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            property->removeKeyFrame(removedTime);
+            if (!keyframeStateMatches(property, after, property->isAnimatable())) {
+                property->clearKeyFrames();
+                for (const auto& keyframe : before) {
+                    property->addKeyFrame(keyframe.time, keyframe.value,
+                                          static_cast<int>(keyframe.interpolation),
+                                          keyframe.cp1_x, keyframe.cp1_y,
+                                          keyframe.cp2_x, keyframe.cp2_y,
+                                          keyframe.roving);
+                }
+                return false;
+            }
+        }
         ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
             comp->id().toString(), layer->id().toString(),
             LayerChangedEvent::ChangeType::Modified});
@@ -3713,7 +4708,27 @@ private:
         if (!property || !property->isAnimatable()) {
             return false;
         }
-        property->setExpression(expression.trimmed());
+        const QString newExpression = expression.trimmed();
+        const QString oldExpression = property->getExpression();
+        if (oldExpression == newExpression) {
+            return true;
+        }
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetEffectPropertyExpressionCommand>(
+                    effect, paramName.trimmed(), oldExpression, newExpression,
+                    QStringLiteral("Set Effect Parameter Expression")),
+                [&]() { return property->getExpression() == newExpression; });
+            if (!applied) {
+                return false;
+            }
+        } else {
+            property->setExpression(newExpression);
+            if (property->getExpression() != newExpression) {
+                property->setExpression(oldExpression);
+                return false;
+            }
+        }
         ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
             comp->id().toString(), layer->id().toString(),
             LayerChangedEvent::ChangeType::Modified});
@@ -3823,11 +4838,27 @@ private:
             return false;
         }
 
+        const QJsonObject beforePreset =
+            ArtifactPresetManager::effectToPresetJson(effect);
         const bool ok = effectService->loadEffectPreset(effect, filePath);
-        if (ok) {
-            recordRecentLayerEffectPreset(filePath, effect);
+        if (!ok) {
+            return false;
         }
-        return ok;
+
+        const QJsonObject afterPreset =
+            ArtifactPresetManager::effectToPresetJson(effect);
+        auto command = std::make_unique<EffectPresetSnapshotCommand>(
+            effect, beforePreset, afterPreset);
+        if (auto* undo = UndoManager::instance()) {
+            if (!undo->push(std::move(command))) {
+                auto restoreTarget = effect;
+                ArtifactPresetManager::applyPresetJsonToEffect(
+                    restoreTarget, beforePreset);
+                return false;
+            }
+        }
+        recordRecentLayerEffectPreset(filePath, effect);
+        return true;
     }
 
     static QVariant listLayerEffectPresets(const QString& directoryPath)
@@ -4044,21 +5075,65 @@ private:
             interpolation = InterpolationType::Bezier;
         }
 
-        // Use KeyframeModel to handle the operation
-        static ArtifactTimelineKeyframeModel keyframeModel;
+        const auto property = findLayerProperty(layer, propertyPath.trimmed());
+        if (!property) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Property not found")}
+            };
+        }
         const auto frameRate = std::max<double>(1.0, currentComp->frameRate().framerate());
-        RationalTime time(frameNumber, frameRate);
-        bool added = keyframeModel.addKeyframe(
-            currentComp->id(),
-            layer->id(),
-            propertyPath,
-            time,
-            QVariant(value),
-            interpolation
-        );
+        const RationalTime time(frameNumber, frameRate);
+        const auto before = property->getKeyFrames();
+        const auto existing = std::find_if(
+            before.begin(), before.end(),
+            [&time](const auto& keyframe) { return keyframe.time == time; });
+        if (existing != before.end() && existing->value == QVariant(value) &&
+            existing->interpolation == interpolation) {
+            return QVariantMap{
+                {QStringLiteral("success"), true},
+                {QStringLiteral("keyframeId"), QString::number(frameNumber)}
+            };
+        }
+        auto after = before;
+        after.erase(std::remove_if(
+            after.begin(), after.end(),
+            [&time](const auto& keyframe) { return keyframe.time == time; }),
+            after.end());
+        ArtifactCore::KeyFrame keyframe;
+        if (existing != before.end()) {
+            keyframe = *existing;
+        }
+        keyframe.time = time;
+        keyframe.value = QVariant(value);
+        keyframe.interpolation = interpolation;
+        after.push_back(keyframe);
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetLayerPropertyKeyframesCommand>(
+                    layer, propertyPath.trimmed(), before, after,
+                    QStringLiteral("Set Keyframe"), property->isAnimatable(), true),
+                [&]() { return keyframeStateMatches(property, after, true); });
+            if (!applied) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to apply keyframe")}
+                };
+            }
+        } else {
+            property->setAnimatable(true);
+            property->removeKeyFrame(time);
+            property->addKeyFrame(time, QVariant(value), interpolation);
+            if (!keyframeStateMatches(property, after, true)) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to apply keyframe")}
+                };
+            }
+        }
 
         return QVariantMap{
-            {QStringLiteral("success"), added},
+            {QStringLiteral("success"), true},
             {QStringLiteral("keyframeId"), QString::number(frameNumber)}
         };
     }
@@ -4162,21 +5237,53 @@ private:
         }
 
         // Check existence before removal so a missing keyframe is not reported as removed.
-        static ArtifactTimelineKeyframeModel keyframeModel;
-        RationalTime time(frameNumber, 30);  // Same base fps as setKeyframe
-        const auto existing = keyframeModel.getKeyframesFor(
-            currentComp->id(), layer->id(), propertyPath);
-        const bool exists = std::any_of(existing.begin(), existing.end(),
+        const auto property = findLayerProperty(layer, propertyPath.trimmed());
+        if (!property) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Property not found")}
+            };
+        }
+        const double frameRate = std::max<double>(1.0, currentComp->frameRate().framerate());
+        const RationalTime time(frameNumber, frameRate);
+        const auto before = property->getKeyFrames();
+        const bool exists = std::any_of(
+            before.begin(), before.end(),
             [&time](const auto& keyframe) { return keyframe.time == time; });
-        bool removed = keyframeModel.removeKeyframe(
-            currentComp->id(),
-            layer->id(),
-            propertyPath,
-            time
-        );
+        if (!exists) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        auto after = before;
+        after.erase(std::remove_if(
+            after.begin(), after.end(),
+            [&time](const auto& keyframe) { return keyframe.time == time; }),
+            after.end());
+        if (auto* undo = UndoManager::instance()) {
+            const bool applied = pushUndoCommandAndVerify(
+                std::make_unique<SetLayerPropertyKeyframesCommand>(
+                    layer, propertyPath.trimmed(), before, after,
+                    QStringLiteral("Delete Keyframe"), property->isAnimatable(),
+                    property->isAnimatable()),
+                [&]() { return keyframeStateMatches(
+                    property, after, property->isAnimatable()); });
+            if (!applied) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to delete keyframe")}
+                };
+            }
+        } else {
+            property->removeKeyFrame(time);
+            if (!keyframeStateMatches(property, after, property->isAnimatable())) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to delete keyframe")}
+                };
+            }
+        }
 
         return QVariantMap{
-            {QStringLiteral("success"), exists && removed}
+            {QStringLiteral("success"), true}
         };
     }
 
@@ -4252,6 +5359,14 @@ private:
     static QVariant batchSetKeyframes(const QString& layerId, const QVariantList& keyframes)
     {
         QVariantMap result;
+        if (keyframes.isEmpty()) {
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("error"), QStringLiteral("At least one keyframe is required"));
+            result.insert(QStringLiteral("addedCount"), 0);
+            result.insert(QStringLiteral("skippedCount"), 0);
+            result.insert(QStringLiteral("details"), QVariantList{});
+            return result;
+        }
         auto svc = ArtifactProjectService::instance();
         if (!svc) {
             result.insert(QStringLiteral("success"), false);
@@ -4273,48 +5388,229 @@ private:
             return result;
         }
 
-        static ArtifactTimelineKeyframeModel keyframeModel;
+        struct KeyframeEdit {
+            QString propertyPath;
+            std::vector<ArtifactCore::KeyFrame> before;
+            std::vector<ArtifactCore::KeyFrame> after;
+            bool beforeAnimatable = false;
+            bool changed = false;
+        };
+        std::vector<KeyframeEdit> edits;
+        const double frameRate = std::max<double>(
+            1.0, currentComp->frameRate().framerate());
         int addedCount = 0;
         int skippedCount = 0;
         QVariantList details;
+
+        // Preflight every entry before changing any property.  A batch is one
+        // transaction from the automation caller's perspective, so a missing
+        // property or malformed value must not leave earlier entries applied.
         for (const QVariant& entryValue : keyframes) {
             const QVariantMap entry = entryValue.toMap();
-            const QString propertyPath = entry.value(QStringLiteral("propertyPath")).toString();
+            const QString propertyPath = entry.value(QStringLiteral("propertyPath")).toString().trimmed();
+            const bool hasFrame = entry.contains(QStringLiteral("frameNumber")) ||
+                                  entry.contains(QStringLiteral("frame"));
+            bool frameOk = false;
+            const int frameNumber = entry.contains(QStringLiteral("frameNumber"))
+                ? entry.value(QStringLiteral("frameNumber")).toInt(&frameOk)
+                : entry.value(QStringLiteral("frame")).toInt(&frameOk);
+            const QVariant rawValue = entry.value(QStringLiteral("value"));
+            bool valueOk = false;
+            const double numericValue = rawValue.toDouble(&valueOk);
+            const QString failure = propertyPath.isEmpty()
+                ? QStringLiteral("Property path is required")
+                : !hasFrame || !frameOk || frameNumber < 0
+                    ? QStringLiteral("Frame number must be a non-negative integer")
+                : !rawValue.isValid() || !valueOk || !std::isfinite(numericValue)
+                        ? QStringLiteral("Keyframe value must be a finite number")
+                        : !findLayerProperty(layer, propertyPath)
+                            ? QStringLiteral("Property not found: %1").arg(propertyPath)
+                            : QString();
+            if (!failure.isEmpty()) {
+                ++skippedCount;
+                details.append(QVariantMap{
+                    {QStringLiteral("propertyPath"), propertyPath},
+                    {QStringLiteral("frameNumber"), frameNumber},
+                    {QStringLiteral("value"), rawValue},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), failure}
+                });
+            }
+        }
+        if (skippedCount > 0) {
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("addedCount"), 0);
+            result.insert(QStringLiteral("skippedCount"), skippedCount);
+            result.insert(QStringLiteral("details"), details);
+            return result;
+        }
+
+        details.clear();
+        for (const QVariant& entryValue : keyframes) {
+            const QVariantMap entry = entryValue.toMap();
+            const QString propertyPath = entry.value(QStringLiteral("propertyPath")).toString().trimmed();
             const int frameNumber = entry.contains(QStringLiteral("frameNumber"))
                 ? entry.value(QStringLiteral("frameNumber")).toInt()
                 : entry.value(QStringLiteral("frame")).toInt();
-            const double value = entry.value(QStringLiteral("value")).toDouble();
-            const QString interpolation = entry.value(QStringLiteral("interpolation"), QStringLiteral("Linear")).toString();
-            if (propertyPath.trimmed().isEmpty() || frameNumber < 0 || !std::isfinite(value)) {
+            const QVariant rawValue = entry.value(QStringLiteral("value"));
+            const double numericValue = rawValue.toDouble();
+            const QString interpolation = entry.value(
+                QStringLiteral("interpolation"), QStringLiteral("Linear")).toString();
+            if (propertyPath.isEmpty() || frameNumber < 0 || !rawValue.isValid() ||
+                !std::isfinite(numericValue)) {
                 ++skippedCount;
                 continue;
             }
-            const bool ok = keyframeModel.addKeyframe(
-                currentComp->id(),
-                layer->id(),
-                propertyPath,
-                RationalTime(frameNumber, 30),
-                QVariant(value),
+            const auto property = findLayerProperty(layer, propertyPath);
+            if (!property) {
+                ++skippedCount;
+                details.append(QVariantMap{
+                    {QStringLiteral("propertyPath"), propertyPath},
+                    {QStringLiteral("frameNumber"), frameNumber},
+                    {QStringLiteral("value"), rawValue},
+                    {QStringLiteral("success"), false}
+                });
+                continue;
+            }
+
+            auto edit = std::find_if(
+                edits.begin(), edits.end(),
+                [&propertyPath](const KeyframeEdit& candidate) {
+                    return candidate.propertyPath == propertyPath;
+                });
+            if (edit == edits.end()) {
+                const auto before = property->getKeyFrames();
+                edits.push_back(KeyframeEdit{propertyPath, before, before,
+                                             property->isAnimatable()});
+                edit = edits.end() - 1;
+            }
+
+            const RationalTime time(frameNumber, frameRate);
+            const auto existing = std::find_if(
+                edit->after.begin(), edit->after.end(),
+                [&time](const auto& keyframe) { return keyframe.time == time; });
+            const auto parsedInterpolation =
                 interpolation.trimmed().compare(QStringLiteral("constant"), Qt::CaseInsensitive) == 0
                     ? InterpolationType::Constant
                     : interpolation.trimmed().compare(QStringLiteral("smooth"), Qt::CaseInsensitive) == 0
-                        ? InterpolationType::Smooth
+                            ? InterpolationType::Smooth
                         : interpolation.trimmed().compare(QStringLiteral("easein"), Qt::CaseInsensitive) == 0
                             ? InterpolationType::EaseIn
                             : interpolation.trimmed().compare(QStringLiteral("easeout"), Qt::CaseInsensitive) == 0
                                 ? InterpolationType::EaseOut
-                                : InterpolationType::Linear);
-            if (ok) {
+                                : interpolation.trimmed().compare(QStringLiteral("easeinout"), Qt::CaseInsensitive) == 0 ||
+                                  interpolation.trimmed().compare(QStringLiteral("ease-in-out"), Qt::CaseInsensitive) == 0
+                                    ? InterpolationType::EaseInOut
+                                    : interpolation.trimmed().compare(QStringLiteral("bezier"), Qt::CaseInsensitive) == 0 ||
+                                      interpolation.trimmed().compare(QStringLiteral("beziercurve"), Qt::CaseInsensitive) == 0
+                                        ? InterpolationType::Bezier
+                                        : InterpolationType::Linear;
+            if (existing != edit->after.end() && existing->value == rawValue &&
+                existing->interpolation == parsedInterpolation) {
                 ++addedCount;
-            } else {
-                ++skippedCount;
+                details.append(QVariantMap{
+                    {QStringLiteral("propertyPath"), propertyPath},
+                    {QStringLiteral("frameNumber"), frameNumber},
+                    {QStringLiteral("value"), rawValue},
+                    {QStringLiteral("success"), true}
+                });
+                continue;
             }
+            ArtifactCore::KeyFrame keyframe;
+            if (existing != edit->after.end()) {
+                keyframe = *existing;
+            }
+            edit->after.erase(std::remove_if(
+                edit->after.begin(), edit->after.end(),
+                [&time](const auto& keyframe) { return keyframe.time == time; }),
+                edit->after.end());
+            keyframe.time = time;
+            keyframe.value = rawValue;
+            keyframe.interpolation = parsedInterpolation;
+            edit->after.push_back(keyframe);
+            edit->changed = true;
+            ++addedCount;
             details.append(QVariantMap{
                 {QStringLiteral("propertyPath"), propertyPath},
                 {QStringLiteral("frameNumber"), frameNumber},
-                {QStringLiteral("value"), value},
-                {QStringLiteral("success"), ok}
+                {QStringLiteral("value"), rawValue},
+                {QStringLiteral("success"), true}
             });
+        }
+
+        const bool hasChanges = std::any_of(
+            edits.begin(), edits.end(),
+            [](const KeyframeEdit& edit) { return edit.changed; });
+        if (hasChanges) {
+            const auto restoreEdits = [&]() {
+                for (const auto& edit : edits) {
+                    if (!edit.changed) {
+                        continue;
+                    }
+                    const auto property = findLayerProperty(layer, edit.propertyPath);
+                    if (!property) {
+                        continue;
+                    }
+                    property->clearKeyFrames();
+                    property->setAnimatable(edit.beforeAnimatable);
+                    for (const auto& keyframe : edit.before) {
+                        property->addKeyFrame(keyframe.time, keyframe.value,
+                                              static_cast<int>(keyframe.interpolation),
+                                              keyframe.cp1_x, keyframe.cp1_y,
+                                              keyframe.cp2_x, keyframe.cp2_y,
+                                              keyframe.roving);
+                    }
+                }
+            };
+            if (auto* undo = UndoManager::instance()) {
+                auto macro = std::make_unique<MacroUndoCommand>(
+                    QStringLiteral("Batch Set Keyframes"));
+                for (auto& edit : edits) {
+                    if (!edit.changed) continue;
+                    macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                        layer, edit.propertyPath, edit.before, edit.after,
+                        QStringLiteral("Set Keyframes"),
+                        edit.beforeAnimatable, true));
+                }
+                const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+                    return std::all_of(
+                        edits.begin(), edits.end(),
+                        [&](const KeyframeEdit& edit) {
+                            if (!edit.changed) {
+                                return true;
+                            }
+                            const auto property = findLayerProperty(layer, edit.propertyPath);
+                            return keyframeStateMatches(property, edit.after, true);
+                        });
+                });
+                if (!applied) {
+                    result.insert(QStringLiteral("success"), false);
+                    result.insert(QStringLiteral("error"),
+                                  QStringLiteral("Batch keyframe command was not applied"));
+                    return result;
+                }
+            } else {
+                for (const auto& edit : edits) {
+                    const auto property = findLayerProperty(layer, edit.propertyPath);
+                    if (!property) continue;
+                    property->clearKeyFrames();
+                    property->setAnimatable(true);
+                    for (const auto& keyframe : edit.after) {
+                        property->addKeyFrame(keyframe.time, keyframe.value,
+                                              static_cast<int>(keyframe.interpolation),
+                                              keyframe.cp1_x, keyframe.cp1_y,
+                                              keyframe.cp2_x, keyframe.cp2_y,
+                                              keyframe.roving);
+                    }
+                    if (!keyframeStateMatches(property, edit.after, true)) {
+                        restoreEdits();
+                        result.insert(QStringLiteral("success"), false);
+                        result.insert(QStringLiteral("error"),
+                                      QStringLiteral("Batch keyframe command was not applied"));
+                        return result;
+                    }
+                }
+            }
         }
 
         result.insert(QStringLiteral("success"), skippedCount == 0);
@@ -4326,9 +5622,31 @@ private:
 
     static QVariant batchRenameProjectItems(const QVariantList& items)
     {
+        auto* service = ArtifactProjectService::instance();
+        auto* undo = UndoManager::instance();
         int renamedCount = 0;
         int skippedCount = 0;
         QVariantList details;
+        struct RenameOperation {
+            ProjectItem* item = nullptr;
+            ArtifactCompositionPtr composition;
+            QString oldName;
+            QString oldItemName;
+            QString newName;
+        };
+        QVector<RenameOperation> operations;
+        QSet<QString> seenItemIds;
+        bool preflightFailed = service == nullptr;
+
+        if (items.isEmpty()) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("renamedCount"), 0},
+                {QStringLiteral("skippedCount"), 0},
+                {QStringLiteral("details"), QVariantList{}},
+                {QStringLiteral("error"), QStringLiteral("At least one project item is required")}
+            };
+        }
 
         for (const QVariant& itemValue : items) {
             const QVariantMap item = itemValue.toMap();
@@ -4336,6 +5654,7 @@ private:
             const QString newName = item.value(QStringLiteral("newName")).toString().trimmed();
             if (itemId.isEmpty() || newName.isEmpty()) {
                 ++skippedCount;
+                preflightFailed = true;
                 details.push_back(QVariantMap{
                     {QStringLiteral("itemId"), itemId},
                     {QStringLiteral("success"), false},
@@ -4343,22 +5662,189 @@ private:
                 });
                 continue;
             }
-
-            const bool success = renameProjectItemById(itemId, newName).toBool();
-            if (success) {
+            if (seenItemIds.contains(itemId)) {
+                ++skippedCount;
+                preflightFailed = true;
+                details.push_back(QVariantMap{
+                    {QStringLiteral("itemId"), itemId},
+                    {QStringLiteral("newName"), newName},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Duplicate project item ID")}
+                });
+                continue;
+            }
+            seenItemIds.insert(itemId);
+            auto* projectItem = findProjectItemByIdPointer(itemId);
+            if (!service || !projectItem) {
+                ++skippedCount;
+                preflightFailed = true;
+                details.push_back(QVariantMap{
+                    {QStringLiteral("itemId"), itemId},
+                    {QStringLiteral("newName"), newName},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), service
+                        ? QStringLiteral("Project item was not found")
+                        : QStringLiteral("Project service unavailable")}
+                });
+                continue;
+            }
+            RenameOperation operation;
+            operation.item = projectItem;
+            operation.oldName = projectItem->name.toQString();
+            operation.oldItemName = operation.oldName;
+            operation.newName = newName;
+            if (projectItem->type() == eProjectItemType::Composition) {
+                const auto* compositionItem =
+                    static_cast<const CompositionItem*>(projectItem);
+                operation.composition = service->findComposition(
+                    compositionItem->compositionId).ptr.lock();
+                if (!operation.composition) {
+                    ++skippedCount;
+                    preflightFailed = true;
+                    details.push_back(QVariantMap{
+                        {QStringLiteral("itemId"), itemId},
+                        {QStringLiteral("newName"), newName},
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("error"), QStringLiteral("Composition was not found")}
+                    });
+                    continue;
+                }
+                operation.oldName = operation.composition->settings()
+                    .compositionName().toQString();
+            }
+            if (operation.oldName == newName &&
+                projectItem->name.toQString() == newName) {
                 ++renamedCount;
             } else {
-                ++skippedCount;
+                operations.push_back(std::move(operation));
+                ++renamedCount;
             }
             details.push_back(QVariantMap{
                 {QStringLiteral("itemId"), itemId},
                 {QStringLiteral("newName"), newName},
-                {QStringLiteral("success"), success}
+                {QStringLiteral("success"), true}
             });
         }
 
+        if (preflightFailed) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("renamedCount"), 0},
+                {QStringLiteral("skippedCount"), skippedCount},
+                {QStringLiteral("details"), details},
+                {QStringLiteral("error"), QStringLiteral("Batch preflight failed; no items were renamed")}
+            };
+        }
+        if (undo && !operations.isEmpty()) {
+            const QString operationLabel = QStringLiteral("Rename Project Items");
+            const size_t undoCountBefore = undo->undoCount();
+            auto macro = std::make_unique<MacroUndoCommand>(
+                operationLabel);
+            for (auto& operation : operations) {
+                if (operation.composition) {
+                    macro->addChild(std::make_unique<RenameCompositionCommand>(
+                        operation.composition, operation.oldName,
+                        operation.newName));
+                } else {
+                    macro->addChild(std::make_unique<RenameProjectItemCommand>(
+                        operation.item, operation.oldName,
+                        operation.newName));
+                }
+            }
+            if (!undo->push(std::move(macro))) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("renamedCount"), 0},
+                    {QStringLiteral("skippedCount"), skippedCount},
+                    {QStringLiteral("details"), details},
+                    {QStringLiteral("error"), QStringLiteral("Batch rename was rejected by Undo manager")}
+                };
+            }
+            bool applied = true;
+            for (const auto& operation : operations) {
+                if (!operation.item || operation.item->name.toQString() != operation.newName ||
+                    (operation.composition &&
+                     operation.composition->settings().compositionName().toQString() !=
+                         operation.newName)) {
+                    applied = false;
+                    break;
+                }
+            }
+            if (!applied) {
+                const auto labels = undo->undoHistoryLabels();
+                if (undo->undoCount() == undoCountBefore + 1 &&
+                    !labels.isEmpty() && labels.first() == operationLabel) {
+                    undo->undo();
+                } else {
+                    for (const auto& operation : operations) {
+                        if (operation.composition) {
+                            operation.composition->setCompositionName(
+                                UniString::fromQString(operation.oldName));
+                        }
+                        if (operation.item) {
+                            operation.item->name = UniString::fromQString(
+                                operation.oldItemName);
+                        }
+                    }
+                }
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("renamedCount"), 0},
+                    {QStringLiteral("skippedCount"), skippedCount},
+                    {QStringLiteral("details"), details},
+                    {QStringLiteral("error"), QStringLiteral("Batch rename was not fully applied")}
+                };
+            }
+        } else if (!undo) {
+            for (const auto& operation : operations) {
+                if (operation.composition) {
+                    operation.composition->setCompositionName(
+                        UniString::fromQString(operation.newName));
+                }
+                if (operation.item) {
+                    operation.item->name = UniString::fromQString(
+                        operation.newName);
+                }
+            }
+            bool applied = true;
+            for (const auto& operation : operations) {
+                if (!operation.item ||
+                    operation.item->name.toQString() != operation.newName ||
+                    (operation.composition &&
+                     operation.composition->settings().compositionName().toQString() !=
+                         operation.newName)) {
+                    applied = false;
+                    break;
+                }
+            }
+            if (!applied) {
+                for (const auto& operation : operations) {
+                    if (operation.composition) {
+                        operation.composition->setCompositionName(
+                            UniString::fromQString(operation.oldName));
+                    }
+                    if (operation.item) {
+                        operation.item->name = UniString::fromQString(
+                            operation.oldItemName);
+                    }
+                }
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("renamedCount"), 0},
+                    {QStringLiteral("skippedCount"), skippedCount},
+                    {QStringLiteral("details"), details},
+                    {QStringLiteral("error"), QStringLiteral("Batch rename was not fully applied")}
+                };
+            }
+            if (!operations.isEmpty() && service) {
+                if (auto project = currentProject()) {
+                    project->projectChanged();
+                }
+            }
+        }
+
         return QVariantMap{
-            {QStringLiteral("success"), skippedCount == 0},
+            {QStringLiteral("success"), true},
             {QStringLiteral("renamedCount"), renamedCount},
             {QStringLiteral("skippedCount"), skippedCount},
             {QStringLiteral("details"), details}
@@ -4367,32 +5853,203 @@ private:
 
     static QVariant batchMoveProjectItemsToFolder(const QStringList& itemIds, const QString& parentFolderId)
     {
+        auto* service = ArtifactProjectService::instance();
+        auto* undo = UndoManager::instance();
         int movedCount = 0;
         int skippedCount = 0;
         QVariantList details;
+        QVector<ProjectItem*> operations;
+        QSet<QString> seenItemIds;
+        const QString targetParentId = parentFolderId.trimmed();
+        auto* targetParent = findProjectItemByIdPointer(targetParentId);
+        bool preflightFailed = !service || !targetParent ||
+            targetParent->type() != eProjectItemType::Folder;
+        auto project = currentProject();
+        const auto roots = project ? project->projectItems()
+                                   : QVector<ProjectItem*>{};
+        QVector<ProjectItem*> oldParents;
+        QVector<int> oldParentIndexes;
+
+        if (itemIds.isEmpty()) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("movedCount"), 0},
+                {QStringLiteral("skippedCount"), 0},
+                {QStringLiteral("details"), QVariantList{}},
+                {QStringLiteral("error"), QStringLiteral("At least one project item is required")}
+            };
+        }
 
         for (const QString& rawItemId : itemIds) {
             const QString itemId = rawItemId.trimmed();
             if (itemId.isEmpty()) {
                 ++skippedCount;
+                preflightFailed = true;
+                details.push_back(QVariantMap{
+                    {QStringLiteral("itemId"), itemId},
+                    {QStringLiteral("parentFolderId"), targetParentId},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Missing itemId")}
+                });
                 continue;
             }
-
-            const bool success = moveProjectItemToFolder(itemId, parentFolderId).toBool();
-            if (success) {
+            if (seenItemIds.contains(itemId)) {
+                ++skippedCount;
+                preflightFailed = true;
+                details.push_back(QVariantMap{
+                    {QStringLiteral("itemId"), itemId},
+                    {QStringLiteral("parentFolderId"), targetParentId},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Duplicate project item ID")}
+                });
+                continue;
+            }
+            seenItemIds.insert(itemId);
+            auto* projectItem = findProjectItemByIdPointer(itemId);
+            const bool isRoot = !roots.isEmpty() && projectItem == roots.front();
+            bool valid = service && project && projectItem && targetParent &&
+                         targetParent->type() == eProjectItemType::Folder &&
+                         !isRoot && projectItem != targetParent;
+            for (auto* parent = targetParent; valid && parent;
+                 parent = parent->parent) {
+                if (parent == projectItem) {
+                    valid = false;
+                }
+            }
+            if (!valid) {
+                ++skippedCount;
+                preflightFailed = true;
+                details.push_back(QVariantMap{
+                    {QStringLiteral("itemId"), itemId},
+                    {QStringLiteral("parentFolderId"), targetParentId},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Invalid project item or parent folder")}
+                });
+                continue;
+            }
+            if (projectItem->parent == targetParent) {
                 ++movedCount;
             } else {
-                ++skippedCount;
+                operations.push_back(projectItem);
+                oldParents.push_back(projectItem->parent);
+                oldParentIndexes.push_back(
+                    projectItem->parent ? projectItem->parent->children.indexOf(projectItem) : -1);
+                ++movedCount;
             }
             details.push_back(QVariantMap{
                 {QStringLiteral("itemId"), itemId},
-                {QStringLiteral("parentFolderId"), parentFolderId},
-                {QStringLiteral("success"), success}
+                {QStringLiteral("parentFolderId"), targetParentId},
+                {QStringLiteral("success"), true}
             });
         }
 
+        if (preflightFailed) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("movedCount"), 0},
+                {QStringLiteral("skippedCount"), skippedCount},
+                {QStringLiteral("details"), details},
+                {QStringLiteral("error"), QStringLiteral("Batch preflight failed; no items were moved")}
+            };
+        }
+        if (undo && !operations.isEmpty()) {
+            const QString operationLabel = QStringLiteral("Move Project Items");
+            const size_t undoCountBefore = undo->undoCount();
+            auto macro = std::make_unique<MacroUndoCommand>(
+                operationLabel);
+            for (auto* operation : operations) {
+                macro->addChild(std::make_unique<MoveProjectItemCommand>(
+                    operation, targetParent));
+            }
+            if (!undo->push(std::move(macro))) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("movedCount"), 0},
+                    {QStringLiteral("skippedCount"), skippedCount},
+                    {QStringLiteral("details"), details},
+                    {QStringLiteral("error"), QStringLiteral("Batch move was rejected by Undo manager")}
+                };
+            }
+            bool applied = true;
+            for (auto* operation : operations) {
+                if (!operation || operation->parent != targetParent) {
+                    applied = false;
+                    break;
+                }
+            }
+            if (!applied) {
+                const auto labels = undo->undoHistoryLabels();
+                if (undo->undoCount() == undoCountBefore + 1 &&
+                    !labels.isEmpty() && labels.first() == operationLabel) {
+                    undo->undo();
+                } else {
+                    for (int i = operations.size() - 1; i >= 0; --i) {
+                        auto* operation = operations[i];
+                        if (!operation) continue;
+                        if (operation->parent) {
+                            operation->parent->children.removeOne(operation);
+                        }
+                        operation->parent = oldParents[i];
+                        if (operation->parent) {
+                            auto& children = operation->parent->children;
+                            const int upper = static_cast<int>(children.size());
+                            const int index = std::clamp(
+                                oldParentIndexes[i], 0, upper);
+                            children.insert(index, operation);
+                        }
+                    }
+                }
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("movedCount"), 0},
+                    {QStringLiteral("skippedCount"), skippedCount},
+                    {QStringLiteral("details"), details},
+                    {QStringLiteral("error"), QStringLiteral("Batch move was not fully applied")}
+                };
+            }
+        } else if (!undo) {
+            bool applied = true;
+            for (auto* operation : operations) {
+                if (!service || !service->moveProjectItem(operation, targetParent)) {
+                    applied = false;
+                    break;
+                }
+            }
+            if (applied) {
+                for (auto* operation : operations) {
+                    if (!operation || operation->parent != targetParent) {
+                        applied = false;
+                        break;
+                    }
+                }
+            }
+            if (!applied) {
+                for (int i = operations.size() - 1; i >= 0; --i) {
+                    auto* operation = operations[i];
+                    if (!operation) continue;
+                    if (operation->parent) {
+                        operation->parent->children.removeOne(operation);
+                    }
+                    operation->parent = oldParents[i];
+                    if (operation->parent) {
+                        auto& children = operation->parent->children;
+                        const int upper = static_cast<int>(children.size());
+                        const int index = std::clamp(oldParentIndexes[i], 0, upper);
+                        children.insert(index, operation);
+                    }
+                }
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("movedCount"), 0},
+                    {QStringLiteral("skippedCount"), skippedCount},
+                    {QStringLiteral("details"), details},
+                    {QStringLiteral("error"), QStringLiteral("Batch move was not fully applied")}
+                };
+            }
+        }
+
         return QVariantMap{
-            {QStringLiteral("success"), skippedCount == 0},
+            {QStringLiteral("success"), true},
             {QStringLiteral("movedCount"), movedCount},
             {QStringLiteral("skippedCount"), skippedCount},
             {QStringLiteral("details"), details}
@@ -4424,9 +6081,26 @@ private:
         auto groupLayer = ArtifactCore::makeShared<ArtifactGroupLayer>();
         groupLayer->setLayerName(name.isEmpty() ? QStringLiteral("Layer Group") : name);
 
-        // Add group layer to composition at top
-        auto result = currentComp->appendLayerTop(groupLayer);
-        if (!result.success) {
+        // Add group layer to composition at top.
+        if (auto* undo = UndoManager::instance()) {
+            if (!pushUndoCommandAndVerify(
+                    std::make_unique<AddLayerCommand>(currentComp, groupLayer, true),
+                    [&]() { return currentComp->containsLayerById(groupLayer->id()); })) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to add group layer to composition")}
+                };
+            }
+        } else {
+            const auto result = currentComp->appendLayerTop(groupLayer);
+            if (!result.success) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to add group layer to composition")}
+                };
+            }
+        }
+        if (!currentComp->containsLayerById(groupLayer->id())) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
                 {QStringLiteral("error"), QStringLiteral("Failed to add group layer to composition")}
@@ -4465,7 +6139,15 @@ private:
             };
         }
 
-        auto groupLayerPtr = currentComp->layerById(LayerID(groupLayerId));
+        const QString normalizedGroupId = groupLayerId.trimmed();
+        if (normalizedGroupId.isEmpty() || layerIds.isEmpty()) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No layers supplied")}
+            };
+        }
+
+        auto groupLayerPtr = currentComp->layerById(LayerID(normalizedGroupId));
         if (!groupLayerPtr) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -4481,62 +6163,171 @@ private:
             };
         }
 
-        if (groupLayerId.trimmed().isEmpty() || layerIds.isEmpty()) {
-            return QVariantMap{
-                {QStringLiteral("success"), false},
-                {QStringLiteral("error"), QStringLiteral("No layers supplied")}
-            };
-        }
-
+        QVector<ArtifactAbstractLayerPtr> layersToMove;
+        QVector<LayerID> oldParentIds;
         int movedCount = 0;
         QSet<QString> processedIds;
         for (const auto& layerId : layerIds) {
             const QString normalizedId = layerId.trimmed();
-            if (normalizedId.isEmpty() || processedIds.contains(normalizedId) ||
-                normalizedId == groupLayerId) {
+            if (normalizedId.isEmpty()) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Layer ID cannot be empty")}
+                };
+            }
+            if (processedIds.contains(normalizedId)) {
                 continue;
+            }
+            if (normalizedId == normalizedGroupId) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("A group cannot be moved into itself")}
+                };
             }
             processedIds.insert(normalizedId);
 
-            auto layerToMove = currentComp->layerById(LayerID(layerId));
-            if (layerToMove && layerToMove->parentLayerId() != groupLayer->id()) {
-                // Do not move an ancestor into one of its descendants.
-                bool wouldCycle = false;
-                auto parentId = groupLayer->parentLayerId();
-                while (!parentId.isNil()) {
-                    if (parentId == layerToMove->id()) {
-                        wouldCycle = true;
-                        break;
-                    }
-                    const auto parent = currentComp->layerById(parentId);
-                    if (!parent) break;
-                    parentId = parent->parentLayerId();
-                }
-                if (wouldCycle) continue;
+            const auto layerToMove = currentComp->layerById(LayerID(normalizedId));
+            if (!layerToMove) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Layer not found: %1").arg(normalizedId)}
+                };
+            }
+            if (layerToMove->parentLayerId() == groupLayer->id()) {
+                continue;
+            }
 
-                // Remove from composition
+            // Do not move an ancestor into one of its descendants.
+            bool wouldCycle = false;
+            auto parentId = groupLayer->parentLayerId();
+            while (!parentId.isNil()) {
+                if (parentId == layerToMove->id()) {
+                    wouldCycle = true;
+                    break;
+                }
+                const auto parent = currentComp->layerById(parentId);
+                if (!parent) {
+                    return QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("error"), QStringLiteral("Broken group hierarchy")}
+                    };
+                }
+                parentId = parent->parentLayerId();
+            }
+            if (wouldCycle) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Moving a layer would create a parent cycle")}
+                };
+            }
+            layersToMove.push_back(layerToMove);
+            oldParentIds.push_back(layerToMove->parentLayerId());
+        }
+
+        if (layersToMove.isEmpty()) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("movedCount"), 0}
+            };
+        }
+
+        if (auto* undo = UndoManager::instance()) {
+            const QString operationLabel = QStringLiteral("Move Layers Into Group");
+            const size_t undoCountBefore = undo->undoCount();
+            auto macro = std::make_unique<MacroUndoCommand>(
+                operationLabel);
+            for (const auto& layerToMove : layersToMove) {
+                macro->addChild(std::make_unique<ChangeLayerParentCommand>(
+                    layerToMove, layerToMove->parentLayerId(), groupLayer->id()));
+            }
+            if (!undo->push(std::move(macro))) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("movedCount"), 0},
+                    {QStringLiteral("error"), QStringLiteral("Moving layers into group was rejected by Undo manager")}
+                };
+            }
+            bool applied = true;
+            for (const auto& layerToMove : layersToMove) {
+                if (layerToMove->parentLayerId() != groupLayer->id()) {
+                    applied = false;
+                    break;
+                }
+            }
+            if (!applied) {
+                const auto labels = undo->undoHistoryLabels();
+                if (undo->undoCount() == undoCountBefore + 1 &&
+                    !labels.isEmpty() && labels.first() == operationLabel) {
+                    undo->undo();
+                } else {
+                    for (int i = layersToMove.size() - 1; i >= 0; --i) {
+                        const auto& layerToMove = layersToMove[i];
+                        const auto& oldParentId = oldParentIds[i];
+                        if (oldParentId.isNil()) {
+                            layerToMove->clearParent();
+                        } else {
+                            layerToMove->setParentById(oldParentId);
+                        }
+                    }
+                }
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("movedCount"), 0},
+                    {QStringLiteral("error"), QStringLiteral("Failed to move all layers into group")}
+                };
+            }
+            movedCount = static_cast<int>(layersToMove.size());
+            for (const auto& layerToMove : layersToMove) {
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{currentComp->id().toString(),
+                                      layerToMove->id().toString(),
+                                      LayerChangedEvent::ChangeType::Modified});
+            }
+        } else {
+            for (int i = layersToMove.size() - 1; i >= 0; --i) {
+                const auto& layerToMove = layersToMove[i];
                 currentComp->removeLayerById(layerToMove->id());
-                
-                // Add to group
                 groupLayer->addChild(layerToMove);
                 if (layerToMove->parentLayerId() != groupLayer->id()) {
                     layerToMove->clearParent();
                     currentComp->appendLayerTop(layerToMove);
                     continue;
                 }
-                movedCount++;
-
-                // Notify layer change
+                ++movedCount;
                 ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                    LayerChangedEvent{currentComp->id().toString(), normalizedId,
-                                    LayerChangedEvent::ChangeType::Modified});
+                    LayerChangedEvent{currentComp->id().toString(),
+                                      layerToMove->id().toString(),
+                                      LayerChangedEvent::ChangeType::Modified});
             }
+        }
+
+        if (movedCount != layersToMove.size()) {
+            for (int i = layersToMove.size() - 1; i >= 0; --i) {
+                const auto& layerToMove = layersToMove[i];
+                if (layerToMove->parentLayerId() == groupLayer->id()) {
+                    groupLayer->removeChild(layerToMove->id());
+                }
+                const auto& oldParentId = oldParentIds[i];
+                if (oldParentId.isNil()) {
+                    layerToMove->clearParent();
+                    if (!currentComp->containsLayerById(layerToMove->id())) {
+                        currentComp->appendLayerTop(layerToMove);
+                    }
+                } else {
+                    layerToMove->setParentById(oldParentId);
+                }
+            }
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("movedCount"), movedCount},
+                {QStringLiteral("error"), QStringLiteral("Failed to move all layers into group")}
+            };
         }
 
         // Notify group change
         currentComp->changed();
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{currentComp->id().toString(), groupLayerId,
+            LayerChangedEvent{currentComp->id().toString(), normalizedGroupId,
                             LayerChangedEvent::ChangeType::Modified});
 
         return QVariantMap{
@@ -4565,7 +6356,15 @@ private:
             };
         }
 
-        auto groupLayerPtr = currentComp->layerById(LayerID(groupLayerId));
+        const QString normalizedGroupId = groupLayerId.trimmed();
+        if (normalizedGroupId.isEmpty()) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Group layer ID cannot be empty")}
+            };
+        }
+
+        auto groupLayerPtr = currentComp->layerById(LayerID(normalizedGroupId));
         if (!groupLayerPtr) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -4581,43 +6380,130 @@ private:
             };
         }
 
-        // Get group's children before clearing
-        auto childrenCopy = groupLayer->children();
+        // Get group's children before clearing.
+        const auto childrenCopy = groupLayer->children();
         int unGroupedCount = 0;
-
-        // Move each child back to composition
-        for (const auto& child : childrenCopy) {
-            if (child) {
-                groupLayer->removeChild(child->id());
-                const auto appendResult = currentComp->appendLayerTop(child);
-                if (!appendResult.success) {
-                    groupLayer->addChild(child);
-                    continue;
+        bool removedEmptyGroup = false;
+        if (auto* undo = UndoManager::instance()) {
+            const QString operationLabel = QStringLiteral("Ungroup Layers");
+            const size_t undoCountBefore = undo->undoCount();
+            auto macro = std::make_unique<MacroUndoCommand>(
+                operationLabel);
+            for (const auto& child : childrenCopy) {
+                if (!child) continue;
+                macro->addChild(std::make_unique<ChangeLayerParentCommand>(
+                    child, groupLayer->id(), LayerID{}));
+            }
+            macro->addChild(std::make_unique<RemoveLayerCommand>(
+                currentComp, groupLayerPtr));
+            if (!undo->push(std::move(macro))) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("unGroupedCount"), 0},
+                    {QStringLiteral("error"), QStringLiteral("Ungroup command was rejected by Undo manager")}
+                };
+            }
+            removedEmptyGroup = !currentComp->containsLayerById(groupLayer->id());
+            if (removedEmptyGroup) {
+                for (const auto& child : childrenCopy) {
+                    if (child && !child->parentLayerId().isNil()) {
+                        removedEmptyGroup = false;
+                        break;
+                    }
                 }
-                unGroupedCount++;
+            }
+            if (!removedEmptyGroup) {
+                const auto labels = undo->undoHistoryLabels();
+                if (undo->undoCount() == undoCountBefore + 1 &&
+                    !labels.isEmpty() && labels.first() == operationLabel) {
+                    undo->undo();
+                } else {
+                    if (!currentComp->containsLayerById(groupLayer->id())) {
+                        currentComp->appendLayerTop(groupLayerPtr);
+                    }
+                    for (const auto& child : childrenCopy) {
+                        if (!child) continue;
+                        groupLayer->addChild(child);
+                        child->setParentById(groupLayer->id());
+                    }
+                }
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("unGroupedCount"), 0},
+                    {QStringLiteral("error"), QStringLiteral("Failed to ungroup all layers")}
+                };
+            }
+            for (const auto& child : childrenCopy) {
+                if (child) ++unGroupedCount;
+            }
+        } else {
+            // Move each child back to composition.
+            for (const auto& child : childrenCopy) {
+                if (child) {
+                    groupLayer->removeChild(child->id());
+                    const auto appendResult = currentComp->appendLayerTop(child);
+                    if (!appendResult.success) {
+                        groupLayer->addChild(child);
+                        continue;
+                    }
+                    ++unGroupedCount;
+                    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                        LayerChangedEvent{currentComp->id().toString(),
+                                          child->id().toString(),
+                                          LayerChangedEvent::ChangeType::Modified});
+                }
+            }
 
-                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                    LayerChangedEvent{currentComp->id().toString(), child->id().toString(),
-                                    LayerChangedEvent::ChangeType::Modified});
+            int validChildCount = 0;
+            for (const auto& child : childrenCopy) {
+                if (child) {
+                    ++validChildCount;
+                }
+            }
+            if (unGroupedCount != validChildCount) {
+                for (const auto& child : childrenCopy) {
+                    if (!child) {
+                        continue;
+                    }
+                    if (currentComp->containsLayerById(child->id())) {
+                        currentComp->removeLayerById(child->id());
+                    }
+                    groupLayer->addChild(child);
+                }
+                currentComp->changed();
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("unGroupedCount"), 0},
+                    {QStringLiteral("error"), QStringLiteral("Failed to ungroup all layers")}
+                };
+            }
+
+            // Remove the group only after every child was successfully detached.
+            removedEmptyGroup = groupLayer->children().empty();
+            if (removedEmptyGroup) {
+                currentComp->removeLayerById(LayerID(normalizedGroupId));
             }
         }
 
-        // Remove the group only after every child was successfully detached.
-        const bool removedEmptyGroup = groupLayer->children().empty();
-        if (removedEmptyGroup) {
-            currentComp->removeLayerById(LayerID(groupLayerId));
-        }
-        
-        // Notify changes
+        // Notify changes.
         currentComp->changed();
+        if (auto* undo = UndoManager::instance(); undo && removedEmptyGroup) {
+            for (const auto& child : childrenCopy) {
+                if (!child) continue;
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{currentComp->id().toString(),
+                                      child->id().toString(),
+                                      LayerChangedEvent::ChangeType::Modified});
+            }
+        }
         if (removedEmptyGroup) {
             ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                LayerChangedEvent{currentComp->id().toString(), groupLayerId,
-                                LayerChangedEvent::ChangeType::Removed});
+                LayerChangedEvent{currentComp->id().toString(), normalizedGroupId,
+                                  LayerChangedEvent::ChangeType::Removed});
         } else if (unGroupedCount > 0) {
             ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                LayerChangedEvent{currentComp->id().toString(), groupLayerId,
-                                LayerChangedEvent::ChangeType::Modified});
+                LayerChangedEvent{currentComp->id().toString(), normalizedGroupId,
+                                  LayerChangedEvent::ChangeType::Modified});
         }
 
         return QVariantMap{
@@ -4667,8 +6553,25 @@ private:
         QSize compSize = comp->settings().compositionSize();
         solidLayer->setSize(width > 0 ? width : compSize.width(), height > 0 ? height : compSize.height());
 
-        auto result = comp->appendLayerTop(solidLayer);
-        if (!result.success) {
+        if (auto* undo = UndoManager::instance()) {
+            if (!pushUndoCommandAndVerify(
+                    std::make_unique<AddLayerCommand>(comp, solidLayer, true),
+                    [&]() { return comp->containsLayerById(solidLayer->id()); })) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}
+                };
+            }
+        } else {
+            const auto result = comp->appendLayerTop(solidLayer);
+            if (!result.success) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}
+                };
+            }
+        }
+        if (!comp->containsLayerById(solidLayer->id())) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
                 {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}
@@ -4726,11 +6629,29 @@ private:
         auto noiseLayer = ArtifactCore::makeShared<ArtifactNoiseLayer>();
         noiseLayer->setLayerName(params.name().toQString());
         noiseLayer->setSize(params.width(), params.height());
-        auto settings = noiseLayer->settings();
+        auto settings = params.hasPreset()
+            ? ArtifactCore::ProceduralTextureGenerator::makePreset(
+                  params.preset(), params.seed())
+            : noiseLayer->settings();
         settings.primary.seed = params.seed();
+        if (!params.hasPreset()) {
+            settings.primary.kind = params.kind();
+        }
         noiseLayer->setSettings(settings);
-        auto result = comp->appendLayerTop(noiseLayer);
-        if (!result.success) {
+        if (auto* undo = UndoManager::instance()) {
+            if (!pushUndoCommandAndVerify(
+                    std::make_unique<AddLayerCommand>(comp, noiseLayer, true),
+                    [&]() { return comp->containsLayerById(noiseLayer->id()); })) {
+                return QVariantMap{{QStringLiteral("success"), false},
+                                   {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}};
+            }
+        } else {
+            const auto result = comp->appendLayerTop(noiseLayer);
+            if (!result.success) {
+                return QVariantMap{{QStringLiteral("success"), false}, {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}};
+            }
+        }
+        if (!comp->containsLayerById(noiseLayer->id())) {
             return QVariantMap{{QStringLiteral("success"), false}, {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}};
         }
         comp->changed();
@@ -4798,10 +6719,7 @@ private:
             };
         }
 
-        // 1. Adjust original layer outPoint
-        originalLayer->setOutPoint(FramePosition(frameTime));
-
-        // 2. Clone layer
+        // Clone the source before changing its timing.
         QJsonObject layerJson = originalLayer->toJson();
         layerJson.remove(QStringLiteral("id")); // Ensure new ID is generated
 
@@ -4813,7 +6731,7 @@ private:
             };
         }
 
-        // Adjust cloned layer inPoint
+        // Adjust cloned layer inPoint/outPoint while it is not yet attached.
         newLayer->setInPoint(FramePosition(frameTime));
         newLayer->setOutPoint(FramePosition(outFrame));
 
@@ -4827,10 +6745,68 @@ private:
             }
         }
 
-        if (originalIndex != -1) {
-            comp->insertLayerAt(newLayer, originalIndex + 1);
+        if (originalIndex == -1) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Original layer is no longer in composition")}
+            };
+        }
+
+        if (auto* undo = UndoManager::instance()) {
+            const int appendedIndex = comp->allLayer().size();
+            auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Split Layer"));
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                originalLayer, QStringLiteral("time.outPoint"),
+                QVariant::fromValue(static_cast<qint64>(outFrame)),
+                QVariant::fromValue(static_cast<qint64>(frameTime)),
+                QStringLiteral("Trim Original Layer")));
+            macro->addChild(std::make_unique<AddLayerCommand>(comp, newLayer, true));
+            macro->addChild(std::make_unique<MoveLayerIndexCommand>(
+                comp, newLayer, appendedIndex, originalIndex + 1));
+            const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+                const auto currentLayers = comp->allLayer();
+                int newLayerIndex = -1;
+                for (int index = 0; index < currentLayers.size(); ++index) {
+                    if (currentLayers[index] &&
+                        currentLayers[index]->id() == newLayer->id()) {
+                        newLayerIndex = index;
+                        break;
+                    }
+                }
+                return originalLayer->outPoint().framePosition() == frameTime &&
+                       comp->containsLayerById(newLayer->id()) &&
+                       newLayerIndex == originalIndex + 1;
+            });
+            if (!applied) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to split layer")}
+                };
+            }
         } else {
-            comp->appendLayerTop(newLayer);
+            originalLayer->setOutPoint(FramePosition(frameTime));
+            comp->insertLayerAt(newLayer, originalIndex + 1);
+            const auto currentLayers = comp->allLayer();
+            int newLayerIndex = -1;
+            for (int index = 0; index < currentLayers.size(); ++index) {
+                if (currentLayers[index] &&
+                    currentLayers[index]->id() == newLayer->id()) {
+                    newLayerIndex = index;
+                    break;
+                }
+            }
+            if (originalLayer->outPoint().framePosition() != frameTime ||
+                !comp->containsLayerById(newLayer->id()) ||
+                newLayerIndex != originalIndex + 1) {
+                if (comp->containsLayerById(newLayer->id())) {
+                    comp->removeLayerById(newLayer->id());
+                }
+                originalLayer->setOutPoint(FramePosition(outFrame));
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Failed to split layer")}
+                };
+            }
         }
 
         comp->changed();
@@ -4875,25 +6851,116 @@ private:
             return false;
         }
 
+        auto* undo = UndoManager::instance();
+        auto macro = undo
+            ? std::make_unique<MacroUndoCommand>(QStringLiteral("Ripple Delete Layer"))
+            : nullptr;
+        struct RippleShift {
+            ArtifactAbstractLayerPtr layer;
+            int64_t oldIn = 0;
+            int64_t oldOut = 0;
+            int64_t oldStart = 0;
+        };
+        QVector<RippleShift> shiftedLayers;
+        bool changed = false;
+
         // Shift subsequent layers
         QVector<ArtifactAbstractLayerPtr> layers = comp->allLayer();
+        int targetIndex = -1;
+        for (int index = 0; index < layers.size(); ++index) {
+            if (layers[index] && layers[index]->id() == targetLayer->id()) {
+                targetIndex = index;
+                break;
+            }
+        }
+        if (targetIndex < 0) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Target layer is no longer in composition")}
+            };
+        }
         for (const auto& layer : layers) {
             if (layer && layer->id() != targetLayer->id()) {
                 int64_t layerIn = layer->inPoint().framePosition();
                 if (layerIn >= outFrame) {
-                    layer->setInPoint(FramePosition(layerIn - duration));
-                    layer->setOutPoint(FramePosition(layer->outPoint().framePosition() - duration));
-                    layer->setStartTime(FramePosition(layer->startTime().framePosition() - duration));
+                    const int64_t layerOut = layer->outPoint().framePosition();
+                    const int64_t startTime = layer->startTime().framePosition();
+                    changed = true;
+                    shiftedLayers.push_back(RippleShift{layer, layerIn, layerOut, startTime});
+                    if (macro) {
+                        macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                            layer, QStringLiteral("time.inPoint"), layerIn,
+                            layerIn - duration, QStringLiteral("Ripple In Point")));
+                        macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                            layer, QStringLiteral("time.outPoint"), layerOut,
+                            layerOut - duration, QStringLiteral("Ripple Out Point")));
+                        macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                            layer, QStringLiteral("time.startTime"), startTime,
+                            startTime - duration, QStringLiteral("Ripple Start Time")));
+                    } else {
+                        layer->setInPoint(FramePosition(layerIn - duration));
+                        layer->setOutPoint(FramePosition(layerOut - duration));
+                        layer->setStartTime(FramePosition(startTime - duration));
+                    }
 
-                    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                                        LayerChangedEvent::ChangeType::Modified});
+                    if (!macro) {
+                        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                                            LayerChangedEvent::ChangeType::Modified});
+                    }
                 }
             }
         }
 
         // Remove the target layer
-        comp->removeLayerById(targetLayer->id());
+        if (macro) {
+            changed = true;
+            macro->addChild(std::make_unique<RemoveLayerCommand>(comp, targetLayer));
+            if (changed) {
+                const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+                    if (comp->containsLayerById(targetLayer->id())) {
+                        return false;
+                    }
+                    return std::all_of(
+                        shiftedLayers.begin(), shiftedLayers.end(),
+                        [&](const RippleShift& shifted) {
+                            return shifted.layer->inPoint().framePosition() ==
+                                       shifted.oldIn - duration &&
+                                   shifted.layer->outPoint().framePosition() ==
+                                       shifted.oldOut - duration &&
+                                   shifted.layer->startTime().framePosition() ==
+                                       shifted.oldStart - duration;
+                        });
+                });
+                if (!applied) {
+                    return false;
+                }
+            }
+        } else {
+            comp->removeLayerById(targetLayer->id());
+            const bool applied = !comp->containsLayerById(targetLayer->id()) &&
+                                 std::all_of(
+                                     shiftedLayers.begin(), shiftedLayers.end(),
+                                     [&](const RippleShift& shifted) {
+                                         return shifted.layer->inPoint().framePosition() ==
+                                                    shifted.oldIn - duration &&
+                                                shifted.layer->outPoint().framePosition() ==
+                                                    shifted.oldOut - duration &&
+                                                shifted.layer->startTime().framePosition() ==
+                                                    shifted.oldStart - duration;
+                                     });
+            if (!applied) {
+                if (!comp->containsLayerById(targetLayer->id())) {
+                    comp->insertLayerAt(targetLayer, targetIndex);
+                }
+                for (auto it = shiftedLayers.rbegin(); it != shiftedLayers.rend(); ++it) {
+                    it->layer->setInPoint(FramePosition(it->oldIn));
+                    it->layer->setOutPoint(FramePosition(it->oldOut));
+                    it->layer->setStartTime(FramePosition(it->oldStart));
+                }
+                return false;
+            }
+        }
         comp->changed();
 
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
@@ -4920,14 +6987,34 @@ private:
             return false;
         }
 
+        QSet<QString> seenLayerIds;
+        for (const QString& rawId : layerIds) {
+            const QString id = rawId.trimmed();
+            if (id.isEmpty() || seenLayerIds.contains(id) ||
+                !comp->layerById(LayerID(id))) {
+                return false;
+            }
+            seenLayerIds.insert(id);
+        }
+
         int64_t currentEndTime = 0;
         bool first = true;
+        auto* undo = UndoManager::instance();
+        auto macro = undo
+            ? std::make_unique<MacroUndoCommand>(QStringLiteral("Align Layers Sequentially"))
+            : nullptr;
+        struct AlignShift {
+            ArtifactAbstractLayerPtr layer;
+            int64_t oldIn = 0;
+            int64_t oldOut = 0;
+            int64_t oldStart = 0;
+            int64_t shift = 0;
+        };
+        QVector<AlignShift> shiftedLayers;
+        bool changed = false;
 
         for (const QString& id : layerIds) {
-            auto layer = comp->layerById(LayerID(id));
-            if (!layer) {
-                continue;
-            }
+            auto layer = comp->layerById(LayerID(id.trimmed()));
 
             if (first) {
                 currentEndTime = layer->outPoint().framePosition();
@@ -4937,20 +7024,76 @@ private:
 
             int64_t layerIn = layer->inPoint().framePosition();
             int64_t shift = currentEndTime - layerIn;
+            const int64_t layerOut = layer->outPoint().framePosition();
 
             if (shift != 0) {
-                layer->setInPoint(FramePosition(layer->inPoint().framePosition() + shift));
-                layer->setOutPoint(FramePosition(layer->outPoint().framePosition() + shift));
-                layer->setStartTime(FramePosition(layer->startTime().framePosition() + shift));
+                const int64_t startTime = layer->startTime().framePosition();
+                changed = true;
+                shiftedLayers.push_back(AlignShift{
+                    layer, layerIn, layerOut, startTime, shift});
+                if (macro) {
+                    macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                        layer, QStringLiteral("time.inPoint"), layerIn,
+                        layerIn + shift, QStringLiteral("Align In Point")));
+                    macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                        layer, QStringLiteral("time.outPoint"), layerOut,
+                        layerOut + shift, QStringLiteral("Align Out Point")));
+                    macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                        layer, QStringLiteral("time.startTime"), startTime,
+                        startTime + shift, QStringLiteral("Align Start Time")));
+                } else {
+                    layer->setInPoint(FramePosition(layerIn + shift));
+                    layer->setOutPoint(FramePosition(layerOut + shift));
+                    layer->setStartTime(FramePosition(startTime + shift));
+                }
 
-                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                    LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                                    LayerChangedEvent::ChangeType::Modified});
+                if (!macro) {
+                    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                                        LayerChangedEvent::ChangeType::Modified});
+                }
             }
 
-            currentEndTime = layer->outPoint().framePosition();
+            currentEndTime = shift != 0 ? layerOut + shift
+                                        : layer->outPoint().framePosition();
         }
 
+        if (macro && changed) {
+            const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+                return std::all_of(
+                    shiftedLayers.begin(), shiftedLayers.end(),
+                    [](const AlignShift& shifted) {
+                        return shifted.layer->inPoint().framePosition() ==
+                                   shifted.oldIn + shifted.shift &&
+                               shifted.layer->outPoint().framePosition() ==
+                                   shifted.oldOut + shifted.shift &&
+                               shifted.layer->startTime().framePosition() ==
+                                   shifted.oldStart + shifted.shift;
+                    });
+            });
+            if (!applied) {
+                return false;
+            }
+        } else if (!macro && changed) {
+            const bool applied = std::all_of(
+                shiftedLayers.begin(), shiftedLayers.end(),
+                [](const AlignShift& shifted) {
+                    return shifted.layer->inPoint().framePosition() ==
+                               shifted.oldIn + shifted.shift &&
+                           shifted.layer->outPoint().framePosition() ==
+                               shifted.oldOut + shifted.shift &&
+                           shifted.layer->startTime().framePosition() ==
+                               shifted.oldStart + shifted.shift;
+                });
+            if (!applied) {
+                for (auto it = shiftedLayers.rbegin(); it != shiftedLayers.rend(); ++it) {
+                    it->layer->setInPoint(FramePosition(it->oldIn));
+                    it->layer->setOutPoint(FramePosition(it->oldOut));
+                    it->layer->setStartTime(FramePosition(it->oldStart));
+                }
+                return false;
+            }
+        }
         comp->changed();
         return true;
     }
@@ -4984,6 +7127,42 @@ private:
             }
         }
         return nullptr;
+    }
+
+    static void collectProjectItemIds(ProjectItem* item, QSet<QString>& ids)
+    {
+        if (!item) {
+            return;
+        }
+        ids.insert(item->id.toString());
+        for (auto* child : item->children) {
+            collectProjectItemIds(child, ids);
+        }
+    }
+
+    static QSet<QString> projectItemIds(const ArtifactProjectPtr& project)
+    {
+        QSet<QString> ids;
+        if (!project) {
+            return ids;
+        }
+        for (auto* root : project->projectItems()) {
+            collectProjectItemIds(root, ids);
+        }
+        return ids;
+    }
+
+    static int projectAssetCount(const ProjectItem* item)
+    {
+        if (!item) {
+            return 0;
+        }
+        int count = (item->type() == eProjectItemType::Footage ||
+                     item->type() == eProjectItemType::Solid) ? 1 : 0;
+        for (const auto* child : item->children) {
+            count += projectAssetCount(child);
+        }
+        return count;
     }
 
     static QJsonObject projectItemToJson(const ProjectItem* item)
@@ -5080,8 +7259,11 @@ private:
         plan.confirmation.operationName = plan.dryRun.operationName;
         plan.confirmation.targetIds = plan.dryRun.targetIds;
         plan.confirmation.required = true;
-        plan.confirmation.undoAvailable = true;
         const ProjectItem* item = findProjectItemByIdPointer(itemId);
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        plan.confirmation.undoAvailable = service && item &&
+            service->projectItemRemovalUndoAvailable(const_cast<ProjectItem*>(item));
         const bool exists = item != nullptr;
         plan.dryRun.wouldChange = exists;
         plan.dryRun.wouldFail = !exists;
@@ -5119,7 +7301,11 @@ private:
         confirmation.targetIds = dryRun.targetIds;
         confirmation.reason = QStringLiteral("Project item removal requires explicit confirmation.");
         confirmation.previewMessage = QStringLiteral("Remove the selected project item?");
-        confirmation.undoAvailable = true;
+        const ProjectItem* item = findProjectItemByIdPointer(itemId);
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        confirmation.undoAvailable = service && item &&
+            service->projectItemRemovalUndoAvailable(const_cast<ProjectItem*>(item));
         QString error;
         if (!ArtifactCore::SafeWriteRemovalGate::authorize(
                 dryRun, confirmation, confirmed, &error)) {
@@ -5172,8 +7358,8 @@ private:
             }
             parentFolder = static_cast<FolderItem*>(parent);
         }
-        project->createFolder(trimmedName, parentFolder);
-        return true;
+        return service->createProjectFolder(
+            UniString::fromQString(trimmedName), parentFolder);
     }
 
     static QVariant renameProjectItemById(const QString& itemId, const QString& newName)
@@ -5194,13 +7380,8 @@ private:
             auto* compItem = static_cast<CompositionItem*>(item);
             return service->renameComposition(compItem->compositionId, UniString::fromQString(trimmedName));
         }
-        auto project = currentProject();
-        if (!project) {
-            return false;
-        }
-        item->name = UniString::fromQString(trimmedName);
-        project->projectChanged();
-        return true;
+        return service->renameProjectItem(
+            item, UniString::fromQString(trimmedName));
     }
 
     static QVariant removeProjectItemById(const QString& itemId)
@@ -5230,15 +7411,37 @@ private:
         QVariantMap result;
         result.insert(QStringLiteral("schemaVersion"), 1);
         result.insert(QStringLiteral("requested"), items.size());
+        result.insert(QStringLiteral("requestedCount"), items.size());
+        if (items.isEmpty()) {
+            result.insert(QStringLiteral("succeeded"), 0);
+            result.insert(QStringLiteral("failed"), 0);
+            result.insert(QStringLiteral("failures"), QVariantList{});
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("partial"), false);
+            result.insert(QStringLiteral("errorCode"), QStringLiteral("NO_ITEMS"));
+            return result;
+        }
         int succeeded = 0;
         int failed = 0;
+        int rolledBack = 0;
+        bool rollbackSucceeded = true;
+        QVector<QPair<QString, QString>> appliedRelinks;
         QVariantList failures;
+        const auto rollbackApplied = [&]() {
+            for (auto it = appliedRelinks.crbegin();
+                 it != appliedRelinks.crend(); ++it) {
+                if (relinkFootageByPath(it->second, it->first).toBool()) {
+                    ++rolledBack;
+                } else {
+                    rollbackSucceeded = false;
+                }
+            }
+        };
         for (const QVariant& value : items) {
             const QVariantMap item = value.toMap();
             const QString oldPath = item.value(QStringLiteral("oldFilePath")).toString().trimmed();
             const QString newPath = item.value(QStringLiteral("newFilePath")).toString().trimmed();
-            if (oldPath.isEmpty() || newPath.isEmpty() ||
-                !relinkFootageByPath(oldPath, newPath).toBool()) {
+            if (oldPath.isEmpty() || newPath.isEmpty()) {
                 ++failed;
                 QVariantMap failure;
                 failure.insert(QStringLiteral("oldFilePath"), oldPath);
@@ -5248,14 +7451,30 @@ private:
                                    ? QStringLiteral("PATH_REQUIRED")
                                    : QStringLiteral("RELINK_FAILED"));
                 failures.append(failure);
-                continue;
+                rollbackApplied();
+                break;
+            }
+            if (!relinkFootageByPath(oldPath, newPath).toBool()) {
+                ++failed;
+                QVariantMap failure;
+                failure.insert(QStringLiteral("oldFilePath"), oldPath);
+                failure.insert(QStringLiteral("newFilePath"), newPath);
+                failure.insert(QStringLiteral("errorCode"),
+                               QStringLiteral("RELINK_FAILED"));
+                failures.append(failure);
+                rollbackApplied();
+                break;
             }
             ++succeeded;
+            appliedRelinks.push_back(qMakePair(oldPath, newPath));
         }
         result.insert(QStringLiteral("succeeded"), succeeded);
         result.insert(QStringLiteral("failed"), failed);
+        result.insert(QStringLiteral("rolledBackCount"), rolledBack);
+        result.insert(QStringLiteral("rollbackSucceeded"), rollbackSucceeded);
         result.insert(QStringLiteral("failures"), failures);
         result.insert(QStringLiteral("success"), failed == 0);
+        result.insert(QStringLiteral("partial"), succeeded > 0 && failed > 0);
         return result;
     }
 
@@ -5274,7 +7493,7 @@ private:
             return false;
         }
         playback->play();
-        return true;
+        return playback->state() == ArtifactCore::PlaybackState::Playing;
     }
 
     // Pause playback of the active composition.
@@ -5286,7 +7505,7 @@ private:
             return false;
         }
         playback->pause();
-        return true;
+        return playback->state() == ArtifactCore::PlaybackState::Paused;
     }
 
     // Stop playback and return to start frame.
@@ -5298,7 +7517,7 @@ private:
             return false;
         }
         playback->stop();
-        return true;
+        return playback->state() == ArtifactCore::PlaybackState::Stopped;
     }
 
     // Toggle between play and pause.
@@ -5309,8 +7528,11 @@ private:
         if (!playback) {
             return false;
         }
+        const bool wasPlaying = playback->state() == ArtifactCore::PlaybackState::Playing;
         playback->togglePlayPause();
-        return true;
+        const auto expected = wasPlaying ? ArtifactCore::PlaybackState::Paused
+                                         : ArtifactCore::PlaybackState::Playing;
+        return playback->state() == expected;
     }
 
     // Get current playback state.
@@ -5321,9 +7543,10 @@ private:
         if (!playback) {
             return QStringLiteral("unknown");
         }
-        if (playback->isPlaying()) {
+        const auto state = playback->state();
+        if (state == ArtifactCore::PlaybackState::Playing) {
             return QStringLiteral("playing");
-        } else if (playback->isPaused()) {
+        } else if (state == ArtifactCore::PlaybackState::Paused) {
             return QStringLiteral("paused");
         } else {
             return QStringLiteral("stopped");
@@ -5352,7 +7575,7 @@ private:
             return false;
         }
         playback->setCurrentFrame(FramePosition(frameNumber));
-        return true;
+        return playback->currentFrame().framePosition() == frameNumber;
     }
 
     // Move playhead to next frame.
@@ -5363,8 +7586,9 @@ private:
         if (!playback) {
             return false;
         }
+        const auto before = playback->currentFrame();
         playback->goToNextFrame();
-        return true;
+        return playback->currentFrame() != before;
     }
 
     // Move playhead to previous frame.
@@ -5375,8 +7599,9 @@ private:
         if (!playback) {
             return false;
         }
+        const auto before = playback->currentFrame();
         playback->goToPreviousFrame();
-        return true;
+        return playback->currentFrame() != before;
     }
 
     // Move playhead to start of composition.
@@ -5388,7 +7613,7 @@ private:
             return false;
         }
         playback->goToStartFrame();
-        return true;
+        return playback->currentFrame() == playback->frameRange().startPosition();
     }
 
     // Move playhead to end of composition.
@@ -5400,7 +7625,7 @@ private:
             return false;
         }
         playback->goToEndFrame();
-        return true;
+        return playback->currentFrame() == playback->frameRange().endPosition();
     }
 
     static QVariant playbackSetInPoint()
@@ -5410,8 +7635,9 @@ private:
         if (!playback || !points) {
             return false;
         }
-        points->setInPointAtCurrent(playback->currentFrame());
-        return true;
+        playback->setInPointAtCurrentFrame();
+        const auto applied = points->inPoint();
+        return applied.has_value() && applied.value() == playback->currentFrame();
     }
 
     static QVariant playbackSetOutPoint()
@@ -5421,8 +7647,9 @@ private:
         if (!playback || !points) {
             return false;
         }
-        points->setOutPointAtCurrent(playback->currentFrame());
-        return true;
+        playback->setOutPointAtCurrentFrame();
+        const auto applied = points->outPoint();
+        return applied.has_value() && applied.value() == playback->currentFrame();
     }
 
     static QVariant playbackClearInPoint()
@@ -5432,8 +7659,8 @@ private:
         if (!points) {
             return false;
         }
-        points->clearInPoint();
-        return true;
+        playback->clearInPoint();
+        return !points->inPoint().has_value();
     }
 
     static QVariant playbackClearOutPoint()
@@ -5443,8 +7670,8 @@ private:
         if (!points) {
             return false;
         }
-        points->clearOutPoint();
-        return true;
+        playback->clearOutPoint();
+        return !points->outPoint().has_value();
     }
 
     static QVariant playbackClearAllPoints()
@@ -5454,8 +7681,8 @@ private:
         if (!points) {
             return false;
         }
-        points->clearAllPoints();
-        return true;
+        playback->clearInOutPoints();
+        return !points->inPoint().has_value() && !points->outPoint().has_value();
     }
 
     static QVariant playbackGoToNextMarker()
@@ -5470,7 +7697,7 @@ private:
             return false;
         }
         playback->setCurrentFrame(*next);
-        return true;
+        return playback->currentFrame() == *next;
     }
 
     static QVariant playbackGoToPreviousMarker()
@@ -5485,7 +7712,7 @@ private:
             return false;
         }
         playback->setCurrentFrame(*prev);
-        return true;
+        return playback->currentFrame() == *prev;
     }
 
     static QVariant playbackGoToNextChapter()
@@ -5500,7 +7727,7 @@ private:
             return false;
         }
         playback->setCurrentFrame(*next);
-        return true;
+        return playback->currentFrame() == *next;
     }
 
     static QVariant playbackGoToPreviousChapter()
@@ -5515,7 +7742,7 @@ private:
             return false;
         }
         playback->setCurrentFrame(*prev);
-        return true;
+        return playback->currentFrame() == *prev;
     }
 
     static QVariant playbackAddMarker(const QString& comment)
@@ -5525,8 +7752,8 @@ private:
         if (!playback || !points) {
             return false;
         }
-        points->addMarker(playback->currentFrame(), comment, MarkerType::Comment);
-        return true;
+        playback->addMarkerAtCurrentFrame(comment);
+        return points->getMarkerAt(playback->currentFrame()) != nullptr;
     }
 
     static QVariant playbackAddChapter(const QString& name)
@@ -5536,8 +7763,9 @@ private:
         if (!playback || !points) {
             return false;
         }
-        points->addMarker(playback->currentFrame(), name, MarkerType::Chapter);
-        return true;
+        playback->addChapterMarkerAtCurrentFrame(name);
+        const auto* marker = points->getMarkerAt(playback->currentFrame());
+        return marker != nullptr && marker->type() == MarkerType::Chapter;
     }
 
     static QVariant playbackClearAllMarkers()
@@ -5547,8 +7775,8 @@ private:
         if (!points) {
             return false;
         }
-        points->clearAllMarkers();
-        return true;
+        playback->clearAllMarkers();
+        return points->markerCount() == 0;
     }
 
     // Timeline Information
@@ -5590,7 +7818,9 @@ private:
             return false;
         }
         playback->setFrameRange(FrameRange(FramePosition(frameStart), FramePosition(frameEnd)));
-        return true;
+        const auto applied = playback->frameRange();
+        return applied.startPosition().framePosition() == frameStart &&
+               applied.endPosition().framePosition() == frameEnd;
     }
 
     // Playback Settings
@@ -5623,11 +7853,12 @@ private:
     static QVariant playbackSetSpeed(double speed)
     {
         auto* playback = ArtifactPlaybackService::instance();
-        if (!playback || speed <= 0.0) {
+        if (!playback || !std::isfinite(speed) || speed <= 0.0 ||
+            speed > static_cast<double>(std::numeric_limits<float>::max())) {
             return false;
         }
         playback->setPlaybackSpeed(static_cast<float>(speed));
-        return true;
+        return playback->playbackSpeed() == static_cast<float>(speed);
     }
 
     // Get looping state.
@@ -5650,7 +7881,7 @@ private:
             return false;
         }
         playback->setLooping(enabled);
-        return true;
+        return playback->isLooping() == enabled;
     }
 
     // Phase 6: Export
@@ -5879,8 +8110,9 @@ private:
         if (!service || !comp) {
             return false;
         }
+        const int beforeCount = service->jobCount();
         service->addRenderQueueForComposition(comp->id(), comp->settings().compositionName().toQString());
-        return true;
+        return service->jobCount() == beforeCount + 1;
     }
 
     static QVariant addRenderQueueForComposition(const QString& compositionId)
@@ -5898,8 +8130,9 @@ private:
         if (!comp) {
             return false;
         }
+        const int beforeCount = service->jobCount();
         service->addRenderQueueForComposition(comp->id(), comp->settings().compositionName().toQString());
-        return true;
+        return service->jobCount() == beforeCount + 1;
     }
 
     static QVariant addAllCompositionsToRenderQueue()
@@ -5917,8 +8150,9 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const int beforeCount = service->jobCount();
         service->duplicateRenderQueueAt(jobIndex);
-        return true;
+        return service->jobCount() == beforeCount + 1;
     }
 
     static QVariant moveRenderQueue(int fromIndex, int toIndex)
@@ -5927,7 +8161,37 @@ private:
         if (!service || fromIndex < 0 || toIndex < 0 || fromIndex >= service->jobCount() || toIndex >= service->jobCount()) {
             return false;
         }
+        if (fromIndex == toIndex) {
+            return true;
+        }
+        const QJsonArray before = service->toJson();
+        if (fromIndex >= before.size() || toIndex >= before.size()) {
+            return false;
+        }
+        auto jobKey = [](const QJsonValue& value) {
+            const QJsonObject object = value.toObject();
+            const QString id = object.value(QStringLiteral("jobId")).toString();
+            return id.isEmpty()
+                ? QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact))
+                : id;
+        };
         service->moveRenderQueue(fromIndex, toIndex);
+        const QJsonArray after = service->toJson();
+        if (after.size() != before.size()) {
+            return false;
+        }
+        QVector<QString> expected;
+        expected.reserve(before.size());
+        for (const auto& value : before) {
+            expected.push_back(jobKey(value));
+        }
+        const QString moved = expected.takeAt(fromIndex);
+        expected.insert(toIndex, moved);
+        for (int index = 0; index < after.size(); ++index) {
+            if (jobKey(after.at(index)) != expected[index]) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -5937,7 +8201,23 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const int beforeCount = service->jobCount();
+        const QJsonArray before = service->toJson();
+        const QString removedJobId =
+            jobIndex < before.size()
+                ? before.at(jobIndex).toObject().value(QStringLiteral("jobId")).toString()
+                : QString();
         service->removeRenderQueueAt(jobIndex);
+        if (service->jobCount() != beforeCount - 1) {
+            return false;
+        }
+        if (!removedJobId.isEmpty()) {
+            for (const auto& value : service->toJson()) {
+                if (value.toObject().value(QStringLiteral("jobId")).toString() == removedJobId) {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -6016,7 +8296,16 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldName = service->jobNameAt(jobIndex);
+        const QString requestedName = name.trimmed();
+        if (oldName == requestedName) {
+            return true;
+        }
         service->setJobNameAt(jobIndex, name);
+        if (service->jobNameAt(jobIndex) != requestedName) {
+            service->setJobNameAt(jobIndex, oldName);
+            return false;
+        }
         return true;
     }
 
@@ -6026,7 +8315,16 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldPath = service->jobOutputPathAt(jobIndex);
+        const QString requestedPath = outputPath.trimmed();
+        if (oldPath == requestedPath) {
+            return true;
+        }
         service->setJobOutputPathAt(jobIndex, outputPath);
+        if (service->jobOutputPathAt(jobIndex) != requestedPath) {
+            service->setJobOutputPathAt(jobIndex, oldPath);
+            return false;
+        }
         return true;
     }
 
@@ -6036,7 +8334,22 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        int oldStart = 0;
+        int oldEnd = 0;
+        if (!service->jobFrameRangeAt(jobIndex, &oldStart, &oldEnd)) {
+            return false;
+        }
+        if (oldStart == startFrame && oldEnd == endFrame) {
+            return true;
+        }
         service->setJobFrameRangeAt(jobIndex, startFrame, endFrame);
+        int appliedStart = 0;
+        int appliedEnd = 0;
+        if (!service->jobFrameRangeAt(jobIndex, &appliedStart, &appliedEnd) ||
+            appliedStart != startFrame || appliedEnd != endFrame) {
+            service->setJobFrameRangeAt(jobIndex, oldStart, oldEnd);
+            return false;
+        }
         return true;
     }
 
@@ -6072,7 +8385,40 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        QString oldFormat;
+        QString oldCodec;
+        QString oldProfile;
+        int oldWidth = 0;
+        int oldHeight = 0;
+        double oldFps = 0.0;
+        int oldBitrate = 0;
+        if (!service->jobOutputSettingsAt(jobIndex, &oldFormat, &oldCodec,
+                                          &oldProfile, &oldWidth, &oldHeight,
+                                          &oldFps, &oldBitrate)) {
+            return false;
+        }
         service->setJobOutputSettingsAt(jobIndex, outputFormat, codec, codecProfile, width, height, fps, bitrateKbps);
+        QString appliedFormat;
+        QString appliedCodec;
+        QString appliedProfile;
+        int appliedWidth = 0;
+        int appliedHeight = 0;
+        double appliedFps = 0.0;
+        int appliedBitrate = 0;
+        if (!service->jobOutputSettingsAt(jobIndex, &appliedFormat, &appliedCodec,
+                                          &appliedProfile, &appliedWidth,
+                                          &appliedHeight, &appliedFps,
+                                          &appliedBitrate) ||
+            appliedFormat.trimmed().isEmpty() || appliedCodec.trimmed().isEmpty() ||
+            appliedWidth < 16 || appliedWidth > 16384 ||
+            appliedHeight < 16 || appliedHeight > 16384 ||
+            !std::isfinite(appliedFps) || appliedFps < 1.0 || appliedFps > 240.0 ||
+            appliedBitrate < 128 || appliedBitrate > 200000) {
+            service->setJobOutputSettingsAt(jobIndex, oldFormat, oldCodec,
+                                            oldProfile, oldWidth, oldHeight,
+                                            oldFps, oldBitrate);
+            return false;
+        }
         return true;
     }
 
@@ -6082,7 +8428,15 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const bool oldEnabled = service->jobIntegratedRenderEnabledAt(jobIndex);
+        if (oldEnabled == enabled) {
+            return true;
+        }
         service->setJobIntegratedRenderEnabledAt(jobIndex, enabled);
+        if (service->jobIntegratedRenderEnabledAt(jobIndex) != enabled) {
+            service->setJobIntegratedRenderEnabledAt(jobIndex, oldEnabled);
+            return false;
+        }
         return true;
     }
 
@@ -6092,7 +8446,13 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldBackend = service->jobRenderBackendAt(jobIndex);
         service->setJobRenderBackendAt(jobIndex, backend);
+        const QString appliedBackend = service->jobRenderBackendAt(jobIndex);
+        if (appliedBackend.isEmpty()) {
+            service->setJobRenderBackendAt(jobIndex, oldBackend);
+            return false;
+        }
         return true;
     }
 
@@ -6102,7 +8462,16 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldPath = service->jobAudioSourcePathAt(jobIndex);
+        const QString requestedPath = path.trimmed().left(32768);
+        if (oldPath == requestedPath) {
+            return true;
+        }
         service->setJobAudioSourcePathAt(jobIndex, path);
+        if (service->jobAudioSourcePathAt(jobIndex) != requestedPath) {
+            service->setJobAudioSourcePathAt(jobIndex, oldPath);
+            return false;
+        }
         return true;
     }
 
@@ -6112,7 +8481,18 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldCodec = service->jobAudioCodecAt(jobIndex);
+        const QString trimmedCodec = codec.trimmed().left(256);
+        const QString requestedCodec = trimmedCodec.isEmpty()
+            ? QStringLiteral("aac") : trimmedCodec;
+        if (oldCodec == requestedCodec) {
+            return true;
+        }
         service->setJobAudioCodecAt(jobIndex, codec);
+        if (service->jobAudioCodecAt(jobIndex) != requestedCodec) {
+            service->setJobAudioCodecAt(jobIndex, oldCodec);
+            return false;
+        }
         return true;
     }
 
@@ -6122,7 +8502,16 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const int oldBitrate = service->jobAudioBitrateKbpsAt(jobIndex);
+        const int requestedBitrate = std::clamp(bitrateKbps, 32, 1024);
+        if (oldBitrate == requestedBitrate) {
+            return true;
+        }
         service->setJobAudioBitrateKbpsAt(jobIndex, bitrateKbps);
+        if (service->jobAudioBitrateKbpsAt(jobIndex) != requestedBitrate) {
+            service->setJobAudioBitrateKbpsAt(jobIndex, oldBitrate);
+            return false;
+        }
         return true;
     }
 
@@ -6132,8 +8521,15 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString status = service->jobStatusAt(jobIndex);
+        const bool rerunnable = status == QStringLiteral("Completed") ||
+                                status == QStringLiteral("Failed") ||
+                                status == QStringLiteral("Canceled");
+        if (!rerunnable) {
+            return false;
+        }
         service->resetJobForRerun(jobIndex);
-        return true;
+        return service->jobStatusAt(jobIndex) == QStringLiteral("Pending");
     }
 
     static QVariant rerenderAllDetectedFailedFrames(int jobIndex)
@@ -6160,8 +8556,12 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldStatus = service->jobStatusAt(jobIndex);
+        if (oldStatus != QStringLiteral("Pending")) {
+            return false;
+        }
         service->startRenderQueueAt(jobIndex);
-        return true;
+        return service->jobStatusAt(jobIndex) == QStringLiteral("Rendering");
     }
 
     static QVariant pauseRenderQueueAt(int jobIndex)
@@ -6170,8 +8570,11 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        if (service->jobStatusAt(jobIndex) != QStringLiteral("Rendering")) {
+            return false;
+        }
         service->pauseRenderQueueAt(jobIndex);
-        return true;
+        return service->jobStatusAt(jobIndex) == QStringLiteral("Pending");
     }
 
     static QVariant cancelRenderQueueAt(int jobIndex)
@@ -6180,8 +8583,13 @@ private:
         if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
             return false;
         }
+        const QString oldStatus = service->jobStatusAt(jobIndex);
+        if (oldStatus != QStringLiteral("Pending") &&
+            oldStatus != QStringLiteral("Rendering")) {
+            return false;
+        }
         service->cancelRenderQueueAt(jobIndex);
-        return true;
+        return service->jobStatusAt(jobIndex) == QStringLiteral("Canceled");
     }
 
     static QVariant renderQueueStartAll()
@@ -6190,8 +8598,27 @@ private:
         if (!service) {
             return false;
         }
+        int pendingCount = 0;
+        for (int i = 0; i < service->jobCount(); ++i) {
+            if (service->jobStatusAt(i) == QStringLiteral("Pending")) {
+                ++pendingCount;
+            }
+        }
+        if (pendingCount == 0) {
+            return false;
+        }
         service->startAllJobs();
-        return true;
+        int remainingPending = 0;
+        bool hasRendering = false;
+        for (int i = 0; i < service->jobCount(); ++i) {
+            const QString status = service->jobStatusAt(i);
+            if (status == QStringLiteral("Pending")) {
+                ++remainingPending;
+            } else if (status == QStringLiteral("Rendering")) {
+                hasRendering = true;
+            }
+        }
+        return hasRendering || remainingPending < pendingCount;
     }
 
     static QVariant renderQueuePauseAll()
@@ -6200,7 +8627,19 @@ private:
         if (!service) {
             return false;
         }
+        bool hasRendering = false;
+        for (int i = 0; i < service->jobCount(); ++i) {
+            hasRendering = hasRendering || service->jobStatusAt(i) == QStringLiteral("Rendering");
+        }
+        if (!hasRendering) {
+            return false;
+        }
         service->pauseAllJobs();
+        for (int i = 0; i < service->jobCount(); ++i) {
+            if (service->jobStatusAt(i) == QStringLiteral("Rendering")) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -6210,7 +8649,23 @@ private:
         if (!service) {
             return false;
         }
+        bool hasCancelable = false;
+        for (int i = 0; i < service->jobCount(); ++i) {
+            const QString status = service->jobStatusAt(i);
+            hasCancelable = hasCancelable || status == QStringLiteral("Pending") ||
+                            status == QStringLiteral("Rendering");
+        }
+        if (!hasCancelable) {
+            return false;
+        }
         service->cancelAllJobs();
+        for (int i = 0; i < service->jobCount(); ++i) {
+            const QString status = service->jobStatusAt(i);
+            if (status == QStringLiteral("Pending") ||
+                status == QStringLiteral("Rendering")) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -6221,7 +8676,7 @@ private:
             return false;
         }
         service->removeAllRenderQueues();
-        return true;
+        return service->jobCount() == 0;
     }
 
     static QVariant dryRunRemoveAllRenderQueues()
@@ -6308,7 +8763,24 @@ private:
         slot[QStringLiteral("required")] = true;
         slotsObj[slotName] = slot;
         obj[QStringLiteral("templateSlots")] = slotsObj;
-        layer->setLayerNote(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        const QString updatedNote = QString::fromUtf8(
+            QJsonDocument(obj).toJson(QJsonDocument::Compact));
+        if (layer->layerNote() != updatedNote) {
+            if (auto* undo = UndoManager::instance()) {
+                if (!pushUndoCommandAndVerify(
+                        std::make_unique<SetLayerPropertyValueCommand>(
+                            layer, QStringLiteral("layer.note"), layer->layerNote(),
+                            updatedNote, QStringLiteral("Define Template Slot")),
+                        [&]() { return layer->layerNote() == updatedNote; })) {
+                    return false;
+                }
+            } else {
+                layer->setLayerNote(updatedNote);
+                if (layer->layerNote() != updatedNote) {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -6357,6 +8829,13 @@ private:
         }
 
         const auto slotValues = variationObj[QStringLiteral("slotValues")].toArray();
+        auto* undo = UndoManager::instance();
+        auto macro = undo
+            ? std::make_unique<MacroUndoCommand>(QStringLiteral("Apply Template Variation"))
+            : nullptr;
+        QVariantMap pendingNotes;
+        QVariantMap oldNotes;
+        bool changed = false;
         for (const auto& sv : slotValues) {
             if (!sv.isObject()) continue;
             const auto entry = sv.toObject();
@@ -6371,10 +8850,16 @@ private:
 
             const auto layer = comp->layerById(LayerID(layerId));
             if (!layer) continue;
+            if (!oldNotes.contains(layerId)) {
+                oldNotes.insert(layerId, layer->layerNote());
+            }
 
             // Preserve the slot map in the layer note so later passes can resolve it consistently.
             QJsonObject noteObj;
-            const QString note = layer->layerNote();
+            const QString currentNote = pendingNotes.contains(layerId)
+                ? pendingNotes.value(layerId).toString()
+                : layer->layerNote();
+            const QString note = currentNote;
             if (!note.isEmpty()) {
                 QJsonParseError noteErr;
                 noteObj = QJsonDocument::fromJson(note.toUtf8(), &noteErr).object();
@@ -6385,7 +8870,48 @@ private:
             slotValue[QStringLiteral("value")] = value;
             slotValues[slotName] = slotValue;
             noteObj[QStringLiteral("slotValues")] = slotValues;
-            layer->setLayerNote(QString::fromUtf8(QJsonDocument(noteObj).toJson(QJsonDocument::Compact)));
+            const QString updatedNote = QString::fromUtf8(
+                QJsonDocument(noteObj).toJson(QJsonDocument::Compact));
+            if (currentNote == updatedNote) {
+                pendingNotes.insert(layerId, updatedNote);
+                continue;
+            }
+            changed = true;
+            pendingNotes.insert(layerId, updatedNote);
+            if (macro) {
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer, QStringLiteral("layer.note"), currentNote,
+                    updatedNote, QStringLiteral("Apply Template Variation")));
+            } else {
+                layer->setLayerNote(updatedNote);
+            }
+        }
+        if (macro && changed) {
+            const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+                for (auto it = pendingNotes.cbegin(); it != pendingNotes.cend(); ++it) {
+                    const auto layer = comp->layerById(LayerID(it.key()));
+                    if (!layer || layer->layerNote() != it.value().toString()) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            if (!applied) {
+                return false;
+            }
+        } else if (!macro && changed) {
+            for (auto it = pendingNotes.cbegin(); it != pendingNotes.cend(); ++it) {
+                const auto layer = comp->layerById(LayerID(it.key()));
+                if (!layer || layer->layerNote() != it.value().toString()) {
+                    for (auto oldIt = oldNotes.cbegin(); oldIt != oldNotes.cend(); ++oldIt) {
+                        const auto oldLayer = comp->layerById(LayerID(oldIt.key()));
+                        if (oldLayer) {
+                            oldLayer->setLayerNote(oldIt.value().toString());
+                        }
+                    }
+                    return false;
+                }
+            }
         }
         return true;
     }
@@ -6473,6 +8999,13 @@ private:
         }
 
         const QVariantList jobs = createExportMatrixJobs(matrixJson, baseOutputPath);
+        if (jobs.isEmpty()) {
+            return {
+                {QStringLiteral("success"), false},
+                {QStringLiteral("addedCount"), 0},
+                {QStringLiteral("errorCode"), QStringLiteral("NO_ENABLED_EXPORTS")}
+            };
+        }
         int added = 0;
         for (const auto& jobValue : jobs) {
             const QJsonObject jobObj = QJsonDocument::fromVariant(jobValue).object();
@@ -6498,8 +9031,10 @@ private:
         }
 
         return {
-            {QStringLiteral("success"), true},
-            {QStringLiteral("addedCount"), added}
+            {QStringLiteral("success"), added == jobs.size()},
+            {QStringLiteral("requestedCount"), jobs.size()},
+            {QStringLiteral("addedCount"), added},
+            {QStringLiteral("failedCount"), jobs.size() - added}
         };
     }
 
@@ -6510,9 +9045,9 @@ private:
             return {{QStringLiteral("success"), false},
                     {QStringLiteral("error"), QStringLiteral("Invalid motion samples")}};
         }
-        int added = 0;
         int rejected = 0;
         int previousFrame = -1;
+        QVariantList pending;
         for (const auto& sampleValue : samples) {
             const auto sample = sampleValue.toMap();
             bool frameOk = false;
@@ -6524,21 +9059,34 @@ private:
                 ++rejected;
                 continue;
             }
-            const auto xResult = setKeyframe(
-                layerId, QStringLiteral("transform.position.x"), frame, x,
-                QStringLiteral("Linear"));
-            const auto yResult = setKeyframe(
-                layerId, QStringLiteral("transform.position.y"), frame, y,
-                QStringLiteral("Linear"));
-            if (xResult.toMap().value(QStringLiteral("success")).toBool() &&
-                yResult.toMap().value(QStringLiteral("success")).toBool()) {
+            pending.append(QVariantMap{
+                {QStringLiteral("propertyPath"), QStringLiteral("transform.position.x")},
+                {QStringLiteral("frameNumber"), frame},
+                {QStringLiteral("value"), x},
+                {QStringLiteral("interpolation"), QStringLiteral("Linear")}
+            });
+            pending.append(QVariantMap{
+                {QStringLiteral("propertyPath"), QStringLiteral("transform.position.y")},
+                {QStringLiteral("frameNumber"), frame},
+                {QStringLiteral("value"), y},
+                {QStringLiteral("interpolation"), QStringLiteral("Linear")}
+            });
+            previousFrame = frame;
+        }
+
+        const QVariantMap batchResult = batchSetKeyframes(layerId, pending).toMap();
+        const QVariantList details = batchResult.value(QStringLiteral("details")).toList();
+        int added = 0;
+        for (int i = 0; i + 1 < details.size(); i += 2) {
+            if (details.at(i).toMap().value(QStringLiteral("success")).toBool() &&
+                details.at(i + 1).toMap().value(QStringLiteral("success")).toBool()) {
                 ++added;
-                previousFrame = frame;
             } else {
                 ++rejected;
             }
         }
-        return {{QStringLiteral("success"), added > 0 && rejected == 0},
+        return {{QStringLiteral("success"), added > 0 && rejected == 0 &&
+                                             batchResult.value(QStringLiteral("success")).toBool()},
                 {QStringLiteral("addedCount"), added},
                 {QStringLiteral("rejectedCount"), rejected}};
     }
@@ -6550,10 +9098,10 @@ private:
             return {{QStringLiteral("success"), false},
                     {QStringLiteral("error"), QStringLiteral("At least two motion samples are required")}};
         }
-        int added = 0;
         int rejected = 0;
         int previousFrame = -1;
         QVariantMap previous;
+        QVariantList pending;
         for (const auto& sampleValue : samples) {
             const auto sample = sampleValue.toMap();
             bool frameOk = false;
@@ -6570,20 +9118,29 @@ private:
                 const double dy = y - previous.value(QStringLiteral("y")).toDouble();
                 if (std::hypot(dx, dy) > 1.0e-9) {
                     const double degrees = std::atan2(dy, dx) * 180.0 / 3.14159265358979323846;
-                    const auto result = setKeyframe(
-                        layerId, QStringLiteral("transform.rotation"), frame, degrees,
-                        QStringLiteral("Linear"));
-                    if (result.toMap().value(QStringLiteral("success")).toBool()) {
-                        ++added;
-                    } else {
-                        ++rejected;
-                    }
+                    pending.append(QVariantMap{
+                        {QStringLiteral("propertyPath"), QStringLiteral("transform.rotation")},
+                        {QStringLiteral("frameNumber"), frame},
+                        {QStringLiteral("value"), degrees},
+                        {QStringLiteral("interpolation"), QStringLiteral("Linear")}
+                    });
                 }
             }
             previous = sample;
             previousFrame = frame;
         }
-        return {{QStringLiteral("success"), added > 0 && rejected == 0},
+        const QVariantMap batchResult = batchSetKeyframes(layerId, pending).toMap();
+        const QVariantList details = batchResult.value(QStringLiteral("details")).toList();
+        int added = 0;
+        for (const auto& detailValue : details) {
+            if (detailValue.toMap().value(QStringLiteral("success")).toBool()) {
+                ++added;
+            } else {
+                ++rejected;
+            }
+        }
+        return {{QStringLiteral("success"), added > 0 && rejected == 0 &&
+                                             batchResult.value(QStringLiteral("success")).toBool()},
                 {QStringLiteral("addedCount"), added},
                 {QStringLiteral("rejectedCount"), rejected}};
     }

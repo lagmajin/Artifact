@@ -17,9 +17,6 @@ public:
   void setCompositionId(const QString &compositionId);
   void setCurrentFrame(qint64 frame);
 
-public:
-  void memoJumpRequested(qint64 frame) W_SIGNAL(memoJumpRequested, frame);
-
 private:
   class Impl;
   Impl *impl_;

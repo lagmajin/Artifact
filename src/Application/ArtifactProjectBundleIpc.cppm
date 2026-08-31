@@ -14,6 +14,7 @@ module;
 #include <QDebug>
 #include <QTimer>
 #include <QWidget>
+#include <memory>
 #include <algorithm>
 
 export module Artifact.Application.ProjectBundleIpc;
@@ -23,6 +24,8 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Clone;
 import Artifact.Service.Project;
+import Undo.UndoManager;
+import Utils.Id;
 import Artifact.Layers.Selection.Manager;
 import Clipboard.ClipboardManager;
 import Composition.ParametricComposition;
@@ -85,6 +88,15 @@ bool pasteLayerBundle(const QJsonObject& bundle) {
 
     auto* app = ArtifactApplicationManager::instance();
     auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    QStringList beforeSelectionIds;
+    if (selectionManager) {
+        for (const auto& selectedLayer : selectionManager->selectedLayers()) {
+            if (selectedLayer) beforeSelectionIds.append(selectedLayer->id().toString());
+        }
+    }
+    const QString beforeCurrentSelection = selectionManager && selectionManager->currentLayer()
+        ? selectionManager->currentLayer()->id().toString()
+        : QString();
     ArtifactAbstractLayerPtr anchorLayer;
     int anchorIndex = -1;
     if (selectionManager) {
@@ -192,7 +204,147 @@ bool pasteLayerBundle(const QJsonObject& bundle) {
         }
     }
 
-    comp->changed();
+    if (auto* undo = UndoManager::instance()) {
+        const auto pastedId = [](const ArtifactAbstractLayerPtr& layer) {
+            return layer ? layer->id().toString() : QString();
+        };
+        const auto liveLayers = comp->allLayer();
+        QVector<ArtifactAbstractLayerPtr> orderedPastedLayers;
+        QHash<QString, int> desiredIndices;
+        for (int index = 0; index < liveLayers.size(); ++index) {
+            const auto& layer = liveLayers[index];
+            if (layer && pastedLayers.contains(layer)) {
+                orderedPastedLayers.push_back(layer);
+                desiredIndices.insert(pastedId(layer), index);
+            }
+        }
+        if (orderedPastedLayers.size() != pastedLayers.size()) {
+            for (const auto& layer : pastedLayers) {
+                if (layer) comp->removeLayer(layer->id());
+            }
+            if (selectionManager) {
+                selectionManager->clearSelection();
+                for (const auto& layerId : beforeSelectionIds) {
+                    auto layer = comp->layerById(LayerID(layerId));
+                    if (layer) selectionManager->addToSelection(layer);
+                }
+            }
+            comp->changed();
+            return false;
+        }
+        for (const auto& layer : orderedPastedLayers) {
+            if (!comp->removeLayer(layer->id()) || comp->containsLayerById(layer->id())) {
+                for (const auto& pastedLayer : orderedPastedLayers) {
+                    if (pastedLayer && !comp->containsLayerById(pastedLayer->id())) {
+                        comp->appendLayerBottom(pastedLayer);
+                    }
+                }
+                if (selectionManager) {
+                    selectionManager->clearSelection();
+                    for (const auto& layerId : beforeSelectionIds) {
+                        auto layer = comp->layerById(LayerID(layerId));
+                        if (layer) selectionManager->addToSelection(layer);
+                    }
+                }
+                comp->changed();
+                return false;
+            }
+        }
+        const auto restorePastedLayers = [&]() {
+            for (const auto& layer : orderedPastedLayers) {
+                if (layer && !comp->containsLayerById(layer->id())) {
+                    comp->appendLayerBottom(layer);
+                }
+            }
+            for (const auto& layer : orderedPastedLayers) {
+                if (!layer) continue;
+                const int targetIndex = desiredIndices.value(pastedId(layer), -1);
+                const auto currentLayers = comp->allLayer();
+                int currentIndex = -1;
+                for (int index = 0; index < currentLayers.size(); ++index) {
+                    if (currentLayers[index] && currentLayers[index]->id() == layer->id()) {
+                        currentIndex = index;
+                        break;
+                    }
+                }
+                if (currentIndex >= 0 && targetIndex >= 0 && currentIndex != targetIndex) {
+                    comp->moveLayerToIndex(layer->id(), targetIndex);
+                }
+            }
+        };
+        const auto restoreSelection = [&]() {
+            if (!selectionManager) return;
+            selectionManager->clearSelection();
+            for (const auto& layer : orderedPastedLayers) {
+                if (layer && comp->containsLayerById(layer->id())) {
+                    selectionManager->addToSelection(layer);
+                }
+            }
+        };
+        auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Paste Layers"));
+        for (const auto& layer : orderedPastedLayers) {
+            macro->addChild(std::make_unique<AddLayerCommand>(comp, layer, false));
+        }
+        const auto baseLayers = comp->allLayer();
+        std::vector<QString> simulatedIds;
+        simulatedIds.reserve(baseLayers.size() + orderedPastedLayers.size());
+        for (const auto& layer : baseLayers) {
+            if (layer) simulatedIds.push_back(layer->id().toString());
+        }
+        for (const auto& layer : orderedPastedLayers) {
+            if (layer) simulatedIds.push_back(layer->id().toString());
+        }
+        for (const auto& layer : orderedPastedLayers) {
+            if (!layer) continue;
+            const QString id = pastedId(layer);
+            const int targetIndex = desiredIndices.value(id, -1);
+            const auto currentIt = std::find(simulatedIds.begin(), simulatedIds.end(), id);
+            if (targetIndex < 0 || currentIt == simulatedIds.end()) continue;
+            const int oldIndex = static_cast<int>(std::distance(simulatedIds.begin(), currentIt));
+            const int boundedTarget = std::clamp(targetIndex, 0,
+                static_cast<int>(simulatedIds.size()) - 1);
+            if (oldIndex != boundedTarget) {
+                macro->addChild(std::make_unique<MoveLayerIndexCommand>(
+                    comp, layer, oldIndex, boundedTarget));
+                const QString movedId = simulatedIds[oldIndex];
+                simulatedIds.erase(simulatedIds.begin() + oldIndex);
+                simulatedIds.insert(simulatedIds.begin() + boundedTarget, movedId);
+            }
+        }
+        QStringList afterSelectionIds;
+        for (const auto& layer : orderedPastedLayers) {
+            if (layer) afterSelectionIds.append(layer->id().toString());
+        }
+        macro->addChild(std::make_unique<LayerSelectionSnapshotCommand>(
+            comp, beforeSelectionIds, beforeCurrentSelection, afterSelectionIds,
+            afterSelectionIds.isEmpty() ? QString() : afterSelectionIds.back()));
+        const size_t undoCountBefore = undo->undoCount();
+        if (!undo->push(std::move(macro))) {
+            restorePastedLayers();
+            restoreSelection();
+            return false;
+        }
+        bool applied = true;
+        const auto afterLayers = comp->allLayer();
+        for (const auto& layer : orderedPastedLayers) {
+            int actualIndex = -1;
+            for (int index = 0; index < afterLayers.size(); ++index) {
+                if (afterLayers[index] && afterLayers[index]->id() == layer->id()) {
+                    actualIndex = index;
+                    break;
+                }
+            }
+            applied = applied && actualIndex == desiredIndices.value(pastedId(layer), -1);
+        }
+        if (!applied) {
+            if (undo->undoCount() == undoCountBefore + 1) undo->undo();
+            restorePastedLayers();
+            restoreSelection();
+            return false;
+        }
+    } else {
+        comp->changed();
+    }
     if (auto project = svc->getCurrentProjectSharedPtr()) {
         project->projectChanged();
     }
@@ -212,7 +364,12 @@ bool pasteProjectItemsBundle(const QJsonObject& bundle) {
     if (items.isEmpty()) {
         return false;
     }
-    const bool ok = project->addProjectItemsFromJson(items, nullptr);
+    bool ok = false;
+    if (auto* undo = UndoManager::instance()) {
+        ok = undo->push(std::make_unique<AddProjectItemsCommand>(items));
+    } else {
+        ok = project->addProjectItemsFromJson(items, nullptr);
+    }
     if (ok) {
         project->projectChanged();
     }
@@ -241,6 +398,7 @@ bool pasteParametricCompositionBundle(const QJsonObject& bundle) {
     item[QStringLiteral("name")] = parsed.bundleTitle.isEmpty()
         ? QStringLiteral("Parametric Composition")
         : parsed.bundleTitle;
+    item[QStringLiteral("id")] = Id().toString();
     item[QStringLiteral("compositionJson")] = compositionJson;
     if (compositionJson.contains(QStringLiteral("id"))) {
         item[QStringLiteral("compositionId")] =
@@ -248,7 +406,13 @@ bool pasteParametricCompositionBundle(const QJsonObject& bundle) {
     }
 
     const QJsonArray items{item};
-    const bool ok = project->addProjectItemsFromJson(items, nullptr);
+    bool ok = false;
+    if (auto* undo = UndoManager::instance()) {
+        ok = undo->push(std::make_unique<AddProjectItemsCommand>(
+            items, nullptr, composition->id().toString()));
+    } else {
+        ok = project->addProjectItemsFromJson(items, nullptr);
+    }
     if (ok) {
         project->projectChanged();
     }
@@ -284,7 +448,19 @@ bool pasteCompositionBundle(const QJsonObject& bundle) {
         return false;
     }
 
-    const bool ok = project->addImportedComposition(composition, finalName);
+    QJsonObject item;
+    item[QStringLiteral("type")] = QStringLiteral("composition");
+    item[QStringLiteral("id")] = Id().toString();
+    item[QStringLiteral("name")] = finalName;
+    item[QStringLiteral("compositionId")] = composition->id().toString();
+    item[QStringLiteral("compositionJson")] = compositionJson;
+    const QJsonArray items{item};
+    bool ok = false;
+    if (auto* undo = UndoManager::instance()) {
+        ok = undo->push(std::make_unique<AddProjectItemsCommand>(items));
+    } else {
+        ok = project->addProjectItemsFromJson(items, nullptr);
+    }
     if (ok) {
         project->setCurrentCompositionId(composition->id(), false);
         project->projectChanged();

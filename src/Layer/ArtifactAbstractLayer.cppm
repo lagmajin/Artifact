@@ -19,6 +19,8 @@ module;
 #include <QRectF>
 #include <QSize>
 #include <QSizeF>
+#include <QMetaObject>
+#include <QThread>
 #include <QVector3D>
 #include <QVector4D>
 #include <QStringList>
@@ -309,13 +311,7 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   }
   layer->setDirty(flag);
   layer->addDirtyReason(reason);
-  const auto *comp =
-      dynamic_cast<const ArtifactAbstractComposition *>(layer->compositionObject());
-  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-      comp ? comp->id().toString() : QString{},
-      layer->id().toString(),
-      LayerChangedEvent::ChangeType::Modified});
-  Q_EMIT layer->changed();
+  layer->changed();
 }
 
 void applyCompositionTransformFields(
@@ -1839,6 +1835,39 @@ ArtifactAbstractLayer::ArtifactAbstractLayer() : impl_(new Impl()) {
 
 ArtifactAbstractLayer::~ArtifactAbstractLayer() { delete impl_; }
 
+void ArtifactAbstractLayer::changed() {
+  const auto publish = [this]() {
+    const auto *comp = dynamic_cast<const ArtifactAbstractComposition *>(
+        compositionObject());
+    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+        comp ? comp->id().toString() : QString{}, id().toString(),
+        LayerChangedEvent::ChangeType::Modified});
+  };
+
+  if (QThread::currentThread() == thread()) {
+    publish();
+    return;
+  }
+
+  QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
+}
+
+void ArtifactAbstractLayer::layerNoteChanged(QString note) {
+  const auto publish = [this, note = std::move(note)]() {
+    const auto *comp = dynamic_cast<const ArtifactAbstractComposition *>(
+        compositionObject());
+    ArtifactCore::globalEventBus().publish(LayerNoteChangedEvent{
+        comp ? comp->id().toString() : QString{}, id().toString(), note});
+  };
+
+  if (QThread::currentThread() == thread()) {
+    publish();
+    return;
+  }
+
+  QMetaObject::invokeMethod(this, publish, Qt::QueuedConnection);
+}
+
 void ArtifactAbstractLayer::setVisible(bool visible /*=true*/) {
   if (!assignIfChanged(impl_->isVisible_, visible)) {
     return;
@@ -1933,7 +1962,7 @@ void ArtifactAbstractLayer::setLayerNote(const QString &note) {
   if (!assignIfChanged(impl_->layerNote_, note)) {
     return;
   }
-  Q_EMIT layerNoteChanged(note);
+  layerNoteChanged(note);
   notifyLayerMutation(this, LayerDirtyFlag::All,
                       LayerDirtyReason::PropertyChanged);
 }
@@ -7429,6 +7458,157 @@ std::vector<QString> ArtifactAbstractLayer::clonerTransformNames() const {
   return names;
 }
 
+QJsonArray ArtifactAbstractLayer::clonerTransformsSnapshot() const {
+  QJsonArray snapshot;
+  for (const auto &op : impl_->clonerTransforms_) {
+    snapshot.append(QJsonObject{
+        {QStringLiteral("name"), op.name},
+        {QStringLiteral("enabled"), op.enabled},
+        {QStringLiteral("positionX"), static_cast<double>(op.position.x())},
+        {QStringLiteral("positionY"), static_cast<double>(op.position.y())},
+        {QStringLiteral("positionZ"), static_cast<double>(op.position.z())},
+        {QStringLiteral("rotationX"), static_cast<double>(op.rotation.x())},
+        {QStringLiteral("rotationY"), static_cast<double>(op.rotation.y())},
+        {QStringLiteral("rotationZ"), static_cast<double>(op.rotation.z())},
+        {QStringLiteral("scaleX"), static_cast<double>(op.scale.x())},
+        {QStringLiteral("scaleY"), static_cast<double>(op.scale.y())},
+        {QStringLiteral("scaleZ"), static_cast<double>(op.scale.z())}});
+  }
+  return snapshot;
+}
+
+bool ArtifactAbstractLayer::restoreClonerTransformsSnapshot(
+    const QJsonArray &snapshot) {
+  const auto finiteClamped = [](double value, double fallback,
+                                double minimum, double maximum) {
+    if (!std::isfinite(value)) {
+      return fallback;
+    }
+    return std::clamp(value, minimum, maximum);
+  };
+  std::vector<ClonerTransformOperation> restored;
+  restored.reserve(static_cast<size_t>(snapshot.size()));
+  for (const auto &entry : snapshot) {
+    if (!entry.isObject()) {
+      return false;
+    }
+    const auto object = entry.toObject();
+    ClonerTransformOperation op;
+    op.name = object.value(QStringLiteral("name"))
+                  .toString(QStringLiteral("Transform"));
+    op.enabled = object.value(QStringLiteral("enabled")).toBool(true);
+    op.position.setX(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("positionX")).toDouble(0.0), 0.0,
+        -100000.0, 100000.0)));
+    op.position.setY(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("positionY")).toDouble(0.0), 0.0,
+        -100000.0, 100000.0)));
+    op.position.setZ(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("positionZ")).toDouble(0.0), 0.0,
+        -100000.0, 100000.0)));
+    op.rotation.setX(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("rotationX")).toDouble(0.0), 0.0,
+        -360000.0, 360000.0)));
+    op.rotation.setY(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("rotationY")).toDouble(0.0), 0.0,
+        -360000.0, 360000.0)));
+    op.rotation.setZ(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("rotationZ")).toDouble(0.0), 0.0,
+        -360000.0, 360000.0)));
+    op.scale.setX(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("scaleX")).toDouble(1.0), 1.0,
+        -100000.0, 100000.0)));
+    op.scale.setY(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("scaleY")).toDouble(1.0), 1.0,
+        -100000.0, 100000.0)));
+    op.scale.setZ(static_cast<float>(finiteClamped(
+        object.value(QStringLiteral("scaleZ")).toDouble(1.0), 1.0,
+        -100000.0, 100000.0)));
+    restored.push_back(std::move(op));
+  }
+  impl_->clonerTransforms_ = std::move(restored);
+  notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                      LayerDirtyReason::PropertyChanged);
+  return clonerTransformsSnapshot() == snapshot;
+}
+
+QJsonObject ArtifactAbstractLayer::componentDescriptorSnapshot() const {
+  QJsonArray generators;
+  for (const auto &descriptor : impl_->extraGeneratorDescriptors_) {
+    generators.append(toJsonObject(descriptor));
+  }
+  QJsonArray fields;
+  for (const auto &descriptor : impl_->extraFieldDescriptors_) {
+    fields.append(toJsonObject(descriptor));
+  }
+  QJsonArray modifiers;
+  for (const auto &descriptor : impl_->extraCloneModifierDescriptors_) {
+    modifiers.append(toJsonObject(descriptor));
+  }
+  return QJsonObject{{QStringLiteral("generators"), generators},
+                     {QStringLiteral("fields"), fields},
+                     {QStringLiteral("cloneModifiers"), modifiers},
+                     {QStringLiteral("clonerTransforms"),
+                      clonerTransformsSnapshot()}};
+}
+
+bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
+    const QJsonObject &snapshot) {
+  constexpr qsizetype kMaxDescriptors = 1024;
+  const auto generatorsValue = snapshot.value(QStringLiteral("generators"));
+  const auto fieldsValue = snapshot.value(QStringLiteral("fields"));
+  const auto modifiersValue = snapshot.value(QStringLiteral("cloneModifiers"));
+  const auto transformsValue =
+      snapshot.value(QStringLiteral("clonerTransforms"));
+  if (!generatorsValue.isArray() || !fieldsValue.isArray() ||
+      !modifiersValue.isArray() || !transformsValue.isArray() ||
+      generatorsValue.toArray().size() > kMaxDescriptors ||
+      fieldsValue.toArray().size() > kMaxDescriptors ||
+      modifiersValue.toArray().size() > kMaxDescriptors) {
+    return false;
+  }
+  std::vector<LayerGeneratorDescriptor> generators;
+  for (const auto &value : generatorsValue.toArray()) {
+    if (!value.isObject()) return false;
+    const auto descriptor = layerGeneratorDescriptorFromJson(value.toObject());
+    if (!descriptor.has_value()) return false;
+    generators.push_back(*descriptor);
+  }
+  std::vector<LayerFieldDescriptor> fields;
+  for (const auto &value : fieldsValue.toArray()) {
+    if (!value.isObject()) return false;
+    const auto descriptor = layerFieldDescriptorFromJson(value.toObject());
+    if (!descriptor.has_value()) return false;
+    fields.push_back(*descriptor);
+  }
+  std::vector<LayerModifierDescriptor> modifiers;
+  for (const auto &value : modifiersValue.toArray()) {
+    if (!value.isObject()) return false;
+    const auto descriptor = layerModifierDescriptorFromJson(value.toObject());
+    if (!descriptor.has_value()) return false;
+    modifiers.push_back(*descriptor);
+  }
+  const auto transforms = transformsValue.toArray();
+  if (!restoreClonerTransformsSnapshot(transforms)) {
+    return false;
+  }
+  impl_->extraGeneratorDescriptors_.clear();
+  impl_->extraFieldDescriptors_.clear();
+  impl_->extraCloneModifierDescriptors_.clear();
+  for (auto &descriptor : generators) {
+    impl_->extraGeneratorDescriptors_.add(std::move(descriptor));
+  }
+  for (auto &descriptor : fields) {
+    impl_->extraFieldDescriptors_.add(std::move(descriptor));
+  }
+  for (auto &descriptor : modifiers) {
+    impl_->extraCloneModifierDescriptors_.add(std::move(descriptor));
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                      LayerDirtyReason::PropertyChanged);
+  return componentDescriptorSnapshot() == snapshot;
+}
+
 std::vector<LayerComponentValidationIssue>
 ArtifactAbstractLayer::validateLayerComponents() const {
   impl_->syncBuiltinComponentDescriptors();
@@ -10120,6 +10300,19 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.name")) {
     setLayerName(value.toString());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.note")) {
+    setLayerNote(value.toString());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.parent")) {
+    const ArtifactCore::LayerID parentId(value.toString());
+    if (parentId.isNil()) {
+      clearParent();
+    } else {
+      setParentById(parentId);
+    }
     return true;
   }
   if (propertyPath == QStringLiteral("layer.visible")) {

@@ -439,7 +439,8 @@ public:
         }
         
         // プロジェクトに変更を通知
-        service->projectChanged();
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+            ProjectChangedEvent{QString(), QString()});
     }
 };
 

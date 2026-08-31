@@ -135,6 +135,25 @@ namespace Artifact
  using namespace ArtifactCore;
 
 namespace {
+template <typename Predicate>
+bool pushUndoCommandAndVerify(std::unique_ptr<UndoCommand> command,
+                              Predicate&& predicate) {
+  auto *undo = UndoManager::instance();
+  if (!undo || !command || !command->canSerialize() ||
+      command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+    return false;
+  }
+  const size_t undoCountBefore = undo->undoCount();
+  if (!undo->push(std::move(command))) {
+    return false;
+  }
+  const bool applied = predicate();
+  if (!applied && undo->undoCount() == undoCountBefore + 1) {
+    undo->undo();
+  }
+  return applied;
+}
+
 QString stripDuplicateSuffix(const QString &effectId) {
   QString base = effectId.trimmed();
   while (true) {
@@ -174,6 +193,39 @@ QString stripDuplicateSuffix(const QString &effectId) {
     break;
   }
   return base;
+}
+
+bool modulationSnapshotsEqual(
+    const Audio::Modulation::ModulationRouterSnapshot& left,
+    const Audio::Modulation::ModulationRouterSnapshot& right) {
+  if (left.smoothingTime != right.smoothingTime ||
+      left.sources.size() != right.sources.size() ||
+      left.assignments.size() != right.assignments.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < left.sources.size(); ++i) {
+    const auto& a = left.sources[i];
+    const auto& b = right.sources[i];
+    if (a.id != b.id || a.type != b.type || a.waveform != b.waveform ||
+        a.frequency != b.frequency || a.phaseOffset != b.phaseOffset ||
+        a.pulseWidth != b.pulseWidth || a.attack != b.attack ||
+        a.decay != b.decay || a.sustain != b.sustain ||
+        a.release != b.release || a.rate != b.rate ||
+        a.smoothing != b.smoothing || a.seed != b.seed ||
+        a.macroValue != b.macroValue || a.unipolar != b.unipolar) {
+      return false;
+    }
+  }
+  for (size_t i = 0; i < left.assignments.size(); ++i) {
+    const auto& a = left.assignments[i];
+    const auto& b = right.assignments[i];
+    if (a.sourceId != b.sourceId || a.targetId != b.targetId ||
+        a.targetPath != b.targetPath || a.depth != b.depth ||
+        a.enabled != b.enabled || a.mode != b.mode) {
+      return false;
+    }
+  }
+  return true;
 }
 } // namespace
 
@@ -1263,7 +1315,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effectPtr->setPipelineStage(EffectPipelineStage::Rasterizer);
   if (ps->addEffectToLayerWithUndo(layerId, effectPtr)) {
    const QString actualEffectId = effectPtr ? effectPtr->effectID().toQString() : effectId.toString();
-   Q_EMIT effectAdded(layerId, actualEffectId);
+   ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+       EffectServiceChangedEvent{EffectServiceChangeKind::Added,
+                                 layerId.toString(), actualEffectId});
    return EffectServiceResult::ok(actualEffectId);
   }
   return EffectServiceResult::fail("Failed to add effect");
@@ -1286,7 +1340,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
    }
   }
   if (ps->removeEffectFromLayerWithUndo(layerId, effectId, capturedEffect)) {
-   Q_EMIT effectRemoved(layerId, effectId);
+   ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+       EffectServiceChangedEvent{EffectServiceChangeKind::Removed,
+                                 layerId.toString(), effectId});
    return EffectServiceResult::ok(effectId);
   }
   return EffectServiceResult::fail("Failed to remove effect");
@@ -1309,7 +1365,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
    }
   }
   if (ps->setEffectEnabledWithUndo(layerId, effectId, enabled, wasEnabled)) {
-   Q_EMIT effectChanged(layerId, effectId);
+   ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+       EffectServiceChangedEvent{EffectServiceChangeKind::Changed,
+                                 layerId.toString(), effectId});
    return EffectServiceResult::ok(effectId);
   }
   return EffectServiceResult::fail("Failed to set effect enabled state");
@@ -1321,7 +1379,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
   if (ps->moveEffectWithUndo(layerId, effectId, direction)) {
-   Q_EMIT effectOrderChanged(layerId);
+   ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+       EffectServiceChangedEvent{EffectServiceChangeKind::OrderChanged,
+                                 layerId.toString(), effectId});
    return EffectServiceResult::ok(effectId);
   }
   return EffectServiceResult::fail("Failed to move effect");
@@ -1360,6 +1420,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
    }
    sourceEnabled = effect->isEnabled();
    break;
+  }
+  if (!sourceEffect) {
+   return EffectServiceResult::fail("Effect not found");
   }
   QString sourceTypeId =
       sourceEffect ? stripDuplicateSuffix(sourceEffect->effectID().toQString())
@@ -1402,9 +1465,11 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
 
   auto copyPtr = makeShared(effectCopy.release(), [](ArtifactAbstractEffect* p) { delete p; });
-  if (ps->addEffectToLayerInCurrentComposition(layerId, copyPtr)) {
+  if (ps->addEffectToLayerWithUndo(layerId, copyPtr)) {
    const QString newEffectId = copyPtr ? copyPtr->effectID().toQString() : copyId;
-   Q_EMIT effectAdded(layerId, newEffectId);
+   ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+       EffectServiceChangedEvent{EffectServiceChangeKind::Added,
+                                 layerId.toString(), newEffectId});
    return EffectServiceResult::ok(newEffectId);
   }
   return EffectServiceResult::fail("Failed to duplicate effect");
@@ -1495,9 +1560,36 @@ W_OBJECT_IMPL(ArtifactEffectService)
    if (!propertyExists) {
     return EffectServiceResult::fail("Property not found");
    }
-    if (!effect->setCommonPropertyValue(normalizedPropertyName, value)) {
-      effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+    const auto property = effect->editableProperty(normalizedPropertyName);
+    if (!property) {
+      return EffectServiceResult::fail("Property not found");
     }
+    const QVariant oldValue = property->getValue();
+     if (oldValue == value) {
+       return EffectServiceResult::ok(effectId);
+     }
+     if (auto* undo = UndoManager::instance()) {
+       const bool applied = pushUndoCommandAndVerify(
+           std::make_unique<SetPropertyCommand>(
+               effect, UniString::fromQString(normalizedPropertyName), oldValue,
+               value),
+           [&]() { return property->getValue() == value; });
+       if (!applied) {
+         return EffectServiceResult::fail("Effect property change was not applied");
+       }
+     } else if (!effect->setCommonPropertyValue(normalizedPropertyName, value)) {
+       effect->setPropertyValue(
+           UniString::fromQString(normalizedPropertyName), value);
+       if (property->getValue() != value) {
+         effect->setPropertyValue(
+             UniString::fromQString(normalizedPropertyName), oldValue);
+         return EffectServiceResult::fail("Effect property change was not applied");
+       }
+     } else if (property->getValue() != value) {
+       effect->setPropertyValue(
+           UniString::fromQString(normalizedPropertyName), oldValue);
+       return EffectServiceResult::fail("Effect property change was not applied");
+     }
     ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
         comp->id().toString(), layerId.toString(),
         LayerChangedEvent::ChangeType::Modified});
@@ -1505,7 +1597,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
       ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
       project->projectChanged();
     }
-    Q_EMIT effectChanged(layerId, effectId);
+    ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+        EffectServiceChangedEvent{EffectServiceChangeKind::Changed,
+                                  layerId.toString(), effectId});
     return EffectServiceResult::ok(effectId);
    }
 
@@ -1540,9 +1634,36 @@ W_OBJECT_IMPL(ArtifactEffectService)
    if (!propertyExists) {
     return EffectServiceResult::fail("Property not found");
    }
-   if (!effect->setCommonPropertyValue(normalizedPropertyName, value)) {
-     effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+   const auto property = effect->editableProperty(normalizedPropertyName);
+   if (!property) {
+    return EffectServiceResult::fail("Property not found");
    }
+   const QVariant oldValue = property->getValue();
+   if (oldValue == value) {
+    return EffectServiceResult::ok(effectId);
+    }
+    if (auto* undo = UndoManager::instance()) {
+     const bool applied = pushUndoCommandAndVerify(
+         std::make_unique<SetPropertyCommand>(
+             effect, UniString::fromQString(normalizedPropertyName), oldValue,
+             value),
+         [&]() { return property->getValue() == value; });
+     if (!applied) {
+      return EffectServiceResult::fail("Composition effect property change was not applied");
+     }
+    } else if (!effect->setCommonPropertyValue(normalizedPropertyName, value)) {
+     effect->setPropertyValue(
+         UniString::fromQString(normalizedPropertyName), value);
+     if (property->getValue() != value) {
+      effect->setPropertyValue(
+          UniString::fromQString(normalizedPropertyName), oldValue);
+      return EffectServiceResult::fail("Composition effect property change was not applied");
+     }
+    } else if (property->getValue() != value) {
+     effect->setPropertyValue(
+         UniString::fromQString(normalizedPropertyName), oldValue);
+     return EffectServiceResult::fail("Composition effect property change was not applied");
+    }
    comp->changed();
    if (auto project = ps->getCurrentProjectSharedPtr()) {
     ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
@@ -1567,11 +1688,27 @@ W_OBJECT_IMPL(ArtifactEffectService)
   for (const auto& effect : layer->getEffects()) {
    if (!effect || effect->effectID().toQString() != effectId) continue;
    const auto before = effect->modulationRouter().snapshot();
-   if (auto* undo = UndoManager::instance()) {
-    undo->push(std::make_unique<EffectModulationSnapshotCommand>(
-        effect, before, snapshot));
-   } else {
-    effect->modulationRouter().restoreSnapshot(snapshot);
+    if (modulationSnapshotsEqual(before, snapshot)) {
+     return EffectServiceResult::ok(effectId);
+     }
+     if (auto* undo = UndoManager::instance()) {
+     const bool applied = pushUndoCommandAndVerify(
+         std::make_unique<EffectModulationSnapshotCommand>(
+             effect, before, snapshot),
+         [&]() {
+           return modulationSnapshotsEqual(
+               effect->modulationRouter().snapshot(), snapshot);
+         });
+     if (!applied) {
+      return EffectServiceResult::fail("Effect modulation change was not applied");
+     }
+    } else {
+     effect->modulationRouter().restoreSnapshot(snapshot);
+     if (!modulationSnapshotsEqual(
+             effect->modulationRouter().snapshot(), snapshot)) {
+      effect->modulationRouter().restoreSnapshot(before);
+      return EffectServiceResult::fail("Effect modulation change was not applied");
+     }
    }
    ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
        comp->id().toString(), layerId.toString(),
@@ -1580,7 +1717,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
     ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
     project->projectChanged();
    }
-   Q_EMIT effectChanged(layerId, effectId);
+   ArtifactCore::globalEventBus().publish<EffectServiceChangedEvent>(
+       EffectServiceChangedEvent{EffectServiceChangeKind::Changed,
+                                 layerId.toString(), effectId});
    return EffectServiceResult::ok(effectId);
   }
   return EffectServiceResult::fail("Effect not found");
@@ -1599,11 +1738,28 @@ W_OBJECT_IMPL(ArtifactEffectService)
   for (const auto& effect : comp->getEffects()) {
    if (!effect || effect->effectID().toQString() != effectId) continue;
    const auto before = effect->modulationRouter().snapshot();
-   if (auto* undo = UndoManager::instance()) {
-    undo->push(std::make_unique<EffectModulationSnapshotCommand>(
-        effect, before, snapshot, QStringLiteral("Edit Composition Effect Modulation")));
-   } else {
-    effect->modulationRouter().restoreSnapshot(snapshot);
+    if (modulationSnapshotsEqual(before, snapshot)) {
+     return EffectServiceResult::ok(effectId);
+     }
+     if (auto* undo = UndoManager::instance()) {
+     const bool applied = pushUndoCommandAndVerify(
+         std::make_unique<EffectModulationSnapshotCommand>(
+             effect, before, snapshot,
+             QStringLiteral("Edit Composition Effect Modulation")),
+         [&]() {
+           return modulationSnapshotsEqual(
+               effect->modulationRouter().snapshot(), snapshot);
+         });
+     if (!applied) {
+      return EffectServiceResult::fail("Composition effect modulation change was not applied");
+     }
+    } else {
+     effect->modulationRouter().restoreSnapshot(snapshot);
+     if (!modulationSnapshotsEqual(
+             effect->modulationRouter().snapshot(), snapshot)) {
+      effect->modulationRouter().restoreSnapshot(before);
+      return EffectServiceResult::fail("Composition effect modulation change was not applied");
+     }
    }
    comp->changed();
    if (auto project = ps->getCurrentProjectSharedPtr()) {

@@ -42,13 +42,6 @@ public Q_SLOTS:
     void onSaveGPL();
     void onClear();
     void onColorDoubleClicked(const QModelIndex& index);
-
-Q_SIGNALS:
-    // 色が選択（クリック）された時のシグナル
-    void colorSelected(const FloatColor& color) W_SIGNAL(colorSelected, color);
-    
-    // パレットのデータが変更された時のシグナル
-    void swatchChanged() W_SIGNAL(swatchChanged);
 };
 
 } // namespace Artifact

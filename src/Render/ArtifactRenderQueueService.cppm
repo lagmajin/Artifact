@@ -70,6 +70,8 @@ module;
 module Artifact.Render.Queue.Service;
 
 import Memory.SharedPtr;
+import Event.Bus;
+import Artifact.Event.Types;
 
 
 
@@ -3228,7 +3230,18 @@ namespace Artifact
                 handleJobProgressChanged(index, progress);
             };
 
+            queueManager.allJobsRemoved = [this]() {
+                publishServiceEvent(RenderQueueServiceChangedEvent{
+                    RenderQueueServiceChangeKind::AllJobsRemoved});
+                if (allJobsRemoved) {
+                    allJobsRemoved();
+                }
+            };
+
             queueManager.queueReordered = [this](int fromIndex, int toIndex) {
+                publishServiceEvent(RenderQueueServiceChangedEvent{
+                    RenderQueueServiceChangeKind::QueueReordered, fromIndex,
+                    0, toIndex});
                 if (queueReordered) {
                     queueReordered(fromIndex, toIndex);
                 }
@@ -4736,34 +4749,54 @@ namespace Artifact
         }
 
         void handleJobAdded(int index) {
-            Q_EMIT owner_->jobAdded(index);
+            publishServiceEvent(RenderQueueServiceChangedEvent{
+                RenderQueueServiceChangeKind::JobAdded, index});
             if (jobAdded) jobAdded(index);
             persistQueueState();
         }
 
         void handleJobRemoved(int index) {
-            Q_EMIT owner_->jobRemoved(index);
+            publishServiceEvent(RenderQueueServiceChangedEvent{
+                RenderQueueServiceChangeKind::JobRemoved, index});
             if (jobRemoved) jobRemoved(index);
             persistQueueState();
         }
 
         void handleJobUpdated(int index) {
-            Q_EMIT owner_->jobUpdated(index);
+            publishServiceEvent(RenderQueueServiceChangedEvent{
+                RenderQueueServiceChangeKind::JobUpdated, index});
             if (jobUpdated) jobUpdated(index);
             persistQueueState();
         }
 
         void handleJobStatusChanged(int index, ArtifactRenderJob::Status status) {
-            Q_EMIT owner_->jobStatusChanged(index, static_cast<int>(status));
+            publishServiceEvent(RenderQueueServiceChangedEvent{
+                RenderQueueServiceChangeKind::JobStatusChanged, index,
+                static_cast<int>(status)});
             if (jobStatusChangedForUi) jobStatusChangedForUi(index, static_cast<int>(status));
             if (jobStatusChanged) jobStatusChanged(index, status);
             persistQueueState();
         }
 
         void handleJobProgressChanged(int index, int progress) {
-            // 内部コールバックのみ発火（2 重発火防止）
-            // Q_EMIT owner_->jobProgressChanged(index, progress);  // 削除
+            publishServiceEvent(RenderQueueServiceChangedEvent{
+                RenderQueueServiceChangeKind::JobProgressChanged, index,
+                progress});
             if (jobProgressChanged) jobProgressChanged(index, progress);
+        }
+
+        void publishServiceEvent(const RenderQueueServiceChangedEvent &event) {
+            if (!owner_) {
+                return;
+            }
+            if (QThread::currentThread() == owner_->thread()) {
+                ArtifactCore::globalEventBus().publish(event);
+                return;
+            }
+            QMetaObject::invokeMethod(
+                owner_, [event]() {
+                    ArtifactCore::globalEventBus().publish(event);
+                }, Qt::QueuedConnection);
         }
 
         QString persistentQueuePath() const {
@@ -7158,7 +7191,13 @@ namespace Artifact
             }
 
             QMetaObject::invokeMethod(service, [service, jobIndex, f]() {
-                Q_EMIT service->previewFrameReady(jobIndex, f);
+                if (!service || !service->impl_) {
+                    return;
+                }
+                service->impl_->publishServiceEvent(
+                    RenderQueueServiceChangedEvent{
+                        RenderQueueServiceChangeKind::PreviewFrameReady,
+                        jobIndex, f});
             }, Qt::QueuedConnection);
 
             if (isVideo) {
@@ -7902,7 +7941,8 @@ namespace Artifact
                 impl_->selectiveJobIndices_.clear();
                 impl_->selectiveRun_ = false;
                 if (impl_->allJobsCompleted) impl_->allJobsCompleted();
-                Q_EMIT allJobsCompleted();
+                impl_->publishServiceEvent(RenderQueueServiceChangedEvent{
+                    RenderQueueServiceChangeKind::AllJobsCompleted});
             }, Qt::QueuedConnection);
 
             } catch (const std::exception& ex) {
@@ -7929,11 +7969,13 @@ namespace Artifact
     void ArtifactRenderQueueService::pauseAllJobs() {
         impl_->queueManager.pauseAllJobs();
         impl_->shutdownRequested_.store(true, std::memory_order_release);
+        impl_->syncCoreQueueModel();
     }
 
     void ArtifactRenderQueueService::cancelAllJobs() {
         impl_->queueManager.cancelAllJobs();
         impl_->shutdownRequested_.store(true, std::memory_order_release);
+        impl_->syncCoreQueueModel();
     }
 
     int ArtifactRenderQueueService::jobCount() const {

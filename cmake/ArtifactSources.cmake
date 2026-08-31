@@ -816,6 +816,7 @@ set(ARTIFACT_APP_IMPL_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactPaintLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactParametricCompositionLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactParticleLayer.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactParticleLayer3D.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactProcedural3DLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactSandSim2DLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactSDFLayer.cppm"

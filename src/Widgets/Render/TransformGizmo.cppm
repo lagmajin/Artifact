@@ -1411,8 +1411,8 @@ double effectiveTransformKeyframeRate(const ArtifactAbstractLayer* layer)
  }
  if (auto* composition = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
   const double fps = composition->frameRate().framerate();
-  if (fps > 0.0) {
-   return fps;
+  if (std::isfinite(fps) && fps > 0.0) {
+   return std::clamp(fps, 1.0, 10000.0);
   }
  }
  return 24.0;
@@ -1435,15 +1435,16 @@ public:
  TransformUndoCommand(ArtifactAbstractLayerPtr layer, int64_t frame, TransformSnapshot before, TransformSnapshot after)
      : layer_(layer), frame_(frame), before_(before), after_(after) {}
 
- void undo() override { apply(before_); }
- void redo() override { apply(after_); }
+ void undo() override { lastOperationSucceeded_ = apply(before_); }
+ void redo() override { lastOperationSucceeded_ = apply(after_); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Transform Layer"); }
 
-private:
- void apply(const TransformSnapshot& snapshot) {
-  auto layer = layer_.lock();
-  if (!layer) {
-   return;
+ private:
+ bool apply(const TransformSnapshot& snapshot) {
+   auto layer = layer_.lock();
+   if (!layer) {
+    return false;
   }
 
   const ArtifactCore::RationalTime time =
@@ -1468,8 +1469,8 @@ private:
       std::abs(current.anchorZ - snapshot.anchorZ) <= 0.0001f &&
       std::abs(current.textBoxWidth - snapshot.textBoxWidth) <= 0.0001f &&
       std::abs(current.textBoxHeight - snapshot.textBoxHeight) <= 0.0001f;
-  if (alreadyMatches) {
-   return;
+   if (alreadyMatches) {
+    return true;
   }
 
   applyPositionSnapshot(t3d, time, snapshot);
@@ -1490,15 +1491,17 @@ private:
        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
                          LayerChangedEvent::ChangeType::Modified});
   }
-  if (auto* mgr = UndoManager::instance()) {
-   mgr->notifyAnythingChanged();
+   if (auto* mgr = UndoManager::instance()) {
+    mgr->notifyAnythingChanged();
+   }
+   return true;
   }
- }
 
  ArtifactAbstractLayerWeak layer_;
  int64_t frame_ = 0;
  TransformSnapshot before_;
  TransformSnapshot after_;
+ bool lastOperationSucceeded_ = true;
 };
 
 struct MultiTransformEntry {
@@ -1512,16 +1515,19 @@ public:
  MultiTransformUndoCommand(int64_t frame, std::vector<MultiTransformEntry> entries)
      : frame_(frame), entries_(std::move(entries)) {}
 
- void undo() override { apply(true); }
- void redo() override { apply(false); }
+ void undo() override { lastOperationSucceeded_ = apply(true); }
+ void redo() override { lastOperationSucceeded_ = apply(false); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Transform Layers"); }
 
-private:
- void apply(bool useBefore) {
-  for (auto &entry : entries_) {
-   auto layer = entry.layer.lock();
-   if (!layer) {
-    continue;
+ private:
+ bool apply(bool useBefore) {
+  bool succeeded = true;
+   for (auto &entry : entries_) {
+    auto layer = entry.layer.lock();
+    if (!layer) {
+     succeeded = false;
+     continue;
    }
    const ArtifactCore::RationalTime time =
        transformKeyframeTimeAtFrame(layer.get(), frame_);
@@ -1541,13 +1547,15 @@ private:
    layer->setDirty(LayerDirtyFlag::Transform);
    layer->changed();
   }
-  if (auto *mgr = UndoManager::instance()) {
-   mgr->notifyAnythingChanged();
+   if (auto *mgr = UndoManager::instance()) {
+    mgr->notifyAnythingChanged();
+   }
+   return succeeded;
   }
- }
 
  int64_t frame_ = 0;
  std::vector<MultiTransformEntry> entries_;
+ bool lastOperationSucceeded_ = true;
 };
 
 void drawEmphasizedLine(ArtifactIRenderer* renderer,
@@ -3559,11 +3567,13 @@ void TransformGizmo::handleMouseRelease() {
    undoEntries.push_back(MultiTransformEntry{target, before, after});
   }
 
-  if (anyChanged && !undoEntries.empty()) {
-   if (auto *mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<MultiTransformUndoCommand>(dragStartFrame_, std::move(undoEntries)));
+   if (anyChanged && !undoEntries.empty()) {
+    auto *mgr = UndoManager::instance();
+    if (mgr && !mgr->push(std::make_unique<MultiTransformUndoCommand>(
+                              dragStartFrame_, std::move(undoEntries)))) {
+     cancelInteraction();
+    }
    }
-  }
  }
 isDragging_ = false;
  lastDragMutationNotify_ = {};

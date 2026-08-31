@@ -24,7 +24,6 @@ module;
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <wobjectimpl.h>
 
 module AI.Client;
 import Configuration.LayeredConfigStore;
@@ -42,6 +41,7 @@ import Artifact.AI.WorkspaceAutomation;
 import Artifact.AI.MaterialAutomation;
 import Artifact.AI.RenderAutomation;
 import Artifact.AI.FileAutomation;
+import Artifact.Event.Types;
 import Artifact.Application.Manager;
 import Artifact.Project.Statistics;
 import Artifact.Service.Project;
@@ -52,7 +52,17 @@ import Memory.SharedPtr;
 
 namespace Artifact {
 
-W_OBJECT_IMPL(AIClient)
+namespace {
+
+void publishAIClientChanged(AIClientChangeKind kind,
+                            const QString& text = {},
+                            bool success = false,
+                            const QString& modelPath = {}) {
+  ArtifactCore::globalEventBus().publish<AIClientChangedEvent>(
+      {kind, text, success, modelPath});
+}
+
+} // namespace
 
 class AIClient::Impl {
 public:
@@ -682,9 +692,10 @@ bool AIClient::initialize(const QString &modelPath) {
       }
     }
     qWarning() << "[AIClient]" << errorText << path;
-    Q_EMIT this->errorOccurred(errorText);
+    publishAIClientChanged(AIClientChangeKind::ErrorOccurred, errorText);
   }
-  Q_EMIT this->initializationFinished(loaded, path);
+  publishAIClientChanged(AIClientChangeKind::InitializationFinished,
+                         {}, loaded, path);
   return loaded;
 }
 
@@ -712,7 +723,8 @@ void AIClient::shutdown() {
     impl_->modelPath.clear();
   }
   qDebug() << "[AIClient] Local AI shut down";
-  Q_EMIT this->initializationFinished(false, previousModelPath);
+  publishAIClientChanged(AIClientChangeKind::InitializationFinished,
+                         {}, false, previousModelPath);
 }
 
 UniString AIClient::sendMessage(const UniString &message) {
@@ -781,7 +793,8 @@ void AIClient::postMessage(const UniString &message) {
       QMetaObject::invokeMethod(
           this,
           [this, readOnlyAnswer]() {
-            Q_EMIT this->messageReceived(readOnlyAnswer);
+            publishAIClientChanged(AIClientChangeKind::MessageReceived,
+                                   readOnlyAnswer);
           },
           Qt::QueuedConnection);
       return;
@@ -810,16 +823,21 @@ void AIClient::postMessage(const UniString &message) {
           const QString response = result.content;
           QMetaObject::invokeMethod(
               this,
-              [this, response]() { Q_EMIT this->messageReceived(response); },
+              [this, response]() {
+                publishAIClientChanged(AIClientChangeKind::MessageReceived,
+                                       response);
+              },
               Qt::QueuedConnection);
         } else {
           QMetaObject::invokeMethod(
               this,
               [this, errorMsg = result.errorMessage]() {
-                Q_EMIT this->errorOccurred(
+                publishAIClientChanged(
+                    AIClientChangeKind::ErrorOccurred,
                     QStringLiteral("Cloud AI error: %1").arg(errorMsg));
-                Q_EMIT this->messageReceived(QStringLiteral("[AI error] ") +
-                                             errorMsg);
+                publishAIClientChanged(AIClientChangeKind::MessageReceived,
+                                       QStringLiteral("[AI error] ") +
+                                           errorMsg);
               },
               Qt::QueuedConnection);
         }
@@ -827,10 +845,12 @@ void AIClient::postMessage(const UniString &message) {
         QMetaObject::invokeMethod(
             this,
             [this, errorMsg = e.what()]() {
-              Q_EMIT this->errorOccurred(
+              publishAIClientChanged(
+                  AIClientChangeKind::ErrorOccurred,
                   QStringLiteral("Exception: %1").arg(errorMsg));
-              Q_EMIT this->messageReceived(QStringLiteral("[AI exception] ") +
-                                           errorMsg);
+              publishAIClientChanged(AIClientChangeKind::MessageReceived,
+                                     QStringLiteral("[AI exception] ") +
+                                         errorMsg);
             },
             Qt::QueuedConnection);
       }
@@ -839,9 +859,10 @@ void AIClient::postMessage(const UniString &message) {
 
     // ローカルAI処理（既存の実装をそのまま使用）
     if (initializing && !initialized) {
-      Q_EMIT this->errorOccurred(
-          QStringLiteral("Local model is still loading."));
-      Q_EMIT this->partialMessageReceived(QStringLiteral("[AI loading]"));
+      publishAIClientChanged(AIClientChangeKind::ErrorOccurred,
+                             QStringLiteral("Local model is still loading."));
+      publishAIClientChanged(AIClientChangeKind::PartialMessageReceived,
+                             QStringLiteral("[AI loading]"));
       return;
     }
 
@@ -866,7 +887,8 @@ void AIClient::postMessage(const UniString &message) {
             QMetaObject::invokeMethod(
                 this,
                 [this, snapshot]() {
-                  Q_EMIT this->partialMessageReceived(snapshot);
+                  publishAIClientChanged(
+                      AIClientChangeKind::PartialMessageReceived, snapshot);
                 },
                 Qt::QueuedConnection);
             std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -875,7 +897,10 @@ void AIClient::postMessage(const UniString &message) {
 
       if (wasCancelled) {
         QMetaObject::invokeMethod(
-            this, [this]() { Q_EMIT this->messageCancelled(); },
+            this,
+            [this]() {
+              publishAIClientChanged(AIClientChangeKind::MessageCancelled);
+            },
             Qt::QueuedConnection);
         return;
       }
@@ -884,17 +909,22 @@ void AIClient::postMessage(const UniString &message) {
         QMetaObject::invokeMethod(
             this,
             [this]() {
-              Q_EMIT this->errorOccurred(
-                  QStringLiteral("AI response was empty."));
-              Q_EMIT this->messageReceived(QStringLiteral(
-                  "申し訳ありません。応答を生成できませんでした。"));
+              publishAIClientChanged(AIClientChangeKind::ErrorOccurred,
+                                     QStringLiteral("AI response was empty."));
+              publishAIClientChanged(
+                  AIClientChangeKind::MessageReceived,
+                  QStringLiteral("申し訳ありません。応答を生成できませんでした。"));
             },
             Qt::QueuedConnection);
         return;
       }
 
       QMetaObject::invokeMethod(
-          this, [this, response]() { Q_EMIT this->messageReceived(response); },
+          this,
+          [this, response]() {
+            publishAIClientChanged(AIClientChangeKind::MessageReceived,
+                                   response);
+          },
           Qt::QueuedConnection);
       return;
     }
@@ -904,8 +934,10 @@ void AIClient::postMessage(const UniString &message) {
     QMetaObject::invokeMethod(
         this,
         [this, fullResponse]() {
-          Q_EMIT this->partialMessageReceived(fullResponse);
-          Q_EMIT this->messageReceived(fullResponse);
+          publishAIClientChanged(AIClientChangeKind::PartialMessageReceived,
+                                 fullResponse);
+          publishAIClientChanged(AIClientChangeKind::MessageReceived,
+                                 fullResponse);
         },
         Qt::QueuedConnection);
   }).detach();

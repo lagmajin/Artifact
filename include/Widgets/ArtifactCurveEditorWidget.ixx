@@ -70,17 +70,14 @@ export namespace ArtifactCore {
   bool promptSetSelectedKeyFrame();
   bool promptSetSelectedKeyValue();
 
- signals:
-  void interactionStarted() W_SIGNAL(interactionStarted);
-  void interactionFinished() W_SIGNAL(interactionFinished);
-  void keyMoved(int trackIndex, int keyIndex, int64_t newFrame, float newValue)
-   W_SIGNAL(keyMoved, trackIndex, keyIndex, newFrame, newValue);
-  void keyDeleted(int trackIndex, int keyIndex)
-   W_SIGNAL(keyDeleted, trackIndex, keyIndex);
-  void keySelected(int trackIndex, int keyIndex)
-   W_SIGNAL(keySelected, trackIndex, keyIndex);
-  void currentFrameChanged(int64_t frame)
-   W_SIGNAL(currentFrameChanged, frame);
+ public:
+  void interactionStarted();
+  void interactionFinished();
+
+  void keyMoved(int trackIndex, int keyIndex, int64_t newFrame, float newValue);
+  void keyDeleted(int trackIndex, int keyIndex);
+  void keySelected(int trackIndex, int keyIndex);
+  void currentFrameChanged(int64_t frame);
 
  protected:
   void paintEvent(QPaintEvent* event) override;

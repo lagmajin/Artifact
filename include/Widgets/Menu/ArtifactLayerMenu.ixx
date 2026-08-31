@@ -31,13 +31,6 @@ export namespace Artifact {
   explicit ArtifactLayerMenu(QWidget* mainWindow = nullptr, QWidget* parent = nullptr);
   ~ArtifactLayerMenu();
   QMenu* newLayerMenu() const;
- //signals
- public :
-  void nullLayerCreated()
-   W_SIGNAL(nullLayerCreated)
- //slots
- public:
-
  };
 
 

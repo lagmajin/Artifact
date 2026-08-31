@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QKeySequence>
 #include <QDebug>
@@ -51,10 +51,18 @@ import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Input.Operator;
 import Undo.UndoManager;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactPlaybackShortcuts)
+
+static void publishPlaybackShortcutExecuted(const QString& actionId)
+{
+    ArtifactCore::globalEventBus().publish<PlaybackShortcutExecutedEvent>(
+        {actionId});
+}
 
 static void bindActionCallback(ArtifactCore::ActionManager* actionManager,
                                const QString& actionId,
@@ -382,7 +390,7 @@ void ArtifactPlaybackShortcuts::playPause() {
     } else if (impl_->controller_) {
         impl_->controller_->togglePlayPause();
     }
-    emit shortcutExecuted(Impl::ACTION_PLAY_PAUSE);
+    publishPlaybackShortcutExecuted(Impl::ACTION_PLAY_PAUSE);
 }
 
 void ArtifactPlaybackShortcuts::play() {
@@ -393,7 +401,7 @@ void ArtifactPlaybackShortcuts::play() {
     } else if (impl_->controller_) {
         impl_->controller_->play();
     }
-    emit shortcutExecuted(Impl::ACTION_PLAY);
+    publishPlaybackShortcutExecuted(Impl::ACTION_PLAY);
 }
 
 void ArtifactPlaybackShortcuts::pause() {
@@ -404,7 +412,7 @@ void ArtifactPlaybackShortcuts::pause() {
     } else if (impl_->controller_) {
         impl_->controller_->pause();
     }
-    emit shortcutExecuted(Impl::ACTION_PAUSE);
+    publishPlaybackShortcutExecuted(Impl::ACTION_PAUSE);
 }
 
 void ArtifactPlaybackShortcuts::stop() {
@@ -415,7 +423,7 @@ void ArtifactPlaybackShortcuts::stop() {
     } else if (impl_->controller_) {
         impl_->controller_->stop();
     }
-    emit shortcutExecuted(Impl::ACTION_STOP);
+    publishPlaybackShortcutExecuted(Impl::ACTION_STOP);
 }
 
 void ArtifactPlaybackShortcuts::goToStart() {
@@ -424,7 +432,7 @@ void ArtifactPlaybackShortcuts::goToStart() {
     } else if (impl_->controller_) {
         impl_->controller_->goToStartFrame();
     }
-    emit shortcutExecuted(Impl::ACTION_GOTO_START);
+    publishPlaybackShortcutExecuted(Impl::ACTION_GOTO_START);
 }
 
 void ArtifactPlaybackShortcuts::goToEnd() {
@@ -433,7 +441,7 @@ void ArtifactPlaybackShortcuts::goToEnd() {
     } else if (impl_->controller_) {
         impl_->controller_->goToEndFrame();
     }
-    emit shortcutExecuted(Impl::ACTION_GOTO_END);
+    publishPlaybackShortcutExecuted(Impl::ACTION_GOTO_END);
 }
 
 void ArtifactPlaybackShortcuts::shuttleForward() {
@@ -443,7 +451,7 @@ void ArtifactPlaybackShortcuts::shuttleForward() {
         impl_->controller_->setPlaybackSpeed(std::max(1.0f, impl_->controller_->playbackSpeed() * 2.0f));
         impl_->controller_->play();
     }
-    emit shortcutExecuted(Impl::ACTION_SHUTTLE_FORWARD);
+    publishPlaybackShortcutExecuted(Impl::ACTION_SHUTTLE_FORWARD);
 }
 
 void ArtifactPlaybackShortcuts::shuttleReverse() {
@@ -453,7 +461,7 @@ void ArtifactPlaybackShortcuts::shuttleReverse() {
         impl_->controller_->setPlaybackSpeed(-1.0f);
         impl_->controller_->play();
     }
-    emit shortcutExecuted(Impl::ACTION_SHUTTLE_REVERSE);
+    publishPlaybackShortcutExecuted(Impl::ACTION_SHUTTLE_REVERSE);
 }
 
 void ArtifactPlaybackShortcuts::shuttleStop() {
@@ -463,7 +471,7 @@ void ArtifactPlaybackShortcuts::shuttleStop() {
         impl_->controller_->setPlaybackSpeed(0.0f);
         impl_->controller_->stop();
     }
-    emit shortcutExecuted(Impl::ACTION_SHUTTLE_STOP);
+    publishPlaybackShortcutExecuted(Impl::ACTION_SHUTTLE_STOP);
 }
 
 void ArtifactPlaybackShortcuts::nextFrame() {
@@ -472,7 +480,7 @@ void ArtifactPlaybackShortcuts::nextFrame() {
     } else if (impl_->controller_) {
         impl_->controller_->goToNextFrame();
     }
-    emit shortcutExecuted(Impl::ACTION_NEXT_FRAME);
+    publishPlaybackShortcutExecuted(Impl::ACTION_NEXT_FRAME);
 }
 
 void ArtifactPlaybackShortcuts::previousFrame() {
@@ -481,7 +489,7 @@ void ArtifactPlaybackShortcuts::previousFrame() {
     } else if (impl_->controller_) {
         impl_->controller_->goToPreviousFrame();
     }
-    emit shortcutExecuted(Impl::ACTION_PREV_FRAME);
+    publishPlaybackShortcutExecuted(Impl::ACTION_PREV_FRAME);
 }
 
 void ArtifactPlaybackShortcuts::goToFrame(int frame) {
@@ -490,7 +498,7 @@ void ArtifactPlaybackShortcuts::goToFrame(int frame) {
     } else if (impl_->controller_) {
         impl_->controller_->goToFrame(FramePosition(frame));
     }
-    emit shortcutExecuted(Impl::ACTION_GOTO_FRAME);
+    publishPlaybackShortcutExecuted(Impl::ACTION_GOTO_FRAME);
 }
 
 // ==================== In/Out Point Actions ====================
@@ -502,8 +510,8 @@ void ArtifactPlaybackShortcuts::setInPoint() {
         auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
         impl_->inOutPoints_->setInPoint(frame);
     }
-    // emit inPointSet(frame.value());
-    emit shortcutExecuted(Impl::ACTION_SET_IN_POINT);
+    // InOutPoints publishes its own internal update event.
+    publishPlaybackShortcutExecuted(Impl::ACTION_SET_IN_POINT);
 }
 
 void ArtifactPlaybackShortcuts::setOutPoint() {
@@ -513,8 +521,8 @@ void ArtifactPlaybackShortcuts::setOutPoint() {
         auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
         impl_->inOutPoints_->setOutPoint(frame);
     }
-    // emit outPointSet(frame.value());
-    emit shortcutExecuted(Impl::ACTION_SET_OUT_POINT);
+    // InOutPoints publishes its own internal update event.
+    publishPlaybackShortcutExecuted(Impl::ACTION_SET_OUT_POINT);
 }
 
 void ArtifactPlaybackShortcuts::clearInPoint() {
@@ -523,7 +531,7 @@ void ArtifactPlaybackShortcuts::clearInPoint() {
     } else if (impl_->inOutPoints_) {
         impl_->inOutPoints_->clearInPoint();
     }
-    emit shortcutExecuted(Impl::ACTION_CLEAR_IN_POINT);
+    publishPlaybackShortcutExecuted(Impl::ACTION_CLEAR_IN_POINT);
 }
 
 void ArtifactPlaybackShortcuts::clearOutPoint() {
@@ -532,7 +540,7 @@ void ArtifactPlaybackShortcuts::clearOutPoint() {
     } else if (impl_->inOutPoints_) {
         impl_->inOutPoints_->clearOutPoint();
     }
-    emit shortcutExecuted(Impl::ACTION_CLEAR_OUT_POINT);
+    publishPlaybackShortcutExecuted(Impl::ACTION_CLEAR_OUT_POINT);
 }
 
 void ArtifactPlaybackShortcuts::clearInOutPoints() {
@@ -541,7 +549,7 @@ void ArtifactPlaybackShortcuts::clearInOutPoints() {
     } else if (impl_->inOutPoints_) {
         impl_->inOutPoints_->clearAllPoints();
     }
-    emit shortcutExecuted(Impl::ACTION_CLEAR_IN_OUT);
+    publishPlaybackShortcutExecuted(Impl::ACTION_CLEAR_IN_OUT);
 }
 
 void ArtifactPlaybackShortcuts::goToInPoint() {
@@ -553,7 +561,7 @@ void ArtifactPlaybackShortcuts::goToInPoint() {
             impl_->controller_->goToFrame(*inPoint);
         }
     }
-    emit shortcutExecuted(Impl::ACTION_GOTO_IN_POINT);
+    publishPlaybackShortcutExecuted(Impl::ACTION_GOTO_IN_POINT);
 }
 
 void ArtifactPlaybackShortcuts::goToOutPoint() {
@@ -565,14 +573,14 @@ void ArtifactPlaybackShortcuts::goToOutPoint() {
             impl_->controller_->goToFrame(*outPoint);
         }
     }
-    emit shortcutExecuted(Impl::ACTION_GOTO_OUT_POINT);
+    publishPlaybackShortcutExecuted(Impl::ACTION_GOTO_OUT_POINT);
 }
 
 void ArtifactPlaybackShortcuts::moveWorkAreaToCurrentFrame() {
     if (auto* service = ArtifactPlaybackService::instance()) {
         service->moveWorkAreaToCurrentFrame();
     }
-    emit shortcutExecuted(Impl::ACTION_MOVE_WORK_AREA);
+    publishPlaybackShortcutExecuted(Impl::ACTION_MOVE_WORK_AREA);
 }
 
 // ==================== Marker Actions ====================
@@ -586,12 +594,16 @@ void ArtifactPlaybackShortcuts::addMarker(const QString& comment) {
         impl_->inOutPoints_->addMarker(frame, comment, MarkerType::Comment);
         const QJsonObject after = impl_->inOutPoints_->toJson();
         if (before != after) {
-            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
-                impl_->inOutPoints_, before, after));
+            auto* undo = UndoManager::instance();
+            if (undo && !undo->push(
+                    std::make_unique<InOutPointsSnapshotCommand>(
+                        impl_->inOutPoints_, before, after))) {
+                impl_->inOutPoints_->fromJson(before);
+            }
         }
     }
-    // emit markerAdded(frame.value(), comment);
-    emit shortcutExecuted(Impl::ACTION_ADD_MARKER);
+    // Marker persistence is handled by the command path.
+    publishPlaybackShortcutExecuted(Impl::ACTION_ADD_MARKER);
 }
 
 void ArtifactPlaybackShortcuts::addChapterMarker(const QString& name) {
@@ -603,12 +615,16 @@ void ArtifactPlaybackShortcuts::addChapterMarker(const QString& name) {
         impl_->inOutPoints_->addMarker(frame, name, MarkerType::Chapter);
         const QJsonObject after = impl_->inOutPoints_->toJson();
         if (before != after) {
-            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
-                impl_->inOutPoints_, before, after));
+            auto* undo = UndoManager::instance();
+            if (undo && !undo->push(
+                    std::make_unique<InOutPointsSnapshotCommand>(
+                        impl_->inOutPoints_, before, after))) {
+                impl_->inOutPoints_->fromJson(before);
+            }
         }
     }
-    // emit markerAdded(frame.value(), name);
-    emit shortcutExecuted(Impl::ACTION_ADD_CHAPTER);
+    // Marker persistence is handled by the command path.
+    publishPlaybackShortcutExecuted(Impl::ACTION_ADD_CHAPTER);
 }
 
 void ArtifactPlaybackShortcuts::goToNextMarker() {
@@ -617,7 +633,7 @@ void ArtifactPlaybackShortcuts::goToNextMarker() {
     } else if (impl_->controller_) {
         impl_->controller_->goToNextMarker();
     }
-    emit shortcutExecuted(Impl::ACTION_NEXT_MARKER);
+    publishPlaybackShortcutExecuted(Impl::ACTION_NEXT_MARKER);
 }
 
 void ArtifactPlaybackShortcuts::goToPreviousMarker() {
@@ -626,7 +642,7 @@ void ArtifactPlaybackShortcuts::goToPreviousMarker() {
     } else if (impl_->controller_) {
         impl_->controller_->goToPreviousMarker();
     }
-    emit shortcutExecuted(Impl::ACTION_PREV_MARKER);
+    publishPlaybackShortcutExecuted(Impl::ACTION_PREV_MARKER);
 }
 
 void ArtifactPlaybackShortcuts::goToNextChapter() {
@@ -635,7 +651,7 @@ void ArtifactPlaybackShortcuts::goToNextChapter() {
     } else if (impl_->controller_) {
         impl_->controller_->goToNextChapter();
     }
-    emit shortcutExecuted(Impl::ACTION_NEXT_CHAPTER);
+    publishPlaybackShortcutExecuted(Impl::ACTION_NEXT_CHAPTER);
 }
 
 void ArtifactPlaybackShortcuts::goToPreviousChapter() {
@@ -644,7 +660,7 @@ void ArtifactPlaybackShortcuts::goToPreviousChapter() {
     } else if (impl_->controller_) {
         impl_->controller_->goToPreviousChapter();
     }
-    emit shortcutExecuted(Impl::ACTION_PREV_CHAPTER);
+    publishPlaybackShortcutExecuted(Impl::ACTION_PREV_CHAPTER);
 }
 
 void ArtifactPlaybackShortcuts::deleteMarkerAtCurrent() {
@@ -656,11 +672,15 @@ void ArtifactPlaybackShortcuts::deleteMarkerAtCurrent() {
         impl_->inOutPoints_->removeMarker(frame);
         const QJsonObject after = impl_->inOutPoints_->toJson();
         if (before != after) {
-            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
-                impl_->inOutPoints_, before, after));
+            auto* undo = UndoManager::instance();
+            if (undo && !undo->push(
+                    std::make_unique<InOutPointsSnapshotCommand>(
+                        impl_->inOutPoints_, before, after))) {
+                impl_->inOutPoints_->fromJson(before);
+            }
         }
     }
-    emit shortcutExecuted(Impl::ACTION_DELETE_MARKER);
+    publishPlaybackShortcutExecuted(Impl::ACTION_DELETE_MARKER);
 }
 
 void ArtifactPlaybackShortcuts::clearAllMarkers() {
@@ -671,11 +691,15 @@ void ArtifactPlaybackShortcuts::clearAllMarkers() {
         impl_->inOutPoints_->clearAllMarkers();
         const QJsonObject after = impl_->inOutPoints_->toJson();
         if (before != after) {
-            UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(
-                impl_->inOutPoints_, before, after));
+            auto* undo = UndoManager::instance();
+            if (undo && !undo->push(
+                    std::make_unique<InOutPointsSnapshotCommand>(
+                        impl_->inOutPoints_, before, after))) {
+                impl_->inOutPoints_->fromJson(before);
+            }
         }
     }
-    emit shortcutExecuted(Impl::ACTION_CLEAR_MARKERS);
+    publishPlaybackShortcutExecuted(Impl::ACTION_CLEAR_MARKERS);
 }
 
 // ==================== Speed Actions ====================
@@ -686,7 +710,7 @@ void ArtifactPlaybackShortcuts::setSpeedNormal() {
     } else if (impl_->controller_) {
         impl_->controller_->setPlaybackSpeed(1.0f);
     }
-    emit shortcutExecuted(Impl::ACTION_SPEED_NORMAL);
+    publishPlaybackShortcutExecuted(Impl::ACTION_SPEED_NORMAL);
 }
 
 void ArtifactPlaybackShortcuts::setSpeedHalf() {
@@ -695,7 +719,7 @@ void ArtifactPlaybackShortcuts::setSpeedHalf() {
     } else if (impl_->controller_) {
         impl_->controller_->setPlaybackSpeed(0.5f);
     }
-    emit shortcutExecuted(Impl::ACTION_SPEED_HALF);
+    publishPlaybackShortcutExecuted(Impl::ACTION_SPEED_HALF);
 }
 
 void ArtifactPlaybackShortcuts::setSpeedDouble() {
@@ -704,7 +728,7 @@ void ArtifactPlaybackShortcuts::setSpeedDouble() {
     } else if (impl_->controller_) {
         impl_->controller_->setPlaybackSpeed(2.0f);
     }
-    emit shortcutExecuted(Impl::ACTION_SPEED_DOUBLE);
+    publishPlaybackShortcutExecuted(Impl::ACTION_SPEED_DOUBLE);
 }
 
 void ArtifactPlaybackShortcuts::toggleLoop() {
@@ -713,7 +737,7 @@ void ArtifactPlaybackShortcuts::toggleLoop() {
     } else if (impl_->controller_) {
         impl_->controller_->setLooping(!impl_->controller_->isLooping());
     }
-    emit shortcutExecuted(Impl::ACTION_TOGGLE_LOOP);
+    publishPlaybackShortcutExecuted(Impl::ACTION_TOGGLE_LOOP);
 }
 
 // ==================== Scrubbing ====================

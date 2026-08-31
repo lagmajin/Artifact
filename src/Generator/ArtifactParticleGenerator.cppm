@@ -68,6 +68,21 @@ namespace Artifact {
 
 namespace {
 
+float remapParticleLife(const float t, const ParticleLifeCurve curve)
+{
+    const float x = std::clamp(std::isfinite(t) ? t : 0.0f, 0.0f, 1.0f);
+    switch (curve) {
+    case ParticleLifeCurve::EaseIn: return x * x;
+    case ParticleLifeCurve::EaseOut: return 1.0f - (1.0f - x) * (1.0f - x);
+    case ParticleLifeCurve::Smooth: return x * x * (3.0f - 2.0f * x);
+    case ParticleLifeCurve::Pulse:
+        return x < 0.5f ? 2.0f * x * x
+                        : 1.0f - 2.0f * (1.0f - x) * (1.0f - x);
+    case ParticleLifeCurve::Linear:
+    default: return x;
+    }
+}
+
 float evaluateTriStageLinear(float startValue,
                              float midValue,
                              float endValue,
@@ -501,6 +516,28 @@ void ParticleEmitter::removeEffector(int index)
     if (index >= 0 && index < static_cast<int>(effectors_.size())) {
         effectors_.erase(effectors_.begin() + index);
     }
+}
+
+bool ParticleEmitter::moveEffector(int fromIndex, int toIndex)
+{
+    const int count = static_cast<int>(effectors_.size());
+    if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count ||
+        fromIndex == toIndex) {
+        return false;
+    }
+    auto effector = std::move(effectors_[fromIndex]);
+    effectors_.erase(effectors_.begin() + fromIndex);
+    effectors_.insert(effectors_.begin() + toIndex, std::move(effector));
+    return true;
+}
+
+bool ParticleEmitter::setEffectorEnabled(int index, bool enabled)
+{
+    if (index < 0 || index >= static_cast<int>(effectors_.size()) || !effectors_[index]) {
+        return false;
+    }
+    effectors_[index]->enabled = enabled;
+    return true;
 }
 
 void ParticleEmitter::clearEffectors()
@@ -988,7 +1025,7 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     }
     
     // Interpolate properties based on life
-    float t = 1.0f - p.life;  // 0 = just born, 1 = about to die
+    float t = remapParticleLife(1.0f - p.life, params_.lifeCurve);
     
     // Scale interpolation
     p.scale = evaluateTriStageLinear(

@@ -37,17 +37,17 @@ class MotionSketchUndoCommand final : public UndoCommand {
       : layer_(layer), before_(std::move(before)), after_(std::move(after)),
         frameRate_(std::max<int64_t>(1, frameRate)) {}
 
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override { return QStringLiteral("Motion Sketch"); }
 
  private:
-  void apply(const Snapshot& snap) {
+  bool apply(const Snapshot& snap) {
     auto layer = layer_.lock();
-    if (!layer) return;
+    if (!layer) return false;
     auto& t3d = layer->transform3D();
     t3d.clearPositionKeyFrames();
-    if (snap.empty()) return;
     for (const auto& [frame, xy] : snap) {
       ArtifactCore::RationalTime rt(frame, frameRate_);
       t3d.setPosition(rt, xy.first, xy.second);
@@ -63,12 +63,14 @@ class MotionSketchUndoCommand final : public UndoCommand {
     if (auto* mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
+    return true;
   }
 
   ArtifactAbstractLayerWeak layer_;
   Snapshot before_;
   Snapshot after_;
   int64_t frameRate_ = 24;
+  bool lastOperationSucceeded_ = true;
 };
 
 class ArtifactMotionSketchTool::Impl {
@@ -258,10 +260,18 @@ bool ArtifactMotionSketchTool::finishSketch()
         afterPositions[frame] = {t3d.positionXAt(kt), t3d.positionYAt(kt)};
     }
 
-    if (auto* mgr = UndoManager::instance()) {
-        mgr->push(std::make_unique<MotionSketchUndoCommand>(
-            layer, impl_->beforePositions, std::move(afterPositions),
-            static_cast<int64_t>(fps)));
+    if (auto* mgr = UndoManager::instance();
+        mgr && !mgr->push(std::make_unique<MotionSketchUndoCommand>(
+                layer, impl_->beforePositions, std::move(afterPositions),
+                static_cast<int64_t>(fps)))) {
+            t3d.clearPositionKeyFrames();
+            for (const auto& [frame, xy] : impl_->beforePositions) {
+                t3d.setPosition(
+                    RationalTime(frame, static_cast<int64_t>(fps)),
+                    xy.first, xy.second);
+            }
+            layer->setDirty(LayerDirtyFlag::Transform);
+            return false;
     }
 
     // Notify

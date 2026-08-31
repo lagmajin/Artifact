@@ -1250,20 +1250,22 @@ namespace Artifact {
      return editor ? editor->renderController() : nullptr;
    };
    QObject::connect(showGridAction, &QAction::toggled, menu,
-                    [this, activeController](bool checked) {
-                      if (auto* controller = activeController()) {
-                        controller->setShowGrid(checked);
-                        QSettings settings;
-                        settings.setValue(QStringLiteral("viewport/showGrid"), checked);
-                      }
+                    [](bool checked) {
+                      ArtifactCore::globalEventBus().publish(
+                          CompositionViewCommandRequestedEvent{
+                              CompositionViewCommandKind::SetGridVisible,
+                              checked});
+                      QSettings settings;
+                      settings.setValue(QStringLiteral("viewport/showGrid"), checked);
                     });
    QObject::connect(showGuidesAction, &QAction::toggled, menu,
-                    [this, activeController](bool checked) {
-                      if (auto* controller = activeController()) {
-                        controller->setShowGuides(checked);
-                        QSettings settings;
-                        settings.setValue(QStringLiteral("viewport/showGuides"), checked);
-                      }
+                    [](bool checked) {
+                      ArtifactCore::globalEventBus().publish(
+                          CompositionViewCommandRequestedEvent{
+                              CompositionViewCommandKind::SetGuidesVisible,
+                              checked});
+                      QSettings settings;
+                      settings.setValue(QStringLiteral("viewport/showGuides"), checked);
                     });
    QObject::connect(snapToGuidesAction, &QAction::toggled, menu,
                     [this, activeController](bool checked) {
@@ -1388,11 +1390,12 @@ namespace Artifact {
     }
    });
 
-   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, menu,
-                     [this]() {
-                      refreshEnabledState();
-                     });
+   if (ArtifactCore::ArtifactAppSettings::instance()) {
+    eventBusSubscriptions_.push_back(
+        eventBus_.subscribe<ArtifactCore::AppSettingsChangedEvent>(
+            [this](const ArtifactCore::AppSettingsChangedEvent&) {
+              refreshEnabledState();
+            }));
    }
 
    auto* svc = ArtifactProjectService::instance();
@@ -2224,20 +2227,43 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
 {
   if (!windowPanelsMenu || !mainWindow) return;
 
+  const auto* artifactWindow = asArtifactMainWindow(mainWindow);
   const QStringList titles = dockTitles(mainWindow);
+  const QStringList dockIds = artifactWindow ? artifactWindow->dockIds() : titles;
+  const auto displayTitle = [artifactWindow](const QString& dockId) {
+    if (!artifactWindow) return dockId;
+    const QString title = artifactWindow->dockDisplayTitle(dockId);
+    return title.isEmpty() ? dockId : title;
+  };
+  const auto normalizeDockIds = [artifactWindow, &dockIds](
+                                   const QStringList& storedIds) {
+    QStringList normalized;
+    for (const QString& storedId : storedIds) {
+      const QString dockId = artifactWindow
+                                 ? artifactWindow->resolveDockId(storedId)
+                                 : (dockIds.contains(storedId) ? storedId : QString{});
+      if (!dockId.isEmpty() && !normalized.contains(dockId)) {
+        normalized.append(dockId);
+      }
+    }
+    return normalized;
+  };
   cachedDockTitles_ = titles;
   windowPanelsMenu->clear();
 
   QSettings dockSettings;
-  QStringList favorites = dockSettings.value(
-      QStringLiteral("Workspace/FavoriteDockIds")).toStringList();
-  favorites.removeAll(QString());
-  favorites.erase(std::remove_if(favorites.begin(), favorites.end(),
-                                  [&titles](const QString& id) {
-                                    return !titles.contains(id);
-                                  }), favorites.end());
-  const QStringList recent = dockSettings.value(
-      QStringLiteral("Workspace/RecentDockIds")).toStringList();
+  const QString favoriteKey = QStringLiteral("Workspace/FavoriteDockIds");
+  const QString recentKey = QStringLiteral("Workspace/RecentDockIds");
+  const QStringList storedFavorites = dockSettings.value(favoriteKey).toStringList();
+  const QStringList favorites = normalizeDockIds(storedFavorites);
+  if (favorites != storedFavorites) {
+    dockSettings.setValue(favoriteKey, favorites);
+  }
+  const QStringList storedRecent = dockSettings.value(recentKey).toStringList();
+  const QStringList recent = normalizeDockIds(storedRecent);
+  if (recent != storedRecent) {
+    dockSettings.setValue(recentKey, recent);
+  }
 
   auto *recentMenu = windowPanelsMenu->addMenu(QStringLiteral("最近使ったパネル"));
   auto *favoriteMenu = windowPanelsMenu->addMenu(QStringLiteral("お気に入り"));
@@ -2245,42 +2271,44 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
   recentMenu->setAccessibleDescription(QStringLiteral("Activate a recently used registered dock panel"));
   favoriteMenu->setAccessibleName(QStringLiteral("Favorite panels"));
   favoriteMenu->setAccessibleDescription(QStringLiteral("Activate or favorite registered dock panels"));
-  const auto addActivationAction = [this](QMenu* target,
-                                                          const QString& title) {
+  const auto addActivationAction = [this, displayTitle](QMenu* target,
+                                                          const QString& dockId) {
+    const QString title = displayTitle(dockId);
     QAction* action = target->addAction(title);
     QObject::connect(action, &QAction::triggered, mainWindow,
-                     [mw = mainWindow, title]() {
-                       setDockVisible(mw, title, true);
-                       activateDock(mw, title);
+                     [mw = mainWindow, dockId]() {
+                       setDockVisible(mw, dockId, true);
+                       activateDock(mw, dockId);
                        QSettings settings;
                        QStringList ids = settings.value(
                            QStringLiteral("Workspace/RecentDockIds")).toStringList();
-                       ids.removeAll(title);
-                       ids.prepend(title);
+                       ids.removeAll(dockId);
+                       ids.prepend(dockId);
                        while (ids.size() > 8) ids.removeLast();
                        settings.setValue(QStringLiteral("Workspace/RecentDockIds"), ids);
                      });
   };
   int recentCount = 0;
-  for (const auto& title : recent) {
-    if (titles.contains(title) && recentCount++ < 8) {
-      addActivationAction(recentMenu, title);
+  for (const auto& dockId : recent) {
+    if (dockIds.contains(dockId) && recentCount++ < 8) {
+      addActivationAction(recentMenu, dockId);
     }
   }
   if (recentMenu->actions().isEmpty()) {
     recentMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
   }
-  for (const auto& title : titles) {
+  for (const auto& dockId : dockIds) {
+    const QString title = displayTitle(dockId);
     QAction* action = favoriteMenu->addAction(title);
     action->setCheckable(true);
-    action->setChecked(favorites.contains(title));
+    action->setChecked(favorites.contains(dockId));
     QObject::connect(action, &QAction::triggered, mainWindow,
-                     [title](bool checked) {
+                     [dockId](bool checked) {
                        QSettings settings;
                        QStringList ids = settings.value(
                            QStringLiteral("Workspace/FavoriteDockIds")).toStringList();
-                       ids.removeAll(title);
-                       if (checked) ids.append(title);
+                       ids.removeAll(dockId);
+                       if (checked) ids.append(dockId);
                        settings.setValue(QStringLiteral("Workspace/FavoriteDockIds"), ids);
                      });
   }
@@ -2302,7 +2330,8 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
     return QStringLiteral("Other");
   };
   QHash<QString, QMenu*> categoryMenus;
-  for (const QString& title : titles) {
+  for (const QString& dockId : dockIds) {
+   const QString title = displayTitle(dockId);
    const QString category = categoryForDock(title);
    QMenu* categoryMenu = categoryMenus.value(category, nullptr);
    if (!categoryMenu) {
@@ -2313,44 +2342,46 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
    addAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    addAction->setToolTip(QStringLiteral("Show and activate %1").arg(title));
    QObject::connect(addAction, &QAction::triggered, mainWindow,
-                    [mw = mainWindow, title]() {
-                      setDockVisible(mw, title, true);
-                      activateDock(mw, title);
+                    [mw = mainWindow, dockId]() {
+                      setDockVisible(mw, dockId, true);
+                      activateDock(mw, dockId);
                     });
   }
-  if (titles.isEmpty()) {
+  if (dockIds.isEmpty()) {
    QAction* none = addPanelMenu->addAction("(no panels)");
    none->setEnabled(false);
   }
   windowPanelsMenu->addSeparator();
 
-  for (const QString& title : titles) {
+  for (const QString& dockId : dockIds) {
+   const QString title = displayTitle(dockId);
    QAction* action = windowPanelsMenu->addAction(title);
    action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    action->setCheckable(true);
-   action->setChecked(isDockVisible(mainWindow, title));
+   action->setChecked(isDockVisible(mainWindow, dockId));
 
-   QObject::connect(action, &QAction::triggered, mainWindow, [mw = mainWindow, title](bool checked) {
-    setDockVisible(mw, title, checked);
+   QObject::connect(action, &QAction::triggered, mainWindow, [mw = mainWindow, dockId](bool checked) {
+    setDockVisible(mw, dockId, checked);
     if (checked) {
-     activateDock(mw, title);
+     activateDock(mw, dockId);
     }
    });
   }
 
   auto *pinMenu = windowPanelsMenu->addMenu(QStringLiteral("ピン留め"));
   pinMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
-  for (const QString &title : titles) {
+  for (const QString &dockId : dockIds) {
+   const QString title = displayTitle(dockId);
    QAction *pinAction = pinMenu->addAction(title);
    pinAction->setCheckable(true);
-   pinAction->setChecked(isDockPinned(mainWindow, title));
+   pinAction->setChecked(isDockPinned(mainWindow, dockId));
    QObject::connect(pinAction, &QAction::toggled, mainWindow,
-                    [mw = mainWindow, title](bool pinned) {
-                      setDockPinned(mw, title, pinned);
+                    [mw = mainWindow, dockId](bool pinned) {
+                      setDockPinned(mw, dockId, pinned);
                     });
   }
 
-  if (titles.isEmpty()) {
+  if (dockIds.isEmpty()) {
    QAction* none = windowPanelsMenu->addAction("(no panels)");
    none->setIcon(QIcon(resolveIconPath("Studio/viewmenu_empty_state.svg")));
    none->setEnabled(false);

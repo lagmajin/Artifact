@@ -492,6 +492,23 @@ QSize physicalViewportSize(const QWidget* widget)
               std::max(1, static_cast<int>(std::lround(widget->height() * dpr))));
 }
 
+bool sameCustomPathVertices(
+    const std::vector<Artifact::CustomPathVertex>& lhs,
+    const std::vector<Artifact::CustomPathVertex>& rhs) {
+  if (lhs.size() != rhs.size()) {
+   return false;
+  }
+  for (size_t index = 0; index < lhs.size(); ++index) {
+   const auto& left = lhs[index];
+   const auto& right = rhs[index];
+   if (left.pos != right.pos || left.inTangent != right.inTangent ||
+       left.outTangent != right.outTangent || left.smooth != right.smooth) {
+    return false;
+   }
+  }
+  return true;
+}
+
 class ShapeEditCommand final : public Artifact::UndoCommand {public:
  ShapeEditCommand(Artifact::ArtifactAbstractLayerPtr layer,
                   std::vector<QPointF> beforePoints,
@@ -500,82 +517,95 @@ class ShapeEditCommand final : public Artifact::UndoCommand {public:
        beforePoints_(std::move(beforePoints)),
        afterPoints_(std::move(afterPoints)) {}
 
- void undo() override {
-  applySnapshot(beforePoints_);
- }
+  void undo() override {
+   lastOperationSucceeded_ = applySnapshot(beforePoints_);
+  }
 
  void redo() override {
-  applySnapshot(afterPoints_);
- }
+   lastOperationSucceeded_ = applySnapshot(afterPoints_);
+  }
+
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
  QString label() const override {
   return QStringLiteral("Edit Polygon");
  }
 
 private:
- void applySnapshot(const std::vector<QPointF>& points) {
-  auto layer = layer_.lock();
-  if (!layer) {
-   return;
+  bool applySnapshot(const std::vector<QPointF>& points) {
+   auto layer = layer_.lock();
+   if (!layer) {
+    return false;
   }
   auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
       ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
-  if (!shape) {
-   return;
+   if (!shape) {
+    return false;
   }
   if (points.size() >= 3) {
    shape->setCustomPolygonPoints(points, true);
   } else {
    shape->clearCustomPolygonPoints();
   }
-  if (auto* mgr = Artifact::UndoManager::instance()) {
-   mgr->notifyAnythingChanged();
-  }
+   if (auto* mgr = Artifact::UndoManager::instance()) {
+    mgr->notifyAnythingChanged();
+   }
+   const auto expected = points.size() >= 3 ? points : std::vector<QPointF>{};
+   return shape->customPolygonPoints() == expected;
  }
 
  Artifact::ArtifactAbstractLayerWeak layer_;
- std::vector<QPointF> beforePoints_;
- std::vector<QPointF> afterPoints_;
+  std::vector<QPointF> beforePoints_;
+  std::vector<QPointF> afterPoints_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class CornerRadiusEditCommand final : public Artifact::UndoCommand {
 public:
  CornerRadiusEditCommand(Artifact::ArtifactAbstractLayerPtr layer, float before, float after)
      : layer_(std::move(layer)), before_(before), after_(after) {}
- void undo() override { apply(before_); }
- void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Edit Corner Radius"); }
 private:
- void apply(float r) {
-  auto layer = layer_.lock();
-  if (!layer) return;
-  if (auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
-          ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer)))
+  bool apply(float r) {
+   auto layer = layer_.lock();
+   if (!layer) return false;
+   auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+           ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
+   if (!shape) return false;
    shape->setCornerRadius(r);
-  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   return std::abs(shape->cornerRadius() - r) <= 0.0001f;
  }
- Artifact::ArtifactAbstractLayerWeak layer_;
- float before_, after_;
+  Artifact::ArtifactAbstractLayerWeak layer_;
+  float before_, after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class StarInnerRadiusEditCommand final : public Artifact::UndoCommand {
 public:
  StarInnerRadiusEditCommand(Artifact::ArtifactAbstractLayerPtr layer, float before, float after)
      : layer_(std::move(layer)), before_(before), after_(after) {}
- void undo() override { apply(before_); }
- void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Edit Star Inner Radius"); }
 private:
- void apply(float r) {
-  auto layer = layer_.lock();
-  if (!layer) return;
-  if (auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
-          ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer)))
+  bool apply(float r) {
+   auto layer = layer_.lock();
+   if (!layer) return false;
+   auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+           ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
+   if (!shape) return false;
    shape->setStarInnerRadius(r);
-  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   return std::abs(shape->starInnerRadius() - r) <= 0.0001f;
  }
- Artifact::ArtifactAbstractLayerWeak layer_;
- float before_, after_;
+  Artifact::ArtifactAbstractLayerWeak layer_;
+  float before_, after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class PathVertexEditCommand final : public Artifact::UndoCommand {
@@ -587,25 +617,32 @@ public:
      : layer_(std::move(layer)),
        before_(std::move(before)), after_(std::move(after)),
        beforeClosed_(beforeClosed), afterClosed_(afterClosed) {}
- void undo() override { apply(before_, beforeClosed_); }
- void redo() override { apply(after_, afterClosed_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_, beforeClosed_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_, afterClosed_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Edit Path Vertices"); }
 private:
- void apply(const std::vector<Artifact::CustomPathVertex>& verts, bool closed) {
-  auto layer = layer_.lock();
-  if (!layer) return;
-  auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
-      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
-  if (!shape) return;
+  bool apply(const std::vector<Artifact::CustomPathVertex>& verts, bool closed) {
+   auto layer = layer_.lock();
+   if (!layer) return false;
+   auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+       ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
+   if (!shape) return false;
   if (verts.size() >= 3)
    shape->setCustomPathVertices(verts, closed);
   else
    shape->clearCustomPath();
-  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   if (verts.size() < 3) {
+    return !shape->hasCustomPath();
+   }
+   return sameCustomPathVertices(shape->customPathVertices(), verts) &&
+          shape->customPathClosed() == closed;
  }
  Artifact::ArtifactAbstractLayerWeak layer_;
  std::vector<Artifact::CustomPathVertex> before_, after_;
- bool beforeClosed_, afterClosed_;
+  bool beforeClosed_, afterClosed_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class ShapeConversionCommand final : public Artifact::UndoCommand {
@@ -629,21 +666,28 @@ public:
        afterPath_(std::move(afterPath)),
        afterPathClosed_(afterPathClosed) {}
 
- void undo() override { apply(beforePolygon_, beforePolygonClosed_, beforePath_, beforePathClosed_); }
- void redo() override { apply(afterPolygon_, afterPolygonClosed_, afterPath_, afterPathClosed_); }
+  void undo() override {
+   lastOperationSucceeded_ = apply(beforePolygon_, beforePolygonClosed_,
+                                    beforePath_, beforePathClosed_);
+  }
+  void redo() override {
+   lastOperationSucceeded_ = apply(afterPolygon_, afterPolygonClosed_,
+                                    afterPath_, afterPathClosed_);
+  }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Convert Shape Structure"); }
 
 private:
- void apply(const std::vector<QPointF>& polygon, bool polygonClosed,
-            const std::vector<Artifact::CustomPathVertex>& path, bool pathClosed) {
-  auto layer = layer_.lock();
-  if (!layer) {
-   return;
+  bool apply(const std::vector<QPointF>& polygon, bool polygonClosed,
+             const std::vector<Artifact::CustomPathVertex>& path, bool pathClosed) {
+   auto layer = layer_.lock();
+   if (!layer) {
+    return false;
   }
   auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
       ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
-  if (!shape) {
-   return;
+   if (!shape) {
+    return false;
   }
   if (path.size() >= 3) {
    shape->setCustomPathVertices(path, pathClosed);
@@ -655,9 +699,17 @@ private:
   } else {
    shape->clearCustomPolygonPoints();
   }
-  if (auto* mgr = Artifact::UndoManager::instance()) {
-   mgr->notifyAnythingChanged();
-  }
+   if (auto* mgr = Artifact::UndoManager::instance()) {
+    mgr->notifyAnythingChanged();
+   }
+   const auto expectedPolygon = polygon.size() >= 3
+       ? polygon : std::vector<QPointF>{};
+   const auto expectedPath = path.size() >= 3
+       ? path : std::vector<Artifact::CustomPathVertex>{};
+   return shape->customPolygonPoints() == expectedPolygon &&
+          sameCustomPathVertices(shape->customPathVertices(), expectedPath) &&
+          (expectedPolygon.empty() || shape->customPolygonClosed() == polygonClosed) &&
+          (expectedPath.empty() || shape->customPathClosed() == pathClosed);
  }
 
  Artifact::ArtifactAbstractLayerWeak layer_;
@@ -667,8 +719,9 @@ private:
  bool beforePathClosed_;
  std::vector<QPointF> afterPolygon_;
  bool afterPolygonClosed_;
- std::vector<Artifact::CustomPathVertex> afterPath_;
- bool afterPathClosed_;
+  std::vector<Artifact::CustomPathVertex> afterPath_;
+  bool afterPathClosed_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class ShapeOperatorStackCommand final : public Artifact::UndoCommand {
@@ -677,22 +730,25 @@ public:
                            QJsonArray before, QJsonArray after)
      : layer_(std::move(layer)), before_(std::move(before)), after_(std::move(after)) {}
 
- void undo() override { apply(before_); }
- void redo() override { apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Edit Shape Operator Stack"); }
 
 private:
- void apply(const QJsonArray& operators) {
-  auto layer = layer_.lock();
-  auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
-      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
-  if (!shape) return;
-  shape->restoreOperatorsFromJson(operators);
-  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+  bool apply(const QJsonArray& operators) {
+   auto layer = layer_.lock();
+   auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+       ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
+   if (!shape) return false;
+   shape->restoreOperatorsFromJson(operators);
+   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+   return shape->toJson().value(QStringLiteral("shapeOperators")).toArray() == operators;
  }
 
  Artifact::ArtifactAbstractLayerWeak layer_;
- QJsonArray before_, after_;
+  QJsonArray before_, after_;
+  bool lastOperationSucceeded_ = true;
 };
 
 enum class MaskHandleType { None, InTangent, OutTangent };
@@ -1208,18 +1264,34 @@ bool ArtifactLayerEditorWidgetV2::Impl::toggleLayerState(int stateIndex)
  auto layer = targetLayer();
  if (!layer || stateIndex < 0 || stateIndex > 2) return false;
 
- if (auto* undo = UndoManager::instance()) {
+  auto* undo = UndoManager::instance();
+  bool applied = false;
   if (stateIndex == 0) {
-   undo->push(std::make_unique<SetLayerVisibilityCommand>(
-       layer, !layer->isVisible()));
+   const bool next = !layer->isVisible();
+   if (undo) {
+    applied = undo->push(std::make_unique<SetLayerVisibilityCommand>(layer, next));
+   } else {
+    layer->setVisible(next);
+    applied = layer->isVisible() == next;
+   }
   } else if (stateIndex == 1) {
-   undo->push(std::make_unique<SetLayerLockCommand>(
-       layer, !layer->isLocked()));
+   const bool next = !layer->isLocked();
+   if (undo) {
+    applied = undo->push(std::make_unique<SetLayerLockCommand>(layer, next));
+   } else {
+    layer->setLocked(next);
+    applied = layer->isLocked() == next;
+   }
   } else {
-   undo->push(std::make_unique<SetLayerSoloCommand>(
-       layer, !layer->isSolo()));
+   const bool next = !layer->isSolo();
+   if (undo) {
+    applied = undo->push(std::make_unique<SetLayerSoloCommand>(layer, next));
+   } else {
+    layer->setSolo(next);
+    applied = layer->isSolo() == next;
+   }
   }
- }
+  if (!applied) return false;
 
  publishLayerReadout(widget_, layer);
  surfaceInfoDirty_ = true;
@@ -1459,7 +1531,16 @@ void ArtifactLayerEditorWidgetV2::Impl::commitMaskEditTransaction()
    afterMasks.push_back(layer->mask(i));
   }
   if (auto* undo = UndoManager::instance()) {
-   undo->push(std::make_unique<MaskEditCommand>(layer, maskEditBefore_, std::move(afterMasks)));
+   if (!undo->push(std::make_unique<MaskEditCommand>(
+           layer, maskEditBefore_, std::move(afterMasks)))) {
+    layer->clearMasks();
+    for (const auto &mask : maskEditBefore_) {
+     layer->addMask(mask);
+    }
+    maskEditBefore_.clear();
+    maskEditDirty_ = false;
+    return;
+   }
   }
  maskEditBefore_.clear();
  maskEditDirty_ = false;
@@ -1648,16 +1729,22 @@ void ArtifactLayerEditorWidgetV2::Impl::commitShapeEditTransaction()
   shapeEditDirty_ = false;
   return;
  }
- std::vector<QPointF> afterPoints;
- if (auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
-         ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
-  afterPoints = shape->customPolygonPoints();
- }
- if (auto* undo = UndoManager::instance()) {
-  undo->push(std::make_unique<ShapeEditCommand>(layer, shapeEditBefore_, std::move(afterPoints)));
- }
- shapeEditBefore_.clear();
- shapeEditDirty_ = false;
+  auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
+  if (!shape) {
+   shapeEditBefore_.clear();
+   shapeEditDirty_ = false;
+   return;
+  }
+  const auto afterPoints = shape->customPolygonPoints();
+  auto* undo = UndoManager::instance();
+   if (undo && !undo->push(std::make_unique<ShapeEditCommand>(
+                         layer, shapeEditBefore_, afterPoints))) {
+   shape->setCustomPolygonPoints(shapeEditBefore_, shape->customPolygonClosed());
+   shape->changed();
+  }
+  shapeEditBefore_.clear();
+  shapeEditDirty_ = false;
 }
 
 bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeVertex(const ArtifactAbstractLayerPtr& layer,
@@ -3418,12 +3505,16 @@ void ArtifactLayerEditorWidgetV2::Impl::commitPathEditTransaction()
  if (!shape) return;
  const auto afterVerts = shape->customPathVertices();
  const bool afterClosed = shape->customPathClosed();
- if (auto* undo = UndoManager::instance()) {
-  undo->push(std::make_unique<PathVertexEditCommand>(
-      layer, pathEditBefore_, afterVerts, pathEditBeforeClosed_, afterClosed));
- }
- pathEditBefore_.clear();
- pathEditDirty_ = false;
+  auto* undo = UndoManager::instance();
+   if (undo && !undo->push(std::make_unique<PathVertexEditCommand>(
+                         layer, pathEditBefore_, afterVerts,
+                         pathEditBeforeClosed_, afterClosed))) {
+   shape->setCustomPathVertices(pathEditBefore_, pathEditBeforeClosed_);
+   shape->changed();
+  }
+  pathEditBefore_.clear();
+  pathEditLayer_.reset();
+  pathEditDirty_ = false;
 }
 
 bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathVertex(
@@ -4825,11 +4916,14 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
  auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
     if (shape) {
-     const float after = shape->cornerRadius();
-     if (std::abs(after - impl_->cornerRadiusBefore_) > 0.001f) {
-      if (auto* undo = UndoManager::instance()) {
-       undo->push(std::make_unique<CornerRadiusEditCommand>(layer, impl_->cornerRadiusBefore_, after));
-      }
+      const float after = shape->cornerRadius();
+       if (std::abs(after - impl_->cornerRadiusBefore_) > 0.001f) {
+        auto* undo = UndoManager::instance();
+         if (undo && !undo->push(std::make_unique<CornerRadiusEditCommand>(
+                 layer, impl_->cornerRadiusBefore_, after))) {
+         shape->setCornerRadius(impl_->cornerRadiusBefore_);
+         shape->changed();
+        }
      }
     }
     impl_->paramHandleEditLayer_.reset();
@@ -4843,11 +4937,14 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
  auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
     if (shape) {
-     const float after = shape->starInnerRadius();
-     if (std::abs(after - impl_->starInnerRadiusBefore_) > 0.001f) {
-      if (auto* undo = UndoManager::instance()) {
-       undo->push(std::make_unique<StarInnerRadiusEditCommand>(layer, impl_->starInnerRadiusBefore_, after));
-      }
+      const float after = shape->starInnerRadius();
+       if (std::abs(after - impl_->starInnerRadiusBefore_) > 0.001f) {
+        auto* undo = UndoManager::instance();
+         if (undo && !undo->push(std::make_unique<StarInnerRadiusEditCommand>(
+                 layer, impl_->starInnerRadiusBefore_, after))) {
+         shape->setStarInnerRadius(impl_->starInnerRadiusBefore_);
+         shape->changed();
+        }
      }
     }
     impl_->paramHandleEditLayer_.reset();
@@ -5440,13 +5537,20 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    QAction* shapeChosen = menu.exec(QPoint(menuX, menuY));
    if (shapeChosen) {
      bool handled = false;
-     const QJsonArray beforeOperatorState =
-         shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
-     if (shapeChosen == clearShapeOperatorsAct) {
-      shapeLayer->clearShapeOperators();
-      impl_->requestRender();
-      event->accept();
-      return;
+      const QJsonArray beforeOperatorState =
+          shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
+      if (shapeChosen == clearShapeOperatorsAct) {
+       shapeLayer->clearShapeOperators();
+       const QJsonArray afterOperatorState =
+           shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
+       auto* undo = UndoManager::instance();
+       if (undo && !undo->push(std::make_unique<ShapeOperatorStackCommand>(
+                                  layer, beforeOperatorState, afterOperatorState))) {
+        shapeLayer->restoreOperatorsFromJson(beforeOperatorState);
+       }
+       impl_->requestRender();
+       event->accept();
+       return;
      }
      if (shapeChosen == addTrimPathsAct) {
       shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::TrimPaths);
@@ -5525,20 +5629,31 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        for (const auto &p : pts)
         verts.push_back({p, QPointF(0, 0), QPointF(0, 0), false});
        const auto afterPath = verts;
-       shapeLayer->setCustomPathVertices(verts, closed);
-       shapeLayer->clearCustomPolygonPoints();
-       impl_->hoveredPathVertexIndex_ = verts.empty() ? -1 : 0;
-       impl_->hoveredPathTangentIndex_ = -1;
-       impl_->hoveredPathTangentType_ = 0;
-       if (auto* undo = UndoManager::instance()) {
-        undo->push(std::make_unique<ShapeConversionCommand>(
-            layer,
-            pts, closed,
-            beforePath, beforePathClosed,
-            std::vector<QPointF>{}, false,
-            afterPath, closed));
-       }
-       handled = true;
+        shapeLayer->setCustomPathVertices(verts, closed);
+        shapeLayer->clearCustomPolygonPoints();
+        impl_->hoveredPathVertexIndex_ = verts.empty() ? -1 : 0;
+        impl_->hoveredPathTangentIndex_ = -1;
+        impl_->hoveredPathTangentType_ = 0;
+        auto* undo = UndoManager::instance();
+         const bool pushed = !undo || undo->push(std::make_unique<ShapeConversionCommand>(
+             layer,
+             pts, closed,
+             beforePath, beforePathClosed,
+             std::vector<QPointF>{}, false,
+             afterPath, closed));
+        if (!pushed) {
+         shapeLayer->setCustomPolygonPoints(pts, closed);
+         if (beforePath.empty()) {
+          shapeLayer->clearCustomPath();
+         } else {
+          shapeLayer->setCustomPathVertices(beforePath, beforePathClosed);
+         }
+         shapeLayer->changed();
+         impl_->requestRender();
+         event->accept();
+         return;
+        }
+        handled = true;
       }
       if (handled) {
        impl_->commitPathEditTransaction();
@@ -5591,19 +5706,30 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        for (const auto &v : verts)
         pts.push_back(v.pos);
        const auto afterPolygon = pts;
-       shapeLayer->setCustomPolygonPoints(pts, closed);
-       shapeLayer->clearCustomPath();
-       impl_->hoveredShapeVertexIndex_ = pts.empty() ? -1 : 0;
-       impl_->hoveredShapeSegmentIndex_ = pts.size() >= 2 ? 0 : -1;
-       if (auto* undo = UndoManager::instance()) {
-        undo->push(std::make_unique<ShapeConversionCommand>(
-            layer,
-            beforePolygon, beforePolygonClosed,
-            verts, closed,
-            afterPolygon, closed,
-            std::vector<Artifact::CustomPathVertex>{}, false));
-       }
-       handled = true;
+        shapeLayer->setCustomPolygonPoints(pts, closed);
+        shapeLayer->clearCustomPath();
+        impl_->hoveredShapeVertexIndex_ = pts.empty() ? -1 : 0;
+        impl_->hoveredShapeSegmentIndex_ = pts.size() >= 2 ? 0 : -1;
+        auto* undo = UndoManager::instance();
+         const bool pushed = !undo || undo->push(std::make_unique<ShapeConversionCommand>(
+             layer,
+             beforePolygon, beforePolygonClosed,
+             verts, closed,
+             afterPolygon, closed,
+             std::vector<Artifact::CustomPathVertex>{}, false));
+        if (!pushed) {
+         if (beforePolygon.empty()) {
+          shapeLayer->clearCustomPolygonPoints();
+         } else {
+          shapeLayer->setCustomPolygonPoints(beforePolygon, beforePolygonClosed);
+         }
+         shapeLayer->setCustomPathVertices(verts, closed);
+         shapeLayer->changed();
+         impl_->requestRender();
+         event->accept();
+         return;
+        }
+        handled = true;
       }
       if (handled) {
        impl_->commitShapeEditTransaction();
@@ -5612,15 +5738,16 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        return;
       }
      }
-     if (handled) {
-      const QJsonArray afterOperatorState =
-          shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
-      if (beforeOperatorState != afterOperatorState) {
-       if (auto* undo = UndoManager::instance()) {
-        undo->push(std::make_unique<ShapeOperatorStackCommand>(
-            layer, beforeOperatorState, afterOperatorState));
+      if (handled) {
+       const QJsonArray afterOperatorState =
+           shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
+       if (beforeOperatorState != afterOperatorState) {
+        auto* undo = UndoManager::instance();
+        if (undo && !undo->push(std::make_unique<ShapeOperatorStackCommand>(
+                                   layer, beforeOperatorState, afterOperatorState))) {
+         shapeLayer->restoreOperatorsFromJson(beforeOperatorState);
+        }
        }
-      }
       impl_->requestRender();
       event->accept();
       return;

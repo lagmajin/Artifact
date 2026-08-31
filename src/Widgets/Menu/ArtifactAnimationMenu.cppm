@@ -61,23 +61,31 @@ public:
   : composition_(std::move(composition)), before_(std::move(before)),
     after_(std::move(after)), label_(std::move(label)) {}
 
- void undo() override { apply(before_); }
- void redo() override { apply(after_); }
+ void undo() override { lastOperationSucceeded_ = apply(before_); }
+ void redo() override { lastOperationSucceeded_ = apply(after_); }
  QString label() const override { return label_; }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
- void apply(const QVector<CompositionAudioReactiveBinding>& bindings) {
-  if (const auto composition = composition_.lock()) {
-   composition->setAudioReactiveBindings(bindings);
-   if (auto* manager = UndoManager::instance()) {
-    manager->notifyAnythingChanged();
-   }
+ bool apply(const QVector<CompositionAudioReactiveBinding>& bindings) {
+  const auto composition = composition_.lock();
+  if (!composition) return false;
+  composition->setAudioReactiveBindings(bindings);
+  const auto applied = composition->audioReactiveBindings();
+  if (applied.size() != bindings.size()) return false;
+  for (int index = 0; index < bindings.size(); ++index) {
+   if (applied[index].toJson() != bindings[index].toJson()) return false;
   }
+  if (auto* manager = UndoManager::instance()) {
+   manager->notifyAnythingChanged();
+  }
+  return true;
  }
  ArtifactCompositionWeakPtr composition_;
  QVector<CompositionAudioReactiveBinding> before_;
  QVector<CompositionAudioReactiveBinding> after_;
  QString label_;
+ bool lastOperationSucceeded_ = true;
 };
 
 class BakeAudioReactiveBindingCommand final : public UndoCommand {
@@ -91,22 +99,41 @@ public:
     before_(std::move(before)), after_(std::move(after)),
     beforeValue_(std::move(beforeValue)), afterValue_(std::move(afterValue)) {}
 
- void undo() override { apply(before_, beforeValue_); }
- void redo() override { apply(after_, afterValue_); }
+ void undo() override {
+  lastOperationSucceeded_ = apply(before_, beforeValue_, after_, afterValue_);
+ }
+ void redo() override {
+  lastOperationSucceeded_ = apply(after_, afterValue_, before_, beforeValue_);
+ }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override {
   return QStringLiteral("Bake Audio Reactive Binding");
  }
 
 private:
- void apply(const std::vector<ArtifactCore::KeyFrame>& keyframes,
-            const QVariant& value) {
-  if (const auto layer = layer_.lock()) {
-   const auto property = layer->getProperty(propertyPath_);
-   if (!property) {
-    return;
-   }
+ bool apply(const std::vector<ArtifactCore::KeyFrame>& keyframes,
+            const QVariant& value,
+            const std::vector<ArtifactCore::KeyFrame>& compensationKeyframes,
+            const QVariant& compensationValue) {
+  const auto layer = layer_.lock();
+  if (!layer) return false;
+  const auto property = layer->getProperty(propertyPath_);
+  if (!property) return false;
+  property->clearKeyFrames();
+  for (const auto& keyframe : keyframes) {
+   property->addKeyFrame(
+       keyframe.time, keyframe.value, keyframe.interpolation,
+       keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+       keyframe.roving);
+   property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+   property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+  }
+  property->setValue(value);
+  const bool applied = property->getKeyFrames().size() == keyframes.size() &&
+                       property->getValue() == value;
+  if (!applied) {
    property->clearKeyFrames();
-   for (const auto& keyframe : keyframes) {
+   for (const auto& keyframe : compensationKeyframes) {
     property->addKeyFrame(
         keyframe.time, keyframe.value, keyframe.interpolation,
         keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
@@ -114,12 +141,14 @@ private:
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
    }
-   property->setValue(value);
-   layer->changed();
-   if (auto* manager = UndoManager::instance()) {
-    manager->notifyAnythingChanged();
-   }
+   property->setValue(compensationValue);
+   return false;
   }
+  layer->changed();
+  if (auto* manager = UndoManager::instance()) {
+   manager->notifyAnythingChanged();
+  }
+  return true;
  }
  ArtifactAbstractLayerWeak layer_;
  QString propertyPath_;
@@ -127,6 +156,7 @@ private:
  std::vector<ArtifactCore::KeyFrame> after_;
  QVariant beforeValue_;
  QVariant afterValue_;
+ bool lastOperationSucceeded_ = true;
 };
 
 class CommitAudioReactiveRecordingCommand final : public UndoCommand {
@@ -136,24 +166,28 @@ public:
      QVector<LiveControlRecordingPropertyChange> changes)
   : composition_(std::move(composition)), changes_(std::move(changes)) {}
 
- void undo() override { apply(true); }
- void redo() override { apply(false); }
+ void undo() override { lastOperationSucceeded_ = apply(true); }
+ void redo() override { lastOperationSucceeded_ = apply(false); }
  QString label() const override {
   return QStringLiteral("Commit Audio Reactive Recording");
  }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
- void apply(const bool before) {
+ bool apply(const bool before) {
   const auto composition = composition_.lock();
   if (!composition) {
-   return;
+   return false;
+  }
+  for (const auto& change : changes_) {
+   const auto layer = composition->layerById(change.layerId);
+   if (!layer || !layer->getProperty(change.propertyPath)) {
+    return false;
+   }
   }
   for (const auto& change : changes_) {
    const auto layer = composition->layerById(change.layerId);
    const auto property = layer ? layer->getProperty(change.propertyPath) : nullptr;
-   if (!property) {
-    continue;
-   }
    const auto& keyframes = before ? change.beforeKeyframes
                                   : change.afterKeyframes;
    property->clearKeyFrames();
@@ -166,14 +200,20 @@ private:
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
    }
    property->setValue(before ? change.beforeValue : change.afterValue);
+   if (property->getKeyFrames().size() != keyframes.size() ||
+       property->getValue() != (before ? change.beforeValue : change.afterValue)) {
+    return false;
+   }
    layer->changed();
   }
   if (auto* manager = UndoManager::instance()) {
    manager->notifyAnythingChanged();
   }
+  return true;
  }
  ArtifactCompositionWeakPtr composition_;
  QVector<LiveControlRecordingPropertyChange> changes_;
+ bool lastOperationSucceeded_ = true;
 };
 
 std::vector<std::size_t> reducedLinearSampleIndexes(
@@ -338,8 +378,9 @@ bool configureActiveAudioReactiveBinding(QWidget* root)
   after[std::distance(before.cbegin(), existing)] = binding;
  }
  if (auto* manager = UndoManager::instance()) {
-  manager->push(std::make_unique<ChangeAudioReactiveBindingsCommand>(
-      composition, before, after, QStringLiteral("Configure Audio Reactive Binding")));
+  return manager->push(std::make_unique<ChangeAudioReactiveBindingsCommand>(
+      composition, before, after,
+      QStringLiteral("Configure Audio Reactive Binding")));
  } else {
   composition->setAudioReactiveBindings(after);
  }
@@ -371,8 +412,9 @@ bool removeActiveAudioReactiveBinding(QWidget* root)
   return false;
  }
  if (auto* manager = UndoManager::instance()) {
-  manager->push(std::make_unique<ChangeAudioReactiveBindingsCommand>(
-      composition, before, after, QStringLiteral("Remove Audio Reactive Binding")));
+  return manager->push(std::make_unique<ChangeAudioReactiveBindingsCommand>(
+      composition, before, after,
+      QStringLiteral("Remove Audio Reactive Binding")));
  } else {
   composition->setAudioReactiveBindings(after);
  }
@@ -556,8 +598,9 @@ bool bakeActiveAudioReactiveBinding(QWidget* root)
  const auto beforeKeyframes = property->getKeyFrames();
  const QVariant beforeValue = property->getValue();
  const QVariant afterValue = samples.back().second;
+ bool applied = false;
  if (auto* manager = UndoManager::instance()) {
-  manager->push(std::make_unique<BakeAudioReactiveBindingCommand>(
+  applied = manager->push(std::make_unique<BakeAudioReactiveBindingCommand>(
       layer, propertyPath, beforeKeyframes, bakedKeyframes,
       beforeValue, afterValue));
  } else {
@@ -565,6 +608,10 @@ bool bakeActiveAudioReactiveBinding(QWidget* root)
       layer, propertyPath, beforeKeyframes, bakedKeyframes,
       beforeValue, afterValue);
   command.redo();
+  applied = command.lastOperationSucceeded();
+ }
+ if (!applied) {
+  return false;
  }
  QMessageBox::information(
      root, QStringLiteral("Audio Reactive Bake"),
@@ -625,13 +672,18 @@ bool commitAudioReactiveRecording()
   return false;
  }
  auto changes = composition->commitLiveControlRecording();
+ bool applied = true;
  if (!changes.isEmpty()) {
   if (auto* manager = UndoManager::instance()) {
-   manager->push(std::make_unique<CommitAudioReactiveRecordingCommand>(
+   applied = manager->push(std::make_unique<CommitAudioReactiveRecordingCommand>(
        composition, std::move(changes)));
+  } else {
+   CommitAudioReactiveRecordingCommand command(composition, std::move(changes));
+   command.redo();
+   applied = command.lastOperationSucceeded();
   }
  }
- return true;
+ return applied;
 }
 
 bool cancelAudioReactiveRecording()
@@ -1244,24 +1296,114 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (!action) {
     return;
    }
-   if (action == impl_->addKeyframeAction) { Q_EMIT addKeyframeRequested(); return; }
-   if (action == impl_->removeKeyframeAction) { Q_EMIT removeKeyframeRequested(); return; }
-   if (action == impl_->selectAllKeyframesAction) { Q_EMIT selectAllKeyframesRequested(); return; }
-   if (action == impl_->reverseSelectedKeyframesAction) { Q_EMIT reverseSelectedKeyframesRequested(); return; }
-   if (action == impl_->reverseAllKeyframesInLayerAction) { Q_EMIT reverseAllKeyframesInLayerRequested(); return; }
-   if (action == impl_->reverseAllKeyframesInSelectedLayersAction) { Q_EMIT reverseAllKeyframesInSelectedLayersRequested(); return; }
-   if (action == impl_->reverseAllKeyframesInCompositionAction) { Q_EMIT reverseAllKeyframesInCompositionRequested(); return; }
-   if (action == impl_->copyKeyframesAction) { Q_EMIT copyKeyframesRequested(); return; }
-   if (action == impl_->pasteKeyframesAction) { Q_EMIT pasteKeyframesRequested(); return; }
-   if (action == impl_->linearInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Linear); return; }
-   if (action == impl_->easeInAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::EaseIn); return; }
-   if (action == impl_->easeOutAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::EaseOut); return; }
-   if (action == impl_->easeInOutAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::EaseInOut); return; }
-   if (action == impl_->holdInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Constant); return; }
-   if (action == impl_->bezierInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Bezier); return; }
-   if (action == impl_->showGraphEditorAction) { Q_EMIT showGraphEditorRequested(); return; }
-   if (action == impl_->toggleValueGraphAction) { Q_EMIT toggleValueGraphRequested(); return; }
-   if (action == impl_->toggleVelocityGraphAction) { Q_EMIT toggleVelocityGraphRequested(); return; }
+   if (action == impl_->addKeyframeAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::Add});
+    return;
+   }
+   if (action == impl_->removeKeyframeAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::Remove});
+    return;
+   }
+   if (action == impl_->selectAllKeyframesAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::SelectAll});
+    return;
+   }
+   if (action == impl_->reverseSelectedKeyframesAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::ReverseSelected});
+    return;
+   }
+   if (action == impl_->reverseAllKeyframesInLayerAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::ReverseCurrentLayer});
+    return;
+   }
+   if (action == impl_->reverseAllKeyframesInSelectedLayersAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::ReverseSelectedLayers});
+    return;
+   }
+   if (action == impl_->reverseAllKeyframesInCompositionAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::ReverseComposition});
+    return;
+   }
+   if (action == impl_->copyKeyframesAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::Copy});
+    return;
+   }
+   if (action == impl_->pasteKeyframesAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeEditCommandRequestedEvent{
+            TimelineKeyframeEditCommandKind::Paste});
+    return;
+   }
+   if (action == impl_->linearInterpolationAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::Linear});
+    return;
+   }
+   if (action == impl_->easeInAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::EaseIn});
+    return;
+   }
+   if (action == impl_->easeOutAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::EaseOut});
+    return;
+   }
+   if (action == impl_->easeInOutAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::EaseInOut});
+    return;
+   }
+   if (action == impl_->holdInterpolationAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::Constant});
+    return;
+   }
+   if (action == impl_->bezierInterpolationAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::Bezier});
+    return;
+   }
+   if (action == impl_->showGraphEditorAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineGraphCommandRequestedEvent{
+            TimelineGraphCommandKind::ShowEditor});
+    return;
+   }
+   if (action == impl_->toggleValueGraphAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineGraphCommandRequestedEvent{
+            TimelineGraphCommandKind::ShowValue});
+    return;
+   }
+   if (action == impl_->toggleVelocityGraphAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineGraphCommandRequestedEvent{
+            TimelineGraphCommandKind::ShowSpeed});
+    return;
+   }
   if (action == impl_->easingLabAction) {
     EasingLabDialog dialog(
         this,
@@ -1285,13 +1427,48 @@ bool hasActiveExpressionTarget(QWidget* root)
     }
     return;
   }
-   if (action == impl_->goToNextKeyframeAction) { Q_EMIT goToNextKeyframeRequested(); return; }
-   if (action == impl_->goToPreviousKeyframeAction) { Q_EMIT goToPreviousKeyframeRequested(); return; }
-   if (action == impl_->goToFirstKeyframeAction) { Q_EMIT goToFirstKeyframeRequested(); return; }
-   if (action == impl_->goToLastKeyframeAction) { Q_EMIT goToLastKeyframeRequested(); return; }
-   if (action == impl_->enableTimeRemapAction) { Q_EMIT enableTimeRemapRequested(); return; }
-   if (action == impl_->freezeFrameAction) { Q_EMIT freezeFrameRequested(); return; }
-   if (action == impl_->timeReverseAction) { Q_EMIT timeReverseRequested(); return; }
+   if (action == impl_->goToNextKeyframeAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeNavigationRequestedEvent{
+            TimelineKeyframeNavigationKind::Next});
+    return;
+   }
+   if (action == impl_->goToPreviousKeyframeAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeNavigationRequestedEvent{
+            TimelineKeyframeNavigationKind::Previous});
+    return;
+   }
+   if (action == impl_->goToFirstKeyframeAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeNavigationRequestedEvent{
+            TimelineKeyframeNavigationKind::First});
+    return;
+   }
+   if (action == impl_->goToLastKeyframeAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineKeyframeNavigationRequestedEvent{
+            TimelineKeyframeNavigationKind::Last});
+    return;
+   }
+   if (action == impl_->enableTimeRemapAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineTimeRemapCommandRequestedEvent{
+            TimelineTimeRemapCommandKind::Enable});
+    return;
+   }
+   if (action == impl_->freezeFrameAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineTimeRemapCommandRequestedEvent{
+            TimelineTimeRemapCommandKind::Freeze});
+    return;
+   }
+   if (action == impl_->timeReverseAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineTimeRemapCommandRequestedEvent{
+            TimelineTimeRemapCommandKind::Reverse});
+    return;
+   }
    if (action == impl_->addExpressionAction) { openNewExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->editExpressionAction) { openActiveExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->removeExpressionAction) { clearActiveExpression(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
@@ -1311,20 +1488,23 @@ bool hasActiveExpressionTarget(QWidget* root)
   QObject::connect(this, &QMenu::triggered, this, dispatchAction);
 
   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, impl_->menu_, [this]() {
-      if (!impl_ || !impl_->toggleValueGraphAction || !impl_->toggleVelocityGraphAction) {
-        return;
-      }
-      if (auto* appSettings = ArtifactCore::ArtifactAppSettings::instance()) {
-        const bool speedMode =
-            appSettings->timelineGraphEditorModeText().compare(
-                QStringLiteral("Speed"), Qt::CaseInsensitive) == 0;
-        const QSignalBlocker blockValue(impl_->toggleValueGraphAction);
-        const QSignalBlocker blockSpeed(impl_->toggleVelocityGraphAction);
-        impl_->toggleValueGraphAction->setChecked(!speedMode);
-        impl_->toggleVelocityGraphAction->setChecked(speedMode);
-      }
-    });
+    impl_->eventBusSubscriptions_.push_back(
+        ArtifactCore::globalEventBus().subscribe<ArtifactCore::AppSettingsChangedEvent>(
+            [this](const ArtifactCore::AppSettingsChangedEvent&) {
+              if (!impl_ || !impl_->toggleValueGraphAction ||
+                  !impl_->toggleVelocityGraphAction) {
+                return;
+              }
+              if (auto* appSettings = ArtifactCore::ArtifactAppSettings::instance()) {
+                const bool speedMode =
+                    appSettings->timelineGraphEditorModeText().compare(
+                        QStringLiteral("Speed"), Qt::CaseInsensitive) == 0;
+                const QSignalBlocker blockValue(impl_->toggleValueGraphAction);
+                const QSignalBlocker blockSpeed(impl_->toggleVelocityGraphAction);
+                impl_->toggleValueGraphAction->setChecked(!speedMode);
+                impl_->toggleVelocityGraphAction->setChecked(speedMode);
+              }
+            }));
     const bool speedMode =
         settings->timelineGraphEditorModeText().compare(
             QStringLiteral("Speed"), Qt::CaseInsensitive) == 0;

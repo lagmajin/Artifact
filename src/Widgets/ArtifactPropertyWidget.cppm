@@ -12,8 +12,10 @@ module;
 #include <QLayout>
 #include <QLineEdit>
 #include <QFileDialog>
+#include <QFocusEvent>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QIODevice>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -23,6 +25,7 @@ module;
 #include <QInputDialog>
 #include <QMetaObject>
 #include <QMouseEvent>
+#include <QThread>
 #include <QDir>
 #include <QMultiHash>
 #include <QPalette>
@@ -94,6 +97,7 @@ import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Input.Operator;
 import Audio.Modulation.Router;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -111,6 +115,74 @@ using AbstractPropertyPtr = ArtifactCore::AbstractPropertyPtr;
 constexpr int kPropertyRowLabelMinWidth = 132;
 constexpr int kPropertyRowLabelMaxWidth = 184;
 constexpr int kEffectRowLabelMaxWidth = 176;
+
+bool samePropertyKeyframeSequence(
+    const std::vector<ArtifactCore::KeyFrame> &lhs,
+    const std::vector<ArtifactCore::KeyFrame> &rhs) {
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.size(); ++i) {
+    const auto &a = lhs[i];
+    const auto &b = rhs[i];
+    if (a.time != b.time || a.value != b.value ||
+        a.interpolation != b.interpolation || a.cp1_x != b.cp1_x ||
+        a.cp1_y != b.cp1_y || a.cp2_x != b.cp2_x ||
+        a.cp2_y != b.cp2_y || a.roving != b.roving ||
+        a.anchor != b.anchor || a.colorLabel != b.colorLabel) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void restorePropertyKeyframesWidget(
+    const AbstractPropertyPtr &property,
+    const std::vector<ArtifactCore::KeyFrame> &keyframes,
+    const bool animatable) {
+  if (!property) {
+    return;
+  }
+  property->clearKeyFrames();
+  for (const auto &keyframe : keyframes) {
+    property->addKeyFrame(
+        keyframe.time, keyframe.value, keyframe.interpolation,
+        keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+        keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+  }
+  property->setAnimatable(animatable);
+}
+
+struct PropertyKeyframeRollback {
+  ArtifactAbstractLayerPtr layer;
+  AbstractPropertyPtr property;
+  std::vector<ArtifactCore::KeyFrame> keyframes;
+  bool animatable = false;
+};
+
+struct PropertyEditRollback {
+  ArtifactAbstractLayerPtr layer;
+  QString propertyName;
+  AbstractPropertyPtr property;
+  QVariant value;
+  std::vector<ArtifactCore::KeyFrame> keyframes;
+  bool animatable = false;
+};
+
+int propertyFrameRateScale(const ArtifactAbstractComposition *composition)
+{
+  if (!composition) {
+    return 30;
+  }
+  const double rawFps = composition->frameRate().framerate();
+  if (!std::isfinite(rawFps) || rawFps <= 0.0) {
+    return 30;
+  }
+  return std::max(1, static_cast<int>(std::llround(
+      std::clamp(rawFps, 1.0, 10000.0))));
+}
 
 struct LayerStateToggleDef {
   const char *propertyName;
@@ -135,6 +207,21 @@ void launchExpressionCopilot(
     ArtifactPropertyEditorRowWidget *inlineRow = nullptr);
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
 void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer);
+
+void restoreLayerPropertySnapshot(
+    const ArtifactAbstractLayerPtr &layer,
+    const QString &propertyName,
+    const AbstractPropertyPtr &property,
+    const QVariant &value,
+    const std::vector<ArtifactCore::KeyFrame> &keyframes,
+    const bool animatable) {
+  if (!layer || !property) {
+    return;
+  }
+  layer->setLayerPropertyValue(propertyName, value);
+  restorePropertyKeyframesWidget(property, keyframes, animatable);
+  notifyLayerPropertyAnimationChanged(layer);
+}
 
 bool editEffectPropertyModulation(
     QWidget *parent, const ArtifactAbstractLayerPtr &layer,
@@ -165,7 +252,7 @@ bool editEffectPropertyModulation(
     return false;
   }
 
-  auto snapshot = effect->modulationRouter().snapshot();
+  const auto before = effect->modulationRouter().snapshot();
   std::unique_ptr<ArtifactCore::Audio::Modulation::IModulatorSource> source;
   if (sourceType == QStringLiteral("Random")) {
     source = std::make_unique<ArtifactCore::Audio::Modulation::RandomSource>();
@@ -177,6 +264,10 @@ bool editEffectPropertyModulation(
     source = std::make_unique<ArtifactCore::Audio::Modulation::LfoSource>();
   }
   const auto sourceId = effect->modulationRouter().addSource(std::move(source));
+  if (sourceId == 0) {
+    effect->modulationRouter().restoreSnapshot(before);
+    return false;
+  }
   auto assignment = ArtifactCore::Audio::Modulation::ModulationAssignment::forPropertyPath(
       sourceId, effect->modulationPropertyPath(propertyName).toStdString(),
       static_cast<float>(depth),
@@ -184,12 +275,13 @@ bool editEffectPropertyModulation(
           ? ArtifactCore::Audio::Modulation::ModulationMixMode::Multiply
           : ArtifactCore::Audio::Modulation::ModulationMixMode::Add);
   if (!effect->modulationRouter().addAssignment(assignment)) {
+    effect->modulationRouter().restoreSnapshot(before);
     return false;
   }
-  snapshot = effect->modulationRouter().snapshot();
-  effect->modulationRouter().restoreSnapshot(snapshot);
+  const auto after = effect->modulationRouter().snapshot();
+  effect->modulationRouter().restoreSnapshot(before);
   const auto result = ArtifactEffectService::instance()->setEffectModulationSnapshot(
-      layer->id(), effect->effectID().toQString(), snapshot);
+      layer->id(), effect->effectID().toQString(), after);
   return result.success;
 }
 
@@ -362,7 +454,10 @@ void addRowsFromProperties(
     const std::function<void(
         ArtifactPropertyEditorRowWidget *,
         const AbstractPropertyPtr &,
-        const QVariant &)> &rowValueChanged = {});
+    const QVariant &)> &rowValueChanged = {},
+    const std::function<void(
+        const QString &, const AbstractPropertyPtr &, const QVariant &)> &beginValueEdit = {},
+    const std::function<void(const QString &)> &cancelValueEdit = {});
 
 } // namespace detail
 
@@ -472,7 +567,6 @@ public:
   ArtifactAbstractLayerPtr currentLayer;
   std::vector<ArtifactAbstractEffectPtr> compositionEffects;
   QSet<ArtifactAbstractLayerPtr> targetLayers;
-  QMetaObject::Connection currentLayerChangedConnection;
   QTimer *rebuildTimer = nullptr;
   QTimer *updateValuesTimer = nullptr;
   int rebuildDebounceMs = 80;
@@ -539,6 +633,26 @@ public:
       const QString& initialExpression,
       const RationalTime& currentTime);
 };
+
+void ArtifactPropertyWidget::focusInEvent(QFocusEvent* event) {
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    input->setActiveContext(QStringLiteral("Panel.Properties"));
+  }
+  QScrollArea::focusInEvent(event);
+}
+
+void ArtifactPropertyWidget::focusOutEvent(QFocusEvent* event) {
+  const QWidget *nextFocus = QApplication::focusWidget();
+  const bool focusRemainsInPropertyPanel =
+      nextFocus && (nextFocus == this || isAncestorOf(nextFocus));
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    if (!focusRemainsInPropertyPanel &&
+        input->activeContext() == QStringLiteral("Panel.Properties")) {
+      input->setActiveContext(QStringLiteral("Global"));
+    }
+  }
+  QScrollArea::focusOutEvent(event);
+}
 
 void ArtifactPropertyWidget::showEvent(QShowEvent *event) {
   QScrollArea::showEvent(event);
@@ -784,9 +898,19 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   impl_->updateValuesTimer->setSingleShot(true);
   QObject::connect(impl_->updateValuesTimer, &QTimer::timeout, this,
                    [this]() { impl_->updatePropertyValues(); });
-  QObject::connect(UndoManager::instance(), &UndoManager::historyChanged, this, [this]() {
-    impl_->scheduleUpdateValues();
-  });
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<UndoManagerChangedEvent>(
+          [this](const UndoManagerChangedEvent& event) {
+            if (event.kind != UndoManagerChangeKind::HistoryChanged) return;
+            const auto refresh = [this]() {
+              if (impl_) impl_->scheduleUpdateValues();
+            };
+            if (QThread::currentThread() == thread()) {
+              refresh();
+            } else {
+              QMetaObject::invokeMethod(this, refresh, Qt::QueuedConnection);
+            }
+          }));
 
   QObject::connect(this, &QWidget::customContextMenuRequested, this,
                    [this](const QPoint &pos) {
@@ -841,12 +965,26 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
           impl_->scheduleRebuild();
         }
       }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerChangedEvent>(
+          [this](const LayerChangedEvent &event) {
+            const auto refresh = [this, layerId = event.layerId]() {
+              if (!impl_ || impl_->localPropertyEditDepth > 0 ||
+                  !impl_->currentLayer ||
+                  impl_->currentLayer->id().toString() != layerId) {
+                return;
+              }
+              impl_->scheduleUpdateValues();
+            };
+            if (QThread::currentThread() == thread()) {
+              refresh();
+            } else {
+              QMetaObject::invokeMethod(this, refresh, Qt::QueuedConnection);
+            }
+          }));
 }
 
 ArtifactPropertyWidget::~ArtifactPropertyWidget() {
-  if (impl_->currentLayerChangedConnection) {
-    QObject::disconnect(impl_->currentLayerChangedConnection);
-  }
   delete impl_;
 }
 
@@ -866,10 +1004,6 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
     return;
   }
 
-  if (impl_->currentLayerChangedConnection) {
-    QObject::disconnect(impl_->currentLayerChangedConnection);
-  }
-
   impl_->currentLayer = layer;
   impl_->compositionEffects.clear();
   impl_->targetLayers.clear();
@@ -878,28 +1012,11 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
   }
   impl_->invalidatePropertyValueCache();
 
-  // Connect to new layer
-  if (impl_->currentLayer) {
-    impl_->currentLayerChangedConnection =
-        connect(impl_->currentLayer.get(), &ArtifactAbstractLayer::changed,
-                this, [this]() {
-                  if (impl_->localPropertyEditDepth > 0) {
-                    return;
-                  }
-                  impl_->scheduleUpdateValues();
-                });
-  }
-
   impl_->scheduleRebuild(0);
 }
 
 void ArtifactPropertyWidget::setCompositionEffects(
     const std::vector<ArtifactAbstractEffectPtr>& effects) {
-  if (impl_->currentLayerChangedConnection) {
-    QObject::disconnect(impl_->currentLayerChangedConnection);
-    impl_->currentLayerChangedConnection = {};
-  }
-
   impl_->currentLayer = nullptr;
   impl_->targetLayers.clear();
   impl_->compositionEffects = effects;
@@ -913,27 +1030,12 @@ void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& lay
     return;
   }
 
-  if (impl_->currentLayerChangedConnection) {
-    QObject::disconnect(impl_->currentLayerChangedConnection);
-  }
-
   // Use first layer as the primary for display
   auto primary = *layers.begin();
   impl_->currentLayer = primary;
   impl_->compositionEffects.clear();
   impl_->targetLayers = layers;
   impl_->invalidatePropertyValueCache();
-
-  if (primary) {
-    impl_->currentLayerChangedConnection =
-        connect(primary.get(), &ArtifactAbstractLayer::changed,
-                this, [this]() {
-                  if (impl_->localPropertyEditDepth > 0) {
-                    return;
-                  }
-                  impl_->scheduleUpdateValues();
-                });
-  }
 
   impl_->scheduleRebuild(0);
 }
@@ -1081,7 +1183,25 @@ bool ArtifactPropertyWidget::clearActiveExpression() {
     return false;
   }
 
-  propertyPtr->setExpression(QString{});
+  const QString beforeExpression = propertyPtr->getExpression();
+  if (beforeExpression.isEmpty()) {
+    return false;
+  }
+  const bool isLayerProperty =
+      impl_->currentLayer->getProperty(propertyName) == propertyPtr;
+  if (isLayerProperty) {
+    if (auto *mgr = UndoManager::instance()) {
+      if (!mgr->push(std::make_unique<SetLayerPropertyExpressionCommand>(
+              impl_->currentLayer, propertyName, beforeExpression, QString{},
+              QStringLiteral("Clear Expression")))) {
+        return false;
+      }
+    } else {
+      propertyPtr->setExpression(QString{});
+    }
+  } else {
+    propertyPtr->setExpression(QString{});
+  }
   if (impl_->currentLayer) {
     notifyLayerPropertyAnimationChanged(impl_->currentLayer);
   }
@@ -1109,10 +1229,7 @@ bool ArtifactPropertyWidget::convertActiveExpressionToKeyframes() {
 
   auto *composition =
       static_cast<ArtifactAbstractComposition *>(impl_->currentLayer->composition());
-  const int fps = composition
-                      ? std::max<int>(1, static_cast<int>(
-                                              std::lround(composition->frameRate().framerate())))
-                      : 30;
+  const int fps = propertyFrameRateScale(composition);
   int64_t startFrame = impl_->currentLayer->inPoint().framePosition();
   int64_t endFrame = impl_->currentLayer->outPoint().framePosition();
   if (endFrame <= startFrame) {
@@ -1132,10 +1249,41 @@ bool ArtifactPropertyWidget::convertActiveExpressionToKeyframes() {
     return false;
   }
 
+  const QString beforeExpression = propertyPtr->getExpression();
+  const auto beforeKeyframes = propertyPtr->getKeyFrames();
+  const bool beforeAnimatable = propertyPtr->isAnimatable();
+  const bool isLayerProperty =
+      impl_->currentLayer->getProperty(propertyName) == propertyPtr;
   propertyPtr->clearKeyFrames();
   propertyPtr->setExpression(QString{});
   for (const auto &[time, value] : sampledKeyframes) {
     propertyPtr->addKeyFrame(time, value);
+  }
+
+  if (isLayerProperty) {
+    if (auto *mgr = UndoManager::instance()) {
+      const auto afterKeyframes = propertyPtr->getKeyFrames();
+      const bool afterAnimatable = propertyPtr->isAnimatable();
+      auto macro = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Convert Expression to Keyframes"));
+      if (!samePropertyKeyframeSequence(beforeKeyframes, afterKeyframes)) {
+        macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+            impl_->currentLayer, propertyName, beforeKeyframes,
+            afterKeyframes, QStringLiteral("Convert Keyframes"),
+            beforeAnimatable, afterAnimatable));
+      }
+      if (beforeExpression != propertyPtr->getExpression()) {
+        macro->addChild(std::make_unique<SetLayerPropertyExpressionCommand>(
+            impl_->currentLayer, propertyName, beforeExpression,
+            propertyPtr->getExpression(), QStringLiteral("Clear Expression")));
+      }
+      if (!mgr->push(std::move(macro))) {
+        restorePropertyKeyframesWidget(propertyPtr, beforeKeyframes, beforeAnimatable);
+        propertyPtr->setExpression(beforeExpression);
+        notifyLayerPropertyAnimationChanged(impl_->currentLayer);
+        return false;
+      }
+    }
   }
 
   if (impl_->currentLayer) {
@@ -1163,10 +1311,7 @@ bool ArtifactPropertyWidget::bakeActivePropertyToKeyframes() {
 
   auto *composition =
       static_cast<ArtifactAbstractComposition *>(impl_->currentLayer->composition());
-  const int fps = composition
-                      ? std::max<int>(1, static_cast<int>(
-                                              std::lround(composition->frameRate().framerate())))
-                      : 30;
+  const int fps = propertyFrameRateScale(composition);
   int64_t startFrame = impl_->currentLayer->inPoint().framePosition();
   int64_t endFrame = impl_->currentLayer->outPoint().framePosition();
   if (composition) {
@@ -1202,9 +1347,31 @@ bool ArtifactPropertyWidget::bakeActivePropertyToKeyframes() {
     return false;
   }
 
+  const auto beforeKeyframes = propertyPtr->getKeyFrames();
+  const bool beforeAnimatable = propertyPtr->isAnimatable();
+  const bool isLayerProperty =
+      impl_->currentLayer->getProperty(row->propertyName()) == propertyPtr;
   propertyPtr->clearKeyFrames();
   for (const auto &[time, value] : sampledKeyframes) {
     propertyPtr->addKeyFrame(time, value);
+  }
+
+  if (!samePropertyKeyframeSequence(beforeKeyframes,
+                                    propertyPtr->getKeyFrames())) {
+    if (isLayerProperty) {
+      if (auto *mgr = UndoManager::instance()) {
+        const auto afterKeyframes = propertyPtr->getKeyFrames();
+        const bool afterAnimatable = propertyPtr->isAnimatable();
+        if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                impl_->currentLayer, row->propertyName(), beforeKeyframes,
+                afterKeyframes, QStringLiteral("Bake Property to Keyframes"),
+                beforeAnimatable, afterAnimatable))) {
+          restorePropertyKeyframesWidget(propertyPtr, beforeKeyframes, beforeAnimatable);
+          notifyLayerPropertyAnimationChanged(impl_->currentLayer);
+          return false;
+        }
+      }
+    }
   }
 
   if (impl_->currentLayer) {
@@ -1478,7 +1645,26 @@ void ArtifactPropertyWidget::Impl::openExpressionCopilotForProperty(
       initialExpression,
       currentLayer,
       currentTime,
-      [this](const QString &) {
+      [this, propertyPtr, propertyName](const QString &expression) {
+        const QString beforeExpression = propertyPtr->getExpression();
+        if (beforeExpression == expression) {
+          return;
+        }
+        const bool isLayerProperty =
+            currentLayer && currentLayer->getProperty(propertyName) == propertyPtr;
+        if (isLayerProperty) {
+          if (auto *mgr = UndoManager::instance()) {
+            if (!mgr->push(std::make_unique<SetLayerPropertyExpressionCommand>(
+                    currentLayer, propertyName, beforeExpression, expression,
+                    QStringLiteral("Edit Expression")))) {
+              return;
+            }
+          } else {
+            propertyPtr->setExpression(expression);
+          }
+        } else {
+          propertyPtr->setExpression(expression);
+        }
         if (currentLayer) {
           notifyLayerPropertyAnimationChanged(currentLayer);
         }
@@ -1831,7 +2017,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   };
   registerCurrentLayerPropertySnapshot(layer, focusedEffectId);
 
-  const auto notifyLayerKeyframeChanged = [this, layer, currentLayerTime](
+    const auto notifyLayerKeyframeChanged = [this, layer, currentLayerTime](
                                                const QString &propertyName) {
     if (!layer) {
       return;
@@ -1841,30 +2027,61 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     // multiple layers are selected, mirror the current keyframe state to the
     // other compatible layers so keyframe toggles and auto-key edits remain
     // a true batch operation instead of only changing the visible primary.
-    const auto sourceProperty = layer->getProperty(propertyName);
-    const auto now = currentLayerTime();
-    if (sourceProperty && targetLayers.size() > 1) {
-      const auto sourceKeys = sourceProperty->getKeyFrames();
-      const auto sourceKey = std::find_if(
+      const auto sourceProperty = layer->getProperty(propertyName);
+      const auto now = currentLayerTime();
+      if (sourceProperty && targetLayers.size() > 1) {
+        const auto sourceKeys = sourceProperty->getKeyFrames();
+        const auto sourceKey = std::find_if(
           sourceKeys.cbegin(), sourceKeys.cend(),
           [&now](const auto &key) { return key.time == now; });
-      for (const auto &target : targetLayers) {
-        if (!target || target == layer) {
-          continue;
+        auto macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Mirror Keyframe to Selected Layers"));
+        std::vector<PropertyKeyframeRollback> rollbacks;
+        bool hasChanges = false;
+        for (const auto &target : targetLayers) {
+          if (!target || target == layer) {
+            continue;
+          }
+          const auto targetProperty = target->getProperty(propertyName);
+          if (!targetProperty) {
+            continue;
+          }
+          const auto beforeKeyframes = targetProperty->getKeyFrames();
+          const bool beforeAnimatable = targetProperty->isAnimatable();
+          if (sourceKey != sourceKeys.cend()) {
+            targetProperty->setAnimatable(true);
+            targetProperty->addKeyFrame(now, sourceKey->value);
+          } else {
+            targetProperty->removeKeyFrame(now);
+          }
+          const bool afterAnimatable = targetProperty->isAnimatable();
+          const auto afterKeyframes = targetProperty->getKeyFrames();
+          const bool keyframesChanged = !samePropertyKeyframeSequence(
+              beforeKeyframes, afterKeyframes);
+          const bool animatableChanged = beforeAnimatable != afterAnimatable;
+          if (keyframesChanged || animatableChanged) {
+            rollbacks.push_back(PropertyKeyframeRollback{
+                target, targetProperty, beforeKeyframes, beforeAnimatable});
+            macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                target, propertyName, beforeKeyframes, afterKeyframes,
+                QStringLiteral("Mirror Keyframe"), beforeAnimatable,
+                afterAnimatable));
+            hasChanges = true;
+          }
+          notifyLayerPropertyAnimationChanged(target);
         }
-        const auto targetProperty = target->getProperty(propertyName);
-        if (!targetProperty) {
-          continue;
+        if (hasChanges) {
+          if (auto *mgr = UndoManager::instance()) {
+            if (!mgr->push(std::move(macro))) {
+              for (const auto &rollback : rollbacks) {
+                restorePropertyKeyframesWidget(
+                    rollback.property, rollback.keyframes, rollback.animatable);
+                notifyLayerPropertyAnimationChanged(rollback.layer);
+              }
+            }
+          }
         }
-        if (sourceKey != sourceKeys.cend()) {
-          targetProperty->setAnimatable(true);
-          targetProperty->addKeyFrame(now, sourceKey->value);
-        } else {
-          targetProperty->removeKeyFrame(now);
-        }
-        notifyLayerPropertyAnimationChanged(target);
       }
-    }
     notifyLayerPropertyAnimationChanged(layer);
   };
 
@@ -1917,14 +2134,131 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         updateScaleSupplementaryText(row, layer, property, value);
       };
 
-  const auto commitChannelValue =
-      [this](const QString &name, const QVariant &value) {
+  auto channelPropertyEditSnapshots =
+      ArtifactCore::makeShared<QHash<QString, QHash<QString, QVariant>>>();
+  auto channelPropertyKeyframeSnapshots =
+      ArtifactCore::makeShared<
+          QHash<QString, QHash<QString, std::vector<ArtifactCore::KeyFrame>>>>();
+  auto channelPropertyAnimatableSnapshots =
+      ArtifactCore::makeShared<QHash<QString, QHash<QString, bool>>>();
+  const auto beginChannelValueEdit =
+      [this, channelPropertyEditSnapshots, channelPropertyKeyframeSnapshots,
+       channelPropertyAnimatableSnapshots](
+          const QString &name, const AbstractPropertyPtr &, const QVariant &) {
+        if (channelPropertyEditSnapshots->contains(name)) {
+          return;
+        }
+        QHash<QString, QVariant> snapshot;
+        QHash<QString, std::vector<ArtifactCore::KeyFrame>> keyframeSnapshot;
+        QHash<QString, bool> animatableSnapshot;
         for (const auto &target : targetLayers) {
           if (!target) continue;
+          if (const auto property = target->getProperty(name)) {
+            snapshot.insert(target->id().toQString(), property->getValue());
+            keyframeSnapshot.insert(target->id().toQString(),
+                                    property->getKeyFrames());
+            animatableSnapshot.insert(target->id().toQString(),
+                                      property->isAnimatable());
+          }
+        }
+        channelPropertyEditSnapshots->insert(name, std::move(snapshot));
+        channelPropertyKeyframeSnapshots->insert(name,
+                                                 std::move(keyframeSnapshot));
+        channelPropertyAnimatableSnapshots->insert(name,
+                                                   std::move(animatableSnapshot));
+      };
+  const auto cancelChannelValueEdit =
+      [channelPropertyEditSnapshots, channelPropertyKeyframeSnapshots,
+       channelPropertyAnimatableSnapshots](const QString &name) {
+        channelPropertyEditSnapshots->remove(name);
+        channelPropertyKeyframeSnapshots->remove(name);
+        channelPropertyAnimatableSnapshots->remove(name);
+      };
+  const auto commitChannelValue =
+      [this, channelPropertyEditSnapshots, channelPropertyKeyframeSnapshots,
+       channelPropertyAnimatableSnapshots](
+          const QString &name, const QVariant &value) {
+        auto macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Edit Channel Property"));
+        std::vector<PropertyEditRollback> rollbacks;
+        bool hasChanges = false;
+        const auto snapshotIt = channelPropertyEditSnapshots->constFind(name);
+        const auto keyframeSnapshotIt =
+            channelPropertyKeyframeSnapshots->constFind(name);
+        const auto animatableSnapshotIt =
+            channelPropertyAnimatableSnapshots->constFind(name);
+        for (const auto &target : targetLayers) {
+          if (!target) continue;
+          const auto property = target->getProperty(name);
+          if (!property) continue;
+          QVariant before = property->getValue();
+          if (snapshotIt != channelPropertyEditSnapshots->cend()) {
+            const auto beforeIt = snapshotIt->constFind(target->id().toQString());
+            if (beforeIt != snapshotIt->cend()) {
+              before = beforeIt.value();
+            }
+          }
+          std::vector<ArtifactCore::KeyFrame> beforeKeyframes;
+          if (keyframeSnapshotIt != channelPropertyKeyframeSnapshots->cend()) {
+            const auto beforeKeyframeIt =
+                keyframeSnapshotIt->constFind(target->id().toQString());
+            if (beforeKeyframeIt != keyframeSnapshotIt->cend()) {
+              beforeKeyframes = beforeKeyframeIt.value();
+            }
+          }
+          bool beforeAnimatable = property->isAnimatable();
+          if (animatableSnapshotIt != channelPropertyAnimatableSnapshots->cend()) {
+            const auto beforeAnimatableIt =
+                animatableSnapshotIt->constFind(target->id().toQString());
+            if (beforeAnimatableIt != animatableSnapshotIt->cend()) {
+              beforeAnimatable = beforeAnimatableIt.value();
+            }
+          }
           target->setLayerPropertyValue(name, value);
+          const QVariant afterValue = property->getValue();
+          const bool afterAnimatable = property->isAnimatable();
+          const auto afterKeyframes = property->getKeyFrames();
+          const bool keyframesChanged = !samePropertyKeyframeSequence(
+              beforeKeyframes, afterKeyframes);
+          const bool animatableChanged = beforeAnimatable != afterAnimatable;
+          if (keyframesChanged || animatableChanged || before != afterValue) {
+            rollbacks.push_back(PropertyEditRollback{
+                target, name, property, before, beforeKeyframes,
+                beforeAnimatable});
+          }
+          if (keyframesChanged || animatableChanged) {
+            macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                target, name, beforeKeyframes, afterKeyframes,
+                QStringLiteral("Edit Channel Property Keyframes"),
+                beforeAnimatable, afterAnimatable));
+            hasChanges = true;
+          }
+          if (before != afterValue) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                target, name, before, afterValue));
+            hasChanges = true;
+          }
+        }
+        channelPropertyEditSnapshots->remove(name);
+        channelPropertyKeyframeSnapshots->remove(name);
+        channelPropertyAnimatableSnapshots->remove(name);
+        if (hasChanges) {
+          if (auto *mgr = UndoManager::instance();
+              mgr && !mgr->push(std::move(macro))) {
+            for (const auto &rollback : rollbacks) {
+              restoreLayerPropertySnapshot(
+                  rollback.layer, rollback.propertyName, rollback.property,
+                  rollback.value, rollback.keyframes, rollback.animatable);
+            }
+          }
         }
       };
-  const auto previewChannelValue = commitChannelValue;
+  const auto previewChannelValue =
+      [this](const QString &name, const QVariant &value) {
+        for (const auto &target : targetLayers) {
+          if (target) target->setLayerPropertyValue(name, value);
+        }
+      };
 
   // Keep a compact Channel Box surface at the top of the Inspector.  It
   // reuses the normal property-editor rows so keying, Auto-Key, undo, and
@@ -1980,13 +2314,57 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       keyAllButton->setToolTip(QStringLiteral(
           "Insert keyframes for all visible Channel Box properties"));
       QObject::connect(keyAllButton, &QPushButton::clicked, channelBox,
-                       [layer, channelProperties, currentLayerTime]() {
-                         if (!layer) return;
-                         const auto time = currentLayerTime();
-                         for (const auto &property : channelProperties) {
-                           if (property) property->addKeyFrame(time, property->getValue());
-                         }
-                         notifyLayerPropertyAnimationChanged(layer);
+                       [this, currentLayerTime]() {
+                          auto macro = std::make_unique<MacroUndoCommand>(
+                              QStringLiteral("Key All Channel Properties"));
+                          std::vector<PropertyKeyframeRollback> rollbacks;
+                          bool hasChanges = false;
+                         for (const auto &target : targetLayers) {
+                           if (!target) continue;
+                           for (const auto &path : channelPaths) {
+                             const auto property = target->getProperty(path);
+                             if (!property) continue;
+                             const auto beforeKeyframes = property->getKeyFrames();
+                             const bool beforeAnimatable =
+                                 property->isAnimatable();
+                             property->setAnimatable(true);
+                             property->addKeyFrame(currentLayerTime(),
+                                                   property->getValue());
+                             const bool afterAnimatable =
+                                 property->isAnimatable();
+                             const auto afterKeyframes = property->getKeyFrames();
+                             const bool keyframesChanged =
+                                 !samePropertyKeyframeSequence(beforeKeyframes,
+                                                               afterKeyframes);
+                              const bool animatableChanged =
+                                  beforeAnimatable != afterAnimatable;
+                              if (keyframesChanged || animatableChanged) {
+                                rollbacks.push_back(PropertyKeyframeRollback{
+                                    target, property, beforeKeyframes,
+                                    beforeAnimatable});
+                                macro->addChild(
+                                   std::make_unique<SetLayerPropertyKeyframesCommand>(
+                                       target, path, beforeKeyframes,
+                                       afterKeyframes,
+                                       QStringLiteral("Key Channel Property"),
+                                       beforeAnimatable, afterAnimatable));
+                               hasChanges = true;
+                             }
+                             notifyLayerPropertyAnimationChanged(target);
+                           }
+                          }
+                          if (hasChanges) {
+                            if (auto *mgr = UndoManager::instance();
+                                mgr && !mgr->push(std::move(macro))) {
+                              for (const auto &rollback : rollbacks) {
+                                restorePropertyKeyframesWidget(
+                                    rollback.property, rollback.keyframes,
+                                    rollback.animatable);
+                                notifyLayerPropertyAnimationChanged(
+                                    rollback.layer);
+                              }
+                            }
+                          }
                        });
       channelLayout->addWidget(keyAllButton);
       auto *lockButton = new QPushButton(QStringLiteral("Lock Channels"), channelBox);
@@ -2023,10 +2401,20 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           tl->setLayerPropertyValue(name, value);
           const QJsonArray afterStack = textLayer->textAnimatorStackSnapshot();
           if (beforeStack != afterStack) {
-            UndoManager::instance()->push(
-                std::make_unique<SetTextAnimatorStackCommand>(
-                    tl, beforeStack, afterStack,
-                    QStringLiteral("Edit Text Animators")));
+            auto command = std::make_unique<SetTextAnimatorStackCommand>(
+                tl, beforeStack, afterStack,
+                QStringLiteral("Edit Text Animators"));
+            bool applied = false;
+            if (auto *mgr = UndoManager::instance()) {
+              applied = mgr->push(std::move(command));
+            } else {
+              command->redo();
+              applied = command->lastOperationSucceeded();
+            }
+            if (!applied) {
+              textLayer->restoreTextAnimatorStack(beforeStack);
+              notifyLayerPropertyAnimationChanged(tl);
+            }
           }
         }
       } else {
@@ -2051,7 +2439,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           commitChannelValue, previewChannelValue, currentLayerTime,
           notifyLayerKeyframeChanged, layer, nullptr,
           QStringLiteral("channelBox"), &propertyEditors, &channelRows,
-          decorateLayerRow, updateLayerRowValue);
+          decorateLayerRow, updateLayerRowValue, beginChannelValueEdit,
+          cancelChannelValueEdit);
       if (!channelRows.empty()) {
         alignPropertyRowLabels(channelRows, kPropertyRowLabelMinWidth,
                                kPropertyRowLabelMaxWidth);
@@ -2124,10 +2513,48 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                   if (timeline) timeline->setSelectedPropertyPaths(selectedChannelPaths);
                 }
               }
-              const auto property = layer->getProperty(selectedRow->propertyName());
-              if (!property) return;
-              property->addKeyFrame(currentLayerTime(), property->getValue());
-              notifyLayerPropertyAnimationChanged(layer);
+              auto macro = std::make_unique<MacroUndoCommand>(
+                  QStringLiteral("Key Selected Channel Property"));
+              std::vector<PropertyKeyframeRollback> rollbacks;
+              bool hasChanges = false;
+              for (const auto &target : targetLayers) {
+                if (!target) continue;
+                const auto property =
+                    target->getProperty(selectedRow->propertyName());
+                if (!property) continue;
+                const auto beforeKeyframes = property->getKeyFrames();
+                const bool beforeAnimatable = property->isAnimatable();
+                property->setAnimatable(true);
+                property->addKeyFrame(currentLayerTime(), property->getValue());
+                const bool afterAnimatable = property->isAnimatable();
+                const auto afterKeyframes = property->getKeyFrames();
+                const bool keyframesChanged = !samePropertyKeyframeSequence(
+                    beforeKeyframes, afterKeyframes);
+                const bool animatableChanged = beforeAnimatable != afterAnimatable;
+                if (keyframesChanged || animatableChanged) {
+                  rollbacks.push_back(PropertyKeyframeRollback{
+                      target, property, beforeKeyframes, beforeAnimatable});
+                  macro->addChild(
+                      std::make_unique<SetLayerPropertyKeyframesCommand>(
+                          target, selectedRow->propertyName(), beforeKeyframes,
+                          afterKeyframes,
+                          QStringLiteral("Key Channel Property"),
+                          beforeAnimatable, afterAnimatable));
+                  hasChanges = true;
+                }
+                notifyLayerPropertyAnimationChanged(target);
+              }
+              if (hasChanges) {
+                if (auto *mgr = UndoManager::instance();
+                    mgr && !mgr->push(std::move(macro))) {
+                  for (const auto &rollback : rollbacks) {
+                    restorePropertyKeyframesWidget(
+                        rollback.property, rollback.keyframes,
+                        rollback.animatable);
+                    notifyLayerPropertyAnimationChanged(rollback.layer);
+                  }
+                }
+              }
             });
         channelLayout->addWidget(keySelectedButton);
         mainLayout->addWidget(channelBox);
@@ -2258,7 +2685,58 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
     auto groupPreviewOpacity = ArtifactCore::makeShared<std::optional<float>>();
-    auto commitLayerValue = [this, layer, groupPreviewOpacity](
+    auto layerPropertyEditSnapshots =
+        ArtifactCore::makeShared<QHash<QString, QHash<QString, QVariant>>>();
+    auto layerPropertyKeyframeSnapshots =
+        ArtifactCore::makeShared<
+            QHash<QString, QHash<QString, std::vector<ArtifactCore::KeyFrame>>>>();
+    auto layerPropertyAnimatableSnapshots =
+        ArtifactCore::makeShared<QHash<QString, QHash<QString, bool>>>();
+    auto beginLayerValueEdit =
+        [this, layerPropertyEditSnapshots, layerPropertyKeyframeSnapshots,
+         layerPropertyAnimatableSnapshots](
+            const QString &name, const AbstractPropertyPtr &,
+            const QVariant &) {
+          auto snapshotIt = layerPropertyEditSnapshots->constFind(name);
+          if (snapshotIt != layerPropertyEditSnapshots->cend() &&
+              !snapshotIt->isEmpty()) {
+            return;
+          }
+          QHash<QString, QVariant> snapshot;
+          QHash<QString, std::vector<ArtifactCore::KeyFrame>> keyframeSnapshot;
+          QHash<QString, bool> animatableSnapshot;
+          for (const auto &target : this->targetLayers) {
+            if (!target) {
+              continue;
+            }
+            const auto property = target->getProperty(name);
+            if (property) {
+              snapshot.insert(target->id().toQString(), property->getValue());
+              keyframeSnapshot.insert(target->id().toQString(),
+                                      property->getKeyFrames());
+              animatableSnapshot.insert(target->id().toQString(),
+                                        property->isAnimatable());
+            }
+          }
+          if (!snapshot.isEmpty()) {
+            layerPropertyEditSnapshots->insert(name, std::move(snapshot));
+            layerPropertyKeyframeSnapshots->insert(name,
+                                                   std::move(keyframeSnapshot));
+            layerPropertyAnimatableSnapshots->insert(name,
+                                                     std::move(animatableSnapshot));
+          }
+        };
+    auto cancelLayerValueEdit =
+        [layerPropertyEditSnapshots, layerPropertyKeyframeSnapshots,
+         layerPropertyAnimatableSnapshots](const QString &name) {
+      layerPropertyEditSnapshots->remove(name);
+      layerPropertyKeyframeSnapshots->remove(name);
+      layerPropertyAnimatableSnapshots->remove(name);
+    };
+    auto commitLayerValue = [this, layer, groupPreviewOpacity,
+                             layerPropertyEditSnapshots,
+                             layerPropertyKeyframeSnapshots,
+                             layerPropertyAnimatableSnapshots](
                                  const QString &name, const QVariant &value) {
       if (!layer) { return; }
       ScopedPropertyEditGuard guard(localPropertyEditDepth);
@@ -2269,12 +2747,25 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           if (!tl) { continue; }
           const float oldOpacity = groupPreviewOpacity->value_or(tl->opacity());
           if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
-            auto *cmd = new ChangeLayerOpacityCommand(tl, oldOpacity, newOpacity);
-            UndoManager::instance()->push(
-                std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
+            auto command = std::make_unique<ChangeLayerOpacityCommand>(
+                tl, oldOpacity, newOpacity);
+            bool recorded = false;
+            if (auto *mgr = UndoManager::instance()) {
+              recorded = mgr->push(std::move(command));
+            } else {
+              command->redo();
+              recorded = command->lastOperationSucceeded();
+            }
+            if (!recorded) {
+              tl->setOpacity(oldOpacity);
+              notifyLayerPropertyAnimationChanged(tl);
+            }
           }
         }
         groupPreviewOpacity->reset();
+        layerPropertyEditSnapshots->remove(name);
+        layerPropertyKeyframeSnapshots->remove(name);
+        layerPropertyAnimatableSnapshots->remove(name);
       } else if (name.compare(QStringLiteral("source.localized"),
                               Qt::CaseInsensitive) == 0) {
         if (auto* service = ArtifactProjectService::instance()) {
@@ -2287,11 +2778,88 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             }
           }
         }
+        layerPropertyEditSnapshots->remove(name);
+        layerPropertyKeyframeSnapshots->remove(name);
+        layerPropertyAnimatableSnapshots->remove(name);
         scheduleRebuild(0);
       } else {
+        std::unique_ptr<MacroUndoCommand> macro;
+        std::vector<PropertyEditRollback> rollbacks;
+        bool hasChanges = false;
+        const auto snapshotIt = layerPropertyEditSnapshots->constFind(name);
+        const auto keyframeSnapshotIt =
+            layerPropertyKeyframeSnapshots->constFind(name);
+        const auto animatableSnapshotIt =
+            layerPropertyAnimatableSnapshots->constFind(name);
+        if (snapshotIt != layerPropertyEditSnapshots->cend() ||
+            keyframeSnapshotIt != layerPropertyKeyframeSnapshots->cend()) {
+          macro = std::make_unique<MacroUndoCommand>(
+              QStringLiteral("Edit Layer Property"));
+        }
         for (const auto &tl : this->targetLayers) {
           if (!tl) { continue; }
+          const auto property = tl->getProperty(name);
+          if (!property) { continue; }
+          QVariant before = property->getValue();
+          if (snapshotIt != layerPropertyEditSnapshots->cend()) {
+            const auto beforeIt = snapshotIt->constFind(tl->id().toQString());
+            if (beforeIt != snapshotIt->cend()) {
+              before = beforeIt.value();
+            }
+          }
+          std::vector<ArtifactCore::KeyFrame> beforeKeyframes;
+          if (keyframeSnapshotIt != layerPropertyKeyframeSnapshots->cend()) {
+            const auto beforeKeyframeIt =
+                keyframeSnapshotIt->constFind(tl->id().toQString());
+            if (beforeKeyframeIt != keyframeSnapshotIt->cend()) {
+              beforeKeyframes = beforeKeyframeIt.value();
+            }
+          }
+          bool beforeAnimatable = property->isAnimatable();
+          if (animatableSnapshotIt != layerPropertyAnimatableSnapshots->cend()) {
+            const auto beforeAnimatableIt =
+                animatableSnapshotIt->constFind(tl->id().toQString());
+            if (beforeAnimatableIt != animatableSnapshotIt->cend()) {
+              beforeAnimatable = beforeAnimatableIt.value();
+            }
+          }
           tl->setLayerPropertyValue(name, value);
+          const QVariant afterValue = property->getValue();
+          const bool afterAnimatable = property->isAnimatable();
+          const auto afterKeyframes = property->getKeyFrames();
+          const bool keyframesChanged = !samePropertyKeyframeSequence(
+              beforeKeyframes, afterKeyframes);
+          const bool animatableChanged = beforeAnimatable != afterAnimatable;
+          if (macro && (keyframesChanged || animatableChanged ||
+                        before != afterValue)) {
+            rollbacks.push_back(PropertyEditRollback{
+                tl, name, property, before, beforeKeyframes, beforeAnimatable});
+          }
+          if (macro && (keyframesChanged || animatableChanged)) {
+            macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                tl, name, beforeKeyframes, afterKeyframes,
+                QStringLiteral("Edit Layer Property Keyframes"),
+                beforeAnimatable, afterAnimatable));
+            hasChanges = true;
+          }
+          if (before != afterValue && macro) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                tl, name, before, afterValue));
+            hasChanges = true;
+          }
+        }
+        layerPropertyEditSnapshots->remove(name);
+        layerPropertyKeyframeSnapshots->remove(name);
+        layerPropertyAnimatableSnapshots->remove(name);
+        if (hasChanges) {
+          if (auto *mgr = UndoManager::instance();
+              mgr && !mgr->push(std::move(macro))) {
+            for (const auto &rollback : rollbacks) {
+              restoreLayerPropertySnapshot(
+                  rollback.layer, rollback.propertyName, rollback.property,
+                  rollback.value, rollback.keyframes, rollback.animatable);
+            }
+          }
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
             name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||
@@ -2300,6 +2868,80 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
       }
     };
+    const auto applyPropertySnapshotMutation =
+        [this](const ArtifactAbstractLayerPtr &target,
+               const QString &label, const QStringList &propertyNames,
+               const std::function<void()> &mutation) {
+          if (!target || propertyNames.isEmpty() || !mutation) {
+            return false;
+          }
+          struct PropertySnapshot {
+            QString name;
+            AbstractPropertyPtr property;
+            QVariant before;
+            QVariant after;
+          };
+          std::vector<PropertySnapshot> snapshots;
+          for (const auto &name : propertyNames) {
+            const auto property = target->getProperty(name);
+            if (property) {
+              snapshots.push_back(
+                  PropertySnapshot{name, property, property->getValue(), {}});
+            }
+          }
+          if (snapshots.empty()) {
+            return false;
+          }
+          mutation();
+          auto macro = std::make_unique<MacroUndoCommand>(label);
+          std::vector<PropertySnapshot *> changed;
+          for (auto &snapshot : snapshots) {
+            snapshot.after = snapshot.property->getValue();
+            if (snapshot.before != snapshot.after) {
+              macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                  target, snapshot.name, snapshot.before, snapshot.after));
+              changed.push_back(&snapshot);
+            }
+          }
+          if (changed.empty()) {
+            return true;
+          }
+          if (auto *manager = UndoManager::instance()) {
+            if (manager->push(std::move(macro))) {
+              return true;
+            }
+            for (const auto *snapshot : changed) {
+              target->setLayerPropertyValue(snapshot->name, snapshot->before);
+            }
+            notifyLayerPropertyAnimationChanged(target);
+            return false;
+          }
+          notifyLayerPropertyAnimationChanged(target);
+          return true;
+        };
+    const auto applyClonerTransformMutation =
+        [](const ArtifactAbstractLayerPtr &target, const QString &label,
+           const std::function<void()> &mutation) {
+          if (!target || !mutation) {
+            return false;
+          }
+          const auto before = target->clonerTransformsSnapshot();
+          mutation();
+          const auto after = target->clonerTransformsSnapshot();
+          if (before == after) {
+            return true;
+          }
+          auto command = std::make_unique<ClonerTransformStackSnapshotCommand>(
+              target, before, after);
+          if (auto *manager = UndoManager::instance()) {
+            if (manager->push(std::move(command))) {
+              return true;
+            }
+            target->restoreClonerTransformsSnapshot(before);
+            return false;
+          }
+          return true;
+        };
     auto previewLayerValue = [this, layer, groupPreviewOpacity](
                                   const QString &name, const QVariant &value) {
       if (!layer) { return; }
@@ -2351,12 +2993,17 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       headerLayout->addWidget(addTransformButton, 0);
       contentLayout->addWidget(headerRow);
       addedGroupProperties = true;
-      QObject::connect(addTransformButton, &QPushButton::clicked, group, [this, layer]() {
+      QObject::connect(addTransformButton, &QPushButton::clicked, group,
+                       [this, layer, applyClonerTransformMutation]() {
         if (!layer) {
           return;
         }
         ScopedPropertyEditGuard guard(localPropertyEditDepth);
-        layer->setLayerPropertyValue(QStringLiteral("component.cloner.transforms.add"), true);
+        applyClonerTransformMutation(
+            layer, QStringLiteral("Add Cloner Transform"), [layer]() {
+              layer->setLayerPropertyValue(
+                  QStringLiteral("component.cloner.transforms.add"), true);
+            });
         notifyLayerPropertyAnimationChanged(layer);
         pendingScrollGroupName = QStringLiteral("Cloner");
         scheduleRebuild(0);
@@ -2394,7 +3041,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             group, contentLayout, baseProps, filterText, commitLayerValue,
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, groupName, &propertyEditors, &groupRows,
-            decorateLayerRow, updateLayerRowValue);
+            decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
+            cancelLayerValueEdit);
       }
 
       for (auto &[transformIndex, props] : transformProps) {
@@ -2455,45 +3103,65 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         transformLayout->addWidget(sectionBody);
 
         QObject::connect(moveUpButton, &QPushButton::clicked, transformBox,
-                         [this, layer, transformIndex]() {
+                         [this, layer, transformIndex,
+                          applyClonerTransformMutation]() {
                            if (!layer) { return; }
                            ScopedPropertyEditGuard guard(localPropertyEditDepth);
-                           layer->setLayerPropertyValue(
-                               QStringLiteral("component.cloner.transforms.moveUp"),
-                               transformIndex);
+                           applyClonerTransformMutation(
+                               layer, QStringLiteral("Move Cloner Transform Up"),
+                               [layer, transformIndex]() {
+                                 layer->setLayerPropertyValue(
+                                     QStringLiteral("component.cloner.transforms.moveUp"),
+                                     transformIndex);
+                               });
                            notifyLayerPropertyAnimationChanged(layer);
                            pendingScrollGroupName = QStringLiteral("Cloner");
                            scheduleRebuild(0);
                          });
         QObject::connect(moveDownButton, &QPushButton::clicked, transformBox,
-                         [this, layer, transformIndex]() {
+                         [this, layer, transformIndex,
+                          applyClonerTransformMutation]() {
                            if (!layer) { return; }
                            ScopedPropertyEditGuard guard(localPropertyEditDepth);
-                           layer->setLayerPropertyValue(
-                               QStringLiteral("component.cloner.transforms.moveDown"),
-                               transformIndex);
+                           applyClonerTransformMutation(
+                               layer, QStringLiteral("Move Cloner Transform Down"),
+                               [layer, transformIndex]() {
+                                 layer->setLayerPropertyValue(
+                                     QStringLiteral("component.cloner.transforms.moveDown"),
+                                     transformIndex);
+                               });
                            notifyLayerPropertyAnimationChanged(layer);
                            pendingScrollGroupName = QStringLiteral("Cloner");
                            scheduleRebuild(0);
                          });
         QObject::connect(duplicateButton, &QPushButton::clicked, transformBox,
-                         [this, layer, transformIndex]() {
+                         [this, layer, transformIndex,
+                          applyClonerTransformMutation]() {
                            if (!layer) { return; }
                            ScopedPropertyEditGuard guard(localPropertyEditDepth);
-                           layer->setLayerPropertyValue(
-                               QStringLiteral("component.cloner.transforms.duplicate"),
-                               transformIndex);
+                           applyClonerTransformMutation(
+                               layer, QStringLiteral("Duplicate Cloner Transform"),
+                               [layer, transformIndex]() {
+                                 layer->setLayerPropertyValue(
+                                     QStringLiteral("component.cloner.transforms.duplicate"),
+                                     transformIndex);
+                               });
                            notifyLayerPropertyAnimationChanged(layer);
                            pendingScrollGroupName = QStringLiteral("Cloner");
                            scheduleRebuild(0);
                          });
         QObject::connect(removeButton, &QPushButton::clicked, transformBox,
-                         [this, layer, transformIndex]() {
+                         [this, layer, transformIndex,
+                          applyClonerTransformMutation]() {
                            if (!layer) { return; }
                            ScopedPropertyEditGuard guard(localPropertyEditDepth);
-                           layer->setLayerPropertyValue(
-                               QStringLiteral("component.cloner.transforms.remove"),
-                               transformIndex);
+                           applyClonerTransformMutation(
+                               layer, QStringLiteral("Remove Cloner Transform"),
+                               [layer, transformIndex]() {
+                                 layer->setLayerPropertyValue(
+                                     QStringLiteral("component.cloner.transforms.remove"),
+                                     transformIndex);
+                               });
                            notifyLayerPropertyAnimationChanged(layer);
                            pendingScrollGroupName = QStringLiteral("Cloner");
                            scheduleRebuild(0);
@@ -2504,7 +3172,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             transformBox, sectionBodyLayout, props, filterText, commitLayerValue,
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, transformTitle, &propertyEditors, &transformRows,
-            decorateLayerRow, updateLayerRowValue);
+            decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
+            cancelLayerValueEdit);
         if (!transformRows.empty()) {
           alignPropertyRowLabels(transformRows, kPropertyRowLabelMinWidth,
                                  kPropertyRowLabelMaxWidth);
@@ -2527,8 +3196,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                                              group);
         enableButton->setCursor(Qt::PointingHandCursor);
         contentLayout->addWidget(enableButton);
-        QObject::connect(enableButton, &QPushButton::clicked, group,
-                         [this, layer]() {
+      QObject::connect(enableButton, &QPushButton::clicked, group,
+                         [this, layer, applyPropertySnapshotMutation]() {
                            if (!layer) {
                              return;
                            }
@@ -2543,25 +3212,36 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                                (!cropWidth || !cropHeight ||
                                 cropWidth->getValue().toDouble() <= 0.0 ||
                                 cropHeight->getValue().toDouble() <= 0.0);
-                           if (!layer->setLayerPropertyValue(
-                                   QStringLiteral("sourceCrop.enabled"), true)) {
-                             return;
-                           }
-                           if (const auto enabled = layer->getProperty(
-                                   QStringLiteral("sourceCrop.enabled"))) {
-                             enabled->setValue(true);
-                           }
+                           QStringList propertyNames{
+                               QStringLiteral("sourceCrop.enabled")};
                            if (needsInitialCrop) {
-                             layer->setLayerPropertyValue(
-                                 QStringLiteral("sourceCrop.cropX"), 0.0);
-                             layer->setLayerPropertyValue(
-                                 QStringLiteral("sourceCrop.cropY"), 0.0);
-                             layer->setLayerPropertyValue(
-                                 QStringLiteral("sourceCrop.cropWidth"), sourceSize.width);
-                             layer->setLayerPropertyValue(
-                                 QStringLiteral("sourceCrop.cropHeight"), sourceSize.height);
+                             propertyNames << QStringLiteral("sourceCrop.cropX")
+                                           << QStringLiteral("sourceCrop.cropY")
+                                           << QStringLiteral("sourceCrop.cropWidth")
+                                           << QStringLiteral("sourceCrop.cropHeight");
                            }
-                           notifyLayerPropertyAnimationChanged(layer);
+                           applyPropertySnapshotMutation(
+                               layer, QStringLiteral("Enable Crop / Pan"),
+                               propertyNames, [layer, sourceSize,
+                                               needsInitialCrop]() {
+                                 if (!layer->setLayerPropertyValue(
+                                         QStringLiteral("sourceCrop.enabled"),
+                                         true)) {
+                                   return;
+                                 }
+                                 if (needsInitialCrop) {
+                                   layer->setLayerPropertyValue(
+                                       QStringLiteral("sourceCrop.cropX"), 0.0);
+                                   layer->setLayerPropertyValue(
+                                       QStringLiteral("sourceCrop.cropY"), 0.0);
+                                   layer->setLayerPropertyValue(
+                                       QStringLiteral("sourceCrop.cropWidth"),
+                                       sourceSize.width);
+                                   layer->setLayerPropertyValue(
+                                       QStringLiteral("sourceCrop.cropHeight"),
+                                       sourceSize.height);
+                                 }
+                               });
                            rebuildSignature.clear();
                            invalidatePropertyValueCache();
                            pendingScrollGroupName = QStringLiteral("Crop / Pan");
@@ -2603,38 +3283,60 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
       contentLayout->addWidget(headerRow);
 
-      QObject::connect(resetButton, &QPushButton::clicked, group, [this, layer]() {
+      QObject::connect(resetButton, &QPushButton::clicked, group,
+                       [this, layer, applyPropertySnapshotMutation]() {
         if (!layer) {
           return;
         }
         ScopedPropertyEditGuard guard(localPropertyEditDepth);
         const auto sourceSize = layer->sourceSize();
         const bool hasSourceSize = sourceSize.width > 0 && sourceSize.height > 0;
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.panX"), 0.0);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.panY"), 0.0);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.zoom"), 1.0);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.rotation"), 0.0);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.anchorX"), 0.5);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.anchorY"), 0.5);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.preserveAspect"), true);
-        if (hasSourceSize) {
-          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"), 0.0);
-          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"), 0.0);
-          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"), sourceSize.width);
-          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"), sourceSize.height);
-        }
-        notifyLayerPropertyAnimationChanged(layer);
+        const QStringList propertyNames{
+            QStringLiteral("sourceCrop.enabled"),
+            QStringLiteral("sourceCrop.panX"),
+            QStringLiteral("sourceCrop.panY"),
+            QStringLiteral("sourceCrop.zoom"),
+            QStringLiteral("sourceCrop.rotation"),
+            QStringLiteral("sourceCrop.anchorX"),
+            QStringLiteral("sourceCrop.anchorY"),
+            QStringLiteral("sourceCrop.preserveAspect"),
+            QStringLiteral("sourceCrop.cropX"),
+            QStringLiteral("sourceCrop.cropY"),
+            QStringLiteral("sourceCrop.cropWidth"),
+            QStringLiteral("sourceCrop.cropHeight")};
+        applyPropertySnapshotMutation(
+            layer, QStringLiteral("Reset Crop / Pan"), propertyNames,
+            [layer, sourceSize, hasSourceSize]() {
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.panX"), 0.0);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.panY"), 0.0);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.zoom"), 1.0);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.rotation"), 0.0);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.anchorX"), 0.5);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.anchorY"), 0.5);
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.preserveAspect"), true);
+              if (hasSourceSize) {
+                layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"), 0.0);
+                layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"), 0.0);
+                layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"), sourceSize.width);
+                layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"), sourceSize.height);
+              }
+            });
         invalidatePropertyValueCache();
       });
 
-      QObject::connect(disableButton, &QPushButton::clicked, group, [this, layer]() {
+      QObject::connect(disableButton, &QPushButton::clicked, group,
+                       [this, layer, applyPropertySnapshotMutation]() {
         if (!layer) {
           return;
         }
         ScopedPropertyEditGuard guard(localPropertyEditDepth);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), false);
-        notifyLayerPropertyAnimationChanged(layer);
+        applyPropertySnapshotMutation(
+            layer, QStringLiteral("Disable Crop / Pan"),
+            QStringList{QStringLiteral("sourceCrop.enabled")}, [layer]() {
+              layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
+                                            false);
+            });
         rebuildSignature.clear();
         invalidatePropertyValueCache();
         scheduleRebuild(0);
@@ -2680,7 +3382,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             group, contentLayout, windowProps, filterText, commitLayerValue,
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, groupName, &propertyEditors, &windowRows,
-            decorateLayerRow, updateLayerRowValue);
+            decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
+            cancelLayerValueEdit);
         groupRows.insert(groupRows.end(), windowRows.begin(), windowRows.end());
       }
 
@@ -2695,7 +3398,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             group, contentLayout, motionProps, filterText, commitLayerValue,
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, groupName, &propertyEditors, &motionRows,
-            decorateLayerRow, updateLayerRowValue);
+            decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
+            cancelLayerValueEdit);
         groupRows.insert(groupRows.end(), motionRows.begin(), motionRows.end());
       }
       }
@@ -2704,7 +3408,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           group, contentLayout, sortedProps, filterText, commitLayerValue,
           previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
           layer, &addedGroupProperties, groupName, &propertyEditors, &groupRows,
-          decorateLayerRow, updateLayerRowValue);
+          decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
+          cancelLayerValueEdit);
     }
 
     const bool hasSourceCrop =

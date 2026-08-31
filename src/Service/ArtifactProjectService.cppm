@@ -1,6 +1,8 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <deque>
+#include <memory>
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
@@ -75,6 +77,25 @@ import ArtifactCore.Control.External;
 
 namespace Artifact {
 namespace {
+template <typename Predicate>
+bool pushUndoCommandAndVerify(std::unique_ptr<UndoCommand> command,
+                              Predicate&& predicate) {
+  auto *undo = UndoManager::instance();
+  if (!undo || !command || !command->canSerialize() ||
+      command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+    return false;
+  }
+  const size_t undoCountBefore = undo->undoCount();
+  if (!undo->push(std::move(command))) {
+    return false;
+  }
+  const bool applied = predicate();
+  if (!applied && undo->undoCount() == undoCountBefore + 1) {
+    undo->undo();
+  }
+  return applied;
+}
+
 QString normalizeRelinkPath(const QString &path) {
   const QFileInfo info(path.trimmed());
   QString identity = info.canonicalFilePath();
@@ -194,6 +215,41 @@ QSet<QString> resolveSmartSoloLayerIds(const ArtifactCompositionPtr& comp,
   QSet<QString> visited;
   collectSmartSoloLayerIds(comp, layer, visited, included);
   return included;
+}
+
+CompositionItem* findCompositionItemInTree(
+    const QVector<ProjectItem*>& items, const CompositionID& compositionId)
+{
+  for (auto* item : items) {
+    if (!item) {
+      continue;
+    }
+    if (item->type() == eProjectItemType::Composition) {
+      auto* compositionItem = static_cast<CompositionItem*>(item);
+      if (compositionItem->compositionId == compositionId) {
+        return compositionItem;
+      }
+    }
+    if (auto* nested = findCompositionItemInTree(item->children, compositionId)) {
+      return nested;
+    }
+  }
+  return nullptr;
+}
+
+bool projectItemTreeContainsComposition(const ProjectItem* item) {
+  if (!item) {
+    return false;
+  }
+  if (item->type() == eProjectItemType::Composition) {
+    return true;
+  }
+  for (const auto* child : item->children) {
+    if (projectItemTreeContainsComposition(child)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct SequenceImportGroup {
@@ -774,6 +830,7 @@ public:
   }
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) {
       return;
@@ -787,6 +844,7 @@ public:
         if (auto *mgr = UndoManager::instance()) {
           mgr->notifyAnythingChanged();
         }
+        lastOperationSucceeded_ = true;
       }
       return;
     }
@@ -823,13 +881,19 @@ public:
         }
       }
     }
+    if (precompLayerId_.isNil() || childCompId_.isNil() ||
+        !precompLayer_ || !childComposition_) {
+      return;
+    }
     firstRedo_ = false;
+    lastOperationSucceeded_ = true;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || precompLayerId_.isNil()) {
       return;
@@ -844,6 +908,7 @@ public:
     if (!svc->unprecomposeLayerInCurrentComposition(precompLayerId_, false)) {
       return;
     }
+    lastOperationSucceeded_ = true;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -851,6 +916,9 @@ public:
 
   QString label() const override {
     return QStringLiteral("Precompose");
+  }
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
   }
 
 private:
@@ -866,6 +934,7 @@ private:
   ArtifactCompositionPtr childComposition_;
   int insertionIndex_ = 0;
   bool firstRedo_ = true;
+  bool lastOperationSucceeded_ = true;
 };
 
 class UnprecomposeUndoCommand : public UndoCommand {
@@ -903,6 +972,7 @@ public:
   }
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || precompLayerId_.isNil()) {
       return;
@@ -919,12 +989,16 @@ public:
     // valid right after a successful unprecompose.
     movedLayerIds_ = svc->lastUnprecomposeMovedLayerIds();
     childName_ = svc->lastUnprecomposeChildName();
+    lastOperationSucceeded_ = !movedLayerIds_.isEmpty() &&
+                              !childName_.toQString().isEmpty();
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || movedLayerIds_.isEmpty() || childName_.toQString().isEmpty() ||
         !precompLayer_ || !childComposition_) {
@@ -936,6 +1010,8 @@ public:
       return;
     }
     precompLayerId_ = precompLayer_->id();
+    lastOperationSucceeded_ = !precompLayerId_.isNil();
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -943,6 +1019,9 @@ public:
 
   QString label() const override {
     return QStringLiteral("Unprecompose");
+  }
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
   }
 
 private:
@@ -954,6 +1033,7 @@ private:
   ArtifactCore::SharedPtr<ArtifactCompositionLayer> precompLayer_;
   ArtifactCompositionPtr childComposition_;
   int insertionIndex_ = 0;
+  bool lastOperationSucceeded_ = true;
 };
 
 class AddEffectUndoCommand : public UndoCommand {
@@ -963,6 +1043,7 @@ public:
       : layerId_(layerId), effect_(std::move(effect)) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || !effect_) return;
     if (effectId_.isEmpty()) {
@@ -977,27 +1058,42 @@ public:
       layer->addEffect(effect_);
       notifyLayerMutation(comp->id().toString(), layerId_);
     }
+    const auto comp = svc->currentComposition().lock();
+    const auto layer = comp ? comp->layerById(layerId_) : ArtifactAbstractLayerPtr{};
+    if (!layer || effectId_.isEmpty()) return;
+    const auto effects = layer->getEffects();
+    lastOperationSucceeded_ = std::any_of(
+        effects.cbegin(), effects.cend(),
+        [this](const auto &effect) {
+          return effect && effect->effectID().toQString() == effectId_;
+        });
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     if (effectId_.isEmpty()) return;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
-    svc->removeEffectFromLayerInCurrentComposition(layerId_, effectId_);
+    lastOperationSucceeded_ =
+        svc->removeEffectFromLayerInCurrentComposition(layerId_, effectId_);
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   QString label() const override { return QStringLiteral("Add Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   LayerID layerId_;
   SharedPtr<ArtifactAbstractEffect> effect_;
   QString effectId_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RemoveEffectUndoCommand : public UndoCommand {
@@ -1007,6 +1103,7 @@ public:
       : layerId_(layerId), effect_(std::move(effect)) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     if (!effect_) return;
     const QString id = effect_->effectID().toQString();
     if (id.isEmpty()) return;
@@ -1017,19 +1114,32 @@ public:
     auto layer = comp->layerById(layerId_);
     if (!layer) return;
     const auto effects = layer->getEffects();
+    effectIndex_ = -1;
     for (int i = 0; i < static_cast<int>(effects.size()); ++i) {
       if (effects[i] && effects[i]->effectID().toQString() == id) {
         effectIndex_ = i;
         break;
       }
     }
-    svc->removeEffectFromLayerInCurrentComposition(layerId_, id);
+    if (effectIndex_ < 0) return;
+    lastOperationSucceeded_ =
+        svc->removeEffectFromLayerInCurrentComposition(layerId_, id);
+    if (!lastOperationSucceeded_) return;
+    const auto effectsAfter = layer->getEffects();
+    if (std::any_of(effectsAfter.cbegin(), effectsAfter.cend(),
+                    [&id](const auto &effect) {
+                      return effect && effect->effectID().toQString() == id;
+                    })) {
+      lastOperationSucceeded_ = false;
+      return;
+    }
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     if (!effect_) return;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
@@ -1047,6 +1157,16 @@ public:
     } else {
       layer->addEffect(effect_);
     }
+    const auto effectsAfter = layer->getEffects();
+    if (!std::any_of(effectsAfter.cbegin(), effectsAfter.cend(),
+                     [this](const auto &effect) {
+                       return effect &&
+                              effect->effectID().toQString() ==
+                                  effect_->effectID().toQString();
+                     })) {
+      return;
+    }
+    lastOperationSucceeded_ = true;
     notifyLayerMutation(comp->id().toString(), layerId_);
     if (auto project = svc->getCurrentProjectSharedPtr()) {
       ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
@@ -1058,11 +1178,13 @@ public:
   }
 
   QString label() const override { return QStringLiteral("Remove Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   LayerID layerId_;
   SharedPtr<ArtifactAbstractEffect> effect_;
   int effectIndex_ = -1;
+  bool lastOperationSucceeded_ = true;
 };
 
 class SetEffectEnabledUndoCommand : public UndoCommand {
@@ -1073,32 +1195,40 @@ public:
         nowEnabled_(nowEnabled) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
-    svc->setEffectEnabledInLayerInCurrentComposition(layerId_, effectId_,
-                                                     nowEnabled_);
+    lastOperationSucceeded_ =
+        svc->setEffectEnabledInLayerInCurrentComposition(layerId_, effectId_,
+                                                         nowEnabled_);
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
-    svc->setEffectEnabledInLayerInCurrentComposition(layerId_, effectId_,
-                                                     wasEnabled_);
+    lastOperationSucceeded_ =
+        svc->setEffectEnabledInLayerInCurrentComposition(layerId_, effectId_,
+                                                         wasEnabled_);
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   QString label() const override { return QStringLiteral("Toggle Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   LayerID layerId_;
   QString effectId_;
   bool wasEnabled_;
   bool nowEnabled_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class MoveEffectUndoCommand : public UndoCommand {
@@ -1108,30 +1238,38 @@ public:
       : layerId_(layerId), effectId_(effectId), direction_(direction) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
-    svc->moveEffectInLayerInCurrentComposition(layerId_, effectId_, direction_);
+    lastOperationSucceeded_ =
+        svc->moveEffectInLayerInCurrentComposition(layerId_, effectId_, direction_);
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
-    svc->moveEffectInLayerInCurrentComposition(layerId_, effectId_,
-                                               -direction_);
+    lastOperationSucceeded_ =
+        svc->moveEffectInLayerInCurrentComposition(layerId_, effectId_,
+                                                   -direction_);
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
   }
 
   QString label() const override { return QStringLiteral("Move Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   LayerID layerId_;
   QString effectId_;
   int direction_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class AddCompositionEffectUndoCommand : public UndoCommand {
@@ -1140,25 +1278,43 @@ public:
       : effect_(std::move(effect)) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (!comp || !effect_) return;
     comp->addEffect(effect_);
+    const auto effects = comp->getEffects();
+    lastOperationSucceeded_ = std::any_of(
+        effects.cbegin(), effects.cend(), [this](const auto &effect) {
+          return effect && effect->effectID().toQString() ==
+                             effect_->effectID().toQString();
+        });
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (!comp || !effect_) return;
     comp->removeEffect(effect_->effectID());
+    const auto effects = comp->getEffects();
+    lastOperationSucceeded_ = !std::any_of(
+        effects.cbegin(), effects.cend(), [this](const auto &effect) {
+          return effect && effect->effectID().toQString() ==
+                             effect_->effectID().toQString();
+        });
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   QString label() const override { return QStringLiteral("Add Composition Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   SharedPtr<ArtifactAbstractEffect> effect_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class RemoveCompositionEffectUndoCommand : public UndoCommand {
@@ -1168,29 +1324,46 @@ public:
       : effect_(std::move(effect)), effectIndex_(effectIndex) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (!comp || !effect_) return;
     comp->removeEffect(effect_->effectID());
+    const auto effects = comp->getEffects();
+    if (std::any_of(effects.cbegin(), effects.cend(), [this](const auto &effect) {
+          return effect && effect->effectID().toQString() ==
+                             effect_->effectID().toQString();
+        })) return;
+    lastOperationSucceeded_ = true;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (!comp || !effect_) return;
     comp->addEffect(effect_);
     if (effectIndex_ >= 0) {
-      comp->moveEffect(effect_->effectID(), effectIndex_);
+      if (!comp->moveEffect(effect_->effectID(), effectIndex_)) return;
     }
+    const auto effects = comp->getEffects();
+    lastOperationSucceeded_ = std::any_of(
+        effects.cbegin(), effects.cend(), [this](const auto &effect) {
+          return effect && effect->effectID().toQString() ==
+                             effect_->effectID().toQString();
+        });
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   QString label() const override { return QStringLiteral("Remove Composition Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   SharedPtr<ArtifactAbstractEffect> effect_;
   int effectIndex_ = -1;
+  bool lastOperationSucceeded_ = true;
 };
 
 class SetCompositionEffectEnabledUndoCommand : public UndoCommand {
@@ -1203,9 +1376,11 @@ public:
   void redo() override { apply(nowEnabled_); }
   void undo() override { apply(wasEnabled_); }
   QString label() const override { return QStringLiteral("Toggle Composition Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   void apply(bool enabled) {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (!comp) return;
@@ -1213,15 +1388,21 @@ private:
       if (effect && effect->effectID().toQString() == effectId_) {
         effect->setEnabled(enabled);
         comp->changed();
+        lastOperationSucceeded_ = effect->isEnabled() == enabled;
+        if (!lastOperationSucceeded_) {
+          effect->setEnabled(enabled == nowEnabled_ ? wasEnabled_ : nowEnabled_);
+        }
         break;
       }
     }
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   QString effectId_;
   bool wasEnabled_;
   bool nowEnabled_;
+  bool lastOperationSucceeded_ = true;
 };
 
 class MoveCompositionEffectUndoCommand : public UndoCommand {
@@ -1232,19 +1413,24 @@ public:
   void redo() override { move(toIndex_); }
   void undo() override { move(fromIndex_); }
   QString label() const override { return QStringLiteral("Move Composition Effect"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   void move(int index) {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (!comp) return;
-    comp->moveEffect(UniString::fromQString(effectId_), index);
+    lastOperationSucceeded_ =
+        comp->moveEffect(UniString::fromQString(effectId_), index);
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   QString effectId_;
   int fromIndex_ = -1;
   int toIndex_ = -1;
+  bool lastOperationSucceeded_ = true;
 };
 
 // --- GroupLayersUndoCommand ---
@@ -1254,6 +1440,7 @@ public:
       : layerIds_(std::move(layerIds)), groupName_(std::move(groupName)) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
     auto *sel = ArtifactLayerSelectionManager::instance();
@@ -1267,11 +1454,16 @@ public:
     }
     if (!svc->groupSelectedLayersInCurrentComposition(groupName_)) return;
     auto current = sel->currentLayer();
-    if (current) groupLayerId_ = current->id();
+    if (!current) return;
+    groupLayerId_ = current->id();
+    lastOperationSucceeded_ = !groupLayerId_.isNil() &&
+                              static_cast<bool>(comp->layerById(groupLayerId_));
+    if (!lastOperationSucceeded_) return;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || groupLayerId_.isNil()) return;
     auto comp = svc->currentComposition().lock();
@@ -1292,6 +1484,10 @@ public:
         }
       }
     }
+    if (groupIndex_ < 0 || childIds_.isEmpty()) return;
+    for (const auto &childId : childIds_) {
+      if (!comp->layerById(childId)) return;
+    }
     // Move children out of group
     for (int i = childIds_.size() - 1; i >= 0; --i) {
       if (auto child = comp->layerById(childIds_[i])) {
@@ -1301,7 +1497,7 @@ public:
     }
     // Remove group layer
     comp->removeLayer(groupLayerId_);
-    groupLayerId_ = LayerID();
+    if (comp->layerById(groupLayerId_)) return;
     // Restore selection to children
     if (auto *sel = ArtifactLayerSelectionManager::instance()) {
       sel->clearSelection();
@@ -1309,12 +1505,14 @@ public:
         if (auto child = comp->layerById(cid)) sel->addToSelection(child);
       }
     }
+    lastOperationSucceeded_ = true;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   QString label() const override {
     return QStringLiteral("Group Layers");
   }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   QVector<LayerID> layerIds_;
@@ -1322,6 +1520,7 @@ private:
   LayerID groupLayerId_;
   int groupIndex_ = -1;
   QVector<LayerID> childIds_;
+  bool lastOperationSucceeded_ = true;
 };
 
 // --- UngroupLayersUndoCommand ---
@@ -1331,6 +1530,7 @@ public:
       : groupLayerId_(groupLayerId), groupName_(std::move(groupName)) {}
 
   void redo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || groupLayerId_.isNil()) return;
     auto comp = svc->currentComposition().lock();
@@ -1360,17 +1560,19 @@ public:
     }
     // Remove group layer
     comp->removeLayer(groupLayerId_);
-    groupLayerId_ = LayerID();
+    if (comp->layerById(groupLayerId_)) return;
     if (auto *sel = ArtifactLayerSelectionManager::instance()) {
       sel->clearSelection();
       for (const auto &cid : childIds_) {
         if (auto child = comp->layerById(cid)) sel->addToSelection(child);
       }
     }
+    lastOperationSucceeded_ = true;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   void undo() override {
+    lastOperationSucceeded_ = false;
     auto *svc = ArtifactProjectService::instance();
     if (!svc || childIds_.isEmpty()) return;
     auto *sel = ArtifactLayerSelectionManager::instance();
@@ -1384,7 +1586,11 @@ public:
     }
     if (!svc->groupSelectedLayersInCurrentComposition(groupName_)) return;
     auto current = sel->currentLayer();
-    if (current) groupLayerId_ = current->id();
+    if (!current) return;
+    groupLayerId_ = current->id();
+    lastOperationSucceeded_ = !groupLayerId_.isNil() &&
+                              static_cast<bool>(comp->layerById(groupLayerId_));
+    if (!lastOperationSucceeded_) return;
     childIds_.clear();
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
@@ -1392,12 +1598,14 @@ public:
   QString label() const override {
     return QStringLiteral("Ungroup Layers");
   }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
 
 private:
   LayerID groupLayerId_;
   UniString groupName_;
   QVector<LayerID> childIds_;
   int groupIndex_ = -1;
+  bool lastOperationSucceeded_ = true;
 };
 
 // --- SplitLayerUndoCommand ---
@@ -1406,7 +1614,11 @@ public:
   SplitLayerUndoCommand(CompositionID compId, LayerID layerId)
       : compId_(compId), layerId_(layerId) {}
 
+  bool succeeded() const { return succeeded_; }
+
   void redo() override {
+    succeeded_ = false;
+    newLayer_.reset();
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
     // Try current composition first, then project lookup
@@ -1422,24 +1634,33 @@ public:
     auto now = comp->framePosition();
     if (now.framePosition() <= layer->inPoint().framePosition() ||
         now.framePosition() >= layer->outPoint().framePosition()) return;
+    if (layer->isTimingLocked()) return;
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) return;
     // Store pre-split state for undo
     oldOutFrame_ = layer->outPoint().framePosition();
     splitFrame_ = now.framePosition();
-    // Truncate original
-    layer->setOutPoint(FramePosition(splitFrame_));
     // Duplicate for second half
-    auto project = svc->getCurrentProjectSharedPtr();
-    if (!project) return;
     auto result = project->duplicateLayerInComposition(comp->id(), layerId_);
-    if (result.success && result.layer) {
-      newLayer_ = result.layer;
-      newLayer_->setInPoint(FramePosition(splitFrame_));
-      newLayer_->setOutPoint(FramePosition(oldOutFrame_));
+    if (!result.success || !result.layer || result.layer->isTimingLocked()) {
+      if (result.layer && result.layer->isTimingLocked() &&
+          comp->containsLayerById(result.layer->id())) {
+        comp->removeLayer(result.layer->id());
+      }
+      return;
     }
+    // The duplicate is valid, so the original can now be truncated without
+    // leaving a partial split when prerequisite checks fail.
+    layer->setOutPoint(FramePosition(splitFrame_));
+    newLayer_ = result.layer;
+    newLayer_->setInPoint(FramePosition(splitFrame_));
+    newLayer_->setOutPoint(FramePosition(oldOutFrame_));
+    succeeded_ = true;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   void undo() override {
+    succeeded_ = false;
     if (!newLayer_) return;
     auto *svc = ArtifactProjectService::instance();
     if (!svc) return;
@@ -1452,17 +1673,23 @@ public:
     }
     // Remove the cloned layer
     comp->removeLayer(newLayer_->id());
+    if (comp->containsLayerById(newLayer_->id())) return;
     newLayer_.reset();
     // Restore original layer's out point
     if (auto layer = comp->layerById(layerId_)) {
       layer->setOutPoint(FramePosition(oldOutFrame_));
+      if (layer->outPoint().framePosition() != oldOutFrame_) return;
+    } else {
+      return;
     }
+    succeeded_ = true;
     if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
   }
 
   QString label() const override {
     return QStringLiteral("Split Layer");
   }
+  bool lastOperationSucceeded() const override { return succeeded_; }
 
 private:
   CompositionID compId_;
@@ -1470,6 +1697,7 @@ private:
   ArtifactAbstractLayerPtr newLayer_;
   int64_t oldOutFrame_ = 0;
   int64_t splitFrame_ = 0;
+  bool succeeded_ = false;
 };
 
 } // namespace
@@ -1733,9 +1961,10 @@ void ArtifactProjectService::Impl::installSelectionBridge(
                     : QString(),
                 layerId.toString(), reason});
       };
-  QObject::connect(
-      selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
-      owner, [this, owner, selectionManager, publishSelectionChanged]() {
+  eventBusSubscriptions_.push_back(
+      eventBus_.subscribe<LayerSelectionManagerSelectionChangedEvent>(
+          [this, owner, selectionManager,
+           publishSelectionChanged](const LayerSelectionManagerSelectionChangedEvent &) {
         if (forwardingSelectionChange_) {
           return;
         }
@@ -1778,7 +2007,7 @@ void ArtifactProjectService::Impl::installSelectionBridge(
                   safeOwner.data(), resolvedId,
                   LayerSelectionChangeReason::TransientSync);
             });
-      });
+          }));
 }
 
 ArtifactProjectManager &ArtifactProjectService::Impl::projectManager() {
@@ -2019,6 +2248,100 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
       // LayerChangedEvent{Created} が projectManager::layerCreated
       // 経由で既に発火済みのため、 ProjectChangedEvent
       // を追加発火すると全ウィジェットが二重リビルドされる。
+    }
+
+    // The project manager creates and initializes the layer before returning,
+    // while the service applies placement, timing, and parent defaults above.
+    // Reattach that fully initialized object through the existing commands so
+    // one create operation has one Undo boundary.  The command is pushed only
+    // after all post-create adjustments succeed; the no-Undo path keeps the
+    // legacy direct mutation behavior.
+    if (targetedCurrentComposition) {
+      if (auto comp = currentComposition().lock()) {
+        if (auto* undo = UndoManager::instance();
+            undo && result.layer && comp->containsLayerById(result.layer->id())) {
+          int finalIndex = -1;
+          const auto finalLayers = comp->allLayer();
+          for (int i = 0; i < finalLayers.size(); ++i) {
+            if (finalLayers[i] && finalLayers[i]->id() == result.layer->id()) {
+              finalIndex = i;
+              break;
+            }
+          }
+
+            if (finalIndex >= 0) {
+            const LayerID finalParentId = result.layer->parentLayerId();
+            comp->removeLayer(result.layer->id());
+            if (!comp->containsLayerById(result.layer->id())) {
+              const int appendIndex = comp->allLayer().size();
+              const int targetIndex = std::clamp(
+                  finalIndex, 0, std::max(0, appendIndex));
+              auto macro = std::make_unique<MacroUndoCommand>(
+                  QStringLiteral("Create Layer"));
+              macro->addChild(std::make_unique<AddLayerCommand>(
+                  comp, result.layer, true));
+              if (appendIndex != finalIndex) {
+                macro->addChild(std::make_unique<MoveLayerIndexCommand>(
+                    comp, result.layer, appendIndex, targetIndex));
+              }
+              if (!finalParentId.isNil()) {
+                macro->addChild(std::make_unique<ChangeLayerParentCommand>(
+                  result.layer, LayerID{}, finalParentId));
+              }
+              const size_t undoCountBefore = undo->undoCount();
+              const bool commandUsable = macro->canSerialize() &&
+                  macro->estimatedMemoryBytes() <=
+                      undo->budget().maxSingleEntryBytes;
+              bool pushed = false;
+              if (commandUsable) {
+                pushed = undo->push(std::move(macro));
+              }
+              const auto layerIndex = [&]() {
+                const auto currentLayers = comp->allLayer();
+                for (int index = 0; index < currentLayers.size(); ++index) {
+                  if (currentLayers[index] &&
+                      currentLayers[index]->id() == result.layer->id()) {
+                    return index;
+                  }
+                }
+                return -1;
+              };
+              const bool applied = commandUsable && pushed &&
+                  comp->containsLayerById(result.layer->id()) &&
+                  layerIndex() == targetIndex &&
+                  result.layer->parentLayerId() == finalParentId;
+              if (!applied) {
+                if (commandUsable && undo->undoCount() == undoCountBefore + 1) {
+                  undo->undo();
+                }
+                if (comp->containsLayerById(result.layer->id())) {
+                  comp->removeLayer(result.layer->id());
+                }
+                // UndoManager may reject an entry that exceeds its active
+                // budget. Never leave a successfully created layer detached
+                // just because its history entry could not be retained.
+                const auto restoreResult = comp->appendLayerTop(result.layer);
+                if (restoreResult.success) {
+                  const int restoredAppendIndex = comp->allLayer().size() - 1;
+                  if (restoredAppendIndex != targetIndex) {
+                    comp->moveLayerToIndex(
+                        result.layer->id(), targetIndex);
+                  }
+                  if (!finalParentId.isNil()) {
+                    result.layer->setParentById(finalParentId);
+                  }
+                }
+                qWarning() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition]"
+                           << "Create layer command was not applied; restored created layer"
+                           << "success=" << restoreResult.success;
+              }
+            } else {
+              qWarning() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition]"
+                         << "could not detach created layer for Undo";
+            }
+          }
+        }
+      }
     }
 
     if (selectNewLayer) {
@@ -2585,7 +2908,12 @@ void ArtifactProjectService::selectLayer(const LayerID &id) {
   if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
     const auto currentComp = currentComposition().lock();
     const auto current = selectionManager->currentLayer();
-    if (current && current->id() == id) {
+    const auto currentInComposition =
+        currentComp && !id.isNil() ? currentComp->layerById(id)
+                                   : ArtifactAbstractLayerPtr{};
+    const bool currentBelongsToComposition =
+        current && currentInComposition && current == currentInComposition;
+    if (current && current->id() == id && currentBelongsToComposition) {
       selectionManager->setActiveComposition(currentComp);
       ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
           LayerSelectionChangedEvent{
@@ -2618,7 +2946,7 @@ void ArtifactProjectService::selectLayer(const LayerID &id) {
 
     const auto resolvedCurrent = selectionManager->currentLayer();
     const LayerID nextId = resolvedCurrent ? resolvedCurrent->id()
-                                           : (id.isNil() ? LayerID() : id);
+                                           : LayerID();
     const auto reason = id.isNil()
                             ? LayerSelectionChangeReason::UserCleared
                             : (resolvedCurrent
@@ -2689,6 +3017,9 @@ bool ArtifactProjectService::defaultNewLayerHidden() const {
 
 bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
 {
+    if (UndoManager::instance()) {
+        return ungroupSelectedGroupWithUndo();
+    }
     auto comp = currentComposition().lock();
     if (!comp) {
         return false;
@@ -2768,6 +3099,9 @@ bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
 
 bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
     const UniString &groupName) {
+  if (UndoManager::instance()) {
+    return groupSelectedLayersWithUndo(groupName);
+  }
   auto comp = currentComposition().lock();
   if (!comp) {
     return false;
@@ -2821,15 +3155,30 @@ bool ArtifactProjectService::removeLayerFromComposition(
   ArtifactAbstractLayerPtr removedLayer;
   ArtifactAbstractLayerPtr selectedLayer;
   auto *selectionManager = ArtifactLayerSelectionManager::instance();
-  if (auto comp = currentComposition().lock()) {
-    removedLayer = comp->layerById(layerId);
+  const auto currentComp = currentComposition().lock();
+  if (currentComp) {
+    removedLayer = currentComp->layerById(layerId);
     if (selectionManager) {
       selectedLayer = selectionManager->currentLayer();
     }
   }
 
-  bool ok = impl_->projectManager().removeLayerFromComposition(compositionId,
+  bool ok = false;
+  const bool isCurrentComposition =
+      currentComp && currentComp->id() == compositionId;
+  if (isCurrentComposition && removedLayer) {
+    if (auto* undo = UndoManager::instance()) {
+      ok = pushUndoCommandAndVerify(
+          std::make_unique<RemoveLayerCommand>(currentComp, removedLayer),
+          [&]() { return !currentComp->containsLayerById(layerId); });
+    } else {
+      ok = impl_->projectManager().removeLayerFromComposition(compositionId,
                                                                layerId);
+    }
+  } else {
+    ok = impl_->projectManager().removeLayerFromComposition(compositionId,
+                                                             layerId);
+  }
   if (ok) {
     const bool selectionMatchedRemoved =
         selectedLayer && selectedLayer->id() == layerId;
@@ -2862,7 +3211,51 @@ bool ArtifactProjectService::moveLayerInCurrentComposition(
 
   const int lastIndex = static_cast<int>(layers.size()) - 1;
   const int clampedIndex = std::clamp<int>(newIndex, 0, lastIndex);
-  comp->moveLayerToIndex(layerId, clampedIndex);
+  auto layer = comp->layerById(layerId);
+  if (!layer) {
+    return false;
+  }
+  int oldIndex = -1;
+  for (int index = 0; index < layers.size(); ++index) {
+    if (layers[index] && layers[index]->id() == layerId) {
+      oldIndex = index;
+      break;
+    }
+  }
+  if (oldIndex < 0 || oldIndex == clampedIndex) {
+    return oldIndex >= 0;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    const bool applied = pushUndoCommandAndVerify(
+        std::make_unique<MoveLayerIndexCommand>(
+            comp, layer, oldIndex, clampedIndex),
+        [&]() {
+          const auto currentLayers = comp->allLayer();
+          for (int index = 0; index < currentLayers.size(); ++index) {
+            if (currentLayers[index] &&
+                currentLayers[index]->id() == layerId) {
+              return index == clampedIndex;
+            }
+          }
+          return false;
+        });
+    if (!applied) {
+      return false;
+    }
+  } else {
+    comp->moveLayerToIndex(layerId, clampedIndex);
+    const auto currentLayers = comp->allLayer();
+    int actualIndex = -1;
+    for (int index = 0; index < currentLayers.size(); ++index) {
+      if (currentLayers[index] && currentLayers[index]->id() == layerId) {
+        actualIndex = index;
+        break;
+      }
+    }
+    if (actualIndex != clampedIndex) {
+      return false;
+    }
+  }
   notifyProjectMutation(impl_->projectManager());
   return true;
 }
@@ -2898,6 +3291,68 @@ bool ArtifactProjectService::duplicateLayerInCurrentComposition(
 
   if (sourceIndex >= 0 && newIndex >= 0 && newIndex != sourceIndex) {
     comp->moveLayerToIndex(result.layer->id(), sourceIndex);
+  }
+
+  if (auto* undo = UndoManager::instance(); undo && result.layer) {
+    // The project-level duplication routine creates and populates the copy
+     // before returning it. Reattach that fully populated object through the
+     // existing add/index commands so the operation has one Undo boundary.
+    const int desiredIndex = sourceIndex >= 0 ? sourceIndex : newIndex;
+    comp->removeLayer(result.layer->id());
+    const int appendIndex = comp->allLayer().size();
+    const int targetIndex = std::clamp(
+        desiredIndex, 0, std::max(0, appendIndex));
+    auto macro = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Duplicate Layer"));
+    macro->addChild(std::make_unique<AddLayerCommand>(
+        comp, result.layer, true));
+    if (desiredIndex >= 0 && appendIndex != desiredIndex) {
+      macro->addChild(std::make_unique<MoveLayerIndexCommand>(
+          comp, result.layer, appendIndex, targetIndex));
+    }
+    const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+      if (!comp->containsLayerById(result.layer->id())) {
+        return false;
+      }
+      if (desiredIndex < 0) {
+        return true;
+      }
+      const auto currentLayers = comp->allLayer();
+      for (int index = 0; index < currentLayers.size(); ++index) {
+        if (currentLayers[index] &&
+            currentLayers[index]->id() == result.layer->id()) {
+          return index == targetIndex;
+        }
+      }
+      return false;
+    });
+    if (!applied) {
+      if (!comp->containsLayerById(result.layer->id())) {
+        const auto restoreResult = comp->appendLayerTop(result.layer);
+        if (restoreResult.success) {
+          const int restoredIndex = comp->allLayer().size() - 1;
+          if (desiredIndex >= 0 && restoredIndex != targetIndex) {
+            comp->moveLayerToIndex(result.layer->id(), targetIndex);
+          }
+        }
+      }
+      return false;
+    }
+  } else if (sourceIndex >= 0 && newIndex >= 0 && newIndex != sourceIndex) {
+    int actualIndex = -1;
+    comp->moveLayerToIndex(result.layer->id(), sourceIndex);
+    const auto afterMoveLayers = comp->allLayer();
+    for (int index = 0; index < afterMoveLayers.size(); ++index) {
+      if (afterMoveLayers[index] &&
+          afterMoveLayers[index]->id() == result.layer->id()) {
+        actualIndex = index;
+        break;
+      }
+    }
+    if (actualIndex != sourceIndex) {
+      comp->removeLayer(result.layer->id());
+      return false;
+    }
     notifyProjectMutation(impl_->projectManager());
   }
   selectLayer(result.layer->id());
@@ -2920,7 +3375,22 @@ bool ArtifactProjectService::renameLayerInCurrentComposition(
   if (trimmed.isEmpty()) {
     return false;
   }
-  layer->setLayerName(trimmed);
+  const QString oldName = layer->layerName();
+  if (oldName == trimmed) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<RenameLayerCommand>(layer, oldName, trimmed),
+            [&]() { return layer->layerName() == trimmed; })) {
+      return false;
+    }
+  } else {
+    layer->setLayerName(trimmed);
+    if (layer->layerName() != trimmed) {
+      return false;
+    }
+  }
   notifyProjectMutation(impl_->projectManager());
   return true;
 }
@@ -2971,8 +3441,10 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
   }
 
   if (auto* undoManager = UndoManager::instance()) {
-    undoManager->push(std::make_unique<ReplaceLayerSourceCommand>(
-        layer, propertyPath, oldSourcePath, normalizedSourcePath));
+    if (!undoManager->push(std::make_unique<ReplaceLayerSourceCommand>(
+            layer, propertyPath, oldSourcePath, normalizedSourcePath))) {
+      return false;
+    }
   } else if (!layer->setLayerPropertyValue(propertyPath, normalizedSourcePath)) {
     return false;
   }
@@ -2988,8 +3460,8 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
     return false;
   }
   const auto layer = comp->layerById(layerId);
-  std::function<void()> localize;
-  std::function<void()> relinkShared;
+  std::function<bool()> localize;
+  std::function<bool()> relinkShared;
   std::function<bool()> isLocalized;
 
   auto bindLayer = [&](auto typedLayer) {
@@ -3000,10 +3472,12 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
     }
     ArtifactCore::WeakPtr<LayerT> weakLayer = typedLayer;
     localize = [weakLayer]() {
-      if (auto locked = weakLayer.lock()) locked->localizeSourceIdentity();
+      if (auto locked = weakLayer.lock()) return locked->localizeSourceIdentity();
+      return false;
     };
     relinkShared = [weakLayer]() {
-      if (auto locked = weakLayer.lock()) locked->relinkSourceIdentityToShared();
+      if (auto locked = weakLayer.lock()) return locked->relinkSourceIdentityToShared();
+      return false;
     };
     isLocalized = [weakLayer]() {
       if (auto locked = weakLayer.lock()) return locked->isSourceIdentityLocalized();
@@ -3018,14 +3492,18 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
       bindLayer(ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer));
   if (!supported) return false;
 
+  bool operationAccepted = false;
   if (auto* undoManager = UndoManager::instance()) {
-    undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
+    operationAccepted = undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
         std::move(localize), std::move(relinkShared)));
   } else {
-    localize();
+    operationAccepted = localize && localize();
+  }
+  if (!operationAccepted || !isLocalized || !isLocalized()) {
+    return false;
   }
   notifyProjectMutation(impl_->projectManager());
-  return isLocalized && isLocalized();
+  return true;
 }
 
 bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
@@ -3033,8 +3511,8 @@ bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
   auto comp = currentComposition().lock();
   if (!comp || layerId.isNil()) return false;
   const auto layer = comp->layerById(layerId);
-  std::function<void()> localize;
-  std::function<void()> relinkShared;
+  std::function<bool()> localize;
+  std::function<bool()> relinkShared;
   std::function<bool()> isLocalized;
 
   auto bindLayer = [&](auto typedLayer) {
@@ -3042,10 +3520,12 @@ bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
     if (!typedLayer || !typedLayer->isSourceIdentityLocalized()) return false;
     ArtifactCore::WeakPtr<LayerT> weakLayer = typedLayer;
     localize = [weakLayer]() {
-      if (auto locked = weakLayer.lock()) locked->localizeSourceIdentity();
+      if (auto locked = weakLayer.lock()) return locked->localizeSourceIdentity();
+      return false;
     };
     relinkShared = [weakLayer]() {
-      if (auto locked = weakLayer.lock()) locked->relinkSourceIdentityToShared();
+      if (auto locked = weakLayer.lock()) return locked->relinkSourceIdentityToShared();
+      return false;
     };
     isLocalized = [weakLayer]() {
       if (auto locked = weakLayer.lock()) return locked->isSourceIdentityLocalized();
@@ -3060,15 +3540,19 @@ bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
       bindLayer(ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer));
   if (!supported) return false;
 
+  bool operationAccepted = false;
   if (auto* undoManager = UndoManager::instance()) {
-    undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
+    operationAccepted = undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
         std::move(relinkShared), std::move(localize),
         QStringLiteral("Relink Shared Layer Source")));
   } else {
-    relinkShared();
+    operationAccepted = relinkShared && relinkShared();
+  }
+  if (!operationAccepted || !isLocalized || isLocalized()) {
+    return false;
   }
   notifyProjectMutation(impl_->projectManager());
-  return isLocalized && !isLocalized();
+  return true;
 }
 
 bool ArtifactProjectService::isLayerVisibleInCurrentComposition(
@@ -3121,7 +3605,22 @@ bool ArtifactProjectService::setLayerVisibleInCurrentComposition(
   if (!layer) {
     return false;
   }
-  layer->setVisible(visible);
+  if (layer->isVisible() == visible) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<SetLayerVisibilityCommand>(layer, visible),
+            [&]() { return layer->isVisible() == visible; })) {
+      return false;
+    }
+  } else {
+    layer->setVisible(visible);
+    if (layer->isVisible() != visible) {
+      return false;
+    }
+  }
+  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 
@@ -3135,7 +3634,22 @@ bool ArtifactProjectService::setLayerLockedInCurrentComposition(
   if (!layer) {
     return false;
   }
-  layer->setLocked(locked);
+  if (layer->isLocked() == locked) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<SetLayerLockCommand>(layer, locked),
+            [&]() { return layer->isLocked() == locked; })) {
+      return false;
+    }
+  } else {
+    layer->setLocked(locked);
+    if (layer->isLocked() != locked) {
+      return false;
+    }
+  }
+  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 
@@ -3149,7 +3663,22 @@ bool ArtifactProjectService::setLayerSoloInCurrentComposition(
   if (!layer) {
     return false;
   }
-  layer->setSolo(solo);
+  if (layer->isSolo() == solo) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<SetLayerSoloCommand>(layer, solo),
+            [&]() { return layer->isSolo() == solo; })) {
+      return false;
+    }
+  } else {
+    layer->setSolo(solo);
+    if (layer->isSolo() != solo) {
+      return false;
+    }
+  }
+  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 
@@ -3163,7 +3692,21 @@ bool ArtifactProjectService::setLayerShyInCurrentComposition(
   if (!layer) {
     return false;
   }
-  layer->setShy(shy);
+  if (layer->isShy() == shy) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<SetLayerShyCommand>(layer, shy),
+            [&]() { return layer->isShy() == shy; })) {
+      return false;
+    }
+  } else {
+    layer->setShy(shy);
+    if (layer->isShy() != shy) {
+      return false;
+    }
+  }
   notifyProjectMutation(impl_->projectManager());
   return true;
 }
@@ -3179,12 +3722,50 @@ bool ArtifactProjectService::soloOnlyLayerInCurrentComposition(
     return false;
   }
 
-  for (const auto &candidate : comp->allLayer()) {
-    if (!candidate)
-      continue;
-    candidate->setSolo(candidate->id() == layerId);
+  const auto allLayers = comp->allLayer();
+  bool changed = false;
+  if (auto* undo = UndoManager::instance()) {
+    auto macro = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Solo Only Layer"));
+    for (const auto &candidate : allLayers) {
+      if (!candidate) {
+        continue;
+      }
+      const bool targetSolo = candidate->id() == layerId;
+      if (candidate->isSolo() == targetSolo) {
+        continue;
+      }
+      macro->addChild(std::make_unique<SetLayerSoloCommand>(
+          candidate, targetSolo));
+      changed = true;
+    }
+    if (changed) {
+      const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+        return std::all_of(
+            allLayers.begin(), allLayers.end(),
+            [&](const auto &candidate) {
+              return !candidate ||
+                     candidate->isSolo() == (candidate->id() == layerId);
+            });
+      });
+      if (!applied) {
+        return false;
+      }
+    }
+  } else {
+    for (const auto &candidate : allLayers) {
+      if (candidate) {
+        const bool targetSolo = candidate->id() == layerId;
+        if (candidate->isSolo() != targetSolo) {
+          candidate->setSolo(targetSolo);
+          changed = true;
+        }
+      }
+    }
   }
-  notifyProjectMutation(impl_->projectManager());
+  if (changed) {
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 
@@ -3206,13 +3787,53 @@ bool ArtifactProjectService::smartSoloOnlyLayerInCurrentComposition(
     return false;
   }
 
-  for (const auto &candidate : comp->allLayer()) {
-    if (!candidate) {
-      continue;
+  const auto allLayers = comp->allLayer();
+  bool changed = false;
+  if (auto* undo = UndoManager::instance()) {
+    auto macro = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Smart Solo Layers"));
+    for (const auto &candidate : allLayers) {
+      if (!candidate) {
+        continue;
+      }
+      const bool targetSolo = smartSoloLayerIds.contains(
+          candidate->id().toString());
+      if (candidate->isSolo() == targetSolo) {
+        continue;
+      }
+      macro->addChild(std::make_unique<SetLayerSoloCommand>(
+          candidate, targetSolo));
+      changed = true;
     }
-    candidate->setSolo(smartSoloLayerIds.contains(candidate->id().toString()));
+    if (changed) {
+      const bool applied = pushUndoCommandAndVerify(std::move(macro), [&]() {
+        return std::all_of(
+            allLayers.begin(), allLayers.end(),
+            [&](const auto &candidate) {
+              return !candidate ||
+                     candidate->isSolo() ==
+                         smartSoloLayerIds.contains(candidate->id().toString());
+            });
+      });
+      if (!applied) {
+        return false;
+      }
+    }
+  } else {
+    for (const auto &candidate : allLayers) {
+      if (candidate) {
+        const bool targetSolo = smartSoloLayerIds.contains(
+            candidate->id().toString());
+        if (candidate->isSolo() != targetSolo) {
+          candidate->setSolo(targetSolo);
+          changed = true;
+        }
+      }
+    }
   }
-  notifyProjectMutation(impl_->projectManager());
+  if (changed) {
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 
@@ -3227,7 +3848,22 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(
     return false;
   }
   if (parentLayerId.isNil()) {
-    layer->clearParent();
+    if (!layer->hasParent()) {
+      return true;
+    }
+    if (auto* undo = UndoManager::instance()) {
+      if (!pushUndoCommandAndVerify(
+              std::make_unique<ChangeLayerParentCommand>(
+                  layer, layer->parentLayerId(), LayerID{}),
+              [&]() { return layer->parentLayerId().isNil(); })) {
+        return false;
+      }
+    } else {
+      layer->clearParent();
+      if (!layer->parentLayerId().isNil()) {
+        return false;
+      }
+    }
   } else {
     auto parent = comp->layerById(parentLayerId);
     if (!parent || parent->id() == layerId) {
@@ -3240,11 +3876,26 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(
       }
       const auto ancestor = comp->layerById(current);
       if (!ancestor) {
-        break;
+        return false;
       }
       current = ancestor->parentLayerId();
     }
-    layer->setParentById(parentLayerId);
+    if (layer->parentLayerId() == parentLayerId) {
+      return true;
+    }
+    if (auto* undo = UndoManager::instance()) {
+      if (!pushUndoCommandAndVerify(
+              std::make_unique<ChangeLayerParentCommand>(
+                  layer, layer->parentLayerId(), parentLayerId),
+              [&]() { return layer->parentLayerId() == parentLayerId; })) {
+        return false;
+      }
+    } else {
+      layer->setParentById(parentLayerId);
+      if (layer->parentLayerId() != parentLayerId) {
+        return false;
+      }
+    }
   }
   notifyProjectMutation(impl_->projectManager());
   return true;
@@ -3344,9 +3995,12 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   childParams.setFrameRate(comp->frameRate());
   childParams.setDurationFrames(childDurationFrames);
   childParams.setBackgroundColor(comp->backgroundColor());
+  const double rawFps = comp->frameRate().framerate();
   const int64_t fpsScale =
       std::max<int64_t>(1, static_cast<int64_t>(std::llround(
-                               comp->frameRate().framerate())));
+                               std::isfinite(rawFps) && rawFps > 0.0
+                                   ? std::clamp(rawFps, 1.0, 10000.0)
+                                   : 1.0)));
   childParams.setWorkArea(RationalTime(0, fpsScale),
                           RationalTime(childDurationFrames, fpsScale));
 
@@ -3791,9 +4445,17 @@ bool ArtifactProjectService::precomposeLayersWithUndo(
       layerIds, newCompositionName, openNewComposition, matchWorkspaceDuration,
       mode);
   // UndoManager::push runs redo() once for us.
-  mgr->push(std::move(cmd));
+  const size_t undoCountBefore = mgr->undoCount();
+  if (!mgr->push(std::move(cmd))) {
+    return false;
+  }
   const PrecomposeOutcome outcome = lastPrecomposeOutcome();
-  return !outcome.precompLayerId.isNil() && !outcome.childCompId.isNil();
+  const bool applied = !outcome.precompLayerId.isNil() &&
+                       !outcome.childCompId.isNil();
+  if (!applied && mgr->undoCount() == undoCountBefore + 1) {
+    mgr->undo();
+  }
+  return applied;
 }
 
 bool ArtifactProjectService::unprecomposeLayerWithUndo(
@@ -3803,10 +4465,17 @@ bool ArtifactProjectService::unprecomposeLayerWithUndo(
     return unprecomposeLayerInCurrentComposition(layerId, keepComposition);
   }
   auto cmd = std::make_unique<UnprecomposeUndoCommand>(layerId, keepComposition);
-  mgr->push(std::move(cmd));
+  const size_t undoCountBefore = mgr->undoCount();
+  if (!mgr->push(std::move(cmd))) {
+    return false;
+  }
   // After redo, the precomp layer is gone; success is implied by a non-empty
   // moved-layer record.
-  return !lastUnprecomposeMovedLayerIds().isEmpty();
+  const bool applied = !lastUnprecomposeMovedLayerIds().isEmpty();
+  if (!applied && mgr->undoCount() == undoCountBefore + 1) {
+    mgr->undo();
+  }
+  return applied;
 }
 
 bool ArtifactProjectService::groupSelectedLayersWithUndo(
@@ -3815,18 +4484,92 @@ bool ArtifactProjectService::groupSelectedLayersWithUndo(
   if (!mgr) {
     return groupSelectedLayersInCurrentComposition(groupName);
   }
+  auto comp = currentComposition().lock();
+  if (!comp) return false;
   auto *sel = ArtifactLayerSelectionManager::instance();
   if (!sel) return false;
   const auto selected = sel->selectedLayers();
   QVector<LayerID> ids;
   ids.reserve(selected.size());
   for (const auto &l : selected) {
-    if (l) ids.push_back(l->id());
+    if (l && l->composition() == comp.get()) ids.push_back(l->id());
   }
   if (ids.isEmpty()) return false;
-  auto cmd = std::make_unique<GroupLayersUndoCommand>(ids, groupName);
-  mgr->push(std::move(cmd));
-  return !ids.isEmpty();
+  QSet<QString> seenIds;
+  QVector<ArtifactAbstractLayerPtr> layers;
+  QVector<LayerID> oldParentIds;
+  layers.reserve(ids.size());
+  oldParentIds.reserve(ids.size());
+  for (const auto &id : ids) {
+    const QString idText = id.toString();
+    if (id.isNil() || seenIds.contains(idText)) continue;
+    seenIds.insert(idText);
+    const auto layer = comp->layerById(id);
+    if (!layer) return false;
+    layers.push_back(layer);
+    oldParentIds.push_back(layer->parentLayerId());
+  }
+  if (layers.isEmpty()) return false;
+
+  QStringList beforeSelectionIds;
+  for (const auto &selectedLayer : sel->selectedLayersInOrder()) {
+    if (selectedLayer) {
+      beforeSelectionIds.append(selectedLayer->id().toString());
+    }
+  }
+  const QString beforeCurrentSelection = sel->currentLayer()
+      ? sel->currentLayer()->id().toString() : QString();
+
+  auto groupLayer = ArtifactCore::makeShared<ArtifactGroupLayer>();
+  const QString trimmedName = groupName.toQString().trimmed();
+  groupLayer->setLayerName(trimmedName.isEmpty()
+                               ? QStringLiteral("Layer Group")
+                               : trimmedName);
+  groupLayer->setCollapsed(false);
+
+  auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Group Layers"));
+  macro->addChild(std::make_unique<AddLayerCommand>(comp, groupLayer, true));
+  for (const auto &layer : layers) {
+    macro->addChild(std::make_unique<ChangeLayerParentCommand>(
+        layer, layer->parentLayerId(), groupLayer->id()));
+  }
+  macro->addChild(std::make_unique<LayerSelectionSnapshotCommand>(
+      comp, beforeSelectionIds, beforeCurrentSelection,
+      QStringList{groupLayer->id().toString()}, groupLayer->id().toString()));
+  const size_t undoCountBefore = mgr->undoCount();
+  if (!mgr->push(std::move(macro))) {
+    return false;
+  }
+
+  bool applied = comp->containsLayerById(groupLayer->id());
+  for (const auto &layer : layers) {
+    applied = applied && layer &&
+              layer->parentLayerId() == groupLayer->id();
+  }
+  if (!applied) {
+    // Do not leave a successfully pushed but semantically invalid macro in
+    // history. The macro owns the complete inverse boundary; use it first,
+    // then retain the explicit repair below for a partially failing undo.
+    if (mgr->undoCount() == undoCountBefore + 1) {
+      mgr->undo();
+    }
+    if (comp->containsLayerById(groupLayer->id())) {
+      for (int i = 0; i < layers.size(); ++i) {
+        const auto &layer = layers[i];
+        if (!layer) continue;
+        if (oldParentIds[i].isNil()) {
+          layer->clearParent();
+        } else {
+          layer->setParentById(oldParentIds[i]);
+        }
+      }
+      comp->removeLayer(groupLayer->id());
+    }
+    return false;
+  }
+
+  selectLayer(groupLayer->id());
+  return true;
 }
 
 bool ArtifactProjectService::ungroupSelectedGroupWithUndo() {
@@ -3838,9 +4581,73 @@ bool ArtifactProjectService::ungroupSelectedGroupWithUndo() {
   if (!sel) return false;
   auto current = sel->currentLayer();
   if (!current || !current->isGroupLayer()) return false;
-  auto cmd = std::make_unique<UngroupLayersUndoCommand>(
-      current->id(), UniString(current->layerName()));
-  mgr->push(std::move(cmd));
+  auto comp = currentComposition().lock();
+  if (!comp || current->composition() != comp.get()) return false;
+  const auto groupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(current);
+  if (!groupLayer) return false;
+  const auto children = groupLayer->children();
+  if (children.empty()) {
+    const size_t undoCountBefore = mgr->undoCount();
+    const bool pushed = mgr->push(std::make_unique<RemoveLayerCommand>(comp, current));
+    if (!pushed) {
+      return false;
+    }
+    if (comp->containsLayerById(current->id())) {
+      if (mgr->undoCount() == undoCountBefore + 1) {
+        mgr->undo();
+      }
+      return false;
+    }
+    return true;
+  }
+
+  QStringList beforeSelectionIds;
+  for (const auto &selectedLayer : sel->selectedLayersInOrder()) {
+    if (selectedLayer) {
+      beforeSelectionIds.append(selectedLayer->id().toString());
+    }
+  }
+  const QString beforeCurrentSelection = sel->currentLayer()
+      ? sel->currentLayer()->id().toString() : QString();
+  QStringList afterSelectionIds;
+  for (const auto &child : children) {
+    if (child) afterSelectionIds.append(child->id().toString());
+  }
+
+  auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Ungroup Layers"));
+  for (const auto &child : children) {
+    if (!child) continue;
+    macro->addChild(std::make_unique<ChangeLayerParentCommand>(
+        child, groupLayer->id(), LayerID{}));
+  }
+  macro->addChild(std::make_unique<RemoveLayerCommand>(comp, current));
+  macro->addChild(std::make_unique<LayerSelectionSnapshotCommand>(
+      comp, beforeSelectionIds, beforeCurrentSelection, afterSelectionIds,
+      afterSelectionIds.isEmpty() ? QString() : afterSelectionIds.back()));
+  const size_t undoCountBefore = mgr->undoCount();
+  if (!mgr->push(std::move(macro))) {
+    return false;
+  }
+
+  bool applied = !comp->containsLayerById(current->id());
+  for (const auto &child : children) {
+    applied = applied && child &&
+              comp->containsLayerById(child->id()) &&
+              child->parentLayerId().isNil();
+  }
+  if (!applied) {
+    if (mgr->undoCount() == undoCountBefore + 1) {
+      mgr->undo();
+    }
+    return false;
+  }
+
+  sel->clearSelection();
+  for (const auto &child : children) {
+    if (child && comp->containsLayerById(child->id())) {
+      sel->addToSelection(child);
+    }
+  }
   return true;
 }
 
@@ -3849,12 +4656,49 @@ bool ArtifactProjectService::splitLayerWithUndo(
   auto *mgr = UndoManager::instance();
   if (!mgr) {
     // No undo — fall back to direct mutation
+    auto comp = findComposition(compositionId).ptr.lock();
+    if (!comp || layerId.isNil()) {
+      return false;
+    }
+    QSet<QString> beforeLayerIds;
+    for (const auto& layer : comp->allLayer()) {
+      if (layer) {
+        beforeLayerIds.insert(layer->id().toString());
+      }
+    }
     splitLayerAtCurrentTime(compositionId, layerId);
-    return true;
+    for (const auto& layer : comp->allLayer()) {
+      if (layer && !beforeLayerIds.contains(layer->id().toString())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  auto comp = findComposition(compositionId).ptr.lock();
+  if (!comp || layerId.isNil()) {
+    return false;
+  }
+  auto layer = comp->layerById(layerId);
+  if (!layer || layer->isTimingLocked()) {
+    return false;
+  }
+  const auto frame = comp->framePosition().framePosition();
+  if (frame <= layer->inPoint().framePosition() ||
+      frame >= layer->outPoint().framePosition() ||
+      !getCurrentProjectSharedPtr()) {
+    return false;
   }
   auto cmd = std::make_unique<SplitLayerUndoCommand>(compositionId, layerId);
-  mgr->push(std::move(cmd));
-  return true;
+  auto *command = cmd.get();
+  const size_t undoCountBefore = mgr->undoCount();
+  if (!mgr->push(std::move(cmd))) {
+    return false;
+  }
+  const bool applied = command->succeeded();
+  if (!applied && mgr->undoCount() == undoCountBefore + 1) {
+    mgr->undo();
+  }
+  return applied;
 }
 
 void ArtifactProjectService::splitLayerAtCurrentTime(
@@ -3893,6 +4737,9 @@ void ArtifactProjectService::splitLayerAtCurrentTime(
   auto newLayer = result.layer;
   if (newLayer->isTimingLocked()) {
     layer->setOutPoint(oldOut);
+    if (comp->containsLayerById(newLayer->id())) {
+      comp->removeLayer(newLayer->id());
+    }
     return;
   }
   newLayer->setInPoint(now);
@@ -3910,7 +4757,22 @@ bool ArtifactProjectService::clearLayerParentInCurrentComposition(
   if (!layer) {
     return false;
   }
-  layer->clearParent();
+  if (!layer->hasParent()) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<ChangeLayerParentCommand>(
+                layer, layer->parentLayerId(), LayerID{}),
+            [&]() { return layer->parentLayerId().isNil(); })) {
+      return false;
+    }
+  } else {
+    layer->clearParent();
+    if (!layer->parentLayerId().isNil()) {
+      return false;
+    }
+  }
   notifyProjectMutation(impl_->projectManager());
   return true;
 }
@@ -3963,6 +4825,14 @@ bool ArtifactProjectService::addEffectToLayerInCurrentComposition(
       effect->effectID().toQString());
   effect->setEffectID(UniString::fromQString(uniqueId));
   layer->addEffect(effect);
+  const auto effectsAfter = layer->getEffects();
+  if (!std::any_of(effectsAfter.cbegin(), effectsAfter.cend(),
+                   [&uniqueId](const auto &candidate) {
+                     return candidate &&
+                            candidate->effectID().toQString() == uniqueId;
+                   })) {
+    return false;
+  }
   // A layer-scoped queued notification is sufficient here. Publishing the
   // same LayerChangedEvent synchronously and then posting it again forced
   // rasterizer surface invalidation twice while the add action was active.
@@ -3983,7 +4853,21 @@ bool ArtifactProjectService::removeEffectFromLayerInCurrentComposition(
   if (!layer) {
     return false;
   }
+  const auto effectsBefore = layer->getEffects();
+  if (!std::any_of(effectsBefore.cbegin(), effectsBefore.cend(),
+                   [&effectId](const auto &effect) {
+                     return effect && effect->effectID().toQString() == effectId;
+                   })) {
+    return false;
+  }
   layer->removeEffect(UniString(effectId.toStdString()));
+  const auto effectsAfter = layer->getEffects();
+  if (std::any_of(effectsAfter.cbegin(), effectsAfter.cend(),
+                  [&effectId](const auto &effect) {
+                    return effect && effect->effectID().toQString() == effectId;
+                  })) {
+    return false;
+  }
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       comp->id().toString(), layerId.toString(),
       LayerChangedEvent::ChangeType::Modified});
@@ -4008,7 +4892,12 @@ bool ArtifactProjectService::setEffectEnabledInLayerInCurrentComposition(
 
   for (const auto &effect : layer->getEffects()) {
     if (effect && effect->effectID().toQString() == effectId) {
+      const bool oldEnabled = effect->isEnabled();
       effect->setEnabled(enabled);
+      if (effect->isEnabled() != enabled) {
+        effect->setEnabled(oldEnabled);
+        return false;
+      }
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           comp->id().toString(), layerId.toString(),
           LayerChangedEvent::ChangeType::Modified});
@@ -4074,12 +4963,39 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(
     return false;
   }
 
+  const auto effectsBefore = effects;
   std::swap(effects[currentIndex], effects[swapIndex]);
   layer->clearEffects();
   for (const auto &effect : effects) {
     if (effect) {
       layer->addEffect(effect);
     }
+  }
+  const auto effectsAfter = layer->getEffects();
+  bool reordered = effectsAfter.size() == effects.size();
+  if (reordered) {
+    for (size_t i = 0; i < effects.size(); ++i) {
+      const auto &expected = effects[i];
+      const auto &actual = effectsAfter[i];
+      if (expected && actual) {
+        if (expected->effectID().toQString() != actual->effectID().toQString()) {
+          reordered = false;
+          break;
+        }
+      } else if (static_cast<bool>(expected) != static_cast<bool>(actual)) {
+        reordered = false;
+        break;
+      }
+    }
+  }
+  if (!reordered) {
+    layer->clearEffects();
+    for (const auto &effect : effectsBefore) {
+      if (effect) {
+        layer->addEffect(effect);
+      }
+    }
+    return false;
   }
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       comp->id().toString(), layerId.toString(),
@@ -4097,8 +5013,7 @@ bool ArtifactProjectService::addEffectToLayerWithUndo(
     return addEffectToLayerInCurrentComposition(layerId, std::move(effect));
   }
   auto cmd = std::make_unique<AddEffectUndoCommand>(layerId, std::move(effect));
-  mgr->push(std::move(cmd));
-  return true;
+  return mgr->push(std::move(cmd));
 }
 
 bool ArtifactProjectService::removeEffectFromLayerWithUndo(
@@ -4109,8 +5024,7 @@ bool ArtifactProjectService::removeEffectFromLayerWithUndo(
     return removeEffectFromLayerInCurrentComposition(layerId, effectId);
   }
   auto cmd = std::make_unique<RemoveEffectUndoCommand>(layerId, std::move(effect));
-  mgr->push(std::move(cmd));
-  return true;
+  return mgr->push(std::move(cmd));
 }
 
 bool ArtifactProjectService::setEffectEnabledWithUndo(
@@ -4122,8 +5036,7 @@ bool ArtifactProjectService::setEffectEnabledWithUndo(
   }
   auto cmd = std::make_unique<SetEffectEnabledUndoCommand>(
       layerId, effectId, wasEnabled, enabled);
-  mgr->push(std::move(cmd));
-  return true;
+  return mgr->push(std::move(cmd));
 }
 
 bool ArtifactProjectService::moveEffectWithUndo(
@@ -4133,8 +5046,7 @@ bool ArtifactProjectService::moveEffectWithUndo(
     return moveEffectInLayerInCurrentComposition(layerId, effectId, direction);
   }
   auto cmd = std::make_unique<MoveEffectUndoCommand>(layerId, effectId, direction);
-  mgr->push(std::move(cmd));
-  return true;
+  return mgr->push(std::move(cmd));
 }
 
 bool ArtifactProjectService::addEffectToCurrentComposition(
@@ -4147,10 +5059,22 @@ bool ArtifactProjectService::addEffectToCurrentComposition(
       comp->getEffects(), effect->displayName().toQString(),
       effect->effectID().toQString());
   effect->setEffectID(UniString::fromQString(uniqueId));
+  const QString effectId = uniqueId;
   if (auto *mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<AddCompositionEffectUndoCommand>(std::move(effect)));
+    if (!mgr->push(std::make_unique<AddCompositionEffectUndoCommand>(
+            std::move(effect)))) {
+      return false;
+    }
   } else {
     comp->addEffect(std::move(effect));
+    const bool added = std::any_of(
+        comp->getEffects().begin(), comp->getEffects().end(),
+        [&](const auto &candidate) {
+          return candidate && candidate->effectID().toQString() == effectId;
+        });
+    if (!added) {
+      return false;
+    }
     notifyProjectMutation(impl_->projectManager());
   }
   return true;
@@ -4177,10 +5101,18 @@ bool ArtifactProjectService::removeEffectFromCurrentComposition(
   }
   if (!effect) return false;
   if (auto *mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<RemoveCompositionEffectUndoCommand>(
+    return mgr->push(std::make_unique<RemoveCompositionEffectUndoCommand>(
         std::move(effect), effectIndex));
   } else {
     comp->removeEffect(UniString(effectId.toStdString()));
+    const bool removed = std::none_of(
+        comp->getEffects().begin(), comp->getEffects().end(),
+        [&](const auto &candidate) {
+          return candidate && candidate->effectID().toQString() == effectId;
+        });
+    if (!removed) {
+      return false;
+    }
     notifyProjectMutation(impl_->projectManager());
   }
   return true;
@@ -4198,10 +5130,15 @@ bool ArtifactProjectService::setEffectEnabledInCurrentComposition(
   for (const auto &effect : comp->getEffects()) {
     if (effect && effect->effectID().toQString() == effectId) {
       if (auto *mgr = UndoManager::instance()) {
-        mgr->push(std::make_unique<SetCompositionEffectEnabledUndoCommand>(
+        return mgr->push(std::make_unique<SetCompositionEffectEnabledUndoCommand>(
             effectId, effect->isEnabled(), enabled));
       } else {
+        const bool oldEnabled = effect->isEnabled();
         effect->setEnabled(enabled);
+        if (effect->isEnabled() != enabled) {
+          effect->setEnabled(oldEnabled);
+          return false;
+        }
         comp->changed();
         notifyProjectMutation(impl_->projectManager());
       }
@@ -4256,7 +5193,7 @@ bool ArtifactProjectService::moveEffectInCurrentComposition(
   }
 
   if (auto *mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<MoveCompositionEffectUndoCommand>(
+    return mgr->push(std::make_unique<MoveCompositionEffectUndoCommand>(
         effectId, currentIndex, swapIndex));
   } else {
     if (!comp->moveEffect(UniString::fromQString(effectId), swapIndex)) {
@@ -4324,7 +5261,229 @@ bool ArtifactProjectService::removeProjectItem(ProjectItem *item) {
   if (!shared) {
     return false;
   }
-  shared->removeItem(item);
+  const auto roots = shared->projectItems();
+  if (!item->parent || (!roots.isEmpty() && item == roots.front())) {
+    return false;
+  }
+  const bool supportedType = item->type() == eProjectItemType::Folder ||
+                             item->type() == eProjectItemType::Footage ||
+                             item->type() == eProjectItemType::Solid;
+  if (auto* undo = UndoManager::instance(); undo && supportedType &&
+      !projectItemTreeContainsComposition(item)) {
+    auto command = std::make_unique<RemoveProjectItemCommand>(item);
+    if (!command->canSerialize()) {
+      return false;
+    }
+    if (command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+      qWarning() << "[ProjectService] project item removal rejected because"
+                 << "the Undo snapshot exceeds the configured budget";
+      return false;
+    }
+    return undo->push(std::move(command)) &&
+           !findProjectItemInTreeForUndo(shared->projectItems(),
+                                         item->id.toString());
+  }
+  return shared->removeItem(item);
+}
+
+bool ArtifactProjectService::projectItemRemovalUndoAvailable(
+    ProjectItem* item) const {
+  if (!item || !UndoManager::instance()) {
+    return false;
+  }
+  auto project = getCurrentProjectSharedPtr();
+  if (!project || !item->parent) {
+    return false;
+  }
+  const auto roots = project->projectItems();
+  if (!roots.isEmpty() && item == roots.front()) {
+    return false;
+  }
+  const bool supportedType = item->type() == eProjectItemType::Folder ||
+                             item->type() == eProjectItemType::Footage ||
+                             item->type() == eProjectItemType::Solid;
+  return supportedType && !projectItemTreeContainsComposition(item);
+}
+
+bool ArtifactProjectService::createProjectFolder(const UniString& name,
+                                                 FolderItem* parentFolder) {
+  const QString trimmedName = name.toQString().trimmed();
+  auto project = getCurrentProjectSharedPtr();
+  if (!project || trimmedName.isEmpty()) {
+    return false;
+  }
+
+  const auto roots = project->projectItems();
+  if (parentFolder) {
+    std::function<ProjectItem*(const QVector<ProjectItem*>&)> findParent =
+        [&](const QVector<ProjectItem*>& items) -> ProjectItem* {
+      for (auto* item : items) {
+        if (!item) continue;
+        if (item == parentFolder) return item;
+        if (auto* found = findParent(item->children)) return found;
+      }
+      return nullptr;
+    };
+    if (findParent(roots) != parentFolder) {
+      return false;
+    }
+  }
+
+  QSet<QString> beforeIds;
+  std::function<void(const QVector<ProjectItem*>&)> collectIds =
+      [&](const QVector<ProjectItem*>& items) {
+        for (auto* item : items) {
+          if (!item) continue;
+          beforeIds.insert(item->id.toString());
+          collectIds(item->children);
+        }
+      };
+  collectIds(roots);
+
+  project->createFolder(trimmedName, parentFolder);
+  FolderItem* created = nullptr;
+  std::function<void(const QVector<ProjectItem*>&)> findCreated =
+      [&](const QVector<ProjectItem*>& items) {
+        for (auto* item : items) {
+          if (!item || created) continue;
+          const ProjectItem* expectedParent =
+              parentFolder ? static_cast<ProjectItem*>(parentFolder)
+                           : (roots.isEmpty() ? nullptr : roots.front());
+          if (item->type() == eProjectItemType::Folder &&
+              !beforeIds.contains(item->id.toString()) &&
+              item->name.toQString() == trimmedName &&
+              item->parent == expectedParent) {
+            created = static_cast<FolderItem*>(item);
+            return;
+          }
+          findCreated(item->children);
+        }
+      };
+  findCreated(project->projectItems());
+  if (!created) {
+    return false;
+  }
+
+  if (auto* undo = UndoManager::instance()) {
+    auto command = std::make_unique<CreateProjectFolderCommand>(
+        created->id.toString(),
+        parentFolder ? parentFolder->id.toString() : QString(),
+        trimmedName, created->tags);
+    if (!command->canSerialize() ||
+        command->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes) {
+      project->removeItem(created);
+      return false;
+    }
+    const size_t undoCountBefore = undo->undoCount();
+    if (!undo->push(std::move(command))) {
+      project->removeItem(created);
+      return false;
+    }
+    const auto createdAfter = findProjectItemInTreeForUndo(
+        project->projectItems(), created->id.toString());
+    if (!createdAfter || createdAfter->type() != eProjectItemType::Folder ||
+        createdAfter->parent != (parentFolder ? static_cast<ProjectItem*>(parentFolder)
+                                              : (roots.isEmpty() ? nullptr : roots.front())) ||
+        createdAfter->name.toQString() != trimmedName) {
+      if (undo->undoCount() == undoCountBefore + 1) {
+        undo->undo();
+      } else if (createdAfter) {
+        project->removeItem(createdAfter);
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ArtifactProjectService::renameProjectItem(ProjectItem *item,
+                                               const UniString& name) {
+  if (!item) {
+    return false;
+  }
+  const QString newName = name.toQString().trimmed();
+  if (newName.isEmpty()) {
+    return false;
+  }
+  const QString oldName = item->name.toQString();
+  if (oldName == newName) {
+    return true;
+  }
+  if (item->type() == eProjectItemType::Composition) {
+    const auto* compositionItem = static_cast<const CompositionItem*>(item);
+    return renameComposition(compositionItem->compositionId,
+                             UniString::fromQString(newName));
+  }
+  auto shared = getCurrentProjectSharedPtr();
+  if (!shared) {
+    return false;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<RenameProjectItemCommand>(item, oldName, newName),
+            [&]() { return item->name.toQString() == newName; })) {
+      return false;
+    }
+  } else {
+    item->name = UniString::fromQString(newName);
+    shared->projectChanged();
+    if (item->name.toQString() != newName) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ArtifactProjectService::setProjectItemTags(ProjectItem* item,
+                                                const QStringList& tags) {
+  if (!item) {
+    return false;
+  }
+  auto shared = getCurrentProjectSharedPtr();
+  if (!shared) {
+    return false;
+  }
+  const QStringList oldTags = item->tags;
+  if (oldTags == tags) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    return pushUndoCommandAndVerify(
+        std::make_unique<SetProjectItemTagsCommand>(item, oldTags, tags),
+        [&]() { return item->tags == tags; });
+  }
+  item->tags = tags;
+  if (item->tags != tags) {
+    return false;
+  }
+  shared->projectChanged();
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+      {QString(), QString()});
+  return true;
+}
+
+bool ArtifactProjectService::setFootageAssetRole(
+    FootageItem* item, ProjectAssetUsage usage, ProjectRenderInputRole role) {
+  if (!item) return false;
+  auto shared = getCurrentProjectSharedPtr();
+  if (!shared) return false;
+  if (item->assetUsage == usage && item->renderInputRole == role) return true;
+  const auto oldUsage = item->assetUsage;
+  const auto oldRole = item->renderInputRole;
+  if (auto* undo = UndoManager::instance()) {
+    return pushUndoCommandAndVerify(
+        std::make_unique<SetFootageAssetRoleCommand>(
+            item, oldUsage, oldRole, usage, role),
+        [&]() {
+          return item->assetUsage == usage && item->renderInputRole == role;
+        });
+  }
+  item->assetUsage = usage;
+  item->renderInputRole = role;
+  if (item->assetUsage != usage || item->renderInputRole != role) return false;
+  shared->projectChanged();
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+      {QString(), QString()});
   return true;
 }
 
@@ -4337,7 +5496,30 @@ bool ArtifactProjectService::moveProjectItem(ProjectItem *item,
   if (!shared) {
     return false;
   }
-  return shared->moveItem(item, newParent);
+  const auto roots = shared->projectItems();
+  if (!roots.isEmpty() && item == roots.front()) {
+    return false;
+  }
+  if (item == newParent || newParent->type() != eProjectItemType::Folder) {
+    return false;
+  }
+  for (auto* parent = newParent; parent; parent = parent->parent) {
+    if (parent == item) {
+      return false;
+    }
+  }
+  if (item->parent == newParent) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    return pushUndoCommandAndVerify(
+        std::make_unique<MoveProjectItemCommand>(item, newParent),
+        [&]() { return item->parent == newParent; });
+  }
+  if (!shared->moveItem(item, newParent)) {
+    return false;
+  }
+  return item->parent == newParent;
 }
 
 QString ArtifactProjectService::projectItemRemovalConfirmationMessage(
@@ -4367,7 +5549,6 @@ bool ArtifactProjectService::removeComposition(const CompositionID &id) {
     return false;
   bool ok = projectShared->removeCompositionById(id);
     if (ok) {
-    compositionRemoved(id);
     ArtifactCore::globalEventBus().publish<CompositionRemovedEvent>(
         CompositionRemovedEvent{id.toString()});
     ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
@@ -4421,29 +5602,42 @@ bool ArtifactProjectService::renameComposition(const CompositionID &id,
                                                const UniString &name) {
   auto &pm = impl_->projectManager();
   auto projectShared = pm.getCurrentProjectSharedPtr();
-  if (!projectShared)
+  if (!projectShared) {
     return false;
-  if (auto comp = pm.findComposition(id).ptr.lock()) {
-    comp->setCompositionName(name);
   }
-  auto items = projectShared->projectItems();
-  for (auto root : items) {
-    if (!root)
-      continue;
-    for (auto c : root->children) {
-      if (!c)
-        continue;
-      if (c->type() == eProjectItemType::Composition) {
-        CompositionItem *ci = static_cast<CompositionItem *>(c);
-        if (ci->compositionId == id) {
-          ci->name = name;
-          ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
-          return true;
-        }
-      }
+  auto composition = pm.findComposition(id).ptr.lock();
+  if (!composition) {
+    return false;
+  }
+  auto* item = findCompositionItemInTree(projectShared->projectItems(), id);
+  if (!item) {
+    return false;
+  }
+  const QString oldName = composition->settings().compositionName().toQString();
+  const QString newName = name.toQString();
+  if (oldName == newName && item->name.toQString() == newName) {
+    return true;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    if (!pushUndoCommandAndVerify(
+            std::make_unique<RenameCompositionCommand>(
+                composition, oldName, newName),
+            [&]() {
+              return composition->settings().compositionName().toQString() == newName &&
+                     item->name.toQString() == newName;
+            })) {
+      return false;
+    }
+  } else {
+    composition->setCompositionName(name);
+    item->name = name;
+    projectShared->projectChanged();
+    if (composition->settings().compositionName().toQString() != newName ||
+        item->name.toQString() != newName) {
+      return false;
     }
   }
-  return false;
+  return true;
 }
 
 bool ArtifactProjectService::finalizeCompositionSettingsChange(
@@ -5108,7 +6302,6 @@ void ArtifactProjectService::setPreviewQualityPreset(
   impl_->setPreviewQualityPreset(preset);
   ArtifactCore::globalEventBus().publish<PreviewQualityPresetChangedEvent>(
       PreviewQualityPresetChangedEvent{static_cast<int>(preset)});
-  previewQualityPresetChanged(preset);
 }
 
 PreviewQualityPreset ArtifactProjectService::previewQualityPreset() const {

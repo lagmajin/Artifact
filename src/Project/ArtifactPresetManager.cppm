@@ -3,6 +3,7 @@ module;
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -346,6 +347,55 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
         return false;
     }
 
+    // Validate known property payloads before mutating any part of the effect.
+    // Unknown properties remain forward-compatible, but malformed values for
+    // properties owned by this effect must not produce a partial preset load.
+    const QJsonValue propertiesValue = json.value(QStringLiteral("properties"));
+    if (!propertiesValue.isUndefined() && !propertiesValue.isArray()) {
+        return false;
+    }
+    const QJsonArray propsArray = propertiesValue.toArray();
+    for (const auto& rawProperty : propsArray) {
+        if (!rawProperty.isObject()) {
+            return false;
+        }
+        const QJsonObject propertyObject = rawProperty.toObject();
+        const QString name = propertyObject.value(QStringLiteral("parameter_id")).toString(
+            propertyObject.value(QStringLiteral("name")).toString()).trimmed();
+        if (name.isEmpty()) {
+            return false;
+        }
+        if (!effect->editableProperty(name)) {
+            continue;
+        }
+        const QJsonValue jsonValue = propertyObject.value(QStringLiteral("value"));
+        if (jsonValue.isUndefined()) {
+            return false;
+        }
+        const QString valueType = propertyObject.value(QStringLiteral("value_type")).toString();
+        if (valueType == QStringLiteral("integer")) {
+            if (!jsonValue.isDouble() || jsonValue.toDouble() != std::floor(jsonValue.toDouble())) {
+                return false;
+            }
+        } else if (valueType == QStringLiteral("double")) {
+            if (!jsonValue.isDouble() || !std::isfinite(jsonValue.toDouble())) {
+                return false;
+            }
+        } else if (valueType == QStringLiteral("boolean")) {
+            if (!jsonValue.isBool()) {
+                return false;
+            }
+        } else if (valueType == QStringLiteral("string")) {
+            if (!jsonValue.isString()) {
+                return false;
+            }
+        } else if (valueType == QStringLiteral("color")) {
+            if (!jsonValue.isString() || !QColor(jsonValue.toString()).isValid()) {
+                return false;
+            }
+        }
+    }
+
     if (json.contains("mask_enabled")) {
         effect->setMaskEnabled(json["mask_enabled"].toBool());
     }
@@ -391,8 +441,6 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
         }
     }
 
-    // Check effect ID match? Or just apply what we can.
-    QJsonArray propsArray = json["properties"].toArray();
     for (int i = 0; i < propsArray.size(); ++i) {
         QJsonObject propObj = propsArray[i].toObject();
         QString name = propObj.value(QStringLiteral("parameter_id")).toString(
@@ -567,14 +615,54 @@ bool ArtifactPresetManager::applyPresetJsonToMask(LayerMask& mask, const QJsonOb
         return false;
     }
 
+    const QJsonValue pathsValue = json.value(QStringLiteral("paths"));
+    if (!pathsValue.isUndefined() && !pathsValue.isArray()) {
+        return false;
+    }
+    const auto pathsArray = pathsValue.toArray();
+    const auto finiteNumber = [](const QJsonValue& value) {
+        return !value.isUndefined() && value.isDouble() &&
+               std::isfinite(value.toDouble());
+    };
+    for (const auto& pathVal : pathsArray) {
+        if (!pathVal.isObject()) {
+            return false;
+        }
+        const QJsonObject pathObject = pathVal.toObject();
+        const QJsonValue verticesValue = pathObject.value(QStringLiteral("vertices"));
+        if (!verticesValue.isUndefined() && !verticesValue.isArray()) {
+            return false;
+        }
+        for (const auto& vertexVal : verticesValue.toArray()) {
+            if (!vertexVal.isObject()) {
+                return false;
+            }
+            const QJsonObject vertexObject = vertexVal.toObject();
+            for (const auto& key : {QStringLiteral("px"), QStringLiteral("py"),
+                                    QStringLiteral("ix"), QStringLiteral("iy"),
+                                    QStringLiteral("ox"), QStringLiteral("oy")}) {
+                if (vertexObject.contains(key) &&
+                    !finiteNumber(vertexObject.value(key))) {
+                    return false;
+                }
+            }
+        }
+        const QJsonValue keyframesValue =
+            pathObject.value(QStringLiteral("animationKeyframes"));
+        if (!keyframesValue.isUndefined() && !keyframesValue.isArray()) {
+            return false;
+        }
+        for (const auto& keyframeVal : keyframesValue.toArray()) {
+            if (!keyframeVal.isObject()) {
+                return false;
+            }
+        }
+    }
+
     mask.clearMaskPaths();
     mask.setEnabled(json.value("enabled").toBool(true));
 
-    const auto pathsArray = json.value("paths").toArray();
     for (const auto& pathVal : pathsArray) {
-        if (!pathVal.isObject()) {
-            continue;
-        }
         mask.addMaskPath(maskPathFromJson(pathVal.toObject()));
     }
     return true;

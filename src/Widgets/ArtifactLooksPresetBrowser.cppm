@@ -1005,7 +1005,6 @@ public:
       appliedBadge_->setBadgeStyle(QColor(0x1a, 0x4a, 0x2a), QColor(0x55, 0xcc, 0x88), QColor(0x2a, 0x7a, 0x4a));
     }
 
-    emit q->presetApplied(appliedId_);
   }
 
   // -----------------------------------------------------------------------
@@ -1016,7 +1015,6 @@ public:
     for (auto &p : allPresets_) {
       if (p.id == selectedId_) {
         p.isFavorite = !p.isFavorite;
-        emit q->presetFavorited(p.id, p.isFavorite);
         break;
       }
     }

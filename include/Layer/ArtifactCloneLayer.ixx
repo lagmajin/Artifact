@@ -7,6 +7,7 @@ module;
 #include <QVector3D>
 #include <QMatrix4x4>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <Graphics/InstanceData.h>
 export module Artifact.Layer.Clone;
 
@@ -111,6 +112,8 @@ public:
     void clearEffectors();
     int effectorCount() const;
     SharedPtr<AbstractCloneEffector> effectorAt(int index) const;
+    QJsonArray effectorStackSnapshot() const;
+    bool restoreEffectorStackSnapshot(const QJsonArray& snapshot);
 
     QSize sourceSize() const;
     QRectF localBounds() const override;

@@ -22,6 +22,7 @@ module;
 #include <QPen>
 #include <QBrush>
 #include <QFont>
+#include <QFontDatabase>
 #include <QTimer>
 #include <QSet>
 #include <QPalette>
@@ -121,7 +122,9 @@ protected:
 
         // Focal length label
         p.setPen(QColor(0x5F, 0xAA, 0xDD));
-        p.setFont(QFont("Consolas", 8));
+        QFont labelFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        labelFont.setPointSize(8);
+        p.setFont(labelFont);
         p.drawText(QRectF(cx + focalPx * 0.4f, cy + 4, 60, 18),
                    Qt::AlignLeft,
                    QString("%1mm").arg(static_cast<int>(focalLength_)));

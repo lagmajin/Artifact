@@ -21,6 +21,7 @@ export namespace Artifact
  explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
   ~ArtifactTimeCodeWidget();
 
+  void setFps(int fps);
   void updateTimeCode(int frame);
 
  protected:

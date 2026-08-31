@@ -72,6 +72,7 @@ module;
 #include <QVariant>
 #include <QLabel>
 #include <QVector>
+#include <QPair>
 #include <QVector3D>
 #include <QWheelEvent>
 #include <QFileDialog>
@@ -183,6 +184,57 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+double safeCompositionFrameRate(const ArtifactAbstractComposition *composition)
+{
+  if (!composition) {
+    return 30.0;
+  }
+  const double rawFps = composition->frameRate().framerate();
+  if (!std::isfinite(rawFps) || rawFps <= 0.0) {
+    return 30.0;
+  }
+  return std::clamp(rawFps, 1.0, 10000.0);
+}
+
+double safeCompositionFrameRate(const ArtifactCompositionPtr& composition)
+{
+  return safeCompositionFrameRate(composition.get());
+}
+
+bool commitAnimationLayerSnapshot(const ArtifactAbstractLayerPtr& layer,
+                                  const QJsonObject& before,
+                                  const QJsonObject& after)
+{
+  if (!layer) {
+    return false;
+  }
+  if (auto* manager = UndoManager::instance()) {
+    const bool accepted = manager->push(
+        std::make_unique<AnimationLayerStackSnapshotCommand>(
+            layer, before, after));
+    if (!accepted) {
+      layer->restoreAnimationLayersSnapshot(before);
+      layer->changed();
+    }
+    return accepted;
+  }
+
+  layer->restoreAnimationLayersSnapshot(after);
+  layer->changed();
+  return layer->animationLayersSnapshot() == after;
+}
+
+int compositionFrameRateScale(const ArtifactAbstractComposition *composition)
+{
+  return std::max(1, static_cast<int>(std::llround(
+      safeCompositionFrameRate(composition))));
+}
+
+int compositionFrameRateScale(const ArtifactCompositionPtr& composition)
+{
+  return compositionFrameRateScale(composition.get());
+}
+
 QDockWidget* findDockByTitle(QWidget* window, const QString& title)
 {
   if (!window) {
@@ -588,12 +640,9 @@ bool commitTextEditorValue(const ArtifactCore::SharedPtr<ArtifactTextLayer> &lay
     const auto beforeKeyframes = property->getKeyFrames();
     auto afterKeyframes = beforeKeyframes;
     const qint64 frame = textEditFrame(layer);
-    int fps = 30;
-    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
-            layer->composition())) {
-      fps = std::max(1, static_cast<int>(
-                            std::round(composition->frameRate().framerate())));
-    }
+    const auto *composition = static_cast<ArtifactAbstractComposition *>(
+        layer->composition());
+    const int fps = compositionFrameRateScale(composition);
     ArtifactCore::KeyFrame editedKeyframe;
     editedKeyframe.time = RationalTime(frame, fps);
     editedKeyframe.value = nextText;
@@ -608,13 +657,32 @@ bool commitTextEditorValue(const ArtifactCore::SharedPtr<ArtifactTextLayer> &lay
     } else {
       afterKeyframes.push_back(editedKeyframe);
     }
-    UndoManager::instance()->push(
-        std::make_unique<SetLayerPropertyKeyframesCommand>(
-            layer, QStringLiteral("text.value"), beforeKeyframes,
-            afterKeyframes, QStringLiteral("Edit Source Text")));
+    auto* manager = UndoManager::instance();
+    if (manager) {
+      if (!manager->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+              layer, QStringLiteral("text.value"), beforeKeyframes,
+              afterKeyframes, QStringLiteral("Edit Source Text")))) {
+        return false;
+      }
+    } else {
+      layer->setSourceTextAtFrame(frame, nextText);
+      if (layer->sourceTextAtFrame(frame) != nextText) {
+        return false;
+      }
+    }
   } else {
-    UndoManager::instance()->push(std::make_unique<SetTextLayerTextCommand>(
-        layer, beforeText, nextText, QStringLiteral("Edit Text")));
+    auto* manager = UndoManager::instance();
+    if (manager) {
+      if (!manager->push(std::make_unique<SetTextLayerTextCommand>(
+              layer, beforeText, nextText, QStringLiteral("Edit Text")))) {
+        return false;
+      }
+    } else {
+      if (!layer->setLayerPropertyValue(QStringLiteral("text.value"),
+                                         nextText)) {
+        return false;
+      }
+    }
   }
   return true;
 }
@@ -1409,9 +1477,8 @@ private:
     const auto beforeWrapMode = textLayer->wrapMode();
     const auto beforeVerticalAlignment = textLayer->verticalAlignment();
     const auto beforeWritingMode = textLayer->writingMode();
-    const int beforeAnimatorCount = textLayer->animatorCount();
     const QJsonArray beforeAnimatorStack = textLayer->textAnimatorStackSnapshot();
-    bool animatorPresetChanged = false;
+    bool animatorStackApplied = false;
     if (fontSizeSpin_) textLayer->setFontSize(static_cast<float>(fontSizeSpin_->value()));
     if (trackingSpin_) textLayer->setTracking(static_cast<float>(trackingSpin_->value()));
     if (leadingSpin_) textLayer->setLeading(static_cast<float>(leadingSpin_->value()));
@@ -1465,15 +1532,19 @@ private:
       if (presetId >= 0) {
         textLayer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"),
                                          presetId);
-        animatorPresetChanged = true;
       }
     }
     const QJsonArray afterAnimatorStack = textLayer->textAnimatorStackSnapshot();
     if (beforeAnimatorStack != afterAnimatorStack) {
       if (auto *mgr = UndoManager::instance()) {
-        mgr->push(std::make_unique<SetTextAnimatorStackCommand>(
+        animatorStackApplied = mgr->push(std::make_unique<SetTextAnimatorStackCommand>(
             textLayer, beforeAnimatorStack, afterAnimatorStack,
             QStringLiteral("Edit Text Animators")));
+        if (!animatorStackApplied) {
+          textLayer->restoreTextAnimatorStack(beforeAnimatorStack);
+        }
+      } else {
+        animatorStackApplied = true;
       }
     }
     const bool styleChanged = beforeFontSize != textLayer->fontSize() ||
@@ -1499,12 +1570,99 @@ private:
                               beforeLayoutMode != textLayer->layoutMode() ||
                               beforeWrapMode != textLayer->wrapMode() ||
                               beforeVerticalAlignment != textLayer->verticalAlignment() ||
-                              beforeWritingMode != textLayer->writingMode() ||
-                              beforeAnimatorCount != textLayer->animatorCount();
+                              beforeWritingMode != textLayer->writingMode();
+
+    bool styleApplied = styleChanged;
+    if (styleChanged) {
+      const QVector<QPair<QString, QVariant>> beforeStyleValues = {
+          {QStringLiteral("text.fontSize"), QVariant(beforeFontSize)},
+          {QStringLiteral("text.tracking"), QVariant(beforeTracking)},
+          {QStringLiteral("text.leading"), QVariant(beforeLeading)},
+          {QStringLiteral("text.fontStretch"), QVariant(beforeStretch)},
+          {QStringLiteral("text.fontFamily"), QVariant(beforeFamily)},
+          {QStringLiteral("text.alignment"),
+           QVariant(static_cast<int>(beforeAlignment))},
+          {QStringLiteral("text.bold"), QVariant(beforeBold)},
+          {QStringLiteral("text.italic"), QVariant(beforeItalic)},
+          {QStringLiteral("text.allCaps"), QVariant(beforeAllCaps)},
+          {QStringLiteral("text.underline"), QVariant(beforeUnderline)},
+          {QStringLiteral("text.strikethrough"), QVariant(beforeStrikethrough)},
+          {QStringLiteral("text.strokeEnabled"), QVariant(beforeStroke)},
+          {QStringLiteral("text.strokeWidth"), QVariant(beforeStrokeWidth)},
+          {QStringLiteral("text.shadowEnabled"), QVariant(beforeShadow)},
+          {QStringLiteral("text.shadowBlur"), QVariant(beforeShadowBlur)},
+          {QStringLiteral("text.shadowOffsetX"), QVariant(beforeShadowOffsetX)},
+          {QStringLiteral("text.shadowOffsetY"), QVariant(beforeShadowOffsetY)},
+          {QStringLiteral("text.maxWidth"), QVariant(beforeBoxWidth)},
+          {QStringLiteral("text.boxHeight"), QVariant(beforeBoxHeight)},
+          {QStringLiteral("text.paragraphSpacing"),
+           QVariant(beforeParagraphSpacing)},
+          {QStringLiteral("text.layoutMode"),
+           QVariant(static_cast<int>(beforeLayoutMode))},
+          {QStringLiteral("text.wrapMode"),
+           QVariant(static_cast<int>(beforeWrapMode))},
+          {QStringLiteral("text.verticalAlignment"),
+           QVariant(static_cast<int>(beforeVerticalAlignment))},
+          {QStringLiteral("text.writingMode"),
+           QVariant(static_cast<int>(beforeWritingMode))}};
+      const QVector<QPair<QString, QVariant>> afterStyleValues = {
+          {QStringLiteral("text.fontSize"), QVariant(textLayer->fontSize())},
+          {QStringLiteral("text.tracking"), QVariant(textLayer->tracking())},
+          {QStringLiteral("text.leading"), QVariant(textLayer->leading())},
+          {QStringLiteral("text.fontStretch"), QVariant(textLayer->fontStretch())},
+          {QStringLiteral("text.fontFamily"),
+           QVariant(textLayer->fontFamily().toQString())},
+          {QStringLiteral("text.alignment"),
+           QVariant(static_cast<int>(textLayer->horizontalAlignment()))},
+          {QStringLiteral("text.bold"), QVariant(textLayer->isBold())},
+          {QStringLiteral("text.italic"), QVariant(textLayer->isItalic())},
+          {QStringLiteral("text.allCaps"), QVariant(textLayer->isAllCaps())},
+          {QStringLiteral("text.underline"), QVariant(textLayer->isUnderline())},
+          {QStringLiteral("text.strikethrough"),
+           QVariant(textLayer->isStrikethrough())},
+          {QStringLiteral("text.strokeEnabled"),
+           QVariant(textLayer->isStrokeEnabled())},
+          {QStringLiteral("text.strokeWidth"), QVariant(textLayer->strokeWidth())},
+          {QStringLiteral("text.shadowEnabled"),
+           QVariant(textLayer->isShadowEnabled())},
+          {QStringLiteral("text.shadowBlur"), QVariant(textLayer->shadowBlur())},
+          {QStringLiteral("text.shadowOffsetX"),
+           QVariant(textLayer->shadowOffsetX())},
+          {QStringLiteral("text.shadowOffsetY"),
+           QVariant(textLayer->shadowOffsetY())},
+          {QStringLiteral("text.maxWidth"), QVariant(textLayer->maxWidth())},
+          {QStringLiteral("text.boxHeight"), QVariant(textLayer->boxHeight())},
+          {QStringLiteral("text.paragraphSpacing"),
+           QVariant(textLayer->paragraphSpacing())},
+          {QStringLiteral("text.layoutMode"),
+           QVariant(static_cast<int>(textLayer->layoutMode()))},
+          {QStringLiteral("text.wrapMode"),
+           QVariant(static_cast<int>(textLayer->wrapMode()))},
+          {QStringLiteral("text.verticalAlignment"),
+           QVariant(static_cast<int>(textLayer->verticalAlignment()))},
+          {QStringLiteral("text.writingMode"),
+           QVariant(static_cast<int>(textLayer->writingMode()))}};
+      auto styleMacro = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Edit Text Style"));
+      for (int index = 0; index < beforeStyleValues.size(); ++index) {
+        styleMacro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+            textLayer, beforeStyleValues[index].first,
+            beforeStyleValues[index].second, afterStyleValues[index].second,
+            QStringLiteral("Edit Text Style")));
+      }
+      if (auto* manager = UndoManager::instance()) {
+        styleApplied = manager->push(std::move(styleMacro));
+        if (!styleApplied) {
+          for (const auto& [path, value] : beforeStyleValues) {
+            textLayer->setLayerPropertyValue(path, value);
+          }
+        }
+      }
+    }
 
     const QString nextText = richText_ ? editor_->toHtml() : editor_->toPlainText();
-    if (commitTextEditorValue(textLayer, nextText) || styleChanged ||
-        animatorPresetChanged) {
+    if (commitTextEditorValue(textLayer, nextText) || styleApplied ||
+        animatorStackApplied) {
       if (auto *comp = static_cast<ArtifactAbstractComposition *>(textLayer->composition())) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), textLayer->id().toString(),
@@ -2791,11 +2949,24 @@ public:
               targetComp->changed();
               return true;
             };
-            UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
-                QStringLiteral("Auto Stagger"),
-                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
-                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact),
-                restore));
+            const QByteArray beforeState =
+                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact);
+            const QByteArray afterState =
+                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::make_unique<LayoutSnapshotCommand>(
+                  QStringLiteral("Auto Stagger"), beforeState, afterState,
+                  restore));
+            } else {
+              applied = restore(afterState);
+            }
+            if (!applied) {
+              QMessageBox::warning(
+                  this, QStringLiteral("Auto Stagger"),
+                  QStringLiteral("The timing changes could not be applied."));
+              return;
+            }
           }, true);
       add(QStringLiteral("Batch: Sequence Layers End-to-End"),
           [this, comp, orderedSelectedLayers]() {
@@ -2804,6 +2975,15 @@ public:
                     this, QStringLiteral("Sequence Layers"),
                     QStringLiteral("Place selected layers end-to-end in layer order?"))
                 != QMessageBox::Yes) return;
+            QJsonArray beforeRecords;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || layer->isLocked()) continue;
+              beforeRecords.append(QJsonObject{
+                  {QStringLiteral("id"), layer->id().toString()},
+                  {QStringLiteral("in"), layer->inPoint().framePosition()},
+                  {QStringLiteral("out"), layer->outPoint().framePosition()},
+                  {QStringLiteral("start"), layer->startTime().framePosition()}});
+            }
             qint64 cursor = orderedSelectedLayers.front()->outPoint().framePosition();
             for (int i = 1; i < orderedSelectedLayers.size(); ++i) {
               const auto &layer = orderedSelectedLayers[i];
@@ -2813,7 +2993,50 @@ public:
               layer->changed();
               cursor = layer->outPoint().framePosition();
             }
-            comp->changed();
+            QJsonArray afterRecords;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || layer->isLocked()) continue;
+              afterRecords.append(QJsonObject{
+                  {QStringLiteral("id"), layer->id().toString()},
+                  {QStringLiteral("in"), layer->inPoint().framePosition()},
+                  {QStringLiteral("out"), layer->outPoint().framePosition()},
+                  {QStringLiteral("start"), layer->startTime().framePosition()}});
+            }
+            if (beforeRecords == afterRecords) return;
+            const ArtifactCompositionWeakPtr weakComp(comp);
+            const auto restore = [weakComp](const QByteArray &state) {
+              const auto targetComp = weakComp.lock();
+              if (!targetComp) return false;
+              for (const auto &value : QJsonDocument::fromJson(state).array()) {
+                const QJsonObject record = value.toObject();
+                const auto layer = targetComp->layerById(
+                    LayerID(record.value(QStringLiteral("id")).toString()));
+                if (!layer) continue;
+                layer->setTimelineWindow(
+                    FramePosition(record.value(QStringLiteral("in")).toVariant().toLongLong()),
+                    FramePosition(record.value(QStringLiteral("out")).toVariant().toLongLong()));
+                layer->setStartTime(FramePosition(
+                    record.value(QStringLiteral("start")).toVariant().toLongLong()));
+                layer->changed();
+              }
+              targetComp->changed();
+              return true;
+            };
+            const QByteArray beforeState =
+                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact);
+            const QByteArray afterState =
+                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::make_unique<LayoutSnapshotCommand>(
+                  QStringLiteral("Sequence Layers End-to-End"), beforeState,
+                  afterState, restore));
+            } else {
+              applied = restore(afterState);
+            }
+            if (!applied) {
+              restore(beforeState);
+            }
           }, true);
       add(QStringLiteral("Batch: Match Duration to First Layer"),
           [this, comp, orderedSelectedLayers]() {
@@ -2826,6 +3049,15 @@ public:
             const qint64 duration = std::max<qint64>(
                 1, orderedSelectedLayers.front()->outPoint().framePosition() -
                        orderedSelectedLayers.front()->inPoint().framePosition());
+            QJsonArray beforeRecords;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || layer->isLocked()) continue;
+              beforeRecords.append(QJsonObject{
+                  {QStringLiteral("id"), layer->id().toString()},
+                  {QStringLiteral("in"), layer->inPoint().framePosition()},
+                  {QStringLiteral("out"), layer->outPoint().framePosition()},
+                  {QStringLiteral("start"), layer->startTime().framePosition()}});
+            }
             for (int i = 1; i < orderedSelectedLayers.size(); ++i) {
               const auto &layer = orderedSelectedLayers[i];
               if (!layer || layer->isLocked()) continue;
@@ -2833,7 +3065,50 @@ public:
                   layer->inPoint().framePosition() + duration));
               layer->changed();
             }
-            comp->changed();
+            QJsonArray afterRecords;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || layer->isLocked()) continue;
+              afterRecords.append(QJsonObject{
+                  {QStringLiteral("id"), layer->id().toString()},
+                  {QStringLiteral("in"), layer->inPoint().framePosition()},
+                  {QStringLiteral("out"), layer->outPoint().framePosition()},
+                  {QStringLiteral("start"), layer->startTime().framePosition()}});
+            }
+            if (beforeRecords == afterRecords) return;
+            const ArtifactCompositionWeakPtr weakComp(comp);
+            const auto restore = [weakComp](const QByteArray &state) {
+              const auto targetComp = weakComp.lock();
+              if (!targetComp) return false;
+              for (const auto &value : QJsonDocument::fromJson(state).array()) {
+                const QJsonObject record = value.toObject();
+                const auto layer = targetComp->layerById(
+                    LayerID(record.value(QStringLiteral("id")).toString()));
+                if (!layer) continue;
+                layer->setTimelineWindow(
+                    FramePosition(record.value(QStringLiteral("in")).toVariant().toLongLong()),
+                    FramePosition(record.value(QStringLiteral("out")).toVariant().toLongLong()));
+                layer->setStartTime(FramePosition(
+                    record.value(QStringLiteral("start")).toVariant().toLongLong()));
+                layer->changed();
+              }
+              targetComp->changed();
+              return true;
+            };
+            const QByteArray beforeState =
+                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact);
+            const QByteArray afterState =
+                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::make_unique<LayoutSnapshotCommand>(
+                  QStringLiteral("Match Layer Duration"), beforeState,
+                  afterState, restore));
+            } else {
+              applied = restore(afterState);
+            }
+            if (!applied) {
+              restore(beforeState);
+            }
           }, true);
     }
     if (selectedCount > 0) {
@@ -2919,7 +3194,19 @@ public:
               macro->addChild(std::make_unique<RemoveLayerCommand>(comp, layer));
               ++removed;
             }
-            if (removed > 0) UndoManager::instance()->push(std::move(macro));
+            auto* manager = UndoManager::instance();
+            bool applied = false;
+            if (removed > 0) {
+              if (manager) {
+                applied = manager->push(std::move(macro));
+              } else {
+                macro->redo();
+                applied = macro->lastOperationSucceeded();
+              }
+            }
+            if (removed > 0 && !applied) {
+              return;
+            }
             selection->clearSelection();
             QMessageBox::information(this, QStringLiteral("Safe Delete"),
                                      QStringLiteral("Removed %1 layer(s).").arg(removed));
@@ -2983,7 +3270,20 @@ public:
                     this, QStringLiteral("Keyframe Cleanup"),
                     QStringLiteral("Remove %1 redundant keyframe(s)?")
                         .arg(removedTotal)) != QMessageBox::Yes) return;
-            UndoManager::instance()->push(std::move(macro));
+            auto* manager = UndoManager::instance();
+            bool applied = false;
+            if (manager) {
+              applied = manager->push(std::move(macro));
+            } else {
+              macro->redo();
+              applied = macro->lastOperationSucceeded();
+            }
+            if (!applied) {
+              QMessageBox::warning(
+                  this, QStringLiteral("Keyframe Cleanup"),
+                  QStringLiteral("The keyframe cleanup could not be applied."));
+              return;
+            }
           }, true);
       add(QStringLiteral("Adaptive Text Fit..."),
           [this, comp, orderedSelectedLayers]() {
@@ -3070,11 +3370,24 @@ public:
               targetComp->changed();
               return true;
             };
-            UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
-                QStringLiteral("Adaptive Text Fit"),
-                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
-                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact),
-                restore));
+            const QByteArray beforeState =
+                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact);
+            const QByteArray afterState =
+                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::make_unique<LayoutSnapshotCommand>(
+                  QStringLiteral("Adaptive Text Fit"), beforeState, afterState,
+                  restore));
+            } else {
+              applied = restore(afterState);
+            }
+            if (!applied) {
+              QMessageBox::warning(
+                  this, QStringLiteral("Adaptive Text Fit"),
+                  QStringLiteral("The font-size changes could not be applied."));
+              return;
+            }
           }, true);
       add(QStringLiteral("Quick Replace Selected Sources..."),
           [this, service, comp, orderedSelectedLayers]() {
@@ -3241,11 +3554,24 @@ public:
                           .arg(previewText)) != QMessageBox::Yes) {
                 return;
               }
-              UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
-                  QStringLiteral("Quick Replace Sources"),
-                  QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
-                  QJsonDocument(afterRecords).toJson(QJsonDocument::Compact),
-                  restore));
+              const QByteArray beforeState =
+                  QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact);
+              const QByteArray afterState =
+                  QJsonDocument(afterRecords).toJson(QJsonDocument::Compact);
+              bool applied = false;
+              if (auto* manager = UndoManager::instance()) {
+                applied = manager->push(std::make_unique<LayoutSnapshotCommand>(
+                    QStringLiteral("Quick Replace Sources"), beforeState,
+                    afterState, restore));
+              } else {
+                applied = restore(afterState);
+              }
+              if (!applied) {
+                QMessageBox::warning(
+                    this, QStringLiteral("Quick Replace"),
+                    QStringLiteral("The source replacements could not be applied."));
+                return;
+              }
             }
             QMessageBox::information(
                 this, QStringLiteral("Quick Replace"),
@@ -3922,7 +4248,26 @@ public:
         transaction->addChild(std::make_unique<MoveLayerIndexCommand>(
             compNow, entry.layer, 0, entry.index));
       }
-      UndoManager::instance()->push(std::move(transaction));
+      bool pushed = false;
+      if (auto* manager = UndoManager::instance()) {
+        pushed = manager->push(std::move(transaction));
+      }
+      if (!pushed) {
+        for (const auto &entry : undoEntries) {
+          if (!entry.layer || compNow->containsLayerById(entry.layer->id())) {
+            continue;
+          }
+          compNow->appendLayerTop(entry.layer);
+        }
+        for (const auto &entry : undoEntries) {
+          if (!entry.layer || entry.index < 0 ||
+              !compNow->containsLayerById(entry.layer->id())) {
+            continue;
+          }
+          compNow->moveLayerToIndex(entry.layer->id(), entry.index);
+        }
+        compNow->changed();
+      }
     };
     const auto copyLayerBundle = [this, svc, comp, layer, selectedLayersInComposition]() {
       QVector<ArtifactAbstractLayerPtr> layersToCopy = selectedLayersInComposition();
@@ -4000,8 +4345,7 @@ public:
         layer->animationLayers().layer(layerIndex).values.setCurrent(layer->opacity());
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
-        UndoManager::instance()->push(
-            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+        commitAnimationLayerSnapshot(layer, before, after);
       });
       add(QStringLiteral("Add Transform Animation Layers"), [layer]() {
         if (!layer) return;
@@ -4022,8 +4366,7 @@ public:
         }
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
-        UndoManager::instance()->push(
-            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+        commitAnimationLayerSnapshot(layer, before, after);
       });
       add(QStringLiteral("Remove Transform Animation Layers"), [layer]() {
         if (!layer) return;
@@ -4042,8 +4385,7 @@ public:
         }
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
-        UndoManager::instance()->push(
-            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+        commitAnimationLayerSnapshot(layer, before, after);
       });
       add(QStringLiteral("Bake Animation Layers at Current Frame"), [layer]() {
         if (!layer) return;
@@ -4051,8 +4393,7 @@ public:
         layer->bakeAnimationLayersAtCurrentFrame();
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
-        UndoManager::instance()->push(
-            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+        commitAnimationLayerSnapshot(layer, before, after);
       });
       add(QStringLiteral("Bake Animation Layers Over Work Area"), [layer, comp]() {
         if (!layer || !comp) return;
@@ -4062,8 +4403,7 @@ public:
         layer->bakeAnimationLayersOverRange(range.start(), range.end());
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
-        UndoManager::instance()->push(
-            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+        commitAnimationLayerSnapshot(layer, before, after);
       });
       if (layer->animationLayers().layerCount() > 0) {
         add(QStringLiteral("Remove Top Animation Layer"), [layer]() {
@@ -4073,8 +4413,7 @@ public:
               layer->animationLayers().layerCount() - 1);
           const QJsonObject after = layer->animationLayersSnapshot();
           layer->restoreAnimationLayersSnapshot(before);
-          UndoManager::instance()->push(
-              std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+          commitAnimationLayerSnapshot(layer, before, after);
         });
       }
       add(selectedCount > 1 ? QStringLiteral("Copy Selected Layers as Bundle")
@@ -4139,8 +4478,15 @@ public:
             if (!comp) return;
             auto l = comp->layerById(layerId);
             if (!l) return;
-            UndoManager::instance()->push(
-                std::make_unique<SetLayerVisibilityCommand>(l, !visible));
+            auto command = std::make_unique<SetLayerVisibilityCommand>(l, !visible);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::move(command));
+            } else {
+              command->redo();
+              applied = command->lastOperationSucceeded();
+            }
+            if (!applied) return;
           });
       const bool locked =
           svc ? svc->isLayerLockedInCurrentComposition(layerId) : false;
@@ -4153,8 +4499,15 @@ public:
             if (!comp) return;
             auto l = comp->layerById(layerId);
             if (!l) return;
-            UndoManager::instance()->push(
-                std::make_unique<SetLayerLockCommand>(l, !locked));
+            auto command = std::make_unique<SetLayerLockCommand>(l, !locked);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::move(command));
+            } else {
+              command->redo();
+              applied = command->lastOperationSucceeded();
+            }
+            if (!applied) return;
           });
       const bool solo =
           svc ? svc->isLayerSoloInCurrentComposition(layerId) : false;
@@ -4167,8 +4520,15 @@ public:
             if (!comp) return;
             auto l = comp->layerById(layerId);
             if (!l) return;
-            UndoManager::instance()->push(
-                std::make_unique<SetLayerSoloCommand>(l, !solo));
+            auto command = std::make_unique<SetLayerSoloCommand>(l, !solo);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::move(command));
+            } else {
+              command->redo();
+              applied = command->lastOperationSucceeded();
+            }
+            if (!applied) return;
           });
       const bool shy = svc ? svc->isLayerShyInCurrentComposition(layerId) : false;
       add(shy ? QStringLiteral("Unshy Layer")
@@ -4180,8 +4540,15 @@ public:
             if (!comp) return;
             auto l = comp->layerById(layerId);
             if (!l) return;
-            UndoManager::instance()->push(
-                std::make_unique<SetLayerShyCommand>(l, !shy));
+            auto command = std::make_unique<SetLayerShyCommand>(l, !shy);
+            bool applied = false;
+            if (auto* manager = UndoManager::instance()) {
+              applied = manager->push(std::move(command));
+            } else {
+              command->redo();
+              applied = command->lastOperationSucceeded();
+            }
+            if (!applied) return;
           });
       add(QStringLiteral("Center Layer"), [this, layerId]() {
         auto *service = ArtifactProjectService::instance();
@@ -4199,13 +4566,23 @@ public:
             static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
             0.5f;
         const QVector3D current = clickedLayer->position3D();
-        clickedLayer->setPosition3D(
-            QVector3D(compCenterX, compCenterY, current.z()));
-        clickedLayer->changed();
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{compNow->id().toString(),
-                              clickedLayer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
+        const float deltaX = compCenterX - current.x();
+        const float deltaY = compCenterY - current.y();
+        if (std::abs(deltaX) <= 0.0001f && std::abs(deltaY) <= 0.0001f) {
+          return;
+        }
+        const auto playback = ArtifactPlaybackService::instance();
+        const auto currentFrame = playback
+            ? playback->currentFrame()
+            : compNow->framePosition();
+        auto command = std::make_unique<MoveLayerCommand>(
+            clickedLayer, deltaX, deltaY, currentFrame.framePosition());
+        if (auto* manager = UndoManager::instance()) {
+          if (!manager->push(std::move(command))) return;
+        } else {
+          command->redo();
+          if (!command->lastOperationSucceeded()) return;
+        }
       });
       if (selected && layer->is3D()) {
         add(QStringLiteral("Reset 3D Transform"), [this]() {
@@ -4572,7 +4949,7 @@ public:
         }
         const auto subtitleText = QString::fromUtf8(subtitleFile.readAll());
         const auto timeBase = ArtifactCore::NLE::TimeBase{
-            1, static_cast<int32_t>(std::lround(compNow->frameRate().framerate())), false};
+            1, static_cast<int32_t>(compositionFrameRateScale(compNow)), false};
         const auto cues = QFileInfo(path).suffix().compare(QStringLiteral("vtt"),
                                                             Qt::CaseInsensitive) == 0
                               ? ArtifactCore::NLE::OtioAdapter::importWebVtt(
@@ -4602,7 +4979,7 @@ public:
           return;
         }
         textProperty->clearKeyFrames();
-        const double fps = compNow->frameRate().framerate();
+        const double fps = safeCompositionFrameRate(compNow);
         for (const auto &cue : cues) {
           textProperty->addKeyFrame(
               ArtifactCore::RationalTime(cue.range.start(), fps),
@@ -4645,9 +5022,9 @@ public:
         if (path.isEmpty()) {
           return;
         }
-        const double fps = compNow->frameRate().framerate();
+        const double fps = safeCompositionFrameRate(compNow);
         const auto timeBase = ArtifactCore::NLE::TimeBase{
-            1, static_cast<int32_t>(std::lround(fps)), false};
+            1, static_cast<int32_t>(std::llround(fps)), false};
         QVector<ArtifactCore::NLE::SubtitleCue> cues;
         for (qsizetype index = 0; index < frames.size(); ++index) {
           const qint64 start = frames.at(index);
@@ -5119,11 +5496,21 @@ public:
       return;
     }
     const auto layers = document.instantiateLayers();
+    auto macro = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Import Template"));
+    bool hasImportableLayers = false;
     for (auto it = layers.crbegin(); it != layers.crend(); ++it) {
       if (*it) {
-        undoManager->push(std::make_unique<AddLayerCommand>(
+        hasImportableLayers = true;
+        macro->addChild(std::make_unique<AddLayerCommand>(
             composition, *it, true));
       }
+    }
+    if (!hasImportableLayers) {
+      return;
+    }
+    if (!undoManager->push(std::move(macro))) {
+      return;
     }
   }
 
@@ -7793,8 +8180,18 @@ protected:
   void toggleCurrentLayerVisibility() {
     const auto layer = currentLayer();
     if (!layer) return;
-    UndoManager::instance()->push(
-        std::make_unique<SetLayerVisibilityCommand>(layer, !layer->isVisible()));
+    auto command = std::make_unique<SetLayerVisibilityCommand>(
+        layer, !layer->isVisible());
+    bool applied = false;
+    if (auto* manager = UndoManager::instance()) {
+      applied = manager->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      return;
+    }
   }
 
   void soloCurrentLayer() {
@@ -7822,19 +8219,29 @@ protected:
         static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
         0.5f;
 
-    if (layer->is3D()) {
-      const QVector3D current = layer->position3D();
-      const QVector3D centeredPos(compCenterX, compCenterY, current.z());
-      layer->setPosition3D(centeredPos);
-    } else {
-      const QVector3D current = layer->position3D();
-      const QVector3D centeredPos(compCenterX, compCenterY, current.z());
-      layer->setPosition3D(centeredPos);
+    const QVector3D current = layer->position3D();
+    const float deltaX = compCenterX - current.x();
+    const float deltaY = compCenterY - current.y();
+    if (std::abs(deltaX) <= 0.0001f && std::abs(deltaY) <= 0.0001f) {
+      return;
     }
-    layer->changed();
-    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                          LayerChangedEvent::ChangeType::Modified});
+    const auto playback = ArtifactPlaybackService::instance();
+    const auto currentFrame = playback
+        ? playback->currentFrame()
+        : comp->framePosition();
+    auto* manager = UndoManager::instance();
+    auto command = std::make_unique<MoveLayerCommand>(
+        layer, deltaX, deltaY, currentFrame.framePosition());
+    bool applied = false;
+    if (manager) {
+      applied = manager->push(std::move(command));
+    } else {
+      command->redo();
+      applied = command->lastOperationSucceeded();
+    }
+    if (!applied) {
+      return;
+    }
   }
 
   QVector<TemporarySoloState> temporarySoloStates_;
@@ -8885,11 +9292,18 @@ bool applyCompositionCleanupCandidate(
     targetComposition->changed();
     return true;
   };
-  UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
-      QStringLiteral("Composition Cleanup: %1").arg(candidate.actionLabel),
-      QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
-      QJsonDocument(afterRecords).toJson(QJsonDocument::Compact), restore));
-  return true;
+  if (auto* manager = UndoManager::instance()) {
+    return manager->push(std::make_unique<LayoutSnapshotCommand>(
+        QStringLiteral("Composition Cleanup: %1").arg(candidate.actionLabel),
+        QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
+        QJsonDocument(afterRecords).toJson(QJsonDocument::Compact), restore));
+  }
+  const bool applied = restore(
+      QJsonDocument(afterRecords).toJson(QJsonDocument::Compact));
+  if (!applied) {
+    restore(QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact));
+  }
+  return applied;
 }
 
 void previewCompositionCleanupCandidate(
@@ -9020,12 +9434,16 @@ void showCompositionCleanupDialog(QWidget* parent,
     }
     const int index = selected->data(0, Qt::UserRole).toInt();
     if (index >= 0 && index < static_cast<int>(candidates.size())) {
-      applyCompositionCleanupCandidate(composition, candidates[index]);
+      const bool applied =
+          applyCompositionCleanupCandidate(composition, candidates[index]);
       if (controller) {
         controller->setInfoOverlayText(
-            QStringLiteral("Composition Cleanup Applied"),
+            applied ? QStringLiteral("Composition Cleanup Applied")
+                    : QStringLiteral("Composition Cleanup Failed"),
             candidates[index].actionLabel);
-        controller->clearDropGhostPreview();
+        if (applied) {
+          controller->clearDropGhostPreview();
+        }
       }
     }
     return;
@@ -11717,44 +12135,41 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     };
     impl_->forEachRenderController(applySettings);
   }
-  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
-                     this, [this]() {
-                       if (!impl_ || !impl_->renderController_) {
-                         return;
-                       }
-                       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-                         impl_->renderController_->setShowMotionPathOverlay(
-                             settings->compositionShowMotionPathOverlay());
-                         impl_->forEachActiveSecondaryController(
-                             [settings](CompositionRenderController *controller) {
-                               controller->setShowMotionPathOverlay(
-                                   settings->compositionShowMotionPathOverlay());
-                             });
-                         if (impl_->motionPathAction_) {
-                           const QSignalBlocker blocker(impl_->motionPathAction_);
-                           impl_->motionPathAction_->setChecked(
-                               impl_->renderController_->isShowMotionPathOverlay());
-                         }
-                         impl_->renderController_->setShowDensityHeatmapOverlay(
-                             settings->compositionShowDensityHeatmapOverlay());
-                         impl_->forEachActiveSecondaryController(
-                             [settings](CompositionRenderController *controller) {
-                               controller->setShowDensityHeatmapOverlay(
-                                   settings->compositionShowDensityHeatmapOverlay());
-                             });
-                         if (impl_->densityHeatmapAction_) {
-                           const QSignalBlocker blocker(impl_->densityHeatmapAction_);
-                           impl_->densityHeatmapAction_->setChecked(
-                               impl_->renderController_->isShowDensityHeatmapOverlay());
-                         }
-                       }
-                     });
+  if (ArtifactCore::ArtifactAppSettings::instance()) {
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ArtifactCore::AppSettingsChangedEvent>(
+            [this](const ArtifactCore::AppSettingsChangedEvent&) {
+              if (!impl_ || !impl_->renderController_) {
+                return;
+              }
+              if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                impl_->renderController_->setShowMotionPathOverlay(
+                    settings->compositionShowMotionPathOverlay());
+                impl_->forEachActiveSecondaryController(
+                    [settings](CompositionRenderController *controller) {
+                      controller->setShowMotionPathOverlay(
+                          settings->compositionShowMotionPathOverlay());
+                    });
+                if (impl_->motionPathAction_) {
+                  const QSignalBlocker blocker(impl_->motionPathAction_);
+                  impl_->motionPathAction_->setChecked(
+                      impl_->renderController_->isShowMotionPathOverlay());
+                }
+                impl_->renderController_->setShowDensityHeatmapOverlay(
+                    settings->compositionShowDensityHeatmapOverlay());
+                impl_->forEachActiveSecondaryController(
+                    [settings](CompositionRenderController *controller) {
+                      controller->setShowDensityHeatmapOverlay(
+                          settings->compositionShowDensityHeatmapOverlay());
+                    });
+                if (impl_->densityHeatmapAction_) {
+                  const QSignalBlocker blocker(impl_->densityHeatmapAction_);
+                  impl_->densityHeatmapAction_->setChecked(
+                      impl_->renderController_->isShowDensityHeatmapOverlay());
+                }
+              }
+            }));
   }
-
-  QObject::connect(impl_->renderController_,
-                   &CompositionRenderController::videoDebugMessage, this,
-                   &ArtifactCompositionEditor::videoDebugMessage);
 
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
@@ -14152,6 +14567,55 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
               }
             }
             setComposition(nullptr);
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CompositionViewCommandRequestedEvent>(
+          [this](const CompositionViewCommandRequestedEvent &event) {
+            if (!impl_) {
+              return;
+            }
+            switch (event.kind) {
+            case CompositionViewCommandKind::Reset:
+              resetView();
+              break;
+            case CompositionViewCommandKind::ZoomIn:
+              zoomIn();
+              break;
+            case CompositionViewCommandKind::ZoomOut:
+              zoomOut();
+              break;
+            case CompositionViewCommandKind::ZoomFit:
+              zoomFit();
+              break;
+            case CompositionViewCommandKind::Zoom100:
+              zoom100();
+              break;
+            case CompositionViewCommandKind::SetGridVisible:
+              if (impl_->renderController_) {
+                impl_->renderController_->setShowGrid(event.visible);
+                impl_->forEachActiveSecondaryController(
+                    [visible = event.visible](CompositionRenderController *controller) {
+                      controller->setShowGrid(visible);
+                    });
+              }
+              if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                settings->setCompositionShowGrid(event.visible);
+              }
+              break;
+            case CompositionViewCommandKind::SetGuidesVisible:
+              if (impl_->renderController_) {
+                impl_->renderController_->setShowGuides(event.visible);
+                impl_->forEachActiveSecondaryController(
+                    [visible = event.visible](CompositionRenderController *controller) {
+                      controller->setShowGuides(visible);
+                    });
+              }
+              if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                settings->setCompositionShowGuides(event.visible);
+              }
+              break;
+            }
           }));
 
   QTimer::singleShot(0, this, [this]() {

@@ -81,7 +81,6 @@ void ArtifactToolService::setEditMode(EditMode mode)
    break;
  }
 
- editModeChanged(mode);
 }
 
 EditMode ArtifactToolService::editMode() const
@@ -93,7 +92,6 @@ void ArtifactToolService::setDisplayMode(DisplayMode mode)
 {
  if (impl_->displayMode_ == mode) return;
  impl_->displayMode_ = mode;
- displayModeChanged(mode);
 }
 
 DisplayMode ArtifactToolService::displayMode() const

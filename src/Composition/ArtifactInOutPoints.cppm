@@ -74,6 +74,8 @@ W_OBJECT_IMPL(ArtifactMarker)
 W_OBJECT_IMPL(ArtifactInOutPoints)
 
 namespace {
+// Model changes cross widget boundaries through the internal event bus.
+// Keep Qt signal emission out of this domain-facing path.
 void publishMarkerAttributeChanged(const ArtifactMarker* marker) {
     if (!marker) {
         return;
@@ -115,8 +117,6 @@ FramePosition ArtifactMarker::position() const {
 void ArtifactMarker::setPosition(const FramePosition& position) {
     if (position_ != position) {
         position_ = position;
-        Q_EMIT positionChanged(position);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -128,8 +128,6 @@ QString ArtifactMarker::comment() const {
 void ArtifactMarker::setComment(const QString& comment) {
     if (comment_ != comment) {
         comment_ = comment;
-        Q_EMIT commentChanged(comment);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -141,8 +139,6 @@ MarkerType ArtifactMarker::type() const {
 void ArtifactMarker::setType(MarkerType type) {
     if (type_ != type) {
         type_ = type;
-        Q_EMIT typeChanged(type);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -154,8 +150,6 @@ QColor ArtifactMarker::color() const {
 void ArtifactMarker::setColor(const QColor& color) {
     if (color_ != color) {
         color_ = color;
-        Q_EMIT colorChanged(color);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -167,8 +161,6 @@ QString ArtifactMarker::webLink() const {
 void ArtifactMarker::setWebLink(const QString& link) {
     if (webLink_ != link) {
         webLink_ = link;
-        Q_EMIT webLinkChanged(link);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -189,8 +181,6 @@ void ArtifactMarker::setTags(const QStringList& tags) {
 
     if (tags_ != normalized) {
         tags_ = normalized;
-        Q_EMIT tagsChanged(tags_);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -201,8 +191,6 @@ void ArtifactMarker::addTag(const QString& tag) {
         return;
     }
     tags_.append(trimmed);
-    Q_EMIT tagsChanged(tags_);
-    Q_EMIT markerChanged();
     publishMarkerAttributeChanged(this);
 }
 
@@ -214,8 +202,6 @@ void ArtifactMarker::removeTag(const QString& tag) {
         return v.compare(trimmed, Qt::CaseInsensitive) == 0;
     }), tags_.end());
     if (before != tags_.size()) {
-        Q_EMIT tagsChanged(tags_);
-        Q_EMIT markerChanged();
         publishMarkerAttributeChanged(this);
     }
 }
@@ -361,7 +347,6 @@ ArtifactMarker* ArtifactInOutPoints::addMarker(const FramePosition& position,
         it->second->setComment(comment);
         it->second->setType(type);
         impl_->chaptersDirty_ = true;
-        Q_EMIT markerChanged(it->second);
         ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
             PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
                                             impl_->outPoint_.has_value()});
@@ -373,7 +358,6 @@ ArtifactMarker* ArtifactInOutPoints::addMarker(const FramePosition& position,
     impl_->markers_[position] = marker;
     impl_->chaptersDirty_ = true;
     
-    Q_EMIT markerAdded(marker);
     ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
         PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
                                         impl_->outPoint_.has_value()});
@@ -387,7 +371,6 @@ bool ArtifactInOutPoints::removeMarker(const FramePosition& position) {
         impl_->markers_.erase(it);
         impl_->chaptersDirty_ = true;
         
-        Q_EMIT markerRemoved(marker);
         delete marker;
         ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
             PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
@@ -405,7 +388,6 @@ void ArtifactInOutPoints::removeMarker(ArtifactMarker* marker) {
         impl_->markers_.erase(it);
         impl_->chaptersDirty_ = true;
         
-        Q_EMIT markerRemoved(marker);
         delete marker;
         ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
             PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
@@ -523,14 +505,12 @@ std::vector<ArtifactMarker*> ArtifactInOutPoints::chapterMarkers() const {
 
 void ArtifactInOutPoints::clearAllMarkers() {
     for (auto& [pos, marker] : impl_->markers_) {
-        Q_EMIT markerRemoved(marker);
         delete marker;
     }
     impl_->markers_.clear();
     impl_->chapters_.clear();
     impl_->chaptersDirty_ = false;
     
-    Q_EMIT allMarkersCleared();
     ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
         PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(),
                                         impl_->outPoint_.has_value()});

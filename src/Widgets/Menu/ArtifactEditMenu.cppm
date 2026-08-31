@@ -9,6 +9,7 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QHash>
+#include <QSet>
 #include <vector>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -73,7 +74,7 @@ private:
   void handleCopyAction();
   void handleCutAction();
   void handlePasteAction();
-  void handleDelete();
+  bool handleDelete();
   void handleUndo();
   void handleRedo();
   void handleDuplicate();
@@ -256,8 +257,8 @@ private:
   if (auto* selMgr = ArtifactApplicationManager::instance()
                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
                           : nullptr) {
-   emit selMgr->selectionChanged();
-   emit selMgr->activeCompositionChanged();
+   ArtifactCore::globalEventBus().publish<
+       LayerSelectionManagerSelectionChangedEvent>({});
   }
   rebuildMenu();
  }
@@ -297,10 +298,12 @@ private:
   rebuildMenu();
  }
 
- void ArtifactEditMenu::Impl::handleCutAction()
- {
+void ArtifactEditMenu::Impl::handleCutAction()
+{
   handleCopyAction();
-  handleDelete();
+  if (!handleDelete()) {
+   return;
+  }
 
   // Publish cut event for clip buffer panel
   qint64 currentFrame = 0;
@@ -351,6 +354,13 @@ private:
     }
    }
   }
+  QStringList beforeSelectionIds;
+  for (const auto& layer : selected) {
+   if (layer) beforeSelectionIds.append(layer->id().toString());
+  }
+  const QString beforeCurrentSelection =
+      selMgr && selMgr->currentLayer()
+          ? selMgr->currentLayer()->id().toString() : QString();
 
   if (selMgr) selMgr->clearSelection();
   int pasted = 0;
@@ -423,7 +433,131 @@ private:
     }
    }
    if (matteReferencesChanged) {
-    pastedLayer->setMatteReferences(matteReferences);
+   pastedLayer->setMatteReferences(matteReferences);
+   }
+  }
+
+ if (pasted > 0) {
+  const auto pastedId = [](const ArtifactAbstractLayerPtr& layer) {
+   return layer ? layer->id().toString() : QString();
+  };
+  QSet<QString> pastedIds;
+  for (const auto& layer : pastedLayers) {
+   if (layer) pastedIds.insert(pastedId(layer));
+  }
+  const auto liveLayers = comp->allLayer();
+  QVector<ArtifactAbstractLayerPtr> orderedPastedLayers;
+  QHash<QString, int> desiredIndices;
+  for (int index = 0; index < liveLayers.size(); ++index) {
+   const auto& layer = liveLayers[index];
+   if (layer && pastedIds.contains(pastedId(layer))) {
+    orderedPastedLayers.push_back(layer);
+    desiredIndices.insert(pastedId(layer), index);
+   }
+  }
+
+  if (auto* undo = UndoManager::instance();
+      undo && orderedPastedLayers.size() == pastedIds.size()) {
+   for (const auto& layer : orderedPastedLayers) {
+    comp->removeLayer(layer->id());
+   }
+
+   const auto restorePastedLayers = [&]() {
+    for (const auto& layer : orderedPastedLayers) {
+     if (layer && !comp->containsLayerById(layer->id())) {
+      comp->appendLayerBottom(layer);
+     }
+    }
+    for (const auto& layer : orderedPastedLayers) {
+     if (!layer) continue;
+     const int targetIndex = desiredIndices.value(pastedId(layer), -1);
+     if (targetIndex < 0) continue;
+     const auto currentLayers = comp->allLayer();
+     int currentIndex = -1;
+     for (int index = 0; index < currentLayers.size(); ++index) {
+      if (currentLayers[index] && currentLayers[index]->id() == layer->id()) {
+       currentIndex = index;
+       break;
+      }
+     }
+     if (currentIndex >= 0 && currentIndex != targetIndex) {
+      comp->moveLayerToIndex(layer->id(), targetIndex);
+     }
+    }
+   };
+   const auto restorePastedSelection = [&]() {
+    if (!selMgr) return;
+    selMgr->clearSelection();
+    for (const auto& layer : orderedPastedLayers) {
+     if (layer && comp->containsLayerById(layer->id())) {
+      selMgr->addToSelection(layer);
+     }
+    }
+   };
+
+   auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Paste Layers"));
+   for (const auto& layer : orderedPastedLayers) {
+    macro->addChild(std::make_unique<AddLayerCommand>(comp, layer, false));
+   }
+   const auto baseLayers = comp->allLayer();
+   std::vector<QString> simulatedIds;
+   simulatedIds.reserve(baseLayers.size() + orderedPastedLayers.size());
+   for (const auto& layer : baseLayers) {
+    if (layer) simulatedIds.push_back(layer->id().toString());
+   }
+   for (const auto& layer : orderedPastedLayers) {
+    if (layer) simulatedIds.push_back(layer->id().toString());
+   }
+   for (const auto& layer : orderedPastedLayers) {
+    if (!layer) continue;
+    const QString id = pastedId(layer);
+    const int targetIndex = desiredIndices.value(id, -1);
+    auto currentIt = std::find(simulatedIds.begin(), simulatedIds.end(), id);
+    if (targetIndex < 0 || currentIt == simulatedIds.end()) continue;
+    const int oldIndex = static_cast<int>(std::distance(simulatedIds.begin(), currentIt));
+    const int boundedTarget = std::clamp(targetIndex, 0,
+                                         static_cast<int>(simulatedIds.size()) - 1);
+    if (oldIndex != boundedTarget) {
+     macro->addChild(std::make_unique<MoveLayerIndexCommand>(
+         comp, layer, oldIndex, boundedTarget));
+     const QString movedId = simulatedIds[oldIndex];
+     simulatedIds.erase(simulatedIds.begin() + oldIndex);
+     simulatedIds.insert(simulatedIds.begin() + boundedTarget, movedId);
+    }
+   }
+   QStringList afterSelectionIds;
+   for (const auto& layer : orderedPastedLayers) {
+    if (layer) afterSelectionIds.append(layer->id().toString());
+   }
+   macro->addChild(std::make_unique<LayerSelectionSnapshotCommand>(
+       comp, beforeSelectionIds, beforeCurrentSelection, afterSelectionIds,
+       afterSelectionIds.isEmpty() ? QString() : afterSelectionIds.back()));
+   const size_t undoCountBefore = undo->undoCount();
+   if (!undo->push(std::move(macro))) {
+    restorePastedLayers();
+    restorePastedSelection();
+   } else {
+    bool applied = true;
+    const auto afterLayers = comp->allLayer();
+    for (const auto& layer : orderedPastedLayers) {
+     if (!layer || !comp->containsLayerById(layer->id())) {
+      applied = false;
+      continue;
+     }
+     int actualIndex = -1;
+     for (int index = 0; index < afterLayers.size(); ++index) {
+      if (afterLayers[index] && afterLayers[index]->id() == layer->id()) {
+       actualIndex = index;
+       break;
+      }
+     }
+     applied = applied && actualIndex == desiredIndices.value(pastedId(layer), -1);
+    }
+    if (!applied) {
+     if (undo->undoCount() == undoCountBefore + 1) undo->undo();
+     restorePastedLayers();
+     restorePastedSelection();
+    }
    }
   }
 
@@ -435,27 +569,38 @@ private:
    rebuildMenu();
   }
  }
- void ArtifactEditMenu::Impl::handleDelete()
+ bool ArtifactEditMenu::Impl::handleDelete()
  {
   auto* selMgr = ArtifactApplicationManager::instance()
                      ? ArtifactApplicationManager::instance()->layerSelectionManager()
                      : nullptr;
   auto* svc = ArtifactProjectService::instance();
-  if (!selMgr || !svc) return;
+  if (!selMgr || !svc) return false;
 
   const auto selected = selMgr->selectedLayers();
-  if (selected.isEmpty()) return;
+  if (selected.isEmpty()) return false;
 
   auto comp = svc->currentComposition().lock();
-  if (!comp) return;
+  if (!comp) return false;
 
+  bool allRemoved = true;
+  std::vector<ArtifactAbstractLayerPtr> failedLayers;
   for (const auto& layer : selected) {
    if (layer) {
-    svc->removeLayerFromComposition(comp->id(), layer->id());
+    if (!svc->removeLayerFromComposition(comp->id(), layer->id())) {
+     allRemoved = false;
+     failedLayers.push_back(layer);
+    }
    }
   }
   selMgr->clearSelection();
+  for (const auto& layer : failedLayers) {
+   if (layer && comp->containsLayerById(layer->id())) {
+    selMgr->addToSelection(layer);
+   }
+  }
   rebuildMenu();
+  return allRemoved;
  }
 
  void ArtifactEditMenu::Impl::handleDuplicate()

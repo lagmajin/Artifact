@@ -182,18 +182,13 @@ export namespace Artifact
                           bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
 
- public /*signals*/:
-  void seekRequested(double frame) W_SIGNAL(seekRequested, frame);
-  void clipSelected(const QString& clipId, const LayerID& layerId) W_SIGNAL(clipSelected, clipId, layerId);
-  void clipDeselected() W_SIGNAL(clipDeselected);
-  void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
-  void clipSlid(const QString& clipId, double startFrame) W_SIGNAL(clipSlid, clipId, startFrame);
-  void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
-  void keyframeMoveRequested(const LayerID& layerId, const QString& propertyPath, qint64 fromFrame, qint64 toFrame) W_SIGNAL(keyframeMoveRequested, layerId, propertyPath, fromFrame, toFrame);
-  void keyframeSelectionChanged(int selectedCount) W_SIGNAL(keyframeSelectionChanged, selectedCount);
-  void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
-  void trackRowHeightChanged(int rowHeight) W_SIGNAL(trackRowHeightChanged, rowHeight);
-  void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
-  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
+ public:
+  void clipSelected(const QString& clipId, const LayerID& layerId);
+  void clipMoved(const QString& clipId, double startFrame);
+  void clipSlid(const QString& clipId, double startFrame);
+  void clipResized(const QString& clipId, double startFrame, double durationFrame);
+  void keyframeMoveRequested(const LayerID& layerId, const QString& propertyPath, qint64 fromFrame, qint64 toFrame);
+  void keyframeSelectionChanged(int selectedCount);
+  void timelineDebugMessage(const QString& message);
  };
 }

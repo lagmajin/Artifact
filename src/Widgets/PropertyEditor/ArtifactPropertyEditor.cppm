@@ -626,6 +626,11 @@ void ArtifactPropertyEditorRowWidget::setResetHandler(
   resetHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setCancelHandler(
+    std::function<void()> handler) {
+  cancelHandler_ = std::move(handler);
+}
+
 void ArtifactPropertyEditorRowWidget::setAuxAction(
     std::function<void()> handler, const QString &label) {
   auxActionHandler_ = std::move(handler);
@@ -1349,6 +1354,9 @@ void ArtifactPropertyEditorRowWidget::finishScrub(const bool commitChanges) {
   } else {
     editor_->setValueFromVariant(scrubStartValue_);
     editor_->previewValueFromVariant(scrubStartValue_);
+    if (cancelHandler_) {
+      cancelHandler_();
+    }
   }
   scrubCandidate_ = false;
   scrubbing_ = false;

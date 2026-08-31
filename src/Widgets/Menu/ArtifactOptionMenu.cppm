@@ -17,6 +17,7 @@ import std;
 
 import Application.AppSettings;
 import ApplicationSettingDialog;
+import Event.Bus;
 import Utils.Path;
 
 namespace Artifact {
@@ -36,6 +37,8 @@ public:
   QAction* resetMenuFontAction = nullptr;
   QAction* resetDockFontAction = nullptr;
   QAction* openAppDataAction = nullptr;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  ArtifactCore::EventBus::Subscription settingsSubscription_;
 
   void handleCompositionOpened();
   void handleCompositionClosed();
@@ -92,9 +95,13 @@ ArtifactOptionMenu::Impl::Impl(ArtifactOptionMenu* menu)
     }
   });
 
-  if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
-                     menu_, [this]() { refreshState(); });
+  if (ArtifactCore::ArtifactAppSettings::instance()) {
+    settingsSubscription_ = eventBus_.subscribe<ArtifactCore::AppSettingsChangedEvent>(
+        [this](const ArtifactCore::AppSettingsChangedEvent&) {
+          if (menu_) {
+            refreshState();
+          }
+        });
   }
 
   QObject::connect(menu_, &QMenu::aboutToShow, menu_, [this]() {

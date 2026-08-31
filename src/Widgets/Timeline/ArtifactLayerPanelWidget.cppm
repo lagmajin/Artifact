@@ -10,6 +10,8 @@ module;
 #include <QWidget>
 #include <QString>
 #include <QVector>
+#include <QPair>
+#include <QMetaType>
 #include <QBoxLayout>
 #include <QPushButton>
 #include <QContextMenuEvent>
@@ -52,6 +54,10 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QClipboard>
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include "TimelinePlayheadDraw.hpp"
 module Artifact.Widgets.LayerPanelWidget;
 
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -119,6 +125,78 @@ enum class MultiEditCycleMode {
 };
 
 constexpr int kMultiEditCycleWindowMs = 4500;
+
+class SetLayerLabelColorCommand final : public UndoCommand {
+public:
+  SetLayerLabelColorCommand(ArtifactAbstractLayerPtr layer, int before, int after)
+      : layer_(std::move(layer)), before_(before), after_(after) {}
+
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QString label() const override { return QStringLiteral("Set Layer Label Color"); }
+
+private:
+  bool apply(int value) {
+    const auto layer = layer_.lock();
+    if (!layer) {
+      return false;
+    }
+    layer->setLabelColorIndex(value);
+    return layer->labelColorIndex() == value;
+  }
+
+  ArtifactAbstractLayerWeakPtr layer_;
+  int before_ = 0;
+  int after_ = 0;
+  bool lastOperationSucceeded_ = true;
+};
+
+bool applyLayerPanelCommand(std::unique_ptr<UndoCommand> command)
+{
+  if (!command) {
+    return false;
+  }
+  if (auto* undo = UndoManager::instance()) {
+    return undo->push(std::move(command));
+  }
+  command->redo();
+  return command->lastOperationSucceeded();
+}
+
+bool applyLayerPropertyValues(
+    const ArtifactAbstractLayerPtr& layer, const QString& label,
+    const QVector<QPair<QString, QVariant>>& values)
+{
+  if (!layer || values.isEmpty()) {
+    return false;
+  }
+  auto macro = std::make_unique<MacroUndoCommand>(label);
+  for (const auto& [path, value] : values) {
+    const auto property = layer->getProperty(path);
+    if (!property) {
+      return false;
+    }
+    const QVariant beforeValue = property->getValue();
+    QVariant afterValue = value;
+    if (beforeValue.isValid() &&
+        afterValue.metaType() != beforeValue.metaType() &&
+        !afterValue.convert(beforeValue.metaType())) {
+      return false;
+    }
+    macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+        layer, path, beforeValue, afterValue, label));
+  }
+  return applyLayerPanelCommand(std::move(macro));
+}
+
+double safeLayerPanelFrameRate(const double rawFps)
+{
+  if (!std::isfinite(rawFps) || rawFps <= 0.0) {
+    return 30.0;
+  }
+  return std::clamp(rawFps, 1.0, 10000.0);
+}
 
 struct LayerPlacementSnapshot {
   LayerID id;
@@ -378,11 +456,17 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     for (int i = 0; i < variants.size(); ++i) {
       const QString label = variantDisplayName(layer, i);
       QAction* action = menu.addAction(label, [parent, layer, i]() {
-        auto* cmd = new ChangeActiveVariantCommand(layer,
-                                                   layer->getActiveVariantIndex(),
-                                                   static_cast<size_t>(i));
-        UndoManager::instance()->push(std::unique_ptr<ChangeActiveVariantCommand>(cmd));
-        parent->update();
+        auto cmd = std::make_unique<ChangeActiveVariantCommand>(
+            layer, layer->getActiveVariantIndex(), static_cast<size_t>(i));
+        auto *undo = UndoManager::instance();
+        if (undo) {
+          if (undo->push(std::move(cmd))) {
+            parent->update();
+          }
+        } else {
+          cmd->redo();
+          parent->update();
+        }
       });
       action->setCheckable(true);
       action->setChecked(i == activeIdx);
@@ -394,9 +478,17 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
 
     const QString newVariantName = nextVariantName(layer);
     menu.addAction(QStringLiteral("New Variant (%1)").arg(newVariantName), [parent, layer, newVariantName]() {
-      auto* cmd = new CreateVariantCommand(layer, newVariantName.toStdString());
-      UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
-      parent->update();
+      auto cmd = std::make_unique<CreateVariantCommand>(
+          layer, newVariantName.toStdString());
+      auto *undo = UndoManager::instance();
+      if (undo) {
+        if (undo->push(std::move(cmd))) {
+          parent->update();
+        }
+      } else {
+        cmd->redo();
+        parent->update();
+      }
     });
 
     menu.exec(globalPos);
@@ -1144,8 +1236,10 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!layer) {
       return;
     }
-    layer->setVisible(!layer->isVisible());
-    if (panel) panel->updateLayout();
+    if (applyLayerPanelCommand(std::make_unique<SetLayerVisibilityCommand>(
+            layer, !layer->isVisible())) && panel) {
+      panel->updateLayout();
+    }
   });
   QObject::connect(lockButton, &QPushButton::clicked, this, [this]() {
     auto* service = ArtifactProjectService::instance();
@@ -1159,8 +1253,10 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!layer) {
       return;
     }
-    layer->setLocked(!layer->isLocked());
-    if (panel) panel->updateLayout();
+    if (applyLayerPanelCommand(std::make_unique<SetLayerLockCommand>(
+            layer, !layer->isLocked())) && panel) {
+      panel->updateLayout();
+    }
   });
   QObject::connect(soloButton, &QPushButton::clicked, this, [this]() {
     auto* service = ArtifactProjectService::instance();
@@ -1174,8 +1270,10 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!layer) {
       return;
     }
-    layer->setSolo(!layer->isSolo());
-    if (panel) panel->updateLayout();
+    if (applyLayerPanelCommand(std::make_unique<SetLayerSoloCommand>(
+            layer, !layer->isSolo())) && panel) {
+      panel->updateLayout();
+    }
   });
   QObject::connect(audioButton, &QPushButton::clicked, this, [this]() {
     auto* service = ArtifactProjectService::instance();
@@ -1190,13 +1288,20 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
       return;
     }
     if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
-      videoLayer->setAudioMuted(!videoLayer->isAudioMuted());
-      if (panel) panel->updateLayout();
+      if (applyLayerPropertyValues(
+              videoLayer, QStringLiteral("Toggle Video Audio Mute"),
+              {{QStringLiteral("video.audioMuted"),
+                QVariant(!videoLayer->isAudioMuted())}}) && panel) {
+        panel->updateLayout();
+      }
       return;
     }
     if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
-      audioLayer->setMuted(!audioLayer->isMuted());
-      if (panel) panel->updateLayout();
+      if (applyLayerPropertyValues(
+              audioLayer, QStringLiteral("Toggle Audio Mute"),
+              {{QStringLiteral("audio.muted"), QVariant(!audioLayer->isMuted())}}) && panel) {
+        panel->updateLayout();
+      }
     }
   });
 
@@ -2082,11 +2187,15 @@ bool applyMatteTypeToLayer(const ArtifactCompositionPtr& comp,
   return false;
  }
 
- auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+  auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(layer,
                                                    std::move(beforeRefs),
                                                    std::move(afterRefs));
- UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
- return true;
+  auto *undo = UndoManager::instance();
+  if (undo) {
+    return undo->push(std::move(cmd));
+  }
+  cmd->redo();
+  return cmd->lastOperationSucceeded();
 }
 
 bool toggleMatteEnabled(const ArtifactCompositionPtr& comp,
@@ -2102,11 +2211,15 @@ bool toggleMatteEnabled(const ArtifactCompositionPtr& comp,
  }
  auto afterRefs = beforeRefs;
  afterRefs[matteIndex].enabled = !afterRefs[matteIndex].enabled;
- auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+  auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(layer,
                                                    std::move(beforeRefs),
                                                    std::move(afterRefs));
- UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
- return true;
+  auto *undo = UndoManager::instance();
+  if (undo) {
+    return undo->push(std::move(cmd));
+  }
+  cmd->redo();
+  return cmd->lastOperationSucceeded();
 }
 
 bool setMatteOpacity(const ArtifactCompositionPtr& comp,
@@ -2125,11 +2238,15 @@ bool setMatteOpacity(const ArtifactCompositionPtr& comp,
  if (std::abs(afterRefs[matteIndex].opacity - beforeRefs[matteIndex].opacity) < 0.0001f) {
   return false;
  }
- auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+  auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(layer,
                                                    std::move(beforeRefs),
                                                    std::move(afterRefs));
- UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
- return true;
+  auto *undo = UndoManager::instance();
+  if (undo) {
+    return undo->push(std::move(cmd));
+  }
+  cmd->redo();
+  return cmd->lastOperationSucceeded();
 }
 
 bool setMatteBlendMode(const ArtifactCompositionPtr& comp,
@@ -2148,11 +2265,15 @@ bool setMatteBlendMode(const ArtifactCompositionPtr& comp,
   return false;
  }
  afterRefs[matteIndex].blendMode = blendMode;
- auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+  auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(layer,
                                                    std::move(beforeRefs),
                                                    std::move(afterRefs));
- UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
- return true;
+  auto *undo = UndoManager::instance();
+  if (undo) {
+    return undo->push(std::move(cmd));
+  }
+  cmd->redo();
+  return cmd->lastOperationSucceeded();
 }
 
 bool setMatteFitMode(const ArtifactCompositionPtr& comp,
@@ -2171,11 +2292,15 @@ bool setMatteFitMode(const ArtifactCompositionPtr& comp,
   return false;
  }
  afterRefs[matteIndex].fitMode = fitMode;
- auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+  auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(layer,
                                                    std::move(beforeRefs),
                                                    std::move(afterRefs));
- UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
- return true;
+  auto *undo = UndoManager::instance();
+  if (undo) {
+    return undo->push(std::move(cmd));
+  }
+  cmd->redo();
+  return cmd->lastOperationSucceeded();
 }
 
 QString maskSummaryLabel(const LayerMask& mask, int index)
@@ -2450,7 +2575,6 @@ public:
    }
    verticalOffset = clamped;
    if (owner) {
-    Q_EMIT owner->verticalOffsetChanged(verticalOffset);
     owner->update();
    }
    if (emitSignal) {
@@ -2776,6 +2900,13 @@ public:
 
  W_OBJECT_IMPL(ArtifactLayerPanelWidget)
 
+void ArtifactLayerPanelWidget::propertyFocusChanged(
+    const LayerID& layerId, const QString& propertyPath) {
+  ArtifactCore::globalEventBus().publish<TimelinePropertyFocusChangedEvent>(
+      TimelinePropertyFocusChangedEvent{impl_->compositionId.toString(),
+                                        layerId.toString(), propertyPath});
+}
+
 ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
  : QWidget(parent), impl_(new Impl())
 {
@@ -2797,11 +2928,22 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
     impl_->incrementalSearchBuffer_.clear();
   });
 
- QObject::connect(UndoManager::instance(), &UndoManager::historyChanged, this, [this]() {
-  impl_->undoFlashTimer_.start();
-  impl_->undoFlashLayerIds_ = selectedLayerIdsSnapshot();
-  updateLayout();
- });
+ impl_->eventBusSubscriptions_.push_back(
+  impl_->eventBus_.subscribe<UndoManagerChangedEvent>(
+   [this](const UndoManagerChangedEvent& event) {
+    if (event.kind != UndoManagerChangeKind::HistoryChanged) return;
+    const auto refresh = [this]() {
+     if (!impl_) return;
+     impl_->undoFlashTimer_.start();
+     impl_->undoFlashLayerIds_ = selectedLayerIdsSnapshot();
+     updateLayout();
+    };
+    if (QThread::currentThread() == thread()) {
+     refresh();
+    } else {
+     QMetaObject::invokeMethod(this, refresh, Qt::QueuedConnection);
+    }
+   }));
 
  impl_->eventBusSubscriptions_.push_back(
   impl_->eventBus_.subscribe<FrameChangedEvent>([this](const FrameChangedEvent& event) {
@@ -2810,7 +2952,7 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
       return;
     }
     if (auto* playback = ArtifactPlaybackService::instance()) {
-      const auto fps = playback->frameRate().framerate();
+      const auto fps = safeLayerPanelFrameRate(playback->frameRate().framerate());
       impl_->currentTime = RationalTime(event.frame, fps);
       update();
     }
@@ -2861,7 +3003,7 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
             if (impl_->layerNameEditable) {
               editLayerName(layerId);
             }
-            this->visibleRowsChanged();
+            ArtifactCore::globalEventBus().publish<TimelineVisibleRowsChangedEvent>({});
           },
           Qt::QueuedConnection);
     }));
@@ -3094,7 +3236,6 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   update();
   if (structureChanged) {
     ArtifactCore::globalEventBus().publish<TimelineVisibleRowsChangedEvent>({});
-    visibleRowsChanged();
   }
   
   impl_->updatingLayout = false;
@@ -3209,9 +3350,16 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
      impl_->inlineNameEditor->deleteLater();
      impl_->inlineNameEditor = nullptr;
      if (newName != l->layerName()) {
-      const QString oldName = l->layerName();
-      auto* cmd = new RenameLayerCommand(l, oldName, newName);
-      UndoManager::instance()->push(std::unique_ptr<RenameLayerCommand>(cmd));
+       const QString oldName = l->layerName();
+       auto cmd = std::make_unique<RenameLayerCommand>(l, oldName, newName);
+       bool applied = false;
+       if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(cmd));
+       } else {
+        cmd->redo();
+        applied = cmd->lastOperationSucceeded();
+       }
+       if (!applied) return;
      }
      setFocus();
     });
@@ -3298,7 +3446,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    if (event->button() == Qt::LeftButton) {
     RationalTime currentTime = impl_->currentTime;
     if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-     const auto fps = std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+     const auto fps = safeLayerPanelFrameRate(comp->frameRate().framerate());
      currentTime = RationalTime(comp->framePosition().framePosition(), fps);
     }
     const QRect keyframeRect =
@@ -3694,7 +3842,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, layer, combo](int i) {
         const auto mode = static_cast<LAYER_BLEND_TYPE>(combo->itemData(i).toInt());
-        UndoManager::instance()->push(std::make_unique<ChangeLayerBlendModeCommand>(layer, mode));
+        auto *undo = UndoManager::instance();
+        auto cmd = std::make_unique<ChangeLayerBlendModeCommand>(layer, mode);
+        bool applied = false;
+        if (undo) {
+          applied = undo->push(std::move(cmd));
+        } else {
+          cmd->redo();
+          applied = cmd->lastOperationSucceeded();
+        }
+        if (!applied) {
+          return;
+        }
         combo->deleteLater();
         update();
       });
@@ -3769,11 +3928,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             return;
           }
           switch (ci) {
-          case 0: if (layer) UndoManager::instance()->push(std::make_unique<SetLayerVisibilityCommand>(layer, !layer->isVisible())); handledLayerSwitch = true; break;
-          case 1: if (layer) UndoManager::instance()->push(std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked())); handledLayerSwitch = true; break;
-          case 2: if (layer) UndoManager::instance()->push(std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo())); handledLayerSwitch = true; break;
+          case 0: if (layer) { auto cmd = std::make_unique<SetLayerVisibilityCommand>(layer, !layer->isVisible()); if (auto *undo = UndoManager::instance()) handledLayerSwitch = undo->push(std::move(cmd)); else { cmd->redo(); handledLayerSwitch = cmd->lastOperationSucceeded(); } } break;
+          case 1: if (layer) { auto cmd = std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked()); if (auto *undo = UndoManager::instance()) handledLayerSwitch = undo->push(std::move(cmd)); else { cmd->redo(); handledLayerSwitch = cmd->lastOperationSucceeded(); } } break;
+          case 2: if (layer) { auto cmd = std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo()); if (auto *undo = UndoManager::instance()) handledLayerSwitch = undo->push(std::move(cmd)); else { cmd->redo(); handledLayerSwitch = cmd->lastOperationSucceeded(); } } break;
           case 3: break; // Audio column - no toggle
-          case 4: if (layer) UndoManager::instance()->push(std::make_unique<SetLayerShyCommand>(layer, !layer->isShy())); handledLayerSwitch = true; break;
+          case 4: if (layer) { auto cmd = std::make_unique<SetLayerShyCommand>(layer, !layer->isShy()); if (auto *undo = UndoManager::instance()) handledLayerSwitch = undo->push(std::move(cmd)); else { cmd->redo(); handledLayerSwitch = cmd->lastOperationSucceeded(); } } break;
           default: break;
           }
           break;
@@ -3816,15 +3975,24 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         !(event->modifiers() & (Qt::ShiftModifier | Qt::MetaModifier)) && layer) {
       auto comp = safeCompositionLookup(impl_->compositionId);
       if (comp) {
+        auto macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Solo Selected Layer"));
         for (const auto& l : comp->allLayer()) {
-          if (l) l->setVisible(l->id() == layer->id());
+          if (l) {
+            macro->addChild(std::make_unique<SetLayerVisibilityCommand>(
+                l, l->id() == layer->id()));
+          }
         }
-        if (service) {
-          service->selectLayer(layer->id());
+        if (applyLayerPanelCommand(std::move(macro))) {
+          if (service) {
+            service->selectLayer(layer->id());
+          }
+          impl_->selectedLayerId = layer->id();
+          impl_->clearDragState();
+          updateLayout();
+          event->accept();
+          return;
         }
-        impl_->selectedLayerId = layer->id();
-        impl_->clearDragState();
-        updateLayout();
         event->accept();
         return;
       }
@@ -4013,8 +4181,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           macro->addChild(std::make_unique<SetLayerVisibilityCommand>(layer, visible));
         }
       }
-      UndoManager::instance()->push(std::move(macro));
-      updateLayout();
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(macro));
+      } else {
+        macro->redo();
+        applied = macro->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     };
 
     auto triggerSelectedLock = [this, currentComp, selectedVisibleIds](bool locked) {
@@ -4028,8 +4204,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           macro->addChild(std::make_unique<SetLayerLockCommand>(layer, locked));
         }
       }
-      UndoManager::instance()->push(std::move(macro));
-      updateLayout();
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(macro));
+      } else {
+        macro->redo();
+        applied = macro->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     };
 
     auto triggerSelectedSolo = [this, currentComp, selectedVisibleIds](bool solo) {
@@ -4043,8 +4227,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           macro->addChild(std::make_unique<SetLayerSoloCommand>(layer, solo));
         }
       }
-      UndoManager::instance()->push(std::move(macro));
-      updateLayout();
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(macro));
+      } else {
+        macro->redo();
+        applied = macro->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     };
 
     auto triggerSelectedShy = [this, currentComp, selectedVisibleIds](bool shy) {
@@ -4058,8 +4250,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           macro->addChild(std::make_unique<SetLayerShyCommand>(layer, shy));
         }
       }
-      UndoManager::instance()->push(std::move(macro));
-      updateLayout();
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(macro));
+      } else {
+        macro->redo();
+        applied = macro->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     };
 
     auto triggerReplaceLayerSource = [this, layer]() {
@@ -4282,9 +4482,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!videoLayer || videoLayer->proxyQuality() == quality) {
         return;
       }
-      videoLayer->setLayerPropertyValue(QStringLiteral("video.proxyQuality"),
-                                        QVariant::fromValue(static_cast<int>(quality)));
-      videoLayer->changed();
+      const int beforeQuality = static_cast<int>(videoLayer->proxyQuality());
+      const int afterQuality = static_cast<int>(quality);
+      if (!applyLayerPanelCommand(std::make_unique<SetLayerPropertyValueCommand>(
+              videoLayer, QStringLiteral("video.proxyQuality"),
+              QVariant(beforeQuality), QVariant(afterQuality),
+              QStringLiteral("Change Proxy Quality")))) {
+        return;
+      }
       if (auto comp = safeCompositionLookup(impl_->compositionId)) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
@@ -4436,37 +4641,53 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         updateLayout();
       };
+      const auto applyLightLinking = [lightLayer](LightLinkMode mode,
+                                                   const QString& includeIds,
+                                                   const QString& excludeIds) {
+        const QVector<QPair<QString, QVariant>> values = {
+            {QStringLiteral("Light Linking/Link Mode"),
+             QVariant(static_cast<int>(mode))},
+            {QStringLiteral("Light Linking/Include Layer IDs"), includeIds},
+            {QStringLiteral("Light Linking/Exclude Layer IDs"), excludeIds}};
+        auto macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Change Light Linking"));
+        for (const auto& [path, value] : values) {
+          const auto property = lightLayer->getProperty(path);
+          if (!property) {
+            return false;
+          }
+          macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+              lightLayer, path, property->getValue(), value,
+              QStringLiteral("Change Light Linking")));
+        }
+        return applyLayerPanelCommand(std::move(macro));
+      };
       QAction* allLightsAction = lightLinkMenu->addAction(QStringLiteral("All Layers"));
       allLightsAction->setCheckable(true);
       allLightsAction->setChecked(lightLayer->lightLinkMode() == LightLinkMode::All);
-      QObject::connect(allLightsAction, &QAction::triggered, this, [lightLayer, publishLightChange]() {
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Link Mode"),
-                                          static_cast<int>(LightLinkMode::All));
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Include Layer IDs"), QString());
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Exclude Layer IDs"), QString());
-        publishLightChange();
+      QObject::connect(allLightsAction, &QAction::triggered, this,
+                       [applyLightLinking, publishLightChange]() {
+        if (applyLightLinking(LightLinkMode::All, QString(), QString())) {
+          publishLightChange();
+        }
       });
       QAction* includeSelectedAction = lightLinkMenu->addAction(
           QStringLiteral("Include Selected Layers"));
       includeSelectedAction->setEnabled(!targets.isEmpty());
       QObject::connect(includeSelectedAction, &QAction::triggered, this,
-                       [lightLayer, targets, publishLightChange]() {
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Link Mode"),
-                                          static_cast<int>(LightLinkMode::IncludeOnly));
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Include Layer IDs"), targets);
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Exclude Layer IDs"), QString());
-        publishLightChange();
+                       [applyLightLinking, targets, publishLightChange]() {
+        if (applyLightLinking(LightLinkMode::IncludeOnly, targets, QString())) {
+          publishLightChange();
+        }
       });
       QAction* excludeSelectedAction = lightLinkMenu->addAction(
           QStringLiteral("Exclude Selected Layers"));
       excludeSelectedAction->setEnabled(!targets.isEmpty());
       QObject::connect(excludeSelectedAction, &QAction::triggered, this,
-                       [lightLayer, targets, publishLightChange]() {
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Link Mode"),
-                                          static_cast<int>(LightLinkMode::ExcludeList));
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Exclude Layer IDs"), targets);
-        lightLayer->setLayerPropertyValue(QStringLiteral("Light Linking/Include Layer IDs"), QString());
-        publishLightChange();
+                       [applyLightLinking, targets, publishLightChange]() {
+        if (applyLightLinking(LightLinkMode::ExcludeList, QString(), targets)) {
+          publishLightChange();
+        }
       });
     }
     if (layer->is3D()) {
@@ -4477,12 +4698,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                                  double specular,
                                                  double transmission,
                                                  double ior) {
-        layer->setLayerPropertyValue(QStringLiteral("material.base.color"), baseColor);
-        layer->setLayerPropertyValue(QStringLiteral("material.metallic"), metallic);
-        layer->setLayerPropertyValue(QStringLiteral("material.roughness"), roughness);
-        layer->setLayerPropertyValue(QStringLiteral("material.specular"), specular);
-        layer->setLayerPropertyValue(QStringLiteral("material.transmission"), transmission);
-        layer->setLayerPropertyValue(QStringLiteral("material.ior"), ior);
+        if (!applyLayerPropertyValues(
+                layer, QStringLiteral("Apply 3D Material Preset"),
+                {{QStringLiteral("material.base.color"), baseColor},
+                 {QStringLiteral("material.metallic"), metallic},
+                 {QStringLiteral("material.roughness"), roughness},
+                 {QStringLiteral("material.specular"), specular},
+                 {QStringLiteral("material.transmission"), transmission},
+                 {QStringLiteral("material.ior"), ior}})) {
+          return;
+        }
         if (auto current = safeCompositionLookup(impl_->compositionId)) {
           ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
               LayerChangedEvent{current->id().toString(), layer->id().toString(),
@@ -4510,13 +4735,22 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           {"Rotation In", 4}, {"Tracking Fade", 5},
           {"Wiggly Position", 6}, {"Blur Reveal", 7}}};
       for (const auto& [label, presetId] : presets) {
-        textAnimatorMenu->addAction(QString::fromLatin1(label), [layer, presetId]() {
-          layer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"), presetId);
+        textAnimatorMenu->addAction(QString::fromLatin1(label), [this, layer, presetId]() {
+          if (!applyLayerPropertyValues(
+                  layer, QStringLiteral("Set Text Animator Preset"),
+                  {{QStringLiteral("text.animatorPreset"), QVariant(presetId)}})) {
+            return;
+          }
+          updateLayout();
         });
       }
       textAnimatorMenu->addSeparator();
-      textAnimatorMenu->addAction(QStringLiteral("Clear Animators"), [layer]() {
-        layer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"), 0);
+      textAnimatorMenu->addAction(QStringLiteral("Clear Animators"), [this, layer]() {
+        if (applyLayerPropertyValues(
+                layer, QStringLiteral("Clear Text Animators"),
+                {{QStringLiteral("text.animatorPreset"), QVariant(0)}})) {
+          updateLayout();
+        }
       });
     }
     if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
@@ -4559,7 +4793,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           if (!group) {
             return;
           }
-          group->setOutputMode(mode);
+          if (!applyLayerPropertyValues(
+                  group, QStringLiteral("Change Group Output Mode"),
+                  {{QStringLiteral("group.outputMode"),
+                    QVariant(static_cast<int>(mode))}})) {
+            return;
+          }
           if (auto comp = safeCompositionLookup(impl_->compositionId)) {
             ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
                 LayerChangedEvent{comp->id().toString(), group->id().toString(),
@@ -4591,7 +4830,22 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                 if (!group) {
                   return;
                 }
-                group->setActiveChildId(childId);
+                const auto children = group->children();
+                int childIndex = -1;
+                for (int index = 0; index < static_cast<int>(children.size()); ++index) {
+                  if (children[static_cast<size_t>(index)] &&
+                      children[static_cast<size_t>(index)]->id() == childId) {
+                    childIndex = index;
+                    break;
+                  }
+                }
+                if (childIndex < 0 ||
+                    !applyLayerPropertyValues(
+                        group, QStringLiteral("Set Group Active Child"),
+                        {{QStringLiteral("group.activeChildIndex"),
+                          QVariant(childIndex)}})) {
+                  return;
+                }
                 if (auto comp = safeCompositionLookup(impl_->compositionId)) {
                   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
                       LayerChangedEvent{comp->id().toString(), group->id().toString(),
@@ -4695,8 +4949,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           return;
         }
         const bool muted = !videoLayer->isAudioMuted();
-        videoLayer->setAudioMuted(muted);
-        if (layer->setLayerPropertyValue(QStringLiteral("video.audioMuted"), muted)) {
+        if (applyLayerPropertyValues(
+                videoLayer, QStringLiteral("Toggle Video Audio Mute"),
+                {{QStringLiteral("video.audioMuted"), QVariant(muted)}})) {
           updateLayout();
         }
       });
@@ -4706,8 +4961,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           return;
         }
         const bool enabled = !videoLayer->hasVideo();
-        videoLayer->setHasVideo(enabled);
-        if (layer->setLayerPropertyValue(QStringLiteral("video.videoEnabled"), enabled)) {
+        if (applyLayerPropertyValues(
+                videoLayer, QStringLiteral("Toggle Video Enabled"),
+                {{QStringLiteral("video.videoEnabled"), QVariant(enabled)}})) {
           updateLayout();
         }
       });
@@ -4985,27 +5241,63 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QMenu* stateMenu = frequentMenu->addMenu(QStringLiteral("状態"));
     stateMenu->addAction(QStringLiteral("表示を切替"), [this, layer]() {
       if (!layer) return;
-      UndoManager::instance()->push(
-          std::make_unique<SetLayerVisibilityCommand>(layer, !layer->isVisible()));
-      updateLayout();
+      auto cmd = std::make_unique<SetLayerVisibilityCommand>(
+          layer, !layer->isVisible());
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(cmd));
+      } else {
+        cmd->redo();
+        applied = cmd->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     });
     stateMenu->addAction(QStringLiteral("ロックを切替"), [this, layer]() {
       if (!layer) return;
-      UndoManager::instance()->push(
-          std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked()));
-      updateLayout();
+      auto cmd = std::make_unique<SetLayerLockCommand>(
+          layer, !layer->isLocked());
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(cmd));
+      } else {
+        cmd->redo();
+        applied = cmd->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     });
     stateMenu->addAction(QStringLiteral("ソロを切替"), [this, layer]() {
       if (!layer) return;
-      UndoManager::instance()->push(
-          std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo()));
-      updateLayout();
+      auto cmd = std::make_unique<SetLayerSoloCommand>(
+          layer, !layer->isSolo());
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(cmd));
+      } else {
+        cmd->redo();
+        applied = cmd->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     });
     stateMenu->addAction(QStringLiteral("シャイを切替"), [this, layer]() {
       if (!layer) return;
-      UndoManager::instance()->push(
-          std::make_unique<SetLayerShyCommand>(layer, !layer->isShy()));
-      updateLayout();
+      auto cmd = std::make_unique<SetLayerShyCommand>(
+          layer, !layer->isShy());
+      bool applied = false;
+      if (auto *undo = UndoManager::instance()) {
+        applied = undo->push(std::move(cmd));
+      } else {
+        cmd->redo();
+        applied = cmd->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     });
     stateMenu->addSeparator();
     stateMenu->addAction(QStringLiteral("スマートソロ"), [this, layer]() {
@@ -5019,7 +5311,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     });
 
     QMenu* dynamicsMenu = frequentMenu->addMenu(QStringLiteral("Motion Dynamics"));
-    const auto applyDynamicsPreset = [layer](double stiffness,
+    const auto applyDynamicsPreset = [this, layer](const QString& label,
+                                               bool enabled,
+                                               int mode,
+                                               double stiffness,
                                                double damping,
                                                double mass,
                                                double lagTau,
@@ -5028,43 +5323,72 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!layer) {
         return;
       }
-      layer->setLayerPropertyValue(QStringLiteral("motion.enabled"), true);
-      layer->setLayerPropertyValue(QStringLiteral("motion.mode"), 1);
-      layer->setLayerPropertyValue(QStringLiteral("motion.stiffness"), stiffness);
-      layer->setLayerPropertyValue(QStringLiteral("motion.damping"), damping);
-      layer->setLayerPropertyValue(QStringLiteral("motion.mass"), mass);
-      layer->setLayerPropertyValue(QStringLiteral("motion.lagTau"), lagTau);
-      layer->setLayerPropertyValue(QStringLiteral("motion.clampOvershoot"), clampOvershoot);
-      layer->setLayerPropertyValue(QStringLiteral("motion.overshootLimit"), overshootLimit);
+      const QVector<QPair<QString, QVariant>> values = {
+          {QStringLiteral("motion.enabled"), QVariant(enabled)},
+          {QStringLiteral("motion.mode"), QVariant(mode)},
+          {QStringLiteral("motion.stiffness"), QVariant(stiffness)},
+          {QStringLiteral("motion.damping"), QVariant(damping)},
+          {QStringLiteral("motion.mass"), QVariant(mass)},
+          {QStringLiteral("motion.lagTau"), QVariant(lagTau)},
+          {QStringLiteral("motion.clampOvershoot"), QVariant(clampOvershoot)},
+          {QStringLiteral("motion.overshootLimit"), QVariant(overshootLimit)}};
+      auto macro = std::make_unique<MacroUndoCommand>(label);
+      for (const auto& [path, value] : values) {
+        const auto property = layer->getProperty(path);
+        if (!property) {
+          return;
+        }
+        const QVariant beforeValue = property->getValue();
+        QVariant afterValue = value;
+        if (beforeValue.isValid() &&
+            afterValue.metaType() != beforeValue.metaType() &&
+            !afterValue.convert(beforeValue.metaType())) {
+          return;
+        }
+        macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+            layer, path, beforeValue, afterValue, label));
+      }
+      bool applied = false;
+      if (auto* undo = UndoManager::instance()) {
+        applied = undo->push(std::move(macro));
+      } else {
+        macro->redo();
+        applied = macro->lastOperationSucceeded();
+      }
+      if (applied) {
+        updateLayout();
+      }
     };
     dynamicsMenu->addAction(QStringLiteral("Smooth"), [applyDynamicsPreset]() {
-      applyDynamicsPreset(70.0, 20.0, 1.0, 0.12, true, 0.15);
+      applyDynamicsPreset(QStringLiteral("Motion Dynamics: Smooth"),
+                          true, 1,
+                          70.0, 20.0, 1.0, 0.12, true, 0.15);
     });
     dynamicsMenu->addAction(QStringLiteral("Bouncy"), [applyDynamicsPreset]() {
-      applyDynamicsPreset(95.0, 7.0, 1.0, 0.08, false, 0.5);
+      applyDynamicsPreset(QStringLiteral("Motion Dynamics: Bouncy"),
+                          true, 1,
+                          95.0, 7.0, 1.0, 0.08, false, 0.5);
     });
     dynamicsMenu->addAction(QStringLiteral("Heavy"), [applyDynamicsPreset]() {
-      applyDynamicsPreset(120.0, 32.0, 2.5, 0.2, true, 0.1);
+      applyDynamicsPreset(QStringLiteral("Motion Dynamics: Heavy"),
+                          true, 1,
+                          120.0, 32.0, 2.5, 0.2, true, 0.1);
     });
     dynamicsMenu->addAction(QStringLiteral("Floaty"), [applyDynamicsPreset]() {
-      applyDynamicsPreset(35.0, 8.0, 1.4, 0.28, false, 0.6);
+      applyDynamicsPreset(QStringLiteral("Motion Dynamics: Floaty"),
+                          true, 1,
+                          35.0, 8.0, 1.4, 0.28, false, 0.6);
     });
     dynamicsMenu->addAction(QStringLiteral("Rigid"), [applyDynamicsPreset]() {
-      applyDynamicsPreset(220.0, 55.0, 0.8, 0.04, true, 0.05);
+      applyDynamicsPreset(QStringLiteral("Motion Dynamics: Rigid"),
+                          true, 1,
+                          220.0, 55.0, 0.8, 0.04, true, 0.05);
     });
     dynamicsMenu->addSeparator();
-    dynamicsMenu->addAction(QStringLiteral("Reset"), [layer]() {
-      if (!layer) {
-        return;
-      }
-      layer->setLayerPropertyValue(QStringLiteral("motion.enabled"), false);
-      layer->setLayerPropertyValue(QStringLiteral("motion.mode"), 0);
-      layer->setLayerPropertyValue(QStringLiteral("motion.stiffness"), 80.0);
-      layer->setLayerPropertyValue(QStringLiteral("motion.damping"), 16.0);
-      layer->setLayerPropertyValue(QStringLiteral("motion.mass"), 1.0);
-      layer->setLayerPropertyValue(QStringLiteral("motion.lagTau"), 0.1);
-      layer->setLayerPropertyValue(QStringLiteral("motion.clampOvershoot"), false);
-      layer->setLayerPropertyValue(QStringLiteral("motion.overshootLimit"), 0.3);
+    dynamicsMenu->addAction(QStringLiteral("Reset"), [applyDynamicsPreset]() {
+      applyDynamicsPreset(QStringLiteral("Reset Motion Dynamics"),
+                          false, 0,
+                          80.0, 16.0, 1.0, 0.1, false, 0.3);
     });
 
     // カラーラベル
@@ -5085,8 +5409,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         QAction* ca = colorMenu->addAction(
             QString::fromLatin1(kLabelColors[ci].first), [this, layer, ci]() {
           if (!layer) return;
-          layer->setLabelColorIndex(ci);
-          update();
+          auto command = std::make_unique<SetLayerLabelColorCommand>(
+              layer, layer->labelColorIndex(), ci);
+          bool applied = false;
+          if (auto* undo = UndoManager::instance()) {
+            applied = undo->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) update();
         });
         if (!kLabelColors[ci].second.isValid()) {
           ca->setIcon(QIcon());
@@ -5105,38 +5437,60 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     // 全レイヤー表示/ロック一括切替と一括グループ操作
     {
       QMenu* batchAllMenu = allMenu->addMenu(QStringLiteral("全レイヤー操作"));
-      batchAllMenu->addAction(QStringLiteral("すべて表示"), [this]() {
+      const auto applyAllVisibility = [this](bool visible) {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
+        auto macro = std::make_unique<MacroUndoCommand>(
+            visible ? QStringLiteral("Show All Layers")
+                    : QStringLiteral("Hide All Layers"));
         for (const auto& l : comp->allLayer()) {
-          if (l) l->setVisible(true);
+          if (l) {
+            macro->addChild(std::make_unique<SetLayerVisibilityCommand>(l, visible));
+          }
         }
-        updateLayout();
+        if (comp->allLayer().isEmpty()) return;
+        bool applied = false;
+        if (auto* undo = UndoManager::instance()) {
+          applied = undo->push(std::move(macro));
+        } else {
+          macro->redo();
+          applied = macro->lastOperationSucceeded();
+        }
+        if (applied) updateLayout();
+      };
+      batchAllMenu->addAction(QStringLiteral("すべて表示"), [applyAllVisibility]() {
+        applyAllVisibility(true);
       });
-      batchAllMenu->addAction(QStringLiteral("すべて非表示"), [this]() {
-        auto comp = safeCompositionLookup(impl_->compositionId);
-        if (!comp) return;
-        for (const auto& l : comp->allLayer()) {
-          if (l) l->setVisible(false);
-        }
-        updateLayout();
+      batchAllMenu->addAction(QStringLiteral("すべて非表示"), [applyAllVisibility]() {
+        applyAllVisibility(false);
       });
       batchAllMenu->addSeparator();
-      batchAllMenu->addAction(QStringLiteral("すべてロック"), [this]() {
+      const auto applyAllLock = [this](bool locked) {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
+        auto macro = std::make_unique<MacroUndoCommand>(
+            locked ? QStringLiteral("Lock All Layers")
+                   : QStringLiteral("Unlock All Layers"));
         for (const auto& l : comp->allLayer()) {
-          if (l) l->setLocked(true);
+          if (l) {
+            macro->addChild(std::make_unique<SetLayerLockCommand>(l, locked));
+          }
         }
-        updateLayout();
+        if (comp->allLayer().isEmpty()) return;
+        bool applied = false;
+        if (auto* undo = UndoManager::instance()) {
+          applied = undo->push(std::move(macro));
+        } else {
+          macro->redo();
+          applied = macro->lastOperationSucceeded();
+        }
+        if (applied) updateLayout();
+      };
+      batchAllMenu->addAction(QStringLiteral("すべてロック"), [applyAllLock]() {
+        applyAllLock(true);
       });
-      batchAllMenu->addAction(QStringLiteral("すべてロック解除"), [this]() {
-        auto comp = safeCompositionLookup(impl_->compositionId);
-        if (!comp) return;
-        for (const auto& l : comp->allLayer()) {
-          if (l) l->setLocked(false);
-        }
-        updateLayout();
+      batchAllMenu->addAction(QStringLiteral("すべてロック解除"), [applyAllLock]() {
+        applyAllLock(false);
       });
       batchAllMenu->addSeparator();
       batchAllMenu->addAction(QStringLiteral("すべてのグループを折りたたみ"), [this]() {
@@ -5480,11 +5834,19 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         auto beforeRefs = matteRefs;
         auto afterRefs = beforeRefs;
         afterRefs.push_back(makeDefaultMatteReference(selectedLayerId));
-        auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+        auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(layer,
                                                           std::move(beforeRefs),
                                                           std::move(afterRefs));
-        UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-        updateLayout();
+        bool applied = false;
+        if (auto *undo = UndoManager::instance()) {
+          applied = undo->push(std::move(cmd));
+        } else {
+          cmd->redo();
+          applied = cmd->lastOperationSucceeded();
+        }
+        if (applied) {
+          updateLayout();
+        }
       } else if (kind == QStringLiteral("matte_focus")) {
         if (matteIndex >= 0 && matteIndex < static_cast<int>(matteRefs.size())) {
           const auto &ref = matteRefs[matteIndex];
@@ -5822,9 +6184,17 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
               }
 
               if (changed) {
-                auto* cmd = new ChangeLayerMatteReferencesCommand(targetLayer, std::move(beforeRefs), std::move(afterRefs));
-                UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
-                updateLayout();
+                auto cmd = std::make_unique<ChangeLayerMatteReferencesCommand>(targetLayer, std::move(beforeRefs), std::move(afterRefs));
+                bool applied = false;
+                if (auto *undo = UndoManager::instance()) {
+                  applied = undo->push(std::move(cmd));
+                } else {
+                  cmd->redo();
+                  applied = cmd->lastOperationSucceeded();
+                }
+                if (applied) {
+                  updateLayout();
+                }
               }
             }
           }
@@ -5861,9 +6231,18 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
             newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
             if (newIndex != oldIndex) {
               auto layer = comp->layerById(dragLayerId);
-              auto* cmd = new MoveLayerIndexCommand(comp, layer, oldIndex, newIndex);
-              UndoManager::instance()->push(std::unique_ptr<MoveLayerIndexCommand>(cmd));
-              updateLayout();
+              auto cmd = std::make_unique<MoveLayerIndexCommand>(
+                  comp, layer, oldIndex, newIndex);
+              bool applied = false;
+              if (auto *undo = UndoManager::instance()) {
+                applied = undo->push(std::move(cmd));
+              } else {
+                cmd->redo();
+                applied = cmd->lastOperationSucceeded();
+              }
+              if (applied) {
+                updateLayout();
+              }
             }
           }
         }
@@ -6084,8 +6463,17 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     if (!comp) return;
     auto layer = comp->layerById(impl_->selectedLayerId);
     if (!layer) return;
-    UndoManager::instance()->push(std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo()));
-    updateLayout();
+    auto cmd = std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo());
+    bool applied = false;
+    if (auto *undo = UndoManager::instance()) {
+      applied = undo->push(std::move(cmd));
+    } else {
+      cmd->redo();
+      applied = cmd->lastOperationSucceeded();
+    }
+    if (applied) {
+      updateLayout();
+    }
   };
   auto toggleSelectedLock = [this]() {
     if (impl_->selectedLayerId.isNil()) return;
@@ -6093,8 +6481,17 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     if (!comp) return;
     auto layer = comp->layerById(impl_->selectedLayerId);
     if (!layer) return;
-    UndoManager::instance()->push(std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked()));
-    updateLayout();
+    auto cmd = std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked());
+    bool applied = false;
+    if (auto *undo = UndoManager::instance()) {
+      applied = undo->push(std::move(cmd));
+    } else {
+      cmd->redo();
+      applied = cmd->lastOperationSucceeded();
+    }
+    if (applied) {
+      updateLayout();
+    }
   };
   auto toggleSelectedShy = [this]() {
     if (impl_->selectedLayerId.isNil()) return;
@@ -6102,8 +6499,17 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     if (!comp) return;
     auto layer = comp->layerById(impl_->selectedLayerId);
     if (!layer) return;
-    UndoManager::instance()->push(std::make_unique<SetLayerShyCommand>(layer, !layer->isShy()));
-    updateLayout();
+    auto cmd = std::make_unique<SetLayerShyCommand>(layer, !layer->isShy());
+    bool applied = false;
+    if (auto *undo = UndoManager::instance()) {
+      applied = undo->push(std::move(cmd));
+    } else {
+      cmd->redo();
+      applied = cmd->lastOperationSucceeded();
+    }
+    if (applied) {
+      updateLayout();
+    }
   };
 
   if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
@@ -6159,10 +6565,17 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
         for (int i = 0; i < layer->maskCount(); ++i) {
           afterMasks.push_back(layer->mask(i));
         }
+        const auto restoreMasks = beforeMasks;
 
         if (auto *undo = UndoManager::instance()) {
-          undo->push(std::make_unique<MaskEditCommand>(layer, std::move(beforeMasks),
-                                                       std::move(afterMasks)));
+          if (!undo->push(std::make_unique<MaskEditCommand>(
+                  layer, std::move(beforeMasks), std::move(afterMasks)))) {
+            layer->clearMasks();
+            for (const auto &mask : restoreMasks) {
+              layer->addMask(mask);
+            }
+            return;
+          }
         }
         const int nextMaskCount = layer->maskCount();
         if (nextMaskCount > 0) {
@@ -6644,8 +7057,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   ArtifactCore::ProfileTimer _profTimer("LayerPanelPaint",
                                         ArtifactCore::ProfileCategory::UI);
   QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing, true);
-  p.setRenderHint(QPainter::SmoothPixmapTransform);
+  TimelinePlayheadDraw::enableTimelinePainterHints(p);
   const int rowH = kLayerRowHeight;
   const int iconSize = 16;
   const int offset = (kLayerColumnWidth - iconSize) / 2;
@@ -6665,7 +7077,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   RationalTime currentTime = impl_->currentTime;
   if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-    const auto fps = std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+    const auto fps = safeLayerPanelFrameRate(comp->frameRate().framerate());
     currentTime = RationalTime(comp->framePosition().framePosition(), fps);
   }
 
@@ -7414,9 +7826,12 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
         newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
          if (newIndex != oldIndex) {
           auto layer = comp->layerById(dragLayerId);
-          auto* cmd = new MoveLayerIndexCommand(comp, layer, oldIndex, newIndex);
-          UndoManager::instance()->push(std::unique_ptr<MoveLayerIndexCommand>(cmd));
-          updateLayout();
+          auto cmd = std::make_unique<MoveLayerIndexCommand>(
+              comp, layer, oldIndex, newIndex);
+          if (auto *undo = UndoManager::instance();
+              undo && undo->push(std::move(cmd))) {
+            updateLayout();
+          }
          }
       }
     }
@@ -7526,20 +7941,6 @@ public:
 
   QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::shyToggled,
                    impl_->panel, &ArtifactLayerPanelWidget::setShyHidden);
-  QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::visibleRowsChanged,
-                   this, [this]() {
-                     this->visibleRowsChanged();
-                   });
-  QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::verticalOffsetChanged,
-                   this, [this](double offset) {
-                       this->verticalOffsetChanged(offset);
-                     });
-  QObject::connect(
-      impl_->panel, &ArtifactLayerPanelWidget::propertyFocusChanged, this,
-      [this](const LayerID& layerId, const QString& propertyPath) {
-        this->propertyFocusChanged(layerId, propertyPath);
-      });
-
   if (auto* selectionButton = impl_->header->selectionMenuButton()) {
     QObject::connect(selectionButton, &QPushButton::clicked, this, [this, selectionButton]() {
       auto* svc = ArtifactProjectService::instance();
@@ -7564,8 +7965,10 @@ public:
               auto comp = service->currentComposition().lock();
               if (comp) {
                 if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
-                  l->setVisible(visible);
-                  impl_->panel->updateLayout();
+                  if (applyLayerPanelCommand(
+                          std::make_unique<SetLayerVisibilityCommand>(l, visible))) {
+                    impl_->panel->updateLayout();
+                  }
                 }
               }
             }
@@ -7575,8 +7978,10 @@ public:
               auto comp = service->currentComposition().lock();
               if (comp) {
                 if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
-                  l->setLocked(locked);
-                  impl_->panel->updateLayout();
+                  if (applyLayerPanelCommand(
+                          std::make_unique<SetLayerLockCommand>(l, locked))) {
+                    impl_->panel->updateLayout();
+                  }
                 }
               }
             }
@@ -7586,8 +7991,10 @@ public:
               auto comp = service->currentComposition().lock();
               if (comp) {
                 if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
-                  l->setSolo(solo);
-                  impl_->panel->updateLayout();
+                  if (applyLayerPanelCommand(
+                          std::make_unique<SetLayerSoloCommand>(l, solo))) {
+                    impl_->panel->updateLayout();
+                  }
                 }
               }
             }
@@ -7597,8 +8004,10 @@ public:
               auto comp = service->currentComposition().lock();
               if (comp) {
                 if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
-                  l->setShy(shy);
-                  impl_->panel->updateLayout();
+                  if (applyLayerPanelCommand(
+                          std::make_unique<SetLayerShyCommand>(l, shy))) {
+                    impl_->panel->updateLayout();
+                  }
                 }
               }
             }

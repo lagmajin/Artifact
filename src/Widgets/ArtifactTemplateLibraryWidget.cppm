@@ -110,12 +110,20 @@ int ArtifactTemplateLibraryWidget::applySelectedToCurrentComposition(
         return document.appendToComposition(*composition);
     }
     const auto layers = document.instantiateLayers();
+    auto transaction = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Import Template"));
     int appended = 0;
     for (auto it = layers.crbegin(); it != layers.crend(); ++it) {
         if (!*it) continue;
-        undoManager->push(std::make_unique<AddLayerCommand>(
+        transaction->addChild(std::make_unique<AddLayerCommand>(
             composition, *it, true));
         ++appended;
+    }
+    if (appended == 0 || !undoManager->push(std::move(transaction))) {
+        if (appended > 0 && errorMessage) {
+            *errorMessage = QStringLiteral("Could not record template import");
+        }
+        return 0;
     }
     return appended;
 }

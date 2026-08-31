@@ -9,6 +9,8 @@ module;
 #include <QShowEvent>
 #include <QPalette>
 #include <QColor>
+#include <QMetaObject>
+#include <QThread>
 #include <QString>
 #include <functional>
 #include <vector>
@@ -78,7 +80,6 @@ public:
   QLabel* titleLabel_ = nullptr;
   QLabel* subtitleLabel_ = nullptr;
   QPlainTextEdit* editor_ = nullptr;
-  QMetaObject::Connection noteConnection_;
   ArtifactCore::EventBus::Subscription compositionNoteSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -166,16 +167,31 @@ public:
             refreshBinding();
           }
         }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<LayerNoteChangedEvent>(
+        [this](const LayerNoteChangedEvent& event) {
+          const QString compositionId = event.compositionId;
+          const QString layerId = event.layerId;
+          const QString note = event.note;
+          const auto apply = [this, compositionId, layerId, note]() {
+            if (target_ != MarkdownNoteTarget::Layer ||
+                currentCompositionId_.toString() != compositionId ||
+                currentLayerId_.toString() != layerId) {
+              return;
+            }
+            loadText(note);
+          };
+          if (QThread::currentThread() == owner_->thread()) {
+            apply();
+          } else {
+            QMetaObject::invokeMethod(owner_, apply, Qt::QueuedConnection);
+          }
+        }));
 
     refreshBinding();
   }
 
   void disconnectNoteConnection()
   {
-    if (noteConnection_) {
-      QObject::disconnect(noteConnection_);
-      noteConnection_ = {};
-    }
     compositionNoteSubscription_.disconnect();
   }
 
@@ -257,10 +273,6 @@ public:
 
     currentLayerId_ = layer->id();
     disconnectNoteConnection();
-    noteConnection_ = QObject::connect(layer.get(), &ArtifactAbstractLayer::layerNoteChanged,
-                                       owner_, [this](const QString& note) {
-      loadText(note);
-    });
     if (editor_) {
       editor_->setPlaceholderText(activePlaceholder());
     }

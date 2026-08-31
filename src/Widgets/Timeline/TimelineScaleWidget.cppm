@@ -3,6 +3,7 @@ module;
 #include <QWidget>
 #include <QPainter>
 #include <QPalette>
+#include <QFontDatabase>
 #include <cmath>
 
 module Artifact.Timeline.ScaleWidget;
@@ -42,8 +43,9 @@ namespace Artifact
    // Background matching AE timeline headers
    painter.fillRect(rect, background);
 
-   QFont font = painter.font();
-   font.setFamily("Consolas"); // Use monospace for numbers
+   QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+   // Use the platform's fixed-width font so ruler labels stay aligned without
+   // depending on a Windows-only family name.
    font.setPointSize(8);
    painter.setFont(font);
 
@@ -152,6 +154,8 @@ void TimelineScaleWidget::setVisibleRange(double startFrame, double endFrame)
 void TimelineScaleWidget::paintEvent(QPaintEvent* event)
 {
  QPainter p(this);
+  // Ruler ticks intentionally stay pixel-stable; the shared timeline hints
+  // are reserved for text and vector overlays.
   p.setRenderHint(QPainter::Antialiasing, false);
   impl_->draw(p, rect());
   //p.setClipRect(r);

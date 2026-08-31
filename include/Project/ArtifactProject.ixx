@@ -131,26 +131,9 @@ bool isDirty() const;
    void removeAllAssets();
     
   public:
-	//signals
-  void projectCreated()
-   W_SIGNAL(projectCreated);
-  void projectChanged()
-   W_SIGNAL(projectChanged);
-   void compositionCreated(const CompositionID& id)
-   W_SIGNAL(compositionCreated, id);
-   void preRemoveComposition(const CompositionID& id)
-   W_SIGNAL(preRemoveComposition, id);
-  void preRemoveAllCompositions()
-   W_SIGNAL(preRemoveAllCompositions);
-
-  void layerCreated(const CompositionID& compId, const LayerID& layerId)
-   W_SIGNAL(layerCreated, compId, layerId);
- void layerRemoved(const CompositionID& compId, const LayerID& id)
-   W_SIGNAL(layerRemoved, compId, id);
-
-  void projectDirtyChanged(bool dirty)
-   W_SIGNAL(projectDirtyChanged, dirty);
-
+  // Internal change notification entry point. The implementation publishes
+  // ProjectChangedEvent; it is intentionally not a Qt signal.
+  void projectChanged();
 
  };
 

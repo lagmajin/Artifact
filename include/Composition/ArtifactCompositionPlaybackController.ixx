@@ -122,16 +122,6 @@ public:
   void goToNextChapter();
   void goToPreviousChapter();
 
-public: // signals
-  void playbackStateChanged(PlaybackState state)
-      W_SIGNAL(playbackStateChanged, state);
-  void frameChanged(const FramePosition &position)
-      W_SIGNAL(frameChanged, position);
-  void playbackSpeedChanged(float speed) W_SIGNAL(playbackSpeedChanged, speed);
-  void loopingChanged(bool loop) W_SIGNAL(loopingChanged, loop);
-  void frameRangeChanged(const FrameRange &range)
-      W_SIGNAL(frameRangeChanged, range);
-
 public:
   void onTimerTick();
   W_SLOT(onTimerTick);

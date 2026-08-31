@@ -98,7 +98,6 @@ public:
                         float clearcoatRoughness = 0.03f,
                         float transmission = 0.0f,
                         float specular = 0.5f, float ior = 1.5f);
-    void displayModeChanged(int mode) W_SIGNAL(displayModeChanged, mode);
     DisplayMode displayMode() const;
     bool hasModel() const;
     int vertexCount() const;

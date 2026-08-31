@@ -1,4 +1,5 @@
 ﻿module;
+#include <algorithm>
 #include <utility>
 #include <QLabel>
 #include <QBoxLayout>
@@ -10,6 +11,7 @@
 #include <QKeyEvent>
 #include <QColor>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QPaintEvent>
 #include <QPalette>
@@ -31,9 +33,11 @@ namespace Artifact
  W_OBJECT_IMPL(ArtifactTimeCodeWidget)
  class ArtifactTimeCodeWidget::Impl {
  public:
-  Impl();
+ Impl();
   QLabel* timecodeLabel_ = nullptr;
   QLabel* frameNumberLabel_ = nullptr;
+  int fps_ = 30;
+  int currentFrame_ = 0;
  };
 
  ArtifactTimeCodeWidget::Impl::Impl()
@@ -84,14 +88,12 @@ namespace Artifact
   layout->addWidget(impl_->frameNumberLabel_);
 
   setLayout(layout);
-  QFont timeFont(QStringLiteral("Consolas"));
-  timeFont.setStyleHint(QFont::Monospace);
+  QFont timeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
   timeFont.setBold(true);
   timeFont.setPixelSize(20);
   impl_->timecodeLabel_->setFont(timeFont);
 
-  QFont frameFont(QStringLiteral("Consolas"));
-  frameFont.setStyleHint(QFont::Monospace);
+  QFont frameFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
   frameFont.setBold(false);
   frameFont.setPixelSize(11);
   impl_->frameNumberLabel_->setFont(frameFont);
@@ -112,10 +114,23 @@ namespace Artifact
   delete impl_;
  }
 
+ void ArtifactTimeCodeWidget::setFps(int fps)
+ {
+    if (!impl_) {
+      return;
+    }
+    const int sanitized = std::max(1, fps);
+    if (impl_->fps_ == sanitized) {
+      return;
+    }
+    impl_->fps_ = sanitized;
+    updateTimeCode(impl_->currentFrame_);
+ }
+
  void ArtifactTimeCodeWidget::updateTimeCode(int frame)
  {
-    // Default FPS for display ? could be made configurable later
-    const int fps = 30;
+    const int fps = std::max(1, impl_->fps_);
+    impl_->currentFrame_ = frame;
 
     // Use RationalTime to represent the frame/time (value = frame count, scale = fps)
     ArtifactCore::RationalTime rt(static_cast<int64_t>(frame), static_cast<int64_t>(fps));

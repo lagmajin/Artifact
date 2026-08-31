@@ -41,108 +41,118 @@ public:
         }
 
         const QString type = request.type.trimmed();
+        const auto finalize = [&validation](ArtifactCore::CommandResult result) {
+            result.valid = validation.valid;
+            if (result.type.isEmpty()) {
+                result.type = validation.type;
+            }
+            if (result.undoLabel.isEmpty()) {
+                result.undoLabel = validation.undoLabel;
+            }
+            return result;
+        };
 
         if (type == QStringLiteral("set_property")) {
-            return executeSetProperty(request);
+            return finalize(executeSetProperty(request));
         }
         if (type == QStringLiteral("set_keyframes")) {
-            return executeSetKeyframes(request);
+            return finalize(executeSetKeyframes(request));
         }
         if (type == QStringLiteral("batch_set_keyframes")) {
-            return executeBatchSetKeyframes(request);
+            return finalize(executeBatchSetKeyframes(request));
         }
         if (type == QStringLiteral("move_layer")) {
-            return executeMoveLayer(request);
+            return finalize(executeMoveLayer(request));
         }
         if (type == QStringLiteral("rename_layer")) {
-            return executeRenameLayer(request);
+            return finalize(executeRenameLayer(request));
         }
         if (type == QStringLiteral("add_effect")) {
-            return executeAddEffect(request);
+            return finalize(executeAddEffect(request));
         }
         if (type == QStringLiteral("create_layer")) {
-            return executeCreateLayer(request);
+            return finalize(executeCreateLayer(request));
         }
         if (type == QStringLiteral("delete_layer")) {
-            return executeDeleteLayer(request);
+            return finalize(executeDeleteLayer(request));
         }
         if (type == QStringLiteral("set_layer_visible")) {
-            return executeSetLayerVisible(request);
+            return finalize(executeSetLayerVisible(request));
         }
         if (type == QStringLiteral("set_layer_blend_mode")) {
-            return executeSetLayerBlendMode(request);
+            return finalize(executeSetLayerBlendMode(request));
         }
         if (type == QStringLiteral("set_layer_opacity")) {
-            return executeSetLayerOpacity(request);
+            return finalize(executeSetLayerOpacity(request));
         }
         if (type == QStringLiteral("set_playback_state")) {
-            return executeSetPlaybackState(request);
+            return finalize(executeSetPlaybackState(request));
         }
         if (type == QStringLiteral("export_composition")) {
-            return executeExportComposition(request);
+            return finalize(executeExportComposition(request));
         }
         if (type == QStringLiteral("remove_effect")) {
-            return executeRemoveEffect(request);
+            return finalize(executeRemoveEffect(request));
         }
         if (type == QStringLiteral("get_scene_info")) {
-            return executeGetSceneInfo(request);
+            return finalize(executeGetSceneInfo(request));
         }
         if (type == QStringLiteral("get_layer_info")) {
-            return executeGetLayerInfo(request);
+            return finalize(executeGetLayerInfo(request));
         }
         if (type == QStringLiteral("create_composition")) {
-            return executeCreateComposition(request);
+            return finalize(executeCreateComposition(request));
         }
         if (type == QStringLiteral("switch_composition")) {
-            return executeSwitchComposition(request);
+            return finalize(executeSwitchComposition(request));
         }
         if (type == QStringLiteral("import_asset")) {
-            return executeImportAsset(request);
+            return finalize(executeImportAsset(request));
         }
         if (type == QStringLiteral("duplicate_layer")) {
-            return executeDuplicateLayer(request);
+            return finalize(executeDuplicateLayer(request));
         }
         if (type == QStringLiteral("group_layers")) {
-            return executeGroupLayers(request);
+            return finalize(executeGroupLayers(request));
         }
         if (type == QStringLiteral("set_layer_parent")) {
-            return executeSetLayerParent(request);
+            return finalize(executeSetLayerParent(request));
         }
         if (type == QStringLiteral("split_layer")) {
-            return executeSplitLayer(request);
+            return finalize(executeSplitLayer(request));
         }
         if (type == QStringLiteral("get_keyframes")) {
-            return executeGetKeyframes(request);
+            return finalize(executeGetKeyframes(request));
         }
         if (type == QStringLiteral("delete_keyframe")) {
-            return executeDeleteKeyframe(request);
+            return finalize(executeDeleteKeyframe(request));
         }
         if (type == QStringLiteral("set_work_area")) {
-            return executeSetWorkArea(request);
+            return finalize(executeSetWorkArea(request));
         }
         if (type == QStringLiteral("add_marker")) {
-            return executeAddMarker(request);
+            return finalize(executeAddMarker(request));
         }
         if (type == QStringLiteral("set_effect_parameter")) {
-            return executeSetEffectParameter(request);
+            return finalize(executeSetEffectParameter(request));
         }
         if (type == QStringLiteral("set_effect_enabled")) {
-            return executeSetEffectEnabled(request);
+            return finalize(executeSetEffectEnabled(request));
         }
         if (type == QStringLiteral("list_available_effects")) {
-            return executeListAvailableEffects(request);
+            return finalize(executeListAvailableEffects(request));
         }
         if (type == QStringLiteral("start_render_queue")) {
-            return executeStartRenderQueue(request);
+            return finalize(executeStartRenderQueue(request));
         }
         if (type == QStringLiteral("get_render_status")) {
-            return executeGetRenderStatus(request);
+            return finalize(executeGetRenderStatus(request));
         }
         if (type == QStringLiteral("list_compositions")) {
-            return executeListCompositions(request);
+            return finalize(executeListCompositions(request));
         }
         if (type == QStringLiteral("list_project_items")) {
-            return executeListProjectItems(request);
+            return finalize(executeListProjectItems(request));
         }
 
         result.error = QStringLiteral("Unsupported command type: ") + type;
@@ -162,12 +172,33 @@ private:
         }
         for (const QVariant& keyVar : keys) {
             const QVariantMap key = keyVar.toMap();
-            if (!key.contains(QStringLiteral("frame")) ||
+            bool frameOk = false;
+            const int frame = key.value(QStringLiteral("frame")).toInt(&frameOk);
+            if (!key.contains(QStringLiteral("frame")) || !frameOk || frame < 0 ||
                 !key.value(QStringLiteral("value")).isValid()) {
                 if (errorOut) {
-                    *errorOut = QStringLiteral("Each keyframe requires frame and value");
+                    *errorOut = QStringLiteral("Each keyframe requires a non-negative frame and value");
                 }
                 return false;
+            }
+            bool valueOk = false;
+            const double value = key.value(QStringLiteral("value")).toDouble(&valueOk);
+            if (!valueOk || !std::isfinite(value)) {
+                if (errorOut) {
+                    *errorOut = QStringLiteral("Each keyframe value must be a finite number");
+                }
+                return false;
+            }
+            if (key.contains(QStringLiteral("timeScale"))) {
+                bool scaleOk = false;
+                const qint64 timeScale = key.value(QStringLiteral("timeScale"))
+                    .toLongLong(&scaleOk);
+                if (!scaleOk || timeScale <= 0) {
+                    if (errorOut) {
+                        *errorOut = QStringLiteral("Each keyframe timeScale must be positive");
+                    }
+                    return false;
+                }
             }
         }
         return true;
@@ -192,29 +223,50 @@ private:
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         const QString propertyPath = request.target.value(QStringLiteral("propertyPath")).toString();
         const QVariant value = request.arguments.value(QStringLiteral("value"));
+        const QString effectId = request.target.value(QStringLiteral("effectId"))
+                                     .toString().trimmed();
 
         // Route property path to the correct setter method
         const QString normPath = propertyPath.trimmed().toLower();
         QVariant success(false);
-        if (normPath == QStringLiteral("position")) {
-            QVariantList args{layerId, value};
+        if (normPath == QStringLiteral("position") ||
+            normPath == QStringLiteral("transform.position")) {
+            const QVariantMap point = value.toMap();
+            QVariantList args{layerId, point.value(QStringLiteral("x")),
+                              point.value(QStringLiteral("y"))};
             success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerPosition"), args);
-        } else if (normPath == QStringLiteral("scale")) {
-            QVariantList args{layerId, value};
+        } else if (normPath == QStringLiteral("scale") ||
+                   normPath == QStringLiteral("transform.scale")) {
+            const QVariantMap point = value.toMap();
+            QVariantList args{layerId, point.value(QStringLiteral("x")),
+                              point.value(QStringLiteral("y"))};
             success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerScale"), args);
-        } else if (normPath == QStringLiteral("rotation")) {
+        } else if (normPath == QStringLiteral("rotation") ||
+                   normPath == QStringLiteral("transform.rotation")) {
             QVariantList args{layerId, value};
             success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerRotation"), args);
-        } else if (normPath == QStringLiteral("opacity")) {
+        } else if (normPath == QStringLiteral("opacity") ||
+                   normPath == QStringLiteral("transform.opacity")) {
             QVariantList args{layerId, value};
             success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerOpacity"), args);
         } else if (normPath == QStringLiteral("effect.enabled")) {
-            QVariantList args{layerId, value};
-            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectEnabled"), args);
+            if (!effectId.isEmpty()) {
+                QVariantList args{layerId, effectId, value};
+                success = invokeWorkspaceAutomationMethod(
+                    QStringLiteral("setLayerEffectEnabled"), args);
+            }
         } else {
-            // Try generic effect parameter setter
-            QVariantList args{layerId, propertyPath, value};
-            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectParameter"), args);
+            // Effect properties require an explicit stable effect instance ID.
+            // Do not reinterpret the property path as an effect ID.
+            const QString prefix = QStringLiteral("effect.");
+            if (!effectId.isEmpty() && normPath.startsWith(prefix)) {
+                const QString paramName = propertyPath.trimmed().mid(prefix.size());
+                if (!paramName.isEmpty()) {
+                    QVariantList args{layerId, effectId, paramName, value};
+                    success = invokeWorkspaceAutomationMethod(
+                        QStringLiteral("setLayerEffectParameter"), args);
+                }
+            }
         }
 
         result.success = success.isValid() && success.toBool();
@@ -257,32 +309,38 @@ private:
             return result;
         }
 
-        int succeeded = 0;
-        int failed = 0;
+        QVariantList normalized;
+        normalized.reserve(keys.size());
         for (const QVariant& keyVar : keys) {
             const QVariantMap key = keyVar.toMap();
-            int frame = key.value(QStringLiteral("frame")).toInt();
-            QVariant value = key.value(QStringLiteral("value"));
-            QVariantList args{layerId, propertyPath, frame, value};
-            const QVariant operation = invokeWorkspaceAutomationMethod(
-                QStringLiteral("setKeyframe"), args);
-            if (operation.isValid() && operation.toMap().value(QStringLiteral("success")).toBool()) {
-                ++succeeded;
-            } else {
-                ++failed;
-            }
+            normalized.append(QVariantMap{
+                {QStringLiteral("propertyPath"), propertyPath},
+                {QStringLiteral("frameNumber"), key.value(QStringLiteral("frame"))},
+                {QStringLiteral("value"), key.value(QStringLiteral("value"))},
+                {QStringLiteral("interpolation"), key.value(
+                    QStringLiteral("interpolation"), QStringLiteral("Linear"))}
+            });
         }
 
-        result.success = failed == 0;
-        result.executed = succeeded > 0 && failed == 0;
+        const QVariant operation = invokeWorkspaceAutomationMethod(
+            QStringLiteral("batchSetKeyframes"), QVariantList{layerId, normalized});
+        const QVariantMap operationMap = operation.toMap();
+        const int succeeded = operationMap.value(QStringLiteral("addedCount")).toInt();
+        const int failed = operationMap.value(QStringLiteral("skippedCount")).toInt();
+
+        result.success = operation.isValid() && operationMap.value(QStringLiteral("success")).toBool();
+        result.executed = result.success;
         if (!result.success) {
-            result.error = QStringLiteral("One or more keyframes could not be set");
+            result.error = operationMap.value(QStringLiteral("error"),
+                                              QStringLiteral("One or more keyframes could not be set"))
+                               .toString();
         }
         QVariantMap details;
         details.insert(QStringLiteral("keyframeCount"), static_cast<int>(keys.size()));
         details.insert(QStringLiteral("succeeded"), succeeded);
         details.insert(QStringLiteral("failed"), failed);
         result.diagnostics = details;
+        result.details = operationMap.value(QStringLiteral("details")).toList();
         return result;
     }
 
@@ -322,9 +380,7 @@ private:
             }
         }
 
-        int totalKeyframes = 0;
-        int succeeded = 0;
-        int failed = 0;
+        QVariantList normalized;
         for (const QVariant& batchVar : batches) {
             const QVariantMap batch = batchVar.toMap();
             const QString propPath = batch.value(QStringLiteral("propertyPath")).toString();
@@ -332,30 +388,28 @@ private:
 
             for (const QVariant& keyVar : keys) {
                 const QVariantMap key = keyVar.toMap();
-                int frame = key.value(QStringLiteral("frame")).toInt();
-                QVariant value = key.value(QStringLiteral("value"));
-                QVariantList args{layerId, propPath, frame, value};
-                const QVariant operation = invokeWorkspaceAutomationMethod(
-                    QStringLiteral("setKeyframe"), args);
-                if (operation.isValid() && operation.toMap().value(QStringLiteral("success")).toBool()) {
-                    ++succeeded;
-                } else {
-                    ++failed;
-                }
-                ++totalKeyframes;
+                normalized.append(QVariantMap{
+                    {QStringLiteral("propertyPath"), propPath},
+                    {QStringLiteral("frameNumber"), key.value(QStringLiteral("frame"))},
+                    {QStringLiteral("value"), key.value(QStringLiteral("value"))},
+                    {QStringLiteral("interpolation"), key.value(
+                        QStringLiteral("interpolation"), QStringLiteral("Linear"))}
+                });
             }
         }
 
-        result.success = totalKeyframes > 0 && failed == 0;
-        result.executed = succeeded > 0 && failed == 0;
+        const QVariant operation = invokeWorkspaceAutomationMethod(
+            QStringLiteral("batchSetKeyframes"), QVariantList{layerId, normalized});
+        const QVariantMap operationMap = operation.toMap();
+        const int totalKeyframes = normalized.size();
+        const int succeeded = operationMap.value(QStringLiteral("addedCount")).toInt();
+        const int failed = operationMap.value(QStringLiteral("skippedCount")).toInt();
+        result.success = operation.isValid() && operationMap.value(QStringLiteral("success")).toBool();
+        result.executed = result.success;
         if (!result.success) {
-            if (totalKeyframes == 0) {
-                result.error = QStringLiteral("batch_set_keyframes requires at least one keyframe");
-                result.errorCode = QStringLiteral("COMMAND_INVALID");
-                result.retryable = true;
-            } else {
-                result.error = QStringLiteral("One or more keyframes could not be set");
-            }
+            result.error = operationMap.value(QStringLiteral("error"),
+                                              QStringLiteral("One or more keyframes could not be set"))
+                               .toString();
         }
         QVariantMap details;
         details.insert(QStringLiteral("batchCount"), static_cast<int>(batches.size()));
@@ -363,6 +417,7 @@ private:
         details.insert(QStringLiteral("succeeded"), succeeded);
         details.insert(QStringLiteral("failed"), failed);
         result.diagnostics = details;
+        result.details = operationMap.value(QStringLiteral("details")).toList();
         return result;
     }
 
@@ -418,8 +473,13 @@ private:
         QVariantList args{layerId, effectType};
         QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("addLayerEffect"), args);
 
-        result.success = ok.isValid() && ok.toBool();
+        const QString effectId = ok.toString().trimmed();
+        result.success = !effectId.isEmpty();
         result.executed = result.success;
+        if (result.success) {
+            result.details = QVariantList{
+                QVariantMap{{QStringLiteral("effectId"), effectId}}};
+        }
         if (!result.success) {
             result.error = QStringLiteral("addLayerEffect failed");
         }
@@ -451,8 +511,12 @@ private:
             return result;
         }
 
-        result.success = ok.isValid() && ok.toBool();
+        const QVariantMap creation = ok.toMap();
+        result.success = creation.value(QStringLiteral("success")).toBool();
         result.executed = result.success;
+        if (result.success) {
+            result.details = QVariantList{creation};
+        }
         if (!result.success) {
             result.error = QStringLiteral("createLayer failed for type: ") + layerType;
         }

@@ -351,6 +351,7 @@ public:
     float lastTime = 0.0f;
     int width = 1920;
     int height = 1080;
+    int selectedEffectorIndex = -1;
     
     Impl() {
         particleSystem = std::make_unique<ParticleSystem>();
@@ -437,28 +438,6 @@ ArtifactParticleLayer::~ArtifactParticleLayer()
     delete impl_;
 }
 
-ArtifactParticle3DLayer::ArtifactParticle3DLayer()
-{
-    setIs3D(true);
-}
-
-ArtifactParticle3DLayer::~ArtifactParticle3DLayer() = default;
-
-QJsonObject ArtifactParticle3DLayer::toJson() const
-{
-    QJsonObject json = ArtifactParticleLayer::toJson();
-    json[QStringLiteral("type")] = static_cast<int>(LayerType::Particle3D);
-    json[QStringLiteral("layerType")] = QStringLiteral("Particle3DLayer");
-    json[QStringLiteral("is3D")] = true;
-    return json;
-}
-
-void ArtifactParticle3DLayer::fromJsonProperties(const QJsonObject& obj)
-{
-    ArtifactParticleLayer::fromJsonProperties(obj);
-    setIs3D(true);
-}
-
 void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer || !impl_->particleSystem) {
@@ -489,9 +468,19 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         const auto lodData = applyParticleRenderLOD(
             std::move(coreData), screenScale);
         if (!lodData.particles.empty()) {
-            const ArtifactCore::ParticleRenderData renderData =
-                transformParticleRenderData(lodData, globalTransform, opacity());
-            renderer->drawParticles(renderData);
+            // 3D particle layers must not collapse (px, py, vx, vy) through a
+            // 2D QTransform — CompositionRenderController bundles the 3D
+            // view/proj matrices through set3DCameraMatrices() and the
+            // ParticleRenderer reads particleViewMatrix_ / particleProjMatrix_
+            // when particle3DCameraActive_ is true. Keep the source positions
+            // intact so 3D camera orbit moves the billboards correctly.
+            if (is3D()) {
+                renderer->drawParticles(lodData);
+            } else {
+                const ArtifactCore::ParticleRenderData renderData =
+                    transformParticleRenderData(lodData, globalTransform, opacity());
+                renderer->drawParticles(renderData);
+            }
         }
         const auto size = sourceSize();
         drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
@@ -700,6 +689,8 @@ QJsonObject ArtifactParticleLayer::toJson() const
             safeEmitterColor(params.colorEnd).name(QColor::HexArgb);
         emitterJson["colorMidPosition"] = safeEmitterValue(
             params.colorMidPosition, 0.5, 0.0, 1.0);
+        emitterJson["lifeCurve"] = std::clamp(
+            static_cast<int>(params.lifeCurve), 0, 4);
         emitterJson["colorVariation"] = safeEmitterValue(
             params.colorVariation, 0.0, 0.0, 1.0);
         
@@ -1097,6 +1088,10 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             }
             if (emitterJson.contains("colorMidPosition")) {
                 params.colorMidPosition = emitterJson["colorMidPosition"].toDouble();
+            }
+            if (emitterJson.contains("lifeCurve")) {
+                params.lifeCurve = static_cast<ParticleLifeCurve>(std::clamp(
+                    emitterJson["lifeCurve"].toInt(), 0, 4));
             }
             if (emitterJson.contains("colorVariation")) {
                 params.colorVariation = emitterJson["colorVariation"].toDouble();
@@ -1561,6 +1556,42 @@ int ArtifactParticleLayer::emitterCount() const
     return impl_->particleSystem->emitterCount();
 }
 
+QVector3D ArtifactParticleLayer::emitterPosition() const
+{
+    const auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    return emitter ? emitter->params().position : QVector3D{};
+}
+
+bool ArtifactParticleLayer::setEmitterPosition(const QVector3D& position)
+{
+    if (!impl_ || !impl_->applyPrimaryEmitterParams([&](EmitterParams& params) {
+        params.position = safeEffectorVector(position);
+    })) return false;
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
+QVector3D ArtifactParticleLayer::emitterDirection() const
+{
+    const auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    return emitter ? emitter->params().direction : QVector3D{0.0f, -1.0f, 0.0f};
+}
+
+bool ArtifactParticleLayer::setEmitterDirection(const QVector3D& direction)
+{
+    const QVector3D safe = safeEffectorVector(direction);
+    if (safe.lengthSquared() <= 0.000001f) return false;
+    if (!impl_ || !impl_->applyPrimaryEmitterParams([&](EmitterParams& params) {
+        params.direction = safe.normalized();
+    })) return false;
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
 void ArtifactParticleLayer::addForceEffector(const QVector3D& force)
 {
     auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
@@ -1636,6 +1667,132 @@ void ArtifactParticleLayer::clearEffectors()
 {
     for (const auto& emitter : impl_->particleSystem->emitters()) {
         if (emitter) emitter->clearEffectors();
+    }
+    impl_->selectedEffectorIndex = -1;
+    impl_->rebuildSavedEmitterParamsFromSystem();
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+}
+
+int ArtifactParticleLayer::effectorCount() const
+{
+    const auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    return emitter ? static_cast<int>(emitter->effectors().size()) : 0;
+}
+
+int ArtifactParticleLayer::selectedEffectorIndex() const
+{
+    return impl_ ? impl_->selectedEffectorIndex : -1;
+}
+
+bool ArtifactParticleLayer::setEffectorEnabled(int index, bool enabled)
+{
+    auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || !emitter->setEffectorEnabled(index, enabled)) return false;
+    impl_->rebuildSavedEmitterParamsFromSystem();
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
+float ArtifactParticleLayer::effectorStrength(int index) const
+{
+    const auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size()) ||
+        !emitter->effectors()[index]) return 0.0f;
+    return emitter->effectors()[index]->strength;
+}
+
+bool ArtifactParticleLayer::setEffectorStrength(int index, float strength)
+{
+    auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size()) ||
+        !emitter->effectors()[index]) return false;
+    emitter->effectors()[index]->strength = std::isfinite(strength)
+        ? std::clamp(strength, 0.0f, 1000000.0f) : 0.0f;
+    impl_->rebuildSavedEmitterParamsFromSystem();
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
+QVector3D ArtifactParticleLayer::effectorPosition(int index) const
+{
+    const auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size()) ||
+        !emitter->effectors()[index]) {
+        return {};
+    }
+    return emitter->effectors()[index]->position;
+}
+
+bool ArtifactParticleLayer::setEffectorPosition(int index, const QVector3D& position)
+{
+    auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size()) ||
+        !emitter->effectors()[index]) {
+        return false;
+    }
+    emitter->effectors()[index]->position = safeEffectorVector(position);
+    impl_->rebuildSavedEmitterParamsFromSystem();
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
+float ArtifactParticleLayer::effectorInfluenceRadius(int index) const
+{
+    const auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size()) ||
+        !emitter->effectors()[index]) return 0.0f;
+    const auto& effector = emitter->effectors()[index];
+    if (const auto* vortex = dynamic_cast<const VortexEffector*>(effector.get())) return vortex->radius;
+    if (const auto* attractor = dynamic_cast<const AttractorEffector*>(effector.get())) return attractor->radius;
+    if (const auto* repeller = dynamic_cast<const RepellerEffector*>(effector.get())) return repeller->radius;
+    return 0.0f;
+}
+
+bool ArtifactParticleLayer::setEffectorInfluenceRadius(int index, float radius)
+{
+    auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size()) ||
+        !emitter->effectors()[index]) return false;
+    const float safeRadius = std::isfinite(radius) ? std::clamp(radius, 0.0f, 1000000.0f) : 0.0f;
+    auto& effector = emitter->effectors()[index];
+    bool changedRadius = false;
+    if (auto* vortex = dynamic_cast<VortexEffector*>(effector.get())) { vortex->radius = safeRadius; changedRadius = true; }
+    else if (auto* attractor = dynamic_cast<AttractorEffector*>(effector.get())) { attractor->radius = safeRadius; changedRadius = true; }
+    else if (auto* repeller = dynamic_cast<RepellerEffector*>(effector.get())) { repeller->radius = safeRadius; changedRadius = true; }
+    if (!changedRadius) return false;
+    impl_->rebuildSavedEmitterParamsFromSystem();
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
+bool ArtifactParticleLayer::moveEffector(int fromIndex, int toIndex)
+{
+    auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || !emitter->moveEffector(fromIndex, toIndex)) return false;
+    impl_->rebuildSavedEmitterParamsFromSystem();
+    clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
+    return true;
+}
+
+void ArtifactParticleLayer::removeEffector(int index)
+{
+    auto* emitter = impl_ ? impl_->primaryEmitter() : nullptr;
+    if (!emitter || index < 0 || index >= static_cast<int>(emitter->effectors().size())) return;
+    emitter->removeEffector(index);
+    if (impl_->selectedEffectorIndex >= static_cast<int>(emitter->effectors().size())) {
+        impl_->selectedEffectorIndex = static_cast<int>(emitter->effectors().size()) - 1;
     }
     impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
@@ -1932,6 +2089,26 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
         return persistentLayerProperty(name, type, value, priority);
     };
 
+    // Keep the first-touch workflow compact: preset selection is an explicit
+    // action and does not expose the whole emitter stack as the entry point.
+    ArtifactCore::PropertyGroup quickSetupGroup(QStringLiteral("Quick Setup"));
+    auto presetProp = makeProp(QStringLiteral("particle.quick.preset"),
+                               ArtifactCore::PropertyType::Integer, 0, -300);
+    presetProp->setDisplayLabel(QStringLiteral("Preset"));
+    presetProp->setHardRange(0, 19);
+    presetProp->setSoftRange(0, 19);
+    presetProp->setTooltip(QStringLiteral(
+        "Select a 2D starter preset. Applying a preset replaces the emitter settings."));
+    quickSetupGroup.addProperty(presetProp);
+    auto preWarmQuickProp = makeProp(QStringLiteral("particle.quick.preWarm"),
+                                     ArtifactCore::PropertyType::Boolean,
+                                     false, -299);
+    preWarmQuickProp->setDisplayLabel(QStringLiteral("Pre-Warm Preview"));
+    preWarmQuickProp->setTooltip(QStringLiteral(
+        "Pre-simulate the current emitter so smoke, trails, and bursts are visible immediately."));
+    quickSetupGroup.addProperty(preWarmQuickProp);
+    groups.push_back(quickSetupGroup);
+
     particleGroup.addProperty(makeProp(QStringLiteral("particle.playing"), ArtifactCore::PropertyType::Boolean, isPlaying(), -140));
     auto timeScaleProp = makeProp(QStringLiteral("particle.timeScale"), ArtifactCore::PropertyType::Float, timeScale(), -130);
     timeScaleProp->setHardRange(0.0, 1000000.0);
@@ -1987,6 +2164,75 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     particleGroup.addProperty(stretchFactorProp);
 
     groups.push_back(particleGroup);
+
+    ArtifactCore::PropertyGroup effectorsGroup(QStringLiteral("Effectors"));
+    auto effectorCountProp = makeProp(QStringLiteral("particle.effectors.count"),
+                                      ArtifactCore::PropertyType::Integer,
+                                      effectorCount(), -200);
+    effectorCountProp->setDisplayLabel(QStringLiteral("Stack Count"));
+    effectorCountProp->setMinValue(0);
+    effectorCountProp->setHardRange(0, 1024);
+    effectorCountProp->setTooltip(QStringLiteral(
+        "Effectors are evaluated in stack order. Use the Particle editor to reorder them."));
+    effectorsGroup.addProperty(effectorCountProp);
+    auto selectedEffectorProp = makeProp(QStringLiteral("particle.effectors.selectedIndex"),
+                                         ArtifactCore::PropertyType::Integer,
+                                         impl_->selectedEffectorIndex, -199);
+    selectedEffectorProp->setDisplayLabel(QStringLiteral("Selected Effector"));
+    selectedEffectorProp->setHardRange(-1, 1023);
+    effectorsGroup.addProperty(selectedEffectorProp);
+    auto addEffectorProp = makeProp(QStringLiteral("particle.effectors.addType"),
+                                    ArtifactCore::PropertyType::Integer, 0, -198);
+    addEffectorProp->setDisplayLabel(QStringLiteral("Add Effector Type"));
+    addEffectorProp->setHardRange(0, 7);
+    addEffectorProp->setTooltip(QStringLiteral(
+        "0=Force, 1=Vortex, 2=Turbulence, 3=Attractor, 4=Repeller, 5=Wind, 6=Flocking, 7=Kill"));
+    effectorsGroup.addProperty(addEffectorProp);
+    auto removeEffectorProp = makeProp(QStringLiteral("particle.effectors.removeSelected"),
+                                       ArtifactCore::PropertyType::Boolean, false, -197);
+    removeEffectorProp->setDisplayLabel(QStringLiteral("Remove Selected"));
+    effectorsGroup.addProperty(removeEffectorProp);
+    auto moveEffectorProp = makeProp(QStringLiteral("particle.effectors.moveSelectedTo"),
+                                     ArtifactCore::PropertyType::Integer, -1, -196);
+    moveEffectorProp->setDisplayLabel(QStringLiteral("Move Selected To"));
+    moveEffectorProp->setHardRange(0, 1023);
+    effectorsGroup.addProperty(moveEffectorProp);
+    auto enabledEffectorProp = makeProp(QStringLiteral("particle.effectors.selectedEnabled"),
+                                        ArtifactCore::PropertyType::Boolean, true, -195);
+    enabledEffectorProp->setDisplayLabel(QStringLiteral("Selected Enabled"));
+    effectorsGroup.addProperty(enabledEffectorProp);
+    auto selectedEffectorStrengthProp = makeProp(
+        QStringLiteral("particle.effectors.selectedStrength"),
+        ArtifactCore::PropertyType::Float,
+        effectorStrength(selectedEffectorIndex()), -194);
+    selectedEffectorStrengthProp->setDisplayLabel(QStringLiteral("Selected Strength"));
+    selectedEffectorStrengthProp->setHardRange(0.0, 1000000.0);
+    selectedEffectorStrengthProp->setSoftRange(0.0, 1000.0);
+    selectedEffectorStrengthProp->setStep(0.1);
+    effectorsGroup.addProperty(selectedEffectorStrengthProp);
+    auto selectedEffectorXProp = makeProp(QStringLiteral("particle.effectors.selectedPositionX"),
+                                          ArtifactCore::PropertyType::Float,
+                                          effectorPosition(selectedEffectorIndex()).x(), -194);
+    selectedEffectorXProp->setDisplayLabel(QStringLiteral("Selected Position X"));
+    selectedEffectorXProp->setUnit(QStringLiteral("px"));
+    selectedEffectorXProp->setHardRange(-1000000.0, 1000000.0);
+    effectorsGroup.addProperty(selectedEffectorXProp);
+    auto selectedEffectorYProp = makeProp(QStringLiteral("particle.effectors.selectedPositionY"),
+                                          ArtifactCore::PropertyType::Float,
+                                          effectorPosition(selectedEffectorIndex()).y(), -193);
+    selectedEffectorYProp->setDisplayLabel(QStringLiteral("Selected Position Y"));
+    selectedEffectorYProp->setUnit(QStringLiteral("px"));
+    selectedEffectorYProp->setHardRange(-1000000.0, 1000000.0);
+    effectorsGroup.addProperty(selectedEffectorYProp);
+    auto selectedEffectorRadiusProp = makeProp(
+        QStringLiteral("particle.effectors.selectedInfluenceRadius"),
+        ArtifactCore::PropertyType::Float,
+        effectorInfluenceRadius(selectedEffectorIndex()), -192);
+    selectedEffectorRadiusProp->setDisplayLabel(QStringLiteral("Influence Radius"));
+    selectedEffectorRadiusProp->setUnit(QStringLiteral("px"));
+    selectedEffectorRadiusProp->setHardRange(0.0, 1000000.0);
+    effectorsGroup.addProperty(selectedEffectorRadiusProp);
+    groups.push_back(effectorsGroup);
 
     ArtifactCore::PropertyGroup emitterGroup(QStringLiteral("Emitter"));
     const EmitterParams emitter = impl_->primaryEmitterParams().value_or(EmitterParams{});
@@ -2266,7 +2512,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     simulationGroup.addProperty(selfCollisionResponseProp);
     groups.push_back(simulationGroup);
 
-    ArtifactCore::PropertyGroup particleLookGroup(QStringLiteral("Particle"));
+    ArtifactCore::PropertyGroup particleLookGroup(QStringLiteral("Particle Life & Appearance"));
 
     auto lifeMinProp = makeProp(QStringLiteral("particle.particle.lifeMin"), ArtifactCore::PropertyType::Float, emitter.lifeMin, -232);
     lifeMinProp->setDisplayLabel(QStringLiteral("Life Min"));
@@ -2429,6 +2675,22 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     colorMidPosProp->setSoftRange(0.0, 1.0);
     colorMidPosProp->setStep(0.01);
     particleLookGroup.addProperty(colorMidPosProp);
+
+    auto lifeCurveProp = makeProp(QStringLiteral("particle.particle.lifeCurve"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  static_cast<int>(emitter.lifeCurve), -211);
+    lifeCurveProp->setDisplayLabel(QStringLiteral("Life Curve"));
+    lifeCurveProp->setHardRange(0, 4);
+    lifeCurveProp->setTooltip(QStringLiteral(
+        "0=Linear, 1=Ease In, 2=Ease Out, 3=Smooth, 4=Pulse"));
+    particleLookGroup.addProperty(lifeCurveProp);
+    auto resetLifeCurveProp = makeProp(
+        QStringLiteral("particle.particle.resetLifeCurve"),
+        ArtifactCore::PropertyType::Boolean, false, -210);
+    resetLifeCurveProp->setDisplayLabel(QStringLiteral("Reset Life Curve"));
+    resetLifeCurveProp->setTooltip(QStringLiteral(
+        "Reset Size, Opacity, Color life points, positions, and curve mode to defaults."));
+    particleLookGroup.addProperty(resetLifeCurveProp);
 
     auto colorEndProp = makeProp(QStringLiteral("particle.particle.colorEnd"), ArtifactCore::PropertyType::Color, emitter.colorEnd, -211);
     colorEndProp->setDisplayLabel(QStringLiteral("Color End"));
@@ -2593,6 +2855,125 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         const float raw = static_cast<float>(input.toDouble());
         return std::isfinite(raw) ? std::clamp(raw, minimum, maximum) : fallback;
     };
+
+    if (propertyPath == QStringLiteral("particle.effectors.selectedIndex")) {
+        const int count = effectorCount();
+        impl_->selectedEffectorIndex = count == 0
+            ? -1 : std::clamp(value.toInt(), -1, count - 1);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.addType")) {
+        auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
+        if (!emitter) return false;
+        std::unique_ptr<ParticleEffector> effector;
+        switch (std::clamp(value.toInt(), 0, 7)) {
+        case 0: effector = std::make_unique<ForceEffector>(); break;
+        case 1: effector = std::make_unique<VortexEffector>(); break;
+        case 2: effector = std::make_unique<TurbulenceEffector>(); break;
+        case 3: effector = std::make_unique<AttractorEffector>(); break;
+        case 4: effector = std::make_unique<RepellerEffector>(); break;
+        case 5: effector = std::make_unique<WindEffector>(); break;
+        case 6: effector = std::make_unique<FlockingEffector>(); break;
+        case 7: effector = std::make_unique<KillZoneEffector>(); break;
+        }
+        emitter->addEffector(std::move(effector));
+        impl_->selectedEffectorIndex = effectorCount() - 1;
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
+        Q_EMIT particleSystemChanged();
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.removeSelected")) {
+        if (value.toBool()) removeEffector(impl_->selectedEffectorIndex);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.moveSelectedTo")) {
+        const int target = std::clamp(value.toInt(), 0, std::max(0, effectorCount() - 1));
+        if (moveEffector(impl_->selectedEffectorIndex, target)) {
+            impl_->selectedEffectorIndex = target;
+        }
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.selectedEnabled")) {
+        setEffectorEnabled(impl_->selectedEffectorIndex, value.toBool());
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.selectedStrength")) {
+        return setEffectorStrength(
+            impl_->selectedEffectorIndex,
+            safeParticleFloat(value, effectorStrength(impl_->selectedEffectorIndex),
+                              0.0f, 1000000.0f));
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.selectedPositionX")) {
+        QVector3D position = effectorPosition(impl_->selectedEffectorIndex);
+        position.setX(safeParticleFloat(value, position.x()));
+        return setEffectorPosition(impl_->selectedEffectorIndex, position);
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.selectedPositionY")) {
+        QVector3D position = effectorPosition(impl_->selectedEffectorIndex);
+        position.setY(safeParticleFloat(value, position.y()));
+        return setEffectorPosition(impl_->selectedEffectorIndex, position);
+    }
+    if (propertyPath == QStringLiteral("particle.effectors.selectedInfluenceRadius")) {
+        return setEffectorInfluenceRadius(
+            impl_->selectedEffectorIndex,
+            safeParticleFloat(value, effectorInfluenceRadius(impl_->selectedEffectorIndex),
+                              0.0f, 1000000.0f));
+    }
+
+    if (propertyPath == QStringLiteral("particle.quick.preset")) {
+        static const QStringList presets = {
+            QStringLiteral("fire"), QStringLiteral("campfire"), QStringLiteral("torch"),
+            QStringLiteral("smoke"), QStringLiteral("steam"), QStringLiteral("dust"),
+            QStringLiteral("rain"), QStringLiteral("splash"), QStringLiteral("fountain"),
+            QStringLiteral("explosion"), QStringLiteral("debris"), QStringLiteral("sparks"),
+            QStringLiteral("leaves"), QStringLiteral("snow"), QStringLiteral("pollen"),
+            QStringLiteral("magic"), QStringLiteral("sparkles"), QStringLiteral("energyField"),
+            QStringLiteral("confetti"), QStringLiteral("bubbles")};
+        const int index = std::clamp(value.toInt(), 0, static_cast<int>(presets.size()) - 1);
+        loadPreset(presets.at(index));
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.quick.preWarm")) {
+        if (value.toBool()) {
+            const auto emitter = impl_->primaryEmitterParams();
+            const float duration = emitter.has_value()
+                ? std::max(emitter->lifeMax, emitter->lifeMin)
+                : 1.0f;
+            preWarm(std::clamp(duration, 0.0f, 60.0f));
+        }
+        Q_EMIT changed();
+        return true;
+    }
+
+    if (propertyPath == QStringLiteral("particle.particle.resetLifeCurve")) {
+        if (!value.toBool()) return true;
+        const EmitterParams defaults{};
+        return applyPrimaryEmitterValue([&defaults](EmitterParams& params) {
+            params.scaleMin = defaults.scaleMin;
+            params.scaleMax = defaults.scaleMax;
+            params.scaleMidMin = defaults.scaleMidMin;
+            params.scaleMidMax = defaults.scaleMidMax;
+            params.scaleMidPosition = defaults.scaleMidPosition;
+            params.scaleEndMin = defaults.scaleEndMin;
+            params.scaleEndMax = defaults.scaleEndMax;
+            params.opacityMin = defaults.opacityMin;
+            params.opacityMax = defaults.opacityMax;
+            params.opacityMidMin = defaults.opacityMidMin;
+            params.opacityMidMax = defaults.opacityMidMax;
+            params.opacityMidPosition = defaults.opacityMidPosition;
+            params.opacityEndMin = defaults.opacityEndMin;
+            params.opacityEndMax = defaults.opacityEndMax;
+            params.colorStart = defaults.colorStart;
+            params.colorMid = defaults.colorMid;
+            params.colorMidPosition = defaults.colorMidPosition;
+            params.colorEnd = defaults.colorEnd;
+            params.lifeCurve = defaults.lifeCurve;
+        });
+    }
 
     if (propertyPath == QStringLiteral("particle.playing")) {
         value.toBool() ? play() : pause();
@@ -3163,6 +3544,12 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     if (propertyPath == QStringLiteral("particle.particle.colorMidPosition")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
             params.colorMidPosition = safeParticleFloat(value, 0.5f, 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.lifeCurve")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.lifeCurve = static_cast<ParticleLifeCurve>(
+                std::clamp(value.toInt(), 0, 4));
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.colorEnd") ||

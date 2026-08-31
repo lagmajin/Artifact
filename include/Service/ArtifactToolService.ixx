@@ -46,8 +46,6 @@ export namespace Artifact {
   void setToolManager(ArtifactToolManager* manager);
   ArtifactToolManager* toolManager() const;
 
-  void editModeChanged(EditMode mode) W_SIGNAL(editModeChanged, mode);
-  void displayModeChanged(DisplayMode mode) W_SIGNAL(displayModeChanged, mode);
  };
 
 }

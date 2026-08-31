@@ -8,6 +8,12 @@
 
 namespace Artifact::TimelinePlayheadDraw {
 
+inline void enableTimelinePainterHints(QPainter& painter) {
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.setRenderHint(QPainter::TextAntialiasing, true);
+  painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+}
+
 inline QColor playheadColor() {
   return QColor(255, 92, 92);
 }
@@ -18,7 +24,7 @@ inline void drawPlayhead(QPainter& painter, const qreal x, const qreal stemTop,
                          const qreal maxHeadHeight = 10.0,
                          const qreal headWidth = 12.0) {
   const QColor color = playheadColor();
-  painter.setRenderHint(QPainter::Antialiasing, true);
+  enableTimelinePainterHints(painter);
 
   painter.setBrush(Qt::NoBrush);
   painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::FlatCap));

@@ -91,6 +91,15 @@ import Artifact.Service.ActiveContext;
 import Artifact.Composition.PlaybackController;
 
 namespace {
+
+float safePlaybackFrameRate(const float rawFps)
+{
+    if (!std::isfinite(rawFps) || rawFps <= 0.0f) {
+        return 30.0f;
+    }
+    return std::clamp(rawFps, 1.0f, 10000.0f);
+}
+
 class PlaybackTimecodeFrame final : public QFrame
 {
 public:
@@ -645,7 +654,7 @@ public:
         timecodeFrame_ = new PlaybackTimecodeFrame(owner_);
         timecodeFrame_->setTimecodeCallback([this](const QString& tc) {
           if (auto* svc = ArtifactPlaybackService::instance()) {
-            const float fps = std::max(1.0f, svc->frameRate().framerate());
+            const float fps = safePlaybackFrameRate(svc->frameRate().framerate());
             const QString input = tc.trimmed();
             bool ok = false;
             qint64 frame = 0;
@@ -1257,7 +1266,7 @@ public:
         }
         const auto* service = ArtifactPlaybackService::instance();
         const FrameRate fpsRate = service ? service->frameRate() : FrameRate(30.0f);
-        const float fps = std::max(1.0f, fpsRate.framerate());
+        const float fps = safePlaybackFrameRate(fpsRate.framerate());
         const FrameRange range = service ? service->frameRange() : FrameRange(FramePosition(0), FramePosition(300));
         const FramePosition current = service ? service->currentFrame() : FramePosition(0);
 
@@ -1569,14 +1578,14 @@ public:
                 updateFrameWidgetsCoalesced(true);
             }));
 
-        if (auto* service = ArtifactPlaybackService::instance()) {
-            QObject::connect(service, &ArtifactPlaybackService::ramPreviewStateChanged, owner_, [this](bool enabled, const FrameRange&) {
-                if (ramCacheCheckbox_) {
-                    QSignalBlocker blocker(ramCacheCheckbox_);
-                    ramCacheCheckbox_->setChecked(enabled);
-                }
-            });
-        }
+        eventBusSubscriptions_.push_back(
+            eventBus_.subscribe<PlaybackRamPreviewStateChangedEvent>(
+                [this](const PlaybackRamPreviewStateChangedEvent& event) {
+                    if (ramCacheCheckbox_) {
+                        QSignalBlocker blocker(ramCacheCheckbox_);
+                        ramCacheCheckbox_->setChecked(event.enabled);
+                    }
+                }));
     }
     
     void handlePlayButtonClicked()

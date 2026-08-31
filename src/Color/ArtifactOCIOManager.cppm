@@ -23,10 +23,31 @@ import Color.GamutConversion;
 import Color.TransferFunction;
 import Core.Parallel;
 import Image.ImageF32x4_RGBA;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace OCIO = OCIO_NAMESPACE;
 
 namespace Artifact {
+
+static void publishOCIOConfigChanged()
+{
+    ArtifactCore::globalEventBus().publish<OCIOManagerChangedEvent>(
+        {OCIOManagerChangeKind::ConfigChanged, {}, {}, {}});
+}
+
+static void publishOCIOWorkingSpaceChanged(const QString& colorSpace)
+{
+    ArtifactCore::globalEventBus().publish<OCIOManagerChangedEvent>(
+        {OCIOManagerChangeKind::WorkingSpaceChanged, colorSpace, {}, {}});
+}
+
+static void publishOCIODisplayViewChanged(const QString& display,
+                                          const QString& view)
+{
+    ArtifactCore::globalEventBus().publish<OCIOManagerChangedEvent>(
+        {OCIOManagerChangeKind::DisplayViewChanged, {}, display, view});
+}
 
 class ArtifactOCIOManager::Impl {
 public:
@@ -115,7 +136,7 @@ bool ArtifactOCIOManager::setActivePreset(const QString& presetName)
         // Fallback to ACES
         impl_->config_ = ArtifactCore::OCIOConfig::createACESConfig();
         impl_->activePresetName_ = QStringLiteral("ACES");
-        configChanged();
+        publishOCIOConfigChanged();
         return false;
     }
     impl_->activePresetName_ = normalizedPresetName;
@@ -142,7 +163,7 @@ bool ArtifactOCIOManager::setActivePreset(const QString& presetName)
             }
         }
     }
-    configChanged();
+    publishOCIOConfigChanged();
     return true;
 }
 bool ArtifactOCIOManager::loadConfigFile(const QString& path)
@@ -167,7 +188,7 @@ bool ArtifactOCIOManager::loadConfigFile(const QString& path)
     impl_->display_ = impl_->config_.activeDisplay();
     impl_->view_ = impl_->config_.activeView();
     impl_->looks_ = impl_->config_.activeLooks();
-    configChanged();
+    publishOCIOConfigChanged();
     return true;
 }
 
@@ -188,7 +209,7 @@ bool ArtifactOCIOManager::loadConfig(const ArtifactCore::OCIOConfig& config)
     impl_->display_ = impl_->config_.activeDisplay();
     impl_->view_ = impl_->config_.activeView();
     impl_->looks_ = impl_->config_.activeLooks();
-    configChanged();
+    publishOCIOConfigChanged();
     return true;
 }
 
@@ -201,7 +222,7 @@ void ArtifactOCIOManager::clearConfig()
     impl_->view_.clear();
     impl_->looks_.clear();
     impl_->ocioConfig_.reset();
-    configChanged();
+    publishOCIOConfigChanged();
 }
 
 const ArtifactCore::OCIOConfig* ArtifactOCIOManager::activeConfig() const
@@ -275,8 +296,8 @@ void ArtifactOCIOManager::setWorkingSpace(const QString& cs)
         return;
     impl_->workingSpace_ = normalized;
     impl_->config_.setWorkingSpace(normalized);
-    workingSpaceChanged(normalized);
-    configChanged();
+    publishOCIOWorkingSpaceChanged(normalized);
+    publishOCIOConfigChanged();
 }
 
 QString ArtifactOCIOManager::display() const
@@ -301,8 +322,8 @@ void ArtifactOCIOManager::setDisplay(const QString& display)
         impl_->view_ = views.first();
         impl_->config_.setActiveView(impl_->view_);
     }
-    displayViewChanged(impl_->display_, impl_->view_);
-    configChanged();
+    publishOCIODisplayViewChanged(impl_->display_, impl_->view_);
+    publishOCIOConfigChanged();
 }
 
 QString ArtifactOCIOManager::view() const
@@ -321,8 +342,8 @@ void ArtifactOCIOManager::setView(const QString& view)
         return;
     impl_->view_ = normalized;
     impl_->config_.setActiveView(normalized);
-    displayViewChanged(impl_->display_, impl_->view_);
-    configChanged();
+    publishOCIODisplayViewChanged(impl_->display_, impl_->view_);
+    publishOCIOConfigChanged();
 }
 
 QString ArtifactOCIOManager::looks() const
@@ -337,7 +358,7 @@ void ArtifactOCIOManager::setLooks(const QString& looks)
         return;
     impl_->looks_ = normalized;
     impl_->config_.setActiveLooks(normalized);
-    configChanged();
+    publishOCIOConfigChanged();
 }
 
 float ArtifactOCIOManager::viewerExposure() const
@@ -351,7 +372,7 @@ void ArtifactOCIOManager::setViewerExposure(const float ev)
     if (qFuzzyCompare(impl_->viewerExposure_, clamped))
         return;
     impl_->viewerExposure_ = clamped;
-    configChanged();
+    publishOCIOConfigChanged();
 }
 
 float ArtifactOCIOManager::viewerGamma() const
@@ -365,7 +386,7 @@ void ArtifactOCIOManager::setViewerGamma(const float gamma)
     if (qFuzzyCompare(impl_->viewerGamma_, clamped))
         return;
     impl_->viewerGamma_ = clamped;
-    configChanged();
+    publishOCIOConfigChanged();
 }
 
 void ArtifactOCIOManager::syncToColorScienceManager(ArtifactColorScienceManager* mgr) const
@@ -986,7 +1007,7 @@ bool ArtifactOCIOManager::fromJson(const QJsonObject& obj)
         impl_->config_.setActiveView(impl_->view_);
     }
 
-    configChanged();
+    publishOCIOConfigChanged();
     return true;
 }
 

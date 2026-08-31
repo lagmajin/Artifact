@@ -15,6 +15,19 @@ export namespace Artifact
 {
     using namespace ArtifactCore;
 
+    enum class AudioScrubChangeKind {
+        Started,
+        Stopped,
+        LatencyUpdated,
+        CacheMiss
+    };
+
+    struct AudioScrubChangedEvent {
+        AudioScrubChangeKind kind = AudioScrubChangeKind::Started;
+        FramePosition frame;
+        int latencyMs = 0;
+    };
+
     class ArtifactAudioScrubController : public QObject
     {
         W_OBJECT(ArtifactAudioScrubController)
@@ -47,10 +60,8 @@ export namespace Artifact
 
         std::vector<ArtifactCore::ProjectDiagnostic> gatherDiagnostics() const;
 
-        void scrubStarted() W_SIGNAL(scrubStarted);
-        void scrubStopped() W_SIGNAL(scrubStopped);
-        void latencyUpdated(int ms) W_SIGNAL(latencyUpdated, ms);
-        void cacheMiss(FramePosition frame) W_SIGNAL(cacheMiss, frame);
+        // Cross-widget notifications use AudioScrubChangedEvent via EventBus.
+        // Qt metadata remains only for the private worker/thread boundary.
 
         ArtifactAudioScrubController(const ArtifactAudioScrubController&) = delete;
         ArtifactAudioScrubController& operator=(const ArtifactAudioScrubController&) = delete;

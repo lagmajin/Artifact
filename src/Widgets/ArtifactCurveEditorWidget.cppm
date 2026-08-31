@@ -22,6 +22,7 @@ module;
 #include <QPen>
 #include <QBrush>
 #include <QFont>
+#include <QFontDatabase>
 #include <QPainterPath>
 #include <QVector>
 #include <wobjectimpl.h>
@@ -30,6 +31,8 @@ module Widget.CurveEditor;
 
 import Frame.Rate;
 import Time.TimeRemap;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace ArtifactCore {
 
@@ -366,7 +369,8 @@ public:
   float yRange = yMax_ - yMin_;
   float yStep = niceStep(yRange, 8);
   float yStart = std::ceil(yMin_ / yStep) * yStep;
-  QFont font("Consolas", 8);
+  QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  font.setPointSize(8);
   p.setFont(font);
 
   // Baseline at y=0, if it is in view.
@@ -1209,6 +1213,41 @@ ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent)
  setAccessibleDescription(QStringLiteral("Edit animation curves and keyframes"));
 }
 
+void ArtifactCurveEditorWidget::interactionStarted() {
+  ArtifactCore::globalEventBus().publish<Artifact::CurveEditorInteractionStartedEvent>(
+      Artifact::CurveEditorInteractionStartedEvent{});
+}
+
+void ArtifactCurveEditorWidget::interactionFinished() {
+  ArtifactCore::globalEventBus().publish<Artifact::CurveEditorInteractionFinishedEvent>(
+      Artifact::CurveEditorInteractionFinishedEvent{});
+}
+
+void ArtifactCurveEditorWidget::currentFrameChanged(const int64_t frame) {
+  ArtifactCore::globalEventBus().publish<Artifact::CurveEditorCurrentFrameChangedEvent>(
+      Artifact::CurveEditorCurrentFrameChangedEvent{frame});
+}
+
+void ArtifactCurveEditorWidget::keySelected(const int trackIndex,
+                                            const int keyIndex) {
+  ArtifactCore::globalEventBus().publish<Artifact::CurveEditorKeySelectedEvent>(
+      Artifact::CurveEditorKeySelectedEvent{trackIndex, keyIndex});
+}
+
+void ArtifactCurveEditorWidget::keyMoved(const int trackIndex, const int keyIndex,
+                                         const int64_t newFrame,
+                                         const float newValue) {
+  ArtifactCore::globalEventBus().publish<Artifact::CurveEditorKeyMovedEvent>(
+      Artifact::CurveEditorKeyMovedEvent{trackIndex, keyIndex, newFrame,
+                                         newValue});
+}
+
+void ArtifactCurveEditorWidget::keyDeleted(const int trackIndex,
+                                           const int keyIndex) {
+  ArtifactCore::globalEventBus().publish<Artifact::CurveEditorKeyDeletedEvent>(
+      Artifact::CurveEditorKeyDeletedEvent{trackIndex, keyIndex});
+}
+
 ArtifactCurveEditorWidget::~ArtifactCurveEditorWidget() {
  delete impl_;
 }
@@ -1264,14 +1303,14 @@ bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
  if (!impl_) {
   return false;
  }
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->applyTangentOperationToSelection(
          [impl = impl_]() { return impl->setSelectedTangentsAuto(); })) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
@@ -1279,14 +1318,14 @@ bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
  if (!impl_) {
   return false;
  }
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->applyTangentOperationToSelection(
          [impl = impl_]() { return impl->setSelectedTangentsFlat(); })) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
@@ -1294,14 +1333,14 @@ bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
  if (!impl_) {
   return false;
  }
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->applyTangentOperationToSelection(
          [impl = impl_]() { return impl->setSelectedTangentsLinear(); })) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
@@ -1309,13 +1348,13 @@ bool ArtifactCurveEditorWidget::setSelectedKeyBrokenTangents() {
  if (!impl_) {
   return false;
  }
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->setSelectedTangentsBroken()) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
@@ -1323,37 +1362,37 @@ bool ArtifactCurveEditorWidget::setSelectedKeyUnifiedTangents() {
  if (!impl_) {
   return false;
  }
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->setSelectedTangentsUnified()) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyConstant() {
  if (!impl_) return false;
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->setSelectedConstant(true)) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyBezier() {
  if (!impl_) return false;
- Q_EMIT interactionStarted();
+ interactionStarted();
  if (!impl_->setSelectedConstant(false)) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
   return false;
  }
  update();
- Q_EMIT interactionFinished();
+ interactionFinished();
  return true;
 }
 
@@ -1397,13 +1436,13 @@ bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
  }
 
  impl_->captureBufferCurve();
- Q_EMIT interactionStarted();
+ interactionStarted();
  for (const auto& selection : keysToMove) {
   auto& selectedKey = impl_->tracks_[selection.first].keys[selection.second];
   selectedKey.value += valueDelta;
-  Q_EMIT keyMoved(selection.first, selection.second, selectedKey.frame, selectedKey.value);
+  keyMoved(selection.first, selection.second, selectedKey.frame, selectedKey.value);
  }
- Q_EMIT interactionFinished();
+ interactionFinished();
  update();
  return true;
 }
@@ -1443,13 +1482,13 @@ bool ArtifactCurveEditorWidget::promptSetSelectedKeyFrame() {
  }
 
  impl_->captureBufferCurve();
- Q_EMIT interactionStarted();
+ interactionStarted();
  for (const auto& selection : keysToMove) {
   auto& selectedKey = impl_->tracks_[selection.first].keys[selection.second];
   selectedKey.frame += frameDelta;
-  Q_EMIT keyMoved(selection.first, selection.second, selectedKey.frame, selectedKey.value);
+  keyMoved(selection.first, selection.second, selectedKey.frame, selectedKey.value);
  }
- Q_EMIT interactionFinished();
+ interactionFinished();
  update();
  return true;
 }
@@ -1574,7 +1613,8 @@ void ArtifactCurveEditorWidget::paintEvent(QPaintEvent* /*event*/) {
  }
 
  // Track names
- QFont font("Consolas", 9);
+ QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+ font.setPointSize(9);
  p.setFont(font);
  int nameY = 14;
  for (int ti = 0; ti < static_cast<int>(impl_->tracks_.size()); ++ti) {
@@ -1597,9 +1637,9 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   QPointF data = impl_->pixelToData(pos);
   int64_t frame = static_cast<int64_t>(std::round(data.x()));
   impl_->currentFrame_ = frame;
-  Q_EMIT currentFrameChanged(frame);
+  currentFrameChanged(frame);
   if (startedInteraction) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
   }
   update();
   return;
@@ -1608,9 +1648,9 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  // CE-5: Ctrl+Click inserts a key at the click position (Blender style).
  if ((event->modifiers() & Qt::ControlModifier) && impl_->keyEditingEnabled_) {
   const QPointF data = impl_->pixelToData(pos);
-  Q_EMIT interactionStarted();
+  interactionStarted();
   impl_->insertKeyAt(data);
-  Q_EMIT interactionFinished();
+  interactionFinished();
   update();
   return;
  }
@@ -1625,7 +1665,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   impl_->dragStartYMax_ = impl_->yMax_;
   startedInteraction = true;
   if (startedInteraction) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
   }
   update();
   return;
@@ -1642,7 +1682,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   impl_->dragStart_ = pos.toPoint();
   impl_->setPrimaryKeySelection(ht, hk);
   if (startedInteraction) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
   }
   update();
   return;
@@ -1686,9 +1726,9 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
    impl_->setPrimaryKeySelection(tk, kk);
   }
   impl_->collectDraggedKeys();
-  Q_EMIT keySelected(tk, kk);
+  keySelected(tk, kk);
   if (startedInteraction) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
   }
   update();
   return;
@@ -1703,7 +1743,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   impl_->dragStart_ = pos.toPoint();
   startedInteraction = true;
   if (startedInteraction) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
   }
   update();
   return;
@@ -1721,7 +1761,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  // Deselect
  impl_->clearKeySelection();
  if (startedInteraction) {
-  Q_EMIT interactionStarted();
+  interactionStarted();
  }
  update();
 }
@@ -1785,7 +1825,7 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
     keys[dragged.key].value = newValue;
     dragged.finalFrame = newFrame;
     dragged.finalValue = newValue;
-    Q_EMIT keyMoved(dragged.track, dragged.key, newFrame, newValue);
+    keyMoved(dragged.track, dragged.key, newFrame, newValue);
    }
    update();
    break;
@@ -1838,7 +1878,7 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
    QPointF data = impl_->pixelToData(pos);
    int64_t frame = static_cast<int64_t>(std::round(data.x()));
    impl_->currentFrame_ = frame;
-   Q_EMIT currentFrameChanged(frame);
+   currentFrameChanged(frame);
    update();
    break;
   }
@@ -1895,7 +1935,7 @@ void ArtifactCurveEditorWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
  impl_->dragMode_ = Impl::DragMode::None;
  impl_->draggedKeys_.clear();
  if (hadDrag) {
-  Q_EMIT interactionFinished();
+  interactionFinished();
  }
  update();
 }
@@ -1992,9 +2032,9 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   // CE-3: delete every selected key. The removal is written back to
   // the properties at interactionFinished and covered by one undo step.
   if (!impl_->selectedKeys_.empty()) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
    impl_->deleteSelectedKeys();
-   Q_EMIT interactionFinished();
+   interactionFinished();
    update();
    event->accept();
    return;
@@ -2012,9 +2052,9 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   if (!impl_->copiedKeys_.empty() &&
       impl_->selectedTrack_ >= 0 &&
       impl_->selectedTrack_ < static_cast<int>(impl_->tracks_.size())) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
    if (impl_->pasteCopiedKeys()) {
-   Q_EMIT interactionFinished();
+   interactionFinished();
    update();
    event->accept();
    return;
@@ -2026,9 +2066,9 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
      event->modifiers().testFlag(Qt::ShiftModifier) &&
      impl_->keyEditingEnabled_) {
   if (!impl_->selectedKeys_.empty()) {
-   Q_EMIT interactionStarted();
+   interactionStarted();
    const bool cloned = impl_->cloneSelectedKeys();
-   Q_EMIT interactionFinished();
+   interactionFinished();
    if (cloned) {
     update();
     event->accept();

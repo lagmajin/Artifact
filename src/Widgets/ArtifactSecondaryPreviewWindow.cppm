@@ -22,6 +22,7 @@ module;
 #include <QDebug>
 #include <QIcon>
 #include <QFont>
+#include <QFontDatabase>
 #include <QGraphicsOpacityEffect>
 #include <QPalette>
 #include <QColor>
@@ -233,8 +234,7 @@ ArtifactSecondaryPreviewWindow::ArtifactSecondaryPreviewWindow(QWidget* parent)
 
     impl_->osdLabel_ = new QLabel(this);
     {
-        QFont font(QStringLiteral("Consolas"));
-        font.setStyleHint(QFont::Monospace);
+        QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         font.setPointSize(14);
         impl_->osdLabel_->setFont(font);
         QPalette pal = impl_->osdLabel_->palette();
@@ -402,7 +402,6 @@ void ArtifactSecondaryPreviewWindow::setFullscreen(bool fullscreen) {
         }
     }
 
-    emit fullscreenToggled(fullscreen);
     impl_->showOSD(fullscreen ? "Fullscreen Mode (ESC to exit)" : "Windowed Mode");
 }
 
@@ -456,7 +455,6 @@ void ArtifactSecondaryPreviewWindow::closeEvent(QCloseEvent* event) {
     if (impl_ && impl_->updateTimer_) {
         impl_->updateTimer_->stop();
     }
-    emit closed();
     QWidget::closeEvent(event);
 }
 

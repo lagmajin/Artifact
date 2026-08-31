@@ -114,26 +114,30 @@ public:
         : layer_(std::move(layer)), before_(std::move(before)),
           after_(std::move(after)) {}
 
-    void undo() override { apply(before_); }
-    void redo() override { apply(after_); }
+    void undo() override { lastOperationSucceeded_ = apply(before_); }
+    void redo() override { lastOperationSucceeded_ = apply(after_); }
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
     QString label() const override { return QStringLiteral("Add Mask"); }
 
 private:
-    void apply(const std::vector<LayerMask>& masks) {
-        if (!layer_) return;
+    bool apply(const std::vector<LayerMask>& masks) {
+        if (!layer_) return false;
         while (layer_->maskCount() > 0) {
             layer_->removeMask(layer_->maskCount() - 1);
         }
         for (const auto& mask : masks) {
             layer_->addMask(mask);
         }
+        if (layer_->maskCount() != static_cast<int>(masks.size())) return false;
         layer_->setDirty(LayerDirtyFlag::Mask);
         layer_->changed();
+        return true;
     }
 
     ArtifactAbstractLayerPtr layer_;
     std::vector<LayerMask> before_;
     std::vector<LayerMask> after_;
+    bool lastOperationSucceeded_ = true;
 };
 
 ArtifactCommandPaletteWidget::ArtifactCommandPaletteWidget(QWidget* parent)
@@ -468,8 +472,12 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
                         }
                         auto after = before;
                         after.push_back(mask);
-                        undo->push(std::make_unique<AddCommandPaletteMaskCommand>(
-                            layer, std::move(before), std::move(after)));
+                        const bool applied = undo->push(
+                            std::make_unique<AddCommandPaletteMaskCommand>(
+                                layer, std::move(before), std::move(after)));
+                        if (!applied) {
+                            return;
+                        }
                     } else {
                         layer->addMask(mask);
                         layer->setDirty(LayerDirtyFlag::Mask);

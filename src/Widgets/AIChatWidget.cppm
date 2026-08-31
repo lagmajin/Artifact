@@ -23,8 +23,11 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QUuid>
+#include <QMetaObject>
+#include <QThread>
 #include <wobjectimpl.h>
 #include <thread>
+#include <vector>
 #ifdef _WIN32
 #define NOMINMAX
 #include <Windows.h>
@@ -34,6 +37,8 @@ module Widgets.AIChatWidget;
 
 import Utils.String.UniString;
 import AI.Client;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -129,6 +134,8 @@ public:
     bool streamingUiUpdateScheduled = false;
     QString pendingMessage;
     QString currentReply;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
     QString resolveModelPath() const;
     void appendSystemLine(const QString& text);
@@ -698,110 +705,115 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
         client->cancelMessage();
     });
 
-    QObject::connect(client, &AIClient::partialMessageReceived, this,
-                     [this](const QString& partial) {
-        if (!impl_) {
-            return;
-        }
-        impl_->isStreaming = true;
-        impl_->currentReply = partial;
-        if (impl_->streamingUiUpdateScheduled) {
-            return;
-        }
-        impl_->streamingUiUpdateScheduled = true;
-        QTimer::singleShot(16, this, [this]() {
-            if (!impl_ || !impl_->streamingUiUpdateScheduled) {
-                return;
-            }
-            impl_->streamingUiUpdateScheduled = false;
-            impl_->updateCurrentAssistantMessage(impl_->currentReply, false);
-        });
-    }, Qt::QueuedConnection);
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<AIClientChangedEvent>(
+            [this, client](const AIClientChangedEvent& event) {
+                const auto dispatch = [this, client, event]() {
+                    if (!impl_) {
+                        return;
+                    }
 
-    QObject::connect(client, &AIClient::messageReceived, this,
-                     [this, client](const QString& message) {
-        if (!impl_) {
-            return;
-        }
-        if (!message.isEmpty()) {
-            impl_->updateCurrentAssistantMessage(message);
-        }
-        impl_->isStreaming = false;
-        impl_->currentReply.clear();
-        impl_->streamingUiUpdateScheduled = false;
-        impl_->pendingMessage.clear();
-        impl_->streamingMessageIndex = -1;
-        impl_->setSendingState(false);
-        impl_->updateModelStatus(client);
-    }, Qt::QueuedConnection);
+                    if (event.kind == AIClientChangeKind::PartialMessageReceived) {
+                        impl_->isStreaming = true;
+                        impl_->currentReply = event.text;
+                        if (impl_->streamingUiUpdateScheduled) {
+                            return;
+                        }
+                        impl_->streamingUiUpdateScheduled = true;
+                        QTimer::singleShot(16, this, [this]() {
+                            if (!impl_ || !impl_->streamingUiUpdateScheduled) {
+                                return;
+                            }
+                            impl_->streamingUiUpdateScheduled = false;
+                            impl_->updateCurrentAssistantMessage(
+                                impl_->currentReply, false);
+                        });
+                        return;
+                    }
 
-    QObject::connect(client, &AIClient::messageCancelled, this,
-                     [this, client]() {
-        if (!impl_) {
-            return;
-        }
-        impl_->appendSystemLine(QStringLiteral("Generation cancelled."));
-        impl_->isStreaming = false;
-        impl_->currentReply.clear();
-        impl_->streamingUiUpdateScheduled = false;
-        impl_->streamingMessageIndex = -1;
-        impl_->setSendingState(false);
-        impl_->updateModelStatus(client);
-    }, Qt::QueuedConnection);
+                    if (event.kind == AIClientChangeKind::MessageReceived) {
+                        if (!event.text.isEmpty()) {
+                            impl_->updateCurrentAssistantMessage(event.text);
+                        }
+                        impl_->isStreaming = false;
+                        impl_->currentReply.clear();
+                        impl_->streamingUiUpdateScheduled = false;
+                        impl_->pendingMessage.clear();
+                        impl_->streamingMessageIndex = -1;
+                        impl_->setSendingState(false);
+                        impl_->updateModelStatus(client);
+                        return;
+                    }
 
-    QObject::connect(client, &AIClient::errorOccurred, this,
-                     [this, client](const QString& error) {
-        if (!impl_) {
-            return;
-        }
-        impl_->appendSystemLine(QStringLiteral("AI error: %1").arg(error));
-        impl_->isStreaming = false;
-        impl_->currentReply.clear();
-        impl_->streamingUiUpdateScheduled = false;
-        impl_->streamingMessageIndex = -1;
-        impl_->setSendingState(false);
-        impl_->updateModelStatus(client);
-    }, Qt::QueuedConnection);
+                    if (event.kind == AIClientChangeKind::MessageCancelled) {
+                        impl_->appendSystemLine(
+                            QStringLiteral("Generation cancelled."));
+                        impl_->isStreaming = false;
+                        impl_->currentReply.clear();
+                        impl_->streamingUiUpdateScheduled = false;
+                        impl_->streamingMessageIndex = -1;
+                        impl_->setSendingState(false);
+                        impl_->updateModelStatus(client);
+                        return;
+                    }
 
-    QObject::connect(client, &AIClient::initializationFinished, this,
-                     [this, client](bool ok, const QString&) {
-        if (!impl_) {
-            return;
-        }
+                    if (event.kind == AIClientChangeKind::ErrorOccurred) {
+                        impl_->appendSystemLine(
+                            QStringLiteral("AI error: %1").arg(event.text));
+                        impl_->isStreaming = false;
+                        impl_->currentReply.clear();
+                        impl_->streamingUiUpdateScheduled = false;
+                        impl_->streamingMessageIndex = -1;
+                        impl_->setSendingState(false);
+                        impl_->updateModelStatus(client);
+                        return;
+                    }
 
-        impl_->updateModelStatus(client);
+                    if (event.kind == AIClientChangeKind::InitializationFinished) {
+                        impl_->updateModelStatus(client);
 
-        const QString pending = impl_->pendingMessage.trimmed();
-        const bool shouldHandle = impl_->isInitializing || !pending.isEmpty();
-        if (!shouldHandle) {
-            return;
-        }
+                        const QString pending = impl_->pendingMessage.trimmed();
+                        const bool shouldHandle =
+                            impl_->isInitializing || !pending.isEmpty();
+                        if (!shouldHandle) {
+                            return;
+                        }
 
-        if (!ok && client->isInitializing()) {
-            return;
-        }
+                        if (!event.success && client->isInitializing()) {
+                            return;
+                        }
 
-        impl_->isInitializing = false;
-        impl_->streamingUiUpdateScheduled = false;
+                        impl_->isInitializing = false;
+                        impl_->streamingUiUpdateScheduled = false;
 
-        if (!ok) {
-            impl_->appendSystemLine(QStringLiteral("Failed to load local model."));
-            impl_->pendingMessage.clear();
-            impl_->setSendingState(false);
-            return;
-        }
+                        if (!event.success) {
+                            impl_->appendSystemLine(
+                                QStringLiteral("Failed to load local model."));
+                            impl_->pendingMessage.clear();
+                            impl_->setSendingState(false);
+                            return;
+                        }
 
-        impl_->appendSystemLine(QStringLiteral("Local model loaded."));
-        impl_->pendingMessage.clear();
-        if (!pending.isEmpty()) {
-            impl_->isStreaming = true;
-            impl_->streamingMessageIndex = -1;
-            impl_->setSendingState(true);
-            client->postMessage(UniString(pending));
-        } else {
-            impl_->setSendingState(false);
-        }
-    }, Qt::QueuedConnection);
+                        impl_->appendSystemLine(
+                            QStringLiteral("Local model loaded."));
+                        impl_->pendingMessage.clear();
+                        if (!pending.isEmpty()) {
+                            impl_->isStreaming = true;
+                            impl_->streamingMessageIndex = -1;
+                            impl_->setSendingState(true);
+                            client->postMessage(UniString(pending));
+                        } else {
+                            impl_->setSendingState(false);
+                        }
+                    }
+                };
+
+                if (QThread::currentThread() == thread()) {
+                    dispatch();
+                } else {
+                    QMetaObject::invokeMethod(this, dispatch, Qt::QueuedConnection);
+                }
+            }));
 
     QObject::connect(impl_->send, &QPushButton::clicked, this, [this, client]() {
         impl_->dispatchMessage(impl_->input ? impl_->input->text() : QString(), client);

@@ -15,6 +15,8 @@ module;
 module Artifact.Timeline.NavigatorWidget;
 
 import std;
+import Event.Bus;
+import Artifact.Event.Types;
 import Widgets.Utils.CSS;
 
 namespace Artifact
@@ -80,6 +82,12 @@ namespace Artifact
   delete impl_;
  }
 
+ void ArtifactTimelineNavigatorWidget::rangeChanged()
+ {
+  ArtifactCore::globalEventBus().publish<TimelineNavigatorRangeChangedEvent>(
+      TimelineNavigatorRangeChangedEvent{start, end});
+ }
+
  int ArtifactTimelineNavigatorWidget::totalFrames() const
  {
   return impl_ ? impl_->totalFrames_ : 0;
@@ -89,7 +97,6 @@ namespace Artifact
  {
   if (start != s) {
    start = s;
-   startChanged(s);
    update();
   }
  }
@@ -98,14 +105,16 @@ namespace Artifact
  {
   if (end != e) {
    end = e;
-   endChanged(e);
    update();
   }
  }
 
  void ArtifactTimelineNavigatorWidget::setCurrentFrame(double frame)
  {
-  const double sanitized = std::max(0.0, frame);
+  const double finiteFrame = std::isfinite(frame) ? frame : 0.0;
+  const double sanitized = std::clamp(
+      finiteFrame, 0.0,
+      static_cast<double>(std::max(0, impl_->totalFrames_ - 1)));
   if (std::abs(currentFrame_ - sanitized) > 0.0001) {
    currentFrame_ = sanitized;
    update();
@@ -115,8 +124,18 @@ namespace Artifact
  void ArtifactTimelineNavigatorWidget::setTotalFrames(const int totalFrames)
  {
   const int sanitized = std::max(1, totalFrames);
-  if (impl_ && impl_->totalFrames_ != sanitized) {
+  if (!impl_) {
+   return;
+  }
+  const double maxFrame = static_cast<double>(std::max(0, sanitized - 1));
+  const double clampedCurrentFrame =
+      std::clamp(currentFrame_, 0.0, maxFrame);
+  const bool totalChanged = impl_->totalFrames_ != sanitized;
+  const bool frameChanged =
+      std::abs(currentFrame_ - clampedCurrentFrame) > 0.0001;
+  if (totalChanged || frameChanged) {
    impl_->totalFrames_ = sanitized;
+   currentFrame_ = clampedCurrentFrame;
    update();
   }
  }
@@ -124,7 +143,7 @@ namespace Artifact
  void ArtifactTimelineNavigatorWidget::paintEvent(QPaintEvent*)
  {
   QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing);
+  TimelinePlayheadDraw::enableTimelinePainterHints(p);
   const TimelineTheme theme = timelineTheme();
   const QColor playheadColor = TimelinePlayheadDraw::playheadColor();
 
@@ -250,6 +269,9 @@ namespace Artifact
    return;
   }
 
+  const float oldStart = start;
+  const float oldEnd = end;
+
   if (impl_->draggingLeft) {
    float newStart = (float(ev->pos().x()) - kHandleHalfW) / float(usableWidth);
    setStart(qBound(0.0f, newStart, end - 0.01f));
@@ -262,6 +284,9 @@ namespace Artifact
    left = qBound(0.0f, left, 1.0f - range);
    setStart(left);
    setEnd(left + range);
+  }
+  if (start != oldStart || end != oldEnd) {
+   rangeChanged();
   }
  }
 

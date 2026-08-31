@@ -101,27 +101,41 @@ public:
                                    QVariant before, QVariant after)
         : layer_(layer), path_(std::move(path)), before_(std::move(before)),
           after_(std::move(after)) {}
-    void undo() override { apply(before_); }
-    void redo() override { apply(after_); }
+    void undo() override { lastOperationSucceeded_ = apply(before_); }
+    void redo() override { lastOperationSucceeded_ = apply(after_); }
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
     QString label() const override {
         return QStringLiteral("Edit Text Animator Range");
     }
 private:
-    void apply(const QVariant &value) {
-        if (auto layer = layer_.lock()) {
-            if (const auto property = layer->getProperty(path_)) {
-                property->setValue(value);
+    bool apply(const QVariant &value) {
+        auto layer = layer_.lock();
+        if (!layer) return false;
+        const auto property = layer->getProperty(path_);
+        const QVariant previous = property ? property->getValue() : QVariant();
+        if (property) property->setValue(value);
+        if (!layer->setLayerPropertyValue(path_, value)) {
+            if (property) {
+                property->setValue(previous);
+                layer->setLayerPropertyValue(path_, previous);
             }
-            layer->setLayerPropertyValue(path_, value);
-            if (auto *manager = UndoManager::instance()) {
-                manager->notifyAnythingChanged();
-            }
+            return false;
         }
+        if (property && property->getValue() != value) {
+            property->setValue(previous);
+            layer->setLayerPropertyValue(path_, previous);
+            return false;
+        }
+        if (auto *manager = UndoManager::instance()) {
+            manager->notifyAnythingChanged();
+        }
+        return true;
     }
     ArtifactAbstractLayerWeak layer_;
     QString path_;
     QVariant before_;
     QVariant after_;
+    bool lastOperationSucceeded_ = true;
 };
 
 float selectorHandleX(const QRectF& bounds, const float percentage) {
@@ -645,6 +659,34 @@ void TextGizmo::handleMouseRelease() {
         const auto textLayer =
             ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
         if (auto *manager = UndoManager::instance()) {
+            const auto restoreDragBeforeState = [this, textLayer]() {
+                if (!textLayer) return;
+                const QString suffix = dragPropertyPath_.mid(
+                    dragPropertyPath_.lastIndexOf(QLatin1Char('.')) + 1);
+                const auto property = animatorProperty(
+                    textLayer, dragAnimatorIndex_, suffix);
+                if (!property) return;
+                if (!dragBeforeKeyframes_.empty()) {
+                    property->clearKeyFrames();
+                    for (const auto &keyframe : dragBeforeKeyframes_) {
+                        property->addKeyFrame(
+                            keyframe.time, keyframe.value,
+                            keyframe.interpolation, keyframe.cp1_x,
+                            keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+                            keyframe.roving);
+                        property->setKeyFrameAnchorAt(
+                            keyframe.time, keyframe.anchor);
+                        property->setKeyFrameColorLabelAt(
+                            keyframe.time, keyframe.colorLabel);
+                    }
+                } else {
+                    property->setValue(dragStartValue_);
+                    textLayer->setLayerPropertyValue(
+                        dragPropertyPath_, dragStartValue_);
+                }
+                textLayer->updateImage();
+                textLayer->changed();
+            };
             if (!dragBeforeKeyframes_.empty()) {
                 const QString suffix = dragPropertyPath_.mid(
                     dragPropertyPath_.lastIndexOf(QLatin1Char('.')) + 1);
@@ -655,10 +697,15 @@ void TextGizmo::handleMouseRelease() {
                         property->getKeyFrames(),
                         QStringLiteral("Edit Text Animator Range"));
                     if (command->estimatedMemoryBytes() >
-                        manager->budget().maxSingleEntryBytes) {
-                        command->undo();
+                        manager->budget().maxSingleEntryBytes ||
+                        command->estimatedMemoryBytes() >
+                            manager->budget().maxMemoryBytes ||
+                        manager->budget().maxEntryCount == 0) {
+                        restoreDragBeforeState();
                     } else {
-                        manager->push(std::move(command));
+                        if (!manager->push(std::move(command))) {
+                            restoreDragBeforeState();
+                        }
                     }
                 }
             } else {
@@ -666,10 +713,15 @@ void TextGizmo::handleMouseRelease() {
                     layer_, dragPropertyPath_, dragStartValue_,
                     dragCurrentValue_);
                 if (command->estimatedMemoryBytes() >
-                    manager->budget().maxSingleEntryBytes) {
-                    command->undo();
+                    manager->budget().maxSingleEntryBytes ||
+                    command->estimatedMemoryBytes() >
+                        manager->budget().maxMemoryBytes ||
+                    manager->budget().maxEntryCount == 0) {
+                    restoreDragBeforeState();
                 } else {
-                    manager->push(std::move(command));
+                    if (!manager->push(std::move(command))) {
+                        restoreDragBeforeState();
+                    }
                 }
             }
         }

@@ -743,6 +743,46 @@ SharedPtr<AbstractCloneEffector> ArtifactCloneLayer::effectorAt(int index) const
     return nullptr;
 }
 
+QJsonArray ArtifactCloneLayer::effectorStackSnapshot() const {
+    QJsonArray snapshot;
+    for (const auto& effector : impl_->effectors_) {
+        if (!effector) {
+            continue;
+        }
+        const auto entry = cloneEffectorToJson(*effector);
+        if (!entry.value(QStringLiteral("type")).toString().isEmpty()) {
+            snapshot.append(entry);
+        }
+    }
+    return snapshot;
+}
+
+bool ArtifactCloneLayer::restoreEffectorStackSnapshot(
+    const QJsonArray& snapshot) {
+    constexpr qsizetype kMaxEffectors = 256;
+    if (snapshot.size() > kMaxEffectors) {
+        return false;
+    }
+    std::vector<SharedPtr<AbstractCloneEffector>> restored;
+    restored.reserve(static_cast<size_t>(snapshot.size()));
+    for (const auto& value : snapshot) {
+        if (!value.isObject()) {
+            return false;
+        }
+        const auto entry = value.toObject();
+        const auto type = entry.value(QStringLiteral("type")).toString();
+        auto effector = makeCloneEffectorByType(type);
+        if (!effector) {
+            return false;
+        }
+        applyJsonToCloneEffector(*effector, entry);
+        restored.push_back(std::move(effector));
+    }
+    impl_->effectors_ = std::move(restored);
+    changed();
+    return effectorStackSnapshot() == snapshot;
+}
+
 QSize ArtifactCloneLayer::sourceSize() const {
     return QSize(1920, 1080);
 }

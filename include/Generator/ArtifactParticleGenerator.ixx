@@ -173,6 +173,14 @@ enum class ParticleBlendMode {
     Multiply        // 乗算
 };
 
+enum class ParticleLifeCurve {
+    Linear = 0,
+    EaseIn = 1,
+    EaseOut = 2,
+    Smooth = 3,
+    Pulse = 4
+};
+
 /**
  * @brief Particle emitter parameters
  */
@@ -226,6 +234,7 @@ public:
     QColor colorMid = QColor(255, 255, 255, 255);
     QColor colorEnd = QColor(255, 255, 255, 0);
     float colorMidPosition = 0.5f;
+    ParticleLifeCurve lifeCurve = ParticleLifeCurve::Linear;
     float colorVariation = 0.0f;
     
     // Opacity
@@ -585,6 +594,8 @@ public:
     // Effectors
     void addEffector(std::unique_ptr<ParticleEffector> effector);
     void removeEffector(int index);
+    bool moveEffector(int fromIndex, int toIndex);
+    bool setEffectorEnabled(int index, bool enabled);
     void clearEffectors();
     const std::vector<std::unique_ptr<ParticleEffector>>& effectors() const { return effectors_; }
     

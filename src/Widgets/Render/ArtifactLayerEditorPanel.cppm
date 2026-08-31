@@ -43,6 +43,8 @@ module Artifact.Widgets.LayerEditorPanel;
 import Artifact.Widgets.CompositionFooter;
 import Artifact.Widgets.RenderLayerWidgetv2;
 import Artifact.Service.Playback;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -52,6 +54,8 @@ namespace Artifact {
  public:
   ArtifactLayerEditorWidgetV2* editor_ = nullptr;
   ArtifactCompositionViewerFooter* footer_ = nullptr;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   Impl();
   ~Impl();
@@ -65,8 +69,14 @@ namespace Artifact {
 
   QObject::connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditorWidgetV2::takeScreenShot);
   if (auto* playback = ArtifactPlaybackService::instance()) {
-    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStatsChanged,
-                     footer_, &ArtifactCompositionViewerFooter::setRamPreviewStats);
+    eventBusSubscriptions_.push_back(
+        eventBus_.subscribe<PlaybackRamPreviewStatsChangedEvent>(
+            [this](const PlaybackRamPreviewStatsChangedEvent& event) {
+              if (footer_) {
+                footer_->setRamPreviewStats(event.hitRate,
+                                             event.cachedFrameCount);
+              }
+            }));
     footer_->setRamPreviewStats(playback->ramPreviewHitRate(), playback->ramPreviewCachedFrameCount());
   }
  }

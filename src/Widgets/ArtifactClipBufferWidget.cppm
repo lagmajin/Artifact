@@ -109,7 +109,7 @@ void ArtifactClipBufferWidget::Impl::onDoubleClicked(const QModelIndex &index) {
     const auto it = std::find_if(items.cbegin(), items.cend(),
                                  [&id](const ArtifactClipBufferItem &item) { return item.id == id; });
     if (it != items.cend()) {
-        Q_EMIT widget->clipPasteRequested(it->data);
+        widget->clipPasteRequested(it->data);
     }
 }
 
@@ -124,6 +124,11 @@ ArtifactClipBufferWidget::ArtifactClipBufferWidget(QWidget *parent)
 
 ArtifactClipBufferWidget::~ArtifactClipBufferWidget() {
     delete impl_;
+}
+
+void ArtifactClipBufferWidget::clipPasteRequested(const QVariant &data) {
+    ArtifactCore::globalEventBus().publish<ClipPasteRequestedEvent>(
+        ClipPasteRequestedEvent{data});
 }
 
 } // namespace Artifact

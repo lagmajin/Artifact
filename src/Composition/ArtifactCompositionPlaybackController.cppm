@@ -216,7 +216,6 @@ void ArtifactCompositionPlaybackController::play() {
   qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->"
            << (int)PlaybackState::Playing << "- interval"
            << impl_->calculateInterval();
-  Q_EMIT playbackStateChanged(impl_->state_);
 }
 
 void ArtifactCompositionPlaybackController::pause() {
@@ -234,7 +233,6 @@ void ArtifactCompositionPlaybackController::pause() {
 
   qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->"
            << (int)PlaybackState::Paused;
-  Q_EMIT playbackStateChanged(impl_->state_);
 }
 
 void ArtifactCompositionPlaybackController::stop() {
@@ -253,8 +251,6 @@ void ArtifactCompositionPlaybackController::stop() {
 
   qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->"
            << (int)PlaybackState::Stopped;
-  Q_EMIT playbackStateChanged(impl_->state_);
-  Q_EMIT frameChanged(impl_->currentFrame_);
 }
 
 void ArtifactCompositionPlaybackController::togglePlayPause() {
@@ -268,7 +264,6 @@ void ArtifactCompositionPlaybackController::togglePlayPause() {
 void ArtifactCompositionPlaybackController::goToFrame(
     const FramePosition &position) {
   impl_->currentFrame_ = position;
-  Q_EMIT frameChanged(impl_->currentFrame_);
 }
 
 void ArtifactCompositionPlaybackController::goToNextFrame() {
@@ -331,7 +326,6 @@ void ArtifactCompositionPlaybackController::setCurrentFrame(
     return;
   }
   impl_->currentFrame_ = position;
-  Q_EMIT frameChanged(impl_->currentFrame_);
 }
 
 FrameRange ArtifactCompositionPlaybackController::frameRange() const {
@@ -341,7 +335,6 @@ FrameRange ArtifactCompositionPlaybackController::frameRange() const {
 void ArtifactCompositionPlaybackController::setFrameRange(
     const FrameRange &range) {
   impl_->frameRange_ = range;
-  Q_EMIT frameRangeChanged(impl_->frameRange_);
 }
 
 FrameRate ArtifactCompositionPlaybackController::frameRate() const {
@@ -355,7 +348,6 @@ void ArtifactCompositionPlaybackController::setFrameRate(
     impl_->timer_->setInterval(
         std::chrono::milliseconds(impl_->calculateInterval()));
   }
-  Q_EMIT playbackSpeedChanged(impl_->playbackSpeed_);
 }
 
 float ArtifactCompositionPlaybackController::playbackSpeed() const {
@@ -368,7 +360,6 @@ void ArtifactCompositionPlaybackController::setPlaybackSpeed(float speed) {
     impl_->timer_->setInterval(
         std::chrono::milliseconds(impl_->calculateInterval()));
   }
-  Q_EMIT playbackSpeedChanged(impl_->playbackSpeed_);
 }
 
 bool ArtifactCompositionPlaybackController::isLooping() const {
@@ -377,7 +368,6 @@ bool ArtifactCompositionPlaybackController::isLooping() const {
 
 void ArtifactCompositionPlaybackController::setLooping(bool loop) {
   impl_->looping_ = loop;
-  Q_EMIT loopingChanged(impl_->looping_);
 }
 
 bool ArtifactCompositionPlaybackController::isRealTime() const {
@@ -472,7 +462,6 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
   }
 
   impl_->currentFrame_ = next;
-  Q_EMIT frameChanged(impl_->currentFrame_);
 
   // Output monitoring
   if (impl_->outputMonitoringEnabled_ && impl_->outputMonitorCallback_) {
