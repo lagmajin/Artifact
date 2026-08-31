@@ -608,6 +608,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthDashboard.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthSummary.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectResponsiveLayout.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorStyle.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionMotionPathCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRigUndoCommands.cppm"
