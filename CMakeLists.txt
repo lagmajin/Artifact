@@ -836,9 +836,15 @@ target_include_directories(ArtifactColorGrading PRIVATE "${CMAKE_CURRENT_SOURCE_
 target_link_libraries(ArtifactColorGrading PUBLIC ArtifactCore)
 target_link_libraries(ArtifactColor PUBLIC ArtifactColorManagement ArtifactColorGrading)
 
-set(ARTIFACT_RENDER_MODULES
+set(ARTIFACT_GPU_FOUNDATION_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderConfig.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/DiligentDeviceManager.ixx"
+)
+set(ARTIFACT_GPU_FOUNDATION_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
+)
+
+set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ShaderManager.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderCommandBuffer.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/IRenderSubmitter.ixx"
@@ -858,7 +864,6 @@ set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx"
 )
 set(ARTIFACT_RENDER_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
@@ -879,6 +884,8 @@ set(ARTIFACT_RENDER_IMPL
 # Keep the first render split deliberately small.  Device and shader modules
 # are the highest fan-out units and are therefore isolated before moving the
 # renderer and widget orchestration layers.
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_GPU_FOUNDATION_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_GPU_FOUNDATION_IMPL})
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_RENDER_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_RENDER_IMPL})
 list(REMOVE_ITEM APP_MODULES
@@ -2725,6 +2732,61 @@ target_link_libraries(Artifact PRIVATE ArtifactEffectsFinishing)
 target_link_libraries(Artifact PRIVATE ArtifactEffectsSurfaceFX)
 target_link_libraries(Artifact PRIVATE ArtifactEffectsGlow)
 target_link_libraries(ArtifactRender PRIVATE ${DILIGENT_LIBS})
+
+# Shared device/swap-chain ownership must not pull the Composition/Layer
+# renderer into consumers such as ArtifactPr. Keep the module provider in a
+# small target so both applications use the same device lease contract.
+add_library(ArtifactGpuFoundation STATIC)
+set_target_properties(ArtifactGpuFoundation PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactGpuFoundation
+    PRIVATE ${ARTIFACT_GPU_FOUNDATION_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_GPU_FOUNDATION_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactGpuFoundation PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactGpuFoundation PROPERTY CXX_MODULE_STD OFF)
+endif()
+if(ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactGpuFoundation PRIVATE /Zf /Zc:__cplusplus /utf-8 /wd5050)
+    target_compile_definitions(ArtifactGpuFoundation PRIVATE
+        PLATFORM_WIN32
+        _GUARDOVERFLOW_CRT_ALLOCATORS=1
+        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
+        _WIN32_WINNT=0x0A00
+    )
+elseif(ARTIFACT_FRONTEND_MSVC)
+    target_compile_options(ArtifactGpuFoundation PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
+    target_compile_definitions(ArtifactGpuFoundation PRIVATE
+        PLATFORM_WIN32
+        _GUARDOVERFLOW_CRT_ALLOCATORS=1
+        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
+        _WIN32_WINNT=0x0A00
+    )
+endif()
+target_include_directories(ArtifactGpuFoundation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
+)
+target_link_libraries(ArtifactGpuFoundation PUBLIC
+    ArtifactCore Qt6::Core Qt6::Gui ${DILIGENT_LIBS})
+if(DILIGENT_COMPILE_DEFINITIONS)
+    target_compile_definitions(ArtifactGpuFoundation PUBLIC ${DILIGENT_COMPILE_DEFINITIONS})
+endif()
+target_link_libraries(ArtifactRender PUBLIC ArtifactGpuFoundation)
 
 # Focused renderer slice for text/GPU smoke tests.  This deliberately omits
 # post-processing, motion-blur, texture-cache, and other composition passes;
