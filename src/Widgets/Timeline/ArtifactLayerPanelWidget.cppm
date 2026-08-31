@@ -93,7 +93,7 @@ import Artifact.Layer.Clone;
 import Artifact.Layer.Group;
 import Layer.Matte;
 import Layer.BlendModeInfo;
-import Geometry.LayerAlignment;
+import Artifact.Widgets.LayerAlignmentPresets;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
 import Artifact.Service.Playback;
@@ -197,12 +197,6 @@ double safeLayerPanelFrameRate(const double rawFps)
   }
   return std::clamp(rawFps, 1.0, 10000.0);
 }
-
-struct LayerPlacementSnapshot {
-  LayerID id;
-  QRectF bounds;
-  QPointF position;
-};
 
 template <typename Handler>
 QAction* addIconAction(QMenu* menu, const QString& text, const QString& iconPath, Handler&& handler)
@@ -1708,133 +1702,6 @@ void replaceSelectionWithIds(const ArtifactCompositionPtr& comp, const QVector<L
       selectionManager->addToSelection(comp->layerById(id));
     }
   }
-}
-
-std::vector<LayerPlacementSnapshot> captureLayerPlacements(
-    const ArtifactCompositionPtr& comp, const QVector<LayerID>& ids)
-{
-  std::vector<LayerPlacementSnapshot> snapshots;
-  if (!comp || ids.isEmpty()) {
-    return snapshots;
-  }
-  snapshots.reserve(static_cast<size_t>(ids.size()));
-  for (const auto& id : ids) {
-    auto layer = comp->layerById(id);
-    if (!layer) {
-      continue;
-    }
-    LayerPlacementSnapshot snapshot;
-    snapshot.id = id;
-    snapshot.bounds = layer->transformedBoundingBox();
-    snapshot.position = QPointF(layer->transform3D().positionX(),
-                                layer->transform3D().positionY());
-    snapshots.push_back(snapshot);
-  }
-  return snapshots;
-}
-
-bool applyAlignPreset(const ArtifactCompositionPtr& comp,
-                      const QVector<LayerID>& selectedIds, int presetIndex)
-{
-  if (!comp || selectedIds.size() < 2) {
-    return false;
-  }
-
-  auto snapshots = captureLayerPlacements(comp, selectedIds);
-  if (snapshots.size() < 2) {
-    return false;
-  }
-
-  std::vector<ArtifactCore::AlignmentObject> objects;
-  objects.reserve(snapshots.size());
-  for (size_t i = 0; i < snapshots.size(); ++i) {
-    const auto& snapshot = snapshots[i];
-    ArtifactCore::AlignmentObject obj;
-    obj.id = static_cast<int>(i);
-    obj.bounds = snapshot.bounds;
-    obj.currentPosition = snapshot.position;
-    objects.push_back(obj);
-  }
-
-  const ArtifactCore::AlignType types[] = {
-      ArtifactCore::AlignType::Left,
-      ArtifactCore::AlignType::CenterHorizontal,
-      ArtifactCore::AlignType::Right,
-      ArtifactCore::AlignType::Top,
-      ArtifactCore::AlignType::CenterVertical,
-      ArtifactCore::AlignType::Bottom,
-  };
-  QRectF dummy;
-  ArtifactCore::LayerAlignment::align(
-      objects, types[presetIndex % (static_cast<int>(std::size(types)))],
-      ArtifactCore::AlignmentTarget::Selection, dummy);
-
-  const ArtifactCore::RationalTime time(0, 30000);
-  for (size_t i = 0; i < snapshots.size() && i < objects.size(); ++i) {
-    const size_t sourceIndex = static_cast<size_t>(objects[i].id);
-    if (sourceIndex >= snapshots.size()) {
-      continue;
-    }
-    auto layer = comp->layerById(snapshots[sourceIndex].id);
-    if (!layer) {
-      continue;
-    }
-    layer->transform3D().setPosition(time, objects[i].currentPosition.x(),
-                                     objects[i].currentPosition.y());
-    layer->changed();
-  }
-  return true;
-}
-
-bool applyDistributePreset(const ArtifactCompositionPtr& comp,
-                           const QVector<LayerID>& selectedIds, int presetIndex)
-{
-  if (!comp || selectedIds.size() < 3) {
-    return false;
-  }
-
-  auto snapshots = captureLayerPlacements(comp, selectedIds);
-  if (snapshots.size() < 3) {
-    return false;
-  }
-
-  std::vector<ArtifactCore::AlignmentObject> objects;
-  objects.reserve(snapshots.size());
-  for (size_t i = 0; i < snapshots.size(); ++i) {
-    const auto& snapshot = snapshots[i];
-    ArtifactCore::AlignmentObject obj;
-    obj.id = static_cast<int>(i);
-    obj.bounds = snapshot.bounds;
-    obj.currentPosition = snapshot.position;
-    objects.push_back(obj);
-  }
-
-  const ArtifactCore::DistributeType types[] = {
-      ArtifactCore::DistributeType::Left,
-      ArtifactCore::DistributeType::CenterHorizontal,
-      ArtifactCore::DistributeType::Right,
-      ArtifactCore::DistributeType::Top,
-      ArtifactCore::DistributeType::CenterVertical,
-      ArtifactCore::DistributeType::Bottom,
-  };
-  ArtifactCore::LayerAlignment::distribute(
-      objects, types[presetIndex % (static_cast<int>(std::size(types)))]);
-
-  const ArtifactCore::RationalTime time(0, 30000);
-  for (size_t i = 0; i < snapshots.size() && i < objects.size(); ++i) {
-    const size_t sourceIndex = static_cast<size_t>(objects[i].id);
-    if (sourceIndex >= snapshots.size()) {
-      continue;
-    }
-    auto layer = comp->layerById(snapshots[sourceIndex].id);
-    if (!layer) {
-      continue;
-    }
-    layer->transform3D().setPosition(time, objects[i].currentPosition.x(),
-                                     objects[i].currentPosition.y());
-    layer->changed();
-  }
-  return true;
 }
 
 bool shuffleSelectedLayers(const ArtifactCompositionPtr& comp,

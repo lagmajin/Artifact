@@ -573,6 +573,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Timeline/ArtifactTimelineTrackPainterView.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/ArtifactTimelineKeyframeUndoCommand.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/ArtifactTimelineKeyframeApplyCommands.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/ArtifactLayerAlignmentPresets.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Timeline/ArtifactWorkAreaControlWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Timeline/EasingLabWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Timeline/KeyframeIconHelper.ixx"
