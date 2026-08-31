@@ -315,6 +315,7 @@ import ArtifactCore.Utils.PerformanceProfiler;
 import Artifact.Render.CompositionChangeDetector;
 import Artifact.Render.CompositionPassState;
 import Artifact.Render.CompositionRenderPassPlan;
+import Artifact.Render.CompositionRenderPassContext;
 
 
 
@@ -10563,32 +10564,6 @@ public:
     QString priorityReason;
 
     quint64 buildGeneration = 0;
-
-  };
-
-  struct RenderPassResources {
-
-    RenderPipeline* pipeline = nullptr;
-
-    Diligent::ITextureView* layerRTV = nullptr;
-
-    Diligent::ITextureView* layerSRV = nullptr;
-
-    Diligent::ITextureView* layerFloatSRV = nullptr;
-
-    Diligent::ITextureView* layerFloatUAV = nullptr;
-
-    Diligent::ITextureView* accumSRV = nullptr;
-
-    Diligent::ITextureView* tempUAV = nullptr;
-
-  };
-
-  struct RenderPassContext {
-
-    ArtifactIRenderer* renderer = nullptr;
-
-    quint64 frame = 0;
 
   };
 
