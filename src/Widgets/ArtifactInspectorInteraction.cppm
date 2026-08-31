@@ -326,4 +326,3 @@ private:
 };
 } // namespace detail
 } // namespace Artifact
-
