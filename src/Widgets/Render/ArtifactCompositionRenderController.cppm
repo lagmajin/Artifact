@@ -312,6 +312,7 @@ import CvUtils;
 import ArtifactCore.ImageProcessing.OpenCV.RotoBrushEngine;
 
 import ArtifactCore.Utils.PerformanceProfiler;
+import Artifact.Render.CompositionChangeDetector;
 
 
 
@@ -10271,102 +10272,6 @@ void drawViewportMayaGradientBackground(ArtifactIRenderer *renderer, float vw,
   renderer->drawRectLocal(0.f, 0.f, vw, vh, bgColor, 1.0f);
 
 }
-
-
-
-// CompositionChangeDetector - 差分レンダリング用の変更検出器
-
-class CompositionChangeDetector {
-
-private:
-
-  QSet<QString> changedLayers_;
-
-  bool compositionSettingsChanged_ = false;
-
-  mutable QMutex mutex_; // スレッドセーフ
-
-
-
-public:
-
-  // レイヤー変更をマーク
-
-  void markLayerChanged(const QString &layerId) {
-
-    QMutexLocker locker(&mutex_);
-
-    changedLayers_.insert(layerId);
-
-  }
-
-
-
-  // Composition設定変更をマーク
-
-  void markCompositionChanged() {
-
-    QMutexLocker locker(&mutex_);
-
-    compositionSettingsChanged_ = true;
-
-  }
-
-
-
-  // 全再描画が必要か判定
-
-  bool needsFullRedraw() const {
-
-    QMutexLocker locker(&mutex_);
-
-    return compositionSettingsChanged_ || changedLayers_.size() > 2;
-
-  }
-
-
-
-  // 変更されたレイヤー一覧を取得
-
-  QSet<QString> getChangedLayers() const {
-
-    QMutexLocker locker(&mutex_);
-
-    return changedLayers_;
-
-  }
-
-
-
-  // 変更状態をリセット
-
-  void reset() {
-
-    QMutexLocker locker(&mutex_);
-
-    changedLayers_.clear();
-
-    compositionSettingsChanged_ = false;
-
-  }
-
-
-
-  // デバッグ情報
-
-  QString debugInfo() const {
-
-    QMutexLocker locker(&mutex_);
-
-    return QString("ChangedLayers: %1, CompositionChanged: %2")
-
-        .arg(changedLayers_.size())
-
-        .arg(compositionSettingsChanged_);
-
-  }
-
-};
 
 
 
