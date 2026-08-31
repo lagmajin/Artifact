@@ -314,6 +314,7 @@ import ArtifactCore.ImageProcessing.OpenCV.RotoBrushEngine;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Artifact.Render.CompositionChangeDetector;
 import Artifact.Render.CompositionPassState;
+import Artifact.Render.CompositionRenderPassPlan;
 
 
 
@@ -10562,38 +10563,6 @@ public:
     QString priorityReason;
 
     quint64 buildGeneration = 0;
-
-  };
-
-  enum class FrameRenderPassKind {
-
-    Setup,
-
-    Base,
-
-    Surface,
-
-    Mask,
-
-    Composite,
-
-    Post,
-
-    Overlay,
-
-    Flush,
-
-    Present,
-
-  };
-
-  struct FrameRenderPass {
-
-    FrameRenderPassKind kind = FrameRenderPassKind::Setup;
-
-    QString name;
-
-    QString note;
 
   };
 
