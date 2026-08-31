@@ -621,6 +621,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactStartupScreenshot.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserUndoCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserPresentation.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactRenderQueuePresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionMotionPathCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRigUndoCommands.cppm"
