@@ -86,6 +86,7 @@ import Property.SerializationBridge;
 import Audio.Modulation.Router;
 import Artifact.Event.Types;
 import Event.Bus;
+import Artifact.Layer.RuntimeSupport;
 
 namespace Artifact {
 
@@ -288,14 +289,6 @@ bool isSourceReframeLayerPropertyGroup(const QString &groupName) {
 }
 
 namespace {
-struct ClonerTransformOperation {
-  QString name = QStringLiteral("Transform");
-  bool enabled = true;
-  QVector3D position{0.0f, 0.0f, 0.0f};
-  QVector3D rotation{0.0f, 0.0f, 0.0f};
-  QVector3D scale{1.0f, 1.0f, 1.0f};
-};
-
 template <typename T> bool assignIfChanged(T &current, const T &next) {
   if (current == next) {
     return false;
@@ -496,64 +489,6 @@ RationalTime currentTimelineTime(const ArtifactAbstractLayer *layer) {
 RationalTime timelineTimeForFramePosition(const ArtifactAbstractLayer *layer,
                                           const FramePosition &position) {
   return RationalTime(position.framePosition(), effectiveLayerFrameRate(layer));
-}
-
-struct MaskPropertyAddress {
-  int maskIndex = -1;
-  int pathIndex = -1;
-  QString field;
-};
-
-std::optional<MaskPropertyAddress>
-parseMaskPropertyPath(const QString &propertyPath) {
-  const QStringList parts = propertyPath.split(QLatin1Char('.'), Qt::SkipEmptyParts);
-  if (parts.size() < 3 || parts[0] != QStringLiteral("mask")) {
-    return std::nullopt;
-  }
-
-  bool ok = false;
-  const int maskIndex = parts[1].toInt(&ok);
-  if (!ok || maskIndex < 0) {
-    return std::nullopt;
-  }
-
-  if (parts.size() == 3 && parts[2] == QStringLiteral("enabled")) {
-    return MaskPropertyAddress{maskIndex, -1, parts[2]};
-  }
-
-  if (parts.size() != 5 || parts[2] != QStringLiteral("path")) {
-    return std::nullopt;
-  }
-
-  const int pathIndex = parts[3].toInt(&ok);
-  if (!ok || pathIndex < 0) {
-    return std::nullopt;
-  }
-
-  const QString field = parts[4];
-  if (field == QStringLiteral("closed") ||
-      field == QStringLiteral("opacity") ||
-      field == QStringLiteral("feather") ||
-      field == QStringLiteral("featherHorizontal") ||
-      field == QStringLiteral("featherVertical") ||
-      field == QStringLiteral("featherInner") ||
-      field == QStringLiteral("featherOuter") ||
-      field == QStringLiteral("expansion") ||
-      field == QStringLiteral("inverted") ||
-      field == QStringLiteral("mode") ||
-      field == QStringLiteral("name")) {
-    return MaskPropertyAddress{maskIndex, pathIndex, field};
-  }
-
-  return std::nullopt;
-}
-
-QString maskPropertyPrefix(const int maskIndex) {
-  return QStringLiteral("mask.%1").arg(maskIndex);
-}
-
-QString maskPathPropertyPrefix(const int maskIndex, const int pathIndex) {
-  return QStringLiteral("mask.%1.path.%2").arg(maskIndex).arg(pathIndex);
 }
 
 std::vector<QPointF> layerCollisionPolygonLocalPoints(
@@ -1092,30 +1027,6 @@ void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
   }
 }
 
-struct ClonerTransformPropertyAddress {
-  int index = -1;
-  QString field;
-};
-
-std::optional<ClonerTransformPropertyAddress>
-parseClonerTransformPropertyPath(const QString &propertyPath) {
-  const QString prefix = QStringLiteral("component.cloner.transforms.");
-  if (!propertyPath.startsWith(prefix, Qt::CaseInsensitive)) {
-    return std::nullopt;
-  }
-  const QString tail = propertyPath.mid(prefix.size());
-  const QStringList parts = tail.split(QLatin1Char('.'), Qt::SkipEmptyParts);
-  if (parts.size() != 2) {
-    return std::nullopt;
-  }
-  bool ok = false;
-  const int index = parts[0].toInt(&ok);
-  if (!ok || index < 0) {
-    return std::nullopt;
-  }
-  return ClonerTransformPropertyAddress{index, parts[1]};
-}
-
 struct FractureShardRenderPrimitive {
   std::vector<Detail::float2> polygon;
   FloatColor color;
@@ -1162,37 +1073,6 @@ int64_t componentSnapshotFrameFromJson(const QJsonObject& object,
   return ok ? static_cast<int64_t>(value)
             : std::numeric_limits<int64_t>::min();
 }
-
-struct MotionTrailRingBuffer {
-  std::vector<QVector3D> samples;
-  std::size_t head = 0;
-  std::size_t count = 0;
-
-  void clear() {
-    head = 0;
-    count = 0;
-  }
-
-  void push(const QVector3D& sample, const std::size_t capacity) {
-    if (capacity == 0) {
-      clear();
-      return;
-    }
-    if (samples.size() != capacity) {
-      samples.assign(capacity, sample);
-      head = 0;
-      count = 1;
-      return;
-    }
-    const std::size_t writeIndex = (head + count) % capacity;
-    samples[writeIndex] = sample;
-    if (count < capacity) {
-      ++count;
-    } else {
-      head = (head + 1) % capacity;
-    }
-  }
-};
 
 void submitFractureRenderElement(ArtifactIRenderer *renderer,
                                  const FractureRenderElement &element) {
