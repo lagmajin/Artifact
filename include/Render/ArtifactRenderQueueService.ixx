@@ -46,11 +46,10 @@ import Core.Diagnostics.SessionLedger;
 import Artifact.Render.Queue.Presets;
 import Frame.Debug;
 import Render.Farm.Types;
+export import Artifact.Render.Queue.Job;
 
 export namespace Artifact {
 // Forward declarations
-class ArtifactRenderJob;
-
 class ArtifactRenderQueueService : public QObject {
   W_OBJECT(ArtifactRenderQueueService)
 private:
@@ -185,8 +184,6 @@ public:
 
   // Job query methods
   int jobCount() const;
-  // ArtifactRenderJob getJob(int index) const;  // Commented out -
-  // ArtifactRenderJob not exported
   int getTotalProgress() const;
 
   // Static render preflight
