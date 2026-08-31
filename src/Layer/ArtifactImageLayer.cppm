@@ -852,6 +852,7 @@ public:
     }
 
     bool hasImage_ = false;
+    const ArtifactCore::ImageF32x4_RGBA* temporarySourceOverride_ = nullptr;
     bool fitToLayer_ = true;
     int width_ = 0;
     int height_ = 0;
@@ -2463,6 +2464,10 @@ QImage ArtifactImageLayer::getThumbnail(int width, int height) const
 const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() const
 {
     static ArtifactCore::ImageF32x4_RGBA empty;
+    if (impl_ && impl_->temporarySourceOverride_ &&
+        !impl_->temporarySourceOverride_->isEmpty()) {
+        return *impl_->temporarySourceOverride_;
+    }
     impl_->refreshSourceVersionIfNeeded();
     if (isImageSequence()) {
         // Sequence refresh is shared with the QImage path so effect/GPU
@@ -2491,8 +2496,18 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
     return empty;
 }
 
+void ArtifactImageLayer::setTemporarySourceOverride(
+    const ArtifactCore::ImageF32x4_RGBA* buffer)
+{
+    impl_->temporarySourceOverride_ = buffer;
+}
+
 bool ArtifactImageLayer::hasCurrentFrameBuffer() const
 {
+    if (impl_ && impl_->temporarySourceOverride_ &&
+        !impl_->temporarySourceOverride_->isEmpty()) {
+        return true;
+    }
     impl_->refreshSourceVersionIfNeeded();
     return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) || impl_->cache_);
 }

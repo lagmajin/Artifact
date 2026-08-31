@@ -46,6 +46,13 @@ import Undo.UndoManager;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layers.SolidImage;
+import Artifact.Layer.NLETransitionBridge;
+import NLE.Core;
+import NLE.OTIO;
+import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
+import Artifact.Layer.Factory;
+import Artifact.Layer.InitParams;
 import Translation.Manager;
 
 namespace Artifact {
@@ -192,6 +199,7 @@ public:
     QAction* closeProjectAction = nullptr;
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
+    QAction* importOtioAction = nullptr;
     QAction* revealProjectFolderAction = nullptr;
     QAction* exportFontUsageAction = nullptr;
     QAction* restartAction = nullptr;
@@ -201,6 +209,7 @@ public:
     QAction* exportWorkAreaAction = nullptr;
     QAction* exportProjectPackageAction = nullptr;
     QAction* exportCompositionAction = nullptr;
+    QAction* exportOtioAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
     QStringList cachedRecentProjects_; // 変更がない場合にメニューを再構築しないためのキャッシュ
     ArtifactFileMenu* menu_ = nullptr;
@@ -212,11 +221,13 @@ public:
     void handleSaveProjectAs();
     void handleNewComposition();
     void handleImportAssets();
+    void handleImportOtio();
     void handleRevealProjectFolder();
     void handleExportCurrentFrame();
     void handleExportWorkArea();
     void handleExportProjectPackage();
     void handleExportComposition();
+    void handleExportOtio();
     void handleExportFontUsage();
     void openProjectPath(const QString& path, bool addToRecent);
 };
@@ -250,6 +261,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     importAssetsAction = new QAction(menuText(QStringLiteral("menu.file.import"), QStringLiteral("アセットを読み込み(&I)...")));
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_import_assets.svg")));
+    importOtioAction = new QAction(QStringLiteral("OpenTimelineIOを読み込む..."), menu);
 
     revealProjectFolderAction = new QAction(menuText(QStringLiteral("menu.file.reveal_folder"), QStringLiteral("プロジェクトフォルダを開く")));
     revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_reveal_folder.svg")));
@@ -257,6 +269,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     exportFontUsageAction = new QAction(menuText(QStringLiteral("menu.file.export_fonts"), QStringLiteral("使用フォントレポートを書き出す...")));
 
     exportCompositionAction = new QAction(QStringLiteral("CompositionをゲームUI形式で書き出す..."), menu);
+    exportOtioAction = new QAction(QStringLiteral("OpenTimelineIOを書き出す..."), menu);
     exportCurrentFrameAction = new QAction(QStringLiteral("現在のフレームを書き出す..."), menu);
     exportWorkAreaAction = new QAction(QStringLiteral("ワークエリアを書き出す..."), menu);
     exportProjectPackageAction = new QAction(QStringLiteral("プロジェクトをパッケージ化..."), menu);
@@ -276,12 +289,14 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addSeparator();
     menu->addAction(newCompositionAction);
     menu->addAction(importAssetsAction);
+    menu->addAction(importOtioAction);
     menu->addSeparator();
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
     menu->addAction(exportFontUsageAction);
     exportMenu = menu->addMenu(QStringLiteral("エクスポート"));
     exportMenu->addAction(exportCompositionAction);
+    exportMenu->addAction(exportOtioAction);
     exportMenu->addSeparator();
     exportMenu->addAction(exportCurrentFrameAction);
     exportMenu->addAction(exportWorkAreaAction);
@@ -299,11 +314,14 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     QObject::connect(saveProjectAsAction, &QAction::triggered, menu, [this]() { handleSaveProjectAs(); });
     QObject::connect(newCompositionAction, &QAction::triggered, menu, [this]() { handleNewComposition(); });
     QObject::connect(importAssetsAction, &QAction::triggered, menu, [this]() { handleImportAssets(); });
+    QObject::connect(importOtioAction, &QAction::triggered, menu, [this]() { handleImportOtio(); });
     QObject::connect(revealProjectFolderAction, &QAction::triggered, menu, [this]() { handleRevealProjectFolder(); });
     QObject::connect(exportFontUsageAction, &QAction::triggered, menu,
                      [this]() { handleExportFontUsage(); });
     QObject::connect(exportCompositionAction, &QAction::triggered, menu,
                      [this]() { handleExportComposition(); });
+    QObject::connect(exportOtioAction, &QAction::triggered, menu,
+                     [this]() { handleExportOtio(); });
     QObject::connect(exportCurrentFrameAction, &QAction::triggered, menu,
                      [this]() { handleExportCurrentFrame(); });
     QObject::connect(exportWorkAreaAction, &QAction::triggered, menu,
@@ -525,6 +543,176 @@ void ArtifactFileMenu::Impl::handleRevealProjectFolder()
     const QString path = ArtifactProjectManager::getInstance().currentProjectPath();
     if (path.isEmpty()) return;
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+}
+
+void ArtifactFileMenu::Impl::handleImportOtio()
+{
+    if (!menu_) return;
+    const QString filePath = QFileDialog::getOpenFileName(
+        menu_, QStringLiteral("OpenTimelineIOを読み込む"), QString(),
+        QStringLiteral("OpenTimelineIO (*.otio);;All Files (*.*)"));
+    if (filePath.isEmpty()) return;
+
+    ArtifactCore::NLE::NLEProjectStore store;
+    ArtifactCore::NLE::SequenceId sequenceId;
+    QVector<QString> warnings;
+    if (!ArtifactCore::NLE::OtioAdapter::importTimelineFile(
+            store, filePath, &sequenceId, &warnings)) {
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"),
+                             QStringLiteral("OTIOを読み込めませんでした。\n%1")
+                                 .arg(warnings.join(QStringLiteral("\n"))));
+        return;
+    }
+
+    const auto* sequence = store.sequence(sequenceId);
+    const int trackCount = sequence ? sequence->trackOrder.size() : 0;
+    const int clipCount = sequence ? store.clipIdsInSequence(sequenceId).size() : 0;
+    qint64 importedDuration = sequence ? sequence->duration.duration() : 0;
+    int transitionCount = 0;
+    int unsupportedTransitionCount = 0;
+    if (sequence) {
+        for (const auto& trackId : sequence->trackOrder) {
+            const auto* track = store.track(trackId);
+            if (!track) continue;
+            transitionCount += track->transitions.size();
+            for (const auto& transitionId : track->transitions) {
+                const auto* transition = store.transition(transitionId);
+                if (transition && transition->kind != ArtifactCore::NLE::TransitionKind::Cut &&
+                    transition->kind != ArtifactCore::NLE::TransitionKind::Crossfade &&
+                    transition->kind != ArtifactCore::NLE::TransitionKind::Dissolve) {
+                    ++unsupportedTransitionCount;
+                }
+            }
+            for (const auto& clipId : track->clipOrder) {
+                if (const auto* clip = store.clip(clipId)) {
+                    importedDuration = qMax(importedDuration, clip->timelineRange.end());
+                }
+            }
+        }
+    }
+    if (transitionCount > 0 && unsupportedTransitionCount > 0) {
+        warnings.push_back(QStringLiteral(
+                               "%1 transition(s) are preserved as timeline metadata; %2 complex transition(s) still await dedicated render application")
+                               .arg(transitionCount)
+                               .arg(unsupportedTransitionCount));
+    }
+    QString message = QStringLiteral("OTIOを読み込みました。\n\nシーケンス: %1\nトラック: %2\nクリップ: %3")
+        .arg(sequence ? sequence->name : QStringLiteral("(unknown)"))
+        .arg(trackCount)
+        .arg(clipCount);
+    if (!warnings.isEmpty()) {
+        message += QStringLiteral("\n\n警告:\n") + warnings.join(QStringLiteral("\n"));
+    }
+    const auto choice = QMessageBox::question(
+        menu_, QStringLiteral("OpenTimelineIO"),
+        message + QStringLiteral("\n\n新しいCompositionを作成しますか？\n既存Compositionは変更されません。"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (choice != QMessageBox::Yes || !sequence) return;
+
+    ArtifactCompositionInitParams params;
+    params.setCompositionName(UniString(sequence->name.isEmpty()
+        ? QStringLiteral("OTIO Import") : sequence->name));
+    params.setFrameRate(sequence->timeBase.fps());
+    params.setDurationFrames(qMax<qint64>(1, importedDuration));
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return;
+    service->createComposition(params);
+    const auto composition = service->currentComposition().lock();
+    if (!composition) {
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"),
+                             QStringLiteral("Import用Compositionを作成できませんでした。"));
+        return;
+    }
+
+    int importedCount = 0;
+    ArtifactLayerFactory layerFactory;
+    for (const auto& trackId : sequence->trackOrder) {
+        const auto* track = store.track(trackId);
+        if (!track) continue;
+        for (const auto& clipId : track->clipOrder) {
+            const auto* clip = store.clip(clipId);
+            const auto* source = clip ? store.source(clip->sourceId) : nullptr;
+            if (!clip || !source) continue;
+            const QString uri = source->uri;
+            const QString path = uri.startsWith(QStringLiteral("file:///"))
+                ? QUrl(uri).toLocalFile() : uri;
+            const QString name = clip->name.isEmpty() ? source->displayName : clip->name;
+            ArtifactAbstractLayerPtr layer;
+            const QString suffix = QFileInfo(path).suffix().toLower();
+            const bool isPlaceholder = uri.startsWith(QStringLiteral("artifact://"));
+            if (isPlaceholder) {
+                ArtifactNullLayerInitParams layerParams(name);
+                layer = layerFactory.createNewLayer(layerParams);
+                warnings.push_back(QStringLiteral("Created placeholder layer for unavailable source: %1")
+                                       .arg(name));
+            } else if (track->kind == ArtifactCore::NLE::TrackKind::Audio) {
+                ArtifactAudioInitParams layerParams(name);
+                layerParams.setAudioPath(path);
+                layer = layerFactory.createNewLayer(layerParams);
+            } else if (suffix == QStringLiteral("svg")) {
+                ArtifactSvgInitParams layerParams(name);
+                layerParams.setSvgPath(path);
+                layer = layerFactory.createNewLayer(layerParams);
+            } else if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+                                  QStringLiteral("exr"), QStringLiteral("tif"), QStringLiteral("tiff"),
+                                  QStringLiteral("webp")}.contains(suffix)) {
+                ArtifactImageInitParams layerParams(name);
+                layerParams.setImagePath(path);
+                layer = layerFactory.createNewLayer(layerParams);
+            } else {
+                ArtifactVideoInitParams layerParams(name);
+                layerParams.setVideoPath(path);
+                layer = layerFactory.createNewLayer(layerParams);
+            }
+            if (!layer) {
+                warnings.push_back(QStringLiteral("Failed to create imported layer: %1").arg(name));
+                continue;
+            }
+            layer->setInPoint(FramePosition(clip->timelineRange.start()));
+            layer->setOutPoint(FramePosition(clip->timelineRange.end()));
+            layer->setVisible(clip->enabled);
+            composition->appendLayerTop(layer);
+            ++importedCount;
+        }
+    }
+    for (const auto& trackId : sequence->trackOrder) {
+        const auto* track = store.track(trackId);
+        if (!track) continue;
+        for (const auto& transitionId : track->transitions) {
+            const auto* transition = store.transition(transitionId);
+            const auto* leftClip = transition ? store.clip(transition->leftClipId) : nullptr;
+            const auto* rightClip = transition ? store.clip(transition->rightClipId) : nullptr;
+            if (!transition || !leftClip || !rightClip) continue;
+            CompositionTimelineTransition importedTransition;
+            switch (transition->kind) {
+            case ArtifactCore::NLE::TransitionKind::Cut: importedTransition.kind = QStringLiteral("Cut"); break;
+            case ArtifactCore::NLE::TransitionKind::Crossfade: importedTransition.kind = QStringLiteral("Crossfade"); break;
+            case ArtifactCore::NLE::TransitionKind::Dissolve: importedTransition.kind = QStringLiteral("Dissolve"); break;
+            case ArtifactCore::NLE::TransitionKind::Wipe: importedTransition.kind = QStringLiteral("Wipe"); break;
+            case ArtifactCore::NLE::TransitionKind::Slide: importedTransition.kind = QStringLiteral("Slide"); break;
+            case ArtifactCore::NLE::TransitionKind::Zoom: importedTransition.kind = QStringLiteral("Zoom"); break;
+            case ArtifactCore::NLE::TransitionKind::GlitchDisplace: importedTransition.kind = QStringLiteral("GlitchDisplace"); break;
+            case ArtifactCore::NLE::TransitionKind::Spin: importedTransition.kind = QStringLiteral("Spin"); break;
+            case ArtifactCore::NLE::TransitionKind::LinearWipe: importedTransition.kind = QStringLiteral("LinearWipe"); break;
+            case ArtifactCore::NLE::TransitionKind::RadialWipe: importedTransition.kind = QStringLiteral("RadialWipe"); break;
+            case ArtifactCore::NLE::TransitionKind::Flip: importedTransition.kind = QStringLiteral("Flip"); break;
+            case ArtifactCore::NLE::TransitionKind::Cube: importedTransition.kind = QStringLiteral("Cube"); break;
+            case ArtifactCore::NLE::TransitionKind::Doors: importedTransition.kind = QStringLiteral("Doors"); break;
+            case ArtifactCore::NLE::TransitionKind::LightLeak: importedTransition.kind = QStringLiteral("LightLeak"); break;
+            case ArtifactCore::NLE::TransitionKind::GradientWipe: importedTransition.kind = QStringLiteral("GradientWipe"); break;
+            case ArtifactCore::NLE::TransitionKind::IrisWipe: importedTransition.kind = QStringLiteral("IrisWipe"); break;
+            case ArtifactCore::NLE::TransitionKind::BlockDissolve: importedTransition.kind = QStringLiteral("BlockDissolve"); break;
+            }
+            importedTransition.leftClipName = leftClip->name;
+            importedTransition.rightClipName = rightClip->name;
+            importedTransition.range = transition->range;
+            importedTransition.enabled = transition->enabled;
+            composition->addTimelineTransition(importedTransition);
+        }
+    }
+    message += QStringLiteral("\n\n新規Compositionを作成しました。レイヤー: %1").arg(importedCount);
+    if (!warnings.isEmpty()) message += QStringLiteral("\n\n警告:\n") + warnings.join(QStringLiteral("\n"));
+    QMessageBox::information(menu_, QStringLiteral("OpenTimelineIO"), message);
 }
 
 void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRecent)
@@ -811,6 +999,34 @@ void ArtifactFileMenu::Impl::handleExportComposition()
     }
 }
 
+void ArtifactFileMenu::Impl::handleExportOtio()
+{
+    if (!menu_) return;
+    auto* service = ArtifactProjectService::instance();
+    if (!service || !service->hasProject()) {
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"), QStringLiteral("プロジェクトが開かれていません。"));
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    if (!composition) {
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"), QStringLiteral("コンポジションが選択されていません。"));
+        return;
+    }
+    const QString filePath = QFileDialog::getSaveFileName(
+        menu_, QStringLiteral("OpenTimelineIOを書き出す"), QStringLiteral("composition.otio"),
+        QStringLiteral("OpenTimelineIO (*.otio);;All Files (*.*)"));
+    if (filePath.isEmpty()) return;
+    QVector<QString> warnings;
+    if (!exportCompositionToOtioFile(*composition, filePath, &warnings)) {
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"),
+                             QStringLiteral("OTIOを書き出せませんでした。\n%1").arg(warnings.join(QStringLiteral("\n"))));
+        return;
+    }
+    QString message = QStringLiteral("OTIOを書き出しました。\n%1").arg(filePath);
+    if (!warnings.isEmpty()) message += QStringLiteral("\n\n警告:\n") + warnings.join(QStringLiteral("\n"));
+    QMessageBox::information(menu_, QStringLiteral("OpenTimelineIO"), message);
+}
+
 void ArtifactFileMenu::Impl::handleExportFontUsage()
 {
     if (!menu_) return;
@@ -846,12 +1062,14 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     closeProjectAction->setEnabled(hasProject);
     newCompositionAction->setEnabled(hasProject);
     importAssetsAction->setEnabled(hasProject);
+    if (importOtioAction) importOtioAction->setEnabled(true);
     revealProjectFolderAction->setEnabled(hasProject);
     exportFontUsageAction->setEnabled(hasProject);
     const bool hasComposition = hasProject && service &&
                                  static_cast<bool>(service->currentComposition().lock());
     if (exportMenu) exportMenu->setEnabled(hasProject);
     if (exportCompositionAction) exportCompositionAction->setEnabled(hasComposition);
+    if (exportOtioAction) exportOtioAction->setEnabled(hasComposition);
     if (exportCurrentFrameAction) exportCurrentFrameAction->setEnabled(hasComposition);
     if (exportWorkAreaAction) exportWorkAreaAction->setEnabled(hasComposition);
     if (exportProjectPackageAction) exportProjectPackageAction->setEnabled(hasProject);

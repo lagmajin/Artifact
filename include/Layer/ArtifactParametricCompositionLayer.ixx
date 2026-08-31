@@ -28,6 +28,15 @@ public:
     void setDefinition(SharedPtr<const ParametricCompositionDefinition> definition);
     SharedPtr<const ParametricCompositionDefinition> definition() const;
 
+    CompositionID sourceCompositionId() const;
+    void setCompositionId(const CompositionID& id);
+    SharedPtr<ArtifactAbstractComposition> sourceComposition() const;
+
+    // Apply named input bindings only for the duration of one child render.
+    // The referenced composition remains the canonical, reusable source.
+    bool beginInputBindingScope();
+    void endInputBindingScope();
+
     // Convenience: add binding for a slot
     void bindSlot(const QString& slotId, const ParametricCompositionInputBinding& binding);
     void unbindSlot(const QString& slotId);

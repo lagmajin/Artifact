@@ -68,7 +68,6 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
         if (glyph.isEmojiSequence && glyph.shapedGlyphIndex == 0) {
             continue;
         }
-        const bool regional = glyph.charCode >= 0x1F1E6 && glyph.charCode <= 0x1F1FF;
         if (glyph.isEmojiSequence && glyph.clusterIndex >= 0 &&
             !glyph.shapedGlyphIndices.empty() && glyph.shapedGlyphIndex != glyph.shapedGlyphIndices.front()) {
             continue;
@@ -80,10 +79,12 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
         ArtifactCore::GlyphKey key;
         key.codePoint = glyph.charCode; key.fontSize = style.fontSize;
         key.fontFamily = font.family().toStdString();
-        // Sequence rasterization is not enabled until the full DirectWrite
-        // color run has been shaped; scalar color glyphs remain the explicit
-        // fallback and ZWJ controls are skipped above.
-        key.sequenceUtf8 = {};
+        // Preserve the shaped grapheme for DirectWrite color rasterization.
+        // This is important for regional indicator flags and multi-codepoint
+        // emoji sequences.
+        key.sequenceUtf8 = glyph.isEmojiSequence && !glyph.clusterText.isEmpty()
+            ? glyph.clusterText.toUtf8().toStdString()
+            : std::string{};
         key.shapedGlyphIndex = glyph.shapedGlyphIndex;
         if (glyph.shapedGlyphIndices.size() > 1) {
             key.shapedGlyphIndices = glyph.shapedGlyphIndices;

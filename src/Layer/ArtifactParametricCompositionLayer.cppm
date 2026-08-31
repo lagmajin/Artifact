@@ -13,6 +13,7 @@ module;
 module Artifact.Layer.ParametricComposition;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
 import Artifact.Service.Project;
 import Composition.ParametricComposition;
 import Property.Abstract;
@@ -78,6 +79,15 @@ QString normalizedPublishedControlId(const QString& source)
 class ArtifactParametricCompositionLayer::Impl {
 public:
     ParametricCompositionInstance instance_;
+    CompositionID sourceCompositionId_;
+    struct InputSnapshot {
+        LayerID layerId;
+        QString propertyPath;
+        QVariant value;
+    };
+    std::vector<InputSnapshot> inputSnapshots_;
+    std::vector<ArtifactImageLayer*> imageOverrides_;
+    bool inputScopeActive_ = false;
 };
 
 ArtifactParametricCompositionLayer::ArtifactParametricCompositionLayer()
@@ -100,6 +110,117 @@ const ParametricCompositionInstance& ArtifactParametricCompositionLayer::paramet
     return impl_->instance_;
 }
 
+CompositionID ArtifactParametricCompositionLayer::sourceCompositionId() const
+{
+    return impl_->sourceCompositionId_;
+}
+
+void ArtifactParametricCompositionLayer::setCompositionId(const CompositionID& id)
+{
+    impl_->sourceCompositionId_ = id;
+    Q_EMIT changed();
+}
+
+SharedPtr<ArtifactAbstractComposition>
+ArtifactParametricCompositionLayer::sourceComposition() const
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || impl_->sourceCompositionId_.isNil()) {
+        return nullptr;
+    }
+    const auto result = service->findComposition(impl_->sourceCompositionId_);
+    return result.ptr.lock();
+}
+
+bool ArtifactParametricCompositionLayer::beginInputBindingScope()
+{
+    if (impl_->inputScopeActive_) {
+        return false;
+    }
+    const auto source = sourceComposition();
+    if (!source) {
+        return false;
+    }
+
+    impl_->inputSnapshots_.clear();
+    impl_->imageOverrides_.clear();
+    impl_->inputScopeActive_ = true;
+    for (const auto& binding : impl_->instance_.inputBindings()) {
+        if (!binding.connected || binding.targetLayerId.trimmed().isEmpty() ||
+            (binding.targetPropertyPath.trimmed().isEmpty() &&
+             binding.kind != ParametricCompositionSlotKind::Image &&
+             binding.kind != ParametricCompositionSlotKind::Matte)) {
+            continue;
+        }
+        const auto target = source->layerById(LayerID(binding.targetLayerId));
+        if (binding.kind == ParametricCompositionSlotKind::Image ||
+            binding.kind == ParametricCompositionSlotKind::Matte) {
+            auto imageTarget = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(target);
+            const auto& buffer = binding.kind == ParametricCompositionSlotKind::Image
+                ? binding.image : binding.matte;
+            if (!imageTarget || buffer.isEmpty()) {
+                continue;
+            }
+            imageTarget->setTemporarySourceOverride(&buffer);
+            impl_->imageOverrides_.push_back(imageTarget.get());
+            continue;
+        }
+        const auto property = target
+            ? target->getProperty(binding.targetPropertyPath)
+            : SharedPtr<ArtifactCore::AbstractProperty>{};
+        if (!target || !property) {
+            continue;
+        }
+
+        QVariant injectedValue;
+        switch (binding.kind) {
+        case ParametricCompositionSlotKind::SourceLayer:
+            injectedValue = binding.sourceLayerId.toString();
+            break;
+        case ParametricCompositionSlotKind::Text:
+            injectedValue = binding.text;
+            break;
+        default:
+            // Image/matte buffers need a renderer-specific surface binding;
+            // do not force them through QVariant or mutate the source.
+            continue;
+        }
+        impl_->inputSnapshots_.push_back(
+            {LayerID(binding.targetLayerId), binding.targetPropertyPath,
+             property->getValue()});
+        if (!target->setLayerPropertyValue(binding.targetPropertyPath,
+                                           injectedValue)) {
+            endInputBindingScope();
+            return false;
+        }
+    }
+    return true;
+}
+
+void ArtifactParametricCompositionLayer::endInputBindingScope()
+{
+    if (!impl_->inputScopeActive_) {
+        return;
+    }
+    const auto source = sourceComposition();
+    if (source) {
+        for (auto it = impl_->inputSnapshots_.rbegin();
+             it != impl_->inputSnapshots_.rend(); ++it) {
+            if (const auto target = source->layerById(it->layerId)) {
+                target->setLayerPropertyValue(it->propertyPath, it->value);
+            }
+        }
+    }
+    impl_->inputSnapshots_.clear();
+    for (auto* imageLayer : impl_->imageOverrides_) {
+        if (imageLayer) {
+            imageLayer->setTemporarySourceOverride(nullptr);
+        }
+    }
+    impl_->imageOverrides_.clear();
+    impl_->inputScopeActive_ = false;
+}
+
 void ArtifactParametricCompositionLayer::setDefinition(
     SharedPtr<const ParametricCompositionDefinition> definition)
 {
@@ -116,8 +237,24 @@ ArtifactParametricCompositionLayer::definition() const
 void ArtifactParametricCompositionLayer::bindSlot(
     const QString& slotId, const ParametricCompositionInputBinding& binding)
 {
+    const QString normalizedSlotId = slotId.trimmed();
+    if (normalizedSlotId.isEmpty()) {
+        return;
+    }
     ParametricCompositionInputBinding b = binding;
-    b.slotId = slotId;
+    b.slotId = normalizedSlotId;
+    if (const auto def = impl_->instance_.definition(); def &&
+        b.wouldCreateCycle(def->definitionId())) {
+        return;
+    }
+    const auto& bindings = impl_->instance_.inputBindings();
+    for (int i = 0; i < bindings.size(); ++i) {
+        if (bindings[i].slotId == normalizedSlotId) {
+            impl_->instance_.setInputBinding(i, b);
+            Q_EMIT changed();
+            return;
+        }
+    }
     impl_->instance_.addInputBinding(b);
     Q_EMIT changed();
 }
@@ -293,6 +430,13 @@ ArtifactParametricCompositionLayer::getLayerPropertyGroups() const
 
     PropertyGroup paramGroup(QStringLiteral("Parametric Composition"));
 
+    auto sourceIdProp = persistentLayerProperty(
+        QStringLiteral("parametric.sourceCompositionId"),
+        PropertyType::String,
+        impl_->sourceCompositionId_.toString(),
+        -120);
+    paramGroup.addProperty(sourceIdProp);
+
     // Show definition ID
     auto defIdProp = persistentLayerProperty(
         QStringLiteral("parametric.definitionId"),
@@ -379,6 +523,10 @@ ArtifactParametricCompositionLayer::getLayerPropertyGroups() const
 bool ArtifactParametricCompositionLayer::setLayerPropertyValue(
     const QString& propertyPath, const QVariant& value)
 {
+    if (propertyPath == QStringLiteral("parametric.sourceCompositionId")) {
+        setCompositionId(CompositionID(value.toString()));
+        return true;
+    }
     if (propertyPath.startsWith(QStringLiteral("published.")) &&
         !propertyPath.startsWith(QStringLiteral("published.meta."))) {
         const QString controlId = propertyPath.mid(QStringLiteral("published.").size());
@@ -394,6 +542,8 @@ QJsonObject ArtifactParametricCompositionLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj[QStringLiteral("type")] = static_cast<int>(LayerType::ParametricComposition);
+    obj[QStringLiteral("parametric.sourceCompositionId")] =
+        impl_->sourceCompositionId_.toString();
     if (auto def = impl_->instance_.definition()) {
         obj[QStringLiteral("parametric.definitionId")] = def->definitionId();
         obj[QStringLiteral("parametric.displayName")] = def->displayName();
@@ -405,6 +555,8 @@ QJsonObject ArtifactParametricCompositionLayer::toJson() const
 void ArtifactParametricCompositionLayer::fromJsonProperties(const QJsonObject& obj)
 {
     ArtifactAbstractLayer::fromJsonProperties(obj);
+    impl_->sourceCompositionId_ = CompositionID(
+        obj.value(QStringLiteral("parametric.sourceCompositionId")).toString());
     const QJsonObject instanceObject =
         obj.value(QStringLiteral("parametric.instance")).toObject();
     if (!instanceObject.isEmpty()) {

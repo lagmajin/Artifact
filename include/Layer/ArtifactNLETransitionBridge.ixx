@@ -1,6 +1,8 @@
 module;
 
 #include <cstdint>
+#include <QString>
+#include <QVector>
 #include <variant>
 
 #include "../Define/DllExportMacro.hpp"
@@ -32,5 +34,20 @@ LIBRARY_DLL_API ImageF32x4_RGBA applyNLETransition(TransitionKind kind,
                                                   const ImageF32x4_RGBA& left,
                                                   const ImageF32x4_RGBA& right,
                                                   const TransitionContext& ctx);
+
+LIBRARY_DLL_API TransitionKind nleTransitionKindFromName(const QString& name);
+
+LIBRARY_DLL_API ImageF32x4_RGBA applyNLETransitionByName(
+    const QString& name,
+    const ImageF32x4_RGBA& left,
+    const ImageF32x4_RGBA& right,
+    const TransitionContext& ctx);
+
+class ArtifactAbstractComposition;
+
+LIBRARY_DLL_API bool exportCompositionToOtioFile(
+    const ArtifactAbstractComposition& composition,
+    const QString& filePath,
+    QVector<QString>* warnings = nullptr);
 
 } // namespace Artifact

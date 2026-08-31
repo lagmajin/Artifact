@@ -190,6 +190,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
 
 import Artifact.Layer.Composition;
+import Artifact.Layer.ParametricComposition;
 
 import Artifact.Layer.Shape;
 
@@ -8598,7 +8599,7 @@ void drawLayerForCompositionView(
 
     bool interactiveDraft = false, bool applyViewportCameraTo2D = false,
     quint64 surfaceGeneration = 1,
-    const std::function<Diligent::ITextureView*(ArtifactCompositionLayer*,
+    const std::function<Diligent::ITextureView*(ArtifactAbstractLayer*,
                                                 int64_t, const QSize&)>*
         precompGpuResolver = nullptr) {
 
@@ -9932,9 +9933,14 @@ void drawLayerForCompositionView(
 
 
 
-  if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer)) {
+  if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer);
+      compLayer || dynamic_cast<ArtifactParametricCompositionLayer *>(layer)) {
 
-    if (auto childComp = compLayer->sourceComposition()) {
+    auto *parametricLayer = dynamic_cast<ArtifactParametricCompositionLayer *>(layer);
+
+    if (auto childComp = compLayer
+            ? compLayer->sourceComposition()
+            : parametricLayer->sourceComposition()) {
 
       const QSize childSize = childComp->settings().compositionSize();
 
@@ -9947,7 +9953,7 @@ void drawLayerForCompositionView(
               : static_cast<int64_t>(std::llround(
                     layer->getSourceFrameAtCompFrame(cacheFrameNumber)));
       if (layer->is3D() && precompGpuResolver) {
-        if (auto* childSRV = (*precompGpuResolver)(compLayer, childFrame,
+        if (auto* childSRV = (*precompGpuResolver)(layer, childFrame,
                                                    childSize)) {
           renderer->draw3DTexturedCard(localRect, layer->getGlobalTransform4x4(),
                                        childSRV,
@@ -9964,12 +9970,14 @@ void drawLayerForCompositionView(
       // Resolve authored animation/expression state first. The instance scope
       // is then the final value layer for this sample, including recursively
       // exposed Master Properties on nested precomp layers.
-      const bool overrideScopeActive =
-          compLayer->beginExposedPropertyOverrideScope();
+      const bool overrideScopeActive = compLayer
+          ? compLayer->beginExposedPropertyOverrideScope()
+          : parametricLayer->beginInputBindingScope();
       QImage childImage = childComp->getThumbnailAtFrame(
           childFrame, childSize.width(), childSize.height());
       if (overrideScopeActive) {
-        compLayer->endExposedPropertyOverrideScope();
+        if (compLayer) compLayer->endExposedPropertyOverrideScope();
+        else parametricLayer->endInputBindingScope();
       }
       if (childRestoreFrame.framePosition() != childFrame) {
         childComp->goToFrame(childRestoreFrame.framePosition());
@@ -10495,11 +10503,14 @@ public:
   }
 
   Diligent::ITextureView* renderPrecomp2DGpuOutput(
-      ArtifactCompositionLayer* precompLayer, qint64 childFrame,
+      ArtifactAbstractLayer* containerLayer, qint64 childFrame,
       const QSize& childSize, float restoreViewportW, float restoreViewportH,
       float restoreCanvasW, float restoreCanvasH) {
-    if (!precompLayer || !renderer_ || !gpuTextureCacheManager_) return nullptr;
-    const auto child = precompLayer->sourceComposition();
+    if (!containerLayer || !renderer_ || !gpuTextureCacheManager_) return nullptr;
+    auto* precompLayer = dynamic_cast<ArtifactCompositionLayer*>(containerLayer);
+    auto* parametricLayer = dynamic_cast<ArtifactParametricCompositionLayer*>(containerLayer);
+    const auto child = precompLayer ? precompLayer->sourceComposition()
+                                    : (parametricLayer ? parametricLayer->sourceComposition() : nullptr);
     if (!child || childSize.isEmpty()) return nullptr;
     const auto layers = child->allLayerRef();
     for (const auto& layer : layers) {
@@ -10511,15 +10522,21 @@ public:
         return nullptr;
       }
     }
+    const QString outputOwnerId = parametricLayer
+        ? child->id().toString() + QStringLiteral("|parametric|") +
+              containerLayer->id().toString()
+        : child->id().toString();
     auto* output = preparePrecompGpuOutput(
-        child->id().toString(), childFrame, childSize, renderFrameCounter_);
+        outputOwnerId, childFrame, childSize, renderFrameCounter_);
     if (!output) return nullptr;
     const auto savedFrame = child->framePosition();
     const float savedZoom = renderer_->getZoom();
     float savedPanX = 0.0f, savedPanY = 0.0f;
     renderer_->getPan(savedPanX, savedPanY);
     child->goToFrame(childFrame);
-    const bool scopeActive = precompLayer->beginExposedPropertyOverrideScope();
+    const bool scopeActive = precompLayer
+        ? precompLayer->beginExposedPropertyOverrideScope()
+        : parametricLayer->beginInputBindingScope();
     renderer_->pushRenderTarget(output->colorTargetView, output->depthTargetView);
     renderer_->setViewportRect(childSize.width(), childSize.height());
     renderer_->setCanvasSize(childSize.width(), childSize.height());
@@ -10544,7 +10561,10 @@ public:
     renderer_->setCanvasSize(restoreCanvasW, restoreCanvasH);
     renderer_->setPan(savedPanX, savedPanY);
     renderer_->setZoom(savedZoom);
-    if (scopeActive) precompLayer->endExposedPropertyOverrideScope();
+    if (scopeActive) {
+      if (precompLayer) precompLayer->endExposedPropertyOverrideScope();
+      else parametricLayer->endInputBindingScope();
+    }
     child->goToFrame(savedFrame.framePosition());
     output->ready = true;
     return output->colorShaderResourceView;
@@ -11562,10 +11582,10 @@ public:
 
     QString* dbgOut = &lastVideoDebug_;
 
-    const std::function<Diligent::ITextureView*(ArtifactCompositionLayer*,
+    const std::function<Diligent::ITextureView*(ArtifactAbstractLayer*,
                                                 int64_t, const QSize&)>
         precompGpuResolver =
-            [this, rcw, rch, cw, ch](ArtifactCompositionLayer* precomp,
+            [this, rcw, rch, cw, ch](ArtifactAbstractLayer* precomp,
                                      int64_t childFrame,
                                      const QSize& childSize) {
               return renderPrecomp2DGpuOutput(precomp, childFrame, childSize,
@@ -34613,8 +34633,43 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const bool xRayDimThisLayer =
               showXRayOverlay_ && !selectedLayerId_.isNil() &&
               layer->id() != selectedLayerId_;
-          const float opacity =
+          float opacity =
               layer->opacity() * (xRayDimThisLayer ? 0.35f : 1.0f);
+
+          // Crossfade/Dissolve transitions are represented by the existing
+          // layer compositor as complementary opacities. More complex
+          // transition kinds remain metadata until their dedicated GPU
+          // transition pass is available.
+          if (comp) {
+            CompositionTimelineTransition activeTransition;
+            const double transitionProgress =
+                comp->timelineTransitionProgressAtFrame(
+                    currentFrame.framePosition(), &activeTransition);
+            const bool opacityTransition =
+                transitionProgress >= 0.0 && activeTransition.isOpacityOnly();
+            if (opacityTransition) {
+              const bool hardCut = activeTransition.kind.compare(
+                  QStringLiteral("Cut"), Qt::CaseInsensitive) == 0;
+              if (layer->layerName() == activeTransition.leftClipName) {
+                if (hardCut && transitionProgress >= 0.5) {
+                  opacity = 0.0f;
+                } else if (hardCut) {
+                  // Keep the outgoing layer fully opaque before the cut.
+                  opacity *= 1.0f;
+                } else {
+                  opacity *= static_cast<float>(1.0 - transitionProgress);
+                }
+              } else if (layer->layerName() == activeTransition.rightClipName) {
+                if (hardCut && transitionProgress < 0.5) {
+                  opacity = 0.0f;
+                } else if (hardCut) {
+                  opacity *= 1.0f;
+                } else {
+                  opacity *= static_cast<float>(transitionProgress);
+                }
+              }
+            }
+          }
 
           if (opacity <= 0.0f) {
 

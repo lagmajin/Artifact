@@ -45,6 +45,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
+import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
@@ -2102,6 +2103,28 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
       applySurfaceAndDraw(textImage, localRect, true);
+    }
+    return;
+  }
+
+  if (auto* parametricLayer = dynamic_cast<ArtifactParametricCompositionLayer*>(layer)) {
+    if (auto childComp = parametricLayer->sourceComposition()) {
+      const QSize childSize = childComp->settings().compositionSize();
+      const int64_t parentFrame =
+          (cacheFrameNumber != std::numeric_limits<int64_t>::min())
+              ? cacheFrameNumber : layer->currentFrame();
+      const int64_t childFrame = static_cast<int64_t>(std::llround(
+          layer->getSourceFrameAtCompFrame(parentFrame)));
+      const bool scopeStarted = parametricLayer->beginInputBindingScope();
+      const QImage childImage = childComp->getThumbnailAtFrame(
+          childFrame, childSize.width(), childSize.height());
+      if (scopeStarted) {
+        parametricLayer->endInputBindingScope();
+      }
+      if (!childImage.isNull()) {
+        applySurfaceAndDraw(childImage, localRect,
+                            hasRasterizerEffectsOrMasks(layer));
+      }
     }
     return;
   }

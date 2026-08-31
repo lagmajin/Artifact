@@ -423,6 +423,8 @@ public:
   void enableRigidBodyPhysics();
   void disableRigidBodyPhysics();
   void syncRigidBodyPhysicsToBounds();
+  void applyRigidBodyPhysicsSettings();
+  void applyRigidBodyWorldGravity();
   const ArtifactCore::FractureState& fractureState() const;
   const std::vector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
   const LayerEvaluationState& layerEvaluationState() const;

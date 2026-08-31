@@ -2433,7 +2433,14 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     impl_->motionLastFrame_ = frame;
   }
 
-  if (impl_->physicsComponent_.enabled()) {
+  if (!impl_->collisionComponentEnabled_ && !impl_->jointComponentEnabled_ &&
+      hasRigidBodyPhysics()) {
+    const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
+  }
+  if (impl_->collisionComponentEnabled_ && !hasRigidBodyPhysics()) {
+    enableRigidBodyPhysics();
+  }
+  if (impl_->physicsComponent_.enabled() && !hasRigidBodyPhysics()) {
     if (impl_->collisionComponentEnabled_) {
       if (auto* composition =
               dynamic_cast<ArtifactAbstractComposition*>(
@@ -2483,6 +2490,29 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
       impact.speed = physicsOutput.collisionSpeed;
       impact.stress = impact.impulse;
       const_cast<ArtifactAbstractLayer*>(this)->applyFractureImpact(impact);
+    }
+  }
+
+  if (hasRigidBodyPhysics()) {
+    auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+    if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+            impl_->composition_.data());
+        composition && !impl_->jointComponentEnabled_) {
+      world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+          composition->id());
+    }
+    if (world) {
+      for (const auto& candidate : world->getBodies()) {
+        if (!candidate || candidate->cloneIndex < -1 ||
+            (candidate->ownerLayerId && candidate->ownerLayerId != id())) {
+          continue;
+        }
+        const QVector2D bodyPos = candidate->position();
+        positionX = bodyPos.x();
+        positionY = bodyPos.y();
+        rotation = candidate->angle();
+        break;
+      }
     }
   }
 
@@ -2848,7 +2878,14 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     impl_->motionLastFrame_ = frame;
   }
 
-  if (impl_->physicsComponent_.enabled()) {
+  if (!impl_->collisionComponentEnabled_ && !impl_->jointComponentEnabled_ &&
+      hasRigidBodyPhysics()) {
+    const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
+  }
+  if (impl_->collisionComponentEnabled_ && !hasRigidBodyPhysics()) {
+    enableRigidBodyPhysics();
+  }
+  if (impl_->physicsComponent_.enabled() && !hasRigidBodyPhysics()) {
     if (impl_->collisionComponentEnabled_) {
       if (auto* composition =
               dynamic_cast<ArtifactAbstractComposition*>(
@@ -2902,12 +2939,20 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   }
 
   if (hasRigidBodyPhysics()) {
-    if (auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id())) {
+    auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+    if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+            impl_->composition_.data());
+        composition && !impl_->jointComponentEnabled_) {
+      world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+          composition->id());
+    }
+    if (world) {
       // cloneIndex == -2 marks joint static proxies; the layer's own dynamic
       // body keeps the default -1 and drives the transform.
       const auto bodies = world->getBodies();
       for (const auto& candidate : bodies) {
-        if (!candidate || candidate->cloneIndex == -2) {
+        if (!candidate || candidate->cloneIndex < -1 ||
+            (candidate->ownerLayerId && candidate->ownerLayerId != id())) {
           continue;
         }
         const QVector2D bodyPos = candidate->position();
@@ -2955,7 +3000,18 @@ SoftBodyDeformationMesh ArtifactAbstractLayer::softBodyDeformationMesh() const {
 }
 
 bool ArtifactAbstractLayer::hasRigidBodyPhysics() const {
-  return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getRigidWorld(id()));
+  auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data());
+      composition && !impl_->jointComponentEnabled_) {
+    world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+        composition->id());
+  }
+  if (!world) return false;
+  for (const auto& body : world->getBodies()) {
+    if (body && body->ownerLayerId == id()) return true;
+  }
+  return false;
 }
 
 const FractureState& ArtifactAbstractLayer::fractureState() const {
@@ -4281,14 +4337,41 @@ void ArtifactAbstractLayer::disableSoftBodyPhysics() {
 
 void ArtifactAbstractLayer::enableRigidBodyPhysics() {
   auto& physics = ArtifactCore::PhysicsSystem::instance();
-  if (!physics.getRigidWorld(id())) {
-    physics.createRigidWorld(id());
+  auto world = physics.getRigidWorld(id());
+  bool createdWorld = false;
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data());
+      composition && !impl_->jointComponentEnabled_) {
+    world = physics.getCompositionRigidWorld(composition->id());
+    if (!world) {
+      world = physics.createCompositionRigidWorld(composition->id());
+      createdWorld = true;
+    }
+  } else if (!world) {
+    world = physics.createRigidWorld(id());
+    createdWorld = true;
+  }
+  if (world && (createdWorld || impl_->jointComponentEnabled_)) {
+    world->setGravity(0.0f, impl_->physicsComponent_.settings().gravityY);
   }
   syncRigidBodyPhysicsToBounds();
 }
 
 void ArtifactAbstractLayer::disableRigidBodyPhysics() {
-  ArtifactCore::PhysicsSystem::instance().unregisterRigidWorld(id());
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data());
+      composition && !impl_->jointComponentEnabled_) {
+    if (auto world = physics.getCompositionRigidWorld(composition->id())) {
+      for (const auto& body : world->getBodies()) {
+        if (body && body->ownerLayerId == id()) {
+          world->removeBody(body);
+        }
+      }
+    }
+  } else {
+    physics.unregisterRigidWorld(id());
+  }
   impl_->rigidBodyColliderShape_ = -1;
   impl_->rigidBodyColliderRestitution_ = -1.0f;
 }
@@ -4352,6 +4435,14 @@ void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
 void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   auto world = physics.getRigidWorld(id());
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data());
+      composition && !impl_->jointComponentEnabled_) {
+    world = physics.getCompositionRigidWorld(composition->id());
+    if (!world) {
+      world = physics.createCompositionRigidWorld(composition->id());
+    }
+  }
   if (!world) {
     world = physics.createRigidWorld(id());
   }
@@ -4370,12 +4461,25 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   const int shape = shapeProperty ? std::clamp(shapeProperty->getValue().toInt(), 0, 3) : 0;
   const float restitution = std::clamp(
       impl_->physicsComponent_.settings().restitution, 0.0f, 1.0f);
+  float floorY = 0.0f;
+  float floorWidth = std::max(4096.0f, w * 8.0f);
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data())) {
+    const auto compositionSize = composition->settings().compositionSize();
+    floorY = impl_->collisionFloorY_ > 0.0f
+        ? impl_->collisionFloorY_
+        : static_cast<float>(compositionSize.height());
+    floorWidth = std::max(floorWidth,
+                          static_cast<float>(compositionSize.width()) * 2.0f);
+  }
+  world->setStaticFloor(floorY, floorWidth);
   auto bodies = world->getBodies();
   ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> body;
   // cloneIndex == -2 marks joint static proxies; pick the layer's own
   // dynamic body (cloneIndex -1) rather than assuming vector order.
   for (const auto& candidate : bodies) {
-    if (candidate && candidate->cloneIndex != -2) {
+    if (candidate && candidate->cloneIndex >= -1 &&
+        (!candidate->ownerLayerId || candidate->ownerLayerId == id())) {
       body = candidate;
       break;
     }
@@ -4391,6 +4495,7 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
     body.reset();
   }
   if (body) {
+    body->ownerLayerId = id();
     body->setTransform({cx, cy}, body->angle());
     body->setLinearVelocity({0.0f, 0.0f});
     body->setAngularVelocity(0.0f);
@@ -4442,11 +4547,47 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
     }
   }
   if (body) {
+    body->ownerLayerId = id();
     impl_->rigidBodyColliderShape_ = shape;
     impl_->rigidBodyColliderRestitution_ = restitution;
-    body->setLinearDamping(0.02f);
-    body->setAngularDamping(0.02f);
+    applyRigidBodyPhysicsSettings();
     body->setFixedRotation(false);
+  }
+}
+
+void ArtifactAbstractLayer::applyRigidBodyPhysicsSettings() {
+  auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data());
+      composition && !impl_->jointComponentEnabled_) {
+    world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+        composition->id());
+  }
+  if (!world) {
+    return;
+  }
+
+  const auto& settings = impl_->physicsComponent_.settings();
+  for (const auto& body : world->getBodies()) {
+    if (!body || body->ownerLayerId != id()) {
+      continue;
+    }
+    body->setLinearDamping(std::max(0.0f, settings.linearDamping));
+    body->setAngularDamping(std::max(0.0f, settings.angularDamping));
+    body->setGravityScale(std::clamp(settings.gravityScale, -10.0f, 10.0f));
+  }
+}
+
+void ArtifactAbstractLayer::applyRigidBodyWorldGravity() {
+  auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+  if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+          impl_->composition_.data());
+      composition && !impl_->jointComponentEnabled_) {
+    world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+        composition->id());
+  }
+  if (world) {
+    world->setGravity(0.0f, impl_->physicsComponent_.settings().gravityY);
   }
 }
 
@@ -7937,9 +8078,23 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   followThroughProp->setStep(0.01);
   physicsGroup.addProperty(followThroughProp);
 
+  auto fallProfileProp =
+      makeProp(QStringLiteral("physics.fallProfile"), PropertyType::Integer,
+               impl_->physicsComponent_.settings().fallProfile, -96);
+  fallProfileProp->setDisplayLabel(QStringLiteral("Fall Profile"));
+  fallProfileProp->setTooltip(
+      QStringLiteral("0=Custom, 1=Light, 2=Normal, 3=Heavy, 4=Floaty."));
+  fallProfileProp->setHardRange(0.0, 4.0);
+  fallProfileProp->setSoftRange(0.0, 4.0);
+  fallProfileProp->setStep(1.0);
+  physicsGroup.addProperty(fallProfileProp);
+
   auto gravityYProp =
       makeProp(QStringLiteral("physics.gravityY"), PropertyType::Float,
                static_cast<double>(impl_->physicsComponent_.settings().gravityY), -96);
+  gravityYProp->setDisplayLabel(QStringLiteral("World Gravity Y (Advanced)"));
+  gravityYProp->setTooltip(
+      QStringLiteral("Shared gravity for all Box2D bodies in this composition."));
   gravityYProp->setUnit(QStringLiteral("px/s^2"));
   gravityYProp->setHardRange(-5000.0, 5000.0);
   gravityYProp->setSoftRange(-2000.0, 2000.0);
@@ -7949,10 +8104,35 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   auto linearDampingProp =
       makeProp(QStringLiteral("physics.linearDamping"), PropertyType::Float,
                static_cast<double>(impl_->physicsComponent_.settings().linearDamping), -95);
+  linearDampingProp->setDisplayLabel(QStringLiteral("Air Drag"));
+  linearDampingProp->setTooltip(
+      QStringLiteral("Linear air resistance applied to the Box2D body."));
   linearDampingProp->setHardRange(0.0, 50.0);
   linearDampingProp->setSoftRange(0.0, 10.0);
   linearDampingProp->setStep(0.1);
   physicsGroup.addProperty(linearDampingProp);
+
+  auto angularDampingProp =
+      makeProp(QStringLiteral("physics.angularDamping"), PropertyType::Float,
+               static_cast<double>(impl_->physicsComponent_.settings().angularDamping), -94);
+  angularDampingProp->setDisplayLabel(QStringLiteral("Angular Drag"));
+  angularDampingProp->setTooltip(
+      QStringLiteral("Rotational air resistance applied to the Box2D body."));
+  angularDampingProp->setHardRange(0.0, 50.0);
+  angularDampingProp->setSoftRange(0.0, 10.0);
+  angularDampingProp->setStep(0.1);
+  physicsGroup.addProperty(angularDampingProp);
+
+  auto gravityScaleProp =
+      makeProp(QStringLiteral("physics.gravityScale"), PropertyType::Float,
+               static_cast<double>(impl_->physicsComponent_.settings().gravityScale), -93);
+  gravityScaleProp->setDisplayLabel(QStringLiteral("Gravity Scale"));
+  gravityScaleProp->setTooltip(
+      QStringLiteral("Per-layer multiplier for the composition gravity."));
+  gravityScaleProp->setHardRange(-10.0, 10.0);
+  gravityScaleProp->setSoftRange(-2.0, 2.0);
+  gravityScaleProp->setStep(0.01);
+  physicsGroup.addProperty(gravityScaleProp);
 
   auto restitutionProp =
       makeProp(QStringLiteral("physics.restitution"), PropertyType::Float,
@@ -10131,13 +10311,83 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         value.toDouble(), impl_->physicsComponent_.settings().gravityY,
         -5000.0, 5000.0);
     impl_->physicsComponent_.reset();
+    applyRigidBodyWorldGravity();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.fallProfile")) {
+    const int profile = std::clamp(value.toInt(), 0, 4);
+    auto& settings = impl_->physicsComponent_.settings();
+    settings.fallProfile = profile;
+    switch (profile) {
+    case 1: // Light
+      settings.gravityScale = 0.65f;
+      settings.linearDamping = 0.10f;
+      settings.angularDamping = 0.12f;
+      break;
+    case 2: // Normal
+      settings.gravityScale = 1.0f;
+      settings.linearDamping = 0.35f;
+      settings.angularDamping = 0.35f;
+      break;
+    case 3: // Heavy
+      settings.gravityScale = 1.8f;
+      settings.linearDamping = 0.12f;
+      settings.angularDamping = 0.16f;
+      break;
+    case 4: // Floaty
+      settings.gravityScale = 0.35f;
+      settings.linearDamping = 2.5f;
+      settings.angularDamping = 2.0f;
+      break;
+    default:
+      break;
+    }
+    impl_->physicsComponent_.reset();
+    applyRigidBodyPhysicsSettings();
+    persistentLayerProperty(QStringLiteral("physics.gravityScale"),
+                            PropertyType::Float,
+                            QVariant(static_cast<double>(settings.gravityScale)),
+                            -93);
+    persistentLayerProperty(QStringLiteral("physics.linearDamping"),
+                            PropertyType::Float,
+                            QVariant(static_cast<double>(settings.linearDamping)),
+                            -95);
+    persistentLayerProperty(QStringLiteral("physics.angularDamping"),
+                            PropertyType::Float,
+                            QVariant(static_cast<double>(settings.angularDamping)),
+                            -94);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.linearDamping")) {
     impl_->physicsComponent_.settings().linearDamping = finiteClampedValue(
         value.toDouble(), impl_->physicsComponent_.settings().linearDamping, 0.0,
         50.0);
+    impl_->physicsComponent_.settings().fallProfile = 0;
     impl_->physicsComponent_.reset();
+    applyRigidBodyPhysicsSettings();
+    persistentLayerProperty(QStringLiteral("physics.fallProfile"),
+                            PropertyType::Integer, QVariant(0), -96);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.angularDamping")) {
+    impl_->physicsComponent_.settings().angularDamping = finiteClampedValue(
+        value.toDouble(), impl_->physicsComponent_.settings().angularDamping, 0.0,
+        50.0);
+    impl_->physicsComponent_.settings().fallProfile = 0;
+    applyRigidBodyPhysicsSettings();
+    persistentLayerProperty(QStringLiteral("physics.fallProfile"),
+                            PropertyType::Integer, QVariant(0), -96);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.gravityScale")) {
+    impl_->physicsComponent_.settings().gravityScale = finiteClampedValue(
+        value.toDouble(), impl_->physicsComponent_.settings().gravityScale,
+        -10.0, 10.0);
+    impl_->physicsComponent_.settings().fallProfile = 0;
+    impl_->physicsComponent_.reset();
+    applyRigidBodyPhysicsSettings();
+    persistentLayerProperty(QStringLiteral("physics.fallProfile"),
+                            PropertyType::Integer, QVariant(0), -96);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.restitution")) {

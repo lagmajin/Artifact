@@ -33,6 +33,7 @@ export namespace Artifact {
   QImage getThumbnail(int width = 128, int height = 128) const override;
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
   bool hasCurrentFrameBuffer() const;
+  void setTemporarySourceOverride(const ArtifactCore::ImageF32x4_RGBA* buffer);
 
  protected:
   const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const override;

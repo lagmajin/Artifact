@@ -1451,8 +1451,9 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
 
   void ArtifactAbstractComposition::Impl::removeAllLayers()
  {
-  for (auto& layer : layerMultiIndex_) {
+   for (auto& layer : layerMultiIndex_) {
    if (layer) {
+    layer->disableRigidBodyPhysics();
     layer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
    }
   }
@@ -1493,6 +1494,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     layerMultiIndex_.removeById(id);
     nodeStore_.removeNode(id.toString());
     if (removedLayer) {
+     removedLayer->disableRigidBodyPhysics();
      removedLayer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
      invalidateThumbnailCache();
      recalculateFrameRange();
@@ -2921,6 +2923,8 @@ bool CompositionStateVariant::hasOverride(const LayerID& layerId,
 
  ArtifactAbstractComposition::~ArtifactAbstractComposition()
  {
+  ArtifactCore::PhysicsSystem::instance().unregisterCompositionRigidWorld(
+      impl_->id_);
   delete impl_;
  }
 

@@ -16,6 +16,9 @@ export namespace Artifact {
         float followThroughGain = 0.5f;
         float gravityY = 980.0f; // px/s^2, positive Y falls downward in composition space.
         float linearDamping = 0.0f;
+        float angularDamping = 0.02f;
+        float gravityScale = 1.0f;
+        int fallProfile = 0; // 0=Custom, 1=Light, 2=Normal, 3=Heavy, 4=Floaty
         bool collisionEnabled = false;
         float floorY = 1080.0f;
         float restitution = 0.25f;
@@ -32,6 +35,9 @@ export namespace Artifact {
             obj["followThroughGain"] = static_cast<double>(followThroughGain);
             obj["gravityY"] = static_cast<double>(gravityY);
             obj["linearDamping"] = static_cast<double>(linearDamping);
+            obj["angularDamping"] = static_cast<double>(angularDamping);
+            obj["gravityScale"] = static_cast<double>(gravityScale);
+            obj["fallProfile"] = fallProfile;
             obj["collisionEnabled"] = collisionEnabled;
             obj["floorY"] = static_cast<double>(floorY);
             obj["restitution"] = static_cast<double>(restitution);
@@ -47,6 +53,9 @@ export namespace Artifact {
             followThroughGain = static_cast<float>(obj["followThroughGain"].toDouble(0.5));
             gravityY = static_cast<float>(obj["gravityY"].toDouble(980.0));
             linearDamping = static_cast<float>(obj["linearDamping"].toDouble(0.0));
+            angularDamping = static_cast<float>(obj["angularDamping"].toDouble(0.02));
+            gravityScale = static_cast<float>(obj["gravityScale"].toDouble(1.0));
+            fallProfile = std::clamp(obj["fallProfile"].toInt(0), 0, 4);
             collisionEnabled = obj["collisionEnabled"].toBool(false);
             floorY = static_cast<float>(obj["floorY"].toDouble(1080.0));
             restitution = static_cast<float>(
@@ -161,7 +170,7 @@ export namespace Artifact {
             if (std::abs(settings_.gravityY) <= 0.01f) {
                 return;
             }
-            dynamicVelocityY_ += settings_.gravityY * dt;
+            dynamicVelocityY_ += settings_.gravityY * settings_.gravityScale * dt;
             if (settings_.linearDamping > 0.0f) {
                 const float dampingFactor = 1.0f / (1.0f + settings_.linearDamping * dt);
                 dynamicVelocityY_ *= dampingFactor;

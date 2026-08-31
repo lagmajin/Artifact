@@ -62,6 +62,7 @@ module;
 
 module Artifact.MainWindow;
 
+import Widgets.Common.DialogPlacement;
 import Artifact.Application.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Tool.Brush;
@@ -1320,6 +1321,7 @@ public:
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  ArtifactWidgets::installDialogCentering(this);
   setAccessibleName(QStringLiteral("Artifact Studio main window"));
   setAccessibleDescription(QStringLiteral(
       "Main workspace containing the project, timeline, inspector, and render views."));
