@@ -604,6 +604,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPerformanceProfilerWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthDashboard.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthSummary.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Effect/ArtifactEffectPalette.ixx"
 )
 
