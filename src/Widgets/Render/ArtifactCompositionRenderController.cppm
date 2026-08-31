@@ -313,6 +313,7 @@ import ArtifactCore.ImageProcessing.OpenCV.RotoBrushEngine;
 
 import ArtifactCore.Utils.PerformanceProfiler;
 import Artifact.Render.CompositionChangeDetector;
+import Artifact.Render.CompositionPassState;
 
 
 
@@ -10781,42 +10782,6 @@ public:
       const std::array<RenderPass*, 1> passes{&pass};
       return runAllWithRenderGraph(passes, context, resources);
     }
-
-  };
-
-  struct GpuBasePassState {
-
-    float origZoom = 1.0f;
-
-    FloatColor origClearColor{};
-
-    float origPanX = 0.0f;
-
-    float origPanY = 0.0f;
-
-    float origViewW = 0.0f;
-
-    float origViewH = 0.0f;
-
-  };
-
-  struct GpuLayerBlendResult {
-
-    bool blended = false;
-
-    bool directFallbackUsed = false;
-
-    bool convertedLayerToFloat = false;
-
-  };
-
-  struct PresentStageResult {
-
-    double presentedGpuFrameMs = 0.0;
-
-    QString presentedStatus;
-
-    QString presentedVideoDebug;
 
   };
 
