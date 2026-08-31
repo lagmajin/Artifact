@@ -605,6 +605,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthDashboard.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthSummary.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionMotionPathCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Effect/ArtifactEffectPalette.ixx"
 )
 
@@ -1049,7 +1050,6 @@ set(ARTIFACT_APP_IMPL_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/Artifact3DModelViewer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionEditor.cppm"
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionCleanup.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionMotionPathCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/CompositionEmptyOverlay.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/CompositionTextEditor.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderController.cppm"
