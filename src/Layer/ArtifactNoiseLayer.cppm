@@ -185,8 +185,10 @@ float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
 
 bool evaluatedNoiseBoolean(const ArtifactNoiseLayer* layer,
                            const QString& path, bool fallback,
-                           const ArtifactCore::RationalTime& time) {
+                           const ArtifactCore::RationalTime& time,
+                           int64_t frame) {
   if (!layer) return fallback;
+  bool value = fallback;
   if (const auto property = layer->getProperty(path);
       property && (property->isAnimatable() || property->hasExpression() ||
                    property->hasEnvelopes())) {
@@ -197,9 +199,14 @@ bool evaluatedNoiseBoolean(const ArtifactNoiseLayer* layer,
     } else {
       animated = property->evaluateValue(time);
     }
-    if (animated.isValid()) return animated.toBool();
+    if (animated.isValid()) value = animated.toBool();
   }
-  return fallback;
+  if (const auto* stack = layer->animationLayerStack(path);
+      stack && stack->layerCount() > 0) {
+    value = stack->evaluateWithBase(ArtifactCore::FramePosition(frame),
+                                    value ? 1.0f : 0.0f) > 0.5f;
+  }
+  return value;
 }
 
 FloatColor evaluatedNoiseColor(const ArtifactNoiseLayer* layer,
@@ -471,9 +478,10 @@ ArtifactNoiseLayer::resolveLayerSourceOverride() const {
   const int height = std::clamp(source.height, 1, 16384);
   auto settings = evaluatedNoiseSettings(this, impl_->settings_);
   const auto time = noiseEvaluationTime(this);
+  const int64_t frame = time.value();
   const bool colorMapping = evaluatedNoiseBoolean(
       this, QStringLiteral("noise.colorMapping"),
-      impl_->colorMappingEnabled_, time);
+      impl_->colorMappingEnabled_, time, frame);
   const auto colorA = evaluatedNoiseColor(
       this, QStringLiteral("noise.colorA"), impl_->colorA_, time);
   const auto colorB = evaluatedNoiseColor(
@@ -532,9 +540,10 @@ void ArtifactNoiseLayer::draw(ArtifactIRenderer* renderer) {
                      std::clamp(source.height, 1, 16384));
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const auto time = noiseEvaluationTime(this);
+  const int64_t frame = time.value();
   const bool colorMapping = evaluatedNoiseBoolean(
       this, QStringLiteral("noise.colorMapping"),
-      impl_->colorMappingEnabled_, time);
+      impl_->colorMappingEnabled_, time, frame);
   if (!colorMapping) {
     auto gpuSettings = evaluatedNoiseSettings(this, impl_->settings_);
     gpuSettings.width = size.width;
