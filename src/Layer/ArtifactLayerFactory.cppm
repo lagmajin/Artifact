@@ -376,6 +376,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           legacyLayerType == QStringLiteral("FormParticle") ||
           legacyLayerType == QStringLiteral("Procedural3D") ||
           legacyLayerType == QStringLiteral("Procedural3DLayer") ||
+          serializedType == QStringLiteral("Noise") ||
+          serializedType == QStringLiteral("NoiseLayer") ||
           json.contains("formParticle") ||
           json.contains("procedural3D");
       if (!json.contains("type") &&
