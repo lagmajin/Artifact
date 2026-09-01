@@ -219,6 +219,27 @@ bool evaluatedNoiseBoolean(const ArtifactNoiseLayer* layer,
   return value;
 }
 
+QString evaluatedNoiseKind(const ArtifactNoiseLayer* layer,
+                           const QString& path, const QString& fallback,
+                           const ArtifactCore::RationalTime& time) {
+  if (!layer) return fallback;
+  if (const auto property = layer->getProperty(path);
+      property && (property->isAnimatable() || property->hasExpression() ||
+                   property->hasEnvelopes() ||
+                   property->hasExternalOverride())) {
+    QVariant animated;
+    if (property->hasExpression()) {
+      ArtifactCore::ExpressionEvaluator evaluator;
+      animated = property->evaluateValue(time, &evaluator);
+    } else {
+      animated = property->evaluateValue(time);
+    }
+    const QString value = animated.toString().trimmed();
+    if (!value.isEmpty()) return value;
+  }
+  return fallback;
+}
+
 FloatColor evaluatedNoiseColor(const ArtifactNoiseLayer* layer,
                                const QString& path, const FloatColor& fallback,
                                const ArtifactCore::RationalTime& time) {
@@ -265,6 +286,11 @@ ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
   const auto time = noiseEvaluationTime(layer);
   const int64_t frame = time.value();
   auto& p = settings.primary;
+  noiseKindFromString(
+      evaluatedNoiseKind(layer, QStringLiteral("noise.kind"),
+                         noiseKindToString(p.kind, p.voronoiMode, p.gradientMode),
+                         time),
+      p.kind, p.voronoiMode, p.gradientMode);
   p.seed = static_cast<std::uint32_t>(std::max(
       0l, std::lround(evaluatedNoiseProperty(
               layer, QStringLiteral("noise.seed"),
@@ -313,7 +339,7 @@ ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
 
 const QStringList& animatedNoisePropertySuffixes() {
   static const QStringList suffixes = {
-      QStringLiteral("seed"), QStringLiteral("scaleX"),
+      QStringLiteral("kind"), QStringLiteral("seed"), QStringLiteral("scaleX"),
       QStringLiteral("scaleY"), QStringLiteral("offsetX"),
       QStringLiteral("offsetY"), QStringLiteral("rotation"),
       QStringLiteral("amplitude"), QStringLiteral("octaves"),
@@ -753,6 +779,7 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
   auto kindProperty = persistentLayerProperty(
       QStringLiteral("noise.kind"), ArtifactCore::PropertyType::String,
       noiseKindToString(p.kind, p.voronoiMode, p.gradientMode), -105);
+  kindProperty->setAnimatable(true);
   kindProperty->setDisplayLabel(QStringLiteral("ノイズタイプ"));
   noiseGroup.addProperty(kindProperty);
   auto seedProperty = persistentLayerProperty(
