@@ -63,6 +63,7 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Layer.Image;
+import Artifact.Layers.Noise;
 import Artifact.Widgets.TransformGizmo;
 import Utils.Path;
 import Memory.SharedPtr;
@@ -133,6 +134,8 @@ QString layerTypeLabel(const ArtifactAbstractLayerPtr& layer)
   QString type;
   if (ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
     type = QStringLiteral("Shape");
+  } else if (ArtifactCore::dynamicPointerCast<ArtifactNoiseLayer>(ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
+    type = QStringLiteral("Noise");
   } else if (ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
     type = QStringLiteral("Image");
   } else {

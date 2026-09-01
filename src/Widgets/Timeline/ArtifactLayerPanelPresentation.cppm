@@ -19,7 +19,7 @@ import Artifact.Layer.FormParticle;
 import Artifact.Layer.Group;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Video;
-import Artifact.Layer.Noise;
+import Artifact.Layers.Noise;
 
 namespace Artifact {
 

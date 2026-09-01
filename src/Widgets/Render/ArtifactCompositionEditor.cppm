@@ -134,6 +134,7 @@ import Artifact.Layer.Image;
 import NLE.Core;
 import NLE.OTIO;
 import Artifact.Layers.SolidImage;
+import Artifact.Layers.Noise;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.ActiveContext;
@@ -2671,6 +2672,8 @@ public:
         typeText = QStringLiteral("Clone Layer");
       } else if (className.contains(QStringLiteral("Text"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Text Layer");
+      } else if (ArtifactCore::dynamicPointerCast<ArtifactNoiseLayer>(targetLayer)) {
+        typeText = QStringLiteral("Noise Layer");
       } else if (className.contains(QStringLiteral("Image"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Image Layer");
       } else if (className.contains(QStringLiteral("Paint"), Qt::CaseInsensitive)) {

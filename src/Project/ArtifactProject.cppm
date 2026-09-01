@@ -35,7 +35,7 @@ import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Svg;
-import Artifact.Layer.Noise;
+import Artifact.Layers.Noise;
 import Artifact.Project.CreationDefaults;
 import Property.SerializationBridge;
 import Application.AppSettings;

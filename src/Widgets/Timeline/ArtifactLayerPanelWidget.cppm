@@ -88,7 +88,7 @@ import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Solid2D;
-import Artifact.Layer.Noise;
+import Artifact.Layers.Noise;
 import Artifact.Layer.Construction;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Group;
