@@ -177,7 +177,9 @@ void sanitizeNoiseSettings(ArtifactCore::ProceduralTextureSettings& settings) {
   settings.height = std::clamp(settings.height, 1, 16384);
   const int outputFormat = static_cast<int>(settings.outputFormat);
   settings.outputFormat = static_cast<ArtifactCore::ProceduralTextureOutputFormat>(
-      std::clamp(outputFormat, 1, 3));
+      std::clamp(outputFormat,
+                 static_cast<int>(ArtifactCore::ProceduralTextureOutputFormat::Rgba8),
+                 static_cast<int>(ArtifactCore::ProceduralTextureOutputFormat::Both)));
   settings.primary.octaves = std::clamp(settings.primary.octaves, 1u, 12u);
   settings.primary.lacunarity =
       std::isfinite(settings.primary.lacunarity)
@@ -944,7 +946,10 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
     const int outputFormat = noiseObj.value("outputFormat").toInt(
         static_cast<int>(settings.outputFormat));
     settings.outputFormat = static_cast<ArtifactCore::ProceduralTextureOutputFormat>(
-        std::clamp(outputFormat, 1, 3));
+        std::clamp(
+            outputFormat,
+            static_cast<int>(ArtifactCore::ProceduralTextureOutputFormat::Rgba8),
+            static_cast<int>(ArtifactCore::ProceduralTextureOutputFormat::Both)));
     settings.post.domainWarpEnabled =
         noiseObj.value("domainWarp").toBool(settings.post.domainWarpEnabled);
     settings.post.warpAmplitude = static_cast<float>(
