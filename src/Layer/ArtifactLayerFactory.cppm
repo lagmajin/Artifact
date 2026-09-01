@@ -325,6 +325,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           legacyLayerType == QStringLiteral("NullLayer") ||
           legacyLayerType == QStringLiteral("Solid") ||
           legacyLayerType == QStringLiteral("SolidLayer") ||
+          legacyLayerType == QStringLiteral("Noise") ||
+          legacyLayerType == QStringLiteral("NoiseLayer") ||
           legacyLayerType == QStringLiteral("Image") ||
           legacyLayerType == QStringLiteral("ImageLayer") ||
           legacyLayerType == QStringLiteral("Shape") ||
@@ -404,6 +406,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       } else if (serializedType == QStringLiteral("Solid") ||
                  serializedType == QStringLiteral("SolidLayer")) {
           type = LayerType::Solid;
+      } else if (serializedType == QStringLiteral("Noise") ||
+                 serializedType == QStringLiteral("NoiseLayer")) {
+          type = LayerType::Noise;
       } else if (serializedType == QStringLiteral("Image") ||
                  serializedType == QStringLiteral("ImageLayer")) {
           type = LayerType::Image;
@@ -477,6 +482,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       } else if (legacyLayerType == QStringLiteral("Solid") ||
                  legacyLayerType == QStringLiteral("SolidLayer")) {
           type = LayerType::Solid;
+      } else if (legacyLayerType == QStringLiteral("Noise") ||
+                 legacyLayerType == QStringLiteral("NoiseLayer")) {
+          type = LayerType::Noise;
       } else if (legacyLayerType == QStringLiteral("Image") ||
                  legacyLayerType == QStringLiteral("ImageLayer")) {
           type = LayerType::Image;
