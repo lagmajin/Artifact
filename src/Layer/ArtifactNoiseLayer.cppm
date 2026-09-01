@@ -175,6 +175,9 @@ QString noiseSignatureKey(
 void sanitizeNoiseSettings(ArtifactCore::ProceduralTextureSettings& settings) {
   settings.width = std::clamp(settings.width, 1, 16384);
   settings.height = std::clamp(settings.height, 1, 16384);
+  const int outputFormat = static_cast<int>(settings.outputFormat);
+  settings.outputFormat = static_cast<ArtifactCore::ProceduralTextureOutputFormat>(
+      std::clamp(outputFormat, 1, 3));
   settings.primary.octaves = std::clamp(settings.primary.octaves, 1u, 12u);
   settings.primary.lacunarity =
       std::isfinite(settings.primary.lacunarity)
