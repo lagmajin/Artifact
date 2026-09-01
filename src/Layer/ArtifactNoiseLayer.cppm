@@ -110,6 +110,8 @@ QString noiseSignatureKey(
   QString key;
   key += QString::number(settings.width);
   key += QLatin1Char('|') + QString::number(settings.height);
+  key += QLatin1Char('|') + QString::number(settings.parallel);
+  key += QLatin1Char('|') + QString::number(static_cast<int>(settings.outputFormat));
   key += QString::number(static_cast<int>(p.kind));
   key += QLatin1Char('|') + QString::number(static_cast<int>(p.voronoiMode));
   key += QLatin1Char('|') + QString::number(static_cast<int>(p.gradientMode));
@@ -805,6 +807,8 @@ QJsonObject ArtifactNoiseLayer::toJson() const {
   noiseObj["gain"] = static_cast<double>(p.gain);
   noiseObj["cellJitter"] = static_cast<double>(p.cellJitter);
   noiseObj["seamless"] = settings.seamless;
+  noiseObj["parallel"] = settings.parallel;
+  noiseObj["outputFormat"] = static_cast<int>(settings.outputFormat);
   noiseObj["domainWarp"] = post.domainWarpEnabled;
   noiseObj["warpAmplitude"] = static_cast<double>(post.warpAmplitude);
   noiseObj["useSecondary"] = post.useSecondary;
@@ -875,6 +879,11 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
     p.cellJitter =
         static_cast<float>(noiseObj.value("cellJitter").toDouble(0.75));
     settings.seamless = noiseObj.value("seamless").toBool(true);
+    settings.parallel = noiseObj.value("parallel").toBool(false);
+    const int outputFormat = noiseObj.value("outputFormat").toInt(
+        static_cast<int>(settings.outputFormat));
+    settings.outputFormat = static_cast<ArtifactCore::ProceduralTextureOutputFormat>(
+        std::clamp(outputFormat, 1, 3));
     settings.post.domainWarpEnabled =
         noiseObj.value("domainWarp").toBool(false);
     settings.post.warpAmplitude =
