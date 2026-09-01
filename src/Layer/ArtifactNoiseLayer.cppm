@@ -108,6 +108,8 @@ QString noiseSignatureKey(
   const auto& p = settings.primary;
   const auto& post = settings.post;
   QString key;
+  key += QString::number(settings.width);
+  key += QLatin1Char('|') + QString::number(settings.height);
   key += QString::number(static_cast<int>(p.kind));
   key += QLatin1Char('|') + QString::number(static_cast<int>(p.voronoiMode));
   key += QLatin1Char('|') + QString::number(static_cast<int>(p.gradientMode));
