@@ -226,6 +226,10 @@ ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
   const auto time = noiseEvaluationTime(layer);
   const int64_t frame = time.value();
   auto& p = settings.primary;
+  p.seed = static_cast<std::uint32_t>(std::max(
+      0l, std::lround(evaluatedNoiseProperty(
+              layer, QStringLiteral("noise.seed"),
+              static_cast<float>(p.seed), time, frame))));
   p.scale[0] = evaluatedNoiseProperty(layer, QStringLiteral("noise.scaleX"),
                                       p.scale[0], time, frame);
   p.scale[1] = evaluatedNoiseProperty(layer, QStringLiteral("noise.scaleY"),
