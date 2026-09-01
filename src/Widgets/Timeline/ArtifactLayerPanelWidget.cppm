@@ -88,6 +88,7 @@ import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Solid2D;
+import Artifact.Layer.Noise;
 import Artifact.Layer.Construction;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Group;
@@ -312,6 +313,7 @@ constexpr int kLayerTypeIconGap = 5;
 enum class TimelineLayerIconKind {
   Generic,
   Solid,
+  Noise,
   Image,
   Svg,
   Video,
@@ -352,6 +354,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
   if (ArtifactCore::dynamicPointerCast<ArtifactLightLayer>(layer)) return TimelineLayerIconKind::Light;
   if (ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
   if (ArtifactCore::dynamicPointerCast<ArtifactFormParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
+  if (ArtifactCore::dynamicPointerCast<ArtifactNoiseLayer>(layer)) return TimelineLayerIconKind::Noise;
   if (ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer)) return TimelineLayerIconKind::Solid;
   if (layer->isNullLayer()) return TimelineLayerIconKind::Null;
   if (layer->hasAudio() && !layer->hasVideo()) return TimelineLayerIconKind::Audio;
@@ -2224,6 +2227,7 @@ public:
     iconCreateModel3D = loadLayerPanelIcon(QStringLiteral("Studio/model3d.svg"));
     iconLayerGeneric      = loadLayerPanelIcon(QStringLiteral("Studio/timeline_layer.svg"));
     iconLayerSolid        = loadLayerPanelIcon(QStringLiteral("Studio/layer_composite.svg"));
+    iconLayerNoise        = loadLayerPanelIcon(QStringLiteral("Studio/noise_layer.svg"));
     iconLayerImage        = loadLayerPanelIcon(QStringLiteral("Studio/photo_filter.svg"));
     iconLayerSvg          = loadLayerPanelIcon(QStringLiteral("Studio/svg_layer.svg"));
     iconLayerVideo        = loadLayerPanelIcon(QStringLiteral("Studio/videocam.svg"));
@@ -2259,7 +2263,7 @@ public:
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
   QIcon iconLink, iconLinkOff;
   QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText, iconCreateModel3D;
-  QIcon iconLayerGeneric, iconLayerSolid, iconLayerImage, iconLayerSvg, iconLayerVideo, iconLayerAudio;
+  QIcon iconLayerGeneric, iconLayerSolid, iconLayerNoise, iconLayerImage, iconLayerSvg, iconLayerVideo, iconLayerAudio;
   QIcon iconLayerText, iconLayerShape, iconLayerPrecomp, iconLayerCamera, iconLayerLight, iconLayerGroup;
   QIcon iconLayerNull, iconLayerAdjustment, iconLayerParticle, iconLayerClone, iconLayerModel3D;
   QIcon iconLayerConstruction;
@@ -2360,6 +2364,7 @@ public:
   {
     switch (kind) {
     case TimelineLayerIconKind::Solid: return iconLayerSolid;
+    case TimelineLayerIconKind::Noise: return iconLayerNoise;
     case TimelineLayerIconKind::Image: return iconLayerImage;
     case TimelineLayerIconKind::Svg: return iconLayerSvg;
     case TimelineLayerIconKind::Video: return iconLayerVideo;
