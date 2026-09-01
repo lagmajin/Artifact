@@ -35,6 +35,7 @@ import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Svg;
+import Artifact.Layer.Noise;
 import Artifact.Project.CreationDefaults;
 import Property.SerializationBridge;
 import Application.AppSettings;
@@ -727,6 +728,10 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
  {
   if (!layer) {
    return LayerType::Unknown;
+  }
+
+  if (dynamic_cast<const ArtifactNoiseLayer*>(layer.get())) {
+   return LayerType::Noise;
   }
 
   std::string typeName = typeid(*layer).name();
