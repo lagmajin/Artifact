@@ -506,8 +506,10 @@ void generatorParamsFromJson(
     const QJsonObject& object,
     ArtifactCore::ProceduralTextureGeneratorParams& params) {
   if (object.isEmpty()) return;
-  noiseKindFromString(object.value(QStringLiteral("kind")).toString(),
-                      params.kind, params.voronoiMode, params.gradientMode);
+  if (object.contains(QStringLiteral("kind"))) {
+    noiseKindFromString(object.value(QStringLiteral("kind")).toString(),
+                        params.kind, params.voronoiMode, params.gradientMode);
+  }
   params.seed = static_cast<std::uint32_t>(
       std::max(0, object.value(QStringLiteral("seed")).toInt(
                                   static_cast<int>(params.seed))));
@@ -901,7 +903,7 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
     settings.post.blendMode = static_cast<ArtifactCore::ProceduralTextureBlendMode>(
         std::clamp(noiseObj.value("blendMode").toInt(
                        static_cast<int>(settings.post.blendMode)),
-                   0, 3));
+                   0, 2));
     settings.post.blendWeight = static_cast<float>(
         noiseObj.value("blendWeight").toDouble(settings.post.blendWeight));
     if (noiseObj.value("secondary").isObject()) {
