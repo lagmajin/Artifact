@@ -164,7 +164,8 @@ float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
   float value = fallback;
   if (const auto property = layer->getProperty(path);
       property && (property->isAnimatable() || property->hasExpression() ||
-                   property->hasEnvelopes())) {
+                   property->hasEnvelopes() ||
+                   property->hasExternalOverride())) {
     QVariant animated;
     if (property->hasExpression()) {
       ArtifactCore::ExpressionEvaluator evaluator;
@@ -191,7 +192,8 @@ bool evaluatedNoiseBoolean(const ArtifactNoiseLayer* layer,
   bool value = fallback;
   if (const auto property = layer->getProperty(path);
       property && (property->isAnimatable() || property->hasExpression() ||
-                   property->hasEnvelopes())) {
+                   property->hasEnvelopes() ||
+                   property->hasExternalOverride())) {
     QVariant animated;
     if (property->hasExpression()) {
       ArtifactCore::ExpressionEvaluator evaluator;
@@ -215,7 +217,8 @@ FloatColor evaluatedNoiseColor(const ArtifactNoiseLayer* layer,
   if (!layer) return fallback;
   if (const auto property = layer->getProperty(path);
       property && (property->isAnimatable() || property->hasExpression() ||
-                   property->hasEnvelopes())) {
+                   property->hasEnvelopes() ||
+                   property->hasExternalOverride())) {
     QVariant animated;
     if (property->hasExpression()) {
       ArtifactCore::ExpressionEvaluator evaluator;
