@@ -790,8 +790,6 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
       QColor::fromRgbF(mappedA.r(), mappedA.g(), mappedA.b(), mappedA.a()),
       -105);
   colorAProperty->setAnimatable(true);
-  colorAProperty->setColorValue(
-      QColor::fromRgbF(mappedA.r(), mappedA.g(), mappedA.b(), mappedA.a()));
   colorAProperty->setDisplayLabel(QStringLiteral("マップ色A"));
   noiseGroup.addProperty(colorAProperty);
   const auto mappedB = colorB();
@@ -800,8 +798,6 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
       QColor::fromRgbF(mappedB.r(), mappedB.g(), mappedB.b(), mappedB.a()),
       -105);
   colorBProperty->setAnimatable(true);
-  colorBProperty->setColorValue(
-      QColor::fromRgbF(mappedB.r(), mappedB.g(), mappedB.b(), mappedB.a()));
   colorBProperty->setDisplayLabel(QStringLiteral("マップ色B"));
   noiseGroup.addProperty(colorBProperty);
   groups.push_back(noiseGroup);
