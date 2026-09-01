@@ -233,8 +233,10 @@ ArtifactCore::RationalTime noiseEvaluationTime(const ArtifactNoiseLayer* layer) 
     return ArtifactCore::RationalTime(layer->currentFrame(), 30);
   }
   const double fps = composition->frameRate().framerate();
+  const auto timeScale = std::max<int64_t>(
+      1, static_cast<int64_t>(std::llround(fps > 0.0 ? fps : 30.0)));
   return ArtifactCore::RationalTime(
-      composition->framePosition().framePosition(), fps > 0.0 ? fps : 30.0);
+      composition->framePosition().framePosition(), timeScale);
 }
 
 ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
