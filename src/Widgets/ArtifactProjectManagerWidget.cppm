@@ -3336,7 +3336,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         params.setSeed(dialog.seed());
         params.setKind(dialog.kind());
         svc->addLayerToCurrentComposition(params, true, false);
-    }, loadProjectViewIcon(QStringLiteral("Studio/effect_ops_noise.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/noise_layer.svg")));
     const auto addNoisePreset = [this, svc, newMenu, &addTrackedNewAction](const QString& id,
                                                       const QString& label,
                                                       ArtifactCore::ProceduralTexturePreset preset) {
@@ -3350,7 +3350,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             params.setHeight(compSize.height());
             params.setPreset(preset);
             svc->addLayerToCurrentComposition(params, true, false);
-        }, loadProjectViewIcon(QStringLiteral("Studio/effect_ops_noise.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/noise_layer.svg")));
     };
     addNoisePreset(QStringLiteral("new_noise_marble"), QStringLiteral("Noise: Marble"), ArtifactCore::ProceduralTexturePreset::Marble);
     addNoisePreset(QStringLiteral("new_noise_clouds"), QStringLiteral("Noise: Clouds"), ArtifactCore::ProceduralTexturePreset::Clouds);
