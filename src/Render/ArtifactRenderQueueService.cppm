@@ -101,6 +101,7 @@ import Artifact.Render.CompositionViewDrawing;
 import Artifact.Render.Context;
 import Artifact.Render.ROI;
 import Artifact.Render.GPUTextureCacheManager;
+import Graphics.LayerBlendPipeline;
 import Core.Diagnostics.SessionLedger;
 import Encoder.FFmpegEncoder;
 import Media.Encoder.FFmpegAudioEncoder;
@@ -109,6 +110,7 @@ import IO.VectorExport;
 import Image.ExportOptions;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Matte;
 import Artifact.Layer.Image;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Svg;
@@ -2401,6 +2403,7 @@ namespace Artifact
         std::mutex previewMutex_;
 
         std::unique_ptr<ArtifactIRenderer> gpuRenderer_;
+        std::unique_ptr<ArtifactCore::LayerBlendPipeline> gpuMattePipeline_;
         int gpuRendererWidth_ = 0;
         int gpuRendererHeight_ = 0;
 
@@ -3000,6 +3003,7 @@ namespace Artifact
                 return true;
             }
             if (gpuRenderer_->isInitialized()) {
+                gpuMattePipeline_.reset();
                 gpuRenderer_->destroy();
             }
             gpuRenderer_->initializeHeadless(width, height);
@@ -3489,6 +3493,7 @@ namespace Artifact
                 gpuRendererWidth_ != width ||
                 gpuRendererHeight_ != height) {
                 if (gpuRenderer_->isInitialized()) {
+                    gpuMattePipeline_.reset();
                     gpuRenderer_->destroy();
                 }
                 gpuRenderer_->initializeHeadless(width, height);
@@ -5599,10 +5604,222 @@ namespace Artifact
                 }
             }
 
+            struct GpuMatteFrameResources {
+                ArtifactIRenderer* renderer = nullptr;
+                std::vector<void*> ownedTargets;
+                ~GpuMatteFrameResources() {
+                    if (!renderer) {
+                        return;
+                    }
+                    for (void* target : ownedTargets) {
+                        renderer->destroyOffscreenTexture(target);
+                    }
+                }
+                void* own(void* target) {
+                    if (target) {
+                        ownedTargets.push_back(target);
+                    }
+                    return target;
+                }
+                void release(void* target) {
+                    if (!renderer || !target) {
+                        return;
+                    }
+                    const auto it = std::find(ownedTargets.begin(),
+                                              ownedTargets.end(), target);
+                    if (it != ownedTargets.end()) {
+                        ownedTargets.erase(it);
+                        renderer->destroyOffscreenTexture(target);
+                    }
+                }
+            } gpuMatteResources{gpuRenderer_.get()};
+
+            QHash<ArtifactCore::Id, Diligent::ITextureView*> matteSourceGpuViews;
+            if (!gpuMattePipeline_ || !gpuMattePipeline_->ready()) {
+                gpuMattePipeline_ = gpuRenderer_->createLayerBlendPipeline();
+                if (gpuMattePipeline_ &&
+                    (!gpuMattePipeline_->initialize() ||
+                     !gpuMattePipeline_->ready())) {
+                    gpuMattePipeline_.reset();
+                }
+            }
+            auto* gpuMattePipeline = gpuMattePipeline_.get();
+            const bool gpuMattePipelineReady = gpuMattePipeline != nullptr;
+
+            const auto shaderModeFor = [](const LayerMatteReference& ref) {
+                switch (ref.type) {
+                case MatteType::Alpha: return ref.invert ? 2u : 0u;
+                case MatteType::Luma: return ref.invert ? 3u : 1u;
+                case MatteType::InverseAlpha: return ref.invert ? 0u : 2u;
+                case MatteType::InverseLuma: return ref.invert ? 1u : 3u;
+                }
+                return 0u;
+            };
+            const auto shaderBlendModeFor = [](const LayerMatteReference& ref) {
+                switch (ref.blendMode) {
+                case MatteBlendMode::Add: return 0u;
+                case MatteBlendMode::Intersect: return 1u;
+                case MatteBlendMode::Subtract: return 2u;
+                case MatteBlendMode::Difference: return 3u;
+                }
+                return 0u;
+            };
+            // MatteTrack inputs must match the active GPU render target. The
+            // effective composition size can differ when a render preset or
+            // crop selects a smaller output surface.
+            const QSize gpuMatteSize(
+                std::max(1, gpuRendererWidth_),
+                std::max(1, gpuRendererHeight_));
+
+            if (gpuMattePipelineReady && gpuMatteSize.width() > 0 &&
+                gpuMatteSize.height() > 0) {
+                for (const auto& layer : gpuLayers) {
+                    if (!layer || !layer->isVisible() ||
+                        !layer->isActiveAt(gpuPos)) {
+                        continue;
+                    }
+                    for (const auto& matteRef : layer->matteReferences()) {
+                        if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+                            matteRef.sourceLayerId == layer->id() ||
+                            matteRef.fitMode != MatteFitMode::Stretch ||
+                            matteSourceGpuViews.contains(matteRef.sourceLayerId)) {
+                            continue;
+                        }
+                        const auto sourceLayer = snap.composition->layerById(
+                            matteRef.sourceLayerId);
+                        const auto sourceMattes = sourceLayer
+                            ? sourceLayer->matteReferences()
+                            : std::vector<LayerMatteReference>{};
+                        if (!sourceLayer || sourceLayer->is3D() ||
+                            sourceLayer->isAdjustmentLayer() ||
+                            !sourceLayer->shouldIncludeInFinalRender() ||
+                            !sourceLayer->isVisible() ||
+                            !sourceLayer->isActiveAt(gpuPos) ||
+                            (sourceLayer->parentLayer() &&
+                             sourceLayer->parentLayer()->isGroupLayer()) ||
+                            std::any_of(sourceMattes.cbegin(),
+                                        sourceMattes.cend(),
+                                        [](const LayerMatteReference& ref) {
+                                            return ref.enabled && !ref.sourceLayerId.isNil();
+                                        })) {
+                            continue;
+                        }
+
+                        void* sourceTarget = gpuMatteResources.own(
+                            gpuRenderer_->createOffscreenTexture(
+                                gpuMatteSize.width(), gpuMatteSize.height()));
+                        void* sourceDepth = gpuMatteResources.own(
+                            gpuRenderer_->createOffscreenDepthTexture(
+                                gpuMatteSize.width(), gpuMatteSize.height()));
+                        auto* sourceSRV = gpuRenderer_->offscreenTextureShaderResourceView(
+                            sourceTarget);
+                        if (!sourceTarget || !sourceDepth || !sourceSRV) {
+                            continue;
+                        }
+                        gpuRenderer_->pushRenderTarget(sourceTarget, sourceDepth);
+                        gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                        gpuRenderer_->clear();
+                        sourceLayer->goToFrame(snap.frameNumber);
+                        drawLayerForCompositionView(
+                            sourceLayer.get(), gpuRenderer_.get(), 1.0f, nullptr,
+                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
+                            snap.frameNumber, true, DetailLevel::High, nullptr, nullptr);
+                        gpuRenderer_->flush();
+                        gpuRenderer_->popRenderTarget();
+                        matteSourceGpuViews.insert(matteRef.sourceLayerId, sourceSRV);
+                    }
+                }
+            }
+
             for (const auto& layer : gpuLayers) {
                 if (!shouldRenderGpuLayer(layer) || !layer->isVisible() ||
                     !layer->isActiveAt(gpuPos)) continue;
                 layer->goToFrame(snap.frameNumber);
+                std::vector<LayerMatteReference> gpuMatteRefs;
+                if (gpuMattePipelineReady && !layer->is3D()) {
+                    for (const auto& ref : layer->matteReferences()) {
+                        if (!ref.enabled || ref.sourceLayerId.isNil() ||
+                            ref.sourceLayerId == layer->id()) {
+                            continue;
+                        }
+                        if (ref.fitMode != MatteFitMode::Stretch ||
+                            !matteSourceGpuViews.contains(ref.sourceLayerId)) {
+                            gpuMatteRefs.clear();
+                            break;
+                        }
+                        gpuMatteRefs.push_back(ref);
+                    }
+                    if (gpuMatteRefs.size() > 3) {
+                        gpuMatteRefs.clear();
+                    }
+                }
+                if (!gpuMatteRefs.empty()) {
+                    void* layerTarget = gpuMatteResources.own(
+                        gpuRenderer_->createOffscreenTexture(
+                            gpuMatteSize.width(), gpuMatteSize.height()));
+                    void* layerDepth = gpuMatteResources.own(
+                        gpuRenderer_->createOffscreenDepthTexture(
+                            gpuMatteSize.width(), gpuMatteSize.height()));
+                    void* outputTarget = gpuMatteResources.own(
+                        gpuRenderer_->createOffscreenComputeTexture(
+                            gpuMatteSize.width(), gpuMatteSize.height()));
+                    auto* layerSRV = gpuRenderer_->offscreenTextureShaderResourceView(layerTarget);
+                    auto* outputSRV = gpuRenderer_->offscreenTextureShaderResourceView(outputTarget);
+                    auto* outputUAV = gpuRenderer_->offscreenTextureUnorderedAccessView(outputTarget);
+                    if (layerTarget && layerDepth && outputTarget && layerSRV &&
+                        outputSRV && outputUAV) {
+                        gpuRenderer_->pushRenderTarget(layerTarget, layerDepth);
+                        gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                        gpuRenderer_->clear();
+                        drawLayerForCompositionView(
+                            layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
+                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
+                            snap.frameNumber, true, DetailLevel::High, nullptr, nullptr);
+                        gpuRenderer_->flush();
+                        gpuRenderer_->popRenderTarget();
+
+                        ArtifactCore::MatteTrackParams params;
+                        params.matteCount = static_cast<unsigned int>(gpuMatteRefs.size());
+                        params.matteMode0 = shaderModeFor(gpuMatteRefs[0]);
+                        params.matteBlendMode0 = shaderBlendModeFor(gpuMatteRefs[0]);
+                        params.matteOpacity0 = std::clamp(gpuMatteRefs[0].opacity, 0.0f, 1.0f);
+                        std::array<Diligent::ITextureView*, 3> matteViews{};
+                        for (size_t i = 0; i < gpuMatteRefs.size(); ++i) {
+                            matteViews[i] = matteSourceGpuViews.value(
+                                gpuMatteRefs[i].sourceLayerId);
+                        }
+                        if (gpuMatteRefs.size() > 1) {
+                            params.matteMode1 = shaderModeFor(gpuMatteRefs[1]);
+                            params.matteBlendMode1 = shaderBlendModeFor(gpuMatteRefs[1]);
+                            params.matteOpacity1 = std::clamp(gpuMatteRefs[1].opacity, 0.0f, 1.0f);
+                        }
+                        if (gpuMatteRefs.size() > 2) {
+                            params.matteMode2 = shaderModeFor(gpuMatteRefs[2]);
+                            params.matteBlendMode2 = shaderBlendModeFor(gpuMatteRefs[2]);
+                            params.matteOpacity2 = std::clamp(gpuMatteRefs[2].opacity, 0.0f, 1.0f);
+                        }
+                        params.lumaMode = 0;
+                        if (gpuRenderer_->applyTrackMatte(
+                                gpuMattePipeline, layerSRV, matteViews[0],
+                                gpuMatteRefs.size() > 1 ? matteViews[1] : nullptr,
+                                gpuMatteRefs.size() > 2 ? matteViews[2] : nullptr,
+                                outputUAV, params,
+                                static_cast<Diligent::Uint32>(gpuMatteSize.width()),
+                                static_cast<Diligent::Uint32>(gpuMatteSize.height()))) {
+                            gpuRenderer_->drawSprite(
+                                0.0f, 0.0f, static_cast<float>(gpuMatteSize.width()),
+                                static_cast<float>(gpuMatteSize.height()), outputSRV, 1.0f);
+                            gpuRenderer_->flush();
+                            gpuMatteResources.release(layerTarget);
+                            gpuMatteResources.release(layerDepth);
+                            gpuMatteResources.release(outputTarget);
+                            continue;
+                        }
+                    }
+                    gpuMatteResources.release(layerTarget);
+                    gpuMatteResources.release(layerDepth);
+                    gpuMatteResources.release(outputTarget);
+                }
                 drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
                                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
                                             snap.frameNumber, true, DetailLevel::High, nullptr,

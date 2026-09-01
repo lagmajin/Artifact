@@ -9298,7 +9298,18 @@ public:
     bool ready = false;
   };
 
+  struct MatteGpuOutputEntry {
+    void* colorTargetView = nullptr;
+    void* depthTargetView = nullptr;
+    Diligent::ITextureView* colorShaderResourceView = nullptr;
+    QSize size;
+    qint64 frame = std::numeric_limits<qint64>::min();
+    quint64 generation = 0;
+    bool ready = false;
+  };
+
   QHash<QString, PrecompGpuOutputEntry> precompGpuOutputs_;
+  QHash<ArtifactCore::Id, MatteGpuOutputEntry> matteGpuOutputs_;
 
   void clearPrecompGpuOutputs() {
     if (renderer_) {
@@ -9308,6 +9319,87 @@ public:
       }
     }
     precompGpuOutputs_.clear();
+  }
+
+  void clearMatteGpuOutputs() {
+    if (renderer_) {
+      for (auto& entry : matteGpuOutputs_) {
+        renderer_->destroyOffscreenTexture(entry.colorTargetView);
+        renderer_->destroyOffscreenTexture(entry.depthTargetView);
+      }
+    }
+    matteGpuOutputs_.clear();
+  }
+
+  Diligent::ITextureView* renderMatteGpuOutput(
+      ArtifactAbstractLayer* sourceLayer, qint64 frame, const QSize& size,
+      float restoreViewportW, float restoreViewportH, float canvasW,
+      float canvasH, Diligent::ITextureView* accumSRV,
+      const std::function<QImage(const ArtifactCore::Id&)>& matteResolver,
+      const std::vector<SceneLightEntry>& sceneLights, bool has3DCamera,
+      const QMatrix4x4& cameraViewMatrix, const QMatrix4x4& cameraProjMatrix,
+      RenderPipeline* renderPipeline) {
+    if (!renderer_ || !sourceLayer || size.width() <= 0 ||
+        size.height() <= 0) {
+      return nullptr;
+    }
+
+    const quint64 generation = surfaceGeneration(sourceLayer);
+    auto& entry = matteGpuOutputs_[sourceLayer->id()];
+    if (entry.ready && entry.size == size && entry.frame == frame &&
+        entry.generation == generation && entry.colorShaderResourceView) {
+      return entry.colorShaderResourceView;
+    }
+
+    if (entry.size != size || !entry.colorTargetView ||
+        !entry.depthTargetView || !entry.colorShaderResourceView) {
+      renderer_->destroyOffscreenTexture(entry.colorTargetView);
+      renderer_->destroyOffscreenTexture(entry.depthTargetView);
+      entry = {};
+      entry.colorTargetView =
+          renderer_->createOffscreenTexture(size.width(), size.height());
+      entry.depthTargetView =
+          renderer_->createOffscreenDepthTexture(size.width(), size.height());
+      entry.colorShaderResourceView = renderer_->offscreenTextureShaderResourceView(
+          entry.colorTargetView);
+      entry.size = size;
+    }
+    if (!entry.colorTargetView || !entry.depthTargetView ||
+        !entry.colorShaderResourceView) {
+      renderer_->destroyOffscreenTexture(entry.colorTargetView);
+      renderer_->destroyOffscreenTexture(entry.depthTargetView);
+      entry = {};
+      return nullptr;
+    }
+
+    const float savedZoom = renderer_->getZoom();
+    float savedPanX = 0.0f;
+    float savedPanY = 0.0f;
+    renderer_->getPan(savedPanX, savedPanY);
+    renderer_->setViewportRect(static_cast<float>(size.width()),
+                               static_cast<float>(size.height()));
+    renderer_->setCanvasSize(canvasW, canvasH);
+    renderer_->setPan(0.0f, 0.0f);
+    renderer_->setZoom(1.0f);
+    sourceLayer->goToFrame(frame);
+    entry.ready = false;
+
+    drawGpuLayerToIntermediate(
+        sourceLayer,
+        static_cast<Diligent::ITextureView*>(entry.colorTargetView),
+        static_cast<Diligent::ITextureView*>(entry.depthTargetView), accumSRV,
+        restoreViewportW, restoreViewportH, canvasW, canvasH,
+        DetailLevel::High, FramePosition(frame), matteResolver, sceneLights,
+        has3DCamera, cameraViewMatrix, cameraProjMatrix, false, renderPipeline);
+
+    renderer_->setViewportRect(restoreViewportW, restoreViewportH);
+    renderer_->setCanvasSize(canvasW, canvasH);
+    renderer_->setPan(savedPanX, savedPanY);
+    renderer_->setZoom(savedZoom);
+    entry.frame = frame;
+    entry.generation = generation;
+    entry.ready = true;
+    return entry.colorShaderResourceView;
   }
 
   void clearCompositionSpaceGpuCache() {
@@ -10579,6 +10671,8 @@ public:
 
       const QHash<ArtifactCore::Id, QImage>& matteSourceImages,
 
+      const QHash<ArtifactCore::Id, Diligent::ITextureView*>& matteSourceGpuViews,
+
       int& layerToFloatConvertCount, bool& convertedLayerToFloat) {
 
     convertedLayerToFloat = renderer_->convertLayerToFloat(
@@ -10629,8 +10723,13 @@ public:
           matteRef.sourceLayerId == layer->id()) {
         continue;
       }
+      const auto gpuIt = matteSourceGpuViews.constFind(matteRef.sourceLayerId);
       const auto matteIt = matteSourceImages.constFind(matteRef.sourceLayerId);
-      if (matteIt == matteSourceImages.constEnd() || matteIt.value().isNull()) {
+      const bool hasGpuSource = gpuIt != matteSourceGpuViews.constEnd() &&
+          gpuIt.value();
+      const bool hasImageSource = matteIt != matteSourceImages.constEnd() &&
+          !matteIt.value().isNull();
+      if (!hasGpuSource && !hasImageSource) {
         allMatted = false;
         missingMatteSource = true;
         continue;
@@ -10662,8 +10761,15 @@ public:
     const bool canBatch = batchSizeSupported && allMatted;
     if (canBatch) {
       bool uploadedAll = true;
+      std::array<Diligent::ITextureView*, 3> matteViews{};
       for (size_t index = 0; index < batchRefs.size(); ++index) {
         const auto& matteRef = batchRefs[index];
+        const auto gpuIt = matteSourceGpuViews.constFind(
+            matteRef.sourceLayerId);
+        if (gpuIt != matteSourceGpuViews.constEnd() && gpuIt.value()) {
+          matteViews[index] = gpuIt.value();
+          continue;
+        }
         const QImage matteSrc = fitMatteSourceToTarget(
             matteSourceImages.value(matteRef.sourceLayerId),
             QSize(static_cast<int>(renderPipeline.width()),
@@ -10675,6 +10781,8 @@ public:
                 static_cast<Diligent::Uint32>(matteSrc.width()),
                 static_cast<Diligent::Uint32>(matteSrc.height()),
                 static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
+        matteViews[index] = renderPipeline.matteSourceSRV(
+            static_cast<int>(index));
       }
       if (uploadedAll) {
         ArtifactCore::MatteTrackParams params;
@@ -10701,9 +10809,9 @@ public:
         params.lumaMode = 0;
         if (renderer_->applyTrackMatte(
                 blendPipeline_.get(), layerFloatSRV,
-                renderPipeline.matteSourceSRV(0),
-                batchRefs.size() > 1 ? renderPipeline.matteSourceSRV(1) : nullptr,
-                batchRefs.size() > 2 ? renderPipeline.matteSourceSRV(2) : nullptr,
+                matteViews[0],
+                batchRefs.size() > 1 ? matteViews[1] : nullptr,
+                batchRefs.size() > 2 ? matteViews[2] : nullptr,
                 tempUAV, params, renderPipeline.width(), renderPipeline.height())) {
           Diligent::CopyTextureAttribs copyAttrs = {};
           copyAttrs.pSrcTexture = tempUAV->GetTexture();
@@ -10728,8 +10836,12 @@ public:
       }
 
       const auto matteIt = matteSourceImages.constFind(matteRef.sourceLayerId);
+      const auto gpuIt = matteSourceGpuViews.constFind(matteRef.sourceLayerId);
+      const bool hasGpuSource = gpuIt != matteSourceGpuViews.constEnd() &&
+          gpuIt.value();
 
-      if (matteIt == matteSourceImages.constEnd() || matteIt.value().isNull()) {
+      if (!hasGpuSource &&
+          (matteIt == matteSourceImages.constEnd() || matteIt.value().isNull())) {
 
         allMatted = false;
 
@@ -10739,25 +10851,25 @@ public:
 
       }
 
-      const QImage matteSrc = fitMatteSourceToTarget(
-          matteIt.value(),
-          QSize(static_cast<int>(renderPipeline.width()),
-                static_cast<int>(renderPipeline.height())),
-          matteRef.fitMode);
-      if (matteSrc.isNull()) {
-        allMatted = false;
-        continue;
+      bool uploaded = hasGpuSource;
+      QImage matteSrc;
+      if (!hasGpuSource) {
+        matteSrc = fitMatteSourceToTarget(
+            matteIt.value(),
+            QSize(static_cast<int>(renderPipeline.width()),
+                  static_cast<int>(renderPipeline.height())),
+            matteRef.fitMode);
+        if (matteSrc.isNull()) {
+          allMatted = false;
+          continue;
+        }
+
+        uploaded = renderPipeline.updateMatteSourceFromData(
+            devCtx.RawPtr(), matteSrc.constBits(),
+            static_cast<Diligent::Uint32>(matteSrc.width()),
+            static_cast<Diligent::Uint32>(matteSrc.height()),
+            static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
       }
-
-      const bool uploaded = renderPipeline.updateMatteSourceFromData(
-
-          devCtx.RawPtr(), matteSrc.constBits(),
-
-          static_cast<Diligent::Uint32>(matteSrc.width()),
-
-          static_cast<Diligent::Uint32>(matteSrc.height()),
-
-          static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
 
       if (!uploaded) {
 
@@ -10789,7 +10901,8 @@ public:
 
               blendPipeline_.get(), layerFloatSRV,
 
-              renderPipeline.matteSourceSRV(), nullptr, nullptr, tempUAV,
+              hasGpuSource ? gpuIt.value() : renderPipeline.matteSourceSRV(),
+              nullptr, nullptr, tempUAV,
 
               params, renderPipeline.width(), renderPipeline.height())) {
 
@@ -15246,6 +15359,8 @@ void CompositionRenderController::destroy() {
 
   impl_->clearPrecompGpuOutputs();
 
+  impl_->clearMatteGpuOutputs();
+
   impl_->clearCompositionSpaceGpuCache();
 
   impl_->surfaceCache_.clear();
@@ -15774,6 +15889,8 @@ void CompositionRenderController::setComposition(
   impl_->surfaceCache_.clear();
 
   impl_->clearPrecompGpuOutputs();
+
+  impl_->clearMatteGpuOutputs();
 
   impl_->surfaceGenerations_.clear();
 
@@ -33465,6 +33582,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // Pre-render matte source layers for GPU track matte
 
       QHash<ArtifactCore::Id, QImage> matteSourceImages;
+      QHash<ArtifactCore::Id, Diligent::ITextureView*> matteSourceGpuViews;
 
       {
 
@@ -33484,7 +33602,33 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 matteRef.sourceLayerId == layerForMatte->id())
               continue;
 
-            if (matteSourceImages.contains(matteRef.sourceLayerId)) continue;
+            if (matteSourceImages.contains(matteRef.sourceLayerId) ||
+                matteSourceGpuViews.contains(matteRef.sourceLayerId)) {
+              continue;
+            }
+
+            if (const auto sourceLayer =
+                    comp->layerById(matteRef.sourceLayerId)) {
+              const auto sourceParent = sourceLayer->parentLayer();
+              const bool sourceCanUseGpuIntermediate =
+                  !sourceLayer->isAdjustmentLayer() &&
+                  sourceLayer->shouldIncludeInFinalRender() &&
+                  (!sourceParent || !sourceParent->isGroupLayer());
+              if (matteRef.fitMode == MatteFitMode::Stretch &&
+                  sourceCanUseGpuIntermediate &&
+                  sourceLayer->isVisible() &&
+                  sourceLayer->isActiveAt(currentFrame)) {
+                if (auto* gpuSource = renderMatteGpuOutput(
+                        sourceLayer.get(), currentFrame.framePosition(),
+                        QSize(previewRenderWidth, previewRenderHeight), rcw, rch,
+                        cw, ch, accumSRV, matteResolver, sceneLights,
+                        has3DCamera, cameraViewMatrix, cameraProjMatrix,
+                        &renderPipeline)) {
+                  matteSourceGpuViews.insert(matteRef.sourceLayerId, gpuSource);
+                  continue;
+                }
+              }
+            }
 
             QImage matteImg = matteResolver(matteRef.sourceLayerId);
 
@@ -34092,8 +34236,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     resources.layerFloatSRV, resources.layerFloatUAV,
 
                     resources.tempUAV, matteSourceImages,
-
-                    layerToFloatConvertCount, convertedLayerToFloat);
+                    matteSourceGpuViews, layerToFloatConvertCount,
+                    convertedLayerToFloat);
 
                 maskPassMs = markPhaseMs();
 

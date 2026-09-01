@@ -44,6 +44,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
+import Artifact.Layer.Shape;
 import Artifact.Layer.Composition;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.AdjustableLayer;
@@ -1391,6 +1392,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   registerCompositionViewContextSnapshot(layer, offlineRender, lod);
 
   const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
+  const bool hasMatte = hasEnabledMatteReferences(layer);
 
   auto applySurfaceAndDraw = [&](QImage surface, const QRectF& rect, bool allowSurfaceCache) {
     if (surface.isNull()) {
@@ -1687,7 +1689,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
     if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
     const auto color = solid2D->color();
-    if (hasRasterizerEffectsOrMasks(layer)) {
+    if (hasRasterizerEffectsOrMasks(layer) || hasMatte) {
       const QSize surfaceSize(
           std::max(1, static_cast<int>(std::ceil(localRect.width()))),
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
@@ -1740,7 +1742,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
     const auto color = solidImage->color();
     const bool gradientEnabled = solidImage->isGradientEnabled();
-    if (hasRasterizerEffectsOrMasks(layer)) {
+    if (hasRasterizerEffectsOrMasks(layer) || hasMatte) {
       QImage surface = gradientEnabled
                            ? makeVersionedSolidGradientImage(
                                  QSize(std::max(1, static_cast<int>(std::ceil(localRect.width()))),
@@ -1793,7 +1795,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
-    if (!hasRasterizerEffectsOrMasks(layer) &&
+    if (!hasRasterizerEffectsOrMasks(layer) && !hasMatte &&
         !imageLayer->sourceCropEnabled() &&
         imageLayer->hasCurrentFrameBuffer()) {
       const ArtifactCore::ImageF32x4_RGBA& buffer = imageLayer->currentFrameBuffer();
@@ -1865,7 +1867,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
   if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
     if (svgLayer->isLoaded()) {
-      if (!hasRasterizerEffectsOrMasks(layer) &&
+      if (!hasRasterizerEffectsOrMasks(layer) && !hasMatte &&
           svgLayer->hasCurrentFrameBuffer()) {
         const ArtifactCore::ImageF32x4_RGBA& buffer =
             svgLayer->currentFrameBuffer();
@@ -1922,7 +1924,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     const FramePosition op = layer->outPoint();
     const int64_t targetFrame =
         cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame();
-    if (!hasRasterizer && !offlineRender) {
+    if (!hasRasterizer && !hasMatte && !offlineRender) {
       const ArtifactCore::ImageF32x4_RGBA buffer =
           videoLayer->cachedFrameImageBuffer(targetFrame);
       if (!buffer.isEmpty()) {
@@ -1958,7 +1960,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     bool usedSyncFallback = false;
     bool usedBufferFallback = false;
     QString reason;
-    if (!hasRasterizer && gpuTextureCacheManager && !offlineRender) {
+    if (!hasRasterizer && !hasMatte && gpuTextureCacheManager && !offlineRender) {
       const ArtifactCore::GpuVideoFrame gpuFrame =
           videoLayer->decodeFrameToGpuFrame(targetFrame);
       if (gpuFrame.isValid()) {
@@ -2058,6 +2060,10 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         .arg(layer->currentFrame());
     }
     if (!frameBuffer.isEmpty()) {
+      if (hasMatte) {
+        applySurfaceAndDraw(frameBuffer.toQImage(), localRect, true);
+        return;
+      }
       if (hasRasterizer) {
         applyRasterizerEffectsAndMasksToSurface(layer, frameBuffer, lod);
       }
@@ -2078,11 +2084,11 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer)) {
-    if (!hasRasterizerEffectsOrMasks(layer)) {
+    if (!hasRasterizerEffectsOrMasks(layer) && !hasMatte) {
       textLayer->draw(renderer);
       return;
     }
-    if (textLayer->hasCurrentFrameBuffer()) {
+    if (textLayer->hasCurrentFrameBuffer() && !hasMatte) {
       ArtifactCore::ImageF32x4_RGBA buffer =
           textLayer->currentFrameBuffer().DeepCopy();
       applyRasterizerEffectsAndMasksToSurface(layer, buffer, lod);
@@ -2177,7 +2183,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             ? cacheFrameNumber
             : layer->currentFrame();
     const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
-    if (renderer && renderer->isInitialized() && !hasRasterizer) {
+    if (renderer && renderer->isInitialized() && !hasRasterizer && !hasMatte) {
       particleLayer->goToFrame(targetFrame);
       particleLayer->draw(renderer);
       return;
@@ -2216,6 +2222,18 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   if (auto* formParticleLayer = dynamic_cast<ArtifactFormParticleLayer*>(layer)) {
     if (renderer && renderer->isInitialized()) {
       formParticleLayer->draw(renderer);
+    }
+    return;
+  }
+
+  if (auto* shapeLayer = dynamic_cast<ArtifactShapeLayer*>(layer)) {
+    if (hasMatte) {
+      const QImage shapeImage = shapeLayer->toQImage();
+      if (!shapeImage.isNull()) {
+        applySurfaceAndDraw(shapeImage, localRect, true);
+      }
+    } else {
+      shapeLayer->draw(renderer);
     }
     return;
   }
