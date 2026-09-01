@@ -25,6 +25,7 @@ import ImageProcessing.ProceduralTexture;
 import Graphics.GPUcomputeContext;
 import Property.Abstract;
 import Property.Group;
+import Property.SerializationBridge;
 
 namespace Artifact {
 
@@ -218,6 +219,77 @@ ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
                                   p.gain, time, frame);
   sanitizeNoiseSettings(settings);
   return settings;
+}
+
+const QStringList& animatedNoisePropertySuffixes() {
+  static const QStringList suffixes = {
+      QStringLiteral("seed"), QStringLiteral("scaleX"),
+      QStringLiteral("scaleY"), QStringLiteral("offsetX"),
+      QStringLiteral("offsetY"), QStringLiteral("rotation"),
+      QStringLiteral("amplitude"), QStringLiteral("octaves"),
+      QStringLiteral("lacunarity"), QStringLiteral("gain")};
+  return suffixes;
+}
+
+QJsonObject serializeNoiseAnimatedProperties(const ArtifactNoiseLayer* layer) {
+  QJsonObject result;
+  if (!layer) return result;
+  for (const auto& suffix : animatedNoisePropertySuffixes()) {
+    const auto property = layer->getProperty(QStringLiteral("noise.") + suffix);
+    if (!property) continue;
+    const auto serialized =
+        ArtifactCore::PropertySerializationBridge::serializeProperty(property);
+    if (serialized.expression.isEmpty() && serialized.keyframes.isEmpty() &&
+        serialized.envelopes.isEmpty()) {
+      continue;
+    }
+    QJsonObject propertyObject;
+    propertyObject[QStringLiteral("type")] = serialized.type;
+    propertyObject[QStringLiteral("value")] = serialized.value;
+    if (!serialized.expression.isEmpty()) {
+      propertyObject[QStringLiteral("expression")] = serialized.expression;
+    }
+    if (!serialized.keyframes.isEmpty()) {
+      propertyObject[QStringLiteral("keyframes")] = serialized.keyframes;
+    }
+    if (!serialized.envelopes.isEmpty()) {
+      propertyObject[QStringLiteral("envelopes")] = serialized.envelopes;
+    }
+    result[suffix] = propertyObject;
+  }
+  return result;
+}
+
+void restoreNoiseAnimatedProperties(ArtifactNoiseLayer* layer,
+                                    const QJsonObject& properties) {
+  if (!layer || properties.isEmpty()) return;
+  // Construct the persistent properties before applying serialized animation.
+  (void)layer->getLayerPropertyGroups();
+  for (auto it = properties.constBegin(); it != properties.constEnd(); ++it) {
+    const QString suffix = it.key();
+    if (!animatedNoisePropertySuffixes().contains(suffix) ||
+        !it.value().isObject()) {
+      continue;
+    }
+    const auto property =
+        layer->getProperty(QStringLiteral("noise.") + suffix);
+    if (!property) continue;
+    const auto propertyObject = it.value().toObject();
+    ArtifactCore::SerializedProperty serialized;
+    serialized.name = property->getName();
+    serialized.type = propertyObject.value(QStringLiteral("type")).toInt(
+        static_cast<int>(property->getType()));
+    serialized.value = propertyObject.value(QStringLiteral("value"));
+    serialized.expression = propertyObject.value(QStringLiteral("expression"))
+                                .toString().trimmed().left(16384);
+    serialized.keyframes =
+        propertyObject.value(QStringLiteral("keyframes")).toArray();
+    serialized.envelopes =
+        propertyObject.value(QStringLiteral("envelopes")).toArray();
+    property->setAnimatable(true);
+    ArtifactCore::PropertySerializationBridge::deserializeProperty(
+        property, serialized);
+  }
 }
 } // namespace
 
@@ -492,6 +564,10 @@ QJsonObject ArtifactNoiseLayer::toJson() const {
   colorBObj["b"] = impl_->colorB_.b();
   colorBObj["a"] = impl_->colorB_.a();
   noiseObj["colorB"] = colorBObj;
+  const auto animatedProperties = serializeNoiseAnimatedProperties(this);
+  if (!animatedProperties.isEmpty()) {
+    noiseObj["animatedProperties"] = animatedProperties;
+  }
   obj["noise"] = noiseObj;
   return obj;
 }
@@ -549,6 +625,11 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
           static_cast<float>(colorObj.value("g").toDouble(1.0)),
           static_cast<float>(colorObj.value("b").toDouble(1.0)),
           static_cast<float>(colorObj.value("a").toDouble(1.0))));
+    }
+    if (noiseObj.contains("animatedProperties") &&
+        noiseObj["animatedProperties"].isObject()) {
+      restoreNoiseAnimatedProperties(
+          this, noiseObj["animatedProperties"].toObject());
     }
   }
 }
