@@ -154,6 +154,14 @@ void sanitizeNoiseSettings(ArtifactCore::ProceduralTextureSettings& settings) {
       std::isfinite(settings.primary.cellJitter)
           ? std::clamp(settings.primary.cellJitter, 0.0f, 1.0f)
           : 0.75f;
+  settings.post.warpAmplitude =
+      std::isfinite(settings.post.warpAmplitude)
+          ? std::clamp(settings.post.warpAmplitude, 0.0f, 16.0f)
+          : 0.25f;
+  settings.post.gamma =
+      std::isfinite(settings.post.gamma)
+          ? std::clamp(settings.post.gamma, 0.01f, 8.0f)
+          : 1.0f;
 }
 
 float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
@@ -282,6 +290,23 @@ ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
                                         p.lacunarity, time, frame);
   p.gain = evaluatedNoiseProperty(layer, QStringLiteral("noise.gain"),
                                   p.gain, time, frame);
+  p.cellJitter = evaluatedNoiseProperty(layer, QStringLiteral("noise.cellJitter"),
+                                        p.cellJitter, time, frame);
+  settings.seamless = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.seamless"), settings.seamless, time, frame);
+  settings.post.domainWarpEnabled = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.domainWarp"), settings.post.domainWarpEnabled,
+      time, frame);
+  settings.post.useSecondary = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.useSecondary"), settings.post.useSecondary,
+      time, frame);
+  settings.post.invert = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.invert"), settings.post.invert, time, frame);
+  settings.post.warpAmplitude = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.warpAmplitude"), settings.post.warpAmplitude,
+      time, frame);
+  settings.post.gamma = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.gamma"), settings.post.gamma, time, frame);
   sanitizeNoiseSettings(settings);
   return settings;
 }
@@ -293,6 +318,10 @@ const QStringList& animatedNoisePropertySuffixes() {
       QStringLiteral("offsetY"), QStringLiteral("rotation"),
       QStringLiteral("amplitude"), QStringLiteral("octaves"),
       QStringLiteral("lacunarity"), QStringLiteral("gain"),
+      QStringLiteral("cellJitter"), QStringLiteral("seamless"),
+      QStringLiteral("domainWarp"), QStringLiteral("warpAmplitude"),
+      QStringLiteral("useSecondary"), QStringLiteral("gamma"),
+      QStringLiteral("invert"),
       QStringLiteral("colorMapping"), QStringLiteral("colorA"),
       QStringLiteral("colorB")};
   return suffixes;
@@ -719,7 +748,8 @@ std::vector<ArtifactCore::PropertyGroup>
 ArtifactNoiseLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstract2DLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup noiseGroup(QStringLiteral("Noise"));
-  const auto& p = impl_->settings_.primary;
+  const auto& settings = impl_->settings_;
+  const auto& p = settings.primary;
   auto kindProperty = persistentLayerProperty(
       QStringLiteral("noise.kind"), ArtifactCore::PropertyType::String,
       noiseKindToString(p.kind, p.voronoiMode, p.gradientMode), -105);
@@ -790,6 +820,51 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
   gainProperty->setHardRange(0.0, 1.0);
   gainProperty->setDisplayLabel(QStringLiteral("ゲイン"));
   noiseGroup.addProperty(gainProperty);
+  auto cellJitterProperty = persistentLayerProperty(
+      QStringLiteral("noise.cellJitter"), ArtifactCore::PropertyType::Float,
+      p.cellJitter, -105);
+  cellJitterProperty->setAnimatable(true);
+  cellJitterProperty->setHardRange(0.0, 1.0);
+  cellJitterProperty->setDisplayLabel(QStringLiteral("セルジッター"));
+  noiseGroup.addProperty(cellJitterProperty);
+  auto seamlessProperty = persistentLayerProperty(
+      QStringLiteral("noise.seamless"), ArtifactCore::PropertyType::Boolean,
+      settings.seamless, -105);
+  seamlessProperty->setAnimatable(true);
+  seamlessProperty->setDisplayLabel(QStringLiteral("シームレス"));
+  noiseGroup.addProperty(seamlessProperty);
+  auto domainWarpProperty = persistentLayerProperty(
+      QStringLiteral("noise.domainWarp"), ArtifactCore::PropertyType::Boolean,
+      settings.post.domainWarpEnabled, -105);
+  domainWarpProperty->setAnimatable(true);
+  domainWarpProperty->setDisplayLabel(QStringLiteral("ドメインワープ"));
+  noiseGroup.addProperty(domainWarpProperty);
+  auto warpAmplitudeProperty = persistentLayerProperty(
+      QStringLiteral("noise.warpAmplitude"), ArtifactCore::PropertyType::Float,
+      settings.post.warpAmplitude, -105);
+  warpAmplitudeProperty->setAnimatable(true);
+  warpAmplitudeProperty->setHardRange(0.0, 16.0);
+  warpAmplitudeProperty->setDisplayLabel(QStringLiteral("ワープ振幅"));
+  noiseGroup.addProperty(warpAmplitudeProperty);
+  auto secondaryProperty = persistentLayerProperty(
+      QStringLiteral("noise.useSecondary"), ArtifactCore::PropertyType::Boolean,
+      settings.post.useSecondary, -105);
+  secondaryProperty->setAnimatable(true);
+  secondaryProperty->setDisplayLabel(QStringLiteral("セカンダリ"));
+  noiseGroup.addProperty(secondaryProperty);
+  auto gammaProperty = persistentLayerProperty(
+      QStringLiteral("noise.gamma"), ArtifactCore::PropertyType::Float,
+      settings.post.gamma, -105);
+  gammaProperty->setAnimatable(true);
+  gammaProperty->setHardRange(0.01, 8.0);
+  gammaProperty->setDisplayLabel(QStringLiteral("ガンマ"));
+  noiseGroup.addProperty(gammaProperty);
+  auto invertProperty = persistentLayerProperty(
+      QStringLiteral("noise.invert"), ArtifactCore::PropertyType::Boolean,
+      settings.post.invert, -105);
+  invertProperty->setAnimatable(true);
+  invertProperty->setDisplayLabel(QStringLiteral("反転"));
+  noiseGroup.addProperty(invertProperty);
   auto colorMappingProperty = persistentLayerProperty(
       QStringLiteral("noise.colorMapping"), ArtifactCore::PropertyType::Boolean,
       impl_->colorMappingEnabled_, -105);
@@ -877,6 +952,44 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
   }
   if (propertyPath == QStringLiteral("noise.gain")) {
     p.gain = static_cast<float>(std::clamp(value.toDouble(0.5), 0.0, 1.0));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.cellJitter")) {
+    p.cellJitter = static_cast<float>(
+        std::clamp(value.toDouble(0.75), 0.0, 1.0));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.seamless")) {
+    settings.seamless = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.domainWarp")) {
+    settings.post.domainWarpEnabled = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.warpAmplitude")) {
+    settings.post.warpAmplitude = static_cast<float>(
+        std::clamp(value.toDouble(0.25), 0.0, 16.0));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.useSecondary")) {
+    settings.post.useSecondary = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.gamma")) {
+    settings.post.gamma = static_cast<float>(
+        std::clamp(value.toDouble(1.0), 0.01, 8.0));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.invert")) {
+    settings.post.invert = value.toBool();
     Q_EMIT changed();
     return true;
   }
