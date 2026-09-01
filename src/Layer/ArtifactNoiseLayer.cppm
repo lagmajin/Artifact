@@ -128,6 +128,36 @@ QString noiseSignatureKey(
   key += QLatin1Char('|') + QString::number(post.warpAmplitude);
   key += QLatin1Char('|') + QString::number(post.useSecondary);
   key += QLatin1Char('|') + QString::number(settings.seamless);
+  key += QLatin1Char('|') + QString::number(post.normalize);
+  key += QLatin1Char('|') + QString::number(post.normalizeMin);
+  key += QLatin1Char('|') + QString::number(post.normalizeMax);
+  key += QLatin1Char('|') + QString::number(post.clampEnabled);
+  key += QLatin1Char('|') + QString::number(post.clampMin);
+  key += QLatin1Char('|') + QString::number(post.clampMax);
+  key += QLatin1Char('|') + QString::number(post.remapEnabled);
+  key += QLatin1Char('|') + QString::number(post.remapInMin);
+  key += QLatin1Char('|') + QString::number(post.remapInMax);
+  key += QLatin1Char('|') + QString::number(post.remapOutMin);
+  key += QLatin1Char('|') + QString::number(post.remapOutMax);
+  key += QLatin1Char('|') + QString::number(static_cast<int>(post.blendMode));
+  key += QLatin1Char('|') + QString::number(post.blendWeight);
+  const auto appendGeneratorParams = [&key](
+      const ArtifactCore::ProceduralTextureGeneratorParams& params) {
+    key += QLatin1Char('|') + QString::number(static_cast<int>(params.kind));
+    key += QLatin1Char('|') + QString::number(static_cast<int>(params.voronoiMode));
+    key += QLatin1Char('|') + QString::number(static_cast<int>(params.gradientMode));
+    key += QLatin1Char('|') + QString::number(params.seed);
+    for (const float value : params.scale) key += QLatin1Char('|') + QString::number(value);
+    for (const float value : params.offset) key += QLatin1Char('|') + QString::number(value);
+    key += QLatin1Char('|') + QString::number(params.rotation);
+    key += QLatin1Char('|') + QString::number(params.amplitude);
+    key += QLatin1Char('|') + QString::number(params.octaves);
+    key += QLatin1Char('|') + QString::number(params.lacunarity);
+    key += QLatin1Char('|') + QString::number(params.gain);
+    key += QLatin1Char('|') + QString::number(params.cellJitter);
+  };
+  appendGeneratorParams(post.secondary);
+  appendGeneratorParams(post.warp);
   key += QLatin1Char('|') + QString::number(colorMappingEnabled);
   for (const FloatColor* c : {&colorA, &colorB}) {
     key += QLatin1Char('|') + QString::number(c->r()) + QLatin1Char(',') +
@@ -162,6 +192,45 @@ void sanitizeNoiseSettings(ArtifactCore::ProceduralTextureSettings& settings) {
       std::isfinite(settings.post.gamma)
           ? std::clamp(settings.post.gamma, 0.01f, 8.0f)
           : 1.0f;
+  settings.post.normalizeMin = std::isfinite(settings.post.normalizeMin)
+                                   ? settings.post.normalizeMin
+                                   : 0.0f;
+  settings.post.normalizeMax = std::isfinite(settings.post.normalizeMax)
+                                   ? settings.post.normalizeMax
+                                   : 1.0f;
+  if (settings.post.normalizeMax < settings.post.normalizeMin) {
+    std::swap(settings.post.normalizeMin, settings.post.normalizeMax);
+  }
+  settings.post.clampMin = std::isfinite(settings.post.clampMin)
+                               ? settings.post.clampMin
+                               : 0.0f;
+  settings.post.clampMax = std::isfinite(settings.post.clampMax)
+                               ? settings.post.clampMax
+                               : 1.0f;
+  if (settings.post.clampMax < settings.post.clampMin) {
+    std::swap(settings.post.clampMin, settings.post.clampMax);
+  }
+  settings.post.remapInMin = std::isfinite(settings.post.remapInMin)
+                                 ? settings.post.remapInMin
+                                 : 0.0f;
+  settings.post.remapInMax = std::isfinite(settings.post.remapInMax)
+                                 ? settings.post.remapInMax
+                                 : 1.0f;
+  if (settings.post.remapInMax < settings.post.remapInMin) {
+    std::swap(settings.post.remapInMin, settings.post.remapInMax);
+  }
+  settings.post.remapOutMin = std::isfinite(settings.post.remapOutMin)
+                                  ? settings.post.remapOutMin
+                                  : 0.0f;
+  settings.post.remapOutMax = std::isfinite(settings.post.remapOutMax)
+                                  ? settings.post.remapOutMax
+                                  : 1.0f;
+  if (settings.post.remapOutMax < settings.post.remapOutMin) {
+    std::swap(settings.post.remapOutMin, settings.post.remapOutMax);
+  }
+  settings.post.blendWeight = std::isfinite(settings.post.blendWeight)
+                                  ? std::clamp(settings.post.blendWeight, 0.0f, 1.0f)
+                                  : 0.5f;
 }
 
 float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
@@ -412,6 +481,56 @@ void restoreNoiseAnimatedProperties(ArtifactNoiseLayer* layer,
     ArtifactCore::PropertySerializationBridge::deserializeProperty(
         property, serialized);
   }
+}
+
+QJsonObject generatorParamsToJson(
+    const ArtifactCore::ProceduralTextureGeneratorParams& params) {
+  QJsonObject object;
+  object[QStringLiteral("kind")] =
+      noiseKindToString(params.kind, params.voronoiMode, params.gradientMode);
+  object[QStringLiteral("seed")] = static_cast<int>(params.seed);
+  object[QStringLiteral("scaleX")] = static_cast<double>(params.scale[0]);
+  object[QStringLiteral("scaleY")] = static_cast<double>(params.scale[1]);
+  object[QStringLiteral("offsetX")] = static_cast<double>(params.offset[0]);
+  object[QStringLiteral("offsetY")] = static_cast<double>(params.offset[1]);
+  object[QStringLiteral("rotation")] = static_cast<double>(params.rotation);
+  object[QStringLiteral("amplitude")] = static_cast<double>(params.amplitude);
+  object[QStringLiteral("octaves")] = static_cast<int>(params.octaves);
+  object[QStringLiteral("lacunarity")] = static_cast<double>(params.lacunarity);
+  object[QStringLiteral("gain")] = static_cast<double>(params.gain);
+  object[QStringLiteral("cellJitter")] = static_cast<double>(params.cellJitter);
+  return object;
+}
+
+void generatorParamsFromJson(
+    const QJsonObject& object,
+    ArtifactCore::ProceduralTextureGeneratorParams& params) {
+  if (object.isEmpty()) return;
+  noiseKindFromString(object.value(QStringLiteral("kind")).toString(),
+                      params.kind, params.voronoiMode, params.gradientMode);
+  params.seed = static_cast<std::uint32_t>(
+      std::max(0, object.value(QStringLiteral("seed")).toInt(
+                                  static_cast<int>(params.seed))));
+  params.scale[0] = static_cast<float>(
+      object.value(QStringLiteral("scaleX")).toDouble(params.scale[0]));
+  params.scale[1] = static_cast<float>(
+      object.value(QStringLiteral("scaleY")).toDouble(params.scale[1]));
+  params.offset[0] = static_cast<float>(
+      object.value(QStringLiteral("offsetX")).toDouble(params.offset[0]));
+  params.offset[1] = static_cast<float>(
+      object.value(QStringLiteral("offsetY")).toDouble(params.offset[1]));
+  params.rotation = static_cast<float>(
+      object.value(QStringLiteral("rotation")).toDouble(params.rotation));
+  params.amplitude = static_cast<float>(
+      object.value(QStringLiteral("amplitude")).toDouble(params.amplitude));
+  params.octaves = static_cast<std::uint32_t>(std::clamp(
+      object.value(QStringLiteral("octaves")).toInt(params.octaves), 1, 12));
+  params.lacunarity = static_cast<float>(
+      object.value(QStringLiteral("lacunarity")).toDouble(params.lacunarity));
+  params.gain = static_cast<float>(
+      object.value(QStringLiteral("gain")).toDouble(params.gain));
+  params.cellJitter = static_cast<float>(
+      object.value(QStringLiteral("cellJitter")).toDouble(params.cellJitter));
 }
 } // namespace
 
@@ -687,6 +806,21 @@ QJsonObject ArtifactNoiseLayer::toJson() const {
   noiseObj["useSecondary"] = post.useSecondary;
   noiseObj["gamma"] = static_cast<double>(post.gamma);
   noiseObj["invert"] = post.invert;
+  noiseObj["normalize"] = post.normalize;
+  noiseObj["normalizeMin"] = static_cast<double>(post.normalizeMin);
+  noiseObj["normalizeMax"] = static_cast<double>(post.normalizeMax);
+  noiseObj["clampEnabled"] = post.clampEnabled;
+  noiseObj["clampMin"] = static_cast<double>(post.clampMin);
+  noiseObj["clampMax"] = static_cast<double>(post.clampMax);
+  noiseObj["remapEnabled"] = post.remapEnabled;
+  noiseObj["remapInMin"] = static_cast<double>(post.remapInMin);
+  noiseObj["remapInMax"] = static_cast<double>(post.remapInMax);
+  noiseObj["remapOutMin"] = static_cast<double>(post.remapOutMin);
+  noiseObj["remapOutMax"] = static_cast<double>(post.remapOutMax);
+  noiseObj["blendMode"] = static_cast<int>(post.blendMode);
+  noiseObj["blendWeight"] = static_cast<double>(post.blendWeight);
+  noiseObj["secondary"] = generatorParamsToJson(post.secondary);
+  noiseObj["warp"] = generatorParamsToJson(post.warp);
   noiseObj["colorMapping"] = impl_->colorMappingEnabled_;
   QJsonObject colorAObj;
   colorAObj["r"] = impl_->colorA_.r();
@@ -745,6 +879,39 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
     settings.post.gamma =
         static_cast<float>(noiseObj.value("gamma").toDouble(1.0));
     settings.post.invert = noiseObj.value("invert").toBool(false);
+    settings.post.normalize = noiseObj.value("normalize").toBool(false);
+    settings.post.normalizeMin = static_cast<float>(
+        noiseObj.value("normalizeMin").toDouble(0.0));
+    settings.post.normalizeMax = static_cast<float>(
+        noiseObj.value("normalizeMax").toDouble(1.0));
+    settings.post.clampEnabled = noiseObj.value("clampEnabled").toBool(true);
+    settings.post.clampMin = static_cast<float>(
+        noiseObj.value("clampMin").toDouble(0.0));
+    settings.post.clampMax = static_cast<float>(
+        noiseObj.value("clampMax").toDouble(1.0));
+    settings.post.remapEnabled = noiseObj.value("remapEnabled").toBool(false);
+    settings.post.remapInMin = static_cast<float>(
+        noiseObj.value("remapInMin").toDouble(0.0));
+    settings.post.remapInMax = static_cast<float>(
+        noiseObj.value("remapInMax").toDouble(1.0));
+    settings.post.remapOutMin = static_cast<float>(
+        noiseObj.value("remapOutMin").toDouble(0.0));
+    settings.post.remapOutMax = static_cast<float>(
+        noiseObj.value("remapOutMax").toDouble(1.0));
+    settings.post.blendMode = static_cast<ArtifactCore::ProceduralTextureBlendMode>(
+        std::clamp(noiseObj.value("blendMode").toInt(
+                       static_cast<int>(settings.post.blendMode)),
+                   0, 3));
+    settings.post.blendWeight = static_cast<float>(
+        noiseObj.value("blendWeight").toDouble(settings.post.blendWeight));
+    if (noiseObj.value("secondary").isObject()) {
+      generatorParamsFromJson(noiseObj.value("secondary").toObject(),
+                              settings.post.secondary);
+    }
+    if (noiseObj.value("warp").isObject()) {
+      generatorParamsFromJson(noiseObj.value("warp").toObject(),
+                              settings.post.warp);
+    }
     setColorMappingEnabled(noiseObj.value("colorMapping").toBool(false));
     if (noiseObj.contains("colorA") && noiseObj["colorA"].isObject()) {
       const auto colorObj = noiseObj["colorA"].toObject();
