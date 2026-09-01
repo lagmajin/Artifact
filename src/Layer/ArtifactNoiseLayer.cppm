@@ -830,48 +830,6 @@ QImage ArtifactNoiseLayer::getThumbnail(int width, int height) const {
                      Qt::SmoothTransformation);
 }
 
-QJsonObject ArtifactNoiseLayer::sourceComponentSettingsSnapshot() const {
-  QJsonObject obj;
-  const auto source = sourceSize();
-  obj[QStringLiteral("width")] = source.width;
-  obj[QStringLiteral("height")] = source.height;
-  const auto& s = impl_->settings_;
-  const auto& p = s.primary;
-  const auto& post = s.post;
-  obj[QStringLiteral("kind")] = noiseKindToString(p.kind, p.voronoiMode, p.gradientMode);
-  obj[QStringLiteral("seed")] = static_cast<int>(p.seed);
-  obj[QStringLiteral("scaleX")] = static_cast<double>(p.scale[0]);
-  obj[QStringLiteral("scaleY")] = static_cast<double>(p.scale[1]);
-  obj[QStringLiteral("offsetX")] = static_cast<double>(p.offset[0]);
-  obj[QStringLiteral("offsetY")] = static_cast<double>(p.offset[1]);
-  obj[QStringLiteral("rotation")] = static_cast<double>(p.rotation);
-  obj[QStringLiteral("amplitude")] = static_cast<double>(p.amplitude);
-  obj[QStringLiteral("octaves")] = static_cast<int>(p.octaves);
-  obj[QStringLiteral("lacunarity")] = static_cast<double>(p.lacunarity);
-  obj[QStringLiteral("gain")] = static_cast<double>(p.gain);
-  obj[QStringLiteral("cellJitter")] = static_cast<double>(p.cellJitter);
-  obj[QStringLiteral("seamless")] = s.seamless;
-  obj[QStringLiteral("domainWarp")] = post.domainWarpEnabled;
-  obj[QStringLiteral("warpAmplitude")] = static_cast<double>(post.warpAmplitude);
-  obj[QStringLiteral("useSecondary")] = post.useSecondary;
-  obj[QStringLiteral("gamma")] = static_cast<double>(post.gamma);
-  obj[QStringLiteral("invert")] = post.invert;
-  obj[QStringLiteral("colorMapping")] = impl_->colorMappingEnabled_;
-  QJsonObject colorAObj;
-  colorAObj[QStringLiteral("r")] = impl_->colorA_.r();
-  colorAObj[QStringLiteral("g")] = impl_->colorA_.g();
-  colorAObj[QStringLiteral("b")] = impl_->colorA_.b();
-  colorAObj[QStringLiteral("a")] = impl_->colorA_.a();
-  obj[QStringLiteral("colorA")] = colorAObj;
-  QJsonObject colorBObj;
-  colorBObj[QStringLiteral("r")] = impl_->colorB_.r();
-  colorBObj[QStringLiteral("g")] = impl_->colorB_.g();
-  colorBObj[QStringLiteral("b")] = impl_->colorB_.b();
-  colorBObj[QStringLiteral("a")] = impl_->colorB_.a();
-  obj[QStringLiteral("colorB")] = colorBObj;
-  return obj;
-}
-
 QJsonObject ArtifactNoiseLayer::toJson() const {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Noise);
