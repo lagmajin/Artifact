@@ -112,7 +112,7 @@ QString noiseSignatureKey(
   key += QLatin1Char('|') + QString::number(settings.height);
   key += QLatin1Char('|') + QString::number(settings.parallel);
   key += QLatin1Char('|') + QString::number(static_cast<int>(settings.outputFormat));
-  key += QString::number(static_cast<int>(p.kind));
+  key += QLatin1Char('|') + QString::number(static_cast<int>(p.kind));
   key += QLatin1Char('|') + QString::number(static_cast<int>(p.voronoiMode));
   key += QLatin1Char('|') + QString::number(static_cast<int>(p.gradientMode));
   key += QLatin1Char('|') + QString::number(p.seed);
