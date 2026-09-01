@@ -1712,12 +1712,21 @@ void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
         owner, QStringLiteral("component.joint.stiffness"), 5.0f);
     const float damping = layerFloatProperty(
         owner, QStringLiteral("component.joint.damping"), 0.7f);
-    const QString signature = QStringLiteral("%1|%2|%3|%4|%5")
+    const bool angleLimitEnabled = layerBooleanProperty(
+        owner, QStringLiteral("component.joint.angleLimitEnabled"), false);
+    const float lowerAngle = layerFloatProperty(
+        owner, QStringLiteral("component.joint.lowerAngle"), -45.0f);
+    const float upperAngle = layerFloatProperty(
+        owner, QStringLiteral("component.joint.upperAngle"), 45.0f);
+    const QString signature = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
                                   .arg(type)
                                   .arg(length)
                                   .arg(stiffness)
                                   .arg(damping)
-                                  .arg(targetName);
+                                  .arg(targetName)
+                                  .arg(angleLimitEnabled ? 1 : 0)
+                                  .arg(lowerAngle)
+                                  .arg(upperAngle);
 
     const QString ownerKey = owner->id().toString();
     const auto knownSignature = jointSignatures_.find(ownerKey);
@@ -1729,8 +1738,9 @@ void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
         world->clearJoints();
       }
       const QVector2D anchor(anchorLocal.x(), anchorLocal.y());
-      if (type == 1) {
-        world->addRevoluteJoint(primary, proxy, anchor);
+      if (type == 1 || type == 2) {
+        world->addRevoluteJoint(primary, proxy, anchor, angleLimitEnabled,
+                                lowerAngle, upperAngle);
       } else {
         // length <= 0 captures the current owner-to-target separation.
         const float currentSeparation =
