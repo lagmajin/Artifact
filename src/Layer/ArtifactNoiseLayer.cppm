@@ -14,6 +14,8 @@ module;
 module Artifact.Layers.Noise;
 
 import Artifact.Layer.CloneEffectSupport;
+import Artifact.Composition.Access;
+import Time.Rational;
 
 import std;
 import Artifact.Layers.Abstract._2D;
@@ -151,6 +153,72 @@ void sanitizeNoiseSettings(ArtifactCore::ProceduralTextureSettings& settings) {
           ? std::clamp(settings.primary.cellJitter, 0.0f, 1.0f)
           : 0.75f;
 }
+
+float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
+                             const QString& path, float fallback,
+                             const ArtifactCore::RationalTime& time,
+                             int64_t frame) {
+  if (!layer) return fallback;
+  float value = fallback;
+  if (const auto property = layer->getProperty(path);
+      property && property->isAnimatable() &&
+          !property->getKeyFrames().empty()) {
+    const QVariant animated = property->interpolateValue(time);
+    if (animated.isValid() && std::isfinite(animated.toDouble())) {
+      value = static_cast<float>(animated.toDouble());
+    }
+  }
+  if (const auto* stack = layer->animationLayerStack(path);
+      stack && stack->layerCount() > 0) {
+    value = stack->evaluateWithBase(ArtifactCore::FramePosition(frame), value);
+  }
+  return value;
+}
+
+ArtifactCore::RationalTime noiseEvaluationTime(const ArtifactNoiseLayer* layer) {
+  if (!layer) return ArtifactCore::RationalTime(0, 30);
+  auto* composition = dynamic_cast<ArtifactAbstractCompositionAccess*>(
+      layer->compositionObject());
+  if (!composition) {
+    return ArtifactCore::RationalTime(layer->currentFrame(), 30);
+  }
+  const double fps = composition->frameRate().framerate();
+  return ArtifactCore::RationalTime(
+      composition->framePosition().framePosition(), fps > 0.0 ? fps : 30.0);
+}
+
+ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
+    const ArtifactNoiseLayer* layer,
+    const ArtifactCore::ProceduralTextureSettings& base) {
+  auto settings = base;
+  if (!layer) return settings;
+  const auto time = noiseEvaluationTime(layer);
+  const int64_t frame = time.value();
+  auto& p = settings.primary;
+  p.scale[0] = evaluatedNoiseProperty(layer, QStringLiteral("noise.scaleX"),
+                                      p.scale[0], time, frame);
+  p.scale[1] = evaluatedNoiseProperty(layer, QStringLiteral("noise.scaleY"),
+                                      p.scale[1], time, frame);
+  p.offset[0] = evaluatedNoiseProperty(layer, QStringLiteral("noise.offsetX"),
+                                       p.offset[0], time, frame);
+  p.offset[1] = evaluatedNoiseProperty(layer, QStringLiteral("noise.offsetY"),
+                                       p.offset[1], time, frame);
+  p.rotation = evaluatedNoiseProperty(layer, QStringLiteral("noise.rotation"),
+                                      p.rotation, time, frame);
+  p.amplitude = evaluatedNoiseProperty(layer, QStringLiteral("noise.amplitude"),
+                                       p.amplitude, time, frame);
+  p.octaves = static_cast<std::uint32_t>(std::clamp(
+      std::lround(evaluatedNoiseProperty(layer, QStringLiteral("noise.octaves"),
+                                          static_cast<float>(p.octaves), time,
+                                          frame)),
+      1l, 12l));
+  p.lacunarity = evaluatedNoiseProperty(layer, QStringLiteral("noise.lacunarity"),
+                                        p.lacunarity, time, frame);
+  p.gain = evaluatedNoiseProperty(layer, QStringLiteral("noise.gain"),
+                                  p.gain, time, frame);
+  sanitizeNoiseSettings(settings);
+  return settings;
+}
 } // namespace
 
 class ArtifactNoiseLayer::Impl
@@ -272,7 +340,7 @@ ArtifactNoiseLayer::resolveLayerSourceOverride() const {
   const auto source = sourceSize();
   const int width = std::clamp(source.width, 1, 16384);
   const int height = std::clamp(source.height, 1, 16384);
-  auto& settings = impl_->settings_;
+  auto settings = evaluatedNoiseSettings(this, impl_->settings_);
   settings.width = width;
   settings.height = height;
   const QString signature = noiseSignatureKey(
@@ -327,7 +395,7 @@ void ArtifactNoiseLayer::draw(ArtifactIRenderer* renderer) {
                      std::clamp(source.height, 1, 16384));
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   if (!impl_->colorMappingEnabled_) {
-    auto gpuSettings = impl_->settings_;
+    auto gpuSettings = evaluatedNoiseSettings(this, impl_->settings_);
     gpuSettings.width = size.width;
     gpuSettings.height = size.height;
     if (auto* gpuTexture = impl_->gpuView(renderer,
