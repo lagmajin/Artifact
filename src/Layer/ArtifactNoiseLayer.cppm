@@ -406,6 +406,47 @@ ArtifactCore::ProceduralTextureSettings evaluatedNoiseSettings(
       time, frame);
   settings.post.gamma = evaluatedNoiseProperty(
       layer, QStringLiteral("noise.gamma"), settings.post.gamma, time, frame);
+  settings.post.normalize = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.normalize"), settings.post.normalize, time,
+      frame);
+  settings.post.normalizeMin = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.normalizeMin"), settings.post.normalizeMin,
+      time, frame);
+  settings.post.normalizeMax = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.normalizeMax"), settings.post.normalizeMax,
+      time, frame);
+  settings.post.clampEnabled = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.clampEnabled"), settings.post.clampEnabled,
+      time, frame);
+  settings.post.clampMin = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.clampMin"), settings.post.clampMin, time,
+      frame);
+  settings.post.clampMax = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.clampMax"), settings.post.clampMax, time,
+      frame);
+  settings.post.remapEnabled = evaluatedNoiseBoolean(
+      layer, QStringLiteral("noise.remapEnabled"), settings.post.remapEnabled,
+      time, frame);
+  settings.post.remapInMin = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.remapInMin"), settings.post.remapInMin, time,
+      frame);
+  settings.post.remapInMax = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.remapInMax"), settings.post.remapInMax, time,
+      frame);
+  settings.post.remapOutMin = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.remapOutMin"), settings.post.remapOutMin,
+      time, frame);
+  settings.post.remapOutMax = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.remapOutMax"), settings.post.remapOutMax,
+      time, frame);
+  settings.post.blendMode = static_cast<ArtifactCore::ProceduralTextureBlendMode>(
+      std::clamp(std::lround(evaluatedNoiseProperty(
+                   layer, QStringLiteral("noise.blendMode"),
+                   static_cast<float>(settings.post.blendMode), time, frame)),
+                 0l, 2l));
+  settings.post.blendWeight = evaluatedNoiseProperty(
+      layer, QStringLiteral("noise.blendWeight"), settings.post.blendWeight,
+      time, frame);
   sanitizeNoiseSettings(settings);
   return settings;
 }
@@ -421,6 +462,13 @@ const QStringList& animatedNoisePropertySuffixes() {
       QStringLiteral("domainWarp"), QStringLiteral("warpAmplitude"),
       QStringLiteral("useSecondary"), QStringLiteral("gamma"),
       QStringLiteral("invert"),
+      QStringLiteral("normalize"), QStringLiteral("normalizeMin"),
+      QStringLiteral("normalizeMax"), QStringLiteral("clampEnabled"),
+      QStringLiteral("clampMin"), QStringLiteral("clampMax"),
+      QStringLiteral("remapEnabled"), QStringLiteral("remapInMin"),
+      QStringLiteral("remapInMax"), QStringLiteral("remapOutMin"),
+      QStringLiteral("remapOutMax"), QStringLiteral("blendMode"),
+      QStringLiteral("blendWeight"),
       QStringLiteral("colorMapping"), QStringLiteral("colorA"),
       QStringLiteral("colorB")};
   return suffixes;
@@ -782,6 +830,48 @@ QImage ArtifactNoiseLayer::getThumbnail(int width, int height) const {
                      Qt::SmoothTransformation);
 }
 
+QJsonObject ArtifactNoiseLayer::sourceComponentSettingsSnapshot() const {
+  QJsonObject obj;
+  const auto source = sourceSize();
+  obj[QStringLiteral("width")] = source.width;
+  obj[QStringLiteral("height")] = source.height;
+  const auto& s = impl_->settings_;
+  const auto& p = s.primary;
+  const auto& post = s.post;
+  obj[QStringLiteral("kind")] = noiseKindToString(p.kind, p.voronoiMode, p.gradientMode);
+  obj[QStringLiteral("seed")] = static_cast<int>(p.seed);
+  obj[QStringLiteral("scaleX")] = static_cast<double>(p.scale[0]);
+  obj[QStringLiteral("scaleY")] = static_cast<double>(p.scale[1]);
+  obj[QStringLiteral("offsetX")] = static_cast<double>(p.offset[0]);
+  obj[QStringLiteral("offsetY")] = static_cast<double>(p.offset[1]);
+  obj[QStringLiteral("rotation")] = static_cast<double>(p.rotation);
+  obj[QStringLiteral("amplitude")] = static_cast<double>(p.amplitude);
+  obj[QStringLiteral("octaves")] = static_cast<int>(p.octaves);
+  obj[QStringLiteral("lacunarity")] = static_cast<double>(p.lacunarity);
+  obj[QStringLiteral("gain")] = static_cast<double>(p.gain);
+  obj[QStringLiteral("cellJitter")] = static_cast<double>(p.cellJitter);
+  obj[QStringLiteral("seamless")] = s.seamless;
+  obj[QStringLiteral("domainWarp")] = post.domainWarpEnabled;
+  obj[QStringLiteral("warpAmplitude")] = static_cast<double>(post.warpAmplitude);
+  obj[QStringLiteral("useSecondary")] = post.useSecondary;
+  obj[QStringLiteral("gamma")] = static_cast<double>(post.gamma);
+  obj[QStringLiteral("invert")] = post.invert;
+  obj[QStringLiteral("colorMapping")] = impl_->colorMappingEnabled_;
+  QJsonObject colorAObj;
+  colorAObj[QStringLiteral("r")] = impl_->colorA_.r();
+  colorAObj[QStringLiteral("g")] = impl_->colorA_.g();
+  colorAObj[QStringLiteral("b")] = impl_->colorA_.b();
+  colorAObj[QStringLiteral("a")] = impl_->colorA_.a();
+  obj[QStringLiteral("colorA")] = colorAObj;
+  QJsonObject colorBObj;
+  colorBObj[QStringLiteral("r")] = impl_->colorB_.r();
+  colorBObj[QStringLiteral("g")] = impl_->colorB_.g();
+  colorBObj[QStringLiteral("b")] = impl_->colorB_.b();
+  colorBObj[QStringLiteral("a")] = impl_->colorB_.a();
+  obj[QStringLiteral("colorB")] = colorBObj;
+  return obj;
+}
+
 QJsonObject ArtifactNoiseLayer::toJson() const {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Noise);
@@ -1072,6 +1162,86 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
   invertProperty->setAnimatable(true);
   invertProperty->setDisplayLabel(QStringLiteral("反転"));
   noiseGroup.addProperty(invertProperty);
+  auto normalizeProperty = persistentLayerProperty(
+      QStringLiteral("noise.normalize"), ArtifactCore::PropertyType::Boolean,
+      settings.post.normalize, -105);
+  normalizeProperty->setAnimatable(true);
+  normalizeProperty->setDisplayLabel(QStringLiteral("正規化"));
+  noiseGroup.addProperty(normalizeProperty);
+  auto normalizeMinProperty = persistentLayerProperty(
+      QStringLiteral("noise.normalizeMin"), ArtifactCore::PropertyType::Float,
+      settings.post.normalizeMin, -105);
+  normalizeMinProperty->setAnimatable(true);
+  normalizeMinProperty->setDisplayLabel(QStringLiteral("正規化下限"));
+  noiseGroup.addProperty(normalizeMinProperty);
+  auto normalizeMaxProperty = persistentLayerProperty(
+      QStringLiteral("noise.normalizeMax"), ArtifactCore::PropertyType::Float,
+      settings.post.normalizeMax, -105);
+  normalizeMaxProperty->setAnimatable(true);
+  normalizeMaxProperty->setDisplayLabel(QStringLiteral("正規化上限"));
+  noiseGroup.addProperty(normalizeMaxProperty);
+  auto clampProperty = persistentLayerProperty(
+      QStringLiteral("noise.clampEnabled"), ArtifactCore::PropertyType::Boolean,
+      settings.post.clampEnabled, -105);
+  clampProperty->setAnimatable(true);
+  clampProperty->setDisplayLabel(QStringLiteral("クランプ"));
+  noiseGroup.addProperty(clampProperty);
+  auto clampMinProperty = persistentLayerProperty(
+      QStringLiteral("noise.clampMin"), ArtifactCore::PropertyType::Float,
+      settings.post.clampMin, -105);
+  clampMinProperty->setAnimatable(true);
+  clampMinProperty->setDisplayLabel(QStringLiteral("クランプ下限"));
+  noiseGroup.addProperty(clampMinProperty);
+  auto clampMaxProperty = persistentLayerProperty(
+      QStringLiteral("noise.clampMax"), ArtifactCore::PropertyType::Float,
+      settings.post.clampMax, -105);
+  clampMaxProperty->setAnimatable(true);
+  clampMaxProperty->setDisplayLabel(QStringLiteral("クランプ上限"));
+  noiseGroup.addProperty(clampMaxProperty);
+  auto remapProperty = persistentLayerProperty(
+      QStringLiteral("noise.remapEnabled"), ArtifactCore::PropertyType::Boolean,
+      settings.post.remapEnabled, -105);
+  remapProperty->setAnimatable(true);
+  remapProperty->setDisplayLabel(QStringLiteral("リマップ"));
+  noiseGroup.addProperty(remapProperty);
+  auto remapInMinProperty = persistentLayerProperty(
+      QStringLiteral("noise.remapInMin"), ArtifactCore::PropertyType::Float,
+      settings.post.remapInMin, -105);
+  remapInMinProperty->setAnimatable(true);
+  remapInMinProperty->setDisplayLabel(QStringLiteral("入力下限"));
+  noiseGroup.addProperty(remapInMinProperty);
+  auto remapInMaxProperty = persistentLayerProperty(
+      QStringLiteral("noise.remapInMax"), ArtifactCore::PropertyType::Float,
+      settings.post.remapInMax, -105);
+  remapInMaxProperty->setAnimatable(true);
+  remapInMaxProperty->setDisplayLabel(QStringLiteral("入力上限"));
+  noiseGroup.addProperty(remapInMaxProperty);
+  auto remapOutMinProperty = persistentLayerProperty(
+      QStringLiteral("noise.remapOutMin"), ArtifactCore::PropertyType::Float,
+      settings.post.remapOutMin, -105);
+  remapOutMinProperty->setAnimatable(true);
+  remapOutMinProperty->setDisplayLabel(QStringLiteral("出力下限"));
+  noiseGroup.addProperty(remapOutMinProperty);
+  auto remapOutMaxProperty = persistentLayerProperty(
+      QStringLiteral("noise.remapOutMax"), ArtifactCore::PropertyType::Float,
+      settings.post.remapOutMax, -105);
+  remapOutMaxProperty->setAnimatable(true);
+  remapOutMaxProperty->setDisplayLabel(QStringLiteral("出力上限"));
+  noiseGroup.addProperty(remapOutMaxProperty);
+  auto blendModeProperty = persistentLayerProperty(
+      QStringLiteral("noise.blendMode"), ArtifactCore::PropertyType::Integer,
+      static_cast<int>(settings.post.blendMode), -105);
+  blendModeProperty->setAnimatable(true);
+  blendModeProperty->setHardRange(0.0, 2.0);
+  blendModeProperty->setDisplayLabel(QStringLiteral("ブレンドモード"));
+  noiseGroup.addProperty(blendModeProperty);
+  auto blendWeightProperty = persistentLayerProperty(
+      QStringLiteral("noise.blendWeight"), ArtifactCore::PropertyType::Float,
+      settings.post.blendWeight, -105);
+  blendWeightProperty->setAnimatable(true);
+  blendWeightProperty->setHardRange(0.0, 1.0);
+  blendWeightProperty->setDisplayLabel(QStringLiteral("ブレンド量"));
+  noiseGroup.addProperty(blendWeightProperty);
   auto colorMappingProperty = persistentLayerProperty(
       QStringLiteral("noise.colorMapping"), ArtifactCore::PropertyType::Boolean,
       impl_->colorMappingEnabled_, -105);
@@ -1197,6 +1367,73 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
   }
   if (propertyPath == QStringLiteral("noise.invert")) {
     settings.post.invert = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.normalize")) {
+    settings.post.normalize = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.normalizeMin")) {
+    settings.post.normalizeMin = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.normalizeMax")) {
+    settings.post.normalizeMax = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.clampEnabled")) {
+    settings.post.clampEnabled = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.clampMin")) {
+    settings.post.clampMin = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.clampMax")) {
+    settings.post.clampMax = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.remapEnabled")) {
+    settings.post.remapEnabled = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.remapInMin")) {
+    settings.post.remapInMin = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.remapInMax")) {
+    settings.post.remapInMax = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.remapOutMin")) {
+    settings.post.remapOutMin = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.remapOutMax")) {
+    settings.post.remapOutMax = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.blendMode")) {
+    settings.post.blendMode = static_cast<ArtifactCore::ProceduralTextureBlendMode>(
+        std::clamp(value.toInt(), 0, 2));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("noise.blendWeight")) {
+    settings.post.blendWeight = static_cast<float>(
+        std::clamp(value.toDouble(0.5), 0.0, 1.0));
     Q_EMIT changed();
     return true;
   }
