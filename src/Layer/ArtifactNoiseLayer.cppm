@@ -909,56 +909,79 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
     const auto noiseObj = obj["noise"].toObject();
     auto& settings = impl_->settings_;
     auto& p = settings.primary;
-    noiseKindFromString(noiseObj.value("kind").toString(), p.kind,
-                        p.voronoiMode, p.gradientMode);
-    p.seed =
-        static_cast<std::uint32_t>(std::max(0, noiseObj.value("seed").toInt(0)));
-    p.scale[0] = static_cast<float>(noiseObj.value("scaleX").toDouble(8.0));
-    p.scale[1] = static_cast<float>(noiseObj.value("scaleY").toDouble(8.0));
-    p.offset[0] = static_cast<float>(noiseObj.value("offsetX").toDouble(0.0));
-    p.offset[1] = static_cast<float>(noiseObj.value("offsetY").toDouble(0.0));
-    p.rotation = static_cast<float>(noiseObj.value("rotation").toDouble(0.0));
-    p.amplitude = static_cast<float>(noiseObj.value("amplitude").toDouble(1.0));
+    if (noiseObj.contains("kind")) {
+      noiseKindFromString(noiseObj.value("kind").toString(), p.kind,
+                          p.voronoiMode, p.gradientMode);
+    }
+    p.seed = static_cast<std::uint32_t>(std::max(
+        0, noiseObj.value("seed").toInt(static_cast<int>(p.seed))));
+    p.scale[0] = static_cast<float>(
+        noiseObj.value("scaleX").toDouble(static_cast<double>(p.scale[0])));
+    p.scale[1] = static_cast<float>(
+        noiseObj.value("scaleY").toDouble(static_cast<double>(p.scale[1])));
+    p.offset[0] = static_cast<float>(
+        noiseObj.value("offsetX").toDouble(static_cast<double>(p.offset[0])));
+    p.offset[1] = static_cast<float>(
+        noiseObj.value("offsetY").toDouble(static_cast<double>(p.offset[1])));
+    p.rotation = static_cast<float>(
+        noiseObj.value("rotation").toDouble(static_cast<double>(p.rotation)));
+    p.amplitude = static_cast<float>(
+        noiseObj.value("amplitude").toDouble(static_cast<double>(p.amplitude)));
     p.octaves = static_cast<std::uint32_t>(
-        std::clamp(noiseObj.value("octaves").toInt(4), 1, 12));
-    p.lacunarity =
-        static_cast<float>(noiseObj.value("lacunarity").toDouble(2.0));
-    p.gain = static_cast<float>(noiseObj.value("gain").toDouble(0.5));
-    p.cellJitter =
-        static_cast<float>(noiseObj.value("cellJitter").toDouble(0.75));
-    settings.seamless = noiseObj.value("seamless").toBool(true);
-    settings.parallel = noiseObj.value("parallel").toBool(false);
+        std::clamp(noiseObj.value("octaves").toInt(static_cast<int>(p.octaves)),
+                   1, 12));
+    p.lacunarity = static_cast<float>(
+        noiseObj.value("lacunarity").toDouble(static_cast<double>(p.lacunarity)));
+    p.gain = static_cast<float>(
+        noiseObj.value("gain").toDouble(static_cast<double>(p.gain)));
+    p.cellJitter = static_cast<float>(
+        noiseObj.value("cellJitter").toDouble(static_cast<double>(p.cellJitter)));
+    settings.seamless = noiseObj.value("seamless").toBool(settings.seamless);
+    settings.parallel = noiseObj.value("parallel").toBool(settings.parallel);
     const int outputFormat = noiseObj.value("outputFormat").toInt(
         static_cast<int>(settings.outputFormat));
     settings.outputFormat = static_cast<ArtifactCore::ProceduralTextureOutputFormat>(
         std::clamp(outputFormat, 1, 3));
     settings.post.domainWarpEnabled =
-        noiseObj.value("domainWarp").toBool(false);
-    settings.post.warpAmplitude =
-        static_cast<float>(noiseObj.value("warpAmplitude").toDouble(0.25));
-    settings.post.useSecondary = noiseObj.value("useSecondary").toBool(false);
-    settings.post.gamma =
-        static_cast<float>(noiseObj.value("gamma").toDouble(1.0));
-    settings.post.invert = noiseObj.value("invert").toBool(false);
-    settings.post.normalize = noiseObj.value("normalize").toBool(false);
+        noiseObj.value("domainWarp").toBool(settings.post.domainWarpEnabled);
+    settings.post.warpAmplitude = static_cast<float>(
+        noiseObj.value("warpAmplitude").toDouble(
+            static_cast<double>(settings.post.warpAmplitude)));
+    settings.post.useSecondary =
+        noiseObj.value("useSecondary").toBool(settings.post.useSecondary);
+    settings.post.gamma = static_cast<float>(
+        noiseObj.value("gamma").toDouble(static_cast<double>(settings.post.gamma)));
+    settings.post.invert = noiseObj.value("invert").toBool(settings.post.invert);
+    settings.post.normalize =
+        noiseObj.value("normalize").toBool(settings.post.normalize);
     settings.post.normalizeMin = static_cast<float>(
-        noiseObj.value("normalizeMin").toDouble(0.0));
+        noiseObj.value("normalizeMin").toDouble(
+            static_cast<double>(settings.post.normalizeMin)));
     settings.post.normalizeMax = static_cast<float>(
-        noiseObj.value("normalizeMax").toDouble(1.0));
-    settings.post.clampEnabled = noiseObj.value("clampEnabled").toBool(true);
+        noiseObj.value("normalizeMax").toDouble(
+            static_cast<double>(settings.post.normalizeMax)));
+    settings.post.clampEnabled =
+        noiseObj.value("clampEnabled").toBool(settings.post.clampEnabled);
     settings.post.clampMin = static_cast<float>(
-        noiseObj.value("clampMin").toDouble(0.0));
+        noiseObj.value("clampMin").toDouble(
+            static_cast<double>(settings.post.clampMin)));
     settings.post.clampMax = static_cast<float>(
-        noiseObj.value("clampMax").toDouble(1.0));
-    settings.post.remapEnabled = noiseObj.value("remapEnabled").toBool(false);
+        noiseObj.value("clampMax").toDouble(
+            static_cast<double>(settings.post.clampMax)));
+    settings.post.remapEnabled =
+        noiseObj.value("remapEnabled").toBool(settings.post.remapEnabled);
     settings.post.remapInMin = static_cast<float>(
-        noiseObj.value("remapInMin").toDouble(0.0));
+        noiseObj.value("remapInMin").toDouble(
+            static_cast<double>(settings.post.remapInMin)));
     settings.post.remapInMax = static_cast<float>(
-        noiseObj.value("remapInMax").toDouble(1.0));
+        noiseObj.value("remapInMax").toDouble(
+            static_cast<double>(settings.post.remapInMax)));
     settings.post.remapOutMin = static_cast<float>(
-        noiseObj.value("remapOutMin").toDouble(0.0));
+        noiseObj.value("remapOutMin").toDouble(
+            static_cast<double>(settings.post.remapOutMin)));
     settings.post.remapOutMax = static_cast<float>(
-        noiseObj.value("remapOutMax").toDouble(1.0));
+        noiseObj.value("remapOutMax").toDouble(
+            static_cast<double>(settings.post.remapOutMax)));
     settings.post.blendMode = static_cast<ArtifactCore::ProceduralTextureBlendMode>(
         std::clamp(noiseObj.value("blendMode").toInt(
                        static_cast<int>(settings.post.blendMode)),
