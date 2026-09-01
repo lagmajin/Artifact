@@ -996,22 +996,24 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
       generatorParamsFromJson(noiseObj.value("warp").toObject(),
                               settings.post.warp);
     }
-    setColorMappingEnabled(noiseObj.value("colorMapping").toBool(false));
+    sanitizeNoiseSettings(settings);
+    setColorMappingEnabled(
+        noiseObj.value("colorMapping").toBool(impl_->colorMappingEnabled_));
     if (noiseObj.contains("colorA") && noiseObj["colorA"].isObject()) {
       const auto colorObj = noiseObj["colorA"].toObject();
       setColorA(FloatColor(
-          static_cast<float>(colorObj.value("r").toDouble(0.0)),
-          static_cast<float>(colorObj.value("g").toDouble(0.0)),
-          static_cast<float>(colorObj.value("b").toDouble(0.0)),
-          static_cast<float>(colorObj.value("a").toDouble(1.0))));
+          static_cast<float>(colorObj.value("r").toDouble(impl_->colorA_.r())),
+          static_cast<float>(colorObj.value("g").toDouble(impl_->colorA_.g())),
+          static_cast<float>(colorObj.value("b").toDouble(impl_->colorA_.b())),
+          static_cast<float>(colorObj.value("a").toDouble(impl_->colorA_.a()))));
     }
     if (noiseObj.contains("colorB") && noiseObj["colorB"].isObject()) {
       const auto colorObj = noiseObj["colorB"].toObject();
       setColorB(FloatColor(
-          static_cast<float>(colorObj.value("r").toDouble(1.0)),
-          static_cast<float>(colorObj.value("g").toDouble(1.0)),
-          static_cast<float>(colorObj.value("b").toDouble(1.0)),
-          static_cast<float>(colorObj.value("a").toDouble(1.0))));
+          static_cast<float>(colorObj.value("r").toDouble(impl_->colorB_.r())),
+          static_cast<float>(colorObj.value("g").toDouble(impl_->colorB_.g())),
+          static_cast<float>(colorObj.value("b").toDouble(impl_->colorB_.b())),
+          static_cast<float>(colorObj.value("a").toDouble(impl_->colorB_.a()))));
     }
     if (noiseObj.contains("animatedProperties") &&
         noiseObj["animatedProperties"].isObject()) {
