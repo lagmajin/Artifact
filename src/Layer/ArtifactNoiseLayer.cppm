@@ -566,55 +566,65 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
   auto seedProperty = persistentLayerProperty(
       QStringLiteral("noise.seed"), ArtifactCore::PropertyType::Integer,
       static_cast<int>(p.seed), -105);
+  seedProperty->setAnimatable(true);
   seedProperty->setDisplayLabel(QStringLiteral("シード"));
   noiseGroup.addProperty(seedProperty);
   auto scaleXProperty = persistentLayerProperty(
       QStringLiteral("noise.scaleX"), ArtifactCore::PropertyType::Float,
       p.scale[0], -105);
+  scaleXProperty->setAnimatable(true);
   scaleXProperty->setHardRange(0.001, 10000.0);
   scaleXProperty->setDisplayLabel(QStringLiteral("スケールX"));
   noiseGroup.addProperty(scaleXProperty);
   auto scaleYProperty = persistentLayerProperty(
       QStringLiteral("noise.scaleY"), ArtifactCore::PropertyType::Float,
       p.scale[1], -105);
+  scaleYProperty->setAnimatable(true);
   scaleYProperty->setHardRange(0.001, 10000.0);
   scaleYProperty->setDisplayLabel(QStringLiteral("スケールY"));
   noiseGroup.addProperty(scaleYProperty);
   auto offsetXProperty = persistentLayerProperty(
       QStringLiteral("noise.offsetX"), ArtifactCore::PropertyType::Float,
       p.offset[0], -105);
+  offsetXProperty->setAnimatable(true);
   offsetXProperty->setDisplayLabel(QStringLiteral("オフセットX"));
   noiseGroup.addProperty(offsetXProperty);
   auto offsetYProperty = persistentLayerProperty(
       QStringLiteral("noise.offsetY"), ArtifactCore::PropertyType::Float,
       p.offset[1], -105);
+  offsetYProperty->setAnimatable(true);
   offsetYProperty->setDisplayLabel(QStringLiteral("オフセットY"));
   noiseGroup.addProperty(offsetYProperty);
   auto rotationProperty = persistentLayerProperty(
       QStringLiteral("noise.rotation"), ArtifactCore::PropertyType::Float,
       p.rotation, -105);
+  rotationProperty->setAnimatable(true);
   rotationProperty->setDisplayLabel(QStringLiteral("回転"));
   noiseGroup.addProperty(rotationProperty);
   auto amplitudeProperty = persistentLayerProperty(
       QStringLiteral("noise.amplitude"), ArtifactCore::PropertyType::Float,
       p.amplitude, -105);
+  amplitudeProperty->setAnimatable(true);
   amplitudeProperty->setDisplayLabel(QStringLiteral("振幅"));
   noiseGroup.addProperty(amplitudeProperty);
   auto octavesProperty = persistentLayerProperty(
       QStringLiteral("noise.octaves"), ArtifactCore::PropertyType::Integer,
       static_cast<int>(p.octaves), -105);
+  octavesProperty->setAnimatable(true);
   octavesProperty->setHardRange(1.0, 12.0);
   octavesProperty->setDisplayLabel(QStringLiteral("オクターブ"));
   noiseGroup.addProperty(octavesProperty);
   auto lacunarityProperty = persistentLayerProperty(
       QStringLiteral("noise.lacunarity"), ArtifactCore::PropertyType::Float,
       p.lacunarity, -105);
+  lacunarityProperty->setAnimatable(true);
   lacunarityProperty->setHardRange(1.0, 8.0);
   lacunarityProperty->setDisplayLabel(QStringLiteral("ラクナリティ"));
   noiseGroup.addProperty(lacunarityProperty);
   auto gainProperty = persistentLayerProperty(
       QStringLiteral("noise.gain"), ArtifactCore::PropertyType::Float,
       p.gain, -105);
+  gainProperty->setAnimatable(true);
   gainProperty->setHardRange(0.0, 1.0);
   gainProperty->setDisplayLabel(QStringLiteral("ゲイン"));
   noiseGroup.addProperty(gainProperty);
