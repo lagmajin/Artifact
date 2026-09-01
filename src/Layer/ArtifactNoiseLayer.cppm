@@ -176,6 +176,36 @@ float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
   return value;
 }
 
+bool evaluatedNoiseBoolean(const ArtifactNoiseLayer* layer,
+                           const QString& path, bool fallback,
+                           const ArtifactCore::RationalTime& time) {
+  if (!layer) return fallback;
+  if (const auto property = layer->getProperty(path);
+      property && property->isAnimatable() &&
+          !property->getKeyFrames().empty()) {
+    const QVariant animated = property->interpolateValue(time);
+    if (animated.isValid()) return animated.toBool();
+  }
+  return fallback;
+}
+
+FloatColor evaluatedNoiseColor(const ArtifactNoiseLayer* layer,
+                               const QString& path, const FloatColor& fallback,
+                               const ArtifactCore::RationalTime& time) {
+  if (!layer) return fallback;
+  if (const auto property = layer->getProperty(path);
+      property && property->isAnimatable() &&
+          !property->getKeyFrames().empty()) {
+    const QVariant animated = property->interpolateValue(time);
+    if (animated.canConvert<QColor>()) {
+      const auto color = animated.value<QColor>();
+      return FloatColor(color.redF(), color.greenF(), color.blueF(),
+                        color.alphaF());
+    }
+  }
+  return fallback;
+}
+
 ArtifactCore::RationalTime noiseEvaluationTime(const ArtifactNoiseLayer* layer) {
   if (!layer) return ArtifactCore::RationalTime(0, 30);
   auto* composition = dynamic_cast<ArtifactAbstractCompositionAccess*>(
@@ -227,7 +257,9 @@ const QStringList& animatedNoisePropertySuffixes() {
       QStringLiteral("scaleY"), QStringLiteral("offsetX"),
       QStringLiteral("offsetY"), QStringLiteral("rotation"),
       QStringLiteral("amplitude"), QStringLiteral("octaves"),
-      QStringLiteral("lacunarity"), QStringLiteral("gain")};
+      QStringLiteral("lacunarity"), QStringLiteral("gain"),
+      QStringLiteral("colorMapping"), QStringLiteral("colorA"),
+      QStringLiteral("colorB")};
   return suffixes;
 }
 
@@ -413,23 +445,31 @@ ArtifactNoiseLayer::resolveLayerSourceOverride() const {
   const int width = std::clamp(source.width, 1, 16384);
   const int height = std::clamp(source.height, 1, 16384);
   auto settings = evaluatedNoiseSettings(this, impl_->settings_);
+  const auto time = noiseEvaluationTime(this);
+  const bool colorMapping = evaluatedNoiseBoolean(
+      this, QStringLiteral("noise.colorMapping"),
+      impl_->colorMappingEnabled_, time);
+  const auto colorA = evaluatedNoiseColor(
+      this, QStringLiteral("noise.colorA"), impl_->colorA_, time);
+  const auto colorB = evaluatedNoiseColor(
+      this, QStringLiteral("noise.colorB"), impl_->colorB_, time);
   settings.width = width;
   settings.height = height;
   const QString signature = noiseSignatureKey(
-      settings, impl_->colorMappingEnabled_, impl_->colorA_, impl_->colorB_);
+      settings, colorMapping, colorA, colorB);
   if (impl_->buffer_.isEmpty() || impl_->bufferSignature_ != signature) {
     impl_->buffer_ = ArtifactCore::ImageF32x4_RGBA();
     if (!ArtifactCore::ProceduralTextureGenerator::generate(
             settings, impl_->buffer_)) {
       return nullptr;
     }
-    if (impl_->colorMappingEnabled_ && impl_->buffer_.rgba32fData() &&
+    if (colorMapping && impl_->buffer_.rgba32fData() &&
         impl_->buffer_.width() > 0 && impl_->buffer_.height() > 0) {
       const int pixelCount =
           impl_->buffer_.width() * impl_->buffer_.height();
       float* pixels = impl_->buffer_.rgba32fData();
-      const FloatColor& a = impl_->colorA_;
-      const FloatColor& b = impl_->colorB_;
+      const FloatColor& a = colorA;
+      const FloatColor& b = colorB;
       for (int i = 0; i < pixelCount; ++i) {
         const float v = std::clamp(pixels[i * 4], 0.0f, 1.0f);
         pixels[i * 4 + 0] = a.r() + (b.r() - a.r()) * v;
@@ -466,7 +506,11 @@ void ArtifactNoiseLayer::draw(ArtifactIRenderer* renderer) {
   const Size_2D size(std::clamp(source.width, 1, 16384),
                      std::clamp(source.height, 1, 16384));
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-  if (!impl_->colorMappingEnabled_) {
+  const auto time = noiseEvaluationTime(this);
+  const bool colorMapping = evaluatedNoiseBoolean(
+      this, QStringLiteral("noise.colorMapping"),
+      impl_->colorMappingEnabled_, time);
+  if (!colorMapping) {
     auto gpuSettings = evaluatedNoiseSettings(this, impl_->settings_);
     gpuSettings.width = size.width;
     gpuSettings.height = size.height;
@@ -712,6 +756,7 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
   auto colorMappingProperty = persistentLayerProperty(
       QStringLiteral("noise.colorMapping"), ArtifactCore::PropertyType::Boolean,
       impl_->colorMappingEnabled_, -105);
+  colorMappingProperty->setAnimatable(true);
   colorMappingProperty->setDisplayLabel(QStringLiteral("カラーマッピング"));
   noiseGroup.addProperty(colorMappingProperty);
   const auto mappedA = colorA();
@@ -719,6 +764,7 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
       QStringLiteral("noise.colorA"), ArtifactCore::PropertyType::Color,
       QColor::fromRgbF(mappedA.r(), mappedA.g(), mappedA.b(), mappedA.a()),
       -105);
+  colorAProperty->setAnimatable(true);
   colorAProperty->setColorValue(
       QColor::fromRgbF(mappedA.r(), mappedA.g(), mappedA.b(), mappedA.a()));
   colorAProperty->setDisplayLabel(QStringLiteral("マップ色A"));
@@ -728,6 +774,7 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
       QStringLiteral("noise.colorB"), ArtifactCore::PropertyType::Color,
       QColor::fromRgbF(mappedB.r(), mappedB.g(), mappedB.b(), mappedB.a()),
       -105);
+  colorBProperty->setAnimatable(true);
   colorBProperty->setColorValue(
       QColor::fromRgbF(mappedB.r(), mappedB.g(), mappedB.b(), mappedB.a()));
   colorBProperty->setDisplayLabel(QStringLiteral("マップ色B"));
