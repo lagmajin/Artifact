@@ -162,9 +162,9 @@ float evaluatedNoiseProperty(const ArtifactNoiseLayer* layer,
   if (!layer) return fallback;
   float value = fallback;
   if (const auto property = layer->getProperty(path);
-      property && property->isAnimatable() &&
-          !property->getKeyFrames().empty()) {
-    const QVariant animated = property->interpolateValue(time);
+      property && (property->isAnimatable() || property->hasExpression() ||
+                   property->hasEnvelopes())) {
+    const QVariant animated = property->evaluateValue(time);
     if (animated.isValid() && std::isfinite(animated.toDouble())) {
       value = static_cast<float>(animated.toDouble());
     }
@@ -181,9 +181,9 @@ bool evaluatedNoiseBoolean(const ArtifactNoiseLayer* layer,
                            const ArtifactCore::RationalTime& time) {
   if (!layer) return fallback;
   if (const auto property = layer->getProperty(path);
-      property && property->isAnimatable() &&
-          !property->getKeyFrames().empty()) {
-    const QVariant animated = property->interpolateValue(time);
+      property && (property->isAnimatable() || property->hasExpression() ||
+                   property->hasEnvelopes())) {
+    const QVariant animated = property->evaluateValue(time);
     if (animated.isValid()) return animated.toBool();
   }
   return fallback;
@@ -194,9 +194,9 @@ FloatColor evaluatedNoiseColor(const ArtifactNoiseLayer* layer,
                                const ArtifactCore::RationalTime& time) {
   if (!layer) return fallback;
   if (const auto property = layer->getProperty(path);
-      property && property->isAnimatable() &&
-          !property->getKeyFrames().empty()) {
-    const QVariant animated = property->interpolateValue(time);
+      property && (property->isAnimatable() || property->hasExpression() ||
+                   property->hasEnvelopes())) {
+    const QVariant animated = property->evaluateValue(time);
     if (animated.canConvert<QColor>()) {
       const auto color = animated.value<QColor>();
       return FloatColor(color.redF(), color.greenF(), color.blueF(),
