@@ -7345,7 +7345,8 @@ protected:
     const auto *gizmo2D = controller_->gizmo();
     const auto *gizmo3D = controller_->gizmo3D();
     return (gizmo2D && gizmo2D->isDragging()) ||
-           (gizmo3D && gizmo3D->isDragging());
+           (gizmo3D && gizmo3D->isDragging()) ||
+           controller_->isEditingShapePathVertices();
   }
 
   bool isScaleDragActive() const {

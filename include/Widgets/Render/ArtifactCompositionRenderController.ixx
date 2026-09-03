@@ -363,6 +363,11 @@ void handleMouseMove(const QPointF& viewportPos);
   bool removeLastPendingMaskVertex();
   bool removeLastPendingShapePathVertex();
   // Main-VP custom shape path vertex editing.
+  // Selection-tool modifiers: Ctrl+Shift adds a vertex on a segment,
+  // Alt removes a vertex, and Ctrl toggles its corner/smooth state.
+  bool insertShapePathVertexAt(const QPointF& viewportPos);
+  bool deleteShapePathVertexAt(const QPointF& viewportPos);
+  bool toggleShapePathVertexSmoothAt(const QPointF& viewportPos);
   bool beginShapePathVertexDrag(const QPointF& viewportPos);
   void updateShapePathVertexDrag(const QPointF& viewportPos);
   void endShapePathVertexDrag();
