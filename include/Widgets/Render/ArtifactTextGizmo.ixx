@@ -96,6 +96,9 @@ private:
     QString dragPropertyPath_;
     std::vector<ArtifactCore::KeyFrame> dragBeforeKeyframes_;
     bool dragValueChanged_ = false;
+    float dragStartBoxWidth_ = 0.0f;
+    float dragStartBoxHeight_ = 0.0f;
+    bool boxResizeChanged_ = false;
 
     // 定数
     static constexpr float HANDLE_WIDTH = 4.0f;

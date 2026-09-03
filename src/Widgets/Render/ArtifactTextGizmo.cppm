@@ -5,6 +5,7 @@ module;
 #include <utility>
 #include <QPointF>
 #include <QRectF>
+#include <QSet>
 #include <QTransform>
 #include <QVariant>
 #include <algorithm>
@@ -20,6 +21,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Text.LayoutContract;
+import Text.Animator;
 import Color.Float;
 import Script.Expression.Evaluator;
 import Undo.UndoManager;
@@ -92,7 +94,7 @@ int editableAnimatorIndex(
     return -1;
 }
 
-bool hasEditablePercentageSelector(
+bool hasEditableRangeSelector(
     const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer) {
     return editableAnimatorIndex(layer) >= 0;
 }
@@ -140,10 +142,45 @@ private:
     bool lastOperationSucceeded_ = true;
 };
 
-float selectorHandleX(const QRectF& bounds, const float percentage) {
+int selectorUnitDomainSize(
+    const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer,
+    const SelectorUnits units) {
+    if (!layer || units == SelectorUnits::Percentage) return 100;
+    const auto geometry = layer->textGlyphGeometry();
+    if (geometry.glyphs.empty()) return 1;
+    if (units == SelectorUnits::Index) {
+        return static_cast<int>(geometry.glyphs.size());
+    }
+    QSet<QString> uniqueUnits;
+    for (const auto& glyph : geometry.glyphs) {
+        if (units == SelectorUnits::Cluster) {
+            uniqueUnits.insert(QString::number(glyph.clusterIndex >= 0
+                                                    ? glyph.clusterIndex
+                                                    : glyph.index));
+        } else if (units == SelectorUnits::Line) {
+            uniqueUnits.insert(QString::number(glyph.lineIndex >= 0
+                                                    ? glyph.lineIndex
+                                                    : glyph.index));
+        } else {
+            uniqueUnits.insert(glyph.selectorTag.isEmpty()
+                                   ? QString::number(glyph.index)
+                                   : glyph.selectorTag);
+        }
+    }
+    return std::max(1, uniqueUnits.size());
+}
+
+float selectorDisplayExtent(const int unitCount, const SelectorUnits units) {
+    return units == SelectorUnits::Percentage
+        ? 100.0f : static_cast<float>(std::max(1, unitCount - 1));
+}
+
+float selectorHandleX(const QRectF& bounds, const float value,
+                      const int unitCount, const SelectorUnits units) {
+    const float extent = selectorDisplayExtent(unitCount, units);
     return static_cast<float>(bounds.left()) +
            static_cast<float>(bounds.width()) *
-               std::clamp(percentage, 0.0f, 100.0f) / 100.0f;
+               std::clamp(value, 0.0f, extent) / extent;
 }
 
 constexpr float kTextGizmoPi = 3.14159265358979323846f;
@@ -323,6 +360,9 @@ void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     dragPropertyPath_.clear();
     dragBeforeKeyframes_.clear();
     dragValueChanged_ = false;
+    dragStartBoxWidth_ = 0.0f;
+    dragStartBoxHeight_ = 0.0f;
+    boxResizeChanged_ = false;
     dragAccumulatedRotationDelta_ = 0.0f;
     transformDragChanged_ = false;
     transformBeforeStates_.clear();
@@ -353,14 +393,23 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
     FloatColor handleColor{0.5f, 0.8f, 1.0f, 1.0f};
     const float handleSize = 6.0f * invZoom;
 
-    // Corner handles
-    renderer->drawSolidRect(bbox.left() - handleSize/2, bbox.top() - handleSize/2, handleSize, handleSize, handleColor);
+    // Box text owns its extent.  Point text must not silently turn into box
+    // text merely because a transform handle was dragged.
+    if (textLayer->isBoxText()) {
+    // Only expose the right/bottom edges: those preserve the text origin.
+    // Left/top handles need a transform-space position compensation path.
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.top() - handleSize/2, handleSize, handleSize, handleColor);
-    renderer->drawSolidRect(bbox.left() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
+    renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.center().y() - handleSize/2, handleSize, handleSize, handleColor);
+    renderer->drawSolidRect(bbox.center().x() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
+    }
 
-    if (hasEditablePercentageSelector(textLayer)) {
+    if (hasEditableRangeSelector(textLayer)) {
         const int animatorIndex = editableAnimatorIndex(textLayer);
+        const auto units = static_cast<SelectorUnits>(
+            static_cast<int>(animatorPropertyValue(
+                textLayer, animatorIndex, QStringLiteral("units"), 0.0f)));
+        const int unitCount = selectorUnitDomainSize(textLayer, units);
         const float start = animatorPropertyValue(
             textLayer, animatorIndex, QStringLiteral("start"));
         const float end = animatorPropertyValue(
@@ -370,10 +419,10 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
         const float selectorY = static_cast<float>(bbox.top()) - 12.0f * invZoom;
         const float selectorHeight = 10.0f * invZoom;
         const float selectorHandleWidth = std::max(2.0f * invZoom, handleWidth);
-        const float startX = selectorHandleX(bbox, start);
-        const float endX = selectorHandleX(bbox, end);
+        const float startX = selectorHandleX(bbox, start, unitCount, units);
+        const float endX = selectorHandleX(bbox, end, unitCount, units);
         const float offsetX = selectorHandleX(
-            bbox, (start + end) * 0.5f + offset);
+            bbox, (start + end) * 0.5f + offset, unitCount, units);
         const FloatColor startColor{0.20f, 0.82f, 1.0f, 0.98f};
         const FloatColor endColor{1.0f, 0.42f, 0.24f, 0.98f};
         const FloatColor offsetColor{1.0f, 0.86f, 0.20f, 0.98f};
@@ -590,8 +639,12 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
     const float hitThreshold = std::isfinite(zoom) && zoom > 0.0001f
         ? 10.0f / zoom : 10.0f;
 
-    if (hasEditablePercentageSelector(textLayer)) {
+    if (hasEditableRangeSelector(textLayer)) {
         const int animatorIndex = editableAnimatorIndex(textLayer);
+        const auto units = static_cast<SelectorUnits>(
+            static_cast<int>(animatorPropertyValue(
+                textLayer, animatorIndex, QStringLiteral("units"), 0.0f)));
+        const int unitCount = selectorUnitDomainSize(textLayer, units);
         const float start = animatorPropertyValue(
             textLayer, animatorIndex, QStringLiteral("start"));
         const float end = animatorPropertyValue(
@@ -602,10 +655,10 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         const bool selectorYHit =
             std::abs(canvasMouse.y - selectorY) < hitThreshold;
         if (selectorYHit) {
-            const float startX = selectorHandleX(bbox, start);
-            const float endX = selectorHandleX(bbox, end);
+            const float startX = selectorHandleX(bbox, start, unitCount, units);
+            const float endX = selectorHandleX(bbox, end, unitCount, units);
             const float offsetX = selectorHandleX(
-                bbox, (start + end) * 0.5f + offset);
+                bbox, (start + end) * 0.5f + offset, unitCount, units);
             if (std::abs(canvasMouse.x - offsetX) < hitThreshold) {
                 return HandleType::RangeOffset;
             }
@@ -618,18 +671,16 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         }
     }
 
-    // Check corner handles
-    if (std::abs(canvasMouse.x - bbox.left()) < hitThreshold && std::abs(canvasMouse.y - bbox.top()) < hitThreshold) {
-        return HandleType::BoxCornerTopLeft;
-    }
+    const bool boxText = textLayer->isBoxText();
+    // Check box handles only for box text.  Right/bottom resizing keeps the
+    // layer origin stable under transformed bounds.
+    if (boxText) {
     if (std::abs(canvasMouse.x - bbox.right()) < hitThreshold && std::abs(canvasMouse.y - bbox.top()) < hitThreshold) {
         return HandleType::BoxCornerTopRight;
     }
-    if (std::abs(canvasMouse.x - bbox.left()) < hitThreshold && std::abs(canvasMouse.y - bbox.bottom()) < hitThreshold) {
-        return HandleType::BoxCornerBottomLeft;
-    }
     if (std::abs(canvasMouse.x - bbox.right()) < hitThreshold && std::abs(canvasMouse.y - bbox.bottom()) < hitThreshold) {
         return HandleType::BoxCornerBottomRight;
+    }
     }
 
     // Rotate ring: ImGui-style outer ring around the transformed bounds.
@@ -677,18 +728,14 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         }
     }
 
-    // Check side handles (simplified, just check if on edges)
-    if (std::abs(canvasMouse.x - bbox.left()) < hitThreshold && canvasMouse.y > bbox.top() && canvasMouse.y < bbox.bottom()) {
-        return HandleType::BoxLeft;
-    }
+    // Check side handles (right/bottom only; see draw()).
+    if (boxText) {
     if (std::abs(canvasMouse.x - bbox.right()) < hitThreshold && canvasMouse.y > bbox.top() && canvasMouse.y < bbox.bottom()) {
         return HandleType::BoxRight;
     }
-    if (std::abs(canvasMouse.y - bbox.top()) < hitThreshold && canvasMouse.x > bbox.left() && canvasMouse.x < bbox.right()) {
-        return HandleType::BoxTop;
-    }
     if (std::abs(canvasMouse.y - bbox.bottom()) < hitThreshold && canvasMouse.x > bbox.left() && canvasMouse.x < bbox.right()) {
         return HandleType::BoxBottom;
+    }
     }
 
     // The text gizmo replaces the regular transform gizmo while a text layer
@@ -742,6 +789,12 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
         dragStartBounds_ = layer_->transformedBoundingBox();
         if (dragStartBounds_.isEmpty()) {
             dragStartBounds_ = QRectF(0, 0, 400, 100);
+        }
+        if (const auto textLayer =
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
+            dragStartBoxWidth_ = textLayer->maxWidth();
+            dragStartBoxHeight_ = textLayer->boxHeight();
+            boxResizeChanged_ = false;
         }
         if (activeHandle_ == HandleType::RangeStart) {
             dragAnimatorIndex_ = editableAnimatorIndex(
@@ -829,8 +882,11 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
         activeHandle_ == HandleType::RangeEnd ||
         activeHandle_ == HandleType::RangeOffset) {
         if (bbox.width() <= 0.0001) return false;
-        const float deltaPercent =
-            deltaX / static_cast<float>(bbox.width()) * 100.0f;
+        const auto units = static_cast<SelectorUnits>(
+            static_cast<int>(animatorPropertyValue(
+                textLayer, dragAnimatorIndex_, QStringLiteral("units"), 0.0f)));
+        const float deltaUnits = deltaX / static_cast<float>(bbox.width()) *
+            selectorDisplayExtent(selectorUnitDomainSize(textLayer, units), units);
         QString suffix;
         if (activeHandle_ == HandleType::RangeStart) {
             suffix = QStringLiteral("start");
@@ -840,7 +896,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             suffix = QStringLiteral("offset");
         }
         const float nextValue = std::clamp(
-            dragStartValue_ + deltaPercent, -100000.0f, 100000.0f);
+            dragStartValue_ + deltaUnits, -100000.0f, 100000.0f);
         dragCurrentValue_ = nextValue;
         dragValueChanged_ = dragValueChanged_ ||
             std::abs(dragCurrentValue_ - dragStartValue_) > 0.0001f;
@@ -1103,6 +1159,9 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     // Assuming bounds represent maxWidth and boxHeight
     textLayer->setMaxWidth(std::max(1.0f, static_cast<float>(bbox.width())));
     textLayer->setBoxHeight(std::max(1.0f, static_cast<float>(bbox.height())));
+    boxResizeChanged_ = boxResizeChanged_ ||
+        std::abs(textLayer->maxWidth() - dragStartBoxWidth_) > 0.0001f ||
+        std::abs(textLayer->boxHeight() - dragStartBoxHeight_) > 0.0001f;
 
     // Update position if needed (simplified)
     // layer_->transform2D().setPosition(...)
@@ -1116,6 +1175,28 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
 
 void TextGizmo::handleMouseRelease() {
     pushTransformUndoIfNeeded();
+    if (boxResizeChanged_ && layer_) {
+        if (auto *manager = UndoManager::instance()) {
+            const auto textLayer =
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
+            if (textLayer) {
+                auto macro = std::make_unique<MacroUndoCommand>(
+                    QStringLiteral("Resize Text Box"));
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer_, QStringLiteral("text.maxWidth"), dragStartBoxWidth_,
+                    textLayer->maxWidth(), QStringLiteral("Resize Text Box")));
+                macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                    layer_, QStringLiteral("text.boxHeight"), dragStartBoxHeight_,
+                    textLayer->boxHeight(), QStringLiteral("Resize Text Box")));
+                if (!manager->push(std::move(macro))) {
+                    textLayer->setMaxWidth(dragStartBoxWidth_);
+                    textLayer->setBoxHeight(dragStartBoxHeight_);
+                    textLayer->setDirty();
+                    textLayer->changed();
+                }
+            }
+        }
+    }
     if (dragValueChanged_ && !dragPropertyPath_.isEmpty() && layer_) {
         const auto textLayer =
             ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
@@ -1193,6 +1274,7 @@ void TextGizmo::handleMouseRelease() {
     dragPropertyPath_.clear();
     dragBeforeKeyframes_.clear();
     dragValueChanged_ = false;
+    boxResizeChanged_ = false;
     transformDragChanged_ = false;
     transformBeforeStates_.clear();
     dragAccumulatedRotationDelta_ = 0.0f;
