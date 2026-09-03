@@ -18,6 +18,14 @@ export namespace Artifact {
         float linearDamping = 0.0f;
         float angularDamping = 0.02f;
         float gravityScale = 1.0f;
+        // Directional force for Box2D-backed collision layers.  When a live
+        // composition field targets this layer, its evaluated weight masks the
+        // force at the body's current canvas position.
+        bool windEnabled = false;
+        float windX = 1.0f;
+        float windY = 0.0f;
+        float windStrength = 0.0f;
+        float windTorque = 0.0f;
         int fallProfile = 0; // 0=Custom, 1=Light, 2=Normal, 3=Heavy, 4=Floaty
         bool collisionEnabled = false;
         float floorY = 1080.0f;
@@ -37,6 +45,11 @@ export namespace Artifact {
             obj["linearDamping"] = static_cast<double>(linearDamping);
             obj["angularDamping"] = static_cast<double>(angularDamping);
             obj["gravityScale"] = static_cast<double>(gravityScale);
+            obj["windEnabled"] = windEnabled;
+            obj["windX"] = static_cast<double>(windX);
+            obj["windY"] = static_cast<double>(windY);
+            obj["windStrength"] = static_cast<double>(windStrength);
+            obj["windTorque"] = static_cast<double>(windTorque);
             obj["fallProfile"] = fallProfile;
             obj["collisionEnabled"] = collisionEnabled;
             obj["floorY"] = static_cast<double>(floorY);
@@ -55,6 +68,11 @@ export namespace Artifact {
             linearDamping = static_cast<float>(obj["linearDamping"].toDouble(0.0));
             angularDamping = static_cast<float>(obj["angularDamping"].toDouble(0.02));
             gravityScale = static_cast<float>(obj["gravityScale"].toDouble(1.0));
+            windEnabled = obj["windEnabled"].toBool(false);
+            windX = static_cast<float>(obj["windX"].toDouble(1.0));
+            windY = static_cast<float>(obj["windY"].toDouble(0.0));
+            windStrength = static_cast<float>(obj["windStrength"].toDouble(0.0));
+            windTorque = static_cast<float>(obj["windTorque"].toDouble(0.0));
             fallProfile = std::clamp(obj["fallProfile"].toInt(0), 0, 4);
             collisionEnabled = obj["collisionEnabled"].toBool(false);
             floorY = static_cast<float>(obj["floorY"].toDouble(1080.0));

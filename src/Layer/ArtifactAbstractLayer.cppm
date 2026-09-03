@@ -1150,11 +1150,14 @@ public:
     float collisionFloorY_ = 0.0f;
     bool collisionCompositionBounds_ = false;
     bool jointComponentEnabled_ = false;
-    int jointType_ = 0; // 0=Distance, 1=Pin(Revolute)
+    int jointType_ = 0; // 0=Distance, 1=Pin, 2=Hinge, 3=Spring
     QString jointTargetLayerName_;
     float jointLength_ = 0.0f;   // 0 = capture the enable-time separation
     float jointStiffness_ = 5.0f; // b2 hertz (spring frequency)
     float jointDamping_ = 0.7f;   // b2 damping ratio
+    bool jointAngleLimitEnabled_ = false;
+    float jointLowerAngle_ = -45.0f;
+    float jointUpperAngle_ = 45.0f;
     bool crowdComponentEnabled_ = false;
     float crowdCohesion_ = 0.5f;
     float crowdSeparation_ = 0.5f;
@@ -1222,6 +1225,8 @@ public:
     mutable int64_t componentParticlesLastFrame_ =
         std::numeric_limits<int64_t>::min();
     mutable int64_t lastCollisionImpactFrame_ =
+        std::numeric_limits<int64_t>::min();
+    mutable int64_t lastRigidWindForceFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerComponentHost componentHost_;
     QString builtinSourceComponentType_;
@@ -1476,6 +1481,9 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(jointStiffness_);
   joint.settings[QStringLiteral("damping")] =
       static_cast<double>(jointDamping_);
+  joint.settings[QStringLiteral("angleLimitEnabled")] = jointAngleLimitEnabled_;
+  joint.settings[QStringLiteral("lowerAngle")] = static_cast<double>(jointLowerAngle_);
+  joint.settings[QStringLiteral("upperAngle")] = static_cast<double>(jointUpperAngle_);
   componentHost_.upsert(std::move(joint));
 
   auto fracture = makeFractureComponentDescriptor(fractureEnabled_);
@@ -2407,6 +2415,28 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
           continue;
         }
         const QVector2D bodyPos = candidate->position();
+        const auto& physicsSettings = impl_->physicsComponent_.settings();
+        if (physicsSettings.windEnabled &&
+            impl_->lastRigidWindForceFrame_ != curFrame) {
+          float fieldWeight = 1.0f;
+          const auto fieldChannels =
+              compositionFieldChannelsAtCanvasPoint(QPointF(bodyPos.x(), bodyPos.y()));
+          if (fieldChannels.affected) {
+            fieldWeight = fieldChannels.weight;
+          }
+          QVector2D windDirection(physicsSettings.windX, physicsSettings.windY);
+          if (windDirection.lengthSquared() > 0.000001f) {
+            windDirection.normalize();
+          } else {
+            windDirection = QVector2D();
+          }
+          const QVector2D windForce = windDirection *
+              (physicsSettings.windStrength * fieldWeight);
+          candidate->applyForce(windForce, bodyPos);
+          candidate->applyTorque(
+              physicsSettings.windTorque * physicsSettings.windStrength * fieldWeight);
+          impl_->lastRigidWindForceFrame_ = curFrame;
+        }
         positionX = bodyPos.x();
         positionY = bodyPos.y();
         rotation = candidate->angle();
@@ -3002,6 +3032,36 @@ void applyFragmentFieldsAndFloorCollision(
                      strength * 300.0f;
     }
     shard.velocity += acceleration * deltaSeconds;
+  }
+
+  const auto windEnabled = layer->getProperty(
+      QStringLiteral("physics.wind.enabled"));
+  if (windEnabled && windEnabled->getValue().toBool()) {
+    const auto windX = layer->getProperty(QStringLiteral("physics.wind.x"));
+    const auto windY = layer->getProperty(QStringLiteral("physics.wind.y"));
+    const auto windStrength = layer->getProperty(
+        QStringLiteral("physics.wind.strength"));
+    const auto windTorque = layer->getProperty(
+        QStringLiteral("physics.wind.torque"));
+    QVector2D direction(windX ? windX->getValue().toFloat() : 1.0f,
+                        windY ? windY->getValue().toFloat() : 0.0f);
+    if (direction.lengthSquared() > 0.000001f) {
+      direction.normalize();
+      float fieldWeight = 1.0f;
+      const QVector3D canvasPosition = baseTransform.map(shard.position);
+      const auto channels = layer->compositionFieldChannelsAtCanvasPoint(
+          QPointF(canvasPosition.x(), canvasPosition.y()));
+      if (channels.affected) {
+        fieldWeight = channels.weight;
+      }
+      const float strength = (windStrength
+          ? windStrength->getValue().toFloat() : 0.0f) * fieldWeight;
+      shard.velocity += QVector3D(direction.x(), direction.y(), 0.0f) *
+                        strength * deltaSeconds;
+      shard.angularVelocity.setZ(shard.angularVelocity.z() +
+          (windTorque ? windTorque->getValue().toFloat() : 0.0f) *
+          strength * deltaSeconds);
+    }
   }
 
   const auto collisionEnabled =
@@ -4045,6 +4105,7 @@ void ArtifactAbstractLayer::resetFractureState() {
   impl_->componentEvaluationState_.clearTransientEvents();
   impl_->fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
   impl_->lastCollisionImpactFrame_ = std::numeric_limits<int64_t>::min();
+  impl_->lastRigidWindForceFrame_ = std::numeric_limits<int64_t>::min();
   if (impl_->particleEmitterComponentEnabled_) {
     impl_->componentParticles_.clear();
     impl_->componentParticlesLastFrame_ =
@@ -4252,6 +4313,9 @@ void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, flo
       1.0f,
       stiffness,
       true);
+  const auto& settings = impl_->physicsComponent_.settings();
+  physics.setSoftBodyWind(id(), settings.windX, settings.windY,
+                          settings.windEnabled ? settings.windStrength : 0.0f);
 }
 
 void ArtifactAbstractLayer::disableSoftBodyPhysics() {
@@ -5663,6 +5727,9 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       static_cast<double>(impl_->jointStiffness_);
   componentsObj["jointDamping"] =
       static_cast<double>(impl_->jointDamping_);
+  componentsObj["jointAngleLimitEnabled"] = impl_->jointAngleLimitEnabled_;
+  componentsObj["jointLowerAngle"] = static_cast<double>(impl_->jointLowerAngle_);
+  componentsObj["jointUpperAngle"] = static_cast<double>(impl_->jointUpperAngle_);
   componentsObj["crowdEnabled"] = impl_->crowdComponentEnabled_;
   componentsObj["crowdCohesion"] =
       static_cast<double>(impl_->crowdCohesion_);
@@ -6505,7 +6572,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->jointComponentEnabled_ = componentsObj.value(
             QStringLiteral("jointEnabled")).toBool(false);
         impl_->jointType_ = std::clamp(
-            componentsObj.value(QStringLiteral("jointType")).toInt(0), 0, 1);
+            componentsObj.value(QStringLiteral("jointType")).toInt(0), 0, 3);
         impl_->jointTargetLayerName_ = componentsObj.value(
             QStringLiteral("jointTargetLayer")).toString();
         impl_->jointLength_ = static_cast<float>(finiteClamped(
@@ -6517,6 +6584,14 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->jointDamping_ = static_cast<float>(finiteClamped(
             componentsObj.value(QStringLiteral("jointDamping")).toDouble(0.7),
             0.7, 0.0, 10.0));
+        impl_->jointAngleLimitEnabled_ = componentsObj.value(
+            QStringLiteral("jointAngleLimitEnabled")).toBool(false);
+        impl_->jointLowerAngle_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointLowerAngle")).toDouble(-45.0),
+            -45.0, -360.0, 360.0));
+        impl_->jointUpperAngle_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointUpperAngle")).toDouble(45.0),
+            45.0, -360.0, 360.0));
         impl_->crowdComponentEnabled_ =
             componentsObj.value(QStringLiteral("crowdEnabled")).toBool(false);
         impl_->crowdCohesion_ = static_cast<float>(finiteClamped(
@@ -8348,6 +8423,52 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   gravityScaleProp->setStep(0.01);
   physicsGroup.addProperty(gravityScaleProp);
 
+  auto windEnabledProp =
+      makeProp(QStringLiteral("physics.wind.enabled"), PropertyType::Boolean,
+               impl_->physicsComponent_.settings().windEnabled, -92);
+  windEnabledProp->setDisplayLabel(QStringLiteral("Wind Enabled"));
+  windEnabledProp->setTooltip(
+      QStringLiteral("Apply directional wind to this rigid body. Targeted Live Fields mask its strength."));
+  physicsGroup.addProperty(windEnabledProp);
+
+  auto windXProp =
+      makeProp(QStringLiteral("physics.wind.x"), PropertyType::Float,
+               static_cast<double>(impl_->physicsComponent_.settings().windX), -92);
+  windXProp->setDisplayLabel(QStringLiteral("Wind Direction X"));
+  windXProp->setHardRange(-1.0, 1.0);
+  windXProp->setSoftRange(-1.0, 1.0);
+  windXProp->setStep(0.01);
+  physicsGroup.addProperty(windXProp);
+
+  auto windYProp =
+      makeProp(QStringLiteral("physics.wind.y"), PropertyType::Float,
+               static_cast<double>(impl_->physicsComponent_.settings().windY), -92);
+  windYProp->setDisplayLabel(QStringLiteral("Wind Direction Y"));
+  windYProp->setHardRange(-1.0, 1.0);
+  windYProp->setSoftRange(-1.0, 1.0);
+  windYProp->setStep(0.01);
+  physicsGroup.addProperty(windYProp);
+
+  auto windStrengthProp =
+      makeProp(QStringLiteral("physics.wind.strength"), PropertyType::Float,
+               static_cast<double>(impl_->physicsComponent_.settings().windStrength), -92);
+  windStrengthProp->setDisplayLabel(QStringLiteral("Wind Strength"));
+  windStrengthProp->setHardRange(0.0, 100000.0);
+  windStrengthProp->setSoftRange(0.0, 5000.0);
+  windStrengthProp->setStep(10.0);
+  physicsGroup.addProperty(windStrengthProp);
+
+  auto windTorqueProp =
+      makeProp(QStringLiteral("physics.wind.torque"), PropertyType::Float,
+               static_cast<double>(impl_->physicsComponent_.settings().windTorque), -92);
+  windTorqueProp->setDisplayLabel(QStringLiteral("Wind Spin"));
+  windTorqueProp->setTooltip(
+      QStringLiteral("Additional rotational force from wind; 0 leaves rotation to collisions."));
+  windTorqueProp->setHardRange(-100.0, 100.0);
+  windTorqueProp->setSoftRange(-10.0, 10.0);
+  windTorqueProp->setStep(0.01);
+  physicsGroup.addProperty(windTorqueProp);
+
   auto restitutionProp =
       makeProp(QStringLiteral("physics.restitution"), PropertyType::Float,
                static_cast<double>(
@@ -8754,9 +8875,9 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                PropertyType::Integer, impl_->jointType_, -79);
   jointTypeProp->setDisplayLabel(QStringLiteral("Type"));
   jointTypeProp->setTooltip(
-      QStringLiteral("0=Distance, 1=Pin"));
-  jointTypeProp->setHardRange(0.0, 1.0);
-  jointTypeProp->setSoftRange(0.0, 1.0);
+      QStringLiteral("0=Distance, 1=Pin, 2=Hinge, 3=Spring"));
+  jointTypeProp->setHardRange(0.0, 3.0);
+  jointTypeProp->setSoftRange(0.0, 3.0);
   jointGroup.addProperty(jointTypeProp);
   auto jointTargetLayerProp =
       makeProp(QStringLiteral("component.joint.targetLayer"),
@@ -8795,6 +8916,29 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   jointDampingProp->setHardRange(0.0, 10.0);
   jointDampingProp->setSoftRange(0.0, 1.0);
   jointGroup.addProperty(jointDampingProp);
+  auto jointAngleLimitEnabledProp =
+      makeProp(QStringLiteral("component.joint.angleLimitEnabled"),
+               PropertyType::Boolean, impl_->jointAngleLimitEnabled_, -74);
+  jointAngleLimitEnabledProp->setDisplayLabel(QStringLiteral("Angle Limit"));
+  jointAngleLimitEnabledProp->setTooltip(
+      QStringLiteral("Limit Pin/Hinge rotation between the lower and upper angles."));
+  jointGroup.addProperty(jointAngleLimitEnabledProp);
+  auto jointLowerAngleProp =
+      makeProp(QStringLiteral("component.joint.lowerAngle"), PropertyType::Float,
+               static_cast<double>(impl_->jointLowerAngle_), -74);
+  jointLowerAngleProp->setDisplayLabel(QStringLiteral("Lower Angle"));
+  jointLowerAngleProp->setUnit(QStringLiteral("deg"));
+  jointLowerAngleProp->setHardRange(-360.0, 360.0);
+  jointLowerAngleProp->setSoftRange(-180.0, 180.0);
+  jointGroup.addProperty(jointLowerAngleProp);
+  auto jointUpperAngleProp =
+      makeProp(QStringLiteral("component.joint.upperAngle"), PropertyType::Float,
+               static_cast<double>(impl_->jointUpperAngle_), -74);
+  jointUpperAngleProp->setDisplayLabel(QStringLiteral("Upper Angle"));
+  jointUpperAngleProp->setUnit(QStringLiteral("deg"));
+  jointUpperAngleProp->setHardRange(-360.0, 360.0);
+  jointUpperAngleProp->setSoftRange(-180.0, 180.0);
+  jointGroup.addProperty(jointUpperAngleProp);
   auto crowdComponentEnabledProp =
       makeProp(QStringLiteral("component.crowd.enabled"),
                PropertyType::Boolean, impl_->crowdComponentEnabled_, -88);
@@ -10684,6 +10828,47 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                             PropertyType::Integer, QVariant(0), -96);
     return true;
   }
+  if (propertyPath == QStringLiteral("physics.wind.enabled")) {
+    impl_->physicsComponent_.settings().windEnabled = value.toBool();
+    impl_->lastRigidWindForceFrame_ = std::numeric_limits<int64_t>::min();
+    const auto& settings = impl_->physicsComponent_.settings();
+    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+        id(), settings.windX, settings.windY,
+        settings.windEnabled ? settings.windStrength : 0.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wind.x")) {
+    impl_->physicsComponent_.settings().windX = finiteClampedValue(
+        value.toDouble(), impl_->physicsComponent_.settings().windX, -1.0, 1.0);
+    const auto& settings = impl_->physicsComponent_.settings();
+    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+        id(), settings.windX, settings.windY,
+        settings.windEnabled ? settings.windStrength : 0.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wind.y")) {
+    impl_->physicsComponent_.settings().windY = finiteClampedValue(
+        value.toDouble(), impl_->physicsComponent_.settings().windY, -1.0, 1.0);
+    const auto& settings = impl_->physicsComponent_.settings();
+    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+        id(), settings.windX, settings.windY,
+        settings.windEnabled ? settings.windStrength : 0.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wind.strength")) {
+    impl_->physicsComponent_.settings().windStrength = finiteClampedValue(
+        value.toDouble(), impl_->physicsComponent_.settings().windStrength, 0.0, 100000.0);
+    const auto& settings = impl_->physicsComponent_.settings();
+    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+        id(), settings.windX, settings.windY,
+        settings.windEnabled ? settings.windStrength : 0.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wind.torque")) {
+    impl_->physicsComponent_.settings().windTorque = finiteClampedValue(
+        value.toDouble(), impl_->physicsComponent_.settings().windTorque, -100.0, 100.0);
+    return true;
+  }
   if (propertyPath == QStringLiteral("physics.restitution")) {
     impl_->physicsComponent_.settings().restitution = finiteClampedValue(
         value.toDouble(), impl_->physicsComponent_.settings().restitution, 0.0,
@@ -11784,7 +11969,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       return true;
     }
     if (propertyPath == QStringLiteral("component.joint.type")) {
-      impl_->jointType_ = std::clamp(value.toInt(), 0, 1);
+      impl_->jointType_ = std::clamp(value.toInt(), 0, 3);
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11818,6 +12003,29 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.damping")) {
       impl_->jointDamping_ = finiteClampedValue(
           value.toDouble(), impl_->jointDamping_, 0.0, 10.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.angleLimitEnabled")) {
+      impl_->jointAngleLimitEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.lowerAngle")) {
+      impl_->jointLowerAngle_ = finiteClampedValue(
+          value.toDouble(), impl_->jointLowerAngle_, -360.0, 360.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.upperAngle")) {
+      impl_->jointUpperAngle_ = finiteClampedValue(
+          value.toDouble(), impl_->jointUpperAngle_, -360.0, 360.0);
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);

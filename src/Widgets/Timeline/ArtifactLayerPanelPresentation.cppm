@@ -19,6 +19,7 @@ import Artifact.Layer.FormParticle;
 import Artifact.Layer.Group;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Video;
+import Artifact.Layers.Noise;
 
 namespace Artifact {
 
@@ -189,6 +190,16 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Model Layer");
     descriptor.capabilitySummaryText = QStringLiteral("3D Space");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactNoiseLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Noise Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Noise");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Noise Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Noise Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Procedural Texture");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
     descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
