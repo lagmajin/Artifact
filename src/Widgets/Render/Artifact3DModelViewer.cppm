@@ -464,12 +464,12 @@ void Artifact3DModelViewer::setAnimationPlaybackEnabled(const bool enabled)
     impl_->animationPlaybackEnabled_ = enabled;
     impl_->animationClock_ = std::chrono::steady_clock::now();
     if (enabled && impl_->currentMesh &&
-        !impl_->currentMesh->skinAnimationClips().isEmpty()) {
+        !impl_->currentMesh->skinAnimationClips().empty()) {
         const auto* clip = impl_->currentMesh->skinAnimationClip(
             impl_->animationClipIndex_);
         if (clip) {
             impl_->animationTime_ = clip->timeBegin;
-            if (!impl_->currentModelPath.isEmpty()) {
+            if (impl_->currentModelPath.length() != 0) {
                 impl_->owner->loadModelAtTime(
                     impl_->currentModelPath, clip->timeBegin,
                     impl_->animationClipIndex_);
@@ -501,7 +501,7 @@ void Artifact3DModelViewer::setAnimationClipIndex(const int clipIndex)
             impl_->animationTime_ = clip->timeBegin;
             const bool wasPlaying = impl_->animationPlaybackEnabled_;
             const auto sourcePath = impl_->currentModelPath;
-            if (!sourcePath.isEmpty()) {
+            if (sourcePath.length() != 0) {
                 impl_->owner->loadModelAtTime(
                     sourcePath, clip->timeBegin, impl_->animationClipIndex_);
                 impl_->animationPlaybackEnabled_ = wasPlaying;
@@ -581,7 +581,7 @@ void Artifact3DModelViewer::clearBlendShapeWeightOverride(
     }
     impl_->blendShapeWeightOverrides_.erase(
         impl_->currentMesh->blendShapes()[shapeIndex].name);
-    if (!impl_->currentModelPath.isEmpty()) {
+    if (impl_->currentModelPath.length() != 0) {
         loadModelAtTime(impl_->currentModelPath, impl_->animationTime_,
                         impl_->animationClipIndex_);
     } else {

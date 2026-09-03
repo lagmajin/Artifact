@@ -13,6 +13,7 @@ export module Artifact.Widgets.InspectorEffectRackPresentation;
 
 import Widgets.CommonStyle;
 import Artifact.Widgets.InspectorStyle;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 

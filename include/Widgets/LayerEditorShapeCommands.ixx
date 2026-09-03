@@ -17,7 +17,8 @@ export namespace Artifact {
 std::unique_ptr<UndoCommand> makeShapeEditCommand(
     const ArtifactAbstractLayerPtr& layer,
     std::vector<QPointF> beforePoints,
-    std::vector<QPointF> afterPoints);
+    std::vector<QPointF> afterPoints,
+    bool beforeClosed, bool afterClosed);
 
 std::unique_ptr<UndoCommand> makeCornerRadiusEditCommand(
     const ArtifactAbstractLayerPtr& layer, float before, float after);

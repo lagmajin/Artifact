@@ -44,6 +44,8 @@ module;
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QTabletEvent>
 #include <QPointer>
@@ -638,6 +640,94 @@ struct PendingDroppedAsset {
   QString layerName;
   ArtifactCore::FileType fileType = ArtifactCore::FileType::Unknown;
   bool svgShapeFile = false;
+};
+
+// Invisible input surface for the in-viewport text editing session. The
+// widget owns keyboard focus and IME handling while the caret / selection /
+// preedit visuals are drawn by the render controller's overlay path.
+class TextEditCaretOverlay final : public QPlainTextEdit {
+public:
+  TextEditCaretOverlay(CompositionRenderController *controller,
+                       QWidget *parent)
+      : QPlainTextEdit(parent), controller_(controller) {
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setFrameShape(QFrame::NoFrame);
+    document()->setDocumentMargin(0.0);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setLineWrapMode(QPlainTextEdit::NoWrap);
+    QPalette invisiblePalette = palette();
+    invisiblePalette.setColor(QPalette::Base, QColor(0, 0, 0, 0));
+    invisiblePalette.setColor(QPalette::Text, QColor(0, 0, 0, 0));
+    invisiblePalette.setColor(QPalette::Highlight, QColor(0, 0, 0, 0));
+    invisiblePalette.setColor(QPalette::HighlightedText, QColor(0, 0, 0, 0));
+    invisiblePalette.setColor(QPalette::Window, QColor(0, 0, 0, 0));
+    setPalette(invisiblePalette);
+    viewport()->setAutoFillBackground(false);
+    setFocusPolicy(Qt::StrongFocus);
+  }
+
+  void keyPressEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_Escape) {
+      if (finishRequested) {
+        finishRequested(true);
+      }
+      event->accept();
+      return;
+    }
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+      if (finishRequested) {
+        finishRequested(false);
+      }
+      event->accept();
+      return;
+    }
+    QPlainTextEdit::keyPressEvent(event);
+    syncToController();
+  }
+
+  void inputMethodEvent(QInputMethodEvent *event) override {
+    QPlainTextEdit::inputMethodEvent(event);
+    syncToController(event->preeditString());
+  }
+
+  void focusOutEvent(QFocusEvent *event) override {
+    QPlainTextEdit::focusOutEvent(event);
+    if (finishRequested) {
+      finishRequested(false);
+    }
+  }
+
+  void syncToController(const QString &preeditText = QString()) {
+    if (controller_ && controller_->isTextEditSessionActive()) {
+      controller_->textSessionSyncFromEditor(
+          toPlainText(), textCursor().position(), textCursor().anchor(),
+          preeditText);
+    }
+  }
+
+  void placeCaretAt(int utf16Pos, bool extendSelection) {
+    const QString currentText = toPlainText();
+    QTextCursor cursor = textCursor();
+    cursor.setPosition(std::clamp(utf16Pos, 0, currentText.length()),
+                       extendSelection ? QTextCursor::KeepAnchor
+                                       : QTextCursor::MoveAnchor);
+    setTextCursor(cursor);
+    syncToController();
+  }
+
+  void selectAllText() {
+    QTextCursor cursor = textCursor();
+    cursor.movePosition(QTextCursor::End, QTextCursor::MoveAnchor);
+    cursor.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
+    setTextCursor(cursor);
+  }
+
+  std::function<void(bool)> finishRequested;
+
+private:
+  CompositionRenderController *controller_ = nullptr;
 };
 
 class CompositionViewport final : public QWidget {

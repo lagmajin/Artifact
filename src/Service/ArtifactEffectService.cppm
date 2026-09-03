@@ -14,6 +14,8 @@ module Artifact.Service.Effect;
 import Utils.String.UniString;
 import Utils.Id;
 import Memory.SharedPtr;
+import Audio.Modulation.Modulator;
+import Audio.Modulation.Router;
 import Artifact.Effect.Abstract;
 import Artifact.Effects.Manager;
 import Artifact.Effect.Ofx.Host;
@@ -23,7 +25,6 @@ import Artifact.Service.Project;
 import Artifact.Event.Types;
 import Event.Bus;
 import Undo.UndoManager;
-import Audio.Modulation.Router;
 import Core.Diagnostics.FallbackPolicy;
 import BrightnessEffect;
 import Artifact.Effect.Creative;
@@ -196,8 +197,8 @@ QString stripDuplicateSuffix(const QString &effectId) {
 }
 
 bool modulationSnapshotsEqual(
-    const Audio::Modulation::ModulationRouterSnapshot& left,
-    const Audio::Modulation::ModulationRouterSnapshot& right) {
+    const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& left,
+    const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& right) {
   if (left.smoothingTime != right.smoothingTime ||
       left.sources.size() != right.sources.size() ||
       left.assignments.size() != right.assignments.size()) {
@@ -1677,7 +1678,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
 
  EffectServiceResult ArtifactEffectService::setEffectModulationSnapshot(
   const LayerID& layerId, const QString& effectId,
-  const Audio::Modulation::ModulationRouterSnapshot& snapshot)
+  const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& snapshot)
  {
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");
@@ -1727,7 +1728,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
 
  EffectServiceResult ArtifactEffectService::setCompositionEffectModulationSnapshot(
   const QString& effectId,
-  const Audio::Modulation::ModulationRouterSnapshot& snapshot)
+  const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& snapshot)
  {
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");

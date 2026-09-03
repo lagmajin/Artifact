@@ -15,9 +15,10 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
 import Event.Bus;
 import Memory.SharedPtr;
+import Time.Rational;
 import Undo.UndoManager;
 
-export namespace Artifact {
+namespace Artifact {
 
 namespace {
 
@@ -35,6 +36,10 @@ ArtifactCore::RationalTime transformTime(
 }
 
 } // namespace
+
+} // namespace Artifact
+
+export namespace Artifact {
 
 class AnchorPointUndoCommand final : public UndoCommand {
 public:

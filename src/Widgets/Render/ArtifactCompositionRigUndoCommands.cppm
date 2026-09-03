@@ -12,6 +12,7 @@ export module Artifact.Widgets.CompositionRigUndoCommands;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
 import ArtifactCore.Rig2D;
+import Utils.Id;
 import Undo.UndoManager;
 
 export namespace Artifact {

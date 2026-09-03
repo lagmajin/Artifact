@@ -629,7 +629,7 @@ public:
   // GPU Acceleration
   QCheckBox *enableGPUCheckBox_;
   QComboBox *antiAliasingModeCombo_;
-  QSpinBox *shutterPhaseSpinBox_;
+  QDoubleSpinBox *shutterPhaseSpinBox_;
   QDoubleSpinBox *shutterAngleSpinBox_;
   QComboBox *gpuDeviceCombo_;
 };

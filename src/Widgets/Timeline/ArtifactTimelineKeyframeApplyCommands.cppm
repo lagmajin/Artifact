@@ -16,12 +16,11 @@ import Property.Abstract;
 import Time.Rational;
 import Undo.UndoManager;
 
-export namespace Artifact {
-
 namespace {
 
 ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
-    const ArtifactAbstractLayerPtr &layer, const QString &propertyPath) {
+    const Artifact::ArtifactAbstractLayerPtr &layer,
+    const QString &propertyPath) {
   if (!layer || propertyPath.trimmed().isEmpty()) return {};
   const auto groups = layer->getLayerPropertyGroups();
   for (const auto &group : groups) {
@@ -33,6 +32,8 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
 }
 
 } // namespace
+
+export namespace Artifact {
 
 struct InterpolationChangeRecord {
   ArtifactAbstractLayerWeak layer;

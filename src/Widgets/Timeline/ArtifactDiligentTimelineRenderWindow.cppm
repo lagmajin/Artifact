@@ -3,6 +3,7 @@ module;
 #include <EngineFactory.h>
 #include <EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
+#include <RefCntAutoPtr.hpp>
 #include <windows.h>
 
 #include <QColor>
@@ -75,9 +76,9 @@ public:
   mutable std::mutex snapshotMutex_;
   std::shared_ptr<const DiligentTimelineVisualSnapshot> snapshot_ =
       std::make_shared<const DiligentTimelineVisualSnapshot>();
-  RefCntAutoPtr<IRenderDevice> device_;
-  RefCntAutoPtr<IDeviceContext> immediateContext_;
-  RefCntAutoPtr<ISwapChain> swapChain_;
+  Diligent::RefCntAutoPtr<IRenderDevice> device_;
+  Diligent::RefCntAutoPtr<IDeviceContext> immediateContext_;
+  Diligent::RefCntAutoPtr<ISwapChain> swapChain_;
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
   RenderCommandBuffer commandBuffer_;
@@ -189,7 +190,7 @@ public:
       snapshot = snapshot_;
     }
 
-    auto* rtv = swapChain_->GetCurrentBackBufferRTV();
+    Diligent::ITextureView* rtv = swapChain_->GetCurrentBackBufferRTV();
     immediateContext_->SetRenderTargets(
         1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     const FloatColor background = toFloatColor(snapshot->background);

@@ -2,6 +2,7 @@ module;
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <RefCntAutoPtr.hpp>
+#include <QMatrix4x4>
 #include <span>
 export module Artifact.Render.ThreeDPrimitiveSubmitter.Contract;
 
@@ -59,14 +60,14 @@ public:
     /// transform along with the packed material constants.
     struct SubmitPacket {
         const float* positions = nullptr;
-        Uint32 positionCount = 0;
-        Uint32 positionStrideBytes = sizeof(float) * 3;
+        Diligent::Uint32 positionCount = 0;
+        Diligent::Uint32 positionStrideBytes = sizeof(float) * 3;
 
         const float* normals = nullptr;
-        Uint32 normalStrideBytes = sizeof(float) * 3;
+        Diligent::Uint32 normalStrideBytes = sizeof(float) * 3;
 
-        const Uint32* indices = nullptr;
-        Uint32 indexCount = 0;
+        const Diligent::Uint32* indices = nullptr;
+        Diligent::Uint32 indexCount = 0;
 
         const QMatrix4x4* modelMatrix = nullptr;
         const QMatrix4x4* viewMatrix = nullptr;
@@ -93,7 +94,7 @@ public:
     /// staging buffers immediately.
     bool uploadMesh(std::span<const float> positions,
                     std::span<const float> normals,
-                    std::span<const Uint32> indices);
+                    std::span<const Diligent::Uint32> indices);
 
     bool submit(Diligent::IDeviceContext* context,
                 Diligent::ITextureView* target,

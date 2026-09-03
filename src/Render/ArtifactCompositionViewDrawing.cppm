@@ -40,6 +40,7 @@ import Artifact.Layer.Video;
 import Asset.Manager;
 import Video.VideoFrame;
 import Artifact.Layer.Text;
+import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
@@ -561,6 +562,22 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
+    bool gradientAnimated = false;
+    for (const QString& propertyPath : {
+             QStringLiteral("solid.gradientStartColor"),
+             QStringLiteral("solid.gradientEndColor"),
+             QStringLiteral("solid.gradientAngleDegrees"),
+             QStringLiteral("solid.gradientReverse"),
+             QStringLiteral("solid.gradientCenterX"),
+             QStringLiteral("solid.gradientCenterY"),
+             QStringLiteral("solid.gradientScale"),
+             QStringLiteral("solid.gradientOffset")}) {
+      const auto property = solid2D->getProperty(propertyPath);
+      if (property && !property->getKeyFrames().empty()) {
+        gradientAnimated = true;
+        break;
+      }
+    }
     const QRectF bounds = solid2D->localBounds();
     key += QStringLiteral("|solid2D|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
                .arg(rgbaKey(solid2D->color().r(), solid2D->color().g(), solid2D->color().b(), solid2D->color().a()))
@@ -577,10 +594,29 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
                .arg(solid2D->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
                .arg(bounds.height(), 0, 'f', 2);
+    if (gradientAnimated) {
+      key += QStringLiteral("|gradientFrame=%1").arg(frameNumber);
+    }
     return key;
   }
 
   if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
+    bool gradientAnimated = false;
+    for (const QString& propertyPath : {
+             QStringLiteral("solid.gradientStartColor"),
+             QStringLiteral("solid.gradientEndColor"),
+             QStringLiteral("solid.gradientAngleDegrees"),
+             QStringLiteral("solid.gradientReverse"),
+             QStringLiteral("solid.gradientCenterX"),
+             QStringLiteral("solid.gradientCenterY"),
+             QStringLiteral("solid.gradientScale"),
+             QStringLiteral("solid.gradientOffset")}) {
+      const auto property = solidImage->getProperty(propertyPath);
+      if (property && !property->getKeyFrames().empty()) {
+        gradientAnimated = true;
+        break;
+      }
+    }
     const QRectF bounds = solidImage->localBounds();
     key += QStringLiteral("|solidImage|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
                .arg(rgbaKey(solidImage->color().r(), solidImage->color().g(), solidImage->color().b(), solidImage->color().a()))
@@ -597,12 +633,37 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
                .arg(solidImage->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
                .arg(bounds.height(), 0, 'f', 2);
+    if (gradientAnimated) {
+      key += QStringLiteral("|gradientFrame=%1").arg(frameNumber);
+    }
     return key;
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
+    imageLayer->refreshSequenceFrameForCurrentTime();
+    imageLayer->refreshAnimatedSourceCrop();
+    bool sourceCropAnimated = false;
+    for (const QString& propertyPath : {
+             QStringLiteral("sourceCrop.enabled"),
+             QStringLiteral("sourceCrop.cropX"),
+             QStringLiteral("sourceCrop.cropY"),
+             QStringLiteral("sourceCrop.cropWidth"),
+             QStringLiteral("sourceCrop.cropHeight"),
+             QStringLiteral("sourceCrop.panX"),
+             QStringLiteral("sourceCrop.panY"),
+             QStringLiteral("sourceCrop.zoom"),
+             QStringLiteral("sourceCrop.rotation"),
+             QStringLiteral("sourceCrop.anchorX"),
+             QStringLiteral("sourceCrop.anchorY"),
+             QStringLiteral("sourceCrop.preserveAspect")}) {
+      const auto property = imageLayer->getProperty(propertyPath);
+      if (property && !property->getKeyFrames().empty()) {
+        sourceCropAnimated = true;
+        break;
+      }
+    }
     key += QStringLiteral(
-               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7|crop=%8")
+               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7|crop=%8|seq=%9|content=%10")
                .arg(imageLayer->sourcePath())
                .arg(imageLayer->sourceVersion())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
@@ -610,7 +671,35 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
                .arg(surface.height())
                .arg(imageLayer->inputColorSpace())
                .arg(imageLayer->inputTransferFunction())
-               .arg(imageLayer->sourceCropSignature());
+               .arg(imageLayer->sourceCropSignature())
+               .arg(imageLayer->isImageSequence()
+                        ? imageLayer->sequenceCachedFrameIndex()
+                        : -1)
+               .arg(imageLayer->isImageSequence()
+                        ? imageLayer->sequenceCachedFrameContentKey()
+                        : 0);
+    if (sourceCropAnimated) {
+      key += QStringLiteral("|cropFrame=%1").arg(frameNumber);
+    }
+    return key;
+  }
+
+  if (auto* shapeLayer = dynamic_cast<ArtifactShapeLayer*>(layer)) {
+    bool animated = shapeLayer->hasPathKeyframes();
+    if (!animated) {
+      for (const auto& group : shapeLayer->getLayerPropertyGroups()) {
+        for (const auto& property : group.sortedProperties()) {
+          if (property && !property->getKeyFrames().empty()) {
+            animated = true;
+            break;
+          }
+        }
+        if (animated) break;
+      }
+    }
+    if (animated) {
+      key += QStringLiteral("|shape|frame=%1").arg(frameNumber);
+    }
     return key;
   }
 
@@ -1793,6 +1882,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
+    imageLayer->refreshSequenceFrameForCurrentTime();
+    imageLayer->refreshAnimatedSourceCrop();
     if (!hasRasterizerEffectsOrMasks(layer) &&
         !imageLayer->sourceCropEnabled() &&
         imageLayer->hasCurrentFrameBuffer()) {
@@ -1825,10 +1916,11 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       } else if (sequenceShareable) {
         const QString ownerId = layer->id().toString();
         const QString cacheKey =
-            QStringLiteral("seq-f32:f%1|cs=%2|tf=%3")
+            QStringLiteral("seq-f32:f%1|content=%2|cs=%3|tf=%4")
                 .arg(imageLayer->sequenceCachedFrameIndex())
-                .arg(imageLayer->inputColorSpace(),
-                     imageLayer->inputTransferFunction());
+                .arg(imageLayer->sequenceCachedFrameContentKey())
+                .arg(imageLayer->inputColorSpace())
+                .arg(imageLayer->inputTransferFunction());
         auto handle = gpuTextureCacheManager->findExisting(ownerId, cacheKey);
         if (!handle.isValid()) {
           handle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheKey, buffer);

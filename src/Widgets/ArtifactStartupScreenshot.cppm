@@ -13,12 +13,16 @@ module;
 
 export module Artifact.Widgets.StartupScreenshot;
 
-export namespace Artifact {
+namespace Artifact {
 
 namespace {
 constexpr auto kStartupScreenshotEnabledKey =
     "UI/Diagnostics/CaptureStartupScreenshot";
 }
+
+} // namespace Artifact
+
+export namespace Artifact {
 
 bool startupScreenshotEnabled() {
   const QByteArray environmentValue =

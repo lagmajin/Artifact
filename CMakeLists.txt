@@ -498,7 +498,7 @@ endforeach()
 
 # Distort pack additions are pinned explicitly so new modules do not depend on
 # recursive glob discovery or content scanning behavior.
-foreach(_distort_effect IN ITEMS TimeDisplacement)
+foreach(_distort_effect IN ITEMS TimeDisplacement ImageMorph)
     list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/${_distort_effect}Effect.ixx" _distort_effect_module_idx)
     if(_distort_effect_module_idx EQUAL -1)
         list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/${_distort_effect}Effect.ixx")
@@ -590,6 +590,10 @@ target_sources(ArtifactRenderSupport
     PRIVATE ${ARTIFACT_RENDER_SUPPORT_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_SUPPORT_MODULES}
 )
+set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactHDRMonitor.cppm" APPEND PROPERTY COMPILE_OPTIONS
+    "/reference;Event.Bus=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCoreEvent.dir/Event.Bus.ifc"
+    "/reference;Memory.SharedPtr=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Memory.SharedPtr.ifc")
+
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD ON)
 else()
@@ -737,36 +741,40 @@ list(REMOVE_ITEM APP_MODULES ${ARTIFACT_COLOR_PALETTE_MODULES} ${ARTIFACT_COLOR_
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_COLOR_PALETTE_IMPL} ${ARTIFACT_COLOR_NODE_IMPL} ${ARTIFACT_COLOR_SETTINGS_IMPL} ${ARTIFACT_COLOR_SCIENCE_IMPL} ${ARTIFACT_COLOR_MANAGEMENT_IMPL} ${ARTIFACT_COLOR_GRADING_IMPL})
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_COLOR_SETTINGS_MODULES} ${ARTIFACT_COLOR_SCIENCE_MODULES} ${ARTIFACT_COLOR_MANAGEMENT_MODULES} ${ARTIFACT_COLOR_GRADING_MODULES})
 
-add_library(ArtifactColor SHARED)
-set_target_properties(ArtifactColor PROPERTIES
-    CXX_STANDARD 23
-    CXX_STANDARD_REQUIRED ON
-    WINDOWS_EXPORT_ALL_SYMBOLS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    FOLDER "Artifact/Libraries"
-)
-target_sources(ArtifactColor
-    PRIVATE ${ARTIFACT_COLOR_IMPL}
-    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_MODULES}
-)
-if(TARGET __CMAKE::CXX23)
-    set_property(TARGET ArtifactColor PROPERTY CXX_MODULE_STD ON)
-else()
-    set_property(TARGET ArtifactColor PROPERTY CXX_MODULE_STD OFF)
-endif()
-if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(ArtifactColor PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
-elseif(ARTIFACT_FRONTEND_MSVC)
-    target_compile_options(ArtifactColor PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
-endif()
-target_include_directories(ArtifactColor PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
-)
-target_compile_definitions(ArtifactColor PRIVATE LIBRARY_DLL_MODE=1)
-target_link_libraries(ArtifactColor PUBLIC ArtifactCore ArtifactCoreAudio)
+# Artifact.Event.Types is owned by the aggregate Artifact target.  Keeping
+# the color-science implementation in a separate library would create a
+# cycle: ColorScience imports Artifact.Event.Types, while Artifact links
+# ColorScience.  Move this paired interface/implementation back to Artifact
+# so both modules remain single-provider without a cross-target cycle.
+list(APPEND APP_MODULES ${ARTIFACT_COLOR_SCIENCE_MODULES})
+list(APPEND APP_IMPL ${ARTIFACT_COLOR_SCIENCE_IMPL})
+set(ARTIFACT_COLOR_SCIENCE_MODULES)
+set(ARTIFACT_COLOR_SCIENCE_IMPL)
+
+# OCIO publishes Artifact-level events, so it must be compiled by the
+# aggregate Artifact target alongside Artifact.Event.Types.  Keeping it in
+# ArtifactColor would make that module depend back on Artifact and produces
+# an IFC/link dependency cycle.
+list(REMOVE_ITEM ARTIFACT_COLOR_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx")
+list(REMOVE_ITEM ARTIFACT_COLOR_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm")
+list(APPEND APP_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx")
+list(APPEND APP_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm")
+
+# The concrete color modules are now owned by their focused targets or by the
+# aggregate Artifact target when they publish Artifact-level events.  Retain
+# this target only as a dependency bundle; an empty shared DLL makes CMake's
+# automatic export generation try to export imported OCIO/Qt symbols.
+add_library(ArtifactColor INTERFACE)
+find_package(Qt6 REQUIRED COMPONENTS Multimedia)
+target_link_libraries(ArtifactColor INTERFACE
+    ArtifactCore
+    ArtifactCoreAudio
+    ArtifactCoreNetwork
+    Qt6::Multimedia)
 
 add_library(ArtifactColorPalette STATIC)
 set_target_properties(ArtifactColorPalette PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
@@ -801,18 +809,6 @@ endif()
 target_include_directories(ArtifactColorSettings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src")
 target_link_libraries(ArtifactColorSettings PUBLIC ArtifactCore)
 
-add_library(ArtifactColorScience STATIC)
-set_target_properties(ArtifactColorScience PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
-target_sources(ArtifactColorScience PRIVATE ${ARTIFACT_COLOR_SCIENCE_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_SCIENCE_MODULES})
-if(TARGET __CMAKE::CXX23)
-    set_property(TARGET ArtifactColorScience PROPERTY CXX_MODULE_STD ON)
-else()
-    set_property(TARGET ArtifactColorScience PROPERTY CXX_MODULE_STD OFF)
-endif()
-target_include_directories(ArtifactColorScience PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src")
-target_link_libraries(ArtifactColorScience PUBLIC ArtifactCore)
-target_link_libraries(ArtifactColor PUBLIC ArtifactColorScience)
-
 add_library(ArtifactColorManagement STATIC)
 set_target_properties(ArtifactColorManagement PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
 target_sources(ArtifactColorManagement PRIVATE ${ARTIFACT_COLOR_MANAGEMENT_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_MANAGEMENT_MODULES})
@@ -834,7 +830,7 @@ else()
 endif()
 target_include_directories(ArtifactColorGrading PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src")
 target_link_libraries(ArtifactColorGrading PUBLIC ArtifactCore)
-target_link_libraries(ArtifactColor PUBLIC ArtifactColorManagement ArtifactColorGrading)
+target_link_libraries(ArtifactColor INTERFACE ArtifactColorManagement ArtifactColorGrading)
 
 set(ARTIFACT_GPU_FOUNDATION_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderConfig.ixx"
@@ -845,6 +841,8 @@ set(ARTIFACT_GPU_FOUNDATION_IMPL
 )
 
 set(ARTIFACT_RENDER_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphSubmitter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphPipelineAdapter.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ShaderManager.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderCommandBuffer.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/IRenderSubmitter.ixx"
@@ -864,6 +862,7 @@ set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx"
 )
 set(ARTIFACT_RENDER_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphPipelineAdapter.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
@@ -1009,7 +1008,13 @@ target_include_directories(ArtifactEffectContract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
 )
 target_compile_definitions(ArtifactEffectContract PRIVATE LIBRARY_DLL_MODE=1)
-target_link_libraries(ArtifactEffectContract PUBLIC ArtifactCore ArtifactCoreAudio ArtifactRender ArtifactRenderSupport ArtifactRenderSupportContracts)
+target_link_libraries(ArtifactEffectContract PUBLIC
+    ArtifactCore
+    ArtifactCoreAudio
+    ArtifactCoreEnvironment
+    ArtifactRender
+    ArtifactRenderSupport
+    ArtifactRenderSupportContracts)
 
 set(ARTIFACT_EFFECTS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/AutoMosaicEffect.ixx"
@@ -1849,7 +1854,12 @@ target_include_directories(ArtifactEffectsSurfaceFX PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
 )
-target_link_libraries(ArtifactEffectsSurfaceFX PUBLIC ArtifactCore ArtifactCoreAudio ArtifactRender ArtifactEffectContract)
+target_link_libraries(ArtifactEffectsSurfaceFX PUBLIC
+    ArtifactCore
+    ArtifactCoreAsset
+    ArtifactCoreAudio
+    ArtifactRender
+    ArtifactEffectContract)
 
 # AutoMosaic has a distinct face-detection/CV boundary, so keep it outside the
 # generic spatial residual pack.
@@ -2584,6 +2594,7 @@ set_target_properties(Artifact PROPERTIES
 # an avoidable full rebuild of Artifact.
 option(ARTIFACT_FEATURE_COMMAND_PALETTE "Enable experimental command palette widget (shell only, no real action registration yet)" OFF)
 option(ARTIFACT_FEATURE_FARM_WORKER "Build out-of-process render farm worker binary (Phase 4)" OFF)
+option(ARTIFACT_FEATURE_PROXY_WORKER "Build out-of-process proxy worker binary" ON)
 
 set(ARTIFACT_APPMAIN_BUILD_METADATA_DEFINITIONS
     ARTIFACT_VERSION_STRING="${ARTIFACT_VERSION}"
@@ -2680,7 +2691,7 @@ target_include_directories(Artifact
 # ---------------------------------------------------------------------------
 
 # 内部ライブラリ
-target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactCoreAudio ArtifactCoreAI ArtifactCoreVideo ArtifactCoreMedia ArtifactCoreComposition ArtifactCoreScene ArtifactCoreMaterial ArtifactCoreUI ArtifactCoreData ArtifactCoreCommand ArtifactCoreAsset ArtifactCoreShape ArtifactCoreText ArtifactCoreGenerate ArtifactCoreSimulation ArtifactCoreTrack ArtifactCoreSource ArtifactCoreProject ArtifactCoreRig ArtifactCoreGrid ArtifactCoreColorCollection ArtifactCoreSound ArtifactCoreSequence ArtifactCoreAnalyze ArtifactCoreTracking ArtifactCoreIPC ArtifactCoreNetwork ArtifactCoreCollaborate ArtifactCoreNLE ArtifactCorePlayback ArtifactCorePreview ArtifactCoreExport ArtifactCoreVST3 ArtifactCoreLocalization ArtifactCoreCoordinate ArtifactCoreEvent ArtifactCoreFile ArtifactCorePlugin ArtifactCoreControl ArtifactCoreDatabase ArtifactCoreMask ArtifactCoreConfiguration ArtifactCoreEnvironment ArtifactCorePlatform ArtifactCoreAcoustic ArtifactCoreLight ArtifactCoreCrowd ArtifactCoreDomain ArtifactCoreFileSystem ArtifactCoreIcon ArtifactCoreVST ArtifactColorPalette ArtifactColorNode ArtifactColorSettings ArtifactColorScience ArtifactColorManagement ArtifactColorGrading ArtifactEffectsResidual ArtifactWidgets ArtifactAsset ArtifactColor ArtifactRenderSupport ArtifactRenderSupportContracts ArtifactRender ArtifactEffectContract ArtifactEffectsColor ArtifactEffectsTemporal ArtifactEffectsSpatial ArtifactEffectsKeying ArtifactEffectsBlur ArtifactEffectsGenerate ArtifactEffectsDistort ArtifactEffectsRasterizer)
+target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactCoreAudio ArtifactCoreAI ArtifactCoreVideo ArtifactCoreMedia ArtifactCoreComposition ArtifactCoreScene ArtifactCoreMaterial ArtifactCoreUI ArtifactCoreData ArtifactCoreCommand ArtifactCoreAsset ArtifactCoreShape ArtifactCoreText ArtifactCoreGenerate ArtifactCoreSimulation ArtifactCoreTrack ArtifactCoreSource ArtifactCoreProject ArtifactCoreRig ArtifactCoreGrid ArtifactCoreColorCollection ArtifactCoreSound ArtifactCoreSequence ArtifactCoreAnalyze ArtifactCoreTracking ArtifactCoreIPC ArtifactCoreNetwork ArtifactCoreCollaborate ArtifactCoreNLE ArtifactCorePlayback ArtifactCorePreview ArtifactCoreExport ArtifactCoreVST3 ArtifactCoreLocalization ArtifactCoreCoordinate ArtifactCoreEvent ArtifactCoreFile ArtifactCorePlugin ArtifactCoreControl ArtifactCoreDatabase ArtifactCoreMask ArtifactCoreConfiguration ArtifactCoreEnvironment ArtifactCorePlatform ArtifactCoreAcoustic ArtifactCoreLight ArtifactCoreCrowd ArtifactCoreDomain ArtifactCoreFileSystem ArtifactCoreIcon ArtifactCoreVST ArtifactColorPalette ArtifactColorNode ArtifactColorSettings ArtifactColorManagement ArtifactColorGrading ArtifactEffectsResidual ArtifactWidgets ArtifactAsset ArtifactColor ArtifactRenderSupport ArtifactRenderSupportContracts ArtifactRender ArtifactEffectContract ArtifactEffectsColor ArtifactEffectsTemporal ArtifactEffectsSpatial ArtifactEffectsKeying ArtifactEffectsBlur ArtifactEffectsGenerate ArtifactEffectsDistort ArtifactEffectsRasterizer)
 target_link_libraries(Artifact PRIVATE ArtifactRender)
 if(MSVC)
     target_link_options(Artifact PRIVATE
@@ -2793,8 +2804,6 @@ target_link_libraries(ArtifactRender PUBLIC ArtifactGpuFoundation)
 # those are not needed to validate glyph atlas upload, per-glyph transforms,
 # or readback and otherwise widen the build to the complete renderer graph.
 set(ARTIFACT_RENDER_TEXT_MODULES
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphSubmitter.ixx"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphPipelineAdapter.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphShaderSources.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextRenderer.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderConfig.ixx"
@@ -2804,22 +2813,17 @@ set(ARTIFACT_RENDER_TEXT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/IRenderSubmitter.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/PrimitiveRenderer2D.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/PrimitiveRenderer3D.ixx"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/DiligentImmediateSubmitter.ixx"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactIRenderer.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ThickLineShaders.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ViewerHelperShaders.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/LOD/ArtifactLODManager.ixx"
 )
 set(ARTIFACT_RENDER_TEXT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphPipelineAdapter.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentImmediateSubmitter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactIRenderer.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cppm"
 )
 
@@ -3184,9 +3188,51 @@ target_link_libraries(ArtifactWorker PRIVATE ArtifactCore ArtifactCoreAudio Arti
 endif()
 
 # ---------------------------------------------------------------------------
+# Out-of-process proxy worker
+# ---------------------------------------------------------------------------
+if(ARTIFACT_FEATURE_PROXY_WORKER)
+    add_executable(ArtifactProxyWorker
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Worker/ArtifactProxyWorker.cpp"
+    )
+    set_target_properties(ArtifactProxyWorker PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    )
+    target_link_libraries(ArtifactProxyWorker PRIVATE Qt6::Core)
+    target_include_directories(ArtifactProxyWorker PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    if(FFMPEG_LIBRARY_DIRS)
+        target_link_directories(ArtifactProxyWorker PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    endif()
+    target_link_libraries(ArtifactProxyWorker PRIVATE ${FFMPEG_LIBRARIES} avutil swscale swresample)
+    set(_ARTIFACT_PROXY_FFMPEG_DLLS)
+    foreach(_artifact_ffmpeg_library_dir IN LISTS FFMPEG_LIBRARY_DIRS)
+        file(GLOB _artifact_proxy_ffmpeg_dlls
+            "${_artifact_ffmpeg_library_dir}/../bin/avcodec*.dll"
+            "${_artifact_ffmpeg_library_dir}/../bin/avformat*.dll"
+            "${_artifact_ffmpeg_library_dir}/../bin/avutil*.dll"
+            "${_artifact_ffmpeg_library_dir}/../bin/swscale*.dll"
+            "${_artifact_ffmpeg_library_dir}/../bin/swresample*.dll")
+        list(APPEND _ARTIFACT_PROXY_FFMPEG_DLLS ${_artifact_proxy_ffmpeg_dlls})
+    endforeach()
+    if(WIN32)
+        target_link_libraries(ArtifactProxyWorker PRIVATE mfplat mfreadwrite mfuuid mf ole32)
+    endif()
+    if(ARTIFACT_COMPILER_MSVC_CL)
+        target_compile_options(ArtifactProxyWorker PRIVATE /Zf /Zc:__cplusplus /utf-8 /WX-)
+        target_compile_definitions(ArtifactProxyWorker PRIVATE PLATFORM_WIN32 _WIN32_WINNT=0x0A00)
+    elseif(ARTIFACT_FRONTEND_MSVC)
+        target_compile_options(ArtifactProxyWorker PRIVATE /Zc:__cplusplus /utf-8 /WX-)
+        target_compile_definitions(ArtifactProxyWorker PRIVATE PLATFORM_WIN32 _WIN32_WINNT=0x0A00)
+    endif()
+    add_dependencies(Artifact ArtifactProxyWorker)
+endif()
+
+# ---------------------------------------------------------------------------
 # Qt runtime deployment (Windows)
 # ---------------------------------------------------------------------------
 if(WIN32)
+    find_program(ARTIFACT_FFMPEG_EXECUTABLE NAMES ffmpeg.exe ffmpeg)
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt)
     if(WINDEPLOYQT_EXECUTABLE)
         set(_ARTIFACT_DEPLOY_QT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWindeployqt.cmake")
@@ -3242,7 +3288,78 @@ if(WIN32)
         COMMENT "Deploying Qt platform plugin for Artifact"
         VERBATIM
     )
+    if(TARGET ArtifactProxyWorker)
+        add_custom_command(TARGET Artifact POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:ArtifactProxyWorker>"
+                "$<TARGET_FILE_DIR:Artifact>/$<TARGET_FILE_NAME:ArtifactProxyWorker>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:ArtifactProxyWorker>
+                "$<TARGET_FILE_DIR:Artifact>/"
+            COMMENT "Deploying ArtifactProxyWorker and runtime DLLs"
+            COMMAND_EXPAND_LISTS
+            VERBATIM
+        )
+        if(ARTIFACT_FFMPEG_EXECUTABLE)
+            add_custom_command(TARGET Artifact POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${ARTIFACT_FFMPEG_EXECUTABLE}"
+                    "$<TARGET_FILE_DIR:Artifact>/ffmpeg.exe"
+                COMMENT "Deploying ffmpeg fallback executable for ArtifactProxyWorker"
+                VERBATIM
+            )
+        endif()
+    endif()
 
+endif()
+
+# Standalone staging target for validating/distributing the proxy worker without
+# requiring a full Artifact post-build copy.
+if(TARGET ArtifactProxyWorker)
+    set(_artifact_proxy_worker_package_dir "${CMAKE_BINARY_DIR}/proxy-worker-package/$<CONFIG>")
+    add_custom_target(ArtifactProxyWorkerPackage
+        DEPENDS ArtifactProxyWorker
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_artifact_proxy_worker_package_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:ArtifactProxyWorker>"
+            "${_artifact_proxy_worker_package_dir}/"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:ArtifactProxyWorker>
+                "${_artifact_proxy_worker_package_dir}/"
+        COMMENT "Staging ArtifactProxyWorker package"
+        COMMAND_EXPAND_LISTS
+        VERBATIM
+    )
+    if(WIN32)
+        add_custom_command(TARGET ArtifactProxyWorkerPackage POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                "-DTARGET_FILE_DIR=${_artifact_proxy_worker_package_dir}"
+                "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+                "-DCONFIG=$<CONFIG>"
+                -P "${_ARTIFACT_COPY_RUNTIME_SCRIPT}"
+            COMMENT "Staging vcpkg runtime dependencies for ArtifactProxyWorker"
+            VERBATIM
+        )
+        if(_ARTIFACT_PROXY_FFMPEG_DLLS)
+            add_custom_command(TARGET ArtifactProxyWorkerPackage POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    ${_ARTIFACT_PROXY_FFMPEG_DLLS}
+                    "${_artifact_proxy_worker_package_dir}/"
+                COMMENT "Staging FFmpeg runtime DLLs for ArtifactProxyWorker"
+                COMMAND_EXPAND_LISTS
+                VERBATIM
+            )
+        endif()
+    endif()
+    if(ARTIFACT_FFMPEG_EXECUTABLE)
+        add_custom_command(TARGET ArtifactProxyWorkerPackage POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${ARTIFACT_FFMPEG_EXECUTABLE}"
+                "${_artifact_proxy_worker_package_dir}/ffmpeg.exe"
+            COMMENT "Staging ffmpeg fallback for ArtifactProxyWorker"
+            VERBATIM
+        )
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -3272,6 +3389,31 @@ if(ARTIFACT_DEPLOY_DIR)
         COMMAND_EXPAND_LISTS
         VERBATIM
     )
+    if(TARGET ArtifactProxyWorker)
+        add_custom_command(TARGET Artifact POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:ArtifactProxyWorker>"
+                "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:ArtifactProxyWorker>
+                "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                ${_ARTIFACT_PROXY_FFMPEG_DLLS}
+                "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+            COMMENT "Copying ArtifactProxyWorker to ARTIFACT_DEPLOY_DIR"
+            COMMAND_EXPAND_LISTS
+            VERBATIM
+        )
+        if(ARTIFACT_FFMPEG_EXECUTABLE)
+            add_custom_command(TARGET Artifact POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${ARTIFACT_FFMPEG_EXECUTABLE}"
+                    "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/ffmpeg.exe"
+                COMMENT "Copying ffmpeg fallback executable to ARTIFACT_DEPLOY_DIR"
+                VERBATIM
+            )
+        endif()
+    endif()
 endif()
 
 # Keep all local Artifact C++23 targets attached to the explicit MSVC std.ifc

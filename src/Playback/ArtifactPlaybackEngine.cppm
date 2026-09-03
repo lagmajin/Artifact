@@ -1086,10 +1086,11 @@ void ArtifactPlaybackEngine::setFrameRange(const FrameRange& range) {
 }
 
 void ArtifactPlaybackEngine::frameRangeChanged(const FrameRange& range) {
-    const PlaybackFrameRangeChangedEvent event{range.start(), range.end()};
+    PlaybackFrameRangeChangedEvent event{range.start(), range.end()};
     const auto publish = [event]() {
+        auto queuedEvent = event;
         ArtifactCore::globalEventBus().publish<PlaybackFrameRangeChangedEvent>(
-            event);
+            std::move(queuedEvent));
     };
     if (QThread::currentThread() == thread()) {
         publish();

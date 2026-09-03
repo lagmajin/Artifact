@@ -17,6 +17,7 @@ module;
 #include <FloatingDockContainer.h>
 #endif
 #include <QAbstractScrollArea>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QByteArray>
 #include <QCloseEvent>
@@ -43,6 +44,7 @@ module;
 #include <QMessageBox>
 #include <QMenu>
 #include <QObject>
+#include <QPushButton>
 #include <QPointer>
 #include <QPixmap>
 #include <QSet>
@@ -665,10 +667,10 @@ bool confirmUnsavedChangesForClose(QWidget *parent)
   box.setDefaultButton(saveButton);
   box.exec();
 
-  if (box.clickedButton() == cancelButton) {
+  if (box.clickedButton() == static_cast<QAbstractButton *>(cancelButton)) {
     return false;
   }
-  if (box.clickedButton() == discardButton) {
+  if (box.clickedButton() == static_cast<QAbstractButton *>(discardButton)) {
     return true;
   }
 
@@ -1064,6 +1066,7 @@ void syncTrackedDockState(ArtifactQadsDockAdapter *backend,
     backend->syncDockState();
   }
 }
+#endif // ARTIFACT_QADS_COMPAT_BACKEND
 
 class ArtifactMainWindow::Impl {
 public:

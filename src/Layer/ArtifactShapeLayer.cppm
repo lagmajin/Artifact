@@ -76,14 +76,6 @@ const char* compatibilityFallbackName(const ShapeCompatibilityFallback reason) {
 using ArtifactCore::FloatColor;
 using ArtifactCore::ShapePath;
 
-static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
-                                int width,
-                                int height,
-                                float cornerRadius,
-                                int starPoints,
-                                float starInnerRadius,
-                                int polygonSides);
-
 static ArtifactCore::ShapePath buildCustomShapePath(
     const std::vector<Artifact::CustomPathVertex>& vertices,
     bool closed) {
@@ -350,7 +342,7 @@ FloatColor normalizedShapeColor(const FloatColor& color) {
 
 // Current composition timeline time used to evaluate animatable
 // shape.* properties during playback/rendering.
-ArtifactCore::RationalTime effectiveShapeTimelineTime(const ArtifactShapeLayer* layer) {
+ArtifactCore::RationalTime effectiveShapeTimelineTime(const Artifact::ArtifactShapeLayer* layer) {
  int64_t frame = 0;
  int64_t fps = 30;
  if (layer) {
@@ -372,7 +364,7 @@ ArtifactCore::RationalTime effectiveShapeTimelineTime(const ArtifactShapeLayer* 
 
 // Evaluate an animatable shape.* numeric property at the current time.
 // Falls back to the stored member value when the property has no keyframes.
-double animatedShapeNumber(const ArtifactShapeLayer* layer,
+double animatedShapeNumber(const Artifact::ArtifactShapeLayer* layer,
                            const char* propertyPath,
                            double fallback) {
  if (!layer) {
@@ -406,7 +398,7 @@ inline bool sameShapeGeomDims(const ShapeGeomDims& a, const ShapeGeomDims& b) {
         a.polygonSides == b.polygonSides;
 }
 
-bool hasAnimatedShapeGeometry(const ArtifactShapeLayer* layer) {
+bool hasAnimatedShapeGeometry(const Artifact::ArtifactShapeLayer* layer) {
  static constexpr const char* kPaths[] = {
      "shape.width", "shape.height", "shape.cornerRadius",
      "shape.starPoints", "shape.starInnerRadius", "shape.polygonSides"};
@@ -422,11 +414,19 @@ bool hasAnimatedShapeGeometry(const ArtifactShapeLayer* layer) {
  return false;
 }
 
+} // namespace
+
+namespace Artifact {
+bool isSupportedCustomPathVertex(const CustomPathVertex& vertex);
+}
+
 // Path keyframe animation: vertices are stored as a JSON document on the
 // animatable layer property "shape.path.keyframes". Each entry maps a frame
 // number to a serialized CustomPathVertex array. Between frames, matching
 // vertices are interpolated (position and tangents) with linear blending.
 namespace {
+
+using Artifact::CustomPathVertex;
 
 QJsonArray serializePathVertices(const std::vector<CustomPathVertex>& verts) {
  QJsonArray arr;
@@ -451,7 +451,7 @@ std::vector<CustomPathVertex> deserializePathVertices(const QJsonArray& arr) {
   v.inTangent = QPointF(o["ix"].toDouble(), o["iy"].toDouble());
   v.outTangent = QPointF(o["ox"].toDouble(), o["oy"].toDouble());
   v.smooth = o["smooth"].toBool(false);
-  if (isSupportedCustomPathVertex(v)) {
+  if (Artifact::isSupportedCustomPathVertex(v)) {
    verts.push_back(v);
   }
  }
@@ -472,6 +472,16 @@ CustomPathVertex lerpPathVertex(const CustomPathVertex& a,
 
 } // namespace
 
+namespace Artifact {
+
+static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
+                                int width,
+                                int height,
+                                float cornerRadius,
+                                int starPoints,
+                                float starInnerRadius,
+                                int polygonSides);
+
 void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
                                          const std::vector<CustomPathVertex>& verts) {
  auto property = getProperty(QStringLiteral("shape.path.keyframes"));
@@ -488,9 +498,6 @@ void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
  root[QString::number(static_cast<qint64>(frame))] =
      serializePathVertices(verts);
  property->setValue(QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
- impl_->markDirty();
- impl_->localBoundsCacheDirty_ = true;
- impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
 }
 
@@ -508,18 +515,18 @@ bool ArtifactShapeLayer::hasPathKeyframes() const {
 
 std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) const {
  if (!hasPathKeyframes()) {
-  return impl_->customPathVertices_;
+  return customPathVertices();
  }
  auto property = getProperty(QStringLiteral("shape.path.keyframes"));
  if (!property) {
-  return impl_->customPathVertices_;
+  return customPathVertices();
  }
  QJsonDocument doc =
      QJsonDocument::fromJson(
          property->getValue().toString().toUtf8());
  const QJsonObject root = doc.object();
  if (root.isEmpty()) {
-  return impl_->customPathVertices_;
+  return customPathVertices();
  }
  std::map<int64_t, std::vector<CustomPathVertex>> samples;
  for (auto it = root.begin(); it != root.end(); ++it) {
@@ -528,7 +535,7 @@ std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) 
       deserializePathVertices(it.value().toArray());
  }
  if (samples.empty()) {
-  return impl_->customPathVertices_;
+  return customPathVertices();
  }
  auto lower = samples.lower_bound(frame);
  if (lower != samples.end() && lower->first == frame) {
@@ -566,7 +573,7 @@ std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) 
 // True when any shape operator parameter has keyframes. Animated operator
 // parameters must bypass the geometry caches so TrimPaths / Repeater values
 // evaluate per frame.
-bool hasAnimatedShapeOperators(const ArtifactShapeLayer* layer) {
+bool hasAnimatedShapeOperators(const Artifact::ArtifactShapeLayer* layer) {
  if (!layer) {
   return false;
  }
@@ -583,13 +590,18 @@ bool hasAnimatedShapeOperators(const ArtifactShapeLayer* layer) {
     return true;
    }
   }
+  const auto modeProperty = layer->getProperty(
+      prefix + QStringLiteral("mode"));
+  if (modeProperty && !modeProperty->getKeyFrames().empty()) {
+   return true;
+  }
  }
  return false;
 }
 
 // Apply keyframed operator parameters onto the operator instances before
 // path processing. Static values stay as authored via setLayerPropertyValue.
-void applyAnimatedOperatorParameters(const ArtifactShapeLayer* layer,
+void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
                                      std::vector<
                                          std::unique_ptr<ArtifactCore::ShapeOperator>>&
                                          operators) {
@@ -614,6 +626,16 @@ void applyAnimatedOperatorParameters(const ArtifactShapeLayer* layer,
    applyFloat("start", [&](double v) { trim->setStart(static_cast<float>(v)); });
    applyFloat("end", [&](double v) { trim->setEnd(static_cast<float>(v)); });
    applyFloat("offset", [&](double v) { trim->setOffset(static_cast<float>(v)); });
+  } else if (auto* merge = dynamic_cast<ArtifactCore::MergePaths*>(&op)) {
+   const auto modeProperty = layer->getProperty(
+       prefix + QStringLiteral("mode"));
+   if (modeProperty && !modeProperty->getKeyFrames().empty()) {
+    const QVariant value =
+        modeProperty->interpolateValue(effectiveShapeTimelineTime(layer));
+    if (value.isValid()) {
+     merge->setMode(std::clamp(value.toInt(), 0, 4));
+    }
+   }
   } else if (auto* repeater = dynamic_cast<ArtifactCore::Repeater*>(&op)) {
    applyFloat("offset",
               [&](double v) { repeater->setOffset(static_cast<float>(v)); });
@@ -653,7 +675,7 @@ void applyAnimatedOperatorParameters(const ArtifactShapeLayer* layer,
  }
 }
 
-ShapeGeomDims resolveShapeGeomDims(const ArtifactShapeLayer* layer,
+ShapeGeomDims resolveShapeGeomDims(const Artifact::ArtifactShapeLayer* layer,
                                    const int width,
                                    const int height,
                                    const float cornerRadius,
@@ -825,6 +847,8 @@ void normalizeRestoredShapeOperator(ArtifactCore::ShapeOperator *op) {
     const float value = rounded->radius();
     rounded->setRadius(std::isfinite(value)
         ? std::clamp(value, 0.0f, 100000.0f) : 0.0f);
+  } else if (auto merge = dynamic_cast<ArtifactCore::MergePaths *>(op)) {
+    merge->setMode(std::clamp(merge->mode(), 0, 4));
   }
 }
 
@@ -836,9 +860,23 @@ static std::vector<ArtifactCore::ShapePath> applyShapeOperators(
   return {basePath};
  }
 
+ bool hasMergePaths = false;
+ for (const auto& op : operators) {
+  if (op && op->type() == ArtifactCore::ShapeOperatorType::MergePaths) {
+   hasMergePaths = true;
+   break;
+  }
+ }
+
  ArtifactCore::ShapeGroup group;
- auto pathShape = std::make_unique<ArtifactCore::PathShape>(basePath);
- group.addChild(std::move(pathShape));
+ const auto inputPaths = hasMergePaths ? basePath.subpaths()
+                                       : std::vector<ArtifactCore::ShapePath>{basePath};
+ if (inputPaths.empty()) {
+  return {};
+ }
+ for (const auto& inputPath : inputPaths) {
+  group.addChild(std::make_unique<ArtifactCore::PathShape>(inputPath));
+ }
  for (const auto& op : operators) {
   group.addOperator(op->clone());
  }
@@ -1264,11 +1302,6 @@ QString operatorName(ArtifactCore::ShapeOperatorType type) {
   }
 }
 
-} // namespace
-
-namespace Artifact
-{
-
 class ArtifactShapeLayer::Impl {
 public:
  Artifact::ShapeType shapeType_ = Artifact::ShapeType::Rect;
@@ -1395,19 +1428,22 @@ public:
     return cachedNativeGeometry_;
    }
 
-   const NativePathGeometry& shapeGeometry(const ShapeGeomDims& dims,
-                                           double tolerance) {
-    if (!shapeGeometryCacheDirty_ && cachedShapeGeometryDimsValid_ &&
+   const NativePathGeometry& shapeGeometry(
+       const ShapeGeomDims& dims, double tolerance,
+       const std::vector<CustomPathVertex>* pathVertices = nullptr) {
+    if (!pathVertices && !shapeGeometryCacheDirty_ && cachedShapeGeometryDimsValid_ &&
         sameShapeGeomDims(cachedShapeGeometryDims_, dims) &&
         std::abs(cachedShapeTolerance_ - tolerance) < 1.0e-9) {
      return cachedShapeGeometry_;
     }
+    const auto& effectivePathVertices = pathVertices ? *pathVertices
+                                                     : customPathVertices_;
     ShapePath path = buildLayerShapePath(
         shapeType_, dims.width, dims.height, dims.cornerRadius,
         dims.starPoints, dims.starInnerRadius, dims.polygonSides,
         customPolygonPoints_, customPolygonClosed_,
-        customPathVertices_, customPathClosed_);
-    if (customPathVertices_.size() >= 3) {
+        effectivePathVertices, customPathClosed_);
+    if (effectivePathVertices.size() >= 3) {
      path.setFillRule(customPathFillRule_);
     }
     cachedShapeGeometry_.triangles = path.triangulate(tolerance);
@@ -1418,8 +1454,10 @@ public:
     shapeGeometryCacheDirty_ = false;
     return cachedShapeGeometry_;
    }
-  void rebuildCache(const ShapeGeomDims* dims = nullptr) {
-    if (!cacheDirty_ && !dims) return;
+  void rebuildCache(
+      const ShapeGeomDims* dims = nullptr,
+      const std::vector<CustomPathVertex>* pathVertices = nullptr) {
+    if (!cacheDirty_ && !dims && !pathVertices) return;
     const int effW = dims ? dims->width : width_;
     const int effH = dims ? dims->height : height_;
     const float effCornerRadius = dims ? dims->cornerRadius : cornerRadius_;
@@ -1432,11 +1470,13 @@ public:
     QPainter painter(&img);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
+    const auto& effectivePathVertices = pathVertices ? *pathVertices
+                                                     : customPathVertices_;
     const auto paths = buildProcessedPainterPaths(shapeType_, effW, effH,
                                                   effCornerRadius, effStarPoints,
                                                   effStarInnerRadius, effPolygonSides,
                                                   customPolygonPoints_, customPolygonClosed_,
-                                                  customPathVertices_, customPathClosed_,
+                                                  effectivePathVertices, customPathClosed_,
                                                   shapeOperators_);
 
     if (!paths.empty()) {
@@ -1500,7 +1540,7 @@ public:
         if (customPolygonPoints_.size() >= 3) {
          pathClosed = customPolygonClosed_;
         }
-        if (customPathVertices_.size() >= 3) {
+        if (effectivePathVertices.size() >= 3) {
          pathClosed = customPathClosed_;
         }
         for (const QPolygonF& subpath : subpaths) {
@@ -2147,11 +2187,16 @@ bool ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
 // ============================================================
 
 QImage ArtifactShapeLayer::toQImage() const {
- if (hasAnimatedShapeGeometry(this)) {
+ const bool geomAnimated = hasAnimatedShapeGeometry(this);
+ const bool pathAnimated = hasPathKeyframes();
+ if (geomAnimated || pathAnimated) {
   const ShapeGeomDims dims = resolveShapeGeomDims(
       this, impl_->width_, impl_->height_, impl_->cornerRadius_,
       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
-  impl_->rebuildCache(&dims);
+  const std::vector<CustomPathVertex> evaluatedPathVertices =
+      pathAnimated ? evaluatePathAt(currentFrame())
+                   : impl_->customPathVertices_;
+  impl_->rebuildCache(&dims, &evaluatedPathVertices);
  } else {
   impl_->rebuildCache();
  }
@@ -2172,7 +2217,11 @@ QImage ArtifactShapeLayer::getThumbnail(int width, int height) const
 QRectF ArtifactShapeLayer::localBounds() const
 {
   const bool geomAnimated = hasAnimatedShapeGeometry(this);
-  if (!impl_->localBoundsCacheDirty_ && !geomAnimated) {
+  const bool pathAnimated = hasPathKeyframes();
+  const std::vector<CustomPathVertex> evaluatedPathVertices =
+      pathAnimated ? evaluatePathAt(currentFrame())
+                   : impl_->customPathVertices_;
+  if (!impl_->localBoundsCacheDirty_ && !geomAnimated && !pathAnimated) {
     return impl_->cachedLocalBounds_;
   }
 
@@ -2202,21 +2251,21 @@ QRectF ArtifactShapeLayer::localBounds() const
        impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
        dims.starPoints, dims.starInnerRadius, dims.polygonSides,
        impl_->customPolygonPoints_, impl_->customPolygonClosed_,
-       impl_->customPathVertices_, impl_->customPathClosed_,
+       evaluatedPathVertices, impl_->customPathClosed_,
        impl_->shapeOperators_);
    for (const auto& path : processedPaths) {
     const QRectF pathBounds = path.boundingRect();
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
    }
-  } else if (impl_->customPathVertices_.size() >= 3) {
-   auto customPath = buildCustomShapePath(impl_->customPathVertices_,
+  } else if (evaluatedPathVertices.size() >= 3) {
+   auto customPath = buildCustomShapePath(evaluatedPathVertices,
                                           impl_->customPathClosed_);
    customPath.setFillRule(impl_->customPathFillRule_);
    bounds = customPath.boundingRect();
-  } else if (impl_->customPathVertices_.size() >= 2) {
+  } else if (evaluatedPathVertices.size() >= 2) {
    std::vector<QPointF> pts;
-   pts.reserve(impl_->customPathVertices_.size());
-   for (const auto& v : impl_->customPathVertices_) pts.push_back(v.pos);
+   pts.reserve(evaluatedPathVertices.size());
+   for (const auto& v : evaluatedPathVertices) pts.push_back(v.pos);
    bounds = boundsOfPoints(pts);
   } else if (impl_->customPolygonPoints_.size() >= 2) {
    bounds = boundsOfPoints(impl_->customPolygonPoints_);
@@ -2297,6 +2346,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
   const bool geomAnimated = hasAnimatedShapeGeometry(this);
+  const bool pathAnimated = hasPathKeyframes();
+  const std::vector<CustomPathVertex> evaluatedPathVertices =
+      pathAnimated ? evaluatePathAt(currentFrame())
+                   : impl->customPathVertices_;
   const ShapeGeomDims geomDims = resolveShapeGeomDims(
       this, impl->width_, impl->height_, impl->cornerRadius_,
       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_);
@@ -2324,10 +2377,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         impl->shapeType_, geomDims.width, geomDims.height, geomDims.cornerRadius,
         geomDims.starPoints, geomDims.starInnerRadius, geomDims.polygonSides,
        impl->customPolygonPoints_, impl->customPolygonClosed_,
-       impl->customPathVertices_, impl->customPathClosed_,
+       evaluatedPathVertices, impl->customPathClosed_,
        operatorsAnimated ? animatedOperatorClones
                          : impl->shapeOperators_);
-   if (impl->customPathVertices_.size() >= 3) {
+   if (evaluatedPathVertices.size() >= 3) {
     for (auto& path : processedOperatorPaths) {
      path.setFillRule(impl->customPathFillRule_);
     }
@@ -2337,11 +2390,12 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                          impl->fillColor_.b(), impl->fillColor_.a());
    const FloatColor stroke(impl->strokeColor_.r(), impl->strokeColor_.g(),
                            impl->strokeColor_.b(), impl->strokeColor_.a());
+   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
    drawWithClonerEffect(
-       this, baseTransform,
+       this, lensPass.transform,
         [renderer, impl, processedPaths = processedOperatorPaths, fill, stroke,
-        contentFieldWeight, this, geomAnimated](const QMatrix4x4& transform, float weight) {
-        const float opacity = this->opacity() * weight * contentFieldWeight;
+        contentFieldWeight, this, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+        const float opacity = this->opacity() * weight * contentFieldWeight * lensOpacity;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
         const FloatColor drawStroke(stroke.r(), stroke.g(), stroke.b(), stroke.a() * opacity);
         const double scaleX = std::hypot(static_cast<double>(transform(0, 0)),
@@ -2351,7 +2405,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         const double renderScale = std::max({1.0, scaleX, scaleY});
         const auto& geometry = impl->nativeGeometry(processedPaths,
                                                     0.25 / renderScale,
-                                                    !geomAnimated);
+                                                    !geomAnimated && !pathAnimated);
         for (const auto& pathGeometry : geometry) {
          if (impl->fillEnabled_) {
           for (const auto& triangle : pathGeometry.triangles) {
@@ -2390,6 +2444,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
          }
         }
        });
+   }
    drawFractureOverlay(renderer, baseTransform,
                        QSizeF(geomDims.width, geomDims.height),
                        opacity() * contentFieldWeight);
@@ -2406,12 +2461,12 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
            << compatibilityFallbackName(fallback);
    impl->lastLoggedFallback_ = fallback;
   }
-  if (geomAnimated) {
+  if (geomAnimated || pathAnimated) {
    const ShapeGeomDims cacheDims = resolveShapeGeomDims(
        this, impl->width_, impl->height_, impl->cornerRadius_,
        impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_);
-   impl->rebuildCache(&cacheDims);
-  } else {
+   impl->rebuildCache(&cacheDims, &evaluatedPathVertices);
+ } else {
    impl->rebuildCache();
   }
    const float layerOpacity = opacity() * contentFieldWeight;
@@ -2422,26 +2477,30 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
        : ShapeGeomDims{impl->width_, impl->height_, impl->cornerRadius_,
                        impl->starPoints_, impl->starInnerRadius_,
                        impl->polygonSides_};
-  drawWithClonerEffect(this, baseTransform,
-       [renderer, impl, layerOpacity, spriteDims](const QMatrix4x4& transform, float weight) {
-   renderer->drawSpriteTransformed(
-       0.0f, 0.0f,
-       static_cast<float>(spriteDims.width),
-       static_cast<float>(spriteDims.height),
-       transform, impl->cachedImage_,
-       layerOpacity * weight);
-  });
+  for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
+    drawWithClonerEffect(this, lensPass.transform,
+         [renderer, impl, layerOpacity, spriteDims, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+     renderer->drawSpriteTransformed(
+         0.0f, 0.0f,
+         static_cast<float>(spriteDims.width),
+         static_cast<float>(spriteDims.height),
+         transform, impl->cachedImage_,
+         layerOpacity * weight * lensOpacity);
+    });
+  }
   drawFractureOverlay(renderer, baseTransform, QSizeF(spriteDims.width, spriteDims.height), layerOpacity);
   return;
  }
-  drawWithClonerEffect(this, baseTransform,
-                       [renderer, impl, this, contentFieldWeight, geomDims](const QMatrix4x4& transform, float weight) {
+  for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
+  drawWithClonerEffect(this, lensPass.transform,
+                       [renderer, impl, this, contentFieldWeight, geomDims,
+                        pathAnimated, evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
-        impl->fillColor_.a() * this->opacity() * contentFieldWeight * weight);
+        impl->fillColor_.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);
     const auto stroke = FloatColor(
         impl->strokeColor_.r(), impl->strokeColor_.g(), impl->strokeColor_.b(),
-        impl->strokeColor_.a() * this->opacity() * contentFieldWeight * weight);
+        impl->strokeColor_.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);
 
     // A soft-body grid owns the rectangle's local vertices.  Keep all other
     // shape types on their existing path until they have a matching topology
@@ -2464,7 +2523,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
                                      static_cast<double>(transform(1, 1)));
     const double renderScale = std::max({1.0, scaleX, scaleY});
-    const auto& geometry = impl->shapeGeometry(geomDims, 0.25 / renderScale);
+    const auto& geometry = impl->shapeGeometry(
+        geomDims, 0.25 / renderScale,
+        pathAnimated ? &evaluatedPathVertices : nullptr);
     if (geometry.subpaths.empty()) return;
 
     if (impl->fillEnabled_) {
@@ -2506,6 +2567,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      }
     }
   });
+  }
   drawFractureOverlay(renderer, baseTransform, QSizeF(impl_->width_, impl_->height_),
                       opacity() * contentFieldWeight);
 }
@@ -2824,6 +2886,17 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
      opGroup.addProperty(makeProp(prefix + QStringLiteral("trimMode"),
                                   ArtifactCore::PropertyType::Integer,
                                   static_cast<int>(trim->trimMode()), -97));
+   } else if (auto merge =
+                  dynamic_cast<const ArtifactCore::MergePaths *>(op.get())) {
+     auto modeProp = makeProp(prefix + QStringLiteral("mode"),
+                              ArtifactCore::PropertyType::Integer,
+                              merge->mode(), -100);
+     modeProp->setDisplayLabel(QStringLiteral("Mode"));
+     modeProp->setHardRange(0, 4);
+     modeProp->setAnimatable(true);
+     modeProp->setTooltip(QStringLiteral(
+         "0=Add, 1=Subtract, 2=Intersect, 3=Difference, 4=Merge"));
+     opGroup.addProperty(modeProp);
    } else if (auto repeater =
                   dynamic_cast<const ArtifactCore::Repeater *>(op.get())) {
      auto copiesProp = makeProp(prefix + QStringLiteral("copies"),
@@ -3119,6 +3192,12 @@ if (propertyPath == "shape.type") {
            handled = true;
          } else if (field == "trimMode") {
            trim->setTrimMode(static_cast<ArtifactCore::TrimMode>(value.toInt()));
+           handled = true;
+         }
+       } else if (auto merge =
+                      dynamic_cast<ArtifactCore::MergePaths *>(op.get())) {
+         if (field == "mode") {
+           merge->setMode(std::clamp(value.toInt(), 0, 4));
            handled = true;
          }
        } else if (auto repeater =

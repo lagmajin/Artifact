@@ -14,17 +14,19 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Frame.Position;
 import Geometry.LayerAlignment;
+import Utils.Id;
 
 export namespace Artifact {
 
 struct LayerPlacementSnapshot {
-  LayerID id;
+  ArtifactCore::LayerID id;
   QRectF bounds;
   QPointF position;
 };
 
 std::vector<LayerPlacementSnapshot> captureLayerPlacements(
-    const ArtifactCompositionPtr &composition, const QVector<LayerID> &ids) {
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactCore::LayerID> &ids) {
   std::vector<LayerPlacementSnapshot> snapshots;
   if (!composition || ids.isEmpty()) return snapshots;
   snapshots.reserve(static_cast<std::size_t>(ids.size()));
@@ -42,7 +44,8 @@ std::vector<LayerPlacementSnapshot> captureLayerPlacements(
 }
 
 bool applyAlignPreset(const ArtifactCompositionPtr &composition,
-                      const QVector<LayerID> &selectedIds, int presetIndex) {
+                      const QVector<ArtifactCore::LayerID> &selectedIds,
+                      int presetIndex) {
   if (!composition || selectedIds.size() < 2) return false;
   auto snapshots = captureLayerPlacements(composition, selectedIds);
   if (snapshots.size() < 2) return false;
@@ -85,7 +88,7 @@ bool applyAlignPreset(const ArtifactCompositionPtr &composition,
 }
 
 bool applyDistributePreset(const ArtifactCompositionPtr &composition,
-                           const QVector<LayerID> &selectedIds,
+                           const QVector<ArtifactCore::LayerID> &selectedIds,
                            int presetIndex) {
   if (!composition || selectedIds.size() < 3) return false;
   auto snapshots = captureLayerPlacements(composition, selectedIds);

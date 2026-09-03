@@ -25,6 +25,7 @@ module;
 export module Artifact.Widgets.InspectorStyle;
 
 import Widgets.CommonStyle;
+import Widgets.Utils.CSS;
 
 export namespace Artifact {
 

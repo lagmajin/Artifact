@@ -7,8 +7,13 @@ module;
 #include <QKeyEvent>
 #include <QPaintEvent>
 #include <QFileDialog>
+#include <QFile>
+#include <QIODevice>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <vector>
@@ -91,6 +96,7 @@ public:
     QString renderQueueCapturePath;
     QString parityStatus;
     QString contextStatus;
+    QJsonObject lastParityReport;
     static constexpr int parityChannelTolerance = 2;
     static constexpr double parityPixelFailureLimit = 0.001;
 
@@ -319,14 +325,27 @@ public:
 
     void compareParityCaptures()
     {
+        lastParityReport = {};
+        lastParityReport.insert(QStringLiteral("timestamp"),
+                                QDateTime::currentDateTime().toString(Qt::ISODate));
+        lastParityReport.insert(QStringLiteral("channelTolerance"), parityChannelTolerance);
+        lastParityReport.insert(QStringLiteral("pixelFailureLimit"), parityPixelFailureLimit);
+        lastParityReport.insert(QStringLiteral("previewCapture"), previewCapturePath);
+        lastParityReport.insert(QStringLiteral("softwarePreviewCapture"), softwarePreviewCapturePath);
+        lastParityReport.insert(QStringLiteral("renderQueueCapture"), renderQueueCapturePath);
         if (previewCapture.isNull() || renderQueueCapture.isNull()) {
             parityStatus = QStringLiteral("Load Preview (P) and Render Queue (Q) captures first");
+            lastParityReport.insert(QStringLiteral("status"), QStringLiteral("INCOMPLETE"));
             return;
         }
 
         struct PairResult {
             bool passed = false;
             QString summary;
+            qint64 differentPixels = 0;
+            qint64 pixelCount = 0;
+            double meanDifference = 0.0;
+            int maximumDifference = 0;
         };
         const auto comparePair = [this](const QImage& lhs, const QImage& rhs,
                                         const QString& label) -> PairResult {
@@ -334,7 +353,7 @@ public:
                 return {false, QStringLiteral("%1 size mismatch (%2x%3 vs %4x%5)")
                     .arg(label)
                     .arg(lhs.width()).arg(lhs.height())
-                    .arg(rhs.width()).arg(rhs.height())};
+                    .arg(rhs.width()).arg(rhs.height()), 0, 0, 0.0, 0};
             }
 
             const qint64 pixelCount = static_cast<qint64>(lhs.width()) *
@@ -377,7 +396,20 @@ public:
                 .arg(differentPixels)
                 .arg(pixelCount)
                 .arg(QString::number(meanDifference, 'f', 3))
-                .arg(maximumDifference)};
+                .arg(maximumDifference), differentPixels, pixelCount,
+                meanDifference, maximumDifference};
+        };
+
+        const auto appendPairReport = [this](const PairResult& pair,
+                                             const QString& label) {
+            QJsonObject report;
+            report.insert(QStringLiteral("label"), label);
+            report.insert(QStringLiteral("passed"), pair.passed);
+            report.insert(QStringLiteral("differentPixels"), pair.differentPixels);
+            report.insert(QStringLiteral("pixelCount"), pair.pixelCount);
+            report.insert(QStringLiteral("meanDifference"), pair.meanDifference);
+            report.insert(QStringLiteral("maximumDifference"), pair.maximumDifference);
+            lastParityReport[QStringLiteral("pair_%1").arg(label)] = report;
         };
 
         const PairResult previewToQueue = comparePair(
@@ -387,6 +419,10 @@ public:
                 QStringLiteral(" | channel <= %1, pixel limit %2%%")
                     .arg(parityChannelTolerance)
                     .arg(QString::number(parityPixelFailureLimit * 100.0, 'f', 2));
+            appendPairReport(previewToQueue, QStringLiteral("preview_to_render_queue"));
+            lastParityReport.insert(QStringLiteral("status"),
+                                    previewToQueue.passed ? QStringLiteral("PASS")
+                                                          : QStringLiteral("FAIL"));
             return;
         }
 
@@ -400,6 +436,34 @@ public:
             .arg(previewToQueue.summary)
             .arg(previewToSoftware.summary)
             .arg(softwareToQueue.summary);
+        appendPairReport(previewToQueue, QStringLiteral("preview_to_render_queue"));
+        appendPairReport(previewToSoftware, QStringLiteral("preview_to_software"));
+        appendPairReport(softwareToQueue, QStringLiteral("software_to_render_queue"));
+        lastParityReport.insert(QStringLiteral("status"),
+                                passed ? QStringLiteral("PASS") : QStringLiteral("FAIL"));
+    }
+
+    void saveParityReport(QWidget* owner)
+    {
+        if (lastParityReport.isEmpty()) {
+            parityStatus = QStringLiteral("Compare captures (D) before saving a report");
+            return;
+        }
+        const QString defaultName = QStringLiteral("still_image_parity_%1.json")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+        const QString path = QFileDialog::getSaveFileName(
+            owner, QStringLiteral("Save Still Image Parity Report"), defaultName,
+            QStringLiteral("JSON Report (*.json)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            file.write(QJsonDocument(lastParityReport).toJson(QJsonDocument::Indented)) < 0) {
+            parityStatus = QStringLiteral("Unable to save parity report");
+            return;
+        }
+        parityStatus = QStringLiteral("Saved parity report: %1").arg(QFileInfo(path).fileName());
     }
 
     void compositeImages(QImage& target, const QImage& cubeLayer) const
@@ -658,7 +722,7 @@ void ArtifactSoftwareRenderTestWidget::paintEvent(QPaintEvent* event)
     painter.drawText(
         QRect(10, 58, w - 20, 44),
         Qt::AlignLeft | Qt::AlignTop,
-        QStringLiteral("Arrow: Offset(%1,%2)  -/=: Scale(%3)  R/T: Rot(%4 deg)")
+            QStringLiteral("Arrow: Offset(%1,%2)  -/=: Scale(%3)  R/T: Rot(%4 deg)")
             .arg(static_cast<int>(std::round(impl_->overlayOffset.x())))
             .arg(static_cast<int>(std::round(impl_->overlayOffset.y())))
             .arg(QString::number(impl_->overlayScale, 'f', 2))
@@ -666,7 +730,7 @@ void ArtifactSoftwareRenderTestWidget::paintEvent(QPaintEvent* event)
     painter.drawText(
         QRect(10, 82, w - 20, 44),
         Qt::AlignLeft | Qt::AlignTop,
-        QStringLiteral("P: Load Preview  V: Load Software Preview  Q: Load Render Queue  D: Compare"));
+            QStringLiteral("P: Load Preview  V: Load Software Preview  Q: Load Render Queue  D: Compare  Ctrl+Shift+S: Save Report"));
     painter.drawText(
         QRect(10, 106, w - 20, 44),
         Qt::AlignLeft | Qt::AlignTop,
@@ -744,6 +808,14 @@ void ArtifactSoftwareRenderTestWidget::keyPressEvent(QKeyEvent* event)
     }
     if (event->key() == Qt::Key_D) {
         impl_->compareParityCaptures();
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_S &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::ShiftModifier)) {
+        impl_->saveParityReport(this);
         update();
         event->accept();
         return;

@@ -190,9 +190,9 @@ namespace
      float sum[4] = {};
      int count = 0;
      for (Uint32 oy = 0; oy < 2; ++oy) {
-      const Uint32 sourceY = std::min(levelHeight - 1, y * 2 + oy);
+      const Uint32 sourceY = (std::min)(levelHeight - 1, y * 2 + oy);
       for (Uint32 ox = 0; ox < 2; ++ox) {
-       const Uint32 sourceX = std::min(levelWidth - 1, x * 2 + ox);
+       const Uint32 sourceX = (std::min)(levelWidth - 1, x * 2 + ox);
        const qsizetype index = (static_cast<qsizetype>(sourceY) * levelWidth + sourceX) * 4;
        sum[0] += toLinear(previous[index + 0]);
        sum[1] += toLinear(previous[index + 1]);
@@ -1449,12 +1449,12 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
                           !std::isfinite(transformed.z())) {
                           continue;
                       }
-                      skinnedMin.setX(std::min(skinnedMin.x(), transformed.x()));
-                      skinnedMin.setY(std::min(skinnedMin.y(), transformed.y()));
-                      skinnedMin.setZ(std::min(skinnedMin.z(), transformed.z()));
-                      skinnedMax.setX(std::max(skinnedMax.x(), transformed.x()));
-                      skinnedMax.setY(std::max(skinnedMax.y(), transformed.y()));
-                      skinnedMax.setZ(std::max(skinnedMax.z(), transformed.z()));
+                      skinnedMin.setX((std::min)(skinnedMin.x(), transformed.x()));
+                      skinnedMin.setY((std::min)(skinnedMin.y(), transformed.y()));
+                      skinnedMin.setZ((std::min)(skinnedMin.z(), transformed.z()));
+                      skinnedMax.setX((std::max)(skinnedMax.x(), transformed.x()));
+                      skinnedMax.setY((std::max)(skinnedMax.y(), transformed.y()));
+                      skinnedMax.setZ((std::max)(skinnedMax.z(), transformed.z()));
                   }
               }
               minBound = skinnedMin;

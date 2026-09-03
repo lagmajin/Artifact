@@ -134,6 +134,7 @@ import Artifact.Widgets.InspectorEffectCatalog;
 import Artifact.Widgets.InspectorEffectPicker;
 import Artifact.Widgets.InspectorEffectRackPresentation;
 import Artifact.Effect.SurfaceFX;
+import Graphics.Effect.SurfaceFX;
 import Settings.Accessibility;
 
 import Artifact.Service.Project;
@@ -391,18 +392,18 @@ QString layerComponentSummaryText(const LayerTabComponentState &state) {
 bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
                           const QString &propertyPath);
 
-QColor toneColor(LayerPresentationBadgeTone tone, const QColor &base,
+QColor toneColor(detail::LayerPresentationBadgeTone tone, const QColor &base,
                  const QColor &accent) {
   switch (tone) {
-  case LayerPresentationBadgeTone::Container:
+  case detail::LayerPresentationBadgeTone::Container:
     return blendColor(base, accent, 0.18);
-  case LayerPresentationBadgeTone::Media:
+  case detail::LayerPresentationBadgeTone::Media:
     return blendColor(base, accent, 0.10);
-  case LayerPresentationBadgeTone::Motion:
+  case detail::LayerPresentationBadgeTone::Motion:
     return blendColor(base, accent.lighter(108), 0.16);
-  case LayerPresentationBadgeTone::Special:
+  case detail::LayerPresentationBadgeTone::Special:
     return blendColor(base, accent.darker(108), 0.14);
-  case LayerPresentationBadgeTone::Neutral:
+  case detail::LayerPresentationBadgeTone::Neutral:
   default:
     return base;
   }
@@ -421,19 +422,19 @@ EffectPipelineStage stageFromRackIndex(int rackIndex) {
   return static_cast<EffectPipelineStage>(rackIndex + 1);
 }
 
-LayerPresentationBadgeTone toneFromRackIndex(int rackIndex) {
+detail::LayerPresentationBadgeTone toneFromRackIndex(int rackIndex) {
   switch (stageFromRackIndex(rackIndex)) {
   case EffectPipelineStage::Generator:
   case EffectPipelineStage::GeometryTransform:
-    return LayerPresentationBadgeTone::Motion;
+    return detail::LayerPresentationBadgeTone::Motion;
   case EffectPipelineStage::MaterialRender:
-    return LayerPresentationBadgeTone::Media;
+    return detail::LayerPresentationBadgeTone::Media;
   case EffectPipelineStage::Rasterizer:
-    return LayerPresentationBadgeTone::Special;
+    return detail::LayerPresentationBadgeTone::Special;
   case EffectPipelineStage::LayerTransform:
-    return LayerPresentationBadgeTone::Container;
+    return detail::LayerPresentationBadgeTone::Container;
   default:
-    return LayerPresentationBadgeTone::Neutral;
+    return detail::LayerPresentationBadgeTone::Neutral;
   }
 }
 
@@ -580,6 +581,8 @@ QString proxySummary(const ArtifactAbstractLayerPtr &layer,
 
   const QString qualityText = [&]() -> QString {
     switch (videoLayer->proxyQuality()) {
+    case ProxyQuality::Eighth:
+      return QStringLiteral("1/8");
     case ProxyQuality::Quarter:
       return QStringLiteral("1/4");
     case ProxyQuality::Half:

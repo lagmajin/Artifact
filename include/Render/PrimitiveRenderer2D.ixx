@@ -153,7 +153,13 @@ public:
         const FloatColor& outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
         float outlineThickness = 0.0f,
         float blurRadius = 0.0f,
-        bool useGlyphColorOverrides = true);
+        bool useGlyphColorOverrides = true,
+        bool useTwoPointFiveD = false,
+        float twoPointFiveDCameraDistance = 1000.0f,
+        bool useTwoPointFiveDDepthOfField = false,
+        float twoPointFiveDFocusDepth = 0.0f,
+        float twoPointFiveDFocusRange = 250.0f,
+        float twoPointFiveDMaxBlur = 12.0f);
     QString glyphAtlasDebugState() const;
 
     // Returns the currently active render target view (override or swapchain back-buffer).

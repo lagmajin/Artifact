@@ -1,6 +1,12 @@
+module;
+
 #include <algorithm>
 #include <iterator>
 #include <utility>
+
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QString>
 
 module Artifact.Composition.Nodes;
 

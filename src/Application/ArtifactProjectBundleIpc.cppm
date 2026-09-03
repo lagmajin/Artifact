@@ -233,7 +233,8 @@ bool pasteLayerBundle(const QJsonObject& bundle) {
             return false;
         }
         for (const auto& layer : orderedPastedLayers) {
-            if (!comp->removeLayer(layer->id()) || comp->containsLayerById(layer->id())) {
+            comp->removeLayer(layer->id());
+            if (comp->containsLayerById(layer->id())) {
                 for (const auto& pastedLayer : orderedPastedLayers) {
                     if (pastedLayer && !comp->containsLayerById(pastedLayer->id())) {
                         comp->appendLayerBottom(pastedLayer);
@@ -409,7 +410,8 @@ bool pasteParametricCompositionBundle(const QJsonObject& bundle) {
     bool ok = false;
     if (auto* undo = UndoManager::instance()) {
         ok = undo->push(std::make_unique<AddProjectItemsCommand>(
-            items, nullptr, composition->id().toString()));
+            items, nullptr,
+            compositionJson.value(QStringLiteral("id")).toString()));
     } else {
         ok = project->addProjectItemsFromJson(items, nullptr);
     }

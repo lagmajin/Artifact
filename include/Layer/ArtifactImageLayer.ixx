@@ -15,6 +15,7 @@ import Artifact.Layers.Abstract._2D;
 
 import Image;
 import Image.ImageF32x4_RGBA;
+import Mesh;
 import Image.DepthMap;
 import Geometry.DepthMeshGenerator;
 import Core.AI.ImageSegmenter;
@@ -50,6 +51,11 @@ export namespace Artifact {
   // Resolved source frame index currently held by the sequence cache. -1 when
   // no sequence frame is cached (used as a GPU texture cache key component).
   qint64 sequenceCachedFrameIndex() const;
+  // Stable content identity for the currently decoded sequence frame. It
+  // changes when a frame is replaced in place, even if its frame index stays
+  // the same.
+  qint64 sequenceCachedFrameContentKey() const;
+  void refreshSequenceFrameForCurrentTime() const;
   QString sourcePath() const;
   void setInputInterpretation(const QString& colorSpace, const QString& transferFunction);
   QString inputColorSpace() const;
@@ -59,6 +65,7 @@ export namespace Artifact {
   bool canShareSourceGpuTexture() const;
   bool sourceCropEnabled() const;
   QString sourceCropSignature() const;
+  void refreshAnimatedSourceCrop();
   bool localizeSourceIdentity();
   bool relinkSourceIdentityToShared();
   bool isSourceIdentityLocalized() const;

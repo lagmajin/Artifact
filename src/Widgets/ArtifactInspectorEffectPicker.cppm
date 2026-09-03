@@ -29,6 +29,7 @@ export module Artifact.Widgets.InspectorEffectPicker;
 
 import Artifact.Widgets.InspectorEffectCatalog;
 import Artifact.Widgets.InspectorStyle;
+import Artifact.Effect.Abstract;
 
 export namespace Artifact {
 class EffectPickerPanel final : public QWidget {

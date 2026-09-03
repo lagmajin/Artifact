@@ -15,7 +15,7 @@ import Mesh;
 
 export namespace Artifact {
 
- enum class RenderMode {
+ enum class ModelRenderMode {
    Wireframe,
    Solid
  };
@@ -72,8 +72,8 @@ export namespace Artifact {
     FixedGeometry3D fixedGeometry() const;
 
    // Render mode
-    RenderMode renderMode() const;
-    void setRenderMode(RenderMode mode);
+    ModelRenderMode renderMode() const;
+    void setRenderMode(ModelRenderMode mode);
     const ArtifactCore::Mesh& mesh() const;
     void setSkinPoseMatrices(const QVector<QMatrix4x4>& boneMatrices);
 

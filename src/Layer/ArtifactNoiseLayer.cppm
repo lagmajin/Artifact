@@ -10,6 +10,8 @@ module;
 #include <QVariant>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 
 module Artifact.Layers.Noise;
 
@@ -594,13 +596,15 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
   }
   if (propertyPath == QStringLiteral("noise.scaleX")) {
     p.scale[0] =
-        static_cast<float>(std::clamp(value.toDouble(8.0), 0.001, 10000.0));
+        static_cast<float>(std::clamp(value.isValid() ? value.toDouble() : 8.0,
+                                      0.001, 10000.0));
     Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("noise.scaleY")) {
     p.scale[1] =
-        static_cast<float>(std::clamp(value.toDouble(8.0), 0.001, 10000.0));
+        static_cast<float>(std::clamp(value.isValid() ? value.toDouble() : 8.0,
+                                      0.001, 10000.0));
     Q_EMIT changed();
     return true;
   }
@@ -626,18 +630,21 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
   }
   if (propertyPath == QStringLiteral("noise.octaves")) {
     p.octaves =
-        static_cast<std::uint32_t>(std::clamp(value.toInt(4), 1, 12));
+        static_cast<std::uint32_t>(std::clamp(
+            value.isValid() ? value.toInt() : 4, 1, 12));
     Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("noise.lacunarity")) {
     p.lacunarity =
-        static_cast<float>(std::clamp(value.toDouble(2.0), 1.0, 8.0));
+        static_cast<float>(std::clamp(value.isValid() ? value.toDouble() : 2.0,
+                                      1.0, 8.0));
     Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("noise.gain")) {
-    p.gain = static_cast<float>(std::clamp(value.toDouble(0.5), 0.0, 1.0));
+    p.gain = static_cast<float>(std::clamp(value.isValid() ? value.toDouble() : 0.5,
+                                            0.0, 1.0));
     Q_EMIT changed();
     return true;
   }

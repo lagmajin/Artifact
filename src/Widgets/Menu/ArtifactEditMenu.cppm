@@ -9,7 +9,9 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QHash>
+#include <QList>
 #include <QSet>
+#include <QVector>
 #include <vector>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -340,6 +342,10 @@ void ArtifactEditMenu::Impl::handleCutAction()
   auto* selMgr = ArtifactApplicationManager::instance()
                      ? ArtifactApplicationManager::instance()->layerSelectionManager()
                      : nullptr;
+  QSet<ArtifactAbstractLayerPtr> selected;
+  if (selMgr) {
+   selected = selMgr->selectedLayers();
+  }
   ArtifactAbstractLayerPtr anchorLayer;
   int anchorIndex = -1;
   if (selMgr) {
@@ -566,8 +572,9 @@ void ArtifactEditMenu::Impl::handleCutAction()
    if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
     sb->showMessage(QString("Pasted %1 layer(s)").arg(pasted), 3000);
    }
-   rebuildMenu();
-  }
+  rebuildMenu();
+ }
+ }
  }
  bool ArtifactEditMenu::Impl::handleDelete()
  {

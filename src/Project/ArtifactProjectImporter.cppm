@@ -847,6 +847,27 @@ namespace Artifact
   });
   
   result.healthReport = ArtifactProjectHealthChecker::check(projectPtr.get());
+  if (sourceResolutionStats_.adoptedExisting > 0 ||
+      sourceResolutionStats_.adoptedForEmptyOriginal > 0 ||
+      sourceResolutionStats_.keptEmptyCandidate > 0) {
+      result.healthReport.issues.push_back(HealthIssue{
+          HealthIssueSeverity::Info,
+          QStringLiteral(
+              "Source resolution: %1 existing candidate(s) adopted, %2 adopted for empty paths, %3 empty candidate(s) retained")
+              .arg(sourceResolutionStats_.adoptedExisting)
+              .arg(sourceResolutionStats_.adoptedForEmptyOriginal)
+              .arg(sourceResolutionStats_.keptEmptyCandidate),
+          QFileInfo(inputPath_).fileName(),
+          QStringLiteral("SourceResolution")});
+  }
+  if (sourceResolutionStats_.keptMissingCandidate > 0) {
+      result.healthReport.issues.push_back(HealthIssue{
+          HealthIssueSeverity::Warning,
+          QStringLiteral("%1 project-relative source candidate(s) were missing; stored paths were retained")
+              .arg(sourceResolutionStats_.keptMissingCandidate),
+          QFileInfo(inputPath_).fileName(),
+          QStringLiteral("SourceResolution")});
+  }
   if (!result.healthReport.isHealthy) {
       qWarning() << "[Importer] Project health check failed with issues:";
       for (const auto& issue : result.healthReport.issues) {

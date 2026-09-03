@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <array>
 #include <compare>
 #include <cmath>
 #include <cstdint>
@@ -20,6 +21,7 @@ module;
 #include <QSize>
 #include <QSizeF>
 #include <QMetaObject>
+#include <QPointer>
 #include <QThread>
 #include <QVector3D>
 #include <QVector4D>
@@ -1040,6 +1042,16 @@ public:
     double inflowCarry = 0.0;
   };
    bool is3D_ = false;
+  bool twoPointFiveDEnabled_ = false;
+  float twoPointFiveDDepth_ = 0.0f;
+  float twoPointFiveDCameraDistance_ = 1000.0f;
+  bool twoPointFiveDDepthOfFieldEnabled_ = false;
+  float twoPointFiveDFocusDepth_ = 0.0f;
+  float twoPointFiveDFocusRange_ = 250.0f;
+  float twoPointFiveDMaxBlur_ = 12.0f;
+  bool twoPointFiveDMotionBlurEnabled_ = false;
+  float twoPointFiveDMotionBlurShutterAngle_ = 180.0f;
+  int twoPointFiveDMotionBlurSamples_ = 4;
   bool isVisible_ = true;
   Id id;
   QString name_;
@@ -1222,6 +1234,9 @@ public:
     int layoutHorizontalPin_ = 0;
     int layoutVerticalPin_ = 0;
     int layoutScaleMode_ = 0;
+    bool layoutResponsiveEnabled_ = false;
+    float layoutResponsiveOffsetX_ = 0.0f;
+    float layoutResponsiveOffsetY_ = 0.0f;
     bool layoutSafeAreaEnabled_ = false;
     float layoutSafeAreaPaddingX_ = 0.0f;
     float layoutSafeAreaPaddingY_ = 0.0f;
@@ -1387,6 +1402,17 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
 
   auto layout = makeLayoutComponentDescriptor(layoutComponentEnabled_);
   layout.settings[QStringLiteral("mode")] = layoutMode_;
+  layout.settings[QStringLiteral("responsiveEnabled")] = layoutResponsiveEnabled_;
+  layout.settings[QStringLiteral("horizontalPin")] = layoutHorizontalPin_;
+  layout.settings[QStringLiteral("verticalPin")] = layoutVerticalPin_;
+  layout.settings[QStringLiteral("scaleMode")] = layoutScaleMode_;
+  layout.settings[QStringLiteral("offsetX")] = static_cast<double>(layoutResponsiveOffsetX_);
+  layout.settings[QStringLiteral("offsetY")] = static_cast<double>(layoutResponsiveOffsetY_);
+  layout.settings[QStringLiteral("safeAreaEnabled")] = layoutSafeAreaEnabled_;
+  layout.settings[QStringLiteral("safeAreaPaddingX")] =
+      static_cast<double>(layoutSafeAreaPaddingX_);
+  layout.settings[QStringLiteral("safeAreaPaddingY")] =
+      static_cast<double>(layoutSafeAreaPaddingY_);
   layout.settings[QStringLiteral("gap")] = static_cast<double>(layoutGap_);
   layout.settings[QStringLiteral("maxPerRow")] = layoutMaxPerRow_;
   componentHost_.upsert(std::move(layout));
@@ -2141,6 +2167,70 @@ QSizeF ArtifactAbstractLayer::compositionSizeHint() const {
   return QSizeF(size.width(), size.height());
 }
 
+bool applyResponsiveLayoutConstraints(const ArtifactAbstractLayer* layer,
+                                      double& positionX, double& positionY,
+                                      double& scaleX, double& scaleY,
+                                      const double anchorX,
+                                      const double anchorY,
+                                      const bool componentEnabled,
+                                      const bool responsiveEnabled,
+                                      const int horizontalPinValue,
+                                      const int verticalPinValue,
+                                      const int scaleModeValue,
+                                      const bool safeAreaEnabled,
+                                      const double safeAreaPaddingX,
+                                      const double safeAreaPaddingY,
+                                      const double offsetX,
+                                      const double offsetY) {
+  if (!layer || layer->is3D()) return false;
+  if (!componentEnabled || !responsiveEnabled) return false;
+  const QSizeF compositionSize = layer->compositionSizeHint();
+  const QRectF localBounds = layer->localBounds();
+  if (!compositionSize.isValid() || compositionSize.width() <= 0.0 ||
+      compositionSize.height() <= 0.0 || !localBounds.isValid() ||
+      localBounds.width() <= 0.0 || localBounds.height() <= 0.0) return false;
+  const qreal paddingX = safeAreaEnabled
+      ? std::max<qreal>(0.0, safeAreaPaddingX) : 0.0;
+  const qreal paddingY = safeAreaEnabled
+      ? std::max<qreal>(0.0, safeAreaPaddingY) : 0.0;
+  const QRectF container(paddingX, paddingY,
+      std::max<qreal>(0.0, compositionSize.width() - paddingX * 2.0),
+      std::max<qreal>(0.0, compositionSize.height() - paddingY * 2.0));
+  if (container.width() <= 0.0 || container.height() <= 0.0) return false;
+  const int horizontalPin = std::clamp(horizontalPinValue, 0, 3);
+  const int verticalPin = std::clamp(verticalPinValue, 0, 3);
+  const int scaleMode = std::clamp(scaleModeValue, 0, 3);
+  const qreal fitScaleX = container.width() / localBounds.width();
+  const qreal fitScaleY = container.height() / localBounds.height();
+  if (scaleMode == 1) {
+    const qreal scale = std::min(fitScaleX, fitScaleY);
+    scaleX = scale;
+    scaleY = scale;
+  } else if (scaleMode == 2) {
+    const qreal scale = std::max(fitScaleX, fitScaleY);
+    scaleX = scale;
+    scaleY = scale;
+  } else if (scaleMode == 3) {
+    scaleX = fitScaleX;
+    scaleY = fitScaleY;
+  }
+  if (horizontalPin == 3) scaleX = fitScaleX;
+  if (verticalPin == 3) scaleY = fitScaleY;
+  const qreal width = localBounds.width() * scaleX;
+  const qreal height = localBounds.height() * scaleY;
+  const auto positionForAxis = [](const qreal start, const qreal extent,
+                                  const qreal itemExtent, const int pin) {
+    if (pin == 1) return start + (extent - itemExtent) * 0.5;
+    if (pin == 2) return start + extent - itemExtent;
+    return start;
+  };
+  const qreal left = positionForAxis(container.left(), container.width(), width, horizontalPin);
+  const qreal top = positionForAxis(container.top(), container.height(), height, verticalPin);
+  positionX = left - scaleX * (localBounds.left() - anchorX) + offsetX;
+  positionY = top - scaleY * (localBounds.top() - anchorY) + offsetY;
+  return true;
+}
+
 double ArtifactAbstractLayer::compositionFrameRate() const {
   return effectiveLayerFrameRate(this);
 }
@@ -2247,7 +2337,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
   }
   if (impl_->collisionComponentEnabled_ && !hasRigidBodyPhysics()) {
-    enableRigidBodyPhysics();
+    const_cast<ArtifactAbstractLayer*>(this)->enableRigidBodyPhysics();
   }
   if (impl_->physicsComponent_.enabled() && !hasRigidBodyPhysics()) {
     if (impl_->collisionComponentEnabled_) {
@@ -2326,6 +2416,13 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   }
 
   applyCompositionTransformFields(this, positionX, positionY, scaleX, scaleY);
+  applyResponsiveLayoutConstraints(this, positionX, positionY, scaleX, scaleY,
+                                   anchorX, anchorY, impl_->layoutComponentEnabled_,
+                                   impl_->layoutResponsiveEnabled_,
+                                   impl_->layoutHorizontalPin_, impl_->layoutVerticalPin_,
+                                   impl_->layoutScaleMode_, impl_->layoutSafeAreaEnabled_,
+                                   impl_->layoutSafeAreaPaddingX_, impl_->layoutSafeAreaPaddingY_,
+                                   impl_->layoutResponsiveOffsetX_, impl_->layoutResponsiveOffsetY_);
   QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                                               anchorX, anchorY);
   transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
@@ -2438,14 +2535,17 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
                                          : nullptr;
   const auto participationProperty = getProperty(
       QStringLiteral("component.layout.mode"));
+  const bool responsiveLayout = impl_->layoutComponentEnabled_ &&
+                                impl_->layoutResponsiveEnabled_;
   const bool layoutManaged = layoutEnabledProperty &&
                              layoutEnabledProperty->getValue().toBool() &&
+                             !responsiveLayout &&
                              (!participationProperty ||
                               participationProperty->getValue().toInt() != 2);
   const QPointF layoutOffset = layoutManaged
                                    ? parentAutoLayoutOffset(this, parent)
                                    : QPointF();
-  if (!layoutManaged &&
+  if (!layoutManaged && !responsiveLayout &&
       impl_->cachedGlobalTransformRevision_ == impl_->geometryRevision_ &&
       impl_->cachedGlobalTransformParentRevision_ == parentRevision &&
       impl_->cachedGlobalTransformFrame_ == frame &&
@@ -2571,6 +2671,13 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
   // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
 
   applyCompositionTransformFields(this, positionX, positionY, scaleX, scaleY);
+  applyResponsiveLayoutConstraints(this, positionX, positionY, scaleX, scaleY,
+                                   anchorX, anchorY, impl_->layoutComponentEnabled_,
+                                   impl_->layoutResponsiveEnabled_,
+                                   impl_->layoutHorizontalPin_, impl_->layoutVerticalPin_,
+                                   impl_->layoutScaleMode_, impl_->layoutSafeAreaEnabled_,
+                                   impl_->layoutSafeAreaPaddingX_, impl_->layoutSafeAreaPaddingY_,
+                                   impl_->layoutResponsiveOffsetX_, impl_->layoutResponsiveOffsetY_);
   QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                                               anchorX, anchorY);
   transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
@@ -2581,7 +2688,8 @@ QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) cons
   QTransform local = getLocalTransformAt(frameNumber);
   auto parent = parentLayer();
   if (parent) {
-    const QPointF layoutOffset = parentAutoLayoutOffset(this, parent);
+    const QPointF layoutOffset = impl_->layoutComponentEnabled_ && impl_->layoutResponsiveEnabled_
+        ? QPointF() : parentAutoLayoutOffset(this, parent);
     if (!layoutOffset.isNull()) {
       local = QTransform::fromTranslate(layoutOffset.x(), layoutOffset.y()) * local;
     }
@@ -2692,7 +2800,7 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
   }
   if (impl_->collisionComponentEnabled_ && !hasRigidBodyPhysics()) {
-    enableRigidBodyPhysics();
+    const_cast<ArtifactAbstractLayer*>(this)->enableRigidBodyPhysics();
   }
   if (impl_->physicsComponent_.enabled() && !hasRigidBodyPhysics()) {
     if (impl_->collisionComponentEnabled_) {
@@ -2774,6 +2882,13 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   }
 
   applyCompositionTransformFields(this, positionX, positionY, scaleX, scaleY);
+  applyResponsiveLayoutConstraints(this, positionX, positionY, scaleX, scaleY,
+                                   anchorX, anchorY, impl_->layoutComponentEnabled_,
+                                   impl_->layoutResponsiveEnabled_,
+                                   impl_->layoutHorizontalPin_, impl_->layoutVerticalPin_,
+                                   impl_->layoutScaleMode_, impl_->layoutSafeAreaEnabled_,
+                                   impl_->layoutSafeAreaPaddingX_, impl_->layoutSafeAreaPaddingY_,
+                                   impl_->layoutResponsiveOffsetX_, impl_->layoutResponsiveOffsetY_);
   const QTransform local2D = impl_->modifiers_.apply(
       makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                            anchorX, anchorY),
@@ -4414,6 +4529,64 @@ QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
   return local;
 }
 
+std::vector<TwoPointFiveDRenderPass>
+ArtifactAbstractLayer::twoPointFiveDRenderPasses(
+    const QMatrix4x4 &baseTransform) const {
+  if (is3D() || !impl_->twoPointFiveDEnabled_) {
+    return {{baseTransform, 1.0f}};
+  }
+
+  const float cameraDistance = std::max(1.0f, impl_->twoPointFiveDCameraDistance_);
+  const float depth = std::clamp(impl_->twoPointFiveDDepth_,
+                                 -cameraDistance * 0.95f,
+                                 cameraDistance * 0.95f);
+  const float perspectiveScale =
+      cameraDistance / std::max(1.0f, cameraDistance - depth);
+  const QPointF center = localBounds().center();
+  QMatrix4x4 projected = baseTransform;
+  projected.translate(static_cast<float>(center.x()), static_cast<float>(center.y()), 0.0f);
+  projected.scale(perspectiveScale, perspectiveScale, 1.0f);
+  projected.translate(static_cast<float>(-center.x()), static_cast<float>(-center.y()), depth);
+
+  const int motionSamples = impl_->twoPointFiveDMotionBlurEnabled_ &&
+          impl_->twoPointFiveDMotionBlurShutterAngle_ > 0.0f
+      ? impl_->twoPointFiveDMotionBlurSamples_ : 1;
+  QPointF previousDelta;
+  if (motionSamples > 1 && currentFrame() > 0) {
+    previousDelta = getGlobalTransformAt(currentFrame() - 1).map(center) -
+                    getGlobalTransformAt(currentFrame()).map(center);
+    previousDelta *= std::clamp(
+        impl_->twoPointFiveDMotionBlurShutterAngle_ / 360.0f, 0.0f, 2.0f);
+  }
+
+  const float focusBlur = impl_->twoPointFiveDDepthOfFieldEnabled_
+      ? std::min(impl_->twoPointFiveDMaxBlur_,
+                 std::abs(depth - impl_->twoPointFiveDFocusDepth_) /
+                     std::max(1.0f, impl_->twoPointFiveDFocusRange_) *
+                     impl_->twoPointFiveDMaxBlur_)
+      : 0.0f;
+  const std::array<QPointF, 5> blurOffsets = {
+      QPointF(0.0, 0.0), QPointF(focusBlur, 0.0), QPointF(-focusBlur, 0.0),
+      QPointF(0.0, focusBlur), QPointF(0.0, -focusBlur)};
+  const int blurSamples = focusBlur > 0.1f ? static_cast<int>(blurOffsets.size()) : 1;
+
+  std::vector<TwoPointFiveDRenderPass> passes;
+  passes.reserve(static_cast<std::size_t>(motionSamples * blurSamples));
+  const float passOpacity = 1.0f / static_cast<float>(motionSamples * blurSamples);
+  for (int motionIndex = 0; motionIndex < motionSamples; ++motionIndex) {
+    const float motionT = motionSamples > 1
+        ? static_cast<float>(motionIndex) / static_cast<float>(motionSamples - 1)
+        : 1.0f;
+    for (int blurIndex = 0; blurIndex < blurSamples; ++blurIndex) {
+      const QPointF offset = previousDelta * (1.0f - motionT) + blurOffsets[blurIndex];
+      QMatrix4x4 screenOffset;
+      screenOffset.translate(static_cast<float>(offset.x()), static_cast<float>(offset.y()), 0.0f);
+      passes.push_back({screenOffset * projected, passOpacity});
+    }
+  }
+  return passes;
+}
+
 float4x4 ArtifactAbstractLayer::getLocalTransformMatrix() const {
   // Transitional boundary: preserve the established layer evaluation
   // (physics, modifiers and animated property overrides), then leave Qt math
@@ -5210,6 +5383,18 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["startTime"] = (qint64)impl_->startTime_.framePosition();
   obj["isVisible"] = isVisible();
   obj["is3D"] = is3D();
+  QJsonObject twoPointFiveD;
+  twoPointFiveD["enabled"] = impl_->twoPointFiveDEnabled_;
+  twoPointFiveD["depth"] = impl_->twoPointFiveDDepth_;
+  twoPointFiveD["cameraDistance"] = impl_->twoPointFiveDCameraDistance_;
+  twoPointFiveD["depthOfFieldEnabled"] = impl_->twoPointFiveDDepthOfFieldEnabled_;
+  twoPointFiveD["focusDepth"] = impl_->twoPointFiveDFocusDepth_;
+  twoPointFiveD["focusRange"] = impl_->twoPointFiveDFocusRange_;
+  twoPointFiveD["maxBlur"] = impl_->twoPointFiveDMaxBlur_;
+  twoPointFiveD["motionBlurEnabled"] = impl_->twoPointFiveDMotionBlurEnabled_;
+  twoPointFiveD["motionBlurShutterAngle"] = impl_->twoPointFiveDMotionBlurShutterAngle_;
+  twoPointFiveD["motionBlurSamples"] = impl_->twoPointFiveDMotionBlurSamples_;
+  obj["twoPointFiveD"] = twoPointFiveD;
   obj["blendMode"] = static_cast<int>(layerBlendType());
   obj["isLocked"] = impl_->isLocked_;
   obj["isSelectionLocked"] = impl_->isSelectionLocked_;
@@ -5552,6 +5737,9 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["layoutHorizontalPin"] = impl_->layoutHorizontalPin_;
   componentsObj["layoutVerticalPin"] = impl_->layoutVerticalPin_;
   componentsObj["layoutScaleMode"] = impl_->layoutScaleMode_;
+  componentsObj["layoutResponsiveEnabled"] = impl_->layoutResponsiveEnabled_;
+  componentsObj["layoutResponsiveOffsetX"] = static_cast<double>(impl_->layoutResponsiveOffsetX_);
+  componentsObj["layoutResponsiveOffsetY"] = static_cast<double>(impl_->layoutResponsiveOffsetY_);
   componentsObj["layoutSafeAreaEnabled"] = impl_->layoutSafeAreaEnabled_;
   componentsObj["layoutSafeAreaPaddingX"] = static_cast<double>(impl_->layoutSafeAreaPaddingX_);
   componentsObj["layoutSafeAreaPaddingY"] = static_cast<double>(impl_->layoutSafeAreaPaddingY_);
@@ -5905,6 +6093,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setVisible(obj["isVisible"].toBool());
   if (obj.contains("is3D"))
     setIs3D(obj["is3D"].toBool());
+  if (obj.value(QStringLiteral("twoPointFiveD")).isObject()) {
+    const QJsonObject twoPointFiveD = obj.value(QStringLiteral("twoPointFiveD")).toObject();
+    impl_->twoPointFiveDEnabled_ = twoPointFiveD.value(QStringLiteral("enabled")).toBool(false);
+    impl_->twoPointFiveDDepth_ = static_cast<float>(twoPointFiveD.value(QStringLiteral("depth")).toDouble(0.0));
+    impl_->twoPointFiveDCameraDistance_ = std::clamp(static_cast<float>(twoPointFiveD.value(QStringLiteral("cameraDistance")).toDouble(1000.0)), 1.0f, 1000000.0f);
+    impl_->twoPointFiveDDepthOfFieldEnabled_ = twoPointFiveD.value(QStringLiteral("depthOfFieldEnabled")).toBool(false);
+    impl_->twoPointFiveDFocusDepth_ = static_cast<float>(twoPointFiveD.value(QStringLiteral("focusDepth")).toDouble(0.0));
+    impl_->twoPointFiveDFocusRange_ = std::clamp(static_cast<float>(twoPointFiveD.value(QStringLiteral("focusRange")).toDouble(250.0)), 1.0f, 1000000.0f);
+    impl_->twoPointFiveDMaxBlur_ = std::clamp(static_cast<float>(twoPointFiveD.value(QStringLiteral("maxBlur")).toDouble(12.0)), 0.0f, 64.0f);
+    impl_->twoPointFiveDMotionBlurEnabled_ = twoPointFiveD.value(QStringLiteral("motionBlurEnabled")).toBool(false);
+    impl_->twoPointFiveDMotionBlurShutterAngle_ = std::clamp(static_cast<float>(twoPointFiveD.value(QStringLiteral("motionBlurShutterAngle")).toDouble(180.0)), 0.0f, 720.0f);
+    impl_->twoPointFiveDMotionBlurSamples_ = std::clamp(twoPointFiveD.value(QStringLiteral("motionBlurSamples")).toInt(4), 2, 8);
+  }
   if (obj.contains("isLocked"))
     setLocked(obj["isLocked"].toBool());
   if (obj.contains("isSelectionLocked"))
@@ -6467,6 +6668,14 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("layoutVerticalPin")).toInt(0);
         impl_->layoutScaleMode_ =
             componentsObj.value(QStringLiteral("layoutScaleMode")).toInt(0);
+        impl_->layoutResponsiveEnabled_ = componentsObj.value(
+            QStringLiteral("layoutResponsiveEnabled")).toBool(false);
+        impl_->layoutResponsiveOffsetX_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("layoutResponsiveOffsetX")).toDouble(0.0),
+            0.0, -100000.0, 100000.0));
+        impl_->layoutResponsiveOffsetY_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("layoutResponsiveOffsetY")).toDouble(0.0),
+            0.0, -100000.0, 100000.0));
         impl_->layoutSafeAreaEnabled_ =
             componentsObj.value(QStringLiteral("layoutSafeAreaEnabled")).toBool(false);
         impl_->layoutSafeAreaPaddingX_ = static_cast<float>(finiteClamped(
@@ -7819,6 +8028,51 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   -145));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.is3D"),
                                   PropertyType::Boolean, is3D(), -144));
+  auto twoPointFiveDEnabled = makeProp(QStringLiteral("layer.2_5d.enabled"),
+      PropertyType::Boolean, impl_->twoPointFiveDEnabled_, -143);
+  twoPointFiveDEnabled->setDisplayLabel(QStringLiteral("2.5D Lens"));
+  twoPointFiveDEnabled->setTooltip(QStringLiteral("Uses a local 2D-stack lens; it does not use the composition 3D camera."));
+  layerGroup.addProperty(twoPointFiveDEnabled);
+  auto twoPointFiveDDepth = makeProp(QStringLiteral("layer.2_5d.depth"),
+      PropertyType::Float, impl_->twoPointFiveDDepth_, -142);
+  twoPointFiveDDepth->setDisplayLabel(QStringLiteral("2.5D Depth"));
+  twoPointFiveDDepth->setSoftRange(-1000.0, 1000.0);
+  layerGroup.addProperty(twoPointFiveDDepth);
+  auto twoPointFiveDCameraDistance = makeProp(QStringLiteral("layer.2_5d.cameraDistance"),
+      PropertyType::Float, impl_->twoPointFiveDCameraDistance_, -141);
+  twoPointFiveDCameraDistance->setDisplayLabel(QStringLiteral("2.5D Camera Distance"));
+  twoPointFiveDCameraDistance->setHardRange(1.0, 1000000.0);
+  twoPointFiveDCameraDistance->setSoftRange(100.0, 5000.0);
+  layerGroup.addProperty(twoPointFiveDCameraDistance);
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.2_5d.depthOfFieldEnabled"),
+      PropertyType::Boolean, impl_->twoPointFiveDDepthOfFieldEnabled_, -140));
+  auto twoPointFiveDFocusDepth = makeProp(QStringLiteral("layer.2_5d.focusDepth"),
+      PropertyType::Float, impl_->twoPointFiveDFocusDepth_, -139);
+  twoPointFiveDFocusDepth->setDisplayLabel(QStringLiteral("2.5D Focus Depth"));
+  twoPointFiveDFocusDepth->setSoftRange(-1000.0, 1000.0);
+  layerGroup.addProperty(twoPointFiveDFocusDepth);
+  auto twoPointFiveDFocusRange = makeProp(QStringLiteral("layer.2_5d.focusRange"),
+      PropertyType::Float, impl_->twoPointFiveDFocusRange_, -138);
+  twoPointFiveDFocusRange->setDisplayLabel(QStringLiteral("2.5D Focus Range"));
+  twoPointFiveDFocusRange->setHardRange(1.0, 1000000.0);
+  layerGroup.addProperty(twoPointFiveDFocusRange);
+  auto twoPointFiveDMaxBlur = makeProp(QStringLiteral("layer.2_5d.maxBlur"),
+      PropertyType::Float, impl_->twoPointFiveDMaxBlur_, -137);
+  twoPointFiveDMaxBlur->setDisplayLabel(QStringLiteral("2.5D Max Blur"));
+  twoPointFiveDMaxBlur->setHardRange(0.0, 64.0);
+  layerGroup.addProperty(twoPointFiveDMaxBlur);
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.2_5d.motionBlurEnabled"),
+      PropertyType::Boolean, impl_->twoPointFiveDMotionBlurEnabled_, -136));
+  auto twoPointFiveDShutter = makeProp(QStringLiteral("layer.2_5d.motionBlurShutterAngle"),
+      PropertyType::Float, impl_->twoPointFiveDMotionBlurShutterAngle_, -135);
+  twoPointFiveDShutter->setDisplayLabel(QStringLiteral("2.5D Motion Blur Shutter"));
+  twoPointFiveDShutter->setHardRange(0.0, 720.0);
+  layerGroup.addProperty(twoPointFiveDShutter);
+  auto twoPointFiveDSamples = makeProp(QStringLiteral("layer.2_5d.motionBlurSamples"),
+      PropertyType::Integer, impl_->twoPointFiveDMotionBlurSamples_, -134);
+  twoPointFiveDSamples->setDisplayLabel(QStringLiteral("2.5D Motion Blur Samples"));
+  twoPointFiveDSamples->setHardRange(2.0, 8.0);
+  layerGroup.addProperty(twoPointFiveDSamples);
 
   auto opacityProp =
       makeProp(QStringLiteral("layer.opacity"), PropertyType::Float,
@@ -8841,6 +9095,12 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       QStringLiteral("0=Flow, 1=Offset, 2=Absolute."));
   layoutModeProp->setHardRange(0.0, 2.0);
   layoutGroup.addProperty(layoutModeProp);
+  auto layoutResponsiveEnabledProp = makeProp(
+      QStringLiteral("component.layout.responsiveEnabled"), PropertyType::Boolean,
+      impl_->layoutResponsiveEnabled_, -87);
+  layoutResponsiveEnabledProp->setDisplayLabel(QStringLiteral("Responsive to Composition"));
+  layoutResponsiveEnabledProp->setTooltip(QStringLiteral("Resolve pins and scale against the composition bounds."));
+  layoutGroup.addProperty(layoutResponsiveEnabledProp);
   auto layoutAlignmentProp = makeProp(
       QStringLiteral("component.layout.anchorMode"), PropertyType::Integer,
       impl_->layoutAnchorMode_, -87);
@@ -8849,15 +9109,36 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       QStringLiteral("0=Start, 1=Center, 2=End."));
   layoutAlignmentProp->setHardRange(0.0, 2.0);
   layoutGroup.addProperty(layoutAlignmentProp);
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.horizontalPin"),
-                PropertyType::Integer, impl_->layoutHorizontalPin_, -86));
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.verticalPin"),
-                PropertyType::Integer, impl_->layoutVerticalPin_, -85));
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.scaleMode"),
-                PropertyType::Integer, impl_->layoutScaleMode_, -84));
+  auto layoutHorizontalPinProp = makeProp(QStringLiteral("component.layout.horizontalPin"),
+      PropertyType::Integer, impl_->layoutHorizontalPin_, -86);
+  layoutHorizontalPinProp->setDisplayLabel(QStringLiteral("Horizontal Pin"));
+  layoutHorizontalPinProp->setTooltip(QStringLiteral("0=Start, 1=Center, 2=End, 3=Stretch."));
+  layoutHorizontalPinProp->setHardRange(0.0, 3.0);
+  layoutGroup.addProperty(layoutHorizontalPinProp);
+  auto layoutVerticalPinProp = makeProp(QStringLiteral("component.layout.verticalPin"),
+      PropertyType::Integer, impl_->layoutVerticalPin_, -85);
+  layoutVerticalPinProp->setDisplayLabel(QStringLiteral("Vertical Pin"));
+  layoutVerticalPinProp->setTooltip(QStringLiteral("0=Start, 1=Center, 2=End, 3=Stretch."));
+  layoutVerticalPinProp->setHardRange(0.0, 3.0);
+  layoutGroup.addProperty(layoutVerticalPinProp);
+  auto layoutScaleModeProp = makeProp(QStringLiteral("component.layout.scaleMode"),
+      PropertyType::Integer, impl_->layoutScaleMode_, -84);
+  layoutScaleModeProp->setDisplayLabel(QStringLiteral("Responsive Scale"));
+  layoutScaleModeProp->setTooltip(QStringLiteral("0=Original, 1=Fit, 2=Fill, 3=Stretch."));
+  layoutScaleModeProp->setHardRange(0.0, 3.0);
+  layoutGroup.addProperty(layoutScaleModeProp);
+  auto layoutResponsiveOffsetXProp = makeProp(QStringLiteral("component.layout.responsiveOffsetX"),
+      PropertyType::Float, static_cast<double>(impl_->layoutResponsiveOffsetX_), -83);
+  layoutResponsiveOffsetXProp->setDisplayLabel(QStringLiteral("Responsive Offset X"));
+  layoutResponsiveOffsetXProp->setUnit(QStringLiteral("px"));
+  layoutResponsiveOffsetXProp->setSoftRange(-2000.0, 2000.0);
+  layoutGroup.addProperty(layoutResponsiveOffsetXProp);
+  auto layoutResponsiveOffsetYProp = makeProp(QStringLiteral("component.layout.responsiveOffsetY"),
+      PropertyType::Float, static_cast<double>(impl_->layoutResponsiveOffsetY_), -82);
+  layoutResponsiveOffsetYProp->setDisplayLabel(QStringLiteral("Responsive Offset Y"));
+  layoutResponsiveOffsetYProp->setUnit(QStringLiteral("px"));
+  layoutResponsiveOffsetYProp->setSoftRange(-2000.0, 2000.0);
+  layoutGroup.addProperty(layoutResponsiveOffsetYProp);
   layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.safeAreaEnabled"),
                 PropertyType::Boolean, impl_->layoutSafeAreaEnabled_, -83));
@@ -10137,6 +10418,46 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.is3D")) {
     setIs3D(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.enabled")) {
+    impl_->twoPointFiveDEnabled_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.depth")) {
+    impl_->twoPointFiveDDepth_ = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.cameraDistance")) {
+    impl_->twoPointFiveDCameraDistance_ = std::clamp(static_cast<float>(value.toDouble()), 1.0f, 1000000.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.depthOfFieldEnabled")) {
+    impl_->twoPointFiveDDepthOfFieldEnabled_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.focusDepth")) {
+    impl_->twoPointFiveDFocusDepth_ = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.focusRange")) {
+    impl_->twoPointFiveDFocusRange_ = std::clamp(static_cast<float>(value.toDouble()), 1.0f, 1000000.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.maxBlur")) {
+    impl_->twoPointFiveDMaxBlur_ = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 64.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.motionBlurEnabled")) {
+    impl_->twoPointFiveDMotionBlurEnabled_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.motionBlurShutterAngle")) {
+    impl_->twoPointFiveDMotionBlurShutterAngle_ = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 720.0f);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.2_5d.motionBlurSamples")) {
+    impl_->twoPointFiveDMotionBlurSamples_ = std::clamp(value.toInt(), 2, 8);
     return true;
   }
   if (propertyPath == QStringLiteral("layer.isAdjustment")) {
@@ -11830,37 +12151,65 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
       impl_->layoutComponentEnabled_ = value.toBool();
+      if (!impl_->layoutComponentEnabled_) impl_->layoutResponsiveEnabled_ = false;
       impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.mode")) {
       impl_->layoutMode_ = std::clamp(value.toInt(), 0, 2);
+      impl_->syncBuiltinComponentDescriptors();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.responsiveEnabled")) {
+      impl_->layoutResponsiveEnabled_ = value.toBool();
+      if (impl_->layoutResponsiveEnabled_) impl_->layoutComponentEnabled_ = true;
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.anchorMode")) {
       impl_->layoutAnchorMode_ = std::clamp(value.toInt(), 0, 2);
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.horizontalPin")) {
-      impl_->layoutHorizontalPin_ = value.toInt();
+      impl_->layoutHorizontalPin_ = std::clamp(value.toInt(), 0, 3);
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.verticalPin")) {
-      impl_->layoutVerticalPin_ = value.toInt();
+      impl_->layoutVerticalPin_ = std::clamp(value.toInt(), 0, 3);
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.scaleMode")) {
-      impl_->layoutScaleMode_ = value.toInt();
+      impl_->layoutScaleMode_ = std::clamp(value.toInt(), 0, 3);
+      impl_->syncBuiltinComponentDescriptors();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.responsiveOffsetX")) {
+      impl_->layoutResponsiveOffsetX_ = static_cast<float>(finiteClampedValue(
+          value.toDouble(), impl_->layoutResponsiveOffsetX_, -100000.0, 100000.0));
+      impl_->syncBuiltinComponentDescriptors();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.responsiveOffsetY")) {
+      impl_->layoutResponsiveOffsetY_ = static_cast<float>(finiteClampedValue(
+          value.toDouble(), impl_->layoutResponsiveOffsetY_, -100000.0, 100000.0));
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.safeAreaEnabled")) {
       impl_->layoutSafeAreaEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
@@ -11868,6 +12217,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->layoutSafeAreaPaddingX_ = finiteClampedValue(
           value.toDouble(), impl_->layoutSafeAreaPaddingX_, -100000.0,
           100000.0);
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
@@ -11875,6 +12225,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->layoutSafeAreaPaddingY_ = finiteClampedValue(
           value.toDouble(), impl_->layoutSafeAreaPaddingY_, -100000.0,
           100000.0);
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
@@ -12503,8 +12854,8 @@ void ArtifactAbstractLayer::setOpacity(float value) {
   }
 
   bool changed = false;
-  if (auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));
-      it != impl_->propertyCache_.end() && it.value()) {
+  const auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));
+  if (it != impl_->propertyCache_.end() && it.value()) {
     auto& prop = *it.value();
     if (prop.isAnimatable() && !prop.getKeyFrames().empty()) {
         const RationalTime time = currentTimelineTime(this);

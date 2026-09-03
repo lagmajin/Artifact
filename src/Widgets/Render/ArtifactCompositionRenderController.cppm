@@ -60,6 +60,7 @@ module;
 
 #include <QStringList>
 #include <QString>
+#include <QTextDocument>
 #include <QUuid>
 
 #include <QTimer>
@@ -301,6 +302,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 
 import Undo.UndoManager;
+import Utils.String.UniString;
 import Configuration.LayeredConfigStore;
 import Configuration.ConfigLayer;
 
@@ -3031,7 +3033,7 @@ enum class LayerDragMode { None, Move, ScaleTL, ScaleTR, ScaleBL, ScaleBR };
 
 
 
-enum class RectangleToolMode { None, Mask, Shape, EllipseMask, EllipseShape };
+enum class RectangleToolMode { None, Mask, Shape, EllipseMask, EllipseShape, StarShape, PolygonShape, TriangleShape };
 
 
 
@@ -11243,6 +11245,16 @@ public:
   QRectF projectedFrameWidthBadgeRect_;
   QRectF projectedFrameHeightBadgeRect_;
   bool projectedFrameSizeBadgesVisible_ = false;
+
+  // In-viewport text editing session (quick edit).
+  bool textEditSessionActive_ = false;
+  LayerID textEditSessionLayerId_;
+  QString textEditSessionStartText_;
+  QString textEditSessionEditText_;
+  int textEditCursorPos_ = 0;
+  int textEditSelectionAnchor_ = 0;
+  QString textEditPreeditText_;
+  bool textEditCaretVisible_ = true;
 
   TransformGizmo::HandleType projectedFrameHoverHandle_ =
       TransformGizmo::HandleType::None;
@@ -21654,6 +21666,512 @@ int CompositionRenderController::beginFrameSizeBadgeInput(
   return dimension;
 }
 
+namespace {
+
+std::vector<int> buildTextCodepointUtf16Offsets(const QString &text) {
+  std::vector<int> offsets;
+  offsets.reserve(static_cast<size_t>(text.size()) + 1);
+  offsets.push_back(0);
+  for (int i = 0; i < text.size();) {
+    const QChar ch = text.at(i);
+    const int unitLength =
+        (ch.isHighSurrogate() && i + 1 < text.size() &&
+         text.at(i + 1).isLowSurrogate())
+            ? 2
+            : 1;
+    i += unitLength;
+    offsets.push_back(i);
+  }
+  return offsets;
+}
+
+int textCodepointCountOf(const QString &text) {
+  return static_cast<int>(buildTextCodepointUtf16Offsets(text).size()) - 1;
+}
+
+int textCodepointIndexForUtf16Pos(const QString &text, int utf16Pos) {
+  int cpIndex = 0;
+  int i = 0;
+  utf16Pos = std::clamp(utf16Pos, 0, text.size());
+  while (i < utf16Pos) {
+    const QChar ch = text.at(i);
+    i += (ch.isHighSurrogate() && i + 1 < text.size() &&
+          text.at(i + 1).isLowSurrogate())
+             ? 2
+             : 1;
+    ++cpIndex;
+  }
+  return cpIndex;
+}
+
+struct TextSessionCaretGeometry {
+  bool valid = false;
+  bool vertical = false;
+  float flowPos = 0.0f;
+  float crossStart = 0.0f;
+  float crossEnd = 0.0f;
+};
+
+TextSessionCaretGeometry textSessionCaretGeometryForCp(
+    const std::vector<ArtifactCore::GlyphItem> &glyphs, int cpIndex,
+    bool vertical) {
+  TextSessionCaretGeometry geometry;
+  geometry.vertical = vertical;
+  if (glyphs.empty()) {
+    return geometry;
+  }
+  const ArtifactCore::GlyphItem *caretBefore = nullptr;
+  const ArtifactCore::GlyphItem *caretAfter = nullptr;
+  for (const auto &glyph : glyphs) {
+    if (!caretBefore && glyph.index >= cpIndex) {
+      caretBefore = &glyph;
+    }
+    if (glyph.index < cpIndex) {
+      caretAfter = &glyph;
+    }
+  }
+  const ArtifactCore::GlyphItem *anchorGlyph = nullptr;
+  bool after = false;
+  if (caretBefore && caretBefore->index == cpIndex) {
+    anchorGlyph = caretBefore;
+  } else if (caretAfter) {
+    anchorGlyph = caretAfter;
+    after = true;
+  } else if (caretBefore) {
+    anchorGlyph = caretBefore;
+  }
+  if (!anchorGlyph) {
+    return geometry;
+  }
+  geometry.valid = true;
+  const QRectF &bounds = anchorGlyph->bounds;
+  if (vertical) {
+    geometry.flowPos = static_cast<float>(after ? bounds.bottom()
+                                                : bounds.top());
+    geometry.crossStart = static_cast<float>(bounds.left());
+    geometry.crossEnd = static_cast<float>(bounds.right());
+  } else {
+    geometry.flowPos = static_cast<float>(after ? bounds.right()
+                                                : bounds.left());
+    geometry.crossStart = static_cast<float>(bounds.top());
+    geometry.crossEnd = static_cast<float>(bounds.bottom());
+  }
+  return geometry;
+}
+
+int textSessionCaretPositionForLocalPoint(
+    const std::vector<ArtifactCore::GlyphItem> &glyphs, const QString &text,
+    const QPointF &localPoint, bool vertical) {
+  if (glyphs.empty()) {
+    return text.size();
+  }
+  const auto cpOffsets = buildTextCodepointUtf16Offsets(text);
+  const int cpCount = static_cast<int>(cpOffsets.size()) - 1;
+  const auto utf16ForCp = [&](int cp) {
+    cp = std::clamp(cp, 0, cpCount);
+    return cpOffsets[static_cast<size_t>(cp)];
+  };
+
+  std::map<int, QRectF> lineBoxes;
+  for (const auto &glyph : glyphs) {
+    auto &box = lineBoxes[glyph.lineIndex];
+    box = box.isNull() ? glyph.bounds : box.united(glyph.bounds);
+  }
+  const float lineCoord = static_cast<float>(vertical ? localPoint.x()
+                                                      : localPoint.y());
+  int targetLine = -1;
+  float bestLineDistance = std::numeric_limits<float>::max();
+  for (const auto &[lineIndex, box] : lineBoxes) {
+    const float lineStart =
+        static_cast<float>(vertical ? box.left() : box.top());
+    const float lineEnd =
+        static_cast<float>(vertical ? box.right() : box.bottom());
+    const float distance = lineCoord < lineStart
+                               ? lineStart - lineCoord
+                               : (lineCoord > lineEnd ? lineCoord - lineEnd
+                                                      : 0.0f);
+    if (distance < bestLineDistance) {
+      bestLineDistance = distance;
+      targetLine = lineIndex;
+    }
+  }
+
+  const float flow = static_cast<float>(vertical ? localPoint.y()
+                                                 : localPoint.x());
+  bool haveBest = false;
+  int bestCp = 0;
+  float bestFlowDistance = std::numeric_limits<float>::max();
+  for (const auto &glyph : glyphs) {
+    if (targetLine >= 0 && glyph.lineIndex != targetLine) {
+      continue;
+    }
+    const float glyphStart =
+        static_cast<float>(vertical ? glyph.bounds.top()
+                                    : glyph.bounds.left());
+    const float glyphEnd = static_cast<float>(vertical
+                                                  ? glyph.bounds.bottom()
+                                                  : glyph.bounds.right());
+    const int startCp = glyph.index;
+    const int endCp = startCp + textCodepointCountOf(glyph.clusterText);
+    const auto consider = [&](int cp, float pos) {
+      const float distance = std::abs(pos - flow);
+      if (!haveBest || distance < bestFlowDistance) {
+        haveBest = true;
+        bestCp = cp;
+        bestFlowDistance = distance;
+      }
+    };
+    consider(startCp, glyphStart);
+    consider(endCp, glyphEnd);
+  }
+  return haveBest ? utf16ForCp(bestCp) : text.size();
+}
+
+qint64 textSessionFrame(const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer) {
+  if (!layer) {
+    return 0;
+  }
+  if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+          layer->composition())) {
+    return composition->framePosition().framePosition();
+  }
+  return 0;
+}
+
+QString textSessionValue(
+    const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer) {
+  if (!layer) {
+    return {};
+  }
+  return layer->hasSourceTextKeyframes()
+             ? layer->sourceTextAtFrame(textSessionFrame(layer))
+             : layer->text().toQString();
+}
+
+bool commitTextSessionValue(
+    const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer,
+    const QString &beforeText, const QString &nextText) {
+  if (!layer || beforeText == nextText) {
+    return false;
+  }
+  if (layer->hasSourceTextKeyframes()) {
+    const auto property = layer->getProperty(QStringLiteral("text.value"));
+    if (!property) {
+      return false;
+    }
+    const auto beforeKeyframes = property->getKeyFrames();
+    auto afterKeyframes = beforeKeyframes;
+    const qint64 frame = textSessionFrame(layer);
+    auto *composition = static_cast<ArtifactAbstractComposition *>(
+        layer->composition());
+    const double rate = composition ? composition->frameRate().framerate()
+                                    : 30.0;
+    const int fps = std::max(1, static_cast<int>(std::llround(
+                                    std::isfinite(rate) && rate > 0.0
+                                        ? rate
+                                        : 30.0)));
+    ArtifactCore::KeyFrame editedKeyframe;
+    editedKeyframe.time = RationalTime(frame, fps);
+    editedKeyframe.value = nextText;
+    editedKeyframe.interpolation = ArtifactCore::InterpolationType::Constant;
+    const auto existing = std::find_if(
+        afterKeyframes.begin(), afterKeyframes.end(),
+        [&editedKeyframe](const ArtifactCore::KeyFrame &keyframe) {
+          return keyframe.time == editedKeyframe.time;
+        });
+    if (existing != afterKeyframes.end()) {
+      *existing = editedKeyframe;
+    } else {
+      afterKeyframes.push_back(editedKeyframe);
+    }
+    if (auto *manager = UndoManager::instance()) {
+      return manager->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+          layer, QStringLiteral("text.value"), beforeKeyframes,
+          afterKeyframes, QStringLiteral("Edit Source Text")));
+    }
+    layer->setSourceTextAtFrame(frame, nextText);
+    return layer->sourceTextAtFrame(frame) == nextText;
+  }
+  if (auto *manager = UndoManager::instance()) {
+    return manager->push(std::make_unique<SetTextLayerTextCommand>(
+        layer, beforeText, nextText, QStringLiteral("Edit Text")));
+  }
+  return layer->setLayerPropertyValue(QStringLiteral("text.value"),
+                                      nextText);
+}
+
+void drawTextSessionOverlay(
+    ArtifactIRenderer &renderer,
+    const ArtifactCore::SharedPtr<ArtifactTextLayer> &textLayer,
+    const QString &editText, int cursorPos, int selectionAnchor,
+    const QString &preeditText, bool caretVisible) {
+  const auto glyphGeometry = textLayer->textGlyphGeometry();
+  if (glyphGeometry.glyphs.empty()) {
+    return;
+  }
+  const QTransform transform = textLayer->getGlobalTransform();
+  const QPointF &origin = glyphGeometry.drawOrigin;
+  const bool vertical =
+      textLayer->writingMode() == TextWritingMode::Vertical;
+  const float zoom = renderer.getZoom();
+  const float invZoom =
+      std::isfinite(zoom) && zoom > 0.0001f ? 1.0f / zoom : 1.0f;
+
+  const auto drawGlyphRangeQuads = [&](int utf16Start, int utf16End,
+                                       const FloatColor &color,
+                                       float heightFraction) {
+    if (utf16End <= utf16Start) {
+      return;
+    }
+    const int cpStart = textCodepointIndexForUtf16Pos(editText, utf16Start);
+    const int cpEnd = textCodepointIndexForUtf16Pos(editText, utf16End);
+    std::map<int, QRectF> ranges;
+    for (const auto &glyph : glyphGeometry.glyphs) {
+      const int glyphEndCp =
+          glyph.index + textCodepointCountOf(glyph.clusterText);
+      if (glyphEndCp <= cpStart || glyph.index >= cpEnd) {
+        continue;
+      }
+      auto &box = ranges[glyph.lineIndex];
+      box = box.isNull() ? glyph.bounds : box.united(glyph.bounds);
+    }
+    for (const auto &[lineIndex, box] : ranges) {
+      QRectF quad = box;
+      if (heightFraction < 1.0f) {
+        const qreal keepHeight = quad.height() * heightFraction;
+        quad.setTop(quad.bottom() - keepHeight);
+      }
+      renderer.drawSolidRectTransformed(
+          static_cast<float>(quad.left() + origin.x()),
+          static_cast<float>(quad.top() + origin.y()),
+          static_cast<float>(quad.width()),
+          static_cast<float>(quad.height()), transform, color);
+    }
+  };
+
+  const int selectionStart = std::min(selectionAnchor, cursorPos);
+  const int selectionEnd = std::max(selectionAnchor, cursorPos);
+  if (selectionEnd > selectionStart) {
+    drawGlyphRangeQuads(selectionStart, selectionEnd,
+                        FloatColor{0.30f, 0.55f, 1.0f, 0.32f}, 1.0f);
+  }
+  if (!preeditText.isEmpty()) {
+    drawGlyphRangeQuads(std::max(0, cursorPos - preeditText.size()),
+                        cursorPos, FloatColor{1.0f, 0.85f, 0.30f, 0.45f},
+                        0.22f);
+  }
+  if (!caretVisible) {
+    return;
+  }
+  const int caretCp = textCodepointIndexForUtf16Pos(editText, cursorPos);
+  const auto caret = textSessionCaretGeometryForCp(
+      glyphGeometry.glyphs, caretCp, vertical);
+  if (!caret.valid) {
+    return;
+  }
+  const float caretThickness = std::max(1.2f, 1.6f * invZoom);
+  if (!caret.vertical) {
+    const QPointF topPoint = transform.map(
+        QPointF(caret.flowPos + origin.x(), caret.crossStart + origin.y()));
+    const QPointF bottomPoint = transform.map(
+        QPointF(caret.flowPos + origin.x(), caret.crossEnd + origin.y()));
+    renderer.drawSolidLine(
+        {static_cast<float>(topPoint.x()) + 0.8f,
+         static_cast<float>(topPoint.y()) + 0.8f},
+        {static_cast<float>(bottomPoint.x()) + 0.8f,
+         static_cast<float>(bottomPoint.y()) + 0.8f},
+        FloatColor{0.0f, 0.0f, 0.0f, 0.60f}, caretThickness);
+    renderer.drawSolidLine(
+        {static_cast<float>(topPoint.x()),
+         static_cast<float>(topPoint.y())},
+        {static_cast<float>(bottomPoint.x()),
+         static_cast<float>(bottomPoint.y())},
+        FloatColor{0.95f, 0.98f, 1.0f, 1.0f}, caretThickness);
+  } else {
+    const QPointF leftPoint = transform.map(
+        QPointF(caret.crossStart + origin.x(), caret.flowPos + origin.y()));
+    const QPointF rightPoint = transform.map(
+        QPointF(caret.crossEnd + origin.x(), caret.flowPos + origin.y()));
+    renderer.drawSolidLine(
+        {static_cast<float>(leftPoint.x()),
+         static_cast<float>(leftPoint.y())},
+        {static_cast<float>(rightPoint.x()),
+         static_cast<float>(rightPoint.y())},
+        FloatColor{0.95f, 0.98f, 1.0f, 1.0f}, caretThickness);
+  }
+}
+
+} // namespace
+
+bool CompositionRenderController::startTextEditSession(
+    const ArtifactAbstractLayerPtr &layer) {
+  if (!impl_ || !layer) {
+    return false;
+  }
+  const auto textLayer =
+      ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
+  if (!textLayer) {
+    return false;
+  }
+  if (impl_->textEditSessionActive_) {
+    finishTextEditSession(false);
+  }
+  const QString sessionText = textSessionValue(textLayer);
+  if (Qt::mightBeRichText(sessionText) ||
+      textLayer->layoutMode() == TextLayoutMode::Path ||
+      textLayer->textGlyphGeometry().glyphs.empty()) {
+    return false;
+  }
+  impl_->textEditSessionActive_ = true;
+  impl_->textEditSessionLayerId_ = layer->id();
+  impl_->textEditSessionStartText_ = sessionText;
+  impl_->textEditSessionEditText_ = sessionText;
+  impl_->textEditCursorPos_ = sessionText.length();
+  impl_->textEditSelectionAnchor_ = sessionText.length();
+  impl_->textEditPreeditText_.clear();
+  impl_->textEditCaretVisible_ = true;
+  if (impl_->textGizmo_) {
+    impl_->textGizmo_->setEditSessionActive(true);
+  }
+  setInfoOverlayText(
+      QStringLiteral("Text Edit"),
+      QStringLiteral("Type to edit — Ctrl+Enter commit, Esc cancel"));
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::finishTextEditSession(
+    bool discardChanges) {
+  if (!impl_ || !impl_->textEditSessionActive_) {
+    return;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  const auto layer = comp ? comp->layerById(impl_->textEditSessionLayerId_)
+                          : ArtifactAbstractLayerPtr{};
+  const auto textLayer =
+      ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
+  const QString startText = impl_->textEditSessionStartText_;
+  const QString editText = impl_->textEditSessionEditText_;
+  impl_->textEditSessionActive_ = false;
+  impl_->textEditSessionLayerId_ = LayerID{};
+  impl_->textEditCursorPos_ = 0;
+  impl_->textEditSelectionAnchor_ = 0;
+  impl_->textEditPreeditText_.clear();
+  impl_->textEditCaretVisible_ = true;
+  if (impl_->textGizmo_) {
+    impl_->textGizmo_->setEditSessionActive(false);
+  }
+  if (!textLayer) {
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
+  }
+  if (discardChanges) {
+    textLayer->setText(UniString(startText));
+    textLayer->setDirty();
+    textLayer->updateImage();
+    textLayer->changed();
+  } else if (commitTextSessionValue(textLayer, startText, editText)) {
+    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+            textLayer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{composition->id().toString(),
+                            textLayer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+  }
+  setInfoOverlayText(QString(), QString());
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isTextEditSessionActive() const {
+  return impl_ && impl_->textEditSessionActive_;
+}
+
+ArtifactAbstractLayerPtr CompositionRenderController::textEditSessionLayer()
+    const {
+  if (!impl_ || !impl_->textEditSessionActive_) {
+    return {};
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  return comp ? comp->layerById(impl_->textEditSessionLayerId_)
+              : ArtifactAbstractLayerPtr{};
+}
+
+QString CompositionRenderController::textEditSessionText() const {
+  return impl_ ? impl_->textEditSessionEditText_ : QString();
+}
+
+void CompositionRenderController::textSessionSyncFromEditor(
+    const QString &text, int cursorPos, int selectionAnchor,
+    const QString &preedit) {
+  if (!impl_ || !impl_->textEditSessionActive_) {
+    return;
+  }
+  impl_->textEditSessionEditText_ = text;
+  impl_->textEditCursorPos_ = cursorPos;
+  impl_->textEditSelectionAnchor_ = selectionAnchor;
+  impl_->textEditPreeditText_ = preedit;
+  impl_->textEditCaretVisible_ = true;
+  auto comp = impl_->previewPipeline_.composition();
+  const auto textLayer = comp
+      ? ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
+            comp->layerById(impl_->textEditSessionLayerId_))
+      : nullptr;
+  if (textLayer) {
+    textLayer->setText(UniString(text));
+    textLayer->setDirty();
+    textLayer->updateImage();
+    textLayer->changed();
+  }
+  markRenderDirty();
+}
+
+void CompositionRenderController::textSessionToggleCaretBlink() {
+  if (!impl_ || !impl_->textEditSessionActive_) {
+    return;
+  }
+  impl_->textEditCaretVisible_ = !impl_->textEditCaretVisible_;
+  markRenderDirty();
+}
+
+int CompositionRenderController::textSessionCaretPositionAt(
+    const QPointF &viewportPos) const {
+  if (!impl_ || !impl_->textEditSessionActive_ || !impl_->renderer_) {
+    return -1;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  const auto textLayer = comp
+      ? ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
+            comp->layerById(impl_->textEditSessionLayerId_))
+      : nullptr;
+  if (!textLayer) {
+    return -1;
+  }
+  const auto glyphGeometry = textLayer->textGlyphGeometry();
+  if (glyphGeometry.glyphs.empty()) {
+    return -1;
+  }
+  const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
+  const auto canvasPoint = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(physicalPos.x()),
+       static_cast<float>(physicalPos.y())});
+  bool invertible = false;
+  const QTransform inverse =
+      textLayer->getGlobalTransform().inverted(&invertible);
+  if (!invertible) {
+    return -1;
+  }
+  const QPointF localPoint =
+      inverse.map(QPointF(canvasPoint.x, canvasPoint.y)) -
+      glyphGeometry.drawOrigin;
+  return textSessionCaretPositionForLocalPoint(
+      glyphGeometry.glyphs, impl_->textEditSessionEditText_, localPoint,
+      textLayer->writingMode() == TextWritingMode::Vertical);
+}
+
 bool CompositionRenderController::constrainModalGizmoInteraction(
     int axis, const QPointF &viewportPos) {
   if (!impl_ || !impl_->gizmoModalTransformActive_ || !impl_->gizmo3D_ ||
@@ -22332,8 +22850,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     }
   }
 
-if (event->button() == Qt::LeftButton &&
-    (activeTool == ToolType::Rectangle || activeTool == ToolType::Ellipse)) {
+  if (event->button() == Qt::LeftButton &&
+      (activeTool == ToolType::Rectangle || activeTool == ToolType::Ellipse ||
+       activeTool == ToolType::Shape)) {
 
     auto *selectionManager = ArtifactApplicationManager::instance()
 
@@ -22367,9 +22886,11 @@ if (event->button() == Qt::LeftButton &&
 
       setViewportOrientation(ArtifactCore::ViewOrientationHotspot::Front);
 
-      impl_->beginRectangleToolSession(activeTool == ToolType::Ellipse
-                                           ? RectangleToolMode::EllipseMask
-                                           : RectangleToolMode::Mask,
+      RectangleToolMode maskMode = RectangleToolMode::Mask;
+      if (activeTool == ToolType::Ellipse) {
+        maskMode = RectangleToolMode::EllipseMask;
+      }
+      impl_->beginRectangleToolSession(maskMode,
 
                                        effectiveSelectedLayer,
 
@@ -22379,9 +22900,11 @@ if (event->button() == Qt::LeftButton &&
 
     } else {
 
-      impl_->beginRectangleToolSession(activeTool == ToolType::Ellipse
-                                           ? RectangleToolMode::EllipseShape
-                                           : RectangleToolMode::Shape,
+      RectangleToolMode shapeMode = RectangleToolMode::Shape;
+      if (activeTool == ToolType::Ellipse) {
+        shapeMode = RectangleToolMode::EllipseShape;
+      }
+      impl_->beginRectangleToolSession(shapeMode,
 
                                        ArtifactAbstractLayerPtr{},
 
@@ -27275,16 +27798,24 @@ void CompositionRenderController::handleMouseRelease() {
       }
 
     } else if ((impl_->rectangleToolMode_ == RectangleToolMode::Shape ||
-                impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape) &&
+                impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape ||
+                impl_->rectangleToolMode_ == RectangleToolMode::StarShape ||
+                impl_->rectangleToolMode_ == RectangleToolMode::PolygonShape ||
+                impl_->rectangleToolMode_ == RectangleToolMode::TriangleShape) &&
 
                meaningfulRect && comp) {
 
-      const QString layerName =
-
-          uniqueLayerNameForCurrentComposition(
-              impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape
-                  ? QStringLiteral("Ellipse")
-                  : QStringLiteral("Rectangle"));
+      QString baseName = QStringLiteral("Rectangle");
+      if (impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape) {
+        baseName = QStringLiteral("Ellipse");
+      } else if (impl_->rectangleToolMode_ == RectangleToolMode::StarShape) {
+        baseName = QStringLiteral("Star");
+      } else if (impl_->rectangleToolMode_ == RectangleToolMode::PolygonShape) {
+        baseName = QStringLiteral("Polygon");
+      } else if (impl_->rectangleToolMode_ == RectangleToolMode::TriangleShape) {
+        baseName = QStringLiteral("Triangle");
+      }
+      const QString layerName = uniqueLayerNameForCurrentComposition(baseName);
 
       if (auto *service = ArtifactProjectService::instance()) {
 
@@ -27326,6 +27857,12 @@ void CompositionRenderController::handleMouseRelease() {
 
             if (impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape) {
               shapeLayer->setShapeType(ShapeType::Ellipse);
+            } else if (impl_->rectangleToolMode_ == RectangleToolMode::StarShape) {
+              shapeLayer->setShapeType(ShapeType::Star);
+            } else if (impl_->rectangleToolMode_ == RectangleToolMode::PolygonShape) {
+              shapeLayer->setShapeType(ShapeType::Polygon);
+            } else if (impl_->rectangleToolMode_ == RectangleToolMode::TriangleShape) {
+              shapeLayer->setShapeType(ShapeType::Triangle);
             }
 
             shapeLayer->setSize(
@@ -30213,7 +30750,7 @@ void CompositionRenderController::trackerApplyToPosition() {
 
 
   const bool applied = Artifact::ArtifactPointTrackerTool::applyTrackingResult(
-      comp.get(), *impl_->trackerMotionTracker_, opts, targetLayer);
+      comp, *impl_->trackerMotionTracker_, opts, targetLayer);
   if (applied && !targetLayer && !comp->allLayerRef().empty()) {
     const auto createdLayer = comp->allLayerRef().back();
     if (createdLayer) {
@@ -30267,7 +30804,7 @@ void CompositionRenderController::trackerApplyToAnchor() {
 
 
   const bool applied = Artifact::ArtifactPointTrackerTool::applyTrackingResult(
-      comp.get(), *impl_->trackerMotionTracker_, opts, targetLayer);
+      comp, *impl_->trackerMotionTracker_, opts, targetLayer);
 
   setInfoOverlayText(
       QStringLiteral("TrackPoint • Apply Anchor"),
@@ -30289,7 +30826,7 @@ void CompositionRenderController::trackerApplyAllPoints() {
   opts.createNullLayer = true;
   opts.applyToSelectedLayer = false;
   const int applied = Artifact::ArtifactPointTrackerTool::applyAllTrackingPoints(
-      comp.get(), *impl_->trackerMotionTracker_, opts);
+      comp, *impl_->trackerMotionTracker_, opts);
   setInfoOverlayText(
       QStringLiteral("TrackPoint • Apply All"),
       applied > 0
@@ -40145,7 +40682,10 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
 
       const bool shapePreview =
           rectangleToolMode_ == RectangleToolMode::Shape ||
-          rectangleToolMode_ == RectangleToolMode::EllipseShape;
+          rectangleToolMode_ == RectangleToolMode::EllipseShape ||
+          rectangleToolMode_ == RectangleToolMode::StarShape ||
+          rectangleToolMode_ == RectangleToolMode::PolygonShape ||
+          rectangleToolMode_ == RectangleToolMode::TriangleShape;
       if (shapePreview && rectangleToolRoundness_ > 0.0f) {
         renderer_->drawRoundedPanel(
             static_cast<float>(rect.left()), static_cast<float>(rect.top()),
@@ -40159,17 +40699,27 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
                                  1.0f);
         drawRectOutline(renderer_.get(), rect, outlineColor, 1.6f);
       }
-      const bool ellipsePreview =
-          rectangleToolMode_ == RectangleToolMode::EllipseMask ||
-          rectangleToolMode_ == RectangleToolMode::EllipseShape;
-      const QString sizeLabel = ellipsePreview
-          ? QStringLiteral("Ellipse  %1 x %2")
-                .arg(QString::number(rect.width(), 'f', 1),
-                     QString::number(rect.height(), 'f', 1))
-          : QStringLiteral("%1 x %2  R %3")
+      QString shapeTypeName = QStringLiteral("Rectangle");
+      if (rectangleToolMode_ == RectangleToolMode::EllipseMask ||
+          rectangleToolMode_ == RectangleToolMode::EllipseShape) {
+        shapeTypeName = QStringLiteral("Ellipse");
+      } else if (rectangleToolMode_ == RectangleToolMode::StarShape) {
+        shapeTypeName = QStringLiteral("Star");
+      } else if (rectangleToolMode_ == RectangleToolMode::PolygonShape) {
+        shapeTypeName = QStringLiteral("Polygon");
+      } else if (rectangleToolMode_ == RectangleToolMode::TriangleShape) {
+        shapeTypeName = QStringLiteral("Triangle");
+      }
+
+      const QString sizeLabel = (rectangleToolRoundness_ > 0.0f && rectangleToolMode_ == RectangleToolMode::Shape)
+          ? QStringLiteral("%1 x %2  R %3")
                 .arg(QString::number(rect.width(), 'f', 1),
                      QString::number(rect.height(), 'f', 1),
-                     QString::number(rectangleToolRoundness_, 'f', 1));
+                     QString::number(rectangleToolRoundness_, 'f', 1))
+          : QStringLiteral("%1  %2 x %3")
+                .arg(shapeTypeName,
+                     QString::number(rect.width(), 'f', 1),
+                     QString::number(rect.height(), 'f', 1));
       const QFont sizeFont(QStringLiteral("sans-serif"), 9);
       const float labelX = static_cast<float>(rect.left());
       const float labelY = static_cast<float>(rect.top()) - 18.0f;
@@ -40461,6 +41011,17 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
               "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
 
           textGizmo_->draw(renderer_.get());
+
+          if (textEditSessionActive_ &&
+              selectedLayer->id() == textEditSessionLayerId_) {
+            if (auto textSessionLayer = ArtifactCore::dynamicPointerCast<
+                    ArtifactTextLayer>(selectedLayer)) {
+              drawTextSessionOverlay(
+                  *renderer_, textSessionLayer, textEditSessionEditText_,
+                  textEditCursorPos_, textEditSelectionAnchor_,
+                  textEditPreeditText_, textEditCaretVisible_);
+            }
+          }
 
         } else if (gizmo_) {
 

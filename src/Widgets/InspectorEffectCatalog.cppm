@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <QString>
 
 module Artifact.Widgets.InspectorEffectCatalog;
 

@@ -62,6 +62,7 @@ import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Geometry.ResolutionRemap;
 import Image.ImageF32x4_RGBA;
+import Color.Float;
 import Audio.Modulation.Router;
 
 export namespace Artifact {

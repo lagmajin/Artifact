@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QBoxLayout>
 
 
@@ -41,7 +41,7 @@ module Artifact.Widgets.LayerEditorPanel;
 
 
 import Artifact.Widgets.CompositionFooter;
-import Artifact.Widgets.RenderLayerWidgetv2;
+import Artifact.Widgets.LayerEditorWidget;
 import Artifact.Service.Playback;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -52,7 +52,7 @@ namespace Artifact {
  private:
 
  public:
-  ArtifactLayerEditorWidgetV2* editor_ = nullptr;
+  ArtifactLayerEditorWidget* editor_ = nullptr;
   ArtifactCompositionViewerFooter* footer_ = nullptr;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -63,11 +63,11 @@ namespace Artifact {
 
  ArtifactLayerEditorPanel::Impl::Impl()
  {
-  editor_ = new ArtifactLayerEditorWidgetV2();
+  editor_ = new ArtifactLayerEditorWidget();
   
   footer_ = new ArtifactCompositionViewerFooter();
 
-  QObject::connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditorWidgetV2::takeScreenShot);
+  QObject::connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditorWidget::takeScreenShot);
   if (auto* playback = ArtifactPlaybackService::instance()) {
     eventBusSubscriptions_.push_back(
         eventBus_.subscribe<PlaybackRamPreviewStatsChangedEvent>(

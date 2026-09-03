@@ -33,6 +33,8 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
+#include <QPointF>
+#include <QRectF>
 export module Artifact.Layer.Text;
 
 
@@ -57,6 +59,15 @@ enum class TextLayoutMode : int {
     Point = 0,
     Box = 1,
     Path = 2
+};
+
+// Snapshot of the shaped glyph layout in layer-local (source image) space.
+// Populated by the latest glyph evaluation; empty when the layer renders via
+// the rich text path or has not been evaluated yet.
+struct TextGlyphGeometrySnapshot {
+    std::vector<ArtifactCore::GlyphItem> glyphs;
+    QPointF drawOrigin;
+    QRectF contentRect;
 };
 
 class ArtifactTextLayer : public ArtifactAbstract2DLayer {
@@ -190,6 +201,7 @@ public:
     QVector<float> selectorWeightPreview(int sampleCount = 24) const;
     QVector<float> selectorClusterBoundaryPreview() const;
     QVector<float> selectorLineBoundaryPreview() const;
+    TextGlyphGeometrySnapshot textGlyphGeometry() const;
     QString selectorDebugSummary() const;
     QString selectorBoundarySummary() const;
     QString selectorOverviewSummary() const;

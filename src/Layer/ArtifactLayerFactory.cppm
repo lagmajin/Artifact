@@ -589,7 +589,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
               if (result.success && result.layer) {
                   if (auto modelLayer = dynamic_cast<Artifact3DLayer*>(result.layer.get())) {
                       if (json.contains("renderMode")) {
-                          modelLayer->setRenderMode(static_cast<RenderMode>(json.value("renderMode").toInt()));
+                          modelLayer->setRenderMode(static_cast<ModelRenderMode>(json.value("renderMode").toInt()));
                       }
                   }
                   result.layer->fromJsonProperties(json);
@@ -608,7 +608,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           if (result.success && result.layer) {
               if (auto modelLayer = dynamic_cast<Artifact3DLayer*>(result.layer.get())) {
                   if (json.contains("renderMode")) {
-                      modelLayer->setRenderMode(static_cast<RenderMode>(json.value("renderMode").toInt()));
+                      modelLayer->setRenderMode(static_cast<ModelRenderMode>(json.value("renderMode").toInt()));
                   }
               }
               result.layer->fromJsonProperties(json);
@@ -650,6 +650,5 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
   }
 
 }
-
 
 

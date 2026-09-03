@@ -237,6 +237,19 @@ CompositionItem* findCompositionItemInTree(
   return nullptr;
 }
 
+ProjectItem* findProjectItemInTreeForUndo(
+    const QVector<ProjectItem*>& items, const QString& id)
+{
+  for (auto* item : items) {
+    if (!item) continue;
+    if (item->id.toString() == id) return item;
+    if (auto* nested = findProjectItemInTreeForUndo(item->children, id)) {
+      return nested;
+    }
+  }
+  return nullptr;
+}
+
 bool projectItemTreeContainsComposition(const ProjectItem* item) {
   if (!item) {
     return false;
@@ -6065,6 +6078,41 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
      if (composition) {
       for (const auto& layer : composition->allLayerRef()) {
        if (!layer) continue;
+       if (!resolvedSequencePaths.isEmpty()) {
+        if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer.get())) {
+         const QStringList existingSequencePaths =
+             imageLayer->sequenceFramePaths();
+         if (!existingSequencePaths.isEmpty()) {
+          QStringList relinkedSequencePaths;
+          relinkedSequencePaths.reserve(existingSequencePaths.size());
+          bool sequenceMatchesFootage = true;
+          for (const QString& existingPath : existingSequencePaths) {
+           const QString normalizedExisting = normalizeRelinkPath(existingPath);
+           int matchedIndex = -1;
+           for (int index = 0; index < oldSequencePaths.size(); ++index) {
+            if (normalizeRelinkPath(oldSequencePaths.at(index)) ==
+                normalizedExisting) {
+             matchedIndex = index;
+             break;
+            }
+           }
+           if (matchedIndex < 0 || matchedIndex >= resolvedSequencePaths.size()) {
+            sequenceMatchesFootage = false;
+            break;
+           }
+           relinkedSequencePaths.append(resolvedSequencePaths.at(matchedIndex));
+          }
+          if (sequenceMatchesFootage) {
+           if (imageLayer->setImageSequence(
+                   relinkedSequencePaths, imageLayer->sequenceFrameRate())) {
+            imageLayer->setDirty(LayerDirtyFlag::Property);
+            imageLayer->changed();
+            continue;
+           }
+          }
+         }
+        }
+       }
        const QJsonObject layerJson = layer->toJson();
        for (const QString& property : sourceProperties) {
         const QString currentPath = layerJson.value(property).toString();
@@ -6198,6 +6246,8 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
     int score = 0;
     bool identityMatch = false;
     QStringList reasons;
+    int sequenceExpectedFrames = 0;
+    int sequenceFoundFrames = 0;
     if (candidateInfo.fileName().compare(oldName, Qt::CaseInsensitive) == 0) {
       score += 100;
       identityMatch = true;
@@ -6231,7 +6281,7 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
 
         if (oldFootage && oldFootage->isSequence &&
             oldFootage->sequencePaths.size() > 1) {
-          bool complete = true;
+          sequenceExpectedFrames = oldFootage->sequencePaths.size();
           const QString prefix = candidateSequenceMatch.captured(1);
           const QString suffix = candidateSequenceMatch.captured(3);
           const int padding = candidateSequenceMatch.captured(2).size();
@@ -6239,27 +6289,24 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
             const auto oldFrameMatch =
                 sequencePattern.match(QFileInfo(oldSequencePath).fileName());
             if (!oldFrameMatch.hasMatch()) {
-              complete = false;
-              break;
+              continue;
             }
             bool frameOk = false;
             const qint64 frame =
                 oldFrameMatch.captured(2).toLongLong(&frameOk);
             if (!frameOk) {
-              complete = false;
-              break;
+              continue;
             }
             const QString frameName =
                 prefix + QString::number(frame).rightJustified(
                               padding, QLatin1Char('0')) +
                 suffix;
             const QString framePath = candidateInfo.absoluteDir().filePath(frameName);
-            if (!QFileInfo::exists(framePath)) {
-              complete = false;
-              break;
+            if (QFileInfo(framePath).isFile()) {
+              ++sequenceFoundFrames;
             }
           }
-          if (complete) {
+          if (sequenceFoundFrames == sequenceExpectedFrames) {
             score += 80;
             reasons.append(QStringLiteral("complete sequence"));
           }
@@ -6283,7 +6330,8 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
       continue;
     }
     candidates.append({candidateInfo.absoluteFilePath(), score,
-                       reasons.join(QStringLiteral(", "))});
+                       reasons.join(QStringLiteral(", ")),
+                       sequenceExpectedFrames, sequenceFoundFrames});
   }
 
   std::sort(candidates.begin(), candidates.end(),

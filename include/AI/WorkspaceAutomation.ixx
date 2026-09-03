@@ -3144,7 +3144,8 @@ private:
         if (auto* undo = UndoManager::instance()) {
             return pushUndoCommandAndVerify(
                 std::make_unique<SetAudioDeClickRangesCommand>(
-                    layer, before, {}, QStringLiteral("Clear Audio De-click Ranges")),
+                    layer, before, std::vector<std::pair<qint64, qint64>>{},
+                    QStringLiteral("Clear Audio De-click Ranges")),
                 [&]() { return audioLayer->deClickRanges().empty(); });
         }
         audioLayer->clearDeClickRanges();
@@ -7348,6 +7349,11 @@ private:
         }
         auto project = currentProject();
         if (!project) {
+            return false;
+        }
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
             return false;
         }
         FolderItem* parentFolder = nullptr;

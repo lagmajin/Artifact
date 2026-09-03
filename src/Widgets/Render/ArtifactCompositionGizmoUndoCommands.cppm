@@ -43,6 +43,10 @@ struct GizmoGroupLayerState {
   bool parentWorldInvertible = true;
 };
 
+} // namespace Artifact
+
+namespace Artifact {
+
 namespace {
 
 ArtifactCore::RationalTime transformTime(
@@ -126,6 +130,10 @@ void restorePropertyKeyState(const ArtifactAbstractLayerPtr &layer,
 }
 
 } // namespace
+
+} // namespace Artifact
+
+export namespace Artifact {
 
 class GizmoTransformUndoCommand final : public UndoCommand {
 public:

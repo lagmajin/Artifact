@@ -46,14 +46,15 @@ import Artifact.Effect.ImplBase;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Render.ROI;
-
-namespace ArtifactCore::Audio::Modulation {
-class ModulationRouter;
-}
+import Audio.Modulation.Router;
 
 export namespace Artifact {
 
 using namespace ArtifactCore;
+
+class ArtifactAbstractEffect;
+using ArtifactAbstractEffectPtr = SharedPtr<ArtifactAbstractEffect>;
+using ArtifactAbstractEffectWeakPtr = WeakPtr<ArtifactAbstractEffect>;
 
 class LIBRARY_DLL_API EffectID {
 public:
@@ -222,8 +223,5 @@ public:
         return roiHint().apply(input);
     }
 };
-
-typedef SharedPtr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;
-typedef WeakPtr<ArtifactAbstractEffect> ArtifactAbstractEffectWeakPtr;
 
 };

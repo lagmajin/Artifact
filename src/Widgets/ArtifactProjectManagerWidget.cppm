@@ -44,6 +44,8 @@ module;
 #include <QCursor>
 #include <QGuiApplication>
 #include <QFile>
+#include <QProcess>
+#include <QSaveFile>
 #include <QFocusEvent>
 #include <QScreen>
 #include <QShortcut>
@@ -60,7 +62,9 @@ module;
 #include <QCheckBox>
 #include <QProgressBar>
 #include <QStandardPaths>
+#include <QUuid>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QSettings>
 #include <QPointer>
 #include <QSet>
@@ -312,8 +316,6 @@ QSet<QString> findUnusedAssetPathsFromSnapshot(const QJsonObject& snapshot)
 }
 }
 
-}
-
 QIcon loadSvgAsQIcon(const QString& path, int size = 16)
 {
     if (path.isEmpty()) return QIcon();
@@ -465,9 +467,10 @@ HeaderResizeHit headerResizeHit(const QVector<int>& columnWidths, const QPoint& 
     return {};
 }
 
-} // namespace
+} // namespace Artifact
 
 namespace Artifact {
+
  W_OBJECT_IMPL(Artifact::ArtifactProjectManagerWidget)
  W_OBJECT_IMPL(Artifact::ArtifactProjectView)
  W_OBJECT_IMPL(Artifact::ArtifactProjectManagerToolBox)
@@ -2988,6 +2991,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     manager->generateProxyForFilePath(footagePath);
                 }
             }, loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
+            addTrackedAction(QStringLiteral("cancel_proxy_queue"), QStringLiteral("Cancel Proxy Queue"), [this]() {
+                if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
+                    manager->cancelProxyQueue();
+                }
+            }, loadProjectViewIcon(QStringLiteral("Studio/timemenu_stop.svg")));
             addTrackedAction(QStringLiteral("reveal_proxy"), QStringLiteral("Reveal Proxy"), [this, footagePath]() {
                 if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                     manager->revealProxyForFilePath(footagePath);
@@ -3901,6 +3909,40 @@ QSize ArtifactProjectView::sizeHint() const { return QSize(400, 400); }
 // --- Main Widget Implementation ---
 class ArtifactProjectManagerWidget::Impl {
 public:
+    ~Impl() {
+        if (activeProxyWorker_) {
+            if (!activeProxyCancelPath_.isEmpty()) {
+                QFile cancelFile(activeProxyCancelPath_);
+                if (cancelFile.open(QIODevice::WriteOnly)) {
+                    cancelFile.write("shutdown\n");
+                    cancelFile.close();
+                }
+            }
+            if (activeProxyWorker_->state() != QProcess::NotRunning) {
+                activeProxyWorker_->terminate();
+                if (!activeProxyWorker_->waitForFinished(1000)) {
+                    activeProxyWorker_->kill();
+                    activeProxyWorker_->waitForFinished(1000);
+                }
+            }
+            delete activeProxyWorker_;
+            activeProxyWorker_ = nullptr;
+        }
+        if (!activeProxyRequestPath_.isEmpty()) {
+            QFile::remove(activeProxyRequestPath_);
+        }
+        if (!activeProxyCancelPath_.isEmpty()) {
+            QFile::remove(activeProxyCancelPath_);
+        }
+        if (!activeProxyPreviousPath_.isEmpty()) {
+            QFile::remove(activeProxyJob_.outputPath);
+            QFile::rename(activeProxyPreviousPath_, activeProxyJob_.outputPath);
+        }
+        if (!activeProxyJob_.outputPath.isEmpty()) {
+            QFile::remove(activeProxyJob_.outputPath + QStringLiteral(".partial"));
+        }
+    }
+
     ArtifactProjectManagerWidget* owner_ = nullptr;
     ArtifactProjectView* projectView_ = nullptr;
     ArtifactProjectModel* projectModel_ = nullptr;
@@ -3949,9 +3991,22 @@ public:
         QString inputPath;
         QString outputPath;
         double scaleFactor = 0.5; // 0.25=1/4, 0.5=1/2, 1.0=full
+        QDateTime sourceLastModified;
+        qint64 sourceSize = -1;
     };
     std::deque<ProxyJob> proxyJobs_;
     QTimer* proxyQueueTimer_ = nullptr;
+    QProcess* activeProxyWorker_ = nullptr;
+    ProxyJob activeProxyJob_;
+    QString activeProxyRequestPath_;
+    QString activeProxyCancelPath_;
+    QString activeProxyPreviousPath_;
+    QByteArray activeProxyOutputBuffer_;
+    double activeProxyFraction_ = 0.0;
+    QString activeProxyFailureReason_;
+    QString activeProxyJobId_;
+    bool activeProxyCompleted_ = false;
+    qint64 activeProxyReportedOutputBytes_ = -1;
     QMetaObject::Connection currentRowChangedConnection_;
     bool headerLayoutInitialized_ = false;
     bool syncingSelectionToComposition_ = false;
@@ -4962,6 +5017,8 @@ public:
             combo->setObjectName(QStringLiteral("projectProxyResolutionCombo"));
             combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProxyQuality::Quarter));
             combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProxyQuality::Half));
+            combo->addItem(QIcon(loadProjectViewIcon(QStringLiteral("Studio/resolution_eighth.svg"))),
+                           QStringLiteral("1/8 (Eighth)"), static_cast<int>(ProxyQuality::Eighth));
             combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProxyQuality::Full));
             combo->setCurrentIndex(1);
             dl->addWidget(combo);
@@ -5009,6 +5066,8 @@ public:
             combo->setObjectName(QStringLiteral("projectProxyResolutionCombo"));
             combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProxyQuality::Quarter));
             combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProxyQuality::Half));
+            combo->addItem(QIcon(loadProjectViewIcon(QStringLiteral("Studio/resolution_eighth.svg"))),
+                           QStringLiteral("1/8 (Eighth)"), static_cast<int>(ProxyQuality::Eighth));
             combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProxyQuality::Full));
             combo->setCurrentIndex(1);
             dl->addWidget(combo);
@@ -5054,6 +5113,21 @@ public:
         syncProxyPathToProject(targetPath, proxyPath, enabled, proxyGlobalEnabled_);
         if (auto* widget = projectView_ ? qobject_cast<ArtifactProjectManagerWidget*>(projectView_->parentWidget()) : nullptr) {
             widget->updateRequested();
+        }
+    }
+
+    void cancelProxyQueue() {
+        proxyJobs_.clear();
+        if (!activeProxyCancelPath_.isEmpty()) {
+            QFile cancelFile(activeProxyCancelPath_);
+            if (cancelFile.open(QIODevice::WriteOnly)) {
+                cancelFile.close();
+            }
+            if (proxyQueueProgress) {
+                proxyQueueProgress->setToolTip(QStringLiteral("Cancelling proxy worker..."));
+            }
+        } else if (proxyQueueProgress) {
+            proxyQueueProgress->setVisible(false);
         }
     }
 
@@ -5271,22 +5345,54 @@ public:
             auto& meta = proxyMetadata()[src.absoluteFilePath()];
             meta.sourceLastModified = src.lastModified();
 
-            const double scale = meta.quality == ProxyQuality::Quarter ? 0.25
+            const double scale = meta.quality == ProxyQuality::Eighth ? 0.125
+                               : meta.quality == ProxyQuality::Quarter ? 0.25
                                : meta.quality == ProxyQuality::Full  ? 1.0
                                : 0.5;
             const QString suffix = src.suffix().toLower();
             const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
                                            QStringLiteral("mkv"), QStringLiteral("avi"),
-                                           QStringLiteral("webm"), QStringLiteral("m4v")}
+                                           QStringLiteral("webm"), QStringLiteral("m4v"),
+                                           QStringLiteral("flv"), QStringLiteral("m2ts"),
+                                           QStringLiteral("ts"), QStringLiteral("mpg"),
+                                           QStringLiteral("mpeg"), QStringLiteral("wmv"),
+                                           QStringLiteral("3gp"), QStringLiteral("3g2"),
+                                           QStringLiteral("ogv"), QStringLiteral("ogm"),
+                                           QStringLiteral("mts"), QStringLiteral("mxf"),
+                                           QStringLiteral("vob"), QStringLiteral("asf")}
                                   .contains(suffix);
             const QString serviceOut = video
                 ? ArtifactProxyManager::proxyFilePath(
                     src.absoluteFilePath(),
                     scale >= 0.9 ? ProxyServiceQuality::Full
+                    : scale <= 0.125 ? ProxyServiceQuality::Eighth
                     : scale <= 0.25 ? ProxyServiceQuality::Quarter
                                     : ProxyServiceQuality::Half)
                 : out;
-            proxyJobs_.push_back({src.absoluteFilePath(), serviceOut, scale});
+            if (!activeProxyWorker_) {
+                const QDir outputDirectory(QFileInfo(serviceOut).absolutePath());
+                const QStringList orphanBackups = outputDirectory.entryList(
+                    {QStringLiteral(".*.proxy-job.json.previous"),
+                     QStringLiteral(".*.proxy-job.json.cancel"),
+                     QStringLiteral("*.partial")}, QDir::Files);
+                for (const QString& orphanFile : orphanBackups) {
+                    QFile::remove(outputDirectory.filePath(orphanFile));
+                }
+            }
+            const QString sourcePath = src.absoluteFilePath();
+            const bool alreadyActive = activeProxyWorker_ &&
+                activeProxyJob_.inputPath == sourcePath &&
+                activeProxyJob_.outputPath == serviceOut &&
+                qFuzzyCompare(activeProxyJob_.scaleFactor, scale);
+            const bool alreadyQueued = std::any_of(proxyJobs_.cbegin(), proxyJobs_.cend(),
+                [&sourcePath, &serviceOut, scale](const ProxyJob& queued) {
+                    return queued.inputPath == sourcePath && queued.outputPath == serviceOut &&
+                           qFuzzyCompare(queued.scaleFactor, scale);
+                });
+            if (!alreadyActive && !alreadyQueued) {
+                proxyJobs_.push_back({sourcePath, serviceOut, scale,
+                                      src.lastModified(), src.size()});
+            }
         }
         if (!proxyQueueTimer_) {
             proxyQueueTimer_ = new QTimer(owner_);
@@ -5299,6 +5405,8 @@ public:
             if (proxyQueueProgress) {
                 proxyQueueProgress->setMaximum(static_cast<int>(proxyJobs_.size()));
                 proxyQueueProgress->setValue(0);
+                proxyQueueProgress->setFormat(QStringLiteral("Proxy queue %v/%m"));
+                proxyQueueProgress->setToolTip(QString());
                 proxyQueueProgress->setVisible(true);
             }
             proxyQueueTimer_->start();
@@ -5306,6 +5414,98 @@ public:
     }
 
     void processNextProxyJob() {
+        if (activeProxyWorker_) {
+            activeProxyOutputBuffer_.append(activeProxyWorker_->readAllStandardOutput());
+            int newline = -1;
+            while ((newline = activeProxyOutputBuffer_.indexOf('\n')) >= 0) {
+                const QByteArray line = activeProxyOutputBuffer_.left(newline).trimmed();
+                activeProxyOutputBuffer_.remove(0, newline + 1);
+                const QJsonDocument message = QJsonDocument::fromJson(line);
+                if (!message.isObject()) continue;
+                const QJsonObject object = message.object();
+                if (object.value(QStringLiteral("type")).toString() == QStringLiteral("progress") &&
+                    object.value(QStringLiteral("jobId")).toString() == activeProxyJobId_) {
+                    activeProxyFraction_ = qBound(0.0, object.value(QStringLiteral("fraction")).toDouble(), 1.0);
+                    if (proxyQueueProgress) {
+                        proxyQueueProgress->setFormat(QStringLiteral("Proxy queue %v/%m (%1%)")
+                            .arg(qRound(activeProxyFraction_ * 100.0)));
+                    }
+                } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("failed") &&
+                           object.value(QStringLiteral("jobId")).toString() == activeProxyJobId_) {
+                    activeProxyFailureReason_ = object.value(QStringLiteral("reason")).toString();
+                    if (proxyQueueProgress && !activeProxyFailureReason_.isEmpty()) {
+                        proxyQueueProgress->setToolTip(activeProxyFailureReason_);
+                    }
+                } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("completed") &&
+                           object.value(QStringLiteral("jobId")).toString() == activeProxyJobId_ &&
+                           QFileInfo(object.value(QStringLiteral("outputPath")).toString()).absoluteFilePath() ==
+                               QFileInfo(activeProxyJob_.outputPath).absoluteFilePath()) {
+                    const QString expectedQuality = activeProxyJob_.scaleFactor >= 0.9 ? QStringLiteral("full")
+                        : activeProxyJob_.scaleFactor <= 0.125 ? QStringLiteral("eighth")
+                        : activeProxyJob_.scaleFactor <= 0.25 ? QStringLiteral("quarter")
+                                                              : QStringLiteral("half");
+                    if (object.value(QStringLiteral("qualityPreset")).toString() == expectedQuality) {
+                        activeProxyCompleted_ = true;
+                        activeProxyReportedOutputBytes_ = object.value(QStringLiteral("outputBytes"))
+                            .toVariant().toLongLong();
+                    } else {
+                        activeProxyFailureReason_ = QStringLiteral("Proxy worker reported mismatched quality preset");
+                        if (proxyQueueProgress) proxyQueueProgress->setToolTip(activeProxyFailureReason_);
+                    }
+                }
+            }
+            if (activeProxyWorker_->state() != QProcess::NotRunning) {
+                return;
+            }
+            const QString workerStderr = QString::fromLocal8Bit(
+                activeProxyWorker_->readAllStandardError()).trimmed();
+            if (proxyQueueProgress && activeProxyFailureReason_.isEmpty() && !workerStderr.isEmpty()) {
+                proxyQueueProgress->setToolTip(workerStderr);
+            }
+            const bool succeeded = activeProxyCompleted_ &&
+                                   activeProxyWorker_->exitStatus() == QProcess::NormalExit &&
+                                   activeProxyWorker_->exitCode() == 0 &&
+                                   QFileInfo(activeProxyJob_.outputPath).isFile() &&
+                                   QFileInfo(activeProxyJob_.outputPath).size() > 0 &&
+                                   QFileInfo(activeProxyJob_.outputPath).size() == activeProxyReportedOutputBytes_ &&
+                                   QFileInfo(activeProxyJob_.inputPath).lastModified() ==
+                                       activeProxyJob_.sourceLastModified &&
+                                   QFileInfo(activeProxyJob_.inputPath).size() ==
+                                       activeProxyJob_.sourceSize;
+            if (succeeded) {
+                syncProxyPathToProject(activeProxyJob_.inputPath, activeProxyJob_.outputPath,
+                                       true, proxyGlobalEnabled_);
+                if (!activeProxyPreviousPath_.isEmpty()) {
+                    QFile::remove(activeProxyPreviousPath_);
+                }
+            } else {
+                QFile::remove(activeProxyJob_.outputPath);
+                if (!activeProxyPreviousPath_.isEmpty()) {
+                    QFile::rename(activeProxyPreviousPath_, activeProxyJob_.outputPath);
+                }
+            }
+            if (!activeProxyRequestPath_.isEmpty()) {
+                QFile::remove(activeProxyRequestPath_);
+            }
+            if (!activeProxyCancelPath_.isEmpty()) {
+                QFile::remove(activeProxyCancelPath_);
+            }
+            activeProxyWorker_->deleteLater();
+            activeProxyWorker_ = nullptr;
+            activeProxyRequestPath_.clear();
+            activeProxyCancelPath_.clear();
+            activeProxyPreviousPath_.clear();
+            activeProxyOutputBuffer_.clear();
+            activeProxyFraction_ = 0.0;
+            activeProxyFailureReason_.clear();
+            activeProxyJobId_.clear();
+            activeProxyCompleted_ = false;
+            activeProxyReportedOutputBytes_ = -1;
+            if (proxyQueueProgress) {
+                const int done = proxyQueueProgress->maximum() - static_cast<int>(proxyJobs_.size());
+                proxyQueueProgress->setValue(done);
+            }
+        }
         if (proxyJobs_.empty()) {
             if (proxyQueueTimer_) proxyQueueTimer_->stop();
             if (proxyQueueProgress) proxyQueueProgress->setVisible(false);
@@ -5314,20 +5514,94 @@ public:
 
         const ProxyJob job = proxyJobs_.front();
         proxyJobs_.pop_front();
+        if (!QFileInfo(job.inputPath).isFile()) {
+            if (proxyQueueProgress) {
+                proxyQueueProgress->setToolTip(QStringLiteral("Proxy source is missing: %1")
+                    .arg(job.inputPath));
+            }
+            if (proxyQueueProgress) {
+                const int done = proxyQueueProgress->maximum() - static_cast<int>(proxyJobs_.size());
+                proxyQueueProgress->setValue(done);
+            }
+            return;
+        }
         const QString suffix = QFileInfo(job.inputPath).suffix().toLower();
         const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
                                        QStringLiteral("mkv"), QStringLiteral("avi"),
-                                       QStringLiteral("webm"), QStringLiteral("m4v")}
+                                       QStringLiteral("webm"), QStringLiteral("m4v"),
+                                       QStringLiteral("flv"), QStringLiteral("m2ts"),
+                                       QStringLiteral("ts"), QStringLiteral("mpg"),
+                                       QStringLiteral("mpeg"), QStringLiteral("wmv"),
+                                       QStringLiteral("3gp"), QStringLiteral("3g2"),
+                                       QStringLiteral("ogv"), QStringLiteral("ogm"),
+                                       QStringLiteral("mts"), QStringLiteral("mxf"),
+                                       QStringLiteral("vob"), QStringLiteral("asf")}
                               .contains(suffix);
         if (video) {
-            const auto quality = job.scaleFactor >= 0.9
-                ? ProxyServiceQuality::Full
-                : job.scaleFactor <= 0.25 ? ProxyServiceQuality::Quarter
-                                          : ProxyServiceQuality::Half;
-            const QString generated = ArtifactProxyManager::instance()->generateProxy(
-                job.inputPath, quality);
-            if (!generated.isEmpty()) {
-                syncProxyPathToProject(job.inputPath, generated, true, proxyGlobalEnabled_);
+            const QString configuredWorkerPath = QSettings().value(
+                QStringLiteral("Proxy/WorkerPath")).toString().trimmed();
+            const QString workerPath = configuredWorkerPath.isEmpty()
+                ? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("ArtifactProxyWorker.exe"))
+                : QFileInfo(configuredWorkerPath).absoluteFilePath();
+            if (QFileInfo(workerPath).isFile()) {
+                const QString jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                const QString partialPath = job.outputPath + QStringLiteral(".partial");
+                QFile::remove(partialPath);
+                const QString requestPath = QDir(QFileInfo(job.outputPath).absolutePath())
+                    .filePath(QStringLiteral(".%1.proxy-job.json").arg(jobId));
+                const QString cancelPath = requestPath + QStringLiteral(".cancel");
+                const QString previousPath = requestPath + QStringLiteral(".previous");
+                if (QFileInfo(job.outputPath).isFile() &&
+                    !QFile::rename(job.outputPath, previousPath)) {
+                    if (proxyQueueProgress) {
+                        proxyQueueProgress->setToolTip(QStringLiteral("Cannot preserve existing proxy output"));
+                    }
+                    return;
+                }
+                const QString backend = QSettings().value(
+                    QStringLiteral("Proxy/WorkerBackend"), QStringLiteral("ffmpeg")).toString();
+                const bool hardwareAccel = QSettings().value(
+                    QStringLiteral("Proxy/HardwareAccel"), false).toBool();
+                const bool audioReencode = QSettings().value(
+                    QStringLiteral("Proxy/AudioReencode"), false).toBool();
+                const QString qualityPreset = job.scaleFactor >= 0.9 ? QStringLiteral("full")
+                    : job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
+                    : job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
+                                              : QStringLiteral("half");
+                QSaveFile requestFile(requestPath);
+                const QJsonObject request{
+                    {QStringLiteral("protocolVersion"), 1},
+                    {QStringLiteral("jobId"), jobId},
+                    {QStringLiteral("sourcePath"), job.inputPath},
+                    {QStringLiteral("outputPath"), job.outputPath},
+                    {QStringLiteral("scale"), job.scaleFactor},
+                    {QStringLiteral("qualityPreset"), qualityPreset},
+                    {QStringLiteral("backend"), backend},
+                    {QStringLiteral("hardwareAccel"), hardwareAccel},
+                    {QStringLiteral("audioReencode"), audioReencode},
+                    {QStringLiteral("cancelPath"), cancelPath},
+                    {QStringLiteral("temporaryOutputPath"), partialPath}
+                };
+                if (requestFile.open(QIODevice::WriteOnly) &&
+                    requestFile.write(QJsonDocument(request).toJson(QJsonDocument::Compact)) >= 0 &&
+                    requestFile.commit()) {
+                    activeProxyWorker_ = new QProcess(owner_);
+                    activeProxyWorker_->setProcessChannelMode(QProcess::SeparateChannels);
+                    activeProxyWorker_->start(workerPath, {QStringLiteral("--request"), requestPath});
+                    activeProxyJob_ = job;
+                    activeProxyJobId_ = jobId;
+                    activeProxyCompleted_ = false;
+                    activeProxyReportedOutputBytes_ = -1;
+                    activeProxyRequestPath_ = requestPath;
+                    activeProxyCancelPath_ = cancelPath;
+                    activeProxyPreviousPath_ = previousPath;
+                    return;
+                }
+                if (QFileInfo(previousPath).isFile()) {
+                    QFile::rename(previousPath, job.outputPath);
+                }
+            } else if (proxyQueueProgress) {
+                proxyQueueProgress->setToolTip(QStringLiteral("ArtifactProxyWorker.exe was not found"));
             }
         } else {
             QImage img(job.inputPath);
@@ -6411,6 +6685,14 @@ void ArtifactProjectManagerWidget::generateProxyForSelection()
 {
     if (impl_) {
         impl_->generateProxyForSelectedItem();
+        updateRequested();
+    }
+}
+
+void ArtifactProjectManagerWidget::cancelProxyQueue()
+{
+    if (impl_) {
+        impl_->cancelProxyQueue();
         updateRequested();
     }
 }

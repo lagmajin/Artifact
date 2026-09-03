@@ -1547,8 +1547,9 @@ void drawCameraPoiOverlay(ArtifactIRenderer *renderer,
        poi.x(), poi.y() + kCrossExtent, poi.z(), 1.6f);
   line(poi.x(), poi.y(), poi.z() - kCrossExtent,
        poi.x(), poi.y(), poi.z() + kCrossExtent, 1.6f);
-  renderer->drawGizmoRing(float3{poi.x(), poi.y(), poi.z()},
-                          float3{0.0f, 0.0f, 1.0f}, kCrossExtent * 0.8f,
+  renderer->drawGizmoRing(Artifact::Detail::float3{poi.x(), poi.y(), poi.z()},
+                          Artifact::Detail::float3{0.0f, 0.0f, 1.0f},
+                          kCrossExtent * 0.8f,
                           poiColor, 1.6f);
 
   renderer->flushGizmo3D();

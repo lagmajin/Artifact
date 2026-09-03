@@ -103,7 +103,7 @@ QString detectSiblingBaseColorTexture(const QString& modelPath)
 
 class Artifact3DLayer::Impl {
 public:
-  RenderMode renderMode_ = RenderMode::Solid;
+  ModelRenderMode renderMode_ = ModelRenderMode::Solid;
   FixedGeometry3D fixedGeometry_ = FixedGeometry3D::Auto;
   float geometryWidth_ = 200.0f;
   float geometryHeight_ = 200.0f;
@@ -242,7 +242,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(detectedTexture));
       }
     }
-    impl_->renderMode_ = RenderMode::Solid;
+    impl_->renderMode_ = ModelRenderMode::Solid;
     const QFileInfo sourceInfo(normalizedInput);
     const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
         ? templatePath
@@ -262,7 +262,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
   createCubeMesh();
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
-  impl_->renderMode_ = RenderMode::Solid;
+  impl_->renderMode_ = ModelRenderMode::Solid;
   Q_EMIT changed();
 }
 
@@ -276,7 +276,7 @@ void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
   createFixedGeometryMesh(geometry);
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
-  impl_->renderMode_ = RenderMode::Solid;
+  impl_->renderMode_ = ModelRenderMode::Solid;
   Q_EMIT changed();
 }
 
@@ -441,10 +441,10 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 
   if (obj.contains("renderMode")) {
     const int mode = obj.value("renderMode").toInt(
-        static_cast<int>(RenderMode::Solid));
-    if (mode >= static_cast<int>(RenderMode::Wireframe) &&
-        mode <= static_cast<int>(RenderMode::Solid)) {
-      setRenderMode(static_cast<RenderMode>(mode));
+        static_cast<int>(ModelRenderMode::Solid));
+    if (mode >= static_cast<int>(ModelRenderMode::Wireframe) &&
+        mode <= static_cast<int>(ModelRenderMode::Solid)) {
+      setRenderMode(static_cast<ModelRenderMode>(mode));
     }
   }
   impl_->affectedByLights_ =
@@ -1183,7 +1183,7 @@ void Artifact3DLayer::updateSourceSizeFromMesh() {
   setSourceSize(Size_2D(width, height));
 }
 
-RenderMode Artifact3DLayer::renderMode() const { return impl_->renderMode_; }
+ModelRenderMode Artifact3DLayer::renderMode() const { return impl_->renderMode_; }
 
 void Artifact3DLayer::loadFromFileAtTime(const QString& filePath,
                                          const double time,
@@ -1220,7 +1220,7 @@ void Artifact3DLayer::loadFromFileAtTime(const QString& filePath,
   }
   centerMeshPositions(impl_->mesh_);
   impl_->meshLoaded_ = true;
-  impl_->renderMode_ = RenderMode::Solid;
+  impl_->renderMode_ = ModelRenderMode::Solid;
   updateSourceSizeFromMesh();
   const QFileInfo sourceInfo(normalizedInput);
   const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
@@ -1343,10 +1343,10 @@ void Artifact3DLayer::clearBlendShapeWeightOverride(const int shapeIndex)
   Q_EMIT changed();
 }
 
-void Artifact3DLayer::setRenderMode(RenderMode mode) {
+void Artifact3DLayer::setRenderMode(ModelRenderMode mode) {
   const int raw = static_cast<int>(mode);
-  if (raw < static_cast<int>(RenderMode::Wireframe) ||
-      raw > static_cast<int>(RenderMode::Solid) ||
+  if (raw < static_cast<int>(ModelRenderMode::Wireframe) ||
+      raw > static_cast<int>(ModelRenderMode::Solid) ||
       impl_->renderMode_ == mode) {
     return;
   }
@@ -1389,7 +1389,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
                .arg(layerName())
                .arg(id().toString())
                .arg(outcome)
-               .arg(impl_->renderMode_ == RenderMode::Solid
+               .arg(impl_->renderMode_ == ModelRenderMode::Solid
                         ? QStringLiteral("solid")
                         : QStringLiteral("wireframe"))
                .arg(impl_->mesh_.vertexCount())
@@ -1573,10 +1573,19 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     }
   };
 
-  if (impl_->renderMode_ == RenderMode::Solid) {
-    const QString cacheKey = QStringLiteral("%1|layer=%2")
+  if (impl_->renderMode_ == ModelRenderMode::Solid) {
+    QString cacheKey = QStringLiteral("%1|layer=%2")
         .arg(sourcePath().isEmpty() ? id().toString() : sourcePath(),
              id().toString());
+    if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
+      cacheKey += QStringLiteral("|fixed=%1|w=%2|h=%3|d=%4|seg=%5|ring=%6")
+          .arg(static_cast<int>(impl_->fixedGeometry_))
+          .arg(impl_->geometryWidth_, 0, 'g', 9)
+          .arg(impl_->geometryHeight_, 0, 'g', 9)
+          .arg(impl_->geometryDepth_, 0, 'g', 9)
+          .arg(impl_->geometrySegments_)
+          .arg(impl_->geometryRings_);
+    }
     const int solidShadingMode = impl_->useTextureInSolid_ ? 3 : 8;
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
                        opacity(), solidShadingMode, &previousModelMatrix);
@@ -2053,9 +2062,9 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("render.mode")) {
     int modeInt = value.toInt();
-    if (modeInt >= static_cast<int>(RenderMode::Wireframe) &&
-        modeInt <= static_cast<int>(RenderMode::Solid)) {
-      setRenderMode(static_cast<RenderMode>(modeInt));
+    if (modeInt >= static_cast<int>(ModelRenderMode::Wireframe) &&
+        modeInt <= static_cast<int>(ModelRenderMode::Solid)) {
+      setRenderMode(static_cast<ModelRenderMode>(modeInt));
       return true;
     }
   } else if (propertyPath == QStringLiteral("model.sourcePath") ||

@@ -22,9 +22,33 @@ import Artifact.Render.Queue.Job;
 import Render.Queue.Manager;
 import Encoder.FFmpegEncoder;
 import Core.Diagnostics.Recorder;
+import Core.Diagnostics.Snapshot;
 import Core.Diagnostics.Trace;
 
 namespace Artifact {
+
+    static QString resolveFfmpegExePath()
+    {
+        const QString executable = QStringLiteral("ffmpeg.exe");
+        const QString candidate = QDir(QCoreApplication::applicationDirPath()).filePath(executable);
+        return QFileInfo::exists(candidate) ? QFileInfo(candidate).absoluteFilePath() : executable;
+    }
+
+    static bool ffmpegExeSupportsEncoder(const QString& ffmpegPath,
+                                         const QString& encoderName)
+    {
+        if (ffmpegPath.trimmed().isEmpty() || encoderName.trimmed().isEmpty()) return false;
+        QProcess probe;
+        probe.setProcessChannelMode(QProcess::MergedChannels);
+        probe.start(ffmpegPath, {QStringLiteral("-hide_banner"), QStringLiteral("-encoders")});
+        if (!probe.waitForFinished(5000)) {
+            probe.kill();
+            probe.waitForFinished(1000);
+            return false;
+        }
+        return QString::fromUtf8(probe.readAllStandardOutput())
+            .contains(encoderName, Qt::CaseInsensitive);
+    }
 
     enum class VideoEncodeBackendKind {
         Auto,

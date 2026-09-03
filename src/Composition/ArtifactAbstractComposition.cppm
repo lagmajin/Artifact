@@ -1723,7 +1723,7 @@ void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
     const auto knownSignature = jointSignatures_.find(ownerKey);
     const bool needsJoint = world->getJoints().empty() ||
                             knownSignature == jointSignatures_.end() ||
-                            *knownSignature != signature;
+                            knownSignature->second.compare(signature) != 0;
     if (needsJoint) {
       if (!world->getJoints().empty()) {
         world->clearJoints();

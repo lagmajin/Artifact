@@ -43,7 +43,7 @@ module;
 #include <random>
 module Artifact.Widgets.RenderLayerEditor;
 
-import Artifact.Widgets.RenderLayerWidgetv2;
+import Artifact.Widgets.LayerEditorWidget;
 import Color.Float;
 import Utils.Id;
 import Utils.Path;
@@ -54,7 +54,7 @@ namespace Artifact {
 
  class ArtifactRenderLayerEditor::Impl {
   public:
-  ArtifactLayerEditorWidgetV2* view = nullptr;
+  ArtifactLayerEditorWidget* view = nullptr;
   QToolBar* toolbar = nullptr;
   QAction* playAction = nullptr;
   QAction* stopAction = nullptr;
@@ -70,7 +70,7 @@ namespace Artifact {
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
 
-  impl_->view = new ArtifactLayerEditorWidgetV2(this);
+  impl_->view = new ArtifactLayerEditorWidget(this);
   impl_->view->setWindowTitle(QStringLiteral("Layer Solo View"));
   impl_->toolbar = new QToolBar(this);
   impl_->toolbar->setMovable(false);
@@ -114,7 +114,7 @@ namespace Artifact {
   return QSize(1280, 820);
  }
 
- ArtifactLayerEditorWidgetV2* ArtifactRenderLayerEditor::view() const
+ ArtifactLayerEditorWidget* ArtifactRenderLayerEditor::view() const
  {
   return impl_->view;
  }

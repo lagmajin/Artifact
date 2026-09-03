@@ -12,6 +12,7 @@ export module Artifact.Widgets.CompositionMotionPathCommands;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
+import Animation.Transform3D;
 import Event.Bus;
 import Time.Rational;
 import Undo.UndoManager;

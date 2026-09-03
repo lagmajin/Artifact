@@ -12,6 +12,7 @@ module;
 export module Artifact.Layer.ParametricComposition;
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Memory.SharedPtr;
 import Composition.ParametricComposition;
 

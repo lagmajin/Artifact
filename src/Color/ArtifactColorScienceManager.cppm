@@ -26,9 +26,9 @@ namespace {
 constexpr const char* kBuiltinLutPrefix = "builtin:";
 
 void publishColorScienceChanged(
-    ColorScienceManagerChangeKind kind,
+    Artifact::ColorScienceManagerChangeKind kind,
     const QString& compositionId = {}) {
-  ArtifactCore::globalEventBus().publish<ColorScienceManagerChangedEvent>(
+  ArtifactCore::globalEventBus().publish<Artifact::ColorScienceManagerChangedEvent>(
       {kind, compositionId});
 }
 }

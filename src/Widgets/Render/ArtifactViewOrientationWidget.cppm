@@ -1,6 +1,7 @@
 module;
 
 #include <QColor>
+#include <QApplication>
 #include <QEnterEvent>
 #include <QFont>
 #include <QMouseEvent>

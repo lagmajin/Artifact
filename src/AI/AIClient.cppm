@@ -26,6 +26,7 @@ module;
 #include <thread>
 
 module AI.Client;
+import Event.Bus;
 import Configuration.LayeredConfigStore;
 import Utils.String.UniString;
 import Core.AI.PromptGenerator;

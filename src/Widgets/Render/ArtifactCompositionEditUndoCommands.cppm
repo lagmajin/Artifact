@@ -20,7 +20,7 @@ import Event.Bus;
 import Time.Rational;
 import Undo.UndoManager;
 
-export namespace Artifact {
+namespace Artifact {
 
 namespace {
 
@@ -38,6 +38,10 @@ ArtifactCore::RationalTime transformTime(
 }
 
 } // namespace
+
+} // namespace Artifact
+
+export namespace Artifact {
 
 class ShapePathVertexEditCommand final : public UndoCommand {
 public:

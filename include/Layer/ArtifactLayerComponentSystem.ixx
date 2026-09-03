@@ -194,6 +194,8 @@ layerModifierDescriptorFromJson(const QJsonObject& obj) {
     return descriptor;
 }
 
+struct LayerEvaluationState;
+
 class LayerComponentHost {
 public:
     bool upsert(LayerComponentDescriptor descriptor);

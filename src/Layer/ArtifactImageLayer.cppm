@@ -58,12 +58,14 @@ import Thread.Helper;
 import CvUtils;
 import Artifact.Render.IRenderer;
 import Artifact.Layer.SourceCrop;
+import Time.Rational;
 import Core.Diagnostics.FallbackPolicy;
 import Graphics.SurfaceColorContract;
 import Image.ImageF32x4_RGBA;
 import Memory.SharedPtr;
 import Memory.SharedPtr;
 import Size;
+import Asset.Database;
 import Asset.Manager;
 import AssetType;
 import EnvironmentVariable.Expansion;
@@ -198,25 +200,28 @@ bool hasSupportedImageChannelCount(const int channels)
     return channels > 0 && channels <= kMaxImageChannels;
 }
 
-void normalizeNonFiniteRgba32F(float* data, const std::size_t pixelCount)
+void normalizeNonFinitePixels(float* data, const std::size_t pixelCount,
+                              const std::size_t channelCount)
 {
-    if (!data) {
-        return;
-    }
+    if (!data || channelCount == 0) return;
     for (std::size_t pixel = 0; pixel < pixelCount; ++pixel) {
-        for (std::size_t channel = 0; channel < 4; ++channel) {
-            float& value = data[pixel * 4u + channel];
+        for (std::size_t channel = 0; channel < channelCount; ++channel) {
+            float& value = data[pixel * channelCount + channel];
             if (!std::isfinite(value)) {
-                value = channel == 3u ? 1.0f : 0.0f;
+                value = channel + 1u == channelCount ? 1.0f : 0.0f;
             }
         }
     }
 }
 
+void normalizeNonFiniteRgba32F(float* data, const std::size_t pixelCount)
+{
+    normalizeNonFinitePixels(data, pixelCount, 4u);
+}
+
 std::array<int, 4> standardCmykChannelOrder(const OIIO::ImageSpec& spec)
 {
-    if (spec.alpha_channel >= 0 || spec.nchannels < 4 ||
-        spec.channelnames.size() < 4) {
+    if (spec.nchannels < 4 || spec.channelnames.size() < 4) {
         return {-1, -1, -1, -1};
     }
     const auto channelIndex = [&spec](const QStringList& candidates) {
@@ -276,6 +281,40 @@ void convertCmykImageToRgba(QImage& image)
     }
 }
 
+void convertCmykAlphaPixelsToRgba(const uchar* source, uchar* destination,
+                                  const size_t pixelCount)
+{
+    if (!source || !destination) return;
+    for (size_t index = 0; index < pixelCount; ++index) {
+        const uchar* pixel = source + index * 5u;
+        uchar* output = destination + index * 4u;
+        output[0] = static_cast<uchar>(
+            (255 - pixel[0]) * (255 - pixel[3]) / 255);
+        output[1] = static_cast<uchar>(
+            (255 - pixel[1]) * (255 - pixel[3]) / 255);
+        output[2] = static_cast<uchar>(
+            (255 - pixel[2]) * (255 - pixel[3]) / 255);
+        output[3] = pixel[4];
+    }
+}
+
+void convertCmykAlphaPixelsToRgba(float* pixels, const size_t pixelCount)
+{
+    if (!pixels) return;
+    for (size_t index = 0; index < pixelCount; ++index) {
+        float* pixel = pixels + index * 5u;
+        const float cyan = std::clamp(pixel[0], 0.0f, 1.0f);
+        const float magenta = std::clamp(pixel[1], 0.0f, 1.0f);
+        const float yellow = std::clamp(pixel[2], 0.0f, 1.0f);
+        const float black = std::clamp(pixel[3], 0.0f, 1.0f);
+        const float alpha = std::clamp(pixel[4], 0.0f, 1.0f);
+        pixel[0] = (1.0f - cyan) * (1.0f - black);
+        pixel[1] = (1.0f - magenta) * (1.0f - black);
+        pixel[2] = (1.0f - yellow) * (1.0f - black);
+        pixel[3] = alpha;
+    }
+}
+
 void unpremultiplyRgba(float* pixels, const size_t pixelCount)
 {
     if (!pixels) return;
@@ -314,6 +353,29 @@ void diagnoseCmykConversion(const QString& path)
         path, "cmyk-to-rgb",
         QStringLiteral("Standard CMYK channels converted to RGB before "
                        "working-space processing"));
+}
+
+QString imageSpecStringAttribute(const OIIO::ImageSpec& spec,
+                                 const char* name);
+
+void diagnoseIccProfileFallback(const OIIO::ImageSpec& spec,
+                                const QString& path)
+{
+    const OIIO::ParamValue* icc =
+        spec.find_attribute("ICCProfile", OIIO::TypeDesc::UINT8);
+    if (!icc || icc->datasize() == 0 ||
+        !imageSpecStringAttribute(spec, "oiio:ColorSpace").isEmpty() ||
+        !imageSpecStringAttribute(spec, "Colorspace").isEmpty()) {
+        return;
+    }
+    ArtifactCore::FallbackTracker::instance()->record(
+        ArtifactCore::FallbackCategory::Image,
+        ArtifactCore::FallbackAction::Warning,
+        path, "icc-profile-retained",
+        QStringLiteral(
+            "Embedded ICC profile was retained as source metadata, but no "
+            "named working-space mapping is available; using source values "
+            "without profile conversion"));
 }
 
 std::array<int, 4> rgbaChannelOrder(const OIIO::ImageSpec& spec)
@@ -542,6 +604,38 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
     } else {
         diagnoseAmbiguousChannels(spec, path);
     }
+    diagnoseIccProfileFallback(spec, path);
+    if (isCmyk && spec.alpha_channel >= 0 &&
+        spec.alpha_channel < spec.nchannels) {
+        const std::array<int, 5> channelOrder{
+            standardCmykChannelOrder(spec)[0],
+            standardCmykChannelOrder(spec)[1],
+            standardCmykChannelOrder(spec)[2],
+            standardCmykChannelOrder(spec)[3],
+            spec.alpha_channel};
+        const std::array<float, 5> channelValues{0.0f, 0.0f, 0.0f, 0.0f,
+                                                  1.0f};
+        OIIO::ImageBuf cmyk = OIIO::ImageBufAlgo::channels(
+            oriented, 5, channelOrder, channelValues);
+        std::vector<uchar> sourcePixels(
+            static_cast<size_t>(spec.width) * static_cast<size_t>(spec.height) *
+            5u);
+        if (!cmyk.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::UINT8,
+                             sourcePixels.data())) {
+            if (errorOut) *errorOut = QString::fromStdString(cmyk.geterror());
+            return {};
+        }
+        QImage image(spec.width, spec.height, QImage::Format_RGBA8888);
+        if (image.isNull()) {
+            if (errorOut) *errorOut = QStringLiteral("Failed to allocate output image.");
+            return {};
+        }
+        convertCmykAlphaPixelsToRgba(sourcePixels.data(), image.bits(),
+                                     static_cast<size_t>(spec.width) *
+                                         static_cast<size_t>(spec.height));
+        if (sizeOut) *sizeOut = QSize(spec.width, spec.height);
+        return image;
+    }
     const std::array<int, 4> channelOrder = rgbaChannelOrder(spec);
     const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
     OIIO::ImageBuf rgba = OIIO::ImageBufAlgo::channels(
@@ -587,6 +681,40 @@ ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> loadFloatImageViaOIIO(
         diagnoseCmykConversion(path);
     } else {
         diagnoseAmbiguousChannels(spec, path);
+    }
+    diagnoseIccProfileFallback(spec, path);
+    if (isCmyk && spec.alpha_channel >= 0 &&
+        spec.alpha_channel < spec.nchannels) {
+        const std::array<int, 5> order{
+            standardCmykChannelOrder(spec)[0],
+            standardCmykChannelOrder(spec)[1],
+            standardCmykChannelOrder(spec)[2],
+            standardCmykChannelOrder(spec)[3],
+            spec.alpha_channel};
+        const std::array<float, 5> values{0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        OIIO::ImageBuf cmyk =
+            OIIO::ImageBufAlgo::channels(source, 5, order, values);
+        std::vector<float> pixels(static_cast<size_t>(spec.width) *
+                                  static_cast<size_t>(spec.height) * 5u);
+        if (!cmyk.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::FLOAT,
+                             pixels.data())) {
+            return {};
+        }
+        normalizeNonFinitePixels(
+            pixels.data(), static_cast<std::size_t>(spec.width) *
+                               static_cast<std::size_t>(spec.height), 5u);
+        convertCmykAlphaPixelsToRgba(
+            pixels.data(), static_cast<size_t>(spec.width) *
+                              static_cast<size_t>(spec.height));
+        std::vector<float> rgbaPixels(static_cast<size_t>(spec.width) *
+                                      static_cast<size_t>(spec.height) * 4u);
+        for (size_t i = 0; i < static_cast<size_t>(spec.width) *
+                              static_cast<size_t>(spec.height); ++i) {
+            std::copy_n(pixels.data() + i * 5u, 4u,
+                        rgbaPixels.data() + i * 4u);
+        }
+        image->setFromRGBA32F(rgbaPixels.data(), spec.width, spec.height);
+        return image;
     }
     const std::array<int, 4> order = rgbaChannelOrder(spec);
     const std::array<float, 4> values{0.0f, 0.0f, 0.0f, 1.0f};
@@ -867,12 +995,12 @@ public:
     // buffers stay alive briefly because currentFrameBuffer() hands out raw
     // references that a concurrent reader may still be dereferencing.
     mutable std::mutex sequenceStateMutex_;
-    std::vector<ArtifactCore::SharedPtr<QImage>> retiredFrameCaches_;
-    std::vector<ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> retiredFrameBuffers_;
+    mutable std::vector<ArtifactCore::SharedPtr<QImage>> retiredFrameCaches_;
+    mutable std::vector<ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> retiredFrameBuffers_;
     static constexpr size_t kMaxRetiredFrameCaches = 4;
 
     void retireFrameCache(ArtifactCore::SharedPtr<QImage>&& oldCache,
-                          ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>&& oldBuffer) {
+                          ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>&& oldBuffer) const {
         if (oldCache) retiredFrameCaches_.push_back(std::move(oldCache));
         if (oldBuffer) retiredFrameBuffers_.push_back(std::move(oldBuffer));
         if (retiredFrameCaches_.size() > kMaxRetiredFrameCaches) {
@@ -1049,6 +1177,7 @@ public:
 
     bool adoptPrefetchResult(const PrefetchResult& result)
     {
+        std::lock_guard<std::mutex> lock(sequenceStateMutex_);
         if (result.generation != prefetchGeneration_) {
             return false;
         }
@@ -1120,8 +1249,11 @@ public:
         std::lock_guard<std::mutex> lock(sequenceStateMutex_);
         const auto clearSequenceFrameCache = [this]() {
             retireFrameCache(std::move(cache_), std::move(cacheBuffer_));
-            cache_.reset();
-            resetCacheBuffer();
+            cache_ = ArtifactCore::makeShared<QImage>(
+                makeMissingImagePlaceholder(
+                    QSize(256, 256), QStringLiteral("Sequence frame unavailable")));
+            cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+                toFrameBuffer(*cache_));
             sequenceCachedIndex_ = -1;
         };
         if (sequencePaths_.size() <= 1) {
@@ -1154,9 +1286,6 @@ public:
         // layer stable at its in/out boundaries instead of flashing blank.
         const qint64 resolvedFrame = std::clamp<qint64>(
             frameIndex, 0, frameCount - 1);
-        if (sequenceCachedIndex_ == resolvedFrame && cache_) {
-            return true;
-        }
         QImage frame;
         if (!sequenceSource_->tryFrameAt(resolvedFrame, frame)) {
             // A clamped out-of-range frame is intentionally held above, but a
@@ -1166,6 +1295,13 @@ public:
             // stale-pixel failure contract.
             clearSequenceFrameCache();
             return false;
+        }
+        // Even when the layer cache points at this frame, tryFrameAt() must
+        // run first so an in-place source replacement invalidates stale data.
+        // QImage's cache key lets the unchanged case remain allocation-free.
+        if (sequenceCachedIndex_ == resolvedFrame && cache_ &&
+            cache_->cacheKey() == frame.cacheKey()) {
+            return true;
         }
         if (!hasSupportedImageDimensions(frame.width(), frame.height())) {
             clearSequenceFrameCache();
@@ -1213,6 +1349,7 @@ public:
 
     bool refreshSourceVersionIfNeeded()
     {
+        std::lock_guard<std::mutex> lock(sequenceStateMutex_);
         if (sourceAssetId_.isNull()) {
             return false;
         }
@@ -1275,16 +1412,33 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
         }
 
         const auto result = impl_->prefetchWatcher_.result();
-        if (result.generation != impl_->prefetchGeneration_) {
-            return;
+        {
+            std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+            if (result.generation != impl_->prefetchGeneration_) {
+                return;
+            }
         }
         const bool decoded = !result.image.isNull() || result.floatImage;
-        if (!impl_->prefetchDone_) {
+        bool shouldAdopt = false;
+        {
+            std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+            shouldAdopt = !impl_->prefetchDone_;
+        }
+        if (shouldAdopt) {
             (void)impl_->adoptPrefetchResult(result);
         }
-        if (decoded && impl_->cache_) {
-            setSourceSize(Size_2D(impl_->width_, impl_->height_));
-            impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
+        bool hasCache = false;
+        int cacheWidth = 0;
+        int cacheHeight = 0;
+        {
+            std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+            hasCache = static_cast<bool>(impl_->cache_);
+            cacheWidth = impl_->width_;
+            cacheHeight = impl_->height_;
+        }
+        if (decoded && hasCache) {
+            setSourceSize(Size_2D(cacheWidth, cacheHeight));
+            impl_->sourceCrop_.clampToSource(QSizeF(cacheWidth, cacheHeight));
         }
         Q_EMIT changed();
     });
@@ -1509,12 +1663,15 @@ bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double 
     if (normalizedPaths.isEmpty()) {
         return false;
     }
-    impl_->sequencePaths_ = normalizedPaths;
-    impl_->sequenceFrameRate_ = std::isfinite(frameRate) && frameRate > 0.0
-        ? std::clamp(frameRate, 0.001, 1000.0)
-        : 0.0;
-    impl_->sequenceSource_.reset();
-    impl_->sequenceCachedIndex_ = -1;
+    {
+        std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+        impl_->sequencePaths_ = normalizedPaths;
+        impl_->sequenceFrameRate_ = std::isfinite(frameRate) && frameRate > 0.0
+            ? std::clamp(frameRate, 0.001, 1000.0)
+            : 0.0;
+        impl_->sequenceSource_.reset();
+        impl_->sequenceCachedIndex_ = -1;
+    }
     // 代表フレーム（先頭）を読み込んで表示・サイズを確定させる。
     // draw() 側で currentFrame() に応じた ImageSequenceSource のフレーム切替を行う。
     return loadFromPath(normalizedPaths.first());
@@ -1522,22 +1679,44 @@ bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double 
 
 QStringList ArtifactImageLayer::sequenceFramePaths() const
 {
+    std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
     return impl_->sequencePaths_;
 }
 
 bool ArtifactImageLayer::isImageSequence() const
 {
+    std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
     return impl_->sequencePaths_.size() > 1;
 }
 
 double ArtifactImageLayer::sequenceFrameRate() const
 {
+    std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
     return impl_->sequenceFrameRate_;
 }
 
 qint64 ArtifactImageLayer::sequenceCachedFrameIndex() const
 {
+    std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
     return impl_->sequenceCachedIndex_;
+}
+
+qint64 ArtifactImageLayer::sequenceCachedFrameContentKey() const
+{
+    std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+    return impl_->cache_ ? impl_->cache_->cacheKey() : 0;
+}
+
+void ArtifactImageLayer::refreshSequenceFrameForCurrentTime() const
+{
+    if (!isImageSequence()) {
+        return;
+    }
+    const qint64 layerFrame = isTimeRemapEnabled()
+        ? static_cast<qint64>(std::llround(
+              getSourceFrameAtCompFrame(currentFrame())))
+        : currentFrame() - startTime().framePosition();
+    impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
 }
 
 QUuid ArtifactImageLayer::sourceAssetId() const
@@ -1718,8 +1897,26 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
             ? std::clamp(frameRate, 0.001, 1000.0)
             : 0.0;
     }
-    const QString sourcePath = obj.value(QStringLiteral("image.sourcePath"))
-                                   .toString().trimmed().left(32768);
+    QString sourcePath = obj.value(QStringLiteral("image.sourcePath"))
+                             .toString().trimmed().left(32768);
+    const QUuid serializedSourceId(
+        obj.value(QStringLiteral("image.sourceAssetId")).toString());
+    const bool serializedSourceLocalized =
+        obj.value(QStringLiteral("image.sourceLocalized")).toBool(false);
+    // Prefer the persisted shared asset identity when its registry entry
+    // resolves to an existing file. The importer may already have supplied a
+    // project-relative path; this fallback is specifically for relocated
+    // projects where the stored path is stale or missing.
+    if (!serializedSourceLocalized && !serializedSourceId.isNull()) {
+        const auto assetInfo = ArtifactCore::AssetDatabase::instance().getAssetInfo(
+            serializedSourceId);
+        if (assetInfo.id == serializedSourceId &&
+            assetInfo.type == ArtifactCore::AssetType::Image &&
+            !assetInfo.absolutePath.trimmed().isEmpty() &&
+            QFileInfo(assetInfo.absolutePath).isFile()) {
+            sourcePath = QDir::cleanPath(assetInfo.absolutePath);
+        }
+    }
     impl_->depthMapPath_ = obj.value(QStringLiteral("image.depthMapPath"))
                                .toString().trimmed().left(32768);
     impl_->depthMeshOptions_.columns = std::clamp(
@@ -1827,9 +2024,8 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
             QSizeF(impl_->width_, impl_->height_));
     }
 
-    if (!sourcePath.isEmpty() &&
-        obj.value(QStringLiteral("image.sourceLocalized")).toBool(false)) {
-        const QUuid savedId(obj.value(QStringLiteral("image.sourceAssetId")).toString());
+    if (!sourcePath.isEmpty() && serializedSourceLocalized) {
+        const QUuid savedId = serializedSourceId;
         bool restored = false;
         if (!savedId.isNull() &&
             ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
@@ -1915,6 +2111,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
                                 ArtifactCore::PropertyType::Boolean,
                                 impl_->sourceCrop_.enabled(), -240);
     enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    enabledProp->setAnimatable(true);
     sourceCropGroup.addProperty(enabledProp);
 
     auto cropXProp = makeProp(QStringLiteral("sourceCrop.cropX"),
@@ -1923,6 +2120,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     cropXProp->setDisplayLabel(QStringLiteral("Crop X"));
     cropXProp->setUnit(QStringLiteral("px"));
     cropXProp->setSoftRange(-10000.0, 10000.0);
+    cropXProp->setAnimatable(true);
     sourceCropGroup.addProperty(cropXProp);
 
     auto cropYProp = makeProp(QStringLiteral("sourceCrop.cropY"),
@@ -1931,6 +2129,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     cropYProp->setDisplayLabel(QStringLiteral("Crop Y"));
     cropYProp->setUnit(QStringLiteral("px"));
     cropYProp->setSoftRange(-10000.0, 10000.0);
+    cropYProp->setAnimatable(true);
     sourceCropGroup.addProperty(cropYProp);
 
     auto cropWProp = makeProp(QStringLiteral("sourceCrop.cropWidth"),
@@ -1939,6 +2138,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     cropWProp->setDisplayLabel(QStringLiteral("Crop W"));
     cropWProp->setUnit(QStringLiteral("px"));
     cropWProp->setSoftRange(0.0, 10000.0);
+    cropWProp->setAnimatable(true);
     sourceCropGroup.addProperty(cropWProp);
 
     auto cropHProp = makeProp(QStringLiteral("sourceCrop.cropHeight"),
@@ -1947,6 +2147,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     cropHProp->setDisplayLabel(QStringLiteral("Crop H"));
     cropHProp->setUnit(QStringLiteral("px"));
     cropHProp->setSoftRange(0.0, 10000.0);
+    cropHProp->setAnimatable(true);
     sourceCropGroup.addProperty(cropHProp);
 
     auto panXProp = makeProp(QStringLiteral("sourceCrop.panX"),
@@ -1955,6 +2156,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     panXProp->setDisplayLabel(QStringLiteral("Pan X"));
     panXProp->setUnit(QStringLiteral("px"));
     panXProp->setSoftRange(-10000.0, 10000.0);
+    panXProp->setAnimatable(true);
     sourceCropGroup.addProperty(panXProp);
 
     auto panYProp = makeProp(QStringLiteral("sourceCrop.panY"),
@@ -1963,6 +2165,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     panYProp->setDisplayLabel(QStringLiteral("Pan Y"));
     panYProp->setUnit(QStringLiteral("px"));
     panYProp->setSoftRange(-10000.0, 10000.0);
+    panYProp->setAnimatable(true);
     sourceCropGroup.addProperty(panYProp);
 
     auto zoomProp = makeProp(QStringLiteral("sourceCrop.zoom"),
@@ -1972,6 +2175,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     zoomProp->setUnit(QStringLiteral("x"));
     zoomProp->setSoftRange(0.1, 8.0);
     zoomProp->setStep(0.05);
+    zoomProp->setAnimatable(true);
     sourceCropGroup.addProperty(zoomProp);
 
     auto rotationProp = makeProp(QStringLiteral("sourceCrop.rotation"),
@@ -1981,6 +2185,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     rotationProp->setUnit(QStringLiteral("deg"));
     rotationProp->setSoftRange(-360.0, 360.0);
     rotationProp->setStep(0.5);
+    rotationProp->setAnimatable(true);
     sourceCropGroup.addProperty(rotationProp);
 
     auto anchorXProp = makeProp(QStringLiteral("sourceCrop.anchorX"),
@@ -1989,6 +2194,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     anchorXProp->setDisplayLabel(QStringLiteral("Anchor X"));
     anchorXProp->setSoftRange(0.0, 1.0);
     anchorXProp->setStep(0.01);
+    anchorXProp->setAnimatable(true);
     sourceCropGroup.addProperty(anchorXProp);
 
     auto anchorYProp = makeProp(QStringLiteral("sourceCrop.anchorY"),
@@ -1997,12 +2203,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     anchorYProp->setDisplayLabel(QStringLiteral("Anchor Y"));
     anchorYProp->setSoftRange(0.0, 1.0);
     anchorYProp->setStep(0.01);
+    anchorYProp->setAnimatable(true);
     sourceCropGroup.addProperty(anchorYProp);
 
     auto preserveProp = makeProp(QStringLiteral("sourceCrop.preserveAspect"),
                                  ArtifactCore::PropertyType::Boolean,
                                  impl_->sourceCrop_.preserveAspect(), -229);
     preserveProp->setDisplayLabel(QStringLiteral("Preserve Aspect"));
+    preserveProp->setAnimatable(true);
     sourceCropGroup.addProperty(preserveProp);
 
     groups.push_back(sourceCropGroup);
@@ -2036,11 +2244,14 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         if (!std::isfinite(frameRate) || frameRate < 0.0) {
             return false;
         }
-        impl_->sequenceFrameRate_ = frameRate > 0.0
-            ? std::clamp(frameRate, 0.001, 1000.0)
-            : 0.0;
-        if (impl_->sequenceSource_) {
-            impl_->sequenceSource_->setFrameRate(impl_->sequenceFrameRate_);
+        {
+            std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+            impl_->sequenceFrameRate_ = frameRate > 0.0
+                ? std::clamp(frameRate, 0.001, 1000.0)
+                : 0.0;
+            if (impl_->sequenceSource_) {
+                impl_->sequenceSource_->setFrameRate(impl_->sequenceFrameRate_);
+            }
         }
         setDirty(LayerDirtyFlag::Source);
         Q_EMIT changed();
@@ -2167,17 +2378,124 @@ void ArtifactImageLayer::setFromCvMat()
     }
 }
 
+void ArtifactImageLayer::refreshAnimatedSourceCrop()
+{
+    const double fps = compositionFrameRate();
+    const int64_t timeRate = std::isfinite(fps) && fps > 0.0
+        ? std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)))
+        : 30;
+    const ArtifactCore::RationalTime animationTime(
+        currentFrame(), timeRate);
+    const auto animatedSourceCropValue = [&](const QString& propertyPath) {
+        const auto property = getProperty(propertyPath);
+        if (!property || !property->isAnimatable() ||
+            property->getKeyFrames().empty()) {
+            return QVariant();
+        }
+        return property->interpolateValue(animationTime);
+    };
+    const QVariant animatedEnabled =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.enabled"));
+    if (animatedEnabled.isValid()) {
+        impl_->sourceCrop_.setEnabled(animatedEnabled.toBool());
+    }
+    const QVariant animatedCropX =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.cropX"));
+    const QVariant animatedCropY =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.cropY"));
+    const QVariant animatedCropWidth =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.cropWidth"));
+    const QVariant animatedCropHeight =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.cropHeight"));
+    if (animatedCropX.isValid() || animatedCropY.isValid() ||
+        animatedCropWidth.isValid() || animatedCropHeight.isValid()) {
+        QRectF rect = impl_->sourceCrop_.cropRect();
+        const ArtifactCore::Size_2D sourceSizeValue = sourceSize();
+        const QSize source(sourceSizeValue.width, sourceSizeValue.height);
+        if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+            rect = QRectF(0.0, 0.0, source.width(), source.height());
+        }
+        if (animatedCropX.isValid() && std::isfinite(animatedCropX.toDouble())) {
+            rect.moveLeft(std::clamp(animatedCropX.toDouble(), -1000000.0,
+                                     1000000.0));
+        }
+        if (animatedCropY.isValid() && std::isfinite(animatedCropY.toDouble())) {
+            rect.moveTop(std::clamp(animatedCropY.toDouble(), -1000000.0,
+                                    1000000.0));
+        }
+        if (animatedCropWidth.isValid() &&
+            std::isfinite(animatedCropWidth.toDouble())) {
+            rect.setWidth(std::max(1.0, animatedCropWidth.toDouble()));
+        }
+        if (animatedCropHeight.isValid() &&
+            std::isfinite(animatedCropHeight.toDouble())) {
+            rect.setHeight(std::max(1.0, animatedCropHeight.toDouble()));
+        }
+        impl_->sourceCrop_.setCropRect(rect);
+        impl_->sourceCrop_.clampToSource(
+            QSizeF(source.width(), source.height()));
+    }
+    const QVariant animatedPanX =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.panX"));
+    const QVariant animatedPanY =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.panY"));
+    if (animatedPanX.isValid() || animatedPanY.isValid()) {
+        QPointF pan = impl_->sourceCrop_.pan();
+        if (animatedPanX.isValid() && std::isfinite(animatedPanX.toDouble())) {
+            pan.setX(std::clamp(animatedPanX.toDouble(), -1000000.0,
+                                1000000.0));
+        }
+        if (animatedPanY.isValid() && std::isfinite(animatedPanY.toDouble())) {
+            pan.setY(std::clamp(animatedPanY.toDouble(), -1000000.0,
+                                1000000.0));
+        }
+        impl_->sourceCrop_.setPan(pan);
+    }
+    const QVariant animatedZoom =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.zoom"));
+    if (animatedZoom.isValid() && std::isfinite(animatedZoom.toDouble())) {
+        impl_->sourceCrop_.setZoom(
+            std::clamp(animatedZoom.toDouble(), 0.001, 1000.0));
+    }
+    const QVariant animatedRotation =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.rotation"));
+    if (animatedRotation.isValid() &&
+        std::isfinite(animatedRotation.toDouble())) {
+        impl_->sourceCrop_.setRotation(std::clamp(
+            animatedRotation.toDouble(), -360000.0, 360000.0));
+    }
+    const QVariant animatedAnchorX =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.anchorX"));
+    const QVariant animatedAnchorY =
+        animatedSourceCropValue(QStringLiteral("sourceCrop.anchorY"));
+    if (animatedAnchorX.isValid() || animatedAnchorY.isValid()) {
+        QPointF anchor = impl_->sourceCrop_.anchor();
+        if (animatedAnchorX.isValid() &&
+            std::isfinite(animatedAnchorX.toDouble())) {
+            anchor.setX(std::clamp(animatedAnchorX.toDouble(), 0.0, 1.0));
+        }
+        if (animatedAnchorY.isValid() &&
+            std::isfinite(animatedAnchorY.toDouble())) {
+            anchor.setY(std::clamp(animatedAnchorY.toDouble(), 0.0, 1.0));
+        }
+        impl_->sourceCrop_.setAnchor(anchor);
+    }
+    const QVariant animatedPreserveAspect = animatedSourceCropValue(
+        QStringLiteral("sourceCrop.preserveAspect"));
+    if (animatedPreserveAspect.isValid()) {
+        impl_->sourceCrop_.setPreserveAspect(animatedPreserveAspect.toBool());
+    }
+}
+
 void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer) return;
 
-    if (isImageSequence()) {
-        const qint64 layerFrame = isTimeRemapEnabled()
-            ? static_cast<qint64>(std::llround(
-                  getSourceFrameAtCompFrame(currentFrame())))
-            : currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
-    }
+    refreshSequenceFrameForCurrentTime();
+
+    // Resolve Source Reframe keyframes without writing back to the property
+    // model. The same helper is used by CompositionView's direct path.
+    refreshAnimatedSourceCrop();
 
     auto size = sourceSize();
     if (!impl_->fitToLayer_) {
@@ -2246,14 +2564,17 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
             cropTransform.translate(static_cast<float>(-pivot.x()),
                                     static_cast<float>(-pivot.y()), 0.0f);
         }
-        drawWithClonerEffect(this, cropTransform, [renderer, &buffer, drawRect, uvRect, this](const QMatrix4x4& transform, float weight) {
-            renderer->drawSpriteTransformed(
-                static_cast<float>(drawRect.x()),
-                static_cast<float>(drawRect.y()),
-                static_cast<float>(drawRect.width()),
-                static_cast<float>(drawRect.height()),
-                transform, buffer, this->opacity() * weight, uvRect);
-        });
+        for (const auto& lensPass : twoPointFiveDRenderPasses(cropTransform)) {
+            drawWithClonerEffect(this, lensPass.transform,
+                [renderer, &buffer, drawRect, uvRect, this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+                    renderer->drawSpriteTransformed(
+                        static_cast<float>(drawRect.x()),
+                        static_cast<float>(drawRect.y()),
+                        static_cast<float>(drawRect.width()),
+                        static_cast<float>(drawRect.height()),
+                        transform, buffer, this->opacity() * weight * lensOpacity, uvRect);
+                });
+        }
         return;
     }
 
@@ -2285,14 +2606,17 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                                 static_cast<float>(-pivot.y()), 0.0f);
     }
 
-    drawWithClonerEffect(this, cropTransform, [renderer, img, drawRect, uvRect, this](const QMatrix4x4& transform, float weight) {
-        renderer->drawSpriteTransformed(
-            static_cast<float>(drawRect.x()),
-            static_cast<float>(drawRect.y()),
-            static_cast<float>(drawRect.width()),
-            static_cast<float>(drawRect.height()),
-            transform, img, this->opacity() * weight, uvRect);
-    });
+    for (const auto& lensPass : twoPointFiveDRenderPasses(cropTransform)) {
+        drawWithClonerEffect(this, lensPass.transform,
+            [renderer, img, drawRect, uvRect, this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+                renderer->drawSpriteTransformed(
+                    static_cast<float>(drawRect.x()),
+                    static_cast<float>(drawRect.y()),
+                    static_cast<float>(drawRect.width()),
+                    static_cast<float>(drawRect.height()),
+                    transform, img, this->opacity() * weight * lensOpacity, uvRect);
+            });
+    }
 
     drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }
@@ -2304,13 +2628,7 @@ QImage ArtifactImageLayer::toQImage() const
         return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
     }
 
-    if (isImageSequence()) {
-        const qint64 layerFrame = isTimeRemapEnabled()
-            ? static_cast<qint64>(std::llround(
-                  getSourceFrameAtCompFrame(currentFrame())))
-            : currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(layerFrame, compositionFrameRate());
-    }
+    refreshSequenceFrameForCurrentTime();
 
     const bool isMainThread = (QThread::currentThread() == qApp->thread());
 
@@ -2474,8 +2792,10 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
         // consumers do not keep using the previously drawn frame.
         (void)toQImage();
     }
-    if (impl_ && !impl_->cacheBuffer_ && impl_->cache_) {
-        // Serialize lazy buffer creation against sequence frame refresh.
+    ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> frameBuffer;
+    if (impl_) {
+        // Serialize lazy buffer creation and retain shared ownership locally
+        // before returning a reference that a concurrent refresh may retire.
         std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
         if (!impl_->cacheBuffer_ && impl_->cache_) {
             impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
@@ -2489,9 +2809,10 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
                     impl_->cacheBuffer_);
             }
         }
+        frameBuffer = impl_->cacheBuffer_;
     }
-    if (impl_ && impl_->cacheBuffer_) {
-        return *impl_->cacheBuffer_;
+    if (frameBuffer) {
+        return *frameBuffer;
     }
     return empty;
 }
@@ -2509,7 +2830,12 @@ bool ArtifactImageLayer::hasCurrentFrameBuffer() const
         return true;
     }
     impl_->refreshSourceVersionIfNeeded();
-    return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) || impl_->cache_);
+    if (!impl_) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
+    return (impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) ||
+           static_cast<bool>(impl_->cache_);
 }
 
 const ArtifactCore::ImageF32x4_RGBA*

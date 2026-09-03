@@ -87,6 +87,8 @@ import Property.Abstract;
 import Memory.SharedPtr;
 import Property.Group;
 import Undo.UndoManager;
+import Audio.Modulation.Modulator;
+import Audio.Modulation.Router;
 import Artifact.Effect.Abstract;
 import Artifact.Application.Manager;
 import Utils.String.UniString;
@@ -99,7 +101,6 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
 import Input.Operator;
-import Audio.Modulation.Router;
 import Event.Bus;
 import Artifact.Event.Types;
 import Time.Rational;
@@ -2280,38 +2281,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                            for (const auto &path : channelPaths) {
                              channelLockedPaths.remove(path);
                            }
-      } else if (name == QStringLiteral("text.animatorCount") ||
-                 name.compare(QStringLiteral("text.animatorPreset"),
-                              Qt::CaseInsensitive) == 0) {
-        for (const auto &tl : this->targetLayers) {
-          if (!tl) { continue; }
-          const auto textLayer =
-              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(tl);
-          if (!textLayer) {
-            tl->setLayerPropertyValue(name, value);
-            continue;
-          }
-          const QJsonArray beforeStack = textLayer->textAnimatorStackSnapshot();
-          tl->setLayerPropertyValue(name, value);
-          const QJsonArray afterStack = textLayer->textAnimatorStackSnapshot();
-          if (beforeStack != afterStack) {
-            auto command = std::make_unique<SetTextAnimatorStackCommand>(
-                tl, beforeStack, afterStack,
-                QStringLiteral("Edit Text Animators"));
-            bool applied = false;
-            if (auto *mgr = UndoManager::instance()) {
-              applied = mgr->push(std::move(command));
-            } else {
-              command->redo();
-              applied = command->lastOperationSucceeded();
-            }
-            if (!applied) {
-              textLayer->restoreTextAnimatorStack(beforeStack);
-              notifyLayerPropertyAnimationChanged(tl);
-            }
-          }
-        }
-      } else {
+       } else {
                            for (const auto &path : channelPaths) {
                              channelLockedPaths.insert(path);
                            }

@@ -65,6 +65,8 @@ struct RelinkCandidate {
   QString path;
   int score = 0;
   QString reason;
+  int sequenceExpectedFrames = 0;
+  int sequenceFoundFrames = 0;
 };
 
 W_REGISTER_ARGTYPE(PreviewQualityPreset)

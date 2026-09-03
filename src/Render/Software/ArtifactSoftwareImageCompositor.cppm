@@ -604,6 +604,8 @@ QImage composeOpenCV(const CompositeRequest& request)
  return matRGBAToQImage(outRgba);
 }
 
+} // namespace
+
 bool qPainterSupportsBlendMode(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
@@ -625,8 +627,6 @@ bool qPainterSupportsBlendMode(const ArtifactCore::BlendMode mode)
   return false;
  }
 }
-
-} // namespace
 
 bool blendSurface(QImage& canvas,
                   const QImage& surface,

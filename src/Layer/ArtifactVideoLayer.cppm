@@ -376,30 +376,40 @@ QString threadDiagnosticsTag()
 }
 
 // ============================================================================
-// FrameCache - LRU cache for decoded frames
+// FrameCache - LRU cache for decoded frames with frame count and byte budgets
 // ============================================================================
 class FrameCache {
 public:
-    explicit FrameCache(size_t maxFrames = 30)
-        : maxFrames_(maxFrames) {}
+    explicit FrameCache(size_t maxFrames = 120, size_t maxBytes = 1024ULL * 1024ULL * 1024ULL)
+        : maxFrames_(maxFrames), maxBytes_(maxBytes) {}
+
+    static size_t calculateFrameBytes(const ArtifactCore::ImageF32x4_RGBA& frameData) {
+        if (frameData.isEmpty()) {
+            return 0;
+        }
+        // ImageF32x4_RGBA uses 4 floats (16 bytes) per pixel
+        return static_cast<size_t>(frameData.width()) * static_cast<size_t>(frameData.height()) * 16ULL;
+    }
 
     void put(int64_t frame, const ArtifactCore::ImageF32x4_RGBA& frameData) {
         std::lock_guard<std::mutex> lock(mutex_);
+        const size_t newBytes = calculateFrameBytes(frameData);
         auto it = cache_.find(frame);
         if (it != cache_.end()) {
+            currentBytes_ = (currentBytes_ >= it->second.byteSize)
+                ? (currentBytes_ - it->second.byteSize + newBytes)
+                : newBytes;
             it->second.data = frameData;
+            it->second.byteSize = newBytes;
             touch(it);
+            evictIfNeeded();
             return;
         }
 
-        while (cache_.size() >= maxFrames_ && !cacheOrder_.empty()) {
-            const int64_t oldest = cacheOrder_.back();
-            cacheOrder_.pop_back();
-            cache_.erase(oldest);
-        }
-
         cacheOrder_.push_front(frame);
-        cache_.emplace(frame, CacheEntry{frameData, cacheOrder_.begin()});
+        cache_.emplace(frame, CacheEntry{frameData, newBytes, cacheOrder_.begin()});
+        currentBytes_ += newBytes;
+        evictIfNeeded();
     }
 
     bool get(int64_t frame, ArtifactCore::ImageF32x4_RGBA& outFrame) {
@@ -423,6 +433,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         cache_.clear();
         cacheOrder_.clear();
+        currentBytes_ = 0;
     }
 
     size_t size() const {
@@ -430,9 +441,15 @@ public:
         return cache_.size();
     }
 
+    size_t currentBytes() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return currentBytes_;
+    }
+
 private:
     struct CacheEntry {
         ArtifactCore::ImageF32x4_RGBA data;
+        size_t byteSize = 0;
         std::list<int64_t>::iterator orderIt;
     };
 
@@ -440,10 +457,29 @@ private:
     std::unordered_map<int64_t, CacheEntry> cache_;
     std::list<int64_t> cacheOrder_;
     size_t maxFrames_;
+    size_t maxBytes_;
+    size_t currentBytes_ = 0;
 
     void touch(std::unordered_map<int64_t, CacheEntry>::iterator it) {
         cacheOrder_.splice(cacheOrder_.begin(), cacheOrder_, it->second.orderIt);
         it->second.orderIt = cacheOrder_.begin();
+    }
+
+    void evictIfNeeded() {
+        while ((cache_.size() > maxFrames_ || (maxBytes_ > 0 && currentBytes_ > maxBytes_)) &&
+               !cacheOrder_.empty()) {
+            const int64_t oldest = cacheOrder_.back();
+            cacheOrder_.pop_back();
+            auto it = cache_.find(oldest);
+            if (it != cache_.end()) {
+                if (currentBytes_ >= it->second.byteSize) {
+                    currentBytes_ -= it->second.byteSize;
+                } else {
+                    currentBytes_ = 0;
+                }
+                cache_.erase(it);
+            }
+        }
     }
 };
 
@@ -571,7 +607,9 @@ public:
     FrameTicket frameTicket_;
     std::deque<FrameOutcome> recentFrameOutcomes_;
 
-    Impl() : playbackController_(ArtifactCore::makeShared<ArtifactCore::MediaPlaybackController>()), frameCache_(120) {}
+    std::deque<int64_t> sharedFrameOrder_;
+
+    Impl() : playbackController_(ArtifactCore::makeShared<ArtifactCore::MediaPlaybackController>()), frameCache_(120, 1024ULL * 1024ULL * 1024ULL) {}
     ~Impl() = default;
 
     void retainSharedFrame(const int64_t sourceFrame,
@@ -581,9 +619,17 @@ public:
             return;
         }
         std::lock_guard<std::mutex> lock(sharedFramePayloadMutex_);
+        auto it = sharedFramePayloads_.find(sourceFrame);
+        if (it != sharedFramePayloads_.end()) {
+            it->second = payload;
+            return;
+        }
         sharedFramePayloads_[sourceFrame] = payload;
-        while (sharedFramePayloads_.size() > 120) {
-            sharedFramePayloads_.erase(sharedFramePayloads_.begin());
+        sharedFrameOrder_.push_back(sourceFrame);
+        while (sharedFramePayloads_.size() > 120 && !sharedFrameOrder_.empty()) {
+            const int64_t oldest = sharedFrameOrder_.front();
+            sharedFrameOrder_.pop_front();
+            sharedFramePayloads_.erase(oldest);
         }
     }
 
@@ -591,6 +637,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(sharedFramePayloadMutex_);
         sharedFramePayloads_.clear();
+        sharedFrameOrder_.clear();
     }
 
     bool refreshSourceVersionIfNeeded()
@@ -2271,6 +2318,9 @@ QString ArtifactProxyManager::proxyDirectory(const QString& sourcePath) {
 
 QString ArtifactProxyManager::proxyFilePath(const QString& sourcePath,
                                             ProxyServiceQuality quality) {
+    if (sourcePath.trimmed().isEmpty() || quality == ProxyServiceQuality::None) {
+        return {};
+    }
     const QFileInfo info(sourcePath);
     const QString suffix = quality == ProxyServiceQuality::Full
         ? QStringLiteral("full")
@@ -2882,7 +2932,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
                               ArtifactCore::PropertyType::Integer,
                               static_cast<qint64>(proxyQuality()), -80);
     proxyProp->setHardRange(0, 3);
-    proxyProp->setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full"));
+    proxyProp->setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full, 4=Eighth"));
     videoGroup.addProperty(proxyProp);
 
     groups.push_back(videoGroup);

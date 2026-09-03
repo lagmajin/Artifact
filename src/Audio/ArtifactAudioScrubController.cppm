@@ -30,7 +30,7 @@ namespace Artifact
     using namespace ArtifactCore;
 
     static void publishAudioScrubChanged(AudioScrubChangeKind kind,
-                                         FramePosition frame = FramePosition{},
+                                         FramePosition frame = FramePosition(0),
                                          int latencyMs = 0)
     {
         globalEventBus().publish(AudioScrubChangedEvent{
@@ -380,7 +380,7 @@ namespace Artifact
             impl_->measureLatencyMs_ = static_cast<int>(std::clamp<qint64>(
                 elapsed, 0, std::numeric_limits<int>::max()));
             publishAudioScrubChanged(AudioScrubChangeKind::LatencyUpdated,
-                                     FramePosition{},
+                                     FramePosition(0),
                                      impl_->measureLatencyMs_);
         }
         impl_->lastFrame_ = f;

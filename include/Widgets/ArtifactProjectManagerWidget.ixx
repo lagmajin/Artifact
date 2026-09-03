@@ -197,6 +197,7 @@ public:
   ArtifactProjectView* projectView() const;
   bool selectItemsByFilePaths(const QStringList& filePaths);
   void generateProxyForSelection();
+  void cancelProxyQueue();
   void revealProxyForSelection();
   void generateProxyForFilePath(const QString& sourceFilePath);
   void revealProxyForFilePath(const QString& sourceFilePath);

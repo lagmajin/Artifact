@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <functional>
 #include <QFileSystemModel>
+#include <QIcon>
 #include <QDir>
 #include <QDirIterator>
 #include <QLabel>
@@ -3938,10 +3939,17 @@ if (!item.isFolder) {
     QStringList labels;
     labels.reserve(candidates.size());
     for (const auto& candidate : candidates) {
-      labels.append(QStringLiteral("[%1] %2\n%3")
+      QString sequenceSummary;
+      if (candidate.sequenceExpectedFrames > 0) {
+        sequenceSummary = QStringLiteral("\nSequence: %1/%2 frames found")
+                              .arg(candidate.sequenceFoundFrames)
+                              .arg(candidate.sequenceExpectedFrames);
+      }
+      labels.append(QStringLiteral("[%1] %2\n%3%4")
                         .arg(candidate.score)
                         .arg(candidate.path)
-                        .arg(candidate.reason));
+                        .arg(candidate.reason)
+                        .arg(sequenceSummary));
     }
     bool accepted = false;
     const QString selected = QInputDialog::getItem(
@@ -4040,10 +4048,17 @@ if (!item.isFolder) {
         const int references = referenceCount(oldPath);
         QStringList labels;
         for (const auto& candidate : candidates) {
-          labels.append(QStringLiteral("[%1] %2\n%3\nReferences: %4")
+          QString sequenceSummary;
+          if (candidate.sequenceExpectedFrames > 0) {
+            sequenceSummary = QStringLiteral("\nSequence: %1/%2 frames found")
+                                  .arg(candidate.sequenceFoundFrames)
+                                  .arg(candidate.sequenceExpectedFrames);
+          }
+          labels.append(QStringLiteral("[%1] %2\n%3%4\nReferences: %5")
                             .arg(candidate.score)
                             .arg(candidate.path)
                             .arg(candidate.reason)
+                            .arg(sequenceSummary)
                             .arg(references));
         }
         bool accepted = false;

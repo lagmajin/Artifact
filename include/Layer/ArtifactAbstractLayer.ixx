@@ -47,14 +47,11 @@ import Geometry.Fracture;
 import Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
+import Audio.Modulation.Router;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4_RGBA;
 export import Property.Abstract;
 export import Property.Group;
-
-namespace ArtifactCore::Audio::Modulation {
-class ModulationRouter;
-}
 
 export namespace Artifact {
 
@@ -74,7 +71,7 @@ export namespace Artifact {
   }
  };
 
- struct LayerComponentRuntimeSnapshot {
+struct LayerComponentRuntimeSnapshot {
   SharedPtr<const void> storage;
   std::size_t estimatedBytes = 0;
 
@@ -96,6 +93,13 @@ enum class VariantOverrideFlags : std::uint32_t {
     BlendMode   = 1 << 2,
     EffectStack = 1 << 3,
     Source      = 1 << 4,
+};
+
+// A local 2.5D lens pass stays in the 2D composition stack: it never
+// participates in the scene camera or its depth buffer.
+struct TwoPointFiveDRenderPass {
+  QMatrix4x4 transform;
+  float opacity = 1.0f;
 };
 
 inline VariantOverrideFlags operator|(VariantOverrideFlags a, VariantOverrideFlags b) {
@@ -407,6 +411,8 @@ public:
   QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
+  std::vector<TwoPointFiveDRenderPass> twoPointFiveDRenderPasses(
+      const QMatrix4x4 &baseTransform) const;
   float4x4 getGlobalTransformMatrix() const;
   float4x4 getLocalTransformMatrix() const;
   bool hasSoftBodyPhysics() const;

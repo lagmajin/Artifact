@@ -12,6 +12,7 @@
 module Artifact.Render.RamPreviewController;
 
 import Core.Diagnostics.Recorder;
+import Core.Diagnostics.Snapshot;
 
 namespace Artifact {
 

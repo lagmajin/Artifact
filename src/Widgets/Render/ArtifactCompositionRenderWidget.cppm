@@ -1215,13 +1215,13 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       (impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||
        impl_->isDraggingParticleEffector_ ||
        impl_->isDraggingParticleInfluenceRadius_)) {
+   auto comp = impl_->previewPipeline_.composition();
+   auto layer = comp && !impl_->selectedLayerId_.isNil()
+       ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
+   auto* particleLayer = layer
+       ? dynamic_cast<ArtifactParticleLayer*>(layer.get()) : nullptr;
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    auto comp = impl_->previewPipeline_.composition();
-    auto layer = comp && !impl_->selectedLayerId_.isNil()
-        ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
-    auto* particleLayer = layer
-        ? dynamic_cast<ArtifactParticleLayer*>(layer.get()) : nullptr;
     if (particleLayer && impl_->isDraggingParticleEmitter_) {
      const QVector3D current = particleLayer->emitterPosition();
      if (std::abs(current.x() - impl_->particleEmitterDragStartX_) > 0.001f ||
@@ -1245,8 +1245,7 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
        }
       }
      }
-    }
-    if (particleLayer && impl_->isDraggingParticleDirection_) {
+   if (particleLayer && impl_->isDraggingParticleDirection_) {
      const QVector3D current = particleLayer->emitterDirection();
      const QVector3D start = impl_->particleEmitterDragStartDirection_;
      if ((current - start).lengthSquared() > 0.000001f) {
@@ -1265,7 +1264,6 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
        }
       }
      }
-    }
     if (particleLayer && impl_->isDraggingParticleEffector_ &&
         impl_->particleEffectorDragIndex_ >= 0) {
      const QVector3D current = particleLayer->effectorPosition(
@@ -1312,7 +1310,6 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       }
      }
     }
-   }
    impl_->isDraggingParticleEmitter_ = false;
    impl_->isDraggingParticleDirection_ = false;
    impl_->isDraggingParticleEffector_ = false;
@@ -1322,7 +1319,6 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
    impl_->requestRender();
    event->accept();
    return;
-  }
 
   if (event->button() == Qt::LeftButton &&
       ArtifactApplicationManager::instance()->toolManager()->activeTool() == ToolType::Zoom &&
@@ -1477,7 +1473,8 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
           static_cast<float>(event->position().y())});
      const QPointF local = inverse.map(QPointF(canvas.x, canvas.y));
      if (impl_->isDraggingParticleEmitter_) {
-      particleLayer->setEmitterPosition(local);
+      particleLayer->setEmitterPosition(QVector3D(
+          static_cast<float>(local.x()), static_cast<float>(local.y()), 0.0f));
      } else if (impl_->isDraggingParticleDirection_) {
       const QVector3D emitter = particleLayer->emitterPosition();
       particleLayer->setEmitterDirection(QVector3D(

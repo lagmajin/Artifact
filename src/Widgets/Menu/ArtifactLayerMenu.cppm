@@ -833,6 +833,7 @@ public:
     QAction* cacheDisabledAction = nullptr;
     QAction* proxyNoneAction = nullptr;
     QAction* proxyQuarterAction = nullptr;
+    QAction* proxyEighthAction = nullptr;
     QAction* proxyHalfAction = nullptr;
     QAction* proxyFullAction = nullptr;
     QAction* generateProxyAction = nullptr;
@@ -1258,6 +1259,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     proxyNoneAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_full.svg")));
     proxyQuarterAction = proxyMenu->addAction("1/4 画質");
     proxyQuarterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_quarter.svg")));
+    proxyEighthAction = proxyMenu->addAction("1/8 画質");
+    proxyEighthAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_eighth.svg")));
     proxyHalfAction = proxyMenu->addAction("1/2 画質");
     proxyHalfAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
     proxyFullAction = proxyMenu->addAction("フル画質");
@@ -1287,7 +1290,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     convertShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     convertMaskToShapeAction = maskMenu->addAction(QStringLiteral("マスクをシェイプに変換"));
     convertMaskToShapeAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyHalfAction, proxyFullAction}) {
+    for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyEighthAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
     }
@@ -1586,6 +1589,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == clearParentAction) { handleClearParent(); return; }
         if (action == proxyNoneAction) { handleSetProxyQuality(ProxyQuality::None); return; }
         if (action == proxyQuarterAction) { handleSetProxyQuality(ProxyQuality::Quarter); return; }
+        if (action == proxyEighthAction) { handleSetProxyQuality(ProxyQuality::Eighth); return; }
         if (action == proxyHalfAction) { handleSetProxyQuality(ProxyQuality::Half); return; }
         if (action == proxyFullAction) { handleSetProxyQuality(ProxyQuality::Full); return; }
         if (action == generateProxyAction) { handleGenerateProxy(); return; }
@@ -2304,11 +2308,13 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     if (isVideoSelected) {
         proxyNoneAction->setChecked(proxyQuality == ProxyQuality::None);
         proxyQuarterAction->setChecked(proxyQuality == ProxyQuality::Quarter);
+        proxyEighthAction->setChecked(proxyQuality == ProxyQuality::Eighth);
         proxyHalfAction->setChecked(proxyQuality == ProxyQuality::Half);
         proxyFullAction->setChecked(proxyQuality == ProxyQuality::Full);
     } else {
         proxyNoneAction->setChecked(false);
         proxyQuarterAction->setChecked(false);
+        proxyEighthAction->setChecked(false);
         proxyHalfAction->setChecked(false);
         proxyFullAction->setChecked(false);
     }

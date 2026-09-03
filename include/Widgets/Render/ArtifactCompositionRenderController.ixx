@@ -323,6 +323,23 @@ void handleMouseMove(const QPointF& viewportPos);
   // Returns 0 (width) or 1 (height) when a visible frame-size badge begins
   // a Scale modal interaction; otherwise returns -1.
   int beginFrameSizeBadgeInput(const QPointF& viewportPos);
+  // In-viewport text editing session (quick edit mode for text layers).
+  bool startTextEditSession(const ArtifactAbstractLayerPtr& layer);
+  // Ends the session. Discards live edits when discardChanges is true,
+  // otherwise commits them through the normal undo pipeline.
+  void finishTextEditSession(bool discardChanges);
+  bool isTextEditSessionActive() const;
+  ArtifactAbstractLayerPtr textEditSessionLayer() const;
+  QString textEditSessionText() const;
+  // Called by the caret overlay after every input event. Applies the text
+  // live to the session layer and stores caret/selection/preedit state for
+  // overlay drawing.
+  void textSessionSyncFromEditor(const QString& text, int cursorPos,
+                                 int selectionAnchor, const QString& preedit);
+  void textSessionToggleCaretBlink();
+  // UTF-16 string position for a viewport click, or -1 when the click falls
+  // outside the shaped glyph layout.
+  int textSessionCaretPositionAt(const QPointF& viewportPos) const;
   bool constrainModalGizmoInteraction(int axis, const QPointF& viewportPos);
   bool setModalGizmoNumericInput(float value, const QPointF& viewportPos);
   bool setModalGizmoFrameDimension(int dimension, float pixels,

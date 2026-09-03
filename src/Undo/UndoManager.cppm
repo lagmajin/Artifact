@@ -75,6 +75,7 @@ import Event.Bus;
 import Animation.Transform3D;
 import Time.Rational;
 import Artifact.Layers.Selection.Manager;
+import Audio.Modulation.Modulator;
 import Audio.Modulation.Router;
 
 namespace Artifact {
@@ -570,14 +571,14 @@ bool SetCompositionSettingsCommand::deserialize(const QJsonObject& data) {
     compositionId_ = data.value(QStringLiteral("compositionId")).toString();
     const auto readSize = [](const QJsonValue& value) {
         const auto array = value.toArray();
-        return QSize(array.value(0).toInt(), array.value(1).toInt());
+        return QSize(array.at(0).toInt(), array.at(1).toInt());
     };
     const auto readColor = [](const QJsonValue& value) {
         const auto array = value.toArray();
-        return FloatColor(static_cast<float>(array.value(0).toDouble()),
-                          static_cast<float>(array.value(1).toDouble()),
-                          static_cast<float>(array.value(2).toDouble()),
-                          static_cast<float>(array.value(3).toDouble()));
+        return FloatColor(static_cast<float>(array.at(0).toDouble()),
+                          static_cast<float>(array.at(1).toDouble()),
+                          static_cast<float>(array.at(2).toDouble()),
+                          static_cast<float>(array.at(3).toDouble()));
     };
     oldSize_ = readSize(data.value(QStringLiteral("oldSize")));
     oldFrameRate_ = static_cast<float>(data.value(QStringLiteral("oldFrameRate")).toDouble());
@@ -591,7 +592,7 @@ bool SetCompositionSettingsCommand::deserialize(const QJsonObject& data) {
     newBackground_ = readColor(data.value(QStringLiteral("newBackground")));
     auto* manager = UndoManager::instance();
     if (!manager || compositionId_.isEmpty()) return false;
-    composition_ = manager->resolveComposition(CompositionID(compositionId_));
+    composition_ = manager->resolveComposition(compositionId_);
     return !composition_.expired();
 }
 
@@ -646,7 +647,7 @@ bool SetCompositionResponsiveLayoutCommand::deserialize(const QJsonObject& data)
     newLayout_ = data.value(QStringLiteral("newLayout")).toObject();
     auto* manager = UndoManager::instance();
     if (!manager || !canSerialize()) return false;
-    composition_ = manager->resolveComposition(CompositionID(compositionId_));
+    composition_ = manager->resolveComposition(compositionId_);
     return !composition_.expired();
 }
 
@@ -1376,10 +1377,11 @@ bool modulationSnapshotSerializable(
     return true;
 }
 
+template <typename Router>
 bool applyModulationSnapshot(
-    Audio::Modulation::ModulationRouter& router,
-    const Audio::Modulation::ModulationRouterSnapshot& target,
-    const Audio::Modulation::ModulationRouterSnapshot& compensation) {
+    Router& router,
+    const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& target,
+    const ArtifactCore::Audio::Modulation::ModulationRouterSnapshot& compensation) {
     router.restoreSnapshot(target);
     if (encodeModulationRouterSnapshot(router.snapshot()) ==
         encodeModulationRouterSnapshot(target)) {

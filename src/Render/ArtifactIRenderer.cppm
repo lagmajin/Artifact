@@ -8,6 +8,7 @@ module;
 #include <cstring>
 #include <cstdint>
 #include <cmath>
+#include <numbers>
 #include <algorithm>
 #include <atomic>
 #include <numeric>
@@ -962,11 +963,9 @@ namespace {
                                  modelMatrix.constData());
     renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
     renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
-    if (baseColorTextureView) {
-      renderer->setBaseColorTextureView(baseColorTextureView);
-    } else {
-      renderer->setBaseColorTexture(material.baseColorTexture().toQString());
-    }
+    // MeshRenderer owns texture loading and does not expose a raw-view setter.
+    // Keep the material path as the single supported texture boundary.
+    renderer->setBaseColorTexture(material.baseColorTexture().toQString());
     renderer->setOpacityTexture(material.opacityTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),
@@ -4178,11 +4177,20 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
      const FloatColor& outlineColor,
      float outlineThickness,
      float blurRadius,
-     bool useGlyphColorOverrides)
+     bool useGlyphColorOverrides,
+     bool useTwoPointFiveD,
+     float twoPointFiveDCameraDistance,
+     bool useTwoPointFiveDDepthOfField,
+     float twoPointFiveDFocusDepth,
+     float twoPointFiveDFocusRange,
+     float twoPointFiveDMaxBlur)
  {
   impl_->primitiveRenderer_.drawGlyphsTransformed(
       glyphs, style, color, transform, origin, opacity, outlineColor,
-      outlineThickness, blurRadius, useGlyphColorOverrides);
+      outlineThickness, blurRadius, useGlyphColorOverrides, useTwoPointFiveD,
+      twoPointFiveDCameraDistance, useTwoPointFiveDDepthOfField,
+      twoPointFiveDFocusDepth, twoPointFiveDFocusRange,
+      twoPointFiveDMaxBlur);
  }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
  {

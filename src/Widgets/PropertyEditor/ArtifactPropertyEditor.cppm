@@ -101,7 +101,7 @@ constexpr int kAuxButtonAreaWidth =
 
 struct PropertyRowActionGeometry {
   std::array<bool, 6> visible{};
-  std::array<int, 6> slots{};
+  std::array<int, 6> slotIndices{};
   int start = 0;
   int width = 0;
 };
@@ -121,12 +121,12 @@ PropertyRowActionGeometry propertyRowActionGeometry(
       hovered && resetVisible,
       hovered && expressionVisible,
       hovered && favoriteVisible};
-  geometry.slots.fill(-1);
+  geometry.slotIndices.fill(-1);
   int count = 0;
   for (int index = 0; index < static_cast<int>(geometry.visible.size());
        ++index) {
     if (geometry.visible[index]) {
-      geometry.slots[index] = count++;
+      geometry.slotIndices[index] = count++;
     }
   }
   geometry.width = count > 0
@@ -959,7 +959,7 @@ void ArtifactPropertyEditorRowWidget::mousePressEvent(QMouseEvent *event) {
           expressionButton_, favoriteButton_};
       for (int index = 0; index < static_cast<int>(actions.visible.size());
            ++index) {
-        if (actions.visible[index] && actions.slots[index] == slot &&
+        if (actions.visible[index] && actions.slotIndices[index] == slot &&
             buttons[index] && buttons[index]->isEnabled()) {
           buttons[index]->click();
           event->accept();
@@ -1225,7 +1225,7 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
     if (!actions.visible[i]) {
       continue;
     }
-    const QRect actionRect(actions.start + actions.slots[i] * step,
+    const QRect actionRect(actions.start + actions.slotIndices[i] * step,
                            (height() - kPropertyKeyButtonSize) / 2,
                            kPropertyKeyButtonSize, kPropertyKeyButtonSize);
     const bool selected = (i == 1 && currentFrameKeyframed_) ||

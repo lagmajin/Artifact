@@ -484,7 +484,7 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
             return;
         }
         const auto children = composition->childLayersOf(id());
-        const int clampedIndex = std::clamp(index, 0, static_cast<int>(children.size()) - 1);
+        const int clampedIndex = std::max(0, static_cast<int>(children.size()) - 1);
         composition->moveLayerToIndex(layer->id(), clampedIndex);
     } else {
         layer->setComposition(compositionObject());

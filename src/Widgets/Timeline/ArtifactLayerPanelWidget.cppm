@@ -4841,6 +4841,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       proxyNoneAct->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
       QAction* proxyQuarterAct = proxyMenu->addAction(QStringLiteral("1/4 画質"));
       proxyQuarterAct->setIcon(QIcon(resolveIconPath("Studio/resolution_quarter.svg")));
+      QAction* proxyEighthAct = proxyMenu->addAction(QStringLiteral("1/8 画質"));
+      proxyEighthAct->setIcon(QIcon(resolveIconPath("Studio/resolution_eighth.svg")));
       QAction* proxyHalfAct = proxyMenu->addAction(QStringLiteral("1/2 画質"));
       proxyHalfAct->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
       QAction* proxyFullAct = proxyMenu->addAction(QStringLiteral("フル画質"));
@@ -4858,6 +4860,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                        [triggerSetProxyQuality](bool) { triggerSetProxyQuality(ProxyQuality::None); });
       QObject::connect(proxyQuarterAct, &QAction::triggered, proxyMenu,
                        [triggerSetProxyQuality](bool) { triggerSetProxyQuality(ProxyQuality::Quarter); });
+      QObject::connect(proxyEighthAct, &QAction::triggered, proxyMenu,
+                       [triggerSetProxyQuality](bool) { triggerSetProxyQuality(ProxyQuality::Eighth); });
       QObject::connect(proxyHalfAct, &QAction::triggered, proxyMenu,
                        [triggerSetProxyQuality](bool) { triggerSetProxyQuality(ProxyQuality::Half); });
       QObject::connect(proxyFullAct, &QAction::triggered, proxyMenu,
@@ -4873,14 +4877,17 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       const ProxyQuality currentProxyQuality = videoLayer ? videoLayer->proxyQuality() : ProxyQuality::None;
       proxyNoneAct->setCheckable(true);
       proxyQuarterAct->setCheckable(true);
+      proxyEighthAct->setCheckable(true);
       proxyHalfAct->setCheckable(true);
       proxyFullAct->setCheckable(true);
       proxyQualityGroup->addAction(proxyNoneAct);
       proxyQualityGroup->addAction(proxyQuarterAct);
+      proxyQualityGroup->addAction(proxyEighthAct);
       proxyQualityGroup->addAction(proxyHalfAct);
       proxyQualityGroup->addAction(proxyFullAct);
       proxyNoneAct->setChecked(currentProxyQuality == ProxyQuality::None);
       proxyQuarterAct->setChecked(currentProxyQuality == ProxyQuality::Quarter);
+      proxyEighthAct->setChecked(currentProxyQuality == ProxyQuality::Eighth);
       proxyHalfAct->setChecked(currentProxyQuality == ProxyQuality::Half);
       proxyFullAct->setChecked(currentProxyQuality == ProxyQuality::Full);
       generateProxyAct->setEnabled(!videoSourcePath().trimmed().isEmpty());

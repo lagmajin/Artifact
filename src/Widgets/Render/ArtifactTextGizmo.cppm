@@ -1,6 +1,7 @@
 module;
 #include <QFont>
 #include <QString>
+#include <QGuiApplication>
 #include <utility>
 #include <QPointF>
 #include <QRectF>
@@ -18,6 +19,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Text.LayoutContract;
 import Color.Float;
 import Script.Expression.Evaluator;
 import Undo.UndoManager;
@@ -144,6 +146,164 @@ float selectorHandleX(const QRectF& bounds, const float percentage) {
                std::clamp(percentage, 0.0f, 100.0f) / 100.0f;
 }
 
+constexpr float kTextGizmoPi = 3.14159265358979323846f;
+
+float textPointDistance(const QPointF& a, const QPointF& b) {
+    const float dx = static_cast<float>(a.x() - b.x());
+    const float dy = static_cast<float>(a.y() - b.y());
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+QPointF textPointOnCircle(const QPointF& center, const float radius,
+                          const float angleDegrees) {
+    const float radians = angleDegrees * (kTextGizmoPi / 180.0f);
+    return QPointF(center.x() + std::cos(radians) * radius,
+                   center.y() + std::sin(radians) * radius);
+}
+
+float textAngleDegreesAround(const QPointF& center, const QPointF& point) {
+    return static_cast<float>(std::atan2(point.y() - center.y(),
+                                         point.x() - center.x()) *
+                              180.0 / kTextGizmoPi);
+}
+
+float textNormalizeAngleDeltaDegrees(float deltaDegrees) {
+    while (deltaDegrees > 180.0f) {
+        deltaDegrees -= 360.0f;
+    }
+    while (deltaDegrees < -180.0f) {
+        deltaDegrees += 360.0f;
+    }
+    return deltaDegrees;
+}
+
+QPointF textApplyScaleRotateToVector(const QPointF& v, const float scaleX,
+                                     const float scaleY,
+                                     const float rotationDegrees) {
+    const double radians = rotationDegrees * (kTextGizmoPi / 180.0f);
+    const double cosA = std::cos(radians);
+    const double sinA = std::sin(radians);
+    const double sx = v.x() * scaleX;
+    const double sy = v.y() * scaleY;
+    return QPointF(sx * cosA - sy * sinA, sx * sinA + sy * cosA);
+}
+
+void textSyncAnimatedProperty(const ArtifactAbstractLayerPtr& layer,
+                              const QString& propertyPath,
+                              const ArtifactCore::RationalTime& time,
+                              const QVariant& value) {
+    if (!layer) {
+        return;
+    }
+    const auto property = layer->getProperty(propertyPath);
+    if (property && property->isAnimatable() &&
+        !property->getKeyFrames().empty()) {
+        property->addKeyFrame(time, value);
+    }
+}
+
+struct TextRotateRingGeometry {
+    QPointF centerWorld;
+    float ringRadius = 0.0f;
+    float ringThickness = 0.0f;
+    float hitRadius = 0.0f;
+    float hitThickness = 0.0f;
+    float gripRadius = 0.0f;
+    float gripSize = 0.0f;
+};
+
+TextRotateRingGeometry computeTextRotateRingGeometry(const QRectF& localRect,
+                                                     const QTransform& globalTransform,
+                                                     const float invZoom) {
+    TextRotateRingGeometry geo;
+    geo.centerWorld = globalTransform.map(localRect.center());
+    const QPointF tl = globalTransform.map(localRect.topLeft());
+    const QPointF tr = globalTransform.map(localRect.topRight());
+    const QPointF bl = globalTransform.map(localRect.bottomLeft());
+    const QPointF br = globalTransform.map(localRect.bottomRight());
+    const float baseRadius = std::max(
+        {textPointDistance(geo.centerWorld, tl),
+         textPointDistance(geo.centerWorld, tr),
+         textPointDistance(geo.centerWorld, bl),
+         textPointDistance(geo.centerWorld, br)});
+    geo.ringRadius = baseRadius + std::max(12.0f * invZoom, 14.0f);
+    geo.ringThickness = std::max(2.0f * invZoom, 2.2f);
+    geo.hitRadius = geo.ringRadius;
+    geo.hitThickness = std::max(geo.ringThickness * 2.2f, 9.0f * invZoom);
+    geo.gripRadius = geo.ringRadius + std::max(5.0f * invZoom, 6.0f);
+    geo.gripSize = std::max(3.5f * invZoom, 4.0f);
+    return geo;
+}
+
+void drawTextRotateRing(ArtifactIRenderer* renderer,
+                        const TextRotateRingGeometry& geo,
+                        const bool rotateActive, const float invZoom) {
+    if (!renderer || geo.ringRadius <= 0.0f) {
+        return;
+    }
+    const FloatColor ringColor = rotateActive
+        ? FloatColor{0.55f, 0.95f, 1.0f, 1.0f}
+        : FloatColor{0.5f, 0.8f, 1.0f, 0.85f};
+    const FloatColor shadowColor{0.0f, 0.0f, 0.0f, 0.35f};
+    const float shadowOffset = std::max(1.0f, 0.9f * invZoom);
+    renderer->drawCircle(
+        static_cast<float>(geo.centerWorld.x()) + shadowOffset,
+        static_cast<float>(geo.centerWorld.y()) + shadowOffset,
+        geo.ringRadius, shadowColor, geo.ringThickness + 0.8f * invZoom);
+    renderer->drawCircle(static_cast<float>(geo.centerWorld.x()),
+                         static_cast<float>(geo.centerWorld.y()),
+                         geo.ringRadius, ringColor, geo.ringThickness);
+    const float cardinalStep = 90.0f;
+    for (int i = 0; i < 4; ++i) {
+        const float angle = i * cardinalStep;
+        const QPointF outer = textPointOnCircle(
+            geo.centerWorld, geo.ringRadius + geo.ringThickness, angle);
+        const QPointF inner = textPointOnCircle(
+            geo.centerWorld, geo.ringRadius - geo.ringThickness * 2.0f, angle);
+        renderer->drawSolidLine(
+            {static_cast<float>(outer.x()), static_cast<float>(outer.y())},
+            {static_cast<float>(inner.x()), static_cast<float>(inner.y())},
+            FloatColor{0.5f, 0.8f, 1.0f, 0.55f}, std::max(1.0f, 1.1f * invZoom));
+    }
+    const QPointF gripCenter =
+        textPointOnCircle(geo.centerWorld, geo.gripRadius, -90.0f);
+    renderer->drawCircle(static_cast<float>(gripCenter.x()),
+                         static_cast<float>(gripCenter.y()),
+                         geo.gripSize, ringColor);
+    renderer->drawSolidLine(
+        {static_cast<float>(geo.centerWorld.x()),
+         static_cast<float>(geo.centerWorld.y() - geo.ringRadius)},
+        {static_cast<float>(gripCenter.x()), static_cast<float>(gripCenter.y())},
+        FloatColor{0.5f, 0.8f, 1.0f, 0.7f}, std::max(1.0f, 1.2f * invZoom));
+}
+
+void drawTextAnchorCrosshair(ArtifactIRenderer* renderer,
+                             const QPointF& anchorWorld,
+                             const bool anchorActive, const float invZoom) {
+    if (!renderer) {
+        return;
+    }
+    const float handleSize = 6.0f * invZoom;
+    const FloatColor outer = anchorActive
+        ? FloatColor{0.95f, 0.95f, 0.95f, 1.0f}
+        : FloatColor{0.0f, 0.0f, 0.0f, 1.0f};
+    const FloatColor inner = anchorActive
+        ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+        : FloatColor{1.0f, 0.82f, 0.18f, 1.0f};
+    const float shadowOffset = std::max(1.0f, 0.9f * invZoom);
+    renderer->drawCrosshair(static_cast<float>(anchorWorld.x()) + shadowOffset,
+                            static_cast<float>(anchorWorld.y()) + shadowOffset,
+                            handleSize * 2.45f,
+                            {0.0f, 0.0f, 0.0f, anchorActive ? 0.50f : 0.36f});
+    renderer->drawCrosshair(static_cast<float>(anchorWorld.x()),
+                            static_cast<float>(anchorWorld.y()),
+                            handleSize * 2.0f, outer);
+    renderer->drawCrosshair(
+        static_cast<float>(anchorWorld.x()) - std::max(1.0f, 0.4f * invZoom),
+        static_cast<float>(anchorWorld.y()) - std::max(1.0f, 0.4f * invZoom),
+        handleSize * 1.32f, inner);
+}
+
 } // namespace
 
 TextGizmo::TextGizmo() {}
@@ -155,6 +315,7 @@ void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     activeHandle_ = HandleType::None;
     dragStartCanvasPos_ = QPointF();
     dragStartLayerPosition_ = QPointF();
+    dragLastCanvasPos_ = QPointF();
     dragStartBounds_ = QRectF();
     dragStartValue_ = 0.0f;
     dragCurrentValue_ = 0.0f;
@@ -162,6 +323,9 @@ void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     dragPropertyPath_.clear();
     dragBeforeKeyframes_.clear();
     dragValueChanged_ = false;
+    dragAccumulatedRotationDelta_ = 0.0f;
+    transformDragChanged_ = false;
+    transformBeforeStates_.clear();
 }
 
 void TextGizmo::draw(ArtifactIRenderer* renderer) {
@@ -320,6 +484,89 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
                            Qt::AlignHCenter | Qt::AlignVCenter);
     }
 
+    // Baseline / line-box overlays derived from the shaped glyph layout.
+    if (textLayer->layoutMode() != TextLayoutMode::Path) {
+        const auto glyphGeometry = textLayer->textGlyphGeometry();
+        if (!glyphGeometry.glyphs.empty()) {
+            const QTransform overlayTransform = layer_->getGlobalTransform();
+            const QPointF &origin = glyphGeometry.drawOrigin;
+            const float lineAlpha = editSessionActive_ ? 0.45f : 0.25f;
+            const FloatColor lineBoxColor{0.65f, 0.85f, 1.0f, lineAlpha};
+            const FloatColor baselineColor{1.0f, 0.86f, 0.35f,
+                                           std::min(1.0f, lineAlpha + 0.2f)};
+            const float baselineThickness = std::max(1.0f, 1.0f * invZoom);
+            int currentLineIndex = -1;
+            QRectF lineBox;
+            bool baselineValid = false;
+            float baselineY = 0.0f;
+            float baselineLeft = 0.0f;
+            float baselineRight = 0.0f;
+            const auto flushLine = [&]() {
+                if (currentLineIndex < 0) {
+                    return;
+                }
+                if (lineBox.width() > 0.0 && lineBox.height() > 0.0) {
+                    renderer->drawSolidRectTransformed(
+                        static_cast<float>(lineBox.left() + origin.x()),
+                        static_cast<float>(lineBox.top() + origin.y()),
+                        static_cast<float>(lineBox.width()),
+                        static_cast<float>(lineBox.height()),
+                        overlayTransform, lineBoxColor);
+                }
+                if (baselineValid) {
+                    const QPointF startCanvas = overlayTransform.map(QPointF(
+                        baselineLeft + origin.x(), baselineY + origin.y()));
+                    const QPointF endCanvas = overlayTransform.map(QPointF(
+                        baselineRight + origin.x(), baselineY + origin.y()));
+                    renderer->drawSolidLine(
+                        {static_cast<float>(startCanvas.x()),
+                         static_cast<float>(startCanvas.y())},
+                        {static_cast<float>(endCanvas.x()),
+                         static_cast<float>(endCanvas.y())},
+                        baselineColor, baselineThickness);
+                }
+            };
+            for (const auto &glyph : glyphGeometry.glyphs) {
+                if (glyph.lineIndex != currentLineIndex) {
+                    flushLine();
+                    currentLineIndex = glyph.lineIndex;
+                    lineBox = QRectF();
+                    baselineValid = false;
+                }
+                lineBox = lineBox.isNull()
+                    ? glyph.bounds : lineBox.united(glyph.bounds);
+                if (glyph.bounds.width() > 0.0) {
+                    if (!baselineValid) {
+                        baselineValid = true;
+                        baselineY = static_cast<float>(glyph.basePosition.y());
+                        baselineLeft =
+                            static_cast<float>(glyph.bounds.left());
+                    }
+                    baselineRight = static_cast<float>(glyph.bounds.right());
+                }
+            }
+            flushLine();
+        }
+    }
+
+    // Rotate ring and anchor crosshair follow the layer transform.
+    const QRectF textLocalBounds = textLayer->localBounds();
+    if (textLocalBounds.isValid() && textLocalBounds.width() > 0.0 &&
+        textLocalBounds.height() > 0.0) {
+        const QTransform textGlobalTransform = layer_->getGlobalTransform();
+        const TextRotateRingGeometry ringGeo = computeTextRotateRingGeometry(
+            textLocalBounds, textGlobalTransform, invZoom);
+        drawTextRotateRing(renderer, ringGeo,
+                           activeHandle_ == HandleType::Rotate, invZoom);
+
+        const auto &textTransform = layer_->transform3D();
+        const QPointF anchorWorld = textGlobalTransform.map(
+            QPointF(textTransform.anchorX(), textTransform.anchorY()));
+        drawTextAnchorCrosshair(renderer, anchorWorld,
+                                activeHandle_ == HandleType::AnchorPoint,
+                                invZoom);
+    }
+
     // Side handles (optional, for now just corners)
 
 }
@@ -385,6 +632,51 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         return HandleType::BoxCornerBottomRight;
     }
 
+    // Rotate ring: ImGui-style outer ring around the transformed bounds.
+    {
+        const QRectF textLocalBounds = textLayer->localBounds();
+        if (textLocalBounds.isValid() && textLocalBounds.width() > 0.0 &&
+            textLocalBounds.height() > 0.0) {
+            const float invZoom = std::isfinite(zoom) && zoom > 0.0001f
+                ? 1.0f / zoom : 1.0f;
+            const QTransform textGlobalTransform =
+                layer_->getGlobalTransform();
+            const TextRotateRingGeometry ringGeo =
+                computeTextRotateRingGeometry(textLocalBounds,
+                                              textGlobalTransform, invZoom);
+            const QPointF mouseCanvasPoint(canvasMouse.x, canvasMouse.y);
+            const float distToCenter =
+                textPointDistance(mouseCanvasPoint, ringGeo.centerWorld);
+            const float distToRing =
+                std::abs(distToCenter - ringGeo.hitRadius);
+            const QPointF gripCenter = textPointOnCircle(
+                ringGeo.centerWorld, ringGeo.gripRadius, -90.0f);
+            const bool hitGrip =
+                textPointDistance(mouseCanvasPoint, gripCenter) <=
+                ringGeo.gripSize * 1.8f;
+            if (distToRing <= ringGeo.hitThickness || hitGrip) {
+                return HandleType::Rotate;
+            }
+        }
+    }
+
+    // Anchor point crosshair at the transformed anchor position.
+    {
+        const QTransform textGlobalTransform = layer_->getGlobalTransform();
+        const auto &textTransform = layer_->transform3D();
+        const QPointF anchorWorld = textGlobalTransform.map(QPointF(
+            textTransform.anchorX(), textTransform.anchorY()));
+        const auto anchorVP = renderer->canvasToViewport(
+            {static_cast<float>(anchorWorld.x()),
+             static_cast<float>(anchorWorld.y())});
+        constexpr float kAnchorHitRadius = 12.0f;
+        if (QRectF(anchorVP.x - kAnchorHitRadius, anchorVP.y - kAnchorHitRadius,
+                   kAnchorHitRadius * 2.0f, kAnchorHitRadius * 2.0f)
+                .contains(viewportPos)) {
+            return HandleType::AnchorPoint;
+        }
+    }
+
     // Check side handles (simplified, just check if on edges)
     if (std::abs(canvasMouse.x - bbox.left()) < hitThreshold && canvasMouse.y > bbox.top() && canvasMouse.y < bbox.bottom()) {
         return HandleType::BoxLeft;
@@ -428,6 +720,10 @@ Qt::CursorShape TextGizmo::cursorShapeForViewportPos(const QPointF& viewportPos,
         case HandleType::RangeEnd:
         case HandleType::RangeOffset:
             return Qt::SizeHorCursor;
+        case HandleType::Rotate:
+            return Qt::CrossCursor;
+        case HandleType::AnchorPoint:
+            return Qt::SizeAllCursor;
         case HandleType::Offset:
             return isDragging_ ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
         default:
@@ -465,6 +761,20 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
             dragStartValue_ = animatorPropertyValue(
                 ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_),
                 dragAnimatorIndex_, QStringLiteral("offset"));
+        } else if (activeHandle_ == HandleType::Rotate ||
+                   activeHandle_ == HandleType::AnchorPoint) {
+            dragStartGlobalTransform_ = layer_->getGlobalTransform();
+            dragStartLocalBounds_ = layer_->localBounds();
+            const auto &startTransform = layer_->transform3D();
+            dragStartAnchor_ = QPointF(startTransform.anchorX(),
+                                       startTransform.anchorY());
+            dragStartScaleX_ = startTransform.scaleX();
+            dragStartScaleY_ = startTransform.scaleY();
+            dragStartRotation_ = startTransform.rotation();
+            dragAccumulatedRotationDelta_ = 0.0f;
+            transformDragChanged_ = false;
+            dragLastCanvasPos_ = dragStartCanvasPos_;
+            captureTransformBeforeStates();
         }
         if (dragAnimatorIndex_ >= 0) {
             QString suffix;
@@ -570,6 +880,156 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     }
 
     switch (activeHandle_) {
+        case HandleType::Rotate: {
+            auto &dragTransform = textLayer->transform3D();
+            const QPointF pivotLocal = dragStartLocalBounds_.center();
+            const QPointF pivotWorldStart =
+                dragStartGlobalTransform_.map(pivotLocal);
+            const float previousAngle = textAngleDegreesAround(
+                pivotWorldStart, dragLastCanvasPos_);
+            const float currentAngle = textAngleDegreesAround(
+                pivotWorldStart, QPointF(canvasMouse.x, canvasMouse.y));
+            dragAccumulatedRotationDelta_ += textNormalizeAngleDeltaDegrees(
+                currentAngle - previousAngle);
+            float newRotation =
+                dragStartRotation_ + dragAccumulatedRotationDelta_;
+            if (QGuiApplication::keyboardModifiers().testFlag(
+                    Qt::ShiftModifier)) {
+                constexpr float kRotationSnapStep = 15.0f;
+                newRotation = std::round(newRotation / kRotationSnapStep) *
+                              kRotationSnapStep;
+                dragAccumulatedRotationDelta_ =
+                    newRotation - dragStartRotation_;
+            }
+            const RationalTime editTime = currentAnimatorTime(textLayer);
+            if (dragTransform.hasRotationKeyFrameAt(editTime) ||
+                dragTransform.getRotationKeyFrameCount() > 0) {
+                dragTransform.setRotation(editTime, newRotation);
+            } else {
+                dragTransform.removeRotationKeyFrameAt(editTime);
+                dragTransform.setInitialRotation(editTime, newRotation);
+            }
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.rotation"), editTime,
+                newRotation);
+            const QPointF localOffset = pivotLocal - dragStartAnchor_;
+            const QPointF startOffset = textApplyScaleRotateToVector(
+                localOffset, dragStartScaleX_, dragStartScaleY_,
+                dragStartRotation_);
+            const QPointF newOffset = textApplyScaleRotateToVector(
+                localOffset, dragStartScaleX_, dragStartScaleY_, newRotation);
+            const float newPosX = static_cast<float>(
+                dragStartLayerPosition_.x() +
+                (startOffset.x() - newOffset.x()));
+            const float newPosY = static_cast<float>(
+                dragStartLayerPosition_.y() +
+                (startOffset.y() - newOffset.y()));
+            if (dragTransform.hasPositionKeyFrameAt(editTime) ||
+                dragTransform.getPositionKeyFrameCount() > 0) {
+                dragTransform.setPosition(editTime, newPosX, newPosY);
+            } else {
+                dragTransform.removePositionKeyFrameAt(editTime);
+                dragTransform.setInitialPosition(editTime, newPosX, newPosY);
+            }
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.position.x"), editTime,
+                newPosX);
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.position.y"), editTime,
+                newPosY);
+            textLayer->setDirty(LayerDirtyFlag::Transform);
+            textLayer->changed();
+            dragLastCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
+            transformDragChanged_ = true;
+            return true;
+        }
+        case HandleType::AnchorPoint: {
+            bool invertible = false;
+            const QTransform inverse =
+                dragStartGlobalTransform_.inverted(&invertible);
+            if (!invertible) {
+                return false;
+            }
+            QPointF targetLocalAnchor =
+                inverse.map(QPointF(canvasMouse.x, canvasMouse.y));
+            const auto modifiers = QGuiApplication::keyboardModifiers();
+            if (modifiers.testFlag(Qt::ShiftModifier)) {
+                const QPointF anchorDelta =
+                    targetLocalAnchor - dragStartAnchor_;
+                if (std::abs(anchorDelta.x()) >= std::abs(anchorDelta.y())) {
+                    targetLocalAnchor.setY(dragStartAnchor_.y());
+                } else {
+                    targetLocalAnchor.setX(dragStartAnchor_.x());
+                }
+            }
+            const bool enableSnapping =
+                modifiers.testFlag(Qt::ControlModifier) &&
+                !modifiers.testFlag(Qt::AltModifier);
+            if (enableSnapping) {
+                const float snapDistance =
+                    8.0f / std::max(0.001f, renderer->getZoom());
+                const QRectF snapBounds = dragStartLocalBounds_;
+                const std::vector<float> vLines = {
+                    static_cast<float>(snapBounds.left()),
+                    static_cast<float>(snapBounds.center().x()),
+                    static_cast<float>(snapBounds.right())};
+                const std::vector<float> hLines = {
+                    static_cast<float>(snapBounds.top()),
+                    static_cast<float>(snapBounds.center().y()),
+                    static_cast<float>(snapBounds.bottom())};
+                for (const float line : vLines) {
+                    if (std::abs(targetLocalAnchor.x() - line) <
+                        snapDistance) {
+                        targetLocalAnchor.setX(line);
+                        break;
+                    }
+                }
+                for (const float line : hLines) {
+                    if (std::abs(targetLocalAnchor.y() - line) <
+                        snapDistance) {
+                        targetLocalAnchor.setY(line);
+                        break;
+                    }
+                }
+            }
+            const QPointF deltaAnchor = targetLocalAnchor - dragStartAnchor_;
+            const QPointF compensation = textApplyScaleRotateToVector(
+                deltaAnchor, dragStartScaleX_, dragStartScaleY_,
+                dragStartRotation_);
+            const RationalTime editTime = currentAnimatorTime(textLayer);
+            auto &anchorTransform = textLayer->transform3D();
+            anchorTransform.setAnchor(
+                editTime, static_cast<float>(targetLocalAnchor.x()),
+                static_cast<float>(targetLocalAnchor.y()),
+                anchorTransform.anchorZ());
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.anchor.x"), editTime,
+                static_cast<float>(targetLocalAnchor.x()));
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.anchor.y"), editTime,
+                static_cast<float>(targetLocalAnchor.y()));
+            const float newPosX = static_cast<float>(
+                dragStartLayerPosition_.x() + compensation.x());
+            const float newPosY = static_cast<float>(
+                dragStartLayerPosition_.y() + compensation.y());
+            if (anchorTransform.hasPositionKeyFrameAt(editTime) ||
+                anchorTransform.getPositionKeyFrameCount() > 0) {
+                anchorTransform.setPosition(editTime, newPosX, newPosY);
+            } else {
+                anchorTransform.removePositionKeyFrameAt(editTime);
+                anchorTransform.setInitialPosition(editTime, newPosX, newPosY);
+            }
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.position.x"), editTime,
+                newPosX);
+            textSyncAnimatedProperty(
+                layer_, QStringLiteral("transform.position.y"), editTime,
+                newPosY);
+            textLayer->setDirty(LayerDirtyFlag::Transform);
+            textLayer->changed();
+            transformDragChanged_ = true;
+            return true;
+        }
         case HandleType::Offset: {
             // Write the edit at the layer's current frame.  Using frame 0
             // here made viewport drags silently alter a different time than
@@ -655,6 +1115,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
 }
 
 void TextGizmo::handleMouseRelease() {
+    pushTransformUndoIfNeeded();
     if (dragValueChanged_ && !dragPropertyPath_.isEmpty() && layer_) {
         const auto textLayer =
             ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
@@ -732,6 +1193,129 @@ void TextGizmo::handleMouseRelease() {
     dragPropertyPath_.clear();
     dragBeforeKeyframes_.clear();
     dragValueChanged_ = false;
+    transformDragChanged_ = false;
+    transformBeforeStates_.clear();
+    dragAccumulatedRotationDelta_ = 0.0f;
+}
+
+void TextGizmo::captureTransformBeforeStates() {
+    transformBeforeStates_.clear();
+    if (!layer_) {
+        return;
+    }
+    const std::vector<QString> paths = {
+        QStringLiteral("transform.rotation"),
+        QStringLiteral("transform.anchor.x"),
+        QStringLiteral("transform.anchor.y"),
+        QStringLiteral("transform.position.x"),
+        QStringLiteral("transform.position.y")};
+    for (const QString &path : paths) {
+        TransformPathBeforeState state;
+        state.path = path;
+        if (const auto property = layer_->getProperty(path)) {
+            state.staticValue = property->getValue();
+            state.animated = property->isAnimatable() &&
+                             !property->getKeyFrames().empty();
+            if (state.animated) {
+                state.keyframes = property->getKeyFrames();
+            }
+        }
+        transformBeforeStates_.push_back(std::move(state));
+    }
+}
+
+void TextGizmo::pushTransformUndoIfNeeded() {
+    if (!transformDragChanged_ || !layer_ || transformBeforeStates_.empty()) {
+        return;
+    }
+    auto *manager = UndoManager::instance();
+    if (!manager) {
+        return;
+    }
+    const auto restoreTransformBeforeState = [this]() {
+        for (const auto &before : transformBeforeStates_) {
+            const auto property = layer_->getProperty(before.path);
+            if (!property) {
+                continue;
+            }
+            if (before.animated) {
+                property->clearKeyFrames();
+                for (const auto &keyframe : before.keyframes) {
+                    property->addKeyFrame(
+                        keyframe.time, keyframe.value,
+                        keyframe.interpolation, keyframe.cp1_x,
+                        keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+                        keyframe.roving);
+                    property->setKeyFrameAnchorAt(keyframe.time,
+                                                  keyframe.anchor);
+                    property->setKeyFrameColorLabelAt(keyframe.time,
+                                                      keyframe.colorLabel);
+                }
+            } else {
+                property->setValue(before.staticValue);
+                layer_->setLayerPropertyValue(before.path,
+                                              before.staticValue);
+            }
+        }
+        if (const auto textLayer =
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
+            textLayer->setDirty();
+            textLayer->updateImage();
+            textLayer->changed();
+        }
+    };
+
+    auto macro = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Transform Text Layer"));
+    bool anyCommand = false;
+    for (const auto &before : transformBeforeStates_) {
+        const auto property = layer_->getProperty(before.path);
+        if (!property) {
+            continue;
+        }
+        if (before.animated) {
+            const auto afterKeys = property->getKeyFrames();
+            bool keyframesUnchanged =
+                afterKeys.size() == before.keyframes.size();
+            if (keyframesUnchanged) {
+                for (size_t i = 0; i < afterKeys.size(); ++i) {
+                    const auto &lhs = afterKeys[i];
+                    const auto &rhs = before.keyframes[i];
+                    if (!(lhs.time == rhs.time && lhs.value == rhs.value &&
+                          lhs.interpolation == rhs.interpolation &&
+                          lhs.cp1_x == rhs.cp1_x && lhs.cp1_y == rhs.cp1_y &&
+                          lhs.cp2_x == rhs.cp2_x && lhs.cp2_y == rhs.cp2_y &&
+                          lhs.roving == rhs.roving && lhs.anchor == rhs.anchor &&
+                          lhs.colorLabel == rhs.colorLabel)) {
+                        keyframesUnchanged = false;
+                        break;
+                    }
+                }
+            }
+            if (keyframesUnchanged) {
+                continue;
+            }
+            macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                layer_, before.path, before.keyframes, afterKeys,
+                QStringLiteral("Transform Text Layer")));
+            anyCommand = true;
+        } else {
+            const QVariant afterValue = property->getValue();
+            if (afterValue == before.staticValue) {
+                continue;
+            }
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer_, before.path, before.staticValue, afterValue,
+                QStringLiteral("Transform Text Layer")));
+            anyCommand = true;
+        }
+    }
+    if (!anyCommand) {
+        return;
+    }
+    if (!manager->push(std::move(macro))) {
+        restoreTransformBeforeState();
+    }
 }
 
 } // namespace Artifact

@@ -41,7 +41,7 @@ public:
     /// createNullLayer=true の場合は新規 Null レイヤーを作成し、
     /// applyToSelectedLayer=true の場合は targetLayer に直接書き出す。
     static bool applyTrackingResult(
-        ArtifactAbstractComposition* comp,
+        const ArtifactCompositionPtr& comp,
         const ArtifactCore::MotionTracker& tracker,
         const ApplyOptions& options,
         ArtifactAbstractLayerPtr targetLayer = nullptr)
@@ -242,7 +242,7 @@ public:
 
     /// 全トラッキングポイントの結果をそれぞれ個別の Null レイヤーに書き出す。
     static int applyAllTrackingPoints(
-        ArtifactAbstractComposition* comp,
+        const ArtifactCompositionPtr& comp,
         const ArtifactCore::MotionTracker& tracker,
         const ApplyOptions& options)
     {

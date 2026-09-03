@@ -5,7 +5,7 @@ module;
 #include <wobjectdefs.h>
 export module Artifact.Widgets.RenderLayerEditor;
 
-import Artifact.Widgets.RenderLayerWidgetv2;
+import Artifact.Widgets.LayerEditorWidget;
 import Color.Float;
 import Utils.Id;
 import Tool;
@@ -23,7 +23,7 @@ export namespace Artifact {
   explicit ArtifactRenderLayerEditor(QWidget* parent = nullptr);
   ~ArtifactRenderLayerEditor();
 
-  ArtifactLayerEditorWidgetV2* view() const;
+  ArtifactLayerEditorWidget* view() const;
 
   void setClearColor(const FloatColor& color);
   void setTargetLayer(const LayerID& id);

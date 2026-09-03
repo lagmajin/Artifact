@@ -132,6 +132,12 @@ public:
   TextLayoutContract layoutContract_;
   std::vector<TextAnimatorState> animators_;
   bool perGlyphMode_ = false;
+  bool twoPointFiveDEnabled_ = false;
+  float twoPointFiveDCameraDistance_ = 1000.0f;
+  bool twoPointFiveDDepthOfFieldEnabled_ = false;
+  float twoPointFiveDFocusDepth_ = 0.0f;
+  float twoPointFiveDFocusRange_ = 250.0f;
+  float twoPointFiveDMaxBlur_ = 12.0f;
   QRectF glyphBounds_;
   QPointF glyphDrawOrigin_;
   QString renderPath_ = QStringLiteral("unresolved");
@@ -2398,6 +2404,14 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.maxWidth"] = maxWidth();
   obj["text.boxHeight"] = boxHeight();
   obj["text.paragraphSpacing"] = paragraphSpacing();
+  obj["text.twoPointFiveDEnabled"] = impl_->twoPointFiveDEnabled_;
+  obj["text.twoPointFiveDCameraDistance"] =
+      static_cast<double>(impl_->twoPointFiveDCameraDistance_);
+  obj["text.twoPointFiveDDepthOfFieldEnabled"] =
+      impl_->twoPointFiveDDepthOfFieldEnabled_;
+  obj["text.twoPointFiveDFocusDepth"] = impl_->twoPointFiveDFocusDepth_;
+  obj["text.twoPointFiveDFocusRange"] = impl_->twoPointFiveDFocusRange_;
+  obj["text.twoPointFiveDMaxBlur"] = impl_->twoPointFiveDMaxBlur_;
 
   obj["text.pathStartOffset"] = pathStartOffset();
   obj["text.pathEndOffset"] = pathEndOffset();
@@ -2539,6 +2553,32 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
     setParagraphSpacing(static_cast<float>(
         obj.value("text.paragraphSpacing").toDouble(paragraphSpacing())));
   }
+  impl_->twoPointFiveDEnabled_ =
+      obj.value("text.twoPointFiveDEnabled").toBool(false);
+  impl_->twoPointFiveDCameraDistance_ = static_cast<float>(std::clamp(
+      obj.value("text.twoPointFiveDCameraDistance").toDouble(1000.0), 1.0,
+      1000000.0));
+  impl_->twoPointFiveDDepthOfFieldEnabled_ =
+      obj.value("text.twoPointFiveDDepthOfFieldEnabled").toBool(false);
+  impl_->twoPointFiveDFocusDepth_ = static_cast<float>(
+      obj.value("text.twoPointFiveDFocusDepth").toDouble(0.0));
+  impl_->twoPointFiveDFocusRange_ = static_cast<float>(std::clamp(
+      obj.value("text.twoPointFiveDFocusRange").toDouble(250.0), 1.0,
+      1000000.0));
+  impl_->twoPointFiveDMaxBlur_ = static_cast<float>(std::clamp(
+      obj.value("text.twoPointFiveDMaxBlur").toDouble(12.0), 0.0, 64.0));
+  ArtifactAbstractLayer::setLayerPropertyValue(
+      QStringLiteral("layer.2_5d.enabled"), impl_->twoPointFiveDEnabled_);
+  ArtifactAbstractLayer::setLayerPropertyValue(
+      QStringLiteral("layer.2_5d.cameraDistance"), impl_->twoPointFiveDCameraDistance_);
+  ArtifactAbstractLayer::setLayerPropertyValue(
+      QStringLiteral("layer.2_5d.depthOfFieldEnabled"), impl_->twoPointFiveDDepthOfFieldEnabled_);
+  ArtifactAbstractLayer::setLayerPropertyValue(
+      QStringLiteral("layer.2_5d.focusDepth"), impl_->twoPointFiveDFocusDepth_);
+  ArtifactAbstractLayer::setLayerPropertyValue(
+      QStringLiteral("layer.2_5d.focusRange"), impl_->twoPointFiveDFocusRange_);
+  ArtifactAbstractLayer::setLayerPropertyValue(
+      QStringLiteral("layer.2_5d.maxBlur"), impl_->twoPointFiveDMaxBlur_);
 
   if (obj.contains("text.sourceTextKeyframes") &&
       obj.value("text.sourceTextKeyframes").isArray()) {
@@ -2762,6 +2802,19 @@ QVector<float> ArtifactTextLayer::selectorLineBoundaryPreview() const {
   return selectorBoundaryPreviewForGlyphs(impl_->glyphs_, true);
 }
 
+TextGlyphGeometrySnapshot ArtifactTextLayer::textGlyphGeometry() const {
+  if (!impl_ || impl_->glyphs_.empty()) {
+    return {};
+  }
+  TextGlyphGeometrySnapshot snapshot;
+  snapshot.glyphs = impl_->glyphs_;
+  snapshot.drawOrigin = impl_->glyphDrawOrigin_;
+  snapshot.contentRect = QRectF(impl_->glyphBounds_.topLeft() +
+                                    impl_->glyphDrawOrigin_,
+                                impl_->glyphBounds_.size());
+  return snapshot;
+}
+
 QString ArtifactTextLayer::selectorDebugSummary() const {
   if (!impl_) {
     return QStringLiteral("glyph");
@@ -2929,6 +2982,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     displayText = displayText.toUpper();
   }
   const bool plainGpuText = !isRichText && !hasEnabledAnimators &&
+                            !impl_->twoPointFiveDEnabled_ &&
                             impl_->layoutMode_ != TextLayoutMode::Path &&
                             impl_->writingMode_ == TextWritingMode::Horizontal &&
                             impl_->rubyText_.isEmpty() &&
@@ -3048,11 +3102,12 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           impl_->textStyle_.shadowColor.r(), impl_->textStyle_.shadowColor.g(),
           impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a());
       const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+      for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
       drawWithClonerEffect(
-          this, baseTransform,
+          this, lensPass.transform,
           [renderer, fillColor, strokeColor, shadowColor,
-           this](const QMatrix4x4& transform, float weight) {
-            const float drawOpacity = this->opacity() * weight;
+           this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+              const float drawOpacity = this->opacity() * weight * lensOpacity;
             if (impl_->textStyle_.shadowEnabled) {
               renderer->drawGlyphsTransformed(
                   impl_->glyphs_, impl_->textStyle_, shadowColor, transform,
@@ -3061,7 +3116,11 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                               impl_->textStyle_.shadowOffsetY),
                   drawOpacity, FloatColor(0.0f, 0.0f, 0.0f, 0.0f), 0.0f,
                   impl_->textStyle_.shadowBlur,
-                  false);
+                  false, impl_->twoPointFiveDEnabled_,
+                  impl_->twoPointFiveDCameraDistance_,
+                  impl_->twoPointFiveDDepthOfFieldEnabled_,
+                  impl_->twoPointFiveDFocusDepth_, impl_->twoPointFiveDFocusRange_,
+                  impl_->twoPointFiveDMaxBlur_);
             }
             renderer->drawGlyphsTransformed(
                 impl_->glyphs_, impl_->textStyle_, fillColor, transform,
@@ -3070,8 +3129,13 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                     ? impl_->textStyle_.strokeWidth
                     : 0.0f,
                 0.0f,
-                true);
+                true, impl_->twoPointFiveDEnabled_,
+                impl_->twoPointFiveDCameraDistance_,
+                impl_->twoPointFiveDDepthOfFieldEnabled_,
+                impl_->twoPointFiveDFocusDepth_, impl_->twoPointFiveDFocusRange_,
+                impl_->twoPointFiveDMaxBlur_);
           });
+      }
       drawFractureOverlay(renderer, baseTransform,
                           QSizeF(size.width, size.height), opacity());
       return;
@@ -3367,11 +3431,12 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           impl_->textStyle_.shadowColor.r(), impl_->textStyle_.shadowColor.g(),
           impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a());
       const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+      for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
       drawWithClonerEffect(
-          this, baseTransform,
+          this, lensPass.transform,
           [renderer, runs, strokeColor, shadowColor,
-           this](const QMatrix4x4& transform, float weight) {
-            const float drawOpacity = this->opacity() * weight;
+           this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+              const float drawOpacity = this->opacity() * weight * lensOpacity;
             for (const RichGpuRun& run : runs) {
               if (impl_->textStyle_.shadowEnabled) {
                 renderer->drawGlyphsTransformed(
@@ -3379,7 +3444,12 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                     run.origin + QPointF(impl_->textStyle_.shadowOffsetX,
                                          impl_->textStyle_.shadowOffsetY),
                     drawOpacity, FloatColor(0.0f, 0.0f, 0.0f, 0.0f), 0.0f,
-                    impl_->textStyle_.shadowBlur, false);
+                    impl_->textStyle_.shadowBlur, false,
+                    impl_->twoPointFiveDEnabled_,
+                    impl_->twoPointFiveDCameraDistance_,
+                    impl_->twoPointFiveDDepthOfFieldEnabled_,
+                    impl_->twoPointFiveDFocusDepth_, impl_->twoPointFiveDFocusRange_,
+                    impl_->twoPointFiveDMaxBlur_);
               }
               renderer->drawGlyphsTransformed(
                   run.glyphs, run.style, run.fill, transform, run.origin,
@@ -3387,7 +3457,11 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                   impl_->textStyle_.strokeEnabled
                       ? impl_->textStyle_.strokeWidth
                       : 0.0f,
-                  0.0f, true);
+                   0.0f, true, impl_->twoPointFiveDEnabled_,
+                   impl_->twoPointFiveDCameraDistance_,
+                   impl_->twoPointFiveDDepthOfFieldEnabled_,
+                   impl_->twoPointFiveDFocusDepth_, impl_->twoPointFiveDFocusRange_,
+                   impl_->twoPointFiveDMaxBlur_);
 
               const QFontMetricsF metrics(run.font);
               const float decorationHeight = std::max(
@@ -3409,7 +3483,8 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                     transform, run.fill, drawOpacity);
               }
             }
-          });
+            });
+      }
       impl_->renderedImage_ = QImage();
       impl_->renderedBuffer_.reset();
       impl_->isDirty_ = false;
@@ -3728,6 +3803,50 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   paragraphSpacingProp->setSoftRange(0.0, 80.0);
   paragraphSpacingProp->setStep(0.5);
   textGroup.addProperty(paragraphSpacingProp);
+
+  auto twoPointFiveDEnabledProp = makeProp(
+      QStringLiteral("text.twoPointFiveDEnabled"),
+      ArtifactCore::PropertyType::Boolean, impl_->twoPointFiveDEnabled_, -72);
+  twoPointFiveDEnabledProp->setDisplayLabel(QStringLiteral("2.5D Text"));
+  twoPointFiveDEnabledProp->setTooltip(
+      QStringLiteral("Use Text Animator Z with perspective projection and stable depth order."));
+  textGroup.addProperty(twoPointFiveDEnabledProp);
+  auto twoPointFiveDCameraDistanceProp = makeProp(
+      QStringLiteral("text.twoPointFiveDCameraDistance"),
+      ArtifactCore::PropertyType::Float,
+      static_cast<double>(impl_->twoPointFiveDCameraDistance_), -71);
+  twoPointFiveDCameraDistanceProp->setDisplayLabel(
+      QStringLiteral("2.5D Camera Distance"));
+  twoPointFiveDCameraDistanceProp->setUnit(QStringLiteral("px"));
+  twoPointFiveDCameraDistanceProp->setHardRange(1.0, 1000000.0);
+  twoPointFiveDCameraDistanceProp->setSoftRange(100.0, 5000.0);
+  twoPointFiveDCameraDistanceProp->setTooltip(
+      QStringLiteral("Lower values amplify Animator Z perspective."));
+  textGroup.addProperty(twoPointFiveDCameraDistanceProp);
+  auto twoPointFiveDDepthOfFieldProp = makeProp(
+      QStringLiteral("text.twoPointFiveDDepthOfFieldEnabled"),
+      ArtifactCore::PropertyType::Boolean,
+      impl_->twoPointFiveDDepthOfFieldEnabled_, -70);
+  twoPointFiveDDepthOfFieldProp->setDisplayLabel(QStringLiteral("2.5D Depth of Field"));
+  textGroup.addProperty(twoPointFiveDDepthOfFieldProp);
+  auto twoPointFiveDFocusDepthProp = makeProp(
+      QStringLiteral("text.twoPointFiveDFocusDepth"),
+      ArtifactCore::PropertyType::Float, impl_->twoPointFiveDFocusDepth_, -69);
+  twoPointFiveDFocusDepthProp->setDisplayLabel(QStringLiteral("2.5D Focus Depth"));
+  twoPointFiveDFocusDepthProp->setSoftRange(-1000.0, 1000.0);
+  textGroup.addProperty(twoPointFiveDFocusDepthProp);
+  auto twoPointFiveDFocusRangeProp = makeProp(
+      QStringLiteral("text.twoPointFiveDFocusRange"),
+      ArtifactCore::PropertyType::Float, impl_->twoPointFiveDFocusRange_, -68);
+  twoPointFiveDFocusRangeProp->setDisplayLabel(QStringLiteral("2.5D Focus Range"));
+  twoPointFiveDFocusRangeProp->setHardRange(1.0, 1000000.0);
+  textGroup.addProperty(twoPointFiveDFocusRangeProp);
+  auto twoPointFiveDMaxBlurProp = makeProp(
+      QStringLiteral("text.twoPointFiveDMaxBlur"),
+      ArtifactCore::PropertyType::Float, impl_->twoPointFiveDMaxBlur_, -67);
+  twoPointFiveDMaxBlurProp->setDisplayLabel(QStringLiteral("2.5D Max Blur"));
+  twoPointFiveDMaxBlurProp->setHardRange(0.0, 64.0);
+  textGroup.addProperty(twoPointFiveDMaxBlurProp);
 
   const auto c = textColor();
   auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
@@ -4327,6 +4446,52 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("text.paragraphSpacing")) {
     setParagraphSpacing(static_cast<float>(value.toDouble()));
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.twoPointFiveDEnabled")) {
+    impl_->twoPointFiveDEnabled_ = value.toBool();
+    ArtifactAbstractLayer::setLayerPropertyValue(
+        QStringLiteral("layer.2_5d.enabled"), impl_->twoPointFiveDEnabled_);
+    markDirty();
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.twoPointFiveDCameraDistance")) {
+    impl_->twoPointFiveDCameraDistance_ = static_cast<float>(std::clamp(
+        value.toDouble(), 1.0, 1000000.0));
+    ArtifactAbstractLayer::setLayerPropertyValue(
+        QStringLiteral("layer.2_5d.cameraDistance"), impl_->twoPointFiveDCameraDistance_);
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.twoPointFiveDDepthOfFieldEnabled")) {
+    impl_->twoPointFiveDDepthOfFieldEnabled_ = value.toBool();
+    ArtifactAbstractLayer::setLayerPropertyValue(
+        QStringLiteral("layer.2_5d.depthOfFieldEnabled"), impl_->twoPointFiveDDepthOfFieldEnabled_);
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.twoPointFiveDFocusDepth")) {
+    impl_->twoPointFiveDFocusDepth_ = static_cast<float>(value.toDouble());
+    ArtifactAbstractLayer::setLayerPropertyValue(
+        QStringLiteral("layer.2_5d.focusDepth"), impl_->twoPointFiveDFocusDepth_);
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.twoPointFiveDFocusRange")) {
+    impl_->twoPointFiveDFocusRange_ = static_cast<float>(std::clamp(
+        value.toDouble(), 1.0, 1000000.0));
+    ArtifactAbstractLayer::setLayerPropertyValue(
+        QStringLiteral("layer.2_5d.focusRange"), impl_->twoPointFiveDFocusRange_);
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.twoPointFiveDMaxBlur")) {
+    impl_->twoPointFiveDMaxBlur_ = static_cast<float>(std::clamp(
+        value.toDouble(), 0.0, 64.0));
+    ArtifactAbstractLayer::setLayerPropertyValue(
+        QStringLiteral("layer.2_5d.maxBlur"), impl_->twoPointFiveDMaxBlur_);
     setDirty(LayerDirtyFlag::Property);
     return true;
   }

@@ -11,6 +11,8 @@ module;
 export module Artifact.Widgets.ProjectFilterProxyModel;
 
 import Artifact.Project;
+import Artifact.Project.Items;
+import Artifact.Project.Roles;
 import Artifact.Layer.Search.Query;
 
 export namespace Artifact {

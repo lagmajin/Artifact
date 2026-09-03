@@ -43,6 +43,7 @@ import Artifact.Project.Roles;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Video;
+import Proxy.Service;
 import Artifact.Layer.Composition;
 import Asset.Manager;
 import Artifact.Event.Types;
@@ -64,7 +65,14 @@ AssetKind assetKindFromPath(const QString& path) {
     }
     if (lower.endsWith(".mp4") || lower.endsWith(".mov") ||
         lower.endsWith(".avi") || lower.endsWith(".mkv") ||
-        lower.endsWith(".webm") || lower.endsWith(".flv")) {
+        lower.endsWith(".webm") || lower.endsWith(".m4v") ||
+        lower.endsWith(".flv") || lower.endsWith(".m2ts") ||
+        lower.endsWith(".ts") || lower.endsWith(".mpg") ||
+        lower.endsWith(".mpeg") || lower.endsWith(".wmv") ||
+        lower.endsWith(".3gp") || lower.endsWith(".3g2") ||
+        lower.endsWith(".ogv") || lower.endsWith(".ogm") ||
+        lower.endsWith(".mts") || lower.endsWith(".mxf") ||
+        lower.endsWith(".vob") || lower.endsWith(".asf")) {
         return AssetKind::Video;
     }
     if (lower.endsWith(".mp3") || lower.endsWith(".wav") ||
@@ -202,6 +210,7 @@ int projectItemSourceUseCount(ProjectItem* item)
         }
     }
     return sourceId.isNull() ? 0 : assetManager.useCount(sourceId);
+}
 
 QString projectRenderInputRoleLabel(ProjectRenderInputRole role);
 
@@ -376,6 +385,15 @@ QString proxyFilePathForFootage(const QString& sourceFilePath)
     const QFileInfo src(sourceFilePath);
     if (src.filePath().isEmpty() || src.completeBaseName().isEmpty()) {
         return {};
+    }
+    if (assetKindFromPath(src.absoluteFilePath()) == AssetKind::Video) {
+        const ProxyQuality quality = proxyMetadata().value(src.absoluteFilePath()).quality;
+        const ProxyServiceQuality serviceQuality =
+            quality == ProxyQuality::Eighth ? ProxyServiceQuality::Eighth
+            : quality == ProxyQuality::Quarter ? ProxyServiceQuality::Quarter
+            : quality == ProxyQuality::Full ? ProxyServiceQuality::Full
+                                             : ProxyServiceQuality::Half;
+        return ArtifactProxyManager::proxyFilePath(src.absoluteFilePath(), serviceQuality);
     }
     const QString appDataRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (appDataRoot.isEmpty()) {

@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <utility>
 #include <array>
 #include <cmath>
@@ -1610,7 +1611,13 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
     const FloatColor& outlineColor,
     float outlineThickness,
     float blurRadius,
-    bool useGlyphColorOverrides)
+    bool useGlyphColorOverrides,
+    bool useTwoPointFiveD,
+    float twoPointFiveDCameraDistance,
+    bool useTwoPointFiveDDepthOfField,
+    float twoPointFiveDFocusDepth,
+    float twoPointFiveDFocusRange,
+    float twoPointFiveDMaxBlur)
 {
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_ ||
         !impl_->pDevice_) {
@@ -1645,6 +1652,13 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
     }
     if (resolvedGlyphs.empty()) {
         return;
+    }
+    if (useTwoPointFiveD) {
+        std::stable_sort(resolvedGlyphs.begin(), resolvedGlyphs.end(),
+                         [](const ResolvedGlyph& left,
+                            const ResolvedGlyph& right) {
+            return left.item->offsetZ < right.item->offsetZ;
+        });
     }
 
     if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
@@ -1693,6 +1707,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
     const float zoom = std::max(viewport.zoom, 0.001f);
     const float atlasWidth = static_cast<float>(impl_->pGlyphAtlas_->width());
     const float atlasHeight = static_cast<float>(impl_->pGlyphAtlas_->height());
+    const float cameraDistance = std::max(1.0f, twoPointFiveDCameraDistance);
 
     const auto blendColor = [](const FloatColor& base,
                                const FloatRGBA& overrideColor,
@@ -1724,9 +1739,23 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
                               rect.bearingY + yOffset;
             const float glyphScale = std::max(
                 0.0001f, glyph.baseScale * glyph.offsetScale);
+            const float depth = useTwoPointFiveD
+                ? std::clamp(glyph.offsetZ, -cameraDistance * 0.95f,
+                             cameraDistance * 0.95f)
+                : glyph.offsetZ;
+            const float perspectiveScale = useTwoPointFiveD
+                ? cameraDistance / std::max(1.0f, cameraDistance - depth)
+                : 1.0f;
 
             QMatrix4x4 model = transform;
-            model.translate(left, top, glyph.offsetZ);
+            if (useTwoPointFiveD) {
+                model.translate(static_cast<float>(origin.x()),
+                                static_cast<float>(origin.y()), 0.0f);
+                model.scale(perspectiveScale, perspectiveScale, 1.0f);
+                model.translate(static_cast<float>(-origin.x()),
+                                static_cast<float>(-origin.y()), 0.0f);
+            }
+            model.translate(left, top, depth);
             model.translate(width * 0.5f, height * 0.5f, 0.0f);
             if (std::abs(glyph.offsetSkew) > 0.0001f) {
                 QMatrix4x4 skew;
@@ -1809,8 +1838,19 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
                                   static_cast<float>(offset.y()));
             }
         }
+        const float depth = useTwoPointFiveD
+            ? std::clamp(glyph.offsetZ, -cameraDistance * 0.95f,
+                         cameraDistance * 0.95f)
+            : glyph.offsetZ;
+        const float depthOfFieldBlur =
+            useTwoPointFiveD && useTwoPointFiveDDepthOfField
+            ? std::min(std::max(0.0f, twoPointFiveDMaxBlur),
+                       std::abs(depth - twoPointFiveDFocusDepth) /
+                           std::max(1.0f, twoPointFiveDFocusRange) *
+                           std::max(0.0f, twoPointFiveDMaxBlur))
+            : 0.0f;
         const float resolvedBlur =
-            std::max(0.0f, blurRadius + glyph.offsetBlur);
+            std::max(0.0f, blurRadius + glyph.offsetBlur + depthOfFieldBlur);
         if (resolvedBlur > 0.1f) {
             const float radius = std::min(resolvedBlur, 32.0f);
             FloatColor tapColor(fill.r(), fill.g(), fill.b(),

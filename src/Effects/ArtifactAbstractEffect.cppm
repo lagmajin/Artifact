@@ -474,7 +474,8 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
             continue;
         }
         const QVariant value = property->evaluateValue(
-            time, nullptr, std::nullopt, &impl_->modulationRouter_,
+            time, nullptr, std::nullopt,
+            &impl_->modulationRouter_,
             modulationPath.toStdString());
         if (value.isValid()) {
             const QString name = property->getName();

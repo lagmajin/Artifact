@@ -390,12 +390,13 @@ public:
         return sourceLoaded ? &sourceImage : nullptr;
     }
 
-    quint64 signatureForFrame(qint64 frameNumber, const QTransform& transform) const
+    quint64 signatureForFrame(qint64 frameNumber, const QTransform& transform,
+                              float layerOpacity) const
     {
         quint64 sig = 0xcbf29ce484222325ULL;
         auto mixInt = [&sig](quint64 value) { sig = mixSignature(sig, value); };
         mixInt(static_cast<quint64>(frameNumber));
-        mixInt(static_cast<quint64>(std::lround(opacity() * 100000.0)));
+        mixInt(static_cast<quint64>(std::lround(layerOpacity * 100000.0)));
         mixInt(static_cast<quint64>(std::lround(transform.m11() * 100000.0)));
         mixInt(static_cast<quint64>(std::lround(transform.m12() * 100000.0)));
         mixInt(static_cast<quint64>(std::lround(transform.m13() * 100000.0)));
@@ -736,7 +737,7 @@ void ArtifactFormParticleLayer::draw(ArtifactIRenderer* renderer)
     const float timeSeconds = static_cast<float>(frameNumber) / fps;
     const QTransform transform = getGlobalTransform();
     const auto* layerMapSource = impl_->layerMapSource();
-    const quint64 signature = impl_->signatureForFrame(frameNumber, transform);
+    const quint64 signature = impl_->signatureForFrame(frameNumber, transform, opacity());
     if (impl_->cacheDirty || impl_->cachedFrame != frameNumber || impl_->cachedSignature != signature) {
         impl_->cachedRenderData = buildRenderData(
             impl_->settings,

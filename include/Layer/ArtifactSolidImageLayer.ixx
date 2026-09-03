@@ -56,6 +56,9 @@ public:
   bool setLayerPropertyValue(const QString &propertyPath,
                              const QVariant &value) override;
   void draw(ArtifactIRenderer *renderer) override;
+ protected:
+  const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const override;
+ public:
   QImage toQImage() const;
   QImage getThumbnail(int width = 128, int height = 128) const override;
 };

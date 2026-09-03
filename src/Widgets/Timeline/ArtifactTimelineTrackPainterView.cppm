@@ -191,6 +191,18 @@ double safeTimelineFrameRate(const ArtifactCompositionPtr &composition)
   return std::clamp(rawFps, 1.0, 10000.0);
 }
 
+double safeTimelineFrameRate(const ArtifactAbstractComposition *composition)
+{
+  if (!composition) {
+    return 30.0;
+  }
+  const double rawFps = composition->frameRate().framerate();
+  if (!std::isfinite(rawFps) || rawFps <= 0.0) {
+    return 30.0;
+  }
+  return std::clamp(rawFps, 1.0, 10000.0);
+}
+
 int timelineFrameRateScale(const ArtifactCompositionPtr &composition)
 {
   return static_cast<int>(std::llround(safeTimelineFrameRate(composition)));
@@ -4225,6 +4237,7 @@ bool pasteKeyframesToLayers(
       layerChanged = true;
     }
     if (layerChanged) {
+      layer->setDirty(LayerDirtyFlag::Property);
       layer->changed();
       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
           LayerChangedEvent{composition->id().toString(),
@@ -8198,6 +8211,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
+  bool undoAccepted = true;
   if (event->button() == Qt::MiddleButton && impl_->panning_) {
     impl_->panning_ = false;
     impl_->panModifiers_ = Qt::NoModifier;
@@ -8373,8 +8387,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
                   });
       }
 
-      bool undoAccepted = true;
-      if (auto *mgr = UndoManager::instance()) {
+        if (auto *mgr = UndoManager::instance()) {
         QPointer<ArtifactTimelineTrackPainterView> self(this);
         const auto trackRows = impl_->trackRows_;
         const QSet<QString> beforeSelectionKeys = impl_->selectedMarkerKeys_;
@@ -8627,7 +8640,6 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
                     });
         }
 
-        bool undoAccepted = true;
         if (auto *mgr = UndoManager::instance()) {
           QPointer<ArtifactTimelineTrackPainterView> self(this);
           const auto trackRows = impl_->trackRows_;
@@ -10183,7 +10195,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
               editLayer, QStringLiteral("text.value"), beforeKeyframes,
               afterKeyframes, QStringLiteral("Edit Source Text")))) {
-        restorePropertyKeyframes(textProperty, beforeKeyframes);
+        Artifact::restorePropertyKeyframes(textProperty, beforeKeyframes);
         event->accept();
         return;
       }

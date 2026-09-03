@@ -25,6 +25,7 @@ module;
 #include <QSpinBox>
 #include <QString>
 #include <QTextEdit>
+#include <QTimer>
 #include <QObject>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -37,7 +38,7 @@ module;
 #include <memory>
 #include <utility>
 
-export module Artifact.Widgets.CompositionTextEditor;
+module Artifact.Widgets.CompositionTextEditor;
 
 import Memory.SharedPtr;
 import Artifact.Widgets.CompositionRenderController;
@@ -50,11 +51,6 @@ import Time.Rational;
 import Undo.UndoManager;
 import Utils.String.UniString;
 import Widgets.Utils.CSS;
-
-export namespace Artifact {
-bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
-                         CompositionRenderController *controller);
-}
 
 namespace Artifact {
 namespace {

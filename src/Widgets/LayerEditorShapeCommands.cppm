@@ -34,17 +34,20 @@ bool sameCustomPathVertices(
 class ShapeEditCommand final : public Artifact::UndoCommand {public:
  ShapeEditCommand(Artifact::ArtifactAbstractLayerPtr layer,
                   std::vector<QPointF> beforePoints,
-                  std::vector<QPointF> afterPoints)
+                  std::vector<QPointF> afterPoints,
+                  bool beforeClosed, bool afterClosed)
      : layer_(layer),
        beforePoints_(std::move(beforePoints)),
-       afterPoints_(std::move(afterPoints)) {}
+       afterPoints_(std::move(afterPoints)),
+       beforeClosed_(beforeClosed),
+       afterClosed_(afterClosed) {}
 
   void undo() override {
-   lastOperationSucceeded_ = applySnapshot(beforePoints_);
+   lastOperationSucceeded_ = applySnapshot(beforePoints_, beforeClosed_);
   }
 
  void redo() override {
-   lastOperationSucceeded_ = applySnapshot(afterPoints_);
+   lastOperationSucceeded_ = applySnapshot(afterPoints_, afterClosed_);
   }
 
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
@@ -54,7 +57,7 @@ class ShapeEditCommand final : public Artifact::UndoCommand {public:
  }
 
 private:
-  bool applySnapshot(const std::vector<QPointF>& points) {
+  bool applySnapshot(const std::vector<QPointF>& points, bool closed) {
    auto layer = layer_.lock();
    if (!layer) {
     return false;
@@ -65,7 +68,7 @@ private:
     return false;
   }
   if (points.size() >= 3) {
-   shape->setCustomPolygonPoints(points, true);
+   shape->setCustomPolygonPoints(points, closed);
   } else {
    shape->clearCustomPolygonPoints();
   }
@@ -73,12 +76,15 @@ private:
     mgr->notifyAnythingChanged();
    }
    const auto expected = points.size() >= 3 ? points : std::vector<QPointF>{};
-   return shape->customPolygonPoints() == expected;
+   return shape->customPolygonPoints() == expected &&
+          (expected.empty() || shape->customPolygonClosed() == closed);
  }
 
  Artifact::ArtifactAbstractLayerWeak layer_;
   std::vector<QPointF> beforePoints_;
   std::vector<QPointF> afterPoints_;
+  bool beforeClosed_ = true;
+  bool afterClosed_ = true;
   bool lastOperationSucceeded_ = true;
 };
 
@@ -279,9 +285,11 @@ private:
 std::unique_ptr<UndoCommand> makeShapeEditCommand(
     const ArtifactAbstractLayerPtr& layer,
     std::vector<QPointF> beforePoints,
-    std::vector<QPointF> afterPoints) {
+    std::vector<QPointF> afterPoints,
+    bool beforeClosed, bool afterClosed) {
   return std::make_unique<ShapeEditCommand>(
-      layer, std::move(beforePoints), std::move(afterPoints));
+      layer, std::move(beforePoints), std::move(afterPoints),
+      beforeClosed, afterClosed);
 }
 
 std::unique_ptr<UndoCommand> makeCornerRadiusEditCommand(

@@ -2513,13 +2513,25 @@ bool pasteKeyframesToLayers(
           static_cast<float>(record.value(QStringLiteral("cp2_x")).toDouble(0.58));
       const float cp2_y =
           static_cast<float>(record.value(QStringLiteral("cp2_y")).toDouble(1.0));
+      const bool roving = record.value(QStringLiteral("roving")).toBool(false);
+      const auto anchorValue =
+          static_cast<ArtifactCore::KeyFrame::Anchor>(
+              record.value(QStringLiteral("anchor"))
+                  .toInt(static_cast<int>(ArtifactCore::KeyFrame::Anchor::Absolute)));
+      const auto colorLabelValue =
+          static_cast<ArtifactCore::KeyFrame::ColorLabel>(
+              record.value(QStringLiteral("colorLabel"))
+                  .toInt(static_cast<int>(ArtifactCore::KeyFrame::ColorLabel::None)));
 
       if (property->hasKeyFrameAt(time)) {
         ++mergedExistingKeyframeCount;
       }
       property->addKeyFrame(time,
                             value.isValid() ? value : property->getValue(),
-                            interpolationValue, cp1_x, cp1_y, cp2_x, cp2_y);
+                            interpolationValue, cp1_x, cp1_y, cp2_x, cp2_y,
+                            roving);
+      property->setKeyFrameAnchorAt(time, anchorValue);
+      property->setKeyFrameColorLabelAt(time, colorLabelValue);
       if (outSelectionKeys) {
         outSelectionKeys->insert(keyframeSelectionKey(
             layer->id(), propertyPath, newFrame));

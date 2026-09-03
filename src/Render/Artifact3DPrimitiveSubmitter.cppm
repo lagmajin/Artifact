@@ -5,9 +5,7 @@ module;
 #include <Buffer.h>
 #include <vector>
 #include <cstring>
-module Artifact.Render.ThreeDPrimitiveSubmitter;
-
-import Artifact.Render.ThreeDPrimitiveSubmitter.Contract;
+module Artifact.Render.ThreeDPrimitiveSubmitter.Contract;
 
 namespace Artifact {
 
