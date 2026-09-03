@@ -38,6 +38,7 @@ export namespace Artifact {
 
  protected:
   const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const override;
+  QJsonObject sourceComponentSettingsSnapshot() const override;
 
  public:
   bool loadFromPath(const QString& path);

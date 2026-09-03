@@ -363,8 +363,10 @@ GizmoBasis gizmoBasisFor(const QVector3D& rotation, GizmoSpace space,
         return {viewAxisX.normalized(), viewAxisY.normalized(),
                 viewAxisZ.normalized()};
     }
-    if (space != GizmoSpace::Local) {
-        return {};
+    if (space == GizmoSpace::World) {
+        return {worldAxisDirectionFor(GizmoAxis::X),
+                worldAxisDirectionFor(GizmoAxis::Y),
+                worldAxisDirectionFor(GizmoAxis::Z)};
     }
 
     if (hasLocalBasis) {

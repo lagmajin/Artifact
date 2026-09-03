@@ -46,6 +46,7 @@ public:
 
 protected:
   const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const override;
+  QJsonObject sourceComponentSettingsSnapshot() const override;
 };
 
 } // namespace Artifact

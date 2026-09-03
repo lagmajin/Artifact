@@ -2845,6 +2845,24 @@ ArtifactImageLayer::resolveLayerSourceOverride() const
     return frameBuffer.isEmpty() ? nullptr : &frameBuffer;
 }
 
+QJsonObject ArtifactImageLayer::sourceComponentSettingsSnapshot() const
+{
+    QJsonObject obj;
+    const auto source = sourceSize();
+    obj[QStringLiteral("width")] = source.width;
+    obj[QStringLiteral("height")] = source.height;
+    obj[QStringLiteral("sourcePath")] = sourcePath();
+    obj[QStringLiteral("isSequence")] = isImageSequence();
+    if (isImageSequence()) {
+        obj[QStringLiteral("sequenceFrameRate")] = sequenceFrameRate();
+        obj[QStringLiteral("sequenceCachedFrame")] = sequenceCachedFrameIndex();
+    }
+    obj[QStringLiteral("inputColorSpace")] = inputColorSpace();
+    obj[QStringLiteral("inputTransferFunction")] = inputTransferFunction();
+    obj[QStringLiteral("hasDepthMap")] = hasDepthMap();
+    return obj;
+}
+
 void ArtifactImageLayer::setFromQImage(const QImage& image)
 {
     if (!image.isNull() &&

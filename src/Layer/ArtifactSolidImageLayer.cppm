@@ -766,4 +766,42 @@ QImage ArtifactSolidImageLayer::getThumbnail(int width, int height) const
       : image.scaled(targetSize, Qt::KeepAspectRatio,
                      Qt::SmoothTransformation);
 }
+
+QJsonObject ArtifactSolidImageLayer::sourceComponentSettingsSnapshot() const {
+  QJsonObject obj;
+  const auto source = sourceSize();
+  obj[QStringLiteral("width")] = source.width;
+  obj[QStringLiteral("height")] = source.height;
+  obj[QStringLiteral("fillType")] = static_cast<int>(fillType());
+  const auto c = color();
+  QJsonObject colorObj;
+  colorObj[QStringLiteral("r")] = c.r();
+  colorObj[QStringLiteral("g")] = c.g();
+  colorObj[QStringLiteral("b")] = c.b();
+  colorObj[QStringLiteral("a")] = c.a();
+  obj[QStringLiteral("color")] = colorObj;
+  if (isGradientEnabled()) {
+    const auto start = gradientStartColor();
+    QJsonObject startObj;
+    startObj[QStringLiteral("r")] = start.r();
+    startObj[QStringLiteral("g")] = start.g();
+    startObj[QStringLiteral("b")] = start.b();
+    startObj[QStringLiteral("a")] = start.a();
+    obj[QStringLiteral("gradientStartColor")] = startObj;
+    const auto end = gradientEndColor();
+    QJsonObject endObj;
+    endObj[QStringLiteral("r")] = end.r();
+    endObj[QStringLiteral("g")] = end.g();
+    endObj[QStringLiteral("b")] = end.b();
+    endObj[QStringLiteral("a")] = end.a();
+    obj[QStringLiteral("gradientEndColor")] = endObj;
+    obj[QStringLiteral("gradientAngleDegrees")] = gradientAngleDegrees();
+    obj[QStringLiteral("gradientReverse")] = gradientReverse();
+    obj[QStringLiteral("gradientCenterX")] = gradientCenterX();
+    obj[QStringLiteral("gradientCenterY")] = gradientCenterY();
+    obj[QStringLiteral("gradientScale")] = gradientScale();
+    obj[QStringLiteral("gradientOffset")] = gradientOffset();
+  }
+  return obj;
+}
 } // namespace Artifact

@@ -61,5 +61,8 @@ public:
  public:
   QImage toQImage() const;
   QImage getThumbnail(int width = 128, int height = 128) const override;
+
+protected:
+  QJsonObject sourceComponentSettingsSnapshot() const override;
 };
 } // namespace Artifact

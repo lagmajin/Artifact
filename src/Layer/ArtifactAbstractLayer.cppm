@@ -1318,7 +1318,7 @@ public:
 public:
   Impl();
   ~Impl();
-  void syncBuiltinComponentDescriptors();
+  void syncBuiltinComponentDescriptors(const ArtifactAbstractLayer* outer = nullptr);
   void syncBuiltinBoolsFromHost();
   std::type_index type_index_ = typeid(void);
   void goToStartFrame();
@@ -1374,7 +1374,7 @@ ArtifactAbstractLayer::Impl::Impl() {
 
 ArtifactAbstractLayer::Impl::~Impl() {}
 
-void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
+void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors(const ArtifactAbstractLayer* outer) {
   physicsComponent_.settings().collisionEnabled =
       collisionComponentEnabled_;
   if (collisionComponentEnabled_ && !physicsComponent_.enabled()) {
@@ -1439,13 +1439,19 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       motionDynamicsEnabled_;
   componentHost_.upsert(std::move(motion));
 
-  auto sequencePlayer = makeSequencePlayerComponentDescriptor(false);
+  auto sequencePlayer = makeSequencePlayerComponentDescriptor(clonerSequenceEnabled_);
   sequencePlayer.settings[QStringLiteral("sequenceSource")] =
       QStringLiteral("inline");
   sequencePlayer.settings[QStringLiteral("targetScope")] =
       QStringLiteral("children");
   sequencePlayer.settings[QStringLiteral("trigger")] =
       QStringLiteral("on-start");
+  sequencePlayer.settings[QStringLiteral("sequenceEnabled")] =
+      clonerSequenceEnabled_;
+  sequencePlayer.settings[QStringLiteral("sequenceRate")] =
+      static_cast<double>(clonerSequenceRate_);
+  sequencePlayer.settings[QStringLiteral("sequenceSoftness")] =
+      static_cast<double>(clonerSequenceSoftness_);
   componentHost_.upsert(std::move(sequencePlayer));
 
   auto collision =
@@ -1565,6 +1571,9 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
     sourceDescriptor.phase = LayerComponentPhase::Source;
     sourceDescriptor.scope = LayerComponentScope::Layer;
     sourceDescriptor.order = 100;
+    if (outer) {
+      sourceDescriptor.settings = outer->sourceComponentSettingsSnapshot();
+    }
     componentHost_.upsert(std::move(sourceDescriptor));
   }
 }
@@ -1739,6 +1748,10 @@ QString ArtifactAbstractLayer::layerName() const { return impl_->name_; }
 
 UniString ArtifactAbstractLayer::className() const { return QString(""); }
 
+QJsonObject ArtifactAbstractLayer::sourceComponentSettingsSnapshot() const {
+  return {};
+}
+
 const ArtifactCore::ImageF32x4_RGBA*
 ArtifactAbstractLayer::resolveLayerSourceOverride() const {
   return nullptr;
@@ -1751,7 +1764,7 @@ void ArtifactAbstractLayer::setBuiltinLayerSourceComponentType(
     return;
   }
   impl_->builtinSourceComponentType_ = normalized;
-  impl_->syncBuiltinComponentDescriptors();
+  impl_->syncBuiltinComponentDescriptors(this);
 }
 
 void ArtifactAbstractLayer::setLayerName(const QString &name) {
@@ -5809,7 +5822,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
   obj["components"] = componentsObj;
-  impl_->syncBuiltinComponentDescriptors();
+  impl_->syncBuiltinComponentDescriptors(this);
   obj["componentGraph"] = impl_->componentHost_.toJson();
 
   QJsonArray variantsArr;
@@ -6913,7 +6926,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     impl_->syncBuiltinBoolsFromHost();
   } else {
     impl_->componentHost_.fromJson(QJsonArray{});
-    impl_->syncBuiltinComponentDescriptors();
+    impl_->syncBuiltinComponentDescriptors(this);
   }
 
   if (obj.contains("variants") && obj["variants"].isArray()) {
@@ -7265,20 +7278,20 @@ bool ArtifactAbstractLayer::hasModifiers() const { return impl_->hasModifiers();
 
 std::vector<LayerComponentDescriptor>
 ArtifactAbstractLayer::layerComponents() const {
-  impl_->syncBuiltinComponentDescriptors();
+  impl_->syncBuiltinComponentDescriptors(this);
   return impl_->componentHost_.components();
 }
 
 std::vector<LayerComponentDescriptor>
 ArtifactAbstractLayer::enabledLayerComponents(
     const LayerComponentPhase phase) const {
-  impl_->syncBuiltinComponentDescriptors();
+  impl_->syncBuiltinComponentDescriptors(this);
   return impl_->componentHost_.enabledForPhase(phase);
 }
 
 std::vector<LayerGeneratorDescriptor>
 ArtifactAbstractLayer::layerGenerators() const {
-  impl_->syncBuiltinComponentDescriptors();
+  impl_->syncBuiltinComponentDescriptors(this);
 
   std::vector<LayerGeneratorDescriptor> generators;
   const auto* cloner =
@@ -7600,7 +7613,7 @@ bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
 
 std::vector<LayerComponentValidationIssue>
 ArtifactAbstractLayer::validateLayerComponents() const {
-  impl_->syncBuiltinComponentDescriptors();
+  impl_->syncBuiltinComponentDescriptors(this);
   auto issues = impl_->componentHost_.validate();
   const auto validateIds = [&issues](const auto& descriptors,
                                      const QString& kind,
@@ -10578,7 +10591,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (enabled) {
       impl_->collisionOwnsPhysicsEnable_ = false;
     }
-    impl_->syncBuiltinComponentDescriptors();
+    impl_->syncBuiltinComponentDescriptors(this);
     Q_EMIT changed();
     return true;
   }
@@ -11682,7 +11695,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->collisionComponentEnabled_ = value.toBool();
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11692,7 +11705,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->collisionShape_ = std::clamp(value.toInt(), 0, 3);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11703,7 +11716,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           value.toDouble(), impl_->collisionWidth_, 0.0, 100000.0);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11714,7 +11727,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           value.toDouble(), impl_->collisionHeight_, 0.0, 100000.0);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11725,7 +11738,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           value.toDouble(), impl_->collisionRadius_, 0.0, 100000.0);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11736,7 +11749,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           value.toDouble(), impl_->collisionOffsetX_, -100000.0, 100000.0);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11747,7 +11760,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           value.toDouble(), impl_->collisionOffsetY_, -100000.0, 100000.0);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11758,14 +11771,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           value.toDouble(), impl_->collisionFloorY_, 0.0, 100000.0);
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.collision.compositionBounds")) {
       impl_->collisionCompositionBounds_ = value.toBool();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11778,14 +11791,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         enableRigidBodyPhysics();
         syncRigidBodyPhysicsToBounds();
       }
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.joint.type")) {
-      impl_->jointType_ = std::clamp(value.toInt(), 0, 1);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->jointType_ = std::clamp(value.toInt(), 0, 3);
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11794,7 +11807,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       const QString target = value.toString().trimmed();
       impl_->jointTargetLayerName_ =
           (target == layerName()) ? QString() : target;
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11802,7 +11815,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.length")) {
       impl_->jointLength_ = finiteClampedValue(
           value.toDouble(), impl_->jointLength_, 0.0, 100000.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11810,7 +11823,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.stiffness")) {
       impl_->jointStiffness_ = finiteClampedValue(
           value.toDouble(), impl_->jointStiffness_, 0.0, 120.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11818,14 +11831,37 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.damping")) {
       impl_->jointDamping_ = finiteClampedValue(
           value.toDouble(), impl_->jointDamping_, 0.0, 10.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.angleLimitEnabled")) {
+      impl_->jointAngleLimitEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors(this);
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.lowerAngle")) {
+      impl_->jointLowerAngle_ = finiteClampedValue(
+          value.toDouble(), impl_->jointLowerAngle_, -360.0, 360.0);
+      impl_->syncBuiltinComponentDescriptors(this);
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.upperAngle")) {
+      impl_->jointUpperAngle_ = finiteClampedValue(
+          value.toDouble(), impl_->jointUpperAngle_, -360.0, 360.0);
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.crowd.enabled")) {
       impl_->crowdComponentEnabled_ = value.toBool();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11833,7 +11869,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.crowd.cohesion")) {
       impl_->crowdCohesion_ = finiteClampedValue(
           value.toDouble(), impl_->crowdCohesion_, 0.0, 10.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11841,7 +11877,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.crowd.separation")) {
       impl_->crowdSeparation_ = finiteClampedValue(
           value.toDouble(), impl_->crowdSeparation_, 0.0, 10.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11849,7 +11885,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.crowd.alignment")) {
       impl_->crowdAlignment_ = finiteClampedValue(
           value.toDouble(), impl_->crowdAlignment_, 0.0, 10.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11857,7 +11893,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.crowd.maxSpeed")) {
       impl_->crowdMaxSpeed_ = finiteClampedValue(
           value.toDouble(), impl_->crowdMaxSpeed_, 0.0, 10000.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11865,7 +11901,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.crowd.jitter")) {
       impl_->crowdJitter_ = finiteClampedValue(
           value.toDouble(), impl_->crowdJitter_, 0.0, 10.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11878,14 +11914,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         impl_->componentParticlesLastFrame_ =
             std::numeric_limits<int64_t>::min();
       }
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.particleEmitter.count")) {
       impl_->particleEmitterCount_ = std::clamp(value.toInt(), 0, 100000);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11893,7 +11929,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.particleEmitter.speed")) {
       impl_->particleEmitterSpeed_ = finiteClampedValue(
           value.toDouble(), impl_->particleEmitterSpeed_, 0.0, 100000.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11903,7 +11939,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->particleEmitterLifetime_ =
           finiteClampedValue(value.toDouble(), impl_->particleEmitterLifetime_,
                              0.01, 3600.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11914,7 +11950,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         impl_->fluidSolver_.reset();
         impl_->invalidateLiquidSimulation();
       }
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       Q_EMIT changed();
       return true;
     }
@@ -11922,21 +11958,21 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fluidMode_ = std::clamp(value.toInt(), 0, 1);
       impl_->fluidSolver_.reset();
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.fluid.gridWidth")) {
       impl_->fluidGridWidth_ = std::clamp(value.toInt(), 8, 4096);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.fluid.gridHeight")) {
       impl_->fluidGridHeight_ = std::clamp(value.toInt(), 8, 4096);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11945,7 +11981,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fluidViscosity_ = finiteClampedValue(
           value.toDouble(), impl_->fluidViscosity_, 0.0, 1.0);
       if (impl_->fluidMode_ == 1) impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11953,7 +11989,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.diffusion")) {
       impl_->fluidDiffusion_ = finiteClampedValue(
           value.toDouble(), impl_->fluidDiffusion_, 0.0, 1.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11961,7 +11997,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.buoyancy")) {
       impl_->fluidBuoyancy_ = finiteClampedValue(
           value.toDouble(), impl_->fluidBuoyancy_, -2.0, 2.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11969,7 +12005,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.vorticity")) {
       impl_->fluidVorticity_ = finiteClampedValue(
           value.toDouble(), impl_->fluidVorticity_, 0.0, 10.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11977,7 +12013,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.solverIterations")) {
       impl_->fluidSolverIterations_ = std::clamp(value.toInt(), 1, 256);
       if (impl_->fluidMode_ == 1) impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11986,7 +12022,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidFillAmount_ = finiteClampedValue(
           value.toDouble(), impl_->liquidFillAmount_, 0.0, 1.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -11995,7 +12031,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidInflowRate_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowRate_, 0.0, 10000.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12004,7 +12040,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidInflowWidth_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowWidth_, 0.0, 1.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12013,7 +12049,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidInflowSpeed_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowSpeed_, 0.0, 20.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12023,7 +12059,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidInflowPosition_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowPosition_, 0.0, 1.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12031,7 +12067,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.liquidOpeningEdge")) {
       impl_->liquidOpeningEdge_ = std::clamp(value.toInt(), -1, 511);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12041,7 +12077,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidSpillCullMargin_ = finiteClampedValue(
           value.toDouble(), impl_->liquidSpillCullMargin_, 0.0, 1000000.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12050,7 +12086,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidGravity_ = finiteClampedValue(
           value.toDouble(), impl_->liquidGravity_, 0.0, 20.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12060,7 +12096,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidSurfaceTension_ = finiteClampedValue(
           value.toDouble(), impl_->liquidSurfaceTension_, 0.0, 1.0);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12070,7 +12106,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidParticleSpacing_ = finiteClampedValue(
           value.toDouble(), impl_->liquidParticleSpacing_, 0.025, 0.2);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12078,7 +12114,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.fluid.liquidSubsteps")) {
       impl_->liquidSubsteps_ = std::clamp(value.toInt(), 1, 8);
       impl_->invalidateLiquidSimulation();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12087,7 +12123,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         QStringLiteral("component.fluid.liquidSurfaceOpacity")) {
       impl_->liquidSurfaceOpacity_ = finiteClampedValue(
           value.toDouble(), impl_->liquidSurfaceOpacity_, 0.0, 1.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12096,7 +12132,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         QStringLiteral("component.fluid.liquidEdgeOpacity")) {
       impl_->liquidEdgeOpacity_ = finiteClampedValue(
           value.toDouble(), impl_->liquidEdgeOpacity_, 0.0, 1.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12106,7 +12142,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->liquidFoamAmount_ = finiteClampedValue(
           value.toDouble(), impl_->liquidFoamAmount_, 0.0, 1.0);
       impl_->invalidateLiquidSurface();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12115,7 +12151,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         QStringLiteral("component.fluid.liquidContainerOpacity")) {
       impl_->liquidContainerOpacity_ = finiteClampedValue(
           value.toDouble(), impl_->liquidContainerOpacity_, 0.0, 1.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12124,7 +12160,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         QStringLiteral("component.fluid.liquidContainerWidth")) {
       impl_->liquidContainerWidth_ = finiteClampedValue(
           value.toDouble(), impl_->liquidContainerWidth_, 0.0, 64.0);
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12134,7 +12170,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       if (!color.isValid()) return false;
       impl_->liquidColor_ = FloatColor(
           color.redF(), color.greenF(), color.blueF(), color.alphaF());
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12144,7 +12180,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       if (!color.isValid()) return false;
       impl_->liquidFoamColor_ = FloatColor(
           color.redF(), color.greenF(), color.blueF(), color.alphaF());
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -12152,7 +12188,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
       impl_->layoutComponentEnabled_ = value.toBool();
       if (!impl_->layoutComponentEnabled_) impl_->layoutResponsiveEnabled_ = false;
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       Q_EMIT changed();
       return true;
     }
@@ -12247,7 +12283,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.cloner.enabled")) {
       impl_->clonerComponentEnabled_ = value.toBool();
-      impl_->syncBuiltinComponentDescriptors();
+      impl_->syncBuiltinComponentDescriptors(this);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;

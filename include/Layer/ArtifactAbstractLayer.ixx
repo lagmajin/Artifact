@@ -328,6 +328,7 @@ protected:
       const QString &propertyPathPrefix) const;
   void setBuiltinLayerSourceComponentType(const QString &componentType);
   virtual const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const;
+  virtual QJsonObject sourceComponentSettingsSnapshot() const;
 
 public:
     ArtifactAbstractLayer();
