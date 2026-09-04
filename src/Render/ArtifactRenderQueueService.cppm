@@ -1731,6 +1731,7 @@ namespace Artifact
             jobs[index].audioChannelMode =
                 normalized == QStringLiteral("mono") || normalized == QStringLiteral("5.1")
                     || normalized == QStringLiteral("7.1")
+                    || normalized == QStringLiteral("7.1.4")
                     || normalized == QStringLiteral("source")
                 ? normalized
                 : QStringLiteral("stereo");
@@ -1769,7 +1770,8 @@ namespace Artifact
             const QString audioMode = jobs[index].audioChannelMode.trimmed().toLower();
             jobs[index].audioChannelMode =
                 audioMode == QStringLiteral("mono") || audioMode == QStringLiteral("5.1") ||
-                        audioMode == QStringLiteral("7.1") || audioMode == QStringLiteral("source")
+                        audioMode == QStringLiteral("7.1") || audioMode == QStringLiteral("7.1.4") ||
+                        audioMode == QStringLiteral("source")
                     ? audioMode : QStringLiteral("stereo");
             jobs[index].resolutionWidth = std::clamp(jobs[index].resolutionWidth, 16, 16384);
             jobs[index].resolutionHeight = std::clamp(jobs[index].resolutionHeight, 16, 16384);
@@ -5227,13 +5229,14 @@ namespace Artifact
                 && channelMode != QStringLiteral("mono")
                 && channelMode != QStringLiteral("stereo")
                 && channelMode != QStringLiteral("5.1")
-                && channelMode != QStringLiteral("7.1")) {
+                && channelMode != QStringLiteral("7.1")
+                && channelMode != QStringLiteral("7.1.4")) {
                 result.addDiagnostic(makePreflightDiagnostic(
                     ArtifactCore::DiagnosticSeverity::Error,
                     ArtifactCore::DiagnosticCategory::Configuration,
                     QStringLiteral("Audio channel mode is invalid"),
                     QStringLiteral("Unknown audio channel mode: %1").arg(job.audioChannelMode),
-                    QStringLiteral("Choose Source, Mono, Stereo, 5.1, or 7.1"),
+                    QStringLiteral("Choose Source, Mono, Stereo, 5.1, 7.1, or 7.1.4"),
                     compId));
             }
             if (job.audioSampleRate != 0 && job.audioSampleRate != 48000
@@ -7025,6 +7028,7 @@ namespace Artifact
                         : job.audioChannelMode == QStringLiteral("stereo") ? 2
                         : job.audioChannelMode == QStringLiteral("5.1") ? 6
                         : job.audioChannelMode == QStringLiteral("7.1") ? 8
+                        : job.audioChannelMode == QStringLiteral("7.1.4") ? 12
                         : 0;
                     if (!ArtifactCore::FFmpegAudioEncoder::muxAudioWithVideo(
                             videoRenderPath,
