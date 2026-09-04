@@ -219,7 +219,9 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSpatialAudioLayer::getLayerProp
     g.addProperty(p(QStringLiteral("spatial.coneOuter"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneOuterAngle, -114));
     g.addProperty(p(QStringLiteral("spatial.coneOuterGain"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneOuterGain, -113));
     g.addProperty(p(QStringLiteral("spatial.gain"), ArtifactCore::PropertyType::Float, impl_->gain_, -112));
-    g.addProperty(p(QStringLiteral("spatial.sourcePath"), ArtifactCore::PropertyType::String, impl_->sourcePath_, -111));
+    g.addProperty(p(QStringLiteral("spatial.muted"), ArtifactCore::PropertyType::Bool, impl_->muted_, -111));
+    g.addProperty(p(QStringLiteral("spatial.enabled"), ArtifactCore::PropertyType::Bool, impl_->enabled_, -110));
+    g.addProperty(p(QStringLiteral("spatial.sourcePath"), ArtifactCore::PropertyType::String, impl_->sourcePath_, -109));
     groups.push_back(std::move(g));
     return groups;
 }
@@ -231,6 +233,8 @@ bool ArtifactSpatialAudioLayer::setLayerPropertyValue(const QString& propertyPat
     else if (propertyPath == QStringLiteral("spatial.rolloff")) sp.rolloff = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.spread")) sp.spread = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.gain")) { setGain(value.toFloat()); return true; }
+    else if (propertyPath == QStringLiteral("spatial.muted")) { setMuted(value.toBool()); return true; }
+    else if (propertyPath == QStringLiteral("spatial.enabled")) { setEnabled(value.toBool()); return true; }
     else if (propertyPath == QStringLiteral("spatial.distanceModel")) sp.model = static_cast<ArtifactCore::Audio::Spatial::DistanceModel>(value.toInt());
     else if (propertyPath == QStringLiteral("spatial.coneInner")) sp.coneInnerAngle = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.coneOuter")) sp.coneOuterAngle = value.toFloat();
