@@ -2889,6 +2889,20 @@ void ArtifactShapeLayer::ShapeContentProxy::setStroke(const ShapeContentStroke& 
   setContent(c);
 }
 
+Artifact::ShapeContentGeometry ArtifactShapeLayer::ShapeContentProxy::geometry() const {
+  const auto c = pull();
+  return c.geometry;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setGeometry(const ShapeContentGeometry& geometry) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.geometry = geometry;
+  setContent(c);
+}
+
 bool ArtifactShapeLayer::ShapeContentProxy::duplicate() {
   if (!isValid()) {
     return false;
@@ -4604,6 +4618,38 @@ if (propertyPath == "shape.dashOffset") {
           const float next = value.toFloat();
           content.stroke.dashOffset = std::isfinite(next)
               ? std::clamp(next, -1000000.0f, 1000000.0f) : 0.0f;
+          handled = true;
+        } else if (field == "type") {
+          content.geometry.type = static_cast<Artifact::ShapeType>(
+              std::clamp(value.toInt(), 0, 6));
+          handled = true;
+        } else if (field == "width") {
+          const int next = value.toInt();
+          content.geometry.width = std::clamp(next, 1, static_cast<int>(kMaxShapeDimension));
+          handled = true;
+        } else if (field == "height") {
+          const int next = value.toInt();
+          content.geometry.height = std::clamp(next, 1, static_cast<int>(kMaxShapeDimension));
+          handled = true;
+        } else if (field == "cornerRadius") {
+          const float next = value.toFloat();
+          content.geometry.cornerRadius = std::isfinite(next)
+              ? std::clamp(next, 0.0f, 100000.0f) : 0.0f;
+          handled = true;
+        } else if (field == "starPoints") {
+          content.geometry.starPoints = std::clamp(value.toInt(), 3, 2048);
+          handled = true;
+        } else if (field == "starInnerRadius") {
+          const float next = value.toFloat();
+          content.geometry.starInnerRadius = std::isfinite(next)
+              ? std::clamp(next, 0.0f, 1.0f) : 0.382f;
+          handled = true;
+        } else if (field == "polygonSides") {
+          content.geometry.polygonSides = std::clamp(value.toInt(), 3, 100000);
+          handled = true;
+        } else if (field == "fillRule") {
+          content.geometry.fillRule = static_cast<ArtifactCore::PathFillRule>(
+              std::clamp(value.toInt(), 0, 1));
           handled = true;
         }
         if (handled) {

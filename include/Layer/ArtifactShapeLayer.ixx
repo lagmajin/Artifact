@@ -241,11 +241,13 @@ public:
      void setOpacity(float opacity);
      ShapeContentMerge merge() const;
      void setMerge(ShapeContentMerge merge);
-     ShapeContentFill fill() const;
-     void setFill(const ShapeContentFill& fill);
-     ShapeContentStroke stroke() const;
-     void setStroke(const ShapeContentStroke& stroke);
-     bool duplicate();
+      ShapeContentFill fill() const;
+      void setFill(const ShapeContentFill& fill);
+      ShapeContentStroke stroke() const;
+      void setStroke(const ShapeContentStroke& stroke);
+      ShapeContentGeometry geometry() const;
+      void setGeometry(const ShapeContentGeometry& geometry);
+      bool duplicate();
    private:
      ArtifactShapeLayer* layer_ = nullptr;
      int index_ = -1;
