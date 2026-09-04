@@ -1069,7 +1069,6 @@ void drawBoxHandle(ArtifactIRenderer* renderer,
 void drawScaleCenterHandle(ArtifactIRenderer* renderer,
                            const QPointF& center,
                            const QPointF& xAxisDir,
-                           const QPointF& yAxisDir,
                            float invZoom,
                            bool active)
 {
@@ -1077,19 +1076,24 @@ void drawScaleCenterHandle(ArtifactIRenderer* renderer,
   return;
  }
 
+ // Note (2026-09-04): The previous Y+ axis line + tip handle drew a vertical
+ // stroke through the layer and a handle outside the bounding box on tall
+ // layers. That double-cross visual was the "X 線ノイズ" reported in
+ // docs/technical/GIZMO_IMPLEMENTATION_STATUS_2026-04-10.md. The X+ axis
+ // handle is kept for accessibility / X-axis nudge, but the Y+ line is
+ // removed because it added visual noise without adding interactive value
+ // (uniform / aspect scale lives on corner handles, not on this center
+ // handle). Aspect lock behavior is preserved on corner handles; see
+ // isCornerScaleHandle() in the drag handler.
    const float shaftLen = std::max(14.0f, 32.0f * invZoom);
  const float handleSize = std::clamp(8.0f + 5.0f * invZoom, 8.0f, 15.0f);
  const FloatColor xColor = active ? FloatColor{1.0f, 0.38f, 0.15f, 1.0f}
                                   : FloatColor{0.98f, 0.18f, 0.06f, 1.0f};
- const FloatColor yColor = active ? FloatColor{0.25f, 1.0f, 0.38f, 1.0f}
-                                  : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
  const FloatColor outline = active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
                                    : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
 
  const QPointF xTip = center + xAxisDir * shaftLen;
- const QPointF yTip = center + yAxisDir * shaftLen;
  const FloatColor xShadow{0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f};
- const FloatColor yShadow{0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f};
  const float lineThickness = std::max(1.4f, 1.15f * invZoom);
 
  renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
@@ -1101,16 +1105,6 @@ void drawScaleCenterHandle(ArtifactIRenderer* renderer,
                          {static_cast<float>(xTip.x()), static_cast<float>(xTip.y())},
                          brighten(xColor, active ? 1.06f : 0.98f), lineThickness);
  drawBoxHandle(renderer, xTip, handleSize, brighten(xColor, 1.08f), outline, invZoom, active);
-
- renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
-                          static_cast<float>(center.y() + 1.0f * invZoom)},
-                         {static_cast<float>(yTip.x() + 1.0f * invZoom),
-                          static_cast<float>(yTip.y() + 1.0f * invZoom)},
-                         yShadow, lineThickness);
- renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
-                         {static_cast<float>(yTip.x()), static_cast<float>(yTip.y())},
-                         brighten(yColor, active ? 1.06f : 0.98f), lineThickness);
- drawBoxHandle(renderer, yTip, handleSize, brighten(yColor, 1.08f), outline, invZoom, active);
 
  drawBoxHandle(renderer, center, std::clamp(handleSize * 1.08f, 8.0f, 16.0f),
                active ? FloatColor{1.0f, 0.92f, 0.35f, 1.0f}
@@ -1970,11 +1964,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
    const float xALen = static_cast<float>(
        std::sqrt(xAxisRaw.x() * xAxisRaw.x() + xAxisRaw.y() * xAxisRaw.y()));
    const QPointF xAxisDir = xALen > 0.001f ? xAxisRaw / xALen : QPointF(1.0, 0.0);
-   QPointF yAxisRaw = globalTransform.map(QPointF(0.0, -1.0)) - mapOrigin;
-   const float yALen = static_cast<float>(
-       std::sqrt(yAxisRaw.x() * yAxisRaw.x() + yAxisRaw.y() * yAxisRaw.y()));
-   const QPointF yAxisDir = yALen > 0.001f ? yAxisRaw / yALen : QPointF(0.0, -1.0);
-   drawScaleCenterHandle(renderer, centerPoint, xAxisDir, yAxisDir, invZoom, activeHandle_ == HandleType::Scale_Center);
+   drawScaleCenterHandle(renderer, centerPoint, xAxisDir, invZoom, activeHandle_ == HandleType::Scale_Center);
   }
   }
 
@@ -2022,27 +2012,18 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
       rotateEmphasis ? FloatColor{1.0f, 0.90f, 0.34f, 1.0f}
                      : FloatColor{0.88f, 0.90f, 0.94f, 0.82f};
   const float shadowOffset = std::max(1.2f, 1.0f * invZoom);
-  const float segmentSweep = 68.0f;
+  // Note (2026-09-04): Reduced axis-segment sweep from 68° to 36° to keep the
+  // X/Y color hint visible at the cardinal axes while letting the rest of the
+  // ring read as a single color. The wider 68° span produced a 4-axis rainbow
+  // effect that competed with the drag arc / leader.
+  const float segmentSweep = 36.0f;
 
-  const float projectedMajorRadius = visualRotateGeo.ringRadius * 0.98f;
-  const float projectedMinorRadius =
-      std::max(1.0f * invZoom, visualRotateGeo.ringRadius * 0.035f);
-  const float projectedAxisThickness =
-      std::max(2.0f, visualRotateGeo.ringThickness * 0.78f);
-  const float projectedAxisRotation = t3d.rotation();
-  drawEllipse(renderer, visualRotateGeo.centerWorld,
-              projectedMajorRadius,
-              projectedMinorRadius,
-              projectedAxisRotation,
-              FloatColor{1.0f, 0.30f, 0.18f, rotateEmphasis ? 0.74f : 0.52f},
-              projectedAxisThickness);
-  drawEllipse(renderer, visualRotateGeo.centerWorld,
-              projectedMinorRadius,
-              projectedMajorRadius,
-              projectedAxisRotation,
-              FloatColor{0.22f, 0.90f, 0.44f, rotateEmphasis ? 0.74f : 0.52f},
-              projectedAxisThickness);
-
+  // Note (2026-09-04): Removed the redundant rotated ellipse pair (X-axis red
+  // / Y-axis green ellipses projected from transform3D.rotation). The ring
+  // already conveys the rotation pivot, and these extra ellipses added visual
+  // noise (four-axis crossings) without improving interaction. X/Y axis
+  // color information is still preserved by the cardinal-axis arc segments
+  // drawn below.
   renderer->drawCircle(visualRotateGeo.centerWorld.x() + shadowOffset,
                        visualRotateGeo.centerWorld.y() + shadowOffset,
                        visualRotateGeo.ringRadius,
