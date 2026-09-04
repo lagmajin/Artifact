@@ -3,6 +3,7 @@ module;
 #include <QVariant>
 #include <QRectF>
 #include <QString>
+#include <QUuid>
 
 export module Artifact.Layer.SpatialAudio;
 
@@ -33,6 +34,13 @@ public:
     void setSourcePath(const QString& path);
     QString sourcePath() const;
     bool loadFromPath(const QString& path);
+    QString objectId() const;
+    float gain() const;
+    bool isMuted() const;
+    bool isEnabled() const;
+    void setGain(float value);
+    void setMuted(bool value);
+    void setEnabled(bool value);
 
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
