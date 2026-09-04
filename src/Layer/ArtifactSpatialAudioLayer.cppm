@@ -196,6 +196,8 @@ void ArtifactSpatialAudioLayer::fromJsonProperties(const QJsonObject& obj) {
     if (obj.contains(QStringLiteral("spatial.coneOuter"))) impl_->spatial_.coneOuterAngle = (float)obj.value(QStringLiteral("spatial.coneOuter")).toDouble(360.0);
     if (obj.contains(QStringLiteral("spatial.coneOuterGain"))) impl_->spatial_.coneOuterGain = (float)obj.value(QStringLiteral("spatial.coneOuterGain")).toDouble(0.0);
     if (obj.contains(QStringLiteral("spatial.doppler"))) impl_->spatial_.doppler = obj.value(QStringLiteral("spatial.doppler")).toBool(false);
+    if (!std::isfinite(impl_->gain_)) impl_->gain_ = 1.0f;
+    impl_->gain_ = std::clamp(impl_->gain_, 0.0f, 4.0f);
     impl_->spatial_ = ArtifactCore::Audio::Spatial::sanitizedSpatialParams(impl_->spatial_);
 }
 
