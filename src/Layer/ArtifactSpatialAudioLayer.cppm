@@ -175,6 +175,7 @@ QJsonObject ArtifactSpatialAudioLayer::toJson() const {
     obj[QStringLiteral("spatial.coneInner")] = impl_->spatial_.coneInnerAngle;
     obj[QStringLiteral("spatial.coneOuter")] = impl_->spatial_.coneOuterAngle;
     obj[QStringLiteral("spatial.coneOuterGain")] = impl_->spatial_.coneOuterGain;
+    obj[QStringLiteral("spatial.airAbsorption")] = impl_->spatial_.airAbsorption;
     obj[QStringLiteral("spatial.doppler")] = impl_->spatial_.doppler;
     return obj;
 }
@@ -195,6 +196,7 @@ void ArtifactSpatialAudioLayer::fromJsonProperties(const QJsonObject& obj) {
     if (obj.contains(QStringLiteral("spatial.coneInner"))) impl_->spatial_.coneInnerAngle = (float)obj.value(QStringLiteral("spatial.coneInner")).toDouble(360.0);
     if (obj.contains(QStringLiteral("spatial.coneOuter"))) impl_->spatial_.coneOuterAngle = (float)obj.value(QStringLiteral("spatial.coneOuter")).toDouble(360.0);
     if (obj.contains(QStringLiteral("spatial.coneOuterGain"))) impl_->spatial_.coneOuterGain = (float)obj.value(QStringLiteral("spatial.coneOuterGain")).toDouble(0.0);
+    if (obj.contains(QStringLiteral("spatial.airAbsorption"))) impl_->spatial_.airAbsorption = (float)obj.value(QStringLiteral("spatial.airAbsorption")).toDouble(0.0);
     if (obj.contains(QStringLiteral("spatial.doppler"))) impl_->spatial_.doppler = obj.value(QStringLiteral("spatial.doppler")).toBool(false);
     if (!std::isfinite(impl_->gain_)) impl_->gain_ = 1.0f;
     impl_->gain_ = std::clamp(impl_->gain_, 0.0f, 4.0f);
@@ -218,7 +220,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSpatialAudioLayer::getLayerProp
     g.addProperty(p(QStringLiteral("spatial.coneInner"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneInnerAngle, -115));
     g.addProperty(p(QStringLiteral("spatial.coneOuter"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneOuterAngle, -114));
     g.addProperty(p(QStringLiteral("spatial.coneOuterGain"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneOuterGain, -113));
-    g.addProperty(p(QStringLiteral("spatial.gain"), ArtifactCore::PropertyType::Float, impl_->gain_, -112));
+    g.addProperty(p(QStringLiteral("spatial.airAbsorption"), ArtifactCore::PropertyType::Float, impl_->spatial_.airAbsorption, -112));
+    g.addProperty(p(QStringLiteral("spatial.gain"), ArtifactCore::PropertyType::Float, impl_->gain_, -111));
     g.addProperty(p(QStringLiteral("spatial.muted"), ArtifactCore::PropertyType::Bool, impl_->muted_, -111));
     g.addProperty(p(QStringLiteral("spatial.enabled"), ArtifactCore::PropertyType::Bool, impl_->enabled_, -110));
     g.addProperty(p(QStringLiteral("spatial.sourcePath"), ArtifactCore::PropertyType::String, impl_->sourcePath_, -109));
@@ -239,6 +242,7 @@ bool ArtifactSpatialAudioLayer::setLayerPropertyValue(const QString& propertyPat
     else if (propertyPath == QStringLiteral("spatial.coneInner")) sp.coneInnerAngle = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.coneOuter")) sp.coneOuterAngle = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.coneOuterGain")) sp.coneOuterGain = value.toFloat();
+    else if (propertyPath == QStringLiteral("spatial.airAbsorption")) sp.airAbsorption = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.sourcePath")) { setSourcePath(value.toString()); return true; }
     else return false;
     setSpatialParams(sp);
