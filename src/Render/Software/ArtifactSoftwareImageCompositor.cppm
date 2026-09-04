@@ -188,7 +188,7 @@ inline ArtifactCore::FloatColor blendColor(const ArtifactCore::FloatColor& base,
  }
 }
 
-QPainter::CompositionMode qPainterCompositionMode(const ArtifactCore::BlendMode mode)
+QPainter::CompositionMode qPainterCompositionModeImpl(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
  // QPainter has no native Subtract; the exact float/CV implementation lives
@@ -605,6 +605,11 @@ QImage composeOpenCV(const CompositeRequest& request)
 }
 
 } // namespace
+
+QPainter::CompositionMode qPainterCompositionMode(const ArtifactCore::BlendMode mode)
+{
+ return qPainterCompositionModeImpl(mode);
+}
 
 QImage compose(const CompositeRequest& request)
 {

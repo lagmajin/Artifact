@@ -10,6 +10,7 @@ module;
 export module Artifact.Layer.NLETransitionBridge;
 
 import NLE.Core;
+import Artifact.Composition.Abstract;
 import Video.AbstractTransition;
 import Video.TransitionFactory;
 import Video.CpuFrameView;
@@ -42,8 +43,6 @@ LIBRARY_DLL_API ImageF32x4_RGBA applyNLETransitionByName(
     const ImageF32x4_RGBA& left,
     const ImageF32x4_RGBA& right,
     const TransitionContext& ctx);
-
-class ArtifactAbstractComposition;
 
 LIBRARY_DLL_API bool exportCompositionToOtioFile(
     const ArtifactAbstractComposition& composition,

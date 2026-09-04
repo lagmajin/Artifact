@@ -718,7 +718,16 @@ bool applyKeyframePropertySnapshots(
     const QVector<KeyframePropertySnapshot> &snapshots);
 void restorePropertyKeyframes(
     const ArtifactCore::AbstractPropertyPtr &property,
-    const std::vector<ArtifactCore::KeyFrame> &keyframes);
+    const std::vector<ArtifactCore::KeyFrame> &keyframes) {
+  if (!property) return;
+  property->clearKeyFrames();
+  for (const auto &keyframe : keyframes) {
+    property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
+                          keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                          keyframe.cp2_y, keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+  }
+}
 
 QSet<QString> keyframeSelectionSetForArea(const KeyframeAreaVisual &area) {
   QSet<QString> selection;
@@ -4601,23 +4610,6 @@ void ArtifactTimelineTrackPainterView::Impl::rebuildClipCaches() {
   }
 }
 
-void restorePropertyKeyframes(
-    const ArtifactCore::AbstractPropertyPtr &property,
-    const std::vector<ArtifactCore::KeyFrame> &keyframes) {
-  if (!property) {
-    return;
-  }
-  property->clearKeyFrames();
-  for (const auto &keyframe : keyframes) {
-    property->addKeyFrame(
-        keyframe.time, keyframe.value, keyframe.interpolation,
-        keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
-        keyframe.roving);
-    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
-    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
-  }
-}
-
 void ArtifactTimelineTrackPainterView::Impl::rebuildMarkerCaches() {
   keyframeAreaCacheValid_ = false;
   keyframeCountsByTrack_.resize(trackHeights_.size());
@@ -5084,6 +5076,19 @@ bool ArtifactTimelineTrackPainterView::reverseSelectedKeyframeMarkers() {
 }
 
 namespace {
+void restorePropertyKeyframesLocalForWidget(
+    const ArtifactCore::AbstractPropertyPtr &property,
+    const std::vector<ArtifactCore::KeyFrame> &keyframes) {
+  if (!property) return;
+  property->clearKeyFrames();
+  for (const auto &keyframe : keyframes) {
+    property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
+                          keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                          keyframe.cp2_y, keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+  }
+}
+
 QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
 collectAllKeyframeMarkersForLayers(
     const QVector<ArtifactAbstractLayerPtr> &layers) {
@@ -10236,7 +10241,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       }
       const int currentIndex = std::clamp(
           static_cast<int>(layer->layerBlendType()), 0,
-          std::max(0, blendModeNames.size() - 1));
+          static_cast<int>(std::max<qsizetype>(0, blendModeNames.size() - 1)));
       bool accepted = false;
       const QString selectedName = QInputDialog::getItem(
           this, tt("timeline.edit_blend_mode", "Set Blend Mode"),
@@ -10269,10 +10274,10 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
             ArtifactOCIOManager::instance()->availableWorkingSpaces());
         colorSpaces.removeDuplicates();
         const QString beforeColorSpace = imageLayer->inputColorSpace();
-        const int currentIndex = std::max(
+        const int currentIndex = static_cast<int>(std::max<qsizetype>(
             0, colorSpaces.indexOf(beforeColorSpace.isEmpty()
                                        ? QStringLiteral("Auto")
-                                       : beforeColorSpace));
+                                       : beforeColorSpace)));
         bool accepted = false;
         const QString selectedColorSpace = QInputDialog::getItem(
             this, tt("timeline.edit_image_color_space", "Set Input Color Space"),
@@ -10336,10 +10341,10 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
             QStringLiteral("HLG"), QStringLiteral("ACEScc"),
             QStringLiteral("ACEScct"), QStringLiteral("SLog3")};
         const QString beforeTransfer = imageLayer->inputTransferFunction();
-        const int currentIndex = std::max(
+        const int currentIndex = static_cast<int>(std::max<qsizetype>(
             0, transferFunctions.indexOf(beforeTransfer.isEmpty()
                                               ? QStringLiteral("Auto")
-                                              : beforeTransfer));
+                                              : beforeTransfer)));
         bool accepted = false;
         const QString selectedTransfer = QInputDialog::getItem(
             this, tt("timeline.edit_image_transfer", "Set Input Transfer"),
@@ -10963,7 +10968,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
               editLayer, QStringLiteral("text.value"), beforeKeyframes,
               afterKeyframes, QStringLiteral("Edit Source Text")))) {
-        Artifact::restorePropertyKeyframes(textProperty, beforeKeyframes);
+        restorePropertyKeyframesLocalForWidget(textProperty, beforeKeyframes);
         event->accept();
         return;
       }

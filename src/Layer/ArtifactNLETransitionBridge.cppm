@@ -10,6 +10,7 @@ module;
 #include <utility>
 #include <variant>
 #include <vector>
+#include "../../include/Define/DllExportMacro.hpp"
 
 module Artifact.Layer.NLETransitionBridge;
 
@@ -134,7 +135,7 @@ ImageF32x4_RGBA applyNLETransitionByName(const QString& name,
     return applyNLETransition(nleTransitionKindFromName(name), left, right, ctx);
 }
 
-bool exportCompositionToOtioFile(const ArtifactAbstractComposition& composition,
+LIBRARY_DLL_API bool exportCompositionToOtioFile(const ArtifactAbstractComposition& composition,
                                  const QString& filePath,
                                  QVector<QString>* warnings)
 {

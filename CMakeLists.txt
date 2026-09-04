@@ -600,7 +600,7 @@ else()
     set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD OFF)
 endif()
 if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(ArtifactRenderSupport PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(ArtifactRenderSupport PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050 /EHsc)
 elseif(ARTIFACT_FRONTEND_MSVC)
     target_compile_options(ArtifactRenderSupport PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
 endif()
@@ -908,7 +908,7 @@ else()
     set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD OFF)
 endif()
 if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(ArtifactRender PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(ArtifactRender PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050 /EHsc)
     target_compile_definitions(ArtifactRender PRIVATE
         PLATFORM_WIN32
         _GUARDOVERFLOW_CRT_ALLOCATORS=1
@@ -2628,7 +2628,7 @@ target_sources(Artifact
 
 # Strict MSVC-cl only flags
 if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(Artifact PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(Artifact PRIVATE /EHsc /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_definitions(Artifact PRIVATE
         PLATFORM_WIN32
         _GUARDOVERFLOW_CRT_ALLOCATORS=1
@@ -2937,9 +2937,11 @@ if(WIN32)
     )
 endif()
 if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(ArtifactEffectContract PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(ArtifactEffectContract PRIVATE /EHsc /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_options(ArtifactEffectsColor PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_options(ArtifactEffectsTemporal PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(ArtifactEffectsOptics PRIVATE /EHsc /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(ArtifactEffectsAutoMosaic PRIVATE /EHsc /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_options(ArtifactEffectsSpatial INTERFACE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_options(ArtifactEffectsRasterizer INTERFACE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_options(ArtifactEffectsResidual INTERFACE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
@@ -3044,6 +3046,12 @@ if(FFMPEG_FOUND)
     # Keep the final Artifact link self-contained instead of relying only on
     # transitive ArtifactCore linkage.
     target_link_libraries(Artifact PRIVATE avutil)
+    target_link_libraries(Artifact PRIVATE
+        "${VCPKG_INSTALLED_DIR}/x64-windows/lib/avcodec.lib"
+        "${VCPKG_INSTALLED_DIR}/x64-windows/lib/avformat.lib"
+        "${VCPKG_INSTALLED_DIR}/x64-windows/lib/avutil.lib"
+        "${VCPKG_INSTALLED_DIR}/x64-windows/lib/swscale.lib"
+        "${VCPKG_INSTALLED_DIR}/x64-windows/lib/swresample.lib")
 else()
     # Fallback for manual specification
     target_link_libraries(Artifact PRIVATE 
