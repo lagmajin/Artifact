@@ -742,6 +742,22 @@ public:
     Zoom,
   };
 
+  struct NavigationSessionState {
+    bool panning = false;
+    bool orbiting = false;
+    bool zooming = false;
+  };
+
+  NavigationSessionState navigationSessionState() const {
+    return {isPanning_, isAltOrbiting_, isAltZooming_};
+  }
+
+  void restoreNavigationSessionState(const NavigationSessionState &state) {
+    isPanning_ = state.panning;
+    isAltOrbiting_ = state.orbiting;
+    isAltZooming_ = state.zooming;
+  }
+
   explicit CompositionViewport(CompositionRenderController *controller,
                                QWidget *parent = nullptr)
       : QWidget(parent), controller_(controller) {
@@ -7952,6 +7968,7 @@ public:
     QQuaternion orientation;
     QPointF pan;
     float zoom = 1.0f;
+    CompositionViewport::NavigationSessionState navigation;
   };
   QHash<CompositionRenderController *, PreviewOrbitSnapshot>
       previewOrbitSnapshots_;
@@ -9235,6 +9252,7 @@ public:
         if (!controller) {
           return;
         }
+        controller->setPreviewOrbitActive(true);
         PreviewOrbitSnapshot snapshot;
         snapshot.orientation = controller->viewportOrientationQuaternion();
         if (auto *renderer = controller->renderer()) {
@@ -9243,6 +9261,12 @@ public:
           renderer->getPan(panX, panY);
           snapshot.pan = QPointF(panX, panY);
           snapshot.zoom = std::max(0.001f, renderer->getZoom());
+        }
+        for (const PaneState &pane : panes_) {
+          if (pane.controller == controller && pane.view) {
+            snapshot.navigation = pane.view->navigationSessionState();
+            break;
+          }
         }
         previewOrbitSnapshots_.insert(controller, snapshot);
       });
@@ -9255,11 +9279,18 @@ public:
         }
         auto *controller = it.key();
         const PreviewOrbitSnapshot snapshot = it.value();
+        controller->setPreviewOrbitActive(false);
         controller->setViewportOrientationQuaternion(snapshot.orientation);
         if (auto *renderer = controller->renderer()) {
           renderer->setZoom(snapshot.zoom);
           renderer->setPan(static_cast<float>(snapshot.pan.x()),
                            static_cast<float>(snapshot.pan.y()));
+        }
+        for (const PaneState &pane : panes_) {
+          if (pane.controller == controller && pane.view) {
+            pane.view->restoreNavigationSessionState(snapshot.navigation);
+            break;
+          }
         }
       }
       previewOrbitSnapshots_.clear();

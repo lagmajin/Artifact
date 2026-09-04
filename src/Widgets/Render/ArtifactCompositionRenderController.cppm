@@ -10263,6 +10263,9 @@ public:
         !viewportOrientationMatricesValid_) {
       ::Artifact::drawCompositionRegionOverlay(renderer_.get(), composition);
     }
+    if (previewOrbitActive_ && composition) {
+      ::Artifact::drawNavigationCrossOverlay(renderer_.get(), composition);
+    }
 
     renderer_->flush();
 
@@ -11660,6 +11663,8 @@ public:
   bool showCompositionRegionOverlay_ =
 
       false; // Temporarily disable the blue frame.
+
+  bool previewOrbitActive_ = false;
 
   // Onion Skin
 
@@ -31194,6 +31199,19 @@ void CompositionRenderController::setViewportOrientationQuaternion(
 
 }
 
+void CompositionRenderController::setPreviewOrbitActive(bool active) {
+  if (!impl_ || impl_->previewOrbitActive_ == active) {
+    return;
+  }
+  impl_->previewOrbitActive_ = active;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isPreviewOrbitActive() const {
+  return impl_ && impl_->previewOrbitActive_;
+}
+
 
 
 // ROI Debug
@@ -34102,6 +34120,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 !viewportOrientationMatricesValid_) {
               ::Artifact::drawCompositionRegionOverlay(context.renderer, comp);
             }
+            if (previewOrbitActive_ && comp) {
+              ::Artifact::drawNavigationCrossOverlay(context.renderer, comp);
+            }
 
             basePassMs = markPhaseMs();
 
@@ -35249,6 +35270,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (showCompositionRegionOverlay_ && comp &&
           !viewportOrientationMatricesValid_) {
         ::Artifact::drawCompositionRegionOverlay(renderer_.get(), comp);
+      }
+      if (previewOrbitActive_ && comp) {
+        ::Artifact::drawNavigationCrossOverlay(renderer_.get(), comp);
       }
 
       lastPresentedReadbackSRV_ = nullptr;

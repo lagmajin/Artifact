@@ -456,6 +456,8 @@ void clearViewportOrientation();
 ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
 QQuaternion viewportOrientationQuaternion() const;
 void setViewportOrientationQuaternion(const QQuaternion& orientation);
+void setPreviewOrbitActive(bool active);
+bool isPreviewOrbitActive() const;
 void pushViewHistory();
  Ray createPickingRay(const QPointF& viewportPos) const;
   Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
@@ -492,4 +494,3 @@ public /*slots*/:
 
  };
 }
-

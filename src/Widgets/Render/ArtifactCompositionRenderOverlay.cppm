@@ -763,6 +763,20 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+void drawNavigationCrossOverlay(ArtifactIRenderer *renderer,
+                                const ArtifactCompositionPtr &comp) {
+  if (!renderer || !comp) {
+    return;
+  }
+  const QSize size = comp->effectiveCompositionSize();
+  const float cx = static_cast<float>(size.width() > 0 ? size.width() : 1920) * 0.5f;
+  const float cy = static_cast<float>(size.height() > 0 ? size.height() : 1080) * 0.5f;
+  constexpr float arm = 18.0f;
+  const FloatColor color{0.55f, 0.78f, 1.0f, 0.72f};
+  renderer->drawSolidLine({cx - arm, cy}, {cx + arm, cy}, color, 1.5f);
+  renderer->drawSolidLine({cx, cy - arm}, {cx, cy + arm}, color, 1.5f);
+}
+
 void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
                              const ArtifactAbstractLayerPtr &layer,
                              const QMatrix4x4 *cameraView,

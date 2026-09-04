@@ -27,6 +27,8 @@ export namespace Artifact {
 
 void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
                                   const ArtifactCompositionPtr &comp);
+void drawNavigationCrossOverlay(ArtifactIRenderer *renderer,
+                                const ArtifactCompositionPtr &comp);
 
 void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
                              const ArtifactAbstractLayerPtr &layer,
