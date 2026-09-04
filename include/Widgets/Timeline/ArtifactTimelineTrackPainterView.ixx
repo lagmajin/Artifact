@@ -83,6 +83,7 @@ export namespace Artifact
     Audio,
     Video
    };
+   enum class SourceState { Ready, Missing, Proxy, Unreadable, SequenceGap };
 
    QString clipId;
    LayerID layerId;
@@ -95,6 +96,14 @@ export namespace Artifact
    QString title;
    QColor fillColor = QColor(73, 126, 196);
    Kind kind = Kind::Generic;
+   SourceState sourceState = SourceState::Ready;
+   double audioFadeInFrames = 0.0;
+   double audioFadeOutFrames = 0.0;
+   double audioClipGainDb = 0.0;
+   double audioPan = 0.0;
+   double audioPlaybackRate = 1.0;
+   bool audioReversed = false;
+   bool audioMuted = false;
    bool selected = false;
    QVector<float> waveformPeaks;
    QVector<float> waveformRms;

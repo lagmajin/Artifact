@@ -6,6 +6,7 @@ module;
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFocusEvent>
+#include <QFileInfo>
 #include <QEvent>
 #include <QHash>
 #include <QIcon>
@@ -41,6 +42,7 @@ module;
 #include <QPointer>
 #include <QPolygonF>
 #include <QStackedWidget>
+#include <algorithm>
 #include <limits>
 #include <cmath>
 #include <qtmetamacros.h>
@@ -8108,6 +8110,27 @@ void ArtifactTimelineWidget::refreshTracks() {
       if (audioLayer) {
         ++audioTrackCount;
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio;
+        visual.audioFadeInFrames = std::clamp(
+            static_cast<double>(audioLayer->fadeInSeconds()) * compositionFps,
+            0.0, clipDuration);
+        visual.audioFadeOutFrames = std::clamp(
+            static_cast<double>(audioLayer->fadeOutSeconds()) * compositionFps,
+            0.0, clipDuration);
+        visual.audioClipGainDb = audioLayer->clipGainDb();
+        visual.audioPan = audioLayer->pan();
+        visual.audioPlaybackRate = audioLayer->playbackRate();
+        visual.audioReversed = audioLayer->isReversed();
+        visual.audioMuted = audioLayer->isMuted();
+        const QString sourcePath = audioLayer->sourcePath().trimmed();
+        if (!sourcePath.isEmpty()) {
+          if (!QFileInfo::exists(sourcePath)) {
+            visual.sourceState =
+                ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Missing;
+          } else if (!audioLayer->isLoaded()) {
+            visual.sourceState =
+                ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Unreadable;
+          }
+        }
         const QString cacheKey = audioWaveformCacheKey(impl_->compositionId_, row.layerId);
         const QString signature = audioWaveformSignatureForLayer(*layer, compositionFps);
         auto cachedIt = impl_->audioWaveformCache_.find(cacheKey);
@@ -8188,11 +8211,25 @@ void ArtifactTimelineWidget::refreshTracks() {
         const QString kind = imageLayer->isImageSequence()
             ? QStringLiteral("Image Sequence")
             : QStringLiteral("Still Image");
-        const QString sourceState = imageLayer->sourcePath().trimmed().isEmpty()
+        const QString sourcePath = imageLayer->sourcePath().trimmed();
+        const QString sourceState = sourcePath.isEmpty()
             ? QStringLiteral("Embedded")
             : QStringLiteral("Linked");
         visual.title = QStringLiteral("%1 · %2 · %3")
                            .arg(layer->layerName(), kind, sourceState);
+        if (imageLayer->isImageSequence()) {
+          const QStringList framePaths = imageLayer->sequenceFramePaths();
+          const bool hasMissingFrame = std::any_of(
+              framePaths.cbegin(), framePaths.cend(),
+              [](const QString& framePath) { return !QFileInfo::exists(framePath); });
+          if (hasMissingFrame) {
+            visual.sourceState =
+                ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::SequenceGap;
+          }
+        } else if (!sourcePath.isEmpty() && !QFileInfo::exists(sourcePath)) {
+          visual.sourceState =
+              ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Missing;
+        }
       } else if (const auto particleLayer =
                      ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(layer)) {
         visual.title = QStringLiteral("%1 · Particle · %2 · emitters:%3")
@@ -8228,6 +8265,7 @@ void ArtifactTimelineWidget::refreshTracks() {
                      ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
         const auto &streamInfo = videoLayer->streamInfo();
+        const QString sourcePath = videoLayer->sourcePath().trimmed();
         const QString sourceState = videoLayer->isLoaded()
             ? QStringLiteral("Loaded")
             : QStringLiteral("Source unavailable");
@@ -8236,6 +8274,19 @@ void ArtifactTimelineWidget::refreshTracks() {
             : QString();
         visual.title = QStringLiteral("%1 · %2%3")
                            .arg(layer->layerName(), sourceState, dimensions);
+        visual.audioMuted = videoLayer->isAudioMuted();
+        if (!sourcePath.isEmpty()) {
+          if (!QFileInfo::exists(sourcePath)) {
+            visual.sourceState =
+                ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Missing;
+          } else if (videoLayer->hasProxy()) {
+            visual.sourceState =
+                ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Proxy;
+          } else if (!videoLayer->isLoaded()) {
+            visual.sourceState =
+                ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Unreadable;
+          }
+        }
       }
       const qint64 inPointFrame = layer->inPoint().framePosition();
       const qint64 startTimeFrame = layer->startTime().framePosition();

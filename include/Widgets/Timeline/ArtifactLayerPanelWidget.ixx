@@ -36,6 +36,14 @@ export namespace Artifact
    VideoOnly
   };
 
+  enum class TimelineLayerHierarchyFilter
+  {
+   AllLayers,
+   ParentLayers,
+   ChildLayers,
+   RootLayers
+  };
+
   enum class TimelineRowKind
   {
    Layer,
@@ -149,6 +157,8 @@ export namespace Artifact
   void setShyHidden(bool hidden);
   void setDisplayMode(TimelineLayerDisplayMode mode);
   TimelineLayerDisplayMode displayMode() const;
+  void setHierarchyFilter(TimelineLayerHierarchyFilter filter);
+  TimelineLayerHierarchyFilter hierarchyFilter() const;
   void setRowHeight(int rowHeight);
   int rowHeight() const;
   void setPropertyColumnWidth(int width);

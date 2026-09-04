@@ -7,13 +7,16 @@ module;
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
+#include <QDesktopServices>
 #include <QDropEvent>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QHash>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMimeData>
 #include <QMessageBox>
 #include <cmath>
@@ -35,6 +38,7 @@ module;
 #include <QSize>
 #include <QStringList>
 #include <QToolTip>
+#include <QUrl>
 #include <QtGlobal>
 #include <wobjectimpl.h>
 #include "TimelinePlayheadDraw.hpp"
@@ -55,8 +59,13 @@ import Artifact.Tool.Service;
 import Artifact.Tool.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Layer.Blend;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Image;
 import Artifact.Layer.Text;
 import Artifact.Layer.InitParams;
+import Artifact.Color.OCIOManager;
+import Artifact.Layer.Video;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Audio.Waveform;
@@ -1797,6 +1806,14 @@ bool sameTrackClipVisual(
          lhs.hasTrimSourceRange == rhs.hasTrimSourceRange &&
          lhs.title == rhs.title && lhs.fillColor == rhs.fillColor &&
          lhs.kind == rhs.kind &&
+         lhs.sourceState == rhs.sourceState &&
+         lhs.audioFadeInFrames == rhs.audioFadeInFrames &&
+         lhs.audioFadeOutFrames == rhs.audioFadeOutFrames &&
+         lhs.audioClipGainDb == rhs.audioClipGainDb &&
+         lhs.audioPan == rhs.audioPan &&
+         lhs.audioPlaybackRate == rhs.audioPlaybackRate &&
+         lhs.audioReversed == rhs.audioReversed &&
+         lhs.audioMuted == rhs.audioMuted &&
          lhs.selected == rhs.selected &&
          lhs.waveformPeaks == rhs.waveformPeaks &&
          lhs.waveformRms == rhs.waveformRms;
@@ -2795,8 +2812,28 @@ QString formatClipTooltip(
           .arg(QString::number(clip.durationFrame, 'f', 1));
   const QString stateText = clip.selected ? tt("timeline.state_selected", "State: Selected")
                                           : tt("timeline.state_idle", "State: Idle");
+  const QString sourceText = [&]() {
+    switch (clip.sourceState) {
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Missing: return tt("timeline.source_missing", "Source: Missing");
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Proxy: return tt("timeline.source_proxy", "Source: Proxy");
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Unreadable: return tt("timeline.source_unreadable", "Source: Unreadable");
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::SequenceGap: return tt("timeline.source_sequence_gap", "Source: Sequence Gap");
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Ready: default: return tt("timeline.source_ready", "Source: Ready");
+    }
+  }();
   QStringList lines;
-  lines << title << startText << endText << durationText << stateText << kindText;
+  lines << title << startText << endText << durationText << stateText << sourceText << kindText;
+  if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio &&
+      (clip.audioFadeInFrames > 0.0 || clip.audioFadeOutFrames > 0.0)) {
+    lines << tt("timeline.audio_fade", "Audio fade: in %1f · out %2f")
+                 .arg(QString::number(clip.audioFadeInFrames, 'f', 1),
+                      QString::number(clip.audioFadeOutFrames, 'f', 1));
+  }
+  if ((clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio ||
+       clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video) &&
+      clip.audioMuted) {
+    lines << tt("timeline.audio_muted", "Audio: Muted");
+  }
   if (!clip.waveformPeaks.isEmpty()) {
     lines << waveformPreviewSummary(clip.waveformPeaks, clip.waveformRms);
   } else if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio) {
@@ -6462,6 +6499,30 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     p.setBrush(isSelected ? selectedFill : fill);
     p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
+    if (clip.sourceState != TrackClipVisual::SourceState::Ready && clipRect.width() > 18.0) {
+      const bool warning = clip.sourceState == TrackClipVisual::SourceState::Proxy;
+      const QColor stateColor = warning ? QColor(240, 181, 63) : QColor(222, 86, 76);
+      p.setBrush(stateColor);
+      p.setPen(Qt::NoPen);
+      const QRectF badge(clipRect.right() - 14.0, clipRect.top() + 3.0, 11.0, 11.0);
+      p.drawRoundedRect(badge, 2.0, 2.0);
+      p.setPen(theme.background);
+      p.drawText(badge, Qt::AlignCenter, clip.sourceState == TrackClipVisual::SourceState::Proxy ? QStringLiteral("P") : QStringLiteral("!"));
+    }
+    if ((clip.kind == TrackClipVisual::Kind::Audio ||
+         clip.kind == TrackClipVisual::Kind::Video) && clip.audioMuted &&
+        clipRect.width() > 30.0) {
+      const qreal rightInset =
+          clip.sourceState == TrackClipVisual::SourceState::Ready ? 14.0 : 28.0;
+      const QRectF badge(clipRect.right() - rightInset, clipRect.top() + 3.0,
+                        11.0, 11.0);
+      p.setBrush(theme.background.lighter(125));
+      p.setPen(Qt::NoPen);
+      p.drawRoundedRect(badge, 2.0, 2.0);
+      p.setPen(theme.text);
+      p.drawText(badge, Qt::AlignCenter, QStringLiteral("M"));
+    }
+
     if (isSelected || isHovered) {
       const QColor rim = isSelected ? QColor(theme.accent.lighter(135))
                                     : QColor(255, 255, 255, 60);
@@ -6556,6 +6617,30 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
           p.setPen(QPen((bar % 3 == 0) ? waveformColor : waveformSoft, 1.0));
           p.drawLine(QPointF(x, top), QPointF(x, bottom));
         }
+      }
+    }
+
+    if (clip.kind == TrackClipVisual::Kind::Audio && clipRect.width() > 20.0 &&
+        (clip.audioFadeInFrames > 0.0 || clip.audioFadeOutFrames > 0.0)) {
+      const qreal usableWidth = std::max<qreal>(1.0, clipRect.width() - 8.0);
+      const qreal fadeInWidth = std::clamp(
+          static_cast<qreal>(clip.audioFadeInFrames / std::max(1.0, clip.durationFrame)) * usableWidth,
+          0.0, usableWidth);
+      const qreal fadeOutWidth = std::clamp(
+          static_cast<qreal>(clip.audioFadeOutFrames / std::max(1.0, clip.durationFrame)) * usableWidth,
+          0.0, usableWidth);
+      const qreal left = clipRect.left() + 4.0;
+      const qreal right = clipRect.right() - 4.0;
+      const qreal low = clipRect.bottom() - 3.0;
+      const qreal high = clipRect.top() + 3.0;
+      QColor fadeColor = isSelected ? theme.accent.lighter(145) : theme.text;
+      fadeColor.setAlpha(210);
+      p.setPen(QPen(fadeColor, 1.25));
+      if (fadeInWidth > 0.0) {
+        p.drawLine(QPointF(left, low), QPointF(left + fadeInWidth, high));
+      }
+      if (fadeOutWidth > 0.0) {
+        p.drawLine(QPointF(right - fadeOutWidth, high), QPointF(right, low));
       }
     }
   }
@@ -9207,6 +9292,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
 
   QAction *splitClipAct = nullptr;
   QAction *duplicateClipAct = nullptr;
+  QAction *renameClipAct = nullptr;
   QAction *trimInClipAct = nullptr;
   QAction *trimOutClipAct = nullptr;
   QAction *rippleTrimOutClipAct = nullptr;
@@ -9216,6 +9302,27 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *moveSelectedToPlayheadAct = nullptr;
   QAction *fitSelectedToWorkAreaAct = nullptr;
   QAction *setWorkAreaToSelectedAct = nullptr;
+  QAction *editBlendModeAct = nullptr;
+  QAction *editOpacityAct = nullptr;
+  QAction *editAudioFadesAct = nullptr;
+  QAction *editAudioGainAct = nullptr;
+  QAction *editAudioPanAct = nullptr;
+  QAction *editAudioPlaybackRateAct = nullptr;
+  QAction *toggleAudioReverseAct = nullptr;
+  QAction *editVideoAudioVolumeAct = nullptr;
+  QAction *editVideoAudioPanAct = nullptr;
+  QAction *editVideoPlaybackSpeedAct = nullptr;
+  QAction *toggleVideoLoopAct = nullptr;
+  QAction *toggleAudioMuteAct = nullptr;
+  QAction *localizeSourceAct = nullptr;
+  QAction *relinkSharedSourceAct = nullptr;
+  QAction *relinkSourceAct = nullptr;
+  QAction *revealSourceFolderAct = nullptr;
+  QAction *revealProxyFolderAct = nullptr;
+  QAction *editImageSequenceFrameRateAct = nullptr;
+  QAction *editImageTransferFunctionAct = nullptr;
+  QAction *toggleImageFitToLayerAct = nullptr;
+  QAction *editImageColorSpaceAct = nullptr;
   QAction *deleteClipAct = nullptr;
   if (clipUnderCursor) {
     if (!markerUnderCursor) {
@@ -9223,6 +9330,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     }
     splitClipAct = menu.addAction(tt("timeline.split_layer_at_playhead", "Split Layer at Playhead"));
     duplicateClipAct = menu.addAction(tt("timeline.duplicate_layer", "Duplicate Layer"));
+    renameClipAct = menu.addAction(tt("timeline.rename_layer", "Rename Layer..."));
     moveStartClipAct = menu.addAction(tt("timeline.move_start_to_playhead", "Move Start to Playhead"));
     trimInClipAct = menu.addAction(tt("timeline.trim_in_at_playhead", "Trim In at Playhead"));
     trimOutClipAct = menu.addAction(tt("timeline.trim_out_at_playhead", "Trim Out at Playhead"));
@@ -9239,6 +9347,58 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         rangeMenu->addAction(tt("timeline.fit_selected_to_work_area", "Fit Selected to Work Area"));
     setWorkAreaToSelectedAct =
         rangeMenu->addAction(tt("timeline.set_work_area_to_selected", "Set Work Area to Selected"));
+    if (composition) {
+      const auto &clip = impl_->clips_[clipHit.clipIndex];
+      const auto clipLayer = composition->layerById(clip.layerId);
+      QString sourcePath;
+      bool supportsSourceRelink = false;
+      bool hasProxy = false;
+      if (const auto audioLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(clipLayer)) {
+        sourcePath = audioLayer->sourcePath().trimmed();
+        supportsSourceRelink = true;
+      } else if (const auto imageLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(clipLayer)) {
+        sourcePath = imageLayer->sourcePath().trimmed();
+        supportsSourceRelink = true;
+      } else if (const auto videoLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(clipLayer)) {
+        sourcePath = videoLayer->sourcePath().trimmed();
+        supportsSourceRelink = true;
+        hasProxy = videoLayer->hasProxy() &&
+                   !videoLayer->proxyPath().trimmed().isEmpty();
+      }
+      if (supportsSourceRelink) {
+        QMenu *mediaMenu = menu.addMenu(tt("timeline.media", "Media"));
+        relinkSourceAct = mediaMenu->addAction(
+            tt("timeline.relink_source", "Relink Source..."));
+        if (!sourcePath.isEmpty()) {
+          revealSourceFolderAct = mediaMenu->addAction(
+              tt("timeline.reveal_source_folder", "Reveal Source Folder"));
+        }
+        if (hasProxy) {
+          revealProxyFolderAct = mediaMenu->addAction(
+              tt("timeline.reveal_proxy_folder", "Reveal Proxy Folder"));
+        }
+      }
+      if (ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(clipLayer)) {
+        QMenu *audioMenu = menu.addMenu(tt("timeline.audio", "Audio"));
+        editAudioFadesAct = audioMenu->addAction(
+            tt("timeline.edit_audio_fades", "Set Audio Fades..."));
+        const auto audioLayer =
+            ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(clipLayer);
+        toggleAudioMuteAct = audioMenu->addAction(
+            audioLayer->isMuted() ? tt("timeline.unmute_audio", "Unmute Audio")
+                                  : tt("timeline.mute_audio", "Mute Audio"));
+      } else if (const auto videoLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(clipLayer)) {
+        QMenu *videoMenu = menu.addMenu(tt("timeline.video", "Video"));
+        toggleAudioMuteAct = videoMenu->addAction(
+            videoLayer->isAudioMuted()
+                ? tt("timeline.unmute_audio", "Unmute Audio")
+                : tt("timeline.mute_audio", "Mute Audio"));
+      }
+    }
     deleteClipAct = menu.addAction(tt("timeline.delete_layer", "Delete Layer"));
   }
 
@@ -10021,6 +10181,614 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   if (clipUnderCursor && composition) {
     const auto &clip = impl_->clips_[clipHit.clipIndex];
     const auto layer = composition->layerById(clip.layerId);
+    if (chosen == renameClipAct && layer) {
+      bool accepted = false;
+      const QString name = QInputDialog::getText(
+          this, tt("timeline.rename_layer", "Rename Layer"),
+          tt("timeline.layer_name", "Layer name"), QLineEdit::Normal,
+          layer->layerName(), &accepted).trimmed();
+      if (accepted && !name.isEmpty() && name != layer->layerName()) {
+        if (auto *svc = ArtifactProjectService::instance()) {
+          if (!svc->renameLayerInCurrentComposition(clip.layerId, name)) {
+            timelineDebugMessage(
+                tt("timeline.rename_layer_failed", "Failed to rename layer"));
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editOpacityAct && layer) {
+      bool accepted = false;
+      const double beforeOpacity = std::clamp(
+          static_cast<double>(layer->opacity()), 0.0, 1.0);
+      const double opacityPercent = QInputDialog::getDouble(
+          this, tt("timeline.edit_opacity", "Set Opacity"),
+          tt("timeline.opacity_percent", "Opacity (%)"), beforeOpacity * 100.0,
+          0.0, 100.0, 1, &accepted);
+      if (accepted) {
+        const double afterOpacity = opacityPercent / 100.0;
+        auto command = std::make_unique<SetLayerPropertyValueCommand>(
+            layer, QStringLiteral("layer.opacity"), beforeOpacity, afterOpacity,
+            tt("timeline.set_opacity", "Set Layer Opacity"));
+        bool applied = false;
+        if (auto *undoManager = UndoManager::instance()) {
+          applied = undoManager->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied) {
+          update();
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editBlendModeAct && layer) {
+      QStringList blendModeNames;
+      blendModeNames.reserve(
+          static_cast<int>(BlendMode::SilhouetteLuma) + 1);
+      for (int index = static_cast<int>(BlendMode::Normal);
+           index <= static_cast<int>(BlendMode::SilhouetteLuma); ++index) {
+        blendModeNames.append(
+            BlendModeUtils::toString(static_cast<BlendMode>(index)));
+      }
+      const int currentIndex = std::clamp(
+          static_cast<int>(layer->layerBlendType()), 0,
+          std::max(0, blendModeNames.size() - 1));
+      bool accepted = false;
+      const QString selectedName = QInputDialog::getItem(
+          this, tt("timeline.edit_blend_mode", "Set Blend Mode"),
+          tt("timeline.blend_mode", "Blend mode"), blendModeNames,
+          currentIndex, false, &accepted);
+      const int selectedIndex = blendModeNames.indexOf(selectedName);
+      if (accepted && selectedIndex >= 0 && selectedIndex != currentIndex) {
+        auto command = std::make_unique<ChangeLayerBlendModeCommand>(
+            layer, static_cast<LAYER_BLEND_TYPE>(selectedIndex));
+        bool applied = false;
+        if (auto *undoManager = UndoManager::instance()) {
+          applied = undoManager->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied) {
+          update();
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editImageColorSpaceAct) {
+      const auto imageLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+      if (imageLayer) {
+        QStringList colorSpaces{QStringLiteral("Auto")};
+        colorSpaces.append(
+            ArtifactOCIOManager::instance()->availableWorkingSpaces());
+        colorSpaces.removeDuplicates();
+        const QString beforeColorSpace = imageLayer->inputColorSpace();
+        const int currentIndex = std::max(
+            0, colorSpaces.indexOf(beforeColorSpace.isEmpty()
+                                       ? QStringLiteral("Auto")
+                                       : beforeColorSpace));
+        bool accepted = false;
+        const QString selectedColorSpace = QInputDialog::getItem(
+            this, tt("timeline.edit_image_color_space", "Set Input Color Space"),
+            tt("timeline.input_color_space", "Input color space"), colorSpaces,
+            currentIndex, false, &accepted);
+        if (accepted) {
+          const QString afterColorSpace =
+              selectedColorSpace == QStringLiteral("Auto") ? QString()
+                                                            : selectedColorSpace;
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("image.inputColorSpace"), beforeColorSpace,
+              afterColorSpace,
+              tt("timeline.set_image_color_space", "Set Image Input Color Space"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) {
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == toggleImageFitToLayerAct) {
+      const auto imageLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+      if (imageLayer) {
+        const bool beforeFit = imageLayer->fitToLayer();
+        auto command = std::make_unique<SetLayerPropertyValueCommand>(
+            layer, QStringLiteral("image.fitToLayer"), beforeFit, !beforeFit,
+            !beforeFit ? tt("timeline.enable_image_fit", "Fit Image to Layer")
+                       : tt("timeline.disable_image_fit", "Disable Fit to Layer"));
+        bool applied = false;
+        if (auto *undoManager = UndoManager::instance()) {
+          applied = undoManager->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied) {
+          update();
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editImageTransferFunctionAct) {
+      const auto imageLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+      if (imageLayer) {
+        const QStringList transferFunctions{
+            QStringLiteral("Auto"), QStringLiteral("linear"),
+            QStringLiteral("sRGB"), QStringLiteral("gamma22"),
+            QStringLiteral("gamma24"), QStringLiteral("gamma26"),
+            QStringLiteral("Rec709"), QStringLiteral("PQ/ST2084"),
+            QStringLiteral("HLG"), QStringLiteral("ACEScc"),
+            QStringLiteral("ACEScct"), QStringLiteral("SLog3")};
+        const QString beforeTransfer = imageLayer->inputTransferFunction();
+        const int currentIndex = std::max(
+            0, transferFunctions.indexOf(beforeTransfer.isEmpty()
+                                              ? QStringLiteral("Auto")
+                                              : beforeTransfer));
+        bool accepted = false;
+        const QString selectedTransfer = QInputDialog::getItem(
+            this, tt("timeline.edit_image_transfer", "Set Input Transfer"),
+            tt("timeline.input_transfer", "Input transfer"),
+            transferFunctions, currentIndex, false, &accepted);
+        if (accepted) {
+          const QString afterTransfer =
+              selectedTransfer == QStringLiteral("Auto") ? QString() : selectedTransfer;
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("image.inputTransferFunction"),
+              beforeTransfer, afterTransfer,
+              tt("timeline.set_image_transfer", "Set Image Input Transfer"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) {
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editImageSequenceFrameRateAct) {
+      const auto imageLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+      if (imageLayer && imageLayer->isImageSequence()) {
+        bool accepted = false;
+        const double beforeFps = imageLayer->sequenceFrameRate();
+        const double fps = QInputDialog::getDouble(
+            this,
+            tt("timeline.edit_image_sequence_fps", "Set Image Sequence FPS"),
+            tt("timeline.sequence_fps", "Sequence FPS"),
+            beforeFps > 0.0 ? beforeFps : 24.0, 0.001, 1000.0, 3, &accepted);
+        if (accepted) {
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("image.sequenceFrameRate"), beforeFps, fps,
+              tt("timeline.set_image_sequence_fps", "Set Image Sequence FPS"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) {
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == revealProxyFolderAct) {
+      const auto videoLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
+      const QString proxyPath = videoLayer ? videoLayer->proxyPath().trimmed()
+                                           : QString();
+      const QString folderPath = QFileInfo(proxyPath).absolutePath();
+      if (!folderPath.isEmpty() && QFileInfo(folderPath).isDir()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath));
+      } else {
+        timelineDebugMessage(
+            tt("timeline.proxy_folder_unavailable", "Proxy folder is unavailable"));
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editAudioPlaybackRateAct) {
+      const auto audioLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+      if (audioLayer) {
+        bool accepted = false;
+        const double beforeRate = audioLayer->playbackRate();
+        const double rate = QInputDialog::getDouble(
+            this, tt("timeline.edit_audio_playback_rate", "Set Audio Playback Rate"),
+            tt("timeline.playback_rate", "Playback rate"), beforeRate,
+            0.1, 8.0, 2, &accepted);
+        if (accepted) {
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("audio.playbackRate"), beforeRate, rate,
+              tt("timeline.set_audio_playback_rate", "Set Audio Playback Rate"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied && clipHit.clipIndex >= 0 &&
+              clipHit.clipIndex < impl_->clips_.size()) {
+            impl_->clips_[clipHit.clipIndex].audioPlaybackRate = rate;
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editVideoPlaybackSpeedAct || chosen == toggleVideoLoopAct) {
+      const auto videoLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
+      if (videoLayer) {
+        if (chosen == editVideoPlaybackSpeedAct) {
+          bool accepted = false;
+          const double beforeSpeed = videoLayer->playbackSpeed();
+          const double speed = QInputDialog::getDouble(
+              this, tt("timeline.edit_video_playback_speed", "Set Playback Speed"),
+              tt("timeline.playback_speed", "Playback speed"), beforeSpeed,
+              0.1, 8.0, 2, &accepted);
+          if (accepted) {
+            auto command = std::make_unique<SetLayerPropertyValueCommand>(
+                layer, QStringLiteral("video.playbackSpeed"), beforeSpeed,
+                speed,
+                tt("timeline.set_video_playback_speed", "Set Video Playback Speed"));
+            bool applied = false;
+            if (auto *undoManager = UndoManager::instance()) {
+              applied = undoManager->push(std::move(command));
+            } else {
+              command->redo();
+              applied = command->lastOperationSucceeded();
+            }
+            if (applied) {
+              update();
+            }
+          }
+        } else {
+          const bool beforeLoop = videoLayer->isLoopEnabled();
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("video.loopEnabled"), beforeLoop,
+              !beforeLoop,
+              !beforeLoop ? tt("timeline.enable_video_loop", "Enable Video Loop")
+                          : tt("timeline.disable_video_loop", "Disable Video Loop"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) {
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == toggleAudioReverseAct) {
+      const auto audioLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+      if (audioLayer) {
+        const bool beforeReversed = audioLayer->isReversed();
+        const bool afterReversed = !beforeReversed;
+        auto command = std::make_unique<SetLayerPropertyValueCommand>(
+            layer, QStringLiteral("audio.reversed"), beforeReversed,
+            afterReversed,
+            afterReversed
+                ? tt("timeline.reverse_audio", "Reverse Audio Playback")
+                : tt("timeline.play_audio_forward", "Play Audio Forward"));
+        bool applied = false;
+        if (auto *undoManager = UndoManager::instance()) {
+          applied = undoManager->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied && clipHit.clipIndex >= 0 &&
+            clipHit.clipIndex < impl_->clips_.size()) {
+          impl_->clips_[clipHit.clipIndex].audioReversed = afterReversed;
+          update();
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editVideoAudioVolumeAct || chosen == editVideoAudioPanAct) {
+      const auto videoLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
+      if (videoLayer) {
+        const bool editVolume = chosen == editVideoAudioVolumeAct;
+        bool accepted = false;
+        const double beforeValue = editVolume ? videoLayer->audioVolume()
+                                              : videoLayer->audioPan();
+        const double value = QInputDialog::getDouble(
+            this,
+            editVolume
+                ? tt("timeline.edit_video_audio_volume", "Set Video Audio Volume")
+                : tt("timeline.edit_video_audio_pan", "Set Video Audio Pan"),
+            editVolume ? tt("timeline.video_audio_volume", "Volume (0.0 - 2.0)")
+                       : tt("timeline.pan_value", "Pan (-1 left, 0 center, 1 right)"),
+            beforeValue, editVolume ? 0.0 : -1.0, editVolume ? 2.0 : 1.0,
+            2, &accepted);
+        if (accepted) {
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer,
+              editVolume ? QStringLiteral("video.audioVolume")
+                         : QStringLiteral("video.audioPan"),
+              beforeValue, value,
+              editVolume ? tt("timeline.set_video_audio_volume",
+                              "Set Video Audio Volume")
+                         : tt("timeline.set_video_audio_pan", "Set Video Audio Pan"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) {
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editAudioPanAct) {
+      const auto audioLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+      if (audioLayer) {
+        bool accepted = false;
+        const double pan = QInputDialog::getDouble(
+            this, tt("timeline.edit_audio_pan", "Set Pan"),
+            tt("timeline.pan_value", "Pan (-1 left, 0 center, 1 right)"),
+            static_cast<double>(audioLayer->pan()), -1.0, 1.0, 2, &accepted);
+        if (accepted) {
+          const double beforePan = static_cast<double>(audioLayer->pan());
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("audio.pan"), beforePan, pan,
+              tt("timeline.set_audio_pan", "Set Audio Pan"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied && clipHit.clipIndex >= 0 &&
+              clipHit.clipIndex < impl_->clips_.size()) {
+            impl_->clips_[clipHit.clipIndex].audioPan = pan;
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == localizeSourceAct || chosen == relinkSharedSourceAct) {
+      bool applied = false;
+      if (auto *svc = ArtifactProjectService::instance()) {
+        applied = chosen == localizeSourceAct
+                      ? svc->localizeLayerSourceInCurrentComposition(clip.layerId)
+                      : svc->relinkSharedLayerSourceInCurrentComposition(clip.layerId);
+      }
+      if (!applied) {
+        timelineDebugMessage(
+            chosen == localizeSourceAct
+                ? tt("timeline.localize_source_failed", "Failed to make source local")
+                : tt("timeline.relink_shared_source_failed",
+                     "Failed to relink shared source"));
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editAudioGainAct) {
+      const auto audioLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+      if (audioLayer) {
+        bool accepted = false;
+        const double gainDb = QInputDialog::getDouble(
+            this, tt("timeline.edit_audio_gain", "Set Clip Gain"),
+            tt("timeline.clip_gain_db", "Clip gain (dB)"),
+            static_cast<double>(audioLayer->clipGainDb()), -60.0, 12.0, 1,
+            &accepted);
+        if (accepted) {
+          const double beforeGainDb = static_cast<double>(audioLayer->clipGainDb());
+          auto command = std::make_unique<SetLayerPropertyValueCommand>(
+              layer, QStringLiteral("audio.clipGainDb"), beforeGainDb, gainDb,
+              tt("timeline.set_clip_gain", "Set Clip Gain"));
+          bool applied = false;
+          if (auto *undoManager = UndoManager::instance()) {
+            applied = undoManager->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied && clipHit.clipIndex >= 0 &&
+              clipHit.clipIndex < impl_->clips_.size()) {
+            impl_->clips_[clipHit.clipIndex].audioClipGainDb = gainDb;
+            update();
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == toggleAudioMuteAct) {
+      const auto audioLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+      const auto videoLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
+      if (audioLayer || videoLayer) {
+        const bool beforeMuted = audioLayer ? audioLayer->isMuted()
+                                            : videoLayer->isAudioMuted();
+        const bool afterMuted = !beforeMuted;
+        auto command = std::make_unique<SetLayerPropertyValueCommand>(
+            layer, audioLayer ? QStringLiteral("audio.muted")
+                              : QStringLiteral("video.audioMuted"),
+            beforeMuted, afterMuted,
+            afterMuted ? tt("timeline.mute_audio", "Mute Audio")
+                       : tt("timeline.unmute_audio", "Unmute Audio"));
+        bool applied = false;
+        if (auto *undoManager = UndoManager::instance()) {
+          applied = undoManager->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied && clipHit.clipIndex >= 0 &&
+            clipHit.clipIndex < impl_->clips_.size()) {
+          impl_->clips_[clipHit.clipIndex].audioMuted = afterMuted;
+          update();
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == editAudioFadesAct) {
+      const auto audioLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+      if (!audioLayer) {
+        event->accept();
+        return;
+      }
+      bool accepted = false;
+      const double fadeInSeconds = QInputDialog::getDouble(
+          this, tt("timeline.edit_audio_fades", "Set Audio Fades"),
+          tt("timeline.fade_in_seconds", "Fade in (seconds)"),
+          std::max(0.0, static_cast<double>(audioLayer->fadeInSeconds())),
+          0.0, 3600.0, 2, &accepted);
+      if (!accepted) {
+        event->accept();
+        return;
+      }
+      const double fadeOutSeconds = QInputDialog::getDouble(
+          this, tt("timeline.edit_audio_fades", "Set Audio Fades"),
+          tt("timeline.fade_out_seconds", "Fade out (seconds)"),
+          std::max(0.0, static_cast<double>(audioLayer->fadeOutSeconds())),
+          0.0, 3600.0, 2, &accepted);
+      if (!accepted) {
+        event->accept();
+        return;
+      }
+      const QVariant beforeFadeIn = static_cast<double>(audioLayer->fadeInSeconds());
+      const QVariant beforeFadeOut = static_cast<double>(audioLayer->fadeOutSeconds());
+      auto command = std::make_unique<MacroUndoCommand>(
+          tt("timeline.set_audio_fades", "Set Audio Fades"));
+      command->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+          layer, QStringLiteral("audio.fadeInSeconds"), beforeFadeIn,
+          fadeInSeconds, tt("timeline.set_audio_fade_in", "Set Audio Fade In")));
+      command->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+          layer, QStringLiteral("audio.fadeOutSeconds"), beforeFadeOut,
+          fadeOutSeconds, tt("timeline.set_audio_fade_out", "Set Audio Fade Out")));
+      bool applied = false;
+      if (auto *undoManager = UndoManager::instance()) {
+        applied = undoManager->push(std::move(command));
+      } else {
+        command->redo();
+        applied = command->lastOperationSucceeded();
+      }
+      if (!applied) {
+        timelineDebugMessage(
+            tt("timeline.set_audio_fades_failed", "Failed to set audio fades"));
+      } else if (clipHit.clipIndex >= 0 &&
+                 clipHit.clipIndex < impl_->clips_.size()) {
+        auto &updatedClip = impl_->clips_[clipHit.clipIndex];
+        const double fps = safeTimelineFrameRate(composition);
+        updatedClip.audioFadeInFrames = std::clamp(
+            fadeInSeconds * fps, 0.0, updatedClip.durationFrame);
+        updatedClip.audioFadeOutFrames = std::clamp(
+            fadeOutSeconds * fps, 0.0, updatedClip.durationFrame);
+        update();
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == relinkSourceAct && layer) {
+      QString sourcePath;
+      QString sourceFilter = tt("timeline.media_files", "Media Files (*.*)");
+      QString dialogTitle = tt("timeline.relink_source_title", "Relink Source");
+      if (const auto audioLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
+        sourcePath = audioLayer->sourcePath().trimmed();
+        sourceFilter = tt("timeline.audio_files",
+                          "Audio Files (*.wav *.mp3 *.aac *.m4a *.flac *.ogg);;All Files (*.*)");
+      } else if (const auto imageLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
+        sourcePath = imageLayer->sourcePath().trimmed();
+        sourceFilter = tt("timeline.image_files",
+                          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
+      } else if (const auto videoLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+        sourcePath = videoLayer->sourcePath().trimmed();
+        sourceFilter = tt("timeline.video_files",
+                          "Video Files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.gif);;All Files (*.*)");
+      }
+      const QString selectedPath = QFileDialog::getOpenFileName(
+          this, dialogTitle,
+          sourcePath.isEmpty() ? QString() : QFileInfo(sourcePath).absolutePath(),
+          sourceFilter);
+      if (!selectedPath.isEmpty()) {
+        if (auto *svc = ArtifactProjectService::instance()) {
+          if (!svc->replaceLayerSourceInCurrentComposition(clip.layerId,
+                                                            selectedPath)) {
+            timelineDebugMessage(
+                tt("timeline.relink_source_failed", "Failed to relink source"));
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (chosen == revealSourceFolderAct && layer) {
+      QString sourcePath;
+      if (const auto audioLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
+        sourcePath = audioLayer->sourcePath().trimmed();
+      } else if (const auto imageLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
+        sourcePath = imageLayer->sourcePath().trimmed();
+      } else if (const auto videoLayer =
+                     ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+        sourcePath = videoLayer->sourcePath().trimmed();
+      }
+      const QString folderPath = QFileInfo(sourcePath).absolutePath();
+      if (!folderPath.isEmpty() && QFileInfo(folderPath).isDir()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath));
+      } else {
+        timelineDebugMessage(
+            tt("timeline.source_folder_unavailable", "Source folder is unavailable"));
+      }
+      event->accept();
+      return;
+    }
     if (chosen == splitClipAct) {
       if (auto *svc = ArtifactProjectService::instance()) {
         svc->splitLayerWithUndo(composition->id(), clip.layerId);

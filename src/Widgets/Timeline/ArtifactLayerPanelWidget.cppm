@@ -2272,6 +2272,7 @@ public:
   QHash<QString, QStringList> propertyGroupSearchCache;
   SearchMatchMode searchMatchMode = SearchMatchMode::AllVisible;
   TimelineLayerDisplayMode displayMode = TimelineLayerDisplayMode::KeyframesOnly;
+  TimelineLayerHierarchyFilter hierarchyFilter = TimelineLayerHierarchyFilter::AllLayers;
   ArtifactLayerPanelWidget::PropertyChannelFilter propertyChannelFilter = ArtifactLayerPanelWidget::PropertyChannelFilter::All;
   int rowHeight = kLayerRowHeight;
   int propertyColumnWidth = kLayerColumnWidth * kLayerPropertyColumnCount;
@@ -2528,6 +2529,13 @@ public:
     return;
    }
 
+   QSet<QString> parentLayerIds;
+   for (const auto& candidate : comp->allLayer()) {
+     if (candidate && !candidate->parentLayerId().isNil()) {
+       parentLayerIds.insert(candidate->parentLayerId().toString());
+     }
+   }
+
    QVector<ArtifactAbstractLayerPtr> layers;
     const QString needle = filterText.trimmed();
    const bool regexQuery = needle.size() >= 2 && needle.startsWith(QLatin1Char('/')) &&
@@ -2544,6 +2552,13 @@ public:
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
      if (maskFilterEnabled_ && !l->hasMasks()) continue;
+     const bool hasParent = !l->parentLayerId().isNil();
+     const bool hasChildren = parentLayerIds.contains(l->id().toString());
+     if ((hierarchyFilter == TimelineLayerHierarchyFilter::ParentLayers && !hasChildren) ||
+         (hierarchyFilter == TimelineLayerHierarchyFilter::ChildLayers && !hasParent) ||
+         (hierarchyFilter == TimelineLayerHierarchyFilter::RootLayers && hasParent)) {
+       continue;
+     }
      if (!needle.isEmpty()) {
        bool nameMatch = matchesSearch(l->layerName());
        bool propMatch = false;
@@ -2987,6 +3002,21 @@ void ArtifactLayerPanelWidget::setDisplayMode(TimelineLayerDisplayMode mode)
 TimelineLayerDisplayMode ArtifactLayerPanelWidget::displayMode() const
 {
   return impl_->displayMode;
+}
+
+void ArtifactLayerPanelWidget::setHierarchyFilter(
+    const TimelineLayerHierarchyFilter filter)
+{
+  if (impl_->hierarchyFilter == filter) {
+    return;
+  }
+  impl_->hierarchyFilter = filter;
+  updateLayout();
+}
+
+TimelineLayerHierarchyFilter ArtifactLayerPanelWidget::hierarchyFilter() const
+{
+  return impl_->hierarchyFilter;
 }
 
 void ArtifactLayerPanelWidget::setRowHeight(int rowHeight)
@@ -7828,14 +7858,28 @@ public:
         return;
       }
 
+      QMenu menu(impl_->panel);
+      QMenu* hierarchyMenu = menu.addMenu(QStringLiteral("親子の表示範囲"));
+      QAction* allLayersAction = hierarchyMenu->addAction(QStringLiteral("すべてのレイヤー"));
+      QAction* parentLayersAction = hierarchyMenu->addAction(QStringLiteral("親レイヤー"));
+      QAction* childLayersAction = hierarchyMenu->addAction(QStringLiteral("子レイヤー"));
+      QAction* rootLayersAction = hierarchyMenu->addAction(QStringLiteral("ルートレイヤー"));
+      const auto hierarchyFilter = impl_->panel->hierarchyFilter();
+      const auto configureHierarchyAction = [hierarchyFilter](QAction* action,
+                                                               TimelineLayerHierarchyFilter filter) {
+        action->setCheckable(true);
+        action->setChecked(hierarchyFilter == filter);
+      };
+      configureHierarchyAction(allLayersAction, TimelineLayerHierarchyFilter::AllLayers);
+      configureHierarchyAction(parentLayersAction, TimelineLayerHierarchyFilter::ParentLayers);
+      configureHierarchyAction(childLayersAction, TimelineLayerHierarchyFilter::ChildLayers);
+      configureHierarchyAction(rootLayersAction, TimelineLayerHierarchyFilter::RootLayers);
+
       const LayerID selectedId = impl_->panel->selectedLayerId();
       auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
-      if (!layer) {
-        return;
-      }
-
-      QMenu menu(impl_->panel);
-      buildSelectedLayerMenu(
+      if (layer) {
+        menu.addSeparator();
+        buildSelectedLayerMenu(
           &menu, layer,
           [this]() { impl_->panel->setFocus(Qt::OtherFocusReason); },
           [this]() { impl_->panel->setFocus(Qt::OtherFocusReason); },
@@ -7930,7 +7974,18 @@ public:
               }
             }
           });
-      menu.exec(selectionButton->mapToGlobal(QPoint(0, selectionButton->height())));
+      }
+      QAction* triggered = menu.exec(
+          selectionButton->mapToGlobal(QPoint(0, selectionButton->height())));
+      if (triggered == allLayersAction) {
+        impl_->panel->setHierarchyFilter(TimelineLayerHierarchyFilter::AllLayers);
+      } else if (triggered == parentLayersAction) {
+        impl_->panel->setHierarchyFilter(TimelineLayerHierarchyFilter::ParentLayers);
+      } else if (triggered == childLayersAction) {
+        impl_->panel->setHierarchyFilter(TimelineLayerHierarchyFilter::ChildLayers);
+      } else if (triggered == rootLayersAction) {
+        impl_->panel->setHierarchyFilter(TimelineLayerHierarchyFilter::RootLayers);
+      }
     });
   }
 }
