@@ -1,5 +1,6 @@
 module;
 
+#include <QIcon>
 #include <QAbstractItemView>
 #include <QColor>
 #include <QCursor>
@@ -25,13 +26,13 @@ module;
 
 #include <vector>
 
-export module Artifact.Widgets.InspectorEffectPicker;
+module Artifact.Widgets.InspectorEffectPicker;
 
 import Artifact.Widgets.InspectorEffectCatalog;
 import Artifact.Widgets.InspectorStyle;
 import Artifact.Effect.Abstract;
 
-export namespace Artifact {
+namespace Artifact {
 class EffectPickerPanel final : public QWidget {
  public:
   using QWidget::QWidget;
@@ -372,5 +373,18 @@ private:
   QLabel *resultSummaryLabel_ = nullptr;
   QPushButton *addButton_ = nullptr;
 };
+
+QDialog* createInspectorEffectPickerDialog(
+    const std::vector<EffectCatalogEntry>& entries, EffectPipelineStage stage,
+    const QString& targetLabel, QWidget* parent) {
+  return new EffectPickerDialog(entries, stage, targetLabel, parent);
+}
+
+QString inspectorEffectPickerSelectedEffectId(QDialog* dialog) {
+  if (auto* picker = dynamic_cast<EffectPickerDialog*>(dialog)) {
+    return picker->selectedEffectId();
+  }
+  return {};
+}
 
 } // namespace Artifact

@@ -4476,6 +4476,7 @@ public:
   QToolButton *curveEditorPinButton_ = nullptr;
   bool curveHandleEditingEnabled_ = false;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
+  ArtifactTimeCodeWidget *timeCodeWidget_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   QWidget *rightPanel_ = nullptr;
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
@@ -7003,7 +7004,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             schedulePostMoveRefresh();
             timelineDebugMessage(
                 QStringLiteral("Failed to move keyframe ") +
-                safeFrom + QStringLiteral(" -> ") + safeTo +
+                QString::number(fromFrame) + QStringLiteral(" -> ") +
+                QString::number(toFrame) +
                 QStringLiteral(" for ") + safePropertyPath);
             return;
           }
@@ -7011,8 +7013,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                         ? QStringLiteral(" (merged existing keyframe at destination)")
                                         : QString();
           timelineDebugMessage(
-              QStringLiteral("Moved keyframe ") + safeFrom +
-              QStringLiteral(" -> ") + safeTo +
+              QStringLiteral("Moved keyframe ") + QString::number(fromFrame) +
+              QStringLiteral(" -> ") + QString::number(toFrame) +
               QStringLiteral(" for ") + safePropertyPath + mergeNote);
         } else {
           schedulePostMoveRefresh();
@@ -7363,7 +7365,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto *rightPanel = createTimelineRightPanel(
       timeNavigatorWidget, scrubBar, workAreaWidget, painterTrackView,
-      impl_->gpuTimelineContainer_, curveHeader, curveEditor);
+      impl_->gpuTimelineContainer_, curveHeader, curveEditor, this);
   impl_->rightPanel_ = rightPanel;
   impl_->timelinePainterPage_ = timelineRightPanelPainterPage(rightPanel);
   impl_->timelineGpuPage_ = timelineRightPanelGpuPage(rightPanel);

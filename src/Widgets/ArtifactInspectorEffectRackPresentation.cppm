@@ -128,8 +128,8 @@ private:
 
 } // namespace
 
-QStyledItemDelegate *createInspectorEffectRackItemDelegate(const int rackIndex,
-                                                            QObject *parent) {
+export QStyledItemDelegate *createInspectorEffectRackItemDelegate(
+    const int rackIndex, QObject *parent) {
   return new EffectRackItemDelegate(rackIndex, parent);
 }
 

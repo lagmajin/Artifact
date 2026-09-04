@@ -170,6 +170,7 @@ import Artifact.Widgets.RecoveryWorkspace;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.CompositionGraphWidget;
+import Artifact.Widgets.ShaderGraphWidget;
 import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.DopeSheetWidget;
 import Artifact.Widgets.Timeline;
@@ -704,7 +705,7 @@ private:
     auto *window = QApplication::activeWindow();
     auto *mainWindow = dynamic_cast<QMainWindow*>(window);
     auto *status = mainWindow
-        ? dynamic_cast<ArtifactStatusBar*>(mainWindow->statusBar())
+        ? dynamic_cast<ArtifactStatusBar *>(mainWindow->findChild<QStatusBar *>())
         : nullptr;
     if (!status) {
       return;
@@ -3115,7 +3116,7 @@ int main(int argc, char *argv[]) {
       if (!mainWindowGuard)
         return;
       auto *status = dynamic_cast<ArtifactStatusBar *>(
-          mainWindowGuard->statusBar());
+          mainWindowGuard->findChild<QStatusBar *>());
       if (!status) {
         return;
       }
@@ -3188,6 +3189,13 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Composition Graph"),
                               DockArea::Left, compositionGraphWidget,
                               QStringLiteral("Project"));
+    auto *shaderGraphWidget = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Shader Graph"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-registered-left-tool"),
+        [mw]() { return new ArtifactShaderGraphWidget(mw); });
+    mw->addDockedWidgetTabbed(QStringLiteral("Shader Graph"),
+                              DockArea::Left, shaderGraphWidget,
+                              QStringLiteral("Composition Graph"));
     auto *assetBrowser = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Asset Browser"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-default-workspace"),

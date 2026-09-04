@@ -3788,9 +3788,11 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
     if (count < 2) return vertex.position;
 
     // 隣接頂点への方向を計算して法線を求める
-    const int prevIdx = (v > 0) ? v - 1 : (path.isClosed() ? count - 1 : v);
+    const int prevIdx = (vertexIndex > 0) ? vertexIndex - 1
+                                          : (path.isClosed() ? count - 1 : vertexIndex);
 
-    const int nextIdx = (v < count - 1) ? v + 1 : (path.isClosed() ? 0 : v);
+    const int nextIdx = (vertexIndex < count - 1) ? vertexIndex + 1
+                                                  : (path.isClosed() ? 0 : vertexIndex);
 
     const QPointF prevPos = path.vertex(prevIdx).position;
 
@@ -21809,7 +21811,7 @@ int textCodepointCountOf(const QString &text) {
 int textCodepointIndexForUtf16Pos(const QString &text, int utf16Pos) {
   int cpIndex = 0;
   int i = 0;
-  utf16Pos = std::clamp(utf16Pos, 0, text.size());
+  utf16Pos = std::clamp(utf16Pos, 0, static_cast<int>(text.size()));
   while (i < utf16Pos) {
     const QChar ch = text.at(i);
     i += (ch.isHighSurrogate() && i + 1 < text.size() &&
@@ -22073,7 +22075,7 @@ void drawTextSessionOverlay(
                         FloatColor{0.30f, 0.55f, 1.0f, 0.32f}, 1.0f);
   }
   if (!preeditText.isEmpty()) {
-    drawGlyphRangeQuads(std::max(0, cursorPos - preeditText.size()),
+    drawGlyphRangeQuads(std::max(0, cursorPos - static_cast<int>(preeditText.size())),
                         cursorPos, FloatColor{1.0f, 0.85f, 0.30f, 0.45f},
                         0.22f);
   }
@@ -22386,6 +22388,17 @@ bool CompositionRenderController::isModalGizmoInteractionActive() const {
 }
 
 
+
+namespace {
+
+QPointF cameraPoiHandleScreenPos(
+    const ArtifactAbstractLayerPtr &layer,
+    const QMatrix4x4 &view, const QMatrix4x4 &projection,
+    const QRect &viewport);
+
+bool selectedCameraPoiHoverable(const ArtifactAbstractLayerPtr &layer);
+
+} // namespace
 
 void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
@@ -23624,7 +23637,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       const QTransform global = line->getGlobalTransform();
       const QPointF a = global.map(QPointF(0.0, line->shapeHeight() * 0.5));
       const QPointF b = global.map(QPointF(line->shapeWidth(), line->shapeHeight() * 0.5));
-      const QPointF canvas = impl_->renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+  const Detail::float2 canvas = impl_->renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
       const float threshold = 14.0f / std::max(0.001f, impl_->renderer_->getZoom());
       const float da = static_cast<float>(QLineF(QPointF(canvas.x, canvas.y), a).length());
       const float db = static_cast<float>(QLineF(QPointF(canvas.x, canvas.y), b).length());
@@ -24868,7 +24881,7 @@ void CompositionRenderController::handleMouseMove(
   if (impl_->isDraggingLineEndpoint_ && impl_->renderer_) {
     auto layer = impl_->draggingLineLayer_.lock(); auto *line = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
     if (line && line->shapeType() == ShapeType::Line) {
-      const QPointF canvas = impl_->renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())}); bool ok = false; const QTransform inv = line->getGlobalTransform().inverted(&ok);
+      const Detail::float2 canvas = impl_->renderer_->viewportToCanvas({static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())}); bool ok = false; const QTransform inv = line->getGlobalTransform().inverted(&ok);
       if (ok) { const QPointF p = inv.map(QPointF(canvas.x, canvas.y)); const QPointF fixed = impl_->draggingLineEndpoint_ == 0 ? QPointF(line->shapeWidth(), line->shapeHeight() * 0.5) : QPointF(0.0, line->shapeHeight() * 0.5); QPointF d = p - fixed; if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) { if (std::abs(d.x()) >= std::abs(d.y())) d.setY(0.0); else d.setX(0.0); } const int w = std::max(1, static_cast<int>(std::round(std::hypot(d.x(), d.y())))); line->setSize(w, line->shapeHeight()); const auto time = gizmoTransformTime(layer, layer->currentFrame()); line->transform3D().setRotation(time, static_cast<float>(std::atan2(-d.y(), d.x()) * 180.0 / 3.14159265358979323846)); line->setDirty(LayerDirtyFlag::Transform); layer->changed(); impl_->invalidateBaseComposite(); impl_->invalidateOverlayComposite(); markRenderDirty(); }
     } return;
   }
@@ -26863,6 +26876,15 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 bool CompositionRenderController::cancelGizmoInteraction() {
+  if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
+    if (impl_->textGizmo_->cancelInteraction()) {
+      impl_->invalidateBaseComposite();
+      impl_->invalidateOverlayComposite();
+      finishViewportInteraction();
+      markRenderDirty();
+      return true;
+    }
+  }
   if (impl_->isDraggingLineEndpoint_) {
     if (auto layer = impl_->draggingLineLayer_.lock()) if (auto *line = dynamic_cast<ArtifactShapeLayer *>(layer.get())) { const auto time = gizmoTransformTime(layer, layer->currentFrame()); line->setSize(impl_->draggingLineBeforeWidth_, impl_->draggingLineBeforeHeight_); line->transform3D().setPosition(time, static_cast<float>(impl_->draggingLineBeforePosition_.x()), static_cast<float>(impl_->draggingLineBeforePosition_.y())); line->transform3D().setRotation(time, impl_->draggingLineBeforeRotation_); line->changed(); }
     impl_->isDraggingLineEndpoint_ = false; impl_->draggingLineEndpoint_ = -1; impl_->draggingLineLayer_.reset(); impl_->invalidateBaseComposite(); impl_->invalidateOverlayComposite(); finishViewportInteraction(); markRenderDirty(); return true;
@@ -28562,7 +28584,7 @@ void CompositionRenderController::endShapePathVertexDrag() {
         shape->setDirty(LayerDirtyFlag::Source);
         shape->changed();
       } else {
-        publishLayerModified(layer, true);
+        impl_->publishLayerModified(layer, true);
       }
     }
   }
@@ -30222,6 +30244,52 @@ bool CompositionRenderController::editTextAtViewport(const QPointF& viewportPos)
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
+}
+
+bool CompositionRenderController::setMaterialGraphJsonOnSelectedLayer(
+    const std::string& json) {
+  if (!impl_) return false;
+  const auto composition = impl_->previewPipeline_.composition();
+  auto layer = composition
+      ? composition->layerById(impl_->selectedLayerId_)
+      : ArtifactAbstractLayerPtr{};
+  auto* modelLayer = layer ? dynamic_cast<Artifact3DLayer*>(layer.get()) : nullptr;
+  if (!modelLayer) return false;
+  modelLayer->setMaterialGraphJson(
+      QString::fromStdString(json));
+  impl_->publishLayerModified(layer);
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::clearMaterialGraphOnSelectedLayer() {
+  if (!impl_) return false;
+  const auto composition = impl_->previewPipeline_.composition();
+  auto layer = composition
+      ? composition->layerById(impl_->selectedLayerId_)
+      : ArtifactAbstractLayerPtr{};
+  auto* modelLayer = layer ? dynamic_cast<Artifact3DLayer*>(layer.get()) : nullptr;
+  if (!modelLayer) return false;
+  if (modelLayer->materialGraphJson().trimmed().isEmpty()) return false;
+  modelLayer->clearMaterialGraph();
+  impl_->publishLayerModified(layer);
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+std::string CompositionRenderController::materialGraphJsonOfSelectedLayer() const {
+  if (!impl_) return {};
+  const auto composition = impl_->previewPipeline_.composition();
+  auto layer = composition
+      ? composition->layerById(impl_->selectedLayerId_)
+      : ArtifactAbstractLayerPtr{};
+  const auto* modelLayer = layer ? dynamic_cast<const Artifact3DLayer*>(layer.get()) : nullptr;
+  if (!modelLayer) return {};
+  return modelLayer->materialGraphJson().toStdString();
 }
 
 bool CompositionRenderController::resetSelectedPuppetPinRotation() {
@@ -38375,9 +38443,10 @@ void drawParticle2DControlOverlay(ArtifactIRenderer* renderer,
           3.0f, (selected ? 6.0f : 4.0f) * inverseZoom);
       renderer->drawCircle(static_cast<float>(point.x()),
                            static_cast<float>(point.y()),
-                           influenceRadius * std::max(0.001f, layer->getGlobalTransform().m11()),
+                           influenceRadius * std::max(0.001f,
+                                                      static_cast<float>(layer->getGlobalTransform().m11())),
                            FloatColor{color.r(), color.g(), color.b(), selected ? 0.34f : 0.18f},
-                           std::max(1.0f, inverseZoom), false);
+                           std::max(1.0f, static_cast<float>(inverseZoom)), false);
       renderer->drawSolidLine(
           {static_cast<float>(point.x()), static_cast<float>(point.y())},
           {static_cast<float>(radiusPoint.x()), static_cast<float>(radiusPoint.y())},

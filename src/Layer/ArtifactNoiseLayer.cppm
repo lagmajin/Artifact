@@ -521,7 +521,7 @@ void restoreNoiseAnimatedProperties(ArtifactNoiseLayer* layer,
         !it.value().isObject()) {
       continue;
     }
-    const auto property =
+    auto property =
         layer->getProperty(QStringLiteral("noise.") + suffix);
     if (!property) continue;
     const auto propertyObject = it.value().toObject();
@@ -1331,8 +1331,8 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("noise.cellJitter")) {
-    p.cellJitter = static_cast<float>(
-        std::clamp(value.toDouble(0.75), 0.0, 1.0));
+    p.cellJitter = static_cast<float>(std::clamp(
+        value.isValid() ? value.toDouble() : 0.75, 0.0, 1.0));
     Q_EMIT changed();
     return true;
   }
@@ -1347,8 +1347,8 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("noise.warpAmplitude")) {
-    settings.post.warpAmplitude = static_cast<float>(
-        std::clamp(value.toDouble(0.25), 0.0, 16.0));
+    settings.post.warpAmplitude = static_cast<float>(std::clamp(
+        value.isValid() ? value.toDouble() : 0.25, 0.0, 16.0));
     Q_EMIT changed();
     return true;
   }
@@ -1358,8 +1358,8 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("noise.gamma")) {
-    settings.post.gamma = static_cast<float>(
-        std::clamp(value.toDouble(1.0), 0.01, 8.0));
+    settings.post.gamma = static_cast<float>(std::clamp(
+        value.isValid() ? value.toDouble() : 1.0, 0.01, 8.0));
     Q_EMIT changed();
     return true;
   }
@@ -1430,8 +1430,8 @@ bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("noise.blendWeight")) {
-    settings.post.blendWeight = static_cast<float>(
-        std::clamp(value.toDouble(0.5), 0.0, 1.0));
+    settings.post.blendWeight = static_cast<float>(std::clamp(
+        value.isValid() ? value.toDouble() : 0.5, 0.0, 1.0));
     Q_EMIT changed();
     return true;
   }

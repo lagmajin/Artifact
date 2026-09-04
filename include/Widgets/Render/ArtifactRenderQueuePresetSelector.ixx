@@ -3,14 +3,7 @@
 
 #include <wobjectdefs.h>
 #include <QWidget>
-#include <QComboBox>
-#include <QCheckBox>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QPushButton>
-#include <QListWidget>
-#include <QGroupBox>
+#include <QString>
 
 export module Artifact.Widgets.RenderQueuePresetSelector;
 

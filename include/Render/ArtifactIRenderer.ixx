@@ -20,6 +20,7 @@ module;
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 struct ArtifactRendererFloat2 {
@@ -67,6 +68,13 @@ export struct PolylineStyle {
   PolylineJoin join = PolylineJoin::Miter;
   bool closed = false;
   std::vector<float> dashPattern;
+  // Dash pattern phase shift in local units (animated marching ants).
+  float dashOffset = 0.0f;
+  // Along-path gradient: per-segment color lerp from gradientStart (t=0)
+  // to gradientEnd (t=1). Disabled = solid color.
+  bool gradientEnabled = false;
+  FloatColor gradientStart = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  FloatColor gradientEnd = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
 };
 
 export namespace Detail {

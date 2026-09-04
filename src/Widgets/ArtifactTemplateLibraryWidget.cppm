@@ -8,6 +8,7 @@ module;
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QtGui/QIcon>
 #include <memory>
 #include <wobjectimpl.h>
 

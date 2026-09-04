@@ -2,7 +2,6 @@ module;
 #include <utility>
 #include <functional>
 #include <QFileSystemModel>
-#include <QIcon>
 #include <QDir>
 #include <QDirIterator>
 #include <QLabel>

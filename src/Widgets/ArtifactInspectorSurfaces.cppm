@@ -1,5 +1,7 @@
 module;
 
+#include <QIcon>
+#include <QMetaType>
 #include <QColor>
 #include <QFrame>
 #include <QFont>
@@ -25,11 +27,11 @@ module;
 #include <functional>
 #include <utility>
 
-export module Artifact.Widgets.InspectorSurfaces;
+module Artifact.Widgets.InspectorSurfaces;
 
 import Artifact.Widgets.InspectorStyle;
 
-export namespace Artifact {
+namespace Artifact {
 
 namespace detail {
 
@@ -358,4 +360,78 @@ class EffectRackSurface final : public QWidget {
 };
 
 } // namespace detail
+
+QPushButton* createInspectorActionButton(const QString& text, QWidget* parent) {
+  return new detail::InspectorActionButton(text, parent);
+}
+
+void setInspectorButtonOwnerDrawn(QPushButton* button, bool enabled) {
+  if (auto* actionButton = dynamic_cast<detail::InspectorActionButton*>(button)) {
+    actionButton->setOwnerDrawn(enabled);
+  }
+}
+
+void setInspectorButtonAction(QPushButton* button, std::function<void()> action) {
+  if (auto* actionButton = dynamic_cast<detail::InspectorActionButton*>(button)) {
+    actionButton->setAction(std::move(action));
+  }
+}
+
+void triggerInspectorButtonAction(QPushButton* button) {
+  if (auto* actionButton = dynamic_cast<detail::InspectorActionButton*>(button)) {
+    actionButton->triggerAction();
+  }
+}
+
+QLabel* createInspectorChromeLabel(const QString& text,
+                                   InspectorChromeLabelRole role,
+                                   QWidget* parent) {
+  using Role = detail::InspectorChromeLabel::Role;
+  const auto detailRole = role == InspectorChromeLabelRole::Section
+      ? Role::Section
+      : role == InspectorChromeLabelRole::Active ? Role::Active : Role::Summary;
+  return new detail::InspectorChromeLabel(text, detailRole, parent);
+}
+
+QWidget* createInspectorCanvasSurface(QWidget* parent) {
+  return new detail::InspectorCanvasSurface(parent);
+}
+
+QWidget* createInspectorPropertySurface(QWidget* editor, QWidget* parent) {
+  return new detail::InspectorPropertySurface(editor, parent);
+}
+
+void setInspectorPropertySurfaceEditor(QWidget* surface, QWidget* editor) {
+  if (auto* propertySurface = dynamic_cast<detail::InspectorPropertySurface*>(surface)) {
+    propertySurface->setEditor(editor);
+  }
+}
+
+QFrame* createInspectorDivider(QWidget* parent) {
+  return new detail::ComponentDivider(parent);
+}
+
+QStyledItemDelegate* createInspectorComponentStackItemDelegate(QObject* parent) {
+  return new detail::ComponentStackItemDelegate(parent);
+}
+
+QWidget* createInspectorEffectPanelSurface(InspectorEffectPanelRole role,
+                                            QWidget* parent) {
+  using Role = detail::EffectPanelSurface::Role;
+  const auto detailRole = role == InspectorEffectPanelRole::Header
+      ? Role::Header
+      : role == InspectorEffectPanelRole::Stack ? Role::Stack : Role::Detail;
+  return new detail::EffectPanelSurface(detailRole, parent);
+}
+
+QWidget* createInspectorEffectRackSurface(const QString& title, QWidget* parent) {
+  return new detail::EffectRackSurface(title, parent);
+}
+
+void setInspectorEffectRackSurfaceTitle(QWidget* surface, const QString& title) {
+  if (auto* rackSurface = dynamic_cast<detail::EffectRackSurface*>(surface)) {
+    rackSurface->setTitle(title);
+  }
+}
+
 } // namespace Artifact

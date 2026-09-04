@@ -21,11 +21,11 @@ module;
 #include <functional>
 #include <utility>
 
-export module Artifact.Widgets.InspectorInteraction;
+module Artifact.Widgets.InspectorInteraction;
 
 import Artifact.Widgets.InspectorStyle;
 
-export namespace Artifact {
+namespace Artifact {
 
 namespace detail {
 class EffectRackList final : public QListWidget {
@@ -325,4 +325,33 @@ private:
   InspectorSelectionList *list_ = nullptr;
 };
 } // namespace detail
+
+QListWidget* createInspectorSelectionList(QWidget* parent) {
+  return new detail::InspectorSelectionList(parent);
+}
+
+void setInspectorSelectionAction(
+    QListWidget* list, std::function<void(QListWidgetItem*)> action) {
+  if (auto* selectionList = dynamic_cast<detail::InspectorSelectionList*>(list)) {
+    selectionList->setSelectionAction(std::move(action));
+  }
+}
+
+void setInspectorSelectionActionEnabled(QListWidget* list, bool enabled) {
+  if (auto* selectionList = dynamic_cast<detail::InspectorSelectionList*>(list)) {
+    selectionList->setSelectionActionEnabled(enabled);
+  }
+}
+
+QListWidget* createInspectorEffectRackList(QWidget* parent) {
+  return new detail::EffectRackList(parent);
+}
+
+void setInspectorEffectRackReorderHandler(
+    QListWidget* list, std::function<void(const QStringList&, int)> handler) {
+  if (auto* rackList = dynamic_cast<detail::EffectRackList*>(list)) {
+    rackList->setReorderHandler(std::move(handler));
+  }
+}
+
 } // namespace Artifact

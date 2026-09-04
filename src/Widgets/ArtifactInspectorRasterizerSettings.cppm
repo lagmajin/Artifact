@@ -1,5 +1,6 @@
 module;
 
+#include <QIcon>
 #include <QAbstractButton>
 #include <QCheckBox>
 #include <QDialog>

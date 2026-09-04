@@ -4,6 +4,8 @@ module;
 #include <cmath>
 #include <memory>
 #include <vector>
+#include <QString>
+#include <QPointF>
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -35,6 +37,65 @@ struct CustomPathVertex {
   QPointF inTangent;   // relative to pos
   QPointF outTangent;  // relative to pos
   bool smooth = false;
+};
+
+// Multi-content shape model: one layer holds N independently styled
+// paths (geometry + fill + stroke + visibility + merge). Empty list =
+// legacy single-primitive behavior. Boolean ops are resolved on CPU
+// geometry; painting stays on the existing GPU triangle/line path.
+enum class ShapeContentMerge { Add = 0, Subtract = 1, Intersect = 2, Difference = 3 };
+
+struct ShapeContentFill {
+  bool enabled = true;
+  FloatColor color = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  ArtifactSolidFillType type = ArtifactSolidFillType::Solid;
+  FloatColor gradientStart = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  FloatColor gradientEnd = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  float gradientAngleDegrees = 0.0f;
+  float gradientCenterX = 0.5f;
+  float gradientCenterY = 0.5f;
+  float gradientRadius = 0.5f;
+};
+
+struct ShapeContentStroke {
+  bool enabled = false;
+  FloatColor color = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  float width = 0.0f;
+  StrokeCap cap = StrokeCap::Flat;
+  StrokeJoin join = StrokeJoin::Miter;
+  StrokeAlign align = StrokeAlign::Center;
+  std::vector<float> dashPattern;
+  float dashOffset = 0.0f;
+  float taperStart = 1.0f;
+  float taperEnd = 1.0f;
+  bool gradientEnabled = false;
+  FloatColor gradientStart = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  FloatColor gradientEnd = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+};
+
+struct ShapeContentGeometry {
+  ShapeType type = ShapeType::Rect;
+  int width = 200;
+  int height = 200;
+  float cornerRadius = 0.0f;
+  int starPoints = 5;
+  float starInnerRadius = 0.382f;
+  int polygonSides = 6;
+  std::vector<QPointF> polygonPoints;
+  bool polygonClosed = true;
+  std::vector<CustomPathVertex> pathVertices;
+  bool pathClosed = true;
+  ArtifactCore::PathFillRule fillRule = ArtifactCore::PathFillRule::Winding;
+};
+
+struct ShapeContent {
+  QString name;
+  ShapeContentGeometry geometry;
+  ShapeContentFill fill;
+  ShapeContentStroke stroke;
+  bool visible = true;
+  float opacity = 1.0f;
+  ShapeContentMerge merge = ShapeContentMerge::Add;
 };
 
 class ArtifactShapeLayer : public ArtifactAbstract2DLayer {
@@ -107,6 +168,8 @@ public:
   StrokeAlign strokeAlign() const;
   void setDashPattern(const std::vector<float>& pattern);
   std::vector<float> dashPattern() const;
+  void setDashOffset(float offset);
+  float dashOffset() const;
 
   // Corner radius (Rect)
   void setCornerRadius(float radius);
@@ -145,6 +208,68 @@ public:
   ArtifactCore::PathFillRule customPathFillRule() const;
   void setCustomPathFillRule(ArtifactCore::PathFillRule rule);
 
+  // Multi-content (1レイヤー複数パス). Empty list = legacy single shape.
+   // addShapeContent snapshots the legacy shape as contents[0] on first use
+   // so the existing look is preserved.
+   int shapeContentCount() const;
+   bool hasMultiShapeContents() const;
+   int addShapeContent(const ShapeContent& content);
+   bool setShapeContentAt(int index, const ShapeContent& content);
+   ShapeContent shapeContentAt(int index) const;
+   bool removeShapeContentAt(int index);
+   void clearShapeContents();
+   ShapeContent makeContentFromLegacy() const;
+
+   // Active content index for per-content editing proxying.
+   // -1 = legacy single-primitive mode (not a valid content).
+   int activeContentIndex() const;
+   bool setActiveContentIndex(int index);
+
+   // Lightweight non-owning proxy for editing a specific content.
+   // Edits flow directly into shapeContents_[index] via setShapeContentAt.
+   class ShapeContentProxy {
+   public:
+     explicit ShapeContentProxy(ArtifactShapeLayer* layer, int index);
+     bool isValid() const;
+     ShapeContent content() const;
+     void setContent(const ShapeContent& content);
+     QString name() const;
+     void setName(const QString& name);
+     bool visible() const;
+     void setVisible(bool visible);
+     float opacity() const;
+     void setOpacity(float opacity);
+     ShapeContentMerge merge() const;
+     void setMerge(ShapeContentMerge merge);
+     ShapeContentFill fill() const;
+     void setFill(const ShapeContentFill& fill);
+     ShapeContentStroke stroke() const;
+     void setStroke(const ShapeContentStroke& stroke);
+     bool duplicate();
+   private:
+     ArtifactShapeLayer* layer_ = nullptr;
+     int index_ = -1;
+     ShapeContent pull() const;
+   };
+  ShapeContentProxy activeContent();
+
+  // Content management: duplicate, insert, reorder, swap.
+  int duplicateShapeContent(int index);
+  bool moveShapeContent(int fromIndex, int toIndex);
+  bool insertShapeContent(int index, const ShapeContent& content);
+  bool swapShapeContents(int a, int b);
+
+    // SVG interop (ベクター受渡し). Export bakes merge-resolved paths;
+  // taper strokes fall back to plain strokes, conical fills to solid.
+  // Import converts rect/circle/ellipse/polygon/path + linear/radial
+  // gradients into editable contents (transforms baked, coordinates
+  // normalized to each content's bounds). Clipboard transport itself is
+  // plain SVG text left to the caller; file errors return -1.
+  QString shapeContentsToSvg() const;
+  int addShapeContentsFromSvg(const QString& svgText);
+  int importSvgFileContents(const QString& filePath);
+  static std::vector<ShapeContent> parseShapeContentsFromSvg(const QString& svgText);
+
   // Backend-neutral geometry after applying the current operator stack.
   std::vector<ArtifactCore::ShapePath> nativeShapePaths() const;
 
@@ -173,6 +298,12 @@ public:
   QImage getThumbnail(int width = 128, int height = 128) const override;
   QJsonObject toJson() const override;
   static SharedPtr<ArtifactShapeLayer> fromJson(const QJsonObject &obj);
+
+ private:
+  // Rebuilds the cached per-content visible paths (merge-resolved).
+  void ensureContentVisPaths() const;
+  // Software rasterization for thumbnails/toQImage when contents exist.
+  QImage renderContentsToImage() const;
 };
 
 } // namespace Artifact

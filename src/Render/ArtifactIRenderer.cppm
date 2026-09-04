@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <string>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
 // Do not replace this renderer with a Qt-only implementation.
@@ -978,6 +979,10 @@ namespace {
                                    material.clearcoatRoughness(), material.sheen());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
+    // Layer-owned material graph: MeshRenderer recompiles only when the
+    // payload differs, so the per-frame call stays a string compare.
+    renderer->setMaterialGraphJson(
+        static_cast<std::string>(material.materialGraphJson()));
     const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
     renderer->setNormalTexture(lowMaterialLOD ? QString() : material.normalTexture().toQString());
     renderer->setOcclusionTexture(lowMaterialLOD ? QString() : material.occlusionTexture().toQString());
@@ -3967,26 +3972,73 @@ void ArtifactIRenderer::renderShadowMapFrame()
  void ArtifactIRenderer::drawPolyline(const std::vector<Detail::float2>& points,
                                       const FloatColor& color, float thickness)
  { impl_->drawPolyline(points, color, thickness); }
- void ArtifactIRenderer::drawStyledPolyline(
-     const std::vector<Detail::float2>& points, const PolylineStyle& style,
-     const FloatColor& color)
- {
-   if (points.size() < 2 || style.thickness <= 0.0f) return;
-   const std::size_t segmentCount = style.closed ? points.size() : points.size() - 1;
-   const auto pointAt = [&points](std::size_t index) {
-     return points[index % points.size()];
-   };
-   std::vector<float> dashPattern;
-   for (const float value : style.dashPattern) {
-     if (std::isfinite(value) && value > 0.001f) dashPattern.push_back(value);
-   }
-   if (dashPattern.size() % 2 == 1) {
-     dashPattern.insert(dashPattern.end(), dashPattern.begin(), dashPattern.end());
-   }
-   std::size_t dashIndex = 0;
-   float dashRemaining = dashPattern.empty() ? 0.0f : dashPattern.front();
-   bool drawingDash = true;
-   bool dashRunStart = true;
+  void ArtifactIRenderer::drawStyledPolyline(
+      const std::vector<Detail::float2>& points, const PolylineStyle& style,
+      const FloatColor& color)
+  {
+    if (points.size() < 2 || style.thickness <= 0.0f) return;
+    const std::size_t segmentCount = style.closed ? points.size() : points.size() - 1;
+    const auto pointAt = [&points](std::size_t index) {
+      return points[index % points.size()];
+    };
+    // Along-path parameter for gradient strokes: cumulative lengths.
+    std::vector<float> segStart;
+    float totalLen = 0.0f;
+    if (style.gradientEnabled) {
+      segStart.reserve(segmentCount + 1);
+      segStart.push_back(0.0f);
+      for (std::size_t i = 0; i < segmentCount; ++i) {
+        const Detail::float2 p0 = pointAt(i);
+        const Detail::float2 p1 = pointAt(i + 1);
+        const float dx = p1.x - p0.x;
+        const float dy = p1.y - p0.y;
+        totalLen += std::sqrt(dx * dx + dy * dy);
+        segStart.push_back(totalLen);
+      }
+    }
+    const auto colorAt = [&](float t) -> FloatColor {
+      if (!style.gradientEnabled) {
+        return color;
+      }
+      const float clamped = std::clamp(t, 0.0f, 1.0f);
+      return FloatColor(
+          style.gradientStart.r() + (style.gradientEnd.r() - style.gradientStart.r()) * clamped,
+          style.gradientStart.g() + (style.gradientEnd.g() - style.gradientStart.g()) * clamped,
+          style.gradientStart.b() + (style.gradientEnd.b() - style.gradientStart.b()) * clamped,
+          style.gradientStart.a() + (style.gradientEnd.a() - style.gradientStart.a()) * clamped);
+    };
+    std::vector<float> dashPattern;
+    for (const float value : style.dashPattern) {
+      if (std::isfinite(value) && value > 0.001f) dashPattern.push_back(value);
+    }
+    if (dashPattern.size() % 2 == 1) {
+      dashPattern.insert(dashPattern.end(), dashPattern.begin(), dashPattern.end());
+    }
+    std::size_t dashIndex = 0;
+    float dashRemaining = dashPattern.empty() ? 0.0f : dashPattern.front();
+    bool drawingDash = true;
+    bool dashRunStart = true;
+    if (!dashPattern.empty()) {
+      float cycle = 0.0f;
+      for (const float value : dashPattern) cycle += value;
+      float off = 0.0f;
+      if (cycle > 0.0f && std::isfinite(style.dashOffset)) {
+        off = std::fmod(style.dashOffset, cycle);
+        if (off < 0.0f) off += cycle;
+      }
+      if (off > 0.0001f) dashRunStart = false;
+      float rest = off;
+      while (rest > 0.0001f) {
+        const float step = std::min(rest, dashRemaining);
+        dashRemaining -= step;
+        rest -= step;
+        if (dashRemaining <= 0.0001f) {
+          dashIndex = (dashIndex + 1) % dashPattern.size();
+          dashRemaining = dashPattern[dashIndex];
+          drawingDash = !drawingDash;
+        }
+      }
+    }
    for (std::size_t i = 0; i < segmentCount; ++i) {
      Detail::float2 p0 = pointAt(i);
      Detail::float2 p1 = pointAt(i + 1);
@@ -4001,12 +4053,15 @@ void ArtifactIRenderer::renderShadowMapFrame()
        if (i == 0) { p0.x -= nx * style.thickness * 0.5f; p0.y -= ny * style.thickness * 0.5f; }
        if (i + 1 == segmentCount) { p1.x += nx * style.thickness * 0.5f; p1.y += ny * style.thickness * 0.5f; }
      }
-     if (dashPattern.empty()) {
-       impl_->primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(p0),
-                                                    toDiligentFloat2(p1),
-                                                    style.thickness, color);
-       continue;
-     }
+      if (dashPattern.empty()) {
+        const float midT = (style.gradientEnabled && totalLen > 0.0f)
+            ? (segStart[i] + segStart[i + 1]) * 0.5f / totalLen
+            : 0.0f;
+        impl_->primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(p0),
+                                                     toDiligentFloat2(p1),
+                                                     style.thickness, colorAt(midT));
+        continue;
+      }
      const float drawLength = std::sqrt((p1.x - p0.x) * (p1.x - p0.x) +
                                         (p1.y - p0.y) * (p1.y - p0.y));
      float consumed = 0.0f;
@@ -4018,13 +4073,17 @@ void ArtifactIRenderer::renderShadowMapFrame()
            (reachesPatternBoundary ||
             (!style.closed && i + 1 == segmentCount &&
              consumed + step >= drawLength - 0.001f));
-       if (drawingDash && step > 0.0f) {
-       const float t0 = consumed / drawLength;
-       const float t1 = (consumed + step) / drawLength;
-         Detail::float2 dashP0{p0.x + (p1.x - p0.x) * t0,
-                               p0.y + (p1.y - p0.y) * t0};
-         Detail::float2 dashP1{p0.x + (p1.x - p0.x) * t1,
-                               p0.y + (p1.y - p0.y) * t1};
+        if (drawingDash && step > 0.0f) {
+        const float t0 = consumed / drawLength;
+        const float t1 = (consumed + step) / drawLength;
+        const float midT = (style.gradientEnabled && totalLen > 0.0f)
+            ? (segStart[i] + consumed + step * 0.5f) / totalLen
+            : 0.0f;
+        const FloatColor dashColor = colorAt(midT);
+          Detail::float2 dashP0{p0.x + (p1.x - p0.x) * t0,
+                                p0.y + (p1.y - p0.y) * t0};
+          Detail::float2 dashP1{p0.x + (p1.x - p0.x) * t1,
+                                p0.y + (p1.y - p0.y) * t1};
          if (style.cap == PolylineCap::Square) {
            if (dashRunStart) {
              dashP0.x -= nx * style.thickness * 0.5f;
@@ -4035,19 +4094,19 @@ void ArtifactIRenderer::renderShadowMapFrame()
              dashP1.y += ny * style.thickness * 0.5f;
            }
          }
-         impl_->primitiveRenderer_.drawThickLineLocal(
-             toDiligentFloat2(dashP0), toDiligentFloat2(dashP1),
-             style.thickness, color);
-         if (style.cap == PolylineCap::Round) {
-           if (dashRunStart) {
-             impl_->primitiveRenderer_.drawSolidCircle(
-                 dashP0.x, dashP0.y, style.thickness * 0.5f, color);
-           }
-           if (dashRunEnd) {
-             impl_->primitiveRenderer_.drawSolidCircle(
-                 dashP1.x, dashP1.y, style.thickness * 0.5f, color);
-           }
-         }
+          impl_->primitiveRenderer_.drawThickLineLocal(
+              toDiligentFloat2(dashP0), toDiligentFloat2(dashP1),
+              style.thickness, dashColor);
+          if (style.cap == PolylineCap::Round) {
+            if (dashRunStart) {
+              impl_->primitiveRenderer_.drawSolidCircle(
+                  dashP0.x, dashP0.y, style.thickness * 0.5f, dashColor);
+            }
+            if (dashRunEnd) {
+              impl_->primitiveRenderer_.drawSolidCircle(
+                  dashP1.x, dashP1.y, style.thickness * 0.5f, dashColor);
+            }
+          }
        }
        consumed += step;
        dashRemaining -= step;
@@ -4066,10 +4125,15 @@ void ArtifactIRenderer::renderShadowMapFrame()
      const float halfThickness = style.thickness * 0.5f;
      const std::size_t first = style.closed ? 0 : 1;
      const std::size_t last = style.closed ? points.size() : points.size() - 1;
-     for (std::size_t i = first; i < last; ++i) {
-       const auto previous = pointAt(i + points.size() - 1);
-       const auto current = pointAt(i);
-       const auto next = pointAt(i + 1);
+      for (std::size_t i = first; i < last; ++i) {
+        const auto previous = pointAt(i + points.size() - 1);
+        const auto current = pointAt(i);
+        const auto next = pointAt(i + 1);
+        const float jointT = (style.gradientEnabled && totalLen > 0.0f &&
+                              i < segStart.size())
+            ? segStart[i] / totalLen
+            : 0.0f;
+        const FloatColor jointColor = colorAt(jointT);
        const float ax = current.x - previous.x;
        const float ay = current.y - previous.y;
        const float bx = next.x - current.x;
@@ -4089,10 +4153,10 @@ void ArtifactIRenderer::renderShadowMapFrame()
        const Detail::float2 b{current.x + (-bdy * side) * halfThickness,
                               current.y + (bdx * side) * halfThickness};
        if (style.join == PolylineJoin::Bevel) {
-         impl_->primitiveRenderer_.drawSolidTriangleLocal(
-             toDiligentFloat2(a), toDiligentFloat2(current),
-             toDiligentFloat2(b), color);
-         continue;
+          impl_->primitiveRenderer_.drawSolidTriangleLocal(
+              toDiligentFloat2(a), toDiligentFloat2(current),
+              toDiligentFloat2(b), jointColor);
+          continue;
        }
        const float denominator = adx * bdy - ady * bdx;
        if (std::abs(denominator) <= 0.001f) continue;
@@ -4100,34 +4164,38 @@ void ArtifactIRenderer::renderShadowMapFrame()
        const Detail::float2 miter{a.x + adx * t, a.y + ady * t};
        const float mx = miter.x - current.x;
        const float my = miter.y - current.y;
-       if (mx * mx + my * my > style.thickness * style.thickness * 16.0f) {
-         impl_->primitiveRenderer_.drawSolidTriangleLocal(
-             toDiligentFloat2(a), toDiligentFloat2(current),
-             toDiligentFloat2(b), color);
-       } else {
-         impl_->primitiveRenderer_.drawSolidTriangleLocal(
-             toDiligentFloat2(a), toDiligentFloat2(miter),
-             toDiligentFloat2(b), color);
-       }
+        if (mx * mx + my * my > style.thickness * style.thickness * 16.0f) {
+          impl_->primitiveRenderer_.drawSolidTriangleLocal(
+              toDiligentFloat2(a), toDiligentFloat2(current),
+              toDiligentFloat2(b), jointColor);
+        } else {
+          impl_->primitiveRenderer_.drawSolidTriangleLocal(
+              toDiligentFloat2(a), toDiligentFloat2(miter),
+              toDiligentFloat2(b), jointColor);
+        }
      }
    }
    if (dashPattern.empty() && style.join == PolylineJoin::Round) {
      const std::size_t first = style.closed ? 0 : 1;
      const std::size_t last = style.closed ? points.size() : points.size() - 1;
-     for (std::size_t i = first; i < last; ++i) {
-       const auto p = pointAt(i);
-       impl_->primitiveRenderer_.drawSolidCircle(
-           p.x, p.y, style.thickness * 0.5f, color);
-     }
-   }
-   if (dashPattern.empty() && !style.closed && style.cap == PolylineCap::Round) {
-     const auto p0 = points.front();
-     const auto p1 = points.back();
-     impl_->primitiveRenderer_.drawSolidCircle(
-         p0.x, p0.y, style.thickness * 0.5f, color);
-     impl_->primitiveRenderer_.drawSolidCircle(
-         p1.x, p1.y, style.thickness * 0.5f, color);
-   }
+      for (std::size_t i = first; i < last; ++i) {
+        const auto p = pointAt(i);
+        const float roundT = (style.gradientEnabled && totalLen > 0.0f &&
+                              i < segStart.size())
+            ? segStart[i] / totalLen
+            : 0.0f;
+        impl_->primitiveRenderer_.drawSolidCircle(
+            p.x, p.y, style.thickness * 0.5f, colorAt(roundT));
+      }
+    }
+    if (dashPattern.empty() && !style.closed && style.cap == PolylineCap::Round) {
+      const auto p0 = points.front();
+      const auto p1 = points.back();
+      impl_->primitiveRenderer_.drawSolidCircle(
+          p0.x, p0.y, style.thickness * 0.5f, colorAt(0.0f));
+      impl_->primitiveRenderer_.drawSolidCircle(
+          p1.x, p1.y, style.thickness * 0.5f, colorAt(1.0f));
+    }
  }
  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h)
  { impl_->drawSolidRect(float2(x, y), float2(w, h), {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f); }

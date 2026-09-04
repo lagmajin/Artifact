@@ -4574,8 +4574,8 @@ void ArtifactAbstractComposition::addTimelineTransition(
     for (const auto& existing : impl_->timelineTransitions_) {
         const bool samePair = existing.leftClipName == normalized.leftClipName &&
                               existing.rightClipName == normalized.rightClipName;
-        const bool overlaps = existing.range.start().framePosition() < normalized.range.end().framePosition() &&
-                              normalized.range.start().framePosition() < existing.range.end().framePosition();
+        const bool overlaps = existing.range.start() < normalized.range.end() &&
+                              normalized.range.start() < existing.range.end();
         if (samePair && overlaps) return;
     }
     impl_->timelineTransitions_.append(std::move(normalized));
@@ -4660,8 +4660,8 @@ bool ArtifactAbstractComposition::setTimelineTransitionRange(
             if (other.id == normalizedId ||
                 other.leftClipName != transition.leftClipName ||
                 other.rightClipName != transition.rightClipName) continue;
-            const bool overlaps = other.range.start().framePosition() < range.end().framePosition() &&
-                                  range.start().framePosition() < other.range.end().framePosition();
+            const bool overlaps = other.range.start() < range.end() &&
+                                  range.start() < other.range.end();
             if (overlaps) return false;
         }
         transition.range = range;
@@ -4730,9 +4730,8 @@ bool ArtifactAbstractComposition::duplicateTimelineTransition(
         duplicate.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         duplicate.name = transition.name + QStringLiteral(" Copy");
         const qint64 offset = std::max<qint64>(1, transition.range.duration());
-        duplicate.range = FrameRange(
-            FramePosition(transition.range.start().framePosition() + offset),
-            FramePosition(transition.range.end().framePosition() + offset));
+        duplicate.range = FrameRange(transition.range.start() + offset,
+                                     transition.range.end() + offset);
         impl_->timelineTransitions_.append(duplicate);
         if (outDuplicate) *outDuplicate = duplicate;
         Q_EMIT changed();

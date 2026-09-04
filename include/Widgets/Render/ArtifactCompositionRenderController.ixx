@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <string>
 
 #include <wobjectdefs.h>
 #include <QObject>
@@ -423,9 +424,15 @@ void clearRigPoseSlots();
   bool adjustHoveredMaskOpacity(float opacityDelta);
   bool adjustHoveredMaskOpacityForSelectedLayers(float opacityDelta);
   bool setHoveredMaskColor(const FloatColor& color);
-  bool createTextLayerAtCanvas(const QPointF& canvasPos,
-                               const QSizeF& boxSize = QSizeF());
-  bool editTextAtViewport(const QPointF& viewportPos);
+   bool createTextLayerAtCanvas(const QPointF& canvasPos,
+                                const QSizeF& boxSize = QSizeF());
+   bool editTextAtViewport(const QPointF& viewportPos);
+   // Stores ShaderNode graph JSON on the selected 3D layer. The renderer
+   // compiles it on next draw; project save/load carries it via
+   // material.graph. Returns false when no 3D layer is selected.
+   bool setMaterialGraphJsonOnSelectedLayer(const std::string& json);
+   bool clearMaterialGraphOnSelectedLayer();
+   std::string materialGraphJsonOfSelectedLayer() const;
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;

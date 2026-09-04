@@ -2340,6 +2340,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     impl_->motionLastFrame_ = frame;
   }
 
+  const int64_t curFrame = currentTimelineFrame(this);
   if (!impl_->collisionComponentEnabled_ && !impl_->jointComponentEnabled_ &&
       hasRigidBodyPhysics()) {
     const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
@@ -2362,7 +2363,6 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
       }
     }
     const double fps2 = effectiveLayerFrameRate(this);
-    const int64_t curFrame = currentTimelineFrame(this);
     const RationalTime prevTime(curFrame - 1, fps2);
     auto evalAt = [this, &prevTime, &t](const QString &path, double fallback) {
       const auto it = impl_->propertyCache_.constFind(path);

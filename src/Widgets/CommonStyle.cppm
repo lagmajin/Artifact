@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <QIcon>
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>

@@ -2593,6 +2593,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     const QSize oldSize = composition->settings().compositionSize();
                     const float oldFrameRate = composition->frameRate().framerate();
                     const FrameRange oldRange = composition->frameRange().normalized();
+                    const qint64 oldStartFrame = oldRange.start();
+                    const qint64 oldEndFrame = oldRange.end();
                     const FloatColor oldBackground(
                         originalBackgroundColor.redF(), originalBackgroundColor.greenF(),
                         originalBackgroundColor.blueF(), originalBackgroundColor.alphaF());
@@ -2645,14 +2647,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     }
                     if (!remapRequested ||
                         std::abs(oldFrameRate - newFrameRate) >= 0.0001f ||
-                        oldRange.start() != newRange.start() || oldRange.end() != newRange.end() ||
+                         oldStartFrame != startFrame || oldEndFrame != endFrame ||
                         oldBackground.r() != newBackground.r() ||
                         oldBackground.g() != newBackground.g() ||
                         oldBackground.b() != newBackground.b() ||
                         oldBackground.a() != newBackground.a()) {
                         settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
-                            composition, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
-                            oldBackground, newSize, newFrameRate, newRange.start(), newRange.end(),
+                             composition, oldSize, oldFrameRate, oldStartFrame, oldEndFrame,
+                             oldBackground, newSize, newFrameRate, startFrame, endFrame,
                             newBackground));
                     }
                     if (oldName != trimmedName) {
@@ -4080,6 +4082,8 @@ public:
             const QSize oldSize = comp->settings().compositionSize();
             const float oldFrameRate = comp->frameRate().framerate();
             const FrameRange oldRange = comp->frameRange().normalized();
+            const qint64 oldStartFrame = oldRange.start();
+            const qint64 oldEndFrame = oldRange.end();
             const FloatColor oldBackground = comp->backgroundColor();
             if (std::abs(oldFrameRate - targetFrameRate) < 0.0001f) continue;
             settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
@@ -4148,6 +4152,8 @@ public:
             const QSize oldSize = comp->settings().compositionSize();
             const float oldFrameRate = comp->frameRate().framerate();
             const FrameRange oldRange = comp->frameRange().normalized();
+            const qint64 oldStartFrame = oldRange.start();
+            const qint64 oldEndFrame = oldRange.end();
             const FloatColor oldBackground = comp->backgroundColor();
             const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
             const float newFrameRate = static_cast<float>(
@@ -4194,14 +4200,14 @@ public:
                     comp, oldSize, newSize, remapPolicy));
             }
             if (!remapRequested || oldFrameRate != newFrameRate ||
-                oldRange.start() != newRange.start() || oldRange.end() != newRange.end() ||
+                oldStartFrame != startFrame || oldEndFrame != endFrame ||
                 oldBackground.r() != newBackground.r() ||
                 oldBackground.g() != newBackground.g() ||
                 oldBackground.b() != newBackground.b() ||
                 oldBackground.a() != newBackground.a()) {
                 settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
-                    comp, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
-                    oldBackground, newSize, newFrameRate, newRange.start(), newRange.end(),
+                    comp, oldSize, oldFrameRate, oldStartFrame, oldEndFrame,
+                    oldBackground, newSize, newFrameRate, startFrame, endFrame,
                     newBackground));
             }
             if (oldName != trimmedName) {
@@ -4244,13 +4250,13 @@ public:
 
             const QSize oldSize = comp->settings().compositionSize();
             const float oldFrameRate = comp->frameRate().framerate();
-            const FrameRange oldRange = comp->frameRange().normalized();
+            const qint64 oldStartFrame = comp->frameRange().start();
+            const qint64 oldEndFrame = comp->frameRange().end();
             const FloatColor oldBackground = comp->backgroundColor();
-            const FrameRange newRange(FramePosition(startFrame), FramePosition(endFrame));
             if (oldSize == newSize &&
                 std::abs(oldFrameRate - frameRate) < 0.0001f &&
-                oldRange.start() == newRange.start() &&
-                oldRange.end() == newRange.end() &&
+                oldStartFrame == startFrame &&
+                oldEndFrame == endFrame &&
                 oldBackground.r() == floatBg.r() &&
                 oldBackground.g() == floatBg.g() &&
                 oldBackground.b() == floatBg.b() &&
@@ -4258,8 +4264,8 @@ public:
                 continue;
             }
             settingsMacro->addChild(std::make_unique<SetCompositionSettingsCommand>(
-                comp, oldSize, oldFrameRate, oldRange.start(), oldRange.end(),
-                oldBackground, newSize, frameRate, newRange.start(), newRange.end(),
+                comp, oldSize, oldFrameRate, oldStartFrame, oldEndFrame,
+                oldBackground, newSize, frameRate, startFrame, endFrame,
                 floatBg));
             applied = true;
         }
@@ -6668,7 +6674,7 @@ void ArtifactProjectManagerWidget::itemDoubleClicked(const QModelIndex& index)
         return;
     }
 
-    ArtifactCore::globalEventBus().publish<ProjectItemActivatedEvent>(event);
+    ArtifactCore::globalEventBus().publish<ProjectItemActivatedEvent>(std::move(event));
 }
 
 ArtifactProjectView* ArtifactProjectManagerWidget::projectView() const

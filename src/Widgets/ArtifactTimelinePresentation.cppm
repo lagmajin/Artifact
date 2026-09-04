@@ -405,7 +405,7 @@ private:
 
 } // namespace
 
-QWidget *createTimelineRightPanel(
+export QWidget *createTimelineRightPanel(
     ArtifactTimelineNavigatorWidget *navigator,
     ArtifactTimelineScrubBar *scrubBar, WorkAreaControl *workArea,
     ArtifactTimelineTrackPainterView *painterTrackView,
@@ -416,34 +416,34 @@ QWidget *createTimelineRightPanel(
                                       curveHeader, curveEditor, parent);
 }
 
-QWidget *timelineRightPanelPainterPage(QWidget *panel) {
+export QWidget *timelineRightPanelPainterPage(QWidget *panel) {
   auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel);
   return rightPanel ? rightPanel->timelinePainterPage() : nullptr;
 }
 
-QWidget *timelineRightPanelGpuPage(QWidget *panel) {
+export QWidget *timelineRightPanelGpuPage(QWidget *panel) {
   auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel);
   return rightPanel ? rightPanel->timelineGpuPage() : nullptr;
 }
 
-QWidget *timelineRightPanelCurveEditorPage(QWidget *panel) {
+export QWidget *timelineRightPanelCurveEditorPage(QWidget *panel) {
   auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel);
   return rightPanel ? rightPanel->curveEditorPage() : nullptr;
 }
 
-QStackedWidget *timelineRightPanelModeStack(QWidget *panel) {
+export QStackedWidget *timelineRightPanelModeStack(QWidget *panel) {
   auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel);
   return rightPanel ? rightPanel->timelineModeStack() : nullptr;
 }
 
-void setTimelineRightPanelPlayheadOverlayEnabled(QWidget *panel,
-                                                 const bool enabled) {
+export void setTimelineRightPanelPlayheadOverlayEnabled(QWidget *panel,
+                                                         const bool enabled) {
   if (auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel)) {
     rightPanel->setPlayheadOverlayEnabled(enabled);
   }
 }
 
-void syncTimelineRightPanelPlayheadOverlay(QWidget *panel) {
+export void syncTimelineRightPanelPlayheadOverlay(QWidget *panel) {
   if (auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel)) {
     rightPanel->syncPlayheadOverlay();
   }

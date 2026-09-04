@@ -9,6 +9,7 @@ module;
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QtGui/QIcon>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 #include <utility>
 #include <wobjectimpl.h>

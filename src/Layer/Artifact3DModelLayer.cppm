@@ -350,6 +350,10 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.emissionTexture"] = impl_->material_.emissionTexture().toQString();
   obj["material.occlusionTexture"] = impl_->material_.occlusionTexture().toQString();
   obj["material.opacityTexture"] = impl_->material_.opacityTexture().toQString();
+  const QString materialGraphJson = impl_->material_.materialGraphJson().toQString();
+  if (!materialGraphJson.trimmed().isEmpty()) {
+    obj["material.graph"] = materialGraphJson;
+  }
   return obj;
 }
 
@@ -548,6 +552,11 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 
   const QString opacityTexture = obj.value("material.opacityTexture").toString();
   impl_->material_.setOpacityTexture(ArtifactCore::UniString::fromQString(opacityTexture));
+
+  // Material graph JSON is stored verbatim; the renderer compiles it on
+  // first draw. Invalid payloads are ignored at apply time, never here.
+  impl_->material_.setMaterialGraphJson(ArtifactCore::UniString::fromQString(
+      obj.value("material.graph").toString()));
 }
 
 void Artifact3DLayer::createCubeMesh() {
@@ -2236,7 +2245,7 @@ QString Artifact3DLayer::materialSignature() const
              "specular=%18|ior=%19|transmission=%20|clearcoat=%21|clearcoatRoughness=%22|"
              "alphaMode=%23|alphaCutoff=%24|emissionStrength=%25|opacity=%26|"
              "normalStrength=%27|occlusionStrength=%28|sheen=%29|solidTexture=%30|"
-             "wireOverlay=%31")
+             "wireOverlay=%31|graph=%32")
       .arg(impl_->sourcePath_)
       .arg(impl_->material_.baseColorTexture().toQString())
       .arg(impl_->material_.metallicRoughnessTexture().toQString())
@@ -2267,7 +2276,28 @@ QString Artifact3DLayer::materialSignature() const
       .arg(impl_->material_.occlusionStrength(), 0, 'f', 6)
       .arg(impl_->material_.sheen(), 0, 'f', 6)
       .arg(impl_->useTextureInSolid_ ? 1 : 0)
-      .arg(impl_->wireOverlay_ ? 1 : 0);
+      .arg(impl_->wireOverlay_ ? 1 : 0)
+      .arg(impl_->material_.materialGraphJson().toQString());
+}
+
+void Artifact3DLayer::setMaterialGraphJson(const QString& json)
+{
+  if (impl_->material_.materialGraphJson().toQString() == json) {
+    return;
+  }
+  impl_->material_.setMaterialGraphJson(ArtifactCore::UniString::fromQString(json));
+  setDirty();
+  Q_EMIT changed();
+}
+
+QString Artifact3DLayer::materialGraphJson() const
+{
+  return impl_->material_.materialGraphJson().toQString();
+}
+
+void Artifact3DLayer::clearMaterialGraph()
+{
+  setMaterialGraphJson(QString());
 }
 
 void Artifact3DLayer::setAffectedByLights(bool enabled)

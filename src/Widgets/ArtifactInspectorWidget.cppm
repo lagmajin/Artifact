@@ -1,4 +1,6 @@
 module;
+#include <QtGui/QIcon>
+#include <QMetaType>
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAbstractScrollArea>
@@ -21,7 +23,6 @@ module;
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
-#include <QIcon>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
@@ -233,6 +234,38 @@ constexpr int kInspectorSectionMarginT = 8;
 constexpr int kInspectorSectionMarginR = 8;
 constexpr int kInspectorSectionMarginB = 8;
 constexpr int kInspectorSectionSpacing = 4;
+
+class InspectorActionButton final : public QPushButton {
+ public:
+  explicit InspectorActionButton(const QString& text, QWidget* parent = nullptr)
+      : QPushButton(text, parent) {}
+
+  void setOwnerDrawn(bool enabled) {
+    setInspectorButtonOwnerDrawn(this, enabled);
+  }
+
+  void setAction(std::function<void()> action) {
+    setInspectorButtonAction(this, std::move(action));
+  }
+
+  void triggerAction() {
+    triggerInspectorButtonAction(this);
+  }
+};
+
+class SelectionActionBlocker final {
+ public:
+  explicit SelectionActionBlocker(QListWidget* list) : list_(list) {
+    setInspectorSelectionActionEnabled(list_, false);
+  }
+  ~SelectionActionBlocker() {
+    setInspectorSelectionActionEnabled(list_, true);
+  }
+
+ private:
+  QListWidget* list_ = nullptr;
+};
+
 constexpr int kInspectorNoteMargin = 6;
 constexpr int kInspectorRackMarginL = 6;
 constexpr int kInspectorRackMarginT = 10;
@@ -1193,23 +1226,23 @@ public:
   InspectorActionButton *removeGeneratorComponentButton = nullptr;
   InspectorActionButton *generatorMoveUpButton = nullptr;
   InspectorActionButton *generatorMoveDownButton = nullptr;
-  InspectorSelectionList *generatorListWidget = nullptr;
+  QListWidget *generatorListWidget = nullptr;
   InspectorActionButton *transformComponentButton = nullptr;
   InspectorActionButton *removeTransformComponentButton = nullptr;
   InspectorActionButton *transformDuplicateButton = nullptr;
   InspectorActionButton *transformMoveUpButton = nullptr;
   InspectorActionButton *transformMoveDownButton = nullptr;
-  InspectorSelectionList *transformListWidget = nullptr;
+  QListWidget *transformListWidget = nullptr;
   InspectorActionButton *fieldComponentButton = nullptr;
   InspectorActionButton *removeFieldComponentButton = nullptr;
   InspectorActionButton *fieldMoveUpButton = nullptr;
   InspectorActionButton *fieldMoveDownButton = nullptr;
-  InspectorSelectionList *fieldListWidget = nullptr;
+  QListWidget *fieldListWidget = nullptr;
   InspectorActionButton *cloneModifierButton = nullptr;
   InspectorActionButton *removeCloneModifierButton = nullptr;
   InspectorActionButton *cloneModifierMoveUpButton = nullptr;
   InspectorActionButton *cloneModifierMoveDownButton = nullptr;
-  InspectorSelectionList *cloneModifierListWidget = nullptr;
+  QListWidget *cloneModifierListWidget = nullptr;
   QWidget *clonerStructureWidget = nullptr;
   QLabel *componentUtilitiesLabel = nullptr;
   InspectorActionButton *openScriptButton = nullptr;
@@ -1217,7 +1250,7 @@ public:
   InspectorActionButton *addEffectorButton = nullptr;
   InspectorActionButton *removeEffectorButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
-  InspectorPropertySurface *componentPropertySurface = nullptr;
+  QWidget *componentPropertySurface = nullptr;
   QString lastComponentPropertyStateSignature_;
   QLabel *statusLabel = nullptr;
 
@@ -1233,9 +1266,9 @@ public:
   QLabel *effectParametersHintLabel = nullptr;
   InspectorActionButton *effectEnableButton = nullptr;
   ArtifactPropertyWidget *effectPropertyWidget = nullptr;
-  InspectorPropertySurface *effectPropertySurface = nullptr;
+  QWidget *effectPropertySurface = nullptr;
   QWidget *surfaceElementPanel = nullptr;
-  InspectorSelectionList *surfaceElementListWidget = nullptr;
+  QListWidget *surfaceElementListWidget = nullptr;
   int surfaceElementIndex_ = 0;
   QPushButton *effectsQuickAddButton = nullptr;
   QString focusedEffectId_;
@@ -1244,8 +1277,8 @@ public:
   QString lastEffectPropertyStateSignature_;
 
   struct EffectRack {
-    EffectRackSurface *groupBox = nullptr;
-    EffectRackList *listWidget = nullptr;
+    QWidget *groupBox = nullptr;
+    QListWidget *listWidget = nullptr;
     QPushButton *addButton = nullptr;
     QPushButton *removeButton = nullptr;
     QPushButton *moveUpButton = nullptr;
@@ -1479,7 +1512,7 @@ void ArtifactInspectorWidget::Impl::ensureEffectPropertyWidget() {
   applyInspectorOwnerDrawScrollBars(effectPropertyWidget);
   effectPropertyWidget->setFilterText(
       effectPropertyFilterEdit ? effectPropertyFilterEdit->text() : QString());
-  effectPropertySurface->setEditor(effectPropertyWidget);
+  setInspectorPropertySurfaceEditor(effectPropertySurface, effectPropertyWidget);
 }
 
 void ArtifactInspectorWidget::Impl::updateSurfaceElementEditor(
@@ -1877,7 +1910,7 @@ bool generatorItemSupportsReorder(const QListWidgetItem *item) {
   return item && item->data(Qt::UserRole + 2).toBool();
 }
 
-bool hasReorderableItemBefore(const InspectorSelectionList *list, int row) {
+bool hasReorderableItemBefore(const QListWidget *list, int row) {
   if (!list || row <= 0) {
     return false;
   }
@@ -1889,7 +1922,7 @@ bool hasReorderableItemBefore(const InspectorSelectionList *list, int row) {
   return false;
 }
 
-bool hasReorderableItemAfter(const InspectorSelectionList *list, int row) {
+bool hasReorderableItemAfter(const QListWidget *list, int row) {
   if (!list || row < 0) {
     return false;
   }
@@ -2667,7 +2700,7 @@ void ArtifactInspectorWidget::Impl::ensureComponentPropertyWidget() {
   componentPropertyWidget->setMinimumHeight(120);
   applyInspectorOwnerDrawScrollBars(componentPropertyWidget);
   componentPropertyWidget->setFilterText(QString());
-  componentPropertySurface->setEditor(componentPropertyWidget);
+  setInspectorPropertySurfaceEditor(componentPropertySurface, componentPropertyWidget);
 }
 
 void ArtifactInspectorWidget::Impl::focusComponentProperties(
@@ -2765,7 +2798,7 @@ void ArtifactInspectorWidget::Impl::showContextMenu() {
 }
 
 void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
-  InspectorActionMenu menu;
+  QMenu menu;
   menu.addAction("Refresh Inspector", [this]() {
     updateLayerInfo();
     updateEffectsList();
@@ -3067,7 +3100,7 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
 
 void ArtifactInspectorWidget::Impl::showRackContextMenu(
     int rackIndex, QListWidgetItem *item, const QPoint &globalPos) {
-  InspectorActionMenu menu;
+  QMenu menu;
 
   if (!item) {
     menu.addAction("Refresh Inspector", [this]() {
@@ -4379,7 +4412,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
         computeRackSignature(i, rackEffects[i]) + QStringLiteral("|filter=") + rackFilter;
     if (rackSignature == lastRackSignatures_[i]) {
       if (racks[i].groupBox) {
-        racks[i].groupBox->setTitle(
+        setInspectorEffectRackSurfaceTitle(racks[i].groupBox,
             QStringLiteral("%1 (%2)")
                 .arg(stageDisplayName(stageFromRackIndex(i)))
                 .arg(static_cast<int>(rackEffects[i].size())));
@@ -4392,7 +4425,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       continue;
     }
     if (racks[i].groupBox) {
-      racks[i].groupBox->setTitle(
+      setInspectorEffectRackSurfaceTitle(racks[i].groupBox,
           QStringLiteral("%1 (%2)")
               .arg(stageDisplayName(stageFromRackIndex(i)))
               .arg(static_cast<int>(rackEffects[i].size())));
@@ -4830,13 +4863,14 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
                       .arg(comp->settings().compositionName().toQString());
   }
 
-  EffectPickerDialog dialog(buildEffectCatalogEntries(),
-                            stageFromRackIndex(rackIndex), targetLabel,
-                            containerWidget ? containerWidget : tabWidget);
-  if (dialog.exec() != QDialog::Accepted) {
+  auto* dialog = createInspectorEffectPickerDialog(
+      buildEffectCatalogEntries(), stageFromRackIndex(rackIndex), targetLabel,
+      containerWidget ? containerWidget : tabWidget);
+  if (!dialog || dialog->exec() != QDialog::Accepted) {
     return;
   }
-  addSelectedEffectToCurrentTarget(dialog.selectedEffectId());
+  addSelectedEffectToCurrentTarget(
+      inspectorEffectPickerSelectedEffectId(dialog));
 }
 
 
@@ -5082,9 +5116,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto* componentsStack = new StudioSectionStack();
   impl_->componentsGroup = componentsStack;
   applyInspectorPalette(impl_->componentsGroup);
-  impl_->componentsSummaryLabel = new InspectorChromeLabel(
+  impl_->componentsSummaryLabel = createInspectorChromeLabel(
       QStringLiteral("Components: select a layer"),
-      InspectorChromeLabel::Role::Summary, impl_->componentsGroup);
+      InspectorChromeLabelRole::Summary, impl_->componentsGroup);
   impl_->componentsSummaryLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->componentsSummaryLabel, true);
 
@@ -5247,16 +5281,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     componentButton->setVisible(false);
   }
 
-  impl_->activeComponentLabel = new InspectorChromeLabel(
+  impl_->activeComponentLabel = createInspectorChromeLabel(
       QStringLiteral("Active Component  |  None"),
-      InspectorChromeLabel::Role::Active, impl_->componentsGroup);
+      InspectorChromeLabelRole::Active, impl_->componentsGroup);
   impl_->activeComponentLabel->setMinimumHeight(32);
   applyInspectorLabelPalette(impl_->activeComponentLabel, true);
   impl_->activeComponentLabel->setVisible(false);
 
-  auto *componentStackLabel = new InspectorChromeLabel(
+  auto *componentStackLabel = createInspectorChromeLabel(
       QStringLiteral("Layer Components"),
-      InspectorChromeLabel::Role::Section, impl_->componentsGroup);
+      InspectorChromeLabelRole::Section, impl_->componentsGroup);
   componentStackLabel->setMinimumHeight(28);
   applyInspectorLabelPalette(componentStackLabel, true);
   componentsStack->appendWidget(componentStackLabel);
@@ -5269,14 +5303,14 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
 
   // Show the selected component's parameters before secondary management
   // controls so the edit loop stays next to the component rows.
-  impl_->componentPropertySurface = new InspectorPropertySurface(
+  impl_->componentPropertySurface = createInspectorPropertySurface(
       nullptr, impl_->componentsGroup);
   impl_->componentPropertySurface->setObjectName(
       QStringLiteral("inspectorComponentPropertySurface"));
   impl_->componentPropertySurface->setVisible(false);
   componentsStack->appendWidget(impl_->componentPropertySurface, true);
 
-  auto* effectorRow = new InspectorCanvasSurface(componentsStack);
+  auto* effectorRow = createInspectorCanvasSurface(componentsStack);
   auto* effectorLayout = new QHBoxLayout(effectorRow);
   effectorLayout->setContentsMargins(0, 0, 0, 0);
   effectorLayout->addStretch(1);
@@ -5285,7 +5319,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectorLayout->addStretch(1);
   componentsStack->appendWidget(effectorRow);
 
-  auto* addComponentRow = new InspectorCanvasSurface(componentsStack);
+  auto* addComponentRow = createInspectorCanvasSurface(componentsStack);
   auto *addComponentLayout = new QHBoxLayout(addComponentRow);
   addComponentLayout->setContentsMargins(0, 0, 0, 0);
   addComponentLayout->addStretch(1);
@@ -5293,7 +5327,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   addComponentLayout->addStretch(1);
   componentsStack->appendWidget(addComponentRow);
 
-  auto *componentDivider = new ComponentDivider(impl_->componentsGroup);
+  auto *componentDivider = createInspectorDivider(impl_->componentsGroup);
   componentDivider->setObjectName(QStringLiteral("inspectorComponentDivider"));
   componentDivider->setFrameShape(QFrame::HLine);
   componentDivider->setFrameShadow(QFrame::Plain);
@@ -5302,20 +5336,20 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   componentsStack->appendWidget(impl_->activeComponentLabel);
 
   impl_->clonerStructureWidget =
-      new InspectorCanvasSurface(impl_->componentsGroup);
+      createInspectorCanvasSurface(impl_->componentsGroup);
   auto *clonerStructureLayout = new QVBoxLayout(impl_->clonerStructureWidget);
   clonerStructureLayout->setContentsMargins(0, 4, 0, 0);
   clonerStructureLayout->setSpacing(6);
-  auto *clonerStructureLabel = new InspectorChromeLabel(
+  auto *clonerStructureLabel = createInspectorChromeLabel(
       QStringLiteral("Cloner Structure"),
-      InspectorChromeLabel::Role::Section, impl_->clonerStructureWidget);
+      InspectorChromeLabelRole::Section, impl_->clonerStructureWidget);
   clonerStructureLabel->setMinimumHeight(28);
   applyInspectorLabelPalette(clonerStructureLabel, true);
   clonerStructureLayout->addWidget(clonerStructureLabel);
 
   auto generatorHeaderLayout = new QHBoxLayout();
-  auto *generatorHeaderLabel = new InspectorChromeLabel(
-      QStringLiteral("Generators"), InspectorChromeLabel::Role::Section,
+  auto *generatorHeaderLabel = createInspectorChromeLabel(
+      QStringLiteral("Generators"), InspectorChromeLabelRole::Section,
       impl_->clonerStructureWidget);
   applyInspectorLabelPalette(generatorHeaderLabel, true);
   generatorHeaderLayout->addWidget(generatorHeaderLabel, 1);
@@ -5324,9 +5358,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   generatorHeaderLayout->addWidget(impl_->generatorMoveDownButton);
   generatorHeaderLayout->addWidget(impl_->removeGeneratorComponentButton);
   clonerStructureLayout->addLayout(generatorHeaderLayout);
-  impl_->generatorListWidget = new InspectorSelectionList();
+  impl_->generatorListWidget = createInspectorSelectionList();
   impl_->generatorListWidget->setItemDelegate(
-      new ComponentStackItemDelegate(impl_->generatorListWidget));
+      createInspectorComponentStackItemDelegate(impl_->generatorListWidget));
   impl_->generatorListWidget->setVisible(false);
   impl_->generatorListWidget->setMaximumHeight(96);
   impl_->generatorListWidget->setSelectionMode(
@@ -5339,8 +5373,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   clonerStructureLayout->addWidget(impl_->generatorListWidget);
 
   auto transformHeaderLayout = new QHBoxLayout();
-  auto *transformHeaderLabel = new InspectorChromeLabel(
-      QStringLiteral("Transforms"), InspectorChromeLabel::Role::Section,
+  auto *transformHeaderLabel = createInspectorChromeLabel(
+      QStringLiteral("Transforms"), InspectorChromeLabelRole::Section,
       impl_->clonerStructureWidget);
   applyInspectorLabelPalette(transformHeaderLabel, true);
   transformHeaderLayout->addWidget(transformHeaderLabel, 1);
@@ -5350,9 +5384,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   transformHeaderLayout->addWidget(impl_->transformMoveDownButton);
   transformHeaderLayout->addWidget(impl_->removeTransformComponentButton);
   clonerStructureLayout->addLayout(transformHeaderLayout);
-  impl_->transformListWidget = new InspectorSelectionList();
+  impl_->transformListWidget = createInspectorSelectionList();
   impl_->transformListWidget->setItemDelegate(
-      new ComponentStackItemDelegate(impl_->transformListWidget));
+      createInspectorComponentStackItemDelegate(impl_->transformListWidget));
   impl_->transformListWidget->setVisible(false);
   impl_->transformListWidget->setMaximumHeight(96);
   impl_->transformListWidget->setSelectionMode(
@@ -5365,8 +5399,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   clonerStructureLayout->addWidget(impl_->transformListWidget);
 
   auto fieldHeaderLayout = new QHBoxLayout();
-  auto *fieldHeaderLabel = new InspectorChromeLabel(
-      QStringLiteral("Fields"), InspectorChromeLabel::Role::Section,
+  auto *fieldHeaderLabel = createInspectorChromeLabel(
+      QStringLiteral("Fields"), InspectorChromeLabelRole::Section,
       impl_->clonerStructureWidget);
   applyInspectorLabelPalette(fieldHeaderLabel, true);
   fieldHeaderLayout->addWidget(fieldHeaderLabel, 1);
@@ -5375,9 +5409,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   fieldHeaderLayout->addWidget(impl_->fieldMoveDownButton);
   fieldHeaderLayout->addWidget(impl_->removeFieldComponentButton);
   clonerStructureLayout->addLayout(fieldHeaderLayout);
-  impl_->fieldListWidget = new InspectorSelectionList();
+  impl_->fieldListWidget = createInspectorSelectionList();
   impl_->fieldListWidget->setItemDelegate(
-      new ComponentStackItemDelegate(impl_->fieldListWidget));
+      createInspectorComponentStackItemDelegate(impl_->fieldListWidget));
   impl_->fieldListWidget->setVisible(false);
   impl_->fieldListWidget->setMaximumHeight(96);
   impl_->fieldListWidget->setSelectionMode(
@@ -5390,8 +5424,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   clonerStructureLayout->addWidget(impl_->fieldListWidget);
 
   auto cloneModifierHeaderLayout = new QHBoxLayout();
-  auto *cloneModifierHeaderLabel = new InspectorChromeLabel(
-      QStringLiteral("Clone Modifiers"), InspectorChromeLabel::Role::Section,
+  auto *cloneModifierHeaderLabel = createInspectorChromeLabel(
+      QStringLiteral("Clone Modifiers"), InspectorChromeLabelRole::Section,
       impl_->clonerStructureWidget);
   applyInspectorLabelPalette(cloneModifierHeaderLabel, true);
   cloneModifierHeaderLayout->addWidget(cloneModifierHeaderLabel, 1);
@@ -5400,9 +5434,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   cloneModifierHeaderLayout->addWidget(impl_->cloneModifierMoveDownButton);
   cloneModifierHeaderLayout->addWidget(impl_->removeCloneModifierButton);
   clonerStructureLayout->addLayout(cloneModifierHeaderLayout);
-  impl_->cloneModifierListWidget = new InspectorSelectionList();
+  impl_->cloneModifierListWidget = createInspectorSelectionList();
   impl_->cloneModifierListWidget->setItemDelegate(
-      new ComponentStackItemDelegate(impl_->cloneModifierListWidget));
+      createInspectorComponentStackItemDelegate(impl_->cloneModifierListWidget));
   impl_->cloneModifierListWidget->setVisible(false);
   impl_->cloneModifierListWidget->setMaximumHeight(96);
   impl_->cloneModifierListWidget->setSelectionMode(
@@ -5416,8 +5450,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->clonerStructureWidget->setVisible(false);
   componentsStack->appendWidget(impl_->clonerStructureWidget);
 
-  impl_->componentUtilitiesLabel = new InspectorChromeLabel(
-      QStringLiteral("Layer Utilities"), InspectorChromeLabel::Role::Section,
+  impl_->componentUtilitiesLabel = createInspectorChromeLabel(
+      QStringLiteral("Layer Utilities"), InspectorChromeLabelRole::Section,
       impl_->componentsGroup);
   applyInspectorLabelPalette(impl_->componentUtilitiesLabel, true);
   impl_->componentUtilitiesLabel->setVisible(false);
@@ -5539,7 +5573,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         !impl_->componentsGroup->isEnabled()) {
       return;
     }
-    InspectorActionMenu menu;
+    QMenu menu;
     auto *physicsAction = menu.addAction(QStringLiteral("Physics"));
     auto *scriptAction = menu.addAction(QStringLiteral("Script"));
     auto *layoutAction = menu.addAction(QStringLiteral("Layout"));
@@ -6008,7 +6042,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                impl_->generatorListWidget->currentItem()));
                      }
                    });
-  impl_->generatorListWidget->setSelectionAction(
+  setInspectorSelectionAction(impl_->generatorListWidget,
       [this](QListWidgetItem *current) {
         if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
           return;
@@ -6167,7 +6201,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->transformMoveDownButton->setAction(
       [transformMoveAction]() { transformMoveAction(
           QStringLiteral("component.cloner.transforms.moveDown")); });
-  impl_->transformListWidget->setSelectionAction(
+  setInspectorSelectionAction(impl_->transformListWidget,
       [this, resolveCurrentInspectorLayer](QListWidgetItem* current) {
         const auto layer = resolveCurrentInspectorLayer();
         if (!layer || !current) return;
@@ -6352,7 +6386,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                       impl_->fieldListWidget->currentItem()));
                      }
                    });
-  impl_->fieldListWidget->setSelectionAction(
+  setInspectorSelectionAction(impl_->fieldListWidget,
       [this](QListWidgetItem *current) {
         if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
           return;
@@ -6565,7 +6599,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                impl_->cloneModifierListWidget->currentItem()));
                      }
                    });
-  impl_->cloneModifierListWidget->setSelectionAction(
+  setInspectorSelectionAction(impl_->cloneModifierListWidget,
       [this](QListWidgetItem *current) {
         if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
           return;
@@ -6663,27 +6697,27 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsScrollArea->setWidgetResizable(true);
   impl_->effectsScrollArea->setFrameShape(QFrame::NoFrame);
   applyInspectorOwnerDrawScrollBars(impl_->effectsScrollArea);
-  impl_->effectsTabWidget = new InspectorCanvasSurface();
+  impl_->effectsTabWidget = createInspectorCanvasSurface();
   impl_->effectsTabWidget->setObjectName(QStringLiteral("inspectorEffectsTabWidget"));
   auto effectsLayout = new QVBoxLayout();
   auto *effectsHeaderFrame =
-      new EffectPanelSurface(EffectPanelSurface::Role::Header);
+      createInspectorEffectPanelSurface(InspectorEffectPanelRole::Header);
   effectsHeaderFrame->setObjectName(QStringLiteral("inspectorEffectsHeaderFrame"));
   applyInspectorPalette(effectsHeaderFrame, false);
   auto *effectsHeaderLayout = new QVBoxLayout(effectsHeaderFrame);
   effectsHeaderLayout->setContentsMargins(10, 10, 10, 10);
   effectsHeaderLayout->setSpacing(6);
 
-  impl_->effectsStateLabel = new InspectorChromeLabel(
+  impl_->effectsStateLabel = createInspectorChromeLabel(
       QStringLiteral("Open a composition to manage effects."),
-      InspectorChromeLabel::Role::Summary, effectsHeaderFrame);
+      InspectorChromeLabelRole::Summary, effectsHeaderFrame);
   impl_->effectsStateLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStateLabel, true);
   effectsHeaderLayout->addWidget(impl_->effectsStateLabel);
 
-  impl_->effectsTargetLabel = new InspectorChromeLabel(
+  impl_->effectsTargetLabel = createInspectorChromeLabel(
       QStringLiteral("Target: Select a composition to inspect effects"),
-      InspectorChromeLabel::Role::Active, effectsHeaderFrame);
+      InspectorChromeLabelRole::Active, effectsHeaderFrame);
   impl_->effectsTargetLabel->setMinimumHeight(30);
   impl_->effectsTargetLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsTargetLabel, false);
@@ -6726,15 +6760,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsModeTabs = nullptr;
 
   auto *stackPanel =
-      new EffectPanelSurface(EffectPanelSurface::Role::Stack);
+      createInspectorEffectPanelSurface(InspectorEffectPanelRole::Stack);
   stackPanel->setObjectName(QStringLiteral("inspectorEffectsStackPanel"));
   applyInspectorPalette(stackPanel, false);
   auto *stackPanelLayout = new QVBoxLayout(stackPanel);
   stackPanelLayout->setContentsMargins(8, 8, 8, 8);
   stackPanelLayout->setSpacing(8);
 
-  impl_->effectsStackSummaryLabel = new InspectorChromeLabel(
-      QStringLiteral("Effect Controls"), InspectorChromeLabel::Role::Section,
+  impl_->effectsStackSummaryLabel = createInspectorChromeLabel(
+      QStringLiteral("Effect Controls"), InspectorChromeLabelRole::Section,
       stackPanel);
   impl_->effectsStackSummaryLabel->setMinimumHeight(28);
   impl_->effectsStackSummaryLabel->setWordWrap(true);
@@ -6742,16 +6776,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   stackPanelLayout->addWidget(impl_->effectsStackSummaryLabel);
 
   auto *detailPanel =
-      new EffectPanelSurface(EffectPanelSurface::Role::Detail);
+      createInspectorEffectPanelSurface(InspectorEffectPanelRole::Detail);
   detailPanel->setObjectName(QStringLiteral("inspectorEffectsDetailPanel"));
   applyInspectorPalette(detailPanel, false);
   auto *detailPanelLayout = new QVBoxLayout(detailPanel);
   detailPanelLayout->setContentsMargins(8, 8, 8, 8);
   detailPanelLayout->setSpacing(8);
 
-  impl_->effectEditorTitleLabel = new InspectorChromeLabel(
+  impl_->effectEditorTitleLabel = createInspectorChromeLabel(
       QStringLiteral("Selected Effect Controls"),
-      InspectorChromeLabel::Role::Active, detailPanel);
+      InspectorChromeLabelRole::Active, detailPanel);
   impl_->effectEditorTitleLabel->setMinimumHeight(32);
   applyInspectorLabelPalette(impl_->effectEditorTitleLabel, true);
   detailPanelLayout->addWidget(impl_->effectEditorTitleLabel);
@@ -6772,9 +6806,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto *surfaceElementLayout = new QVBoxLayout(impl_->surfaceElementPanel);
   surfaceElementLayout->setContentsMargins(0, 2, 0, 2);
   surfaceElementLayout->setSpacing(4);
-  auto *surfaceElementTitle = new InspectorChromeLabel(
+  auto *surfaceElementTitle = createInspectorChromeLabel(
       QStringLiteral("Lens Surface Elements"),
-      InspectorChromeLabel::Role::Section, impl_->surfaceElementPanel);
+      InspectorChromeLabelRole::Section, impl_->surfaceElementPanel);
   surfaceElementTitle->setMinimumHeight(26);
   applyInspectorLabelPalette(surfaceElementTitle, false);
   surfaceElementLayout->addWidget(surfaceElementTitle);
@@ -6800,7 +6834,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     surfaceElementActions->addWidget(button, 1);
   }
   surfaceElementLayout->addLayout(surfaceElementActions);
-  impl_->surfaceElementListWidget = new InspectorSelectionList(
+  impl_->surfaceElementListWidget = createInspectorSelectionList(
       impl_->surfaceElementPanel);
   impl_->surfaceElementListWidget->setObjectName(
       QStringLiteral("lensSurfaceElementList"));
@@ -6808,7 +6842,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QAbstractItemView::SingleSelection);
   impl_->surfaceElementListWidget->setMinimumHeight(48);
   impl_->surfaceElementListWidget->setMaximumHeight(132);
-  impl_->surfaceElementListWidget->setSelectionAction(
+  setInspectorSelectionAction(impl_->surfaceElementListWidget,
       [this](QListWidgetItem *item) {
         if (!item) {
           return;
@@ -7012,14 +7046,14 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   surfaceElementLayout->addWidget(impl_->surfaceElementListWidget);
   detailPanelLayout->addWidget(impl_->surfaceElementPanel);
 
-  impl_->effectParametersHintLabel = new InspectorChromeLabel(
+  impl_->effectParametersHintLabel = createInspectorChromeLabel(
       QStringLiteral("Select an effect above to reveal its parameters here."),
-      InspectorChromeLabel::Role::Summary, detailPanel);
+      InspectorChromeLabelRole::Summary, detailPanel);
   impl_->effectParametersHintLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
   detailPanelLayout->addWidget(impl_->effectParametersHintLabel);
 
-  impl_->effectPropertySurface = new InspectorPropertySurface(
+  impl_->effectPropertySurface = createInspectorPropertySurface(
       nullptr, detailPanel);
   impl_->effectPropertySurface->setObjectName(
       QStringLiteral("inspectorEffectPropertySurface"));
@@ -7058,18 +7092,18 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                           "Rasterizer", "Layer Transform"};
 
   for (int i = 0; i < 5; ++i) {
-    auto rackGroup = new EffectRackSurface(rackNames[i]);
+    auto rackGroup = createInspectorEffectRackSurface(rackNames[i]);
     impl_->racks[i].groupBox = rackGroup;
     applyInspectorPalette(rackGroup, false);
     auto rackLayout = new QVBoxLayout();
 
-    impl_->racks[i].listWidget = new EffectRackList();
+    impl_->racks[i].listWidget = createInspectorEffectRackList();
     impl_->racks[i].listWidget->setDragEnabled(true);
     impl_->racks[i].listWidget->setAcceptDrops(true);
     impl_->racks[i].listWidget->setDropIndicatorShown(true);
     impl_->racks[i].listWidget->setDragDropMode(QAbstractItemView::DragDrop);
     impl_->racks[i].listWidget->setDefaultDropAction(Qt::MoveAction);
-    impl_->racks[i].listWidget->setReorderHandler(
+    setInspectorEffectRackReorderHandler(impl_->racks[i].listWidget,
         [this](const QStringList &effectIds, int distance) {
           if (effectIds.isEmpty() || distance == 0) {
             return;

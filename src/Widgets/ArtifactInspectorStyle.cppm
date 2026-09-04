@@ -1,5 +1,6 @@
 module;
 
+#include <QIcon>
 #include <QAbstractScrollArea>
 #include <QColor>
 #include <QFont>
@@ -22,12 +23,11 @@ module;
 
 #include <algorithm>
 
-export module Artifact.Widgets.InspectorStyle;
+module Artifact.Widgets.InspectorStyle;
 
-import Widgets.CommonStyle;
 import Widgets.Utils.CSS;
 
-export namespace Artifact {
+namespace Artifact {
 
 QColor themeColor(const QString& value, const QColor& fallback)
 {
@@ -44,7 +44,7 @@ QColor blendColor(const QColor& a, const QColor& b, const qreal t)
                             a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
 }
 
-void applyInspectorPalette(QWidget* widget, const bool elevated = false)
+void applyInspectorPalette(QWidget* widget, const bool elevated)
 {
     if (!widget) {
         return;
@@ -93,7 +93,7 @@ void applyInspectorPalette(QWidget* widget, const bool elevated = false)
     widget->setPalette(pal);
 }
 
-void applyInspectorLabelPalette(QLabel* label, const bool prominent = false)
+void applyInspectorLabelPalette(QLabel* label, const bool prominent)
 {
     if (!label) {
         return;
@@ -139,7 +139,7 @@ void applyInspectorList(QListWidget* list)
     list->setAlternatingRowColors(true);
 }
 
-void applyInspectorButton(QPushButton* button, const bool accent = false)
+void applyInspectorButton(QPushButton* button, const bool accent)
 {
     if (!button) {
         return;

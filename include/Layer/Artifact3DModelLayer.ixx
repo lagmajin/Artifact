@@ -95,6 +95,11 @@ export namespace Artifact {
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
     QString materialSignature() const;
+    // Session material-graph JSON (ShaderNode round-trip). Stored verbatim;
+    // the renderer compiles it on next draw. No undo integration yet.
+    void setMaterialGraphJson(const QString& json);
+    QString materialGraphJson() const;
+    void clearMaterialGraph();
  };
 
 }

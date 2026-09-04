@@ -54,6 +54,7 @@ public:
     bool handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer);
     bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);
     void handleMouseRelease();
+    bool cancelInteraction();
 
     bool isDragging() const { return isDragging_; }
     HandleType activeHandle() const { return activeHandle_; }

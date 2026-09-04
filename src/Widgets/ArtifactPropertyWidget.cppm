@@ -2328,9 +2328,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                     selectedChannelPaths.clear();
                     selectedChannelPaths.insert(path);
                   }
-                  for (auto *candidate : channelBox->findChildren<ArtifactPropertyEditorRowWidget*>()) {
-                    candidate->setSelectionChecked(
-                        selectedChannelPaths.contains(candidate->propertyName()));
+                   for (auto *candidate : channelBox->findChildren<QWidget*>()) {
+                     auto *row = dynamic_cast<ArtifactPropertyEditorRowWidget *>(candidate);
+                     if (!row) {
+                       continue;
+                     }
+                     row->setSelectionChecked(
+                         selectedChannelPaths.contains(row->propertyName()));
                   }
                   QStringList persisted;
                   for (const auto &selected : selectedChannelPaths)
@@ -2364,9 +2368,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
               }
               if (!selectedRow) return;
               selectedChannelPaths.insert(selectedRow->propertyName());
-              for (auto *candidate : channelBox->findChildren<ArtifactPropertyEditorRowWidget*>()) {
-                candidate->setSelectionChecked(
-                    selectedChannelPaths.contains(candidate->propertyName()));
+               for (auto *candidate : channelBox->findChildren<QWidget*>()) {
+                 auto *row = dynamic_cast<ArtifactPropertyEditorRowWidget *>(candidate);
+                 if (!row) {
+                   continue;
+                 }
+                 row->setSelectionChecked(
+                     selectedChannelPaths.contains(row->propertyName()));
               }
               QStringList persistedSelection;
               for (const auto &path : selectedChannelPaths) persistedSelection.append(path);

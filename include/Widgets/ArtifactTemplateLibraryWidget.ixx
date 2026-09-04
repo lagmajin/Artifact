@@ -1,9 +1,10 @@
 module;
-#include <QListWidget>
-#include <QEvent>
-#include <QPushButton>
 #include <QWidget>
 #include <wobjectdefs.h>
+
+class QEvent;
+class QListWidget;
+class QPushButton;
 
 export module Artifact.Widgets.TemplateLibrary;
 

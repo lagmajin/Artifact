@@ -1286,6 +1286,8 @@ public:
     return true;
   }
 
+#endif // ARTIFACT_QADS_COMPAT_BACKEND
+
   void syncTextToolOptions(ArtifactMainWindow *owner) {
     if (!owner || !toolOptionsBar) {
       return;
@@ -2164,12 +2166,17 @@ void ArtifactMainWindow::setCentralWorkspace(const QString &title,
       impl_->nativeDockWidgets.insert(QStringLiteral("Composition Viewer"),
                                       widget);
     }
-  } else {
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  else {
     widget->setParent(impl_->centralWidgetHost);
     impl_->centralWorkspaceLayout->addWidget(widget);
   }
+#endif
   widget->show();
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   impl_->primaryCenterDockAssigned = true;
+#endif
   if (impl_->dockStyleManager) {
     impl_->dockStyleManager->applyStyle();
   }
@@ -2409,10 +2416,9 @@ void ArtifactMainWindow::addDockedWidgetFloating(
   if (!impl_->startupLayoutFrozen) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
   }
-}
-#endif
+ }
 
-void ArtifactMainWindow::addLazyDockedWidgetFloating(
+ void ArtifactMainWindow::addLazyDockedWidgetFloating(
     const QString &title, const QString &dockId,
     std::function<QWidget *()> factory, const QRect &floatingGeometry) {
   if (!impl_ || !factory) {
@@ -3000,7 +3006,9 @@ void ArtifactMainWindow::enterFocusMode() {
 
   impl_->focusMode_ = true;
   impl_->focusChromeVisibility_.clear();
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   impl_->focusDockVisibility_.clear();
+#endif
 
   const auto hideChrome = [this](QWidget *widget) {
     if (!impl_ || !widget) {
@@ -3090,7 +3098,9 @@ void ArtifactMainWindow::exitFocusMode() {
     }
   }
 #endif
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   impl_->focusDockVisibility_.clear();
+#endif
   impl_->focusChromeVisibility_.clear();
   showStatusMessage(QStringLiteral("Focus mode disabled"), 1500);
 }
@@ -3191,7 +3201,9 @@ QStringList ArtifactMainWindow::dockIds() const {
         ids.append(it.key());
       }
     }
-  } else {
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  else {
     for (auto *dock : impl_->dockWidgets) {
       if (!dock)
         continue;
@@ -3204,6 +3216,7 @@ QStringList ArtifactMainWindow::dockIds() const {
       }
     }
   }
+#endif
   ids.removeDuplicates();
   return ids;
 }
@@ -3218,12 +3231,14 @@ QString ArtifactMainWindow::dockDisplayTitle(const QString &dockId) const {
   }
   if (impl_->nativeDockSurface)
     return {};
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (dock && dock->objectName() == dockId) {
       const QString title = dock->windowTitle();
       return title.isEmpty() ? dockId : title;
     }
   }
+#endif
   return {};
 }
 
@@ -3259,6 +3274,7 @@ bool ArtifactMainWindow::isDockVisible(const QString &title) const {
     }
     return false;
   }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
@@ -3268,6 +3284,7 @@ bool ArtifactMainWindow::isDockVisible(const QString &title) const {
       return dock->isVisible();
     }
   }
+#endif
   return false;
 }
 
@@ -3278,6 +3295,7 @@ bool ArtifactMainWindow::hasDock(const QString &title) const {
       impl_->nativeDockSurface->containsDock(title)) {
     return true;
   }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
@@ -3287,6 +3305,7 @@ bool ArtifactMainWindow::hasDock(const QString &title) const {
       return true;
     }
   }
+#endif
   return false;
 }
 
@@ -3415,6 +3434,7 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
     }
     return;
   }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   if (!impl_->dockBackend->manager())
     return;
 
@@ -3439,6 +3459,10 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
       return;
     }
   }
+#else
+  Q_UNUSED(dockTitle);
+  Q_UNUSED(sizes);
+#endif
 }
 
 QByteArray ArtifactMainWindow::saveDockManagerState() const {
@@ -3447,9 +3471,13 @@ QByteArray ArtifactMainWindow::saveDockManagerState() const {
   if (impl_->nativeDockSurface) {
     return impl_->nativeDockSurface->saveLayoutState();
   }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
   if (!impl_->dockBackend->manager())
     return {};
   return impl_->dockBackend ? impl_->dockBackend->saveState() : QByteArray{};
+#else
+  return {};
+#endif
 }
 
 QByteArray ArtifactMainWindow::savePortableDockLayoutState() const {
@@ -3537,7 +3565,6 @@ bool ArtifactMainWindow::resetDockManagerStateToDefault() {
     return true;
   }
 #if defined(ARTIFACT_QADS_COMPAT_BACKEND)
-#endif
   if (!impl_->dockBackend->manager()) {
     return false;
   }
@@ -3556,6 +3583,9 @@ bool ArtifactMainWindow::resetDockManagerStateToDefault() {
   }
   setWorkspaceMode(WorkspaceMode::Default);
   return true;
+#else
+  return false;
+#endif
 }
 
 void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {

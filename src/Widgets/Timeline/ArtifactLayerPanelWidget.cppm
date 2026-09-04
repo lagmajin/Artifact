@@ -147,7 +147,7 @@ private:
     return layer->labelColorIndex() == value;
   }
 
-  ArtifactAbstractLayerWeakPtr layer_;
+  ArtifactAbstractLayerWeak layer_;
   int before_ = 0;
   int after_ = 0;
   bool lastOperationSucceeded_ = true;
@@ -4357,7 +4357,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       const int beforeQuality = static_cast<int>(videoLayer->proxyQuality());
       const int afterQuality = static_cast<int>(quality);
       if (!applyLayerPanelCommand(std::make_unique<SetLayerPropertyValueCommand>(
-              videoLayer, QStringLiteral("video.proxyQuality"),
+              layer, QStringLiteral("video.proxyQuality"),
               QVariant(beforeQuality), QVariant(afterQuality),
               QStringLiteral("Change Proxy Quality")))) {
         return;
@@ -4513,7 +4513,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         updateLayout();
       };
-      const auto applyLightLinking = [lightLayer](LightLinkMode mode,
+      const auto applyLightLinking = [lightLayer, layer](LightLinkMode mode,
                                                    const QString& includeIds,
                                                    const QString& excludeIds) {
         const QVector<QPair<QString, QVariant>> values = {
@@ -4529,7 +4529,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             return false;
           }
           macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
-              lightLayer, path, property->getValue(), value,
+              layer, path, property->getValue(), value,
               QStringLiteral("Change Light Linking")));
         }
         return applyLayerPanelCommand(std::move(macro));
@@ -4666,7 +4666,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             return;
           }
           if (!applyLayerPropertyValues(
-                  group, QStringLiteral("Change Group Output Mode"),
+                   layer, QStringLiteral("Change Group Output Mode"),
                   {{QStringLiteral("group.outputMode"),
                     QVariant(static_cast<int>(mode))}})) {
             return;
@@ -4713,7 +4713,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                 }
                 if (childIndex < 0 ||
                     !applyLayerPropertyValues(
-                        group, QStringLiteral("Set Group Active Child"),
+                         layer, QStringLiteral("Set Group Active Child"),
                         {{QStringLiteral("group.activeChildIndex"),
                           QVariant(childIndex)}})) {
                   return;
@@ -4961,9 +4961,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (selectedForTransition.size() >= 2) {
         QMenu* transitionMenu = allMenu->addMenu(QStringLiteral("トランジションを追加"));
         const qint64 centerFrame = comp->framePosition().framePosition();
-        const qint64 halfSpan = std::max<qint64>(1, comp->frameRate().fps() / 2);
-        const qint64 startFrame = std::max<qint64>(comp->frameRange().start().framePosition(), centerFrame - halfSpan);
-        const qint64 endFrame = std::min<qint64>(comp->frameRange().end().framePosition(), centerFrame + halfSpan);
+         const qint64 halfSpan = std::max<qint64>(1, static_cast<qint64>(comp->frameRate().framerate() / 2.0));
+         const qint64 startFrame = std::max<qint64>(comp->frameRange().start(), centerFrame - halfSpan);
+         const qint64 endFrame = std::min<qint64>(comp->frameRange().end(), centerFrame + halfSpan);
         const QString leftName = selectedForTransition[0]->layerName();
         const QString rightName = selectedForTransition[1]->layerName();
         const auto addTransition = [comp, leftName, rightName, startFrame, endFrame](const QString& kind) {
@@ -4992,8 +4992,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                 QStringLiteral("%1 — %2  [%3-%4]")
                     .arg(existing.name)
                     .arg(existing.kind)
-                    .arg(existing.range.start().framePosition())
-                    .arg(existing.range.end().framePosition()));
+                     .arg(existing.range.start())
+                     .arg(existing.range.end()));
             itemMenu->addAction(
                 existing.enabled ? QStringLiteral("無効化") : QStringLiteral("有効化"),
                 [comp, id = existing.id, enabled = existing.enabled]() {
@@ -5030,11 +5030,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
               bool accepted = false;
               const int start = QInputDialog::getInt(
                   this, QStringLiteral("トランジション範囲"), QStringLiteral("開始フレーム"),
-                  static_cast<int>(existing.range.start().framePosition()), -1000000, 1000000, 1, &accepted);
+                 static_cast<int>(existing.range.start()), -1000000, 1000000, 1, &accepted);
               if (!accepted) return;
               const int end = QInputDialog::getInt(
                   this, QStringLiteral("トランジション範囲"), QStringLiteral("終了フレーム"),
-                  static_cast<int>(existing.range.end().framePosition()), start + 1, 1000000, 1, &accepted);
+                 static_cast<int>(existing.range.end()), start + 1, 1000000, 1, &accepted);
               if (accepted) comp->setTimelineTransitionRange(
                   existing.id, FrameRange(FramePosition(start), FramePosition(end)));
             });
@@ -5058,8 +5058,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
               QStringLiteral("%1 — %2  [%3-%4]")
                   .arg(existing.name)
                   .arg(existing.kind)
-                  .arg(existing.range.start().framePosition())
-                  .arg(existing.range.end().framePosition()));
+                   .arg(existing.range.start())
+                   .arg(existing.range.end()));
           itemMenu->addAction(
               existing.enabled ? QStringLiteral("無効化") : QStringLiteral("有効化"),
               [comp, id = existing.id, enabled = existing.enabled]() {
@@ -5096,11 +5096,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             bool accepted = false;
             const int start = QInputDialog::getInt(
                 this, QStringLiteral("トランジション範囲"), QStringLiteral("開始フレーム"),
-                static_cast<int>(existing.range.start().framePosition()), -1000000, 1000000, 1, &accepted);
+                 static_cast<int>(existing.range.start()), -1000000, 1000000, 1, &accepted);
             if (!accepted) return;
             const int end = QInputDialog::getInt(
                 this, QStringLiteral("トランジション範囲"), QStringLiteral("終了フレーム"),
-                static_cast<int>(existing.range.end().framePosition()), start + 1, 1000000, 1, &accepted);
+                 static_cast<int>(existing.range.end()), start + 1, 1000000, 1, &accepted);
             if (accepted) comp->setTimelineTransitionRange(
                 existing.id, FrameRange(FramePosition(start), FramePosition(end)));
           });

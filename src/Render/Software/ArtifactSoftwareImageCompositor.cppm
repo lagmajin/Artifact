@@ -606,6 +606,11 @@ QImage composeOpenCV(const CompositeRequest& request)
 
 } // namespace
 
+QImage compose(const CompositeRequest& request)
+{
+ return composeOpenCV(request);
+}
+
 bool qPainterSupportsBlendMode(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {

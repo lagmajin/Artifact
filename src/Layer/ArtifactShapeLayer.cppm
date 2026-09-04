@@ -16,6 +16,8 @@ module;
 #include <QRectF>
 #include <QTransform>
 #include <QLineF>
+#include <QFile>
+#include <QXmlStreamReader>
 #include <QMatrix4x4>
 #include <QVector4D>
 #include <QPolygonF>
@@ -924,11 +926,247 @@ static std::vector<ArtifactCore::ShapePath> buildProcessedShapePaths(
     bool customPathClosed,
     const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators)
 {
- const ArtifactCore::ShapePath basePath = buildLayerShapePath(
-     shapeType, width, height, cornerRadius, starPoints, starInnerRadius,
-     polygonSides, customPolygonPoints, customPolygonClosed,
-     customPathVertices, customPathClosed);
- return applyShapeOperators(basePath, operators);
+  const ArtifactCore::ShapePath basePath = buildLayerShapePath(
+      shapeType, width, height, cornerRadius, starPoints, starInnerRadius,
+      polygonSides, customPolygonPoints, customPolygonClosed,
+      customPathVertices, customPathClosed);
+  return applyShapeOperators(basePath, operators);
+}
+
+// ---- Multi-content + GPU-native helpers (gaps 1 & 3) ----
+// All painting stays on existing renderer primitives
+// (drawSolidTriangleLocal / drawThickLineLocal / drawStyledPolyline).
+// No new shader, signal, QImage, or QPainter paths are introduced here.
+
+static ArtifactCore::ShapePath buildContentShapePath(const Artifact::ShapeContent& content) {
+  const auto& g = content.geometry;
+  const int w = std::clamp(g.width, 1, kMaxShapeDimension);
+  const int h = std::clamp(g.height, 1, kMaxShapeDimension);
+  // Contents accept 2-vertex open paths (e.g. imported <line>) as
+  // stroke-only geometry; triangulation of open paths is empty by design.
+  if (g.pathVertices.size() >= 2) {
+    ArtifactCore::ShapePath path = buildCustomShapePath(g.pathVertices, g.pathClosed);
+    path.setFillRule(g.fillRule);
+    return path;
+  }
+  if (g.polygonPoints.size() >= 3) {
+    ArtifactCore::ShapePath sp;
+    sp.setPolygon(g.polygonPoints, g.polygonClosed);
+    return sp;
+  }
+  return buildShapePath(g.type, w, h,
+                        std::isfinite(g.cornerRadius) ? g.cornerRadius : 0.0f,
+                        std::clamp(g.starPoints, 3, kMaxStarPoints),
+                        std::clamp(g.starInnerRadius, 0.0f, 1.0f),
+                        std::clamp(g.polygonSides, 3, 100));
+}
+
+static QPainterPath contentPathsToPainter(const std::vector<ArtifactCore::ShapePath>& paths) {
+  QPainterPath out;
+  for (const auto& p : paths) {
+    out.addPath(p.toPainterPath());
+  }
+  return out;
+}
+
+static std::vector<ArtifactCore::ShapePath> painterToContentPaths(const QPainterPath& painter) {
+  if (painter.isEmpty()) {
+    return {};
+  }
+  const QPainterPath simplified = painter.simplified();
+  if (simplified.isEmpty()) {
+    return {};
+  }
+  return ArtifactCore::ShapePath::fromPainterPath(simplified).subpaths();
+}
+
+// Gradient parameter t in [0,1] for a local point. Fill type ints match
+// ArtifactSolidFillType: 0=Solid 1=Linear 2=Radial 3=Conical 4=Repeating 5=Mirrored.
+static float contentGradientT(const Artifact::ShapeContentFill& fill,
+                              float x, float y, float w, float h) {
+  const float cx = w * std::clamp(fill.gradientCenterX, 0.0f, 1.0f);
+  const float cy = h * std::clamp(fill.gradientCenterY, 0.0f, 1.0f);
+  const int type = static_cast<int>(fill.type);
+  if (type == 2) {
+    const float radius = std::max(w, h) * std::max(fill.gradientRadius, 0.0001f);
+    const float dx = x - cx;
+    const float dy = y - cy;
+    return std::clamp(std::sqrt(dx * dx + dy * dy) / radius, 0.0f, 1.0f);
+  }
+  if (type == 3) {
+    const float ang = std::atan2(y - cy, x - cx) * 180.0f / 3.14159265f;
+    float t = (ang - fill.gradientAngleDegrees) / 360.0f;
+    t = t - std::floor(t);
+    return std::clamp(t, 0.0f, 1.0f);
+  }
+  const float rad = fill.gradientAngleDegrees * 3.14159265f / 180.0f;
+  const float half = 0.5f * std::sqrt(w * w + h * h);
+  float t = (half <= 0.0001f)
+      ? 0.0f
+      : 0.5f + ((x - cx) * std::cos(rad) + (y - cy) * std::sin(rad)) / (2.0f * half);
+  if (type == 4) {
+    t = t - std::floor(t);
+  } else if (type == 5) {
+    const float m = t - std::floor(t / 2.0f) * 2.0f;
+    t = (m > 1.0f) ? 2.0f - m : m;
+  } else {
+    t = std::clamp(t, 0.0f, 1.0f);
+  }
+  return std::clamp(t, 0.0f, 1.0f);
+}
+
+static ArtifactCore::FloatColor contentGradientColorAt(const Artifact::ShapeContentFill& fill,
+                                                       float x, float y, float w, float h) {
+  if (fill.type == ArtifactSolidFillType::Solid) {
+    return fill.color;
+  }
+  return mixColor(fill.gradientStart, fill.gradientEnd,
+                  contentGradientT(fill, x, y, w, h));
+}
+
+// Segmented variable-width / gradient-color stroker for the GPU path.
+// Taper and along-path gradient cannot be expressed by PolylineStyle,
+// so each flattened segment is drawn with its midpoint width/color.
+// Dash + taper/gradient stays on drawStyledPolyline (dash wins).
+static void drawTaperedPolylineGPU(Artifact::ArtifactIRenderer* renderer,
+                                   const std::vector<Artifact::Detail::float2>& points,
+                                   bool closed,
+                                   float width,
+                                   float taperStart,
+                                   float taperEnd,
+                                   const ArtifactCore::FloatColor& gradStart,
+                                   const ArtifactCore::FloatColor& gradEnd,
+                                   bool gradientEnabled,
+                                   const ArtifactCore::FloatColor& baseColor,
+                                   Artifact::StrokeCap cap) {
+  if (!renderer || points.size() < 2 || !std::isfinite(width) || width <= 0.0f) {
+    return;
+  }
+  const size_t segmentCount = closed ? points.size() : (points.size() - 1);
+  if (segmentCount == 0) {
+    return;
+  }
+  std::vector<double> cumulative;
+  cumulative.reserve(segmentCount + 1);
+  cumulative.push_back(0.0);
+  double total = 0.0;
+  for (size_t i = 0; i < segmentCount; ++i) {
+    const auto& p0 = points[i % points.size()];
+    const auto& p1 = points[(i + 1) % points.size()];
+    const double dx = static_cast<double>(p1.x) - p0.x;
+    const double dy = static_cast<double>(p1.y) - p0.y;
+    total += std::sqrt(dx * dx + dy * dy);
+    cumulative.push_back(total);
+  }
+  if (total <= 1e-6) {
+    return;
+  }
+  const float t0 = std::clamp(taperStart, 0.0f, 1.0f);
+  const float t1 = std::clamp(taperEnd, 0.0f, 1.0f);
+  for (size_t i = 0; i < segmentCount; ++i) {
+    const float midT = static_cast<float>((cumulative[i] + cumulative[i + 1]) * 0.5 / total);
+    const float segWidth = std::max(0.0f, width * (t0 + (t1 - t0) * midT));
+    if (segWidth <= 0.0f) {
+      continue;
+    }
+    const ArtifactCore::FloatColor segColor = gradientEnabled
+        ? mixColor(gradStart, gradEnd, midT)
+        : baseColor;
+    auto p0 = points[i % points.size()];
+    auto p1 = points[(i + 1) % points.size()];
+    if (!closed && cap == Artifact::StrokeCap::Square) {
+      const float dx = p1.x - p0.x;
+      const float dy = p1.y - p0.y;
+      const float len = std::sqrt(dx * dx + dy * dy);
+      if (len > 1e-6f) {
+        const float ex = dx / len * segWidth * 0.5f;
+        const float ey = dy / len * segWidth * 0.5f;
+        if (i == 0) {
+          p0.x -= ex;
+          p0.y -= ey;
+        }
+        if (i + 1 == segmentCount) {
+          p1.x += ex;
+          p1.y += ey;
+        }
+      }
+    }
+    renderer->drawThickLineLocal(p0, p1, segWidth, segColor);
+  }
+}
+
+// Inside/Outside strokes without a clip path: stroke a path offset by
+// half the width so a center stroke lands exactly inside/outside.
+// Closed paths only; open paths and Line shapes keep center strokes.
+static ArtifactCore::ShapePath strokeAlignedPath(const ArtifactCore::ShapePath& path,
+                                                Artifact::StrokeAlign align,
+                                                float width) {
+  if (align == Artifact::StrokeAlign::Center || !std::isfinite(width) || width <= 0.0f) {
+    return path.clone();
+  }
+  if (path.isEmpty() || !path.isClosed()) {
+    return path.clone();
+  }
+  const double delta = static_cast<double>(width) * 0.5 *
+      (align == Artifact::StrokeAlign::Inside ? -1.0 : 1.0);
+  ArtifactCore::ShapePath offset = path.offsetPath(delta, 128);
+  if (offset.isEmpty()) {
+    return path.clone();
+  }
+  offset.setFillRule(path.fillRule());
+  return offset;
+}
+
+// Resolve per-content visible paths after merge modes.
+// Subtract removes itself and punches holes in contents below it.
+// Intersect keeps the overlap with the union below. Difference (XOR with
+// top-wins paint) repaints the symmetric difference with its own style.
+static std::vector<std::vector<ArtifactCore::ShapePath>> resolveContentVisPaths(
+    const std::vector<std::vector<ArtifactCore::ShapePath>>& processed,
+    const std::vector<Artifact::ShapeContent>& contents) {
+  std::vector<std::vector<ArtifactCore::ShapePath>> vis = processed;
+  if (processed.empty()) {
+    return vis;
+  }
+  std::vector<QPainterPath> geom(processed.size());
+  for (size_t i = 0; i < processed.size(); ++i) {
+    geom[i] = contentPathsToPainter(processed[i]);
+  }
+  for (size_t j = 0; j < contents.size() && j < vis.size(); ++j) {
+    const int mode = static_cast<int>(contents[j].merge);
+    if (mode == static_cast<int>(Artifact::ShapeContentMerge::Subtract)) {
+      if (geom[j].isEmpty()) {
+        vis[j].clear();
+        continue;
+      }
+      for (size_t k = 0; k < j; ++k) {
+        if (geom[k].isEmpty()) {
+          continue;
+        }
+        geom[k] = geom[k].subtracted(geom[j]).simplified();
+        vis[k] = painterToContentPaths(geom[k]);
+      }
+      vis[j].clear();
+      geom[j] = QPainterPath();
+    } else if (mode == static_cast<int>(Artifact::ShapeContentMerge::Intersect)) {
+      QPainterPath below;
+      for (size_t k = 0; k < j; ++k) {
+        below.addPath(geom[k]);
+      }
+      geom[j] = geom[j].intersected(below).simplified();
+      vis[j] = painterToContentPaths(geom[j]);
+    } else if (mode == static_cast<int>(Artifact::ShapeContentMerge::Difference)) {
+      QPainterPath below;
+      for (size_t k = 0; k < j; ++k) {
+        below.addPath(geom[k]);
+      }
+      const QPainterPath uni = geom[j].united(below).simplified();
+      const QPainterPath inter = geom[j].intersected(below).simplified();
+      geom[j] = uni.subtracted(inter).simplified();
+      vis[j] = painterToContentPaths(geom[j]);
+    }
+  }
+  return vis;
 }
 
 std::vector<QPointF> polygonToPoints(const QPolygonF& polygon) {
@@ -1340,8 +1578,9 @@ public:
  // Phase 3: Stroke styles
  StrokeCap strokeCap_ = StrokeCap::Flat;
  StrokeJoin strokeJoin_ = StrokeJoin::Miter;
- StrokeAlign strokeAlign_ = StrokeAlign::Center;
- std::vector<float> dashPattern_;
+  StrokeAlign strokeAlign_ = StrokeAlign::Center;
+  std::vector<float> dashPattern_;
+  float dashOffset_ = 0.0f;
 
  bool hasCustomStrokeEffects() const {
   return std::abs(strokeTaperStart_ - 1.0f) > kStrokeEffectEpsilon ||
@@ -1353,8 +1592,17 @@ public:
  std::vector<CustomPathVertex> customPathVertices_;
  bool customPathClosed_ = true;
  ArtifactCore::PathFillRule customPathFillRule_ = ArtifactCore::PathFillRule::Winding;
- std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
- ShapeCompatibilityFallback lastLoggedFallback_ = ShapeCompatibilityFallback::None;
+  std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
+  ShapeCompatibilityFallback lastLoggedFallback_ = ShapeCompatibilityFallback::None;
+
+  // Gap 1: multi-content model. Empty = legacy single-primitive behavior.
+   std::vector<Artifact::ShapeContent> shapeContents_;
+   int activeContentIndex_ = -1;
+   struct ContentDrawCache {
+   std::vector<std::vector<ArtifactCore::ShapePath>> visPaths;
+   bool valid = false;
+  };
+  ContentDrawCache contentCache_;
 
   ShapeCompatibilityFallback compatibilityFallback() const {
    if (fillEnabled_ && fillType_ != ArtifactSolidFillType::Solid) {
@@ -1402,12 +1650,13 @@ public:
    Impl() = default;
  ~Impl() = default;
    void addShape() {}
-   void markDirty() {
-    cacheDirty_ = true;
-    shapeContentCacheDirty_ = true;
-    nativeGeometryCacheDirty_ = true;
-    shapeGeometryCacheDirty_ = true;
-   }
+    void markDirty() {
+     cacheDirty_ = true;
+     shapeContentCacheDirty_ = true;
+     nativeGeometryCacheDirty_ = true;
+     shapeGeometryCacheDirty_ = true;
+     contentCache_.valid = false;
+    }
 
    const std::vector<NativePathGeometry>& nativeGeometry(
        const std::vector<ArtifactCore::ShapePath>& paths, double tolerance,
@@ -1566,12 +1815,13 @@ public:
          case StrokeJoin::Bevel: pen.setJoinStyle(Qt::BevelJoin); break;
          default:                pen.setJoinStyle(Qt::MiterJoin); break;
         }
-        if (!dashPattern_.empty()) {
-         QVector<qreal> qDash;
-         qDash.reserve(static_cast<int>(dashPattern_.size()));
-         for (float v : dashPattern_) qDash.push_back(static_cast<qreal>(v));
-         pen.setDashPattern(qDash);
-        }
+         if (!dashPattern_.empty()) {
+          QVector<qreal> qDash;
+          qDash.reserve(static_cast<int>(dashPattern_.size()));
+          for (float v : dashPattern_) qDash.push_back(static_cast<qreal>(v));
+          pen.setDashPattern(qDash);
+          pen.setDashOffset(static_cast<qreal>(dashOffset_));
+         }
         if (strokeAlign_ == StrokeAlign::Inside) {
          painter.save();
          painter.setClipPath(path);
@@ -1796,7 +2046,12 @@ void ArtifactShapeLayer::setStrokeGradientEndColor(const FloatColor& color) {
 FloatColor ArtifactShapeLayer::strokeGradientEndColor() const { return impl_->strokeGradientEndColor_; }
 
 std::vector<QPointF> ArtifactShapeLayer::direct3DCardFillPoints() const {
- if (impl_->useCachePipeline() || !impl_->fillEnabled_ ||
+  // Multi-content layers paint through the vector path; the single-card
+  // fast path cannot represent per-content styles.
+  if (!impl_->shapeContents_.empty()) {
+    return {};
+  }
+  if (impl_->useCachePipeline() || !impl_->fillEnabled_ ||
      impl_->fillType_ != ArtifactSolidFillType::Solid ||
      impl_->shapeType_ == ShapeType::Line ||
      (impl_->shapeType_ == ShapeType::Polygon &&
@@ -1833,10 +2088,13 @@ FloatColor ArtifactShapeLayer::direct3DCardFillColor() const {
 }
 
 std::vector<QPointF> ArtifactShapeLayer::direct3DCardStrokePoints() const {
- if (impl_->useCachePipeline() || !impl_->strokeEnabled_ ||
-     impl_->strokeWidth_ <= 0.0f) {
-  return {};
- }
+  if (!impl_->shapeContents_.empty()) {
+    return {};
+  }
+  if (impl_->useCachePipeline() || !impl_->strokeEnabled_ ||
+      impl_->strokeWidth_ <= 0.0f) {
+   return {};
+  }
  if (impl_->shapeContentCacheDirty_) {
   const ShapeGeomDims dims = resolveShapeGeomDims(
       this, impl_->width_, impl_->height_, impl_->cornerRadius_,
@@ -1960,6 +2218,18 @@ void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) {
  Q_EMIT changed();
 }
 std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashPattern_; }
+void ArtifactShapeLayer::setDashOffset(float offset) {
+  const float normalized = std::isfinite(offset)
+      ? std::clamp(offset, -1000000.0f, 1000000.0f) : 0.0f;
+  if (impl_->dashOffset_ == normalized) {
+    return;
+  }
+  impl_->dashOffset_ = normalized;
+  impl_->markDirty();
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+float ArtifactShapeLayer::dashOffset() const { return impl_->dashOffset_; }
 
 // Phase 5: Bezier path
 bool ArtifactShapeLayer::hasCustomPath() const { return impl_->customPathVertices_.size() >= 3; }
@@ -2010,9 +2280,19 @@ void ArtifactShapeLayer::setCustomPathFillRule(ArtifactCore::PathFillRule rule) 
 
 std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() const
 {
- // Animatable shape.* properties are evaluated at the current timeline
- // time so keyframed geometry animates during playback/rendering.
- const ShapeGeomDims dims = resolveShapeGeomDims(
+  if (impl_ && !impl_->shapeContents_.empty()) {
+    ensureContentVisPaths();
+    std::vector<ArtifactCore::ShapePath> paths;
+    for (const auto& vis : impl_->contentCache_.visPaths) {
+      for (const auto& path : vis) {
+        paths.push_back(path.clone());
+      }
+    }
+    return paths;
+  }
+  // Animatable shape.* properties are evaluated at the current timeline
+  // time so keyframed geometry animates during playback/rendering.
+  const ShapeGeomDims dims = resolveShapeGeomDims(
      this, impl_->width_, impl_->height_, impl_->cornerRadius_,
      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
 
@@ -2038,13 +2318,91 @@ ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
  core.setVisible(isVisible());
  core.setOpacity(static_cast<double>(opacity()));
 
- auto* group = core.content();
- if (!group) {
-  return core;
- }
+  auto* group = core.content();
+  if (!group) {
+   return core;
+  }
 
- // Core SVG output supports gradients via <defs>; placement/taper strokes
- // are exported as outline geometry by the core exporter.
+  // Gap 1: multi-content export keeps each content's own fill/stroke.
+  if (impl_ && !impl_->shapeContents_.empty()) {
+    ensureContentVisPaths();
+    for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
+      const auto& content = impl_->shapeContents_[ci];
+      if (!content.visible) {
+        continue;
+      }
+      ArtifactCore::FillSettings cfill;
+      cfill.enabled = content.fill.enabled;
+      if (content.fill.type == ArtifactSolidFillType::Solid) {
+        cfill.color = toQColor(content.fill.color);
+      } else {
+        cfill.gradientStart = toQColor(content.fill.gradientStart);
+        cfill.gradientEnd = toQColor(content.fill.gradientEnd);
+        cfill.gradientAngleDegrees = content.fill.gradientAngleDegrees;
+        cfill.gradientCenterX = content.fill.gradientCenterX;
+        cfill.gradientCenterY = content.fill.gradientCenterY;
+        cfill.gradientRadiusRatio =
+            std::clamp(content.fill.gradientRadius, 0.01f, 100000.0f);
+        switch (content.fill.type) {
+          case ArtifactSolidFillType::LinearGradient:
+            cfill.type = ArtifactCore::FillSettings::FillType::Linear; break;
+          case ArtifactSolidFillType::RadialGradient:
+            cfill.type = ArtifactCore::FillSettings::FillType::Radial; break;
+          case ArtifactSolidFillType::ConicalGradient:
+            cfill.type = ArtifactCore::FillSettings::FillType::Conic; break;
+          case ArtifactSolidFillType::RepeatingGradient:
+            cfill.type = ArtifactCore::FillSettings::FillType::Repeating; break;
+          case ArtifactSolidFillType::MirroredGradient:
+            cfill.type = ArtifactCore::FillSettings::FillType::Mirrored; break;
+          case ArtifactSolidFillType::Solid: break;
+        }
+      }
+      ArtifactCore::StrokeSettings cstroke(
+          toQColor(content.stroke.gradientEnabled
+                       ? mixColor(content.stroke.gradientStart,
+                                  content.stroke.gradientEnd, 0.5f)
+                       : content.stroke.color),
+          static_cast<double>(content.stroke.width));
+      cstroke.dashOffset = static_cast<double>(content.stroke.dashOffset);
+      cstroke.enabled = content.stroke.enabled && content.stroke.width > 0.0f;
+      cstroke.placement =
+          content.stroke.align == StrokeAlign::Inside
+              ? ArtifactCore::StrokePlacement::Inside
+              : (content.stroke.align == StrokeAlign::Outside
+                     ? ArtifactCore::StrokePlacement::Outside
+                     : ArtifactCore::StrokePlacement::Center);
+      cstroke.taperStartScale = content.stroke.taperStart;
+      cstroke.taperEndScale = content.stroke.taperEnd;
+      switch (content.stroke.cap) {
+        case StrokeCap::Round: cstroke.cap = ArtifactCore::LineCap::Round; break;
+        case StrokeCap::Square: cstroke.cap = ArtifactCore::LineCap::Square; break;
+        case StrokeCap::Flat:
+        default: cstroke.cap = ArtifactCore::LineCap::Butt; break;
+      }
+      switch (content.stroke.join) {
+        case StrokeJoin::Round: cstroke.join = ArtifactCore::LineJoin::Round; break;
+        case StrokeJoin::Bevel: cstroke.join = ArtifactCore::LineJoin::Bevel; break;
+        case StrokeJoin::Miter:
+        default: cstroke.join = ArtifactCore::LineJoin::Miter; break;
+      }
+      cstroke.dashPattern.reserve(content.stroke.dashPattern.size());
+      for (const float dash : content.stroke.dashPattern) {
+        cstroke.dashPattern.push_back(static_cast<double>(dash));
+      }
+      if (ci < impl_->contentCache_.visPaths.size()) {
+        for (const auto& path : impl_->contentCache_.visPaths[ci]) {
+          auto shape = std::make_unique<ArtifactCore::PathShape>(path);
+          shape->setFill(cfill);
+          shape->setStroke(cstroke);
+          group->addChild(std::move(shape));
+        }
+      }
+    }
+    return core;
+  }
+
+  // Core SVG output supports gradients via <defs>; placement/taper strokes
+  // are exported as outline geometry by the core exporter.
  ArtifactCore::FillSettings fill;
  fill.enabled = impl_->fillEnabled_;
  if (impl_->fillType_ == ArtifactSolidFillType::Solid) {
@@ -2071,12 +2429,13 @@ ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
   }
  }
 
- ArtifactCore::StrokeSettings stroke(
-     toQColor(impl_->strokeGradientEnabled_
-                  ? mixColor(impl_->strokeGradientStartColor_,
-                             impl_->strokeGradientEndColor_, 0.5f)
-                  : impl_->strokeColor_),
-     static_cast<double>(impl_->strokeWidth_));
+  ArtifactCore::StrokeSettings stroke(
+      toQColor(impl_->strokeGradientEnabled_
+                   ? mixColor(impl_->strokeGradientStartColor_,
+                              impl_->strokeGradientEndColor_, 0.5f)
+                   : impl_->strokeColor_),
+      static_cast<double>(impl_->strokeWidth_));
+  stroke.dashOffset = static_cast<double>(impl_->dashOffset_);
  stroke.enabled = impl_->strokeEnabled_ && impl_->strokeWidth_ > 0.0f;
  stroke.placement =
      impl_->strokeAlign_ == StrokeAlign::Inside
@@ -2173,22 +2532,636 @@ bool ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
      fromIndex == toIndex) {
   return false;
  }
- std::swap(impl_->shapeOperators_[static_cast<size_t>(fromIndex)],
-           impl_->shapeOperators_[static_cast<size_t>(toIndex)]);
- impl_->markDirty();
- impl_->localBoundsCacheDirty_ = true;
- impl_->shapeContentCacheDirty_ = true;
- Q_EMIT changed();
- return true;
+  std::swap(impl_->shapeOperators_[static_cast<size_t>(fromIndex)],
+            impl_->shapeOperators_[static_cast<size_t>(toIndex)]);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+// ============================================================
+// Multi-content API (gap 1)
+// ============================================================
+
+static Artifact::ShapeContent normalizedShapeContent(const Artifact::ShapeContent& content) {
+  Artifact::ShapeContent out = content;
+  auto& g = out.geometry;
+  g.width = std::clamp(g.width, 1, kMaxShapeDimension);
+  g.height = std::clamp(g.height, 1, kMaxShapeDimension);
+  const auto pixelCount = static_cast<std::uint64_t>(g.width) *
+                          static_cast<std::uint64_t>(g.height);
+  if (pixelCount > kMaxShapeCachePixels) {
+    const double scale = std::sqrt(static_cast<double>(kMaxShapeCachePixels) /
+                                   static_cast<double>(pixelCount));
+    g.width = std::max(1, static_cast<int>(std::floor(g.width * scale)));
+    g.height = std::max(1, static_cast<int>(std::floor(g.height * scale)));
+  }
+  const int rawType = static_cast<int>(g.type);
+  g.type = (rawType < static_cast<int>(Artifact::ShapeType::Rect) ||
+            rawType > static_cast<int>(Artifact::ShapeType::Square))
+      ? Artifact::ShapeType::Rect
+      : g.type;
+  g.cornerRadius = std::isfinite(g.cornerRadius)
+      ? std::clamp(g.cornerRadius, 0.0f, static_cast<float>(kMaxShapeDimension)) : 0.0f;
+  g.starPoints = std::clamp(g.starPoints, 3, kMaxStarPoints);
+  g.starInnerRadius = std::isfinite(g.starInnerRadius)
+      ? std::clamp(g.starInnerRadius, 0.0f, 1.0f) : 0.382f;
+  g.polygonSides = std::clamp(g.polygonSides, 3, kMaxShapePathVertices);
+  if (g.polygonPoints.size() > static_cast<size_t>(kMaxShapePathVertices)) {
+    g.polygonPoints.resize(static_cast<size_t>(kMaxShapePathVertices));
+  }
+  {
+    std::vector<QPointF> kept;
+    kept.reserve(g.polygonPoints.size());
+    for (const auto& p : g.polygonPoints) {
+      if (isSupportedShapePoint(p)) {
+        kept.push_back(p);
+      }
+    }
+    g.polygonPoints = std::move(kept);
+  }
+  if (g.pathVertices.size() > static_cast<size_t>(kMaxShapePathVertices)) {
+    g.pathVertices.resize(static_cast<size_t>(kMaxShapePathVertices));
+  }
+  {
+    std::vector<Artifact::CustomPathVertex> kept;
+    kept.reserve(g.pathVertices.size());
+    for (const auto& v : g.pathVertices) {
+      if (isSupportedCustomPathVertex(v)) {
+        kept.push_back(v);
+      }
+    }
+    g.pathVertices = std::move(kept);
+  }
+  out.fill.color = normalizedShapeColor(out.fill.color);
+  out.fill.gradientStart = normalizedShapeColor(out.fill.gradientStart);
+  out.fill.gradientEnd = normalizedShapeColor(out.fill.gradientEnd);
+  {
+    const int raw = std::clamp(static_cast<int>(out.fill.type),
+                               static_cast<int>(ArtifactSolidFillType::Solid),
+                               static_cast<int>(ArtifactSolidFillType::MirroredGradient));
+    out.fill.type = static_cast<ArtifactSolidFillType>(raw);
+  }
+  out.fill.gradientAngleDegrees = std::isfinite(out.fill.gradientAngleDegrees)
+      ? std::clamp(out.fill.gradientAngleDegrees, -360.0f, 360.0f) : 0.0f;
+  out.fill.gradientCenterX = std::isfinite(out.fill.gradientCenterX)
+      ? std::clamp(out.fill.gradientCenterX, 0.0f, 1.0f) : 0.5f;
+  out.fill.gradientCenterY = std::isfinite(out.fill.gradientCenterY)
+      ? std::clamp(out.fill.gradientCenterY, 0.0f, 1.0f) : 0.5f;
+  out.fill.gradientRadius = std::isfinite(out.fill.gradientRadius)
+      ? std::clamp(out.fill.gradientRadius, 0.0f, 100000.0f) : 0.5f;
+  out.stroke.color = normalizedShapeColor(out.stroke.color);
+  out.stroke.gradientStart = normalizedShapeColor(out.stroke.gradientStart);
+  out.stroke.gradientEnd = normalizedShapeColor(out.stroke.gradientEnd);
+  out.stroke.width = std::isfinite(out.stroke.width)
+      ? std::clamp(out.stroke.width, 0.0f, static_cast<float>(kMaxShapeDimension)) : 0.0f;
+  out.stroke.cap = static_cast<Artifact::StrokeCap>(std::clamp(
+      static_cast<int>(out.stroke.cap), 0, 2));
+  out.stroke.join = static_cast<Artifact::StrokeJoin>(std::clamp(
+      static_cast<int>(out.stroke.join), 0, 2));
+  out.stroke.align = static_cast<Artifact::StrokeAlign>(std::clamp(
+      static_cast<int>(out.stroke.align), 0, 2));
+  {
+    std::vector<float> dash;
+    dash.reserve(std::min(out.stroke.dashPattern.size(),
+                          static_cast<size_t>(kMaxDashPatternEntries)));
+    for (const float value : out.stroke.dashPattern) {
+      if (dash.size() >= static_cast<size_t>(kMaxDashPatternEntries)) {
+        break;
+      }
+      if (std::isfinite(value) && value > 0.001f) {
+        dash.push_back(std::min(value, static_cast<float>(kMaxShapeDimension)));
+      }
+    }
+    out.stroke.dashPattern = std::move(dash);
+  }
+  out.stroke.dashOffset = std::isfinite(out.stroke.dashOffset)
+      ? std::clamp(out.stroke.dashOffset, -1000000.0f, 1000000.0f) : 0.0f;
+  out.stroke.taperStart = std::isfinite(out.stroke.taperStart)
+      ? std::clamp(out.stroke.taperStart, 0.0f, 1.0f) : 1.0f;
+  out.stroke.taperEnd = std::isfinite(out.stroke.taperEnd)
+      ? std::clamp(out.stroke.taperEnd, 0.0f, 1.0f) : 1.0f;
+  out.opacity = std::isfinite(out.opacity) ? std::clamp(out.opacity, 0.0f, 1.0f) : 1.0f;
+  out.merge = static_cast<Artifact::ShapeContentMerge>(
+      std::clamp(static_cast<int>(out.merge), 0, 3));
+  return out;
+}
+
+Artifact::ShapeContent ArtifactShapeLayer::makeContentFromLegacy() const {
+  Artifact::ShapeContent content;
+  content.name = QStringLiteral("Shape 1");
+  if (!impl_) {
+    return content;
+  }
+  auto& g = content.geometry;
+  g.type = impl_->shapeType_;
+  g.width = impl_->width_;
+  g.height = impl_->height_;
+  g.cornerRadius = impl_->cornerRadius_;
+  g.starPoints = impl_->starPoints_;
+  g.starInnerRadius = impl_->starInnerRadius_;
+  g.polygonSides = impl_->polygonSides_;
+  g.polygonPoints = impl_->customPolygonPoints_;
+  g.polygonClosed = impl_->customPolygonClosed_;
+  g.pathVertices = impl_->customPathVertices_;
+  g.pathClosed = impl_->customPathClosed_;
+  g.fillRule = impl_->customPathFillRule_;
+  content.fill.enabled = impl_->fillEnabled_;
+  content.fill.color = impl_->fillColor_;
+  content.fill.type = impl_->fillType_;
+  content.fill.gradientStart = impl_->fillGradientStartColor_;
+  content.fill.gradientEnd = impl_->fillGradientEndColor_;
+  content.fill.gradientAngleDegrees = impl_->fillGradientAngleDegrees_;
+  content.fill.gradientCenterX = impl_->fillGradientCenterX_;
+  content.fill.gradientCenterY = impl_->fillGradientCenterY_;
+  content.fill.gradientRadius = impl_->fillGradientRadius_;
+  content.stroke.enabled = impl_->strokeEnabled_;
+  content.stroke.color = impl_->strokeColor_;
+  content.stroke.width = impl_->strokeWidth_;
+  content.stroke.cap = impl_->strokeCap_;
+  content.stroke.join = impl_->strokeJoin_;
+  content.stroke.align = impl_->strokeAlign_;
+  content.stroke.dashPattern = impl_->dashPattern_;
+  content.stroke.dashOffset = impl_->dashOffset_;
+  content.stroke.taperStart = impl_->strokeTaperStart_;
+  content.stroke.taperEnd = impl_->strokeTaperEnd_;
+  content.stroke.gradientEnabled = impl_->strokeGradientEnabled_;
+  content.stroke.gradientStart = impl_->strokeGradientStartColor_;
+  content.stroke.gradientEnd = impl_->strokeGradientEndColor_;
+  return content;
+}
+
+int ArtifactShapeLayer::shapeContentCount() const {
+  return impl_ ? static_cast<int>(impl_->shapeContents_.size()) : 0;
+}
+
+bool ArtifactShapeLayer::hasMultiShapeContents() const {
+  return shapeContentCount() > 0;
+}
+
+int ArtifactShapeLayer::addShapeContent(const Artifact::ShapeContent& content) {
+  if (!impl_) {
+    return -1;
+  }
+  if (impl_->shapeContents_.empty()) {
+    impl_->shapeContents_.push_back(makeContentFromLegacy());
+  }
+  Artifact::ShapeContent normalized = normalizedShapeContent(content);
+  if (normalized.name.isEmpty()) {
+    normalized.name = QStringLiteral("Shape %1").arg(impl_->shapeContents_.size() + 1);
+  }
+  impl_->shapeContents_.push_back(std::move(normalized));
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return static_cast<int>(impl_->shapeContents_.size()) - 1;
+}
+
+bool ArtifactShapeLayer::setShapeContentAt(int index, const Artifact::ShapeContent& content) {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeContents_.size())) {
+    return false;
+  }
+  impl_->shapeContents_[static_cast<size_t>(index)] = normalizedShapeContent(content);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+Artifact::ShapeContent ArtifactShapeLayer::shapeContentAt(int index) const {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeContents_.size())) {
+    return Artifact::ShapeContent();
+  }
+  return impl_->shapeContents_[static_cast<size_t>(index)];
+}
+
+bool ArtifactShapeLayer::removeShapeContentAt(int index) {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeContents_.size())) {
+    return false;
+  }
+  impl_->shapeContents_.erase(impl_->shapeContents_.begin() + index);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+void ArtifactShapeLayer::clearShapeContents() {
+  if (!impl_ || impl_->shapeContents_.empty()) {
+    return;
+  }
+  impl_->shapeContents_.clear();
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+
+int ArtifactShapeLayer::activeContentIndex() const {
+  return impl_ ? impl_->activeContentIndex_ : -1;
+}
+
+bool ArtifactShapeLayer::setActiveContentIndex(int index) {
+  if (!impl_) {
+    return false;
+  }
+  if (index < -1 ||
+      index >= static_cast<int>(impl_->shapeContents_.size())) {
+    return false;
+  }
+  impl_->activeContentIndex_ = index;
+  Q_EMIT changed();
+  return true;
+}
+
+ArtifactShapeLayer::ShapeContentProxy::ShapeContentProxy(
+    ArtifactShapeLayer* layer, int index)
+    : layer_(layer), index_(index) {}
+
+bool ArtifactShapeLayer::ShapeContentProxy::isValid() const {
+  return layer_ && index_ >= 0 &&
+         index_ < layer_->shapeContentCount();
+}
+
+Artifact::ShapeContent ArtifactShapeLayer::ShapeContentProxy::content() const {
+  return isValid() ? layer_->shapeContentAt(index_) : Artifact::ShapeContent();
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setContent(const ShapeContent& c) {
+  if (isValid()) {
+    layer_->setShapeContentAt(index_, c);
+  }
+}
+
+Artifact::ShapeContent ArtifactShapeLayer::ShapeContentProxy::pull() const {
+  return isValid() ? layer_->shapeContentAt(index_) : Artifact::ShapeContent();
+}
+
+QString ArtifactShapeLayer::ShapeContentProxy::name() const {
+  const auto c = pull();
+  return c.name;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setName(const QString& name) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.name = name;
+  setContent(c);
+}
+
+bool ArtifactShapeLayer::ShapeContentProxy::visible() const {
+  const auto c = pull();
+  return c.visible;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setVisible(bool visible) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.visible = visible;
+  setContent(c);
+}
+
+float ArtifactShapeLayer::ShapeContentProxy::opacity() const {
+  const auto c = pull();
+  return c.opacity;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setOpacity(float opacity) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.opacity = std::isfinite(opacity) ? std::clamp(opacity, 0.0f, 1.0f) : 1.0f;
+  setContent(c);
+}
+
+Artifact::ShapeContentMerge ArtifactShapeLayer::ShapeContentProxy::merge() const {
+  const auto c = pull();
+  return c.merge;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setMerge(ShapeContentMerge merge) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.merge = merge;
+  setContent(c);
+}
+
+Artifact::ShapeContentFill ArtifactShapeLayer::ShapeContentProxy::fill() const {
+  const auto c = pull();
+  return c.fill;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setFill(const ShapeContentFill& fill) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.fill = fill;
+  setContent(c);
+}
+
+Artifact::ShapeContentStroke ArtifactShapeLayer::ShapeContentProxy::stroke() const {
+  const auto c = pull();
+  return c.stroke;
+}
+
+void ArtifactShapeLayer::ShapeContentProxy::setStroke(const ShapeContentStroke& stroke) {
+  if (!isValid()) {
+    return;
+  }
+  auto c = pull();
+  c.stroke = stroke;
+  setContent(c);
+}
+
+bool ArtifactShapeLayer::ShapeContentProxy::duplicate() {
+  if (!isValid()) {
+    return false;
+  }
+  layer_->duplicateShapeContent(index_);
+  return true;
+}
+
+ArtifactShapeLayer::ShapeContentProxy ArtifactShapeLayer::activeContent() {
+  return ShapeContentProxy(this, impl_ ? impl_->activeContentIndex_ : -1);
+}
+
+int ArtifactShapeLayer::duplicateShapeContent(int index) {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeContents_.size())) {
+    return -1;
+  }
+  auto content = normalizedShapeContent(
+      impl_->shapeContents_[static_cast<size_t>(index)]);
+  content.name = QStringLiteral("Copy of %1").arg(content.name);
+  impl_->shapeContents_.insert(
+      impl_->shapeContents_.begin() + index + 1, content);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return index + 1;
+}
+
+bool ArtifactShapeLayer::moveShapeContent(int fromIndex, int toIndex) {
+  if (!impl_ || fromIndex < 0 || toIndex < 0 ||
+      fromIndex >= static_cast<int>(impl_->shapeContents_.size()) ||
+      toIndex >= static_cast<int>(impl_->shapeContents_.size())) {
+    return false;
+  }
+  if (fromIndex == toIndex) {
+    return true;
+  }
+  auto content = std::move(impl_->shapeContents_[static_cast<size_t>(fromIndex)]);
+  impl_->shapeContents_.erase(impl_->shapeContents_.begin() + fromIndex);
+  const int dest = toIndex > fromIndex ? toIndex - 1 : toIndex;
+  impl_->shapeContents_.insert(
+      impl_->shapeContents_.begin() + dest, std::move(content));
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactShapeLayer::insertShapeContent(int index, const ShapeContent& content) {
+  if (!impl_ || index < 0 ||
+      index > static_cast<int>(impl_->shapeContents_.size())) {
+    return false;
+  }
+  if (impl_->shapeContents_.empty()) {
+    impl_->shapeContents_.push_back(makeContentFromLegacy());
+  }
+  impl_->shapeContents_.insert(
+      impl_->shapeContents_.begin() + index, normalizedShapeContent(content));
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactShapeLayer::swapShapeContents(int a, int b) {
+  if (!impl_ || a < 0 || b < 0 ||
+      a >= static_cast<int>(impl_->shapeContents_.size()) ||
+      b >= static_cast<int>(impl_->shapeContents_.size())) {
+    return false;
+  }
+  if (a == b) {
+    return true;
+  }
+  std::swap(impl_->shapeContents_[static_cast<size_t>(a)],
+            impl_->shapeContents_[static_cast<size_t>(b)]);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+void ArtifactShapeLayer::ensureContentVisPaths() const {
+  if (!impl_ || impl_->contentCache_.valid || impl_->shapeContents_.empty()) {
+    return;
+  }
+  std::vector<std::vector<ArtifactCore::ShapePath>> processed;
+  processed.reserve(impl_->shapeContents_.size());
+  for (const auto& content : impl_->shapeContents_) {
+    processed.push_back(
+        applyShapeOperators(buildContentShapePath(content), impl_->shapeOperators_));
+  }
+  impl_->contentCache_.visPaths =
+      resolveContentVisPaths(processed, impl_->shapeContents_);
+  impl_->contentCache_.valid = true;
 }
 
 // ============================================================
 // toQImage (Software rendering)
 // ============================================================
 
+QImage ArtifactShapeLayer::renderContentsToImage() const {
+  const QRectF bounds = localBounds();
+  if (!impl_ || bounds.isNull() || !bounds.isValid()) {
+    return {};
+  }
+  int imgW = std::clamp(static_cast<int>(std::ceil(bounds.width())), 1, kMaxShapeDimension);
+  int imgH = std::clamp(static_cast<int>(std::ceil(bounds.height())), 1, kMaxShapeDimension);
+  const auto pixelCount = static_cast<std::uint64_t>(imgW) * static_cast<std::uint64_t>(imgH);
+  if (pixelCount > kMaxShapeCachePixels) {
+    const double scale = std::sqrt(static_cast<double>(kMaxShapeCachePixels) /
+                                   static_cast<double>(pixelCount));
+    imgW = std::max(1, static_cast<int>(std::floor(imgW * scale)));
+    imgH = std::max(1, static_cast<int>(std::floor(imgH * scale)));
+  }
+  QImage img(imgW, imgH, QImage::Format_ARGB32_Premultiplied);
+  img.fill(Qt::transparent);
+  QPainter painter(&img);
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.translate(-bounds.left(), -bounds.top());
+  ensureContentVisPaths();
+  for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
+    const auto& content = impl_->shapeContents_[ci];
+    if (!content.visible || content.opacity <= 0.0f) {
+      continue;
+    }
+    if (ci >= impl_->contentCache_.visPaths.size()) {
+      continue;
+    }
+    const float gw = static_cast<float>(std::max(1, content.geometry.width));
+    const float gh = static_cast<float>(std::max(1, content.geometry.height));
+    QBrush fillBrush;
+    if (content.fill.type != ArtifactSolidFillType::Solid) {
+      const float cx = gw * content.fill.gradientCenterX;
+      const float cy = gh * content.fill.gradientCenterY;
+      const float radius = std::max(gw, gh) * content.fill.gradientRadius;
+      QGradient* grad = nullptr;
+      if (content.fill.type == ArtifactSolidFillType::LinearGradient ||
+          content.fill.type == ArtifactSolidFillType::RepeatingGradient ||
+          content.fill.type == ArtifactSolidFillType::MirroredGradient) {
+        const float rad = content.fill.gradientAngleDegrees * static_cast<float>(M_PI) / 180.0f;
+        const float dx = std::cos(rad) * gw * 0.5f;
+        const float dy = std::sin(rad) * gh * 0.5f;
+        auto* linear = new QLinearGradient(QPointF(cx - dx, cy - dy), QPointF(cx + dx, cy + dy));
+        if (content.fill.type == ArtifactSolidFillType::RepeatingGradient) {
+          linear->setSpread(QGradient::RepeatSpread);
+        } else if (content.fill.type == ArtifactSolidFillType::MirroredGradient) {
+          linear->setSpread(QGradient::ReflectSpread);
+        }
+        grad = linear;
+      } else if (content.fill.type == ArtifactSolidFillType::RadialGradient) {
+        grad = new QRadialGradient(QPointF(cx, cy), radius);
+      } else {
+        grad = new QConicalGradient(QPointF(cx, cy), content.fill.gradientAngleDegrees);
+      }
+      grad->setColorAt(0.0, toQColor(FloatColor(
+          content.fill.gradientStart.r(), content.fill.gradientStart.g(),
+          content.fill.gradientStart.b(),
+          content.fill.gradientStart.a() * content.opacity)));
+      grad->setColorAt(1.0, toQColor(FloatColor(
+          content.fill.gradientEnd.r(), content.fill.gradientEnd.g(),
+          content.fill.gradientEnd.b(),
+          content.fill.gradientEnd.a() * content.opacity)));
+      fillBrush = QBrush(*grad);
+      delete grad;
+    } else {
+      fillBrush = QColor(
+          static_cast<int>(content.fill.color.r() * 255),
+          static_cast<int>(content.fill.color.g() * 255),
+          static_cast<int>(content.fill.color.b() * 255),
+          static_cast<int>(content.fill.color.a() * content.opacity * 255));
+    }
+    const bool useTaper =
+        std::abs(content.stroke.taperStart - 1.0f) > kStrokeEffectEpsilon ||
+        std::abs(content.stroke.taperEnd - 1.0f) > kStrokeEffectEpsilon ||
+        content.stroke.gradientEnabled;
+    const bool canTaper = useTaper &&
+        content.stroke.align == StrokeAlign::Center &&
+        content.stroke.join == StrokeJoin::Miter &&
+        content.stroke.dashPattern.empty();
+    bool pathClosed = content.geometry.type != Artifact::ShapeType::Line;
+    if (content.geometry.pathVertices.size() >= 3) {
+      pathClosed = content.geometry.pathClosed;
+    } else if (content.geometry.polygonPoints.size() >= 3) {
+      pathClosed = content.geometry.polygonClosed;
+    }
+    for (const auto& shapePath : impl_->contentCache_.visPaths[ci]) {
+      const QPainterPath path = shapePath.toPainterPath();
+      if (path.isEmpty()) {
+        continue;
+      }
+      if (content.fill.enabled) {
+        painter.fillPath(path, fillBrush);
+      }
+      if (content.stroke.enabled && content.stroke.width > 0.0f) {
+        if (canTaper) {
+          const auto subpaths = path.toSubpathPolygons();
+          const FloatColor gs = content.stroke.gradientEnabled
+              ? content.stroke.gradientStart : content.stroke.color;
+          const FloatColor ge = content.stroke.gradientEnabled
+              ? content.stroke.gradientEnd : content.stroke.color;
+          for (const QPolygonF& subpath : subpaths) {
+            drawStrokePath(painter, polygonToPoints(subpath), pathClosed,
+                           content.stroke.width, content.stroke.taperStart,
+                           content.stroke.taperEnd, content.stroke.gradientEnabled,
+                           content.stroke.color, gs, ge, content.stroke.cap);
+          }
+        } else {
+          QColor sc(static_cast<int>(content.stroke.color.r() * 255),
+                    static_cast<int>(content.stroke.color.g() * 255),
+                    static_cast<int>(content.stroke.color.b() * 255),
+                    static_cast<int>(content.stroke.color.a() * content.opacity * 255));
+          QPen pen(sc, content.stroke.width);
+          switch (content.stroke.cap) {
+            case StrokeCap::Round: pen.setCapStyle(Qt::RoundCap); break;
+            case StrokeCap::Square: pen.setCapStyle(Qt::SquareCap); break;
+            default: pen.setCapStyle(Qt::FlatCap); break;
+          }
+          switch (content.stroke.join) {
+            case StrokeJoin::Round: pen.setJoinStyle(Qt::RoundJoin); break;
+            case StrokeJoin::Bevel: pen.setJoinStyle(Qt::BevelJoin); break;
+            default: pen.setJoinStyle(Qt::MiterJoin); break;
+          }
+           if (!content.stroke.dashPattern.empty()) {
+             QVector<qreal> qDash;
+             qDash.reserve(static_cast<int>(content.stroke.dashPattern.size()));
+             for (float v : content.stroke.dashPattern) {
+               qDash.push_back(static_cast<qreal>(v));
+             }
+             pen.setDashPattern(qDash);
+             pen.setDashOffset(static_cast<qreal>(content.stroke.dashOffset));
+           }
+          if (content.stroke.align == StrokeAlign::Inside) {
+            painter.save();
+            painter.setClipPath(path);
+            QPen widePen = pen;
+            widePen.setWidthF(static_cast<qreal>(content.stroke.width) * 2.0);
+            painter.setPen(widePen);
+            painter.drawPath(path);
+            painter.restore();
+          } else if (content.stroke.align == StrokeAlign::Outside) {
+            painter.save();
+            QPainterPath outside;
+            outside.addRect(QRectF(bounds.left() - 2, bounds.top() - 2,
+                                   bounds.width() + 4, bounds.height() + 4));
+            outside = outside.subtracted(path);
+            painter.setClipPath(outside);
+            QPen widePen = pen;
+            widePen.setWidthF(static_cast<qreal>(content.stroke.width) * 2.0);
+            painter.setPen(widePen);
+            painter.drawPath(path);
+            painter.restore();
+          } else {
+            painter.setPen(pen);
+            painter.drawPath(path);
+          }
+        }
+      }
+    }
+  }
+  painter.end();
+  return img;
+}
+
 QImage ArtifactShapeLayer::toQImage() const {
- const bool geomAnimated = hasAnimatedShapeGeometry(this);
- const bool pathAnimated = hasPathKeyframes();
+  if (impl_ && !impl_->shapeContents_.empty()) {
+    return renderContentsToImage();
+  }
+  const bool geomAnimated = hasAnimatedShapeGeometry(this);
+  const bool pathAnimated = hasPathKeyframes();
  if (geomAnimated || pathAnimated) {
   const ShapeGeomDims dims = resolveShapeGeomDims(
       this, impl_->width_, impl_->height_, impl_->cornerRadius_,
@@ -2216,6 +3189,47 @@ QImage ArtifactShapeLayer::getThumbnail(int width, int height) const
 
 QRectF ArtifactShapeLayer::localBounds() const
 {
+  if (impl_ && !impl_->shapeContents_.empty()) {
+    if (!impl_->localBoundsCacheDirty_) {
+      return impl_->cachedLocalBounds_;
+    }
+    ensureContentVisPaths();
+    QRectF bounds;
+    qreal maxPad = 0.5;
+    for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
+      const auto& content = impl_->shapeContents_[ci];
+      if (!content.visible) {
+        continue;
+      }
+      if (ci < impl_->contentCache_.visPaths.size()) {
+        for (const auto& path : impl_->contentCache_.visPaths[ci]) {
+          const QRectF pathBounds = path.boundingRect();
+          bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
+        }
+      }
+      if (content.stroke.enabled && content.stroke.width > 0.0f) {
+        const qreal w = static_cast<qreal>(content.stroke.width);
+        qreal pad = content.stroke.align == StrokeAlign::Outside
+            ? w
+            : (content.stroke.align == StrokeAlign::Center ? w * 0.5 : 0.0);
+        if (content.stroke.join == StrokeJoin::Miter) {
+          pad = std::max(pad, std::max<qreal>(1.0, w) * 4.0);
+        }
+        maxPad = std::max(maxPad, pad);
+      }
+    }
+    if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+      const auto size = sourceSize();
+      if (size.width <= 0 || size.height <= 0) {
+        return QRectF();
+      }
+      bounds = QRectF(0.0, 0.0, static_cast<qreal>(size.width),
+                      static_cast<qreal>(size.height));
+    }
+    impl_->cachedLocalBounds_ = bounds.adjusted(-maxPad, -maxPad, maxPad, maxPad);
+    impl_->localBoundsCacheDirty_ = false;
+    return impl_->cachedLocalBounds_;
+  }
   const bool geomAnimated = hasAnimatedShapeGeometry(this);
   const bool pathAnimated = hasPathKeyframes();
   const std::vector<CustomPathVertex> evaluatedPathVertices =
@@ -2302,6 +3316,42 @@ QRectF ArtifactShapeLayer::localBounds() const
 
 std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
 {
+  // Multi-content: concatenate per-content outlines (custom path, polygon,
+  // or primitive sample points). Operator/merge reshaping falls back to
+  // the auto-bounds path, same as the legacy operator case below.
+  if (impl_ && !impl_->shapeContents_.empty()) {
+    if (!impl_->shapeOperators_.empty()) {
+      return {};
+    }
+    std::vector<QPointF> points;
+    for (const auto& content : impl_->shapeContents_) {
+      if (!content.visible) {
+        continue;
+      }
+      const auto& g = content.geometry;
+      if (g.pathVertices.size() >= 3) {
+        for (const auto& vertex : g.pathVertices) {
+          points.push_back(vertex.pos);
+        }
+        continue;
+      }
+      if (g.polygonPoints.size() >= 3) {
+        for (const auto& p : g.polygonPoints) {
+          points.push_back(p);
+        }
+        continue;
+      }
+      if (g.type == Artifact::ShapeType::Line) {
+        continue;
+      }
+      const auto sampled = buildRenderablePoints(
+          g.type, std::max(1, g.width), std::max(1, g.height), g.cornerRadius,
+          std::max(3, g.starPoints), g.starInnerRadius, std::max(3, g.polygonSides),
+          g.polygonPoints, g.polygonClosed);
+      points.insert(points.end(), sampled.begin(), sampled.end());
+    }
+    return points;
+  }
   // Operator stacks reshape the outline; a stale proxy would misrepresent the
   // collision shape, so fall back to the auto-bounds path instead.
   if (!impl_->shapeOperators_.empty()) {
@@ -2335,6 +3385,122 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
                                impl_->customPolygonClosed_);
 }
 // ============================================================
+// GPU vector painting (gaps 1 & 3)
+// ============================================================
+
+struct GpuPaintItem {
+  std::vector<ArtifactCore::ShapePath> fillPaths;
+  std::vector<ArtifactCore::ShapePath> strokePaths;
+  Artifact::ShapeContentFill fill;
+  Artifact::ShapeContentStroke stroke;
+  float gradientW = 1.0f;
+  float gradientH = 1.0f;
+  float itemOpacity = 1.0f;
+};
+
+// Unified GPU painter for gradient fills, Inside/Outside strokes and
+// taper/gradient strokes. Triangulation is intentionally fresh per frame:
+// this path replaces the QImage cache sprite, which was strictly more
+// expensive. The legacy solid fast paths below keep their caches.
+static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
+                               const QMatrix4x4& transform,
+                               float baseOpacity,
+                               const std::vector<GpuPaintItem>& items,
+                               double tolerance,
+                               float renderScale) {
+  if (!renderer || items.empty()) {
+    return;
+  }
+  const double tol = (std::isfinite(tolerance) && tolerance > 0.0) ? tolerance : 0.25;
+  for (const auto& item : items) {
+    const float opacity = baseOpacity * item.itemOpacity;
+    const bool hasStroke = item.stroke.enabled && item.stroke.width > 0.0f;
+    if (opacity <= 0.0f || (!item.fill.enabled && !hasStroke)) {
+      continue;
+    }
+    const float gradW = item.gradientW > 0.0f ? item.gradientW : 1.0f;
+    const float gradH = item.gradientH > 0.0f ? item.gradientH : 1.0f;
+    if (item.fill.enabled) {
+      for (const auto& path : item.fillPaths) {
+        const auto triangles = path.triangulate(tol);
+        for (const auto& tri : triangles) {
+          const double cx = (tri.p0.x() + tri.p1.x() + tri.p2.x()) / 3.0;
+          const double cy = (tri.p0.y() + tri.p1.y() + tri.p2.y()) / 3.0;
+          ArtifactCore::FloatColor c = contentGradientColorAt(
+              item.fill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH);
+          c = ArtifactCore::FloatColor(c.r(), c.g(), c.b(), c.a() * opacity);
+          const QPointF p0 = mapPoint(transform, tri.p0);
+          const QPointF p1 = mapPoint(transform, tri.p1);
+          const QPointF p2 = mapPoint(transform, tri.p2);
+          renderer->drawSolidTriangleLocal(
+              {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+              {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+              {static_cast<float>(p2.x()), static_cast<float>(p2.y())}, c);
+        }
+      }
+    }
+    if (hasStroke) {
+      const bool hasTaper =
+          std::abs(item.stroke.taperStart - 1.0f) > kStrokeEffectEpsilon ||
+          std::abs(item.stroke.taperEnd - 1.0f) > kStrokeEffectEpsilon;
+      // Taper needs the segmented stroker (PolylineStyle has no taper
+      // channel). Gradient-only and dashed strokes stay on
+      // drawStyledPolyline so joins, caps, dash phase and along-path
+      // gradient compose. Dash wins over taper.
+      const bool useTaper = hasTaper && item.stroke.dashPattern.empty();
+      const float thickness = std::max(1.0f, item.stroke.width * renderScale);
+      const ArtifactCore::FloatColor baseStroke = ArtifactCore::FloatColor(
+          item.stroke.color.r(), item.stroke.color.g(), item.stroke.color.b(),
+          item.stroke.color.a() * opacity);
+      const ArtifactCore::FloatColor gradStrokeStart = ArtifactCore::FloatColor(
+          item.stroke.gradientStart.r(), item.stroke.gradientStart.g(),
+          item.stroke.gradientStart.b(), item.stroke.gradientStart.a() * opacity);
+      const ArtifactCore::FloatColor gradStrokeEnd = ArtifactCore::FloatColor(
+          item.stroke.gradientEnd.r(), item.stroke.gradientEnd.g(),
+          item.stroke.gradientEnd.b(), item.stroke.gradientEnd.a() * opacity);
+      for (const auto& strokePath : item.strokePaths) {
+        const auto subpaths = strokePath.flattenSubpaths(tol);
+        for (const auto& segments : subpaths) {
+          if (segments.empty()) {
+            continue;
+          }
+          std::vector<Artifact::Detail::float2> points;
+          points.reserve(segments.size() + 1);
+          for (const auto& segment : segments) {
+            const QPointF p = mapPoint(transform, segment.p0);
+            points.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
+          }
+          const QPointF end = mapPoint(transform, segments.back().p1);
+          points.push_back({static_cast<float>(end.x()), static_cast<float>(end.y())});
+          const bool closed = points.size() > 2 &&
+              std::hypot(points.front().x - points.back().x,
+                         points.front().y - points.back().y) < 0.01f;
+          if (useTaper) {
+            drawTaperedPolylineGPU(renderer, points, closed, thickness,
+                                   item.stroke.taperStart, item.stroke.taperEnd,
+                                   gradStrokeStart, gradStrokeEnd,
+                                   item.stroke.gradientEnabled, baseStroke,
+                                   item.stroke.cap);
+          } else {
+            PolylineStyle style;
+            style.thickness = thickness;
+            style.cap = static_cast<PolylineCap>(item.stroke.cap);
+            style.join = static_cast<PolylineJoin>(item.stroke.join);
+            style.closed = closed;
+            style.dashPattern = item.stroke.dashPattern;
+            style.dashOffset = item.stroke.dashOffset;
+            style.gradientEnabled = item.stroke.gradientEnabled;
+            style.gradientStart = gradStrokeStart;
+            style.gradientEnd = gradStrokeEnd;
+            renderer->drawStyledPolyline(points, style, baseStroke);
+          }
+        }
+      }
+    }
+  }
+}
+
+// ============================================================
 // draw (GPU rendering)
 // ============================================================
 
@@ -2342,9 +3508,77 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
  if (!renderer) {
   return;
  }
- const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-  const float contentFieldWeight = compositionFieldContentWeight(this);
- auto* impl = impl_;
+  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+   const float contentFieldWeight = compositionFieldContentWeight(this);
+  auto* impl = impl_;
+  // Gap 1: multi-content GPU rendering. Each visible content paints with its
+  // own fill/stroke after merge resolution. Physics grids stay legacy-only.
+  if (!impl->shapeContents_.empty()) {
+   const bool contentsOpsAnimated = hasAnimatedShapeOperators(this);
+   std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> contentsOpClones;
+   if (contentsOpsAnimated) {
+    contentsOpClones.reserve(impl->shapeOperators_.size());
+    for (const auto& op : impl->shapeOperators_) {
+     contentsOpClones.push_back(op->clone());
+    }
+    applyAnimatedOperatorParameters(this, contentsOpClones);
+    std::vector<std::vector<ArtifactCore::ShapePath>> processed;
+    processed.reserve(impl->shapeContents_.size());
+    for (const auto& content : impl->shapeContents_) {
+     processed.push_back(
+         applyShapeOperators(buildContentShapePath(content), contentsOpClones));
+    }
+    impl->contentCache_.visPaths =
+        resolveContentVisPaths(processed, impl->shapeContents_);
+    impl->contentCache_.valid = false;
+   } else {
+    ensureContentVisPaths();
+   }
+   std::vector<GpuPaintItem> contentItems;
+   contentItems.reserve(impl->shapeContents_.size());
+   for (size_t ci = 0; ci < impl->shapeContents_.size(); ++ci) {
+    const auto& content = impl->shapeContents_[ci];
+    if (!content.visible || content.opacity <= 0.0f) {
+     continue;
+    }
+    if (ci >= impl->contentCache_.visPaths.size() ||
+        impl->contentCache_.visPaths[ci].empty()) {
+     continue;
+    }
+    GpuPaintItem item;
+    item.fillPaths = impl->contentCache_.visPaths[ci];
+    item.strokePaths.reserve(item.fillPaths.size());
+    for (const auto& path : item.fillPaths) {
+     item.strokePaths.push_back(
+         strokeAlignedPath(path, content.stroke.align, content.stroke.width));
+    }
+    item.fill = content.fill;
+    item.stroke = content.stroke;
+    item.gradientW = static_cast<float>(std::max(1, content.geometry.width));
+    item.gradientH = static_cast<float>(std::max(1, content.geometry.height));
+    item.itemOpacity = content.opacity;
+    contentItems.push_back(std::move(item));
+   }
+   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
+    drawWithClonerEffect(
+        this, lensPass.transform,
+        [renderer, this, contentItems, contentFieldWeight,
+         lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+         const float baseOpacity =
+             this->opacity() * weight * contentFieldWeight * lensOpacity;
+         const double scaleX = std::hypot(static_cast<double>(transform(0, 0)),
+                                          static_cast<double>(transform(1, 0)));
+         const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
+                                          static_cast<double>(transform(1, 1)));
+         const double renderScale = std::max({1.0, scaleX, scaleY});
+         paintGpuPaintItems(renderer, transform, baseOpacity, contentItems,
+                             0.25 / renderScale, static_cast<float>(renderScale));
+        });
+   }
+   drawFractureOverlay(renderer, baseTransform, localBounds().size(),
+                       opacity() * contentFieldWeight);
+   return;
+  }
   const bool geomAnimated = hasAnimatedShapeGeometry(this);
   const bool pathAnimated = hasPathKeyframes();
   const std::vector<CustomPathVertex> evaluatedPathVertices =
@@ -2437,9 +3671,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                1.0f, impl->strokeWidth_ * static_cast<float>(renderScale));
            style.cap = static_cast<PolylineCap>(impl->strokeCap_);
            style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
-           style.closed = closed;
-           style.dashPattern = impl->dashPattern_;
-           renderer->drawStyledPolyline(points, style, drawStroke);
+            style.closed = closed;
+            style.dashPattern = impl->dashPattern_;
+            style.dashOffset = impl->dashOffset_;
+            renderer->drawStyledPolyline(points, style, drawStroke);
           }
          }
         }
@@ -2451,46 +3686,90 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    return;
   }
   }
- // Non-solid fills and custom stroke effects still use the compatibility
- // cache. Operator paths meeting the native candidate contract are handled
- // above; simple custom Bézier paths use ShapePath::flatten().
- if (impl->useCachePipeline()) {
-  const ShapeCompatibilityFallback fallback = impl->compatibilityFallback();
-  if (fallback != impl->lastLoggedFallback_) {
-   qInfo() << "[ArtifactShapeLayer] compatibility fallback:"
-           << compatibilityFallbackName(fallback);
-   impl->lastLoggedFallback_ = fallback;
+  // Gap 3: gradient fills, Inside/Outside strokes, taper/gradient strokes
+  // and operator stacks render on the GPU vector path instead of the QImage
+  // cache sprite. The cache remains for toQImage()/thumbnails only.
+  const bool needsUnifiedGpu =
+      (impl->fillEnabled_ && impl->fillType_ != ArtifactSolidFillType::Solid) ||
+      (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f &&
+       (impl->strokeAlign_ != StrokeAlign::Center || impl->hasCustomStrokeEffects()));
+  if (!nativeOperatorCandidate && needsUnifiedGpu) {
+   const ShapeCompatibilityFallback unifiedFallback = impl->compatibilityFallback();
+   if (unifiedFallback != impl->lastLoggedFallback_) {
+    qInfo() << "[ArtifactShapeLayer] gpu vector path:"
+            << compatibilityFallbackName(unifiedFallback);
+    impl->lastLoggedFallback_ = unifiedFallback;
+   }
+   std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> legacyOpClones;
+   const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>* legacyOps =
+       &impl->shapeOperators_;
+   if (operatorsAnimated) {
+    legacyOpClones.reserve(impl->shapeOperators_.size());
+    for (const auto& op : impl->shapeOperators_) {
+     legacyOpClones.push_back(op->clone());
+    }
+    applyAnimatedOperatorParameters(this, legacyOpClones);
+    legacyOps = &legacyOpClones;
+   }
+   const auto legacyProcessed = buildProcessedShapePaths(
+       impl->shapeType_, geomDims.width, geomDims.height, geomDims.cornerRadius,
+       geomDims.starPoints, geomDims.starInnerRadius, geomDims.polygonSides,
+       impl->customPolygonPoints_, impl->customPolygonClosed_,
+       evaluatedPathVertices, impl->customPathClosed_, *legacyOps);
+   GpuPaintItem legacyItem;
+   legacyItem.fillPaths = legacyProcessed;
+   legacyItem.strokePaths.reserve(legacyProcessed.size());
+   for (const auto& path : legacyProcessed) {
+    legacyItem.strokePaths.push_back(
+        strokeAlignedPath(path, impl->strokeAlign_, impl->strokeWidth_));
+   }
+   legacyItem.fill.enabled = impl->fillEnabled_;
+   legacyItem.fill.color = impl->fillColor_;
+   legacyItem.fill.type = impl->fillType_;
+   legacyItem.fill.gradientStart = impl->fillGradientStartColor_;
+   legacyItem.fill.gradientEnd = impl->fillGradientEndColor_;
+   legacyItem.fill.gradientAngleDegrees = impl->fillGradientAngleDegrees_;
+   legacyItem.fill.gradientCenterX = impl->fillGradientCenterX_;
+   legacyItem.fill.gradientCenterY = impl->fillGradientCenterY_;
+   legacyItem.fill.gradientRadius = impl->fillGradientRadius_;
+   legacyItem.stroke.enabled = impl->strokeEnabled_;
+   legacyItem.stroke.color = impl->strokeColor_;
+   legacyItem.stroke.width = impl->strokeWidth_;
+   legacyItem.stroke.cap = impl->strokeCap_;
+   legacyItem.stroke.join = impl->strokeJoin_;
+   legacyItem.stroke.align = impl->strokeAlign_;
+   legacyItem.stroke.dashPattern = impl->dashPattern_;
+   legacyItem.stroke.dashOffset = impl->dashOffset_;
+   legacyItem.stroke.taperStart = impl->strokeTaperStart_;
+   legacyItem.stroke.taperEnd = impl->strokeTaperEnd_;
+   legacyItem.stroke.gradientEnabled = impl->strokeGradientEnabled_;
+   legacyItem.stroke.gradientStart = impl->strokeGradientStartColor_;
+   legacyItem.stroke.gradientEnd = impl->strokeGradientEndColor_;
+   legacyItem.gradientW = static_cast<float>(std::max(1, geomDims.width));
+   legacyItem.gradientH = static_cast<float>(std::max(1, geomDims.height));
+   std::vector<GpuPaintItem> legacyItems;
+   legacyItems.push_back(std::move(legacyItem));
+   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
+    drawWithClonerEffect(
+        this, lensPass.transform,
+        [renderer, this, legacyItems, contentFieldWeight,
+         lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+         const float baseOpacity =
+             this->opacity() * weight * contentFieldWeight * lensOpacity;
+         const double scaleX = std::hypot(static_cast<double>(transform(0, 0)),
+                                          static_cast<double>(transform(1, 0)));
+         const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
+                                          static_cast<double>(transform(1, 1)));
+         const double renderScale = std::max({1.0, scaleX, scaleY});
+         paintGpuPaintItems(renderer, transform, baseOpacity, legacyItems,
+                             0.25 / renderScale, static_cast<float>(renderScale));
+        });
+   }
+   drawFractureOverlay(renderer, baseTransform,
+                       QSizeF(geomDims.width, geomDims.height),
+                       opacity() * contentFieldWeight);
+   return;
   }
-  if (geomAnimated || pathAnimated) {
-   const ShapeGeomDims cacheDims = resolveShapeGeomDims(
-       this, impl->width_, impl->height_, impl->cornerRadius_,
-       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_);
-   impl->rebuildCache(&cacheDims, &evaluatedPathVertices);
- } else {
-   impl->rebuildCache();
-  }
-   const float layerOpacity = opacity() * contentFieldWeight;
-   const ShapeGeomDims spriteDims = geomAnimated
-       ? resolveShapeGeomDims(this, impl->width_, impl->height_,
-                              impl->cornerRadius_, impl->starPoints_,
-                              impl->starInnerRadius_, impl->polygonSides_)
-       : ShapeGeomDims{impl->width_, impl->height_, impl->cornerRadius_,
-                       impl->starPoints_, impl->starInnerRadius_,
-                       impl->polygonSides_};
-  for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
-    drawWithClonerEffect(this, lensPass.transform,
-         [renderer, impl, layerOpacity, spriteDims, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
-     renderer->drawSpriteTransformed(
-         0.0f, 0.0f,
-         static_cast<float>(spriteDims.width),
-         static_cast<float>(spriteDims.height),
-         transform, impl->cachedImage_,
-         layerOpacity * weight * lensOpacity);
-    });
-  }
-  drawFractureOverlay(renderer, baseTransform, QSizeF(spriteDims.width, spriteDims.height), layerOpacity);
-  return;
- }
   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
   drawWithClonerEffect(this, lensPass.transform,
                        [renderer, impl, this, contentFieldWeight, geomDims,
@@ -2561,9 +3840,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
           1.0f, impl->strokeWidth_ * static_cast<float>(renderScale));
       style.cap = static_cast<PolylineCap>(impl->strokeCap_);
       style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
-      style.closed = closed;
-      style.dashPattern = impl->dashPattern_;
-      renderer->drawStyledPolyline(points, style, stroke);
+       style.closed = closed;
+       style.dashPattern = impl->dashPattern_;
+       style.dashOffset = impl->dashOffset_;
+       renderer->drawStyledPolyline(points, style, stroke);
      }
     }
   });
@@ -2811,8 +4091,17 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
                                  ArtifactCore::PropertyType::String,
                                  dashPatternToString(impl_->dashPattern_), -197, false);
  dashPatternProp->setDisplayLabel(QStringLiteral("Dash Pattern"));
- dashPatternProp->setTooltip(QStringLiteral("Comma-separated dash lengths (empty=solid). E.g. '4,2' = 4px dash, 2px gap"));
-  appearanceGroup.addProperty(dashPatternProp);
+  dashPatternProp->setTooltip(QStringLiteral("Comma-separated dash lengths (empty=solid). E.g. '4,2' = 4px dash, 2px gap"));
+   appearanceGroup.addProperty(dashPatternProp);
+
+  auto dashOffsetProp = makeProp(QStringLiteral("shape.dashOffset"),
+                                 ArtifactCore::PropertyType::Float,
+                                 impl_->dashOffset_, -196);
+  dashOffsetProp->setSoftRange(-256.0, 256.0);
+  dashOffsetProp->setHardRange(-1000000.0, 1000000.0);
+  dashOffsetProp->setDisplayLabel(QStringLiteral("Dash Offset"));
+  dashOffsetProp->setTooltip(QStringLiteral("Dash pattern phase shift (marching ants)"));
+   appearanceGroup.addProperty(dashOffsetProp);
 
  groups.push_back(appearanceGroup);
 
@@ -2855,9 +4144,104 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  fillRuleProp->setTooltip(QStringLiteral("0=Winding, 1=Even Odd"));
  paramsGroup.addProperty(fillRuleProp);
 
- groups.push_back(paramsGroup);
+  groups.push_back(paramsGroup);
 
- // Shape Operators
+  // Multi-content group (gap 1): per-content paint/visibility/merge.
+  // Geometry editing stays on the ShapeContent API for now.
+  if (!impl_->shapeContents_.empty()) {
+    ArtifactCore::PropertyGroup contentsGroup;
+    contentsGroup.setName("Contents");
+auto countProp = makeProp(QStringLiteral("shape.contents.count"),
+                               ArtifactCore::PropertyType::Integer,
+                               static_cast<int>(impl_->shapeContents_.size()),
+                               -190, false);
+     countProp->setDisplayLabel(QStringLiteral("Content Count"));
+     contentsGroup.addProperty(countProp);
+     auto activeProp = makeProp(QStringLiteral("shape.activeContentIndex"),
+                                   ArtifactCore::PropertyType::Integer,
+                                   impl_->activeContentIndex_, -189, false);
+     activeProp->setDisplayLabel(QStringLiteral("Active Content"));
+     activeProp->setTooltip(QStringLiteral("-1 = legacy mode, 0+ = index of edited content"));
+     contentsGroup.addProperty(activeProp);
+     for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
+      const auto& content = impl_->shapeContents_[ci];
+      const QString prefix = QStringLiteral("shape.content.%1.").arg(ci);
+      const QString title = content.name.isEmpty()
+          ? QStringLiteral("Content %1").arg(ci + 1)
+          : content.name;
+      auto nameProp = makeProp(prefix + QStringLiteral("name"),
+                               ArtifactCore::PropertyType::String,
+                               content.name, -189, false);
+      nameProp->setDisplayLabel(title);
+      contentsGroup.addProperty(nameProp);
+      auto visibleProp = makeProp(prefix + QStringLiteral("visible"),
+                                  ArtifactCore::PropertyType::Boolean,
+                                  content.visible, -188);
+      visibleProp->setDisplayLabel(QStringLiteral("Visible"));
+      contentsGroup.addProperty(visibleProp);
+      auto opacityProp = makeProp(prefix + QStringLiteral("opacity"),
+                                  ArtifactCore::PropertyType::Float,
+                                  content.opacity, -187);
+      opacityProp->setSoftRange(0.0, 1.0);
+      opacityProp->setHardRange(0.0, 1.0);
+      opacityProp->setDisplayLabel(QStringLiteral("Opacity"));
+      contentsGroup.addProperty(opacityProp);
+      auto mergeProp = makeProp(prefix + QStringLiteral("merge"),
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<int>(content.merge), -186, false);
+      mergeProp->setHardRange(0, 3);
+      mergeProp->setDisplayLabel(QStringLiteral("Merge"));
+      mergeProp->setTooltip(QStringLiteral("0=Add, 1=Subtract, 2=Intersect, 3=Difference"));
+      contentsGroup.addProperty(mergeProp);
+      auto fillEnabledProp = makeProp(
+          prefix + QStringLiteral("fillEnabled"),
+          ArtifactCore::PropertyType::Boolean, content.fill.enabled, -185);
+      fillEnabledProp->setDisplayLabel(QStringLiteral("Fill Enabled"));
+      contentsGroup.addProperty(fillEnabledProp);
+      auto fillColorProp = makeProp(
+          prefix + QStringLiteral("fillColor"),
+          ArtifactCore::PropertyType::Color,
+          QColor(static_cast<int>(content.fill.color.r() * 255),
+                 static_cast<int>(content.fill.color.g() * 255),
+                 static_cast<int>(content.fill.color.b() * 255),
+                 static_cast<int>(content.fill.color.a() * 255)),
+          -184);
+      fillColorProp->setDisplayLabel(QStringLiteral("Fill Color"));
+      contentsGroup.addProperty(fillColorProp);
+      auto strokeEnabledProp = makeProp(
+          prefix + QStringLiteral("strokeEnabled"),
+          ArtifactCore::PropertyType::Boolean, content.stroke.enabled, -183);
+      strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
+      contentsGroup.addProperty(strokeEnabledProp);
+      auto strokeColorProp = makeProp(
+          prefix + QStringLiteral("strokeColor"),
+          ArtifactCore::PropertyType::Color,
+          QColor(static_cast<int>(content.stroke.color.r() * 255),
+                 static_cast<int>(content.stroke.color.g() * 255),
+                 static_cast<int>(content.stroke.color.b() * 255),
+                 static_cast<int>(content.stroke.color.a() * 255)),
+          -182);
+      strokeColorProp->setDisplayLabel(QStringLiteral("Stroke Color"));
+      contentsGroup.addProperty(strokeColorProp);
+      auto strokeWidthProp = makeProp(
+          prefix + QStringLiteral("strokeWidth"),
+          ArtifactCore::PropertyType::Float, content.stroke.width, -181);
+      strokeWidthProp->setSoftRange(0.0, 64.0);
+      strokeWidthProp->setHardRange(0.0, 16384.0);
+      strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
+      contentsGroup.addProperty(strokeWidthProp);
+      auto contentDashOffsetProp = makeProp(
+          prefix + QStringLiteral("dashOffset"),
+          ArtifactCore::PropertyType::Float, content.stroke.dashOffset, -180);
+      contentDashOffsetProp->setSoftRange(-256.0, 256.0);
+      contentDashOffsetProp->setHardRange(-1000000.0, 1000000.0);
+      contentDashOffsetProp->setDisplayLabel(QStringLiteral("Dash Offset"));
+      contentsGroup.addProperty(contentDashOffsetProp);
+    }
+    groups.push_back(contentsGroup);
+  }
+
+  // Shape Operators
  for (int i = 0; i < shapeOperatorCount(); ++i) {
    const auto &op = impl_->shapeOperators_[static_cast<size_t>(i)];
    ArtifactCore::PropertyGroup opGroup;
@@ -3158,12 +4542,84 @@ if (propertyPath == "shape.type") {
   setStrokeAlign(static_cast<StrokeAlign>(value.toInt()));
   return true;
  }
- if (propertyPath == "shape.dashPattern") {
-  setDashPattern(stringToDashPattern(value.toString()));
-  return true;
- }
+  if (propertyPath == "shape.dashPattern") {
+   setDashPattern(stringToDashPattern(value.toString()));
+   return true;
+  }
+if (propertyPath == "shape.dashOffset") {
+    setDashOffset(value.toFloat());
+    return true;
+   }
+   if (propertyPath == "shape.activeContentIndex") {
+    setActiveContentIndex(value.toInt());
+    return true;
+   }
 
- if (propertyPath.startsWith("shape.operator.")) {
+   if (propertyPath.startsWith("shape.content.")) {
+    const QStringList parts = propertyPath.split('.');
+    if (parts.size() == 4) {
+      bool ok = false;
+      const int contentIndex = parts[2].toInt(&ok);
+      const QString field = parts[3];
+      if (ok && contentIndex >= 0 &&
+          contentIndex < static_cast<int>(impl_->shapeContents_.size())) {
+        auto content = impl_->shapeContents_[static_cast<size_t>(contentIndex)];
+        bool handled = false;
+        if (field == "name") {
+          content.name = value.toString();
+          handled = true;
+        } else if (field == "visible") {
+          content.visible = value.toBool();
+          handled = true;
+        } else if (field == "opacity") {
+          const float next = value.toFloat();
+          content.opacity = std::isfinite(next) ? std::clamp(next, 0.0f, 1.0f) : 1.0f;
+          handled = true;
+        } else if (field == "merge") {
+          content.merge = static_cast<Artifact::ShapeContentMerge>(
+              std::clamp(value.toInt(), 0, 3));
+          handled = true;
+        } else if (field == "fillEnabled") {
+          content.fill.enabled = value.toBool();
+          handled = true;
+        } else if (field == "fillColor") {
+          const auto c = value.value<QColor>();
+          content.fill.color = normalizedShapeColor(
+              FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+          handled = true;
+        } else if (field == "strokeEnabled") {
+          content.stroke.enabled = value.toBool();
+          handled = true;
+        } else if (field == "strokeColor") {
+          const auto c = value.value<QColor>();
+          content.stroke.color = normalizedShapeColor(
+              FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+          handled = true;
+        } else if (field == "strokeWidth") {
+          const float next = value.toFloat();
+          content.stroke.width = std::isfinite(next)
+              ? std::clamp(next, 0.0f, static_cast<float>(kMaxShapeDimension)) : 0.0f;
+          handled = true;
+        } else if (field == "dashOffset") {
+          const float next = value.toFloat();
+          content.stroke.dashOffset = std::isfinite(next)
+              ? std::clamp(next, -1000000.0f, 1000000.0f) : 0.0f;
+          handled = true;
+        }
+        if (handled) {
+          impl_->shapeContents_[static_cast<size_t>(contentIndex)] =
+              normalizedShapeContent(content);
+          impl_->markDirty();
+          impl_->localBoundsCacheDirty_ = true;
+          impl_->shapeContentCacheDirty_ = true;
+          Q_EMIT changed();
+          return true;
+        }
+      }
+    }
+  }
+
+  if (propertyPath.startsWith("shape.operator.")) {
    QStringList parts = propertyPath.split('.');
    if (parts.size() >= 4) {
      bool ok = false;
@@ -3343,6 +4799,1663 @@ if (propertyPath == "shape.type") {
 // Serialization
 // ============================================================
 
+static QJsonObject shapeContentToJson(const Artifact::ShapeContent& content) {
+  QJsonObject obj;
+  obj["name"] = content.name;
+  obj["visible"] = content.visible;
+  obj["opacity"] = static_cast<double>(content.opacity);
+  obj["merge"] = static_cast<int>(content.merge);
+  QJsonObject geom;
+  geom["type"] = static_cast<int>(content.geometry.type);
+  geom["width"] = content.geometry.width;
+  geom["height"] = content.geometry.height;
+  geom["cornerRadius"] = static_cast<double>(content.geometry.cornerRadius);
+  geom["starPoints"] = content.geometry.starPoints;
+  geom["starInnerRadius"] = static_cast<double>(content.geometry.starInnerRadius);
+  geom["polygonSides"] = content.geometry.polygonSides;
+  geom["polygonClosed"] = content.geometry.polygonClosed;
+  QJsonArray polyPoints;
+  for (const auto& point : content.geometry.polygonPoints) {
+    QJsonObject p;
+    p["x"] = point.x();
+    p["y"] = point.y();
+    polyPoints.push_back(p);
+  }
+  geom["polygonPoints"] = polyPoints;
+  geom["pathClosed"] = content.geometry.pathClosed;
+  geom["fillRule"] = static_cast<int>(content.geometry.fillRule);
+  QJsonArray pathVerts;
+  for (const auto& v : content.geometry.pathVertices) {
+    QJsonObject vObj;
+    vObj["px"] = v.pos.x();    vObj["py"] = v.pos.y();
+    vObj["ix"] = v.inTangent.x(); vObj["iy"] = v.inTangent.y();
+    vObj["ox"] = v.outTangent.x(); vObj["oy"] = v.outTangent.y();
+    vObj["smooth"] = v.smooth;
+    pathVerts.push_back(vObj);
+  }
+  geom["pathVertices"] = pathVerts;
+  obj["geometry"] = geom;
+  QJsonObject fill;
+  fill["enabled"] = content.fill.enabled;
+  fill["r"] = static_cast<double>(content.fill.color.r());
+  fill["g"] = static_cast<double>(content.fill.color.g());
+  fill["b"] = static_cast<double>(content.fill.color.b());
+  fill["a"] = static_cast<double>(content.fill.color.a());
+  fill["type"] = static_cast<int>(content.fill.type);
+  fill["gradStartR"] = static_cast<double>(content.fill.gradientStart.r());
+  fill["gradStartG"] = static_cast<double>(content.fill.gradientStart.g());
+  fill["gradStartB"] = static_cast<double>(content.fill.gradientStart.b());
+  fill["gradStartA"] = static_cast<double>(content.fill.gradientStart.a());
+  fill["gradEndR"] = static_cast<double>(content.fill.gradientEnd.r());
+  fill["gradEndG"] = static_cast<double>(content.fill.gradientEnd.g());
+  fill["gradEndB"] = static_cast<double>(content.fill.gradientEnd.b());
+  fill["gradEndA"] = static_cast<double>(content.fill.gradientEnd.a());
+  fill["gradAngle"] = static_cast<double>(content.fill.gradientAngleDegrees);
+  fill["gradCenterX"] = static_cast<double>(content.fill.gradientCenterX);
+  fill["gradCenterY"] = static_cast<double>(content.fill.gradientCenterY);
+  fill["gradRadius"] = static_cast<double>(content.fill.gradientRadius);
+  obj["fill"] = fill;
+  QJsonObject stroke;
+  stroke["enabled"] = content.stroke.enabled;
+  stroke["r"] = static_cast<double>(content.stroke.color.r());
+  stroke["g"] = static_cast<double>(content.stroke.color.g());
+  stroke["b"] = static_cast<double>(content.stroke.color.b());
+  stroke["a"] = static_cast<double>(content.stroke.color.a());
+  stroke["width"] = static_cast<double>(content.stroke.width);
+  stroke["cap"] = static_cast<int>(content.stroke.cap);
+  stroke["join"] = static_cast<int>(content.stroke.join);
+  stroke["align"] = static_cast<int>(content.stroke.align);
+  stroke["dash"] = dashPatternToString(content.stroke.dashPattern);
+  stroke["dashOffset"] = static_cast<double>(content.stroke.dashOffset);
+  stroke["taperStart"] = static_cast<double>(content.stroke.taperStart);
+  stroke["taperEnd"] = static_cast<double>(content.stroke.taperEnd);
+  stroke["gradEnabled"] = content.stroke.gradientEnabled;
+  stroke["gradStartR"] = static_cast<double>(content.stroke.gradientStart.r());
+  stroke["gradStartG"] = static_cast<double>(content.stroke.gradientStart.g());
+  stroke["gradStartB"] = static_cast<double>(content.stroke.gradientStart.b());
+  stroke["gradStartA"] = static_cast<double>(content.stroke.gradientStart.a());
+  stroke["gradEndR"] = static_cast<double>(content.stroke.gradientEnd.r());
+  stroke["gradEndG"] = static_cast<double>(content.stroke.gradientEnd.g());
+  stroke["gradEndB"] = static_cast<double>(content.stroke.gradientEnd.b());
+  stroke["gradEndA"] = static_cast<double>(content.stroke.gradientEnd.a());
+  obj["stroke"] = stroke;
+  return obj;
+}
+
+static Artifact::ShapeContent shapeContentFromJson(const QJsonObject& obj) {
+  Artifact::ShapeContent content;
+  content.name = obj["name"].toString();
+  content.visible = obj["visible"].toBool(true);
+  content.opacity = static_cast<float>(obj["opacity"].toDouble(1.0));
+  content.merge = static_cast<Artifact::ShapeContentMerge>(
+      std::clamp(obj["merge"].toInt(0), 0, 3));
+  const QJsonObject geom = obj["geometry"].toObject();
+  content.geometry.type = static_cast<Artifact::ShapeType>(
+      std::clamp(geom["type"].toInt(0), 0, 6));
+  content.geometry.width = geom["width"].toInt(200);
+  content.geometry.height = geom["height"].toInt(200);
+  content.geometry.cornerRadius = static_cast<float>(geom["cornerRadius"].toDouble(0.0));
+  content.geometry.starPoints = geom["starPoints"].toInt(5);
+  content.geometry.starInnerRadius =
+      static_cast<float>(geom["starInnerRadius"].toDouble(0.382));
+  content.geometry.polygonSides = geom["polygonSides"].toInt(6);
+  content.geometry.polygonClosed = geom["polygonClosed"].toBool(true);
+  for (const auto& val : geom["polygonPoints"].toArray()) {
+    const QJsonObject p = val.toObject();
+    content.geometry.polygonPoints.push_back(QPointF(p["x"].toDouble(), p["y"].toDouble()));
+  }
+  content.geometry.pathClosed = geom["pathClosed"].toBool(true);
+  content.geometry.fillRule = geom["fillRule"].toInt(1) == 1
+      ? ArtifactCore::PathFillRule::EvenOdd
+      : ArtifactCore::PathFillRule::Winding;
+  for (const auto& val : geom["pathVertices"].toArray()) {
+    const QJsonObject vObj = val.toObject();
+    Artifact::CustomPathVertex v;
+    v.pos = QPointF(vObj["px"].toDouble(), vObj["py"].toDouble());
+    v.inTangent = QPointF(vObj["ix"].toDouble(), vObj["iy"].toDouble());
+    v.outTangent = QPointF(vObj["ox"].toDouble(), vObj["oy"].toDouble());
+    v.smooth = vObj["smooth"].toBool(false);
+    content.geometry.pathVertices.push_back(v);
+  }
+  const QJsonObject fill = obj["fill"].toObject();
+  content.fill.enabled = fill["enabled"].toBool(true);
+  content.fill.color = FloatColor(
+      static_cast<float>(fill["r"].toDouble(1.0)),
+      static_cast<float>(fill["g"].toDouble(1.0)),
+      static_cast<float>(fill["b"].toDouble(1.0)),
+      static_cast<float>(fill["a"].toDouble(1.0)));
+  content.fill.type = static_cast<ArtifactSolidFillType>(
+      std::clamp(fill["type"].toInt(0), 0, 5));
+  content.fill.gradientStart = FloatColor(
+      static_cast<float>(fill["gradStartR"].toDouble(1.0)),
+      static_cast<float>(fill["gradStartG"].toDouble(1.0)),
+      static_cast<float>(fill["gradStartB"].toDouble(1.0)),
+      static_cast<float>(fill["gradStartA"].toDouble(1.0)));
+  content.fill.gradientEnd = FloatColor(
+      static_cast<float>(fill["gradEndR"].toDouble(0.0)),
+      static_cast<float>(fill["gradEndG"].toDouble(0.0)),
+      static_cast<float>(fill["gradEndB"].toDouble(0.0)),
+      static_cast<float>(fill["gradEndA"].toDouble(1.0)));
+  content.fill.gradientAngleDegrees = static_cast<float>(fill["gradAngle"].toDouble(0.0));
+  content.fill.gradientCenterX = static_cast<float>(fill["gradCenterX"].toDouble(0.5));
+  content.fill.gradientCenterY = static_cast<float>(fill["gradCenterY"].toDouble(0.5));
+  content.fill.gradientRadius = static_cast<float>(fill["gradRadius"].toDouble(0.5));
+  const QJsonObject stroke = obj["stroke"].toObject();
+  content.stroke.enabled = stroke["enabled"].toBool(false);
+  content.stroke.color = FloatColor(
+      static_cast<float>(stroke["r"].toDouble(0.0)),
+      static_cast<float>(stroke["g"].toDouble(0.0)),
+      static_cast<float>(stroke["b"].toDouble(0.0)),
+      static_cast<float>(stroke["a"].toDouble(1.0)));
+  content.stroke.width = static_cast<float>(stroke["width"].toDouble(0.0));
+  content.stroke.cap = static_cast<Artifact::StrokeCap>(std::clamp(stroke["cap"].toInt(0), 0, 2));
+  content.stroke.join = static_cast<Artifact::StrokeJoin>(std::clamp(stroke["join"].toInt(0), 0, 2));
+  content.stroke.align = static_cast<Artifact::StrokeAlign>(std::clamp(stroke["align"].toInt(0), 0, 2));
+  content.stroke.dashPattern = stringToDashPattern(stroke["dash"].toString());
+  content.stroke.dashOffset = static_cast<float>(stroke["dashOffset"].toDouble(0.0));
+  content.stroke.taperStart = static_cast<float>(stroke["taperStart"].toDouble(1.0));
+  content.stroke.taperEnd = static_cast<float>(stroke["taperEnd"].toDouble(1.0));
+  content.stroke.gradientEnabled = stroke["gradEnabled"].toBool(false);
+  content.stroke.gradientStart = FloatColor(
+      static_cast<float>(stroke["gradStartR"].toDouble(0.0)),
+      static_cast<float>(stroke["gradStartG"].toDouble(0.0)),
+      static_cast<float>(stroke["gradStartB"].toDouble(0.0)),
+      static_cast<float>(stroke["gradStartA"].toDouble(1.0)));
+  content.stroke.gradientEnd = FloatColor(
+      static_cast<float>(stroke["gradEndR"].toDouble(0.0)),
+      static_cast<float>(stroke["gradEndG"].toDouble(0.0)),
+      static_cast<float>(stroke["gradEndB"].toDouble(0.0)),
+      static_cast<float>(stroke["gradEndA"].toDouble(1.0)));
+  return normalizedShapeContent(content);
+}
+
+// ---- SVG interop (gap 8) ----
+
+static QString svgNumber(double value) {
+  if (!std::isfinite(value)) {
+    return QStringLiteral("0");
+  }
+  if (std::abs(value) < 0.0005) {
+    return QStringLiteral("0");
+  }
+  QString s = QString::number(value, 'f', 3);
+  while (s.endsWith(QChar('0'))) {
+    s.chop(1);
+  }
+  if (s.endsWith(QChar('.'))) {
+    s.chop(1);
+  }
+  if (s.isEmpty() || s == QStringLiteral("-0")) {
+    return QStringLiteral("0");
+  }
+  return s;
+}
+
+static QString svgColorRgb(const ArtifactCore::FloatColor& c, QString* opacityOut) {
+  const auto channel = [](float v) {
+    return std::clamp(static_cast<int>(std::round(v * 255.0f)), 0, 255);
+  };
+  if (opacityOut) {
+    *opacityOut = svgNumber(std::clamp(c.a(), 0.0f, 1.0f));
+  }
+  return QStringLiteral("rgb(%1,%2,%3)").arg(channel(c.r())).arg(channel(c.g())).arg(channel(c.b()));
+}
+
+static QString svgPathData(const ArtifactCore::ShapePath& path) {
+  QString d;
+  d.reserve(path.commandCount() * 24);
+  for (const auto& cmd : path.commands()) {
+    switch (cmd.type) {
+      case ArtifactCore::PathCommandType::MoveTo:
+        d += QStringLiteral("M%1 %2 ").arg(svgNumber(cmd.points[0].x())).arg(svgNumber(cmd.points[0].y()));
+        break;
+      case ArtifactCore::PathCommandType::LineTo:
+        d += QStringLiteral("L%1 %2 ").arg(svgNumber(cmd.points[0].x())).arg(svgNumber(cmd.points[0].y()));
+        break;
+      case ArtifactCore::PathCommandType::CubicTo:
+        d += QStringLiteral("C%1 %2 %3 %4 %5 %6 ").arg(svgNumber(cmd.points[0].x())).arg(svgNumber(cmd.points[0].y())).arg(svgNumber(cmd.points[1].x())).arg(svgNumber(cmd.points[1].y())).arg(svgNumber(cmd.points[2].x())).arg(svgNumber(cmd.points[2].y()));
+        break;
+      case ArtifactCore::PathCommandType::QuadTo:
+        d += QStringLiteral("Q%1 %2 %3 %4 ").arg(svgNumber(cmd.points[0].x())).arg(svgNumber(cmd.points[0].y())).arg(svgNumber(cmd.points[1].x())).arg(svgNumber(cmd.points[1].y()));
+        break;
+      case ArtifactCore::PathCommandType::Close:
+        d += QStringLiteral("Z ");
+        break;
+    }
+  }
+  return d.trimmed();
+}
+
+// Gradients export as objectBoundingBox (content-local fractions), which
+// round-trips through the importer below. Conical has no SVG equivalent
+// and falls back to the start color.
+static QString svgFillAttr(const Artifact::ShapeContentFill& fill, int contentIndex,
+                           QString* defsOut) {
+  if (!fill.enabled) {
+    return QStringLiteral("none");
+  }
+  const int type = static_cast<int>(fill.type);
+  if (type == 1 || type == 2 || type == 4 || type == 5) {
+    const QString gid = QStringLiteral("ag%1f").arg(contentIndex);
+    QString stops;
+    QString so0;
+    stops += QStringLiteral("<stop offset=\"0\" stop-color=\"%1\" stop-opacity=\"%2\"/>")
+                 .arg(svgColorRgb(fill.gradientStart, &so0), so0);
+    QString so1;
+    stops += QStringLiteral("<stop offset=\"1\" stop-color=\"%1\" stop-opacity=\"%2\"/>")
+                 .arg(svgColorRgb(fill.gradientEnd, &so1), so1);
+    if (type == 1 || type == 4 || type == 5) {
+      const float rad = fill.gradientAngleDegrees * 3.14159265f / 180.0f;
+      const float dx = std::cos(rad) * 0.5f;
+      const float dy = std::sin(rad) * 0.5f;
+      QString spread;
+      if (type == 4) {
+        spread = QStringLiteral(" spreadMethod=\"repeat\"");
+      } else if (type == 5) {
+        spread = QStringLiteral(" spreadMethod=\"reflect\"");
+      }
+      *defsOut += QStringLiteral("<linearGradient id=\"%1\" x1=\"%2\" y1=\"%3\" x2=\"%4\" y2=\"%5\"%6>%7</linearGradient>")
+                       .arg(gid)
+                       .arg(svgNumber(fill.gradientCenterX - dx))
+                       .arg(svgNumber(fill.gradientCenterY - dy))
+                       .arg(svgNumber(fill.gradientCenterX + dx))
+                       .arg(svgNumber(fill.gradientCenterY + dy))
+                       .arg(spread, stops);
+    } else {
+      *defsOut += QStringLiteral("<radialGradient id=\"%1\" cx=\"%2\" cy=\"%3\" r=\"%4\">%5</radialGradient>")
+                       .arg(gid)
+                       .arg(svgNumber(fill.gradientCenterX))
+                       .arg(svgNumber(fill.gradientCenterY))
+                       .arg(svgNumber(fill.gradientRadius))
+                       .arg(stops);
+    }
+    return QStringLiteral("url(#%1)").arg(gid);
+  }
+  QString opacity;
+  const QString rgb = svgColorRgb(type == 0 ? fill.color : fill.gradientStart, &opacity);
+  if (opacity != QStringLiteral("1")) {
+    return rgb + QStringLiteral("|") + opacity;
+  }
+  return rgb;
+}
+
+QString ArtifactShapeLayer::shapeContentsToSvg() const {
+  struct ExportItem {
+    Artifact::ShapeContent content;
+    std::vector<ArtifactCore::ShapePath> paths;
+  };
+  std::vector<ExportItem> items;
+  if (impl_) {
+    if (!impl_->shapeContents_.empty()) {
+      ensureContentVisPaths();
+      for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
+        const auto& content = impl_->shapeContents_[ci];
+        if (!content.visible || content.opacity <= 0.0f) {
+          continue;
+        }
+        ExportItem item;
+        item.content = content;
+        if (ci < impl_->contentCache_.visPaths.size()) {
+          item.paths = impl_->contentCache_.visPaths[ci];
+        }
+        if (!item.paths.empty()) {
+          items.push_back(std::move(item));
+        }
+      }
+    } else {
+      ExportItem item;
+      item.content = makeContentFromLegacy();
+      auto paths = nativeShapePaths();
+      if (hasCustomPath()) {
+        for (auto& path : paths) {
+          path.setFillRule(impl_->customPathFillRule_);
+        }
+      }
+      item.paths = std::move(paths);
+      if (!item.paths.empty()) {
+        items.push_back(std::move(item));
+      }
+    }
+  }
+  QRectF bounds;
+  for (const auto& item : items) {
+    for (const auto& path : item.paths) {
+      const QRectF pb = path.boundingRect();
+      bounds = bounds.isNull() ? pb : bounds.united(pb);
+    }
+  }
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    bounds = QRectF(0.0, 0.0, 200.0, 200.0);
+  }
+  const float layerOpacity = opacity();
+  QString defs;
+  QString body;
+  int contentIndex = 0;
+  for (const auto& item : items) {
+    const auto& content = item.content;
+    const float itemOpacity = std::clamp(content.opacity * layerOpacity, 0.0f, 1.0f);
+    for (const auto& path : item.paths) {
+      const QString d = svgPathData(path);
+      if (d.isEmpty()) {
+        continue;
+      }
+      QString fillValue = svgFillAttr(content.fill, contentIndex, &defs);
+      QString fillOpacityAttr;
+      const int pipeAt = fillValue.indexOf(QChar('|'));
+      if (pipeAt >= 0) {
+        fillOpacityAttr = QStringLiteral(" fill-opacity=\"%1\"").arg(fillValue.mid(pipeAt + 1));
+        fillValue = fillValue.left(pipeAt);
+      }
+      const char* fillRule = (path.fillRule() == ArtifactCore::PathFillRule::EvenOdd)
+          ? "evenodd" : "nonzero";
+      QString strokeValue = QStringLiteral("none");
+      QString strokeAttrs;
+      if (content.stroke.enabled && content.stroke.width > 0.0f) {
+        QString strokeOpacity;
+        const ArtifactCore::FloatColor mid = content.stroke.gradientEnabled
+            ? mixColor(content.stroke.gradientStart, content.stroke.gradientEnd, 0.5f)
+            : content.stroke.color;
+        strokeValue = svgColorRgb(mid, &strokeOpacity);
+        strokeAttrs += QStringLiteral(" stroke-opacity=\"%1\"").arg(strokeOpacity);
+        strokeAttrs += QStringLiteral(" stroke-width=\"%1\"").arg(svgNumber(content.stroke.width));
+        strokeAttrs += QStringLiteral(" stroke-linecap=\"%1\"").arg(
+            content.stroke.cap == Artifact::StrokeCap::Round ? "round"
+            : (content.stroke.cap == Artifact::StrokeCap::Square ? "square" : "butt"));
+        strokeAttrs += QStringLiteral(" stroke-linejoin=\"%1\"").arg(
+            content.stroke.join == Artifact::StrokeJoin::Round ? "round"
+            : (content.stroke.join == Artifact::StrokeJoin::Bevel ? "bevel" : "miter"));
+        if (!content.stroke.dashPattern.empty()) {
+          QStringList dashes;
+          for (float v : content.stroke.dashPattern) {
+            dashes << svgNumber(v);
+          }
+          strokeAttrs += QStringLiteral(" stroke-dasharray=\"%1\"").arg(dashes.join(QChar(' ')));
+          if (std::abs(content.stroke.dashOffset) > 0.0005f) {
+            strokeAttrs += QStringLiteral(" stroke-dashoffset=\"%1\"").arg(svgNumber(content.stroke.dashOffset));
+          }
+        }
+      }
+      body += QStringLiteral("<g id=\"c%1\" opacity=\"%2\"><path d=\"%3\" fill=\"%4\"%5 fill-rule=\"%6\" stroke=\"%7\"%8/></g>")
+                  .arg(contentIndex)
+                  .arg(svgNumber(itemOpacity))
+                  .arg(d)
+                  .arg(fillValue)
+                  .arg(fillOpacityAttr)
+                  .arg(QString::fromLatin1(fillRule))
+                  .arg(strokeValue)
+                  .arg(strokeAttrs);
+    }
+    ++contentIndex;
+  }
+  // Gradients export as objectBoundingBox fractions; the importer maps
+  // them back onto content-local gradient parameters (approximate for
+  // custom paths whose bounds differ from width/height).
+  const QString defsBlock =
+      defs.isEmpty() ? QString() : QStringLiteral("<defs>%1</defs>").arg(defs);
+  return QStringLiteral("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%2\" viewBox=\"%3 %4 %5 %6\">%7%8</svg>")
+      .arg(svgNumber(bounds.width()))
+      .arg(svgNumber(bounds.height()))
+      .arg(svgNumber(bounds.left()))
+      .arg(svgNumber(bounds.top()))
+      .arg(svgNumber(bounds.width()))
+      .arg(svgNumber(bounds.height()))
+      .arg(defsBlock)
+      .arg(body);
+}
+
+// ---- SVG import (gap 8) ----
+
+namespace SvgImport {
+
+struct GradientStop {
+  double offset = 0.0;
+  ArtifactCore::FloatColor color = ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+};
+
+struct Gradient {
+  bool radial = false;
+  bool userSpace = false;
+  double x1 = 0.0, y1 = 0.0, x2 = 1.0, y2 = 0.0;
+  double cx = 0.5, cy = 0.5, r = 0.5;
+  int spread = 0; // 0 pad, 1 repeat, 2 reflect
+  std::vector<GradientStop> stops;
+};
+
+struct Paint {
+  bool fillNone = true;
+  bool fillUrl = false;
+  QString fillUrlId;
+  bool strokeUrl = false;
+  QString strokeUrlId;
+  ArtifactCore::FloatColor fillColor = ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  bool strokeNone = true;
+  ArtifactCore::FloatColor strokeColor = ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  double strokeWidth = 1.0;
+  int lineCap = 0; // 0 butt, 1 round, 2 square
+  int lineJoin = 0; // 0 miter, 1 round, 2 bevel
+  std::vector<float> dash;
+  double dashOffset = 0.0;
+  double opacity = 1.0;
+  int fillRule = 0; // 0 nonzero, 1 evenodd
+};
+
+struct Pending {
+  Artifact::ShapeContent content;
+  Paint paint;
+  QString name;
+};
+
+static std::vector<double> parseSvgNumbers(const QString& s) {
+  std::vector<double> out;
+  QString token;
+  auto flush = [&]() {
+    if (token.isEmpty()) {
+      return;
+    }
+    bool ok = false;
+    const double v = token.toDouble(&ok);
+    if (ok && std::isfinite(v)) {
+      out.push_back(v);
+    }
+    token.clear();
+  };
+  for (int i = 0; i < s.size(); ++i) {
+    const QChar c = s[i];
+    if (c == QChar(',') || c.isSpace()) {
+      flush();
+      continue;
+    }
+    if ((c == QChar('-') || c == QChar('+')) && !token.isEmpty()) {
+      const QChar last = token[token.size() - 1];
+      if (last != QChar('e') && last != QChar('E')) {
+        flush();
+      }
+    }
+    if (c == QChar('.') && token.contains(QChar('.'))) {
+      flush();
+    }
+    token += c;
+  }
+  flush();
+  return out;
+}
+
+static bool parseSvgColor(const QString& text, ArtifactCore::FloatColor* color) {
+  if (!color) {
+    return false;
+  }
+  const QString s = text.trimmed().toLower();
+  if (s.isEmpty() || s == QStringLiteral("none")) {
+    return false;
+  }
+  if (s == QStringLiteral("transparent")) {
+    *color = ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 0.0f);
+    return true;
+  }
+  if (s[0] == QChar('#')) {
+    const QString h = s.mid(1);
+    bool ok = false;
+    auto byte = [&](int pos, int len, int fallback) {
+      bool partOk = false;
+      const int v = h.mid(pos, len).toInt(&partOk, 16);
+      if (!partOk) {
+        ok = false;
+      }
+      return partOk ? v : fallback;
+    };
+    ok = true;
+    if (h.size() == 3) {
+      const int r = byte(0, 1, 0), g = byte(1, 1, 0), b = byte(2, 1, 0);
+      if (!ok) {
+        return false;
+      }
+      *color = ArtifactCore::FloatColor(r / 15.0f, g / 15.0f, b / 15.0f, 1.0f);
+      return true;
+    }
+    if (h.size() == 6 || h.size() == 8) {
+      const int r = byte(0, 2, 0), g = byte(2, 2, 0), b = byte(4, 2, 0);
+      const int a = h.size() == 8 ? byte(6, 2, 255) : 255;
+      if (!ok) {
+        return false;
+      }
+      *color = ArtifactCore::FloatColor(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+      return true;
+    }
+    return false;
+  }
+  if (s.startsWith(QStringLiteral("rgb(")) || s.startsWith(QStringLiteral("rgba("))) {
+    const int open = s.indexOf(QChar('('));
+    const int close = s.lastIndexOf(QChar(')'));
+    if (open < 0 || close < open) {
+      return false;
+    }
+    const auto nums = parseSvgNumbers(s.mid(open + 1, close - open - 1));
+    if (nums.size() < 3) {
+      return false;
+    }
+    auto channel = [](double v) {
+      return static_cast<float>(std::clamp(v / 255.0, 0.0, 1.0));
+    };
+    float alpha = 1.0f;
+    if (nums.size() >= 4) {
+      alpha = static_cast<float>(std::clamp(nums[3] <= 1.0 ? nums[3] : nums[3] / 100.0, 0.0, 1.0));
+    }
+    *color = ArtifactCore::FloatColor(channel(nums[0]), channel(nums[1]), channel(nums[2]), alpha);
+    return true;
+  }
+  static const std::pair<const char*, unsigned> kNames[] = {
+      {"black", 0x000000}, {"white", 0xFFFFFF}, {"red", 0xFF0000},
+      {"green", 0x008000}, {"lime", 0x00FF00}, {"blue", 0x0000FF},
+      {"yellow", 0xFFFF00}, {"cyan", 0x00FFFF}, {"aqua", 0x00FFFF},
+      {"magenta", 0xFF00FF}, {"fuchsia", 0xFF00FF}, {"gray", 0x808080},
+      {"grey", 0x808080}, {"silver", 0xC0C0C0}, {"maroon", 0x800000},
+      {"olive", 0x808000}, {"navy", 0x000080}, {"teal", 0x008080},
+      {"purple", 0x800080}, {"orange", 0xFFA500}, {"brown", 0xA52A2A},
+      {"pink", 0xFFC0CB},
+  };
+  for (const auto& entry : kNames) {
+    if (s == QLatin1String(entry.first)) {
+      const unsigned v = entry.second;
+      *color = ArtifactCore::FloatColor(((v >> 16) & 255) / 255.0f,
+                                        ((v >> 8) & 255) / 255.0f,
+                                        (v & 255) / 255.0f, 1.0f);
+      return true;
+    }
+  }
+  return false;
+}
+
+static double svgAttrNumber(const QString& s, double fallback) {
+  // Leading-numeric parse so unit suffixes ("2px", "12pt") still convert.
+  const QString t = s.trimmed();
+  int len = 0;
+  while (len < t.size()) {
+    const QChar c = t[len];
+    if (c.isDigit() || c == QChar('.') || c == QChar('-') || c == QChar('+') ||
+        c == QChar('e') || c == QChar('E')) {
+      ++len;
+    } else {
+      break;
+    }
+  }
+  if (len <= 0) {
+    return fallback;
+  }
+  bool ok = false;
+  const double v = t.left(len).toDouble(&ok);
+  return (ok && std::isfinite(v)) ? v : fallback;
+}
+
+static QTransform parseSvgTransform(const QString& text) {
+  QTransform result;
+  int pos = 0;
+  const int n = text.size();
+  while (pos < n) {
+    while (pos < n && (text[pos].isSpace() || text[pos] == QChar(','))) {
+      ++pos;
+    }
+    const int nameStart = pos;
+    while (pos < n && text[pos].isLetter()) {
+      ++pos;
+    }
+    const QString name = text.mid(nameStart, pos - nameStart).trimmed().toLower();
+    while (pos < n && text[pos].isSpace()) {
+      ++pos;
+    }
+    if (name.isEmpty()) {
+      break;
+    }
+    if (pos >= n || text[pos] != QChar('(')) {
+      continue;
+    }
+    int depth = 0;
+    const int argStart = pos;
+    while (pos < n) {
+      if (text[pos] == QChar('(')) {
+        ++depth;
+      } else if (text[pos] == QChar(')')) {
+        --depth;
+        if (depth == 0) {
+          break;
+        }
+      }
+      ++pos;
+    }
+    const QString argsText = text.mid(argStart + 1, pos - argStart - 1);
+    if (pos < n) {
+      ++pos;
+    }
+    const auto args = parseSvgNumbers(argsText);
+    QTransform local;
+    bool valid = true;
+    if (name == QStringLiteral("translate")) {
+      local.translate(args.size() > 0 ? args[0] : 0.0,
+                      args.size() > 1 ? args[1] : 0.0);
+    } else if (name == QStringLiteral("scale")) {
+      const double sx = args.size() > 0 ? args[0] : 1.0;
+      local.scale(sx, args.size() > 1 ? args[1] : sx);
+    } else if (name == QStringLiteral("rotate")) {
+      const double a = args.empty() ? 0.0 : args[0];
+      if (args.size() >= 3) {
+        local = QTransform().translate(args[1], args[2]).rotate(a).translate(-args[1], -args[2]);
+      } else {
+        local.rotate(a);
+      }
+    } else if (name == QStringLiteral("skewx")) {
+      local.shear(args.empty() ? 0.0 : std::tan(args[0] * 3.14159265 / 180.0), 0.0);
+    } else if (name == QStringLiteral("skewy")) {
+      local.shear(0.0, args.empty() ? 0.0 : std::tan(args[0] * 3.14159265 / 180.0));
+    } else if (name == QStringLiteral("matrix") && args.size() >= 6) {
+      local = QTransform(args[0], args[1], args[2], args[3], args[4], args[5]);
+    } else {
+      valid = false;
+    }
+    if (valid) {
+      result = result * local;
+    }
+  }
+  return result;
+}
+
+static Artifact::CustomPathVertex svgLineVertex(const QPointF& p) {
+  Artifact::CustomPathVertex v;
+  v.pos = p;
+  v.smooth = false;
+  return v;
+}
+
+static Artifact::CustomPathVertex svgCurveVertex(const QPointF& p) {
+  Artifact::CustomPathVertex v;
+  v.pos = p;
+  v.smooth = true;
+  return v;
+}
+
+static Artifact::CustomPathVertex svgTransformedVertex(const QTransform& xf,
+                                                       const Artifact::CustomPathVertex& v) {
+  Artifact::CustomPathVertex out = v;
+  const QPointF mappedPos = xf.map(v.pos);
+  out.outTangent = xf.map(v.pos + v.outTangent) - mappedPos;
+  out.inTangent = xf.map(v.pos + v.inTangent) - mappedPos;
+  out.pos = mappedPos;
+  return out;
+}
+
+// W3C SVG F.6.5 endpoint parametrization + <=90 degree cubic spans.
+static void appendSvgArc(ArtifactCore::ShapePath& path, const QPointF& p0,
+                         double rx, double ry, double rotDeg,
+                         bool largeArc, bool sweep, const QPointF& p1) {
+  rx = std::abs(rx);
+  ry = std::abs(ry);
+  if (rx <= 1e-9 || ry <= 1e-9 || p0 == p1) {
+    path.lineTo(p1);
+    return;
+  }
+  const double rot = rotDeg * 3.14159265 / 180.0;
+  const double cosR = std::cos(rot);
+  const double sinR = std::sin(rot);
+  const double dx = (p0.x() - p1.x()) * 0.5;
+  const double dy = (p0.y() - p1.y()) * 0.5;
+  double x1p = cosR * dx + sinR * dy;
+  double y1p = -sinR * dx + cosR * dy;
+  double lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+  if (lambda > 1.0) {
+    const double s = std::sqrt(lambda);
+    rx *= s;
+    ry *= s;
+    x1p = cosR * dx + sinR * dy;
+    y1p = -sinR * dx + cosR * dy;
+  }
+  double num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+  double den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+  double factor = (den <= 1e-12) ? 0.0 : std::sqrt(std::max(0.0, num / den));
+  if (largeArc == sweep) {
+    factor = -factor;
+  }
+  const double cxp = factor * rx * y1p / ry;
+  const double cyp = -factor * ry * x1p / rx;
+  const double cx = cosR * cxp - sinR * cyp + (p0.x() + p1.x()) * 0.5;
+  const double cy = sinR * cxp + cosR * cyp + (p0.y() + p1.y()) * 0.5;
+  auto angleOf = [](double ux, double uy, double vx, double vy) {
+    const double dot = ux * vx + uy * vy;
+    const double lu = std::hypot(ux, uy);
+    const double lv = std::hypot(vx, vy);
+    if (lu <= 1e-12 || lv <= 1e-12) {
+      return 0.0;
+    }
+    double c = std::clamp(dot / (lu * lv), -1.0, 1.0);
+    double a = std::acos(c);
+    if (ux * vy - uy * vx < 0.0) {
+      a = -a;
+    }
+    return a;
+  };
+  double startAngle = angleOf(1.0, 0.0, (x1p - cxp) / rx, (y1p - cyp) / ry);
+  double sweepAngle = angleOf((x1p - cxp) / rx, (y1p - cyp) / ry,
+                              (-x1p - cxp) / rx, (-y1p - cyp) / ry);
+  if (!sweep && sweepAngle > 0.0) {
+    sweepAngle -= 2.0 * 3.14159265;
+  } else if (sweep && sweepAngle < 0.0) {
+    sweepAngle += 2.0 * 3.14159265;
+  }
+  const int spans = std::max(1, static_cast<int>(
+      std::ceil(std::abs(sweepAngle) / (3.14159265 * 0.5))));
+  const double delta = sweepAngle / spans;
+  auto pointAt = [&](double angle) {
+    return QPointF(cx + rx * cosR * std::cos(angle) - ry * sinR * std::sin(angle),
+                   cy + rx * sinR * std::cos(angle) + ry * cosR * std::sin(angle));
+  };
+  auto tangentAt = [&](double angle) {
+    return QPointF(-rx * cosR * std::sin(angle) - ry * sinR * std::cos(angle),
+                   -rx * sinR * std::sin(angle) + ry * cosR * std::cos(angle));
+  };
+  for (int i = 0; i < spans; ++i) {
+    const double a0 = startAngle + delta * i;
+    const double a1 = a0 + delta;
+    const double k = 4.0 / 3.0 * std::tan((a1 - a0) / 4.0);
+    const QPointF q0 = pointAt(a0);
+    const QPointF q1 = pointAt(a1);
+    const QPointF t0 = tangentAt(a0);
+    const QPointF t1 = tangentAt(a1);
+    path.cubicTo(q0 + t0 * k, q1 - t1 * k, q1);
+  }
+}
+
+struct PathScan {
+  const QString& s;
+  int pos = 0;
+  void skipSep() {
+    while (pos < s.size() && (s[pos].isSpace() || s[pos] == QChar(','))) {
+      ++pos;
+    }
+  }
+  bool readCommand(QChar* cmd) {
+    skipSep();
+    if (pos >= s.size()) {
+      return false;
+    }
+    if (!s[pos].isLetter()) {
+      return false;
+    }
+    *cmd = s[pos++];
+    return true;
+  }
+  bool readNumber(double* v) {
+    skipSep();
+    if (pos >= s.size()) {
+      return false;
+    }
+    const int start = pos;
+    if (s[pos] == QChar('-') || s[pos] == QChar('+')) {
+      ++pos;
+    }
+    bool any = false;
+    while (pos < s.size() && s[pos].isDigit()) {
+      ++pos;
+      any = true;
+    }
+    if (pos < s.size() && s[pos] == QChar('.')) {
+      ++pos;
+      while (pos < s.size() && s[pos].isDigit()) {
+        ++pos;
+        any = true;
+      }
+    }
+    if (pos < s.size() && (s[pos] == QChar('e') || s[pos] == QChar('E'))) {
+      const int epos = pos++;
+      if (pos < s.size() && (s[pos] == QChar('-') || s[pos] == QChar('+'))) {
+        ++pos;
+      }
+      bool ed = false;
+      while (pos < s.size() && s[pos].isDigit()) {
+        ++pos;
+        ed = true;
+      }
+      if (!ed) {
+        pos = epos;
+      }
+    }
+    if (!any) {
+      return false;
+    }
+    bool ok = false;
+    const double val = s.mid(start, pos - start).toDouble(&ok);
+    if (!ok || !std::isfinite(val)) {
+      return false;
+    }
+    *v = val;
+    return true;
+  }
+};
+
+static ArtifactCore::ShapePath parseSvgPathData(const QString& d) {
+  ArtifactCore::ShapePath path;
+  PathScan scan{d};
+  QChar cmd = QChar(' ');
+  QPointF current;
+  QPointF subStart;
+  QPointF prevCubicCp2;
+  QPointF prevQuadCp;
+  bool prevCubic = false;
+  bool prevQuad = false;
+  bool hasCurrent = false;
+  int guard = 0;
+  auto line = [&](const QPointF& p) {
+    if (!hasCurrent) {
+      path.moveTo(p);
+      subStart = p;
+    } else {
+      path.lineTo(p);
+    }
+    current = p;
+    hasCurrent = true;
+    prevCubic = prevQuad = false;
+  };
+  while (guard++ < 100000) {
+    QChar next;
+    if (scan.readCommand(&next)) {
+      cmd = next;
+    } else {
+      break;
+    }
+    bool relative = cmd.isLower();
+    QChar base = cmd.toUpper();
+    if (base == QChar('Z')) {
+      if (hasCurrent) {
+        path.close();
+        current = subStart;
+        prevCubic = prevQuad = false;
+      }
+      cmd = QChar(' ');
+      continue;
+    }
+    int need = 0;
+    if (base == QChar('M') || base == QChar('L') || base == QChar('T')) {
+      need = 2;
+    } else if (base == QChar('H') || base == QChar('V')) {
+      need = 1;
+    } else if (base == QChar('C')) {
+      need = 6;
+    } else if (base == QChar('S') || base == QChar('Q')) {
+      need = 4;
+    } else if (base == QChar('A')) {
+      need = 7;
+    } else {
+      break;
+    }
+    bool firstMove = (base == QChar('M'));
+    while (guard++ < 100000) {
+      double v[7] = {0, 0, 0, 0, 0, 0, 0};
+      int got = 0;
+      for (; got < need; ++got) {
+        if (!scan.readNumber(&v[got])) {
+          break;
+        }
+      }
+      if (got < need) {
+        break;
+      }
+      auto absPoint = [&](double x, double y) {
+        return relative ? current + QPointF(x, y) : QPointF(x, y);
+      };
+      if (base == QChar('M')) {
+        const QPointF p = absPoint(v[0], v[1]);
+        path.moveTo(p);
+        current = p;
+        subStart = p;
+        hasCurrent = true;
+        prevCubic = prevQuad = false;
+        if (firstMove) {
+          // Subsequent pairs after moveto are implicit linetos
+          // (relative flag carries over from m/M).
+          firstMove = false;
+          base = QChar('L');
+          need = 2;
+        }
+      } else if (base == QChar('L')) {
+        line(absPoint(v[0], v[1]));
+      } else if (base == QChar('T')) {
+        const QPointF cp = prevQuad ? current * 2.0 - prevQuadCp : current;
+        const QPointF p = absPoint(v[0], v[1]);
+        if (!hasCurrent) {
+          path.moveTo(p);
+        } else {
+          path.quadTo(cp, p);
+        }
+        prevQuadCp = cp;
+        prevQuad = true;
+        prevCubic = false;
+        current = p;
+        hasCurrent = true;
+      } else if (base == QChar('H')) {
+        const QPointF p = relative ? current + QPointF(v[0], 0.0) : QPointF(v[0], current.y());
+        line(p);
+      } else if (base == QChar('V')) {
+        const QPointF p = relative ? current + QPointF(0.0, v[0]) : QPointF(current.x(), v[0]);
+        line(p);
+      } else if (base == QChar('C')) {
+        const QPointF c1 = absPoint(v[0], v[1]);
+        const QPointF c2 = absPoint(v[2], v[3]);
+        const QPointF p = absPoint(v[4], v[5]);
+        if (!hasCurrent) {
+          path.moveTo(p);
+        } else {
+          path.cubicTo(c1, c2, p);
+        }
+        prevCubicCp2 = c2;
+        prevCubic = true;
+        prevQuad = false;
+        current = p;
+        hasCurrent = true;
+      } else if (base == QChar('S')) {
+        const QPointF c1 = prevCubic ? current * 2.0 - prevCubicCp2 : current;
+        const QPointF c2 = absPoint(v[0], v[1]);
+        const QPointF p = absPoint(v[2], v[3]);
+        if (!hasCurrent) {
+          path.moveTo(p);
+        } else {
+          path.cubicTo(c1, c2, p);
+        }
+        prevCubicCp2 = c2;
+        prevCubic = true;
+        prevQuad = false;
+        current = p;
+        hasCurrent = true;
+      } else if (base == QChar('Q')) {
+        const QPointF cp = absPoint(v[0], v[1]);
+        const QPointF p = absPoint(v[2], v[3]);
+        if (!hasCurrent) {
+          path.moveTo(p);
+        } else {
+          path.quadTo(cp, p);
+        }
+        prevQuadCp = cp;
+        prevQuad = true;
+        prevCubic = false;
+        current = p;
+        hasCurrent = true;
+      } else if (base == QChar('A')) {
+        const QPointF p = absPoint(v[5], v[6]);
+        if (!hasCurrent) {
+          path.moveTo(p);
+        } else {
+          appendSvgArc(path, current, v[0], v[1], v[2], v[3] != 0.0, v[4] != 0.0, p);
+        }
+        prevCubic = prevQuad = false;
+        current = p;
+        hasCurrent = true;
+      }
+      PathScan probe = scan;
+      double peek = 0.0;
+      if (!probe.readNumber(&peek)) {
+        break;
+      }
+    }
+    cmd = QChar(' ');
+  }
+  return path;
+}
+
+static void applySvgPaintAttr(Paint* paint, const QString& name, const QString& value) {
+  if (!paint) {
+    return;
+  }
+  const QString key = name.trimmed().toLower();
+  const QString val = value.trimmed();
+  if (key == QStringLiteral("fill")) {
+    if (val.startsWith(QStringLiteral("url("))) {
+      const int hash = val.indexOf(QChar('#'));
+      const int end = val.indexOf(QChar(')'), hash);
+      if (hash >= 0 && end > hash) {
+        paint->fillNone = false;
+        paint->fillUrl = true;
+        paint->fillUrlId = val.mid(hash + 1, end - hash - 1);
+      }
+    } else {
+      ArtifactCore::FloatColor c(0.0f, 0.0f, 0.0f, 1.0f);
+      if (parseSvgColor(val, &c)) {
+        paint->fillNone = false;
+        paint->fillUrl = false;
+        paint->fillColor = c;
+      } else {
+        paint->fillNone = true;
+        paint->fillUrl = false;
+      }
+    }
+  } else if (key == QStringLiteral("stroke")) {
+    if (val.startsWith(QStringLiteral("url("))) {
+      const int hash = val.indexOf(QChar('#'));
+      const int end = val.indexOf(QChar(')'), hash);
+      if (hash >= 0 && end > hash) {
+        paint->strokeNone = false;
+        paint->strokeUrl = true;
+        paint->strokeUrlId = val.mid(hash + 1, end - hash - 1);
+      }
+      return;
+    }
+    ArtifactCore::FloatColor c(0.0f, 0.0f, 0.0f, 1.0f);
+    if (parseSvgColor(val, &c)) {
+      paint->strokeNone = false;
+      paint->strokeUrl = false;
+      paint->strokeColor = c;
+    } else {
+      paint->strokeNone = true;
+      paint->strokeUrl = false;
+    }
+  } else if (key == QStringLiteral("stroke-width")) {
+    paint->strokeWidth = std::max(0.0, svgAttrNumber(val, 1.0));
+  } else if (key == QStringLiteral("stroke-linecap")) {
+    const QString v = val.toLower();
+    paint->lineCap = (v == QStringLiteral("round")) ? 1 : ((v == QStringLiteral("square")) ? 2 : 0);
+  } else if (key == QStringLiteral("stroke-linejoin")) {
+    const QString v = val.toLower();
+    paint->lineJoin = (v == QStringLiteral("round")) ? 1 : ((v == QStringLiteral("bevel")) ? 2 : 0);
+  } else if (key == QStringLiteral("stroke-dasharray")) {
+    paint->dash.clear();
+    if (val.toLower() != QStringLiteral("none")) {
+      for (double v : parseSvgNumbers(val)) {
+        if (paint->dash.size() >= 64) {
+          break;
+        }
+        if (std::isfinite(v) && v > 0.001) {
+          paint->dash.push_back(static_cast<float>(v));
+        }
+      }
+      if (paint->dash.size() % 2 == 1) {
+        const size_t n = paint->dash.size();
+        for (size_t i = 0; i < n; ++i) {
+          paint->dash.push_back(paint->dash[i]);
+        }
+      }
+    }
+  } else if (key == QStringLiteral("stroke-dashoffset")) {
+    paint->dashOffset = svgAttrNumber(val, 0.0);
+  } else if (key == QStringLiteral("stroke-opacity") || key == QStringLiteral("fill-opacity")) {
+    const double a = std::clamp(svgAttrNumber(val, 1.0), 0.0, 1.0);
+    if (key == QStringLiteral("stroke-opacity")) {
+      paint->strokeColor = ArtifactCore::FloatColor(paint->strokeColor.r(), paint->strokeColor.g(),
+                                                    paint->strokeColor.b(),
+                                                    paint->strokeColor.a() * static_cast<float>(a));
+    } else {
+      paint->fillColor = ArtifactCore::FloatColor(paint->fillColor.r(), paint->fillColor.g(),
+                                                  paint->fillColor.b(),
+                                                  paint->fillColor.a() * static_cast<float>(a));
+    }
+  } else if (key == QStringLiteral("opacity")) {
+    paint->opacity *= std::clamp(svgAttrNumber(val, 1.0), 0.0, 1.0);
+  } else if (key == QStringLiteral("fill-rule")) {
+    paint->fillRule = (val.toLower() == QStringLiteral("evenodd")) ? 1 : 0;
+  }
+}
+
+static void applySvgStyleText(Paint* paint, const QString& styleText) {
+  const auto decls = styleText.split(QChar(';'));
+  for (const auto& decl : decls) {
+    const int colon = decl.indexOf(QChar(':'));
+    if (colon < 0) {
+      continue;
+    }
+    applySvgPaintAttr(paint, decl.left(colon), decl.mid(colon + 1));
+  }
+}
+
+static void applySvgAttributes(Paint* paint, const QXmlStreamAttributes& attrs) {
+  static const char* kKeys[] = {"fill", "stroke", "stroke-width", "stroke-linecap",
+                                "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset",
+                                "stroke-opacity", "fill-opacity", "opacity", "fill-rule"};
+  for (const char* key : kKeys) {
+    if (attrs.hasAttribute(QLatin1String(key))) {
+      applySvgPaintAttr(paint, QLatin1String(key), attrs.value(QLatin1String(key)).toString());
+    }
+  }
+  if (attrs.hasAttribute(QStringLiteral("style"))) {
+    applySvgStyleText(paint, attrs.value(QStringLiteral("style")).toString());
+  }
+}
+
+static Gradient parseSvgGradientElement(QXmlStreamReader* xml, bool radial) {
+  Gradient grad;
+  grad.radial = radial;
+  const auto attrs = xml->attributes();
+  const QString units = attrs.value(QStringLiteral("gradientUnits")).toString().trimmed();
+  grad.userSpace = (units == QStringLiteral("userSpaceOnUse"));
+  const QString spread = attrs.value(QStringLiteral("spreadMethod")).toString().trimmed().toLower();
+  grad.spread = (spread == QStringLiteral("repeat")) ? 1 : ((spread == QStringLiteral("reflect")) ? 2 : 0);
+  if (radial) {
+    grad.cx = svgAttrNumber(attrs.value(QStringLiteral("cx")).toString(), 0.5);
+    grad.cy = svgAttrNumber(attrs.value(QStringLiteral("cy")).toString(), 0.5);
+    grad.r = svgAttrNumber(attrs.value(QStringLiteral("r")).toString(), 0.5);
+  } else {
+    grad.x1 = svgAttrNumber(attrs.value(QStringLiteral("x1")).toString(), 0.0);
+    grad.y1 = svgAttrNumber(attrs.value(QStringLiteral("y1")).toString(), 0.0);
+    grad.x2 = svgAttrNumber(attrs.value(QStringLiteral("x2")).toString(), 1.0);
+    grad.y2 = svgAttrNumber(attrs.value(QStringLiteral("y2")).toString(), 0.0);
+  }
+  const QString elementName = radial ? QStringLiteral("radialGradient") : QStringLiteral("linearGradient");
+  while (!xml->atEnd()) {
+    const auto token = xml->readNext();
+    if (token == QXmlStreamReader::EndElement) {
+      const QString name = xml->name().toString();
+      if (name == elementName) {
+        break;
+      }
+      continue;
+    }
+    if (token != QXmlStreamReader::StartElement || xml->name() != QLatin1String("stop")) {
+      continue;
+    }
+    const auto stopAttrs = xml->attributes();
+    GradientStop stop;
+    QString offsetText = stopAttrs.value(QStringLiteral("offset")).toString().trimmed();
+    if (offsetText.endsWith(QChar('%'))) {
+      offsetText.chop(1);
+      stop.offset = std::clamp(svgAttrNumber(offsetText, 0.0) / 100.0, 0.0, 1.0);
+    } else {
+      stop.offset = std::clamp(svgAttrNumber(offsetText, 0.0), 0.0, 1.0);
+    }
+    ArtifactCore::FloatColor c(0.0f, 0.0f, 0.0f, 1.0f);
+    const QString stopColor = stopAttrs.value(QStringLiteral("stop-color")).toString();
+    if (!stopColor.isEmpty() && parseSvgColor(stopColor, &c)) {
+      stop.color = c;
+    }
+    Paint stopPaint;
+    stopPaint.fillColor = stop.color;
+    // applySvgAttributes covers presentation attributes and style="" text.
+    applySvgAttributes(&stopPaint, stopAttrs);
+    stop.color = stopPaint.fillColor;
+    const QString stopOpacity = stopAttrs.value(QStringLiteral("stop-opacity")).toString();
+    if (!stopOpacity.isEmpty()) {
+      stop.color = ArtifactCore::FloatColor(stop.color.r(), stop.color.g(), stop.color.b(),
+                                            stop.color.a() * static_cast<float>(std::clamp(svgAttrNumber(stopOpacity, 1.0), 0.0, 1.0)));
+    }
+    grad.stops.push_back(stop);
+  }
+  std::sort(grad.stops.begin(), grad.stops.end(),
+            [](const GradientStop& a, const GradientStop& b) { return a.offset < b.offset; });
+  return grad;
+}
+
+static void resolveSvgGradientUrl(const std::map<QString, Gradient>& gradients,
+                                  const QString& urlId, const QRectF& bbox,
+                                  Artifact::ShapeContentFill* fill) {
+  if (!fill) {
+    return;
+  }
+  const auto it = gradients.find(urlId);
+  if (it == gradients.end() || it->second.stops.empty()) {
+    fill->enabled = false;
+    return;
+  }
+  const Gradient& grad = it->second;
+  const auto& first = grad.stops.front();
+  const auto& last = grad.stops.back();
+  fill->enabled = true;
+  fill->gradientStart = first.color;
+  fill->gradientEnd = last.color;
+  if (grad.radial) {
+    fill->type = ArtifactSolidFillType::RadialGradient;
+    if (grad.userSpace && bbox.width() > 0.0 && bbox.height() > 0.0) {
+      fill->gradientCenterX = static_cast<float>(std::clamp((grad.cx - bbox.left()) / bbox.width(), 0.0, 1.0));
+      fill->gradientCenterY = static_cast<float>(std::clamp((grad.cy - bbox.top()) / bbox.height(), 0.0, 1.0));
+      fill->gradientRadius = static_cast<float>(std::clamp(grad.r / std::max(bbox.width(), bbox.height()), 0.0, 1.0));
+    } else {
+      fill->gradientCenterX = static_cast<float>(std::clamp(grad.cx, 0.0, 1.0));
+      fill->gradientCenterY = static_cast<float>(std::clamp(grad.cy, 0.0, 1.0));
+      fill->gradientRadius = static_cast<float>(std::clamp(grad.r, 0.0, 1.0));
+    }
+  } else {
+    if (grad.spread == 1) {
+      fill->type = ArtifactSolidFillType::RepeatingGradient;
+    } else if (grad.spread == 2) {
+      fill->type = ArtifactSolidFillType::MirroredGradient;
+    } else {
+      fill->type = ArtifactSolidFillType::LinearGradient;
+    }
+    double x1 = grad.x1, y1 = grad.y1, x2 = grad.x2, y2 = grad.y2;
+    if (grad.userSpace && bbox.width() > 0.0 && bbox.height() > 0.0) {
+      x1 = (x1 - bbox.left()) / bbox.width();
+      y1 = (y1 - bbox.top()) / bbox.height();
+      x2 = (x2 - bbox.left()) / bbox.width();
+      y2 = (y2 - bbox.top()) / bbox.height();
+    }
+    const double dx = x2 - x1;
+    const double dy = y2 - y1;
+    fill->gradientAngleDegrees = static_cast<float>(std::atan2(dy, dx) * 180.0 / 3.14159265);
+    fill->gradientCenterX = static_cast<float>(std::clamp((x1 + x2) * 0.5, 0.0, 1.0));
+    fill->gradientCenterY = static_cast<float>(std::clamp((y1 + y2) * 0.5, 0.0, 1.0));
+  }
+}
+
+static QRectF svgContentBounds(const Artifact::ShapeContent& content) {
+  QRectF bounds;
+  bool first = true;
+  auto include = [&](const QPointF& p) {
+    if (first) {
+      bounds = QRectF(p, QSizeF(0, 0));
+      first = false;
+    } else {
+      bounds = bounds.united(QRectF(p, QSizeF(0, 0)));
+    }
+  };
+  for (const auto& v : content.geometry.pathVertices) {
+    include(v.pos);
+  }
+  for (const auto& p : content.geometry.polygonPoints) {
+    include(p);
+  }
+  return first ? QRectF() : bounds;
+}
+
+static void normalizeSvgContent(Artifact::ShapeContent* content) {
+  if (!content) {
+    return;
+  }
+  const QRectF bounds = svgContentBounds(*content);
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    return;
+  }
+  const QPointF origin = bounds.topLeft();
+  for (auto& v : content->geometry.pathVertices) {
+    v.pos -= origin;
+    // Tangents are relative; translation does not affect them.
+  }
+  for (auto& p : content->geometry.polygonPoints) {
+    p -= origin;
+  }
+  content->geometry.width = std::max(1, static_cast<int>(std::ceil(bounds.width())));
+  content->geometry.height = std::max(1, static_cast<int>(std::ceil(bounds.height())));
+}
+
+static Artifact::ShapeContent finishSvgContent(Artifact::ShapeContent content,
+                                               const Paint& paint,
+                                               const QString& name,
+                                               const std::map<QString, Gradient>& gradients) {
+  content.name = name;
+  content.opacity = static_cast<float>(std::clamp(paint.opacity, 0.0, 1.0));
+  content.fill.enabled = !paint.fillNone;
+  content.fill.color = paint.fillColor;
+  content.fill.type = ArtifactSolidFillType::Solid;
+  content.stroke.enabled = !paint.strokeNone && paint.strokeWidth > 0.0;
+  content.stroke.color = paint.strokeColor;
+  content.stroke.width = static_cast<float>(std::max(0.0, paint.strokeWidth));
+  content.stroke.cap = static_cast<Artifact::StrokeCap>(std::clamp(paint.lineCap, 0, 2));
+  content.stroke.join = static_cast<Artifact::StrokeJoin>(std::clamp(paint.lineJoin, 0, 2));
+  content.stroke.align = Artifact::StrokeAlign::Center;
+  content.stroke.dashPattern = paint.dash;
+  content.stroke.dashOffset = static_cast<float>(paint.dashOffset);
+  content.stroke.taperStart = 1.0f;
+  content.stroke.taperEnd = 1.0f;
+  content.stroke.gradientEnabled = false;
+  content.geometry.fillRule = (paint.fillRule == 1)
+      ? ArtifactCore::PathFillRule::EvenOdd
+      : ArtifactCore::PathFillRule::Winding;
+  // Resolve userSpace gradients against pre-normalization coordinates,
+  // then translate vertices so bounds start at the origin.
+  const QRectF preBounds = svgContentBounds(content);
+  normalizeSvgContent(&content);
+  if (paint.fillUrl && !paint.fillUrlId.isEmpty()) {
+    resolveSvgGradientUrl(gradients, paint.fillUrlId, preBounds, &content.fill);
+  }
+  if (paint.strokeUrl && !paint.strokeUrlId.isEmpty()) {
+    const auto it = gradients.find(paint.strokeUrlId);
+    if (it != gradients.end() && !it->second.stops.empty()) {
+      const auto& firstStop = it->second.stops.front();
+      const auto& lastStop = it->second.stops.back();
+      content.stroke.gradientEnabled = true;
+      content.stroke.gradientStart = firstStop.color;
+      content.stroke.gradientEnd = lastStop.color;
+      content.stroke.color = mixColor(firstStop.color, lastStop.color, 0.5f);
+    }
+  }
+  return normalizedShapeContent(content);
+}
+
+static std::vector<Artifact::ShapeContent> parseSvgDocument(const QString& svgText) {
+  std::vector<Artifact::ShapeContent> contents;
+  std::map<QString, Gradient> gradients;
+  std::vector<Pending> pending;
+  struct Frame {
+    QTransform transform;
+    Paint paint;
+    bool skip = false;
+  };
+  std::vector<Frame> stack;
+  Frame root;
+  root.paint.fillNone = false;
+  root.paint.fillColor = ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  stack.push_back(root);
+  QXmlStreamReader xml(svgText);
+  int shapeIndex = 0;
+  int guard = 0;
+  auto isHidden = [](const QXmlStreamAttributes& attrs) {
+    const QString display = attrs.value(QStringLiteral("display")).toString().trimmed().toLower();
+    const QString visibility = attrs.value(QStringLiteral("visibility")).toString().trimmed().toLower();
+    return display == QStringLiteral("none") || visibility == QStringLiteral("hidden") ||
+           visibility == QStringLiteral("collapse");
+  };
+  auto transformVertices = [](const QTransform& xf, std::vector<Artifact::CustomPathVertex> verts) {
+    for (auto& v : verts) {
+      v = svgTransformedVertex(xf, v);
+    }
+    return verts;
+  };
+  auto transformPoints = [](const QTransform& xf, std::vector<QPointF> points) {
+    for (auto& p : points) {
+      p = xf.map(p);
+    }
+    return points;
+  };
+  // Paint and gradient urls resolve after the walk so forward-referenced
+  // defs work; coordinates normalize per content at finish time.
+  auto pushContent = [&](Artifact::ShapeContent content, const Paint& paint, const QString& name) {
+    if (content.geometry.pathVertices.size() + content.geometry.polygonPoints.size() < 2) {
+      return;
+    }
+    if (pending.size() >= 256) {
+      return;
+    }
+    Pending item;
+    item.content = std::move(content);
+    item.paint = paint;
+    item.name = name;
+    pending.push_back(std::move(item));
+  };
+  while (!xml.atEnd() && guard++ < 200000) {
+    const auto token = xml.readNext();
+    if (token == QXmlStreamReader::StartElement) {
+      const QString tag = xml.name().toString().toLower();
+      const auto attrs = xml.attributes();
+      if (tag == QStringLiteral("lineargradient")) {
+        const QString id = attrs.value(QStringLiteral("id")).toString();
+        Gradient grad = parseSvgGradientElement(&xml, false);
+        if (!id.isEmpty()) {
+          gradients[id] = std::move(grad);
+        }
+        continue;
+      }
+      if (tag == QStringLiteral("radialgradient")) {
+        const QString id = attrs.value(QStringLiteral("id")).toString();
+        Gradient grad = parseSvgGradientElement(&xml, true);
+        if (!id.isEmpty()) {
+          gradients[id] = std::move(grad);
+        }
+        continue;
+      }
+      Frame frame = stack.back();
+      if (frame.skip || isHidden(attrs)) {
+        Frame skipped;
+        skipped.skip = true;
+        stack.push_back(skipped);
+        continue;
+      }
+      if (attrs.hasAttribute(QStringLiteral("transform"))) {
+        frame.transform = frame.transform *
+            parseSvgTransform(attrs.value(QStringLiteral("transform")).toString());
+      }
+      applySvgAttributes(&frame.paint, attrs);
+      const bool isContainer = (tag == QStringLiteral("g") || tag == QStringLiteral("svg") ||
+                                tag == QStringLiteral("defs") || tag == QStringLiteral("symbol"));
+      if (isContainer) {
+        stack.push_back(frame);
+        continue;
+      }
+      const QString idAttr = attrs.value(QStringLiteral("id")).toString();
+      const QString shapeName = idAttr.isEmpty()
+          ? QStringLiteral("SVG %1").arg(++shapeIndex)
+          : idAttr;
+      const QTransform& xf = frame.transform;
+      if (tag == QStringLiteral("path")) {
+        ArtifactCore::ShapePath parsed = parseSvgPathData(attrs.value(QStringLiteral("d")).toString());
+        if (parsed.isEmpty()) {
+          continue;
+        }
+        // Rebuild vertices from commands to preserve curves exactly.
+        // Note: multiple subpaths merge into one vertex run per element;
+        // stroking such elements draws connectors between subpaths.
+        Artifact::ShapeContent content;
+        std::vector<Artifact::CustomPathVertex> verts;
+        QPointF current;
+        bool hasCurrent = false;
+        bool elementClosed = false;
+        for (const auto& command : parsed.commands()) {
+          switch (command.type) {
+            case ArtifactCore::PathCommandType::MoveTo: {
+              Artifact::CustomPathVertex v = svgLineVertex(command.points[0]);
+              verts.push_back(v);
+              current = command.points[0];
+              hasCurrent = true;
+              break;
+            }
+            case ArtifactCore::PathCommandType::LineTo: {
+              if (!hasCurrent) {
+                verts.push_back(svgLineVertex(command.points[0]));
+                current = command.points[0];
+                hasCurrent = true;
+                break;
+              }
+              verts.push_back(svgLineVertex(command.points[0]));
+              current = command.points[0];
+              break;
+            }
+            case ArtifactCore::PathCommandType::CubicTo: {
+              if (!hasCurrent || verts.empty()) {
+                verts.push_back(svgLineVertex(command.points[2]));
+                current = command.points[2];
+                hasCurrent = true;
+                break;
+              }
+              verts.back().outTangent = command.points[0] - verts.back().pos;
+              verts.back().smooth = true;
+              Artifact::CustomPathVertex v = svgCurveVertex(command.points[2]);
+              v.inTangent = command.points[1] - command.points[2];
+              verts.push_back(v);
+              current = command.points[2];
+              break;
+            }
+            case ArtifactCore::PathCommandType::QuadTo: {
+              if (!hasCurrent || verts.empty()) {
+                verts.push_back(svgLineVertex(command.points[1]));
+                current = command.points[1];
+                hasCurrent = true;
+                break;
+              }
+              // Degree-elevate quadratic to cubic control points.
+              const QPointF p0 = current;
+              const QPointF cp = command.points[0];
+              const QPointF p1 = command.points[1];
+              const QPointF c1 = p0 + (cp - p0) * (2.0 / 3.0);
+              const QPointF c2 = p1 + (cp - p1) * (2.0 / 3.0);
+              verts.back().outTangent = c1 - verts.back().pos;
+              verts.back().smooth = true;
+              Artifact::CustomPathVertex v = svgCurveVertex(p1);
+              v.inTangent = c2 - p1;
+              verts.push_back(v);
+              current = p1;
+              break;
+            }
+            case ArtifactCore::PathCommandType::Close: {
+              elementClosed = true;
+              break;
+            }
+          }
+        }
+        if (verts.size() < 2) {
+          continue;
+        }
+        content.geometry.pathVertices = transformVertices(xf, std::move(verts));
+        content.geometry.pathClosed = elementClosed;
+        pushContent(std::move(content), frame.paint, shapeName);
+      } else if (tag == QStringLiteral("rect")) {
+        const double x = svgAttrNumber(attrs.value(QStringLiteral("x")).toString(), 0.0);
+        const double y = svgAttrNumber(attrs.value(QStringLiteral("y")).toString(), 0.0);
+        const double w = svgAttrNumber(attrs.value(QStringLiteral("width")).toString(), 0.0);
+        const double h = svgAttrNumber(attrs.value(QStringLiteral("height")).toString(), 0.0);
+        if (w <= 0.0 || h <= 0.0) {
+          continue;
+        }
+        double rx = svgAttrNumber(attrs.value(QStringLiteral("rx")).toString(), 0.0);
+        double ry = svgAttrNumber(attrs.value(QStringLiteral("ry")).toString(), 0.0);
+        if (attrs.hasAttribute(QStringLiteral("rx")) && !attrs.hasAttribute(QStringLiteral("ry"))) {
+          ry = rx;
+        }
+        if (attrs.hasAttribute(QStringLiteral("ry")) && !attrs.hasAttribute(QStringLiteral("rx"))) {
+          rx = ry;
+        }
+        rx = std::clamp(rx, 0.0, w * 0.5);
+        ry = std::clamp(ry, 0.0, h * 0.5);
+        // One vertex per joint; each span sets the previous vertex's
+        // out-tangent and pushes its end vertex with the in-tangent.
+        std::vector<Artifact::CustomPathVertex> verts;
+        if (rx <= 0.0 || ry <= 0.0) {
+          verts.push_back(svgLineVertex(QPointF(x, y)));
+          verts.push_back(svgLineVertex(QPointF(x + w, y)));
+          verts.push_back(svgLineVertex(QPointF(x + w, y + h)));
+          verts.push_back(svgLineVertex(QPointF(x, y + h)));
+        } else {
+          verts.push_back(svgLineVertex(QPointF(x + rx, y)));
+          auto spanTo = [&](const QPointF& end, const QPointF& c1, const QPointF& c2) {
+            verts.back().outTangent = c1 - verts.back().pos;
+            verts.back().smooth = true;
+            Artifact::CustomPathVertex b = svgCurveVertex(end);
+            b.inTangent = c2 - end;
+            verts.push_back(b);
+          };
+          const double k = 0.5522847498;
+          spanTo(QPointF(x + w - rx, y), QPointF(x + w - rx, y), QPointF(x + w - rx, y));
+          spanTo(QPointF(x + w, y + ry),
+                 QPointF(x + w - rx + rx * k, y), QPointF(x + w, y + ry - ry * k));
+          spanTo(QPointF(x + w, y + h - ry),
+                 QPointF(x + w, y + ry), QPointF(x + w, y + h - ry));
+          spanTo(QPointF(x + w - rx, y + h),
+                 QPointF(x + w, y + h - ry + ry * k), QPointF(x + w - rx + rx * k, y + h));
+          spanTo(QPointF(x + rx, y + h),
+                 QPointF(x + w - rx, y + h), QPointF(x + rx, y + h));
+          spanTo(QPointF(x, y + h - ry),
+                 QPointF(x + rx - rx * k, y + h), QPointF(x, y + h - ry + ry * k));
+          spanTo(QPointF(x, y + ry),
+                 QPointF(x, y + h - ry), QPointF(x, y + ry));
+          spanTo(QPointF(x + rx, y),
+                 QPointF(x, y + ry - ry * k), QPointF(x + rx - rx * k, y));
+          // Last vertex duplicates the start; pathClosed seals the shape.
+          verts.pop_back();
+        }
+        Artifact::ShapeContent content;
+        content.geometry.pathVertices = transformVertices(xf, std::move(verts));
+        content.geometry.pathClosed = true;
+        pushContent(std::move(content), frame.paint, shapeName);
+      } else if (tag == QStringLiteral("circle") || tag == QStringLiteral("ellipse")) {
+        double cx = svgAttrNumber(attrs.value(QStringLiteral("cx")).toString(), 0.0);
+        double cy = svgAttrNumber(attrs.value(QStringLiteral("cy")).toString(), 0.0);
+        double rx = 0.0, ry = 0.0;
+        if (tag == QStringLiteral("circle")) {
+          rx = ry = svgAttrNumber(attrs.value(QStringLiteral("r")).toString(), 0.0);
+        } else {
+          rx = svgAttrNumber(attrs.value(QStringLiteral("rx")).toString(), 0.0);
+          ry = svgAttrNumber(attrs.value(QStringLiteral("ry")).toString(), 0.0);
+        }
+        if (rx <= 0.0 || ry <= 0.0) {
+          continue;
+        }
+        const double k = 0.5522847498;
+        std::vector<Artifact::CustomPathVertex> verts;
+        verts.reserve(4);
+        auto ellipseVertex = [&](double px, double py, double ix, double iy,
+                                 double ox, double oy) {
+          Artifact::CustomPathVertex v = svgCurveVertex(QPointF(cx + px, cy + py));
+          v.inTangent = QPointF(ix, iy);
+          v.outTangent = QPointF(ox, oy);
+          verts.push_back(v);
+        };
+        ellipseVertex(rx, 0, 0, ry * k, 0, -ry * k);
+        ellipseVertex(0, -ry, -rx * k, 0, rx * k, 0);
+        ellipseVertex(-rx, 0, 0, -ry * k, 0, ry * k);
+        ellipseVertex(0, ry, rx * k, 0, -rx * k, 0);
+        Artifact::ShapeContent content;
+        content.geometry.pathVertices = transformVertices(xf, std::move(verts));
+        content.geometry.pathClosed = true;
+        pushContent(std::move(content), frame.paint, shapeName);
+      } else if (tag == QStringLiteral("polygon") || tag == QStringLiteral("polyline") ||
+                 tag == QStringLiteral("line")) {
+        std::vector<QPointF> points;
+        if (tag == QStringLiteral("line")) {
+          const double x1 = svgAttrNumber(attrs.value(QStringLiteral("x1")).toString(), 0.0);
+          const double y1 = svgAttrNumber(attrs.value(QStringLiteral("y1")).toString(), 0.0);
+          const double x2 = svgAttrNumber(attrs.value(QStringLiteral("x2")).toString(), 0.0);
+          const double y2 = svgAttrNumber(attrs.value(QStringLiteral("y2")).toString(), 0.0);
+          points.push_back(QPointF(x1, y1));
+          points.push_back(QPointF(x2, y2));
+        } else {
+          const auto nums = parseSvgNumbers(attrs.value(QStringLiteral("points")).toString());
+          for (size_t i = 0; i + 1 < nums.size(); i += 2) {
+            points.push_back(QPointF(nums[i], nums[i + 1]));
+          }
+        }
+        if (points.size() < 2) {
+          continue;
+        }
+        Artifact::ShapeContent content;
+        content.geometry.polygonPoints = transformPoints(xf, std::move(points));
+        content.geometry.polygonClosed = (tag != QStringLiteral("polyline")) &&
+                                         (tag != QStringLiteral("line"));
+        pushContent(std::move(content), frame.paint, shapeName);
+      }
+    } else if (token == QXmlStreamReader::EndElement) {
+      if (stack.size() > 1) {
+        stack.pop_back();
+      }
+    }
+  }
+  // Finish all shapes now that every gradient def is known.
+  for (auto& item : pending) {
+    contents.push_back(finishSvgContent(std::move(item.content), item.paint, item.name, gradients));
+  }
+  return contents;
+}
+
+} // namespace SvgImport
+
+std::vector<Artifact::ShapeContent> ArtifactShapeLayer::parseShapeContentsFromSvg(
+    const QString& svgText) {
+  if (svgText.trimmed().isEmpty()) {
+    return {};
+  }
+  return SvgImport::parseSvgDocument(svgText);
+}
+
+int ArtifactShapeLayer::addShapeContentsFromSvg(const QString& svgText) {
+  if (!impl_) {
+    return 0;
+  }
+  const auto parsed = parseShapeContentsFromSvg(svgText);
+  int added = 0;
+  for (const auto& content : parsed) {
+    if (addShapeContent(content) >= 0) {
+      ++added;
+    }
+  }
+  return added;
+}
+
+int ArtifactShapeLayer::importSvgFileContents(const QString& filePath) {
+  const QString trimmed = filePath.trimmed();
+  if (trimmed.isEmpty()) {
+    return -1;
+  }
+  QFile file(trimmed);
+  if (!file.exists() || file.size() > 64 * 1024 * 1024) {
+    return -1;
+  }
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    return -1;
+  }
+  const QString text = QString::fromUtf8(file.readAll());
+  file.close();
+  if (text.trimmed().isEmpty()) {
+    return -1;
+  }
+  return addShapeContentsFromSvg(text);
+}
+
 QJsonObject ArtifactShapeLayer::toJson() const {
  QJsonObject obj = ArtifactAbstract2DLayer::toJson();
  obj["type"] = static_cast<int>(LayerType::Shape);
@@ -3388,7 +6501,8 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["strokeCap"] = static_cast<int>(impl_->strokeCap_);
   obj["strokeJoin"] = static_cast<int>(impl_->strokeJoin_);
   obj["strokeAlign"] = static_cast<int>(impl_->strokeAlign_);
-  obj["dashPattern"] = dashPatternToString(impl_->dashPattern_);
+   obj["dashPattern"] = dashPatternToString(impl_->dashPattern_);
+   obj["dashOffset"] = static_cast<double>(impl_->dashOffset_);
   obj["cornerRadius"] = static_cast<double>(impl_->cornerRadius_);
   obj["starPoints"] = impl_->starPoints_;
   obj["starInnerRadius"] = static_cast<double>(impl_->starInnerRadius_);
@@ -3421,9 +6535,15 @@ QJsonObject ArtifactShapeLayer::toJson() const {
     opObj["type"] = static_cast<int>(op->type());
     operators.push_back(opObj);
   }
-  obj["shapeOperators"] = operators;
-  return obj;
-}
+   obj["shapeOperators"] = operators;
+   QJsonArray contents;
+   for (const auto& content : impl_->shapeContents_) {
+     contents.push_back(shapeContentToJson(content));
+   }
+obj["shapeContents"] = contents;
+    obj["activeContentIndex"] = impl_->activeContentIndex_;
+    return obj;
+  }
 
 SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &obj) {
   auto layer = ArtifactCore::makeShared<ArtifactShapeLayer>();
@@ -3483,7 +6603,8 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->setStrokeCap(static_cast<StrokeCap>(obj["strokeCap"].toInt(0)));
   layer->setStrokeJoin(static_cast<StrokeJoin>(obj["strokeJoin"].toInt(0)));
   layer->setStrokeAlign(static_cast<StrokeAlign>(obj["strokeAlign"].toInt(0)));
-  layer->setDashPattern(stringToDashPattern(obj["dashPattern"].toString()));
+   layer->setDashPattern(stringToDashPattern(obj["dashPattern"].toString()));
+   layer->setDashOffset(static_cast<float>(obj["dashOffset"].toDouble(0.0)));
   layer->setCornerRadius(static_cast<float>(obj["cornerRadius"].toDouble(0.0)));
   layer->setStarPoints(obj["starPoints"].toInt(5));
   layer->setStarInnerRadius(
@@ -3553,6 +6674,17 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
        layer->impl_->shapeOperators_.push_back(std::move(op));
     }
   }
+  const QJsonArray contentsArr = obj["shapeContents"].toArray();
+  layer->impl_->shapeContents_.clear();
+  const int contentCount = std::min(static_cast<int>(contentsArr.size()), 256);
+  layer->impl_->shapeContents_.reserve(contentCount);
+for (int contentIndex = 0; contentIndex < contentCount; ++contentIndex) {
+    layer->impl_->shapeContents_.push_back(
+        shapeContentFromJson(contentsArr.at(contentIndex).toObject()));
+  }
+  layer->impl_->activeContentIndex_ =
+      obj.contains("activeContentIndex") ? obj["activeContentIndex"].toInt(-1)
+                                         : -1;
   layer->impl_->markDirty();
   return layer;
 }

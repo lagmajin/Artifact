@@ -711,7 +711,7 @@ public:
   void placeCaretAt(int utf16Pos, bool extendSelection) {
     const QString currentText = toPlainText();
     QTextCursor cursor = textCursor();
-    cursor.setPosition(std::clamp(utf16Pos, 0, currentText.length()),
+    cursor.setPosition(std::clamp(utf16Pos, 0, static_cast<int>(currentText.length())),
                        extendSelection ? QTextCursor::KeepAnchor
                                        : QTextCursor::MoveAnchor);
     setTextCursor(cursor);
@@ -5898,13 +5898,13 @@ protected:
       event->accept();
       return;
     }
-    if (!event->isAutoRepeat() && event->key() == Qt::Key_Backspace &&
-        event->modifiers() == Qt::NoModifier && controller_) {
-      if (auto *toolManager = ArtifactApplicationManager::instance()
-                                  ? ArtifactApplicationManager::instance()->toolManager()
-                                  : nullptr;
-          toolManager && toolManager->activeTool() == ToolType::Pen &&
-          controller_->removeLastPendingShapePathVertex()) {
+      if (!event->isAutoRepeat() && event->key() == Qt::Key_Backspace &&
+          event->modifiers() == Qt::NoModifier && controller_) {
+        auto *toolManager = ArtifactApplicationManager::instance()
+                                ? ArtifactApplicationManager::instance()->toolManager()
+                                : nullptr;
+        if (toolManager && toolManager->activeTool() == ToolType::Pen &&
+            controller_->removeLastPendingShapePathVertex()) {
         event->accept();
         return;
       }
