@@ -1032,6 +1032,9 @@ QImage applyMatteStackToSurface(
         case ArtifactCore::MatteStackMode::Subtract:
           combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
           break;
+        case ArtifactCore::MatteStackMode::Difference:
+          combinedMask[i] = std::abs(combinedMask[i] - matteMask[i]);
+          break;
         }
     });
   }

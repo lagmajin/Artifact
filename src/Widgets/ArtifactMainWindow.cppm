@@ -191,11 +191,11 @@ struct WorkspaceVisibilityRule {
 const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
   static const WorkspaceVisibilityRule rules[] = {
       {WorkspaceMode::Default,
-       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Effects", "Properties"},
+       {"Composition Viewer", "Project", "Inspector"},
 
 
-       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition View (Software)",
+       {"Asset Browser", "Effects", "Properties", "Audio Mixer",
+        "Contents Viewer", "AI Chat", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"}},
       {WorkspaceMode::Import,
        {"Project", "Asset Browser", "Inspector", "Effects", "Properties"},
@@ -410,7 +410,7 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   }
   for (const QString &title : dockTitles) {
     if (isTimelineDockTitle(title)) {
-      if (mode == WorkspaceMode::Default || mode == WorkspaceMode::Animation) {
+      if (mode == WorkspaceMode::Animation) {
         visibleTitles.insert(title);
       } else {
         visibleTitles.remove(title);

@@ -465,7 +465,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
-        const auto lodData = applyParticleRenderLOD(
+        auto lodData = applyParticleRenderLOD(
             std::move(coreData), screenScale);
         if (!lodData.particles.empty()) {
             // 3D particle layers must not collapse (px, py, vx, vy) through a
@@ -475,6 +475,17 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
             // when particle3DCameraActive_ is true. Keep the source positions
             // intact so 3D camera orbit moves the billboards correctly.
             if (is3D()) {
+                const QMatrix4x4 modelRows = getGlobalTransform4x4().transposed();
+                std::copy_n(modelRows.constData(), lodData.modelMatrix.size(),
+                            lodData.modelMatrix.begin());
+                const float safeOpacity = std::isfinite(opacity())
+                    ? std::clamp(opacity(), 0.0f, 1.0f)
+                    : 0.0f;
+                for (auto& particle : lodData.particles) {
+                    particle.a = std::isfinite(particle.a)
+                        ? std::clamp(particle.a * safeOpacity, 0.0f, 1.0f)
+                        : 0.0f;
+                }
                 renderer->drawParticles(lodData);
             } else {
                 const ArtifactCore::ParticleRenderData renderData =

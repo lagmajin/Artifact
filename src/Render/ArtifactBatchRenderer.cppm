@@ -138,38 +138,61 @@ int ArtifactBatchRenderer::addCompositions(
 {
     clearBatchErrors();
     auto* queue = impl_->queueService;
-    if (!queue || outputDir.trimmed().isEmpty() || fileNamePattern.trimmed().isEmpty()) return 0;
+    if (!queue) {
+        lastBatchErrors_.append(QStringLiteral("Render queue service is unavailable"));
+        return 0;
+    }
+    if (outputDir.trimmed().isEmpty() || fileNamePattern.trimmed().isEmpty()) {
+        lastBatchErrors_.append(QStringLiteral("Output directory or file name pattern is empty"));
+        return 0;
+    }
+    QDir dir(outputDir);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        lastBatchErrors_.append(
+            QStringLiteral("Unable to create output directory: %1").arg(outputDir));
+        return 0;
+    }
+    const QString defaultPresetId = QStringLiteral("h264_mp4_standard");
+    const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(
+        defaultPresetId);
+    if (!preset) {
+        lastBatchErrors_.append(
+            QStringLiteral("Default render preset is unavailable: %1").arg(defaultPresetId));
+        return 0;
+    }
 
     int added = 0;
     auto& pm = ArtifactProjectManager::getInstance();
 
     for (const auto& id : ids) {
         const auto found = pm.findComposition(id);
-        if (!found.success) continue;
+        if (!found.success) {
+            lastBatchErrors_.append(QStringLiteral("Composition was not found: %1").arg(id.toString()));
+            continue;
+        }
 
         auto comp = found.ptr.lock();
-        if (!comp) continue;
+        if (!comp) {
+            lastBatchErrors_.append(QStringLiteral("Composition is no longer available: %1").arg(id.toString()));
+            continue;
+        }
 
         const QString compName = comp->settings().compositionName().toQString();
         const QString safeName = resolveFileNamePattern(fileNamePattern, compName);
 
-        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(
-            QStringLiteral("h264_mp4_standard"));
         const QString outputExt = presetOutputExtension(preset);
 
-        QDir dir(outputDir);
-        if (!dir.exists()) dir.mkpath(".");
         const QString outputPath = dir.filePath(safeName + QStringLiteral(".") + outputExt);
 
-        queue->addRenderQueueWithPreset(id, compName, QStringLiteral("h264_mp4_standard"));
+        queue->addRenderQueueWithPreset(id, compName, defaultPresetId);
 
         const int compIndex = queue->jobCount() - 1;
         if (compIndex >= 0) {
             queue->setJobOutputPathAt(compIndex, outputPath);
-            int startF = 0, endF = 1;
-            if (queue->jobFrameRangeAt(compIndex, &startF, &endF)) {
-                // Already set by addRenderQueueForComposition
-            }
+        } else {
+            lastBatchErrors_.append(
+                QStringLiteral("Failed to create a render job for: %1").arg(compName));
+            continue;
         }
 
         added++;
@@ -223,31 +246,56 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
     const BatchTemplate& tmpl)
 {
     auto* queue = impl_->queueService;
-    if (!queue || !validateTemplate(tmpl)) return 0;
+    if (!queue) {
+        lastBatchErrors_.append(QStringLiteral("Render queue service is unavailable"));
+        return 0;
+    }
+    QString templateError;
+    if (!validateTemplate(tmpl, &templateError)) {
+        lastBatchErrors_.append(templateError);
+        return 0;
+    }
+    QDir outputDir(tmpl.outputDirectory);
+    if (!outputDir.exists() && !outputDir.mkpath(QStringLiteral("."))) {
+        lastBatchErrors_.append(
+            QStringLiteral("Unable to create output directory: %1").arg(tmpl.outputDirectory));
+        return 0;
+    }
 
     int added = 0;
     auto& pm = ArtifactProjectManager::getInstance();
 
     for (const auto& id : ids) {
         const auto found = pm.findComposition(id);
-        if (!found.success) continue;
+        if (!found.success) {
+            lastBatchErrors_.append(QStringLiteral("Composition was not found: %1").arg(id.toString()));
+            continue;
+        }
 
         auto comp = found.ptr.lock();
-        if (!comp) continue;
+        if (!comp) {
+            lastBatchErrors_.append(QStringLiteral("Composition is no longer available: %1").arg(id.toString()));
+            continue;
+        }
 
         const QString compName = comp->settings().compositionName().toQString();
         const QString resolvedName = resolveFileNamePattern(tmpl.fileNamePattern, compName);
         QDir dir(tmpl.outputDirectory);
-        if (!dir.exists()) dir.mkpath(".");
 
         // Determine extension from preset
-        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(tmpl.presetId);
+        const QString presetId = tmpl.presetId.isEmpty()
+            ? QStringLiteral("h264_mp4_standard")
+            : tmpl.presetId;
+        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+        if (!preset) {
+            lastBatchErrors_.append(
+                QStringLiteral("Render preset is unavailable: %1").arg(presetId));
+            continue;
+        }
         const QString ext = presetOutputExtension(preset);
         const QString outputPath = dir.filePath(resolvedName + "." + ext);
 
-        queue->addRenderQueueWithPreset(id, compName, tmpl.presetId.isEmpty()
-                                                     ? QStringLiteral("h264_mp4_standard")
-                                                     : tmpl.presetId);
+        queue->addRenderQueueWithPreset(id, compName, presetId);
         const int idx = queue->jobCount() - 1;
         if (idx >= 0) {
             queue->setJobOutputPathAt(idx, outputPath);
@@ -273,6 +321,10 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
             if (tmpl.startFrame >= 0 && tmpl.endFrame >= tmpl.startFrame) {
                 queue->setJobFrameRangeAt(idx, tmpl.startFrame, tmpl.endFrame);
             }
+        } else {
+            lastBatchErrors_.append(
+                QStringLiteral("Failed to create a render job for: %1").arg(compName));
+            continue;
         }
         added++;
     }

@@ -37,6 +37,7 @@ import Layer.State;
 import Animation.Transform2D;
 import Animation.Transform3D;
 import Animation.Value;
+import Time.Rational;
 import Time.TimeRemap;
 import Artifact.Effect.Abstract;
 import Artifact.Animation.LayerEffectEnvelope;
@@ -54,6 +55,23 @@ export import Property.Abstract;
 export import Property.Group;
 
 export namespace Artifact {
+
+enum class LayerRigidBodyContactPhase : std::uint8_t {
+  Begin,
+  End,
+  Hit
+};
+
+struct LayerRigidBodyContactState {
+  int beginCount = 0;
+  int endCount = 0;
+  int hitCount = 0;
+  int activeContactCount = 0;
+  ArtifactCore::LayerID lastOtherLayerId;
+  QPointF lastPoint;
+  QPointF lastNormal;
+  float maxImpactSpeed = 0.0f;
+};
 
  struct LayerFieldChannelSample {
   float weight = 1.0f;
@@ -410,7 +428,11 @@ public:
   QTransform getGlobalTransformAt(int64_t frameNumber) const;
   QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
+  // Evaluates the 3D parent chain at an explicit composition time. Audio and
+  // offline rendering use this instead of the interactive timeline cursor.
+  QMatrix4x4 getGlobalTransform4x4At(const ArtifactCore::RationalTime& time) const;
   QMatrix4x4 getLocalTransform4x4() const;
+  QMatrix4x4 getLocalTransform4x4At(const ArtifactCore::RationalTime& time) const;
   std::vector<TwoPointFiveDRenderPass> twoPointFiveDRenderPasses(
       const QMatrix4x4 &baseTransform) const;
   float4x4 getGlobalTransformMatrix() const;
@@ -430,8 +452,22 @@ public:
   void enableRigidBodyPhysics();
   void disableRigidBodyPhysics();
   void syncRigidBodyPhysicsToBounds();
+  void syncKinematicRigidBodyToAuthoredTransform();
+  bool beginRigidBodyMouseDrag(const QPointF& canvasPosition);
+  bool updateRigidBodyMouseDrag(const QPointF& canvasPosition);
+  void endRigidBodyMouseDrag();
+  bool hasRigidBodyMouseDrag() const;
+  void beginRigidBodyContactStep();
+  void recordRigidBodyContact(LayerRigidBodyContactPhase phase,
+                              const ArtifactCore::LayerID& otherLayerId,
+                              const QPointF& point, const QPointF& normal,
+                              float approachSpeed);
+  void clearRigidBodyContactState();
+  const LayerRigidBodyContactState& rigidBodyContactState() const;
   void applyRigidBodyPhysicsSettings();
   void applyRigidBodyWorldGravity();
+  bool isJointBroken() const;
+  void setJointBroken(bool broken);
   const ArtifactCore::FractureState& fractureState() const;
   const std::vector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
   const LayerEvaluationState& layerEvaluationState() const;

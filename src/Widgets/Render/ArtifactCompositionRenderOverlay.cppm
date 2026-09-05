@@ -730,16 +730,11 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  const FloatColor darkColor{0.02f, 0.02f, 0.02f, 0.85f};
-  const FloatColor lightColor{0.42f, 0.68f, 0.96f, 0.95f};
+  const FloatColor darkColor{0.22f, 0.24f, 0.27f, 0.65f};
   renderer->drawSolidLine({0.0f, 0.0f}, {cw, 0.0f}, darkColor, 1.0f);
   renderer->drawSolidLine({cw, 0.0f}, {cw, ch}, darkColor, 1.0f);
   renderer->drawSolidLine({cw, ch}, {0.0f, ch}, darkColor, 1.0f);
   renderer->drawSolidLine({0.0f, ch}, {0.0f, 0.0f}, darkColor, 1.0f);
-  renderer->drawSolidLine({0.0f, 0.0f}, {cw, 0.0f}, lightColor, 1.0f);
-  renderer->drawSolidLine({cw, 0.0f}, {cw, ch}, lightColor, 1.0f);
-  renderer->drawSolidLine({cw, ch}, {0.0f, ch}, lightColor, 1.0f);
-  renderer->drawSolidLine({0.0f, ch}, {0.0f, 0.0f}, lightColor, 1.0f);
 
   const QString summary = responsiveLayoutSummaryText(comp);
   if (!summary.isEmpty()) {
@@ -1201,12 +1196,8 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
   // layers. In that mode the selection frame must follow the supplied camera
   // matrices instead of falling back to the unrotated 2D canvas transform.
   if (layer->is3D() || (cameraView && cameraProj)) {
-    // Keep the projected frame clear of the layer pixels. Besides improving
-    // readability, this leaves a stable border-sized target for frame dragging.
-    const qreal frameOutset = std::clamp(
-        std::min(localBounds.width(), localBounds.height()) * 0.015, 6.0, 18.0);
-    const QRectF bounds = localBounds.adjusted(
-        -frameOutset, -frameOutset, frameOutset, frameOutset);
+    // The frame follows the source edge; hit padding is screen-space only.
+    const QRectF bounds = localBounds;
     // Match the matrix used by layer rendering and projected-frame hit tests.
     // The transitional Diligent matrix path has different row/column
     // conventions and projected the visible frame away from its 2D plane in
@@ -1263,8 +1254,11 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                        color.a() * 0.48f};
       }
     }
+    // Drain preceding work before switching cameras. Frame vertices are
+    // batched and must also be submitted before resetting this camera below.
+    renderer->flushGizmo3D();
     if (cameraView && cameraProj) {
-      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+      renderer->setGizmoCameraMatrices(*cameraView, *cameraProj);
     }
     // Thick 3D lines are expanded as world-space quads and become uneven at
     // low zoom or oblique angles. Native one-pixel lines stay aligned with the
@@ -1376,9 +1370,10 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     if (showRotationHandle) {
       rotationHandle(rotationX, rotationY);
     }
+    // Submit batched handles while their camera matrices are still active.
     renderer->flushGizmo3D();
     if (cameraView && cameraProj) {
-      renderer->reset3DCameraMatrices();
+      renderer->resetGizmoCameraMatrices();
     }
     return;
   }

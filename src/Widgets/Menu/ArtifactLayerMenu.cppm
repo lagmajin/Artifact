@@ -792,6 +792,7 @@ public:
     QAction* createCameraAction = nullptr;
     QAction* createLightAction = nullptr;
     QAction* createAudioAction = nullptr;
+    QAction* createSpatialAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
     QAction* createModel3DAction = nullptr;
     QAction* createPlane3DAction = nullptr;
@@ -919,7 +920,7 @@ public:
     void handleCreateProcedural3D(Procedural3DLayerKind kind);
     void handleCreateCamera();
     void handleCreateLight();
-    void handleCreateAudio();
+    void handleCreateAudio(bool spatial = false);
     void handleCreateSvg();
     void handleCreateModel3D();
     void handleCreatePlane3D();
@@ -1063,6 +1064,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createLightAction = new QAction("ライト(&L)", createMenu);
     createLightAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_wb_sunny.svg")));
 
+    createSpatialAudioAction = new QAction("3Dオーディオ...", createMenu);
+    createSpatialAudioAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
     createAudioAction = new QAction("オーディオ(&U)...", createMenu);
     createAudioAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
 
@@ -1174,6 +1177,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createCameraAction);
     createMenu->addAction(createLightAction);
     createMenu->addAction(createAudioAction);
+    createMenu->addAction(createSpatialAudioAction);
     createMenu->addAction(createSvgAction);
     create3DMenu = new QMenu(QStringLiteral("3Dレイヤー(&3)"), createMenu);
     create3DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
@@ -1535,6 +1539,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createPathTubeAction) { handleCreateProcedural3D(Procedural3DLayerKind::PathTube); return; }
         if (action == createCameraAction) { handleCreateCamera(); return; }
         if (action == createLightAction) { handleCreateLight(); return; }
+        if (action == createSpatialAudioAction) { handleCreateAudio(true); return; }
         if (action == createAudioAction) { handleCreateAudio(); return; }
         if (action == createSvgAction) { handleCreateSvg(); return; }
         if (action == createModel3DAction) { handleCreateModel3D(); return; }
@@ -1990,6 +1995,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createCameraAction->setEnabled(hasProject);
     createLightAction->setEnabled(hasProject);
     createAudioAction->setEnabled(hasProject);
+    createSpatialAudioAction->setEnabled(hasProject);
     createSvgAction->setEnabled(hasProject);
     createModel3DAction->setEnabled(hasProject);
     createPlane3DAction->setEnabled(hasProject);
@@ -2703,7 +2709,7 @@ void ArtifactLayerMenu::Impl::handleCreateLight()
     service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
-void ArtifactLayerMenu::Impl::handleCreateAudio()
+void ArtifactLayerMenu::Impl::handleCreateAudio(bool spatial)
 {
     if (!ensureCurrentComposition()) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
@@ -2719,7 +2725,8 @@ void ArtifactLayerMenu::Impl::handleCreateAudio()
         return;
     }
 
-    ArtifactAudioInitParams params(uniqueLayerName(QFileInfo(path).baseName()));
+    ArtifactAudioInitParams params(uniqueLayerName(QFileInfo(path).baseName()),
+                                   spatial ? LayerType::SpatialAudio : LayerType::Audio);
     params.setAudioPath(path);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
@@ -2783,7 +2790,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         menu_ ? menu_->window() : nullptr,
         QStringLiteral("3Dモデルを選択"),
         QString(),
-        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)"));
+        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.ply *.las *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)"));
     if (filePath.isEmpty()) {
         return;
     }

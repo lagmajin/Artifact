@@ -632,6 +632,24 @@ namespace Artifact
                     }
                 }
 
+                int enabledMatteCount = 0;
+                for (const auto& ref : layer->matteReferences()) {
+                    if (ref.enabled && !ref.sourceLayerId.isNil()) {
+                        ++enabledMatteCount;
+                    }
+                }
+                if (enabledMatteCount > 3) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Matte,
+                        QStringLiteral("Layer '%1' has %2 track mattes; GPU render applies at most 3")
+                            .arg(layerName).arg(enabledMatteCount),
+                        QStringLiteral("Layer '%1' references %2 enabled matte sources. The GPU track-matte pass supports up to 3; additional mattes are ignored on GPU renders.")
+                            .arg(layerName).arg(enabledMatteCount),
+                        QStringLiteral("Reduce to 3 or fewer enabled mattes, or render on the CPU path"),
+                        compId, layerId));
+                }
+
                 const auto hasCycleFrom = [&layerMap](
                         const QString& currentId, QSet<QString>& path,
                         QStringList& chain, QString& cycleKey,
@@ -2428,6 +2446,7 @@ namespace Artifact
             int frameNumber = 0;
             int jobIndex = 0;
             ArtifactCompositionPtr composition;
+            bool compositionIsIsolated = false;
             ArtifactRenderJob job;
             bool useGpuBackend = false;
             bool isVideo = false;
@@ -5510,11 +5529,13 @@ namespace Artifact
             return false;
         }
 
-        // goToFrame() updates shared mutable state (FramePosition, layers, and
-        // PhysicsSystem). A single job snapshot is intentionally shared by the
-        // scheduler, so serialise its render-state transition and consumption.
-        // Output buffering/encoding remain outside this critical section.
-        std::lock_guard<std::mutex> frameStateLock(compositionFrameStateMutex_);
+        // A worker-owned snapshot contains its own frame, layer, and simulation
+        // state. Shared GPU renderer state still uses the serialized path.
+        std::unique_lock<std::mutex> frameStateLock(
+            compositionFrameStateMutex_, std::defer_lock);
+        if (!snap.compositionIsIsolated || snap.useGpuBackend) {
+            frameStateLock.lock();
+        }
 
         registerRenderQueueContextSnapshot(snap.job, snap.composition, snap.frameNumber);
 
@@ -5953,13 +5974,27 @@ namespace Artifact
                 }
             }
         }
-        // A frame render mutates the shared composition and layer state. Do not
-        // dispatch this queue path through MFR/Farm until each worker owns an
-        // isolated composition snapshot and renderer.
-        const bool useMfr = false;
-        const int numWorkers = useMfr
+        // CPU workers receive an independent composition snapshot.  GPU work
+        // remains serialized because the Diligent immediate context, renderer,
+        // surface cache, and encoder ownership are still shared.
+        bool useMfr = !useGpuBackend && totalFrames > 1;
+        int numWorkers = useMfr
             ? std::max(1, std::min(maxInFlightFrames_, totalFrames))
             : 1;
+        std::vector<ArtifactCompositionPtr> workerCompositions;
+        if (useMfr) {
+            workerCompositions.reserve(static_cast<size_t>(numWorkers));
+            for (int workerIndex = 0; workerIndex < numWorkers; ++workerIndex) {
+                auto snapshot = cloneCompositionSnapshot(compositionForRender);
+                if (!snapshot) {
+                    workerCompositions.clear();
+                    useMfr = false;
+                    numWorkers = 1;
+                    break;
+                }
+                workerCompositions.push_back(std::move(snapshot));
+            }
+        }
 
         FrameRenderSnapshot baseSnap;
         baseSnap.jobIndex = jobIndex;
@@ -5988,7 +6023,9 @@ namespace Artifact
 
         // Shared: render a single frame, return true on success.
         // Does NOT set anyWorkerFailed — caller (renderFrame) owns retry/failure logic.
-        auto renderOneFrame = [&](int f) -> bool {
+        auto renderOneFrame = [&](int f,
+                                  const ArtifactCompositionPtr& workerComposition,
+                                  bool compositionIsIsolated) -> bool {
             if (shutdownRequested_.load(std::memory_order_acquire))
                 return false;
 
@@ -6006,6 +6043,8 @@ namespace Artifact
 
             FrameRenderSnapshot snap = baseSnap;
             snap.frameNumber = f;
+            snap.composition = workerComposition;
+            snap.compositionIsIsolated = compositionIsIsolated;
             FrameRenderOutput frameOutput;
             QString frameError;
             bool ok = false;
@@ -6063,7 +6102,9 @@ namespace Artifact
         };
 
         // Determine whether to use the farm path
-        const bool useFarm = farmEnabled_ && useMfr;
+        // The farm callback cannot retain one snapshot per worker yet.  Keep it
+        // disabled until farm worker state has the same ownership contract.
+        const bool useFarm = false;
 
         // Checkpoint-aware start frame (farm path only)
         int consumerStartF = startF;
@@ -6206,7 +6247,7 @@ namespace Artifact
                             std::chrono::milliseconds(backoff));
                     }
 
-                    if (renderOneFrame(frame)) {
+                    if (renderOneFrame(frame, compositionForRender, false)) {
                         // Success
                         farmProgress.reportFrameCompleted(
                             QStringLiteral("master"), frame);
@@ -6239,7 +6280,14 @@ namespace Artifact
             }
         } else {
             // Legacy path: worker threads pull from atomic counter
-            auto renderWorker = [&]() {
+            auto renderWorker = [&](int workerIndex) {
+                const bool hasIsolatedComposition =
+                    useMfr && workerIndex >= 0 &&
+                    workerIndex < static_cast<int>(workerCompositions.size());
+                const ArtifactCompositionPtr& workerComposition =
+                    hasIsolatedComposition
+                        ? workerCompositions[static_cast<size_t>(workerIndex)]
+                        : compositionForRender;
                 while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
                     const int f = nextFrameCounter.fetch_add(1, std::memory_order_relaxed);
                     if (f >= endF) break;
@@ -6247,12 +6295,12 @@ namespace Artifact
                         anyWorkerFailed.store(true, std::memory_order_relaxed);
                         break;
                     }
-                    renderOneFrame(f);
+                    renderOneFrame(f, workerComposition, hasIsolatedComposition);
                 }
             };
 
             for (int w = 0; w < numWorkers; ++w) {
-                renderWorkers.emplace_back(renderWorker);
+                renderWorkers.emplace_back(renderWorker, w);
             }
         }
 

@@ -18,6 +18,7 @@ module;
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLabel>
+#include <QPushButton>
 #include <QListWidget>
 #include <QAbstractScrollArea>
 #include <QPainter>
@@ -29,6 +30,7 @@ module;
 #include <QSplitter>
 #include <QTabWidget>
 #include <QShowEvent>
+#include <QHideEvent>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 #include <QTimerEvent>
@@ -454,6 +456,18 @@ QString debugMcpSummaryPreviewText(const QJsonArray& history, const QJsonArray& 
 }
 
 class AppDebuggerWidget::Impl {
+    class CaptureButton final : public QPushButton {
+    public:
+        CaptureButton(Impl* impl, QWidget* parent)
+            : QPushButton(QStringLiteral("詳細を取得（画像・履歴）"), parent), impl_(impl) {}
+    protected:
+        void nextCheckState() override {
+            QPushButton::nextCheckState();
+            if (impl_) impl_->refresh(true);
+        }
+    private:
+        Impl* impl_;
+    };
 public:
     class CaptureHistoryListWidget : public QListWidget {
     public:
@@ -475,6 +489,7 @@ public:
     };
 
     AppDebuggerWidget* owner_ = nullptr;
+    QLabel* liveSummary_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QWidget* overviewPage_ = nullptr;
     QLabel* overviewSummary_ = nullptr;
@@ -931,9 +946,14 @@ public:
         tabs_->addTab(fallbackDiagnosticsPage_, QStringLiteral("Fallbacks"));
         tabs_->addTab(exportPage_, QStringLiteral("Export"));
 
+        liveSummary_ = new QLabel(owner_);
+        liveSummary_->setWordWrap(true);
+        layout->addWidget(liveSummary_);
+        auto* captureButton = new CaptureButton(this, owner_);
+        captureButton->setToolTip(QStringLiteral("詳細タブは手動取得した時点の情報です。画像読み戻し・履歴の読み書きを行うため、一時的に操作が止まる場合があります。"));
+        layout->addWidget(captureButton);
         layout->addWidget(tabs_);
 
-        timerId_ = owner_->startTimer(250);
         owner_->ensurePolished();
         layout->activate();
         applyDebuggerSurfacePalette(owner_, palette);
@@ -1711,12 +1731,30 @@ public:
         }
     }
 
-    void refresh()
+    void refresh(bool detailed = false)
     {
-        if (refreshing_) {
+        if (refreshing_ || !owner_->isVisible()) {
             return;
         }
         QScopedValueRollback<bool> refreshGuard(refreshing_, true);
+        if (liveSummary_) {
+            if (controller_) {
+                const auto counters = controller_->frameDebugCounters();
+                liveSummary_->setText(QStringLiteral(
+                    "自動観測（1秒間隔） CPU: %1 ms / 平均 %2 ms / GPU記録値: %3 ms / Draw: %4 / PSO: %5 / SRB: %6 / Buffer更新: %7\n"
+                    "記録済み数値のみ（未計測・停止中は0または以前の値）。詳細タブは手動取得時の情報です。")
+                    .arg(counters.renderLastFrameMs, 0, 'f', 2)
+                    .arg(counters.renderAverageFrameMs, 0, 'f', 2)
+                    .arg(counters.renderGpuFrameMs, 0, 'f', 2)
+                    .arg(counters.renderCost.drawCalls)
+                    .arg(counters.renderCost.psoSwitches)
+                    .arg(counters.renderCost.srbCommits)
+                    .arg(counters.renderCost.bufferUpdates));
+            } else {
+                liveSummary_->setText(QStringLiteral("自動観測: 接続されたViewportなし。詳細情報は手動で取得してください。"));
+            }
+        }
+        if (!detailed) return;
         refreshCaptureBundleFromDisk();
         const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
         const auto projectSvc = ArtifactProjectService::instance();
@@ -2820,8 +2858,18 @@ void AppDebuggerWidget::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
     applyDebuggerSurfacePalette(this, palette());
     if (impl_) {
+        if (!impl_->timerId_) impl_->timerId_ = startTimer(1000);
         impl_->refresh();
     }
+}
+
+void AppDebuggerWidget::hideEvent(QHideEvent* event)
+{
+    if (impl_ && impl_->timerId_) {
+        killTimer(impl_->timerId_);
+        impl_->timerId_ = 0;
+    }
+    QWidget::hideEvent(event);
 }
 
 void AppDebuggerWidget::resizeEvent(QResizeEvent* event)

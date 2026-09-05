@@ -24,6 +24,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
+import Artifact.Layer.SpatialAudio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Artifact.Layer.Text;
@@ -179,6 +180,18 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
   case LayerType::Procedural3D:
    ptr = createTerrainLayer();
    break;
+  case LayerType::SpatialAudio: {
+    auto audioLayer = ArtifactCore::makeShared<ArtifactSpatialAudioLayer>();
+    if (auto* audioParams = dynamic_cast<const ArtifactAudioInitParams*>(&params)) {
+      const QString path = audioParams->audioPath();
+      if (!path.isEmpty() && !audioLayer->loadFromPath(path)) {
+        qWarning() << "[ArtifactLayerFactory] Spatial audio requires a readable mono/stereo WAV:" << path;
+        break;
+      }
+    }
+    ptr = audioLayer;
+    break;
+  }
   case LayerType::Audio: {
     auto audioLayer = ArtifactCore::makeShared<ArtifactAudioLayer>();
    if (auto* audioParams = dynamic_cast<const ArtifactAudioInitParams*>(&params)) {

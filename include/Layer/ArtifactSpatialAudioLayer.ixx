@@ -4,19 +4,27 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QUuid>
+#include <vector>
 
 export module Artifact.Layer.SpatialAudio;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Audio;
+import Audio.Segment;
+import Frame.Position;
 import Memory.SharedPtr;
 import Audio.Spatial.Params;
 
 export namespace Artifact {
 
-class ArtifactSpatialAudioLayer : public ArtifactAbstractLayer {
+class ArtifactSpatialAudioLayer : public ArtifactAudioLayer {
 public:
     ArtifactSpatialAudioLayer();
     ~ArtifactSpatialAudioLayer() override;
+    ArtifactSpatialAudioLayer(const ArtifactSpatialAudioLayer&) = delete;
+    ArtifactSpatialAudioLayer& operator=(const ArtifactSpatialAudioLayer&) = delete;
+    ArtifactSpatialAudioLayer(ArtifactSpatialAudioLayer&&) = delete;
+    ArtifactSpatialAudioLayer& operator=(ArtifactSpatialAudioLayer&&) = delete;
 
     void draw(ArtifactIRenderer* renderer) override;
     UniString className() const override;

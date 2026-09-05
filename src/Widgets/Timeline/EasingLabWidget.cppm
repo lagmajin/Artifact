@@ -48,6 +48,10 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
         return QStringLiteral("maps to ease-out");
     case ArtifactCore::InterpolationType::EaseInOut:
         return QStringLiteral("maps to easy ease");
+    case ArtifactCore::InterpolationType::EaseOutIn:
+        return QStringLiteral("maps to ease-out-in");
+    case ArtifactCore::InterpolationType::Smooth:
+        return QStringLiteral("maps to smooth");
     case ArtifactCore::InterpolationType::BounceIn:
         return QStringLiteral("maps to bounce-in");
     case ArtifactCore::InterpolationType::BounceOut:
@@ -68,6 +72,14 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
         return QStringLiteral("maps to back-in-out");
     case ArtifactCore::InterpolationType::Exponential:
         return QStringLiteral("maps to expo");
+    case ArtifactCore::InterpolationType::Quartic:
+        return QStringLiteral("maps to quartic");
+    case ArtifactCore::InterpolationType::Quintic:
+        return QStringLiteral("maps to quintic");
+    case ArtifactCore::InterpolationType::Sine:
+        return QStringLiteral("maps to sine");
+    case ArtifactCore::InterpolationType::Circular:
+        return QStringLiteral("maps to circular");
     case ArtifactCore::InterpolationType::Bezier:
         return QStringLiteral("maps to bezier");
     default:

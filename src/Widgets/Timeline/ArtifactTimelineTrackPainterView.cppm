@@ -3148,6 +3148,10 @@ QColor keyframeInterpolationColor(const ArtifactCore::InterpolationType type,
     return QColor(110, 214, 255);
   case ArtifactCore::InterpolationType::Bezier:
     return QColor(126, 176, 255);
+  case ArtifactCore::InterpolationType::CatmullRom:
+    return QColor(170, 130, 255);
+  case ArtifactCore::InterpolationType::Hermite:
+    return QColor(205, 120, 245);
   case ArtifactCore::InterpolationType::BounceIn:
   case ArtifactCore::InterpolationType::BounceOut:
   case ArtifactCore::InterpolationType::BounceInOut:
@@ -3193,6 +3197,10 @@ QString keyframeInterpolationLabel(const ArtifactCore::InterpolationType type) {
     return tt("timeline.ease_in_out", "Ease In/Out");
   case ArtifactCore::InterpolationType::Bezier:
     return tt("timeline.bezier", "Bezier");
+  case ArtifactCore::InterpolationType::CatmullRom:
+    return tt("timeline.catmull_rom", "Catmull-Rom");
+  case ArtifactCore::InterpolationType::Hermite:
+    return tt("timeline.hermite", "Hermite");
   case ArtifactCore::InterpolationType::BounceIn:
     return tt("timeline.bounce_in", "Bounce In");
   case ArtifactCore::InterpolationType::BounceOut:
@@ -3252,6 +3260,19 @@ QPolygonF keyframeShapePolygon(const QRectF &rect,
                      QPointF(c.x(), rect.bottom()),
                      QPointF(rect.left(), rect.bottom() - rect.height() * 0.28),
                      QPointF(rect.left(), rect.top() + rect.height() * 0.28)};
+  case ArtifactCore::InterpolationType::CatmullRom:
+    return QPolygonF{QPointF(c.x(), rect.top()),
+                     QPointF(rect.right(), rect.top() + rect.height() * 0.22),
+                     QPointF(rect.right(), rect.bottom() - rect.height() * 0.22),
+                     QPointF(c.x(), rect.bottom()),
+                     QPointF(rect.left(), rect.bottom() - rect.height() * 0.22),
+                     QPointF(rect.left(), rect.top() + rect.height() * 0.22)};
+  case ArtifactCore::InterpolationType::Hermite:
+    return QPolygonF{QPointF(c.x(), rect.top()),
+                     QPointF(rect.right(), c.y()),
+                     QPointF(rect.right() - rect.width() * 0.22, rect.bottom()),
+                     QPointF(rect.left() + rect.width() * 0.22, rect.bottom()),
+                     QPointF(rect.left(), c.y())};
   case ArtifactCore::InterpolationType::BounceIn:
   case ArtifactCore::InterpolationType::BounceOut:
   case ArtifactCore::InterpolationType::BounceInOut:
@@ -9194,6 +9215,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *interpEaseInOutAct = nullptr;
   QAction *interpHoldAct = nullptr;
   QAction *interpBezierAct = nullptr;
+  QAction *interpCatmullRomAct = nullptr;
+  QAction *interpHermiteAct = nullptr;
   QMenu *interpolationMenu = nullptr;
   if (!interpolationTargets.isEmpty()) {
     menu.addSeparator();
@@ -9205,12 +9228,16 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     interpEaseInOutAct = interpolationMenu->addAction(tt("timeline.ease_in_out", "Ease In/Out"));
     interpHoldAct = interpolationMenu->addAction(tt("timeline.hold", "Hold"));
     interpBezierAct = interpolationMenu->addAction(tt("timeline.bezier", "Bezier"));
+    interpCatmullRomAct = interpolationMenu->addAction(tt("timeline.catmull_rom", "Catmull-Rom"));
+    interpHermiteAct = interpolationMenu->addAction(tt("timeline.hermite", "Hermite"));
     setActionIcon(interpLinearAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(interpEaseInAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(interpEaseOutAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(interpEaseInOutAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(interpHoldAct, QStringLiteral("timeline_keyframe_anchor"));
     setActionIcon(interpBezierAct, QStringLiteral("timeline_keyframe_interpolation"));
+    setActionIcon(interpCatmullRomAct, QStringLiteral("timeline_keyframe_interpolation"));
+    setActionIcon(interpHermiteAct, QStringLiteral("timeline_keyframe_interpolation"));
   }
   QAction *breakTangentsAct = nullptr;
   QAction *unifyTangentsAct = nullptr;
@@ -9525,7 +9552,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   if (interpolationMenu &&
       (chosen == interpLinearAct || chosen == interpEaseInAct ||
        chosen == interpEaseOutAct || chosen == interpEaseInOutAct ||
-       chosen == interpHoldAct || chosen == interpBezierAct)) {
+       chosen == interpHoldAct || chosen == interpBezierAct ||
+       chosen == interpCatmullRomAct || chosen == interpHermiteAct)) {
     const ArtifactCore::InterpolationType type =
         (chosen == interpLinearAct)   ? ArtifactCore::InterpolationType::Linear
         : (chosen == interpEaseInAct) ? ArtifactCore::InterpolationType::EaseIn
@@ -9533,7 +9561,11 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         : (chosen == interpEaseInOutAct)
             ? ArtifactCore::InterpolationType::EaseInOut
         : (chosen == interpHoldAct)   ? ArtifactCore::InterpolationType::Constant
-                                      : ArtifactCore::InterpolationType::Bezier;
+        : (chosen == interpCatmullRomAct)
+            ? ArtifactCore::InterpolationType::CatmullRom
+        : (chosen == interpHermiteAct)
+            ? ArtifactCore::InterpolationType::Hermite
+                                        : ArtifactCore::InterpolationType::Bezier;
 
     ArtifactCompositionPtr currentComposition = composition;
     if (!currentComposition) {
@@ -9558,7 +9590,11 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
                                 ? QStringLiteral("Ease In/Out")
                                 : (type == ArtifactCore::InterpolationType::Constant)
                                       ? QStringLiteral("Hold")
-                                      : QStringLiteral("Bezier");
+                                      : (type == ArtifactCore::InterpolationType::CatmullRom)
+                                            ? QStringLiteral("Catmull-Rom")
+                                            : (type == ArtifactCore::InterpolationType::Hermite)
+                                                  ? QStringLiteral("Hermite")
+                                                  : QStringLiteral("Bezier");
       timelineDebugMessage(
           QStringLiteral("Applied %1 interpolation to %2 %3")
               .arg(typeLabel)

@@ -1202,7 +1202,7 @@ class ArtifactAbstractComposition::Impl {
   void recalculateFrameRange();
   void removeLayer(const LayerID& id);
   const FramePosition framePosition() const;
-  void setFramePosition(const FramePosition& position);
+  void setFramePosition(const FramePosition& position, bool advanceOtherPhysics = true);
   void goToStartFrame();
   void goToEndFrame();
   void goToFrame(int64_t frame=0);
@@ -1232,6 +1232,9 @@ class ArtifactAbstractComposition::Impl {
     QVector<ArtifactCore::AssetID> getUsedAssets() const;
   void evaluateLayerCollisionPairs();
   void evaluateJointConstraints();
+  void evaluateRigidBodyContacts();
+  void evaluateJointBreaks();
+  void resetRigidBodySimulation();
   void evaluateLayerComponentSimulation(const FramePosition& frame,
                                         bool interactive);
   void resetLayerComponentSimulation();
@@ -1416,7 +1419,8 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
   goToFrame(frameRange_.end());
  }
 
- void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
+ void ArtifactAbstractComposition::Impl::setFramePosition(
+     const FramePosition& position, bool advanceOtherPhysics)
  {
     if (position_ == position) {
         return;
@@ -1426,16 +1430,15 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     // Playback updates only need the composition's current frame state.
     // Layer propagation is handled by goToFrame() for explicit timeline edits/seeks.
     position_ = position;
-    evaluateLayerCollisionPairs();
-    evaluateJointConstraints();
-
     auto& physics = ArtifactCore::PhysicsSystem::instance();
     const int64_t advancedFrames = nextFrame - previousFrame;
     if (advancedFrames <= 0 || advancedFrames > 8) {
-        // Scrubbing and large seeks restore an exact cached state only.  A
-        // miss deliberately leaves the live solver untouched rather than
-        // integrating a non-deterministic jump.
+        // Soft bodies retain their existing snapshot policy. Shared rigid
+        // bodies restart from authored values on rewind / a large seek.
         physics.restoreSoftBodySnapshots(nextFrame);
+        resetRigidBodySimulation();
+        evaluateLayerCollisionPairs();
+        evaluateJointConstraints();
         return;
     }
 
@@ -1443,9 +1446,19 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     constexpr int64_t kMaxCatchUpSteps = 8;
     const int64_t stepCount = std::min(advancedFrames, kMaxCatchUpSteps);
     const float fixedDeltaSeconds = static_cast<float>(1.0 / fps);
-    physics.captureSoftBodySnapshots(previousFrame);
+    if (advanceOtherPhysics) physics.captureSoftBodySnapshots(previousFrame);
     for (int64_t step = 0; step < stepCount; ++step) {
-        physics.update(fixedDeltaSeconds);
+        position_ = FramePosition(previousFrame + step);
+        evaluateLayerCollisionPairs();
+        evaluateJointConstraints();
+        physics.updateCompositionRigidWorld(id_, fixedDeltaSeconds);
+        evaluateRigidBodyContacts();
+        evaluateJointBreaks();
+        position_ = FramePosition(previousFrame + step + 1);
+        // goToFrame historically restores other solvers without integrating
+        // them. Keep this change scoped to shared 2D rigid bodies.
+        if (!advanceOtherPhysics) continue;
+        physics.update(fixedDeltaSeconds, 0.0f, 9.8f, false);
         for (const auto& event : physics.takeMaterialFractureEvents()) {
             const auto layer = layerMultiIndex_.findById(event.layerId);
             if (!layer || event.fracturedParticleCount <= 0) {
@@ -1462,6 +1475,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         }
         physics.captureSoftBodySnapshots(previousFrame + step + 1);
     }
+    position_ = position;
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
@@ -1471,7 +1485,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
   void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
   {
-    position_ = FramePosition(frame);
+    // Playback also enters through goToFrame. Share the same clock so it
+    // cannot reset every tick or step twice after setFramePosition.
+    setFramePosition(FramePosition(frame), false);
     for (auto& layer : layerMultiIndex_) {
         if (layer) layer->goToFrame(frame);
     }
@@ -1608,150 +1624,240 @@ void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
 {
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   const auto& layers = layerMultiIndex_.all();
+  // Prepare every participant before creating connections: layer order must
+  // not decide whether a target is dynamic or a fixed anchor.
+  for (const auto& layer : layers) {
+    if (!layer || layer->is3D()) continue;
+    const bool enabled = layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"), false) ||
+                         layerBooleanProperty(layer, QStringLiteral("component.joint.enabled"), false);
+    if (enabled && !layer->hasRigidBodyPhysics()) layer->enableRigidBodyPhysics();
+    if (enabled) layer->syncKinematicRigidBodyToAuthoredTransform();
+    if (!enabled && layer->hasRigidBodyPhysics()) layer->disableRigidBodyPhysics();
+  }
+  auto world = physics.getCompositionRigidWorld(id_);
+  if (!world) { jointSignatures_.clear(); return; }
+
+  // Deleted layers cannot leave invisible bodies or owned anchor proxies.
+  for (const auto& body : world->getBodies()) {
+    if (body && body->ownerLayerId &&
+        !layerMultiIndex_.findById(body->ownerLayerId)) {
+      world->removeLayerJoint(body->ownerLayerId);
+      world->removeBody(body);
+    }
+  }
+  const auto bodies = world->getBodies();
+  const auto findBody = [&](const LayerID& layerId, bool proxy) {
+    ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> result;
+    for (const auto& body : bodies) {
+      if (body && body->ownerLayerId == layerId &&
+          (proxy ? body->cloneIndex == -2 : body->cloneIndex == -1)) {
+        result = body;
+        break;
+      }
+    }
+    return result;
+  };
 
   for (const auto& owner : layers) {
-    if (!owner) {
-      continue;
-    }
-    auto world = physics.getRigidWorld(owner->id());
-    if (!world) {
-      jointSignatures_.erase(owner->id().toString());
-      continue;
-    }
-
-    ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> proxy;
-    ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> primary;
-    for (const auto& candidate : world->getBodies()) {
-      if (!candidate) {
-        continue;
-      }
-      // cloneIndex == -2 marks joint static proxies.
-      if (candidate->cloneIndex == -2) {
-        proxy = candidate;
-      } else if (!primary) {
-        primary = candidate;
-      }
-    }
-
-    const bool jointEnabled = layerBooleanProperty(
-        owner, QStringLiteral("component.joint.enabled"), false);
+    if (!owner) continue;
+    const QString ownerKey = owner->id().toString();
+    auto primary = findBody(owner->id(), false);
+    auto proxy = findBody(owner->id(), true);
+    const bool jointEnabled = !owner->is3D() && !owner->isJointBroken() &&
+        layerBooleanProperty(owner, QStringLiteral("component.joint.enabled"), false);
     const QString targetName = layerStringProperty(
         owner, QStringLiteral("component.joint.targetLayer")).trimmed();
     ArtifactAbstractLayerPtr target;
     if (jointEnabled && !targetName.isEmpty()) {
       for (const auto& candidate : layers) {
         if (candidate && candidate != owner &&
-            candidate->layerName() == targetName) {
-          target = candidate;
-          break;
+            candidate->id().toString() == targetName) { target = candidate; break; }
+      }
+      if (!target) {
+        for (const auto& candidate : layers) {
+          if (candidate && candidate != owner && candidate->layerName() == targetName) {
+            if (target) { target.reset(); break; }
+            target = candidate;
+          }
         }
       }
     }
-
-    // A restored or freshly-enabled joint may have no body yet; create it
-    // from the authored transform once. Existing bodies are left alone so
-    // the simulation keeps integrating between frames.
-    if (jointEnabled && target && !primary) {
-      owner->syncRigidBodyPhysicsToBounds();
-      for (const auto& candidate : world->getBodies()) {
-        if (!candidate) {
-          continue;
-        }
-        if (candidate->cloneIndex == -2) {
-          proxy = candidate;
-        } else if (!primary) {
-          primary = candidate;
-        }
-      }
+    if (!jointEnabled || !target || target->is3D() || !primary) {
+      world->removeLayerJoint(owner->id());
+      if (proxy) world->removeBody(proxy);
+      jointSignatures_.erase(ownerKey);
+      continue;
     }
 
-    if (!jointEnabled || !target || !primary) {
-      // Destroying the proxy body would also destroy its attached joints;
-      // clear ids explicitly so signature tracking stays consistent.
-      if (!world->getJoints().empty()) {
-        world->clearJoints();
-      }
+    const QPointF ownerOffset(
+        layerFloatProperty(owner, QStringLiteral("component.joint.ownerAnchorX"), 0.0f),
+        layerFloatProperty(owner, QStringLiteral("component.joint.ownerAnchorY"), 0.0f));
+    const QPointF targetOffset(
+        layerFloatProperty(owner, QStringLiteral("component.joint.targetAnchorX"), 0.0f),
+        layerFloatProperty(owner, QStringLiteral("component.joint.targetAnchorY"), 0.0f));
+    const QPointF ownerPoint = owner->getGlobalTransform().map(owner->localBounds().center() + ownerOffset);
+    auto endpoint = findBody(target->id(), false);
+    const QTransform targetTransform = endpoint ? target->getGlobalTransform() :
+        target->getGlobalTransform4x4At(RationalTime(position_.framePosition(),
+            std::max<double>(1.0, frameRate_.framerate()))).toTransform();
+    const QPointF targetPoint = targetTransform.map(target->localBounds().center() + targetOffset);
+    if (!std::isfinite(static_cast<float>(ownerPoint.x())) ||
+        !std::isfinite(static_cast<float>(ownerPoint.y())) ||
+        !std::isfinite(static_cast<float>(targetPoint.x())) ||
+        !std::isfinite(static_cast<float>(targetPoint.y()))) {
+      world->removeLayerJoint(owner->id());
+      continue;
+    }
+    const bool dynamicTarget = static_cast<bool>(endpoint);
+    if (endpoint) {
       if (proxy) {
+        world->removeLayerJoint(owner->id());
         world->removeBody(proxy);
         proxy.reset();
       }
-      jointSignatures_.erase(owner->id().toString());
-      continue;
-    }
-
-    bool invertible = false;
-    const QTransform inverseOwner =
-        owner->getGlobalTransform().inverted(&invertible);
-    const QRectF targetBounds = compositionCollisionBounds(target);
-    if (!invertible || !targetBounds.isValid()) {
-      continue;
-    }
-    const QPointF anchorLocal =
-        inverseOwner.map(targetBounds.center());
-
-    if (!proxy) {
-      proxy = world->addStaticAnchor(
-          static_cast<float>(anchorLocal.x()),
-          static_cast<float>(anchorLocal.y()));
-      if (!proxy) {
-        continue;
-      }
-      proxy->cloneIndex = -2;
     } else {
-      proxy->setTransform(
-          QVector2D(static_cast<float>(anchorLocal.x()),
-                    static_cast<float>(anchorLocal.y())),
-          0.0f);
-    }
-
-    const int type = layerIntProperty(
-        owner, QStringLiteral("component.joint.type"), 0);
-    const float length = layerFloatProperty(
-        owner, QStringLiteral("component.joint.length"), 0.0f);
-    const float stiffness = layerFloatProperty(
-        owner, QStringLiteral("component.joint.stiffness"), 5.0f);
-    const float damping = layerFloatProperty(
-        owner, QStringLiteral("component.joint.damping"), 0.7f);
-    const bool angleLimitEnabled = layerBooleanProperty(
-        owner, QStringLiteral("component.joint.angleLimitEnabled"), false);
-    const float lowerAngle = layerFloatProperty(
-        owner, QStringLiteral("component.joint.lowerAngle"), -45.0f);
-    const float upperAngle = layerFloatProperty(
-        owner, QStringLiteral("component.joint.upperAngle"), 45.0f);
-    const QString signature = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
-                                  .arg(type)
-                                  .arg(length)
-                                  .arg(stiffness)
-                                  .arg(damping)
-                                  .arg(targetName)
-                                  .arg(angleLimitEnabled ? 1 : 0)
-                                  .arg(lowerAngle)
-                                  .arg(upperAngle);
-
-    const QString ownerKey = owner->id().toString();
-    const auto knownSignature = jointSignatures_.find(ownerKey);
-    const bool needsJoint = world->getJoints().empty() ||
-                            knownSignature == jointSignatures_.end() ||
-                            knownSignature->second.compare(signature) != 0;
-    if (needsJoint) {
-      if (!world->getJoints().empty()) {
-        world->clearJoints();
-      }
-      const QVector2D anchor(anchorLocal.x(), anchorLocal.y());
-      if (type == 1 || type == 2) {
-        world->addRevoluteJoint(primary, proxy, anchor, angleLimitEnabled,
-                                lowerAngle, upperAngle);
+      if (!proxy) {
+        proxy = world->addStaticAnchor(static_cast<float>(targetPoint.x()),
+                                      static_cast<float>(targetPoint.y()));
+        if (!proxy) continue;
+        proxy->cloneIndex = -2;
+        proxy->ownerLayerId = owner->id();
       } else {
-        // length <= 0 captures the current owner-to-target separation.
-        const float currentSeparation =
-            (primary->position() - proxy->position()).length();
-        world->addDistanceJoint(
-            primary, proxy,
-            std::max(0.0f, length) > 0.0f ? std::max(0.0f, length)
-                                          : currentSeparation,
-            damping, stiffness);
+        const QVector2D nextAnchor(targetPoint);
+        if ((proxy->position() - nextAnchor).lengthSquared() > 0.000001f) {
+          proxy->setTransform(nextAnchor, 0.0f);
+          primary->setAwake(true);
+        }
       }
-      jointSignatures_[ownerKey] = signature;
+      endpoint = proxy;
+    }
+    const QVector2D ownerAnchor = primary->worldToLocalPoint(QVector2D(ownerPoint));
+    const QVector2D targetAnchor = endpoint->worldToLocalPoint(QVector2D(targetPoint));
+    const int type = layerIntProperty(owner, QStringLiteral("component.joint.type"), 0);
+    const float length = layerFloatProperty(owner, QStringLiteral("component.joint.length"), 0.0f);
+    const float stiffness = layerFloatProperty(owner, QStringLiteral("component.joint.stiffness"), 5.0f);
+    const float damping = layerFloatProperty(owner, QStringLiteral("component.joint.damping"), 0.7f);
+    const bool angleLimit = layerBooleanProperty(owner, QStringLiteral("component.joint.angleLimitEnabled"), false);
+    const float lower = layerFloatProperty(owner, QStringLiteral("component.joint.lowerAngle"), -45.0f);
+    const float upper = layerFloatProperty(owner, QStringLiteral("component.joint.upperAngle"), 45.0f);
+    const QVector2D axis(
+        layerFloatProperty(owner, QStringLiteral("component.joint.axisX"), 1.0f),
+        layerFloatProperty(owner, QStringLiteral("component.joint.axisY"), 0.0f));
+    const bool linearLimit = layerBooleanProperty(owner,
+        QStringLiteral("component.joint.linearLimitEnabled"), false);
+    const float lowerLimit = layerFloatProperty(owner,
+        QStringLiteral("component.joint.lowerLimit"), -100.0f);
+    const float upperLimit = layerFloatProperty(owner,
+        QStringLiteral("component.joint.upperLimit"), 100.0f);
+    const bool motor = layerBooleanProperty(owner,
+        QStringLiteral("component.joint.motorEnabled"), false);
+    const float motorSpeed = layerFloatProperty(owner,
+        QStringLiteral("component.joint.motorSpeed"), 0.0f);
+    const float motorForce = layerFloatProperty(owner,
+        QStringLiteral("component.joint.motorForce"), 100.0f);
+    const QString signature = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
+        .arg(type).arg(length).arg(stiffness).arg(damping).arg(target->id().toString())
+        .arg(angleLimit ? 1 : 0).arg(lower).arg(upper) +
+        QStringLiteral("|%1|%2|%3|%4|%5")
+        .arg(ownerOffset.x()).arg(ownerOffset.y())
+        .arg(targetOffset.x()).arg(targetOffset.y()).arg(dynamicTarget ? 1 : 0) +
+        QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8")
+        .arg(axis.x()).arg(axis.y()).arg(linearLimit ? 1 : 0)
+        .arg(lowerLimit).arg(upperLimit).arg(motor ? 1 : 0)
+        .arg(motorSpeed).arg(motorForce);
+    const auto known = jointSignatures_.find(ownerKey);
+    if (!world->hasLayerJoint(owner->id()) || known == jointSignatures_.end() ||
+        known->second != signature) {
+      world->removeLayerJoint(owner->id());
+      if (type == 5) {
+        world->setLayerJoint(owner->id(), world->addPrismaticJoint(
+            primary, endpoint, QVector2D(ownerPoint), axis, linearLimit,
+            lowerLimit, upperLimit, motor, motorSpeed, motorForce));
+      } else if (type == 1 || type == 2) {
+        world->setLayerJoint(owner->id(), world->addRevoluteJoint(
+            primary, endpoint, QVector2D(targetPoint), angleLimit, lower, upper));
+      } else {
+        world->setLayerJoint(owner->id(), world->addDistanceJoint(
+            primary, endpoint, std::max(0.0f, length), damping, stiffness,
+            type == 3, type == 4, ownerAnchor, targetAnchor));
+      }
+      if (world->hasLayerJoint(owner->id())) jointSignatures_[ownerKey] = signature;
+      else jointSignatures_.erase(ownerKey);
+    }
+  }
+}
+
+void ArtifactAbstractComposition::Impl::evaluateRigidBodyContacts()
+{
+  const auto world = ArtifactCore::PhysicsSystem::instance()
+      .getCompositionRigidWorld(id_);
+  if (!world) return;
+
+  // Counts and maximum impact are per fixed step; active contact state is
+  // retained by each layer until an end event arrives or the world resets.
+  for (const auto& layer : layerMultiIndex_.all()) {
+    if (layer) layer->beginRigidBodyContactStep();
+  }
+  for (const auto& event : world->takeContactEvents()) {
+    const auto phase = event.phase == ArtifactCore::PhysicsContactPhase::Begin
+        ? LayerRigidBodyContactPhase::Begin
+        : event.phase == ArtifactCore::PhysicsContactPhase::End
+            ? LayerRigidBodyContactPhase::End
+            : LayerRigidBodyContactPhase::Hit;
+    const QPointF point(event.point.x(), event.point.y());
+    const QPointF normal(event.normal.x(), event.normal.y());
+    if (!event.firstLayerId.isNil()) {
+      if (const auto first = layerMultiIndex_.findById(event.firstLayerId)) {
+        first->recordRigidBodyContact(phase, event.secondLayerId, point, normal,
+                                      event.approachSpeed);
+      }
+    }
+    if (!event.secondLayerId.isNil()) {
+      if (const auto second = layerMultiIndex_.findById(event.secondLayerId)) {
+        second->recordRigidBodyContact(
+            phase, event.firstLayerId, point,
+            QPointF(-normal.x(), -normal.y()), event.approachSpeed);
+      }
+    }
+  }
+}
+
+void ArtifactAbstractComposition::Impl::evaluateJointBreaks()
+{
+  auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(id_);
+  if (!world) return;
+  for (const auto& layer : layerMultiIndex_.all()) {
+    if (!layer || layer->isJointBroken() || !layerBooleanProperty(
+            layer, QStringLiteral("component.joint.enabled"), false)) continue;
+    const float threshold = layerFloatProperty(
+        layer, QStringLiteral("component.joint.breakForce"), 0.0f);
+    if (threshold <= 0.0f || !world->hasLayerJoint(layer->id())) continue;
+    const float force = world->layerJointForce(layer->id());
+    if (std::isfinite(force) && force >= threshold) {
+      world->removeLayerJoint(layer->id());
+      layer->setJointBroken(true);
+      jointSignatures_.erase(layer->id().toString());
+    }
+  }
+}
+
+void ArtifactAbstractComposition::Impl::resetRigidBodySimulation()
+{
+  // No rigid-body history is claimed here. A seek/restart begins a new
+  // simulation from the authored pose at that frame, with fresh constraints.
+  if (auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(id_)) {
+    world->clear();
+  }
+  jointSignatures_.clear();
+  for (const auto& layer : layerMultiIndex_.all()) {
+    if (layer) {
+      layer->setJointBroken(false);
+      layer->clearRigidBodyContactState();
+    }
+    if (layer && !layer->is3D() &&
+        (layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"), false) ||
+         layerBooleanProperty(layer, QStringLiteral("component.joint.enabled"), false))) {
+      layer->enableRigidBodyPhysics();
     }
   }
 }
@@ -1770,6 +1876,7 @@ void ArtifactAbstractComposition::Impl::resetLayerComponentSimulation()
   componentSimulation_.frame = std::numeric_limits<int64_t>::min();
   componentSimulation_.valid = false;
   jointSignatures_.clear();
+  resetRigidBodySimulation();
 }
 
 void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
@@ -3444,10 +3551,11 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 if (!bus) continue;
                 AudioSegment layerSegment;
                 if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
+                    // ArtifactAudioLayer applies its animated clip volume while
+                    // producing PCM. Applying it again at the layer bus would
+                    // square the requested gain, including for SpatialAudio.
                     float layerVol = 1.0f;
-                    if (auto al = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
-                        layerVol = al->volume();
-                    } else if (auto vl = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+                    if (auto vl = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
                         layerVol = static_cast<float>(vl->audioVolume());
                     }
                     bus->setVolume(20.0f * std::log10(std::max(0.001f, layerVol)));
@@ -3459,14 +3567,15 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 }
             }
         }
-        const AudioChannelLayout outputLayout = outputChannels >= 8
-            ? AudioChannelLayout::Surround71
+        const AudioChannelLayout outputLayout = outputChannels >= 12
+            ? AudioChannelLayout::Surround714
+            : outputChannels >= 8 ? AudioChannelLayout::Surround71
             : outputChannels >= 6 ? AudioChannelLayout::Surround51
             : AudioChannelLayout::Stereo;
         AudioSegment mixOutput;
         mixOutput.sampleRate = sampleRate;
         mixOutput.layout = outputLayout;
-        mixOutput.channelData.resize(outputChannels >= 8 ? 8 : outputChannels >= 6 ? 6 : 2);
+        mixOutput.channelData.resize(outputChannels >= 12 ? 12 : outputChannels >= 8 ? 8 : outputChannels >= 6 ? 6 : 2);
         mixOutput.setFrameCount(frameCount);
         mixOutput.zero();
         if (auto masterBus = mixer.getMasterBus()) {
@@ -3504,7 +3613,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 ++activeAudioLayerCount;
                 if (layer->getAudio(layerSeg, start, frameCount, sampleRate)) {
                     const int sourceChannels = layerSeg.channelCount();
-                    const int requestedChannels = sourceChannels >= 8 ? 8
+                    const int requestedChannels = sourceChannels >= 12 ? 12
+                        : sourceChannels >= 8 ? 8
                         : sourceChannels >= 6 ? 6 : 2;
                     const int targetChannels =
                         std::max(outSegment.channelCount(), requestedChannels);
@@ -3512,8 +3622,9 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                         outSegment.channelData.resize(targetChannels);
                         outSegment.setFrameCount(frameCount);
                     }
-                    outSegment.layout = targetChannels == 8
-                        ? AudioChannelLayout::Surround71
+                    outSegment.layout = targetChannels == 12
+                        ? AudioChannelLayout::Surround714
+                        : targetChannels == 8 ? AudioChannelLayout::Surround71
                         : targetChannels == 6 ? AudioChannelLayout::Surround51
                         : AudioChannelLayout::Stereo;
                     const float layerGain = evaluationGainForLayer(layer->id());

@@ -12,6 +12,7 @@ module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
+#include <QVector4D>
 #include <QVector>
 #include <QtGlobal>
 #include <algorithm>
@@ -125,6 +126,7 @@ public:
   bool skinAnimationEnabled_ = true;
   QHash<QString, float> blendShapeWeightOverrides_;
   float normalLength_ = 25.0f;
+  float pointSize_ = 1.0f;
   QString lastRenderTraceOutcome_;
   Impl() {}
   ~Impl() {}
@@ -311,6 +313,7 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["render.faceNormals"] = impl_->faceNormals_;
   obj["render.vertexNormals"] = impl_->vertexNormals_;
   obj["render.normalLength"] = impl_->normalLength_;
+  obj["render.pointSize"] = impl_->pointSize_;
   obj["fixedGeometry"] = static_cast<int>(impl_->fixedGeometry_);
   obj["geometry.width"] = impl_->geometryWidth_;
   obj["geometry.height"] = impl_->geometryHeight_;
@@ -464,6 +467,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->normalLength_ = finiteClamped(
       static_cast<float>(obj.value("render.normalLength").toDouble(
           impl_->normalLength_)), impl_->normalLength_, 0.01f, 10000.0f);
+  impl_->pointSize_ = finiteClamped(
+      static_cast<float>(obj.value("render.pointSize").toDouble(
+          impl_->pointSize_)), impl_->pointSize_, 0.25f, 8.0f);
 
   const QJsonObject baseColor = obj.value("material.base.color").toObject();
   if (!baseColor.isEmpty()) {
@@ -1503,6 +1509,42 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
       }
     }
   };
+  // Minimal point-cloud fallback: vertex-only PLY has no polygons, so the
+  // indexed mesh path submits nothing. Draw a capped set of 3-axis crosses
+  // in world space through the same draw3DLine path as wireframe.
+  const auto drawPoints = [&]() {
+    const int pointCount = static_cast<int>(transformedVertices.size());
+    if (pointCount <= 0) {
+      return 0;
+    }
+    const auto colorAttr = vertexAttrs.get<QVector4D>("color");
+    const bool hasColor = colorAttr && colorAttr->data().size() == pointCount;
+    const QVector3D diagVec = impl_->mesh_.boundingBoxMax() - impl_->mesh_.boundingBoxMin();
+    const float avgScale = (snapshot.scaleX + snapshot.scaleY + snapshot.scaleZ) / 3.0f;
+    const float crossHalf = std::clamp(diagVec.length() * avgScale * 0.004f, 0.75f, 14.0f) *
+        std::clamp(impl_->pointSize_, 0.25f, 8.0f);
+    const int kMaxPointDraws = 32768;
+    const int stride = std::max(1, (pointCount + kMaxPointDraws - 1) / kMaxPointDraws);
+    int drawn = 0;
+    const float baseAlpha = static_cast<float>(opacity());
+    for (int i = 0; i < pointCount; i += stride) {
+      const QVector3D &p = transformedVertices[i];
+      FloatColor c{1.0f, 1.0f, 1.0f, baseAlpha};
+      if (hasColor) {
+        const QVector4D &vc = colorAttr->data()[i];
+        c = FloatColor{vc.x(), vc.y(), vc.z(), baseAlpha * vc.w()};
+      }
+      const QVector3D dx(crossHalf, 0.0f, 0.0f);
+      const QVector3D dy(0.0f, crossHalf, 0.0f);
+      const QVector3D dz(0.0f, 0.0f, crossHalf);
+      renderer->draw3DLine(toFloat3(p - dx), toFloat3(p + dx), c, 1.5f);
+      renderer->draw3DLine(toFloat3(p - dy), toFloat3(p + dy), c, 1.5f);
+      renderer->draw3DLine(toFloat3(p - dz), toFloat3(p + dz), c, 1.5f);
+      ++drawn;
+    }
+    return drawn;
+  };
+  const bool isPointCloud = impl_->mesh_.polygonCount() == 0 && !transformedVertices.isEmpty();
   const auto drawFaceNormals = [&]() {
     const FloatColor normalColor{1.0f, 0.35f, 0.08f, opacity() * 0.9f};
     const auto normalMatrix = modelMatrix.normalMatrix();
@@ -1583,6 +1625,14 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   };
 
   if (impl_->renderMode_ == ModelRenderMode::Solid) {
+    if (isPointCloud) {
+      const int drawnPoints = drawPoints();
+      traceResult(
+          QStringLiteral("points-submitted"),
+          QStringLiteral("points=%1 drawn=%2")
+              .arg(transformedVertices.size())
+              .arg(drawnPoints));
+    } else {
     QString cacheKey = QStringLiteral("%1|layer=%2")
         .arg(sourcePath().isEmpty() ? id().toString() : sourcePath(),
              id().toString());
@@ -1616,9 +1666,19 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
         drawVertexNormals();
       }
     }
+    }
   } else {
-    drawEdges(wireframeColor, thickness);
-    traceResult(QStringLiteral("wireframe-submitted"));
+    if (isPointCloud) {
+      const int drawnPoints = drawPoints();
+      traceResult(
+          QStringLiteral("points-submitted"),
+          QStringLiteral("points=%1 drawn=%2")
+              .arg(transformedVertices.size())
+              .arg(drawnPoints));
+    } else {
+      drawEdges(wireframeColor, thickness);
+      traceResult(QStringLiteral("wireframe-submitted"));
+    }
   }
 
   drawFractureOverlay(renderer, modelMatrix,
@@ -1650,6 +1710,27 @@ void Artifact3DLayer::drawSelectionOutline(ArtifactIRenderer *renderer) const {
   modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
   const FloatColor outlineColor{0.30f, 0.86f, 1.0f, 0.98f};
+  if (impl_->mesh_.polygonCount() == 0) {
+    // Point cloud: no edges to trace, outline the world-space bounds box.
+    const QVector3D minB = impl_->mesh_.boundingBoxMin();
+    const QVector3D maxB = impl_->mesh_.boundingBoxMax();
+    const QVector3D corners[] = {
+        {minB.x(), minB.y(), minB.z()}, {maxB.x(), minB.y(), minB.z()},
+        {maxB.x(), maxB.y(), minB.z()}, {minB.x(), maxB.y(), minB.z()},
+        {minB.x(), minB.y(), maxB.z()}, {maxB.x(), minB.y(), maxB.z()},
+        {maxB.x(), maxB.y(), maxB.z()}, {minB.x(), maxB.y(), maxB.z()},
+    };
+    const int edges[][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                            {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    for (const auto &edge : edges) {
+      const QVector3D worldA = modelMatrix.map(corners[edge[0]]);
+      const QVector3D worldB = modelMatrix.map(corners[edge[1]]);
+      renderer->draw3DLine({worldA.x(), worldA.y(), worldA.z()},
+                           {worldB.x(), worldB.y(), worldB.z()},
+                           outlineColor, 1.8f);
+    }
+    return;
+  }
   for (int polygon = 0; polygon < impl_->mesh_.polygonCount(); ++polygon) {
     const auto indices = impl_->mesh_.getPolygonVertices(polygon);
     for (size_t i = 0; i < indices.size(); ++i) {
@@ -1847,6 +1928,15 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   normalLengthProp->setHardRange(0.01, 10000.0);
   normalLengthProp->setSoftRange(1.0, 200.0);
   renderGroup.addProperty(normalLengthProp);
+
+  auto pointSizeProp = persistentLayerProperty(
+      QStringLiteral("render.pointSize"), PropertyType::Float,
+      impl_->pointSize_, -48);
+  pointSizeProp->setDisplayLabel(QStringLiteral("Point Size"));
+  pointSizeProp->setTooltip(QStringLiteral("Point cross size multiplier (point clouds only)"));
+  pointSizeProp->setHardRange(0.25, 8.0);
+  pointSizeProp->setSoftRange(0.5, 4.0);
+  renderGroup.addProperty(pointSizeProp);
 
   PropertyGroup materialGroup(QStringLiteral("Material"));
 
@@ -2126,6 +2216,11 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
   } else if (propertyPath == QStringLiteral("render.normalLength")) {
     impl_->normalLength_ = finiteClamped(
         value.toFloat(), impl_->normalLength_, 0.01f, 10000.0f);
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("render.pointSize")) {
+    impl_->pointSize_ = finiteClamped(
+        value.toFloat(), impl_->pointSize_, 0.25f, 8.0f);
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {

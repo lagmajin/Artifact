@@ -3051,6 +3051,7 @@ int main(int argc, char *argv[]) {
           return new AppDebuggerWidget(controller, mw);
         },
         QRect(140, 140, 1080, 640));
+    mw->setDockVisible(QStringLiteral("App Debugger"), false);
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Render Harness"),
         QStringLiteral("DebugRenderHarness"),
@@ -3153,7 +3154,7 @@ int main(int argc, char *argv[]) {
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
-        DockArea::Right,
+        DockArea::Center,
         [mw]() -> QWidget * {
           return new ArtifactSoftwareCompositionTestWidget(mw);
         },
@@ -3166,11 +3167,11 @@ int main(int argc, char *argv[]) {
                                    QSizePolicy::Expanding);
     suppressScrollBarsForViewportWidget(layerViewEditor);
     mw->addDockedWidgetTabbed(QStringLiteral("Layer Solo View"),
-                              DockArea::Right, layerViewEditor,
-                              QString());
+                              DockArea::Center, layerViewEditor,
+                              QStringLiteral("Composition Viewer"));
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Layer View (Software)"),
-        QStringLiteral("Layer View (Software)"), DockArea::Right,
+        QStringLiteral("Layer View (Software)"), DockArea::Center,
         [mw]() -> QWidget * {
           return new ArtifactSoftwareLayerTestWidget(mw);
         },
@@ -3226,8 +3227,8 @@ int main(int argc, char *argv[]) {
     QPointer<ArtifactAssetBrowser> assetBrowserGuard(assetBrowser);
     QPointer<ArtifactContentsViewer> contentsViewerGuard(contentsViewer);
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
-                              DockArea::Right, contentsViewer,
-                              QString());
+                              DockArea::Left, contentsViewer,
+                              QStringLiteral("Project"));
     mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
     static ArtifactCore::EventBus appEventBus = ArtifactCore::globalEventBus();
     static std::vector<ArtifactCore::EventBus::Subscription>
@@ -3642,11 +3643,11 @@ int main(int argc, char *argv[]) {
                               QStringLiteral("Inspector"));
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Audio Mixer"), QStringLiteral("Audio Mixer"),
-        DockArea::Right,
+        DockArea::Bottom,
         [mw]() -> QWidget * {
           return new ArtifactCompositionAudioMixerWidget(mw);
         },
-        QStringLiteral("Inspector"));
+        QStringLiteral("timeline::"));
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("AI Cloud"), QStringLiteral("AI Cloud"),
         DockArea::Right,
@@ -4411,6 +4412,7 @@ int main(int argc, char *argv[]) {
               << "requested=" << !portableDockLayout.isEmpty()
               << "restored=" << portableRestored;
     }
+    mw->setDockVisible(QStringLiteral("App Debugger"), false);
     qInfo() << "[AppMain][Startup] layout finalize ms="
             << startupLayoutTimer.elapsed();
   });

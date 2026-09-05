@@ -97,6 +97,7 @@ public:
     void endDrag();
     bool isDragging() const { return activeAxis_ != GizmoAxis::None; }
     GizmoAxis activeAxis() const { return activeAxis_; }
+    QVector3D dragAxisDirection() const;
     GizmoAxis hoverAxis() const { return hoverAxis_; }
     float hoverAxisDirectionSign() const { return hoverAxisDirectionSign_; }
     QVector3D hoverScaleAxes() const { return hoverScaleAxes_; }

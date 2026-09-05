@@ -473,6 +473,8 @@ public:
             {QStringLiteral("twist"), pathTube.twist},
             {QStringLiteral("pathOffset"), pathTube.pathOffset},
             {QStringLiteral("repeatCount"), pathTube.repeatCount},
+            {QStringLiteral("trimStart"), pathTube.trimStart},
+            {QStringLiteral("trimEnd"), pathTube.trimEnd},
             {QStringLiteral("pathScale"), pathTube.pathScale},
             {QStringLiteral("noiseScale"), pathTube.noiseScale},
             {QStringLiteral("noiseAmplitude"), pathTube.noiseAmplitude},
@@ -544,6 +546,8 @@ public:
         pathTube.twist = safeFinite(pathJson.value(QStringLiteral("twist")).toDouble(pathTube.twist), pathTube.twist, -100000.0f, 100000.0f);
         pathTube.pathOffset = safeFinite(pathJson.value(QStringLiteral("pathOffset")).toDouble(pathTube.pathOffset), pathTube.pathOffset, -100000.0f, 100000.0f);
         pathTube.repeatCount = safeFinite(pathJson.value(QStringLiteral("repeatCount")).toDouble(pathTube.repeatCount), pathTube.repeatCount, 0.001f, 100000.0f);
+        pathTube.trimStart = safeFinite(pathJson.value(QStringLiteral("trimStart")).toDouble(pathTube.trimStart), pathTube.trimStart, 0.0f, 1.0f);
+        pathTube.trimEnd = safeFinite(pathJson.value(QStringLiteral("trimEnd")).toDouble(pathTube.trimEnd), pathTube.trimEnd, 0.0f, 1.0f);
         pathTube.pathScale = safeFinite(pathJson.value(QStringLiteral("pathScale")).toDouble(pathTube.pathScale), pathTube.pathScale, 0.001f, 100000.0f);
         pathTube.noiseScale = safeFinite(pathJson.value(QStringLiteral("noiseScale")).toDouble(pathTube.noiseScale), pathTube.noiseScale, 0.0001f, 100000.0f);
         pathTube.noiseAmplitude = safeFinite(pathJson.value(QStringLiteral("noiseAmplitude")).toDouble(pathTube.noiseAmplitude), pathTube.noiseAmplitude, 0.0f, 100000.0f);
@@ -879,6 +883,12 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
         generator.addProperty(property(QStringLiteral("path.twist"), ArtifactCore::PropertyType::Float, impl_->pathTube.twist, -243));
         generator.addProperty(property(QStringLiteral("path.pathOffset"), ArtifactCore::PropertyType::Float, impl_->pathTube.pathOffset, -242));
         generator.addProperty(property(QStringLiteral("path.repeatCount"), ArtifactCore::PropertyType::Float, impl_->pathTube.repeatCount, -241));
+        auto trimStartProperty = property(QStringLiteral("path.trimStart"), ArtifactCore::PropertyType::Float, impl_->pathTube.trimStart, -238);
+        trimStartProperty->setTooltip(QStringLiteral("Stroke trim start (0-1 of the path)"));
+        generator.addProperty(trimStartProperty);
+        auto trimEndProperty = property(QStringLiteral("path.trimEnd"), ArtifactCore::PropertyType::Float, impl_->pathTube.trimEnd, -237);
+        trimEndProperty->setTooltip(QStringLiteral("Stroke trim end (0-1 of the path)"));
+        generator.addProperty(trimEndProperty);
         generator.addProperty(property(QStringLiteral("path.pathScale"), ArtifactCore::PropertyType::Float, impl_->pathTube.pathScale, -240));
         generator.addProperty(property(QStringLiteral("path.seed"), ArtifactCore::PropertyType::Integer, static_cast<int>(impl_->pathTube.seed), -239));
     }
@@ -1033,6 +1043,8 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
     if (path == QStringLiteral("path.twist")) { impl_->pathTube.twist = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.pathOffset")) { impl_->pathTube.pathOffset = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.repeatCount")) { impl_->pathTube.repeatCount = safeValue(value, 1.0f, 0.001f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.trimStart")) { impl_->pathTube.trimStart = safeValue(value, 0.0f, 0.0f, 1.0f); return commitChange(); }
+    if (path == QStringLiteral("path.trimEnd")) { impl_->pathTube.trimEnd = safeValue(value, 1.0f, 0.0f, 1.0f); return commitChange(); }
     if (path == QStringLiteral("path.pathScale")) { impl_->pathTube.pathScale = safeValue(value, 1.0f, 0.001f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.seed")) { impl_->pathTube.seed = static_cast<std::uint32_t>(std::max(0, value.toInt())); return commitChange(); }
     if (path == QStringLiteral("path.noiseScale")) { impl_->pathTube.noiseScale = safeValue(value, 1.0f, 0.0001f, 100000.0f); return commitChange(); }

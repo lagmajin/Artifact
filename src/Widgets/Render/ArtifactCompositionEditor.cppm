@@ -5077,7 +5077,7 @@ protected:
 
     if (controller_ && !spacePressed_) {
       controller_->handleMousePress(event);
-      if (isSpatialGizmoDragging()) {
+      if (isSpatialGizmoDragging() || controller_->isPhysicsDragActive()) {
         if (QWidget::mouseGrabber() != this) {
           grabMouse();
         }
@@ -5271,6 +5271,7 @@ protected:
     if (controller_) {
       const bool wasScaleDrag = isScaleDragActive();
       const bool wasSpatialGizmoDragging = isSpatialGizmoDragging();
+      const bool wasPhysicsDragging = controller_->isPhysicsDragActive();
       controller_->handleMouseRelease();
       if (auto *toolManager = ArtifactApplicationManager::instance()
                                   ? ArtifactApplicationManager::instance()->toolManager()
@@ -5287,7 +5288,8 @@ protected:
           }
         }
       }
-      if (wasSpatialGizmoDragging && QWidget::mouseGrabber() == this) {
+      if ((wasSpatialGizmoDragging || wasPhysicsDragging) &&
+          QWidget::mouseGrabber() == this) {
         releaseMouse();
       }
       if (wasScaleDrag) {
@@ -5302,7 +5304,7 @@ protected:
       if (!spacePressed_) {
         updateViewportCursor(event->position());
       }
-      if (wasSpatialGizmoDragging) {
+      if (wasSpatialGizmoDragging || wasPhysicsDragging) {
         controller_->finishViewportInteraction();
         event->accept();
         return;
@@ -9121,7 +9123,7 @@ public:
     if (!visible) {
       return QStringLiteral("Gizmo: OFF");
     }
-    QString modeLabel = QStringLiteral("All");
+    QString modeLabel = QStringLiteral("Selection");
     if (renderController_) {
       switch (renderController_->gizmoMode()) {
       case TransformGizmo::Mode::Translation:
@@ -9153,7 +9155,7 @@ public:
     lines << QStringLiteral("Transform gizmo mode and visibility");
     lines << QStringLiteral("Current: %1").arg(gizmoButtonLabel());
     lines << QStringLiteral("W = Move, R = Rotate, S = Scale");
-    lines << QStringLiteral("All = Move + Rotate + Scale");
+    lines << QStringLiteral("Selection = Move axes + frame resize handles");
     return lines.join(QChar::LineFeed);
   }
 
@@ -10564,7 +10566,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->refreshViewportStateLabels();
     });
   };
-  addGizmoAction(QStringLiteral("Gizmo: All (W/R/S)"),
+  addGizmoAction(QStringLiteral("Gizmo: Selection (Move + Frame)"),
                  QStringLiteral("MaterialVS/neutral/view_sidebar.svg"),
                  TransformGizmo::Mode::All, true);
   addGizmoAction(QStringLiteral("Gizmo: Move (W)"),

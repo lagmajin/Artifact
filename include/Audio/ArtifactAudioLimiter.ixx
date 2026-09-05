@@ -26,6 +26,7 @@ private:
   float releaseCoeff_ = 0.0f;
   int delaySize_ = 0;
   int delayPos_ = 0;
+  int delayChannelCount_ = 0;
   std::vector<std::vector<float>> delayBuf_;
 };
 

@@ -213,6 +213,7 @@ export namespace Artifact {
 
  public:
   ArtifactAudioInitParams(const QString& name);
+  ArtifactAudioInitParams(const QString& name, LayerType type);
   ~ArtifactAudioInitParams();
   QString audioPath() const { return audioPath_; }
   void setAudioPath(const QString& path) { audioPath_ = path; }

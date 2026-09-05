@@ -25,16 +25,15 @@ void AudioLimiter::process(ArtifactCore::AudioSegment& segment, int sampleRate) 
     if (prevSR != sampleRate_) {
       delayBuf_.clear();
       delayPos_ = 0;
+      delayChannelCount_ = 0;
     }
   }
 
   const int channels = segment.channelCount();
   const int frames = segment.frameCount();
-  if (delaySize_ > 0 && static_cast<int>(delayBuf_.size()) < channels) {
-    delayBuf_.resize(channels);
-    for (auto& buffer : delayBuf_) {
-      buffer.assign(delaySize_, 0.0f);
-    }
+  if (delaySize_ > 0 && delayChannelCount_ != channels) {
+    delayBuf_.assign(channels, std::vector<float>(delaySize_, 0.0f));
+    delayChannelCount_ = channels;
     delayPos_ = 0;
   }
 
@@ -75,6 +74,7 @@ void AudioLimiter::reset() {
     std::fill(buffer.begin(), buffer.end(), 0.0f);
   }
   delayPos_ = 0;
+  delayChannelCount_ = static_cast<int>(delayBuf_.size());
 }
 
 void softClipAudioSegment(ArtifactCore::AudioSegment& segment) {

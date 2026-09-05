@@ -17,6 +17,7 @@ module;
 #include <QPainter>
 #include <QFont>
 #include <QPointF>
+#include <QSet>
 #include <QRectF>
 #include <QSize>
 #include <QSizeF>
@@ -1138,6 +1139,7 @@ public:
     bool clonerComponentEnabled_ = false;
     bool layoutComponentEnabled_ = false;
     bool collisionComponentEnabled_ = false;
+    int collisionBodyType_ = 0; // 0=Dynamic, 1=Static, 2=Kinematic
     bool collisionOwnsPhysicsEnable_ = false;
     int collisionShape_ = 0;
     float collisionWidth_ = 0.0f;
@@ -1147,10 +1149,17 @@ public:
     float collisionOffsetY_ = 0.0f;
     int rigidBodyColliderShape_ = -1;
     float rigidBodyColliderRestitution_ = -1.0f;
+    QTransform rigidBodyRestTransform_;
+    QPointF rigidBodyRestCenter_;
+    float rigidBodyRestAngle_ = 0.0f;
+    QTransform rigidBodyLocalTransform(const ArtifactAbstractLayer* layer,
+        const ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D>& body) const;
     float collisionFloorY_ = 0.0f;
     bool collisionCompositionBounds_ = false;
     bool jointComponentEnabled_ = false;
-    int jointType_ = 0; // 0=Distance, 1=Pin, 2=Hinge, 3=Spring
+    int jointType_ = 0; // 0=Distance, 1=Pin, 2=Hinge, 3=Spring, 4=Rope, 5=Slider
+    float jointOwnerAnchorX_ = 0, jointOwnerAnchorY_ = 0;
+    float jointTargetAnchorX_ = 0, jointTargetAnchorY_ = 0;
     QString jointTargetLayerName_;
     float jointLength_ = 0.0f;   // 0 = capture the enable-time separation
     float jointStiffness_ = 5.0f; // b2 hertz (spring frequency)
@@ -1158,6 +1167,16 @@ public:
     bool jointAngleLimitEnabled_ = false;
     float jointLowerAngle_ = -45.0f;
     float jointUpperAngle_ = 45.0f;
+    float jointAxisX_ = 1.0f;
+    float jointAxisY_ = 0.0f;
+    bool jointLinearLimitEnabled_ = false;
+    float jointLowerLimit_ = -100.0f;
+    float jointUpperLimit_ = 100.0f;
+    bool jointMotorEnabled_ = false;
+    float jointMotorSpeed_ = 0.0f;
+    float jointMotorForce_ = 100.0f;
+    float jointBreakForce_ = 0.0f;
+    bool jointBroken_ = false;
     bool crowdComponentEnabled_ = false;
     float crowdCohesion_ = 0.5f;
     float crowdSeparation_ = 0.5f;
@@ -1228,6 +1247,8 @@ public:
         std::numeric_limits<int64_t>::min();
     mutable int64_t lastRigidWindForceFrame_ =
         std::numeric_limits<int64_t>::min();
+    LayerRigidBodyContactState rigidBodyContactState_;
+    QSet<QString> activeRigidBodyContactKeys_;
     LayerComponentHost componentHost_;
     QString builtinSourceComponentType_;
     ArtifactCore::Optional<LayerEvaluationState> authoritativeComponentState_;
@@ -1456,6 +1477,7 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   auto collision =
       makeCollisionComponentDescriptor(collisionComponentEnabled_);
   collision.settings[QStringLiteral("shape")] = collisionShape_;
+  collision.settings[QStringLiteral("bodyType")] = collisionBodyType_;
   collision.settings[QStringLiteral("width")] =
       static_cast<double>(collisionWidth_);
   collision.settings[QStringLiteral("height")] =
@@ -1475,6 +1497,10 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   auto joint = makeJointComponentDescriptor(jointComponentEnabled_);
   joint.settings[QStringLiteral("type")] = jointType_;
   joint.settings[QStringLiteral("targetLayer")] = jointTargetLayerName_;
+  joint.settings[QStringLiteral("targetAnchorY")] = jointTargetAnchorY_;
+  joint.settings[QStringLiteral("targetAnchorX")] = jointTargetAnchorX_;
+  joint.settings[QStringLiteral("ownerAnchorY")] = jointOwnerAnchorY_;
+  joint.settings[QStringLiteral("ownerAnchorX")] = jointOwnerAnchorX_;
   joint.settings[QStringLiteral("length")] =
       static_cast<double>(jointLength_);
   joint.settings[QStringLiteral("stiffness")] =
@@ -1484,6 +1510,15 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   joint.settings[QStringLiteral("angleLimitEnabled")] = jointAngleLimitEnabled_;
   joint.settings[QStringLiteral("lowerAngle")] = static_cast<double>(jointLowerAngle_);
   joint.settings[QStringLiteral("upperAngle")] = static_cast<double>(jointUpperAngle_);
+  joint.settings[QStringLiteral("axisX")] = static_cast<double>(jointAxisX_);
+  joint.settings[QStringLiteral("axisY")] = static_cast<double>(jointAxisY_);
+  joint.settings[QStringLiteral("linearLimitEnabled")] = jointLinearLimitEnabled_;
+  joint.settings[QStringLiteral("lowerLimit")] = static_cast<double>(jointLowerLimit_);
+  joint.settings[QStringLiteral("upperLimit")] = static_cast<double>(jointUpperLimit_);
+  joint.settings[QStringLiteral("motorEnabled")] = jointMotorEnabled_;
+  joint.settings[QStringLiteral("motorSpeed")] = static_cast<double>(jointMotorSpeed_);
+  joint.settings[QStringLiteral("motorForce")] = static_cast<double>(jointMotorForce_);
+  joint.settings[QStringLiteral("breakForce")] = static_cast<double>(jointBreakForce_);
   componentHost_.upsert(std::move(joint));
 
   auto fracture = makeFractureComponentDescriptor(fractureEnabled_);
@@ -2345,7 +2380,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
       hasRigidBodyPhysics()) {
     const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
   }
-  if (impl_->collisionComponentEnabled_ && !hasRigidBodyPhysics()) {
+  if ((impl_->collisionComponentEnabled_ || impl_->jointComponentEnabled_) && !hasRigidBodyPhysics()) {
     const_cast<ArtifactAbstractLayer*>(this)->enableRigidBodyPhysics();
   }
   if (impl_->physicsComponent_.enabled() && !hasRigidBodyPhysics()) {
@@ -2404,14 +2439,14 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
     if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
             impl_->composition_.data());
-        composition && !impl_->jointComponentEnabled_) {
+        composition) {
       world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
           composition->id());
     }
     if (world) {
       for (const auto& candidate : world->getBodies()) {
         if (!candidate || candidate->cloneIndex < -1 ||
-            (candidate->ownerLayerId && candidate->ownerLayerId != id())) {
+            candidate->ownerLayerId != id()) {
           continue;
         }
         const QVector2D bodyPos = candidate->position();
@@ -2437,10 +2472,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
               physicsSettings.windTorque * physicsSettings.windStrength * fieldWeight);
           impl_->lastRigidWindForceFrame_ = curFrame;
         }
-        positionX = bodyPos.x();
-        positionY = bodyPos.y();
-        rotation = candidate->angle();
-        break;
+        return impl_->rigidBodyLocalTransform(this, candidate);
       }
     }
   }
@@ -2554,6 +2586,26 @@ QPointF parentAutoLayoutOffset(const ArtifactAbstractLayer *layer,
   return QPointF();
 }
 
+QTransform ArtifactAbstractLayer::Impl::rigidBodyLocalTransform(
+    const ArtifactAbstractLayer* layer,
+    const ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D>& body) const {
+  const auto position = body->position();
+  QTransform delta;
+  delta.translate(position.x(), position.y());
+  delta.rotateRadians(body->angle() - rigidBodyRestAngle_);
+  delta.translate(-rigidBodyRestCenter_.x(), -rigidBodyRestCenter_.y());
+  QTransform result = rigidBodyRestTransform_ * delta;
+  if (const auto parent = layer->parentLayer()) {
+    bool invertible = false;
+    const auto inverseParent = parent->getGlobalTransform().inverted(&invertible);
+    if (invertible) result = result * inverseParent;
+    const QPointF offset = layoutComponentEnabled_ && layoutResponsiveEnabled_
+        ? QPointF() : parentAutoLayoutOffset(layer, parent);
+    result = QTransform::fromTranslate(-offset.x(), -offset.y()) * result;
+  }
+  return result;
+}
+
 QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   auto parent = parentLayer();
   const LayerID parentId = impl_->parentLayerId_;
@@ -2575,7 +2627,8 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   const QPointF layoutOffset = layoutManaged
                                    ? parentAutoLayoutOffset(this, parent)
                                    : QPointF();
-  if (!layoutManaged && !responsiveLayout &&
+  if (!hasRigidBodyPhysics() && !(parent && parent->hasRigidBodyPhysics()) &&
+      !layoutManaged && !responsiveLayout &&
       impl_->cachedGlobalTransformRevision_ == impl_->geometryRevision_ &&
       impl_->cachedGlobalTransformParentRevision_ == parentRevision &&
       impl_->cachedGlobalTransformFrame_ == frame &&
@@ -2829,7 +2882,7 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
       hasRigidBodyPhysics()) {
     const_cast<ArtifactAbstractLayer*>(this)->disableRigidBodyPhysics();
   }
-  if (impl_->collisionComponentEnabled_ && !hasRigidBodyPhysics()) {
+  if ((impl_->collisionComponentEnabled_ || impl_->jointComponentEnabled_) && !hasRigidBodyPhysics()) {
     const_cast<ArtifactAbstractLayer*>(this)->enableRigidBodyPhysics();
   }
   if (impl_->physicsComponent_.enabled() && !hasRigidBodyPhysics()) {
@@ -2889,7 +2942,7 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
     if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
             impl_->composition_.data());
-        composition && !impl_->jointComponentEnabled_) {
+        composition) {
       world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
           composition->id());
     }
@@ -2899,14 +2952,13 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
       const auto bodies = world->getBodies();
       for (const auto& candidate : bodies) {
         if (!candidate || candidate->cloneIndex < -1 ||
-            (candidate->ownerLayerId && candidate->ownerLayerId != id())) {
+            candidate->ownerLayerId != id()) {
           continue;
         }
-        const QVector2D bodyPos = candidate->position();
-        positionX = bodyPos.x();
-        positionY = bodyPos.y();
-        rotation = candidate->angle();
-        break;
+        QMatrix4x4 result = matrixFromTransform2D(
+            impl_->rigidBodyLocalTransform(this, candidate));
+        result.translate(0.0f, 0.0f, static_cast<float>(positionZ));
+        return result;
       }
     }
   }
@@ -2957,13 +3009,13 @@ bool ArtifactAbstractLayer::hasRigidBodyPhysics() const {
   auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
-      composition && !impl_->jointComponentEnabled_) {
+      composition) {
     world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
         composition->id());
   }
   if (!world) return false;
   for (const auto& body : world->getBodies()) {
-    if (body && body->ownerLayerId == id()) return true;
+    if (body && body->cloneIndex >= -1 && body->ownerLayerId == id()) return true;
   }
   return false;
 }
@@ -4329,7 +4381,9 @@ void ArtifactAbstractLayer::enableRigidBodyPhysics() {
   bool createdWorld = false;
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
-      composition && !impl_->jointComponentEnabled_) {
+      composition) {
+    // A layer attached to a composition must never retain a private solver.
+    physics.unregisterRigidWorld(id());
     world = physics.getCompositionRigidWorld(composition->id());
     if (!world) {
       world = physics.createCompositionRigidWorld(composition->id());
@@ -4339,7 +4393,7 @@ void ArtifactAbstractLayer::enableRigidBodyPhysics() {
     world = physics.createRigidWorld(id());
     createdWorld = true;
   }
-  if (world && (createdWorld || impl_->jointComponentEnabled_)) {
+  if (world && createdWorld) {
     world->setGravity(0.0f, impl_->physicsComponent_.settings().gravityY);
   }
   syncRigidBodyPhysicsToBounds();
@@ -4349,19 +4403,20 @@ void ArtifactAbstractLayer::disableRigidBodyPhysics() {
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
-      composition && !impl_->jointComponentEnabled_) {
+      composition) {
     if (auto world = physics.getCompositionRigidWorld(composition->id())) {
+      world->removeLayerJoint(id());
       for (const auto& body : world->getBodies()) {
         if (body && body->ownerLayerId == id()) {
           world->removeBody(body);
         }
       }
     }
-  } else {
-    physics.unregisterRigidWorld(id());
   }
+  physics.unregisterRigidWorld(id());
   impl_->rigidBodyColliderShape_ = -1;
   impl_->rigidBodyColliderRestitution_ = -1.0f;
+  clearRigidBodyContactState();
 }
 
 void ArtifactAbstractLayer::enableMaterialPhysics(int preset) {
@@ -4425,7 +4480,7 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   auto world = physics.getRigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
-      composition && !impl_->jointComponentEnabled_) {
+      composition) {
     world = physics.getCompositionRigidWorld(composition->id());
     if (!world) {
       world = physics.createCompositionRigidWorld(composition->id());
@@ -4440,10 +4495,25 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
     return;
   }
 
-  const float cx = static_cast<float>(bounds.center().x());
-  const float cy = static_cast<float>(bounds.center().y());
-  const float w = static_cast<float>(bounds.width());
-  const float h = static_cast<float>(bounds.height());
+  // Use the authored pose, never the already simulated transform.
+  const QTransform rest = getGlobalTransform4x4At(currentTimelineTime(this)).toTransform();
+  const QPointF center = rest.map(bounds.center());
+  const float angle = static_cast<float>(std::atan2(rest.m12(), rest.m11()));
+  QTransform inverseRotation;
+  inverseRotation.rotateRadians(-angle);
+  const auto bodyLocalPoint = [&](const QPointF& point) {
+    return inverseRotation.map(rest.map(point) - center);
+  };
+  const float cx = static_cast<float>(center.x());
+  const float cy = static_cast<float>(center.y());
+  const float w = static_cast<float>(bounds.width() * std::hypot(rest.m11(), rest.m12()));
+  const float h = static_cast<float>(bounds.height() * std::hypot(rest.m21(), rest.m22()));
+  if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(w) ||
+      !std::isfinite(h) || w <= 0.0f || h <= 0.0f) return;
+  impl_->rigidBodyRestTransform_ = rest;
+  impl_->rigidBodyRestCenter_ = center;
+  impl_->rigidBodyRestAngle_ = angle;
+  impl_->lastRigidWindForceFrame_ = std::numeric_limits<int64_t>::min();
   const auto shapeProperty = getProperty(
       QStringLiteral("component.collision.shape"));
   const int shape = shapeProperty ? std::clamp(shapeProperty->getValue().toInt(), 0, 3) : 0;
@@ -4467,26 +4537,16 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   // dynamic body (cloneIndex -1) rather than assuming vector order.
   for (const auto& candidate : bodies) {
     if (candidate && candidate->cloneIndex >= -1 &&
-        (!candidate->ownerLayerId || candidate->ownerLayerId == id())) {
+        candidate->ownerLayerId == id()) {
       body = candidate;
       break;
     }
   }
-  if (body && ((impl_->rigidBodyColliderShape_ >= 0 &&
-                impl_->rigidBodyColliderShape_ != shape) ||
-               (impl_->rigidBodyColliderRestitution_ >= 0.0f &&
-                !qFuzzyCompare(impl_->rigidBodyColliderRestitution_, restitution)))) {
-    // Joints attach to this body; drop them so the composition pass
-    // recreates them against the rebuilt body.
-    world->clearJoints();
+  if (body) {
+    // Explicit authored edits also change size/anchor/scale. Rebuild only
+    // this body; Box2D removes its attached joints, not unrelated ones.
     world->removeBody(body);
     body.reset();
-  }
-  if (body) {
-    body->ownerLayerId = id();
-    body->setTransform({cx, cy}, body->angle());
-    body->setLinearVelocity({0.0f, 0.0f});
-    body->setAngularVelocity(0.0f);
   }
   if (!body) {
     if (shape == 2) {
@@ -4516,9 +4576,9 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
         std::vector<QVector2D> vertices;
         vertices.reserve(hullSource.size());
         for (const QPointF& point : hullSource) {
+          const QPointF local = bodyLocalPoint(point);
           vertices.emplace_back(
-              static_cast<float>(point.x() - bounds.center().x()),
-              static_cast<float>(point.y() - bounds.center().y()));
+              static_cast<float>(local.x()), static_cast<float>(local.y()));
         }
         body = world->addPolygonBody(
             cx, cy, vertices, true, 1.0f, 0.3f, restitution);
@@ -4536,18 +4596,148 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   }
   if (body) {
     body->ownerLayerId = id();
+    body->setTransform({cx, cy}, angle);
     impl_->rigidBodyColliderShape_ = shape;
     impl_->rigidBodyColliderRestitution_ = restitution;
     applyRigidBodyPhysicsSettings();
     body->setFixedRotation(false);
+    body->setType(impl_->collisionBodyType_ == 1
+        ? ArtifactCore::RigidBody2D::Type::Static
+        : (impl_->collisionBodyType_ == 2
+            ? ArtifactCore::RigidBody2D::Type::Kinematic
+            : ArtifactCore::RigidBody2D::Type::Dynamic));
   }
 }
+
+void ArtifactAbstractLayer::syncKinematicRigidBodyToAuthoredTransform() {
+  if (impl_->collisionBodyType_ == 0) return;
+  auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+      impl_->composition_.data());
+  if (!composition) return;
+  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+      composition->id());
+  if (!world) return;
+  const QTransform authored = getGlobalTransformAt(currentTimelineFrame(this));
+  const QPointF center = authored.map(layerCollisionLocalBounds(this).center());
+  const float angle = static_cast<float>(std::atan2(authored.m12(), authored.m11()));
+  if (!std::isfinite(static_cast<float>(center.x())) ||
+      !std::isfinite(static_cast<float>(center.y())) || !std::isfinite(angle)) return;
+  for (const auto& body : world->getBodies()) {
+    if (!body || body->cloneIndex != -1 || body->ownerLayerId != id()) continue;
+    body->setTransform(QVector2D(center), angle);
+    body->setLinearVelocity({0.0f, 0.0f});
+    body->setAngularVelocity(0.0f);
+    body->setAwake(true);
+    impl_->rigidBodyRestTransform_ = authored;
+    impl_->rigidBodyRestCenter_ = center;
+    impl_->rigidBodyRestAngle_ = angle;
+    return;
+  }
+}
+
+bool ArtifactAbstractLayer::beginRigidBodyMouseDrag(
+    const QPointF& canvasPosition) {
+  auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+      impl_->composition_.data());
+  if (!composition || !std::isfinite(canvasPosition.x()) ||
+      !std::isfinite(canvasPosition.y())) return false;
+  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+      composition->id());
+  if (!world) return false;
+  for (const auto& body : world->getBodies()) {
+    if (!body || body->cloneIndex != -1 || body->ownerLayerId != id() ||
+        body->type() != ArtifactCore::RigidBody2D::Type::Dynamic) continue;
+    const float mass = body->mass();
+    const float maxForce = std::clamp(mass * 5000.0f, 10000.0f, 1.0e9f);
+    return world->startMouseDrag(id(), body,
+        QVector2D(static_cast<float>(canvasPosition.x()),
+                  static_cast<float>(canvasPosition.y())),
+        8.0f, 0.7f, maxForce);
+  }
+  return false;
+}
+
+bool ArtifactAbstractLayer::updateRigidBodyMouseDrag(
+    const QPointF& canvasPosition) {
+  auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+      impl_->composition_.data());
+  if (!composition || !std::isfinite(canvasPosition.x()) ||
+      !std::isfinite(canvasPosition.y())) return false;
+  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+      composition->id());
+  return world && world->updateMouseDrag(id(),
+      QVector2D(static_cast<float>(canvasPosition.x()),
+                static_cast<float>(canvasPosition.y())));
+}
+
+void ArtifactAbstractLayer::endRigidBodyMouseDrag() {
+  auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+      impl_->composition_.data());
+  if (!composition) return;
+  if (const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+          composition->id())) world->endMouseDrag(id());
+}
+
+bool ArtifactAbstractLayer::hasRigidBodyMouseDrag() const {
+  auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
+      impl_->composition_.data());
+  if (!composition) return false;
+  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
+      composition->id());
+  return world && world->hasMouseDrag(id());
+}
+
+void ArtifactAbstractLayer::beginRigidBodyContactStep() {
+  impl_->rigidBodyContactState_.beginCount = 0;
+  impl_->rigidBodyContactState_.endCount = 0;
+  impl_->rigidBodyContactState_.hitCount = 0;
+  impl_->rigidBodyContactState_.maxImpactSpeed = 0.0f;
+}
+
+void ArtifactAbstractLayer::recordRigidBodyContact(
+    LayerRigidBodyContactPhase phase, const ArtifactCore::LayerID& otherLayerId,
+    const QPointF& point, const QPointF& normal, float approachSpeed) {
+  auto& state = impl_->rigidBodyContactState_;
+  const QString key = otherLayerId.isNil()
+      ? QStringLiteral("__composition_floor__") : otherLayerId.toString();
+  state.lastOtherLayerId = otherLayerId;
+  switch (phase) {
+  case LayerRigidBodyContactPhase::Begin:
+    ++state.beginCount;
+    impl_->activeRigidBodyContactKeys_.insert(key);
+    break;
+  case LayerRigidBodyContactPhase::End:
+    ++state.endCount;
+    impl_->activeRigidBodyContactKeys_.remove(key);
+    break;
+  case LayerRigidBodyContactPhase::Hit:
+    ++state.hitCount;
+    state.lastPoint = point;
+    state.lastNormal = normal;
+    state.maxImpactSpeed = std::max(state.maxImpactSpeed,
+        std::max(0.0f, approachSpeed));
+    break;
+  }
+  state.activeContactCount = impl_->activeRigidBodyContactKeys_.size();
+}
+
+void ArtifactAbstractLayer::clearRigidBodyContactState() {
+  impl_->rigidBodyContactState_ = {};
+  impl_->activeRigidBodyContactKeys_.clear();
+}
+
+const LayerRigidBodyContactState& ArtifactAbstractLayer::rigidBodyContactState() const {
+  return impl_->rigidBodyContactState_;
+}
+
+bool ArtifactAbstractLayer::isJointBroken() const { return impl_->jointBroken_; }
+void ArtifactAbstractLayer::setJointBroken(bool broken) { impl_->jointBroken_ = broken; }
 
 void ArtifactAbstractLayer::applyRigidBodyPhysicsSettings() {
   auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
-      composition && !impl_->jointComponentEnabled_) {
+      composition) {
     world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
         composition->id());
   }
@@ -4570,7 +4760,7 @@ void ArtifactAbstractLayer::applyRigidBodyWorldGravity() {
   auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
-      composition && !impl_->jointComponentEnabled_) {
+      composition) {
     world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
         composition->id());
   }
@@ -4591,6 +4781,29 @@ QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
     return combineLayerTransform3D(local, parent->getGlobalTransform4x4());
   }
   return local;
+}
+
+QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4At(
+    const RationalTime& time) const {
+  const auto snapshot = transform3D().snapshotAt(time);
+  QMatrix4x4 result;
+  result.setToIdentity();
+  result.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+  result.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  result.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  result.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+  result.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+  result.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+  return result;
+}
+
+QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4At(
+    const RationalTime& time) const {
+  QMatrix4x4 local = getLocalTransform4x4At(time);
+  auto parent = parentLayer();
+  return parent ? combineLayerTransform3D(
+                      local, parent->getGlobalTransform4x4At(time))
+                : local;
 }
 
 std::vector<TwoPointFiveDRenderPass>
@@ -5703,6 +5916,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["clonerEnabled"] = impl_->clonerComponentEnabled_;
   componentsObj["layoutEnabled"] = impl_->layoutComponentEnabled_;
   componentsObj["collisionEnabled"] = impl_->collisionComponentEnabled_;
+  componentsObj["collisionBodyType"] = impl_->collisionBodyType_;
   componentsObj["collisionShape"] = impl_->collisionShape_;
   componentsObj["collisionWidth"] =
       static_cast<double>(impl_->collisionWidth_);
@@ -5721,6 +5935,10 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["jointEnabled"] = impl_->jointComponentEnabled_;
   componentsObj["jointType"] = impl_->jointType_;
   componentsObj["jointTargetLayer"] = impl_->jointTargetLayerName_;
+  componentsObj["jointTargetAnchorY"] = impl_->jointTargetAnchorY_;
+  componentsObj["jointTargetAnchorX"] = impl_->jointTargetAnchorX_;
+  componentsObj["jointOwnerAnchorY"] = impl_->jointOwnerAnchorY_;
+  componentsObj["jointOwnerAnchorX"] = impl_->jointOwnerAnchorX_;
   componentsObj["jointLength"] =
       static_cast<double>(impl_->jointLength_);
   componentsObj["jointStiffness"] =
@@ -5730,6 +5948,15 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["jointAngleLimitEnabled"] = impl_->jointAngleLimitEnabled_;
   componentsObj["jointLowerAngle"] = static_cast<double>(impl_->jointLowerAngle_);
   componentsObj["jointUpperAngle"] = static_cast<double>(impl_->jointUpperAngle_);
+  componentsObj["jointAxisX"] = static_cast<double>(impl_->jointAxisX_);
+  componentsObj["jointAxisY"] = static_cast<double>(impl_->jointAxisY_);
+  componentsObj["jointLinearLimitEnabled"] = impl_->jointLinearLimitEnabled_;
+  componentsObj["jointLowerLimit"] = static_cast<double>(impl_->jointLowerLimit_);
+  componentsObj["jointUpperLimit"] = static_cast<double>(impl_->jointUpperLimit_);
+  componentsObj["jointMotorEnabled"] = impl_->jointMotorEnabled_;
+  componentsObj["jointMotorSpeed"] = static_cast<double>(impl_->jointMotorSpeed_);
+  componentsObj["jointMotorForce"] = static_cast<double>(impl_->jointMotorForce_);
+  componentsObj["jointBreakForce"] = static_cast<double>(impl_->jointBreakForce_);
   componentsObj["crowdEnabled"] = impl_->crowdComponentEnabled_;
   componentsObj["crowdCohesion"] =
       static_cast<double>(impl_->crowdCohesion_);
@@ -6530,6 +6757,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->layoutComponentEnabled_ = false;
       impl_->collisionComponentEnabled_ = false;
       impl_->jointComponentEnabled_ = false;
+      impl_->jointBroken_ = false;
       impl_->crowdComponentEnabled_ = false;
       impl_->particleEmitterComponentEnabled_ = false;
       impl_->fluidComponentEnabled_ = false;
@@ -6546,6 +6774,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("layoutEnabled")).toBool(false);
         impl_->collisionComponentEnabled_ =
             componentsObj.value(QStringLiteral("collisionEnabled")).toBool(false);
+        impl_->collisionBodyType_ = std::clamp(
+            componentsObj.value(QStringLiteral("collisionBodyType")).toInt(0), 0, 2);
         impl_->collisionShape_ = std::clamp(
             componentsObj.value(QStringLiteral("collisionShape")).toInt(0), 0,
             3);
@@ -6572,9 +6802,17 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->jointComponentEnabled_ = componentsObj.value(
             QStringLiteral("jointEnabled")).toBool(false);
         impl_->jointType_ = std::clamp(
-            componentsObj.value(QStringLiteral("jointType")).toInt(0), 0, 3);
+            componentsObj.value(QStringLiteral("jointType")).toInt(0), 0, 5);
         impl_->jointTargetLayerName_ = componentsObj.value(
             QStringLiteral("jointTargetLayer")).toString();
+        impl_->jointTargetAnchorY_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointTargetAnchorY")).toDouble(0.0), 0.0, -100000.0, 100000.0));
+        impl_->jointTargetAnchorX_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointTargetAnchorX")).toDouble(0.0), 0.0, -100000.0, 100000.0));
+        impl_->jointOwnerAnchorY_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointOwnerAnchorY")).toDouble(0.0), 0.0, -100000.0, 100000.0));
+        impl_->jointOwnerAnchorX_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointOwnerAnchorX")).toDouble(0.0), 0.0, -100000.0, 100000.0));
         impl_->jointLength_ = static_cast<float>(finiteClamped(
             componentsObj.value(QStringLiteral("jointLength")).toDouble(0.0),
             0.0, 0.0, 100000.0));
@@ -6592,6 +6830,25 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->jointUpperAngle_ = static_cast<float>(finiteClamped(
             componentsObj.value(QStringLiteral("jointUpperAngle")).toDouble(45.0),
             45.0, -360.0, 360.0));
+        impl_->jointAxisX_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointAxisX")).toDouble(1.0), 1.0, -1.0, 1.0));
+        impl_->jointAxisY_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointAxisY")).toDouble(0.0), 0.0, -1.0, 1.0));
+        impl_->jointLinearLimitEnabled_ = componentsObj.value(
+            QStringLiteral("jointLinearLimitEnabled")).toBool(false);
+        impl_->jointLowerLimit_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointLowerLimit")).toDouble(-100.0), -100.0, -100000.0, 100000.0));
+        impl_->jointUpperLimit_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointUpperLimit")).toDouble(100.0), 100.0, -100000.0, 100000.0));
+        impl_->jointMotorEnabled_ = componentsObj.value(
+            QStringLiteral("jointMotorEnabled")).toBool(false);
+        impl_->jointMotorSpeed_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointMotorSpeed")).toDouble(0.0), 0.0, -100000.0, 100000.0));
+        impl_->jointMotorForce_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointMotorForce")).toDouble(100.0), 100.0, 0.0, 1000000.0));
+        impl_->jointBreakForce_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("jointBreakForce")).toDouble(0.0), 0.0, 0.0, 1000000.0));
+        impl_->jointBroken_ = false;
         impl_->crowdComponentEnabled_ =
             componentsObj.value(QStringLiteral("crowdEnabled")).toBool(false);
         impl_->crowdCohesion_ = static_cast<float>(finiteClamped(
@@ -8804,6 +9061,15 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   collisionShapeProp->setHardRange(0.0, 3.0);
   collisionShapeProp->setSoftRange(0.0, 3.0);
   collisionGroup.addProperty(collisionShapeProp);
+  auto collisionBodyTypeProp = makeProp(
+      QStringLiteral("component.collision.bodyType"), PropertyType::Integer,
+      impl_->collisionBodyType_, -87);
+  collisionBodyTypeProp->setDisplayLabel(QStringLiteral("Body Type"));
+  collisionBodyTypeProp->setTooltip(
+      QStringLiteral("0=Dynamic, 1=Static, 2=Kinematic (animated collision body)."));
+  collisionBodyTypeProp->setHardRange(0.0, 2.0);
+  collisionBodyTypeProp->setSoftRange(0.0, 2.0);
+  collisionGroup.addProperty(collisionBodyTypeProp);
   auto collisionWidthProp =
       makeProp(QStringLiteral("component.collision.width"),
                PropertyType::Float,
@@ -8875,24 +9141,64 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                PropertyType::Integer, impl_->jointType_, -79);
   jointTypeProp->setDisplayLabel(QStringLiteral("Type"));
   jointTypeProp->setTooltip(
-      QStringLiteral("0=Distance, 1=Pin, 2=Hinge, 3=Spring"));
-  jointTypeProp->setHardRange(0.0, 3.0);
-  jointTypeProp->setSoftRange(0.0, 3.0);
+      QStringLiteral("0=Distance, 1=Pin, 2=Hinge, 3=Spring, 4=Rope, 5=Slider"));
+  jointTypeProp->setHardRange(0.0, 5.0);
+  jointTypeProp->setSoftRange(0.0, 5.0);
   jointGroup.addProperty(jointTypeProp);
   auto jointTargetLayerProp =
       makeProp(QStringLiteral("component.joint.targetLayer"),
                PropertyType::String, impl_->jointTargetLayerName_, -78);
   jointTargetLayerProp->setDisplayLabel(QStringLiteral("Target Layer"));
   jointTargetLayerProp->setTooltip(
-      QStringLiteral("Layer name to attach to. Empty disables the joint."));
+      QStringLiteral("Target layer ID or unique name. A 2D target with Collision or Joint enabled receives reaction forces; otherwise it is a fixed moving anchor. Empty disables the joint."));
   jointGroup.addProperty(jointTargetLayerProp);
+  {
+    auto anchor = makeProp(QStringLiteral("component.joint.targetAnchorY"), PropertyType::Float,
+        double(impl_->jointTargetAnchorY_), -78);
+    anchor->setDisplayLabel(QStringLiteral("Target Anchor Y"));
+    anchor->setTooltip(QStringLiteral("Local pixel offset from the corresponding layer's bounds center."));
+    anchor->setUnit(QStringLiteral("px"));
+    anchor->setHardRange(-100000.0, 100000.0);
+    anchor->setSoftRange(-2048.0, 2048.0);
+    jointGroup.addProperty(anchor);
+  }
+  {
+    auto anchor = makeProp(QStringLiteral("component.joint.targetAnchorX"), PropertyType::Float,
+        double(impl_->jointTargetAnchorX_), -78);
+    anchor->setDisplayLabel(QStringLiteral("Target Anchor X"));
+    anchor->setTooltip(QStringLiteral("Local pixel offset from the corresponding layer's bounds center."));
+    anchor->setUnit(QStringLiteral("px"));
+    anchor->setHardRange(-100000.0, 100000.0);
+    anchor->setSoftRange(-2048.0, 2048.0);
+    jointGroup.addProperty(anchor);
+  }
+  {
+    auto anchor = makeProp(QStringLiteral("component.joint.ownerAnchorY"), PropertyType::Float,
+        double(impl_->jointOwnerAnchorY_), -78);
+    anchor->setDisplayLabel(QStringLiteral("Owner Anchor Y"));
+    anchor->setTooltip(QStringLiteral("Local pixel offset from the corresponding layer's bounds center."));
+    anchor->setUnit(QStringLiteral("px"));
+    anchor->setHardRange(-100000.0, 100000.0);
+    anchor->setSoftRange(-2048.0, 2048.0);
+    jointGroup.addProperty(anchor);
+  }
+  {
+    auto anchor = makeProp(QStringLiteral("component.joint.ownerAnchorX"), PropertyType::Float,
+        double(impl_->jointOwnerAnchorX_), -78);
+    anchor->setDisplayLabel(QStringLiteral("Owner Anchor X"));
+    anchor->setTooltip(QStringLiteral("Local pixel offset from the corresponding layer's bounds center."));
+    anchor->setUnit(QStringLiteral("px"));
+    anchor->setHardRange(-100000.0, 100000.0);
+    anchor->setSoftRange(-2048.0, 2048.0);
+    jointGroup.addProperty(anchor);
+  }
   auto jointLengthProp =
       makeProp(QStringLiteral("component.joint.length"),
                PropertyType::Float,
                static_cast<double>(impl_->jointLength_), -77);
   jointLengthProp->setDisplayLabel(QStringLiteral("Length"));
   jointLengthProp->setTooltip(
-      QStringLiteral("Distance joint length. 0 captures the current separation."));
+      QStringLiteral("Spring rest length / rope maximum length. 0 captures the current anchor separation."));
   jointLengthProp->setHardRange(0.0, 100000.0);
   jointLengthProp->setSoftRange(0.0, 4096.0);
   jointGroup.addProperty(jointLengthProp);
@@ -8939,6 +9245,36 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   jointUpperAngleProp->setHardRange(-360.0, 360.0);
   jointUpperAngleProp->setSoftRange(-180.0, 180.0);
   jointGroup.addProperty(jointUpperAngleProp);
+  const auto addJointFloat = [&](const QString& path, const QString& label,
+                                 float value, double min, double max,
+                                 const QString& unit) {
+    auto prop = makeProp(path, PropertyType::Float, static_cast<double>(value), -73);
+    prop->setDisplayLabel(label); prop->setHardRange(min, max); prop->setSoftRange(min, max);
+    if (!unit.isEmpty()) prop->setUnit(unit);
+    jointGroup.addProperty(prop);
+  };
+  addJointFloat(QStringLiteral("component.joint.axisX"), QStringLiteral("Slider Axis X"),
+      impl_->jointAxisX_, -1.0, 1.0, QString());
+  addJointFloat(QStringLiteral("component.joint.axisY"), QStringLiteral("Slider Axis Y"),
+      impl_->jointAxisY_, -1.0, 1.0, QString());
+  auto jointLinearLimitProp = makeProp(QStringLiteral("component.joint.linearLimitEnabled"),
+      PropertyType::Boolean, impl_->jointLinearLimitEnabled_, -73);
+  jointLinearLimitProp->setDisplayLabel(QStringLiteral("Slider Limit"));
+  jointGroup.addProperty(jointLinearLimitProp);
+  addJointFloat(QStringLiteral("component.joint.lowerLimit"), QStringLiteral("Lower Limit"),
+      impl_->jointLowerLimit_, -100000.0, 100000.0, QStringLiteral("px"));
+  addJointFloat(QStringLiteral("component.joint.upperLimit"), QStringLiteral("Upper Limit"),
+      impl_->jointUpperLimit_, -100000.0, 100000.0, QStringLiteral("px"));
+  auto jointMotorProp = makeProp(QStringLiteral("component.joint.motorEnabled"),
+      PropertyType::Boolean, impl_->jointMotorEnabled_, -73);
+  jointMotorProp->setDisplayLabel(QStringLiteral("Slider Motor"));
+  jointGroup.addProperty(jointMotorProp);
+  addJointFloat(QStringLiteral("component.joint.motorSpeed"), QStringLiteral("Motor Speed"),
+      impl_->jointMotorSpeed_, -100000.0, 100000.0, QStringLiteral("px/s"));
+  addJointFloat(QStringLiteral("component.joint.motorForce"), QStringLiteral("Motor Force"),
+      impl_->jointMotorForce_, 0.0, 1000000.0, QString());
+  addJointFloat(QStringLiteral("component.joint.breakForce"), QStringLiteral("Break Force"),
+      impl_->jointBreakForce_, 0.0, 1000000.0, QString());
   auto crowdComponentEnabledProp =
       makeProp(QStringLiteral("component.crowd.enabled"),
                PropertyType::Boolean, impl_->crowdComponentEnabled_, -88);
@@ -11957,11 +12293,19 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.joint.enabled")) {
       impl_->jointComponentEnabled_ = value.toBool();
+      impl_->jointBroken_ = false;
       if (impl_->jointComponentEnabled_ && !hasRigidBodyPhysics()) {
         // A joint needs a simulated body; the rigid entry doubles as the
         // previously unreachable enableRigidBodyPhysics() call site.
         enableRigidBodyPhysics();
-        syncRigidBodyPhysicsToBounds();
+      }
+      if (!impl_->jointComponentEnabled_) {
+        if (auto* comp = dynamic_cast<ArtifactAbstractComposition*>(impl_->composition_.data())) {
+          if (auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(comp->id())) {
+            world->removeLayerJoint(id());
+          }
+        }
+        if (!impl_->collisionComponentEnabled_) disableRigidBodyPhysics();
       }
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
@@ -11969,24 +12313,80 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       return true;
     }
     if (propertyPath == QStringLiteral("component.joint.type")) {
-      impl_->jointType_ = std::clamp(value.toInt(), 0, 3);
+      impl_->jointType_ = std::clamp(value.toInt(), 0, 5);
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.joint.targetLayer")) {
-      const QString target = value.toString().trimmed();
-      impl_->jointTargetLayerName_ =
-          (target == layerName()) ? QString() : target;
+      QString target = value.toString().trimmed();
+      if (auto *comp = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+          comp && !target.isEmpty()) {
+        ArtifactAbstractLayerPtr resolved;
+        for (const auto &candidate : comp->allLayer()) {
+          if (candidate && candidate->id().toString() == target) { resolved = candidate; break; }
+        }
+        if (!resolved) {
+          for (const auto &candidate : comp->allLayer()) {
+            if (candidate && candidate->layerName() == target) {
+              if (resolved) return false;
+              resolved = candidate;
+            }
+          }
+        }
+        if (!resolved || resolved.get() == this) return false;
+        target = resolved->id().toString();
+      }
+impl_->jointTargetLayerName_ =
+          (target == id().toString()) ? QString() : target;
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.joint.ownerAnchorX")) {
+impl_->jointOwnerAnchorX_ = finiteClampedValue(value.toDouble(), impl_->jointOwnerAnchorX_, -100000.0, 100000.0);
+      impl_->jointBroken_ = false;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.bodyType")) {
+      impl_->collisionBodyType_ = std::clamp(value.toInt(), 0, 2);
+      impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.ownerAnchorY")) {
+impl_->jointOwnerAnchorY_ = finiteClampedValue(value.toDouble(), impl_->jointOwnerAnchorY_, -100000.0, 100000.0);
+      impl_->jointBroken_ = false;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.targetAnchorX")) {
+impl_->jointTargetAnchorX_ = finiteClampedValue(value.toDouble(), impl_->jointTargetAnchorX_, -100000.0, 100000.0);
+      impl_->jointBroken_ = false;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.joint.targetAnchorY")) {
+impl_->jointTargetAnchorY_ = finiteClampedValue(value.toDouble(), impl_->jointTargetAnchorY_, -100000.0, 100000.0);
+      impl_->jointBroken_ = false;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.joint.length")) {
       impl_->jointLength_ = finiteClampedValue(
           value.toDouble(), impl_->jointLength_, 0.0, 100000.0);
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11995,6 +12395,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.stiffness")) {
       impl_->jointStiffness_ = finiteClampedValue(
           value.toDouble(), impl_->jointStiffness_, 0.0, 120.0);
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -12003,13 +12404,15 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.damping")) {
       impl_->jointDamping_ = finiteClampedValue(
           value.toDouble(), impl_->jointDamping_, 0.0, 10.0);
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.joint.angleLimitEnabled")) {
-      impl_->jointAngleLimitEnabled_ = value.toBool();
+impl_->jointAngleLimitEnabled_ = value.toBool();
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -12018,6 +12421,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.lowerAngle")) {
       impl_->jointLowerAngle_ = finiteClampedValue(
           value.toDouble(), impl_->jointLowerAngle_, -360.0, 360.0);
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -12026,9 +12430,36 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.joint.upperAngle")) {
       impl_->jointUpperAngle_ = finiteClampedValue(
           value.toDouble(), impl_->jointUpperAngle_, -360.0, 360.0);
+      impl_->jointBroken_ = false;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    const auto setJointFloat = [this, &propertyPath, &value](const QString& expected,
+        float& target, double minimum, double maximum) {
+      if (propertyPath != expected) return false;
+      target = finiteClampedValue(value.toDouble(), target, minimum, maximum);
+      impl_->jointBroken_ = false;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    };
+    if (setJointFloat(QStringLiteral("component.joint.axisX"), impl_->jointAxisX_, -1.0, 1.0) ||
+        setJointFloat(QStringLiteral("component.joint.axisY"), impl_->jointAxisY_, -1.0, 1.0) ||
+        setJointFloat(QStringLiteral("component.joint.lowerLimit"), impl_->jointLowerLimit_, -100000.0, 100000.0) ||
+        setJointFloat(QStringLiteral("component.joint.upperLimit"), impl_->jointUpperLimit_, -100000.0, 100000.0) ||
+        setJointFloat(QStringLiteral("component.joint.motorSpeed"), impl_->jointMotorSpeed_, -100000.0, 100000.0) ||
+        setJointFloat(QStringLiteral("component.joint.motorForce"), impl_->jointMotorForce_, 0.0, 1000000.0) ||
+        setJointFloat(QStringLiteral("component.joint.breakForce"), impl_->jointBreakForce_, 0.0, 1000000.0)) return true;
+    if (propertyPath == QStringLiteral("component.joint.linearLimitEnabled") ||
+        propertyPath == QStringLiteral("component.joint.motorEnabled")) {
+      if (propertyPath == QStringLiteral("component.joint.linearLimitEnabled"))
+        impl_->jointLinearLimitEnabled_ = value.toBool();
+      else impl_->jointMotorEnabled_ = value.toBool();
+      impl_->jointBroken_ = false;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.crowd.enabled")) {

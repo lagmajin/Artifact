@@ -1,6 +1,6 @@
 ﻿# 3D Particle 完成度マイルストーン (2026-08-29)
 
-**最終更新:** 2026-08-30
+**最終更新:** 2026-09-05
 
 > 2026-08-30 方針更新: 2D/3Dを単一Particle Layerの`is3D`切替として扱わず、
 > `LayerType::Particle`（2D）と`LayerType::Particle3D`（3D）へ分離する。
@@ -230,3 +230,16 @@ Done:
 - 対応: ArtifactParticleLayer.cppm:470-484 で is3D() による分岐を追加し、3D パーティクルは transformParticleRenderData をスキップして lodData をそのまま drawParticles に渡す。2D パーティクルは従来通り transformParticleRenderData で 2D QTransform を適用。AGENTS.md 2026-08-15「D3D12 / Diligent backend 触るときは慎重」「QImage の本流投入禁止」「QPainter::CompositionMode による合成実装禁止」を守り、.cppm のみの変更、.ixx 宣言追加なし、CMake 変更なし、module import 追加なし。
 - 未検証 (AGENTS.md に従いビルド・runtime はユーザー指示待ち): (1) 3D camera orbit 時に Particle billboard が立体的に動くか (2) 既存 2D particle プロジェクトの表示が回帰しないか (3) AOV (emission / normal) gate (line 11613/11642) を Particle が pass するか。
 - 次着手: P4-3 (model matrix 経路) — set3DCameraMatrices は view/proj のみ受け、model matrix を含まない。getGlobalTransform4x4() から取った model を ParticleRenderData に追加し、ParticleRenderer::setModelMatrix API を新設する。これは ArtifactCore::ParticleRenderData の ABI 共有を伴うため、grep で全利用箇所を確認してから着手。
+
+### P4-3 実装 (2026-09-05) — model matrix をGPU particle drawへ接続
+
+- `ParticleRenderData` に identity 初期値の row-major `modelMatrix` を追加し、`ArtifactParticle3DLayer` は `getGlobalTransform4x4()` を row-major で設定する。2D Particle は従来どおり canvas-space座標とidentity model matrixを使う。
+- `DiligentImmediateSubmitter` は model / view / projection を `ParticleRenderer` に渡し、vertex shaderとGPU cull shaderはいずれも model → view → projection の順で座標を処理する。D3D12/Vulkan固有APIは追加していない。
+- 3D経路で layer opacity もGPU upload前のvertex alphaへ明示適用した。
+- **未検証:** build、3D layer の position / rotation / scale、camera orbit、GPU cull有効時、2D Particle回帰、D3D12/Vulkan parity は未実行（ユーザー許可待ち）。
+
+### P4-3 追補 (2026-09-05) — Form Particle のGrid3Dへモデル行列を接続
+
+- `ArtifactFormParticleLayer::draw()` は Grid3D 時だけ `getGlobalTransform4x4()` を row-major の `ParticleRenderData::modelMatrix` へ設定する。Grid2D は identity を明示し、従来の2D座標契約を保持する。
+- Form Particle は既存の Diligent particle submitter / shader を共有するため、GPU resource、PSO、同期経路は追加しない。
+- **未検証:** build、Grid3D のposition / rotation / scale、camera orbit、GPU cull有効時、Grid2D回帰、D3D12/Vulkan parity は未実行（ユーザー方針によりビルドは実施しない）。

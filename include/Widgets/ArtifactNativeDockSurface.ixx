@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <limits>
 #include <QHash>
 #include <QByteArray>
 #include <QColor>
@@ -8,17 +9,31 @@ module;
 #include <QDebug>
 #include <QDrag>
 #include <QDragEnterEvent>
+#include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDialog>
 #include <QDropEvent>
 #include <QEvent>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QKeyEvent>
+#include <QIcon>
+#include <QToolButton>
+#include <QStyle>
+#include <QProxyStyle>
+#include <QStyleOptionTab>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPen>
+#include <QVariant>
 #include <QPalette>
+#include <QLabel>
+#include <QSizePolicy>
 #include <QJsonDocument>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QStringList>
 #include <QWidget>
@@ -34,17 +49,62 @@ export namespace Artifact {
 // top-level dialogs; the registry remains the stable routing and persistence
 // boundary used by both embedded and floating surfaces.
 class NativeDockSurface final : public QWidget {
+  class DockDropPreview final : public QWidget {
+  public:
+    explicit DockDropPreview(QWidget *parent) : QWidget(parent) {
+      setAttribute(Qt::WA_TransparentForMouseEvents, true);
+      hide();
+    }
+  protected:
+    void paintEvent(QPaintEvent *) override {
+      QPainter painter(this);
+      const QColor accent = palette().color(QPalette::Highlight);
+      QColor fill = accent;
+      fill.setAlpha(52);
+      painter.fillRect(rect(), fill);
+      QPen pen(accent, 2.0);
+      painter.setPen(pen);
+      painter.drawRect(rect().adjusted(1, 1, -2, -2));
+    }
+  };
+  class TabAccentStyle final : public QProxyStyle {
+  public:
+    void drawControl(ControlElement element, const QStyleOption *option,
+                     QPainter *painter, const QWidget *widget = nullptr) const override {
+      QProxyStyle::drawControl(element, option, painter, widget);
+      if (element != CE_TabBarTabLabel || !painter) return;
+      const auto *tab = qstyleoption_cast<const QStyleOptionTab *>(option);
+      if (!tab || !(tab->state & State_Selected)) return;
+      // The style's text sub-element excludes the tab's close button.
+      const QRect titleRect = subElementRect(SE_TabBarTabText, tab, widget)
+                                  .intersected(tab->rect);
+      if (titleRect.width() <= 0) return;
+      painter->save();
+      painter->setClipRect(tab->rect, Qt::IntersectClip);
+      painter->fillRect(QRect(titleRect.left(), tab->rect.bottom() - 2,
+                              titleRect.width(), 2),
+                        tab->palette.color(QPalette::Highlight));
+      painter->restore();
+    }
+  };
 public:
   explicit NativeDockSurface(QWidget *parent = nullptr) : QWidget(parent) {
     setAcceptDrops(true);
+    dropPreview_ = new DockDropPreview(this);
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
-    topTabs_ = createTabSurface(this);
+    verticalSplitter_ = new QSplitter(Qt::Vertical, this);
+    verticalSplitter_->setChildrenCollapsible(false);
+    verticalSplitter_->setOpaqueResize(false);
+    rootLayout->addWidget(verticalSplitter_);
+    topTabs_ = createTabSurface(verticalSplitter_);
     topTabs_->hide();
-    rootLayout->addWidget(topTabs_);
+    verticalSplitter_->addWidget(topTabs_);
 
-    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    auto *splitter = new QSplitter(Qt::Horizontal, verticalSplitter_);
+    splitter->setChildrenCollapsible(false);
+    splitter->setOpaqueResize(false);
     splitter_ = splitter;
     leftTabs_ = createTabSurface(splitter);
     centerTabs_ = createTabSurface(splitter);
@@ -52,11 +112,14 @@ public:
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 3);
     splitter->setStretchFactor(2, 1);
-    rootLayout->addWidget(splitter);
+    verticalSplitter_->addWidget(splitter);
 
-    bottomTabs_ = createTabSurface(this);
+    bottomTabs_ = createTabSurface(verticalSplitter_);
     bottomTabs_->hide();
-    rootLayout->addWidget(bottomTabs_);
+    verticalSplitter_->addWidget(bottomTabs_);
+    verticalSplitter_->setStretchFactor(0, 1);
+    verticalSplitter_->setStretchFactor(1, 3);
+    verticalSplitter_->setStretchFactor(2, 1);
 
     for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_, topTabs_,
                        bottomTabs_}) {
@@ -64,6 +127,7 @@ public:
         continue;
       }
       tabs->setAcceptDrops(true);
+      tabs->tabBar()->setAcceptDrops(true);
       tabs->installEventFilter(this);
       tabs->tabBar()->installEventFilter(this);
     }
@@ -92,7 +156,7 @@ public:
       return false;
     }
     widget->setParent(tabs);
-    tabs->addTab(widget, title);
+    installCloseButton(tabs, tabs->addTab(widget, title), dockId);
     tabs->show();
     docks_.insert(dockId, widget);
     areas_.insert(dockId, area);
@@ -116,7 +180,7 @@ public:
       return false;
     }
     widget->setParent(tabs);
-    tabs->addTab(widget, title);
+    installCloseButton(tabs, tabs->addTab(widget, title), dockId);
     tabs->setCurrentWidget(widget);
     tabs->show();
     docks_.insert(dockId, widget);
@@ -140,6 +204,7 @@ public:
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(0, 0, 0, 0);
+    installFloatingHeader(dialog, layout, dockId, title);
     widget->setParent(dialog);
     layout->addWidget(widget);
     if (geometry.isValid()) {
@@ -154,6 +219,54 @@ public:
     if (visible) {
       dialog->show();
     }
+    return true;
+  }
+
+  // QADS-style detach: a tab released outside a dock surface becomes an owned
+  // floating window. The panel object itself is preserved for a later re-dock.
+  bool floatDockWidget(const QString &dockId, const QRect &geometry = {}) {
+    const QString resolvedId = resolveDockId(dockId);
+    auto *widget = docks_.value(resolvedId, nullptr);
+    if (!widget || floatingDialogs_.contains(resolvedId)) return false;
+    const QString title = titles_.value(resolvedId, resolvedId);
+    const bool visible = widget->isVisible();
+    if (auto *tabs = tabsForWidget(widget)) {
+      const int index = tabs->indexOf(widget);
+      if (index >= 0) tabs->removeTab(index);
+      if (tabs->count() == 0) tabs->hide();
+    }
+    docks_.remove(resolvedId);
+    auto *dialog = new QDialog(window());
+    dialog->setWindowTitle(title);
+    dialog->setObjectName(QStringLiteral("ArtifactNativeFloatingDock_%1").arg(resolvedId));
+    dialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    installFloatingHeader(dialog, layout, resolvedId, title);
+    widget->setParent(dialog);
+    layout->addWidget(widget);
+    const QRect fallback(dialog->mapToGlobal(QPoint(0, 0)), QSize(560, 400));
+    dialog->setGeometry(geometry.isValid() ? geometry : fallback);
+    floatingDialogs_.insert(resolvedId, dialog);
+    floatingWidgets_.insert(resolvedId, widget);
+    if (visible) dialog->show();
+    return true;
+  }
+
+  bool dockFloatingWidget(const QString &dockId, DockArea area = DockArea::Center) {
+    const QString resolvedId = resolveDockId(dockId);
+    auto *dialog = floatingDialogs_.take(resolvedId);
+    auto *widget = floatingWidgets_.take(resolvedId);
+    if (!dialog || !widget) return false;
+    const QString title = titles_.value(resolvedId, resolvedId);
+    const bool visible = dialog->isVisible();
+    const bool pinned = pinned_.value(resolvedId, false);
+    widget->setParent(nullptr);
+    dialog->hide();
+    dialog->deleteLater();
+    if (!addDockWidget(resolvedId, title, widget, area)) return false;
+    pinned_.insert(resolvedId, pinned);
+    setDockVisible(resolvedId, visible);
     return true;
   }
 
@@ -172,14 +285,31 @@ public:
       seen.insert(entry.dockId, true);
       normalized.push_back(entry);
     }
+    const auto savedTabOrder = [](const DockLayoutEntry &entry) {
+      if (!entry.tabGroup.startsWith(QStringLiteral("tabs:"))) {
+        return std::numeric_limits<int>::max();
+      }
+      return entry.tabGroup.mid(5).split(QLatin1Char('|')).indexOf(entry.dockId);
+    };
     std::sort(normalized.begin(), normalized.end(),
-              [](const DockLayoutEntry &left, const DockLayoutEntry &right) {
+              [&savedTabOrder](const DockLayoutEntry &left,
+                               const DockLayoutEntry &right) {
+                if (left.floating != right.floating) return !left.floating;
+                if (left.area != right.area)
+                  return static_cast<int>(left.area) < static_cast<int>(right.area);
+                const int leftOrder = savedTabOrder(left);
+                const int rightOrder = savedTabOrder(right);
+                if (leftOrder != rightOrder) return leftOrder < rightOrder;
                 return left.dockId < right.dockId;
               });
 
     bool restoredAny = false;
     for (const auto &entry : normalized) {
       if (entry.floating) {
+        if (!floatingDialogs_.contains(entry.dockId) &&
+            docks_.contains(entry.dockId)) {
+          floatDockWidget(entry.dockId, entry.floatingGeometry);
+        }
         if (auto *dialog = floatingDialogs_.value(entry.dockId, nullptr)) {
           if (entry.floatingGeometry.isValid()) {
             dialog->setGeometry(entry.floatingGeometry);
@@ -189,6 +319,11 @@ public:
           restoredAny = true;
         }
         continue;
+      }
+      if (floatingDialogs_.contains(entry.dockId)) {
+        if (!dockFloatingWidget(entry.dockId, entry.area)) {
+          continue;
+        }
       }
       auto *widget = docks_.value(entry.dockId);
       if (!widget) {
@@ -208,7 +343,7 @@ public:
         }
         continue;
       }
-      widget->setVisible(entry.visible);
+      setDockVisible(entry.dockId, entry.visible);
       pinned_.insert(entry.dockId, entry.pinned);
       restoredAny = true;
     }
@@ -218,13 +353,26 @@ public:
   QByteArray saveLayoutState() const {
     DockLayoutDocument document;
     QHash<int, QStringList> areaIds;
+    const auto appendTabOrder = [this, &areaIds](QTabWidget *tabs,
+                                                  DockArea area) {
+      if (!tabs) return;
+      auto &ids = areaIds[static_cast<int>(area)];
+      for (int i = 0; i < tabs->count(); ++i) {
+        const QString id = dockIdForWidget(tabs->widget(i));
+        if (!id.isEmpty()) ids.push_back(id);
+      }
+    };
+    appendTabOrder(leftTabs_, DockArea::Left);
+    appendTabOrder(centerTabs_, DockArea::Center);
+    appendTabOrder(rightTabs_, DockArea::Right);
+    appendTabOrder(topTabs_, DockArea::Top);
+    appendTabOrder(bottomTabs_, DockArea::Bottom);
     for (auto it = docks_.cbegin(); it != docks_.cend(); ++it) {
       DockLayoutEntry entry;
       entry.dockId = it.key();
       entry.area = areas_.value(it.key(), DockArea::Center);
       entry.visible = it.value() && it.value()->isVisible();
       entry.pinned = pinned_.value(it.key(), false);
-      areaIds[static_cast<int>(entry.area)].push_back(entry.dockId);
       document.entries.push_back(entry);
     }
     for (auto it = floatingWidgets_.cbegin(); it != floatingWidgets_.cend();
@@ -247,7 +395,6 @@ public:
       }
       auto ids = areaIds.value(static_cast<int>(entry.area));
       ids.removeDuplicates();
-      ids.sort();
       entry.tabGroup = QStringLiteral("tabs:") + ids.join(QStringLiteral("|"));
     }
     return QJsonDocument(document.toJson()).toJson(QJsonDocument::Compact);
@@ -369,7 +516,7 @@ public:
       newTabs->removeTab(index);
     }
     widget->setParent(targetTabs);
-    targetTabs->addTab(widget, title);
+    installCloseButton(targetTabs, targetTabs->addTab(widget, title), dockId);
     targetTabs->setCurrentWidget(widget);
     areas_.insert(resolvedId, targetArea);
     pinned_.insert(resolvedId, pinned);
@@ -390,7 +537,15 @@ public:
     if (!widget) {
       return false;
     }
-    widget->setVisible(visible);
+    if (auto *tabs = tabsForWidget(widget)) {
+      tabs->setTabVisible(tabs->indexOf(widget), visible);
+      if (visible) tabs->setCurrentWidget(widget);
+      bool anyVisible = false;
+      for (int i = 0; i < tabs->count(); ++i) anyVisible |= tabs->isTabVisible(i);
+      tabs->setVisible(anyVisible);
+    } else {
+      widget->setVisible(visible);
+    }
     return true;
   }
 
@@ -401,6 +556,10 @@ public:
     if (area == DockArea::Left || area == DockArea::Center ||
         area == DockArea::Right) {
       splitter_->setSizes(sizes);
+      return true;
+    }
+    if (verticalSplitter_ && (area == DockArea::Top || area == DockArea::Bottom)) {
+      verticalSplitter_->setSizes(sizes);
       return true;
     }
     return false;
@@ -549,12 +708,28 @@ protected:
     if (event->mimeData()->hasFormat(
             QStringLiteral("application/x-artifact-dock-id"))) {
       event->acceptProposedAction();
+      showDropPreview(rect());
       return;
     }
     QWidget::dragEnterEvent(event);
   }
 
+  void dragMoveEvent(QDragMoveEvent *event) override {
+    if (event->mimeData()->hasFormat(QStringLiteral("application/x-artifact-dock-id"))) {
+      showDropPreview(dropPreviewRectForArea(areaForPosition(event->position().toPoint())));
+      event->acceptProposedAction();
+      return;
+    }
+    QWidget::dragMoveEvent(event);
+  }
+
+  void dragLeaveEvent(QDragLeaveEvent *event) override {
+    hideDropPreview();
+    QWidget::dragLeaveEvent(event);
+  }
+
   void dropEvent(QDropEvent *event) override {
+    hideDropPreview();
     const QByteArray payload = event->mimeData()->data(
         QStringLiteral("application/x-artifact-dock-id"));
     if (!payload.isEmpty()) {
@@ -568,6 +743,37 @@ protected:
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
+    if (auto *button = qobject_cast<QToolButton *>(watched)) {
+      const QString id = button->property("artifactDockCloseId").toString();
+      if (!id.isEmpty()) {
+        const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
+            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
+            button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
+        const bool keyRelease = event->type() == QEvent::KeyRelease &&
+            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space &&
+            !static_cast<QKeyEvent *>(event)->isAutoRepeat();
+        if (button->isDown() && (mouseRelease || keyRelease)) {
+          button->setDown(false);
+          dragSourceId_.clear();
+          setDockVisible(id, false);
+          return true;
+        }
+      }
+      const QString dockBackId = button->property("artifactDockBackId").toString();
+      if (!dockBackId.isEmpty()) {
+        const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
+            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
+            button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
+        const bool keyRelease = event->type() == QEvent::KeyRelease &&
+            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space &&
+            !static_cast<QKeyEvent *>(event)->isAutoRepeat();
+        if (button->isDown() && (mouseRelease || keyRelease)) {
+          button->setDown(false);
+          dockFloatingWidget(dockBackId, areas_.value(dockBackId, DockArea::Center));
+          return true;
+        }
+      }
+    }
     auto *tabs = qobject_cast<QTabWidget *>(watched);
     auto *tabBar = qobject_cast<QTabBar *>(watched);
     if (!tabs && tabBar) {
@@ -577,7 +783,22 @@ protected:
       return QWidget::eventFilter(watched, event);
     }
 
-    if (event->type() == QEvent::MouseButtonPress && tabBar) {
+    if (event->type() == QEvent::MouseButtonDblClick && tabBar) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      if (mouseEvent->button() == Qt::LeftButton) {
+        const int index = tabBar->tabAt(mouseEvent->position().toPoint());
+        const QString dockId = index >= 0
+            ? dockIdForWidget(tabs->widget(index))
+            : QString{};
+        if (!dockId.isEmpty()) {
+          const QRect geometry(
+              tabBar->mapToGlobal(tabBar->tabRect(index).topLeft()),
+              QSize(560, 400));
+          dragSourceId_.clear();
+          if (floatDockWidget(dockId, geometry)) return true;
+        }
+      }
+    } else if (event->type() == QEvent::MouseButtonPress && tabBar) {
       auto *mouseEvent = static_cast<QMouseEvent *>(event);
       if (mouseEvent->button() == Qt::LeftButton) {
         const int index = tabBar->tabAt(mouseEvent->position().toPoint());
@@ -599,7 +820,12 @@ protected:
                     dragSourceId_.toUtf8());
       auto *drag = new QDrag(tabBar);
       drag->setMimeData(mime);
-      drag->exec(Qt::MoveAction);
+      const Qt::DropAction result = drag->exec(Qt::MoveAction);
+      hideDropPreview();
+      if (result == Qt::IgnoreAction && docks_.contains(dragSourceId_)) {
+        const QPoint globalPosition = tabBar->mapToGlobal(mouseEvent->position().toPoint());
+        floatDockWidget(dragSourceId_, QRect(globalPosition, QSize(560, 400)));
+      }
       dragSourceId_.clear();
       return true;
     } else if (event->type() == QEvent::DragEnter ||
@@ -607,10 +833,23 @@ protected:
       auto *dragEvent = static_cast<QDragMoveEvent *>(event);
       if (dragEvent->mimeData()->hasFormat(
               QStringLiteral("application/x-artifact-dock-id"))) {
+        const QPoint position = dragEvent->position().toPoint();
+        const QPoint tabPosition = tabBar
+                                       ? position
+                                       : tabs->tabBar()->mapFrom(tabs, position);
+        const int targetIndex = tabs->tabBar()->tabAt(tabPosition);
+        const QRect targetRect = targetIndex >= 0
+            ? QRect(tabs->tabBar()->mapTo(this, tabs->tabBar()->tabRect(targetIndex).topLeft()),
+                    tabs->tabBar()->tabRect(targetIndex).size())
+            : QRect(tabs->mapTo(this, tabs->rect().topLeft()), tabs->size());
+        showDropPreview(targetRect);
         dragEvent->acceptProposedAction();
         return true;
       }
+    } else if (event->type() == QEvent::DragLeave) {
+      hideDropPreview();
     } else if (event->type() == QEvent::Drop) {
+      hideDropPreview();
       auto *dropEvent = static_cast<QDropEvent *>(event);
       const QByteArray payload = dropEvent->mimeData()->data(
           QStringLiteral("application/x-artifact-dock-id"));
@@ -621,6 +860,22 @@ protected:
                                        ? position
                                        : tabs->tabBar()->mapFrom(tabs, position);
         const int targetIndex = tabs->tabBar()->tabAt(tabPosition);
+        auto *source = docks_.value(sourceId, nullptr);
+        auto *sourceTabs = source ? tabsForWidget(source) : nullptr;
+        if (source && sourceTabs == tabs) {
+          const int sourceIndex = tabs->indexOf(source);
+          if (sourceIndex >= 0) {
+            int insertionIndex = targetIndex < 0 ? tabs->count() : targetIndex;
+            const QString title = titles_.value(sourceId, sourceId);
+            tabs->removeTab(sourceIndex);
+            if (sourceIndex < insertionIndex) --insertionIndex;
+            insertionIndex = std::clamp(insertionIndex, 0, tabs->count());
+            installCloseButton(tabs, tabs->insertTab(insertionIndex, source, title), sourceId);
+            tabs->setCurrentWidget(source);
+            dropEvent->acceptProposedAction();
+            return true;
+          }
+        }
         if (targetIndex >= 0) {
           const QString targetId = dockIdForWidget(tabs->widget(targetIndex));
           if (!targetId.isEmpty() && sourceId != targetId &&
@@ -628,6 +883,11 @@ protected:
             dropEvent->acceptProposedAction();
             return true;
           }
+        } else if (moveDockWidget(sourceId, areaForTabs(tabs))) {
+          // The empty content/tab-strip portion is an area drop, not a
+          // request to merge with whichever tab happens to be current.
+          dropEvent->acceptProposedAction();
+          return true;
         }
       }
     }
@@ -637,23 +897,73 @@ protected:
 private:
   DockArea areaForPosition(const QPoint &position) const {
     if (topTabs_ && topTabs_->isVisible() &&
-        topTabs_->geometry().contains(position)) {
+        topTabs_->rect().contains(topTabs_->mapFrom(this, position))) {
       return DockArea::Top;
     }
     if (bottomTabs_ && bottomTabs_->isVisible() &&
-        bottomTabs_->geometry().contains(position)) {
+        bottomTabs_->rect().contains(bottomTabs_->mapFrom(this, position))) {
       return DockArea::Bottom;
     }
-    if (splitter_ && splitter_->geometry().contains(position)) {
-      const int center = splitter_->geometry().center().x();
-      if (position.x() < center - splitter_->width() / 6) {
+    if (splitter_ && splitter_->rect().contains(splitter_->mapFrom(this, position))) {
+      const int center = splitter_->width() / 2;
+      const int localX = splitter_->mapFrom(this, position).x();
+      if (localX < center - splitter_->width() / 6) {
         return DockArea::Left;
       }
-      if (position.x() > center + splitter_->width() / 6) {
+      if (localX > center + splitter_->width() / 6) {
         return DockArea::Right;
       }
     }
     return DockArea::Center;
+  }
+
+  QRect dropPreviewRectForArea(DockArea area) const {
+    auto *tabs = tabsForArea(area);
+    if (!tabs) return rect();
+    return QRect(tabs->mapTo(const_cast<NativeDockSurface *>(this), tabs->rect().topLeft()),
+                 tabs->size());
+  }
+
+  void showDropPreview(const QRect &targetRect) {
+    if (!dropPreview_) return;
+    dropPreview_->setGeometry(targetRect.adjusted(2, 2, -2, -2));
+    dropPreview_->show();
+    dropPreview_->raise();
+  }
+
+  void hideDropPreview() {
+    if (dropPreview_) dropPreview_->hide();
+  }
+
+  void installCloseButton(QTabWidget *tabs, int index, const QString &id) {
+    auto *button = new QToolButton(tabs->tabBar());
+    button->setAutoRaise(true);
+    button->setIcon(button->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+    button->setToolTip(tr("Close panel"));
+    button->setAccessibleName(tr("Close panel"));
+    button->setProperty("artifactDockCloseId", id);
+    button->installEventFilter(this);
+    tabs->tabBar()->setTabButton(index, QTabBar::RightSide, button);
+  }
+
+  void installFloatingHeader(QDialog *dialog, QVBoxLayout *layout,
+                             const QString &dockId, const QString &title) {
+    if (!dialog || !layout) return;
+    auto *header = new QWidget(dialog);
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(6, 3, 3, 3);
+    auto *label = new QLabel(title, header);
+    label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    headerLayout->addWidget(label);
+    auto *dockBack = new QToolButton(header);
+    dockBack->setAutoRaise(true);
+    dockBack->setIcon(dockBack->style()->standardIcon(QStyle::SP_ArrowBack));
+    dockBack->setToolTip(tr("Dock panel back to the center"));
+    dockBack->setAccessibleName(tr("Dock panel back"));
+    dockBack->setProperty("artifactDockBackId", dockId);
+    dockBack->installEventFilter(this);
+    headerLayout->addWidget(dockBack);
+    layout->addWidget(header);
   }
 
   static QTabWidget *createTabSurface(QWidget *parent) {
@@ -663,6 +973,9 @@ private:
     tabs->tabBar()->setExpanding(false);
     tabs->tabBar()->setUsesScrollButtons(true);
     tabs->tabBar()->setElideMode(Qt::ElideRight);
+    auto *accentStyle = new TabAccentStyle;
+    accentStyle->setParent(tabs->tabBar());
+    tabs->tabBar()->setStyle(accentStyle);
     const auto &theme = ArtifactCore::currentDCCTheme();
     QPalette palette = tabs->palette();
     palette.setColor(QPalette::Window,
@@ -695,6 +1008,14 @@ private:
     return centerTabs_;
   }
 
+  DockArea areaForTabs(const QTabWidget *tabs) const {
+    if (tabs == leftTabs_) return DockArea::Left;
+    if (tabs == rightTabs_) return DockArea::Right;
+    if (tabs == topTabs_) return DockArea::Top;
+    if (tabs == bottomTabs_) return DockArea::Bottom;
+    return DockArea::Center;
+  }
+
   QTabWidget *tabsForWidget(QWidget *widget) const {
     for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_, topTabs_,
                        bottomTabs_}) {
@@ -711,6 +1032,8 @@ private:
   QTabWidget *rightTabs_ = nullptr;
   QTabWidget *bottomTabs_ = nullptr;
   QSplitter *splitter_ = nullptr;
+  QSplitter *verticalSplitter_ = nullptr;
+  DockDropPreview *dropPreview_ = nullptr;
   QPoint dragStartPosition_;
   QString dragSourceId_;
   QHash<QString, QWidget *> docks_;

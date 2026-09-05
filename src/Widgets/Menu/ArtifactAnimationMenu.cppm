@@ -883,6 +883,8 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* easeInAction = nullptr;
   QAction* easeOutAction = nullptr;
   QAction* easeInOutAction = nullptr;
+  QAction* catmullRomInterpolationAction = nullptr;
+  QAction* hermiteInterpolationAction = nullptr;
 
   QAction* showGraphEditorAction = nullptr;
   QAction* toggleValueGraphAction = nullptr;
@@ -1145,10 +1147,16 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->bezierInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_edit.svg")));
   impl_->bezierInterpolationAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationBezierInterpolation));
+  impl_->catmullRomInterpolationAction = impl_->interpolationMenu->addAction("Catmull-Rom");
+  impl_->catmullRomInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
+  impl_->hermiteInterpolationAction = impl_->interpolationMenu->addAction("Hermite");
+  impl_->hermiteInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
 
   impl_->linearInterpolationAction->setCheckable(true);
   impl_->bezierInterpolationAction->setCheckable(true);
   impl_->holdInterpolationAction->setCheckable(true);
+  impl_->catmullRomInterpolationAction->setCheckable(true);
+  impl_->hermiteInterpolationAction->setCheckable(true);
 
   addSeparator();
 
@@ -1384,6 +1392,18 @@ bool hasActiveExpressionTarget(QWidget* root)
     ArtifactCore::globalEventBus().publish(
         TimelineInterpolationCommandRequestedEvent{
             ArtifactCore::InterpolationType::Bezier});
+    return;
+   }
+   if (action == impl_->catmullRomInterpolationAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::CatmullRom});
+    return;
+   }
+   if (action == impl_->hermiteInterpolationAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineInterpolationCommandRequestedEvent{
+            ArtifactCore::InterpolationType::Hermite});
     return;
    }
    if (action == impl_->showGraphEditorAction) {

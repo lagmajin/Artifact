@@ -2,6 +2,9 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
+#include <QMatrix4x4>
+#include <QVector3D>
+#include <cmath>
 module Artifact.Core.SmartGuidesManager;
 import std;
 import Memory.SharedPtr;
@@ -91,7 +94,7 @@ void SmartGuidesManager::buildCustomGuides(ArtifactCompositionPtr comp, std::vec
     if (!size.isValid()) return;
     const auto layers = comp->allLayer();
     for (const auto& layer : layers) {
-        if (!layer || !layer->isConstructionLayer()) {
+        if (!layer || !layer->isVisible() || !layer->isConstructionLayer()) {
             continue;
         }
         const auto constructionLayer =
@@ -99,13 +102,12 @@ void SmartGuidesManager::buildCustomGuides(ArtifactCompositionPtr comp, std::vec
         if (!constructionLayer) {
             continue;
         }
-        const auto guides = constructionLayer->constructionGuideSet().enabledGuides();
-        for (const auto& guide : guides) {
-            if (guide.orientation == GuideOrientation::Vertical) {
-                outV.push_back(static_cast<float>(guide.position));
-            } else if (guide.orientation == GuideOrientation::Horizontal) {
-                outH.push_back(static_cast<float>(guide.position));
-            }
+        const auto transform = layer->getGlobalTransform4x4();
+        for (const auto& point : constructionLayer->constructionSnapPoints()) {
+            const auto world = transform.map(QVector3D(float(point.x()), float(point.y()), 0));
+            if (!std::isfinite(world.x()) || !std::isfinite(world.y())) continue;
+            outV.push_back(world.x());
+            outH.push_back(world.y());
         }
     }
 }

@@ -653,6 +653,10 @@ void Artifact3DGizmo::setViewBasis(const QVector3D& xAxis,
     impl_->viewAxisZ = normalizedOr(zAxis, QVector3D(0.0f, 0.0f, 1.0f));
 }
 
+QVector3D Artifact3DGizmo::dragAxisDirection() const {
+    return isDragging() ? impl_->dragAxisDirection : QVector3D{};
+}
+
 QVector3D Artifact3DGizmo::position() const {
     return impl_->position;
 }
@@ -934,7 +938,7 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
         checkRing(axisDirectionFor(GizmoAxis::X, basis), GizmoAxis::X);
         checkRing(axisDirectionFor(GizmoAxis::Y, basis), GizmoAxis::Y);
         checkRing(axisDirectionFor(GizmoAxis::Z, basis), GizmoAxis::Z);
-        if (!impl_->testingFullOverlay) {
+        if (depthEnabled_ && !impl_->testingFullOverlay) {
             checkRing(cameraForwardForView(view), GizmoAxis::Screen);
         }
     }
@@ -1631,6 +1635,8 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     const QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
     const float distance = std::abs(viewPos.z());
     const bool orthographic = std::abs(proj(3, 3) - 1.0f) < 0.001f;
+    // The front orthographic camera carries zoom in its projection, not
+    // its view basis. Compensate the viewport zoom to keep handles fixed-size.
     const float zoom = std::max(renderer->getZoom(), 0.001f);
     const float contrastScale = Accessibility::contrastScale();
     // Keep the manipulator compact while preserving its existing world-space
@@ -1642,9 +1648,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
 
     const float s = impl_->currentScale;
 
-    renderer->setUseExternalMatrices(true);
-    renderer->setViewMatrix(view);
-    renderer->setProjectionMatrix(proj);
+    // Gizmos own only the 3D primitive camera, not the canvas input mapping.
     renderer->setGizmoCameraMatrices(view, proj);
 
     auto clamp01 = [](float v) {
@@ -1980,7 +1984,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         }
         drawRotateRing(GizmoAxis::Z, center, toFloat3(axisZ),
                        s * axisRadiusScale, axisBaseColorFor(GizmoAxis::Z));
-        if (!impl_->drawingFullOverlay) {
+        if (depthEnabled_ && !impl_->drawingFullOverlay) {
             drawAxisRing(GizmoAxis::Screen, center, toFloat3(cameraForward),
                          s * (dedicatedRotatePass
                                   ? kDedicatedRotateScreenRadiusScale

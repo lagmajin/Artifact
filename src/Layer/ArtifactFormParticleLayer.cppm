@@ -756,6 +756,24 @@ void ArtifactFormParticleLayer::draw(ArtifactIRenderer* renderer)
         return;
     }
 
+    if (is3D()) {
+        // Form particles retain local grid coordinates.  Keep the 3D layer
+        // transform in the shared Diligent particle contract so the GPU
+        // applies model -> view -> projection just as it does for
+        // ArtifactParticle3DLayer.
+        const QMatrix4x4 modelRows = getGlobalTransform4x4().transposed();
+        std::copy_n(modelRows.constData(),
+                    impl_->cachedRenderData.modelMatrix.size(),
+                    impl_->cachedRenderData.modelMatrix.begin());
+    } else {
+        impl_->cachedRenderData.modelMatrix = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
+    }
+
     renderer->drawParticles(impl_->cachedRenderData);
 }
 

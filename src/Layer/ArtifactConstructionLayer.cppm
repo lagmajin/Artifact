@@ -1,6 +1,12 @@
 module;
 #include <utility>
 #include <cmath>
+#include <algorithm>
+#include <QFont>
+#include <QRectF>
+#include <QSizeF>
+#include <QMatrix4x4>
+#include <QStringList>
 #include <QVariant>
 #include <QJsonArray>
 
@@ -14,6 +20,20 @@ import Property.Group;
 import Property;
 
 namespace Artifact {
+
+namespace {
+ConstructionItem defaultConstructionItem(ConstructionItemType type) {
+  ConstructionItem item;
+  item.type = type;
+  item.enabled = false;
+  item.start = QPointF(100, 100);
+  item.end = QPointF(400, 100);
+  item.center = QPointF(240, 240);
+  item.radius = 80;
+  item.text = QStringLiteral("Note");
+  return item;
+}
+}
 
 class ArtifactConstructionLayer::Impl {
 public:
@@ -100,7 +120,7 @@ void ArtifactConstructionLayer::draw(ArtifactIRenderer* renderer) {
   const FloatColor warm = {1.0f, 0.72f, 0.22f, impl_->renderAsDesign ? 0.92f : 0.68f};
 
   if (impl_->showGrid && impl_->gridSpacing > 2.0f) {
-    const float spacing = std::max(2.0f, impl_->gridSpacing);
+    const float spacing = std::max({2.0f, impl_->gridSpacing, std::max(w, h) / 2048.0f});
     for (float x = 0.0f; x <= w + 0.5f; x += spacing) {
       renderer->drawSolidRectTransformed(x - 0.5f, 0.0f, 1.0f, h, transform, faint, opacity);
     }
@@ -153,6 +173,45 @@ void ArtifactConstructionLayer::draw(ArtifactIRenderer* renderer) {
   if (impl_->showBaseline) {
     const float y = h * std::clamp(impl_->baselineY, 0.0f, 1.0f);
     renderer->drawSolidRectTransformed(0.0f, y - 1.0f, w, 2.0f, transform, warm, opacity);
+  }
+
+  const auto drawLine = [&](const QPointF &a, const QPointF &b, float alpha) {
+    const double dx = b.x() - a.x(), dy = b.y() - a.y();
+    const double length = std::hypot(dx, dy);
+    if (!std::isfinite(length) || length < 0.001) return;
+    QMatrix4x4 lineTransform = transform;
+    lineTransform.translate(float(a.x()), float(a.y()));
+    lineTransform.rotate(float(std::atan2(dy, dx) * 180.0 / 3.141592653589793), 0, 0, 1);
+    renderer->drawSolidRectTransformed(0, -1, float(length), 2, lineTransform, strong, alpha);
+  };
+  for (const auto &guide : impl_->guideSet.guides) {
+    if (!guide.enabled || !std::isfinite(guide.position)) continue;
+    if (guide.orientation == GuideOrientation::Vertical)
+      drawLine(QPointF(guide.position, 0), QPointF(guide.position, h), opacity);
+    else if (guide.orientation == GuideOrientation::Horizontal)
+      drawLine(QPointF(0, guide.position), QPointF(w, guide.position), opacity);
+  }
+  for (const auto &item : impl_->items) {
+    if (!item.enabled || !std::isfinite(item.opacity) || item.opacity <= 0.0) continue;
+    const float alpha = opacity * float(std::clamp(item.opacity, 0.0, 1.0));
+    if (item.type == ConstructionItemType::Line) {
+      drawLine(item.start, item.end, alpha);
+    } else if (item.type == ConstructionItemType::Circle) {
+      if (!std::isfinite(item.radius) || item.radius <= 0.0) continue;
+      constexpr int segments = 128;
+      QPointF previous = item.center + QPointF(item.radius, 0);
+      for (int i = 1; i <= segments; ++i) {
+        const double angle = i * (2.0 * 3.141592653589793 / segments);
+        const QPointF next = item.center + QPointF(std::cos(angle), std::sin(angle)) * item.radius;
+        drawLine(previous, next, alpha);
+        previous = next;
+      }
+    } else if (!item.text.isEmpty() && std::isfinite(item.center.x()) && std::isfinite(item.center.y())) {
+      QFont font;
+      font.setPixelSize(20);
+      renderer->drawTextTransformed(QRectF(item.center, QSizeF(w, h)), item.text,
+          font, warm, transform, Qt::AlignLeft | Qt::AlignTop, alpha);
+    }
   }
 }
 
@@ -228,6 +287,7 @@ void ArtifactConstructionLayer::fromJsonProperties(const QJsonObject& obj) {
   impl_->showBaseline = obj.value(QStringLiteral("construction.showBaseline")).toBool(impl_->showBaseline);
   impl_->renderAsDesign = obj.value(QStringLiteral("construction.renderAsDesign")).toBool(impl_->renderAsDesign);
   impl_->includeInFinalRender = obj.value(QStringLiteral("construction.includeInFinalRender")).toBool(impl_->includeInFinalRender);
+  setGuide(!(impl_->renderAsDesign || impl_->includeInFinalRender));
   impl_->guideSet = GuideSet::fromJson(obj.value(QStringLiteral("construction.guideSet")).toObject());
   impl_->items.clear();
   for (const auto value : obj.value(QStringLiteral("construction.items")).toArray())
@@ -299,10 +359,100 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactConstructionLayer::getLayerProp
   group.addProperty(makeProp(QStringLiteral("construction.includeInFinalRender"), PropertyType::Boolean, impl_->includeInFinalRender, -79));
 
   groups.push_back(group);
+  // Stable type/ordinal paths keep value-based Undo valid when an empty
+  // creation slot becomes a stored item. Disabled items are never erased here.
+  for (int typeIndex = 0; typeIndex < 3; ++typeIndex) {
+    const auto type = static_cast<ConstructionItemType>(typeIndex);
+    const QString title = type == ConstructionItemType::Line ? QStringLiteral("Line")
+        : type == ConstructionItemType::Circle ? QStringLiteral("Circle") : QStringLiteral("Annotation");
+    int ordinal = 0;
+    const auto addItemGroup = [&](const ConstructionItem &item, int index) {
+      PropertyGroup itemGroup(QStringLiteral("Construction · %1 %2").arg(title).arg(index + 1));
+      const QString prefix = QStringLiteral("construction.item.%1.%2.").arg(typeIndex).arg(index);
+      const auto add = [&](const QString &field, PropertyType propertyType, const QVariant &v) {
+        auto property = makeProp(prefix + field, propertyType, v);
+        property->setAnimatable(false);
+        if (propertyType == PropertyType::Float) {
+          if (field == QStringLiteral("opacity")) {
+            property->setSoftRange(0.0, 1.0);
+            property->setStep(0.01);
+          } else {
+            property->setSoftRange(field == QStringLiteral("radius") ? 0.0 : -100000.0, 100000.0);
+            property->setUnit(QStringLiteral("px"));
+          }
+        }
+        itemGroup.addProperty(property);
+      };
+      add(QStringLiteral("enabled"), PropertyType::Boolean, item.enabled);
+      add(QStringLiteral("opacity"), PropertyType::Float, item.opacity);
+      if (type == ConstructionItemType::Line) {
+        add(QStringLiteral("startX"), PropertyType::Float, item.start.x());
+        add(QStringLiteral("startY"), PropertyType::Float, item.start.y());
+        add(QStringLiteral("endX"), PropertyType::Float, item.end.x());
+        add(QStringLiteral("endY"), PropertyType::Float, item.end.y());
+      } else {
+        add(QStringLiteral("centerX"), PropertyType::Float, item.center.x());
+        add(QStringLiteral("centerY"), PropertyType::Float, item.center.y());
+        if (type == ConstructionItemType::Circle)
+          add(QStringLiteral("radius"), PropertyType::Float, item.radius);
+        else
+          add(QStringLiteral("text"), PropertyType::String, item.text);
+      }
+      groups.push_back(itemGroup);
+    };
+    for (const auto &item : impl_->items) {
+      if (item.type == type) addItemGroup(item, ordinal++);
+    }
+    if (ordinal < 128) addItemGroup(defaultConstructionItem(type), ordinal);
+  }
   return groups;
 }
 
 bool ArtifactConstructionLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value) {
+  if (propertyPath.startsWith(QStringLiteral("construction.item."))) {
+    const auto parts = propertyPath.split(QLatin1Char('.'));
+    if (parts.size() != 5) return false;
+    bool typeOk = false, indexOk = false;
+    const int typeIndex = parts[2].toInt(&typeOk), index = parts[3].toInt(&indexOk);
+    if (!typeOk || !indexOk || typeIndex < 0 || typeIndex > 2 || index < 0 || index >= 128) return false;
+    const auto type = static_cast<ConstructionItemType>(typeIndex);
+    const QString field = parts[4];
+    const bool common = field == QStringLiteral("enabled") || field == QStringLiteral("opacity");
+    const bool lineField = field == QStringLiteral("startX") || field == QStringLiteral("startY") ||
+        field == QStringLiteral("endX") || field == QStringLiteral("endY");
+    const bool centerField = field == QStringLiteral("centerX") || field == QStringLiteral("centerY");
+    if (!(common || (type == ConstructionItemType::Line && lineField) ||
+          (type != ConstructionItemType::Line && centerField) ||
+          (type == ConstructionItemType::Circle && field == QStringLiteral("radius")) ||
+          (type == ConstructionItemType::Annotation && field == QStringLiteral("text")))) return false;
+    bool numericOk = false;
+    double number = value.toDouble(&numericOk);
+    if (field != QStringLiteral("enabled") && field != QStringLiteral("text") &&
+        (!numericOk || !std::isfinite(number))) return false;
+    ConstructionItem *target = nullptr;
+    int ordinal = 0;
+    for (auto &item : impl_->items) {
+      if (item.type == type && ordinal++ == index) { target = &item; break; }
+    }
+    if (!target) {
+      if (ordinal != index) return false;
+      impl_->items.push_back(defaultConstructionItem(type));
+      target = &impl_->items.back();
+      target->id = QStringLiteral("inspector-%1-%2").arg(typeIndex).arg(index);
+    }
+    number = std::clamp(number, -100000.0, 100000.0);
+    if (field == QStringLiteral("enabled")) target->enabled = value.toBool();
+    else if (field == QStringLiteral("opacity")) target->opacity = std::clamp(number, 0.0, 1.0);
+    else if (field == QStringLiteral("startX")) target->start.setX(number);
+    else if (field == QStringLiteral("startY")) target->start.setY(number);
+    else if (field == QStringLiteral("endX")) target->end.setX(number);
+    else if (field == QStringLiteral("endY")) target->end.setY(number);
+    else if (field == QStringLiteral("centerX")) target->center.setX(number);
+    else if (field == QStringLiteral("centerY")) target->center.setY(number);
+    else if (field == QStringLiteral("radius")) target->radius = std::max(0.0, number);
+    else if (field == QStringLiteral("text")) target->text = value.toString();
+    return true;
+  }
   bool sizeChanged = false;
   if (propertyPath == QStringLiteral("construction.width")) {
     impl_->width = std::max(1.0f, value.toFloat());
@@ -332,9 +482,10 @@ bool ArtifactConstructionLayer::setLayerPropertyValue(const QString& propertyPat
     impl_->showBaseline = value.toBool();
   } else if (propertyPath == QStringLiteral("construction.renderAsDesign")) {
     impl_->renderAsDesign = value.toBool();
-    setGuide(!impl_->renderAsDesign);
+    setGuide(!(impl_->renderAsDesign || impl_->includeInFinalRender));
   } else if (propertyPath == QStringLiteral("construction.includeInFinalRender")) {
     impl_->includeInFinalRender = value.toBool();
+    setGuide(!(impl_->renderAsDesign || impl_->includeInFinalRender));
   } else {
     return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
   }
@@ -348,6 +499,48 @@ bool ArtifactConstructionLayer::setLayerPropertyValue(const QString& propertyPat
 
 GuideSet ArtifactConstructionLayer::constructionGuideSet() const {
   return impl_->guideSet;
+}
+
+ArtifactCore::Array<QPointF> ArtifactConstructionLayer::constructionSnapPoints() const {
+  ArtifactCore::Array<QPointF> points;
+  if (impl_->opacity <= 0.001f || opacity() <= 0.001f) return points;
+  const double w = impl_->width, h = impl_->height;
+  const auto add = [&](QPointF p) {
+    if (std::isfinite(p.x()) && std::isfinite(p.y())) points.append(p);
+  };
+  const auto vertical = [&](double x) { add(QPointF(x, 0)); add(QPointF(x, h)); };
+  const auto horizontal = [&](double y) { add(QPointF(0, y)); add(QPointF(w, y)); };
+  if (impl_->showGrid && impl_->gridSpacing > 2.0f) {
+    const double spacing = std::max({2.0, double(impl_->gridSpacing), std::max(w, h) / 2048.0});
+    for (double x = 0; x <= w; x += spacing) vertical(x);
+    for (double y = 0; y <= h; y += spacing) horizontal(y);
+  }
+  if (impl_->showThirds) { vertical(w / 3); vertical(w * 2 / 3); horizontal(h / 3); horizontal(h * 2 / 3); }
+  if (impl_->showCenter) { vertical(w / 2); horizontal(h / 2); }
+  if (impl_->showSafeArea) {
+    const double margin = std::clamp(double(impl_->safeMargin), 0.0, 0.45);
+    for (double x : {w * margin, w * (1 - margin)})
+      for (double y : {h * margin, h * (1 - margin)}) add(QPointF(x, y));
+  }
+  if (impl_->showBaseline) horizontal(h * std::clamp(double(impl_->baselineY), 0.0, 1.0));
+  for (const auto &guide : impl_->guideSet.guides) {
+    if (!guide.enabled) continue;
+    if (guide.orientation == GuideOrientation::Vertical) vertical(guide.position);
+    else if (guide.orientation == GuideOrientation::Horizontal) horizontal(guide.position);
+  }
+  for (const auto &item : impl_->items) {
+    if (!item.enabled || !std::isfinite(item.opacity) || item.opacity <= 0.001) continue;
+    if (item.type == ConstructionItemType::Line) {
+      add(item.start); add(item.end); add((item.start + item.end) * 0.5);
+    } else {
+      add(item.center);
+      if (item.type == ConstructionItemType::Circle && std::isfinite(item.radius) && item.radius > 0) {
+        add(item.center + QPointF(item.radius, 0)); add(item.center - QPointF(item.radius, 0));
+        add(item.center + QPointF(0, item.radius)); add(item.center - QPointF(0, item.radius));
+      }
+    }
+  }
+  return points;
 }
 
 void ArtifactConstructionLayer::setConstructionGuideSet(const GuideSet& guideSet) {
@@ -373,6 +566,14 @@ void ArtifactConstructionLayer::clearConstructionGuides() {
 }
 
 const std::vector<ConstructionItem>& ArtifactConstructionLayer::constructionItems() const { return impl_->items; }
+bool ArtifactConstructionLayer::setConstructionItem(size_t index, const ConstructionItem& item) {
+  if (index >= impl_->items.size() || impl_->items[index].id != item.id ||
+      impl_->items[index].type != item.type) return false;
+  impl_->items[index] = item;
+  setDirty(LayerDirtyFlag::Source);
+  changed();
+  return true;
+}
 void ArtifactConstructionLayer::setConstructionItems(const std::vector<ConstructionItem>& items) { impl_->items = items; }
 void ArtifactConstructionLayer::addConstructionItem(const ConstructionItem& item) { impl_->items.push_back(item); }
 void ArtifactConstructionLayer::clearConstructionItems() { impl_->items.clear(); }

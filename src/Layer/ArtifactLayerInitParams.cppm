@@ -370,6 +370,11 @@ void ArtifactNoiseLayerInitParams::setPreset(ArtifactCore::ProceduralTexturePres
  {
  }
 
+ ArtifactAudioInitParams::ArtifactAudioInitParams(const QString& name, LayerType type)
+     : ArtifactLayerInitParams(name, type == LayerType::SpatialAudio ? type : LayerType::Audio)
+ {
+ }
+
  ArtifactAudioInitParams::~ArtifactAudioInitParams()
  {
  }

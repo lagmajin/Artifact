@@ -16,6 +16,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Animation.Transform3D;
 import Time.Rational;
+import Graphics.ParticleData;
 import Property.Group;
 import Property;
 import Color.Float;
@@ -66,6 +67,9 @@ struct ArtifactLightLayer::Impl {
     bool goboInvert_ = false;
     float shadowRadius_ = 10.0f;
     bool castsShadows_ = true;
+    bool glowEnabled_ = true;
+    float glowSize_ = 1.0f;
+    float glowIntensity_ = 1.0f;
     LightLinkMode linkMode_ = LightLinkMode::All;
     QString linkedLayerIdsText_;
     QString excludedLayerIdsText_;
@@ -106,6 +110,9 @@ QJsonObject ArtifactLightLayer::toJson() const
   obj[QStringLiteral("light.goboInvert")] = lightImpl_->goboInvert_;
   obj[QStringLiteral("light.shadowRadius")] = lightImpl_->shadowRadius_;
   obj[QStringLiteral("light.castsShadows")] = lightImpl_->castsShadows_;
+  obj[QStringLiteral("light.glowEnabled")] = lightImpl_->glowEnabled_;
+  obj[QStringLiteral("light.glowSize")] = lightImpl_->glowSize_;
+  obj[QStringLiteral("light.glowIntensity")] = lightImpl_->glowIntensity_;
   obj[QStringLiteral("light.linkMode")] = static_cast<int>(lightImpl_->linkMode_);
   obj[QStringLiteral("light.linkedLayerIds")] = lightImpl_->linkedLayerIdsText_;
   obj[QStringLiteral("light.excludedLayerIds")] = lightImpl_->excludedLayerIdsText_;
@@ -160,6 +167,12 @@ void ArtifactLightLayer::fromJsonProperties(const QJsonObject& obj)
       static_cast<float>(obj.value(QStringLiteral("light.shadowRadius")).toDouble()));
   if (obj.contains(QStringLiteral("light.castsShadows"))) setCastsShadows(
       obj.value(QStringLiteral("light.castsShadows")).toBool());
+  if (obj.contains(QStringLiteral("light.glowEnabled"))) setGlowEnabled(
+      obj.value(QStringLiteral("light.glowEnabled")).toBool(lightImpl_->glowEnabled_));
+  if (obj.contains(QStringLiteral("light.glowSize"))) setGlowSize(
+      static_cast<float>(obj.value(QStringLiteral("light.glowSize")).toDouble(lightImpl_->glowSize_)));
+  if (obj.contains(QStringLiteral("light.glowIntensity"))) setGlowIntensity(
+      static_cast<float>(obj.value(QStringLiteral("light.glowIntensity")).toDouble(lightImpl_->glowIntensity_)));
   if (obj.contains(QStringLiteral("light.linkMode"))) setLightLinkMode(
       static_cast<LightLinkMode>(std::clamp(
           obj.value(QStringLiteral("light.linkMode")).toInt(), 0, 2)));
@@ -403,6 +416,50 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
                pos.z() + incoming.z() * (baseSize * 2.4f) + up.z()},
         tintColor, 0.9f);
   }
+
+  // Lux-style visible glow: one additive camera-facing sprite at the light
+  // position. Parallel is direction-only and Ambient has no meaningful
+  // origin, so only positioned lights participate. The layer stays excluded
+  // from the final render; final-render glow is a separate render-queue item.
+  if (lightImpl_->glowEnabled_ &&
+      (type == LightType::Point || type == LightType::Spot ||
+       type == LightType::Area)) {
+    const float falloffBase = type == LightType::Spot
+        ? std::max(1.0f, lightImpl_->coneLength_)
+        : std::max(1.0f, lightImpl_->range_);
+    const float glowRadius = std::clamp(
+        falloffBase * 0.25f * lightImpl_->glowSize_, 1.0f, 100000.0f);
+    const float glowAlpha = std::clamp(
+        (lightImpl_->intensity_ / 100.0f) * lightImpl_->glowIntensity_ *
+            opacity(),
+        0.0f, 1.0f);
+    if (glowAlpha > 0.001f) {
+      ArtifactCore::ParticleRenderData glowData;
+      glowData.frameNumber = currentFrame();
+      glowData.options.blend = ArtifactCore::ParticleBlendPolicy::Additive;
+      glowData.options.billboard = ArtifactCore::ParticleBillboardPolicy::ScreenAligned;
+      glowData.options.depthTest = false;
+      glowData.options.depthWrite = false;
+      ArtifactCore::ParticleVertex glowVertex;
+      glowVertex.px = pos.x();
+      glowVertex.py = pos.y();
+      glowVertex.pz = pos.z();
+      glowVertex.vx = 0.0f;
+      glowVertex.vy = 0.0f;
+      glowVertex.vz = 0.0f;
+      glowVertex.r = lightColor.r();
+      glowVertex.g = lightColor.g();
+      glowVertex.b = lightColor.b();
+      glowVertex.a = glowAlpha;
+      glowVertex.size = glowRadius;
+      glowVertex.stretch = 1.0f;
+      glowVertex.rotation = 0.0f;
+      glowVertex.age = 0.0f;
+      glowVertex.lifetime = 1.0f;
+      glowData.particles.push_back(glowVertex);
+      renderer->drawParticles(glowData);
+    }
+  }
 }
 
 LightType ArtifactLightLayer::lightType() const { return lightImpl_->type_; }
@@ -497,6 +554,27 @@ void ArtifactLightLayer::setShadowRadius(float r) { lightImpl_->shadowRadius_ = 
 
 bool ArtifactLightLayer::castsShadows() const { return lightImpl_->castsShadows_; }
 void ArtifactLightLayer::setCastsShadows(bool e) { lightImpl_->castsShadows_ = e; changed(); }
+
+bool ArtifactLightLayer::glowEnabled() const { return lightImpl_->glowEnabled_; }
+void ArtifactLightLayer::setGlowEnabled(bool e) { lightImpl_->glowEnabled_ = e; changed(); }
+
+float ArtifactLightLayer::glowSize() const { return lightImpl_->glowSize_; }
+void ArtifactLightLayer::setGlowSize(float multiplier)
+{
+  lightImpl_->glowSize_ = std::isfinite(multiplier)
+      ? std::clamp(multiplier, 0.0f, 8.0f)
+      : 1.0f;
+  changed();
+}
+
+float ArtifactLightLayer::glowIntensity() const { return lightImpl_->glowIntensity_; }
+void ArtifactLightLayer::setGlowIntensity(float multiplier)
+{
+  lightImpl_->glowIntensity_ = std::isfinite(multiplier)
+      ? std::clamp(multiplier, 0.0f, 4.0f)
+      : 1.0f;
+  changed();
+}
 
 LightLinkMode ArtifactLightLayer::lightLinkMode() const { return lightImpl_->linkMode_; }
 void ArtifactLightLayer::setLightLinkMode(LightLinkMode mode)
@@ -646,6 +724,30 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     radiusProp->setUnit(QStringLiteral("px"));
     lightOptions.addProperty(radiusProp);
 
+    auto glowEnabledProp = persistentLayerProperty(
+        QStringLiteral("Light/Glow"),
+        ArtifactCore::PropertyType::Boolean,
+        lightImpl_->glowEnabled_, -119);
+    glowEnabledProp->setTooltip(QStringLiteral("Lux-style visible glow sprite at the light position (Point/Spot/Area)"));
+    lightOptions.addProperty(glowEnabledProp);
+
+    auto glowSizeProp = persistentLayerProperty(
+        QStringLiteral("Light/Glow Size"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(lightImpl_->glowSize_), -118);
+    glowSizeProp->setHardRange(0.0, 8.0);
+    glowSizeProp->setSoftRange(0.25, 4.0);
+    glowSizeProp->setTooltip(QStringLiteral("Glow radius multiplier relative to the light range"));
+    lightOptions.addProperty(glowSizeProp);
+
+    auto glowIntensityProp = persistentLayerProperty(
+        QStringLiteral("Light/Glow Intensity"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(lightImpl_->glowIntensity_), -117);
+    glowIntensityProp->setHardRange(0.0, 4.0);
+    glowIntensityProp->setSoftRange(0.0, 2.0);
+    lightOptions.addProperty(glowIntensityProp);
+
     ArtifactCore::PropertyGroup linkingOptions("Light Linking");
 
     auto linkModeProp = persistentLayerProperty(
@@ -729,6 +831,15 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         return true;
     } else if (propertyPath == "Light/Shadow Radius") {
         setShadowRadius(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/Glow") {
+        setGlowEnabled(value.toBool());
+        return true;
+    } else if (propertyPath == "Light/Glow Size") {
+        setGlowSize(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/Glow Intensity") {
+        setGlowIntensity(value.toFloat());
         return true;
     } else if (propertyPath == "Light Linking/Link Mode") {
         setLightLinkMode(static_cast<LightLinkMode>(value.toInt()));

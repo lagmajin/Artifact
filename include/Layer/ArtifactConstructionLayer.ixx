@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstddef>
 #include <QString>
 #include <QJsonObject>
 #include <QVariant>
@@ -10,6 +11,7 @@ export module Artifact.Layer.Construction;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
+import Core.ArtifactArray;
 
 export namespace Artifact {
 
@@ -48,10 +50,12 @@ public:
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
   GuideSet constructionGuideSet() const;
+  ArtifactCore::Array<QPointF> constructionSnapPoints() const;
   void setConstructionGuideSet(const GuideSet& guideSet);
   void addConstructionGuide(const GuideDefinition& guide);
   void clearConstructionGuides();
   const std::vector<ConstructionItem>& constructionItems() const;
+  bool setConstructionItem(size_t index, const ConstructionItem& item);
   void setConstructionItems(const std::vector<ConstructionItem>& items);
   void addConstructionItem(const ConstructionItem& item);
   void clearConstructionItems();

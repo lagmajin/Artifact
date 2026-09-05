@@ -870,8 +870,9 @@ ArtifactAssetBrowser::Impl::~Impl()
   else if (currentFileTypeFilter_ == "3d") {
    return lower.endsWith(".fbx") || lower.endsWith(".obj") ||
           lower.endsWith(".gltf") || lower.endsWith(".glb") ||
-          lower.endsWith(".pmd") ||
-          lower.endsWith(".usd") || lower.endsWith(".usda") ||
+          lower.endsWith(".pmd") || lower.endsWith(".ply") ||
+          lower.endsWith(".las") || lower.endsWith(".usd") ||
+          lower.endsWith(".usda") ||
           lower.endsWith(".usdc") || lower.endsWith(".abc") ||
           lower.endsWith(".stl");
   }

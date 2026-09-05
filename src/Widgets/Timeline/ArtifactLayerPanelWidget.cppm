@@ -3336,7 +3336,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    impl_->clearMaskSelection();
    if (event->button() == Qt::LeftButton) {
     if (!row.groupKey.trimmed().isEmpty()) {
-      impl_->expandedByGroupKey[row.groupKey] = !impl_->expandedByGroupKey.value(row.groupKey, true);
+      impl_->expandedByGroupKey[row.groupKey] = !row.expanded;
       updateLayout();
     }
    }
@@ -3590,6 +3590,17 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     return x;
   }();
   const int nameX = mouseNameStartX + row.depth * 14;
+  // Disclosure owns its hit area before selection, parent-link and dividers.
+  if (event->button() == Qt::LeftButton && row.kind == RowKind::Layer && row.hasChildren) {
+    const QRect disclosureRect(nameX, y, 16, rowH);
+    if (disclosureRect.contains(event->pos())) {
+      impl_->expandedByLayerId[layer->id().toString()] = !row.expanded;
+      impl_->clearDragState();
+      updateLayout();
+      event->accept();
+      return;
+    }
+  }
   const bool showInlineCombos =
       row.kind == RowKind::Layer &&
       (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
@@ -3770,7 +3781,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
       int whipCumX = 0;
       for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
-        if (!impl_->columnVisible_[ci]) { whipCumX += impl_->columnWidths_[ci]; continue; }
+        if (!impl_->columnVisible_[ci]) continue;
         if (ci == 5) {
           const QRect whipColRect(whipCumX, impl_->rowViewportY(idx), impl_->columnWidths_[ci], kLayerRowHeight);
           if (whipColRect.contains(event->pos())) {
@@ -3795,8 +3806,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
       int cumX = 0;
       for (int ci = 0; ci < kLayerPropertyColumnCount - 1; ++ci) {
-        cumX += impl_->columnWidths_[ci];
         if (!impl_->columnVisible_[ci]) continue;
+        cumX += impl_->columnWidths_[ci];
         if (std::abs(clickX - cumX) <= kColumnDividerDragMargin) {
           impl_->dragCol_ = ci;
           impl_->dragStartX_ = clickX;

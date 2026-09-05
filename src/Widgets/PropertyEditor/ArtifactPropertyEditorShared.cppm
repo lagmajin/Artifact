@@ -421,7 +421,7 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
   if (propertyName.contains(QStringLiteral("model"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("3d"), Qt::CaseInsensitive)) {
     return QStringLiteral(
-        "3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)");
+        "3D Models (*.obj *.fbx *.gltf *.glb *.ply *.las *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)");
   }
   if (propertyName.contains(QStringLiteral("video"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("media"), Qt::CaseInsensitive)) {
@@ -559,6 +559,24 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {0, QStringLiteral("Default")},
         {1, QStringLiteral("Enabled")},
         {2, QStringLiteral("Disabled")}};
+  }
+  if (name == QStringLiteral("spatial.distanceModel")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Linear")},
+        {1, QStringLiteral("Inverse")},
+        {2, QStringLiteral("Exponential")}};
+  }
+  if (name == QStringLiteral("spatial.outputLayout")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {1, QStringLiteral("Stereo")},
+        {2, QStringLiteral("5.1 Surround")},
+        {3, QStringLiteral("7.1 Surround")},
+        {4, QStringLiteral("7.1.4 Surround")}};
+  }
+  if (name == QStringLiteral("spatial.renderMode")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Speakers")},
+        {1, QStringLiteral("Headphones")}};
   }
   if (name == QStringLiteral("component.cloner.mode")) {
     return ArtifactEnumPropertyEditor::OptionList{

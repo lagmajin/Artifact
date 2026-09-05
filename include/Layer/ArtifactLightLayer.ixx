@@ -85,8 +85,17 @@ export namespace Artifact {
   float shadowRadius() const;
   void setShadowRadius(float radius);
 
-  bool castsShadows() const;
-  void setCastsShadows(bool enabled);
+   bool castsShadows() const;
+   void setCastsShadows(bool enabled);
+
+   // Lux-style visible glow sprite at the light position (viewport preview;
+   // final-render glow is a separate render-queue item).
+   bool glowEnabled() const;
+   void setGlowEnabled(bool enabled);
+   float glowSize() const;
+   void setGlowSize(float multiplier);
+   float glowIntensity() const;
+   void setGlowIntensity(float multiplier);
 
   LightLinkMode lightLinkMode() const;
   void setLightLinkMode(LightLinkMode mode);

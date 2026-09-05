@@ -1015,7 +1015,9 @@ namespace Artifact {
    showGuidesAction->setCheckable(true);
    showGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
 
-   snapToGuidesAction = new QAction("ガイドにスナップ");
+   snapToGuidesAction = new QAction("コンポジション／ガイドにスナップ");
+   snapToGuidesAction->setToolTip(QStringLiteral(
+       "正面ビューでコンポジションとレイヤーの端・中心に吸着。Altで一時解除"));
    snapToGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGuides));
    snapToGuidesAction->setCheckable(true);
    snapToGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_linear_scale.svg")));
@@ -3074,4 +3076,3 @@ void ArtifactViewMenu::Impl::showSecondaryPreview()
 }
 
 };
-

@@ -889,6 +889,7 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     const QMatrix4x4 particleViewRows = p.viewMatrix.transposed();
     const QMatrix4x4 particleProjRows = p.projMatrix.transposed();
+    m_particleRenderer_->setModelMatrix(p.data.modelMatrix.data());
     m_particleRenderer_->setViewMatrix(particleViewRows.constData());
     m_particleRenderer_->setProjectionMatrix(particleProjRows.constData());
     m_particleRenderer_->setFrameCostStats(m_frameCostStats_);

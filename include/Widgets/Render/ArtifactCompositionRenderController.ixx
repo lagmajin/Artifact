@@ -313,12 +313,14 @@ void zoomFill();
   ArtifactIRenderer* renderer() const;
   QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
+  ArtifactCore::FrameDebugSnapshot frameDebugCounters() const;
   double lastFrameTimeMs() const;
   double averageFrameTimeMs() const;
 
 void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
+  bool isPhysicsDragActive() const;
   bool beginModalGizmoInteraction(TransformGizmo::Mode mode,
                                   const QPointF& viewportPos);
   // Returns 0 (width) or 1 (height) when a visible frame-size badge begins

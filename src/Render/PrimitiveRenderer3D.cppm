@@ -1139,9 +1139,9 @@ public:
         QVector3D up = normalizeOrFallback(QVector3D::crossProduct(direction, side), QVector3D(0.0f, 1.0f, 0.0f));
         up = normalizeOrFallback(up, QVector3D(0.0f, 1.0f, 0.0f));
 
-        const float headLength = std::min(std::max(size * 0.35f, length * 0.15f), length * 0.45f);
-        const float shaftWidth = std::max(size * 0.16f, length * 0.035f);
-        const float headWidth = std::max(size * 0.28f, headLength * 0.55f);
+        const float headLength = std::min(std::max(size * 0.85f, length * 0.20f), length * 0.35f);
+        const float shaftWidth = std::max(size * 0.055f, length * 0.012f);
+        const float headWidth = std::max(size * 0.30f, headLength * 0.40f);
         const QVector3D headBase = end - direction * headLength;
         const QVector3D shaftSide = side * shaftWidth;
         const QVector3D shaftUp = up * shaftWidth;
