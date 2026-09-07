@@ -1405,7 +1405,10 @@ public:
   // Effects Pipeline Tab
   QScrollArea *effectsScrollArea = nullptr;
   QWidget *effectsTabWidget = nullptr;
+  QWidget *effectsEmptyStateWidget = nullptr;
+  QLabel *effectsEmptyIconLabel = nullptr;
   QLabel *effectsStateLabel = nullptr;
+  QLabel *effectsStateDescriptionLabel = nullptr;
   QLabel *effectsTargetLabel = nullptr;
   QLabel *effectsStackSummaryLabel = nullptr;
   QLineEdit *effectPropertyFilterEdit = nullptr;
@@ -2149,14 +2152,26 @@ QString componentTypeDisplayName(const QString &typeId) {
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
                                                         bool visible) {
-  if (!effectsStateLabel)
+  if (!effectsStateLabel || !effectsEmptyStateWidget)
     return;
-  if (effectsStateLabel->text() == text &&
-      effectsStateLabel->isVisible() == visible) {
-    return;
+  QString title = text;
+  QString description;
+  const bool isEmptyEffectStack =
+      text == QStringLiteral(
+                  "No effects yet. Add an effect to start building your stack.");
+  if (isEmptyEffectStack) {
+    title = QStringLiteral("No effects yet");
+    description = QStringLiteral("Add an effect to start building your stack.");
   }
-  effectsStateLabel->setText(text);
-  effectsStateLabel->setVisible(visible);
+  effectsStateLabel->setText(title);
+  if (effectsStateDescriptionLabel) {
+    effectsStateDescriptionLabel->setText(description);
+    effectsStateDescriptionLabel->setVisible(visible && !description.isEmpty());
+  }
+  if (effectsEmptyIconLabel) {
+    effectsEmptyIconLabel->setVisible(visible && isEmptyEffectStack);
+  }
+  effectsEmptyStateWidget->setVisible(visible);
 }
 
 namespace {
@@ -6923,6 +6938,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Open a composition to manage effects."),
       InspectorChromeLabelRole::Summary, effectsHeaderFrame);
   impl_->effectsStateLabel->setWordWrap(true);
+  impl_->effectsStateLabel->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
   applyInspectorLabelPalette(impl_->effectsStateLabel, true);
 
 
@@ -6964,7 +6980,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectsToolbarLayout->addWidget(impl_->effectsQuickAddButton);
   effectsToolbarLayout->addWidget(impl_->effectPropertyFilterEdit, 1);
   effectsHeaderLayout->addLayout(effectsToolbarLayout);
-  effectsHeaderLayout->addWidget(impl_->effectsStateLabel);
   effectsLayout->addWidget(effectsHeaderFrame);
 
   // AE-style Effect Controls is one continuous browse-and-edit surface.  Do
@@ -6986,6 +7001,42 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsStackSummaryLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStackSummaryLabel, false);
   stackPanelLayout->addWidget(impl_->effectsStackSummaryLabel);
+
+  impl_->effectsEmptyStateWidget = new QWidget(stackPanel);
+  impl_->effectsEmptyStateWidget->setObjectName(
+      QStringLiteral("inspectorEffectsEmptyState"));
+  impl_->effectsEmptyStateWidget->setSizePolicy(QSizePolicy::Expanding,
+                                                QSizePolicy::Expanding);
+  auto *effectsEmptyLayout = new QVBoxLayout(impl_->effectsEmptyStateWidget);
+  effectsEmptyLayout->setContentsMargins(18, 42, 18, 42);
+  effectsEmptyLayout->setSpacing(10);
+  effectsEmptyLayout->addStretch(1);
+
+  impl_->effectsEmptyIconLabel = new QLabel(impl_->effectsEmptyStateWidget);
+  impl_->effectsEmptyIconLabel->setAlignment(Qt::AlignCenter);
+  impl_->effectsEmptyIconLabel->setPixmap(
+      QIcon(QStringLiteral(":/icons/Studio/effectrack_empty.svg"))
+          .pixmap(QSize(64, 64)));
+  impl_->effectsEmptyIconLabel->setAccessibleName(
+      QStringLiteral("No effects"));
+  effectsEmptyLayout->addWidget(impl_->effectsEmptyIconLabel);
+
+  QFont emptyTitleFont = impl_->effectsStateLabel->font();
+  emptyTitleFont.setPointSizeF(emptyTitleFont.pointSizeF() + 1.0);
+  emptyTitleFont.setWeight(QFont::Medium);
+  impl_->effectsStateLabel->setFont(emptyTitleFont);
+  effectsEmptyLayout->addWidget(impl_->effectsStateLabel);
+
+  impl_->effectsStateDescriptionLabel = createInspectorChromeLabel(
+      QStringLiteral("Add an effect to start building your stack."),
+      InspectorChromeLabelRole::Summary, impl_->effectsEmptyStateWidget);
+  impl_->effectsStateDescriptionLabel->setAlignment(Qt::AlignHCenter |
+                                                    Qt::AlignVCenter);
+  impl_->effectsStateDescriptionLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->effectsStateDescriptionLabel, false);
+  effectsEmptyLayout->addWidget(impl_->effectsStateDescriptionLabel);
+  effectsEmptyLayout->addStretch(2);
+  stackPanelLayout->addWidget(impl_->effectsEmptyStateWidget, 1);
 
   auto *detailPanel =
       createInspectorEffectPanelSurface(InspectorEffectPanelRole::Detail);
