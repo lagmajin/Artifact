@@ -107,7 +107,8 @@ public:
     GizmoOperation hoverOperation() const { return hoverOperation_; }
 
     // Rendering
-    void draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, const QMatrix4x4& proj);
+    void draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, const QMatrix4x4& proj,
+              float viewportWidth = 0.0f, float viewportHeight = 0.0f);
 
 private:
     struct Impl;

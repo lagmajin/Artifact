@@ -30,6 +30,10 @@ module;
 #include <QHash>
 #include <QPalette>
 #include <QSize>
+#include <QAbstractSpinBox>
+#include <QProxyStyle>
+#include <QStyleFactory>
+#include <QStyleOption>
 #include <Layer/ArtifactSolidGradientUtil.hpp>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
@@ -45,12 +49,55 @@ import DragSpinBox;
 import Utils.String.UniString;
 import Color.Float;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
 import Artifact.Layers.SolidImage;
 
 namespace {
+
+class SolidDialogStyle final : public QProxyStyle {
+public:
+  SolidDialogStyle() : QProxyStyle(QStyleFactory::create(QStringLiteral("Fusion"))) {}
+  void drawPrimitive(PrimitiveElement element,const QStyleOption* option,QPainter* painter,const QWidget* widget=nullptr) const override {
+    if(element == PE_PanelButtonCommand && widget && widget->property("solidPrimary").toBool()) {
+      painter->save();
+      painter->setPen(QColor(78,136,240));
+      painter->setBrush(option->state & State_Sunken ? QColor(38,88,175) : QColor(52,116,227));
+      painter->drawRoundedRect(QRectF(option->rect).adjusted(0.5,0.5,-0.5,-0.5),4,4);
+      painter->restore();return;
+    }
+    QProxyStyle::drawPrimitive(element,option,painter,widget);
+  }
+};
+void applySolidDialogPresentation(QWidget* root) {
+  auto* style=new SolidDialogStyle;style->setParent(root);
+  QPalette pal=root->palette();
+  pal.setColor(QPalette::Window,QColor(43,44,47));
+  pal.setColor(QPalette::Base,QColor(34,35,38));
+  pal.setColor(QPalette::Button,QColor(47,48,52));
+  pal.setColor(QPalette::Text,QColor(236,237,240));
+  pal.setColor(QPalette::WindowText,QColor(218,220,225));
+  pal.setColor(QPalette::ButtonText,QColor(236,237,240));
+  pal.setColor(QPalette::Mid,QColor(67,69,74));
+  pal.setColor(QPalette::Highlight,QColor(52,116,227));
+  pal.setColor(QPalette::HighlightedText,Qt::white);
+  pal.setColor(QPalette::Disabled,QPalette::Text,QColor(131,134,141));
+  root->setPalette(pal);root->setAutoFillBackground(true);
+  root->setFont(QFont(QStringLiteral("Segoe UI"),10));root->setStyle(style);
+  for(auto* child:root->findChildren<QWidget*>()) {
+    child->setStyle(style);
+    QPalette field=pal;
+    if(qobject_cast<QAbstractSpinBox*>(child) || qobject_cast<QAbstractSpinBox*>(child->parentWidget())) {
+      field.setColor(QPalette::Text,QColor(246,198,111));
+      child->setFont(QFont(QStringLiteral("Consolas"),11));
+    }
+    child->setPalette(field);
+    if(qobject_cast<QAbstractSpinBox*>(child) || qobject_cast<QComboBox*>(child) ||
+       (qobject_cast<QLineEdit*>(child) && !qobject_cast<QAbstractSpinBox*>(child->parentWidget()))) child->setMinimumHeight(32);
+  }
+}
 
 class DialogCloseButton final : public QPushButton {
 public:
@@ -82,7 +129,7 @@ protected:
 class AspectLockButton final : public QPushButton {
 public:
   explicit AspectLockButton(QWidget* parent = nullptr) : QPushButton(u8"🔒", parent) {
-    setFixedSize(20, 20);
+    setFixedSize(32, 32);
     setCheckable(true);
     setChecked(false);
     setToolTip(u8"縦横比をロック");
@@ -92,12 +139,15 @@ protected:
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     
-    QColor textCol = isChecked() ? QColor(0xff, 0x99, 0x00) : QColor(0xaa, 0xaa, 0xaa);
-    painter.setPen(textCol);
-    QFont font = this->font();
-    font.setPointSize(12);
-    painter.setFont(font);
-    painter.drawText(rect(), Qt::AlignCenter, text());
+    painter.setPen(QPen(isChecked() ? QColor(246,198,111) : QColor(190,194,203),2));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(QRectF(5,11,13,10),4,4);
+    painter.drawRoundedRect(QRectF(14,11,13,10),4,4);
+    if(isChecked()) painter.drawLine(QPointF(12,16),QPointF(20,16));
+    if(hasFocus()) {
+      painter.setPen(QPen(QColor(80,140,245),1,Qt::DotLine));
+      painter.drawRect(rect().adjusted(1,1,-2,-2));
+    }
   }
 };
 
@@ -137,15 +187,18 @@ QWidget* makeSectionHeader(const QString& title, QWidget* parent)
     auto* w = new QWidget(parent);
     auto* layout = new QVBoxLayout(w);
     layout->setContentsMargins(0, 8, 0, 2);
-    layout->setSpacing(2);
+    layout->setSpacing(8);
     auto* label = new QLabel(title, w);
     {
         QPalette pal = label->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
         label->setPalette(pal);
     }
+    QFont headingFont = label->font(); headingFont.setBold(true);
+    label->setFont(headingFont);
     auto* line = new QFrame(w);
     line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Plain);
     layout->addWidget(label);
     layout->addWidget(line);
     return w;
@@ -157,7 +210,7 @@ QWidget* makeRow(QWidget* parent, const QString& labelText, int labelWidth,
 {
     auto* row = new QWidget(parent);
     auto* lay = new QHBoxLayout(row);
-    lay->setContentsMargins(20, 2, 4, 2);
+    lay->setContentsMargins(20, 5, 4, 5);
     auto* lbl = new QLabel(labelText, row);
     lbl->setFixedWidth(labelWidth);
     lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -424,12 +477,12 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->unitCombo->addItem(u8"ミリメートル");
 
     impl_->pixelAspectCombo = new QComboBox(this);
-    impl_->pixelAspectCombo->addItem(u8"正方形ピクセル");
-    impl_->pixelAspectCombo->addItem(u8"D1/DV NTSC");
-    impl_->pixelAspectCombo->addItem(u8"D1/DV PAL");
-    impl_->pixelAspectCombo->addItem(u8"D1/DV NTSC ワイドスクリーン");
-    impl_->pixelAspectCombo->addItem(u8"D1/DV PAL ワイドスクリーン");
-    impl_->pixelAspectCombo->addItem(u8"アナモフィック 2:1");
+    impl_->pixelAspectCombo->addItem(u8"正方形ピクセル", 1.0);
+    impl_->pixelAspectCombo->addItem(u8"D1/DV NTSC", 0.91);
+    impl_->pixelAspectCombo->addItem(u8"D1/DV PAL", 1.09);
+    impl_->pixelAspectCombo->addItem(u8"D1/DV NTSC ワイドスクリーン", 1.21);
+    impl_->pixelAspectCombo->addItem(u8"D1/DV PAL ワイドスクリーン", 1.46);
+    impl_->pixelAspectCombo->addItem(u8"アナモフィック 2:1", 2.0);
 
     impl_->bgColorButton = new QPushButton(this);
     impl_->bgColorButton->setFixedSize(40, 24);
@@ -488,6 +541,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->gradientOffsetSpin->setValue(0.0);
 
     impl_->matchCompButton = new QPushButton(u8"コンポジションサイズを使用", this);
+    impl_->matchCompButton->setMaximumWidth(340);
+    impl_->matchCompButton->setMinimumHeight(34);
 
     impl_->fitToCompCheck = new QCheckBox(u8"平面をコンポジションサイズに合わせる", this);
     impl_->fitToCompCheck->setChecked(false);
@@ -533,9 +588,11 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         auto* ctrlLay = new QHBoxLayout(ctrl);
         ctrlLay->setContentsMargins(0, 0, 0, 0);
         ctrlLay->setSpacing(4);
-        ctrlLay->addWidget(impl_->widthSpinBox, 1);
+        impl_->widthSpinBox->setFixedWidth(150);
+        ctrlLay->addWidget(impl_->widthSpinBox);
         ctrlLay->addWidget(new QLabel("px", this));
         ctrlLay->addWidget(impl_->lockButton);
+        ctrlLay->addStretch();
         vbox->addWidget(makeRow(this, u8"幅", 100, ctrl));
     }
 
@@ -545,8 +602,10 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         auto* ctrlLay = new QHBoxLayout(ctrl);
         ctrlLay->setContentsMargins(0, 0, 0, 0);
         ctrlLay->setSpacing(4);
-        ctrlLay->addWidget(impl_->heightSpinBox, 1);
+        impl_->heightSpinBox->setFixedWidth(150);
+        ctrlLay->addWidget(impl_->heightSpinBox);
         ctrlLay->addWidget(new QLabel("px", this));
+        ctrlLay->addStretch();
         vbox->addWidget(makeRow(this, u8"高さ", 100, ctrl));
     }
 
@@ -594,7 +653,7 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         const auto presets = defaultGradientPresets();
         for (const auto& preset : presets) {
             auto* btn = new QPushButton(impl_->presetBar);
-            btn->setFixedSize(40, 24);
+            btn->setFixedSize(36, 30);
             btn->setIcon(QIcon(renderGradientPreview(preset)));
             btn->setIconSize(QSize(40, 24));
             btn->setToolTip(preset.name);
@@ -691,6 +750,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         vbox->addWidget(impl_->gradientOffsetRow);
     }
 
+    vbox->addWidget(makeSectionHeader(u8"配置", this));
+
     // fitToCompCheck row (indented to align with controls)
     {
         auto* checkRow = new QWidget(this);
@@ -701,7 +762,6 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         vbox->addWidget(checkRow);
     }
 
-    vbox->addStretch();
 
     // ── Connections ───────────────────────────────────────────────────────────
 
@@ -744,6 +804,7 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
             impl_->bgColor.blueF(),
             impl_->bgColor.alphaF()));
 
+        Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Creation);
         if (picker.exec() != QDialog::Accepted) return;
 
         const FloatColor picked = picker.getColor();
@@ -765,6 +826,7 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
             targetColor->blueF(),
             targetColor->alphaF()));
 
+        Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Creation);
         if (picker.exec() != QDialog::Accepted) return;
 
         const FloatColor picked = picker.getColor();
@@ -851,13 +913,22 @@ void PlaneLayerSettingPage::resizeCompositionSize()
     impl_->heightSpinBox->setValue(1080);
 }
 
-void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const FloatColor& color)
+void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const FloatColor& color,
+                                             double pixelAspectRatio)
 {
     impl_->widthSpinBox->setValue(p_width);
     impl_->heightSpinBox->setValue(p_height);
     QColor c;
     c.setRgbF(color.r(), color.g(), color.b(), color.a());
     impl_->bgColor = c;
+    int aspectIndex = impl_->pixelAspectCombo->findData(pixelAspectRatio);
+    if (aspectIndex < 0 && std::isfinite(pixelAspectRatio) && pixelAspectRatio > 0.0) {
+        impl_->pixelAspectCombo->addItem(
+            QStringLiteral("カスタム (%1:1)").arg(pixelAspectRatio, 0, 'f', 4),
+            pixelAspectRatio);
+        aspectIndex = impl_->pixelAspectCombo->count() - 1;
+    }
+    if (aspectIndex >= 0) impl_->pixelAspectCombo->setCurrentIndex(aspectIndex);
     updateColorButtonPreview(impl_->bgColorButton, c);
     updateHexFromColor(impl_->hexColorEdit, c);
 }
@@ -899,6 +970,7 @@ ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString&
     ArtifactSolidLayerInitParams params(name);
     params.setWidth(impl_->widthSpinBox->value());
     params.setHeight(impl_->heightSpinBox->value());
+    params.setPixelAspectRatio(impl_->pixelAspectCombo->currentData().toDouble());
     QColor c = impl_->bgColor;
     params.setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
     params.setFillType(impl_->fillType);
@@ -1000,17 +1072,19 @@ DialogChrome buildDialogChrome(QDialog* dlg)
     chrome.buttonBox->hide();
 
     // Visual buttons in explicit Windows order: [OK] [キャンセル]
-    auto* okBtn = new QPushButton("OK", footer);
-    okBtn->setFixedSize(80, 28);
+    auto* okBtn = new QPushButton(u8"確定", footer);
+    okBtn->setObjectName(QStringLiteral("solidDialogConfirm"));
+    okBtn->setProperty("solidPrimary",true);
+    okBtn->setFixedSize(104, 34);
     auto* cancelBtn = new QPushButton(u8"キャンセル", footer);
-    cancelBtn->setFixedSize(80, 28);
+    cancelBtn->setFixedSize(104, 34);
     QObject::connect(okBtn,     &QPushButton::clicked,
                      chrome.buttonBox->button(QDialogButtonBox::Ok),     &QPushButton::click);
     QObject::connect(cancelBtn, &QPushButton::clicked,
                      chrome.buttonBox->button(QDialogButtonBox::Cancel), &QPushButton::click);
     footerLayout->addStretch();
-    footerLayout->addWidget(okBtn);
     footerLayout->addWidget(cancelBtn);
+    footerLayout->addWidget(okBtn);
     chrome.mainLayout->addWidget(footer);
 
     return chrome;
@@ -1070,7 +1144,7 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(
         chrome.scrollLayout->addWidget(nameRow);
     }
 
-    chrome.scrollLayout->addWidget(makeSectionHeader(u8"作成", chrome.scrollContent));
+
     // Settings page (サイズ + カラー sections)
     auto* settingPage = impl_->settingPage = new PlaneLayerSettingPage(chrome.scrollContent);
     settingPage->resizeCompositionSize();
@@ -1116,9 +1190,11 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(
             impl_->nameEditableLabel->setText(name);
     });
 
+    if(auto* confirm=findChild<QPushButton*>(QStringLiteral("solidDialogConfirm"))) confirm->setText(u8"作成");
+    applySolidDialogPresentation(this);
     adjustSize();
     const int preferredWidth = std::max(width(), 620);
-    const int preferredHeight = std::max(height(), 720);
+    const int preferredHeight = 740;
     resize(preferredWidth, preferredHeight);
     setMinimumSize(QSize(620, 720));
 }
@@ -1253,6 +1329,7 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
         if (impl_->targetLayer) {
             impl_->targetLayer->setLayerName(name);
             impl_->targetLayer->setSize(params.width(), params.height());
+            impl_->targetLayer->setPixelAspectRatio(params.pixelAspectRatio());
             impl_->targetLayer->setColor(params.color());
             impl_->targetLayer->setFillType(params.fillType());
             impl_->targetLayer->setGradientStartColor(params.gradientStartColor());
@@ -1348,7 +1425,8 @@ void EditPlaneLayerSettingDialog::setupEdit(SharedPtr<ArtifactSolidImageLayer> l
         impl_->nameEditableLabel->setText(layer->layerName());
     if (impl_->settingPage) {
         auto size = layer->sourceSize();
-        impl_->settingPage->setInitialParams(size.width, size.height, layer->color());
+        impl_->settingPage->setInitialParams(size.width, size.height, layer->color(),
+                                             layer->pixelAspectRatio());
         impl_->settingPage->setInitialGradientParams(layer->fillType(),
                                                      layer->gradientStartColor(),
                                                      layer->gradientEndColor(),

@@ -1229,6 +1229,32 @@ namespace {
       VP.TopLeftX = 0.0f;
       VP.TopLeftY = 0.0f;
       ctx->SetViewports(1, &VP, static_cast<Uint32>(w), static_cast<Uint32>(h));
+      const Rect scissor{0, 0, static_cast<Int32>(std::lround(w)),
+                         static_cast<Int32>(std::lround(h))};
+      ctx->SetScissorRects(1, &scissor, static_cast<Uint32>(w),
+                           static_cast<Uint32>(h));
+    }
+  }
+  void setViewportRect(float x, float y, float w, float h,
+                       float renderTargetW, float renderTargetH) {
+    setViewportSize(w, h);
+    if (auto ctx = deviceManager_.immediateContext()) {
+      const Uint32 targetW = static_cast<Uint32>(std::max(1.0f, std::round(renderTargetW)));
+      const Uint32 targetH = static_cast<Uint32>(std::max(1.0f, std::round(renderTargetH)));
+      Viewport viewport;
+      viewport.TopLeftX = x;
+      viewport.TopLeftY = y;
+      viewport.Width = w;
+      viewport.Height = h;
+      viewport.MinDepth = 0.0f;
+      viewport.MaxDepth = 1.0f;
+      ctx->SetViewports(1, &viewport, targetW, targetH);
+      const Rect scissor{
+          static_cast<Int32>(std::lround(x)),
+          static_cast<Int32>(std::lround(y)),
+          static_cast<Int32>(std::lround(x + w)),
+          static_cast<Int32>(std::lround(y + h))};
+      ctx->SetScissorRects(1, &scissor, targetW, targetH);
     }
   }
   void unbindColorTargetsForCompute() {
@@ -3783,6 +3809,10 @@ bool ArtifactIRenderer::isMeshAlbedoOnlyPass() const {
   FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
   void ArtifactIRenderer::setViewportRect(float w, float h) { impl_->setViewportRect(w, h); }
+  void ArtifactIRenderer::setViewportRect(float x, float y, float w, float h,
+                                          float renderTargetW, float renderTargetH) {
+    impl_->setViewportRect(x, y, w, h, renderTargetW, renderTargetH);
+  }
   void ArtifactIRenderer::unbindColorTargetsForCompute() { impl_->unbindColorTargetsForCompute(); }
   void ArtifactIRenderer::setDevicePixelRatio(float dpr) { impl_->primitiveRenderer_.setDevicePixelRatio(dpr); }
   void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }

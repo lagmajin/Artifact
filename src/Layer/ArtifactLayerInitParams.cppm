@@ -182,10 +182,12 @@ bool ArtifactNoiseLayerInitParams::hasPreset() const { return impl_->presetEnabl
 ArtifactCore::ProceduralTexturePreset ArtifactNoiseLayerInitParams::preset() const { return impl_->preset_; }
 void ArtifactNoiseLayerInitParams::setPreset(ArtifactCore::ProceduralTexturePreset value) { impl_->preset_ = value; impl_->presetEnabled_ = true; }
 
- class ArtifactSolidLayerInitParams::Impl {
- public:
+class ArtifactSolidLayerInitParams::Impl {
+public:
   int width_ = 1920;
   int height_ = 1080;
+  QString sourceItemId_;
+  double pixelAspectRatio_ = 1.0;
   FloatColor color_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
   ArtifactSolidFillType fillType_ = ArtifactSolidFillType::Solid;
   FloatColor gradientStartColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -243,6 +245,10 @@ void ArtifactNoiseLayerInitParams::setPreset(ArtifactCore::ProceduralTexturePres
  int ArtifactSolidLayerInitParams::height() const { return impl_->height_; }
  void ArtifactSolidLayerInitParams::setHeight(int height) {
   impl_->height_ = std::clamp(height, 1, 16384);
+ }
+ double ArtifactSolidLayerInitParams::pixelAspectRatio() const { return impl_->pixelAspectRatio_; }
+void ArtifactSolidLayerInitParams::setPixelAspectRatio(double ratio) {
+  impl_->pixelAspectRatio_ = std::isfinite(ratio) ? std::clamp(ratio, 0.01, 100.0) : 1.0;
  }
  FloatColor ArtifactSolidLayerInitParams::color() const { return impl_->color_; }
  void ArtifactSolidLayerInitParams::setColor(const FloatColor& color) {
@@ -452,6 +458,11 @@ FixedGeometry3D ArtifactFixedGeometry3DLayerInitParams::geometry() const
  return geometry_;
 }
 
+QString ArtifactSolidLayerInitParams::sourceItemId() const { return impl_->sourceItemId_; }
+void ArtifactSolidLayerInitParams::setSourceItemId(const QString& id) {
+  impl_->sourceItemId_ = id.trimmed();
+}
+
 void ArtifactFixedGeometry3DLayerInitParams::setGeometry(FixedGeometry3D geometry)
 {
  geometry_ = geometry;
@@ -459,10 +470,6 @@ void ArtifactFixedGeometry3DLayerInitParams::setGeometry(FixedGeometry3D geometr
 
 
 };
-
-
-
-
 
 
 

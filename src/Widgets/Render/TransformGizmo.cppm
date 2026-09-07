@@ -2400,8 +2400,19 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  auto checkLocalPoint = [&](const QPointF& localPoint) {
   QPointF worldPoint = globalTransform.map(localPoint);
   auto vPos = renderer->canvasToViewport({(float)worldPoint.x(), (float)worldPoint.y()});
-  const float hitHandleSize = std::clamp(
-      static_cast<float>(HANDLE_SIZE) * 2.75f * invZoom, 17.0f, 30.0f);
+  // The handle itself is a viewport overlay.  Keep its hit target in the same
+  // screen space as the drawn handle, rather than deriving it from a scaled
+  // layer-local rectangle.  This makes a resize handle equally usable after
+  // a layer has been enlarged or reduced.
+  const float contrastScale = Accessibility::contrastScale();
+  const float handleSize = std::clamp(
+      static_cast<float>(HANDLE_SIZE) * 1.62f * 1.5f * invZoom * contrastScale,
+      11.0f, 28.0f * contrastScale);
+  const float drawnHandleSize = std::clamp(
+      handleSize * GizmoVisualStyle::scaleHandleSize * 1.16f *
+          GizmoVisualStyle::scaleOverlayBoost,
+      14.0f, 34.0f);
+  const float hitHandleSize = std::max(14.0f, drawnHandleSize * zoom);
   QRectF handleRect = handleRectForViewport({vPos.x, vPos.y}, hitHandleSize);
   return handleRect.contains(viewportPos);
  };

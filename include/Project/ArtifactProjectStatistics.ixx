@@ -79,6 +79,10 @@ public:
         const QVector<ArtifactCore::MetadataCollector*>& collectors);
     static ArtifactCore::MetadataReport collectDefaultMetadataReport(
         ArtifactProject* project);
+    // Write a portable manifest of every external path found in project items
+    // and serialized layer metadata, including its current resolution state.
+    static bool writeExternalFileManifest(
+        ArtifactProject* project, const QString& jsonPath);
     static ArtifactCore::MetadataReport collectFontUsageReport(
         ArtifactProject* project,
         const ArtifactCore::FontLicenseRegistry* licenseRegistry = nullptr);

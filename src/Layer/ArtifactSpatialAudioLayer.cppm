@@ -336,8 +336,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSpatialAudioLayer::getLayerProp
                     static_cast<int>(impl_->spatial_.renderMode), -110));
     g.addProperty(p(QStringLiteral("spatial.dopplerFactor"), ArtifactCore::PropertyType::Float, impl_->spatial_.dopplerFactor, -111));
     g.addProperty(p(QStringLiteral("spatial.gain"), ArtifactCore::PropertyType::Float, impl_->gain_, -110));
-    g.addProperty(p(QStringLiteral("spatial.muted"), ArtifactCore::PropertyType::Bool, ArtifactAudioLayer::isMuted(), -111));
-    g.addProperty(p(QStringLiteral("spatial.enabled"), ArtifactCore::PropertyType::Bool, impl_->enabled_, -110));
+    g.addProperty(p(QStringLiteral("spatial.muted"), ArtifactCore::PropertyType::Boolean, ArtifactAudioLayer::isMuted(), -111));
+    g.addProperty(p(QStringLiteral("spatial.enabled"), ArtifactCore::PropertyType::Boolean, impl_->enabled_, -110));
     g.addProperty(p(QStringLiteral("spatial.sourcePath"), ArtifactCore::PropertyType::String, sourcePath(), -109));
     groups.push_back(std::move(g));
     return groups;

@@ -43,6 +43,7 @@ import Artifact.Layers.Noise;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.EnvironmentMap;
 import Artifact.Layer.EnvironmentMapInitParams;
+import Artifact.Layer.Accumulator;
 import Animation.Transform3D;
 import Time.Rational;
 //import Artifact.Layer.Video;
@@ -93,6 +94,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
     auto solidLayer = ArtifactCore::makeShared<ArtifactSolidImageLayer>();
    if (auto* solidParams = dynamic_cast<const ArtifactSolidLayerInitParams*>(&params)) {
     solidLayer->setSize(solidParams->width(), solidParams->height());
+    solidLayer->setPixelAspectRatio(solidParams->pixelAspectRatio());
+    solidLayer->setSourceItemId(solidParams->sourceItemId());
     solidLayer->setColor(solidParams->color());
     solidLayer->setFillType(solidParams->fillType());
     solidLayer->setGradientStartColor(solidParams->gradientStartColor());
@@ -290,6 +293,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       auto* envLayer = static_cast<ArtifactEnvironmentMapLayer*>(ptr.get());
       envLayer->setHdriPath(envParams->hdriPath());
     }
+    break;
+  case LayerType::Accumulator:
+    ptr = ArtifactCore::makeShared<ArtifactAccumulatorLayer>();
     break;
    default:
      break;
@@ -673,5 +679,3 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
   }
 
 }
-
-

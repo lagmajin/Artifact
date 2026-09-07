@@ -29,6 +29,7 @@ module;
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <thread>
 #include <tuple>
 #include <wobjectimpl.h>
@@ -215,17 +216,6 @@ const QCursor& hudCursorForLayerDragMode(LayerDragMode mode, bool dragging)
   }
 }
 
-int compositionPreviewIntervalMs(
-    const ArtifactCompositionPtr& comp)
-{
-  const double fps = comp ? comp->frameRate().framerate() : 0.0;
-  if (!std::isfinite(fps) || fps <= 0.0) {
-    return 16;
-  }
-  const double safeFps = std::clamp(fps, 1.0, 10000.0);
-  return std::max(1, static_cast<int>(std::lround(1000.0 / safeFps)));
-}
-
 int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
 {
   constexpr double kFallbackFps = 30.0;
@@ -239,8 +229,15 @@ int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
 }
   } // namespace
 
- class ArtifactCompositionRenderWidget::Impl {
+class ArtifactCompositionRenderWidget::Impl {
  public:
+  struct ViewState {
+   float panX = 0.0f;
+   float panY = 0.0f;
+   float zoom = 1.0f;
+   float rotation = 0.0f;
+  };
+
   std::unique_ptr<ArtifactIRenderer> renderer_;
   ArtifactPreviewCompositionPipeline previewPipeline_;
   std::atomic_bool initialized_{ false };
@@ -268,6 +265,9 @@ int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   QString lastRamPreviewFallbackSummary_;
+  CompositionViewportLayout viewportLayout_ = CompositionViewportLayout::Single;
+  std::array<ViewState, 4> viewportStates_{};
+  int activeViewportIndex_ = 0;
   
   QPointF lastMousePos_;
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
@@ -305,6 +305,50 @@ int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
   
   Impl() = default;
   ~Impl() { destroy(); }
+
+  std::vector<QRectF> viewportRects() const {
+   if (!widget_) return {};
+   const float viewportW = static_cast<float>(std::max(0, widget_->width()));
+   const float viewportH = static_cast<float>(std::max(0, widget_->height()));
+   if (viewportLayout_ != CompositionViewportLayout::Quad ||
+       viewportW < 2.0f || viewportH < 2.0f) {
+    return {QRectF(0.0, 0.0, viewportW, viewportH)};
+   }
+   const float leftW = std::floor(viewportW * 0.5f);
+   const float topH = std::floor(viewportH * 0.5f);
+   return {QRectF(0.0, 0.0, leftW, topH),
+           QRectF(leftW, 0.0, viewportW - leftW, topH),
+           QRectF(0.0, topH, leftW, viewportH - topH),
+           QRectF(leftW, topH, viewportW - leftW, viewportH - topH)};
+  }
+
+  void captureActiveView() {
+   if (!renderer_) return;
+   ViewState& state = viewportStates_[static_cast<size_t>(activeViewportIndex_)];
+   renderer_->getPan(state.panX, state.panY);
+   state.zoom = renderer_->getZoom();
+   state.rotation = renderer_->getRotation();
+  }
+
+  void applyView(int index, const QRectF& rect) {
+   if (!renderer_ || !widget_ || rect.width() <= 0.0 || rect.height() <= 0.0) return;
+   const ViewState& state = viewportStates_[static_cast<size_t>(index)];
+   renderer_->setViewportRect(static_cast<float>(rect.x()), static_cast<float>(rect.y()),
+                              static_cast<float>(rect.width()), static_cast<float>(rect.height()),
+                              static_cast<float>(widget_->width()), static_cast<float>(widget_->height()));
+   renderer_->setPan(state.panX, state.panY);
+   renderer_->setZoom(state.zoom);
+   renderer_->setRotation(state.rotation);
+  }
+
+  void setViewportLayout(CompositionViewportLayout layout) {
+   if (viewportLayout_ == layout) return;
+   captureActiveView();
+   viewportLayout_ = layout;
+   const ViewState current = viewportStates_[static_cast<size_t>(activeViewportIndex_)];
+   for (ViewState& state : viewportStates_) state = current;
+   activeViewportIndex_ = 0;
+  }
 
   void startSmoothZoomTo(const QPointF& viewportAnchor,
                          const QPointF& canvasAnchor,
@@ -417,48 +461,20 @@ int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
    running_ = true;
    renderTask_ = std::thread([this]() {
     while (running_.load(std::memory_order_acquire)) {
-       int frameIntervalMs = 16;
-       {
-        std::lock_guard<std::mutex> lock(renderMutex_);
-        frameIntervalMs =
-            compositionPreviewIntervalMs(previewPipeline_.composition());
-       }
-       const bool playing = isPlaying_.load(std::memory_order_acquire);
        const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
-       if (!playing && !dirty) {
+       if (!dirty) {
          std::unique_lock<std::mutex> waitLock(renderCvMutex_);
-         renderCv_.wait_for(waitLock, std::chrono::milliseconds(frameIntervalMs), [this]() {
+         renderCv_.wait(waitLock, [this]() {
           return !running_.load(std::memory_order_acquire) ||
-                 isPlaying_.load(std::memory_order_acquire) ||
                  needsRender_.load(std::memory_order_acquire);
          });
          continue;
       }
-       qint64 renderElapsedMs = 0;
        {
         std::lock_guard<std::mutex> lock(renderMutex_);
         const std::uint64_t generation =
             renderGeneration_.load(std::memory_order_acquire);
-        QElapsedTimer frameTimer;
-        frameTimer.start();
         renderOneFrame(generation);
-        renderElapsedMs = frameTimer.elapsed();
-       }
-       // Do not keep the render mutex while pacing playback. UI edits and
-       // resize requests must be able to update the pending generation during
-       // the frame interval.
-       if (playing) {
-        const int remainingMs =
-            std::max(0, frameIntervalMs - static_cast<int>(renderElapsedMs));
-        if (remainingMs > 0) {
-          std::unique_lock<std::mutex> waitLock(renderCvMutex_);
-          renderCv_.wait_for(
-              waitLock, std::chrono::milliseconds(remainingMs), [this]() {
-               return !running_.load(std::memory_order_acquire) ||
-                      !isPlaying_.load(std::memory_order_acquire) ||
-                      needsRender_.load(std::memory_order_acquire);
-              });
-        }
        }
      }
     });
@@ -534,21 +550,41 @@ int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
      renderer_->setCanvasSize((float)size.width(), (float)size.height());
     previewPipeline_.setCurrentFrame(targetFrame.framePosition());
    }
+   const auto renderInViewports = [this](const auto& renderPane) {
+    const auto panes = viewportRects();
+    if (panes.empty()) return;
+    // Input mutates the renderer's currently active camera.  Snapshot it
+    // before temporarily applying the four pane-local cameras for rendering.
+    captureActiveView();
+    renderer_->setViewportRect(static_cast<float>(widget_->width()),
+                               static_cast<float>(widget_->height()));
+    renderer_->clear();
+    for (size_t index = 0; index < panes.size(); ++index) {
+     if (panes[index].width() <= 0.0 || panes[index].height() <= 0.0) continue;
+     applyView(static_cast<int>(index), panes[index]);
+     renderPane();
+    }
+    const int restoreIndex = std::min(activeViewportIndex_,
+                                      static_cast<int>(panes.size()) - 1);
+    applyView(restoreIndex, panes[static_cast<size_t>(restoreIndex)]);
+   };
    if (useRamPreviewFallback && comp) {
     if (!isCurrentGeneration()) return;
     QMatrix4x4 identity;
-    renderer_->clear();
-    renderer_->drawSpriteTransformed(
-        0.0f, 0.0f, (float)comp->settings().compositionSize().width(),
-        (float)comp->settings().compositionSize().height(), identity,
-        ramPreviewFrameImage, 1.0f);
+    renderInViewports([&]() {
+     renderer_->drawSpriteTransformed(
+         0.0f, 0.0f, (float)comp->settings().compositionSize().width(),
+         (float)comp->settings().compositionSize().height(), identity,
+         ramPreviewFrameImage, 1.0f);
+     renderer_->flush();
+    });
     if (isCurrentGeneration()) {
      renderer_->present();
     }
     return;
    }
    if (!isCurrentGeneration()) return;
-   previewPipeline_.render(renderer_.get());
+   renderInViewports([&]() { previewPipeline_.render(renderer_.get()); });
    // Property edits can arrive while CPU preparation/effect evaluation is
    // running on this worker. Never publish an older frame after a newer edit;
    // the pending request will render the latest generation next.
@@ -705,12 +741,24 @@ int64_t compositionTransformTimeScale(const ArtifactCompositionPtr& comp)
   ArtifactApplicationManager::instance()->activeContextService()->setActiveComposition(composition);
  }
 
- void ArtifactCompositionRenderWidget::setClearColor(const FloatColor& color) {
+void ArtifactCompositionRenderWidget::setClearColor(const FloatColor& color) {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
    impl_->renderer_->setClearColor(color);
    impl_->requestRender();
   }
+ }
+
+ void ArtifactCompositionRenderWidget::setViewportLayout(
+     CompositionViewportLayout layout) {
+  std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+  impl_->setViewportLayout(layout);
+  impl_->requestRender();
+ }
+
+ CompositionViewportLayout ArtifactCompositionRenderWidget::viewportLayout() const {
+  std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+  return impl_->viewportLayout_;
  }
 
  void ArtifactCompositionRenderWidget::play() {

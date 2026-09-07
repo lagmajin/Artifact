@@ -1,4 +1,3 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <path d="M4 5h16v4h-5v11h-6V9H4Z" fill="#38BDF8"/>
-  <path d="M7 7h10M12 9v9" stroke="#0F172A" stroke-width="1.8" stroke-linecap="round"/>
+  <path fill="#E8EBEE" fill-rule="evenodd" d="M2 3h20v6h-3V6h-5v13h3v3H7v-3h3V6H5v3H2Z"/>
 </svg>

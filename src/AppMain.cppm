@@ -164,6 +164,7 @@ import Artifact.Application.ProjectBundleIpc;
 import Artifact.Project.Roles;
 import Undo.UndoManager;
 import EnvironmentVariable;
+import Core.TaskSystem;
 import Core.Localization;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.RecoveryWorkspace;
@@ -2835,15 +2836,19 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  auto pool = QThreadPool::globalInstance();
-  const int configuredRenderThreads =
-      commandLine.global.renderThreads > 0
-          ? commandLine.global.renderThreads
-          : std::max(1, settings ? settings->renderThreadCount() : 10);
-  pool->setMaxThreadCount(configuredRenderThreads);
-  // Pre-warm the thread pool to avoid burst thread creation on first render
-  for (int i = 0; i < configuredRenderThreads; ++i) {
-    pool->start([] {});
+  // QThreadPool globalInstance prewarm is no longer needed: TBB/TaskSystem
+  // lazily creates its arena. Keep the configured count for the legacy pool
+  // for any remaining QtConcurrent users, but pre-warm the TaskSystem.
+  {
+    auto qPool = QThreadPool::globalInstance();
+    const int configuredRenderThreads =
+        commandLine.global.renderThreads > 0
+            ? commandLine.global.renderThreads
+            : std::max(1, settings ? settings->renderThreadCount() : 10);
+    qPool->setMaxThreadCount(configuredRenderThreads);
+    for (int i = 0; i < std::min(2, configuredRenderThreads); ++i) {
+      ArtifactCore::TaskSystem::globalInstance().silent_async([] {});
+    }
   }
 
   bootstrapPythonScripts();

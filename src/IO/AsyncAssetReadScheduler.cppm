@@ -13,11 +13,11 @@ module;
 #include <QHash>
 #include <QList>
 #include <QString>
-#include <QThreadPool>
 
 module Artifact.IO.AsyncAssetReadScheduler;
 
 import Artifact.IO.DirectStorageReader;
+import Core.TaskSystem;
 
 namespace Artifact {
 
@@ -95,14 +95,12 @@ struct AsyncAssetReadScheduler::Impl {
         bool stopping = false;
     };
 
-    QThreadPool pool;
+    std::unique_ptr<ArtifactCore::TaskSystem> pool;
     std::shared_ptr<SharedState> state = std::make_shared<SharedState>();
 
     explicit Impl(int workerCount)
+        : pool(std::make_unique<ArtifactCore::TaskSystem>(std::clamp(workerCount, 1, 8)))
     {
-        pool.setObjectName(QStringLiteral("ArtifactAsyncAssetReadPool"));
-        pool.setMaxThreadCount(std::clamp(workerCount, 1, 8));
-        pool.setExpiryTimeout(30000);
     }
 
     ~Impl()
@@ -115,8 +113,7 @@ struct AsyncAssetReadScheduler::Impl {
             }
             state->completionCondition.notify_all();
         }
-        pool.clear();
-        pool.waitForDone();
+        if (pool) pool->wait_for_all();
     }
 
     void pruneCompletedLocked()
@@ -227,7 +224,7 @@ AsyncAssetReadTicket AsyncAssetReadScheduler::enqueue(
             saturatingAdd(state->stats.queuedBytes, estimatedBytes);
     }
 
-    impl_->pool.start(
+    impl_->pool->silent_async(
         [state, job]() {
             {
                 const std::scoped_lock lock(state->mutex);
@@ -304,8 +301,7 @@ AsyncAssetReadTicket AsyncAssetReadScheduler::enqueue(
                 }
             }
             state->completionCondition.notify_all();
-        },
-        static_cast<int>(request.priority));
+        });
     return job->ticket;
 }
 

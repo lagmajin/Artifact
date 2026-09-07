@@ -28,6 +28,7 @@ import Artifact.Test.LayerGroup;
 import Artifact.Test.PreCompose;
 import Artifact.Test.PropertyKeyframe;
 import Artifact.Test.ShapePath;
+import Artifact.Test.SolidLayer;
 import Artifact.Test.TimingEventView;
 import Artifact.Test.CommandLine;
 import Artifact.Service.Playback;
@@ -351,6 +352,7 @@ int runAllTests()
     failures += runPreComposeTests();
     failures += runPropertyKeyframeTests();
     failures += runShapePathTests();
+    failures += runSolidLayerTests();
     failures += runCommandLineTests();
     if (!versionedGradientCpuContractTest()) {
         qWarning().noquote() << "[Test] Versioned gradient CPU contract failed";

@@ -1421,6 +1421,12 @@ public:
     // Executes and retains cmd. Returns false when the budget rejects it or
     // the command reports that its initial redo did not succeed.
     bool push(std::unique_ptr<UndoCommand> cmd);
+    // Records 5–10 serializable actions as a portable MacroUndoCommand payload.
+    bool beginActionRecording(const QString& label);
+    QJsonObject endActionRecording();
+    void cancelActionRecording();
+    bool replayActionRecording(const QJsonObject& recording);
+    bool isActionRecording() const;
     void undo();
     void redo();
     bool canUndo() const;

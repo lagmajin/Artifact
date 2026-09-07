@@ -14,5 +14,9 @@ void drawSafeAreaAndOrigin(ArtifactIRenderer *renderer, float canvasWidth,
 void drawGuides(ArtifactIRenderer *renderer, const QVector<float> &verticals,
                 const QVector<float> &horizontals, bool showGuides,
                 float canvasWidth, float canvasHeight);
+void drawPixelGrid(ArtifactIRenderer *renderer, float canvasWidth,
+                   float canvasHeight, float zoom, bool visible);
+void drawCompositionBoundary(ArtifactIRenderer *renderer, float canvasWidth,
+                             float canvasHeight, bool visible);
 } // namespace ViewportOverlay
 } // namespace Artifact

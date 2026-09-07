@@ -29,7 +29,8 @@ export namespace Artifact {
   explicit PlaneLayerSettingPage(QWidget* parent = nullptr);
   ~PlaneLayerSettingPage();
   void setDefaultFocus();
-  void setInitialParams(int p_width, int p_height, const FloatColor& color);
+  void setInitialParams(int p_width, int p_height, const FloatColor& color,
+                        double pixelAspectRatio = 1.0);
   void setInitialGradientParams(ArtifactSolidFillType fillType,
                                 const FloatColor& startColor,
                                 const FloatColor& endColor,

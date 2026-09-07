@@ -20,6 +20,7 @@ module;
 export module Artifact.Widgets.ProjectManagerControls;
 
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 
 export namespace Artifact {
 
@@ -117,6 +118,7 @@ protected:
                     previewChanged(liveColor);
                 }
             });
+            Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
             if (picker.exec() == QDialog::Accepted) {
                 const ArtifactCore::FloatColor picked = picker.getColor();
                 const QColor acceptedColor = QColor::fromRgbF(

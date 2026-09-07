@@ -72,6 +72,7 @@ import Artifact.Layer.CloneEffectSupport;
 
 
 import Thread.Helper;
+import Core.TaskSystem;
 import Artifact.Composition.Abstract;
 import Audio.Panner;
 import Artifact.Render.IRenderer;
@@ -1177,7 +1178,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
     const int requestId = ++impl_->openRequestId_;
     auto* layer = this;
-    impl_->openFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [normalizedPath]() -> Impl::AsyncOpenResult {
+    ArtifactCore::asyncPostToObject<Impl::AsyncOpenResult>(this, [normalizedPath]() -> Impl::AsyncOpenResult {
         ArtifactCore::ScopedThreadName threadName(
             QStringLiteral("VideoLayer/open:%1").arg(QFileInfo(normalizedPath).fileName()));
         Impl::AsyncOpenResult result;
@@ -1215,13 +1216,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         }
         result.defaultOutPoint = result.streamInfo.frameCount > 0 ? result.streamInfo.frameCount : 300;
         return result;
-    });
-
-    auto* watcher = new QFutureWatcher<Impl::AsyncOpenResult>(this);
-    QObject::connect(watcher, &QFutureWatcher<Impl::AsyncOpenResult>::finished, this,
-                     [layer, watcher, requestId]() {
-        const Impl::AsyncOpenResult result = watcher->result();
-        watcher->deleteLater();
+    },
+    [layer, requestId](Impl::AsyncOpenResult result) {
         if (!layer || !layer->impl_) {
             return;
         }
@@ -1322,7 +1318,6 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                  << "Frames:" << layer->impl_->streamInfo_.frameCount;
         publishVideoLayerModified(layer);
     });
-    watcher->setFuture(impl_->openFuture_);
 
     return true;
 }

@@ -201,6 +201,11 @@ public:
   FloatColor getClearColor() const;
   void setViewportSize(float w, float h);
   void setViewportRect(float w, float h);
+  // Select a sub-rectangle of the currently bound render target.  The logical
+  // viewport remains local to the rectangle; Diligent applies the offset and
+  // scissor when commands are submitted.
+  void setViewportRect(float x, float y, float w, float h,
+                       float renderTargetW, float renderTargetH);
   void unbindColorTargetsForCompute();
   void setDevicePixelRatio(float dpr);
 

@@ -25,6 +25,7 @@ module;
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPen>
+#include <QPointer>
 #include <QVariant>
 #include <QPalette>
 #include <QLabel>
@@ -49,6 +50,28 @@ export namespace Artifact {
 // top-level dialogs; the registry remains the stable routing and persistence
 // boundary used by both embedded and floating surfaces.
 class NativeDockSurface final : public QWidget {
+  class DockTabSurface final : public QTabWidget {
+  public:
+    explicit DockTabSurface(QWidget *parent) : QTabWidget(parent) {}
+
+  protected:
+    void paintEvent(QPaintEvent *event) override {
+      QTabWidget::paintEvent(event);
+      if (!property("artifactNativeActivePanel").toBool()) {
+        return;
+      }
+
+      // The focus marker belongs to the complete dock surface, including its
+      // tab strip, rather than only the current tab.
+      QPainter painter(this);
+      QColor frame(86, 156, 214, 150);
+      QPen pen(frame, 3.0);
+      painter.setPen(pen);
+      painter.setBrush(Qt::NoBrush);
+      painter.drawRect(rect().adjusted(1, 1, -2, -2));
+    }
+  };
+
   class DockDropPreview final : public QWidget {
   public:
     explicit DockDropPreview(QWidget *parent) : QWidget(parent) {
@@ -90,13 +113,18 @@ class NativeDockSurface final : public QWidget {
 public:
   explicit NativeDockSurface(QWidget *parent = nullptr) : QWidget(parent) {
     setAcceptDrops(true);
+    qApp->installEventFilter(this);
     dropPreview_ = new DockDropPreview(this);
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
     verticalSplitter_ = new QSplitter(Qt::Vertical, this);
     verticalSplitter_->setChildrenCollapsible(false);
-    verticalSplitter_->setOpaqueResize(false);
+    // Keep the docking splitters visibly draggable and update the panel sizes
+    // while dragging.  The application-wide style uses deferred resizing for
+    // heavyweight editor splitters, which is inappropriate for dock layout.
+    verticalSplitter_->setHandleWidth(6);
+    verticalSplitter_->setOpaqueResize(true);
     rootLayout->addWidget(verticalSplitter_);
     topTabs_ = createTabSurface(verticalSplitter_);
     topTabs_->hide();
@@ -104,7 +132,8 @@ public:
 
     auto *splitter = new QSplitter(Qt::Horizontal, verticalSplitter_);
     splitter->setChildrenCollapsible(false);
-    splitter->setOpaqueResize(false);
+    splitter->setHandleWidth(6);
+    splitter->setOpaqueResize(true);
     splitter_ = splitter;
     leftTabs_ = createTabSurface(splitter);
     centerTabs_ = createTabSurface(splitter);
@@ -134,6 +163,9 @@ public:
   }
 
   ~NativeDockSurface() override {
+    if (qApp) {
+      qApp->removeEventFilter(this);
+    }
     const auto dialogs = floatingDialogs_.values();
     for (auto *dialog : dialogs) {
       if (!dialog) {
@@ -162,6 +194,9 @@ public:
     areas_.insert(dockId, area);
     titles_.insert(dockId, title);
     pinned_.insert(dockId, false);
+    if (!activeTabs_) {
+      setActiveTabSurface(tabs);
+    }
     return true;
   }
 
@@ -187,6 +222,7 @@ public:
     areas_.insert(dockId, areas_.value(targetDockId, DockArea::Center));
     titles_.insert(dockId, title);
     pinned_.insert(dockId, false);
+    setActiveTabSurface(tabs);
     return true;
   }
 
@@ -285,9 +321,9 @@ public:
       seen.insert(entry.dockId, true);
       normalized.push_back(entry);
     }
-    const auto savedTabOrder = [](const DockLayoutEntry &entry) {
+    const auto savedTabOrder = [](const DockLayoutEntry &entry) -> qsizetype {
       if (!entry.tabGroup.startsWith(QStringLiteral("tabs:"))) {
-        return std::numeric_limits<int>::max();
+        return std::numeric_limits<qsizetype>::max();
       }
       return entry.tabGroup.mid(5).split(QLatin1Char('|')).indexOf(entry.dockId);
     };
@@ -642,6 +678,7 @@ public:
     }
     tabs->setCurrentIndex(index);
     widget->show();
+    setActiveTabSurface(tabs);
     return true;
   }
 
@@ -743,6 +780,15 @@ protected:
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
+    if (event && (event->type() == QEvent::FocusIn ||
+                  event->type() == QEvent::MouseButtonPress)) {
+      if (auto *widget = qobject_cast<QWidget *>(watched)) {
+        if (auto *tabs = tabSurfaceForObject(widget)) {
+          setActiveTabSurface(tabs);
+        }
+      }
+    }
+
     if (auto *button = qobject_cast<QToolButton *>(watched)) {
       const QString id = button->property("artifactDockCloseId").toString();
       if (!id.isEmpty()) {
@@ -967,7 +1013,7 @@ private:
   }
 
   static QTabWidget *createTabSurface(QWidget *parent) {
-    auto *tabs = new QTabWidget(parent);
+    auto *tabs = new DockTabSurface(parent);
     tabs->setDocumentMode(true);
     tabs->setMovable(true);
     tabs->tabBar()->setExpanding(false);
@@ -1026,6 +1072,32 @@ private:
     return nullptr;
   }
 
+  QTabWidget *tabSurfaceForObject(const QWidget *widget) const {
+    if (!widget) {
+      return nullptr;
+    }
+    for (auto *tabs : {leftTabs_, centerTabs_, rightTabs_, topTabs_,
+                       bottomTabs_}) {
+      if (tabs && (tabs == widget || tabs->isAncestorOf(widget))) {
+        return tabs;
+      }
+    }
+    return nullptr;
+  }
+
+  void setActiveTabSurface(QTabWidget *tabs) {
+    if (!tabs || activeTabs_ == tabs) {
+      return;
+    }
+    if (activeTabs_) {
+      activeTabs_->setProperty("artifactNativeActivePanel", false);
+      activeTabs_->update();
+    }
+    activeTabs_ = tabs;
+    activeTabs_->setProperty("artifactNativeActivePanel", true);
+    activeTabs_->update();
+  }
+
   QTabWidget *topTabs_ = nullptr;
   QTabWidget *leftTabs_ = nullptr;
   QTabWidget *centerTabs_ = nullptr;
@@ -1034,6 +1106,7 @@ private:
   QSplitter *splitter_ = nullptr;
   QSplitter *verticalSplitter_ = nullptr;
   DockDropPreview *dropPreview_ = nullptr;
+  QPointer<QTabWidget> activeTabs_;
   QPoint dragStartPosition_;
   QString dragSourceId_;
   QHash<QString, QWidget *> docks_;

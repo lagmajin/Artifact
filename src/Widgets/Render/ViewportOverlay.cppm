@@ -92,4 +92,24 @@ void drawGuides(ArtifactIRenderer *renderer, const QVector<float> &verticals,
   }
 }
 
+void drawPixelGrid(ArtifactIRenderer *renderer, float canvasWidth,
+                   float canvasHeight, float zoom, bool visible) {
+  if (!renderer || !visible || zoom < 4.0f || canvasWidth <= 0.0f ||
+      canvasHeight <= 0.0f) return;
+  const float step = zoom >= 16.0f ? 1.0f : zoom >= 8.0f ? 2.0f : 5.0f;
+  const FloatColor color{0.55f, 0.68f, 0.82f, zoom >= 8.0f ? 0.24f : 0.16f};
+  for (float x = 0.0f; x <= canvasWidth; x += step)
+    renderer->drawSolidLine({x, 0.0f}, {x, canvasHeight}, color, 0.5f);
+  for (float y = 0.0f; y <= canvasHeight; y += step)
+    renderer->drawSolidLine({0.0f, y}, {canvasWidth, y}, color, 0.5f);
+}
+
+void drawCompositionBoundary(ArtifactIRenderer *renderer, float canvasWidth,
+                             float canvasHeight, bool visible) {
+  if (!renderer || !visible || canvasWidth <= 0.0f || canvasHeight <= 0.0f)
+    return;
+  renderer->drawRectOutlineLocal(0.0f, 0.0f, canvasWidth, canvasHeight,
+                                 {0.98f, 0.72f, 0.20f, 0.92f});
+}
+
 } // namespace Artifact::ViewportOverlay

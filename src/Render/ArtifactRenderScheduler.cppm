@@ -1,7 +1,5 @@
 
 module;
-#include <QThreadPool>
-#include <QtConcurrent>
 #include <QFutureWatcher>
 #include <QElapsedTimer>
 #include <QDebug>
@@ -47,6 +45,7 @@ module Artifact.Render.Scheduler;
 
 
 import Thread.Helper;
+import Core.TaskSystem;
 import Core.Diagnostics.Trace;
 import Frame.Position;
 import Frame.Range;
@@ -86,7 +85,7 @@ RenderTask::~RenderTask() = default;
 
 class RenderScheduler::Impl {
 public:
-    std::unique_ptr<QThreadPool> threadPool_;
+    std::unique_ptr<ArtifactCore::TaskSystem> taskSystem_;
     RenderScheduler* owner_ = nullptr;
     ParallelStrategy strategy_ = ParallelStrategy::Adaptive;
     bool adaptiveEnabled_ = true;
@@ -133,22 +132,23 @@ public:
         return std::max(1, ideal - 1);
     }
 
-    QThreadPool* ensureThreadPool() {
+    ArtifactCore::TaskSystem* ensureTaskSystem() {
         const bool explicitThreadCount = requestedThreadCountExplicit_;
         const int desiredThreadCount =
             explicitThreadCount ? requestedThreadCount_ : defaultThreadCount();
-        if (!threadPool_) {
-            threadPool_ = std::make_unique<QThreadPool>();
-            threadPool_->setObjectName(QStringLiteral("ArtifactRenderSchedulerPool"));
-            threadPool_->setMaxThreadCount(desiredThreadCount);
+        if (!taskSystem_) {
+            taskSystem_ = std::make_unique<ArtifactCore::TaskSystem>(desiredThreadCount);
             requestedThreadCount_ = desiredThreadCount;
         } else if (!explicitThreadCount &&
-                   threadPool_->maxThreadCount() != desiredThreadCount) {
-            threadPool_->setMaxThreadCount(desiredThreadCount);
+                   static_cast<int>(taskSystem_->concurrency()) != desiredThreadCount) {
+            // TaskSystem concurrency is fixed at construction; recreate for new size
+            taskSystem_ = std::make_unique<ArtifactCore::TaskSystem>(desiredThreadCount);
             requestedThreadCount_ = desiredThreadCount;
         }
-        return threadPool_.get();
+        return taskSystem_.get();
     }
+    // Compat shim: old name delegates to TaskSystem
+    Q_DECL_DEPRECATED_X("Use ensureTaskSystem()") auto ensureThreadPool() { return ensureTaskSystem(); }
 
     // Main-thread slots for signal emission (called via QMetaObject::invokeMethod)
     void onTaskCompleted(RenderTask* task, double elapsedMs) {
@@ -227,14 +227,15 @@ RenderScheduler::~RenderScheduler() = default;
 void RenderScheduler::setThreadCount(int count) {
     impl_->requestedThreadCount_ = std::max(1, count);
     impl_->requestedThreadCountExplicit_ = true;
-    if (auto* pool = impl_->ensureThreadPool()) {
-        pool->setMaxThreadCount(impl_->requestedThreadCount_);
+    // Recreate TaskSystem with new concurrency on next ensureTaskSystem()
+    if (impl_->taskSystem_) {
+        impl_->taskSystem_ = std::make_unique<ArtifactCore::TaskSystem>(impl_->requestedThreadCount_);
     }
 }
 
 int RenderScheduler::threadCount() const {
-    if (impl_->threadPool_) {
-        return impl_->threadPool_->maxThreadCount();
+    if (impl_->taskSystem_) {
+        return static_cast<int>(impl_->taskSystem_->concurrency());
     }
     if (!impl_->requestedThreadCountExplicit_) {
         return isRenderSchedulerStartupWarmupComplete()
@@ -394,7 +395,7 @@ void RenderScheduler::setTaskPriority(RenderTask* task, TaskPriority priority) {
 void RenderScheduler::startExecution() {
     if (impl_->executing_) return;
 
-    if (!impl_->ensureThreadPool()) {
+    if (!impl_->ensureTaskSystem()) {
         return;
     }
 
@@ -424,17 +425,17 @@ void RenderScheduler::stopExecution() {
 }
 
 void RenderScheduler::processNextTask() {
-    // Dispatch tasks to thread pool (parallel execution)
-    auto* threadPool = impl_->ensureThreadPool();
-    if (!threadPool) {
+    // Dispatch tasks via TaskSystem work-stealing
+    auto* taskSystem = impl_->ensureTaskSystem();
+    if (!taskSystem) {
         return;
     }
     const bool allowsConcurrentFrames =
         impl_->strategy_ == ParallelStrategy::FrameParallel ||
         impl_->strategy_ == ParallelStrategy::Adaptive;
     const int maxConcurrent = allowsConcurrentFrames
-                                  ? threadPool->maxThreadCount()
-                                  : 1;
+                                   ? static_cast<int>(taskSystem->concurrency())
+                                   : 1;
 
     while (impl_->executing_ && !impl_->paused_ && !impl_->stopRequested_) {
         RenderTask* task = nullptr;
@@ -493,7 +494,7 @@ void RenderScheduler::processNextTask() {
                                      : QStringLiteral("frames:%1-%2")
                                             .arg(task->range().start())
                                             .arg(task->range().end());
-        threadPool->start([self, task, taskName]() {
+        taskSystem->silent_async([self, task, taskName]() {
             if (!self) {
                 return;
             }

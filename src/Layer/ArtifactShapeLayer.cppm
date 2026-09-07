@@ -32,6 +32,8 @@ module Artifact.Layer.Shape;
 import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.CloneEffectSupport;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Property.Types;
 import Property.Abstract;
 import Shape.Group;
@@ -580,11 +582,15 @@ bool hasAnimatedShapeOperators(const Artifact::ArtifactShapeLayer* layer) {
   return false;
  }
  for (int i = 0; i < layer->shapeOperatorCount(); ++i) {
+  if (layer->shapeOperatorTypeAt(i) == ArtifactCore::ShapeOperatorType::WigglePaths) {
+   return true;
+  }
   const QString prefix =
       QStringLiteral("shape.operator.%1.").arg(i);
   static const char* kFloatFields[] = {"start", "end", "offset", "copies",
                                        "rotation", "amount", "radius",
-                                       "startOpacity", "endOpacity"};
+                                       "startOpacity", "endOpacity", "frequency",
+                                       "temporalPhase", "correlation"};
   for (const char* field : kFloatFields) {
    const auto property =
        layer->getProperty(prefix + QString::fromLatin1(field));
@@ -673,6 +679,27 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
    applyFloat("radius", [&](double v) {
     rounded->setRadius(static_cast<float>(v));
    });
+  } else if (auto* wiggle = dynamic_cast<ArtifactCore::WigglePaths*>(&op)) {
+   applyFloat("amount", [&](double v) { wiggle->setAmount(static_cast<float>(v)); });
+   applyFloat("frequency", [&](double v) { wiggle->setFrequency(static_cast<float>(v)); });
+   applyFloat("temporalPhase", [&](double v) {
+    wiggle->setTemporalPhase(static_cast<float>(v));
+   });
+   applyFloat("correlation", [&](double v) { wiggle->setCorrelation(static_cast<float>(v)); });
+   const auto detailProperty = layer->getProperty(prefix + QStringLiteral("detail"));
+   if (detailProperty && !detailProperty->getKeyFrames().empty()) {
+    const QVariant value = detailProperty->interpolateValue(effectiveShapeTimelineTime(layer));
+    if (value.isValid()) wiggle->setDetail(value.toInt());
+   }
+   const auto smoothProperty = layer->getProperty(prefix + QStringLiteral("smooth"));
+   if (smoothProperty && !smoothProperty->getKeyFrames().empty()) {
+    const QVariant value = smoothProperty->interpolateValue(effectiveShapeTimelineTime(layer));
+    if (value.isValid()) wiggle->setSmooth(value.toBool());
+   }
+   // The cloned operator receives the composition time; authored Temporal
+   // Phase remains an offset and can itself be keyframed.
+   wiggle->setTemporalPhase(wiggle->temporalPhase() + static_cast<float>(
+       effectiveShapeTimelineTime(layer).toSeconds()));
   }
  }
 }
@@ -788,6 +815,46 @@ std::unique_ptr<ArtifactCore::ShapeOperator> createShapeOperator(ArtifactCore::S
   }
 }
 
+static void shiftShapeStackContentIndices(
+    std::vector<Artifact::ShapeStackNode>* nodes, int firstIndex, int delta) {
+  if (!nodes || delta == 0) return;
+  for (auto& node : *nodes) {
+    if (node.type != Artifact::ShapeStackNodeType::Operator &&
+        node.contentIndex >= firstIndex) node.contentIndex += delta;
+  }
+}
+
+static void eraseShapeStackContentIndex(
+    std::vector<Artifact::ShapeStackNode>* nodes, int removedIndex) {
+  if (!nodes) return;
+  nodes->erase(std::remove_if(nodes->begin(), nodes->end(),
+      [removedIndex](const Artifact::ShapeStackNode& node) {
+        return node.type != Artifact::ShapeStackNodeType::Operator &&
+            node.contentIndex == removedIndex;
+      }), nodes->end());
+  shiftShapeStackContentIndices(nodes, removedIndex + 1, -1);
+}
+
+static void shiftShapeStackOperatorIndices(
+    std::vector<Artifact::ShapeStackNode>* nodes, int firstIndex, int delta) {
+  if (!nodes || delta == 0) return;
+  for (auto& node : *nodes) {
+    if (node.type == Artifact::ShapeStackNodeType::Operator &&
+        node.operatorIndex >= firstIndex) node.operatorIndex += delta;
+  }
+}
+
+static void eraseShapeStackOperatorIndex(
+    std::vector<Artifact::ShapeStackNode>* nodes, int removedIndex) {
+  if (!nodes) return;
+  nodes->erase(std::remove_if(nodes->begin(), nodes->end(),
+      [removedIndex](const Artifact::ShapeStackNode& node) {
+        return node.type == Artifact::ShapeStackNodeType::Operator &&
+            node.operatorIndex == removedIndex;
+      }), nodes->end());
+  shiftShapeStackOperatorIndices(nodes, removedIndex + 1, -1);
+}
+
 void normalizeRestoredShapeOperator(ArtifactCore::ShapeOperator *op) {
   if (auto trim = dynamic_cast<ArtifactCore::TrimPaths *>(op)) {
     const auto safe = [](const float value, const float fallback) {
@@ -823,6 +890,11 @@ void normalizeRestoredShapeOperator(ArtifactCore::ShapeOperator *op) {
         ? std::clamp(wiggle->amount(), -100000.0f, 100000.0f) : 0.0f);
     wiggle->setFrequency(std::isfinite(wiggle->frequency())
         ? std::clamp(wiggle->frequency(), 0.0f, 10000.0f) : 1.0f);
+    wiggle->setTemporalPhase(std::isfinite(wiggle->temporalPhase())
+        ? std::clamp(wiggle->temporalPhase(), -100000.0f, 100000.0f) : 0.0f);
+    wiggle->setDetail(std::clamp(wiggle->detail(), 1, 64));
+    wiggle->setCorrelation(std::isfinite(wiggle->correlation())
+        ? std::clamp(wiggle->correlation(), 0.0f, 1.0f) : 0.0f);
   } else if (auto zigzag = dynamic_cast<ArtifactCore::ZigZag *>(op)) {
     zigzag->setAmount(std::isfinite(zigzag->amount())
         ? std::clamp(zigzag->amount(), -100000.0f, 100000.0f) : 0.0f);
@@ -947,18 +1019,52 @@ static ArtifactCore::ShapePath buildContentShapePath(const Artifact::ShapeConten
   if (g.pathVertices.size() >= 2) {
     ArtifactCore::ShapePath path = buildCustomShapePath(g.pathVertices, g.pathClosed);
     path.setFillRule(g.fillRule);
+    const auto& t = content.transform;
+    QTransform matrix;
+    matrix.translate(t.position.x(), t.position.y());
+    matrix.translate(t.anchor.x(), t.anchor.y());
+    matrix.rotate(t.rotation);
+    matrix.shear(std::tan(t.skew * 0.017453292519943295), 0.0);
+    matrix.rotate(-t.skewAxis);
+    matrix.scale(t.scale.x(), t.scale.y());
+    matrix.rotate(t.skewAxis);
+    matrix.translate(-t.anchor.x(), -t.anchor.y());
+    path.transform(matrix);
     return path;
   }
   if (g.polygonPoints.size() >= 3) {
     ArtifactCore::ShapePath sp;
     sp.setPolygon(g.polygonPoints, g.polygonClosed);
+    const auto& t = content.transform;
+    QTransform matrix;
+    matrix.translate(t.position.x(), t.position.y());
+    matrix.translate(t.anchor.x(), t.anchor.y());
+    matrix.rotate(t.rotation);
+    matrix.shear(std::tan(t.skew * 0.017453292519943295), 0.0);
+    matrix.rotate(-t.skewAxis);
+    matrix.scale(t.scale.x(), t.scale.y());
+    matrix.rotate(t.skewAxis);
+    matrix.translate(-t.anchor.x(), -t.anchor.y());
+    sp.transform(matrix);
     return sp;
   }
-  return buildShapePath(g.type, w, h,
+  ArtifactCore::ShapePath path = buildShapePath(g.type, w, h,
                         std::isfinite(g.cornerRadius) ? g.cornerRadius : 0.0f,
                         std::clamp(g.starPoints, 3, kMaxStarPoints),
                         std::clamp(g.starInnerRadius, 0.0f, 1.0f),
                         std::clamp(g.polygonSides, 3, 100));
+  const auto& t = content.transform;
+  QTransform matrix;
+  matrix.translate(t.position.x(), t.position.y());
+  matrix.translate(t.anchor.x(), t.anchor.y());
+  matrix.rotate(t.rotation);
+  matrix.shear(std::tan(t.skew * 0.017453292519943295), 0.0);
+  matrix.rotate(-t.skewAxis);
+  matrix.scale(t.scale.x(), t.scale.y());
+  matrix.rotate(t.skewAxis);
+  matrix.translate(-t.anchor.x(), -t.anchor.y());
+  path.transform(matrix);
+  return path;
 }
 
 static QPainterPath contentPathsToPainter(const std::vector<ArtifactCore::ShapePath>& paths) {
@@ -1597,6 +1703,10 @@ public:
 
   // Gap 1: multi-content model. Empty = legacy single-primitive behavior.
    std::vector<Artifact::ShapeContent> shapeContents_;
+   // Empty means legacy evaluation.  Entries retain indices into the owned
+   // content/operator arrays, keeping the stack cheap to reorder and safe to
+   // serialize without copying QObject-backed operators.
+   std::vector<Artifact::ShapeStackNode> shapeStackNodes_;
    int activeContentIndex_ = -1;
    struct ContentDrawCache {
    std::vector<std::vector<ArtifactCore::ShapePath>> visPaths;
@@ -2278,9 +2388,19 @@ void ArtifactShapeLayer::setCustomPathFillRule(ArtifactCore::PathFillRule rule) 
  Q_EMIT changed();
 }
 
+static std::vector<ArtifactCore::ShapePath> evaluateShapeStackGeometry(
+    const std::vector<Artifact::ShapeStackNode>& nodes,
+    const std::vector<Artifact::ShapeContent>& contents,
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators);
+
 std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() const
 {
   if (impl_ && !impl_->shapeContents_.empty()) {
+    if (!impl_->shapeStackNodes_.empty()) {
+      return evaluateShapeStackGeometry(impl_->shapeStackNodes_,
+                                        impl_->shapeContents_,
+                                        impl_->shapeOperators_);
+    }
     ensureContentVisPaths();
     std::vector<ArtifactCore::ShapePath> paths;
     for (const auto& vis : impl_->contentCache_.visPaths) {
@@ -2309,6 +2429,28 @@ std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() cons
      impl_->customPolygonPoints_, impl_->customPolygonClosed_,
      pathVertices, pathClosed,
      impl_->shapeOperators_);
+}
+
+LayerMask ArtifactShapeLayer::createMaskFromShape() const
+{
+  LayerMask mask;
+  if (!impl_) {
+    mask.setEnabled(false);
+    return mask;
+  }
+
+  for (const auto& shapePath : nativeShapePaths()) {
+    for (const auto& maskPath : MaskPath::fromShapePath(shapePath)) {
+      if (maskPath.vertexCount() > 0) {
+        mask.addMaskPath(maskPath);
+      }
+    }
+  }
+
+  if (mask.maskPathCount() == 0) {
+    mask.setEnabled(false);
+  }
+  return mask;
 }
 
 ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
@@ -2479,6 +2621,11 @@ void ArtifactShapeLayer::addShapeOperator(ArtifactCore::ShapeOperatorType type)
  auto op = createShapeOperator(type);
  if (op) {
   impl_->shapeOperators_.push_back(std::move(op));
+  if (!impl_->shapeStackNodes_.empty()) {
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Operator, -1,
+        static_cast<int>(impl_->shapeOperators_.size()) - 1, true});
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2492,6 +2639,11 @@ void ArtifactShapeLayer::clearShapeOperators()
   return;
  }
  impl_->shapeOperators_.clear();
+ impl_->shapeStackNodes_.erase(
+     std::remove_if(impl_->shapeStackNodes_.begin(), impl_->shapeStackNodes_.end(),
+         [](const Artifact::ShapeStackNode& node) {
+           return node.type == Artifact::ShapeStackNodeType::Operator;
+         }), impl_->shapeStackNodes_.end());
  impl_->markDirty();
  impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
@@ -2517,6 +2669,7 @@ bool ArtifactShapeLayer::removeShapeOperatorAt(int index)
   return false;
  }
  impl_->shapeOperators_.erase(impl_->shapeOperators_.begin() + index);
+ eraseShapeStackOperatorIndex(&impl_->shapeStackNodes_, index);
  impl_->markDirty();
  impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
@@ -2534,6 +2687,11 @@ bool ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
  }
   std::swap(impl_->shapeOperators_[static_cast<size_t>(fromIndex)],
             impl_->shapeOperators_[static_cast<size_t>(toIndex)]);
+  for (auto& node : impl_->shapeStackNodes_) {
+   if (node.type != Artifact::ShapeStackNodeType::Operator) continue;
+   if (node.operatorIndex == fromIndex) node.operatorIndex = toIndex;
+   else if (node.operatorIndex == toIndex) node.operatorIndex = fromIndex;
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2644,6 +2802,16 @@ static Artifact::ShapeContent normalizedShapeContent(const Artifact::ShapeConten
   out.stroke.taperEnd = std::isfinite(out.stroke.taperEnd)
       ? std::clamp(out.stroke.taperEnd, 0.0f, 1.0f) : 1.0f;
   out.opacity = std::isfinite(out.opacity) ? std::clamp(out.opacity, 0.0f, 1.0f) : 1.0f;
+  out.transform.scale.setX(std::isfinite(out.transform.scale.x())
+      ? std::clamp(out.transform.scale.x(), -100.0, 100.0) : 1.0);
+  out.transform.scale.setY(std::isfinite(out.transform.scale.y())
+      ? std::clamp(out.transform.scale.y(), -100.0, 100.0) : 1.0);
+  out.transform.rotation = std::isfinite(out.transform.rotation)
+      ? std::clamp(out.transform.rotation, -36000.0, 36000.0) : 0.0;
+  out.transform.skew = std::isfinite(out.transform.skew)
+      ? std::clamp(out.transform.skew, -89.0, 89.0) : 0.0;
+  out.transform.skewAxis = std::isfinite(out.transform.skewAxis)
+      ? std::clamp(out.transform.skewAxis, -36000.0, 36000.0) : 0.0;
   out.merge = static_cast<Artifact::ShapeContentMerge>(
       std::clamp(static_cast<int>(out.merge), 0, 3));
   return out;
@@ -2713,6 +2881,15 @@ int ArtifactShapeLayer::addShapeContent(const Artifact::ShapeContent& content) {
     normalized.name = QStringLiteral("Shape %1").arg(impl_->shapeContents_.size() + 1);
   }
   impl_->shapeContents_.push_back(std::move(normalized));
+  if (!impl_->shapeStackNodes_.empty()) {
+   const int contentIndex = static_cast<int>(impl_->shapeContents_.size()) - 1;
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Path, contentIndex, -1, true});
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Fill, contentIndex, -1, true});
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Stroke, contentIndex, -1, true});
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2747,6 +2924,7 @@ bool ArtifactShapeLayer::removeShapeContentAt(int index) {
     return false;
   }
   impl_->shapeContents_.erase(impl_->shapeContents_.begin() + index);
+  eraseShapeStackContentIndex(&impl_->shapeStackNodes_, index);
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2759,6 +2937,11 @@ void ArtifactShapeLayer::clearShapeContents() {
     return;
   }
   impl_->shapeContents_.clear();
+  impl_->shapeStackNodes_.erase(
+      std::remove_if(impl_->shapeStackNodes_.begin(), impl_->shapeStackNodes_.end(),
+          [](const Artifact::ShapeStackNode& node) {
+            return node.type != Artifact::ShapeStackNodeType::Operator;
+          }), impl_->shapeStackNodes_.end());
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2925,6 +3108,16 @@ int ArtifactShapeLayer::duplicateShapeContent(int index) {
   content.name = QStringLiteral("Copy of %1").arg(content.name);
   impl_->shapeContents_.insert(
       impl_->shapeContents_.begin() + index + 1, content);
+  shiftShapeStackContentIndices(&impl_->shapeStackNodes_, index + 1, 1);
+  if (!impl_->shapeStackNodes_.empty()) {
+   const int duplicateIndex = index + 1;
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Path, duplicateIndex, -1, true});
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Fill, duplicateIndex, -1, true});
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Stroke, duplicateIndex, -1, true});
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2946,6 +3139,13 @@ bool ArtifactShapeLayer::moveShapeContent(int fromIndex, int toIndex) {
   const int dest = toIndex > fromIndex ? toIndex - 1 : toIndex;
   impl_->shapeContents_.insert(
       impl_->shapeContents_.begin() + dest, std::move(content));
+  for (auto& node : impl_->shapeStackNodes_) {
+   if (node.type == Artifact::ShapeStackNodeType::Operator) continue;
+   const int oldIndex = node.contentIndex;
+   if (oldIndex == fromIndex) node.contentIndex = dest;
+   else if (fromIndex < dest && oldIndex > fromIndex && oldIndex <= dest) --node.contentIndex;
+   else if (dest < fromIndex && oldIndex >= dest && oldIndex < fromIndex) ++node.contentIndex;
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2961,8 +3161,17 @@ bool ArtifactShapeLayer::insertShapeContent(int index, const ShapeContent& conte
   if (impl_->shapeContents_.empty()) {
     impl_->shapeContents_.push_back(makeContentFromLegacy());
   }
+  shiftShapeStackContentIndices(&impl_->shapeStackNodes_, index, 1);
   impl_->shapeContents_.insert(
       impl_->shapeContents_.begin() + index, normalizedShapeContent(content));
+  if (!impl_->shapeStackNodes_.empty()) {
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Path, index, -1, true});
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Fill, index, -1, true});
+   impl_->shapeStackNodes_.push_back(
+       {Artifact::ShapeStackNodeType::Stroke, index, -1, true});
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -2981,11 +3190,141 @@ bool ArtifactShapeLayer::swapShapeContents(int a, int b) {
   }
   std::swap(impl_->shapeContents_[static_cast<size_t>(a)],
             impl_->shapeContents_[static_cast<size_t>(b)]);
+  for (auto& node : impl_->shapeStackNodes_) {
+   if (node.type == Artifact::ShapeStackNodeType::Operator) continue;
+   if (node.contentIndex == a) node.contentIndex = b;
+   else if (node.contentIndex == b) node.contentIndex = a;
+  }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
   Q_EMIT changed();
   return true;
+}
+
+static bool isValidShapeStackNode(const Artifact::ShapeStackNode& node,
+                                  int contentCount, int operatorCount) {
+  const int type = static_cast<int>(node.type);
+  if (type < static_cast<int>(Artifact::ShapeStackNodeType::Path) ||
+      type > static_cast<int>(Artifact::ShapeStackNodeType::Operator)) {
+    return false;
+  }
+  if (node.type == Artifact::ShapeStackNodeType::Operator) {
+    return node.operatorIndex >= 0 && node.operatorIndex < operatorCount;
+  }
+  return node.contentIndex >= 0 && node.contentIndex < contentCount;
+}
+
+int ArtifactShapeLayer::shapeStackNodeCount() const {
+  return impl_ ? static_cast<int>(impl_->shapeStackNodes_.size()) : 0;
+}
+
+Artifact::ShapeStackNode ArtifactShapeLayer::shapeStackNodeAt(int index) const {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeStackNodes_.size())) {
+    return {};
+  }
+  return impl_->shapeStackNodes_[static_cast<size_t>(index)];
+}
+
+bool ArtifactShapeLayer::setShapeStackNodeAt(int index,
+                                              const Artifact::ShapeStackNode& node) {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeStackNodes_.size()) ||
+      !isValidShapeStackNode(node, static_cast<int>(impl_->shapeContents_.size()),
+                             static_cast<int>(impl_->shapeOperators_.size()))) {
+    return false;
+  }
+  impl_->shapeStackNodes_[static_cast<size_t>(index)] = node;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactShapeLayer::moveShapeStackNode(int fromIndex, int toIndex) {
+  if (!impl_ || fromIndex < 0 || toIndex < 0 ||
+      fromIndex >= static_cast<int>(impl_->shapeStackNodes_.size()) ||
+      toIndex >= static_cast<int>(impl_->shapeStackNodes_.size())) {
+    return false;
+  }
+  if (fromIndex == toIndex) return true;
+  auto node = impl_->shapeStackNodes_[static_cast<size_t>(fromIndex)];
+  impl_->shapeStackNodes_.erase(impl_->shapeStackNodes_.begin() + fromIndex);
+  impl_->shapeStackNodes_.insert(impl_->shapeStackNodes_.begin() + toIndex,
+                                 node);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactShapeLayer::insertShapeStackNode(int index,
+                                               const Artifact::ShapeStackNode& node) {
+  if (!impl_ || index < 0 ||
+      index > static_cast<int>(impl_->shapeStackNodes_.size()) ||
+      !isValidShapeStackNode(node, static_cast<int>(impl_->shapeContents_.size()),
+                             static_cast<int>(impl_->shapeOperators_.size()))) {
+    return false;
+  }
+  impl_->shapeStackNodes_.insert(impl_->shapeStackNodes_.begin() + index, node);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactShapeLayer::removeShapeStackNodeAt(int index) {
+  if (!impl_ || index < 0 ||
+      index >= static_cast<int>(impl_->shapeStackNodes_.size())) {
+    return false;
+  }
+  impl_->shapeStackNodes_.erase(impl_->shapeStackNodes_.begin() + index);
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+
+void ArtifactShapeLayer::clearShapeStackNodes() {
+  if (!impl_ || impl_->shapeStackNodes_.empty()) return;
+  impl_->shapeStackNodes_.clear();
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+
+void ArtifactShapeLayer::resetShapeStackOrder() {
+  if (!impl_) return;
+  if (impl_->shapeContents_.empty()) {
+    impl_->shapeContents_.push_back(makeContentFromLegacy());
+  }
+  impl_->shapeStackNodes_.clear();
+  impl_->shapeStackNodes_.reserve(impl_->shapeContents_.size() * 3 +
+                                  impl_->shapeOperators_.size());
+  for (int index = 0; index < static_cast<int>(impl_->shapeContents_.size()); ++index) {
+    impl_->shapeStackNodes_.push_back(
+        {Artifact::ShapeStackNodeType::Path, index, -1, true});
+  }
+  for (int index = 0; index < static_cast<int>(impl_->shapeOperators_.size()); ++index) {
+    impl_->shapeStackNodes_.push_back(
+        {Artifact::ShapeStackNodeType::Operator, -1, index, true});
+  }
+  for (int index = 0; index < static_cast<int>(impl_->shapeContents_.size()); ++index) {
+    impl_->shapeStackNodes_.push_back(
+        {Artifact::ShapeStackNodeType::Fill, index, -1, true});
+    impl_->shapeStackNodes_.push_back(
+        {Artifact::ShapeStackNodeType::Stroke, index, -1, true});
+  }
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
 
 void ArtifactShapeLayer::ensureContentVisPaths() const {
@@ -3207,6 +3546,33 @@ QRectF ArtifactShapeLayer::localBounds() const
     if (!impl_->localBoundsCacheDirty_) {
       return impl_->cachedLocalBounds_;
     }
+    if (!impl_->shapeStackNodes_.empty()) {
+      const auto paths = evaluateShapeStackGeometry(impl_->shapeStackNodes_,
+                                                    impl_->shapeContents_,
+                                                    impl_->shapeOperators_);
+      QRectF bounds;
+      for (const auto& path : paths) {
+        const QRectF pathBounds = path.boundingRect();
+        bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
+      }
+      qreal maxPad = 0.5;
+      for (const auto& content : impl_->shapeContents_) {
+        if (!content.visible || !content.stroke.enabled ||
+            content.stroke.width <= 0.0f) continue;
+        const qreal width = static_cast<qreal>(content.stroke.width);
+        qreal pad = content.stroke.align == StrokeAlign::Outside
+            ? width : (content.stroke.align == StrokeAlign::Center ? width * 0.5 : 0.0);
+        if (content.stroke.join == StrokeJoin::Miter) {
+          pad = std::max(pad, std::max<qreal>(1.0, width) * 4.0);
+        }
+        maxPad = std::max(maxPad, pad);
+      }
+      if (bounds.isValid() && bounds.width() > 0.0 && bounds.height() > 0.0) {
+        impl_->cachedLocalBounds_ = bounds.adjusted(-maxPad, -maxPad, maxPad, maxPad);
+        impl_->localBoundsCacheDirty_ = false;
+        return impl_->cachedLocalBounds_;
+      }
+    }
     ensureContentVisPaths();
     QRectF bounds;
     qreal maxPad = 0.5;
@@ -3402,6 +3768,29 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
 // GPU vector painting (gaps 1 & 3)
 // ============================================================
 
+static bool isValidShapeStackNode(const Artifact::ShapeStackNode& node,
+                                  int contentCount, int operatorCount);
+
+static std::vector<ArtifactCore::ShapePath> evaluateShapeStackGeometry(
+    const std::vector<Artifact::ShapeStackNode>& nodes,
+    const std::vector<Artifact::ShapeContent>& contents,
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators) {
+  std::vector<ArtifactCore::ShapePath> paths;
+  for (const auto& node : nodes) {
+    if (!node.enabled || !isValidShapeStackNode(
+            node, static_cast<int>(contents.size()),
+            static_cast<int>(operators.size()))) continue;
+    if (node.type == Artifact::ShapeStackNodeType::Path) {
+      const auto& content = contents[static_cast<size_t>(node.contentIndex)];
+      if (content.visible) paths.push_back(buildContentShapePath(content));
+    } else if (node.type == Artifact::ShapeStackNodeType::Operator) {
+      const auto& op = operators[static_cast<size_t>(node.operatorIndex)];
+      if (op) paths = op->process(paths);
+    }
+  }
+  return paths;
+}
+
 struct GpuPaintItem {
   std::vector<ArtifactCore::ShapePath> fillPaths;
   std::vector<ArtifactCore::ShapePath> strokePaths;
@@ -3411,6 +3800,57 @@ struct GpuPaintItem {
   float gradientH = 1.0f;
   float itemOpacity = 1.0f;
 };
+
+// Evaluates the persisted ordered Shape Group.  A path entry contributes
+// geometry, an operator rewrites every path accumulated above it, and a paint
+// entry snapshots that result with its own style.  This is deliberately kept
+// separate from the legacy multi-content evaluator so old projects retain
+// their established output until they opt into a stack.
+static std::vector<GpuPaintItem> evaluateShapeStack(
+    const std::vector<Artifact::ShapeStackNode>& nodes,
+    const std::vector<Artifact::ShapeContent>& contents,
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators) {
+  std::vector<GpuPaintItem> items;
+  std::vector<ArtifactCore::ShapePath> paths;
+  for (const auto& node : nodes) {
+    if (!node.enabled || !isValidShapeStackNode(
+            node, static_cast<int>(contents.size()),
+            static_cast<int>(operators.size()))) {
+      continue;
+    }
+    if (node.type == Artifact::ShapeStackNodeType::Path) {
+      const auto& content = contents[static_cast<size_t>(node.contentIndex)];
+      if (content.visible) {
+        paths.push_back(buildContentShapePath(content));
+      }
+      continue;
+    }
+    if (node.type == Artifact::ShapeStackNodeType::Operator) {
+      const auto& op = operators[static_cast<size_t>(node.operatorIndex)];
+      if (op) paths = op->process(paths);
+      continue;
+    }
+    const auto& content = contents[static_cast<size_t>(node.contentIndex)];
+    if (!content.visible || content.opacity <= 0.0f || paths.empty()) {
+      continue;
+    }
+    GpuPaintItem item;
+    item.fillPaths = paths;
+    item.strokePaths = paths;
+    item.fill = content.fill;
+    item.stroke = content.stroke;
+    if (node.type == Artifact::ShapeStackNodeType::Fill) {
+      item.stroke.enabled = false;
+    } else {
+      item.fill.enabled = false;
+    }
+    item.gradientW = static_cast<float>(std::max(1, content.geometry.width));
+    item.gradientH = static_cast<float>(std::max(1, content.geometry.height));
+    item.itemOpacity = content.opacity;
+    items.push_back(std::move(item));
+  }
+  return items;
+}
 
 // Unified GPU painter for gradient fills, Inside/Outside strokes and
 // taper/gradient strokes. Triangulation is intentionally fresh per frame:
@@ -3536,21 +3976,37 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      contentsOpClones.push_back(op->clone());
     }
     applyAnimatedOperatorParameters(this, contentsOpClones);
-    std::vector<std::vector<ArtifactCore::ShapePath>> processed;
-    processed.reserve(impl->shapeContents_.size());
-    for (const auto& content : impl->shapeContents_) {
-     processed.push_back(
-         applyShapeOperators(buildContentShapePath(content), contentsOpClones));
+    if (impl->shapeStackNodes_.empty()) {
+     std::vector<std::vector<ArtifactCore::ShapePath>> processed;
+     processed.reserve(impl->shapeContents_.size());
+     for (const auto& content : impl->shapeContents_) {
+      processed.push_back(
+          applyShapeOperators(buildContentShapePath(content), contentsOpClones));
+     }
+     impl->contentCache_.visPaths =
+         resolveContentVisPaths(processed, impl->shapeContents_);
+     impl->contentCache_.valid = false;
     }
-    impl->contentCache_.visPaths =
-        resolveContentVisPaths(processed, impl->shapeContents_);
-    impl->contentCache_.valid = false;
    } else {
     ensureContentVisPaths();
    }
    std::vector<GpuPaintItem> contentItems;
-   contentItems.reserve(impl->shapeContents_.size());
-   for (size_t ci = 0; ci < impl->shapeContents_.size(); ++ci) {
+   if (!impl->shapeStackNodes_.empty()) {
+    const auto& activeOperators = contentsOpsAnimated ? contentsOpClones
+                                                       : impl->shapeOperators_;
+    contentItems = evaluateShapeStack(impl->shapeStackNodes_, impl->shapeContents_,
+                                      activeOperators);
+    for (auto& item : contentItems) {
+     item.strokePaths.clear();
+     item.strokePaths.reserve(item.fillPaths.size());
+     for (const auto& path : item.fillPaths) {
+      item.strokePaths.push_back(
+          strokeAlignedPath(path, item.stroke.align, item.stroke.width));
+     }
+    }
+   } else {
+    contentItems.reserve(impl->shapeContents_.size());
+    for (size_t ci = 0; ci < impl->shapeContents_.size(); ++ci) {
     const auto& content = impl->shapeContents_[ci];
     if (!content.visible || content.opacity <= 0.0f) {
      continue;
@@ -3572,6 +4028,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     item.gradientH = static_cast<float>(std::max(1, content.geometry.height));
     item.itemOpacity = content.opacity;
     contentItems.push_back(std::move(item));
+   }
    }
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
@@ -4207,6 +4664,24 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
       mergeProp->setDisplayLabel(QStringLiteral("Merge"));
       mergeProp->setTooltip(QStringLiteral("0=Add, 1=Subtract, 2=Intersect, 3=Difference"));
       contentsGroup.addProperty(mergeProp);
+      auto addTransform = [&](const QString& field, double value, const QString& label,
+                              double min, double max) {
+        auto prop = makeProp(prefix + QStringLiteral("transform.") + field,
+                             ArtifactCore::PropertyType::Float, value, -176);
+        prop->setSoftRange(min, max);
+        prop->setHardRange(min, max);
+        prop->setDisplayLabel(label);
+        contentsGroup.addProperty(prop);
+      };
+      addTransform(QStringLiteral("anchorX"), content.transform.anchor.x(), QStringLiteral("Anchor X"), -16384.0, 16384.0);
+      addTransform(QStringLiteral("anchorY"), content.transform.anchor.y(), QStringLiteral("Anchor Y"), -16384.0, 16384.0);
+      addTransform(QStringLiteral("positionX"), content.transform.position.x(), QStringLiteral("Position X"), -16384.0, 16384.0);
+      addTransform(QStringLiteral("positionY"), content.transform.position.y(), QStringLiteral("Position Y"), -16384.0, 16384.0);
+      addTransform(QStringLiteral("scaleX"), content.transform.scale.x(), QStringLiteral("Scale X"), -100.0, 100.0);
+      addTransform(QStringLiteral("scaleY"), content.transform.scale.y(), QStringLiteral("Scale Y"), -100.0, 100.0);
+      addTransform(QStringLiteral("rotation"), content.transform.rotation, QStringLiteral("Rotation"), -36000.0, 36000.0);
+      addTransform(QStringLiteral("skew"), content.transform.skew, QStringLiteral("Skew"), -89.0, 89.0);
+      addTransform(QStringLiteral("skewAxis"), content.transform.skewAxis, QStringLiteral("Skew Axis"), -36000.0, 36000.0);
       auto fillEnabledProp = makeProp(
           prefix + QStringLiteral("fillEnabled"),
           ArtifactCore::PropertyType::Boolean, content.fill.enabled, -185);
@@ -4253,6 +4728,46 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
       contentsGroup.addProperty(contentDashOffsetProp);
     }
     groups.push_back(contentsGroup);
+  }
+
+  // The ordered stack is the authoritative evaluation order when present.
+  // Keep it on the Shape surface (rather than the generic Components UI): it
+  // controls vector construction, not a layer component.
+  if (!impl_->shapeStackNodes_.empty()) {
+    ArtifactCore::PropertyGroup stackGroup;
+    stackGroup.setName("Shape Stack");
+    auto stackCount = makeProp(QStringLiteral("shape.stack.count"),
+                               ArtifactCore::PropertyType::Integer,
+                               static_cast<int>(impl_->shapeStackNodes_.size()),
+                               -175, false);
+    stackCount->setDisplayLabel(QStringLiteral("Node Count"));
+    stackGroup.addProperty(stackCount);
+    for (size_t index = 0; index < impl_->shapeStackNodes_.size(); ++index) {
+      const auto& node = impl_->shapeStackNodes_[index];
+      const QString prefix = QStringLiteral("shape.stack.%1.").arg(index);
+      auto enabled = makeProp(prefix + QStringLiteral("enabled"),
+                              ArtifactCore::PropertyType::Boolean, node.enabled,
+                              -174);
+      enabled->setDisplayLabel(QStringLiteral("%1 Enabled").arg(index + 1));
+      stackGroup.addProperty(enabled);
+      auto type = makeProp(prefix + QStringLiteral("type"),
+                           ArtifactCore::PropertyType::Integer,
+                           static_cast<int>(node.type), -173, false);
+      type->setDisplayLabel(QStringLiteral("%1 Type").arg(index + 1));
+      type->setHardRange(0, 3);
+      type->setTooltip(QStringLiteral("0=Path, 1=Fill, 2=Stroke, 3=Operator"));
+      stackGroup.addProperty(type);
+      const bool operatorNode = node.type == Artifact::ShapeStackNodeType::Operator;
+      auto target = makeProp(prefix + QStringLiteral("targetIndex"),
+                             ArtifactCore::PropertyType::Integer,
+                             operatorNode ? node.operatorIndex : node.contentIndex,
+                             -172, false);
+      target->setDisplayLabel(QStringLiteral("%1 Target").arg(index + 1));
+      target->setTooltip(operatorNode ? QStringLiteral("Operator index")
+                                      : QStringLiteral("Content index"));
+      stackGroup.addProperty(target);
+    }
+    groups.push_back(stackGroup);
   }
 
   // Shape Operators
@@ -4370,6 +4885,30 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
                                    wp->frequency(), -99);
      frequencyProp->setHardRange(0.0, 10000.0);
      opGroup.addProperty(frequencyProp);
+     auto phaseProp = makeProp(prefix + QStringLiteral("temporalPhase"),
+                               ArtifactCore::PropertyType::Float,
+                               wp->temporalPhase(), -98);
+     phaseProp->setHardRange(-100000.0, 100000.0);
+     phaseProp->setDisplayLabel(QStringLiteral("Temporal Phase"));
+     opGroup.addProperty(phaseProp);
+     auto detailProp = makeProp(prefix + QStringLiteral("detail"),
+                                ArtifactCore::PropertyType::Integer,
+                                wp->detail(), -97, false);
+     detailProp->setHardRange(1, 64);
+     detailProp->setDisplayLabel(QStringLiteral("Detail"));
+     opGroup.addProperty(detailProp);
+     auto correlationProp = makeProp(prefix + QStringLiteral("correlation"),
+                                     ArtifactCore::PropertyType::Float,
+                                     wp->correlation(), -96);
+     correlationProp->setHardRange(0.0, 1.0);
+     correlationProp->setDisplayLabel(QStringLiteral("Correlation"));
+     opGroup.addProperty(correlationProp);
+     auto smoothProp = makeProp(prefix + QStringLiteral("smooth"),
+                                ArtifactCore::PropertyType::Boolean,
+                                wp->smooth(), -95);
+     smoothProp->setDisplayLabel(QStringLiteral("Smooth"));
+     smoothProp->setTooltip(QStringLiteral("Off uses Corner-style peaks."));
+     opGroup.addProperty(smoothProp);
    } else if (auto zz = dynamic_cast<const ArtifactCore::ZigZag *>(op.get())) {
      auto amountProp = makeProp(prefix + QStringLiteral("amount"),
                                 ArtifactCore::PropertyType::Float,
@@ -4567,6 +5106,64 @@ if (propertyPath == "shape.dashOffset") {
    if (propertyPath == "shape.activeContentIndex") {
     setActiveContentIndex(value.toInt());
     return true;
+   }
+   if (propertyPath.startsWith("shape.content.")) {
+    const QStringList parts = propertyPath.split('.');
+    if (parts.size() == 5 && parts[3] == "transform") {
+      bool ok = false;
+      const int index = parts[2].toInt(&ok);
+      if (ok && index >= 0 && index < shapeContentCount()) {
+        auto content = shapeContentAt(index);
+        const double v = value.toDouble();
+        const QString& field = parts[4];
+        if (field == "anchorX") content.transform.anchor.setX(v);
+        else if (field == "anchorY") content.transform.anchor.setY(v);
+        else if (field == "positionX") content.transform.position.setX(v);
+        else if (field == "positionY") content.transform.position.setY(v);
+        else if (field == "scaleX") content.transform.scale.setX(v);
+        else if (field == "scaleY") content.transform.scale.setY(v);
+        else if (field == "rotation") content.transform.rotation = v;
+        else if (field == "skew") content.transform.skew = v;
+        else if (field == "skewAxis") content.transform.skewAxis = v;
+        else return false;
+        return setShapeContentAt(index, content);
+      }
+    }
+   }
+
+   if (propertyPath.startsWith("shape.stack.")) {
+    const QStringList parts = propertyPath.split('.');
+    if (parts.size() == 4) {
+      bool ok = false;
+      const int stackIndex = parts[2].toInt(&ok);
+      if (ok && stackIndex >= 0 &&
+          stackIndex < static_cast<int>(impl_->shapeStackNodes_.size())) {
+        auto node = impl_->shapeStackNodes_[static_cast<size_t>(stackIndex)];
+        const QString field = parts[3];
+        if (field == "enabled") {
+          node.enabled = value.toBool();
+        } else if (field == "type") {
+          node.type = static_cast<Artifact::ShapeStackNodeType>(
+              std::clamp(value.toInt(), 0, 3));
+          if (node.type == Artifact::ShapeStackNodeType::Operator) {
+            node.contentIndex = -1;
+            if (node.operatorIndex < 0) node.operatorIndex = 0;
+          } else {
+            node.operatorIndex = -1;
+            if (node.contentIndex < 0) node.contentIndex = 0;
+          }
+        } else if (field == "targetIndex") {
+          if (node.type == Artifact::ShapeStackNodeType::Operator) {
+            node.operatorIndex = value.toInt();
+          } else {
+            node.contentIndex = value.toInt();
+          }
+        } else {
+          return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
+        }
+        return setShapeStackNodeAt(stackIndex, node);
+      }
+    }
    }
 
    if (propertyPath.startsWith("shape.content.")) {
@@ -4786,6 +5383,18 @@ if (propertyPath == "shape.dashOffset") {
          } else if (field == "frequency") {
            wp->setFrequency(safeOperatorValue(value, 1.0f, 0.0f, 10000.0f));
            handled = true;
+         } else if (field == "temporalPhase") {
+           wp->setTemporalPhase(safeOperatorValue(value, 0.0f, -100000.0f, 100000.0f));
+           handled = true;
+         } else if (field == "detail") {
+           wp->setDetail(std::clamp(value.toInt(), 1, 64));
+           handled = true;
+         } else if (field == "correlation") {
+           wp->setCorrelation(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
+           handled = true;
+         } else if (field == "smooth") {
+           wp->setSmooth(value.toBool());
+           handled = true;
          }
        } else if (auto zz = dynamic_cast<ArtifactCore::ZigZag *>(op.get())) {
          const auto safeOperatorValue = [](const QVariant &input, const float fallback,
@@ -4851,6 +5460,17 @@ static QJsonObject shapeContentToJson(const Artifact::ShapeContent& content) {
   obj["visible"] = content.visible;
   obj["opacity"] = static_cast<double>(content.opacity);
   obj["merge"] = static_cast<int>(content.merge);
+  QJsonObject transform;
+  transform["anchorX"] = content.transform.anchor.x();
+  transform["anchorY"] = content.transform.anchor.y();
+  transform["positionX"] = content.transform.position.x();
+  transform["positionY"] = content.transform.position.y();
+  transform["scaleX"] = content.transform.scale.x();
+  transform["scaleY"] = content.transform.scale.y();
+  transform["rotation"] = content.transform.rotation;
+  transform["skew"] = content.transform.skew;
+  transform["skewAxis"] = content.transform.skewAxis;
+  obj["transform"] = transform;
   QJsonObject geom;
   geom["type"] = static_cast<int>(content.geometry.type);
   geom["width"] = content.geometry.width;
@@ -4935,6 +5555,16 @@ static Artifact::ShapeContent shapeContentFromJson(const QJsonObject& obj) {
   content.opacity = static_cast<float>(obj["opacity"].toDouble(1.0));
   content.merge = static_cast<Artifact::ShapeContentMerge>(
       std::clamp(obj["merge"].toInt(0), 0, 3));
+  const QJsonObject transform = obj["transform"].toObject();
+  content.transform.anchor = QPointF(transform["anchorX"].toDouble(0.0),
+                                      transform["anchorY"].toDouble(0.0));
+  content.transform.position = QPointF(transform["positionX"].toDouble(0.0),
+                                        transform["positionY"].toDouble(0.0));
+  content.transform.scale = QPointF(transform["scaleX"].toDouble(1.0),
+                                     transform["scaleY"].toDouble(1.0));
+  content.transform.rotation = transform["rotation"].toDouble(0.0);
+  content.transform.skew = transform["skew"].toDouble(0.0);
+  content.transform.skewAxis = transform["skewAxis"].toDouble(0.0);
   const QJsonObject geom = obj["geometry"].toObject();
   content.geometry.type = static_cast<Artifact::ShapeType>(
       std::clamp(geom["type"].toInt(0), 0, 6));
@@ -5013,6 +5643,25 @@ static Artifact::ShapeContent shapeContentFromJson(const QJsonObject& obj) {
       static_cast<float>(stroke["gradEndB"].toDouble(0.0)),
       static_cast<float>(stroke["gradEndA"].toDouble(1.0)));
   return normalizedShapeContent(content);
+}
+
+static QJsonObject shapeStackNodeToJson(const Artifact::ShapeStackNode& node) {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(node.type);
+  obj["contentIndex"] = node.contentIndex;
+  obj["operatorIndex"] = node.operatorIndex;
+  obj["enabled"] = node.enabled;
+  return obj;
+}
+
+static Artifact::ShapeStackNode shapeStackNodeFromJson(const QJsonObject& obj) {
+  Artifact::ShapeStackNode node;
+  node.type = static_cast<Artifact::ShapeStackNodeType>(
+      std::clamp(obj["type"].toInt(0), 0, 3));
+  node.contentIndex = obj["contentIndex"].toInt(-1);
+  node.operatorIndex = obj["operatorIndex"].toInt(-1);
+  node.enabled = obj["enabled"].toBool(true);
+  return node;
 }
 
 // ---- SVG interop (gap 8) ----
@@ -5133,12 +5782,27 @@ QString ArtifactShapeLayer::shapeContentsToSvg() const {
   std::vector<ExportItem> items;
   if (impl_) {
     if (!impl_->shapeContents_.empty()) {
-      ensureContentVisPaths();
-      for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
-        const auto& content = impl_->shapeContents_[ci];
-        if (!content.visible || content.opacity <= 0.0f) {
-          continue;
+      if (!impl_->shapeStackNodes_.empty()) {
+        const auto paintItems = evaluateShapeStack(
+            impl_->shapeStackNodes_, impl_->shapeContents_, impl_->shapeOperators_);
+        for (const auto& paintItem : paintItems) {
+          ExportItem item;
+          item.content.visible = true;
+          item.content.opacity = paintItem.itemOpacity;
+          item.content.fill = paintItem.fill;
+          item.content.stroke = paintItem.stroke;
+          item.content.geometry.width = std::max(1, static_cast<int>(paintItem.gradientW));
+          item.content.geometry.height = std::max(1, static_cast<int>(paintItem.gradientH));
+          item.paths = paintItem.fill.enabled ? paintItem.fillPaths : paintItem.strokePaths;
+          if (!item.paths.empty()) items.push_back(std::move(item));
         }
+      } else {
+        ensureContentVisPaths();
+        for (size_t ci = 0; ci < impl_->shapeContents_.size(); ++ci) {
+          const auto& content = impl_->shapeContents_[ci];
+          if (!content.visible || content.opacity <= 0.0f) {
+            continue;
+          }
         ExportItem item;
         item.content = content;
         if (ci < impl_->contentCache_.visPaths.size()) {
@@ -5147,6 +5811,7 @@ QString ArtifactShapeLayer::shapeContentsToSvg() const {
         if (!item.paths.empty()) {
           items.push_back(std::move(item));
         }
+      }
       }
     } else {
       ExportItem item;
@@ -6587,6 +7252,11 @@ QJsonObject ArtifactShapeLayer::toJson() const {
      contents.push_back(shapeContentToJson(content));
    }
 obj["shapeContents"] = contents;
+   QJsonArray stackNodes;
+   for (const auto& node : impl_->shapeStackNodes_) {
+     stackNodes.push_back(shapeStackNodeToJson(node));
+   }
+   obj["shapeStackNodes"] = stackNodes;
     obj["activeContentIndex"] = impl_->activeContentIndex_;
     return obj;
   }
@@ -6727,6 +7397,19 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
 for (int contentIndex = 0; contentIndex < contentCount; ++contentIndex) {
     layer->impl_->shapeContents_.push_back(
         shapeContentFromJson(contentsArr.at(contentIndex).toObject()));
+  }
+  const QJsonArray stackNodesArr = obj["shapeStackNodes"].toArray();
+  layer->impl_->shapeStackNodes_.clear();
+  const int stackNodeCount = std::min(static_cast<int>(stackNodesArr.size()), 1024);
+  layer->impl_->shapeStackNodes_.reserve(stackNodeCount);
+  for (int stackNodeIndex = 0; stackNodeIndex < stackNodeCount; ++stackNodeIndex) {
+    const auto node = shapeStackNodeFromJson(
+        stackNodesArr.at(stackNodeIndex).toObject());
+    if (isValidShapeStackNode(node,
+                              static_cast<int>(layer->impl_->shapeContents_.size()),
+                              static_cast<int>(layer->impl_->shapeOperators_.size()))) {
+      layer->impl_->shapeStackNodes_.push_back(node);
+    }
   }
   layer->impl_->activeContentIndex_ =
       obj.contains("activeContentIndex") ? obj["activeContentIndex"].toInt(-1)

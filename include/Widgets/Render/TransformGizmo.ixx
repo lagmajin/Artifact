@@ -52,7 +52,8 @@ export namespace Artifact {
    Translation = Move,
    Rotation = Rotate,
    AnchorPoint,
-   None
+   None,
+   Full // Dedicated universal 3D manipulator; separate from Selection/All.
   };
 
   enum class HandleType {

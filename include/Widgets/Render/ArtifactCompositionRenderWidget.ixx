@@ -14,6 +14,11 @@ import Artifact.Render.IRenderer;
 
 export namespace Artifact {
 
+ enum class CompositionViewportLayout {
+  Single,
+  Quad
+ };
+
  class ArtifactCompositionRenderWidget : public QWidget {
   W_OBJECT(ArtifactCompositionRenderWidget)
  private:
@@ -45,6 +50,8 @@ export namespace Artifact {
 
   void setComposition(ArtifactCompositionPtr composition);
   void setClearColor(const FloatColor& color);
+  void setViewportLayout(CompositionViewportLayout layout);
+  CompositionViewportLayout viewportLayout() const;
   
   void play();
   void stop();

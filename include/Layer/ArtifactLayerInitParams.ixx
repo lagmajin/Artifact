@@ -95,6 +95,10 @@ export namespace Artifact {
   void setWidth(int width);
   int height() const;
   void setHeight(int height);
+  double pixelAspectRatio() const;
+  void setPixelAspectRatio(double ratio);
+  QString sourceItemId() const;
+  void setSourceItemId(const QString& id);
   FloatColor color() const;
   void setColor(const FloatColor& color);
   ArtifactSolidFillType fillType() const;

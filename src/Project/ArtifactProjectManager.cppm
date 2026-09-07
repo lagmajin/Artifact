@@ -16,6 +16,8 @@ module;
 #include <QCoreApplication>
 #include <QtConcurrent>
 #include <QFutureWatcher>
+#include <QElapsedTimer>
+#include "Diagnostics/WidgetCreationDiagnostics.hpp"
 
 #include <QTextStream>
 #include <wobjectimpl.h>
@@ -539,24 +541,38 @@ void ArtifactProjectManager::createProject()
 
 void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
 {
+ QElapsedTimer phaseTimer;
+ phaseTimer.start();
  qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
 
  ++impl_->projectOperationGeneration_;
 
  impl_->createProject(projectName, force);
+ const double modelMs = phaseTimer.nsecsElapsed() / 1000000.0;
 
  if (!impl_->currentProjectPtr_) {
    qDebug() << "createProject: failed to create currentProjectPtr_";
  }
 
-  publishProjectCreatedEvent(impl_->projectDisplayName_);
+ phaseTimer.restart();
+ publishProjectCreatedEvent(impl_->projectDisplayName_);
+ const double subscribersMs = phaseTimer.nsecsElapsed() / 1000000.0;
 
+ phaseTimer.restart();
  if (impl_->currentProjectPtr_) {
   auto report = ArtifactProjectHealthChecker::check(impl_->currentProjectPtr_.get());
   if (!report.isHealthy) {
    qWarning() << "[createProject] health issues detected:" << report.issues.size();
   }
  }
+ const double healthMs = phaseTimer.nsecsElapsed() / 1000000.0;
+ WidgetCreationDiagnostics::recordPhase(
+     QStringLiteral("Project Create Breakdown"),
+     QStringLiteral("composition-lifecycle"), QStringLiteral("project-create-phases"),
+     modelMs + subscribersMs + healthMs,
+     QStringLiteral("modelAndFoldersMs=%1 projectCreatedSubscribersMs=%2 healthMs=%3")
+         .arg(modelMs, 0, 'f', 2).arg(subscribersMs, 0, 'f', 2)
+         .arg(healthMs, 0, 'f', 2));
 }
 
 // Call this to prevent project-created default composition creation in the
@@ -887,6 +903,87 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
    runProjectHookScript(QStringLiteral("on_project_save_failed"), normalizedPath);
   }
   return result;
+}
+
+ArtifactProjectExporterResult ArtifactProjectManager::saveNumberedCopy()
+{
+  ArtifactProjectExporterResult result;
+  result.success = false;
+  if (!impl_ || !impl_->currentProjectPtr_ ||
+      impl_->currentProjectPath_.trimmed().isEmpty()) {
+    result.errorMessage = QStringLiteral("No active project is available for numbered save.");
+    return result;
+  }
+
+  const QString sourcePath = QDir::cleanPath(
+      QFileInfo(impl_->currentProjectPath_).absoluteFilePath());
+  const QFileInfo sourceInfo(sourcePath);
+  const QString suffix = sourceInfo.completeSuffix();
+  const QString baseName = sourceInfo.completeBaseName();
+  const QString directory = sourceInfo.absolutePath();
+  QString destination;
+  for (int index = 1; index < 100000; ++index) {
+    const QString candidateName = suffix.isEmpty()
+        ? QStringLiteral("%1_%2").arg(baseName).arg(index)
+        : QStringLiteral("%1_%2.%3").arg(baseName).arg(index).arg(suffix);
+    const QString candidate = QDir(directory).filePath(candidateName);
+    if (!QFile::exists(candidate)) {
+      destination = candidate;
+      break;
+    }
+  }
+  if (destination.isEmpty()) {
+    result.errorMessage = QStringLiteral("Unable to allocate a numbered project filename.");
+    return result;
+  }
+
+  const bool wasDirty = impl_->currentProjectPtr_->isDirty();
+  const QString previousPath = impl_->currentProjectPath_;
+  result = saveToFile(destination);
+  impl_->currentProjectPath_ = previousPath;
+  impl_->currentProjectPtr_->setDirty(wasDirty);
+  return result;
+}
+
+QStringList ArtifactProjectManager::backupProjectPaths() const
+{
+  QStringList paths;
+  if (!impl_ || impl_->currentProjectPath_.trimmed().isEmpty()) return paths;
+  const QFileInfo info(impl_->currentProjectPath_);
+  for (int generation = 1; generation <= kBackupGenerationCount; ++generation) {
+    const QString path = info.absolutePath() + QLatin1Char('/') + info.fileName() +
+                         QStringLiteral(".bak~%1").arg(generation);
+    if (QFile::exists(path)) paths.append(path);
+  }
+  return paths;
+}
+
+bool ArtifactProjectManager::restoreBackup(int generation)
+{
+  if (!impl_ || generation < 1 || generation > kBackupGenerationCount ||
+      impl_->currentProjectPath_.trimmed().isEmpty()) return false;
+  const QFileInfo info(impl_->currentProjectPath_);
+  const QString backupPath = info.absolutePath() + QLatin1Char('/') + info.fileName() +
+                             QStringLiteral(".bak~%1").arg(generation);
+  if (!QFile::exists(backupPath)) return false;
+
+  const QString stagedPath = info.absoluteFilePath() + QStringLiteral(".restore.tmp");
+  if (QFile::exists(stagedPath)) QFile::remove(stagedPath);
+  if (!QFile::copy(backupPath, stagedPath)) return false;
+
+  // Preserve the current file as a new backup before replacing it.
+  if (QFile::exists(info.absoluteFilePath()) && !createBackupFile(info.absoluteFilePath())) {
+    QFile::remove(stagedPath);
+    return false;
+  }
+  const QString restorePath = info.absoluteFilePath();
+  if (QFile::exists(restorePath) && !QFile::remove(restorePath)) {
+    QFile::remove(stagedPath);
+    return false;
+  }
+  const bool copied = QFile::copy(stagedPath, restorePath);
+  QFile::remove(stagedPath);
+  return copied && loadFromFile(restorePath);
 }
 
 ArtifactProjectExporterResult ArtifactProjectManager::saveIncremental(const QString& fullpath)

@@ -58,6 +58,7 @@ import Artifact.Project.PresetManager;
 import Color.Float;
 import Analyze.SmartPalette;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 
 namespace Artifact {
 
@@ -203,6 +204,7 @@ void ArtifactColorPaletteWidget::onGenerateHarmonicPalette() {
     ArtifactWidgets::FloatColorPicker picker(this);
     picker.setColor(initial);
     picker.setInitialColor(initial);
+    Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Creation);
     if (picker.exec() != QDialog::Accepted) {
         return;
     }

@@ -49,6 +49,7 @@ import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
+import Artifact.Layers.SolidImage;
 import Artifact.Layer.Group;
 import Artifact.Project.Health;
 import Asset.Sequence;
@@ -2031,6 +2032,7 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer,
     bool placeAtCurrentFrame, bool startHidden) {
   auto &manager = ArtifactProjectService::Impl::projectManager();
+  QString solidSourceItemId;
 
   // 連番シーケンス素材として登録済みの画像パスは、レイヤー生成前に
   // シーケンス情報を InitParams へ引き継ぐ。ここで一元的に注入することで
@@ -2173,6 +2175,10 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         const_cast<ArtifactLayerInitParams &>(*effectiveParams));
   }
   if (result.success && result.layer) {
+    if (auto* solidLayer = dynamic_cast<ArtifactSolidImageLayer*>(result.layer.get())) {
+      solidSourceItemId = ArtifactCore::Id().toString();
+      solidLayer->setSourceItemId(solidSourceItemId);
+    }
     if (startHidden) {
       result.layer->setVisible(false);
     }
@@ -2291,6 +2297,21 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
                   finalIndex, 0, std::max(0, appendIndex));
               auto macro = std::make_unique<MacroUndoCommand>(
                   QStringLiteral("Create Layer"));
+              if (!solidSourceItemId.isEmpty()) {
+                QJsonObject item;
+                item[QStringLiteral("id")] = solidSourceItemId;
+                item[QStringLiteral("type")] = QStringLiteral("solid");
+                item[QStringLiteral("name")] = params.name().toQString();
+                item[QStringLiteral("color")] = result.layer->toJson().value(
+                    QStringLiteral("solidColor")).toObject();
+                const auto solidJson = result.layer->toJson();
+                item[QStringLiteral("width")] = solidJson.value(QStringLiteral("solidWidth"));
+                item[QStringLiteral("height")] = solidJson.value(QStringLiteral("solidHeight"));
+                item[QStringLiteral("pixelAspectRatio")] = solidJson.value(
+                    QStringLiteral("solidPixelAspectRatio"));
+                macro->addChild(std::make_unique<AddProjectItemsCommand>(
+                    QJsonArray{item}));
+              }
               macro->addChild(std::make_unique<AddLayerCommand>(
                   comp, result.layer, true));
               if (appendIndex != finalIndex) {

@@ -1,6 +1,8 @@
 module;
 #include <utility>
 #include <QDebug>
+#include <QElapsedTimer>
+#include "Diagnostics/WidgetCreationDiagnostics.hpp"
 #include <QFileDialog>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
@@ -549,6 +551,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
       if (!colorStr.isEmpty()) {
         solidUp->color = QColor(colorStr);
       }
+      solidUp->width = std::clamp(obj.value(QStringLiteral("width")).toInt(1920), 1, 16384);
+      solidUp->height = std::clamp(obj.value(QStringLiteral("height")).toInt(1080), 1, 16384);
+      solidUp->pixelAspectRatio = std::clamp(obj.value(QStringLiteral("pixelAspectRatio")).toDouble(1.0), 0.01, 100.0);
       return appendChild(std::move(solidUp));
     }
 
@@ -912,6 +917,9 @@ QJsonArray compsArray;
        obj["type"] = "solid";
        const auto* solid = static_cast<const SolidItem*>(item);
        obj["color"] = solid->color.name(QColor::HexArgb);
+       obj["width"] = std::clamp(solid->width, 1, 16384);
+       obj["height"] = std::clamp(solid->height, 1, 16384);
+       obj["pixelAspectRatio"] = std::clamp(solid->pixelAspectRatio, 0.01, 100.0);
        break;
       }
       case eProjectItemType::Composition: {
@@ -1194,6 +1202,25 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
 
  CreateCompositionResult ArtifactProject::createComposition(const ArtifactCompositionInitParams& param)
  {
+ QElapsedTimer totalTimer;
+ totalTimer.start();
+ double modelMs = 0.0;
+ double createdSubscribersMs = 0.0;
+ const auto publishCreationChanged = [&]() {
+   QElapsedTimer timer;
+   timer.start();
+   publishProjectChangedEvent();
+   const double changedMs = timer.nsecsElapsed() / 1000000.0;
+   const double totalMs = totalTimer.nsecsElapsed() / 1000000.0;
+   WidgetCreationDiagnostics::recordPhase(
+       QStringLiteral("Composition Model Breakdown"),
+       QStringLiteral("composition-lifecycle"), QStringLiteral("composition-model-phases"),
+       totalMs,
+       QStringLiteral("modelMs=%1 compositionCreatedSubscribersMs=%2 projectChangedSubscribersMs=%3 otherMs=%4")
+           .arg(modelMs, 0, 'f', 2).arg(createdSubscribersMs, 0, 'f', 2)
+           .arg(changedMs, 0, 'f', 2)
+           .arg(totalMs - modelMs - createdSubscribersMs - changedMs, 0, 'f', 2));
+ };
  // If a name was provided and a default/unamed composition already exists,
  // prefer renaming that existing composition instead of creating a new one.
  QString requestedName = param.compositionName().toQString();
@@ -1212,7 +1239,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
            CreateCompositionResult result;
            result.success = true;
            result.id = ci->compositionId;
-          publishProjectChangedEvent();
+          publishCreationChanged();
            return result;
          }
        }
@@ -1220,7 +1247,10 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
    }
  }
 
+ QElapsedTimer phaseTimer;
+ phaseTimer.start();
  auto res = impl_->createComposition(param);
+ modelMs = phaseTimer.nsecsElapsed() / 1000000.0;
  if (res.success) {
   // avoid adding duplicate project items for the same composition id
   for (const auto& up : impl_->ownedItems_) {
@@ -1230,7 +1260,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
       if (existing->compositionId == res.id) {
         // already have an item for this composition
         qDebug() << "Composition item for ID already exists, skipping add:" << res.id.toString();
-        publishProjectChangedEvent();
+        publishCreationChanged();
         return res;
       }
     }
@@ -1258,12 +1288,14 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
      projectRoot->children.append(raw);
    }
    impl_->ownedItems_.push_back(std::move(compItemUp));
+  phaseTimer.restart();
   publishCompositionCreatedEvent(res.id);
+  createdSubscribersMs = phaseTimer.nsecsElapsed() / 1000000.0;
   // log using captured name (compItemUp is null after move)
   QString idStr = res.id.toString();
   qDebug() << "Composition created:" << capturedName << "(ID:" << idStr << ")";
  }
-  publishProjectChangedEvent();
+  publishCreationChanged();
  return res;
  }
 
@@ -1995,6 +2027,9 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
       if (!colorStr.isEmpty()) {
         solidUp->color = QColor(colorStr);
       }
+      solidUp->width = std::clamp(obj.value(QStringLiteral("width")).toInt(1920), 1, 16384);
+      solidUp->height = std::clamp(obj.value(QStringLiteral("height")).toInt(1080), 1, 16384);
+      solidUp->pixelAspectRatio = std::clamp(obj.value(QStringLiteral("pixelAspectRatio")).toDouble(1.0), 0.01, 100.0);
       solidUp->parent = parent;
       parent->children.append(solidUp.get());
       impl_->ownedItems_.push_back(std::move(solidUp));

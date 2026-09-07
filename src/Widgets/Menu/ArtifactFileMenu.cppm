@@ -208,6 +208,8 @@ public:
     QAction* openProjectAction = nullptr;
     QAction* saveProjectAction = nullptr;
     QAction* saveProjectAsAction = nullptr;
+    QAction* saveNumberedCopyAction = nullptr;
+    QAction* restoreLatestBackupAction = nullptr;
     QAction* closeProjectAction = nullptr;
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
@@ -220,6 +222,7 @@ public:
     QAction* exportCurrentFrameAction = nullptr;
     QAction* exportWorkAreaAction = nullptr;
     QAction* exportProjectPackageAction = nullptr;
+    QAction* exportExternalManifestAction = nullptr;
     QAction* exportCompositionAction = nullptr;
     QAction* exportOtioAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
@@ -231,6 +234,8 @@ public:
     void handleOpenProject();
     void handleSaveProject();
     void handleSaveProjectAs();
+    void handleSaveNumberedCopy();
+    void handleRestoreLatestBackup();
     void handleNewComposition();
     void handleImportAssets();
     void handleImportOtio();
@@ -238,6 +243,7 @@ public:
     void handleExportCurrentFrame();
     void handleExportWorkArea();
     void handleExportProjectPackage();
+    void handleExportExternalManifest();
     void handleExportComposition();
     void handleExportOtio();
     void handleExportFontUsage();
@@ -263,6 +269,10 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     saveProjectAsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_save_project_as.svg")));
 
+    saveNumberedCopyAction = new QAction(QStringLiteral("番号をつけて保存(&V)"), menu_);
+    saveNumberedCopyAction->setToolTip(QStringLiteral("現在のプロジェクトを番号付きコピーとして保存します。現在のプロジェクトは切り替わりません。"));
+    restoreLatestBackupAction = new QAction(QStringLiteral("最新バックアップから復元"), menu_);
+
     closeProjectAction = new QAction(menuText(QStringLiteral("menu.file.close_project"), QStringLiteral("プロジェクトを閉じる")));
     closeProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_close_project.svg")));
 
@@ -285,6 +295,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     exportCurrentFrameAction = new QAction(QStringLiteral("現在のフレームを書き出す..."), menu);
     exportWorkAreaAction = new QAction(QStringLiteral("ワークエリアを書き出す..."), menu);
     exportProjectPackageAction = new QAction(QStringLiteral("プロジェクトをパッケージ化..."), menu);
+    exportExternalManifestAction = new QAction(QStringLiteral("外部ファイル依存マニフェストを書き出す..."), menu);
 
     restartAction = new QAction(menuText(QStringLiteral("menu.file.restart"), QStringLiteral("再起動")));
     restartAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_restart.svg")));
@@ -298,6 +309,8 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addSeparator();
     menu->addAction(saveProjectAction);
     menu->addAction(saveProjectAsAction);
+    menu->addAction(saveNumberedCopyAction);
+    menu->addAction(restoreLatestBackupAction);
     menu->addSeparator();
     menu->addAction(newCompositionAction);
     menu->addAction(importAssetsAction);
@@ -314,6 +327,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     exportMenu->addAction(exportWorkAreaAction);
     exportMenu->addSeparator();
     exportMenu->addAction(exportProjectPackageAction);
+    exportMenu->addAction(exportExternalManifestAction);
     recentProjectsMenu = menu->addMenu(menuText(QStringLiteral("menu.file.recent_projects"), QStringLiteral("最近使ったプロジェクト")));
     recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
     menu->addSeparator();
@@ -324,6 +338,8 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     QObject::connect(openProjectAction, &QAction::triggered, menu, [this]() { handleOpenProject(); });
     QObject::connect(saveProjectAction, &QAction::triggered, menu, [this]() { handleSaveProject(); });
     QObject::connect(saveProjectAsAction, &QAction::triggered, menu, [this]() { handleSaveProjectAs(); });
+    QObject::connect(saveNumberedCopyAction, &QAction::triggered, menu, [this]() { handleSaveNumberedCopy(); });
+    QObject::connect(restoreLatestBackupAction, &QAction::triggered, menu, [this]() { handleRestoreLatestBackup(); });
     QObject::connect(newCompositionAction, &QAction::triggered, menu, [this]() { handleNewComposition(); });
     QObject::connect(importAssetsAction, &QAction::triggered, menu, [this]() { handleImportAssets(); });
     QObject::connect(importOtioAction, &QAction::triggered, menu, [this]() { handleImportOtio(); });
@@ -340,6 +356,8 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
                      [this]() { handleExportWorkArea(); });
     QObject::connect(exportProjectPackageAction, &QAction::triggered, menu,
                      [this]() { handleExportProjectPackage(); });
+    QObject::connect(exportExternalManifestAction, &QAction::triggered, menu,
+                     [this]() { handleExportExternalManifest(); });
     QObject::connect(closeProjectAction, &QAction::triggered, menu, &ArtifactFileMenu::projectClosed);
     QObject::connect(restartAction, &QAction::triggered, menu, &ArtifactFileMenu::restartApplication);
     QObject::connect(quitAction, &QAction::triggered, menu, &ArtifactFileMenu::quitApplication);
@@ -354,6 +372,7 @@ void ArtifactFileMenu::Impl::handleCreateProject()
 
     const QStringList starterChoices = {
         QStringLiteral("Blank Project"),
+        QStringLiteral("標準テンプレート（プロジェクト設定）"),
         QStringLiteral("Starter: Full HD Composition"),
         QStringLiteral("Starter: Vertical Ad Composition"),
         QStringLiteral("Starter: Square Social Composition")
@@ -389,15 +408,22 @@ void ArtifactFileMenu::Impl::handleCreateProject()
         return;
     }
 
+    if (starterChoice == starterChoices.at(1)) {
+        // ArtifactProjectManager resolves project defaults, last-used defaults,
+        // and global defaults in the same order used by normal composition creation.
+        manager.createComposition();
+        return;
+    }
+
     ArtifactCompositionInitParams starterParams = ArtifactCompositionInitParams::hdPreset();
     QString compName = QStringLiteral("Main");
-    if (starterChoice == starterChoices.at(1)) {
+    if (starterChoice == starterChoices.at(2)) {
         starterParams = ArtifactCompositionInitParams::hdPreset();
         compName = QStringLiteral("Main");
-    } else if (starterChoice == starterChoices.at(2)) {
+    } else if (starterChoice == starterChoices.at(3)) {
         starterParams = ArtifactCompositionInitParams::verticalPreset();
         compName = QStringLiteral("Vertical Ad");
-    } else if (starterChoice == starterChoices.at(3)) {
+    } else if (starterChoice == starterChoices.at(4)) {
         starterParams = ArtifactCompositionInitParams::squarePreset();
         compName = QStringLiteral("Square Social");
     }
@@ -463,6 +489,56 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
                                          .arg(result.errorMessage));
             }
         });
+}
+
+void ArtifactFileMenu::Impl::handleSaveNumberedCopy()
+{
+    if (!menu_) return;
+    const auto result = ArtifactProjectManager::getInstance().saveNumberedCopy();
+    if (!result.success) {
+        QMessageBox::warning(
+            menu_, QStringLiteral("番号をつけて保存"),
+            result.errorMessage.isEmpty()
+                ? QStringLiteral("番号付きコピーを保存できませんでした。")
+                : result.errorMessage);
+        return;
+    }
+    QMessageBox::information(
+        menu_, QStringLiteral("番号をつけて保存"),
+        QStringLiteral("番号付きコピーを保存しました。現在のプロジェクトは変更されていません。"));
+}
+
+void ArtifactFileMenu::Impl::handleRestoreLatestBackup()
+{
+    if (!menu_) return;
+    auto& manager = ArtifactProjectManager::getInstance();
+    const QStringList backupPaths = manager.backupProjectPaths();
+    if (backupPaths.isEmpty()) {
+        QMessageBox::information(menu_, QStringLiteral("バックアップ復元"),
+                                 QStringLiteral("利用可能なバックアップがありません。"));
+        return;
+    }
+    if (!confirmUnsavedChanges(menu_, QStringLiteral("バックアップを復元する"))) return;
+    QStringList choices;
+    for (int index = 0; index < backupPaths.size(); ++index) {
+        choices.append(QStringLiteral("世代 %1 — %2")
+                          .arg(index + 1)
+                          .arg(QFileInfo(backupPaths.at(index)).lastModified().toString(
+                              QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
+    }
+    bool accepted = false;
+    const QString choice = QInputDialog::getItem(
+        menu_, QStringLiteral("バックアップ復元"), QStringLiteral("復元する世代:"),
+        choices, 0, false, &accepted);
+    if (!accepted || choice.isEmpty()) return;
+    const int selectedIndex = choices.indexOf(choice);
+    if (selectedIndex < 0 || !manager.restoreBackup(selectedIndex + 1)) {
+        QMessageBox::warning(menu_, QStringLiteral("バックアップ復元"),
+                             QStringLiteral("選択したバックアップを復元できませんでした。"));
+        return;
+    }
+    QMessageBox::information(menu_, QStringLiteral("バックアップ復元"),
+                             QStringLiteral("選択したバックアップを復元しました。"));
 }
 
 void ArtifactFileMenu::Impl::handleNewComposition()
@@ -989,6 +1065,25 @@ void ArtifactFileMenu::Impl::handleExportProjectPackage()
                              QStringLiteral("プロジェクトをパッケージ化しました。\n%1").arg(dirPath));
 }
 
+void ArtifactFileMenu::Impl::handleExportExternalManifest()
+{
+    if (!menu_) return;
+    auto* service = ArtifactProjectService::instance();
+    if (!service || !service->hasProject()) return;
+    const QString path = QFileDialog::getSaveFileName(
+        menu_, QStringLiteral("外部ファイル依存マニフェスト"),
+        QStringLiteral("external-files.json"), QStringLiteral("JSON (*.json)"));
+    if (path.isEmpty()) return;
+    const auto project = service->getCurrentProjectSharedPtr();
+    if (!project || !ArtifactProjectStatistics::writeExternalFileManifest(project.get(), path)) {
+        QMessageBox::warning(menu_, QStringLiteral("依存マニフェスト"),
+                             QStringLiteral("外部ファイル依存マニフェストの出力に失敗しました。"));
+        return;
+    }
+    QMessageBox::information(menu_, QStringLiteral("依存マニフェスト"),
+                             QStringLiteral("外部ファイル依存マニフェストを書き出しました。\n%1").arg(path));
+}
+
 void ArtifactFileMenu::Impl::handleExportComposition()
 {
     if (!menu_) return;
@@ -1071,6 +1166,12 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     bool hasProject = service && service->hasProject();
     saveProjectAction->setEnabled(hasProject);
     saveProjectAsAction->setEnabled(hasProject);
+    saveNumberedCopyAction->setEnabled(hasProject &&
+                                       !ArtifactProjectManager::getInstance()
+                                            .currentProjectPath().trimmed().isEmpty());
+    restoreLatestBackupAction->setEnabled(hasProject &&
+                                          !ArtifactProjectManager::getInstance()
+                                               .backupProjectPaths().isEmpty());
     closeProjectAction->setEnabled(hasProject);
     newCompositionAction->setEnabled(hasProject);
     importAssetsAction->setEnabled(hasProject);
@@ -1085,6 +1186,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     if (exportCurrentFrameAction) exportCurrentFrameAction->setEnabled(hasComposition);
     if (exportWorkAreaAction) exportWorkAreaAction->setEnabled(hasComposition);
     if (exportProjectPackageAction) exportProjectPackageAction->setEnabled(hasProject);
+    if (exportExternalManifestAction) exportExternalManifestAction->setEnabled(hasProject);
 
     // 最近使ったプロジェクトメニューを更新
     if (recentProjectsMenu) {

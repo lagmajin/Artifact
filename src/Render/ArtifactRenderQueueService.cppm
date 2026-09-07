@@ -4306,6 +4306,7 @@ namespace Artifact
     void ArtifactRenderQueueService::removeAllRenderQueues() {
         impl_->queueManager.removeAllJobs();
         impl_->syncCoreQueueModel();
+        impl_->persistQueueState();
     }
 
     void ArtifactRenderQueueService::removeRenderQueuesForComposition(const ArtifactCore::CompositionID& compositionId)

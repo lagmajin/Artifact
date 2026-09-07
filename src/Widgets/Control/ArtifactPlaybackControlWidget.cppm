@@ -25,8 +25,15 @@ module;
 #include <QSignalBlocker>
 #include <QCheckBox>
 #include <QMenu>
+#include <QAction>
+#include <QWidgetAction>
+#include <QList>
+#include <QKeyEvent>
+#include <QStyleFactory>
 #include <QEvent>
 #include <QPainter>
+#include <QLinearGradient>
+#include <QPen>
 #include <QPaintEvent>
 #include <QShowEvent>
 #include <QStyle>
@@ -100,6 +107,78 @@ float safePlaybackFrameRate(const float rawFps)
     return std::clamp(rawFps, 1.0f, 10000.0f);
 }
 
+// Local transport face: retain QToolButton input, shortcuts and existing event routes.
+class PlaybackTransportButton final : public QToolButton {
+public:
+    explicit PlaybackTransportButton(QWidget* parent = nullptr) : QToolButton(parent) {
+        setAttribute(Qt::WA_Hover);
+        setFocusPolicy(Qt::StrongFocus);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        const bool primary = property("studioPrimaryTransport").toBool();
+        const bool active = isChecked();
+        const QColor accent(58, 126, 238);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setOpacity(isEnabled() ? 1.0 : 0.4);
+        const QRectF body = QRectF(rect()).adjusted(1, 1, -1, -1);
+        if (primary || active || (underMouse() && isEnabled()) || isDown()) {
+            QColor face = primary ? accent : QColor(theme.secondaryBackgroundColor).lighter(125);
+            if (isDown()) face = face.darker(118);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(face);
+            painter.drawRoundedRect(body, 4, 4);
+        }
+        if (active && !primary) {
+            painter.setPen(QPen(accent, 2));
+            painter.drawLine(QPointF(body.left() + 6, body.bottom() - 2),
+                             QPointF(body.right() - 6, body.bottom() - 2));
+        }
+        const QSize size = iconSize();
+        const bool withText = toolButtonStyle() == Qt::ToolButtonTextBesideIcon;
+        const QPoint center = withText ? QPoint(12, height()/2) : body.center().toPoint();
+        if (withText) {
+            painter.setPen(QColor(theme.textColor));
+            painter.drawText(rect().adjusted(26, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, text());
+        }
+        icon().paint(&painter, QRect(center - QPoint(size.width()/2, size.height()/2), size),
+                     Qt::AlignCenter, isEnabled() ? QIcon::Normal : QIcon::Disabled,
+                     active ? QIcon::On : QIcon::Off);
+        if (hasFocus()) {
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(QColor(theme.textColor), 1, Qt::DotLine));
+            painter.drawRoundedRect(body.adjusted(3, 3, -3, -3), 3, 3);
+        }
+    }
+};
+
+// Local callback button: no additional signal/slot wiring for view-only menus.
+class PlaybackMenuButton final : public QToolButton {
+public:
+    using QToolButton::QToolButton;
+    std::function<void()> openMenu;
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && openMenu) {
+            openMenu();
+            event->accept();
+            return;
+        }
+        QToolButton::mousePressEvent(event);
+    }
+    void keyPressEvent(QKeyEvent* event) override {
+        if ((event->key() == Qt::Key_Space || event->key() == Qt::Key_Return ||
+             event->key() == Qt::Key_Down) && openMenu) {
+            openMenu();
+            event->accept();
+            return;
+        }
+        QToolButton::keyPressEvent(event);
+    }
+};
+
 class PlaybackTimecodeFrame final : public QFrame
 {
 public:
@@ -151,7 +230,9 @@ public:
     QSize sizeHint() const override
     {
         QFont currentFont = font();
-        currentFont.setPointSize(12);
+        currentFont.setPointSize(14);
+        currentFont.setStyleHint(QFont::Monospace);
+        currentFont.setFamily(QStringLiteral("Consolas"));
         currentFont.setWeight(QFont::DemiBold);
         QFont labelFont = font();
         labelFont.setPointSize(8);
@@ -185,10 +266,10 @@ public:
             labelMetrics.horizontalAdvance(outLabel) + labelValueGap +
             valueMetrics.horizontalAdvance(outValue);
         const int rangeWidth = std::max(64, std::max(inWidth, outWidth));
-        const int width = mainWidth + rangeWidth + 20;
+        const int width = mainWidth + 20;
         const int height = std::max(currentMetrics.lineSpacing() + 18,
                                     labelMetrics.lineSpacing() * 2 + 14);
-        return QSize(width + 16, height);
+        return QSize(mainWidth + 16, height);
     }
 
     QSize minimumSizeHint() const override
@@ -205,13 +286,15 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
         const QColor frameBg(QColor(theme.secondaryBackgroundColor).darker(108));
-        painter.fillRect(rect(), frameBg);
+        painter.fillRect(rect(), QColor(theme.backgroundColor));
         painter.setPen(QPen(QColor(theme.borderColor).darker(115), 1));
-        painter.drawRect(rect().adjusted(0, 0, -1, -1));
+
 
         const QRect content = rect().adjusted(8, 5, -8, -5);
         QFont currentFont = font();
-        currentFont.setPointSize(12);
+        currentFont.setPointSize(14);
+        currentFont.setStyleHint(QFont::Monospace);
+        currentFont.setFamily(QStringLiteral("Consolas"));
         currentFont.setWeight(QFont::DemiBold);
         QFont labelFont = font();
         labelFont.setPointSize(8);
@@ -220,7 +303,7 @@ protected:
         valueFont.setPointSize(9);
         valueFont.setWeight(QFont::DemiBold);
 
-        const QColor currentTimeText(232, 178, 82);
+        const QColor currentTimeText(246, 198, 111);
         const QColor endTimeText(QColor(theme.textColor).darker(145));
         const QColor mutedText(QColor(theme.textColor).darker(125));
         const QString currentLine = currentText_.isEmpty()
@@ -243,17 +326,11 @@ protected:
         const int outWidth =
             labelMetrics.horizontalAdvance(outLabel) + labelValueGap +
             valueMetrics.horizontalAdvance(outValue);
-        const int rangeWidth = std::max(64, std::max(inWidth, outWidth)) + 12;
-        const QRect mainRect(content.left(), content.top(),
-                             std::max(1, content.width() - rangeWidth - 10),
-                             content.height());
-        const QRect rangeRect(mainRect.right() + 10, content.top(),
-                              rangeWidth, content.height());
+        const QRect mainRect = content;
 
-        painter.fillRect(mainRect.adjusted(0, 2, 0, -2),
-                         QColor(theme.backgroundColor).darker(104));
+
         painter.setPen(QPen(QColor(theme.borderColor).darker(125), 1));
-        painter.drawRect(mainRect.adjusted(0, 2, 0, -2));
+
 
         painter.setFont(currentFont);
         const QFontMetrics currentMetrics(currentFont);
@@ -269,27 +346,7 @@ protected:
         painter.setPen(endTimeText);
         painter.drawText(x, baseline, endLine);
 
-        painter.fillRect(rangeRect, QColor(theme.backgroundColor).darker(102));
-        painter.setPen(QPen(QColor(theme.borderColor).darker(125), 1));
-        painter.drawRect(rangeRect.adjusted(0, 0, -1, -1));
 
-        painter.setFont(labelFont);
-        painter.setPen(mutedText);
-        int y = rangeRect.top() + 4 + labelMetrics.ascent();
-        const int labelX = rangeRect.left() + 5;
-        const int valueX = labelX + labelMetrics.horizontalAdvance(inLabel) + labelValueGap;
-        painter.drawText(labelX, y, inLabel);
-        painter.setFont(valueFont);
-        painter.setPen(currentTimeText);
-        painter.drawText(valueX, y, inValue);
-
-        painter.setFont(labelFont);
-        painter.setPen(mutedText);
-        y += std::max(labelMetrics.lineSpacing(), valueMetrics.lineSpacing()) + 2;
-        painter.drawText(labelX, y, outLabel);
-        painter.setFont(valueFont);
-        painter.setPen(currentTimeText);
-        painter.drawText(valueX, y, outValue);
     }
 
     void mousePressEvent(QMouseEvent* event) override
@@ -327,23 +384,7 @@ protected:
 
     QRect mainTextRect() const
     {
-        QFont labelFont = font();
-        labelFont.setPointSize(8);
-        labelFont.setWeight(QFont::DemiBold);
-        QFont valueFont = font();
-        valueFont.setPointSize(9);
-        valueFont.setWeight(QFont::DemiBold);
-        const QFontMetrics labelMetrics(labelFont);
-        const QFontMetrics valueMetrics(valueFont);
-        const QRect content = rect().adjusted(8, 5, -8, -5);
-        const int inWidth = labelMetrics.horizontalAdvance(QStringLiteral("In")) + 6 +
-                            valueMetrics.horizontalAdvance(inText_.isEmpty() ? "--:--:--:--" : inText_);
-        const int outWidth = labelMetrics.horizontalAdvance(QStringLiteral("Out")) + 6 +
-                             valueMetrics.horizontalAdvance(outText_.isEmpty() ? "--:--:--:--" : outText_);
-        const int rangeWidth = std::max(64, std::max(inWidth, outWidth)) + 12;
-        return QRect(content.left(), content.top(),
-                     std::max(1, content.width() - rangeWidth - 10),
-                     content.height());
+        return rect().adjusted(8, 5, -8, -5);
     }
 
 private:
@@ -384,7 +425,13 @@ void applyPlaybackSurfacePalette(QWidget* root, const QPalette& palette)
         if (!child || child->testAttribute(Qt::WA_PaintOnScreen)) {
             continue;
         }
-        child->setPalette(palette);
+        QPalette childPalette = palette;
+        if (child->property("studioNumericAccent").toBool()) {
+            childPalette.setColor(QPalette::WindowText, QColor(246, 198, 111));
+            childPalette.setColor(QPalette::Text, QColor(246, 198, 111));
+            childPalette.setColor(QPalette::ButtonText, QColor(246, 198, 111));
+        }
+        child->setPalette(childPalette);
         if (auto* scroll = qobject_cast<QAbstractScrollArea*>(child)) {
             if (auto* viewport = scroll->viewport()) {
                 viewport->setAutoFillBackground(true);
@@ -501,6 +548,7 @@ public:
     QToolButton* clearInOutButton_ = nullptr;
     QLabel* inTimecodeLabel_ = nullptr;
     QLabel* outTimecodeLabel_ = nullptr;
+    PlaybackMenuButton* speedMenuButton_ = nullptr;
     QToolButton* speedQuarterButton_ = nullptr;
     QToolButton* speedHalfButton_ = nullptr;
     QToolButton* speedOneButton_ = nullptr;
@@ -541,12 +589,12 @@ public:
     void setupUI()
     {
         auto* mainLayout = new QVBoxLayout(owner_);
-        mainLayout->setSpacing(12);
-        mainLayout->setContentsMargins(18, 14, 18, 14);
+        mainLayout->setSpacing(4);
+        mainLayout->setContentsMargins(10, 8, 10, 8);
         mainLayout->setAlignment(Qt::AlignTop);
 
         const auto configureSurface = [](QFrame* surface) {
-            surface->setFrameShape(QFrame::StyledPanel);
+            surface->setFrameShape(QFrame::NoFrame);
             surface->setFrameShadow(QFrame::Plain);
             surface->setAutoFillBackground(true);
             QPalette palette = surface->palette();
@@ -560,51 +608,52 @@ public:
         configureSurface(transportSurface);
         
         auto* transportRow = new QHBoxLayout(transportSurface);
-        transportRow->setContentsMargins(10, 10, 10, 10);
-        transportRow->setSpacing(10);
+        transportRow->setContentsMargins(8, 6, 8, 6);
+        transportRow->setSpacing(6);
         
         seekStartButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/seek_start.svg")
+            QStringLiteral("Studio/playback_start.svg")
         }, "先頭へ (Home)", Qt::Key_Home);
         
         stepBackwardButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/skip_previous.svg")
+            QStringLiteral("Studio/playback_previous.svg")
         }, "1フレーム戻る (←)", Qt::Key_Left);
 
         playButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg")
+            QStringLiteral("Studio/playback_play.svg")
         }, "再生/一時停止 (Space)", Qt::Key_Space);
-        playButton_->setProperty("artifactPlayButton", true);
-        playButton_->setFixedSize(46, 46);
+        playButton_->setProperty("artifactPlayButton", false);
+        playButton_->setProperty("studioPrimaryTransport", true);
+        playButton_->setFixedSize(Accessibility::scaledSize(36), Accessibility::scaledSize(34));
         playButton_->setIconSize(QSize(26, 26));
 
         stopButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
-            QStringLiteral("Material/stop.svg")
+            QStringLiteral("Studio/playback_stop.svg"),
+            QStringLiteral("Studio/playback_stop.svg")
         }, "停止", 0);
 
         stepForwardButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/skip_next.svg")
+            QStringLiteral("Studio/playback_next.svg")
         }, "1フレーム進む (→)", Qt::Key_Right);
 
         seekEndButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/seek_end.svg")
+            QStringLiteral("Studio/playback_end.svg")
         }, "末尾へ (End)", Qt::Key_End);
         
         inButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/push_pin.svg")
+            QStringLiteral("Studio/playback_in.svg")
         }, "In 点設定 (I)", Qt::Key_I);
         
         outButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/remove_circle.svg")
+            QStringLiteral("Studio/playback_out.svg")
         }, "Out 点設定 (O)", Qt::Key_O);
         clearInOutButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/clear.svg"),
-            QStringLiteral("Material/clear.svg")
+            QStringLiteral("Studio/playback_clear.svg"),
+            QStringLiteral("Studio/playback_clear.svg")
         }, "In/Out クリア", 0);
 
         loopButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/loop.svg")
+            QStringLiteral("Studio/playback_loop.svg")
         }, "ループ再生 (L)", Qt::Key_L);
         loopButton_->setCheckable(true);
         loopButton_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -702,6 +751,7 @@ public:
         inLayout->setSpacing(2);
         inLayout->addWidget(inButton_);
         inTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        inTimecodeLabel_->setProperty("studioNumericAccent", true);
         inTimecodeLabel_->setAccessibleName(QStringLiteral("In point timecode"));
         inTimecodeLabel_->setAccessibleDescription(
             QStringLiteral("Current In point frame timecode."));
@@ -723,6 +773,7 @@ public:
         outLayout->setSpacing(2);
         outLayout->addWidget(outButton_);
         outTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        outTimecodeLabel_->setProperty("studioNumericAccent", true);
         outTimecodeLabel_->setAccessibleName(QStringLiteral("Out point timecode"));
         outTimecodeLabel_->setAccessibleDescription(
             QStringLiteral("Current Out point frame timecode."));
@@ -738,9 +789,7 @@ public:
         outLayout->addWidget(outTimecodeLabel_);
         outTimecodeLabel_->setVisible(false);
         
-        transportRow->addWidget(inWidget);
-        transportRow->addWidget(outWidget);
-        transportRow->addWidget(clearInOutButton_);
+
         transportRow->addWidget(timecodeFrame_);
         transportRow->addSpacing(8);
         transportRow->addWidget(loopButton_);
@@ -750,11 +799,11 @@ public:
 
         auto* scrubRuler = new QFrame(owner_);
         configureSurface(scrubRuler);
-        scrubRuler->setMinimumHeight(118);
-        scrubRuler->setMaximumHeight(118);
+        scrubRuler->setMinimumHeight(68);
+        scrubRuler->setMaximumHeight(68);
         auto* scrubRulerLayout = new QVBoxLayout(scrubRuler);
-        scrubRulerLayout->setContentsMargins(14, 14, 14, 10);
-        scrubRulerLayout->setSpacing(8);
+        scrubRulerLayout->setContentsMargins(12, 6, 12, 6);
+        scrubRulerLayout->setSpacing(2);
 
         auto* scrubLabelRow = new QHBoxLayout();
         scrubLabelRow->setContentsMargins(5, 0, 5, 0);
@@ -782,7 +831,9 @@ public:
         scrubSlider_->setTracking(true);
         scrubSlider_->setTickPosition(QSlider::TicksAbove);
         scrubSlider_->setTickInterval(60);
-        scrubSlider_->setFixedHeight(44);
+        scrubSlider_->setFixedHeight(32);
+        auto* scrubStyle = QStyleFactory::create(QStringLiteral("Fusion"));
+        if (scrubStyle) { scrubStyle->setParent(scrubSlider_); scrubSlider_->setStyle(scrubStyle); }
         scrubSlider_->setToolTip(QStringLiteral("Drag the playhead to seek"));
         scrubSlider_->setAccessibleName(QStringLiteral("Playback position"));
         scrubSlider_->setAccessibleDescription(
@@ -799,7 +850,7 @@ public:
 
         auto* speedLayout = new QHBoxLayout();
         speedLayout->setSpacing(4);
-        auto* speedLabel = createLabel(QStringLiteral("速度:"), QStringLiteral("再生速度"));
+        auto* speedLabel = createLabel(QStringLiteral("Speed"), QStringLiteral("再生速度"));
         {
             QFont font = speedLabel->font();
             font.setPointSize(11);
@@ -830,16 +881,39 @@ public:
             applySpeedPalette(speedHalfButton_);
             applySpeedPalette(speedOneButton_);
         }
-        speedLayout->addWidget(speedQuarterButton_);
-        speedLayout->addWidget(speedHalfButton_);
-        speedLayout->addWidget(speedOneButton_);
+        speedQuarterButton_->setParent(owner_);
+        speedHalfButton_->setParent(owner_);
+        speedOneButton_->setParent(owner_);
+        speedQuarterButton_->hide();
+        speedHalfButton_->hide();
+        speedOneButton_->hide();
+        speedMenuButton_ = new PlaybackMenuButton(owner_);
+        speedMenuButton_->setProperty("studioNumericAccent", true);
+        speedMenuButton_->setText(QStringLiteral("1.0x ▾"));
+        speedMenuButton_->setAccessibleName(QStringLiteral("Playback speed"));
+        speedMenuButton_->setMinimumSize(72, 30);
+        speedMenuButton_->openMenu = [this]() {
+            QMenu menu(owner_);
+            auto* quarter = menu.addAction(QStringLiteral("0.25x"));
+            auto* half = menu.addAction(QStringLiteral("0.5x"));
+            auto* normal = menu.addAction(QStringLiteral("1.0x"));
+            for (auto* action : {quarter, half, normal}) action->setCheckable(true);
+            quarter->setChecked(speedQuarterButton_->isChecked());
+            half->setChecked(speedHalfButton_->isChecked());
+            normal->setChecked(speedOneButton_->isChecked());
+            auto* chosen = menu.exec(speedMenuButton_->mapToGlobal(QPoint(0, speedMenuButton_->height())));
+            if (chosen == quarter) speedQuarterButton_->click();
+            else if (chosen == half) speedHalfButton_->click();
+            else if (chosen == normal) speedOneButton_->click();
+        };
+        speedLayout->addWidget(speedMenuButton_);
         transportRow->addLayout(speedLayout);
 
         auto* optionsSurface = new QFrame(owner_);
         configureSurface(optionsSurface);
         auto* optionsSurfaceLayout = new QVBoxLayout(optionsSurface);
-        optionsSurfaceLayout->setContentsMargins(14, 12, 14, 12);
-        optionsSurfaceLayout->setSpacing(10);
+        optionsSurfaceLayout->setContentsMargins(8, 6, 8, 6);
+        optionsSurfaceLayout->setSpacing(8);
 
         auto* optionsRow = new QHBoxLayout();
         optionsRow->setContentsMargins(0, 0, 0, 0);
@@ -861,8 +935,7 @@ public:
         optionsRow->addWidget(ramCacheCheckbox_);
 
         previewWorkAreaButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/play_circle.svg"),
-            QStringLiteral("Material/play_circle.svg")
+            QStringLiteral("Studio/playback_workarea.svg")
         }, QStringLiteral("ワークエリアを RAM preview"), 0);
         previewWorkAreaButton_->setText(QStringLiteral("Preview Work Area"));
         previewWorkAreaButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -870,8 +943,7 @@ public:
         previewWorkAreaButton_->setIconSize(QSize(16, 16));
 
         clearRamPreviewButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/neutral/delete_sweep.svg"),
-            QStringLiteral("Material/clear.svg")
+            QStringLiteral("Studio/playback_trash.svg")
         }, QStringLiteral("RAM preview キャッシュをクリア"), 0);
         clearRamPreviewButton_->setText(QStringLiteral("Clear Cache"));
         clearRamPreviewButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -1178,19 +1250,71 @@ public:
         optionsSurfaceLayout->addLayout(skipRow);
         mainLayout->addWidget(optionsSurface);
 
+        // Compact range row directly beneath the scrubber.
+        actionsRow->removeWidget(previewWorkAreaButton_);
+        actionsRow->removeWidget(clearRamPreviewButton_);
+        actionsRow->insertWidget(2, inWidget);
+        actionsRow->insertWidget(3, outWidget);
+        actionsRow->insertWidget(4, clearInOutButton_);
+        actionsRow->addWidget(previewWorkAreaButton_);
+        optionsSurfaceLayout->removeItem(actionsRow);
+        optionsSurfaceLayout->insertLayout(0, actionsRow);
+        inButton_->setText(QStringLiteral("Set In"));
+        outButton_->setText(QStringLiteral("Set Out"));
+        for (auto* button : {inButton_, outButton_}) {
+            button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            button->setFixedSize(78, 28);
+            button->setIconSize(QSize(16, 16));
+        }
+        inTimecodeLabel_->show();
+        outTimecodeLabel_->show();
+        optionsRow->removeWidget(mutePreviewCheckbox_);
+        transportRow->addWidget(mutePreviewCheckbox_);
+        skipRow->removeWidget(skipLabel);
+        skipRow->removeWidget(playbackSkipCombo_);
+        optionsRow->insertWidget(1, skipLabel);
+        optionsRow->insertWidget(2, playbackSkipCombo_);
+        skipRow->addWidget(clearRamPreviewButton_);
+
+        const auto addSettingsMenu = [&](const QString& title,
+                                          const QList<QWidget*>& controls) {
+            auto* button = new QToolButton(optionsSurface);
+            button->setText(title + QStringLiteral(" ▾"));
+            button->setAccessibleName(title);
+            button->setPopupMode(QToolButton::InstantPopup);
+            auto* menu = new QMenu(button);
+            auto* action = new QWidgetAction(menu);
+            auto* content = new QWidget(menu);
+            auto* form = new QVBoxLayout(content);
+            form->setContentsMargins(12, 10, 12, 10);
+            form->setSpacing(8);
+            for (auto* control : controls) {
+                optionsRow->removeWidget(control);
+                form->addWidget(control);
+            }
+            action->setDefaultWidget(content);
+            menu->addAction(action);
+            button->setMenu(menu);
+            optionsRow->insertWidget(optionsRow->count() - 1, button);
+        };
+        addSettingsMenu(QStringLiteral("Auto-Key settings"),
+            {autoKeyScopeCombo_, keyingSetLabel, keyingSetCombo_, keyingSetPathsEdit_});
+        addSettingsMenu(QStringLiteral("Ghosting settings"),
+            {ghostingFrameLabel, ghostingFrameCountSpin_, ghostingOpacityLabel, ghostingOpacitySpin_});
+
         connectSignals();
     }
     
     QToolButton* createToolButton(const QStringList& iconNames, const QString& tooltip, int shortcut)
     {
-        auto* button = new ArtifactFramedToolButton();
+        auto* button = new PlaybackTransportButton();
         button->setIcon(loadIconWithFallback(iconNames));
         button->setIconSize(QSize(22, 22));
         button->setToolTip(tooltip);
         button->setAccessibleName(tooltip);
         button->setAccessibleDescription(
             QStringLiteral("Playback control: %1").arg(tooltip));
-        const int targetSize = Accessibility::scaledSize(40);
+        const int targetSize = Accessibility::scaledSize(32);
         button->setFixedSize(targetSize, targetSize);
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         applyThemeTextPalette(button, QColor(ArtifactCore::currentDCCTheme().textColor));
@@ -1254,6 +1378,7 @@ public:
         setChecked(speedHalfButton_, std::abs(speed - 0.5f) < 0.001f);
         setChecked(speedOneButton_, std::abs(speed - 1.0f) < 0.001f);
         playbackSpeed_ = speed;
+        if (speedMenuButton_) speedMenuButton_->setText(formatSpeedLabel(speed) + QStringLiteral(" ▾"));
         if (timecodeFrame_) {
             timecodeFrame_->setToolTip(QStringLiteral("Playback speed: %1").arg(formatSpeedLabel(speed)));
         }
@@ -1712,10 +1837,10 @@ public:
         if (playButton_) {
             playButton_->setChecked(isPlaying_);
             playButton_->setIcon(loadIconWithFallback(isPlaying_
-                ? QStringList{QStringLiteral("MaterialVS/colored/E3E3E3/pause.svg"),
-                              QStringLiteral("Material/pause.svg")}
-                : QStringList{QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg"),
-                              QStringLiteral("Material/play_arrow.svg")}));
+                ? QStringList{QStringLiteral("Studio/playback_pause.svg"),
+                              QStringLiteral("Studio/playback_pause.svg")}
+                : QStringList{QStringLiteral("Studio/playback_play.svg"),
+                              QStringLiteral("Studio/playback_play.svg")}));
             playButton_->setToolTip(isPlaying_ ? QStringLiteral("一時停止 (Space)") : QStringLiteral("再生 (Space)"));
         }
         if (pauseButton_) {

@@ -7197,6 +7197,10 @@ private:
             obj[QStringLiteral("type")] = QStringLiteral("solid");
             const auto* solid = static_cast<const SolidItem*>(item);
             obj[QStringLiteral("color")] = solid->color.name(QColor::HexArgb);
+            obj[QStringLiteral("width")] = std::clamp(solid->width, 1, 16384);
+            obj[QStringLiteral("height")] = std::clamp(solid->height, 1, 16384);
+            obj[QStringLiteral("pixelAspectRatio")] =
+                std::clamp(solid->pixelAspectRatio, 0.01, 100.0);
             break;
         }
         case eProjectItemType::Composition: {

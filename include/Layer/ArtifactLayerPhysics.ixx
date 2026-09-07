@@ -9,7 +9,58 @@ export module Artifact.Layer.Physics;
 import Animation.Value;
 
 export namespace Artifact {
+    enum class PhysicsSolverKind : std::uint8_t {
+        Disabled = 0,
+        RigidBody2D = 1,
+        SoftBody2D = 2,
+        Fluid2D = 3,
+        Mpm2D = 4,
+    };
+
+    // Authoring-time contract shared by all layer-owned simulation kinds.
+    // Solver-specific controls remain on their owning component; these fields
+    // define when and how a solver participates in the composition timeline.
+    struct PhysicsAuthoringSettings {
+        PhysicsSolverKind solverKind = PhysicsSolverKind::Disabled;
+        std::int64_t startFrame = 0;
+        float fixedTimeStep = 1.0f / 60.0f;
+        int maxSubsteps = 8;
+        bool cacheEnabled = true;
+        int maxCachedFrames = 480;
+        float worldScale = 1.0f;
+
+        QJsonObject toJson() const {
+            QJsonObject obj;
+            obj["solverKind"] = static_cast<int>(solverKind);
+            obj["startFrame"] = static_cast<qint64>(startFrame);
+            obj["fixedTimeStep"] = static_cast<double>(fixedTimeStep);
+            obj["maxSubsteps"] = maxSubsteps;
+            obj["cacheEnabled"] = cacheEnabled;
+            obj["maxCachedFrames"] = maxCachedFrames;
+            obj["worldScale"] = static_cast<double>(worldScale);
+            return obj;
+        }
+
+        void fromJson(const QJsonObject& obj) {
+            solverKind = static_cast<PhysicsSolverKind>(std::clamp(
+                obj.value("solverKind").toInt(static_cast<int>(solverKind)),
+                static_cast<int>(PhysicsSolverKind::Disabled),
+                static_cast<int>(PhysicsSolverKind::Mpm2D)));
+            startFrame = obj.value("startFrame").toInteger(startFrame);
+            fixedTimeStep = static_cast<float>(std::clamp(
+                obj.value("fixedTimeStep").toDouble(fixedTimeStep),
+                1.0 / 1000.0, 1.0 / 15.0));
+            maxSubsteps = std::clamp(obj.value("maxSubsteps").toInt(maxSubsteps), 1, 64);
+            cacheEnabled = obj.value("cacheEnabled").toBool(cacheEnabled);
+            maxCachedFrames = std::clamp(
+                obj.value("maxCachedFrames").toInt(maxCachedFrames), 1, 100000);
+            worldScale = static_cast<float>(std::clamp(
+                obj.value("worldScale").toDouble(worldScale), 0.0001, 1000000.0));
+        }
+    };
+
     struct LayerPhysicsSettings {
+        PhysicsAuthoringSettings authoring;
         bool enabled = false;
         float stiffness = 120.0f;
         float damping = 12.0f;
@@ -37,6 +88,7 @@ export namespace Artifact {
 
         QJsonObject toJson() const {
             QJsonObject obj;
+            obj["authoring"] = authoring.toJson();
             obj["enabled"] = enabled;
             obj["stiffness"] = static_cast<double>(stiffness);
             obj["damping"] = static_cast<double>(damping);
@@ -60,6 +112,9 @@ export namespace Artifact {
         }
 
         void fromJson(const QJsonObject& obj) {
+            if (obj.contains("authoring") && obj.value("authoring").isObject()) {
+                authoring.fromJson(obj.value("authoring").toObject());
+            }
             enabled = obj["enabled"].toBool(false);
             stiffness = static_cast<float>(obj["stiffness"].toDouble(120.0));
             damping = static_cast<float>(obj["damping"].toDouble(12.0));
@@ -107,6 +162,10 @@ export namespace Artifact {
     public:
         LayerPhysicsSettings& settings() { return settings_; }
         const LayerPhysicsSettings& settings() const { return settings_; }
+        PhysicsAuthoringSettings& authoring() { return settings_.authoring; }
+        const PhysicsAuthoringSettings& authoring() const {
+            return settings_.authoring;
+        }
 
         bool enabled() const { return settings_.enabled; }
         void setEnabled(bool enabled) {

@@ -38,6 +38,11 @@ import Artifact.Widgets.PointTrackerGizmo;
 import UI.View.Orientation.Navigator;
 
 export namespace Artifact {
+
+enum class CompositionViewportPresentationLayout {
+  Single,
+  Quad
+};
  using namespace ArtifactCore;
 
  enum class CompositionCompareMode {
@@ -115,6 +120,8 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  public:
+  enum class ViewportRulerUnit { Pixels, Percent };
+  enum class ViewportOriginMode { TopLeft, Center, BottomLeft };
   explicit CompositionRenderController(QObject* parent = nullptr);
   ~CompositionRenderController();
 
@@ -128,6 +135,8 @@ export namespace Artifact {
 
   void recreateSwapChain(QWidget* hostWidget);
 void setViewportSize(float width, float height);
+void setPresentationLayout(CompositionViewportPresentationLayout layout);
+CompositionViewportPresentationLayout presentationLayout() const;
 void setPreviewQualityPreset(PreviewQualityPreset preset);
 void panBy(const QPointF& viewportDelta);
 void notifyViewportInteractionActivity();
@@ -161,6 +170,14 @@ void setShowGrid(bool show);
 bool isShowGrid() const;
 void setShowViewportRuler(bool show);
 bool isShowViewportRuler() const;
+void setViewportRulerUnit(ViewportRulerUnit unit);
+ViewportRulerUnit viewportRulerUnit() const;
+void setViewportOriginMode(ViewportOriginMode mode);
+ViewportOriginMode viewportOriginMode() const;
+void setShowPixelGrid(bool show);
+bool isShowPixelGrid() const;
+void setShowOutsideComposition(bool show);
+bool isShowOutsideComposition() const;
 void setLineDebugKindVisible(LineDebugKind kind, bool visible);
 bool isLineDebugKindVisible(LineDebugKind kind) const;
 void setShowCheckerboard(bool show);

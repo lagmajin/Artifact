@@ -196,6 +196,37 @@ ArtifactCore::MetadataReport ArtifactProjectStatistics::collectDefaultMetadataRe
     return collectMetadataReport(project, collectors);
 }
 
+bool ArtifactProjectStatistics::writeExternalFileManifest(
+    ArtifactProject* project, const QString& jsonPath) {
+    if (!project || jsonPath.trimmed().isEmpty()) return false;
+    ProjectMetadataValueCollector collector;
+    collectMetadata(project, {&collector});
+
+    QJsonArray files;
+    for (const QString& path : collector.externalFiles()) {
+        const QFileInfo info(path);
+        QJsonObject entry;
+        entry.insert(QStringLiteral("path"), path);
+        entry.insert(QStringLiteral("absolutePath"), info.absoluteFilePath());
+        entry.insert(QStringLiteral("exists"), info.exists());
+        entry.insert(QStringLiteral("size"), info.exists() ? info.size() : 0);
+        entry.insert(QStringLiteral("lastModified"), info.exists()
+            ? info.lastModified().toUTC().toString(Qt::ISODateWithMs)
+            : QString());
+        files.append(entry);
+    }
+
+    QJsonObject manifest;
+    manifest.insert(QStringLiteral("format"), QStringLiteral("artifact.external-files"));
+    manifest.insert(QStringLiteral("version"), 1);
+    manifest.insert(QStringLiteral("project"), project->settings().projectName());
+    manifest.insert(QStringLiteral("files"), files);
+    QSaveFile output(QFileInfo(jsonPath).absoluteFilePath());
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    const QByteArray bytes = QJsonDocument(manifest).toJson(QJsonDocument::Indented);
+    return output.write(bytes) == bytes.size() && output.commit();
+}
+
 ArtifactCore::MetadataReport ArtifactProjectStatistics::collectFontUsageReport(
     ArtifactProject* project,
     const ArtifactCore::FontLicenseRegistry* licenseRegistry) {

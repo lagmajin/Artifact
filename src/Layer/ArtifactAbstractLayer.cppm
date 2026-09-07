@@ -4,6 +4,7 @@ module;
 #include <compare>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -64,6 +65,7 @@ import Geometry.Fracture;
 import Physics.Fluid;
 import Physics.SoftBody;
 import Physics.System;
+import Physics2D;
 import Physics.Mpm2D;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
@@ -99,6 +101,16 @@ using namespace ArtifactCore;
 namespace {
 ArtifactLayerJsonFactory g_layerJsonFactory = nullptr;
 std::mutex g_layerJsonFactoryMutex;
+
+float finiteClampedValue(double raw, double fallback,
+                         double minimum, double maximum) {
+  const double safeFallback = std::isfinite(fallback)
+                                  ? std::clamp(fallback, minimum, maximum)
+                                  : minimum;
+  return static_cast<float>(std::isfinite(raw)
+                                ? std::clamp(raw, minimum, maximum)
+                                : safeFallback);
+}
 }
 
 void setArtifactLayerJsonFactory(ArtifactLayerJsonFactory factory) {
@@ -2156,8 +2168,33 @@ void ArtifactAbstractLayer::insertVariant(size_t index, std::unique_ptr<LayerVar
 }
 
 void ArtifactAbstractLayer::setComposition(QObject *comp) {
-  std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
-  impl_->composition_ = comp;
+  std::optional<int64_t> transformTimeScale;
+  if (auto *composition = dynamic_cast<ArtifactAbstractComposition *>(comp)) {
+    const double fps = composition->frameRate().framerate();
+    transformTimeScale = std::isfinite(fps) && fps > 0.0
+        ? std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)))
+        : 24;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
+    impl_->composition_ = comp;
+  }
+
+  // Preserve a detached layer's current scale so its stored keyframe indices
+  // are not reinterpreted while it is being moved between compositions.
+  if (transformTimeScale.has_value()) {
+    // Transform keyframes use the composition frame domain. This assignment
+    // happens as a layer joins its composition, before timeline edits can
+    // create keys, so 25/30/60 fps edits never collapse into legacy 24fps
+    // storage buckets.
+    impl_->transform_.setKeyframeTimeScale(*transformTimeScale);
+    for (const auto &variant : impl_->variants_) {
+      if (variant && variant->transform3DOverride.has_value()) {
+        variant->transform3DOverride->setKeyframeTimeScale(*transformTimeScale);
+      }
+    }
+  }
 }
 
 void ArtifactAbstractLayer::setComposition(void *comp) {
@@ -4334,6 +4371,8 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
 
 void ArtifactAbstractLayer::enableSoftBodyPhysics() {
   impl_->softBodyPhysicsEnabled_ = true;
+  impl_->physicsComponent_.authoring().solverKind =
+      PhysicsSolverKind::SoftBody2D;
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   if (!physics.getSoftBody(id())) {
     physics.createSoftBody(id());
@@ -4343,6 +4382,8 @@ void ArtifactAbstractLayer::enableSoftBodyPhysics() {
 
 void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, float stiffness) {
   impl_->softBodyPhysicsEnabled_ = true;
+  impl_->physicsComponent_.authoring().solverKind =
+      PhysicsSolverKind::SoftBody2D;
   const QRectF bounds = localBounds();
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
     enableSoftBodyPhysics();
@@ -4372,10 +4413,17 @@ void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, flo
 
 void ArtifactAbstractLayer::disableSoftBodyPhysics() {
   impl_->softBodyPhysicsEnabled_ = false;
+  if (impl_->physicsComponent_.authoring().solverKind ==
+      PhysicsSolverKind::SoftBody2D) {
+    impl_->physicsComponent_.authoring().solverKind =
+        PhysicsSolverKind::Disabled;
+  }
   ArtifactCore::PhysicsSystem::instance().unregisterSoftBody(id());
 }
 
 void ArtifactAbstractLayer::enableRigidBodyPhysics() {
+  impl_->physicsComponent_.authoring().solverKind =
+      PhysicsSolverKind::RigidBody2D;
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   auto world = physics.getRigidWorld(id());
   bool createdWorld = false;
@@ -4425,6 +4473,8 @@ void ArtifactAbstractLayer::enableMaterialPhysics(int preset) {
     return;
   }
   impl_->materialPhysicsEnabled_ = true;
+  impl_->physicsComponent_.authoring().solverKind =
+      PhysicsSolverKind::Mpm2D;
   impl_->materialPhysicsPreset_ = std::clamp(preset, 0, 3);
   ArtifactCore::PhysicsSystem::instance().createMaterialGrid(
       id(), static_cast<float>(bounds.left()), static_cast<float>(bounds.top()),
@@ -4434,6 +4484,11 @@ void ArtifactAbstractLayer::enableMaterialPhysics(int preset) {
 
 void ArtifactAbstractLayer::disableMaterialPhysics() {
   impl_->materialPhysicsEnabled_ = false;
+  if (impl_->physicsComponent_.authoring().solverKind ==
+      PhysicsSolverKind::Mpm2D) {
+    impl_->physicsComponent_.authoring().solverKind =
+        PhysicsSolverKind::Disabled;
+  }
   ArtifactCore::PhysicsSystem::instance().unregisterMaterialSolver(id());
 }
 
@@ -6882,6 +6937,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             1.0, 0.01, 3600.0));
         impl_->fluidComponentEnabled_ =
             componentsObj.value(QStringLiteral("fluidEnabled")).toBool(false);
+        if (impl_->fluidComponentEnabled_ &&
+            impl_->physicsComponent_.authoring().solverKind ==
+                PhysicsSolverKind::Disabled) {
+            impl_->physicsComponent_.authoring().solverKind =
+                PhysicsSolverKind::Fluid2D;
+        }
         impl_->fluidMode_ = std::clamp(
             componentsObj.value(QStringLiteral("fluidMode")).toInt(0), 0, 1);
         impl_->fluidGridWidth_ = std::clamp(
@@ -11014,15 +11075,6 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   // Physics properties
-  const auto finiteClampedValue = [](double raw, double fallback,
-                                    double minimum, double maximum) {
-    const double safeFallback = std::isfinite(fallback)
-                                    ? std::clamp(fallback, minimum, maximum)
-                                    : minimum;
-    return static_cast<float>(std::isfinite(raw)
-                                  ? std::clamp(raw, minimum, maximum)
-                                  : safeFallback);
-  };
   if (propertyPath == QStringLiteral("physics.softBody.enabled")) {
     if (value.toBool()) {
       enableSoftBodyPhysicsGrid();
@@ -12549,6 +12601,14 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     }
     if (propertyPath == QStringLiteral("component.fluid.enabled")) {
       impl_->fluidComponentEnabled_ = value.toBool();
+      if (impl_->fluidComponentEnabled_) {
+        impl_->physicsComponent_.authoring().solverKind =
+            PhysicsSolverKind::Fluid2D;
+      } else if (impl_->physicsComponent_.authoring().solverKind ==
+                 PhysicsSolverKind::Fluid2D) {
+        impl_->physicsComponent_.authoring().solverKind =
+            PhysicsSolverKind::Disabled;
+      }
       if (!impl_->fluidComponentEnabled_) {
         impl_->fluidSolver_.reset();
         impl_->invalidateLiquidSimulation();

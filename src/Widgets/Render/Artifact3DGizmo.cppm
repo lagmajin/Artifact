@@ -5,6 +5,9 @@ module;
 #include <QVector4D>
 #include <QMatrix4x4>
 #include <QQuaternion>
+#include <QFont>
+#include <QRectF>
+#include <QString>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.Gizmo3D;
@@ -552,6 +555,27 @@ QVector3D scaleAxisHandleEndFor(GizmoAxis axis, const QVector3D& center, float s
     return center + dir * (scale * kScaleHandleLength);
 }
 
+// One geometry definition for the compact Full presentation and picking.
+struct FullHandleGeometry {
+    QVector3D direction, tip, scalePoint, corner, elbowA, elbowB;
+};
+FullHandleGeometry fullHandleFor(GizmoAxis axis, const QVector3D& center,
+                                 float size, const GizmoBasis& basis) {
+    const QVector3D direction = axisDirectionFor(axis, basis);
+    const QVector3D u = axisDirectionFor(axis == GizmoAxis::X ? GizmoAxis::Y : GizmoAxis::X, basis);
+    const QVector3D v = axisDirectionFor(axis == GizmoAxis::Z ? GizmoAxis::Y : GizmoAxis::Z, basis);
+    const float cage = size * 0.55f;
+    const QVector3D corner = center + (u + v) * cage;
+    return {direction, center + direction * size * 1.24f,
+            center + direction * size * 0.82f, corner,
+            corner - u * size * 0.11f, corner - v * size * 0.11f};
+}
+FloatColor fullAxisColor(GizmoAxis axis, float alpha = 1.0f) {
+    if (axis == GizmoAxis::X) return FloatColor{0.62f,0.86f,0.30f,alpha};
+    if (axis == GizmoAxis::Y) return FloatColor{0.95f,0.34f,0.60f,alpha};
+    return FloatColor{0.28f,0.70f,0.96f,alpha};
+}
+
 float axisHandleHitThreshold(float scale) {
     return std::max(scale * kAxisHitThresholdScale,
                     kMinAxisHitThreshold);
@@ -707,32 +731,52 @@ void Artifact3DGizmo::clearBoundingBox() {
 GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const QMatrix4x4& proj) {
     (void)proj;
     if (mode_ == GizmoMode::Full) {
-        // Rings are visually distinct and get priority, followed by scale
-        // handles and finally translation handles. The screen-rotation ring
-        // is deliberately omitted from Full because the axis rings already
-        // provide rotation handles there.
-        const GizmoMode savedMode = mode_;
-        const bool savedTestingFullOverlay = impl_->testingFullOverlay;
-        impl_->testingFullOverlay = true;
-        const GizmoMode candidates[] = {GizmoMode::Rotate, GizmoMode::Scale, GizmoMode::Move};
-        for (const GizmoMode candidate : candidates) {
-            mode_ = candidate;
-            const GizmoAxis hit = hitTest(ray, view, proj);
-            if (hit != GizmoAxis::None) {
-                const GizmoOperation operation = operationForMode(candidate);
-                mode_ = savedMode;
-                impl_->testingFullOverlay = savedTestingFullOverlay;
-                hoverAxis_ = hit;
-                hoverOperation_ = operation;
-                return hit;
-            }
-        }
-        mode_ = savedMode;
-        impl_->testingFullOverlay = savedTestingFullOverlay;
+        const GizmoBasis basis = gizmoBasisFor(impl_->rotation, space_,
+            impl_->localAxisX, impl_->localAxisY, impl_->localAxisZ, impl_->hasLocalBasis,
+            impl_->viewAxisX, impl_->viewAxisY, impl_->viewAxisZ);
+        const QVector3D center = interactionCenterFor(boundingBoxMin_, boundingBoxMax_,
+            boundingBoxEnabled_, impl_->position, impl_->scale, basis);
         hoverAxis_ = GizmoAxis::None;
         hoverOperation_ = GizmoOperation::None;
-        return GizmoAxis::None;
+        hoverAxisDirectionSign_ = 1.0f;
+        hoverScaleAxes_ = QVector3D();
+        hoverScaleSigns_ = QVector3D(1,1,1);
+        const float tolerance = impl_->currentScale * 0.095f;
+        float best = tolerance;
+        const auto check = [&](const QVector3D& point, GizmoAxis axis, GizmoOperation operation) {
+            if (QVector3D::dotProduct(point-ray.origin,ray.direction) < 0) return;
+            const float distance = rayPointDistance(ray,point);
+            if (distance < best) { best=distance; hoverAxis_=axis; hoverOperation_=operation; }
+        };
+        check(center,GizmoAxis::Screen,GizmoOperation::Scale);
+        const GizmoAxis axes[] = {GizmoAxis::X,GizmoAxis::Y,GizmoAxis::Z};
+        for (const auto axis : axes) {
+            const auto g = fullHandleFor(axis,center,impl_->currentScale,basis);
+            if (depthEnabled_ || axis != GizmoAxis::Z) {
+                check(g.scalePoint,axis,GizmoOperation::Scale);
+                check(g.tip,axis,GizmoOperation::Translate);
+            }
+            if (depthEnabled_ || axis == GizmoAxis::Z) {
+                check(g.corner,axis,GizmoOperation::Rotate);
+                check(g.elbowA,axis,GizmoOperation::Rotate);
+                check(g.elbowB,axis,GizmoOperation::Rotate);
+            }
+        }
+        // Shafts translate only when a discrete handle was not picked.
+        if (hoverAxis_ == GizmoAxis::None) {
+            for (const auto axis : axes) {
+                if (!depthEnabled_ && axis == GizmoAxis::Z) continue;
+                const auto g = fullHandleFor(axis,center,impl_->currentScale,basis);
+                if (QVector3D::dotProduct(g.tip-ray.origin,ray.direction) < 0) continue;
+                float t=0;
+                const float distance=impl_->rayLineDistance(ray.origin,ray.direction,
+                    center+g.direction*impl_->currentScale*0.18f,g.tip,t);
+                if (distance < best) { best=distance; hoverAxis_=axis; hoverOperation_=GizmoOperation::Translate; }
+            }
+        }
+        return hoverAxis_;
     }
+
     float threshold = 0.12f * impl_->currentScale;
     float minDistance = std::numeric_limits<float>::max();
     GizmoAxis result = GizmoAxis::None;
@@ -1615,22 +1659,10 @@ void Artifact3DGizmo::endDrag() {
     }
 }
 
-void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, const QMatrix4x4& proj) {
+void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, const QMatrix4x4& proj, float viewportWidth, float viewportHeight) {
     if (!renderer) return;
 
-    if (mode_ == GizmoMode::Full) {
-        const GizmoMode savedMode = mode_;
-        const bool savedDrawingFullOverlay = impl_->drawingFullOverlay;
-        impl_->drawingFullOverlay = true;
-        const GizmoMode modes[] = {GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale};
-        for (const GizmoMode mode : modes) {
-            mode_ = mode;
-            draw(renderer, view, proj);
-        }
-        mode_ = savedMode;
-        impl_->drawingFullOverlay = savedDrawingFullOverlay;
-        return;
-    }
+    const bool compactFull = mode_ == GizmoMode::Full || fullModeDrag_;
 
     const QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
     const float distance = std::abs(viewPos.z());
@@ -1711,6 +1743,17 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
 
     auto toFloat3 = [](const QVector3D& v) -> Detail::float3 {
         return {v.x(), v.y(), v.z()};
+    };
+
+    auto drawScaleSquare = [&](const QVector3D& point, float half, const FloatColor& color, bool selected) {
+        const auto quad = [&](float size, const FloatColor& fill) {
+            renderer->draw3DQuad(toFloat3(point - cameraRight*size - cameraUp*size),
+                toFloat3(point + cameraRight*size - cameraUp*size),
+                toFloat3(point + cameraRight*size + cameraUp*size),
+                toFloat3(point - cameraRight*size + cameraUp*size), fill);
+        };
+        quad(half * 1.22f, selected ? FloatColor{0.96f,0.97f,1.0f,1.0f} : FloatColor{0.08f,0.09f,0.11f,0.85f});
+        quad(half, color);
     };
 
     auto drawPlaneHandle = [&](GizmoAxis axis) {
@@ -1818,21 +1861,112 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         renderer->drawGizmoRing(centerPos, normal, radius, coreColor, thickness * contrastScale);
     };
 
+    bool angleBadge = false;
+    QVector3D badgeWorld;
+    float displayedAngle = 0.0f;
     auto drawRotateRing = [&](GizmoAxis axis,
                               const Detail::float3& centerPos,
                               const Detail::float3& normal,
                               float radius,
                               const FloatColor& baseColor) {
-        const FloatColor shadowColor = getAxisShadowColor(axis, baseColor);
-        const FloatColor coreColor = getAxisCoreColor(axis, baseColor);
-        const float tubeRadius =
-            s * (dedicatedRotatePass ? 0.014f : 0.018f);
-        const float shadowTube = tubeRadius * 1.42f;
-        renderer->drawGizmoTorus(centerPos, normal, radius * 1.018f, shadowTube, shadowColor);
-        renderer->drawGizmoTorus(centerPos, normal, radius, tubeRadius, coreColor);
+        const bool active = activeAxis_ == axis;
+        const bool hovered = hoverAxis_ == axis;
+        const QVector3D n = active ? impl_->dragAxisDirection.normalized()
+                                  : QVector3D(normal.x, normal.y, normal.z).normalized();
+        const QVector3D origin = active ? impl_->dragStartInteractionCenter
+                                       : QVector3D(centerPos.x, centerPos.y, centerPos.z);
+        const auto [u, v] = ringBasisForNormal(n);
+        const auto point = [&](float radians) {
+            return origin + radius * (u * std::cos(radians) + v * std::sin(radians));
+        };
+        constexpr int segments = 96;
+        constexpr float tau = 6.28318530718f;
+        for (int i = 0; i < segments; ++i) {
+            const float a = tau * i / segments, b = tau * (i + 1) / segments;
+            const QVector3D p0 = point(a), p1 = point(b);
+            const bool rear = (view * QVector4D((p0 + p1) * 0.5f, 1)).z()
+                            < (view * QVector4D(origin, 1)).z();
+            const float alpha = rear ? 0.24f : (activeAxis_ != GizmoAxis::None && !active ? 0.38f : 0.95f);
+            const FloatColor color{baseColor.r(), baseColor.g(), baseColor.b(), alpha};
+            renderer->drawGizmoLine(toFloat3(p0), toFloat3(p1), color,
+                                    (active ? 2.2f : hovered ? 1.9f : 1.15f) * contrastScale);
+        }
+        if (!active) return;
+        const QVector3D difference = impl_->rotation - impl_->dragStartRotation;
+        displayedAngle = axis == GizmoAxis::X ? difference.x()
+                       : axis == GizmoAxis::Y ? difference.y()
+                       : axis == GizmoAxis::Z ? difference.z()
+                       : QVector3D::dotProduct(difference, n);
+        const float start = impl_->dragStartAngle * tau / 360.0f;
+        const float sweep = std::clamp(displayedAngle, -360.0f, 360.0f) * tau / 360.0f;
+        const FloatColor fill{baseColor.r(), baseColor.g(), baseColor.b(), 0.10f};
+        for (int i = 0; i < segments; ++i) {
+            const QVector3D p0 = point(start + sweep * i / segments);
+            const QVector3D p1 = point(start + sweep * (i + 1) / segments);
+            renderer->draw3DQuad(toFloat3(origin), toFloat3(p0), toFloat3(p1), toFloat3(origin), fill);
+        }
+        const QVector3D begin = point(start);
+        const QVector3D end = point(start + displayedAngle * tau / 360.0f);
+        const FloatColor guide{0.92f, 0.94f, 0.98f, 0.85f};
+        renderer->drawGizmoLine(toFloat3(origin), toFloat3(begin), guide, 0.8f);
+        renderer->drawGizmoLine(toFloat3(origin), toFloat3(end), guide, 0.8f);
+        for (int i = 0; i < 24; ++i) {
+            const QVector3D radial = point(tau * i / 24) - origin;
+            renderer->drawGizmoLine(toFloat3(origin + radial * 0.97f),
+                                    toFloat3(origin + radial * 1.03f), guide, 0.8f);
+        }
+        renderer->drawGizmoRing(toFloat3(end), toFloat3(cameraForward), radius * 0.045f, guide, 1.4f);
+        badgeWorld = end;
+        angleBadge = true;
     };
 
-    if (boundingBoxEnabled_ && mode_ == GizmoMode::Scale) {
+    if (compactFull) {
+        const GizmoAxis axes[] = {GizmoAxis::X,GizmoAxis::Y,GizmoAxis::Z};
+        const auto selected = [&](GizmoAxis axis,GizmoOperation op) {
+            return (activeAxis_ == axis && activeOperation_ == op) ||
+                (activeAxis_ == GizmoAxis::None && hoverAxis_ == axis && hoverOperation_ == op);
+        };
+        for (const auto axis : axes) {
+            const auto g=fullHandleFor(axis,interactionCenter,s,basis);
+            const auto color=fullAxisColor(axis,activeAxis_ == GizmoAxis::None || activeAxis_ == axis ? 0.95f : 0.32f);
+            if (depthEnabled_ || axis != GizmoAxis::Z) {
+                const QVector3D base=g.tip-g.direction*s*0.09f;
+                renderer->drawGizmoLine(center,toFloat3(base),color,1.5f*contrastScale);
+                QVector3D wing=QVector3D::crossProduct(g.direction,cameraForward).normalized()*s*0.035f;
+                if (wing.isNull()) wing=cameraRight*s*0.035f;
+                renderer->draw3DQuad(toFloat3(g.tip),toFloat3(base+wing),toFloat3(base-wing),toFloat3(g.tip),color);
+                if (selected(axis,GizmoOperation::Translate)) {
+                    const FloatColor white{0.97f,0.98f,1,1};
+                    renderer->drawGizmoLine(toFloat3(g.tip),toFloat3(base+wing),white,1.1f);
+                    renderer->drawGizmoLine(toFloat3(g.tip),toFloat3(base-wing),white,1.1f);
+                }
+                drawScaleSquare(g.scalePoint,s*0.038f,color,selected(axis,GizmoOperation::Scale));
+            }
+            if (depthEnabled_ || axis == GizmoAxis::Z) {
+                const QVector3D u=(g.corner-g.elbowA).normalized();
+                const QVector3D v=(g.corner-g.elbowB).normalized();
+                renderer->drawGizmoLine(toFloat3(interactionCenter+u*s*0.55f),toFloat3(g.elbowB),color,1.2f);
+                renderer->drawGizmoLine(toFloat3(interactionCenter+v*s*0.55f),toFloat3(g.elbowA),color,1.2f);
+                const bool highlight=selected(axis,GizmoOperation::Rotate);
+                // Rounded quadratic elbow: a localized rotation target, not a full ring.
+                for (int i=0;i<16;++i) {
+                    const auto point=[&](float t) { return g.elbowA*(1-t)*(1-t)+g.corner*(2*t*(1-t))+g.elbowB*t*t; };
+                    const auto a=point(i/16.0f),b=point((i+1)/16.0f);
+                    if(highlight) renderer->drawGizmoLine(toFloat3(a),toFloat3(b),FloatColor{0.96f,0.97f,1,1},7.0f*contrastScale);
+                    renderer->drawGizmoLine(toFloat3(a),toFloat3(b),color,4.5f*contrastScale);
+                }
+                if(activeAxis_ == axis && activeOperation_ == GizmoOperation::Rotate) {
+                    const auto delta=impl_->rotation-impl_->dragStartRotation;
+                    displayedAngle=axis == GizmoAxis::X ? delta.x() : axis == GizmoAxis::Y ? delta.y() : delta.z();
+                    badgeWorld=g.corner;angleBadge=true;
+                }
+            }
+        }
+        drawScaleSquare(interactionCenter,s*0.06f,FloatColor{0.91f,0.93f,0.96f,1},
+            selected(GizmoAxis::Screen,GizmoOperation::Scale));
+    }
+
+    if (!compactFull && boundingBoxEnabled_ && mode_ == GizmoMode::Scale) {
         const BoundingBoxGeometry geometry = boundingBoxGeometryFor(
             boundingBoxMin_, boundingBoxMax_, impl_->position, impl_->scale,
             basis);
@@ -1940,7 +2074,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         }
     }
 
-    if (mode_ == GizmoMode::Move) {
+    if (!compactFull && mode_ == GizmoMode::Move) {
         const QVector3D endX =
             axisHandleEndFor(GizmoAxis::X, interactionCenter, s, basis);
         const QVector3D endY =
@@ -1972,7 +2106,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                          s * 0.085f, FloatColor{1.0f, 1.0f, 1.0f, 0.96f}, 1.4f);
         }
     } 
-    else if (mode_ == GizmoMode::Rotate) {
+    else if (!compactFull && mode_ == GizmoMode::Rotate) {
         const float axisRadiusScale = dedicatedRotatePass
             ? kDedicatedRotateAxisRadiusScale
             : kRotateAxisRadiusScale;
@@ -1985,16 +2119,11 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         drawRotateRing(GizmoAxis::Z, center, toFloat3(axisZ),
                        s * axisRadiusScale, axisBaseColorFor(GizmoAxis::Z));
         if (depthEnabled_ && !impl_->drawingFullOverlay) {
-            drawAxisRing(GizmoAxis::Screen, center, toFloat3(cameraForward),
-                         s * (dedicatedRotatePass
-                                  ? kDedicatedRotateScreenRadiusScale
-                                  : kRotateScreenRadiusScale),
-                         dedicatedRotatePass
-                             ? FloatColor{0.92f, 0.92f, 0.92f, 0.72f}
-                             : FloatColor{0.92f, 0.92f, 0.92f, 0.86f},
-                         dedicatedRotatePass ? 1.15f : 1.4f);
+            drawRotateRing(GizmoAxis::Screen, center, toFloat3(cameraForward),
+                           s * (dedicatedRotatePass ? kDedicatedRotateScreenRadiusScale : kRotateScreenRadiusScale),
+                           FloatColor{0.86f, 0.88f, 0.92f, 0.75f});
         }
-    } else if (mode_ == GizmoMode::Scale) {
+    } else if (!compactFull && mode_ == GizmoMode::Scale) {
       if (!boundingBoxEnabled_ || dedicatedScalePass) {
         drawPlaneHandle(GizmoAxis::XY);
         drawPlaneHandle(GizmoAxis::XZ);
@@ -2004,14 +2133,13 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                                  const Detail::float3& start,
                                  const Detail::float3& tipPos,
                                  float cubeHalf) {
-            const FloatColor baseColor = axisBaseColorFor(axis);
-            const FloatColor shadowColor = getAxisShadowColor(axis, baseColor);
-            const FloatColor coreColor = getAxisCoreColor(axis, baseColor);
-            renderer->drawGizmoLine(start, tipPos, shadowColor, 2.2f);
-            renderer->drawGizmoLine(start, tipPos, coreColor, 1.35f);
-            Detail::float3 tip = tipPos;
-            renderer->drawGizmoCube(tip, cubeHalf * 1.12f, shadowColor);
-            renderer->drawGizmoCube(tip, cubeHalf, coreColor);
+            const FloatColor base = axisBaseColorFor(axis);
+            const bool selected = activeAxis_ == axis || hoverAxis_ == axis;
+            const bool uniform = activeAxis_ == GizmoAxis::Screen;
+            const FloatColor color{base.r(), base.g(), base.b(),
+                activeAxis_ != GizmoAxis::None && !selected && !uniform ? 0.38f : 0.96f};
+            renderer->drawGizmoLine(start, tipPos, color, (selected || uniform ? 2.0f : 1.1f)*contrastScale);
+            drawScaleSquare(QVector3D(tipPos.x, tipPos.y, tipPos.z), cubeHalf, color, selected);
         };
 
         const float cubeHalf = s * (dedicatedScalePass
@@ -2035,16 +2163,9 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                           cubeHalf);
         }
         if (dedicatedScalePass) {
-            const FloatColor baseColor{0.94f, 0.94f, 0.96f, 0.96f};
-            const FloatColor shadowColor =
-                getAxisShadowColor(GizmoAxis::Screen, baseColor);
-            const FloatColor coreColor =
-                getAxisCoreColor(GizmoAxis::Screen, baseColor);
-            Detail::float3 centerHandle = center;
-            renderer->drawGizmoCube(centerHandle, cubeHalf * 1.24f,
-                                    shadowColor);
-            renderer->drawGizmoCube(centerHandle, cubeHalf * 1.08f,
-                                    coreColor);
+            drawScaleSquare(interactionCenter, cubeHalf * 1.08f,
+                FloatColor{0.94f,0.95f,0.98f,1.0f},
+                activeAxis_ == GizmoAxis::Screen || hoverAxis_ == GizmoAxis::Screen);
         } else {
             drawAxisRing(GizmoAxis::Screen, center, toFloat3(cameraForward),
                          s * 0.50f,
@@ -2056,12 +2177,103 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
       }
     }
 
+    if (mode_ == GizmoMode::Scale && isDragging() && boundingBoxEnabled_) {
+        const auto startBasis = gizmoBasisFor(impl_->dragStartRotation, space_,
+            impl_->localAxisX, impl_->localAxisY, impl_->localAxisZ, impl_->hasLocalBasis,
+            impl_->viewAxisX, impl_->viewAxisY, impl_->viewAxisZ);
+        const auto box = boundingBoxGeometryFor(boundingBoxMin_, boundingBoxMax_,
+            impl_->dragStartPosition, impl_->dragStartScale, startBasis);
+        constexpr int edges[][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+        for (const auto& edge : edges) {
+            const auto a = box.corners[edge[0]], b = box.corners[edge[1]];
+            for (int dash = 0; dash < 16; dash += 2)
+                renderer->drawGizmoLine(toFloat3(a+(b-a)*(dash/16.0f)),
+                    toFloat3(a+(b-a)*((dash+1)/16.0f)), FloatColor{0.7f,0.72f,0.76f,0.38f}, 0.8f);
+        }
+    }
+
     // PrimitiveRenderer3D submits its queued vertices with the camera matrices
     // that are active at flush time. Flush before restoring them; otherwise
     // the whole gizmo is projected with identity matrices and disappears.
     renderer->flushGizmo3D();
     renderer->setUseExternalMatrices(false);
     renderer->resetGizmoCameraMatrices();
+    if (!compactFull && mode_ == GizmoMode::Rotate && !impl_->drawingFullOverlay && viewportWidth > 80 && viewportHeight > 60) {
+        const GizmoAxis axes[] = {GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
+        for (const auto axis : axes) {
+            if (!depthEnabled_ && axis != GizmoAxis::Z) continue;
+            const auto [u, v] = ringBasisForNormal(axisDirectionFor(axis, basis));
+            const float offset = axis == GizmoAxis::X ? 0.4f : axis == GizmoAxis::Y ? 2.5f : 4.5f;
+            const QVector3D labelWorld = interactionCenter + s * kRotateAxisRadiusScale * 1.13f *
+                (u * std::cos(offset) + v * std::sin(offset));
+            const QVector4D clip = proj * view * QVector4D(labelWorld, 1);
+            if (clip.w() <= 0.0001f) continue;
+            const auto canvas = renderer->viewportToCanvas({
+                (clip.x()/clip.w()+1)*0.5f*viewportWidth,
+                (1-clip.y()/clip.w())*0.5f*viewportHeight});
+            const float invZoom = 1.0f / std::max(0.001f, renderer->getZoom());
+            QFont font; font.setPixelSize(12);
+            renderer->drawText(QRectF(canvas.x, canvas.y, 18*invZoom, 18*invZoom),
+                axis == GizmoAxis::X ? QStringLiteral("X") : axis == GizmoAxis::Y ? QStringLiteral("Y") : QStringLiteral("Z"),
+                font, axisBaseColorFor(axis));
+        }
+    }
+    if (mode_ == GizmoMode::Scale && isDragging() && viewportWidth > 240 && viewportHeight > 100) {
+        const QVector3D anchor = activeAxis_ == GizmoAxis::X || activeAxis_ == GizmoAxis::Y || activeAxis_ == GizmoAxis::Z
+            ? (compactFull ? fullHandleFor(activeAxis_,interactionCenter,s,basis).scalePoint : scaleAxisHandleEndFor(activeAxis_, interactionCenter, s, basis)) : interactionCenter;
+        const QVector4D clip = proj * view * QVector4D(anchor, 1);
+        if (clip.w() > 0.0001f) {
+            const float px = std::clamp((clip.x()/clip.w()+1)*0.5f*viewportWidth+16, 8.0f, viewportWidth-228);
+            const float py = std::clamp((1-clip.y()/clip.w())*0.5f*viewportHeight-26, 8.0f, viewportHeight-80);
+            const auto canvas = renderer->viewportToCanvas({px, py});
+            const float iz = 1.0f/std::max(0.001f,renderer->getZoom());
+            QString text;
+            const auto append = [&](const QString& axis, float value, float start) {
+                if (!text.isEmpty()) text += QStringLiteral("\n");
+                text += axis + QStringLiteral(" ") + (std::abs(start) > kScaleDivisionEpsilon
+                    ? QString::number(value/start*100.0f,'f',1)+QStringLiteral("%") : QStringLiteral("—"));
+            };
+            if (activeAxis_ != GizmoAxis::Y && activeAxis_ != GizmoAxis::Z && activeAxis_ != GizmoAxis::YZ)
+                append(QStringLiteral("X"),impl_->scale.x(),impl_->dragStartScale.x());
+            if (activeAxis_ != GizmoAxis::X && activeAxis_ != GizmoAxis::Z && activeAxis_ != GizmoAxis::XZ)
+                append(QStringLiteral("Y"),impl_->scale.y(),impl_->dragStartScale.y());
+            if (depthEnabled_ && activeAxis_ != GizmoAxis::X && activeAxis_ != GizmoAxis::Y && activeAxis_ != GizmoAxis::XY)
+                append(QStringLiteral("Z"),impl_->scale.z(),impl_->dragStartScale.z());
+            renderer->drawOverlayPanel(canvas.x,canvas.y,220*iz,70*iz,
+                FloatColor{0.10f,0.11f,0.13f,0.95f},FloatColor{0.28f,0.29f,0.32f,0.8f});
+            QFont font(QStringLiteral("Consolas"));font.setPixelSize(12);
+            renderer->drawText(QRectF(canvas.x+8*iz,canvas.y+4*iz,204*iz,40*iz),text,font,
+                FloatColor{0.965f,0.776f,0.435f,1},Qt::AlignLeft|Qt::AlignTop);
+            const QString space = space_ == GizmoSpace::Local ? QStringLiteral("Local")
+                : space_ == GizmoSpace::World ? QStringLiteral("World") : QStringLiteral("View");
+            renderer->drawText(QRectF(canvas.x+8*iz,canvas.y+48*iz,204*iz,18*iz),
+                space+(snapEnabled_ ? QStringLiteral(" · Snap") : QStringLiteral(" · Free")),font,
+                FloatColor{0.70f,0.72f,0.76f,1});
+        }
+    }
+    if (angleBadge && viewportWidth > 160 && viewportHeight > 80) {
+        const QVector4D clip = proj * view * QVector4D(badgeWorld, 1);
+        if (clip.w() > 0.0001f) {
+            const float px = std::clamp((clip.x()/clip.w() + 1)*0.5f*viewportWidth + 14, 8.0f, viewportWidth - 148);
+            const float py = std::clamp((1 - clip.y()/clip.w())*0.5f*viewportHeight - 24, 8.0f, viewportHeight - 58);
+            const auto canvas = renderer->viewportToCanvas({px, py});
+            const float invZoom = 1.0f / std::max(0.001f, renderer->getZoom());
+            renderer->drawOverlayPanel(canvas.x, canvas.y, 140*invZoom, 50*invZoom,
+                FloatColor{0.10f, 0.11f, 0.13f, 0.95f}, FloatColor{0.28f, 0.29f, 0.32f, 0.8f});
+            QFont font(QStringLiteral("Consolas")); font.setPixelSize(13);
+            const QString axis = activeAxis_ == GizmoAxis::X ? QStringLiteral("X")
+                : activeAxis_ == GizmoAxis::Y ? QStringLiteral("Y")
+                : activeAxis_ == GizmoAxis::Z ? QStringLiteral("Z") : QStringLiteral("View");
+            renderer->drawText(QRectF(canvas.x+8*invZoom, canvas.y+4*invZoom, 124*invZoom, 22*invZoom),
+                QStringLiteral("%1  %2°").arg(axis).arg(displayedAngle, 0, 'f', 1), font,
+                FloatColor{0.965f, 0.776f, 0.435f, 1});
+            const QString space = space_ == GizmoSpace::Local ? QStringLiteral("Local")
+                : space_ == GizmoSpace::World ? QStringLiteral("World") : QStringLiteral("View");
+            renderer->drawText(QRectF(canvas.x+8*invZoom, canvas.y+27*invZoom, 124*invZoom, 18*invZoom),
+                space + (snapEnabled_ ? QStringLiteral(" · Snap 15°") : QStringLiteral(" · Free")), font,
+                FloatColor{0.70f, 0.72f, 0.76f, 1});
+        }
+    }
 }
 
 } // namespace Artifact

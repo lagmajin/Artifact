@@ -671,6 +671,10 @@ public:
     int64_t nextStateId_ = 1;
     int64_t version_ = 0;
     int64_t savedVersion_ = 0;
+    bool actionRecording_ = false;
+    QString actionRecordingLabel_;
+    QJsonArray actionRecordingCommands_;
+    bool actionRecordingFailed_ = false;
 
     size_t stackBytes(const std::vector<std::unique_ptr<UndoCommand>>& stack) const {
         size_t total = 0;
@@ -4784,6 +4788,17 @@ bool UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
     }
 
     impl_->undoStack.push_back(std::move(cmd));
+    if (impl_->actionRecording_) {
+        const auto& recorded = impl_->undoStack.back();
+        if (!recorded || !recorded->canSerialize() || recorded->isOffloaded() ||
+            recorded->commandType().isEmpty() || impl_->actionRecordingCommands_.size() >= 10) {
+            impl_->actionRecordingFailed_ = true;
+        } else {
+            impl_->actionRecordingCommands_.append(QJsonObject{
+                {QStringLiteral("type"), recorded->commandType()},
+                {QStringLiteral("data"), recorded->serialize()}});
+        }
+    }
     impl_->undoStateIds_.push_back(impl_->allocateStateId());
     impl_->redoStack.clear();
     impl_->redoStateIds_.clear();
@@ -4794,6 +4809,52 @@ bool UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
         {UndoManagerChangeKind::HistoryChanged, {}});
     return true;
 }
+
+bool UndoManager::beginActionRecording(const QString& label) {
+    if (impl_->actionRecording_ || label.trimmed().isEmpty()) return false;
+    impl_->actionRecording_ = true;
+    impl_->actionRecordingLabel_ = label.trimmed();
+    impl_->actionRecordingCommands_ = {};
+    impl_->actionRecordingFailed_ = false;
+    return true;
+}
+
+QJsonObject UndoManager::endActionRecording() {
+    if (!impl_->actionRecording_) return {};
+    impl_->actionRecording_ = false;
+    const auto commands = impl_->actionRecordingCommands_;
+    const QString label = impl_->actionRecordingLabel_;
+    const bool failed = impl_->actionRecordingFailed_;
+    impl_->actionRecordingCommands_ = {};
+    impl_->actionRecordingLabel_.clear();
+    impl_->actionRecordingFailed_ = false;
+    if (failed || commands.size() < 5 || commands.size() > 10) return {};
+    return QJsonObject{{QStringLiteral("schema"), QStringLiteral("artifact.action-recording.v1")},
+                       {QStringLiteral("label"), label}, {QStringLiteral("commands"), commands}};
+}
+
+void UndoManager::cancelActionRecording() {
+    impl_->actionRecording_ = false;
+    impl_->actionRecordingLabel_.clear();
+    impl_->actionRecordingCommands_ = {};
+    impl_->actionRecordingFailed_ = false;
+}
+
+bool UndoManager::replayActionRecording(const QJsonObject& recording) {
+    if (recording.value(QStringLiteral("schema")).toString() != QStringLiteral("artifact.action-recording.v1")) return false;
+    const QJsonArray commands = recording.value(QStringLiteral("commands")).toArray();
+    if (commands.size() < 5 || commands.size() > 10) return false;
+    auto macro = std::make_unique<MacroUndoCommand>(recording.value(QStringLiteral("label")).toString());
+    for (const QJsonValue& entry : commands) {
+        const QJsonObject object = entry.toObject();
+        auto command = createCommand(object.value(QStringLiteral("type")).toString(), object.value(QStringLiteral("data")).toObject());
+        if (!command) return false;
+        macro->addChild(std::move(command));
+    }
+    return push(std::move(macro));
+}
+
+bool UndoManager::isActionRecording() const { return impl_->actionRecording_; }
 
 void UndoManager::undo() {
     if (impl_->undoStack.empty()) return;

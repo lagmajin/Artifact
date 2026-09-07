@@ -109,6 +109,9 @@ class SolidItem : public ProjectItem {
  public:
   eProjectItemType type() const override { return eProjectItemType::Solid; }
   QColor color;
+  int width = 1920;
+  int height = 1080;
+  double pixelAspectRatio = 1.0;
 
  };
 

@@ -30,6 +30,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
 export module Artifact.Layer.Solid2D;
 
 
@@ -73,6 +74,10 @@ export namespace Artifact
   float gradientOffset() const;
   void setGradientOffset(float value);
   void setSize(int width, int height);
+  double pixelAspectRatio() const;
+  void setPixelAspectRatio(double ratio);
+  QString sourceItemId() const;
+  void setSourceItemId(const QString& id);
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject& obj) override;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;

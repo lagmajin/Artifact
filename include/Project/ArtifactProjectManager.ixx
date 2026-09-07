@@ -57,6 +57,10 @@ export namespace Artifact {
   void createProject(const QString& projectName, bool force = false);
    bool loadFromFile(const QString& fullpath);
    ArtifactProjectExporterResult saveToFile(const QString& fullpath);
+   // Save a numbered copy without changing the active project path.
+   ArtifactProjectExporterResult saveNumberedCopy();
+   QStringList backupProjectPaths() const;
+   bool restoreBackup(int generation);
    ArtifactProjectExporterResult saveIncremental(const QString& fullpath);
    bool persistComponentSimulationBakes();
    bool discardComponentSimulationBake(const CompositionID& compositionId);

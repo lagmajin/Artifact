@@ -595,18 +595,20 @@ void generatorParamsFromJson(
 }
 } // namespace
 
-class ArtifactNoiseLayer::Impl
+class ArtifactNoiseLayer::Impl : public ArtifactNoiseSource
 {
 public:
-  ArtifactCore::ProceduralTextureSettings settings_;
-  bool colorMappingEnabled_ = false;
-  FloatColor colorA_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
-  FloatColor colorB_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
-  mutable ArtifactCore::ImageF32x4_RGBA buffer_;
-  mutable QString bufferSignature_;
-  mutable QImage cachedImage_;
-  mutable QSize cachedSize_;
-  mutable QString cachedSignature_;
+  ArtifactCore::ProceduralTextureSettings& mutableSettings() { return settings_; }
+  const ArtifactCore::ProceduralTextureSettings& sourceSettings() const { return settings_; }
+  bool colorMapping() const { return colorMappingEnabled_; }
+  const FloatColor& colorAValue() const { return colorA_; }
+  const FloatColor& colorBValue() const { return colorB_; }
+  ArtifactCore::ImageF32x4_RGBA& sourceBuffer() const { return buffer_; }
+  QString& sourceBufferSignature() const { return bufferSignature_; }
+  QImage& cachedSourceImage() const { return cachedImage_; }
+  QSize& cachedSourceSize() const { return cachedSize_; }
+  QString& cachedSourceSignature() const { return cachedSignature_; }
+
   mutable ArtifactCore::GpuContext* gpuContext_ = nullptr;
   mutable ArtifactCore::ProceduralTextureComputePipeline* gpuPipeline_ = nullptr;
   mutable Diligent::RefCntAutoPtr<Diligent::ITexture> gpuTexture_;
@@ -674,39 +676,33 @@ void ArtifactNoiseLayer::setSize(const int width, const int height) {
 
 const ArtifactCore::ProceduralTextureSettings&
 ArtifactNoiseLayer::settings() const {
-  return impl_->settings_;
+  return impl_->sourceSettings();
 }
 
 void ArtifactNoiseLayer::setSettings(
     const ArtifactCore::ProceduralTextureSettings& settings) {
-  impl_->settings_ = settings;
-  sanitizeNoiseSettings(impl_->settings_);
+  impl_->ArtifactNoiseSource::setSettings(settings);
+  sanitizeNoiseSettings(impl_->mutableSettings());
 }
 
 bool ArtifactNoiseLayer::isColorMappingEnabled() const {
-  return impl_->colorMappingEnabled_;
+  return impl_->colorMapping();
 }
 
 void ArtifactNoiseLayer::setColorMappingEnabled(bool enabled) {
-  impl_->colorMappingEnabled_ = enabled;
+  impl_->ArtifactNoiseSource::setColorMappingEnabled(enabled);
 }
 
-FloatColor ArtifactNoiseLayer::colorA() const { return impl_->colorA_; }
+FloatColor ArtifactNoiseLayer::colorA() const { return impl_->colorAValue(); }
 
 void ArtifactNoiseLayer::setColorA(const FloatColor& color) {
-  impl_->colorA_ = FloatColor(clampUnit(color.r(), 0.0f),
-                              clampUnit(color.g(), 0.0f),
-                              clampUnit(color.b(), 0.0f),
-                              clampUnit(color.a(), 1.0f));
+  impl_->ArtifactNoiseSource::setColorA(color);
 }
 
-FloatColor ArtifactNoiseLayer::colorB() const { return impl_->colorB_; }
+FloatColor ArtifactNoiseLayer::colorB() const { return impl_->colorBValue(); }
 
 void ArtifactNoiseLayer::setColorB(const FloatColor& color) {
-  impl_->colorB_ = FloatColor(clampUnit(color.r(), 1.0f),
-                              clampUnit(color.g(), 1.0f),
-                              clampUnit(color.b(), 1.0f),
-                              clampUnit(color.a(), 1.0f));
+  impl_->ArtifactNoiseSource::setColorB(color);
 }
 
 const ArtifactCore::ImageF32x4_RGBA*
@@ -714,31 +710,31 @@ ArtifactNoiseLayer::resolveLayerSourceOverride() const {
   const auto source = sourceSize();
   const int width = std::clamp(source.width, 1, 16384);
   const int height = std::clamp(source.height, 1, 16384);
-  auto settings = evaluatedNoiseSettings(this, impl_->settings_);
+  auto settings = evaluatedNoiseSettings(this, impl_->sourceSettings());
   const auto time = noiseEvaluationTime(this);
   const int64_t frame = time.value();
   const bool colorMapping = evaluatedNoiseBoolean(
       this, QStringLiteral("noise.colorMapping"),
-      impl_->colorMappingEnabled_, time, frame);
+      impl_->colorMapping(), time, frame);
   const auto colorA = evaluatedNoiseColor(
-      this, QStringLiteral("noise.colorA"), impl_->colorA_, time);
+      this, QStringLiteral("noise.colorA"), impl_->colorAValue(), time);
   const auto colorB = evaluatedNoiseColor(
-      this, QStringLiteral("noise.colorB"), impl_->colorB_, time);
+      this, QStringLiteral("noise.colorB"), impl_->colorBValue(), time);
   settings.width = width;
   settings.height = height;
   const QString signature = noiseSignatureKey(
       settings, colorMapping, colorA, colorB);
-  if (impl_->buffer_.isEmpty() || impl_->bufferSignature_ != signature) {
-    impl_->buffer_ = ArtifactCore::ImageF32x4_RGBA();
+  if (impl_->sourceBuffer().isEmpty() || impl_->sourceBufferSignature() != signature) {
+    impl_->sourceBuffer() = ArtifactCore::ImageF32x4_RGBA();
     if (!ArtifactCore::ProceduralTextureGenerator::generate(
-            settings, impl_->buffer_)) {
+            settings, impl_->sourceBuffer())) {
       return nullptr;
     }
-    if (colorMapping && impl_->buffer_.rgba32fData() &&
-        impl_->buffer_.width() > 0 && impl_->buffer_.height() > 0) {
+    if (colorMapping && impl_->sourceBuffer().rgba32fData() &&
+        impl_->sourceBuffer().width() > 0 && impl_->sourceBuffer().height() > 0) {
       const int pixelCount =
-          impl_->buffer_.width() * impl_->buffer_.height();
-      float* pixels = impl_->buffer_.rgba32fData();
+          impl_->sourceBuffer().width() * impl_->sourceBuffer().height();
+      float* pixels = impl_->sourceBuffer().rgba32fData();
       const FloatColor& a = colorA;
       const FloatColor& b = colorB;
       for (int i = 0; i < pixelCount; ++i) {
@@ -749,9 +745,9 @@ ArtifactNoiseLayer::resolveLayerSourceOverride() const {
         pixels[i * 4 + 3] = a.a() + (b.a() - a.a()) * v;
       }
     }
-    impl_->bufferSignature_ = signature;
+    impl_->sourceBufferSignature() = signature;
   }
-  return &impl_->buffer_;
+  return &impl_->sourceBuffer();
 }
 
 const QImage& ArtifactNoiseLayer::currentNoiseImage() const {
@@ -759,16 +755,16 @@ const QImage& ArtifactNoiseLayer::currentNoiseImage() const {
   const QSize targetSize(std::clamp(source.width, 1, 16384),
                          std::clamp(source.height, 1, 16384));
   const auto* buffer = resolveLayerSourceOverride();
-  const QString signature = buffer ? impl_->bufferSignature_ : QString();
-  if (impl_->cachedSignature_ == signature &&
-      impl_->cachedSize_ == targetSize &&
-      impl_->cachedImage_.isNull() != static_cast<bool>(buffer)) {
-    return impl_->cachedImage_;
+  const QString signature = buffer ? impl_->sourceBufferSignature() : QString();
+  if (impl_->cachedSourceSignature() == signature &&
+      impl_->cachedSourceSize() == targetSize &&
+      impl_->cachedSourceImage().isNull() != static_cast<bool>(buffer)) {
+    return impl_->cachedSourceImage();
   }
-  impl_->cachedImage_ = buffer ? buffer->toQImage() : QImage();
-  impl_->cachedSize_ = targetSize;
-  impl_->cachedSignature_ = signature;
-  return impl_->cachedImage_;
+  impl_->cachedSourceImage() = buffer ? buffer->toQImage() : QImage();
+  impl_->cachedSourceSize() = targetSize;
+  impl_->cachedSourceSignature() = signature;
+  return impl_->cachedSourceImage();
 }
 
 void ArtifactNoiseLayer::draw(ArtifactIRenderer* renderer) {
@@ -781,9 +777,9 @@ void ArtifactNoiseLayer::draw(ArtifactIRenderer* renderer) {
   const int64_t frame = time.value();
   const bool colorMapping = evaluatedNoiseBoolean(
       this, QStringLiteral("noise.colorMapping"),
-      impl_->colorMappingEnabled_, time, frame);
+      impl_->colorMapping(), time, frame);
   if (!colorMapping) {
-    auto gpuSettings = evaluatedNoiseSettings(this, impl_->settings_);
+    auto gpuSettings = evaluatedNoiseSettings(this, impl_->sourceSettings());
     gpuSettings.width = size.width;
     gpuSettings.height = size.height;
     if (auto* gpuTexture = impl_->gpuView(renderer,
@@ -844,7 +840,7 @@ QJsonObject ArtifactNoiseLayer::toJson() const {
   const auto safeSource = sourceSize();
   obj["noiseWidth"] = std::clamp(safeSource.width, 1, 16384);
   obj["noiseHeight"] = std::clamp(safeSource.height, 1, 16384);
-  const auto& settings = impl_->settings_;
+  const auto& settings = impl_->sourceSettings();
   const auto& p = settings.primary;
   const auto& post = settings.post;
   QJsonObject noiseObj;
@@ -884,18 +880,18 @@ QJsonObject ArtifactNoiseLayer::toJson() const {
   noiseObj["blendWeight"] = static_cast<double>(post.blendWeight);
   noiseObj["secondary"] = generatorParamsToJson(post.secondary);
   noiseObj["warp"] = generatorParamsToJson(post.warp);
-  noiseObj["colorMapping"] = impl_->colorMappingEnabled_;
+  noiseObj["colorMapping"] = impl_->colorMapping();
   QJsonObject colorAObj;
-  colorAObj["r"] = impl_->colorA_.r();
-  colorAObj["g"] = impl_->colorA_.g();
-  colorAObj["b"] = impl_->colorA_.b();
-  colorAObj["a"] = impl_->colorA_.a();
+  colorAObj["r"] = impl_->colorAValue().r();
+  colorAObj["g"] = impl_->colorAValue().g();
+  colorAObj["b"] = impl_->colorAValue().b();
+  colorAObj["a"] = impl_->colorAValue().a();
   noiseObj["colorA"] = colorAObj;
   QJsonObject colorBObj;
-  colorBObj["r"] = impl_->colorB_.r();
-  colorBObj["g"] = impl_->colorB_.g();
-  colorBObj["b"] = impl_->colorB_.b();
-  colorBObj["a"] = impl_->colorB_.a();
+  colorBObj["r"] = impl_->colorBValue().r();
+  colorBObj["g"] = impl_->colorBValue().g();
+  colorBObj["b"] = impl_->colorBValue().b();
+  colorBObj["a"] = impl_->colorBValue().a();
   noiseObj["colorB"] = colorBObj;
   const auto animatedProperties = serializeNoiseAnimatedProperties(this);
   if (!animatedProperties.isEmpty()) {
@@ -914,7 +910,7 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
   }
   if (obj.contains("noise") && obj["noise"].isObject()) {
     const auto noiseObj = obj["noise"].toObject();
-    auto& settings = impl_->settings_;
+    auto& settings = impl_->mutableSettings();
     auto& p = settings.primary;
     if (noiseObj.contains("kind")) {
       noiseKindFromString(noiseObj.value("kind").toString(), p.kind,
@@ -1008,22 +1004,22 @@ void ArtifactNoiseLayer::fromJsonProperties(const QJsonObject& obj) {
     }
     sanitizeNoiseSettings(settings);
     setColorMappingEnabled(
-        noiseObj.value("colorMapping").toBool(impl_->colorMappingEnabled_));
+        noiseObj.value("colorMapping").toBool(impl_->colorMapping()));
     if (noiseObj.contains("colorA") && noiseObj["colorA"].isObject()) {
       const auto colorObj = noiseObj["colorA"].toObject();
       setColorA(FloatColor(
-          static_cast<float>(colorObj.value("r").toDouble(impl_->colorA_.r())),
-          static_cast<float>(colorObj.value("g").toDouble(impl_->colorA_.g())),
-          static_cast<float>(colorObj.value("b").toDouble(impl_->colorA_.b())),
-          static_cast<float>(colorObj.value("a").toDouble(impl_->colorA_.a()))));
+          static_cast<float>(colorObj.value("r").toDouble(impl_->colorAValue().r())),
+          static_cast<float>(colorObj.value("g").toDouble(impl_->colorAValue().g())),
+          static_cast<float>(colorObj.value("b").toDouble(impl_->colorAValue().b())),
+          static_cast<float>(colorObj.value("a").toDouble(impl_->colorAValue().a()))));
     }
     if (noiseObj.contains("colorB") && noiseObj["colorB"].isObject()) {
       const auto colorObj = noiseObj["colorB"].toObject();
       setColorB(FloatColor(
-          static_cast<float>(colorObj.value("r").toDouble(impl_->colorB_.r())),
-          static_cast<float>(colorObj.value("g").toDouble(impl_->colorB_.g())),
-          static_cast<float>(colorObj.value("b").toDouble(impl_->colorB_.b())),
-          static_cast<float>(colorObj.value("a").toDouble(impl_->colorB_.a()))));
+          static_cast<float>(colorObj.value("r").toDouble(impl_->colorBValue().r())),
+          static_cast<float>(colorObj.value("g").toDouble(impl_->colorBValue().g())),
+          static_cast<float>(colorObj.value("b").toDouble(impl_->colorBValue().b())),
+          static_cast<float>(colorObj.value("a").toDouble(impl_->colorBValue().a()))));
     }
     if (noiseObj.contains("animatedProperties") &&
         noiseObj["animatedProperties"].isObject()) {
@@ -1037,7 +1033,7 @@ std::vector<ArtifactCore::PropertyGroup>
 ArtifactNoiseLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstract2DLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup noiseGroup(QStringLiteral("Noise"));
-  const auto& settings = impl_->settings_;
+  const auto& settings = impl_->sourceSettings();
   const auto& p = settings.primary;
   auto kindProperty = persistentLayerProperty(
       QStringLiteral("noise.kind"), ArtifactCore::PropertyType::String,
@@ -1237,7 +1233,7 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
   noiseGroup.addProperty(blendWeightProperty);
   auto colorMappingProperty = persistentLayerProperty(
       QStringLiteral("noise.colorMapping"), ArtifactCore::PropertyType::Boolean,
-      impl_->colorMappingEnabled_, -105);
+      impl_->colorMapping(), -105);
   colorMappingProperty->setAnimatable(true);
   colorMappingProperty->setDisplayLabel(QStringLiteral("カラーマッピング"));
   noiseGroup.addProperty(colorMappingProperty);
@@ -1263,7 +1259,7 @@ ArtifactNoiseLayer::getLayerPropertyGroups() const {
 
 bool ArtifactNoiseLayer::setLayerPropertyValue(const QString& propertyPath,
                                                const QVariant& value) {
-  auto& settings = impl_->settings_;
+  auto& settings = impl_->mutableSettings();
   auto& p = settings.primary;
   if (propertyPath == QStringLiteral("noise.kind")) {
     noiseKindFromString(value.toString(), p.kind, p.voronoiMode,

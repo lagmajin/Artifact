@@ -311,9 +311,6 @@ class EffectPanelSurface final : public QWidget {
     painter.setPen(pal.color(QPalette::Mid));
     if (role_ == Role::Header) {
       painter.drawLine(rect().bottomLeft(), rect().bottomRight());
-    } else {
-      painter.drawRoundedRect(
-          QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
     }
   }
 
@@ -340,11 +337,7 @@ class EffectRackSurface final : public QWidget {
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     const QPalette pal = palette();
-    const QRectF surfaceRect =
-        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-    painter.setPen(pal.color(QPalette::Mid));
-    painter.setBrush(pal.color(QPalette::AlternateBase));
-    painter.drawRoundedRect(surfaceRect, 4.0, 4.0);
+    painter.fillRect(rect(), pal.color(QPalette::Window));
     QFont titleFont = font();
     titleFont.setWeight(QFont::DemiBold);
     painter.setFont(titleFont);

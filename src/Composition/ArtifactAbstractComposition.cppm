@@ -1458,7 +1458,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         // goToFrame historically restores other solvers without integrating
         // them. Keep this change scoped to shared 2D rigid bodies.
         if (!advanceOtherPhysics) continue;
-        physics.update(fixedDeltaSeconds, 0.0f, 9.8f, false);
+        physics.advancePhysicsFrame(fixedDeltaSeconds, 0.0f, 9.8f, false);
         for (const auto& event : physics.takeMaterialFractureEvents()) {
             const auto layer = layerMultiIndex_.findById(event.layerId);
             if (!layer || event.fracturedParticleCount <= 0) {
@@ -4000,6 +4000,13 @@ void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
         return;
     }
     impl_->frameRate_ = rate;
+    // Keep every Transform3D keyframe domain aligned with the new composition
+    // rate. setComposition() updates base and variant transforms together.
+    for (const auto &layer : impl_->layerMultiIndex_) {
+        if (layer) {
+            layer->setComposition(this);
+        }
+    }
     const int startFrame = impl_->startTimeCode_.frame();
     impl_->startTimeCode_ = TimeCode(startFrame, rate.framerate());
     impl_->startTimeCode_.setDropFrame(rate.hasDropframe());

@@ -454,12 +454,12 @@ namespace {
         }
 
         Uint32 adapterCount = 0;
-        factory->EnumerateAdapters(Version{}, adapterCount, nullptr);
+        factory->EnumerateAdapters(Version{11, 0}, adapterCount, nullptr);
         if (adapterCount == 0) {
             return selection;
         }
         std::vector<GraphicsAdapterInfo> adapters(adapterCount);
-        factory->EnumerateAdapters(Version{}, adapterCount, adapters.data());
+        factory->EnumerateAdapters(Version{11, 0}, adapterCount, adapters.data());
         adapters.resize(adapterCount);
 
         int selectedIndex = -1;

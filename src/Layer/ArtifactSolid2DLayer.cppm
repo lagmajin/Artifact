@@ -85,6 +85,8 @@ bool animatedSolidGradientBool(const ArtifactSolid2DLayer* layer,
   float gradientCenterY_ = 0.5f;
   float gradientScale_ = 1.0f;
   float gradientOffset_ = 0.0f;
+  double pixelAspectRatio_ = 1.0;
+  QString sourceItemId_;
 
  public:
   Impl();
@@ -144,6 +146,12 @@ bool animatedSolidGradientBool(const ArtifactSolid2DLayer* layer,
         ? std::clamp(v, -1000000.0f, 1000000.0f)
         : 0.0f;
   }
+  double pixelAspectRatio() const { return pixelAspectRatio_; }
+  void setPixelAspectRatio(const double ratio) {
+    pixelAspectRatio_ = std::isfinite(ratio) ? std::clamp(ratio, 0.01, 100.0) : 1.0;
+  }
+  QString sourceItemId() const { return sourceItemId_; }
+  void setSourceItemId(const QString& id) { sourceItemId_ = id.trimmed(); }
  };
 
  ArtifactSolid2DLayer::Impl::Impl()
@@ -290,13 +298,29 @@ void ArtifactSolid2DLayer::setSize(int width, int height)
                         std::clamp(height, 1, 16384)));
 }
 
+double ArtifactSolid2DLayer::pixelAspectRatio() const { return impl_->pixelAspectRatio(); }
+
+void ArtifactSolid2DLayer::setPixelAspectRatio(double ratio)
+{
+  impl_->setPixelAspectRatio(ratio);
+}
+
+QString ArtifactSolid2DLayer::sourceItemId() const { return impl_->sourceItemId(); }
+
+void ArtifactSolid2DLayer::setSourceItemId(const QString& id)
+{
+  impl_->setSourceItemId(id);
+}
+
  QJsonObject ArtifactSolid2DLayer::toJson() const
  {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Solid);
   const auto safeSource = sourceSize();
   obj["solidWidth"] = std::clamp(safeSource.width, 1, 16384);
-  obj["solidHeight"] = std::clamp(safeSource.height, 1, 16384);
+ obj["solidHeight"] = std::clamp(safeSource.height, 1, 16384);
+  obj["solidPixelAspectRatio"] = pixelAspectRatio();
+  if (!sourceItemId().isEmpty()) obj["solidSourceItemId"] = sourceItemId();
   QJsonObject colorObj;
   const auto c = color();
   colorObj["r"] = c.r();
@@ -330,8 +354,10 @@ void ArtifactSolid2DLayer::setSize(int width, int height)
 
  void ArtifactSolid2DLayer::fromJsonProperties(const QJsonObject& obj)
  {
-  ArtifactAbstract2DLayer::fromJsonProperties(obj);
-  if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
+ ArtifactAbstract2DLayer::fromJsonProperties(obj);
+  setSourceItemId(obj.value("solidSourceItemId").toString());
+  setPixelAspectRatio(obj.value("solidPixelAspectRatio").toDouble(1.0));
+ if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
    const int width = obj.value("solidWidth").toInt(sourceSize().width);
    const int height = obj.value("solidHeight").toInt(sourceSize().height);
    setSize(width, height);
@@ -384,6 +410,14 @@ void ArtifactSolid2DLayer::setSize(int width, int height)
   p->setAnimatable(true);
   p->setDisplayLabel(QStringLiteral("Color"));
   solidGroup.addProperty(p);
+
+  auto pixelAspectProp = persistentLayerProperty(
+      QStringLiteral("solid.pixelAspectRatio"), ArtifactCore::PropertyType::Float,
+      pixelAspectRatio(), -119);
+  pixelAspectProp->setHardRange(0.01, 100.0);
+  pixelAspectProp->setValue(pixelAspectRatio());
+  pixelAspectProp->setDisplayLabel(QStringLiteral("Pixel Aspect Ratio"));
+  solidGroup.addProperty(pixelAspectProp);
 
   auto fillTypeProp = persistentLayerProperty(QStringLiteral("solid.fillType"),
                                               ArtifactCore::PropertyType::Integer,
@@ -499,6 +533,11 @@ void ArtifactSolid2DLayer::setSize(int width, int height)
    Q_EMIT changed();
    return true;
   }
+  if (propertyPath == QStringLiteral("solid.pixelAspectRatio")) {
+   setPixelAspectRatio(value.toDouble());
+   Q_EMIT changed();
+   return true;
+  }
   if (propertyPath == QStringLiteral("solid.gradientStartColor")) {
    const auto c = value.value<QColor>();
    setGradientStartColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
@@ -550,6 +589,8 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
  const auto sourceSize = this->sourceSize();
  const Size_2D size(std::clamp(sourceSize.width, 1, 16384),
                     std::clamp(sourceSize.height, 1, 16384));
+ const float displayWidth = static_cast<float>(size.width) *
+                            static_cast<float>(pixelAspectRatio());
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const FloatColor gradientStart = animatedSolidGradientColor(
       this, QStringLiteral("solid.gradientStartColor"),
@@ -572,12 +613,12 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
   const float gradientOffset = animatedSolidGradientFloat(
       this, QStringLiteral("solid.gradientOffset"), impl_->gradientOffset());
   drawWithClonerEffect(this, baseTransform,
-      [renderer, size, this, gradientStart, gradientEnd, gradientAngle,
+      [renderer, size, displayWidth, this, gradientStart, gradientEnd, gradientAngle,
        gradientReverse, gradientCenterX, gradientCenterY, gradientScale,
        gradientOffset](const QMatrix4x4& transform, float weight) {
    if (impl_->fillType() != ArtifactSolidFillType::Solid) {
    renderer->drawGradientRectTransformed(
-       0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height),
+       0.0f, 0.0f, displayWidth, static_cast<float>(size.height),
        transform, gradientStart, gradientEnd, static_cast<int>(impl_->fillType()),
        gradientAngle, gradientReverse, gradientCenterX, gradientCenterY,
        gradientScale, gradientOffset, this->opacity() * weight);
@@ -586,7 +627,7 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
   const FloatColor src = impl_->color();
   const FloatColor color(src.r(), src.g(), src.b(), src.a() * this->opacity() * weight);
   renderer->drawSolidRectTransformed(0.0f, 0.0f,
-                                     static_cast<float>(size.width),
+                                     displayWidth,
                                      static_cast<float>(size.height),
                                      transform,
                                      color,

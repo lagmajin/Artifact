@@ -10,6 +10,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
 import Image.ImageF32x4_RGBA;
 import ImageProcessing.ProceduralTexture;
+import Artifact.Source.Noise;
 
 export namespace Artifact {
 using namespace ArtifactCore;

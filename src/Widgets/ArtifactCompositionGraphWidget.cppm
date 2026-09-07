@@ -30,6 +30,8 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Engine.DAG.LayerGraphBuilder;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
+import Artifact.Project.Items;
+import Artifact.Layer.Composition;
 import Artifact.Event.Types;
 import Event.Bus;
 import Utils;
@@ -229,6 +231,7 @@ namespace Artifact {
         QGraphicsScene* scene;
         QLineEdit* searchBar;
         QMap<LayerID, LayerNodeItem*> nodeMap;
+        QMap<QString, QGraphicsRectItem*> projectNodeMap;
         ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
         std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
@@ -516,6 +519,10 @@ namespace Artifact {
                 QObject::connect(refreshAction, &QAction::triggered, [this]() {
                     refresh();
                 });
+                auto projectAction = menu.addAction("Project Flowchart");
+                QObject::connect(projectAction, &QAction::triggered, [this]() {
+                    refreshProject();
+                });
             }
 
             int menuX = globalPos.x();
@@ -528,6 +535,7 @@ namespace Artifact {
         void refresh() {
             scene->clear();
             nodeMap.clear();
+            projectNodeMap.clear();
             auto service = ArtifactProjectService::instance();
             auto compPtr = service->currentComposition();
             if (compPtr.expired()) return;
@@ -610,6 +618,106 @@ namespace Artifact {
                     drawParentLink(nodeMap[pId], nodeMap[layer->id()]);
                 }
             }
+        }
+
+        void refreshProject() {
+            scene->clear();
+            nodeMap.clear();
+            projectNodeMap.clear();
+            auto service = ArtifactProjectService::instance();
+            if (!service) return;
+            const auto project = service->getCurrentProjectSharedPtr();
+            if (!project) return;
+
+            const auto items = service->projectItems();
+            QMap<ProjectItem*, QGraphicsRectItem*> itemNodes;
+            int index = 0;
+            for (ProjectItem* item : items) {
+                if (!item) continue;
+                QString kind = QStringLiteral("Item");
+                QColor color(70, 100, 140);
+                switch (item->type()) {
+                case eProjectItemType::Folder: kind = QStringLiteral("Folder"); color = QColor(150, 110, 45); break;
+                case eProjectItemType::Composition: kind = QStringLiteral("Composition"); color = QColor(75, 135, 105); break;
+                case eProjectItemType::Footage: kind = QStringLiteral("Footage"); color = QColor(55, 115, 170); break;
+                case eProjectItemType::Solid: kind = QStringLiteral("Solid"); color = QColor(135, 75, 135); break;
+                default: break;
+                }
+                auto* node = new QGraphicsRectItem(0, 0, 190, 48);
+                node->setBrush(color);
+                node->setPen(QPen(color.lighter(145), 1.5));
+                node->setFlag(QGraphicsItem::ItemIsSelectable, true);
+                node->setPos((index % 4) * 250.0, (index / 4) * 90.0);
+                auto* label = new QGraphicsTextItem(
+                    QStringLiteral("%1\n%2").arg(kind, item->name.toQString()), node);
+                label->setDefaultTextColor(Qt::white);
+                label->setPos(7, 5);
+                node->setToolTip(QStringLiteral("%1\nID: %2").arg(kind, item->id.toString()));
+                scene->addItem(node);
+                itemNodes.insert(item, node);
+                projectNodeMap.insert(item->id.toString(), node);
+                ++index;
+            }
+
+            for (auto it = itemNodes.cbegin(); it != itemNodes.cend(); ++it) {
+                ProjectItem* child = it.key();
+                if (!child || !child->parent || !itemNodes.contains(child->parent)) continue;
+                auto* parentNode = itemNodes.value(child->parent);
+                auto* childNode = it.value();
+                QPainterPath path;
+                const QPointF start = parentNode->pos() + QPointF(190, 24);
+                const QPointF end = childNode->pos() + QPointF(0, 24);
+                path.moveTo(start);
+                const qreal midX = (start.x() + end.x()) * 0.5;
+                path.cubicTo(midX, start.y(), midX, end.y(), end.x(), end.y());
+                auto* link = new QGraphicsPathItem(path);
+                link->setPen(QPen(QColor(210, 210, 210, 160), 1.5));
+                link->setZValue(-1);
+                scene->addItem(link);
+            }
+
+            // Composition layers are project-level references. Draw these as
+            // solid dependency edges in addition to the folder hierarchy.
+            for (ProjectItem* item : items) {
+                auto* compositionItem = dynamic_cast<CompositionItem*>(item);
+                if (!compositionItem) continue;
+                auto parentNode = itemNodes.value(compositionItem, nullptr);
+                if (!parentNode) continue;
+                const auto compositionResult = service->findComposition(
+                    compositionItem->compositionId);
+                const auto composition = compositionResult.ptr.lock();
+                if (!composition) continue;
+                for (const auto& layer : composition->allLayer()) {
+                    const auto sourceLayer = ArtifactCore::dynamicPointerCast<
+                        ArtifactCompositionLayer>(layer);
+                    if (!sourceLayer) continue;
+                    const auto targetItem = std::find_if(
+                        items.cbegin(), items.cend(), [&](ProjectItem* candidate) {
+                            const auto* candidateComposition =
+                                dynamic_cast<CompositionItem*>(candidate);
+                            return candidateComposition &&
+                                   candidateComposition->compositionId ==
+                                       sourceLayer->sourceCompositionId();
+                        });
+                    if (targetItem == items.cend()) continue;
+                    auto targetNode = itemNodes.value(*targetItem, nullptr);
+                    if (!targetNode) continue;
+                    QPainterPath path;
+                    const QPointF start = parentNode->pos() + QPointF(190, 24);
+                    const QPointF end = targetNode->pos() + QPointF(0, 24);
+                    path.moveTo(start);
+                    const qreal midX = (start.x() + end.x()) * 0.5;
+                    path.cubicTo(midX, start.y(), midX, end.y(), end.x(), end.y());
+                    auto* link = new QGraphicsPathItem(path);
+                    link->setPen(QPen(QColor(245, 205, 110, 220), 2.0));
+                    link->setZValue(-0.5);
+                    link->setToolTip(QStringLiteral("Composition source dependency"));
+                    scene->addItem(link);
+                }
+            }
+            view->fitInView(scene->itemsBoundingRect().adjusted(-40, -40, 40, 40),
+                            Qt::KeepAspectRatio);
+            searchBar->setPlaceholderText(QStringLiteral("Search project items..."));
         }
 
         void filterNodes(const QString& text) {

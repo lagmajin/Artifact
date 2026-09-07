@@ -194,6 +194,7 @@ enum class LayerType {
   SpatialAudio = 29,            // 3D spatial audio source
   Noise = 30,                   // Procedural noise source layer
   Particle3D = 31,              // 3D camera/depth particle layer
+  Accumulator = 32,             // Temporal composition-space feedback operator
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -520,6 +521,8 @@ public:
   virtual bool isNullLayer() const;
   virtual bool isCloneLayer() const;
   virtual bool isParticleLayer() const { return false; }
+  // The renderer may use this capability to force ordered frame evaluation.
+  virtual bool requiresSequentialEvaluation() const { return false; }
   virtual QRectF localBounds() const;
 
   virtual bool isAdjustmentLayer() const;
@@ -528,7 +531,7 @@ public:
   virtual bool isCompositionBackgroundLayer() const;
   virtual bool shouldIncludeInFinalRender() const;
 
-  bool is3D() const;
+  virtual bool is3D() const;
 
   virtual bool hasAudio() const;
   virtual bool hasVideo() const;

@@ -6,6 +6,7 @@ module;
 #include <QVector3D>
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -16,10 +17,18 @@ import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
 import Event.Bus;
+import Property.Abstract;
 import Time.Rational;
 import Undo.UndoManager;
 
 export namespace Artifact {
+
+struct GizmoPropertyKeySnapshot {
+  QString path;
+  ArtifactCore::KeyFrame key;
+  bool hasKey = false;
+  bool animated = false;
+};
 
 struct GizmoTransformSnapshot {
   QVector3D position;
@@ -32,7 +41,63 @@ struct GizmoTransformSnapshot {
   bool positionAnimated = false;
   bool rotationAnimated = false;
   bool scaleAnimated = false;
+  GizmoPropertyKeySnapshot properties[7] = {
+      {QStringLiteral("transform.position.x"), {}},
+      {QStringLiteral("transform.position.y"), {}},
+      {QStringLiteral("transform.position.z"), {}},
+      {QStringLiteral("transform.rotation"), {}},
+      {QStringLiteral("transform.scale.x"), {}},
+      {QStringLiteral("transform.scale.y"), {}},
+      {QStringLiteral("transform.scale.z"), {}}};
+
+  bool propertyAnimated(const QString &path) const {
+    for (const auto &property : properties) {
+      if (property.path == path) return property.animated;
+    }
+    return false;
+  }
 };
+
+void captureGizmoPropertyKeys(const ArtifactAbstractLayerPtr &layer,
+                              const ArtifactCore::RationalTime &time,
+                              GizmoTransformSnapshot &snapshot) {
+  if (!layer) return;
+  for (auto &saved : snapshot.properties) {
+    const auto property = layer->getProperty(saved.path);
+    saved.hasKey = false;
+    saved.animated = false;
+    if (!property) continue;
+    const auto keys = property->getKeyFrames();
+    saved.animated = !keys.empty();
+    for (const auto &key : keys) {
+      if (key.time == time) {
+        saved.key = key;
+        saved.hasKey = true;
+        break;
+      }
+    }
+  }
+}
+
+void restoreGizmoPropertyKeys(const ArtifactAbstractLayerPtr &layer,
+                              const ArtifactCore::RationalTime &time,
+                              const GizmoTransformSnapshot &snapshot) {
+  if (!layer) return;
+  for (const auto &saved : snapshot.properties) {
+    const auto property = layer->getProperty(saved.path);
+    if (!property || !property->isAnimatable()) continue;
+    if (saved.hasKey) {
+      const auto &key = saved.key;
+      property->addKeyFrame(key.time, key.value, key.interpolation,
+                            key.cp1_x, key.cp1_y, key.cp2_x, key.cp2_y,
+                            key.roving);
+      property->setKeyFrameAnchorAt(key.time, key.anchor);
+      property->setKeyFrameColorLabelAt(key.time, key.colorLabel);
+    } else {
+      property->removeKeyFrame(time);
+    }
+  }
+}
 
 struct GizmoGroupLayerState {
   ArtifactAbstractLayerPtr layer;
@@ -59,7 +124,8 @@ ArtifactCore::RationalTime transformTime(
       if (candidate > 0.0) fps = candidate;
     }
   }
-  return ArtifactCore::RationalTime(frame, fps);
+  return ArtifactCore::RationalTime(
+      frame, std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps))));
 }
 
 void applyPlanarTransform(const ArtifactAbstractLayerPtr &layer, int64_t frame,
@@ -100,33 +166,7 @@ void applyPlanarTransform(const ArtifactAbstractLayerPtr &layer, int64_t frame,
 void restorePropertyKeyState(const ArtifactAbstractLayerPtr &layer,
                              int64_t frame,
                              const GizmoTransformSnapshot &snapshot) {
-  if (!layer) return;
-  const auto time = transformTime(layer, frame);
-  const auto restore = [&](const QString &path, bool hasKey,
-                           const QVariant &value) {
-    const auto property = layer->getProperty(path);
-    if (!property || !property->isAnimatable()) return;
-    if (hasKey) property->addKeyFrame(time, value);
-    else property->removeKeyFrame(time);
-  };
-  restore(QStringLiteral("transform.position.x"), snapshot.hasPositionKey,
-          snapshot.position.x());
-  restore(QStringLiteral("transform.position.y"), snapshot.hasPositionKey,
-          snapshot.position.y());
-  if (snapshot.is3D) {
-    restore(QStringLiteral("transform.position.z"), snapshot.hasPositionKey,
-            snapshot.position.z());
-  }
-  restore(QStringLiteral("transform.rotation"), snapshot.hasRotationKey,
-          snapshot.is3D ? snapshot.rotation.x() : snapshot.rotation.z());
-  restore(QStringLiteral("transform.scale.x"), snapshot.hasScaleKey,
-          snapshot.scale.x());
-  restore(QStringLiteral("transform.scale.y"), snapshot.hasScaleKey,
-          snapshot.scale.y());
-  if (snapshot.is3D) {
-    restore(QStringLiteral("transform.scale.z"), snapshot.hasScaleKey,
-            snapshot.scale.z());
-  }
+  restoreGizmoPropertyKeys(layer, transformTime(layer, frame), snapshot);
 }
 
 } // namespace

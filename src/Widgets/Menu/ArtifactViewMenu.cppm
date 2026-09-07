@@ -875,6 +875,8 @@ namespace Artifact {
    QAction* showGuidesAction = nullptr;
    QAction* snapToGuidesAction = nullptr;
    QAction* showRulersAction = nullptr;
+   QAction* showPixelGridAction = nullptr;
+   QAction* showOutsideCompositionAction = nullptr;
    QAction* showRigOverlayAction = nullptr;
    QAction* showRigWeightMapAction = nullptr;
    QAction* showOnionSkinAction = nullptr;
@@ -925,7 +927,9 @@ namespace Artifact {
      QAction* openContentsViewerAction = nullptr;
      QAction* openProjectPanelAction = nullptr;
      QAction* openColorPaletteAction = nullptr;
+     QAction* openEffectPaletteAction = nullptr;
      QAction* openColorScienceAction = nullptr;
+     QAction* newBrowserAction = nullptr;
      QAction* openReactiveEventEditorAction = nullptr;
    QAction* secondaryPreviewAction = nullptr;
    QPointer<ArtifactSecondaryPreviewWindow> secondaryPreviewWindow;
@@ -1036,6 +1040,26 @@ namespace Artifact {
                       editor->renderController()->setShowViewportRuler(checked);
                       QSettings settings;
                       settings.setValue(QStringLiteral("viewport/showRuler"), checked);
+                    });
+
+   showPixelGridAction = new QAction(QStringLiteral("ピクセルグリッドを表示"));
+   showPixelGridAction->setCheckable(true);
+   QObject::connect(showPixelGridAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (editor && editor->renderController())
+                        editor->renderController()->setShowPixelGrid(checked);
+                    });
+
+   showOutsideCompositionAction = new QAction(QStringLiteral("コンポジション境界を表示"));
+   showOutsideCompositionAction->setCheckable(true);
+   QObject::connect(showOutsideCompositionAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (editor && editor->renderController())
+                        editor->renderController()->setShowOutsideComposition(checked);
                     });
 
    showRigOverlayAction = new QAction(QStringLiteral("リグオーバーレイを表示"));
@@ -1584,22 +1608,51 @@ namespace Artifact {
     refreshSelectionSetMenu();
    });
 
-   menu->addAction(zoomInAction);
-   menu->addAction(zoomOutAction);
-   menu->addAction(defaultZoomAction);
-   menu->addAction(fitToScreenAction);
-   menu->addSeparator();
-   menu->addMenu(viewportBookmarkMenu);
-   menu->addMenu(viewportTemplateMenu);
-   menu->addMenu(compareMenu);
-   menu->addMenu(selectionSetMenu);
-   menu->addSeparator();
-   menu->addMenu(resolutionMenu);
-   menu->addMenu(qualityPresetMenu);
-   menu->addSeparator();
-   menu->addAction(useDisplayColorManagementAction);
-   menu->addSeparator();
-   openContentsViewerAction = menu->addAction("Contents Viewer");
+   auto *navigationMenu = menu->addMenu(QStringLiteral("ナビゲーション(&N)"));
+   navigationMenu->addAction(zoomInAction);
+   navigationMenu->addAction(zoomOutAction);
+   navigationMenu->addAction(defaultZoomAction);
+   navigationMenu->addAction(fitToScreenAction);
+   navigationMenu->addSeparator();
+   navigationMenu->addMenu(viewportBookmarkMenu);
+   navigationMenu->addMenu(viewportTemplateMenu);
+   navigationMenu->addMenu(compareMenu);
+   navigationMenu->addMenu(selectionSetMenu);
+
+   auto *previewMenu = menu->addMenu(QStringLiteral("プレビュー(&P)"));
+   previewMenu->addMenu(resolutionMenu);
+   previewMenu->addMenu(qualityPresetMenu);
+   previewMenu->addSeparator();
+   previewMenu->addAction(useDisplayColorManagementAction);
+
+   auto *overlaysMenu = menu->addMenu(QStringLiteral("オーバーレイ(&O)"));
+   auto *gridAndSnapMenu = overlaysMenu->addMenu(QStringLiteral("グリッドとスナップ(&G)"));
+   gridAndSnapMenu->addAction(showGridAction);
+   gridAndSnapMenu->addMenu(gridSettingsMenu);
+   gridAndSnapMenu->addAction(snapToGridAction);
+   gridAndSnapMenu->addSeparator();
+   gridAndSnapMenu->addAction(showGuidesAction);
+   gridAndSnapMenu->addAction(snapToGuidesAction);
+   overlaysMenu->addAction(showRulersAction);
+   overlaysMenu->addAction(showPixelGridAction);
+   overlaysMenu->addAction(showOutsideCompositionAction);
+   overlaysMenu->addAction(showOnionSkinAction);
+   overlaysMenu->addAction(showSafeMarginsAction);
+
+   auto *rigMenu = menu->addMenu(QStringLiteral("Rig(&R)"));
+   rigMenu->addAction(showRigOverlayAction);
+   rigMenu->addAction(showRigWeightMapAction);
+   rigMenu->addSeparator();
+   rigMenu->addAction(captureRigPoseAction);
+   rigMenu->addAction(saveRigPoseSlotAction);
+   rigMenu->addAction(applyRigPoseSlotAction);
+   rigMenu->addAction(clearRigPoseSlotsAction);
+
+   auto *workspaceLayoutMenu = menu->addMenu(QStringLiteral("ワークスペース(&K)"));
+   workspaceLayoutMenu->addMenu(workspaceMenu);
+   workspaceLayoutMenu->addMenu(workspacePresetMenu);
+
+   openContentsViewerAction = new QAction(QStringLiteral("Contents Viewer"), menu);
    openContentsViewerAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
    QObject::connect(openContentsViewerAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1607,13 +1660,13 @@ namespace Artifact {
     activateDock(mainWindow, QStringLiteral("Contents Viewer"));
    });
 
-   openProjectPanelAction = menu->addAction("Project パネル(&P)");
+   openProjectPanelAction = new QAction(QStringLiteral("Project パネル(&P)"), menu);
    openProjectPanelAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    QObject::connect(openProjectPanelAction, &QAction::triggered, menu, [this]() {
     showProjectPanel();
    });
 
-   openColorPaletteAction = menu->addAction("カラーパレット(&P)");
+   openColorPaletteAction = new QAction(QStringLiteral("カラーパレット(&P)"), menu);
    openColorPaletteAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
    QObject::connect(openColorPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1628,7 +1681,7 @@ namespace Artifact {
                     paletteWidget, QRect(120, 120, 560, 640));
    });
 
-   auto* openEffectPaletteAction = menu->addAction(QStringLiteral("エフェクトパレット"));
+   openEffectPaletteAction = new QAction(QStringLiteral("エフェクトパレット"), menu);
    openEffectPaletteAction->setIcon(QIcon(resolveIconPath("Studio/effect_ops_generate.svg")));
    QObject::connect(openEffectPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1643,7 +1696,7 @@ namespace Artifact {
                     paletteWidget, QRect(160, 160, 360, 600));
    });
 
-   openColorScienceAction = menu->addAction("Color Science");
+   openColorScienceAction = new QAction(QStringLiteral("Color Science"), menu);
    openColorScienceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
    QObject::connect(openColorScienceAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1658,27 +1711,6 @@ namespace Artifact {
                     colorScienceWidget, QRect(140, 140, 720, 720));
    });
 
-   menu->addSeparator();
-   menu->addMenu(workspaceMenu);
-   menu->addMenu(workspacePresetMenu);
-   menu->addSeparator();
-   menu->addAction(showGridAction);
-   menu->addMenu(gridSettingsMenu);
-   menu->addAction(snapToGridAction);
-   menu->addAction(showGuidesAction);
-   menu->addAction(snapToGuidesAction);
-   menu->addAction(showRulersAction);
-   menu->addAction(showRigOverlayAction);
-   menu->addAction(showRigWeightMapAction);
-   menu->addAction(showOnionSkinAction);
-   menu->addAction(showSafeMarginsAction);
-   menu->addSeparator();
-   menu->addAction(captureRigPoseAction);
-   menu->addAction(saveRigPoseSlotAction);
-   menu->addAction(applyRigPoseSlotAction);
-   menu->addAction(clearRigPoseSlotsAction);
-   menu->addAction(openColorScienceAction);
-   menu->addSeparator();
     windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
     windowPanelsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
 
@@ -1699,8 +1731,7 @@ namespace Artifact {
      reactiveEventEditorWindow->present();
     });
 
-    menu->addSeparator();
-     auto* newBrowserAction = menu->addAction("新規アセットブラウザ(&A)");
+     newBrowserAction = new QAction(QStringLiteral("新規アセットブラウザ(&A)"), menu);
      newBrowserAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_asset_browser.svg")));
      QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
       if (!mainWindow) return;
@@ -1712,13 +1743,14 @@ namespace Artifact {
                       browser, QRect(100, 100, 800, 600));
      });
 
-     menu->addSeparator();
-     secondaryPreviewAction = menu->addAction("セカンドモニタープレビュー(&S)");
+     secondaryPreviewAction = new QAction(QStringLiteral("セカンドモニタープレビュー(&S)"), menu);
      secondaryPreviewAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSecondaryPreview));
      secondaryPreviewAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_secondary_preview.svg")));
      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this]() {
       showSecondaryPreview();
      });
+     previewMenu->addSeparator();
+     previewMenu->addAction(secondaryPreviewAction);
     }
 
  ArtifactViewMenu::Impl::~Impl()
@@ -1863,6 +1895,8 @@ namespace Artifact {
   showGuidesAction->setEnabled(hasComp);
   snapToGuidesAction->setEnabled(hasComp);
   showRulersAction->setEnabled(hasComp);
+  showPixelGridAction->setEnabled(hasComp);
+  showOutsideCompositionAction->setEnabled(hasComp);
   if (showRulersAction && hasViewport) {
     const bool showRuler = QSettings().value(
         QStringLiteral("viewport/showRuler"),
@@ -1870,6 +1904,17 @@ namespace Artifact {
     editor->renderController()->setShowViewportRuler(showRuler);
     const QSignalBlocker blocker(showRulersAction);
     showRulersAction->setChecked(showRuler);
+  }
+  if (hasViewport) {
+    {
+      const QSignalBlocker blocker(showPixelGridAction);
+      showPixelGridAction->setChecked(editor->renderController()->isShowPixelGrid());
+    }
+    {
+      const QSignalBlocker blocker(showOutsideCompositionAction);
+      showOutsideCompositionAction->setChecked(
+          editor->renderController()->isShowOutsideComposition());
+    }
   }
   if (hasViewport) {
     const bool showGrid = QSettings().value(
@@ -2252,6 +2297,21 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
   };
   cachedDockTitles_ = titles;
   windowPanelsMenu->clear();
+
+  // Commands that can create a utility surface on demand live beside the
+  // registry-backed panel controls, rather than crowding View's top level.
+  auto *utilityPanelsMenu = windowPanelsMenu->addMenu(
+      QStringLiteral("ユーティリティパネル"));
+  if (openContentsViewerAction) utilityPanelsMenu->addAction(openContentsViewerAction);
+  if (openProjectPanelAction) utilityPanelsMenu->addAction(openProjectPanelAction);
+  if (openColorPaletteAction) utilityPanelsMenu->addAction(openColorPaletteAction);
+  if (openEffectPaletteAction) utilityPanelsMenu->addAction(openEffectPaletteAction);
+  if (openColorScienceAction) utilityPanelsMenu->addAction(openColorScienceAction);
+  if (newBrowserAction) {
+    utilityPanelsMenu->addSeparator();
+    utilityPanelsMenu->addAction(newBrowserAction);
+  }
+  windowPanelsMenu->addSeparator();
 
   QSettings dockSettings;
   const QString favoriteKey = QStringLiteral("Workspace/FavoriteDockIds");

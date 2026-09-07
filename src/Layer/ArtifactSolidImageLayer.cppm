@@ -149,6 +149,8 @@ public:
   float gradientCenterY_ = 0.5f;
   float gradientScale_ = 1.0f;
   float gradientOffset_ = 0.0f;
+  double pixelAspectRatio_ = 1.0;
+  QString sourceItemId_;
   mutable QImage cachedImage_;
   mutable QSize cachedSize_;
   mutable FloatColor cachedColor_ = FloatColor(-1.0f, -1.0f, -1.0f, -1.0f);
@@ -327,12 +329,28 @@ void ArtifactSolidImageLayer::setSize(const int width, const int height) {
   }
 }
 
+double ArtifactSolidImageLayer::pixelAspectRatio() const { return impl_->pixelAspectRatio_; }
+
+void ArtifactSolidImageLayer::setPixelAspectRatio(double ratio) {
+    impl_->pixelAspectRatio_ = std::isfinite(ratio) ? std::clamp(ratio, 0.01, 100.0) : 1.0;
+}
+
+QString ArtifactSolidImageLayer::sourceItemId() const { return impl_->sourceItemId_; }
+
+void ArtifactSolidImageLayer::setSourceItemId(const QString& id) {
+  impl_->sourceItemId_ = id.trimmed();
+}
+
 QJsonObject ArtifactSolidImageLayer::toJson() const {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Solid);
   const auto safeSource = sourceSize();
   obj["solidWidth"] = std::clamp(safeSource.width, 1, 16384);
-  obj["solidHeight"] = std::clamp(safeSource.height, 1, 16384);
+    obj["solidHeight"] = std::clamp(safeSource.height, 1, 16384);
+    obj["solidPixelAspectRatio"] = pixelAspectRatio();
+    if (!sourceItemId().isEmpty()) {
+      obj["solidSourceItemId"] = sourceItemId();
+    }
   QJsonObject colorObj;
   if (const auto colorProperty = getProperty(QStringLiteral("solid.color"));
       colorProperty && !colorProperty->getKeyFrames().empty()) {
@@ -371,7 +389,9 @@ QJsonObject ArtifactSolidImageLayer::toJson() const {
 }
 
 void ArtifactSolidImageLayer::fromJsonProperties(const QJsonObject &obj) {
-  ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    setPixelAspectRatio(obj.value("solidPixelAspectRatio").toDouble(1.0));
+    setSourceItemId(obj.value("solidSourceItemId").toString());
   if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
     const int width = obj.value("solidWidth").toInt(sourceSize().width);
     const int height = obj.value("solidHeight").toInt(sourceSize().height);
@@ -445,6 +465,15 @@ ArtifactSolidImageLayer::getLayerPropertyGroups() const {
   property->setAnimatable(true); // キーフレーム可能に設定
   property->setDisplayLabel(QStringLiteral("Color"));
   solidGroup.addProperty(property);
+
+  auto pixelAspectProperty = persistentLayerProperty(
+      QStringLiteral("solid.pixelAspectRatio"), ArtifactCore::PropertyType::Float,
+      pixelAspectRatio(), -118);
+  pixelAspectProperty->setHardRange(0.01, 100.0);
+  pixelAspectProperty->setValue(pixelAspectRatio());
+  pixelAspectProperty->setDisplayLabel(QStringLiteral("Pixel Aspect Ratio"));
+  pixelAspectProperty->setTooltip(QStringLiteral("Display width multiplier for non-square pixels"));
+  solidGroup.addProperty(pixelAspectProperty);
 
   auto fillTypeProperty = persistentLayerProperty(
       QStringLiteral("solid.fillType"), ArtifactCore::PropertyType::Integer,
@@ -554,6 +583,11 @@ bool ArtifactSolidImageLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   }
+  if (propertyPath == QStringLiteral("solid.pixelAspectRatio")) {
+    setPixelAspectRatio(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
   if (propertyPath == QStringLiteral("solid.gradientStartColor")) {
     const auto c = value.value<QColor>();
     setGradientStartColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
@@ -603,6 +637,8 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   const auto source = sourceSize();
   const Size_2D size(std::clamp(source.width, 1, 16384),
                      std::clamp(source.height, 1, 16384));
+  const float displayWidth = static_cast<float>(size.width) *
+                             static_cast<float>(pixelAspectRatio());
   const auto color = this->color();
   const auto fillType = this->fillType();
   const auto gradientStart = gradientStartColor();
@@ -630,19 +666,19 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
     const QImage& overrideImage = currentFillImage();
     drawWithClonerEffect(
         this, baseTransform,
-        [renderer, size, overrideImage, this]
+        [renderer, size, displayWidth, overrideImage, this]
         (const QMatrix4x4 &transform, float weight) {
           renderer->drawSpriteTransformed(
-              0.0f, 0.0f, static_cast<float>(size.width),
+              0.0f, 0.0f, displayWidth,
               static_cast<float>(size.height), transform, overrideImage,
               opacity() * weight);
         });
-    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
+    drawFractureOverlay(renderer, baseTransform, QSizeF(displayWidth, size.height), opacity());
     return;
   }
   drawWithClonerEffect(
       this, baseTransform,
-      [renderer, size, color, fillType, gradientStart, gradientEnd, gradientAngle,
+      [renderer, size, displayWidth, color, fillType, gradientStart, gradientEnd, gradientAngle,
        gradientReverseValue, gradientCenterXValue, gradientCenterYValue,
        gradientScaleValue, gradientOffsetValue, this]
       (const QMatrix4x4 &transform, float weight) {
@@ -656,7 +692,7 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
               static_cast<int>(fillType), gradientAngle, gradientReverseValue,
               gradientCenterXValue, gradientCenterYValue, gradientScaleValue,
               gradientOffsetValue);
-          renderer->drawSpriteTransformed(0.0f, 0.0f, static_cast<float>(size.width),
+          renderer->drawSpriteTransformed(0.0f, 0.0f, displayWidth,
                                           static_cast<float>(size.height), transform,
                                           gradientImage, 1.0f);
           return;
@@ -664,10 +700,10 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
         const FloatColor cloneColor(color.r(), color.g(), color.b(),
                                     color.a() * this->opacity() * weight);
         renderer->drawSolidRectTransformed(
-            0.0f, 0.0f, static_cast<float>(size.width),
+            0.0f, 0.0f, displayWidth,
             static_cast<float>(size.height), transform, cloneColor, 1.0f);
       });
-  drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
+  drawFractureOverlay(renderer, baseTransform, QSizeF(displayWidth, size.height), opacity());
 }
 
 QImage ArtifactSolidImageLayer::toQImage() const {

@@ -11,6 +11,7 @@ module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Utils.Path;
 
 namespace Artifact {
@@ -47,6 +48,7 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
     picker.setInitialColor(ArtifactCore::FloatColor(
         currentColor_.redF(), currentColor_.greenF(), currentColor_.blueF(),
         currentColor_.alphaF()));
+    Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
     if (picker.exec() != QDialog::Accepted) {
       return;
     }

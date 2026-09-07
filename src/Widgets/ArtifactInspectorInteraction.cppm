@@ -6,6 +6,10 @@ module;
 #include <QFocusEvent>
 #include <QListWidget>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QKeyEvent>
+#include <QPointer>
+#include <QResizeEvent>
 #include <QModelIndex>
 #include <QPaintEvent>
 #include <QPainter>
@@ -15,6 +19,7 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QStyle>
+#include <QSize>
 #include <QStyleOptionViewItem>
 #include <QWidget>
 
@@ -43,7 +48,75 @@ class EffectRackList final : public QListWidget {
     reorderHandler_ = std::move(handler);
   }
 
+  void setHeaderAction(std::function<void(QListWidgetItem*, bool)> action) {
+    headerAction_ = std::move(action);
+  }
+
+  void setEditor(QWidget* editor, const QString& effectId) {
+    if (editor_ && editor_ != editor) editor_->hide();
+    editor_ = editor;
+    editorId_ = effectId;
+    int totalHeight = 4;
+    for (int row = 0; row < count(); ++row) {
+      auto* entry = item(row);
+      const bool expanded = editor && entry->data(Qt::UserRole).toString() == effectId;
+      const int rowHeight = expanded
+          ? qMax(360, editor->minimumSizeHint().height() + 48) : 44;
+      entry->setSizeHint(QSize(0, rowHeight));
+      totalHeight += rowHeight + spacing() * 2;
+    }
+    setFixedHeight(qMax(4, totalHeight));
+    if (editor_) editor_->setParent(viewport());
+    doItemsLayout();
+    positionEditor();
+  }
+
  protected:
+  void resizeEvent(QResizeEvent* event) override {
+    QListWidget::resizeEvent(event);
+    positionEditor();
+  }
+
+  void scrollContentsBy(int dx, int dy) override {
+    QListWidget::scrollContentsBy(dx, dy);
+    positionEditor();
+  }
+
+  void mousePressEvent(QMouseEvent* event) override {
+    auto* entry = itemAt(event->position().toPoint());
+    if (event->button() == Qt::LeftButton && entry && headerAction_) {
+      const QRect header = visualItemRect(entry);
+      if (event->position().y() < header.top() + 44 &&
+          event->position().x() >= header.right() - 70) {
+        // Preserve the item selection callbacks; the command path stays in the inspector.
+        setCurrentItem(entry);
+        headerAction_(entry, event->position().x() >= header.right() - 28);
+        event->accept();
+        return;
+      }
+    }
+    QListWidget::mousePressEvent(event);
+  }
+
+  void keyPressEvent(QKeyEvent* event) override {
+    if (currentItem() && headerAction_ &&
+        (event->key() == Qt::Key_Space || event->key() == Qt::Key_Menu)) {
+      headerAction_(currentItem(), event->key() == Qt::Key_Menu);
+      event->accept();
+      return;
+    }
+    QListWidget::keyPressEvent(event);
+  }
+
+  void mouseDoubleClickEvent(QMouseEvent* event) override {
+    auto* entry = itemAt(event->position().toPoint());
+    if (entry && event->position().x() >= visualItemRect(entry).right() - 70) {
+      event->accept();
+      return;
+    }
+    QListWidget::mouseDoubleClickEvent(event);
+  }
+
   void dropEvent(QDropEvent* event) override {
     if (!event || event->source() != this || !reorderHandler_) {
       QListWidget::dropEvent(event);
@@ -115,16 +188,25 @@ class EffectRackList final : public QListWidget {
         delegate->paint(&painter, option, index);
       }
     }
-    painter.setClipping(false);
-    painter.setPen(hasFocus() ? pal.color(QPalette::Highlight)
-                              : pal.color(QPalette::Mid));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(
-        QRectF(viewport()->rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-        3.0, 3.0);
+
   }
 
  private:
+  void positionEditor() {
+    if (!editor_) return;
+    for (int row = 0; row < count(); ++row) {
+      auto* entry = item(row);
+      if (entry->data(Qt::UserRole).toString() != editorId_) continue;
+      const QRect bounds = visualItemRect(entry);
+      editor_->setGeometry(bounds.adjusted(8, 44, -8, -4));
+      editor_->show();
+      return;
+    }
+    editor_->hide();
+  }
+  QPointer<QWidget> editor_;
+  QString editorId_;
+  std::function<void(QListWidgetItem*, bool)> headerAction_;
   ReorderHandler reorderHandler_;
 };
 
@@ -352,6 +434,18 @@ void setInspectorEffectRackReorderHandler(
   if (auto* rackList = dynamic_cast<detail::EffectRackList*>(list)) {
     rackList->setReorderHandler(std::move(handler));
   }
+}
+
+void setInspectorEffectRackEditor(QListWidget* list, QWidget* editor,
+                                 const QString& effectId) {
+  if (auto* rack = dynamic_cast<detail::EffectRackList*>(list))
+    rack->setEditor(editor, effectId);
+}
+
+void setInspectorEffectRackHeaderAction(
+    QListWidget* list, std::function<void(QListWidgetItem*, bool)> action) {
+  if (auto* rack = dynamic_cast<detail::EffectRackList*>(list))
+    rack->setHeaderAction(std::move(action));
 }
 
 } // namespace Artifact

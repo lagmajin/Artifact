@@ -154,6 +154,7 @@ import Artifact.Layer.ParametricComposition;
 import Artifact.Tool.Manager;
 import Artifact.Tool.PuppetTool;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.CreateNoiseLayerDialog;
 import Clipboard.ClipboardManager;
@@ -1168,6 +1169,14 @@ public:
     add(QStringLiteral("View: Zoom 100%"), [this]() {
       if (controller_) controller_->zoom100();
     });
+    add(QStringLiteral("View: Toggle Quad Presentation"), [this]() {
+      if (!controller_) return;
+      const auto layout = controller_->presentationLayout();
+      controller_->setPresentationLayout(
+          layout == CompositionViewportPresentationLayout::Quad
+              ? CompositionViewportPresentationLayout::Single
+              : CompositionViewportPresentationLayout::Quad);
+    });
     add(QStringLiteral("Selection: Focus Selected Layer"), [this]() {
       if (controller_) controller_->focusSelectedLayer();
     });
@@ -1179,6 +1188,9 @@ public:
     });
     add(QStringLiteral("Tool: Scale"), [this]() {
       if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Scale);
+    });
+    add(QStringLiteral("Tool: Full Gizmo"), [this]() {
+      if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Full);
     });
     if (comp && selection && service) {
       add(QStringLiteral("Smart Select: All Layers"), [comp, selection]() {
@@ -11135,6 +11147,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     ArtifactWidgets::FloatColorPicker picker(this);
     picker.setColor(initial);
     picker.setInitialColor(initial);
+    Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
     if (picker.exec() == QDialog::Accepted) {
       const FloatColor chosen = picker.getColor();
       impl_->renderController_->setClearColor(chosen);

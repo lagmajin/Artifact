@@ -56,6 +56,9 @@ module;
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QScrollArea>
+#include <QFrame>
+#include <QSizePolicy>
 #include <QTreeView>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -191,52 +194,52 @@ struct WorkspaceVisibilityRule {
 const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
   static const WorkspaceVisibilityRule rules[] = {
       {WorkspaceMode::Default,
-       {"Composition Viewer", "Project", "Inspector"},
+       {"Composition Viewer", "Project", "Inspector", "Components", "Effects"},
 
 
-       {"Asset Browser", "Effects", "Properties", "Audio Mixer",
+       {"Asset Browser", "Properties", "Audio Mixer",
         "Contents Viewer", "AI Chat", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"}},
       {WorkspaceMode::Import,
-       {"Project", "Asset Browser", "Inspector", "Effects", "Properties"},
+       {"Project", "Asset Browser", "Inspector", "Components", "Effects", "Properties"},
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer"}},
       {WorkspaceMode::Layout,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Effects", "Properties"},
+        "Components", "Effects", "Properties"},
        {"Audio Mixer", "Contents Viewer", "AI Chat"}},
       {WorkspaceMode::Animation,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Effects", "Properties", "Composition View (Software)",
+        "Components", "Effects", "Properties", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control"}},
       {WorkspaceMode::VFX,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Effects", "Properties", "Composition View (Software)",
+        "Components", "Effects", "Properties", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Compositing,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Effects", "Properties", "Layer Solo View"},
+        "Components", "Effects", "Properties", "Layer Solo View"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control", "Composition View (Software)",
         "Layer View (Software)"}},
       {WorkspaceMode::Text,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Effects", "Properties", "Contents Viewer"},
+        "Components", "Effects", "Properties", "Contents Viewer"},
        {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Export,
-       {"Project", "Asset Browser", "Inspector", "Effects", "Properties",
+       {"Project", "Asset Browser", "Inspector", "Components", "Effects", "Properties",
         "Composition Viewer"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control"}},
       {WorkspaceMode::Debug,
-       {"Project", "Asset Browser", "Inspector", "Effects", "Properties",
+       {"Project", "Asset Browser", "Inspector", "Components", "Effects", "Properties",
         "Contents Viewer", "AI Chat", "Playback Control"},
        {"Audio Mixer"}},
       {WorkspaceMode::Audio,
        {"Contents Viewer", "Audio Mixer", "Project", "Asset Browser",
-        "Inspector", "Effects", "Properties"},
+        "Inspector", "Components", "Effects", "Properties"},
        {"AI Cloud", "AI Chat", "Composition Viewer",
         "Composition View (Software)", "Layer Solo View",
         "Layer View (Software)"}},
@@ -1400,6 +1403,10 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
       "Choose the active workspace layout and editing mode."));
   workspaceButton->setText(Artifact::workspaceModeInfo(WorkspaceMode::Default).label);
   workspaceButton->setPopupMode(QToolButton::InstantPopup);
+  workspaceButton->setAutoRaise(true);
+  workspaceButton->setMinimumHeight(Artifact::Accessibility::scaledSize(38));
+  workspaceButton->setPalette(toolBar->palette());
+  workspaceButton->setStyle(toolBar->style());
   auto *workspaceMenu = new QMenu(workspaceButton);
   for (const auto &info : Artifact::workspaceModeInfos()) {
     QAction *action = workspaceMenu->addAction(info.label);
@@ -1431,17 +1438,30 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolOptionsHost->setMovable(false);
   impl_->toolOptionsHost->setFloatable(false);
   impl_->toolOptionsHost->setIconSize(QSize(16, 16));
+  // Reserve both the options and horizontal overflow lane for every active tool.
+  impl_->toolOptionsHost->setFixedHeight(Artifact::Accessibility::scaledSize(60));
   {
     QPalette pal = impl_->toolOptionsHost->palette();
     pal.setColor(QPalette::Window,
-                 QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+                 QColor(41, 43, 46));
     pal.setColor(QPalette::Button,
-                 QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+                 QColor(41, 43, 46));
     pal.setColor(QPalette::WindowText,
                  QColor(ArtifactCore::currentDCCTheme().textColor));
     impl_->toolOptionsHost->setPalette(pal);
   }
-  impl_->toolOptionsHost->addWidget(impl_->toolOptionsBar);
+  auto *optionsScroll = new QScrollArea(impl_->toolOptionsHost);
+  optionsScroll->setAccessibleName(QStringLiteral("Active tool settings"));
+  optionsScroll->setFrameShape(QFrame::NoFrame);
+  optionsScroll->setWidgetResizable(true);
+  optionsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  optionsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  optionsScroll->setMinimumWidth(0);
+  optionsScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  optionsScroll->setWidget(impl_->toolOptionsBar);
+  optionsScroll->setPalette(impl_->toolOptionsBar->palette());
+  optionsScroll->viewport()->setBackgroundRole(QPalette::Window);
+  impl_->toolOptionsHost->addWidget(optionsScroll);
   impl_->rootLayout->addWidget(impl_->toolOptionsHost);
   toolBar->setToolOptionsBar(impl_->toolOptionsBar);
   toolBar->refreshFromApplicationState();

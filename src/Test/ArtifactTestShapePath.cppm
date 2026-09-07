@@ -10,6 +10,7 @@ module;
 export module Artifact.Test.ShapePath;
 
 import Artifact.Layer.Shape;
+import Shape.Operator;
 
 namespace Artifact {
 
@@ -56,7 +57,43 @@ export int runShapePathTests()
                      qFuzzyCompare(halfway.front().pos.x(), 5.0) &&
                      qFuzzyCompare(halfway.front().pos.y(), 5.0) &&
                      halfway.back().smooth,
-                 QStringLiteral("matching path keyframes interpolate at the playhead"));
+                     QStringLiteral("matching path keyframes interpolate at the playhead"));
+
+    layer.addShapeOperator(ArtifactCore::ShapeOperatorType::TrimPaths);
+    layer.addShapeOperator(ArtifactCore::ShapeOperatorType::Repeater);
+    report.check(layer.shapeOperatorCount() == 2,
+                 QStringLiteral("shape operators can be added to the layer"));
+    const auto roundTrip = ArtifactShapeLayer::fromJson(layer.toJson());
+    report.check(roundTrip && roundTrip->shapeOperatorCount() == 2,
+                 QStringLiteral("shape operators survive layer JSON roundtrip"));
+
+    ShapeContent content;
+    content.name = QStringLiteral("Transform Content");
+    content.geometry.type = ShapeType::Rect;
+    content.transform.anchor = QPointF(10.0, 20.0);
+    content.transform.position = QPointF(40.0, 50.0);
+    content.transform.scale = QPointF(1.5, 0.75);
+    content.transform.rotation = 22.5;
+    content.transform.skew = 8.0;
+    content.transform.skewAxis = 15.0;
+    const int contentIndex = layer.addShapeContent(content);
+    report.check(contentIndex >= 0,
+                 QStringLiteral("shape content with local transform can be added"));
+    const auto transformedRoundTrip = ArtifactShapeLayer::fromJson(layer.toJson());
+    const auto restored = transformedRoundTrip
+        ? transformedRoundTrip->shapeContentAt(contentIndex) : ShapeContent();
+    report.check(transformedRoundTrip &&
+                     qFuzzyCompare(restored.transform.position.x(), 40.0) &&
+                     qFuzzyCompare(restored.transform.scale.y(), 0.75) &&
+                     qFuzzyCompare(restored.transform.rotation, 22.5) &&
+                     qFuzzyCompare(restored.transform.skew, 8.0),
+                 QStringLiteral("content transform survives layer JSON roundtrip"));
+    report.check(layer.setLayerPropertyValue(QStringLiteral("shape.content.%1.transform.positionX").arg(contentIndex),
+                                             123.0),
+                 QStringLiteral("content transform property path is writable"));
+    const auto edited = layer.shapeContentAt(contentIndex);
+    report.check(qFuzzyCompare(edited.transform.position.x(), 123.0),
+                 QStringLiteral("content transform property updates the model"));
 
     qInfo().noquote() << "[Shape Path Test] failures:" << report.failures;
     return report.failures;

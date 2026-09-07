@@ -39,6 +39,12 @@ module;
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QDebug>
+#include <QFrame>
+#include <QPalette>
+#include <QAbstractSpinBox>
+#include <QStyleFactory>
+#include <QProxyStyle>
+#include <QStyleOption>
 #include <QSet>
 #include <algorithm>
 #include <cmath>
@@ -56,6 +62,7 @@ import Artifact.Project.Items;
 import Artifact.Service.Project;
 import Utils.String.UniString;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 
 namespace Artifact {
 
@@ -197,6 +204,34 @@ QString compositionDialogIllustrationPath(const QString& relativePath)
   return {};
 }
 
+class CompositionDialogStyle final : public QProxyStyle {
+public:
+  CompositionDialogStyle() : QProxyStyle(QStyleFactory::create(QStringLiteral("Fusion"))) {}
+  void drawPrimitive(PrimitiveElement element, const QStyleOption* option,
+                     QPainter* painter, const QWidget* widget = nullptr) const override {
+    if (element == PE_FrameTabWidget) return;
+    if (element == PE_PanelButtonCommand && widget &&
+        (widget->property("compositionPrimary").toBool() || (option->state & State_On))) {
+      painter->save();
+      const QColor blue = option->state & State_Sunken ? QColor(39,91,183) : QColor(52,116,227);
+      painter->setPen(QColor(80,139,244));
+      painter->setBrush(blue);
+      painter->drawRoundedRect(QRectF(option->rect).adjusted(0.5,0.5,-0.5,-0.5),4,4);
+      painter->restore();
+      return;
+    }
+    QProxyStyle::drawPrimitive(element,option,painter,widget);
+  }
+};
+
+QFrame* compositionSectionDivider() {
+  auto* line = new QFrame;
+  line->setFrameShape(QFrame::HLine);
+  line->setFrameShadow(QFrame::Plain);
+  line->setFixedHeight(12);
+  return line;
+}
+
 class CompositionDialogHeader final : public QWidget
 {
 public:
@@ -215,20 +250,6 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.fillRect(rect(), QColor(0x24, 0x24, 0x24));
 
-    if (!banner_.isNull()) {
-      const QPixmap scaled = banner_.scaled(size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-      const QPoint topLeft((width() - scaled.width()) / 2, (height() - scaled.height()) / 2);
-      painter.setOpacity(0.62);
-      painter.drawPixmap(topLeft, scaled);
-      painter.setOpacity(1.0);
-    }
-
-    QLinearGradient shade(rect().topLeft(), rect().topRight());
-    shade.setColorAt(0.0, QColor(25, 25, 26, 235));
-    shade.setColorAt(0.48, QColor(25, 25, 26, 185));
-    shade.setColorAt(1.0, QColor(25, 25, 26, 86));
-    painter.fillRect(rect(), shade);
-
     QFont titleFont = font();
     titleFont.setPointSize(std::max(12, titleFont.pointSize() + 2));
     titleFont.setBold(true);
@@ -239,9 +260,9 @@ protected:
                      QStringLiteral("Composition Settings"));
 
     QFont subFont = font();
-    subFont.setPointSize(std::max(8, subFont.pointSize() - 1));
+    subFont.setPointSize(10);
     painter.setFont(subFont);
-    painter.setPen(QColor(166, 176, 188, 210));
+    painter.setPen(QColor(180, 183, 190));
     painter.drawText(rect().adjusted(22, 44, -22, -12),
                      Qt::AlignLeft | Qt::AlignVCenter,
                      QStringLiteral("Create a composition with resolution, timing, color, and anchor defaults."));
@@ -259,7 +280,7 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
  if (!button) {
   return;
  }
- QPixmap pix(button->size().isEmpty() ? QSize(40, 24) : button->size());
+ QPixmap pix(QSize(48, 22));
  pix.fill(Qt::transparent);
  {
   QPainter painter(&pix);
@@ -271,7 +292,7 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
  button->setIcon(QIcon(pix));
  button->setIconSize(pix.size());
  button->setToolTip(QStringLiteral("Background Color: %1").arg(color.name(QColor::HexArgb)));
- button->setText(QString());
+ button->setText(color.name(QColor::HexRgb).toUpper());
 }
 
 QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
@@ -392,21 +413,13 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   QElapsedTimer ctorTimer;
   ctorTimer.start();
   auto mainLayout = new QVBoxLayout(this);
-  mainLayout->setContentsMargins(15, 15, 15, 15);
+  mainLayout->setContentsMargins(4, 12, 4, 8);
   mainLayout->setSpacing(10);
 
   auto formLayout = new QFormLayout();
   formLayout->setLabelAlignment(Qt::AlignRight);
-  formLayout->setVerticalSpacing(12);
+  formLayout->setVerticalSpacing(14);
   formLayout->setHorizontalSpacing(20);
-
-  QString pageStyle = R"(
-      QLabel { color: #AAA; font-size: 11px; }
-      QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {
-          background-color: #2D2D30; border: 1px solid #454545; border-radius: 4px; color: white; padding: 4px 8px;
-      }
-      QComboBox:hover, QLineEdit:focus { border: 1px solid #D47D32; }
-  )";
 
   impl_->widthSpinBox = new DragSpinBox();
   impl_->widthSpinBox->setRange(1, 16384);
@@ -487,17 +500,17 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   impl_->bgColorButton = new QPushButton("Pick Color");
   impl_->bgColorButton->setAccessibleName(QStringLiteral("Background color"));
   impl_->bgColorButton->setAccessibleDescription(QStringLiteral("Choose the composition background color"));
-  impl_->bgColorButton->setFixedSize(80, 24);
+  impl_->bgColorButton->setFixedSize(154, 32);
   updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   
   formLayout->addRow("Preset:", impl_->resolutionCombobox_);
   formLayout->addRow("Resolution:", sizeWidget);
   formLayout->addRow("Pixel Aspect:", impl_->pixelAspectCombo_);
   formLayout->addRow("Frame Rate:", impl_->fpsCombo_);
-  formLayout->addRow(new QLabel(" ")); 
+  formLayout->addRow(compositionSectionDivider());
   formLayout->addRow("Start Time:", impl_->startTimecodeEdit);
   formLayout->addRow("Duration (s):", impl_->durationSpinBox);
-  formLayout->addRow(new QLabel(" "));
+  formLayout->addRow(compositionSectionDivider());
   formLayout->addRow("Background Color:", impl_->bgColorButton);
   
   mainLayout->addLayout(formLayout);
@@ -575,6 +588,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
       if (auto* tabBar = picker.findChild<QTabBar*>()) {
           tabBar->setCurrentIndex(1);
       }
+      Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Creation);
       if (picker.exec() != QDialog::Accepted) {
           return;
       }
@@ -653,7 +667,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
       auto* button = new QPushButton(anchorLabels[row][col], anchorPresetHost);
       button->setCheckable(true);
       button->setToolTip(anchorTooltips[row][col]);
-      button->setFixedSize(34, 34);
+      button->setFixedSize(38, 38);
       button->setFont(QFont(QStringLiteral("Segoe UI Symbol"), 13));
       impl_->anchorPresetButtons[row][col] = button;
       impl_->anchorPresetGroup->addButton(button, static_cast<int>(anchorPresets[row][col]));
@@ -673,6 +687,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
     spin->setSingleStep(0.05);
     spin->setDecimals(3);
     spin->setMinimumWidth(96);
+    spin->setMinimumHeight(32);
   }
   impl_->anchorXSpinBox->setValue(0.5);
   impl_->anchorYSpinBox->setValue(0.5);
@@ -681,7 +696,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
 
   anchorRootLayout->addWidget(anchorPresetHost, 0, Qt::AlignTop);
   anchorRootLayout->addWidget(anchorValueHost, 1);
-  anchorRootLayout->addStretch();
+
   formLayout->addRow(anchorWidget);
 
   const auto syncAnchorPresetFromSpinBoxes = [this]() {
@@ -821,6 +836,11 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   impl_->pTabWidget->setAccessibleName(QStringLiteral("Composition settings sections"));
   impl_->compositionSettingPage_ = new CompositionSettingPage();
   impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Basic");
+  impl_->pTabWidget->tabBar()->hide();
+  auto* basicHeading = new QLabel(QStringLiteral("Basic"));
+  QFont sectionFont = font(); sectionFont.setBold(true);
+  basicHeading->setFont(sectionFont);
+  content->addWidget(basicHeading);
   impl_->pTabWidget->setMinimumWidth(520);
   content->addWidget(impl_->pTabWidget);
   mainLayout->addLayout(content);
@@ -829,22 +849,58 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   auto footer = new QWidget();
   auto fLayout = new QHBoxLayout(footer);
   fLayout->setContentsMargins(15, 10, 15, 10);
-  auto okBtn = new QPushButton("OK");
+  auto okBtn = new QPushButton("Create");
+  okBtn->setProperty("compositionPrimary", true);
+  okBtn->setDefault(true);
   okBtn->setAccessibleName(QStringLiteral("Create composition"));
   okBtn->setAccessibleDescription(QStringLiteral("Create the composition with the selected settings"));
-  okBtn->setFixedSize(80, 28);
+  okBtn->setFixedSize(104, 34);
   auto cancelBtn = new QPushButton("Cancel");
   cancelBtn->setAccessibleName(QStringLiteral("Cancel composition creation"));
   cancelBtn->setAccessibleDescription(QStringLiteral("Close without creating a composition"));
-  cancelBtn->setFixedSize(80, 28);
+  cancelBtn->setFixedSize(104, 34);
   fLayout->addStretch();
-  fLayout->addWidget(okBtn);
   fLayout->addWidget(cancelBtn);
+  fLayout->addWidget(okBtn);
   mainLayout->addWidget(footer);
 
   QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });
   QObject::connect(cancelBtn, &QPushButton::clicked, this, [this]() { impl_->cancel(this); });
 
+  auto* studioStyle = new CompositionDialogStyle;
+  studioStyle->setParent(this);
+  QPalette studioPalette = palette();
+  studioPalette.setColor(QPalette::Window, QColor(43,44,47));
+  studioPalette.setColor(QPalette::Base, QColor(34,35,38));
+  studioPalette.setColor(QPalette::Button, QColor(47,48,52));
+  studioPalette.setColor(QPalette::Text, QColor(236,237,240));
+  studioPalette.setColor(QPalette::WindowText, QColor(218,220,225));
+  studioPalette.setColor(QPalette::ButtonText, QColor(236,237,240));
+  studioPalette.setColor(QPalette::Mid, QColor(67,69,74));
+  studioPalette.setColor(QPalette::Highlight, QColor(52,116,227));
+  studioPalette.setColor(QPalette::HighlightedText, Qt::white);
+  studioPalette.setColor(QPalette::Disabled, QPalette::Text, QColor(131,134,141));
+  setPalette(studioPalette);
+  setAutoFillBackground(true);
+  QFont bodyFont(QStringLiteral("Segoe UI"), 10);
+  setFont(bodyFont);
+  setStyle(studioStyle);
+  for (auto* widget : findChildren<QWidget*>()) {
+    widget->setStyle(studioStyle);
+    QPalette fieldPalette = studioPalette;
+    const bool number = qobject_cast<QAbstractSpinBox*>(widget) ||
+        qobject_cast<QAbstractSpinBox*>(widget->parentWidget()) ||
+        widget->accessibleName() == QStringLiteral("Start timecode");
+    if (number) {
+      fieldPalette.setColor(QPalette::Text,QColor(246,198,111));
+      widget->setFont(QFont(QStringLiteral("Consolas"),11));
+    }
+    // Preserve the actual color of the background swatch.
+    if (widget->accessibleName() != QStringLiteral("Background color")) widget->setPalette(fieldPalette);
+    if (qobject_cast<QAbstractSpinBox*>(widget) || qobject_cast<QComboBox*>(widget) ||
+        (qobject_cast<QLineEdit*>(widget) && !qobject_cast<QAbstractSpinBox*>(widget->parentWidget())))
+      widget->setMinimumHeight(32);
+  }
   resize(620, 720);
   setMinimumSize(620, 720);
 

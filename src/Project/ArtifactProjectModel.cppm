@@ -395,6 +395,16 @@ void ArtifactProjectModel::Impl::refreshTree()
                     : QStringLiteral("-"));
           }
         }
+      } else if (it->type() == Artifact::eProjectItemType::Solid) {
+        const auto* solid = static_cast<const Artifact::SolidItem*>(it);
+        sizeItem->setText(QStringLiteral("%1 x %2")
+                              .arg(solid->width)
+                              .arg(solid->height));
+        const QString aspectLabel = std::abs(solid->pixelAspectRatio - 1.0) <= 0.0005
+                                         ? QStringLiteral("Square pixels")
+                                         : QStringLiteral("PAR %1:1").arg(
+                                               solid->pixelAspectRatio, 0, 'f', 3);
+        frameRateItem->setText(QStringLiteral("Solid • %1").arg(aspectLabel));
       }
     }
 

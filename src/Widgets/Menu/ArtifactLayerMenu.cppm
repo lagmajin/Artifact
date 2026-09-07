@@ -3566,14 +3566,7 @@ void ArtifactLayerMenu::Impl::handleConvertShapeToMask()
         return;
     }
 
-    LayerMask convertedMask;
-    for (const auto& shapePath : shapeLayer->nativeShapePaths()) {
-        for (const auto& maskPath : MaskPath::fromShapePath(shapePath)) {
-            if (maskPath.vertexCount() > 0) {
-                convertedMask.addMaskPath(maskPath);
-            }
-        }
-    }
+    const LayerMask convertedMask = shapeLayer->createMaskFromShape();
     if (convertedMask.maskPathCount() == 0) {
         QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクに変換"),
                                  QStringLiteral("変換可能なパスがありません。"));

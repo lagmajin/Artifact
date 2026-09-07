@@ -60,6 +60,7 @@ import Property.ExposedPropertyRegistry;
 import Memory.SharedPtr;
 import Dialog.Composition;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Artifact.Widgets.AppDialogs;
 import Widgets.Utils.CSS;
 import Geometry.ResolutionRemap;
@@ -885,6 +886,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
  };
  updateBgPreview();
  QObject::connect(bgButton, &QPushButton::clicked, &dialog, [&]() {
+  const QColor pickerInitialColor = backgroundColor;
   ArtifactWidgets::FloatColorPicker picker(&dialog);
   picker.setWindowTitle(QStringLiteral("Background Color"));
   picker.setColor(FloatColor(backgroundColor.redF(),
@@ -905,12 +907,13 @@ void ArtifactCompositionMenu::Impl::showSettings()
         backgroundColor.alphaF()));
     updateBgPreview();
   });
+  Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
   if (picker.exec() == QDialog::Accepted) {
    const FloatColor picked = picker.getColor();
    backgroundColor = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
    updateBgPreview();
   } else {
-   backgroundColor = originalBackgroundColor;
+   backgroundColor = pickerInitialColor;
    current->setBackGroundColor(FloatColor(backgroundColor.redF(),
                                           backgroundColor.greenF(),
                                           backgroundColor.blueF(),
@@ -1530,6 +1533,7 @@ void ArtifactCompositionMenu::Impl::showColor()
                                     comp->backgroundColor().g(),
                                     comp->backgroundColor().b(),
                                     comp->backgroundColor().a()));
+  Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
   if (picker.exec() == QDialog::Accepted) {
    const FloatColor picked = picker.getColor();
    comp->setBackGroundColor(

@@ -3,6 +3,7 @@ module;
 #include <vector>
 
 #include <QImage>
+#include <QString>
 export module Artifact.Layers.SolidImage;
 import Color.Float;
 import Artifact.Layer.InitParams;
@@ -49,6 +50,10 @@ public:
   float gradientOffset() const;
   void setGradientOffset(float value);
   void setSize(int width, int height);
+  double pixelAspectRatio() const;
+  void setPixelAspectRatio(double ratio);
+  QString sourceItemId() const;
+  void setSourceItemId(const QString& id);
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject &obj) override;
   std::vector<ArtifactCore::PropertyGroup>

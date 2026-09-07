@@ -81,6 +81,13 @@ class ArtifactTimelineWidget :public QWidget {
   void applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType type);
   void selectAllKeyframes();
   void reverseSelectedKeyframes();
+  void nudgeSelectedKeyframes(int frameDelta);
+  void moveSelectedLayerStartToCurrentFrame();
+  void moveSelectedLayerEndToCurrentFrame();
+  void trimSelectedLayerInToCurrentFrame();
+  void trimSelectedLayerOutToCurrentFrame();
+  void deleteSelectedLayerAnimation();
+  void distributeSelectedKeyframesEvenly();
   void reverseAllKeyframesInCurrentLayer();
   void reverseAllKeyframesInSelectedLayers();
   void reverseAllKeyframesInComposition();

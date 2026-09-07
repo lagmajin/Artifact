@@ -36,6 +36,7 @@ module;
 #include <QInputDialog>
 #include <QContextMenuEvent>
 #include <QDesktopServices>
+#include <QUrl>
 #include <QDir>
 #include <QHeaderView>
 #include <QPushButton>
@@ -137,6 +138,16 @@ import Utils.String.UniString;
 import Utils.Id;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
+import Artifact.Layer.Factory;
+import Artifact.Layer.Abstract;
+import Artifact.Layer.GenerationPreset;
+import Artifact.Layer.GenerationPresetLibrary;
+import Artifact.Layer.Text;
+import Artifact.Service.Effect;
+import Artifact.Effect.Abstract;
 import Artifact.Service.FootageInterpret;
 import Artifact.Application.ProjectBundleIpc;
 import Artifact.Service.Playback;
@@ -2600,7 +2611,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         originalBackgroundColor.blueF(), originalBackgroundColor.alphaF());
                     const QSize newSize(widthSpin->value(), heightSpin->value());
                     const float newFrameRate = static_cast<float>(fpsSpin->value());
-                    const FrameRange newRange(FramePosition(startFrame), FramePosition(endFrame));
+                    const FrameRange newRange{FramePosition(startFrame), FramePosition(endFrame)};
                     const QColor selectedBg = bgButton ? bgButton->selectedColor()
                                                         : QColor::fromRgbF(
                                                               oldBackground.r(), oldBackground.g(),
@@ -2993,6 +3004,20 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     manager->generateProxyForFilePath(footagePath);
                 }
             }, loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
+            const QString normalizedFootagePath = QFileInfo(footagePath).absoluteFilePath();
+            const bool proxyEnabled = proxyMetadata().value(normalizedFootagePath).enabled;
+            addTrackedAction(
+                QStringLiteral("toggle_proxy_for_selected"),
+                proxyEnabled ? QStringLiteral("Disable Proxy Playback")
+                             : QStringLiteral("Enable Proxy Playback"),
+                [this, normalizedFootagePath, proxyEnabled]() {
+                    auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget());
+                    if (!manager || normalizedFootagePath.isEmpty()) {
+                        return;
+                    }
+                    manager->toggleProxyPlaybackForFilePath(normalizedFootagePath);
+                },
+                loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
             addTrackedAction(QStringLiteral("cancel_proxy_queue"), QStringLiteral("Cancel Proxy Queue"), [this]() {
                 if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                     manager->cancelProxyQueue();
@@ -3321,6 +3346,168 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
         }
     }, loadProjectViewIcon(QStringLiteral("Studio/palette.svg")));
+    QMenu* generationPresetsMenu = newMenu->addMenu(QStringLiteral("Presets"));
+    generationPresetsMenu->setIcon(loadProjectViewIcon(QStringLiteral("Studio/add_circle.svg")));
+    std::function<void(const ArtifactGenerationPreset&)> addGenerationPreset =
+        [this, svc, generationPresetsMenu, &addTrackedNewAction](
+            const ArtifactGenerationPreset& generationPreset) {
+        const ArtifactGenerationPreset presetValue = generationPreset;
+        addTrackedNewAction(generationPresetsMenu,
+            QStringLiteral("generation_preset_") + generationPreset.id,
+            generationPreset.displayName, [this, svc, presetValue]() {
+            const QString validationError = validateGenerationPreset(presetValue);
+            if (!svc || !validationError.isEmpty()) {
+                if (!validationError.isEmpty()) {
+                    QMessageBox::warning(this, QStringLiteral("Preset"), validationError);
+                }
+                return;
+            }
+            auto composition = svc->currentComposition().lock();
+            if (!composition && svc->hasProject()) {
+                svc->createComposition(UniString(QStringLiteral("Composition")));
+                composition = svc->currentComposition().lock();
+            }
+            if (!composition) {
+                QMessageBox::warning(this, QStringLiteral("Preset"),
+                                     QStringLiteral("コンポジションが選択されていません。"));
+                return;
+            }
+            const LayerType type = static_cast<LayerType>(presetValue.layer.value(QStringLiteral("type")).toInt());
+            const QString layerName = presetValue.layer.value(QStringLiteral("name")).toString(
+                presetValue.displayName.section(QStringLiteral(" + "), 0, 0));
+            ArtifactLayerFactory factory;
+            ArtifactAbstractLayerPtr layer;
+            if (type == LayerType::Solid) {
+                ArtifactSolidLayerInitParams params(layerName);
+                const QSize size = composition->settings().compositionSize();
+                params.setWidth(std::max(1, size.width()));
+                params.setHeight(std::max(1, size.height()));
+                layer = factory.createNewLayer(params);
+            } else {
+                ArtifactLayerInitParams params(layerName, type);
+                layer = factory.createNewLayer(params);
+            }
+            if (!layer) {
+                QMessageBox::warning(this, QStringLiteral("Preset"),
+                                     QStringLiteral("プリセットのレイヤーを作成できませんでした。"));
+                return;
+            }
+            const bool isTextLayer = dynamic_cast<ArtifactTextLayer*>(layer.get()) != nullptr;
+            for (const QJsonValue& value : presetValue.animators) {
+                if (!isTextLayer ||
+                    value.toObject().value(QStringLiteral("kind")).toString() != QStringLiteral("default")) {
+                    QMessageBox::warning(this, QStringLiteral("Preset"),
+                                         QStringLiteral("未対応のテキストアニメーターが含まれています。"));
+                    return;
+                }
+            }
+            std::vector<LayerMask> afterMasks;
+            const auto sourceSize = layer->sourceSize();
+            const QSize compositionSize = composition->settings().compositionSize();
+            const qreal width = sourceSize.width > 0 ? sourceSize.width :
+                std::max(1, compositionSize.width());
+            const qreal height = sourceSize.height > 0 ? sourceSize.height :
+                std::max(1, compositionSize.height());
+            for (const QJsonValue& value : presetValue.masks) {
+                const QString kind = value.toObject().value(QStringLiteral("kind")).toString();
+                if (kind != QStringLiteral("ellipse") && kind != QStringLiteral("rectangle")) {
+                    QMessageBox::warning(this, QStringLiteral("Preset"),
+                                         QStringLiteral("未対応のマスク形状が含まれています。"));
+                    return;
+                }
+                MaskPath path;
+                if (kind == QStringLiteral("ellipse")) {
+                    constexpr qreal kappa = 0.5522847498307936;
+                    const qreal cx = width * 0.5, cy = height * 0.5;
+                    const qreal rx = width * 0.5, ry = height * 0.5;
+                    path.addVertex({QPointF(cx + rx, cy), QPointF(0, kappa * ry), QPointF(0, -kappa * ry)});
+                    path.addVertex({QPointF(cx, cy + ry), QPointF(kappa * rx, 0), QPointF(-kappa * rx, 0)});
+                    path.addVertex({QPointF(cx - rx, cy), QPointF(0, -kappa * ry), QPointF(0, kappa * ry)});
+                    path.addVertex({QPointF(cx, cy - ry), QPointF(-kappa * rx, 0), QPointF(kappa * rx, 0)});
+                } else {
+                    path.addVertex({QPointF(0, 0), {}, {}});
+                    path.addVertex({QPointF(width, 0), {}, {}});
+                    path.addVertex({QPointF(width, height), {}, {}});
+                    path.addVertex({QPointF(0, height), {}, {}});
+                }
+                path.setClosed(true);
+                LayerMask mask;
+                mask.addMaskPath(path);
+                afterMasks.push_back(mask);
+            }
+            auto* effectService = ArtifactEffectService::instance();
+            if (!presetValue.effects.isEmpty() && !effectService) {
+                QMessageBox::warning(this, QStringLiteral("Preset"),
+                                     QStringLiteral("エフェクトサービスを利用できません。"));
+                return;
+            }
+            for (const QJsonValue& value : presetValue.effects) {
+                const QString effectType = value.toObject().value(QStringLiteral("type")).toString();
+                if (effectType.isEmpty() || !effectService->createEffect(EffectID(effectType))) {
+                    QMessageBox::warning(this, QStringLiteral("Preset"),
+                                         QStringLiteral("未対応のエフェクトが含まれています。"));
+                    return;
+                }
+            }
+            auto macro = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Create %1").arg(presetValue.displayName));
+            macro->addChild(std::make_unique<AddLayerCommand>(composition, layer, true));
+            if (!afterMasks.empty()) {
+                macro->addChild(std::make_unique<MaskEditCommand>(layer, std::vector<LayerMask>{}, afterMasks));
+            }
+            if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer.get())) {
+                for (const QJsonValue& value : presetValue.animators) {
+                    if (value.toObject().value(QStringLiteral("kind")).toString() == QStringLiteral("default"))
+                        textLayer->addAnimator();
+                }
+            }
+            for (const QJsonValue& value : presetValue.effects) {
+                const QString effectType = value.toObject().value(QStringLiteral("type")).toString();
+                auto effect = effectService->createEffect(EffectID(effectType));
+                if (!effect) return;
+                auto effectPtr = ArtifactCore::makeShared(effect.release(), [](ArtifactAbstractEffect* item) { delete item; });
+                effectPtr->setPipelineStage(EffectPipelineStage::Rasterizer);
+                macro->addChild(std::make_unique<AddLayerEffectCommand>(layer, effectPtr));
+            }
+            auto* undo = UndoManager::instance();
+            if (!undo || !macro->canSerialize() ||
+                macro->estimatedMemoryBytes() > undo->budget().maxSingleEntryBytes ||
+                !undo->push(std::move(macro))) {
+                QMessageBox::warning(this, QStringLiteral("Preset"),
+                                     QStringLiteral("プリセットの Undo 操作を作成できませんでした。"));
+                return;
+            }
+            svc->selectLayer(layer->id());
+        }, loadProjectViewIcon(QStringLiteral("Studio/add_circle.svg")));
+    };
+    for (const ArtifactGenerationPreset& preset : standardGenerationPresets()) {
+        addGenerationPreset(preset);
+    }
+    const auto userPresets = userGenerationPresets();
+    if (!userPresets.isEmpty()) {
+        generationPresetsMenu->addSeparator();
+        for (const ArtifactGenerationPreset& preset : userPresets) addGenerationPreset(preset);
+    }
+    addTrackedNewAction(generationPresetsMenu,
+        QStringLiteral("create_generation_preset_template"),
+        QStringLiteral("Create Editable Preset Template"), [this]() {
+        ArtifactGenerationPreset templatePreset = standardGenerationPresets().front();
+        templatePreset.id = QStringLiteral("user.%1").arg(
+            QUuid::createUuid().toString(QUuid::WithoutBraces));
+        templatePreset.displayName = QStringLiteral("My Solid + Circle Mask");
+        if (!saveUserGenerationPreset(templatePreset)) {
+            QMessageBox::warning(this, QStringLiteral("Preset"),
+                                 QStringLiteral("プリセットテンプレートを保存できませんでした。"));
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(generationPresetDirectory()));
+    }, loadProjectViewIcon(QStringLiteral("Studio/add_circle.svg")));
+    addTrackedNewAction(generationPresetsMenu,
+        QStringLiteral("open_generation_preset_folder"),
+        QStringLiteral("Open Preset Folder"), []() {
+        QDir().mkpath(generationPresetDirectory());
+        QDesktopServices::openUrl(QUrl::fromLocalFile(generationPresetDirectory()));
+    }, loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_noise"), QStringLiteral("Noise Layer..."), [this, svc]() {
         if (!svc) return;
         if (!svc->currentComposition().lock()) {
@@ -5201,6 +5388,18 @@ public:
         return true;
     }
 
+    void toggleProxyPlaybackForFilePath(const QString& sourceFilePath) {
+        const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
+        if (targetPath.isEmpty()) {
+            return;
+        }
+        auto& metadata = proxyMetadata()[targetPath];
+        metadata.enabled = !metadata.enabled;
+        syncProxyPathToProject(targetPath, proxyFilePathForFootage(targetPath),
+                               metadata.enabled, proxyGlobalEnabled_);
+        refreshSelectionChrome();
+    }
+
     void clearProxyForSelectedItem(QWidget* parent) {
         ProjectItem* item = currentSelectedItem();
         if (!item || item->type() != eProjectItemType::Footage) {
@@ -5479,8 +5678,10 @@ public:
                                    QFileInfo(activeProxyJob_.inputPath).size() ==
                                        activeProxyJob_.sourceSize;
             if (succeeded) {
+                auto& metadata = proxyMetadata()[activeProxyJob_.inputPath];
+                metadata.sourceLastModified = activeProxyJob_.sourceLastModified;
                 syncProxyPathToProject(activeProxyJob_.inputPath, activeProxyJob_.outputPath,
-                                       true, proxyGlobalEnabled_);
+                                       metadata.enabled, proxyGlobalEnabled_);
                 if (!activeProxyPreviousPath_.isEmpty()) {
                     QFile::remove(activeProxyPreviousPath_);
                 }
@@ -6714,6 +6915,14 @@ void ArtifactProjectManagerWidget::generateProxyForFilePath(const QString& sourc
 {
     if (impl_) {
         impl_->generateProxyForFilePath(sourceFilePath);
+        updateRequested();
+    }
+}
+
+void ArtifactProjectManagerWidget::toggleProxyPlaybackForFilePath(const QString& sourceFilePath)
+{
+    if (impl_) {
+        impl_->toggleProxyPlaybackForFilePath(sourceFilePath);
         updateRequested();
     }
 }

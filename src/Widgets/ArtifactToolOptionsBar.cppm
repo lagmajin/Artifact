@@ -21,6 +21,8 @@ module;
 #include <QThread>
 #include <QToolButton>
 #include <QWidget>
+#include <QLayout>
+#include <QSizePolicy>
 #include <wobjectimpl.h>
 
 module Widgets.ToolOptionsBar;
@@ -32,6 +34,7 @@ import Artifact.Layer.Shape;
 import Text.Style;
 import Settings.Accessibility;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Color.Float;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -711,6 +714,7 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
       {"Brush tool options", "Configure brush size, opacity, and hardness"},
       {"Clone tool options", "Configure copy stamp radius and alignment"},
       {"Eraser tool options", "Configure eraser size and opacity"},
+      {"Motion sketch options", "Configure smoothing and sampling"},
   }};
   for (int i = 0; i < OptionCount; ++i) {
     if (optionFrames[i]) {
@@ -972,6 +976,7 @@ void ArtifactToolOptionsBar::Impl::connectSignals() {
               ArtifactWidgets::FloatColorPicker picker(toolOptionsBar);
               picker.setInitialColor(brushColor);
               picker.setColor(brushColor);
+              Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
               if (picker.exec() != QDialog::Accepted) {
                 return;
               }
@@ -1080,12 +1085,24 @@ ArtifactToolOptionsBar::ArtifactToolOptionsBar(QWidget *parent)
     : QWidget(parent), impl_(new Impl(this)) {
   setAccessibleName(QStringLiteral("Tool Options"));
   setAccessibleDescription(QStringLiteral("Adjust options for the active editing tool"));
-  setMinimumHeight(Artifact::Accessibility::scaledSize(32));
-  setMaximumHeight(Artifact::Accessibility::scaledSize(40));
+  setFixedHeight(Artifact::Accessibility::scaledSize(40));
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  setAutoFillBackground(true);
+  QPalette surface = palette();
+  surface.setColor(QPalette::Window, QColor(41, 43, 46));
+  surface.setColor(QPalette::Button, QColor(41, 43, 46));
+  surface.setColor(QPalette::Base, QColor(32, 34, 37));
+  surface.setColor(QPalette::WindowText, QColor(232, 235, 238));
+  surface.setColor(QPalette::Text, QColor(232, 235, 238));
+  surface.setColor(QPalette::ButtonText, QColor(232, 235, 238));
+  surface.setColor(QPalette::Highlight, QColor(41, 70, 83));
+  surface.setColor(QPalette::HighlightedText, QColor(94, 210, 234));
+  setPalette(surface);
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
+  layout->setSizeConstraint(QLayout::SetMinimumSize);
 
   impl_->createFrames(layout);
   impl_->connectSignals();

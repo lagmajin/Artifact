@@ -200,6 +200,7 @@ public:
   void cancelProxyQueue();
   void revealProxyForSelection();
   void generateProxyForFilePath(const QString& sourceFilePath);
+  void toggleProxyPlaybackForFilePath(const QString& sourceFilePath);
   void revealProxyForFilePath(const QString& sourceFilePath);
   bool clearProxyForFilePath(const QString& sourceFilePath);
   void setFilter();

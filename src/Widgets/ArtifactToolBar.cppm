@@ -5,6 +5,15 @@ module;
 #include <QDebug>
 #include <QFileInfo>
 #include <QIcon>
+#include <QLabel>
+#include <QHBoxLayout>
+#include <QPalette>
+#include <QPixmap>
+#include <QColor>
+#include <QPainter>
+#include <QProxyStyle>
+#include <QStyleOption>
+#include <QSizePolicy>
 #include <QList>
 #include <QMetaObject>
 #include <QMenu>
@@ -35,6 +44,31 @@ import Artifact.Workspace.Modes;
 import Settings.Accessibility;
 
 namespace {
+
+// Local chrome styling only; keep the application style and event routing intact.
+class ToolbarSurfaceStyle final : public QProxyStyle {
+public:
+  void drawControl(ControlElement element, const QStyleOption *option,
+                   QPainter *painter, const QWidget *widget = nullptr) const override {
+    if (element == CE_ToolBar) {
+      painter->fillRect(option->rect, option->palette.window());
+      return;
+    }
+    QProxyStyle::drawControl(element, option, painter, widget);
+  }
+  void drawPrimitive(PrimitiveElement element, const QStyleOption *option,
+                     QPainter *painter, const QWidget *widget = nullptr) const override {
+    if (element == PE_PanelButtonTool) {
+      const bool active = option->state & (State_On | State_Sunken);
+      if (active || (option->state & State_MouseOver)) {
+        painter->fillRect(option->rect.adjusted(2, 3, -2, -3),
+                          active ? QColor(41, 70, 83) : QColor(54, 58, 62));
+      }
+      return;
+    }
+    QProxyStyle::drawPrimitive(element, option, painter, widget);
+  }
+};
 
 constexpr auto kToolbarIconHome = "Studio/toolbar_home_surface.svg";
 constexpr auto kToolbarIconSelect = "Studio/toolbar_tool_select.svg";
@@ -239,7 +273,15 @@ public:
   bool guideVisible_ = true;
 
   // New members for toolbar improvements
-  ToolBarDisplayMode displayMode_ = ToolBarDisplayMode::Full;
+  ToolBarDisplayMode displayMode_ = ToolBarDisplayMode::Compact;
+  QLabel *currentToolIcon_ = nullptr;
+  QLabel *currentToolLabel_ = nullptr;
+  ToolbarSurfaceStyle *surfaceStyle_ = nullptr;
+  struct ToolGroup {
+    QToolButton *button;
+    QList<QAction *> actions;
+  };
+  QList<ToolGroup> groupedTools_;
   WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   class ArtifactToolOptionsBar *toolOptionsBar_ = nullptr;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -267,6 +309,8 @@ public:
   void updateDisplayMode();
   void buildToolInfoList();
   void setupMoreActionsMenu();
+  void arrangeToolRail();
+  void styleButtons();
 };
 
 ArtifactToolBar::Impl::Impl(ArtifactToolBar *parent) : toolBar(parent) {}
@@ -278,9 +322,20 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   setAccessibleName(QStringLiteral("Main tool bar"));
   setAccessibleDescription(
       QStringLiteral("Choose editing tools and viewport display controls"));
-  setIconSize(QSize(Artifact::Accessibility::scaledSize(32),
-                    Artifact::Accessibility::scaledSize(32)));
-  setMinimumHeight(Artifact::Accessibility::scaledSize(40));
+  setIconSize(QSize(Artifact::Accessibility::scaledSize(22),
+                    Artifact::Accessibility::scaledSize(22)));
+  setFixedHeight(Artifact::Accessibility::scaledSize(44));
+  impl_->surfaceStyle_ = new ToolbarSurfaceStyle;
+  impl_->surfaceStyle_->setParent(this);
+  setStyle(impl_->surfaceStyle_);
+  QPalette surface = palette();
+  surface.setColor(QPalette::Window, QColor(41, 43, 46));
+  surface.setColor(QPalette::Button, QColor(41, 43, 46));
+  surface.setColor(QPalette::WindowText, QColor(232, 235, 238));
+  surface.setColor(QPalette::ButtonText, QColor(232, 235, 238));
+  surface.setColor(QPalette::Highlight, QColor(41, 70, 83));
+  surface.setColor(QPalette::HighlightedText, QColor(94, 210, 234));
+  setPalette(surface);
   setToolButtonStyle(Qt::ToolButtonIconOnly);
   setMovable(false);
   setFloatable(false);
@@ -591,6 +646,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      if (!action) {
                        return;
                      }
+                     setCurrentTool(action->text());
                      if (action == impl_->selectTool_) {
                        setTool(ToolType::Selection);
                      } else if (action == impl_->handTool_) {
@@ -707,6 +763,8 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
             }
           }));
 
+  impl_->arrangeToolRail();
+  setCurrentTool(QStringLiteral("選択"));
   refreshFromApplicationState();
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     const bool showGrid = settings->toolbarShowGrid();
@@ -746,16 +804,11 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
 ArtifactToolBar::~ArtifactToolBar() { delete impl_; }
 
 void ArtifactToolBar::setCompactMode(bool enabled) {
-  if (enabled) {
-    setIconSize(QSize(24, 24));
-  } else {
-    setIconSize(QSize(32, 32));
-  }
+  setDisplayMode(enabled ? ToolBarDisplayMode::Compact : ToolBarDisplayMode::IconsOnly);
 }
 
 void ArtifactToolBar::setTextUnderIcon(bool enabled) {
-  setToolButtonStyle(enabled ? Qt::ToolButtonTextUnderIcon
-                             : Qt::ToolButtonIconOnly);
+  setDisplayMode(enabled ? ToolBarDisplayMode::Full : ToolBarDisplayMode::Compact);
 }
 
 void ArtifactToolBar::setZoomLevel(float zoomPercent) {
@@ -810,11 +863,11 @@ void ArtifactToolBar::setActionEnabledAnimated(QAction *action, bool enabled) {
 
 void ArtifactToolBar::lockHeight(bool locked /*= true*/) {
   if (locked) {
-    // 高さを固定（現在の高さで固定）
-    setFixedHeight(height());
+    setFixedHeight(Artifact::Accessibility::scaledSize(44));
   } else {
     // 高さを可変に戻す
-    setFixedHeight(QWIDGETSIZE_MAX);
+    setMinimumHeight(Artifact::Accessibility::scaledSize(44));
+    setMaximumHeight(QWIDGETSIZE_MAX);
   }
 }
 
@@ -822,54 +875,101 @@ void ArtifactToolBar::lockHeight(bool locked /*= true*/) {
 // New methods for toolbar improvements
 // ============================================================================
 
-void ArtifactToolBar::Impl::updateDisplayMode() {
-  const auto setVisible = [this](QAction *action, bool visible) {
-    if (!action)
-      return;
-    QWidget *widget = toolBar->widgetForAction(action);
-    if (widget) {
-      widget->setVisible(visible);
+void ArtifactToolBar::Impl::styleButtons() {
+  for (auto *action : toolBar->actions()) {
+    if (auto *button = qobject_cast<QToolButton *>(toolBar->widgetForAction(action))) {
+      button->setStyle(surfaceStyle_);
+      button->setAutoRaise(true);
+      button->setMinimumSize(Accessibility::scaledSize(36), Accessibility::scaledSize(38));
+      auto *displayedAction = button->defaultAction() ? button->defaultAction() : action;
+      button->setAccessibleName(displayedAction->text());
+      button->setAccessibleDescription(displayedAction->statusTip());
+    }
+  }
+}
+
+void ArtifactToolBar::Impl::arrangeToolRail() {
+  // Reuse the original QActions, including their shortcuts and tool-group routing.
+  for (auto *action : toolBar->actions()) {
+    toolBar->removeAction(action);
+    if (action->isSeparator())
+      delete action;
+  }
+  toolBar->addAction(homeAction_);
+  toolBar->addSeparator();
+  auto *indicator = new QWidget(toolBar);
+  indicator->setFixedWidth(Accessibility::scaledSize(148));
+  auto *layout = new QHBoxLayout(indicator);
+  layout->setContentsMargins(8, 0, 8, 0);
+  layout->setSpacing(8);
+  currentToolIcon_ = new QLabel(indicator);
+  currentToolIcon_->setFixedSize(Accessibility::scaledSize(24), Accessibility::scaledSize(24));
+  currentToolLabel_ = new QLabel(indicator);
+  currentToolLabel_->setAccessibleName(QStringLiteral("Current editing tool"));
+  auto labelPalette = currentToolLabel_->palette();
+  labelPalette.setColor(QPalette::WindowText, QColor(94, 210, 234));
+  currentToolLabel_->setPalette(labelPalette);
+  layout->addWidget(currentToolIcon_);
+  layout->addWidget(currentToolLabel_, 1);
+  toolBar->addWidget(indicator);
+  toolBar->addSeparator();
+  for (auto *action : {selectTool_, handTool_, zoomTool_})
+    toolBar->addAction(action);
+  toolBar->addSeparator();
+  for (auto *action : {moveTool_, rotationTool_, scaleTool_})
+    toolBar->addAction(action);
+  toolBar->addSeparator();
+
+  const auto addGroup = [this](QAction *primary, const QList<QAction *> &members) {
+    toolBar->addAction(primary);
+    auto *button = qobject_cast<QToolButton *>(toolBar->widgetForAction(primary));
+    auto *menu = new QMenu(button);
+    menu->addAction(primary);
+    for (auto *member : members)
+      menu->addAction(member);
+    button->setMenu(menu);
+    button->setPopupMode(QToolButton::MenuButtonPopup);
+    if (toolsGroup_->actions().contains(primary)) {
+      auto groupActions = members;
+      groupActions.prepend(primary);
+      groupedTools_.append({button, groupActions});
     }
   };
+  addGroup(shapeTool_, {ellipseTool_});
+  toolBar->addAction(penTool_);
+  toolBar->addAction(textTool_);
+  addGroup(brushTool_, {rotoBrushTool_, cloneStampTool_, eraserTool_});
+  addGroup(cameraTool_, {trackPointTool_});
 
-  switch (displayMode_) {
-  case ToolBarDisplayMode::Full:
-    // Show all actions with text
-    toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    for (auto *action : toolActions_.actions) {
-      setVisible(action, true);
-    }
-    if (moreActionsButton_) {
-      moreActionsButton_->setVisible(false);
-    }
-    break;
+  toolActions_.secondaryActions = {panBehindTool_, ellipseTool_, rotoBrushTool_,
+      cloneStampTool_, eraserTool_, puppetTool_, rigSelectTool_, rigWeightTool_,
+      trackPointTool_, motionSketchTool_, scrubPreviewTool_};
+  setupMoreActionsMenu();
+  toolBar->addSeparator();
+  auto *spacer = new QWidget(toolBar);
+  spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  toolBar->addWidget(spacer);
+  addGroup(zoomFitAction_, {zoomInAction_, zoomOutAction_, zoom100Action_});
+  toolBar->addAction(gridToggleAction_);
+  toolBar->addAction(guideToggleAction_);
+  addGroup(normalViewAction_, {gridViewAction_, detailViewAction_});
+  toolBar->addSeparator();
+  updateDisplayMode();
+}
 
-  case ToolBarDisplayMode::IconsOnly:
-    // Show all actions without text
-    toolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    for (auto *action : toolActions_.actions) {
-      setVisible(action, true);
-    }
-    if (moreActionsButton_) {
-      moreActionsButton_->setVisible(false);
-    }
-    break;
-
-  case ToolBarDisplayMode::Compact:
-    // Show only primary actions, hide secondary actions
-    toolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    for (auto *action : toolActions_.primaryActions) {
-      setVisible(action, true);
-    }
-    for (auto *action : toolActions_.secondaryActions) {
-      setVisible(action, false);
-    }
-    // Show "more" button if there are secondary actions
-    if (moreActionsButton_ && !toolActions_.secondaryActions.isEmpty()) {
-      moreActionsButton_->setVisible(true);
-    }
-    break;
+void ArtifactToolBar::Impl::updateDisplayMode() {
+  // Full mode uses beside-icon labels so the two-row chrome never changes height.
+  toolBar->setToolButtonStyle(displayMode_ == ToolBarDisplayMode::Full
+                                 ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
+  for (auto *action : toolActions_.secondaryActions) {
+    if (displayMode_ == ToolBarDisplayMode::Compact)
+      toolBar->removeAction(action);
+    else if (!toolBar->actions().contains(action))
+      toolBar->insertAction(moreActionsButton_, action);
   }
+  if (moreActionsButton_)
+    moreActionsButton_->setVisible(displayMode_ == ToolBarDisplayMode::Compact);
+  styleButtons();
 }
 
 void ArtifactToolBar::Impl::setupMoreActionsMenu() {
@@ -887,26 +987,18 @@ void ArtifactToolBar::Impl::setupMoreActionsMenu() {
   moreActionsButton_ = new QAction("...", toolBar);
   moreActionsButton_->setToolTip("More tools");
   toolBar->addAction(moreActionsButton_);
+  moreActionsButton_->setStatusTip(QStringLiteral("追加の編集ツールを選択"));
   if (auto *button = toolBar->widgetForAction(moreActionsButton_)) {
     button->setAccessibleName(QStringLiteral("More tools"));
     button->setAccessibleDescription(
         QStringLiteral("Open additional editing tools"));
     button->setMinimumHeight(Artifact::Accessibility::scaledSize(40));
   }
-  QObject::connect(moreActionsButton_, &QAction::triggered, toolBar, [this]() {
-    if (moreActionsMenu_ && moreActionsButton_) {
-      auto *widget = toolBar->widgetForAction(moreActionsButton_);
-      if (widget) {
-        const QPoint origin =
-            widget->mapToGlobal(QPoint(0, widget->height()));
-        int menuX = origin.x();
-        int menuY = origin.y();
-        Accessibility::adjustContextMenuPosition(
-            menuX, menuY, moreActionsMenu_->sizeHint().width());
-        moreActionsMenu_->popup(QPoint(menuX, menuY));
-      }
-    }
-  });
+  if (auto *button = qobject_cast<QToolButton *>(toolBar->widgetForAction(moreActionsButton_))) {
+    button->setMenu(moreActionsMenu_);
+    button->setPopupMode(QToolButton::InstantPopup);
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  }
 }
 
 void ArtifactToolBar::Impl::buildToolInfoList() {
@@ -998,6 +1090,20 @@ void ArtifactToolBar::setCurrentTool(const QString &toolName) {
   for (const auto &info : impl_->toolInfos_) {
     if (info.toolName == toolName) {
       info.action->setChecked(true);
+      for (const auto &group : impl_->groupedTools_) {
+        if (group.actions.contains(info.action)) {
+          // Remember the selected variant without changing group positions.
+          group.button->setDefaultAction(info.action);
+          group.button->setAccessibleName(info.toolName);
+          group.button->setAccessibleDescription(info.action->statusTip());
+        }
+      }
+      if (impl_->currentToolLabel_) {
+        impl_->currentToolLabel_->setText(toolName);
+        impl_->currentToolLabel_->setToolTip(info.action->statusTip());
+        impl_->currentToolIcon_->setPixmap(info.action->icon().pixmap(
+            QSize(Accessibility::scaledSize(22), Accessibility::scaledSize(22))));
+      }
 
       // Update tool options bar
       if (impl_->toolOptionsBar_) {

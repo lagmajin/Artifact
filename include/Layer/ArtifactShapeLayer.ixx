@@ -6,6 +6,7 @@ module;
 #include <vector>
 #include <QString>
 #include <QPointF>
+#include <QTransform>
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -14,6 +15,7 @@ export module Artifact.Layer.Shape;
 import Color.Float;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Mask.LayerMask;
 import Artifact.Render.IRenderer;
 import Shape.Operator;
 import Shape.Path;
@@ -44,6 +46,20 @@ struct CustomPathVertex {
 // legacy single-primitive behavior. Boolean ops are resolved on CPU
 // geometry; painting stays on the existing GPU triangle/line path.
 enum class ShapeContentMerge { Add = 0, Subtract = 1, Intersect = 2, Difference = 3 };
+
+// Ordered shape-group entries mirror the evaluation order used by After
+// Effects: paths feed later operators, while fills and strokes consume the
+// path result at their own position.  Content and operator indices refer to
+// the existing owned arrays, so reordering the stack never duplicates style
+// or operator state.
+enum class ShapeStackNodeType { Path = 0, Fill = 1, Stroke = 2, Operator = 3 };
+
+struct ShapeStackNode {
+  ShapeStackNodeType type = ShapeStackNodeType::Path;
+  int contentIndex = -1;
+  int operatorIndex = -1;
+  bool enabled = true;
+};
 
 struct ShapeContentFill {
   bool enabled = true;
@@ -88,9 +104,19 @@ struct ShapeContentGeometry {
   ArtifactCore::PathFillRule fillRule = ArtifactCore::PathFillRule::Winding;
 };
 
+struct ShapeContentTransform {
+  QPointF anchor = QPointF(0.0, 0.0);
+  QPointF position = QPointF(0.0, 0.0);
+  QPointF scale = QPointF(1.0, 1.0);
+  double rotation = 0.0;
+  double skew = 0.0;
+  double skewAxis = 0.0;
+};
+
 struct ShapeContent {
   QString name;
   ShapeContentGeometry geometry;
+  ShapeContentTransform transform;
   ShapeContentFill fill;
   ShapeContentStroke stroke;
   bool visible = true;
@@ -261,6 +287,19 @@ public:
   bool insertShapeContent(int index, const ShapeContent& content);
   bool swapShapeContents(int a, int b);
 
+  // Ordered group evaluation.  An empty stack preserves the legacy content
+  // and operator evaluation model for existing projects.  New stacks are
+  // persisted with the layer and can place path operations between path and
+  // paint entries.
+  int shapeStackNodeCount() const;
+  ShapeStackNode shapeStackNodeAt(int index) const;
+  bool setShapeStackNodeAt(int index, const ShapeStackNode& node);
+  bool moveShapeStackNode(int fromIndex, int toIndex);
+  bool insertShapeStackNode(int index, const ShapeStackNode& node);
+  bool removeShapeStackNodeAt(int index);
+  void clearShapeStackNodes();
+  void resetShapeStackOrder();
+
     // SVG interop (ベクター受渡し). Export bakes merge-resolved paths;
   // taper strokes fall back to plain strokes, conical fills to solid.
   // Import converts rect/circle/ellipse/polygon/path + linear/radial
@@ -274,6 +313,11 @@ public:
 
   // Backend-neutral geometry after applying the current operator stack.
   std::vector<ArtifactCore::ShapePath> nativeShapePaths() const;
+
+  // Convert the currently evaluated shape geometry into editable mask paths.
+  // The shape layer itself remains unchanged; callers decide whether to add
+  // the returned mask as a one-shot conversion or use it as a live source.
+  LayerMask createMaskFromShape() const;
 
   // Convert to a core ShapeLayer (processed paths + fill/stroke settings)
   // for vector export pipelines (e.g. SvgFrameExporter).

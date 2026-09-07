@@ -1,12 +1,15 @@
 module;
 
 #include <QFont>
+#include <QIcon>
+#include <QVariant>
 #include <QFontMetrics>
 #include <QModelIndex>
 #include <QPainter>
 #include <QRectF>
 #include <QStyledItemDelegate>
 #include <QStyle>
+#include <QSize>
 #include <QStyleOptionViewItem>
 
 export module Artifact.Widgets.InspectorEffectRackPresentation;
@@ -46,8 +49,9 @@ public:
   explicit EffectRackItemDelegate(const int rackIndex, QObject *parent)
       : QStyledItemDelegate(parent), rackIndex_(rackIndex) {}
 
-  QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override {
-    return QSize(0, 34);
+  QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &index) const override {
+    const auto hint = index.data(Qt::SizeHintRole).toSize();
+    return hint.isValid() ? hint : QSize(0, 44);
   }
 
   void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -63,62 +67,56 @@ public:
         theme.secondaryBackgroundColor, QColor(QStringLiteral("#2B3038")));
     const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
     const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
-    const QColor selection = themeColor(
-        theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
     const QColor rackColor = rackColorForIndex(rackIndex_, text, accent);
     const QColor muted = blendColor(rackColor, background, 0.58);
     const bool selected = option.state.testFlag(QStyle::State_Selected);
     const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
     const bool enabled = index.data(kEffectRackEnabledRole).toBool();
     const bool hasMask = index.data(kEffectRackHasMaskRole).toBool();
-    const int maskCount = index.data(kEffectRackMaskCountRole).toInt();
-    const QString effectId = index.data(Qt::UserRole).toString().trimmed();
     const QString effectName = index.data(kEffectRackNameRole).toString().trimmed();
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
-    const QRect rowRect = option.rect.adjusted(2, 2, -2, -2);
-    painter->setPen(selected ? rackColor : blendColor(surface, text, 0.18));
-    painter->setBrush(selected ? selection
-                               : hovered ? blendColor(surface, accent, 0.14)
-                                         : surface);
-    painter->drawRoundedRect(QRectF(rowRect), 3.0, 3.0);
-
-    if (effectId.isEmpty()) {
-      painter->setPen(blendColor(text, background, 0.52));
-      painter->drawText(rowRect, Qt::AlignCenter, index.data(Qt::DisplayRole).toString());
-      painter->restore();
-      return;
-    }
-
-    const QPoint indicator(rowRect.left() + 10, rowRect.center().y());
+    const QRect rowRect = option.rect.adjusted(1, 1, -1, -1);
+    painter->fillRect(rowRect, hovered ? blendColor(surface, accent, 0.08) : surface);
+    if (selected) painter->fillRect(QRect(rowRect.left(), rowRect.top(), 2, rowRect.height()), accent);
+    const QRect header(rowRect.left(), rowRect.top(), rowRect.width(), 42);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(enabled ? rackColor : muted);
-    painter->drawEllipse(indicator, 4, 4);
-
-    QRect textRect = rowRect.adjusted(22, 0, -6, 0);
-    if (hasMask) {
-      const QString maskLabel = maskCount > 0
-                                    ? QStringLiteral("Mask %1").arg(maskCount)
-                                    : QStringLiteral("Mask");
-      QFontMetrics metrics(option.font);
-      const int chipWidth = metrics.horizontalAdvance(maskLabel) + 12;
-      const QRect chipRect(rowRect.right() - chipWidth, rowRect.center().y() - 9,
-                           chipWidth, 18);
-      painter->setBrush(blendColor(rackColor, background, selected ? 0.28 : 0.16));
-      painter->drawRoundedRect(chipRect, 4, 4);
-      painter->setPen(enabled ? text : muted);
-      painter->drawText(chipRect, Qt::AlignCenter, maskLabel);
-      textRect.setRight(chipRect.left() - 6);
+    painter->setBrush(muted);
+    for (int y : {-4, 0, 4}) {
+      painter->drawEllipse(QPoint(header.left() + 9, header.center().y() + y), 1, 1);
+      painter->drawEllipse(QPoint(header.left() + 13, header.center().y() + y), 1, 1);
     }
-
+    painter->setPen(muted);
+    painter->drawText(QRect(header.left() + 21, header.top(), 26, header.height()),
+                      Qt::AlignCenter, QStringLiteral("%1").arg(index.row() + 1, 2, 10, QLatin1Char('0')));
+    const QIcon icon(QStringLiteral(":/icons/Studio/effectrack_effect.svg"));
+    icon.paint(painter, QRect(header.left() + 51, header.center().y() - 9, 18, 18),
+               Qt::AlignCenter, enabled ? QIcon::Normal : QIcon::Disabled);
     QFont nameFont = option.font;
     nameFont.setWeight(QFont::DemiBold);
     painter->setFont(nameFont);
     painter->setPen(enabled ? text : muted);
-    painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
-                      effectName.isEmpty() ? index.data(Qt::DisplayRole).toString()
-                                           : effectName);
+    const QRect nameRect = header.adjusted(78, 0, -78, 0);
+    const QString label = effectName.isEmpty() ? index.data(Qt::DisplayRole).toString() : effectName;
+    painter->drawText(nameRect, Qt::AlignVCenter | Qt::AlignLeft,
+        QFontMetrics(nameFont).elidedText(label, Qt::ElideRight, qMax(0, nameRect.width())));
+    // Match the header hit regions in EffectRackList.
+    const QRect toggle(header.right() - 65, header.center().y() - 7, 30, 14);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(enabled ? accent : muted);
+    painter->drawRoundedRect(toggle, 7, 7);
+    painter->setBrush(enabled ? text : background);
+    painter->drawEllipse(QPoint(enabled ? toggle.right() - 7 : toggle.left() + 7,
+                               toggle.center().y()), 5, 5);
+    painter->setBrush(text);
+    for (int y : {-4, 0, 4})
+      painter->drawEllipse(QPoint(header.right() - 14, header.center().y() + y), 1, 1);
+    if (hasMask) {
+      painter->setPen(accent);
+      painter->drawText(QRect(header.left() + 51, header.bottom() - 9, 18, 9),
+                        Qt::AlignCenter, QStringLiteral("M"));
+    }
     painter->restore();
   }
 

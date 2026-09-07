@@ -73,6 +73,7 @@ import Configuration.LayeredConfigStore;
 import Artifact.Workspace.Modes;
 import Artifact.Audio.ScrubController;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
 import Settings.Accessibility;
@@ -964,6 +965,7 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
                          impl_->backgroundColor_.greenF(),
                          impl_->backgroundColor_.blueF(),
                          impl_->backgroundColor_.alphaF()));
+                     Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Edit);
                      if (picker.exec() != QDialog::Accepted) {
                        return;
                      }

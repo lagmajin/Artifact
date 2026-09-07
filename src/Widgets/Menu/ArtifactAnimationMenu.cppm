@@ -19,6 +19,7 @@ module;
 #include <QThread>
 #include <QStringList>
 #include <QVector>
+#include <QSet>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
@@ -723,6 +724,17 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
  return widgets.isEmpty() ? nullptr : widgets.front();
 }
 
+void addTransformKeyframesAtPlayhead(QWidget* root,
+                                     const QSet<QString>& propertyPaths)
+{
+ auto* timeline = activeTimelineWidget(root);
+ if (!timeline || propertyPaths.isEmpty()) return;
+ const QSet<QString> previous = timeline->selectedPropertyPaths();
+ timeline->setSelectedPropertyPaths(propertyPaths);
+ timeline->addKeyframeAtPlayhead();
+ timeline->setSelectedPropertyPaths(previous);
+}
+
 bool openActiveExpressionCopilot(QWidget* root)
 {
  if (!root) {
@@ -868,6 +880,18 @@ bool hasActiveExpressionTarget(QWidget* root)
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   QAction* addKeyframeAction = nullptr;
+  QAction* setPositionKeyframesAction = nullptr;
+  QAction* setRotationKeyframesAction = nullptr;
+  QAction* setScaleKeyframesAction = nullptr;
+  QAction* setAllTransformKeyframesAction = nullptr;
+  QAction* nudgeBackwardAction = nullptr;
+  QAction* nudgeForwardAction = nullptr;
+  QAction* moveLayerStartAction = nullptr;
+  QAction* moveLayerEndAction = nullptr;
+  QAction* trimLayerInAction = nullptr;
+  QAction* trimLayerOutAction = nullptr;
+  QAction* deleteLayerAnimationAction = nullptr;
+  QAction* distributeKeyframesAction = nullptr;
   QAction* removeKeyframeAction = nullptr;
   QAction* selectAllKeyframesAction = nullptr;
   QAction* reverseSelectedKeyframesAction = nullptr;
@@ -1005,6 +1029,18 @@ bool hasActiveExpressionTarget(QWidget* root)
   bool hasLayer = service && service->hasProject() && static_cast<bool>(service->currentComposition().lock()) && !selectedLayerId_.isNil();
 
   addKeyframeAction->setEnabled(hasLayer);
+  setPositionKeyframesAction->setEnabled(hasLayer);
+  setRotationKeyframesAction->setEnabled(hasLayer);
+  setScaleKeyframesAction->setEnabled(hasLayer);
+  setAllTransformKeyframesAction->setEnabled(hasLayer);
+  nudgeBackwardAction->setEnabled(hasLayer);
+  nudgeForwardAction->setEnabled(hasLayer);
+  moveLayerStartAction->setEnabled(hasLayer);
+  moveLayerEndAction->setEnabled(hasLayer);
+  trimLayerInAction->setEnabled(hasLayer);
+  trimLayerOutAction->setEnabled(hasLayer);
+  deleteLayerAnimationAction->setEnabled(hasLayer);
+  distributeKeyframesAction->setEnabled(hasLayer);
   removeKeyframeAction->setEnabled(hasLayer);
   selectAllKeyframesAction->setEnabled(hasLayer);
   copyKeyframesAction->setEnabled(hasLayer);
@@ -1087,6 +1123,23 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->addKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_add_circle.svg")));
   impl_->addKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationAddKeyframe));
+  auto* transformKeyframesMenu = addMenu("トランスフォームキーを設定");
+  transformKeyframesMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
+  impl_->setPositionKeyframesAction = transformKeyframesMenu->addAction("Position");
+  impl_->setRotationKeyframesAction = transformKeyframesMenu->addAction("Rotation");
+  impl_->setScaleKeyframesAction = transformKeyframesMenu->addAction("Scale");
+  transformKeyframesMenu->addSeparator();
+  impl_->setAllTransformKeyframesAction = transformKeyframesMenu->addAction("All");
+  auto* nudgeMenu = addMenu("キーフレームをナッジ");
+  impl_->nudgeBackwardAction = nudgeMenu->addAction("Backward");
+  impl_->nudgeForwardAction = nudgeMenu->addAction("Forward");
+  auto* layerTimingMenu = addMenu("レイヤー時間操作");
+  impl_->moveLayerStartAction = layerTimingMenu->addAction("Move Layer Start to Current Frame");
+  impl_->moveLayerEndAction = layerTimingMenu->addAction("Move Layer End to Current Frame");
+  impl_->trimLayerInAction = layerTimingMenu->addAction("Set Layer In Point to Current Frame");
+  impl_->trimLayerOutAction = layerTimingMenu->addAction("Set Layer Out Point to Current Frame");
+  impl_->deleteLayerAnimationAction = addAction("アニメーションを削除");
+  impl_->distributeKeyframesAction = addAction("選択キーフレームを均等配置");
   impl_->removeKeyframeAction = addAction("キーフレームを削除");
   impl_->removeKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_remove_circle.svg")));
   impl_->removeKeyframeAction->setShortcut(
@@ -1308,6 +1361,71 @@ bool hasActiveExpressionTarget(QWidget* root)
     ArtifactCore::globalEventBus().publish(
         TimelineKeyframeEditCommandRequestedEvent{
             TimelineKeyframeEditCommandKind::Add});
+    return;
+   }
+   QWidget* root = impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr;
+   if (action == impl_->setPositionKeyframesAction) {
+    addTransformKeyframesAtPlayhead(
+        root, {QStringLiteral("transform.position.x"),
+               QStringLiteral("transform.position.y")});
+    return;
+   }
+   if (action == impl_->setRotationKeyframesAction) {
+    addTransformKeyframesAtPlayhead(
+        root, {QStringLiteral("transform.rotation.z")});
+    return;
+   }
+   if (action == impl_->setScaleKeyframesAction) {
+    addTransformKeyframesAtPlayhead(
+        root, {QStringLiteral("transform.scale.x"),
+               QStringLiteral("transform.scale.y")});
+    return;
+   }
+   if (action == impl_->setAllTransformKeyframesAction) {
+    addTransformKeyframesAtPlayhead(
+        root, {QStringLiteral("transform.position.x"),
+               QStringLiteral("transform.position.y"),
+               QStringLiteral("transform.rotation.z"),
+               QStringLiteral("transform.scale.x"),
+               QStringLiteral("transform.scale.y")});
+    return;
+   }
+   if (action == impl_->nudgeBackwardAction ||
+       action == impl_->nudgeForwardAction) {
+    if (auto* timeline = activeTimelineWidget(root)) {
+      timeline->nudgeSelectedKeyframes(
+          action == impl_->nudgeForwardAction ? 1 : -1);
+    }
+    return;
+   }
+   if (action == impl_->moveLayerStartAction ||
+       action == impl_->moveLayerEndAction) {
+    if (auto* timeline = activeTimelineWidget(root)) {
+      if (action == impl_->moveLayerStartAction)
+        timeline->moveSelectedLayerStartToCurrentFrame();
+      else
+        timeline->moveSelectedLayerEndToCurrentFrame();
+    }
+    return;
+   }
+   if (action == impl_->trimLayerInAction ||
+       action == impl_->trimLayerOutAction) {
+    if (auto* timeline = activeTimelineWidget(root)) {
+      if (action == impl_->trimLayerInAction)
+        timeline->trimSelectedLayerInToCurrentFrame();
+      else
+        timeline->trimSelectedLayerOutToCurrentFrame();
+    }
+    return;
+   }
+   if (action == impl_->deleteLayerAnimationAction) {
+    if (auto* timeline = activeTimelineWidget(root))
+      timeline->deleteSelectedLayerAnimation();
+    return;
+   }
+   if (action == impl_->distributeKeyframesAction) {
+    if (auto* timeline = activeTimelineWidget(root))
+      timeline->distributeSelectedKeyframesEvenly();
     return;
    }
    if (action == impl_->removeKeyframeAction) {

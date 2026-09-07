@@ -240,6 +240,12 @@ import Artifact.Render.OffscreenComposition;
 import Artifact.Render.PointwiseEffectFusion;
 
 import ExposureEffect;
+import HueAndSaturation;
+import LevelsEffect;
+import BrightnessEffect;
+import InvertEffect;
+import GrayscaleEffect;
+import Artifact.Effect.WhiteBalance;
 
 import Artifact.Widgets.PieMenu;
 
@@ -410,7 +416,12 @@ ArtifactCore::RationalTime gizmoTransformTime(
       if (candidate > 0.0) fps = candidate;
     }
   }
-  return ArtifactCore::RationalTime(frame, fps);
+  // Curve editor側(timelineFrameRateFallback + llround)と時刻スケールを一致させる。
+  // doubleのまま渡すとint64_tへの暗黙変換で切り捨てられ(29.97→29)、
+  // カーブ側(RationalTime(frame, 30))と別時刻として扱われる。
+  const int64_t fpsInt =
+      std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
+  return ArtifactCore::RationalTime(frame, fpsInt);
 }
 
 void captureGizmoKeyState(const ArtifactAbstractLayerPtr &layer, int64_t frame,
@@ -424,6 +435,7 @@ void captureGizmoKeyState(const ArtifactAbstractLayerPtr &layer, int64_t frame,
   snapshot.positionAnimated = transform.getPositionKeyFrameCount() > 0;
   snapshot.rotationAnimated = transform.getRotationKeyFrameCount() > 0;
   snapshot.scaleAnimated = transform.getScaleKeyFrameCount() > 0;
+  captureGizmoPropertyKeys(layer, time, snapshot);
 }
 
 void applyPlanarGizmoTransform(const ArtifactAbstractLayerPtr &layer,
@@ -513,6 +525,21 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
   const bool autoKeyScale = gizmoAutoKeyApplies(
       layer, QStringLiteral("transform.scale"));
 
+  const bool positionPropertiesAnimated =
+      before.propertyAnimated(QStringLiteral("transform.position.x")) ||
+      before.propertyAnimated(QStringLiteral("transform.position.y")) ||
+      before.propertyAnimated(QStringLiteral("transform.position.z"));
+  const bool scalePropertiesAnimated =
+      before.propertyAnimated(QStringLiteral("transform.scale.x")) ||
+      before.propertyAnimated(QStringLiteral("transform.scale.y")) ||
+      before.propertyAnimated(QStringLiteral("transform.scale.z"));
+  const bool positionKeyed = before.hasPositionKey || before.positionAnimated ||
+                             positionPropertiesAnimated || autoKeyPosition;
+  const bool rotationKeyed = before.hasRotationKey || before.rotationAnimated ||
+      before.propertyAnimated(QStringLiteral("transform.rotation")) || autoKeyRotation;
+  const bool scaleKeyed = before.hasScaleKey || before.scaleAnimated ||
+                          scalePropertiesAnimated || autoKeyScale;
+
   const bool positionChanged =
       (current.position - before.position).lengthSquared() > 0.000001f;
   const bool rotationChanged =
@@ -520,7 +547,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
   const bool scaleChanged =
       (current.scale - before.scale).lengthSquared() > 0.000001f;
   if (positionChanged) {
-    if (before.hasPositionKey || before.positionAnimated || autoKeyPosition) {
+    if (positionKeyed) {
       const float initialX = transform.positionX() - transform.positionXAt(time);
       const float initialY = transform.positionY() - transform.positionYAt(time);
       transform.setPosition(time, current.position.x() - initialX,
@@ -530,7 +557,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
                                    current.position.y());
     }
     if (std::abs(current.position.z() - before.position.z()) > 0.000001f) {
-      if (before.positionAnimated || autoKeyPosition) {
+      if (positionKeyed) {
         transform.setPositionZ(time, current.position.z());
       } else {
         transform.setCurrentPositionZ(current.position.z());
@@ -540,7 +567,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
 
   if (rotationChanged) {
     if (current.is3D) {
-      if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
+      if (rotationKeyed) {
         transform.setRotationX(time, current.rotation.x());
         transform.setRotationY(time, current.rotation.y());
         transform.setRotationZ(time, current.rotation.z());
@@ -549,7 +576,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
         transform.setCurrentRotationY(current.rotation.y());
         transform.setCurrentRotationZ(current.rotation.z());
       }
-    } else if (before.hasRotationKey || before.rotationAnimated || autoKeyRotation) {
+    } else if (rotationKeyed) {
       transform.setRotation(time, current.rotation.z());
     } else {
       transform.setInitialRotation(time, current.rotation.z());
@@ -557,7 +584,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
   }
 
   if (scaleChanged) {
-    if (before.hasScaleKey || before.scaleAnimated || autoKeyScale) {
+    if (scaleKeyed) {
       transform.setScale(time, current.scale.x(), current.scale.y());
     } else {
       transform.setInitialScale(time, current.scale.x(), current.scale.y());
@@ -572,35 +599,58 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
       ? current.rotation.x()
       : current.rotation.z();
   const auto syncProperty = [&](const QString &path, const QVariant &value,
-                                bool autoKey) {
+                                bool keyed) {
     const auto property = layer->getProperty(path);
     if (!property || !property->isAnimatable()) return;
-    if (!property->getKeyFrames().empty() || autoKey) {
+    if (keyed) {
+      // Preserve interpolation/labels when editing an existing property key.
+      for (const auto &saved : before.properties) {
+        if (saved.path == path && saved.hasKey) {
+          const auto &key = saved.key;
+          property->addKeyFrame(time, value, key.interpolation,
+                                key.cp1_x, key.cp1_y, key.cp2_x, key.cp2_y,
+                                key.roving);
+          property->setKeyFrameAnchorAt(time, key.anchor);
+          property->setKeyFrameColorLabelAt(time, key.colorLabel);
+          return;
+        }
+      }
       property->addKeyFrame(time, value);
     }
   };
+  // Existing property channels are authoritative. A Transform3D-only animation
+  // still seeds property mirrors, but must not turn an unkeyed sibling into an
+  // animated channel when the left pane has keyed only X or Y.
+  const auto positionChannelKeyed = [&](const QString &path) {
+    return before.propertyAnimated(path) || autoKeyPosition ||
+           (!positionPropertiesAnimated && positionKeyed);
+  };
+  const auto scaleChannelKeyed = [&](const QString &path) {
+    return before.propertyAnimated(path) || autoKeyScale ||
+           (!scalePropertiesAnimated && scaleKeyed);
+  };
   if (positionChanged) {
     syncProperty(QStringLiteral("transform.position.x"),
-                 current.position.x(), autoKeyPosition);
+                 current.position.x(), positionChannelKeyed(QStringLiteral("transform.position.x")));
     syncProperty(QStringLiteral("transform.position.y"),
-                 current.position.y(), autoKeyPosition);
+                 current.position.y(), positionChannelKeyed(QStringLiteral("transform.position.y")));
     if (current.is3D) {
       syncProperty(QStringLiteral("transform.position.z"),
-                   current.position.z(), autoKeyPosition);
+                   current.position.z(), positionChannelKeyed(QStringLiteral("transform.position.z")));
     }
   }
   if (rotationChanged) {
     syncProperty(QStringLiteral("transform.rotation"), currentRotation,
-                 autoKeyRotation);
+                 rotationKeyed);
   }
   if (scaleChanged) {
     syncProperty(QStringLiteral("transform.scale.x"), current.scale.x(),
-                 autoKeyScale);
+                 scaleChannelKeyed(QStringLiteral("transform.scale.x")));
     syncProperty(QStringLiteral("transform.scale.y"), current.scale.y(),
-                 autoKeyScale);
+                 scaleChannelKeyed(QStringLiteral("transform.scale.y")));
     if (current.is3D) {
       syncProperty(QStringLiteral("transform.scale.z"), current.scale.z(),
-                   autoKeyScale);
+                   scaleChannelKeyed(QStringLiteral("transform.scale.z")));
     }
   }
   layer->setDirty(LayerDirtyFlag::Transform);
@@ -610,36 +660,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
 void restoreGizmoPropertyKeyState(const ArtifactAbstractLayerPtr &layer,
                                   int64_t frame,
                                   const GizmoTransformSnapshot &snapshot) {
-  if (!layer) return;
-  const auto time = gizmoTransformTime(layer, frame);
-  const auto restore = [&](const QString &path, bool hasKey,
-                           const QVariant &value) {
-    const auto property = layer->getProperty(path);
-    if (!property || !property->isAnimatable()) return;
-    if (hasKey) {
-      property->addKeyFrame(time, value);
-    } else {
-      property->removeKeyFrame(time);
-    }
-  };
-  restore(QStringLiteral("transform.position.x"), snapshot.hasPositionKey,
-          snapshot.position.x());
-  restore(QStringLiteral("transform.position.y"), snapshot.hasPositionKey,
-          snapshot.position.y());
-  if (snapshot.is3D) {
-    restore(QStringLiteral("transform.position.z"), snapshot.hasPositionKey,
-            snapshot.position.z());
-  }
-  restore(QStringLiteral("transform.rotation"), snapshot.hasRotationKey,
-          snapshot.is3D ? snapshot.rotation.x() : snapshot.rotation.z());
-  restore(QStringLiteral("transform.scale.x"), snapshot.hasScaleKey,
-          snapshot.scale.x());
-  restore(QStringLiteral("transform.scale.y"), snapshot.hasScaleKey,
-          snapshot.scale.y());
-  if (snapshot.is3D) {
-    restore(QStringLiteral("transform.scale.z"), snapshot.hasScaleKey,
-            snapshot.scale.z());
-  }
+  restoreGizmoPropertyKeys(layer, gizmoTransformTime(layer, frame), snapshot);
 }
 }
 
@@ -3703,10 +3724,12 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   }
 
   if (hasRasterizerEffect) {
-    const float overscanPixels = layerOverscanPixels(targetLayer) *
-        (interactivePreview
-             ? std::clamp(resolutionScale, 0.125f, 1.0f)
-             : 1.0f);
+    // Overscan is expressed in layer-space pixels.  It must remain stable
+    // while the viewport uses an interactive preview scale: outputRect keeps
+    // the same logical extent, so reducing this padding would stretch the
+    // processed surface into that extent and make the layer appear to shrink
+    // when the full-quality effect result arrives.
+    const float overscanPixels = layerOverscanPixels(targetLayer);
     if (overscanPixels > 0.0f) {
       const QRectF localBounds = targetLayer->localBounds();
       const float scaleX = static_cast<float>(mat.cols) /
@@ -9450,6 +9473,8 @@ class CompositionRenderController::Impl {
 public:
 
   std::unique_ptr<ArtifactIRenderer> renderer_;
+  CompositionViewportPresentationLayout presentationLayout_ =
+      CompositionViewportPresentationLayout::Single;
   std::unique_ptr<ArtifactCore::OpenCVRotoBrushEngine> rotoBrushEngine_ =
       std::make_unique<ArtifactCore::OpenCVRotoBrushEngine>();
   cv::Mat rotoBrushMask_;
@@ -10566,34 +10591,195 @@ public:
       ArtifactCore::PointwiseEffectStack pointwiseStack;
       bool canApplyPointwise = true;
       bool pointwiseApplied = false;
+      // Pointwise processing currently operates on the full accumulated
+      // surface. A mask or non-neutral layer opacity changes the adjustment's
+      // spatial/compositing scope, so keep those cases on the established
+      // full-quality path until an explicit adjustment mask is available.
+      if (layer->hasMasks() || std::abs(layer->opacity() - 1.0f) > 1.0e-6f) {
+        canApplyPointwise = false;
+      }
+      const QMatrix4x4 adjustmentTransform = layer->getGlobalTransform4x4();
+      bool hasNonIdentityTransform = false;
+      for (int row = 0; row < 4 && !hasNonIdentityTransform; ++row) {
+        for (int column = 0; column < 4; ++column) {
+          const float expected = row == column ? 1.0f : 0.0f;
+          if (std::abs(adjustmentTransform(row, column) - expected) > 1.0e-5f) {
+            hasNonIdentityTransform = true;
+            break;
+          }
+        }
+      }
+      if (hasNonIdentityTransform) {
+        canApplyPointwise = false;
+      }
       std::uint32_t parameterSlot = 0;
       for (const auto& effect : layer->getEffects()) {
         const auto exposure = ArtifactCore::dynamicPointerCast<ExposureEffect>(effect);
+        const auto hueAndSaturation =
+            ArtifactCore::dynamicPointerCast<HueAndSaturation>(effect);
+        const auto levels =
+            ArtifactCore::dynamicPointerCast<LevelsEffect>(effect);
+        const auto brightness =
+            ArtifactCore::dynamicPointerCast<BrightnessEffect>(effect);
+        const auto whiteBalance =
+            ArtifactCore::dynamicPointerCast<WhiteBalanceEffect>(effect);
+        const auto invert = ArtifactCore::dynamicPointerCast<InvertEffect>(effect);
+        const auto grayscale = ArtifactCore::dynamicPointerCast<GrayscaleEffect>(effect);
         if (!effect || !effect->isEnabled()) {
           continue;
         }
-        if (!exposure || effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+        if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+            (!exposure && !hueAndSaturation && !levels && !brightness &&
+             !whiteBalance && !invert && !grayscale)) {
           canApplyPointwise = false;
           break;
         }
-        pointwiseStack.addNode(
-            ArtifactCore::PointwiseNodeKind::Exposure, parameterSlot);
-        pointwiseStack.setParameter(
-            parameterSlot, {exposure->exposure(), 0.0f, 0.0f, 0.0f});
-        ++parameterSlot;
-        if (std::abs(exposure->offset()) > 1.0e-6f) {
+        if (exposure) {
           pointwiseStack.addNode(
-              ArtifactCore::PointwiseNodeKind::Offset, parameterSlot);
+              ArtifactCore::PointwiseNodeKind::Exposure, parameterSlot);
           pointwiseStack.setParameter(
-              parameterSlot, {exposure->offset(), 0.0f, 0.0f, 0.0f});
+              parameterSlot, {exposure->exposure(), 0.0f, 0.0f, 0.0f});
           ++parameterSlot;
-        }
-        if (std::abs(exposure->gammaCorrection() - 1.0f) > 1.0e-6f) {
+          if (std::abs(exposure->offset()) > 1.0e-6f) {
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Offset, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {exposure->offset(), 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+          if (std::abs(exposure->gammaCorrection() - 1.0f) > 1.0e-6f) {
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Gamma, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {exposure->gammaCorrection(), 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+        } else if (hueAndSaturation) {
+          // The fusion contract covers saturation and hue rotation, but not
+          // HueAndSaturation's lightness or colorize branches. Preserve the
+          // established fallback whenever either unsupported branch is active.
+          if (std::abs(hueAndSaturation->lightness()) > 1.0e-6f ||
+              hueAndSaturation->isColorize()) {
+            canApplyPointwise = false;
+            break;
+          }
+          if (std::abs(hueAndSaturation->saturation() - 1.0f) > 1.0e-6f) {
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Saturation, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {hueAndSaturation->saturation(), 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+          if (std::abs(hueAndSaturation->hue()) > 1.0e-6f) {
+            constexpr float kPi = 3.14159265358979323846f;
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::HueRotate, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot,
+                {hueAndSaturation->hue() * kPi / 180.0f, 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+        } else if (levels) {
+          // Pointwise Levels currently models only the master input range.
+          // Keep output range, gamma, and per-channel variants on fallback so
+          // the GPU shortcut cannot silently change the effect semantics.
+          const auto& settings = levels->settings();
+          constexpr double kEpsilon = 1.0e-6;
+          if (settings.perChannel ||
+              std::abs(settings.inputGamma - 1.0) > kEpsilon ||
+              std::abs(settings.outputBlack) > kEpsilon ||
+              std::abs(settings.outputWhite - 255.0) > kEpsilon ||
+              settings.inputWhite <= settings.inputBlack + kEpsilon) {
+            canApplyPointwise = false;
+            break;
+          }
+          const float inputBlack = static_cast<float>(
+              std::clamp(settings.inputBlack / 255.0, 0.0, 1.0));
+          const float inputWhite = static_cast<float>(
+              std::clamp(settings.inputWhite / 255.0, 0.0, 1.0));
           pointwiseStack.addNode(
-              ArtifactCore::PointwiseNodeKind::Gamma, parameterSlot);
+              ArtifactCore::PointwiseNodeKind::Levels, parameterSlot);
           pointwiseStack.setParameter(
-              parameterSlot, {exposure->gammaCorrection(), 0.0f, 0.0f, 0.0f});
+              parameterSlot, {inputBlack, 0.0f, 0.0f, 0.0f});
           ++parameterSlot;
+          pointwiseStack.setParameter(
+              parameterSlot, {inputWhite, 0.0f, 0.0f, 0.0f});
+          ++parameterSlot;
+        } else if (brightness) {
+          // BrightnessEffect's CPU path is equivalent to Offset followed by
+          // Contrast only while Highlights and Shadows are at their neutral
+          // values. Preserve its richer tonal branches on fallback.
+          if (std::abs(brightness->highlights()) > 1.0e-6f ||
+              std::abs(brightness->shadows()) > 1.0e-6f) {
+            canApplyPointwise = false;
+            break;
+          }
+          if (std::abs(brightness->brightness()) > 1.0e-6f) {
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Offset, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {brightness->brightness(), 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+          if (std::abs(brightness->contrast()) > 1.0e-6f) {
+            const float c = std::clamp(brightness->contrast(), -0.999f, 0.999f);
+            const float factor = (1.0f + c) / (1.0f - c);
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Contrast, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {factor, 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+        } else if (invert) {
+          // The pointwise contrast primitive can express a full RGB invert or
+          // a partial-strength RGB invert. Channel-specific and alpha-only
+          // variants remain on the established fallback path.
+          if (invert->channel() != 0) {
+            canApplyPointwise = false;
+            break;
+          }
+          const float strength = std::clamp(invert->strength(), 0.0f, 1.0f);
+          const float factor = 1.0f - 2.0f * strength;
+          if (std::abs(factor - 1.0f) > 1.0e-6f) {
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Contrast, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {factor, 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+        } else if (grayscale) {
+          // Pointwise Saturation uses the same Rec.709 luma coefficients as
+          // Grayscale mode 0. Linear-light and min/max modes stay on fallback.
+          if (grayscale->mode() != 0) {
+            canApplyPointwise = false;
+            break;
+          }
+          const float strength = std::clamp(grayscale->strength(), 0.0f, 1.0f);
+          if (std::abs(strength - 1.0f) > 1.0e-6f) {
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Saturation, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {1.0f - strength, 0.0f, 0.0f, 0.0f});
+            ++parameterSlot;
+          }
+        } else {
+          // WhiteBalance's Kelvin conversion is richer than the generic
+          // ColorTemperature node. Only its neutral-temperature tint branch
+          // is representable by the existing RGB multiplier contract.
+          if (std::abs(whiteBalance->temperature() - 6500.0f) > 1.0e-4f ||
+              std::abs(whiteBalance->brightness()) > 1.0e-6f) {
+            canApplyPointwise = false;
+            break;
+          }
+          if (std::abs(whiteBalance->tint()) > 1.0e-6f) {
+            const float tint = whiteBalance->tint();
+            pointwiseStack.addNode(
+                ArtifactCore::PointwiseNodeKind::Tint, parameterSlot);
+            pointwiseStack.setParameter(
+                parameterSlot, {1.0f - tint * 0.5f, 1.0f + tint * 0.5f,
+                                1.0f - tint * 0.5f, 0.0f});
+            ++parameterSlot;
+          }
         }
       }
       if (canApplyPointwise && !pointwiseStack.nodes().empty()) {
@@ -11264,6 +11450,10 @@ public:
 
     const bool transparentCompositionBackground = layerBgColor.a() < 0.999f;
 
+    // The single-pane path keeps its existing command ordering. Quad mode
+    // presents the already-resolved texture below, once per Diligent viewport.
+    if (presentationLayout_ == CompositionViewportPresentationLayout::Single) {
+
     if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
 
       drawViewportMayaGradientBackground(renderer_.get(), origViewW, origViewH,
@@ -11299,6 +11489,7 @@ public:
                                     viewportOrientationMatricesValid_
                                         ? &viewportOrientationProjectionForOverlay_
                                         : nullptr);
+    }
 
 
 
@@ -11414,15 +11605,39 @@ public:
       }
     }
 
-    renderer_->setCanvasSize(origViewW, origViewH);
-
-    renderer_->setZoom(1.0f);
-
-    renderer_->setPan(0.0f, 0.0f);
-
-    renderer_->drawSprite(0.0f, 0.0f, origViewW, origViewH, finalPresentSRV,
-
-                          1.0f);
+    if (presentationLayout_ == CompositionViewportPresentationLayout::Quad) {
+      const float leftW = std::floor(origViewW * 0.5f);
+      const float topH = std::floor(origViewH * 0.5f);
+      const std::array<QRectF, 4> panes{
+          QRectF(0.0, 0.0, leftW, topH),
+          QRectF(leftW, 0.0, origViewW - leftW, topH),
+          QRectF(0.0, topH, leftW, origViewH - topH),
+          QRectF(leftW, topH, origViewW - leftW, origViewH - topH)};
+      for (const QRectF& pane : panes) {
+        if (pane.width() <= 0.0 || pane.height() <= 0.0) continue;
+        renderer_->setViewportRect(
+            static_cast<float>(pane.x()), static_cast<float>(pane.y()),
+            static_cast<float>(pane.width()), static_cast<float>(pane.height()),
+            origViewW, origViewH);
+        renderer_->setCanvasSize(static_cast<float>(pane.width()),
+                                 static_cast<float>(pane.height()));
+        renderer_->setZoom(1.0f);
+        renderer_->setPan(0.0f, 0.0f);
+        renderer_->drawSprite(0.0f, 0.0f, static_cast<float>(pane.width()),
+                              static_cast<float>(pane.height()), finalPresentSRV,
+                              1.0f);
+        // The hardware viewport/scissor is immediate state, while the sprite
+        // commands are buffered. Drain each pane before switching state.
+        renderer_->flush();
+      }
+      renderer_->setViewportRect(origViewW, origViewH);
+    } else {
+      renderer_->setCanvasSize(origViewW, origViewH);
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
+      renderer_->drawSprite(0.0f, 0.0f, origViewW, origViewH, finalPresentSRV,
+                            1.0f);
+    }
 
 
 
@@ -11771,6 +11986,10 @@ public:
 
   bool showViewportRuler_ = QSettings().value(
       QStringLiteral("viewport/showRuler"), false).toBool();
+  ViewportRulerUnit viewportRulerUnit_ = ViewportRulerUnit::Pixels;
+  ViewportOriginMode viewportOriginMode_ = ViewportOriginMode::TopLeft;
+  bool showPixelGrid_ = false;
+  bool showOutsideComposition_ = true;
 
   float viewportRulerCacheZoom_ = -1.0f;
   float viewportRulerCachePanX_ = 0.0f;
@@ -13564,7 +13783,7 @@ public:
                              ? QVector<int64_t>{frame}
                              : selectedMotionPathFrames_;
     for (const auto selectedFrame : frames) {
-      const auto time = ArtifactCore::RationalTime(selectedFrame, 24);
+      const auto time = gizmoTransformTime(layer, selectedFrame);
       MotionPathKeySnapshot snapshot;
       snapshot.frame = selectedFrame;
       snapshot.value.hasPositionKey = transform.hasPositionKeyFrameAt(time);
@@ -13812,7 +14031,7 @@ public:
     if (!intersectPickingRayFixedPlaneAt(*plane, draggingPastPlaneFrame_, ray,
                                          hit)) return false;
     const QVector3D delta = hit - draggingPastPlaneStartHit_;
-    const auto time = ArtifactCore::RationalTime(draggingPastPlaneFrame_, 24);
+    const auto time = gizmoTransformTime(layer, draggingPastPlaneFrame_);
     auto &transform = layer->transform3D();
     transform.setPositionKeyFrameValueAt(
         time, draggingPastPlaneBefore_.x + delta.x(),
@@ -13882,7 +14101,7 @@ public:
               draggingMotionPathGroupStartRadius_,
           0.05f, 20.0f);
       for (const auto &snapshot : draggingMotionPathGroupBefore_) {
-        const auto keyTime = ArtifactCore::RationalTime(snapshot.frame, 24);
+        const auto keyTime = gizmoTransformTime(layer, snapshot.frame);
         QPointF point(snapshot.value.x, snapshot.value.y);
         if (draggingMotionPathGroupTransform_ ==
             MotionPathGroupTransform::Translate) {
@@ -14750,6 +14969,10 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
 
   auto& config = ArtifactCore::LayeredConfigStore::instance();
+  impl_->presentationLayout_ = config.valueBool(
+      QStringLiteral("Viewport/PresentationLayout/Quad"), false)
+      ? CompositionViewportPresentationLayout::Quad
+      : CompositionViewportPresentationLayout::Single;
   impl_->showAudioWaveformOverlay_ = config.valueBool(
       QStringLiteral("Viewport/AudioWaveformOverlay"), true);
   impl_->showAudioSpectrumOverlay_ = config.valueBool(
@@ -15834,6 +16057,24 @@ void CompositionRenderController::setViewportSize(float w, float h) {
 
 }
 
+void CompositionRenderController::setPresentationLayout(
+    CompositionViewportPresentationLayout layout) {
+  if (impl_->presentationLayout_ == layout) {
+    return;
+  }
+  impl_->presentationLayout_ = layout;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/PresentationLayout/Quad"),
+      layout == CompositionViewportPresentationLayout::Quad);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+CompositionViewportPresentationLayout
+CompositionRenderController::presentationLayout() const {
+  return impl_->presentationLayout_;
+}
+
 
 
 void CompositionRenderController::setPreviewQualityPreset(
@@ -15970,7 +16211,7 @@ void CompositionRenderController::setGizmoMode(
 
   if (impl_->gizmo_) {
 
-    impl_->gizmo_->setMode(mode);
+    impl_->gizmo_->setMode(mode == TransformGizmo::Mode::Full ? TransformGizmo::Mode::None : mode);
 
   }
 
@@ -15978,7 +16219,9 @@ void CompositionRenderController::setGizmoMode(
     // Selection keeps move axes and the separate frame resize handles.
     // Rotation rings and axis scale handles belong to their dedicated modes.
     GizmoMode gizmo3DMode = GizmoMode::Move;
-    if (mode == TransformGizmo::Mode::Translation) {
+    if (mode == TransformGizmo::Mode::Full) {
+      gizmo3DMode = GizmoMode::Full;
+    } else if (mode == TransformGizmo::Mode::Translation) {
       gizmo3DMode = GizmoMode::Move;
     } else if (mode == TransformGizmo::Mode::Rotate) {
       gizmo3DMode = GizmoMode::Rotate;
@@ -16597,6 +16840,54 @@ void CompositionRenderController::setShowViewportRuler(bool show) {
 
 bool CompositionRenderController::isShowViewportRuler() const {
   return impl_->showViewportRuler_;
+}
+
+void CompositionRenderController::setViewportRulerUnit(ViewportRulerUnit unit) {
+  if (impl_->viewportRulerUnit_ == unit) return;
+  impl_->viewportRulerUnit_ = unit;
+  impl_->viewportRulerCacheZoom_ = -1.0f;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+CompositionRenderController::ViewportRulerUnit
+CompositionRenderController::viewportRulerUnit() const {
+  return impl_->viewportRulerUnit_;
+}
+
+void CompositionRenderController::setViewportOriginMode(ViewportOriginMode mode) {
+  if (impl_->viewportOriginMode_ == mode) return;
+  impl_->viewportOriginMode_ = mode;
+  impl_->viewportRulerCacheZoom_ = -1.0f;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+CompositionRenderController::ViewportOriginMode
+CompositionRenderController::viewportOriginMode() const {
+  return impl_->viewportOriginMode_;
+}
+
+void CompositionRenderController::setShowPixelGrid(bool show) {
+  if (impl_->showPixelGrid_ == show) return;
+  impl_->showPixelGrid_ = show;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowPixelGrid() const {
+  return impl_->showPixelGrid_;
+}
+
+void CompositionRenderController::setShowOutsideComposition(bool show) {
+  if (impl_->showOutsideComposition_ == show) return;
+  impl_->showOutsideComposition_ = show;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowOutsideComposition() const {
+  return impl_->showOutsideComposition_;
 }
 
 bool CompositionRenderController::isShowGrid() const {
@@ -17863,7 +18154,7 @@ bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFra
 
   const FramePosition currentFrame = currentFrameForComposition(comp);
 
-  const ArtifactCore::RationalTime time(currentFrame.framePosition(), 24);
+  const auto time = gizmoTransformTime(layer, currentFrame.framePosition());
 
   auto &t3d = layer->transform3D();
 
@@ -17976,7 +18267,7 @@ bool CompositionRenderController::removeSelectedLayerMotionPathKeyframeAtCurrent
 
   const FramePosition currentFrame = currentFrameForComposition(comp);
 
-  const ArtifactCore::RationalTime time(currentFrame.framePosition(), 24);
+  const auto time = gizmoTransformTime(layer, currentFrame.framePosition());
 
   auto &t3d = layer->transform3D();
 
@@ -18081,7 +18372,7 @@ bool CompositionRenderController::setSelectedLayerMotionPathInterpolationAtCurre
 
   const FramePosition currentFrame = currentFrameForComposition(comp);
 
-  const ArtifactCore::RationalTime time(currentFrame.framePosition(), 24);
+  const auto time = gizmoTransformTime(layer, currentFrame.framePosition());
 
   auto &t3d = layer->transform3D();
 
@@ -21564,7 +21855,8 @@ bool CompositionRenderController::resetProjectedFrameHandleAt(
   auto *manager = UndoManager::instance();
   if (manager && !manager->push(std::make_unique<GizmoTransformUndoCommand>(
                             layer, layer->currentFrame(), before, after))) {
-    applyLiveGizmoTransform(layer, layer->currentFrame(), after, before);
+    GizmoTransformUndoCommand rollback(layer, layer->currentFrame(), before, after);
+    rollback.undo();
     return false;
   }
   if (auto *composition =
@@ -21674,7 +21966,8 @@ bool CompositionRenderController::setSelected3DTransform(
   auto* manager = UndoManager::instance();
   if (manager && !manager->push(std::make_unique<GizmoTransformUndoCommand>(
                            layer, layer->currentFrame(), before, after))) {
-    applyLiveGizmoTransform(layer, layer->currentFrame(), after, before);
+    GizmoTransformUndoCommand rollback(layer, layer->currentFrame(), before, after);
+    rollback.undo();
     return false;
   }
   impl_->publishLayerModified(layer);
@@ -21714,7 +22007,8 @@ bool CompositionRenderController::resetSelected3DTransform() {
   auto *manager = UndoManager::instance();
   if (manager && !manager->push(std::make_unique<GizmoTransformUndoCommand>(
                             layer, layer->currentFrame(), before, after))) {
-    applyLiveGizmoTransform(layer, layer->currentFrame(), after, before);
+    GizmoTransformUndoCommand rollback(layer, layer->currentFrame(), before, after);
+    rollback.undo();
     return false;
   }
   impl_->publishLayerModified(layer);
@@ -21801,7 +22095,8 @@ bool CompositionRenderController::resetSelectedTransformComponent(
   if (!pushed) {
     for (const auto &entry : rollbackEntries) {
       if (const auto target = entry.layer.lock()) {
-        applyLiveGizmoTransform(target, entry.frame, entry.after, entry.before);
+        GizmoTransformUndoCommand rollback(target, entry.frame, entry.before, entry.after);
+        rollback.undo();
       }
     }
     return false;
@@ -24213,7 +24508,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       const Ray ray = createPickingRay(physicalViewportPos);
       if (plane && intersectPickingRayFixedPlaneAt(*plane, pastPlaneFrame, ray,
                                                    startHit)) {
-        const auto time = ArtifactCore::RationalTime(pastPlaneFrame, 24);
+        const auto time = gizmoTransformTime(selectedLayer, pastPlaneFrame);
         const auto &transform = selectedLayer->transform3D();
         MotionPathPositionSnapshot before;
         before.hasPositionKey = transform.hasPositionKeyFrameAt(time);
@@ -25831,7 +26126,7 @@ void CompositionRenderController::handleMouseMove(
             ArtifactCore::PositionSpatialTangents hoverTangents;
             const bool hasHoverTangents =
                 selectedLayer->transform3D().positionKeyFrameSpatialTangentsAt(
-                    ArtifactCore::RationalTime(tangentHoverFrame, 24),
+                    gizmoTransformTime(selectedLayer, tangentHoverFrame),
                     hoverTangents);
             setInfoOverlayText(
                 QStringLiteral("Motion Path • %1 Tangent • Frame %2")
@@ -25861,7 +26156,7 @@ void CompositionRenderController::handleMouseMove(
             const auto interpolation = static_cast<ArtifactCore::InterpolationType>(
                 motionPathPositionInterpolation(
                     selectedLayer,
-                    ArtifactCore::RationalTime(hoverSample.framePosition, 24)));
+                    gizmoTransformTime(selectedLayer, hoverSample.framePosition)));
             QString interpolationName = QStringLiteral("Linear");
             switch (interpolation) {
             case ArtifactCore::InterpolationType::Constant:
@@ -28109,7 +28404,7 @@ void CompositionRenderController::handleMouseRelease() {
 
     if (layer) {
 
-      const ArtifactCore::RationalTime time(impl_->draggingMotionPathFrame_, 24);
+      const auto time = gizmoTransformTime(layer, impl_->draggingMotionPathFrame_);
 
       const auto &t3d = layer->transform3D();
 
@@ -28137,7 +28432,7 @@ void CompositionRenderController::handleMouseRelease() {
             QVector<MotionPathKeySnapshot> groupAfter;
             for (const auto &beforeKey :
                  impl_->draggingMotionPathGroupBefore_) {
-              const auto keyTime = ArtifactCore::RationalTime(beforeKey.frame, 24);
+              const auto keyTime = gizmoTransformTime(layer, beforeKey.frame);
               MotionPathKeySnapshot current;
               current.frame = beforeKey.frame;
               current.value.hasPositionKey = t3d.hasPositionKeyFrameAt(keyTime);
@@ -28160,7 +28455,7 @@ void CompositionRenderController::handleMouseRelease() {
           auto &mutableTransform = layer->transform3D();
           if (impl_->draggingMotionPathGroupBefore_.size() > 1) {
             for (const auto &beforeKey : impl_->draggingMotionPathGroupBefore_) {
-              const auto keyTime = ArtifactCore::RationalTime(beforeKey.frame, 24);
+              const auto keyTime = gizmoTransformTime(layer, beforeKey.frame);
               if (beforeKey.value.hasPositionKey) {
                 mutableTransform.setPositionKeyFrameValueAt(
                     keyTime, beforeKey.value.x, beforeKey.value.y);
@@ -28715,8 +29010,9 @@ void CompositionRenderController::handleMouseRelease() {
         if (!pushed) {
           for (const auto &entry : rollbackEntries) {
             if (const auto target = entry.layer.lock()) {
-              applyLiveGizmoTransform(target, entry.frame, entry.after,
-                                      entry.before);
+              GizmoTransformUndoCommand rollback(
+                  target, entry.frame, entry.before, entry.after);
+              rollback.undo();
             }
           }
         }
@@ -28763,8 +29059,9 @@ void CompositionRenderController::handleMouseRelease() {
                                   impl_->gizmoUndoLayer_.lock(),
                                   impl_->gizmoUndoFrame_, before, after))) {
           if (const auto layer = impl_->gizmoUndoLayer_.lock()) {
-            applyLiveGizmoTransform(layer, impl_->gizmoUndoFrame_, after,
-                                    before);
+            GizmoTransformUndoCommand rollback(
+                layer, impl_->gizmoUndoFrame_, before, after);
+            rollback.undo();
           }
         }
       }
@@ -36486,7 +36783,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                   "Gizmo3DDraw", ArtifactCore::ProfileCategory::Render);
 
-              gizmo3D_->draw(renderer_.get(), view, proj);
+              gizmo3D_->draw(renderer_.get(), view, proj, viewportW, viewportH);
 
             }
 
@@ -36513,7 +36810,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
                                              : renderer_->getViewMatrix(),
                 gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
-                                             : renderer_->getProjectionMatrix());
+                                             : renderer_->getProjectionMatrix(), viewportW, viewportH);
 
             }
 
@@ -41317,6 +41614,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
   ViewportOverlay::drawSafeAreaAndOrigin(
       renderer_.get(), cw, ch, showSafeMargins_, showOriginOverlay_);
+  ViewportOverlay::drawPixelGrid(renderer_.get(), cw, ch, zoom,
+                                 showPixelGrid_);
+  ViewportOverlay::drawCompositionBoundary(renderer_.get(), cw, ch,
+                                           showOutsideComposition_);
 
 }
 
@@ -42084,7 +42385,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
                 "Gizmo3DDraw", ArtifactCore::ProfileCategory::Render);
 
-            gizmo3D_->draw(renderer_.get(), view, proj);
+            gizmo3D_->draw(renderer_.get(), view, proj, viewportW, viewportH);
 
           }
 
@@ -42111,7 +42412,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                 gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
                                              : renderer_->getViewMatrix(),
                 gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
-                                             : renderer_->getProjectionMatrix());
+                                             : renderer_->getProjectionMatrix(), viewportW, viewportH);
 
           }
 
