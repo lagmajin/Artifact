@@ -15,6 +15,7 @@ import Video.AbstractTransition;
 import Video.TransitionFactory;
 import Video.CpuFrameView;
 import Image.ImageF32x4_RGBA;
+import Artifact.Composition.Abstract;
 
 export namespace Artifact {
 

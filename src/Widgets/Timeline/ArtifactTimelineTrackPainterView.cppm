@@ -91,6 +91,10 @@ import Utils.Path;
 
 namespace Artifact {
 
+void restorePropertyKeyframes(
+    const ArtifactCore::AbstractPropertyPtr &property,
+    const std::vector<ArtifactCore::KeyFrame> &keyframes);
+
 static QPoint accessibilityMenuPosition(const QMenu &menu,
                                         const QPoint &origin) {
   int x = origin.x();
