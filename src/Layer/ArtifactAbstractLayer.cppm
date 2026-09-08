@@ -65,6 +65,7 @@ import Geometry.Fracture;
 import Physics.Fluid;
 import Physics.SoftBody;
 import Physics.System;
+import Physics2D;
 import Physics.Mpm2D;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
