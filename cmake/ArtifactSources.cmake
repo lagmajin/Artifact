@@ -890,6 +890,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/Artifact3DModelLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactAbstract2DLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactAbstractLayer.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactAbstractLayerUtilities.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerRuntimeSupport.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactAdjustableLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactAudioLayer.cppm"

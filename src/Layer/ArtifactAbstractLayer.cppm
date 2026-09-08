@@ -27,6 +27,7 @@ module;
 #include <QThread>
 #include <QVector3D>
 #include <QVector4D>
+#include <QString>
 #include <QStringList>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
@@ -92,24 +93,17 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Layer.RuntimeSupport;
 import Artifact.Layer.RuntimeRenderSupport;
+import Artifact.Layer.Abstract.Utilities;
 
 namespace Artifact {
 
 using namespace ArtifactCore;
+using LayerAbstractUtilities::finiteClampedValue;
 
 namespace {
 ArtifactLayerJsonFactory g_layerJsonFactory = nullptr;
 std::mutex g_layerJsonFactoryMutex;
 
-float finiteClampedValue(double raw, double fallback,
-                         double minimum, double maximum) {
-  const double safeFallback = std::isfinite(fallback)
-                                  ? std::clamp(fallback, minimum, maximum)
-                                  : minimum;
-  return static_cast<float>(std::isfinite(raw)
-                                ? std::clamp(raw, minimum, maximum)
-                                : safeFallback);
-}
 }
 
 void setArtifactLayerJsonFactory(ArtifactLayerJsonFactory factory) {
@@ -5023,7 +5017,8 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
   }
 
   if (id == this->id()) {
-    qWarning() << "[Layer] Reject self-parent:" << id.toString();
+    qWarning("%s", qPrintable(QStringLiteral("[Layer] Reject self-parent: %1")
+                                .arg(id.toString())));
     return;
   }
 
@@ -5031,7 +5026,8 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
     auto *composition = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
     auto parent = composition->layerById(id);
     if (!parent) {
-      qWarning() << "[Layer] Reject invalid parent id:" << id.toString();
+      qWarning("%s", qPrintable(QStringLiteral("[Layer] Reject invalid parent id: %1")
+                                  .arg(id.toString())));
       return;
     }
 
@@ -5039,7 +5035,8 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
     int guard = 0;
     while (!cursor.isNil() && guard++ < 1024) {
       if (cursor == this->id()) {
-        qWarning() << "[Layer] Reject cyclic parent:" << id.toString();
+        qWarning("%s", qPrintable(QStringLiteral("[Layer] Reject cyclic parent: %1")
+                                    .arg(id.toString())));
         return;
       }
       auto node = composition->layerById(cursor);
@@ -5060,7 +5057,8 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
   }
   setDirty(LayerDirtyFlag::Transform);
   addDirtyReason(LayerDirtyReason::TransformChanged);
-  qDebug() << "[Layer] Parent set to:" << id.toString();
+  qDebug("%s", qPrintable(QStringLiteral("[Layer] Parent set to: %1")
+                            .arg(id.toString())));
   Q_EMIT changed();
 }
 
@@ -7586,9 +7584,9 @@ void ArtifactAbstractLayer::Impl::addEffect(
     effect->setEffectID(UniString::fromQString(uniqueId));
   }
   effects_.push_back(effect);
-  qDebug() << "[ArtifactAbstractLayer] Effect added:"
-           << effect->displayName().toQString() << "id="
-           << effect->effectID().toQString();
+  qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Effect added: %1 id=%2")
+                            .arg(effect->displayName().toQString(),
+                                 effect->effectID().toQString())));
 }
 
 void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
@@ -7599,14 +7597,14 @@ void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
       });
   if (it != effects_.end()) {
     effects_.erase(it, effects_.end());
-    qDebug() << "[ArtifactAbstractLayer] Effect removed:"
-             << effectID.toQString();
+    qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Effect removed: %1")
+                              .arg(effectID.toQString())));
   }
 }
 
 void ArtifactAbstractLayer::Impl::clearEffects() {
   effects_.clear();
-  qDebug() << "[ArtifactAbstractLayer] All effects cleared";
+  qDebug("[ArtifactAbstractLayer] All effects cleared");
 }
 
 std::vector<SharedPtr<ArtifactAbstractEffect>>
@@ -13453,14 +13451,16 @@ QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {
 void ArtifactAbstractLayer::Impl::addMask(const LayerMask &mask) {
   masks_.push_back(mask);
   ++maskRevision_;
-  qDebug() << "[ArtifactAbstractLayer] Mask added, count:" << masks_.size();
+  qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Mask added, count: %1")
+                            .arg(masks_.size())));
 }
 
 void ArtifactAbstractLayer::Impl::removeMask(int index) {
   if (index >= 0 && index < static_cast<int>(masks_.size())) {
     masks_.erase(masks_.begin() + index);
     ++maskRevision_;
-    qDebug() << "[ArtifactAbstractLayer] Mask removed at index:" << index;
+    qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Mask removed at index: %1")
+                              .arg(index)));
   }
 }
 
