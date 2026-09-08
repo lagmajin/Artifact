@@ -77,6 +77,7 @@ import Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.Keying.DifferenceKey;
 import Artifact.Effect.Rasterizer.DifferenceMatte;
 import Artifact.Effect.Keying.IBKKeyer;
+import Artifact.Effect.Generator.Cloner;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Container.NamedVector;
