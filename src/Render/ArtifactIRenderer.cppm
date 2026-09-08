@@ -1562,10 +1562,33 @@ namespace {
 
     QMatrix4x4 view;
     QMatrix4x4 proj;
+    QString cameraMode = QStringLiteral("2d");
     if (particle3DCameraActive_) {
-      view = particleViewMatrix_;
-      proj = particleProjMatrix_;
-    } else {
+      // Harden the 3D camera dependency: stale identity or non-finite
+      // matrices used to make particles silently disappear or jump.
+      // Fall back to the 2D canvas path and say so in the diagnostics.
+      const auto matrixUsable = [](const QMatrix4x4& m) {
+        const float* d = m.constData();
+        for (int i = 0; i < 16; ++i) {
+          if (!std::isfinite(d[i])) {
+            return false;
+          }
+        }
+        QMatrix4x4 identity;
+        return m != identity;
+      };
+      if (matrixUsable(particleViewMatrix_) &&
+          matrixUsable(particleProjMatrix_)) {
+        view = particleViewMatrix_;
+        proj = particleProjMatrix_;
+        cameraMode = QStringLiteral("3d");
+      } else {
+        cameraMode = QStringLiteral("3d-invalid-fallback");
+        qWarning() << "[ParticleRenderer] 3D camera matrices invalid"
+                   << "— falling back to 2D canvas path";
+      }
+    }
+    if (cameraMode != QStringLiteral("3d")) {
       // 2D fallback: mirror PrimitiveRenderer2D's canvas->NDC path exactly.
       view.setToIdentity();
       proj.setToIdentity();
@@ -1596,10 +1619,9 @@ namespace {
     auto* pRTV = primitiveRenderer_.currentRTV();
     if (!pRTV) {
       lastParticleDebug_ = QStringLiteral(
-                               "state=no-rtv skipped=no-rtv count=%1 camera3D=%2 viewport=%3x%4 path=particle")
+                               "state=no-rtv skipped=no-rtv count=%1 cameraMode=%2 viewport=%3x%4 path=particle")
                                .arg(data.particles.size())
-                               .arg(particle3DCameraActive_ ? QStringLiteral("true")
-                                                            : QStringLiteral("false"))
+                               .arg(cameraMode)
                                .arg(m_viewportWidth)
                                .arg(m_viewportHeight);
       qWarning() << "[ParticleRenderer] No active RTV — skipping particle draw"
@@ -1610,17 +1632,14 @@ namespace {
     }
 
     lastParticleDebug_ = QStringLiteral(
-                             "state=queued count=%1 camera3D=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound matrix=%8 path=particle")
+                             "state=queued count=%1 cameraMode=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound path=particle")
                              .arg(data.particles.size())
-                             .arg(particle3DCameraActive_ ? QStringLiteral("true")
-                                                          : QStringLiteral("false"))
+                             .arg(cameraMode)
                              .arg(QString::number(zoom, 'f', 3))
                              .arg(QString::number(panX, 'f', 1))
                              .arg(QString::number(panY, 'f', 1))
                              .arg(m_viewportWidth)
-                             .arg(m_viewportHeight)
-                             .arg(particle3DCameraActive_ ? QStringLiteral("3d")
-                                                          : QStringLiteral("2d"));
+                             .arg(m_viewportHeight);
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;

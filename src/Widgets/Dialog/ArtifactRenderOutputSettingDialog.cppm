@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <functional>
 #include <wobjectimpl.h>
 #include <QDialog>
 #include <QFormLayout>
@@ -19,6 +20,7 @@ module;
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
+#include <QVector>
 #include <QCoreApplication>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -27,16 +29,272 @@ module;
 #include <QPalette>
 #include <QColor>
 #include <QFont>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QMessageBox>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
 import Encoder.FFmpegEncoder;
 import Artifact.Render.Queue.Presets;
+import Artifact.Render.Queue.Service;
+import Artifact.Service.Project;
 import Artifact.Widgets.RelativeSpinBox;
 
 
 namespace Artifact
 {
+
+ namespace {
+
+ // The project intentionally avoids adding new Qt signal/slot wiring.  This
+ // button keeps a small, local dialog action explicit without widening the
+ // dialog's public event surface.
+ class CallbackButton final : public QPushButton
+ {
+ public:
+  explicit CallbackButton(const QString& text, QWidget* parent = nullptr)
+      : QPushButton(text, parent)
+  {
+  }
+
+  void setClickHandler(std::function<void()> handler)
+  {
+   handler_ = std::move(handler);
+  }
+
+ protected:
+  void mouseReleaseEvent(QMouseEvent* event) override
+  {
+   const bool invokeHandler = event && event->button() == Qt::LeftButton
+       && isEnabled() && rect().contains(event->pos());
+   QPushButton::mouseReleaseEvent(event);
+   if (invokeHandler && handler_) {
+    handler_();
+   }
+  }
+
+  void keyReleaseEvent(QKeyEvent* event) override
+  {
+   const bool invokeHandler = event && isEnabled()
+       && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter
+           || event->key() == Qt::Key_Space);
+   QPushButton::keyReleaseEvent(event);
+   if (invokeHandler && handler_) {
+    handler_();
+   }
+  }
+
+ private:
+  std::function<void()> handler_;
+ };
+
+ class RenderMatrixDialog final : public QDialog
+ {
+ public:
+  explicit RenderMatrixDialog(QWidget* parent = nullptr)
+      : QDialog(parent)
+  {
+   setWindowTitle(QStringLiteral("レンダーマトリックス"));
+   setAccessibleName(QStringLiteral("Render matrix"));
+   setAccessibleDescription(QStringLiteral(
+       "Create several output jobs for the current composition from purpose-based presets"));
+   setMinimumSize(980, 620);
+
+   auto* mainLayout = new QVBoxLayout(this);
+   mainLayout->setContentsMargins(16, 16, 16, 16);
+   mainLayout->setSpacing(12);
+
+   auto* header = new QFrame(this);
+   header->setFrameShape(QFrame::StyledPanel);
+   header->setFrameShadow(QFrame::Raised);
+   QPalette headerPalette = header->palette();
+   headerPalette.setColor(QPalette::Window, QColor(QStringLiteral("#233244")));
+   header->setPalette(headerPalette);
+   header->setAutoFillBackground(true);
+   auto* headerLayout = new QVBoxLayout(header);
+   headerLayout->setContentsMargins(14, 12, 14, 12);
+   auto* title = new QLabel(QStringLiteral("同じコンポジションから、用途別の出力をまとめて作成"), header);
+   QFont titleFont = title->font();
+   titleFont.setBold(true);
+   titleFont.setPointSize(titleFont.pointSize() + 2);
+   title->setFont(titleFont);
+   auto* subtitle = new QLabel(
+       QStringLiteral("選択したバリエーションはレンダーキューへ個別ジョブとして追加されます。"), header);
+   subtitle->setWordWrap(true);
+   headerLayout->addWidget(title);
+   headerLayout->addWidget(subtitle);
+
+   auto* contentLayout = new QHBoxLayout();
+   contentLayout->setSpacing(12);
+   auto* variantsGroup = new QGroupBox(QStringLiteral("出力バリエーション"), this);
+   auto* variantsLayout = new QVBoxLayout(variantsGroup);
+   variantsLayout->setSpacing(8);
+   addVariant(variantsLayout, QStringLiteral("PC 配布版"),
+              QStringLiteral("高画質配布(H.264 MP4)"),
+              QStringLiteral("16:9  •  MP4 / H.264  •  透過なし"),
+              QStringLiteral("h264_mp4_high"), 1920, 1080, true);
+   addVariant(variantsLayout, QStringLiteral("スマホ版"),
+              QStringLiteral("標準配布(H.264 MP4)"),
+              QStringLiteral("9:16  •  1080 × 1920  •  MP4 / H.264"),
+              QStringLiteral("h264_mp4_standard"), 1080, 1920, true);
+   addVariant(variantsLayout, QStringLiteral("編集用中間素材"),
+              QStringLiteral("編集ソフト用(ProRes 4444 MOV)"),
+              QStringLiteral("高品質  •  Alpha / Straight を想定"),
+              QStringLiteral("prores_4444_mov"), 1920, 1080, true);
+   addVariant(variantsLayout, QStringLiteral("レビュー版"),
+              QStringLiteral("背景透過動画(WebM/VP9)"),
+              QStringLiteral("Web 確認・透過素材の共有向け"),
+              QStringLiteral("webm_vp9"), 1920, 1080, false);
+   variantsLayout->addStretch(1);
+
+   auto* detailGroup = new QGroupBox(QStringLiteral("マトリックスの使い方"), this);
+   auto* detailLayout = new QVBoxLayout(detailGroup);
+   auto* detailTitle = new QLabel(QStringLiteral("用途を並べて、同時にキューへ追加"), detailGroup);
+   QFont detailTitleFont = detailTitle->font();
+   detailTitleFont.setBold(true);
+   detailTitle->setFont(detailTitleFont);
+   auto* detailText = new QLabel(QStringLiteral(
+       "各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\n"
+       "解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\n\n"
+       "透過素材は ProRes 4444 または WebM/VP9 を選択してください。\n"
+       "一般配布用は MP4/H.264 が基本です。"), detailGroup);
+   detailText->setWordWrap(true);
+   detailLayout->addWidget(detailTitle);
+   detailLayout->addWidget(detailText);
+   detailLayout->addStretch(1);
+
+   auto* queueHint = new QLabel(
+       QStringLiteral("選択した出力: 既存の Render Queue プリセットとして追加"), detailGroup);
+   queueHint->setWordWrap(true);
+   QPalette hintPalette = queueHint->palette();
+   hintPalette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
+   queueHint->setPalette(hintPalette);
+   detailLayout->addWidget(queueHint);
+
+   contentLayout->addWidget(variantsGroup, 3);
+   contentLayout->addWidget(detailGroup, 2);
+
+   const DialogButtonRow buttons = createWindowsDialogButtonRow(
+       this, QStringLiteral("選択した出力をキューに追加"), QStringLiteral("キャンセル"));
+   auto* queueButton = new CallbackButton(QStringLiteral("選択した出力をキューに追加"), buttons.widget);
+   queueButton->setDefault(true);
+   queueButton->setAccessibleName(QStringLiteral("Add selected render matrix outputs to queue"));
+   queueButton->setClickHandler([this]() { queueSelected(); });
+   auto* buttonLayout = static_cast<QHBoxLayout*>(buttons.widget->layout());
+   if (buttonLayout) {
+    buttonLayout->removeWidget(buttons.okButton);
+    buttons.okButton->deleteLater();
+    buttonLayout->insertWidget(std::max(0, buttonLayout->count() - 1), queueButton);
+   }
+   if (buttonLayout && buttons.cancelButton) {
+    auto* cancelButton = new CallbackButton(QStringLiteral("キャンセル"), buttons.widget);
+    cancelButton->setClickHandler([this]() { reject(); });
+    buttonLayout->replaceWidget(buttons.cancelButton, cancelButton);
+    buttons.cancelButton->deleteLater();
+   }
+
+   mainLayout->addWidget(header);
+   mainLayout->addLayout(contentLayout, 1);
+   mainLayout->addWidget(buttons.widget);
+  }
+
+ private:
+  struct Variant {
+   QCheckBox* enabled = nullptr;
+   QString presetId;
+   int width = 1920;
+   int height = 1080;
+  };
+
+  void addVariant(QVBoxLayout* layout, const QString& label,
+                  const QString& presetName, const QString& detail,
+                  const QString& presetId, int width, int height, bool enabled)
+  {
+   auto* row = new QFrame(this);
+   row->setFrameShape(QFrame::StyledPanel);
+   row->setFrameShadow(QFrame::Plain);
+   auto* rowLayout = new QVBoxLayout(row);
+   rowLayout->setContentsMargins(10, 8, 10, 8);
+   auto* check = new QCheckBox(label, row);
+   check->setChecked(enabled);
+   QFont labelFont = check->font();
+   labelFont.setBold(true);
+   check->setFont(labelFont);
+   auto* preset = new QLabel(presetName, row);
+   auto* description = new QLabel(detail, row);
+   description->setWordWrap(true);
+   QPalette presetPalette = preset->palette();
+   presetPalette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
+   preset->setPalette(presetPalette);
+   rowLayout->addWidget(check);
+   rowLayout->addWidget(preset);
+   rowLayout->addWidget(description);
+   layout->addWidget(row);
+   variants_.push_back({check, presetId, width, height});
+  }
+
+  void queueSelected()
+  {
+   QVector<const Variant*> selectedVariants;
+   QVector<QString> presetIds;
+   for (const Variant& variant : variants_) {
+    if (variant.enabled && variant.enabled->isChecked()) {
+     selectedVariants.push_back(&variant);
+     presetIds.push_back(variant.presetId);
+    }
+   }
+   if (presetIds.isEmpty()) {
+    QMessageBox::information(this, QStringLiteral("レンダーマトリックス"),
+                             QStringLiteral("少なくとも1つの出力を選択してください。"));
+    return;
+   }
+   auto* projectService = ArtifactProjectService::instance();
+   if (!projectService) {
+    QMessageBox::warning(this, QStringLiteral("レンダーマトリックス"),
+                         QStringLiteral("Project Service を利用できません。"));
+    return;
+   }
+   const auto composition = projectService->currentComposition().lock();
+   if (!composition) {
+    QMessageBox::information(this, QStringLiteral("レンダーマトリックス"),
+                             QStringLiteral("アクティブなコンポジションがありません。"));
+    return;
+   }
+   auto* queueService = ArtifactRenderQueueService::instance();
+   if (!queueService) {
+    QMessageBox::warning(this, QStringLiteral("レンダーマトリックス"),
+                         QStringLiteral("Render Queue を利用できません。"));
+    return;
+   }
+   const int firstAddedJobIndex = queueService->jobCount();
+   queueService->addMultipleRenderQueuesForComposition(
+       composition->id(), composition->settings().compositionName().toQString(), presetIds);
+   for (int index = 0; index < selectedVariants.size(); ++index) {
+    const Variant* variant = selectedVariants.at(index);
+    QString format;
+    QString codec;
+    QString codecProfile;
+    int width = 0;
+    int height = 0;
+    double frameRate = 0.0;
+    int bitrate = 0;
+    const int jobIndex = firstAddedJobIndex + index;
+    if (!variant || !queueService->jobOutputSettingsAt(
+            jobIndex, &format, &codec, &codecProfile, &width, &height, &frameRate, &bitrate)) {
+     continue;
+    }
+    queueService->setJobOutputSettingsAt(
+        jobIndex, format, codec, codecProfile, variant->width, variant->height,
+        frameRate, bitrate);
+   }
+   accept();
+  }
+
+  QVector<Variant> variants_;
+ };
+
+ } // namespace
 	
  class ArtifactRenderOutputSettingDialog::Impl
  {
@@ -929,15 +1187,46 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 	
  ArtifactRenderOutputSettingDialog::ArtifactRenderOutputSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent),impl_(new Impl())
  {
-  setAccessibleName(QStringLiteral("Render output settings"));
-  setAccessibleDescription(QStringLiteral("Configure render format, resolution, audio, channels, and sequence output"));
+    setAccessibleName(QStringLiteral("Render output settings"));
+    setAccessibleDescription(QStringLiteral("Configure render format, resolution, audio, channels, and sequence output"));
     setWindowTitle(QStringLiteral("レンダー出力の設定"));
-    setMinimumWidth(920);
+    setMinimumSize(1040, 720);
 
     auto mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(14, 14, 14, 14);
     mainLayout->setSpacing(10);
-    auto formLayout = new QFormLayout();
+    auto* headerFrame = new QFrame(this);
+    headerFrame->setFrameShape(QFrame::StyledPanel);
+    headerFrame->setFrameShadow(QFrame::Raised);
+    headerFrame->setAutoFillBackground(true);
+    QPalette headerPalette = headerFrame->palette();
+    headerPalette.setColor(QPalette::Window, QColor(QStringLiteral("#233244")));
+    headerFrame->setPalette(headerPalette);
+    auto* headerLayout = new QHBoxLayout(headerFrame);
+    headerLayout->setContentsMargins(14, 10, 14, 10);
+    auto* headerTextLayout = new QVBoxLayout();
+    auto* headerTitle = new QLabel(QStringLiteral("レンダー出力の設定"), headerFrame);
+    QFont headerTitleFont = headerTitle->font();
+    headerTitleFont.setBold(true);
+    headerTitleFont.setPointSize(headerTitleFont.pointSize() + 2);
+    headerTitle->setFont(headerTitleFont);
+    auto* headerSubtitle = new QLabel(
+        QStringLiteral("まず用途と透過を決め、必要なときだけ詳細設定を開きます。"), headerFrame);
+    headerTextLayout->addWidget(headerTitle);
+    headerTextLayout->addWidget(headerSubtitle);
+    auto* matrixButton = new CallbackButton(QStringLiteral("レンダーマトリックス…"), headerFrame);
+    matrixButton->setToolTip(QStringLiteral("用途別の複数出力をまとめて Render Queue に追加します"));
+    matrixButton->setAccessibleName(QStringLiteral("Open render matrix"));
+    matrixButton->setClickHandler([this]() {
+      RenderMatrixDialog matrix(this);
+      matrix.exec();
+    });
+    headerLayout->addLayout(headerTextLayout, 1);
+    headerLayout->addWidget(matrixButton, 0, Qt::AlignVCenter);
+
+    auto* outputSettingsGroup = new QGroupBox(QStringLiteral("出力の詳細"), this);
+    auto* formLayout = new QFormLayout(outputSettingsGroup);
+    formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
     const auto createGuideFrame = [this](const QString& title, const QString& detail) {
       auto* frame = new QFrame(this);
@@ -1274,10 +1563,11 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         impl_->cancelButton->setAccessibleDescription(QStringLiteral("Close without applying output settings"));
     }
 
+    mainLayout->addWidget(headerFrame);
     mainLayout->addWidget(beginnerGuide);
     mainLayout->addWidget(impl_->recommendationLabel);
     mainLayout->addWidget(summaryFrame);
-    mainLayout->addLayout(formLayout);
+    mainLayout->addWidget(outputSettingsGroup);
     mainLayout->addWidget(impl_->advancedGroup);
     mainLayout->addStretch();
     mainLayout->addWidget(impl_->buttonRow);

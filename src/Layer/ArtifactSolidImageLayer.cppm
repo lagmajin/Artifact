@@ -676,10 +676,13 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
           // PERF: gradient QImage は currentFillImage() のキャッシュを再利用する。
           // 毎frame makeSolidGradientImage するとCPU生成+GPU uploadが走る。
           // 不透明度は drawSprite 側の weight 乗算に寄せる（source-override経路と同一）。
-          const QImage& gradientImage = this->currentFillImage();
-          renderer->drawSpriteTransformed(0.0f, 0.0f, displayWidth,
-                                          static_cast<float>(size.height), transform,
-                                          gradientImage, this->opacity() * weight);
+          const QImage &cachedGradient = this->currentFillImage();
+          if (!cachedGradient.isNull()) {
+            renderer->drawSpriteTransformed(
+                0.0f, 0.0f, displayWidth,
+                static_cast<float>(size.height), transform, cachedGradient,
+                this->opacity() * weight);
+          }
           return;
         }
         const FloatColor cloneColor(color.r(), color.g(), color.b(),

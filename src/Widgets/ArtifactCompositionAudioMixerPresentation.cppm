@@ -9,6 +9,9 @@ module;
 #include <QColor>
 #include <QFont>
 #include <QFontMetrics>
+#include <QIcon>
+#include <QPen>
+#include <QSizePolicy>
 #include <QFrame>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -128,11 +131,17 @@ void queueMixerRefresh(Artifact::ArtifactCompositionAudioMixerWidget* widget)
 }
 
 float sliderValueToVolume(const int value) {
-  return std::clamp(static_cast<float>(value) / 100.0f, 0.0f, 2.0f);
+  if (value <= 0) return 0.0f;
+  const int step = std::clamp(value, 0, audioFaderSteps);
+  const float db = step <= 600 ? (step - 600) / 10.0f
+                               : (step - 600) / 60.0f * audioMixerMaxDb;
+  return std::clamp(std::pow(10.0f, db / 20.0f), 0.0f, 2.0f);
 }
 
-int volumeToPercent(const float volume) {
-  return static_cast<int>(std::lround(std::clamp(volume, 0.0f, 2.0f) * 100.0f));
+int volumeToFaderValue(const float volume) {
+  if (volume <= 0.0001f) return 0;
+  return std::max(1, static_cast<int>(std::lround(
+      audioDbFraction(20.0f * std::log10(volume)) * audioFaderSteps)));
 }
 
 float volumeToMeterDb(const float volume) {
@@ -219,7 +228,7 @@ bool recordMixerSnapshotChange(
 
 QColor mixerAccentForName(const QString &name, const bool master = false) {
   if (master) {
-    return QColor(211, 170, 66);
+    return QColor(205, 209, 214);
   }
   const uint hash = qHash(name);
   QColor color = QColor::fromHsv(static_cast<int>(hash % 360), 125, 172);
@@ -266,7 +275,7 @@ public:
   explicit AudioFxRackWidget(ArtifactCompositionAudioMixerWidget *owner = nullptr,
                              QWidget *parent = nullptr)
       : QWidget(parent), owner_(owner) {
-    setFixedHeight(56);
+    setFixedHeight(78);
     setMinimumWidth(112);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
@@ -379,7 +388,7 @@ protected:
       painter.setBrush(hoverCount ? QColor(56, 60, 65) : QColor(47, 51, 55));
       painter.drawRoundedRect(countRect, 3.0, 3.0);
       QFont countFont = painter.font();
-      countFont.setPointSize(std::max(5, countFont.pointSize() - 5));
+      countFont.setPointSize(8);
       countFont.setBold(true);
       painter.setFont(countFont);
       painter.setPen(hoverCount ? QColor(247, 248, 249) : QColor(232, 236, 239));
@@ -388,6 +397,7 @@ protected:
 
     const QRect addRect = addButtonRect();
     const bool hoverAdd = hoverTarget_ == kAddTarget;
+    painter.setFont(font());
     painter.setPen(QPen(hoverAdd ? QColor(180, 188, 194) : QColor(96, 103, 110),
                         hoverAdd ? 1.2 : 1.0));
     painter.setBrush(hoverAdd ? QColor(56, 60, 65) : QColor(40, 44, 48));
@@ -396,46 +406,22 @@ protected:
     painter.drawText(addRect, Qt::AlignCenter, QStringLiteral("+"));
 
     const int chipCount = visibleChipCount();
-    const int chipY = 16;
-    const int chipH = 16;
-    const int chipGap = 4;
-    const int chipW = std::max(36, (width() - 12 - (chipCount > 0 ? (chipCount - 1) * chipGap : 0)) /
-                                      std::max(1, chipCount));
     for (int i = 0; i < chipCount; ++i) {
-      const QRect chipRect(6 + i * (chipW + chipGap), chipY, chipW, chipH);
+      const QRect chipRect = chipRectAt(i, chipCount);
       const auto &chip = effects_.at(i);
-      const QString &displayName = chip.displayName;
-      const QString typeHint = typeHintForEffectId(chip.id);
-      QColor fill = chipColorForName(displayName);
-      if (!chip.enabled) {
-        fill = QColor(78, 82, 86);
-        fill.setAlpha(190);
-      }
       const bool hovered = hoverTarget_ == i;
-      painter.setPen(QPen(hovered ? fill.lighter(150) : fill.lighter(120),
-                          hovered ? 1.4 : 1.0));
-      painter.setBrush(fill);
-      painter.drawRoundedRect(chipRect, 3.0, 3.0);
-      painter.setPen(hovered ? QColor(255, 255, 255)
-                             : (chip.enabled ? QColor(20, 22, 24)
-                                             : QColor(226, 228, 230)));
-      painter.drawText(chipRect.adjusted(5, 0, -5, 0), Qt::AlignCenter,
-                       painter.fontMetrics().elidedText(displayName, Qt::ElideRight,
-                                                          chipRect.width() - 10));
-      if (!typeHint.isEmpty()) {
-        QRect hintRect = chipRect.adjusted(chipRect.width() - 16, 2, -2, -2);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(0, 0, 0, 70));
-        painter.drawRoundedRect(hintRect, 2.0, 2.0);
-        painter.setPen(QColor(250, 250, 250));
-        QFont hintFont = painter.font();
-        hintFont.setPointSize(std::max(5, hintFont.pointSize() - 5));
-        hintFont.setBold(true);
-        const QFont chipFont = painter.font();
-        painter.setFont(hintFont);
-        painter.drawText(hintRect, Qt::AlignCenter, typeHint);
-        painter.setFont(chipFont);
-      }
+      painter.setPen(hovered ? QColor(228, 173, 83) : QColor(64, 67, 71));
+      painter.setBrush(QColor(34, 36, 39));
+      painter.drawRoundedRect(chipRect, 2.0, 2.0);
+      powerIcon_.paint(&painter, QRect(chipRect.right() - 18, chipRect.top() + 3, 16, 16),
+                       Qt::AlignCenter, chip.enabled ? QIcon::Normal : QIcon::Disabled);
+      QFont chipFont = font();
+      chipFont.setPointSize(std::max(8, chipFont.pointSize() - 1));
+      painter.setFont(chipFont);
+      painter.setPen(chip.enabled ? QColor(229, 231, 233) : QColor(137, 140, 144));
+      painter.drawText(chipRect.adjusted(5, 0, -23, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                       painter.fontMetrics().elidedText(chip.displayName, Qt::ElideRight,
+                                                        chipRect.width() - 28));
     }
 
     if (effects_.empty()) {
@@ -805,6 +791,8 @@ private:
     }
   }
 
+  QIcon powerIcon_{QStringLiteral(":/icons/Studio/mixer_power.svg")};
+
   int chipIndexAt(const QPoint &pos) const {
     const int count = visibleChipCount();
     for (int i = 0; i < count; ++i) {
@@ -815,17 +803,12 @@ private:
     return -1;
   }
 
-  QRect chipRectAt(const int index, const int visibleChipCount) const {
-    const int chipY = 16;
-    const int chipH = 16;
-    const int chipGap = 4;
-    const int chipW = std::max(36, (width() - 12 - (visibleChipCount > 0 ? (visibleChipCount - 1) * chipGap : 0)) /
-                                      std::max(1, visibleChipCount));
-    return QRect(6 + index * (chipW + chipGap), chipY, chipW, chipH);
+  QRect chipRectAt(const int index, const int /*visibleChipCount*/) const {
+    return QRect(4, 24 + index * 25, width() - 8, 22);
   }
 
   QRect overflowBadgeRect() const {
-    return QRect(width() - 28, 34, 22, 14);
+    return QRect(width() - 56, 4, 26, 16);
   }
 
   QString effectCountText() const {
@@ -842,23 +825,23 @@ private:
 
   QRect countBadgeRect(const QString &countText) const {
     QFont countFont = font();
-    countFont.setPointSize(std::max(5, countFont.pointSize() - 5));
+    countFont.setPointSize(8);
     countFont.setBold(true);
     const QFontMetrics metrics(countFont);
     const int textWidth = metrics.horizontalAdvance(countText) + 10;
     const QRect addRect = addButtonRect();
-    return QRect(std::max(6, addRect.left() - 4 - textWidth), 4, textWidth, 14);
+    return QRect(std::max(28, addRect.left() - 36 - textWidth), 4, textWidth, 16);
   }
 
   QRect addButtonRect() const {
-    return QRect(width() - 22, 4, 14, 14);
+    return QRect(width() - 24, 3, 20, 18);
   }
 
   int visibleChipCount() const {
     if (effects_.empty()) {
       return 0;
     }
-    return std::min(static_cast<int>(effects_.size()), width() >= 128 ? 3 : 2);
+    return std::min(static_cast<int>(effects_.size()), 2);
   }
 
   void updateHoverTarget(const QPoint &pos) {
@@ -1020,16 +1003,17 @@ public:
     setFrameShape(QFrame::NoFrame);
     setAttribute(Qt::WA_StyledBackground, false);
     setAutoFillBackground(false);
-    setFixedWidth(140);
-    setMinimumHeight(466);
+    setFixedWidth(176);
+    setMinimumHeight(520);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     accentColor_ = mixerAccentForName(strip ? strip->layerName() : QString());
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 34);
-    layout->setSpacing(6);
+    layout->setContentsMargins(10, 8, 10, 34);
+    layout->setSpacing(4);
 
     statusBadge_ = new AudioStatusBadge(this);
-    statusBadge_->setFixedSize(22, 22);
+    statusBadge_->setFixedSize(12, 12);
     statusBadge_->setAlignment(Qt::AlignCenter);
 
     nameLabel_ = new QLabel(this);
@@ -1063,7 +1047,7 @@ public:
     valueFont.setBold(true);
     volumeValueLabel_->setFont(valueFont);
     QPalette valuePalette = volumeValueLabel_->palette();
-    valuePalette.setColor(QPalette::WindowText, QColor(143, 166, 191));
+    valuePalette.setColor(QPalette::WindowText, QColor(228, 173, 83));
     volumeValueLabel_->setPalette(valuePalette);
 
     muteButton_ = new AudioMixerToggleButton(QStringLiteral("M"), this);
@@ -1076,9 +1060,9 @@ public:
     faderLayout->setContentsMargins(2, 0, 2, 0);
     faderLayout->setSpacing(5);
     faderLayout->addStretch(1);
-    faderLayout->addWidget(scaleWidget_, 0, Qt::AlignBottom);
-    faderLayout->addWidget(meterWidget_, 0, Qt::AlignBottom);
-    faderLayout->addWidget(volumeSlider_, 0, Qt::AlignBottom);
+    faderLayout->addWidget(scaleWidget_);
+    faderLayout->addWidget(volumeSlider_);
+    faderLayout->addWidget(meterWidget_);
     faderLayout->addStretch(1);
 
     auto *buttonLayout = new QHBoxLayout();
@@ -1093,7 +1077,9 @@ public:
     headerLayout->addWidget(statusBadge_, 0);
     headerLayout->addWidget(nameLabel_, 1);
     layout->addLayout(headerLayout, 0);
-    layout->addWidget(sectionLabel(QStringLiteral("FX")), 0);
+    layout->addWidget(sectionLabel(QStringLiteral("Output")), 0);
+    layout->addWidget(outputSlot_, 0);
+    layout->addWidget(fxRack_, 0);
     fxSummaryLabel_ = new QLabel(this);
     fxSummaryLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     fxSummaryLabel_->setFixedHeight(18);
@@ -1116,13 +1102,17 @@ public:
     fxSummaryLabel_->installEventFilter(this);
     setFxSummaryInteractiveState(false);
     layout->addWidget(fxSummaryLabel_, 0);
-    layout->addWidget(fxRack_, 0);
-    layout->addWidget(sectionLabel(QStringLiteral("Output")), 0);
-    layout->addWidget(outputSlot_, 0);
+    layout->addWidget(sectionLabel(QStringLiteral("Pan")), 0);
     layout->addWidget(panKnob_, 0, Qt::AlignCenter);
+    layout->addLayout(buttonLayout, 0);
     layout->addLayout(faderLayout, 1);
     layout->addWidget(volumeValueLabel_, 0);
-    layout->addLayout(buttonLayout, 0);
+
+    volumeSlider_->installEventFilter(this);
+    panKnob_->installEventFilter(this);
+    muteButton_->installEventFilter(this);
+    soloButton_->installEventFilter(this);
+    fxRack_->installEventFilter(this);
 
     volumeCommitTimer_ = new QTimer(this);
     volumeCommitTimer_->setSingleShot(true);
@@ -1227,26 +1217,22 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing, true);
     const QRectF bounds = rect().adjusted(0.5, 0.5, -0.5, -0.5);
     QLinearGradient bg(bounds.topLeft(), bounds.bottomLeft());
-    bg.setColorAt(0.0, QColor(55, 60, 64));
-    bg.setColorAt(0.58, QColor(39, 43, 47));
-    bg.setColorAt(1.0, QColor(29, 32, 36));
-    painter.setPen(QPen(QColor(19, 22, 25), 1.0));
+    bg.setColorAt(0.0, QColor(46, 48, 51));
+    bg.setColorAt(0.58, QColor(39, 41, 44));
+    bg.setColorAt(1.0, QColor(34, 36, 39));
+    const bool focused = volumeSlider_->hasFocus() || panKnob_->hasFocus() ||
+        muteButton_->hasFocus() || soloButton_->hasFocus() ||
+        fxRack_->hasFocus() || fxSummaryLabel_->hasFocus();
+    painter.setPen(QPen(focused ? QColor(228, 173, 83) : QColor(19, 22, 25), 1.0));
     painter.setBrush(bg);
-    painter.drawRoundedRect(bounds, 5.0, 5.0);
+    painter.drawRoundedRect(bounds, 2.0, 2.0);
 
-    QColor side = accentColor_;
-    side.setAlpha(190);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(side);
-    painter.drawRoundedRect(QRectF(1.0, 1.0, 4.0, bounds.height() - 2.0),
-                            2.0, 2.0);
+    painter.fillRect(QRectF(10.0, bounds.bottom() - 6.0, bounds.width() - 20.0, 3.0),
+                     accentColor_);
 
     QRectF footer(bounds.left() + 5.0, bounds.bottom() - 25.0,
                   bounds.width() - 10.0, 21.0);
-    painter.setBrush(accentColor_.darker(104));
-    painter.setPen(QPen(accentColor_.lighter(125), 1.0));
-    painter.drawRoundedRect(footer, 3.0, 3.0);
-    painter.setPen(QColor(20, 22, 24));
+    painter.setPen(QColor(222, 224, 227));
     QFont footerFont = font();
     footerFont.setBold(true);
     painter.setFont(footerFont);
@@ -1319,17 +1305,8 @@ private:
         const int enabledCount = static_cast<int>(std::count_if(
             fxEffects.begin(), fxEffects.end(),
             [](const AudioFxChipInfo &chip) { return chip.enabled; }));
-        QStringList previewNames;
-        const int previewCount = std::min(static_cast<int>(fxEffects.size()), 2);
-        for (int i = 0; i < previewCount; ++i) {
-          previewNames.append(fxEffects.at(i).displayName);
-        }
-        if (fxEffects.size() > previewCount) {
-          previewNames.append(QStringLiteral("+%1")
-                                  .arg(static_cast<int>(fxEffects.size()) - previewCount));
-        }
-        fxSummaryLabel_->setText(QStringLiteral("%1 · %2 enabled")
-                                     .arg(previewNames.join(QStringLiteral(", ")))
+        fxSummaryLabel_->setText(QStringLiteral("%1 effects · %2 enabled")
+                                     .arg(static_cast<int>(fxEffects.size()))
                                      .arg(enabledCount));
         QStringList fullNames;
         for (const auto &chip : fxEffects) {
@@ -1363,7 +1340,7 @@ private:
     update();
     const float stripVolume = strip_->volume();
     if (!volumeSlider_->isSliderDown()) {
-      volumeSlider_->setValue(volumeToPercent(stripVolume));
+      volumeSlider_->setValue(volumeToFaderValue(stripVolume));
     }
     updateVolumePresentation(stripVolume);
     muteButton_->setChecked(strip_->isMuted());
@@ -1425,6 +1402,9 @@ private:
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
+    if (event && (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)) {
+      update();
+    }
     if (watched == fxSummaryLabel_ && event) {
       if (event->type() == QEvent::Enter || event->type() == QEvent::FocusIn) {
         setFxSummaryInteractiveState(true);
@@ -1542,22 +1522,23 @@ public:
     setFrameShape(QFrame::NoFrame);
     setAttribute(Qt::WA_StyledBackground, false);
     setAutoFillBackground(false);
-    setFixedWidth(146);
-    setMinimumHeight(466);
+    setFixedWidth(176);
+    setMinimumHeight(520);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     accentColor_ = mixerAccentForName(QStringLiteral("Master"), true);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 34);
-    layout->setSpacing(6);
+    layout->setContentsMargins(10, 8, 10, 34);
+    layout->setSpacing(4);
 
     statusBadge_ = new AudioStatusBadge(this);
-    statusBadge_->setFixedSize(22, 22);
+    statusBadge_->setFixedSize(12, 12);
     statusBadge_->setAlignment(Qt::AlignCenter);
 
     nameLabel_ = new QLabel(QStringLiteral("Master"), this);
     nameLabel_->setAlignment(Qt::AlignCenter);
     nameLabel_->setWordWrap(true);
-    nameLabel_->setFixedHeight(36);
+    nameLabel_->setFixedHeight(34);
     QFont nameFont = nameLabel_->font();
     nameFont.setBold(true);
     nameFont.setPointSize(nameFont.pointSize() > 0 ? nameFont.pointSize() : 10);
@@ -1582,7 +1563,7 @@ public:
     valueFont.setBold(true);
     volumeValueLabel_->setFont(valueFont);
     QPalette valuePalette = volumeValueLabel_->palette();
-    valuePalette.setColor(QPalette::WindowText, QColor(155, 192, 227));
+    valuePalette.setColor(QPalette::WindowText, QColor(228, 173, 83));
     volumeValueLabel_->setPalette(valuePalette);
 
     muteButton_ = new AudioMixerToggleButton(QStringLiteral("M"), this);
@@ -1590,11 +1571,11 @@ public:
 
     auto *faderLayout = new QHBoxLayout();
     faderLayout->setContentsMargins(2, 0, 2, 0);
-    faderLayout->setSpacing(8);
+    faderLayout->setSpacing(5);
     faderLayout->addStretch(1);
-    faderLayout->addWidget(scaleWidget_, 0, Qt::AlignBottom);
-    faderLayout->addWidget(meterWidget_, 0, Qt::AlignBottom);
-    faderLayout->addWidget(volumeSlider_, 0, Qt::AlignBottom);
+    faderLayout->addWidget(scaleWidget_);
+    faderLayout->addWidget(volumeSlider_);
+    faderLayout->addWidget(meterWidget_);
     faderLayout->addStretch(1);
 
     auto *headerLayout = new QHBoxLayout();
@@ -1603,13 +1584,21 @@ public:
     headerLayout->addWidget(statusBadge_, 0);
     headerLayout->addWidget(nameLabel_, 1);
     layout->addLayout(headerLayout, 0);
-    layout->addWidget(sectionLabel(QStringLiteral("Bus")), 0);
+    layout->addWidget(sectionLabel(QStringLiteral("Output")), 0);
     layout->addWidget(busSlot_, 0);
+    // Match the two insert rows and summary in source channels.
+    auto *masterInfo = new QLabel(QStringLiteral("Master output\n\nL / R stereo"), this);
+    masterInfo->setAlignment(Qt::AlignCenter);
+    masterInfo->setFixedHeight(100);
+    masterInfo->setForegroundRole(QPalette::PlaceholderText);
+    layout->addWidget(masterInfo, 0);
     layout->addWidget(sectionLabel(QStringLiteral("Pan")), 0);
+    panKnob_->setEnabled(false);
+    panKnob_->setToolTip(QStringLiteral("Master stereo output has no pan control."));
     layout->addWidget(panKnob_, 0, Qt::AlignCenter);
+    layout->addWidget(muteButton_, 0, Qt::AlignCenter);
     layout->addLayout(faderLayout, 1);
     layout->addWidget(volumeValueLabel_, 0);
-    layout->addWidget(muteButton_, 0, Qt::AlignCenter);
 
     volumeCommitTimer_ = new QTimer(this);
     volumeCommitTimer_->setSingleShot(true);
@@ -1672,31 +1661,24 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing, true);
     const QRectF bounds = rect().adjusted(0.5, 0.5, -0.5, -0.5);
     QLinearGradient bg(bounds.topLeft(), bounds.bottomLeft());
-    bg.setColorAt(0.0, QColor(61, 56, 43));
-    bg.setColorAt(0.58, QColor(44, 43, 40));
-    bg.setColorAt(1.0, QColor(31, 32, 33));
+    bg.setColorAt(0.0, QColor(46, 48, 51));
+    bg.setColorAt(0.58, QColor(39, 41, 44));
+    bg.setColorAt(1.0, QColor(34, 36, 39));
     painter.setPen(QPen(QColor(19, 22, 25), 1.0));
     painter.setBrush(bg);
-    painter.drawRoundedRect(bounds, 5.0, 5.0);
+    painter.drawRoundedRect(bounds, 2.0, 2.0);
 
-    QColor side = accentColor_;
-    side.setAlpha(210);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(side);
-    painter.drawRoundedRect(QRectF(1.0, 1.0, 4.0, bounds.height() - 2.0),
-                            2.0, 2.0);
+    painter.fillRect(QRectF(10.0, bounds.bottom() - 6.0, bounds.width() - 20.0, 3.0),
+                     accentColor_);
 
     QRectF footer(bounds.left() + 5.0, bounds.bottom() - 25.0,
                   bounds.width() - 10.0, 21.0);
-    painter.setBrush(accentColor_);
-    painter.setPen(QPen(accentColor_.lighter(125), 1.0));
-    painter.drawRoundedRect(footer, 3.0, 3.0);
-    painter.setPen(QColor(20, 22, 24));
+    painter.setPen(QColor(222, 224, 227));
     QFont footerFont = font();
     footerFont.setBold(true);
     painter.setFont(footerFont);
     painter.drawText(footer.adjusted(6.0, 0.0, -6.0, 0.0),
-                     Qt::AlignCenter, QStringLiteral("MASTER OUT"));
+                     Qt::AlignCenter, QStringLiteral("Master"));
   }
 
 private:
@@ -1724,7 +1706,7 @@ private:
 
     const float masterVolume = masterBus_->volume();
     if (!volumeSlider_->isSliderDown()) {
-      volumeSlider_->setValue(volumeToPercent(masterVolume));
+      volumeSlider_->setValue(volumeToFaderValue(masterVolume));
     }
     updateVolumePresentation(masterVolume);
     muteButton_->setChecked(masterBus_->isMuted());
@@ -1738,10 +1720,6 @@ private:
 
   void updateVolumePresentation(const float volume) {
     volumeValueLabel_->setText(volumeToDisplayText(volume));
-    if (draggingVolume_ && meterWidget_) {
-      const float db = volumeToMeterDb(volume);
-      meterWidget_->setLevels(db, db);
-    }
   }
 
   void captureMasterBefore() {

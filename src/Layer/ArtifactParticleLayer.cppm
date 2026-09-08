@@ -293,6 +293,68 @@ ArtifactCore::ParticleRenderOptions coreRenderOptionsFromSettings(
     return options;
 }
 
+// Sorts GPU-bound particles the same way the software QPainter path does
+// (ParticleSystem::render). captureRenderData() preserves emitter order, so
+// without this the GPU path ignores SortMode entirely. Distance uses the
+// ParticleSystem camera position for parity with the software path; depth
+// texture based soft-particle fading is intentionally out of scope here —
+// the GPU pixel shader only does sprite-edge falloff.
+void sortCoreParticleRenderData(
+    ArtifactCore::ParticleRenderData& data,
+    ParticleRenderSettings::SortMode sortMode,
+    const QVector3D& cameraPosition)
+{
+    if (data.particles.size() < 2) {
+        return;
+    }
+    switch (sortMode) {
+    case ParticleRenderSettings::SortMode::Distance: {
+        const auto finiteComponent = [](float value) {
+            return std::isfinite(value)
+                ? std::clamp(value, -1000000.0f, 1000000.0f)
+                : 0.0f;
+        };
+        const float cx = finiteComponent(cameraPosition.x());
+        const float cy = finiteComponent(cameraPosition.y());
+        const float cz = finiteComponent(cameraPosition.z());
+        std::stable_sort(
+            data.particles.begin(), data.particles.end(),
+            [cx, cy, cz](const ArtifactCore::ParticleVertex& a,
+                         const ArtifactCore::ParticleVertex& b) {
+                const float distA =
+                    (a.px - cx) * (a.px - cx) +
+                    (a.py - cy) * (a.py - cy) +
+                    (a.pz - cz) * (a.pz - cz);
+                const float distB =
+                    (b.px - cx) * (b.px - cx) +
+                    (b.py - cy) * (b.py - cy) +
+                    (b.pz - cz) * (b.pz - cz);
+                return distA > distB; // Far to near
+            });
+        break;
+    }
+    case ParticleRenderSettings::SortMode::OldestFirst:
+        std::stable_sort(
+            data.particles.begin(), data.particles.end(),
+            [](const ArtifactCore::ParticleVertex& a,
+               const ArtifactCore::ParticleVertex& b) {
+                return a.age > b.age;
+            });
+        break;
+    case ParticleRenderSettings::SortMode::YoungestFirst:
+        std::stable_sort(
+            data.particles.begin(), data.particles.end(),
+            [](const ArtifactCore::ParticleVertex& a,
+               const ArtifactCore::ParticleVertex& b) {
+                return a.age < b.age;
+            });
+        break;
+    case ParticleRenderSettings::SortMode::None:
+    default:
+        break;
+    }
+}
+
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
 {
     const auto safeColor = [](float value) {
@@ -467,6 +529,14 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
         auto lodData = applyParticleRenderLOD(
             std::move(coreData), screenScale);
+        // GPU path parity: captureRenderData() is emitter-ordered, so apply
+        // the layer SortMode here like the software path does. Depth-aware
+        // soft particles need a scene-depth SRV and stay software-only;
+        // the GPU shader keeps sprite-edge falloff.
+        sortCoreParticleRenderData(
+            lodData,
+            impl_->particleSystem->renderSettings().sortMode,
+            impl_->particleSystem->cameraPosition());
         if (!lodData.particles.empty()) {
             // 3D particle layers must not collapse (px, py, vx, vy) through a
             // 2D QTransform — CompositionRenderController bundles the 3D
@@ -550,7 +620,7 @@ QString ArtifactParticleLayer::debugState() const
     const auto& rs = impl_->particleSystem->renderSettings();
     const auto sourceData = impl_->particleSystem->captureRenderData();
     const int emitterCount = impl_->particleSystem->emitterCount();
-    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10 bounds={%11}")
+    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10 bounds={%11} soft=%12")
         .arg(impl_->playing ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(emitterCount)
         .arg(sourceData.particles.size())
@@ -561,7 +631,9 @@ QString ArtifactParticleLayer::debugState() const
         .arg(rs.depthWrite ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_->cachedFrameNumber)
         .arg(QString::number(impl_->particleSystem->timeScale(), 'f', 3))
-        .arg(contentBoundsSummary());
+        .arg(contentBoundsSummary())
+        .arg(rs.softParticles ? QStringLiteral("true(software-only)")
+                              : QStringLiteral("false"));
 }
 
 QJsonObject ArtifactParticleLayer::toJson() const
