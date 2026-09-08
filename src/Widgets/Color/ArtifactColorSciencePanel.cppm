@@ -23,7 +23,6 @@ module;
 #include <QHeaderView>
 #include <QTableWidget>
 #include <QTableWidgetItem>
-#include <QTabWidget>
 #include <QTimer>
 #include <QMetaObject>
 #include <QThread>
@@ -149,6 +148,7 @@ private:
 
     auto *label = new QLabel(title, tile);
     label->setAccessibleName(title + QStringLiteral(" title"));
+    label->installEventFilter(this);
     layout->addWidget(label);
 
     if (scope) {
