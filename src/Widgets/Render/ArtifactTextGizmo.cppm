@@ -859,6 +859,11 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
                    activeHandle_ == HandleType::BoxCornerTopRight ||
                    activeHandle_ == HandleType::BoxCornerBottomLeft ||
                    activeHandle_ == HandleType::BoxCornerBottomRight) {
+            // Offset drag receives a canvas-space pointer delta.  Retain the
+            // start transform so the new world anchor can be converted back
+            // to this layer's parent-local Position, just as TransformGizmo
+            // does for nested layers.
+            dragStartGlobalTransform_ = layer_->getGlobalTransform();
             transformDragChanged_ = false;
             captureTransformBeforeStates();
         }
@@ -1178,10 +1183,21 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             const auto frame = ArtifactCore::RationalTime(
                 static_cast<int64_t>(textLayer->currentFrame()), timeScale);
             auto &start = textLayer->transform3D();
-            const float newPosX = static_cast<float>(
-                dragStartLayerPosition_.x() + moveX);
-            const float newPosY = static_cast<float>(
-                dragStartLayerPosition_.y() + moveY);
+            const QPointF startWorldAnchor = dragStartGlobalTransform_.map(
+                QPointF(start.anchorX(), start.anchorY()));
+            const QPointF newWorldAnchor = startWorldAnchor +
+                QPointF(moveX, moveY);
+            bool parentInvertible = true;
+            QTransform parentWorldInverse;
+            if (const auto parent = textLayer->parentLayer()) {
+                parentWorldInverse = parent->getGlobalTransform().inverted(
+                    &parentInvertible);
+            }
+            const QPointF newLocalPosition = parentInvertible
+                ? parentWorldInverse.map(newWorldAnchor)
+                : newWorldAnchor;
+            const float newPosX = static_cast<float>(newLocalPosition.x());
+            const float newPosY = static_cast<float>(newLocalPosition.y());
             // AnimatableTransform3D::setPosition() accepts track-relative
             // values and always creates keyframes.  Sending the absolute
             // layer position here made a static text layer jump by its
