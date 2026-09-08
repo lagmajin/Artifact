@@ -9,6 +9,7 @@ module;
 #include <QFileInfo>
 #include <QDir>
 #include <QAbstractItemView>
+#include <QAction>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QContextMenuEvent>
@@ -33,6 +34,7 @@ module;
 #include <QFrame>
 #include <QStandardPaths>
 #include <QSlider>
+#include <QSizePolicy>
 #include <QUrl>
 #include <limits>
 #include <QVBoxLayout>
@@ -109,8 +111,17 @@ protected:
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
+    QWidget *widget = qobject_cast<QWidget *>(watched);
+    if (event && event->type() == QEvent::ContextMenu) {
+      contextMenuEvent(static_cast<QContextMenuEvent *>(event));
+      return true;
+    }
     if (event && event->type() == QEvent::MouseButtonDblClick) {
-      QWidget *tile = qobject_cast<QWidget *>(watched);
+      QWidget *tile = widget;
+      if (paradeTile_ && paradeTile_->isAncestorOf(widget)) tile = paradeTile_;
+      else if (vectorscopeTile_ && vectorscopeTile_->isAncestorOf(widget)) tile = vectorscopeTile_;
+      else if (waveformTile_ && waveformTile_->isAncestorOf(widget)) tile = waveformTile_;
+      else if (histogramTile_ && histogramTile_->isAncestorOf(widget)) tile = histogramTile_;
       if (viewMode_ == ViewMode::Grid) {
         if (tile == paradeTile_) applyViewMode(ViewMode::Parade);
         else if (tile == vectorscopeTile_) applyViewMode(ViewMode::Vectorscope);
@@ -143,6 +154,7 @@ private:
     if (scope) {
       scope->setParent(tile);
       scope->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+      scope->installEventFilter(this);
       layout->addWidget(scope, 1);
     }
     return tile;
@@ -493,7 +505,7 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
   scopeLayout->addWidget(scopeHeader);
 
   auto *scopeToolbar = new QHBoxLayout();
-  auto *layoutLabel = new QLabel(QStringLiteral("Layout: 2 x 2"), scopeGroup);
+  auto *layoutLabel = new QLabel(QStringLiteral("Layout"), scopeGroup);
   auto *layoutHint = new QLabel(
       QStringLiteral("Right-click to choose a scope; double-click to focus or restore"),
       scopeGroup);
