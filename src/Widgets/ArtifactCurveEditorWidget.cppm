@@ -1499,6 +1499,9 @@ void ArtifactCurveEditorWidget::fitToContent() {
  bool hasKeys = false;
 
  for (const auto& track : impl_->tracks_) {
+  if (!track.visible) {
+   continue;
+  }
   for (const auto& key : track.keys) {
    float f = static_cast<float>(key.frame);
    minF = std::min(minF, f);

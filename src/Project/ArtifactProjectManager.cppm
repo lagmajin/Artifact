@@ -769,7 +769,14 @@ namespace {
             if (auto comp = res.ptr.lock()) {
               const auto appValidation = projectValidationEngine().validateAll(comp.get());
               for (const auto& diagnostic : appValidation.getDiagnostics()) {
-                if (diagnostic.isError()) {
+                // A missing source is recoverable for a project save: the
+                // project can still be opened and relinked on another
+                // machine. Keep it visible as a warning here while render
+                // preflight may continue to treat it as an error.
+                if (diagnostic.isError() &&
+                    diagnostic.getCategory() == ArtifactCore::DiagnosticCategory::File) {
+                  warnings.append(diagnostic.getMessage());
+                } else if (diagnostic.isError()) {
                   errors.append(diagnostic.getMessage());
                 } else if (diagnostic.isWarning()) {
                   warnings.append(diagnostic.getMessage());

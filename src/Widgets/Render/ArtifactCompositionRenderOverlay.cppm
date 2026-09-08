@@ -55,6 +55,32 @@ QString overlayDebugTag(const QString& tag)
   return QStringLiteral("OVR:%1").arg(tag);
 }
 
+// PERF: the four tags below are constants ("OVR:SEL" etc.) but were rebuilt
+// with QString::arg on every overlay frame. One-time statics instead.
+const QString& ovrSelTag()
+{
+  static const QString tag = overlayDebugTag(QStringLiteral("SEL"));
+  return tag;
+}
+
+const QString& ovrInfoTag()
+{
+  static const QString tag = overlayDebugTag(QStringLiteral("INFO"));
+  return tag;
+}
+
+const QString& ovrStatTag()
+{
+  static const QString tag = overlayDebugTag(QStringLiteral("STAT"));
+  return tag;
+}
+
+const QString& ovrSnapTag()
+{
+  static const QString tag = overlayDebugTag(QStringLiteral("SNAP"));
+  return tag;
+}
+
 QString blendModeName(const ArtifactCore::BlendMode mode)
 {
   return ArtifactCore::BlendModeUtils::toString(mode);
@@ -74,12 +100,11 @@ QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
                                                 : QStringLiteral("H");
   const QString locked = layer->isLocked() ? QStringLiteral("L")
                                            : QStringLiteral("-");
-  const QString maskText = layer->maskCount() > 0
-                               ? QStringLiteral("%1 mask%2")
-                                     .arg(layer->maskCount())
-                                     .arg(layer->maskCount() == 1 ? QString()
-                                                                 : QStringLiteral("s"))
-                               : QStringLiteral("no masks");
+  const int maskCount = layer->maskCount();
+  const QString maskText = maskCount <= 0
+                               ? QStringLiteral("no masks")
+                               : (maskCount == 1 ? QStringLiteral("%1 mask").arg(maskCount)
+                                                 : QStringLiteral("%1 masks").arg(maskCount));
   QString detail = QStringLiteral("%1 | %2 | O%3 | %4%5 | %6 | %7x%8")
       .arg(typeLabel)
       .arg(blendModeName(ArtifactCore::toBlendMode(layer->layerBlendType())))
@@ -1657,7 +1682,7 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
     const QString displayLine =
         i == 0
             ? QStringLiteral("%1 %2")
-                  .arg(overlayDebugTag(QStringLiteral("SEL")),
+                  .arg(ovrSelTag(),
                        fm.elidedText(lines[i], Qt::ElideRight,
                                      std::max(0, lineRect.width() - 56)))
             : fm.elidedText(lines[i], Qt::ElideRight, lineRect.width());
@@ -1764,7 +1789,7 @@ void drawViewportInfoOverlay(ArtifactIRenderer *renderer,
                              1.0f,
                              1.0f);
   renderer->drawText(labelRect.adjusted(10, 6, -10, -6),
-                     QStringLiteral("%1 %2").arg(overlayDebugTag(QStringLiteral("INFO")), title),
+                     QStringLiteral("%1 %2").arg(ovrInfoTag(), title),
                      font,
                      FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
                      Qt::AlignLeft | Qt::AlignTop);
@@ -1807,7 +1832,7 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
                              1.0f,
                              1.0f);
   renderer->drawText(chipRect,
-                     QStringLiteral("%1 %2").arg(overlayDebugTag(QStringLiteral("STAT")), statusText),
+                     QStringLiteral("%1 %2").arg(ovrStatTag(), statusText),
                      font,
                      FloatColor{0.90f, 0.94f, 0.97f, 1.0f},
                      Qt::AlignCenter);
@@ -1935,7 +1960,7 @@ void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
                              1.0f,
                              1.0f);
   renderer->drawText(labelRect.adjusted(10, 6, -10, -6),
-                     QStringLiteral("%1 %2").arg(overlayDebugTag(QStringLiteral("SNAP")), title),
+                     QStringLiteral("%1 %2").arg(ovrSnapTag(), title),
                      font,
                      FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
                      Qt::AlignLeft | Qt::AlignTop);

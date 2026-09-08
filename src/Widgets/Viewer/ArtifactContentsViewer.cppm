@@ -17,6 +17,7 @@ module;
 #include <QToolButton>
 #include <QSlider>
 #include <QVector3D>
+#include <QMatrix4x4>
 #include <wobjectimpl.h>
 #include <QVBoxLayout>
 #include <QResizeEvent>
@@ -32,6 +33,7 @@ module;
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QFocusEvent>
+#include <QShowEvent>
 #include <QScrollBar>
 #include <QDebug>
 #include <QFile>
@@ -88,6 +90,7 @@ module;
 #include <regex>
 #include <random>
 #include <limits>
+#include <numbers>
 module Artifact.Contents.Viewer;
 import Application.AppSettings;
 
@@ -104,6 +107,8 @@ import File.TypeDetector;
 import File.Preview;
 import Platform.QuickLook;
 import Artifact.Widgets.ModelViewer;
+import Artifact.Render.IRenderer;
+import Image.ImageF32x4_RGBA;
 import Event.Bus;
 import Artifact.Event.Types;
 import Utils.Path;
@@ -116,6 +121,126 @@ namespace Artifact
 {
  namespace
  {
+  // The Contents Viewer deliberately keeps this surface narrow: it owns a
+  // Diligent swap chain solely for a still-image preview.  Compare, scopes,
+  // and screenshot export retain their existing CPU compatibility surfaces.
+  class GpuImagePreviewWidget final : public QWidget
+  {
+  public:
+   explicit GpuImagePreviewWidget(QWidget* parent = nullptr)
+       : QWidget(parent)
+   {
+    setAutoFillBackground(false);
+   }
+
+   ~GpuImagePreviewWidget() override
+   {
+    if (renderer_) {
+     renderer_->destroy();
+     delete renderer_;
+     renderer_ = nullptr;
+    }
+   }
+
+   void setImage(const ArtifactCore::ImageF32x4_RGBA& image)
+   {
+    image_ = image;
+    setFixedSize(transformedSize());
+    updateGeometry();
+    update();
+   }
+
+   void setDisplayTransform(const double zoom, const double rotationDegrees)
+   {
+   zoom_ = std::clamp(zoom, 0.05, 10.0);
+   rotationDegrees_ = rotationDegrees;
+   setFixedSize(transformedSize());
+   updateGeometry();
+    update();
+   }
+
+   QSize sizeHint() const override
+   {
+    return transformedSize();
+   }
+
+  protected:
+   void showEvent(QShowEvent* event) override
+   {
+    QWidget::showEvent(event);
+    ensureRenderer();
+    update();
+   }
+
+   void resizeEvent(QResizeEvent* event) override
+   {
+    QWidget::resizeEvent(event);
+    if (renderer_) {
+     renderer_->recreateSwapChain(this);
+    }
+   }
+
+   void paintEvent(QPaintEvent*) override
+   {
+    ensureRenderer();
+    if (!renderer_ || image_.isEmpty() || width() <= 0 || height() <= 0) {
+     return;
+    }
+
+    renderer_->setViewportSize(static_cast<float>(width()),
+                               static_cast<float>(height()));
+    renderer_->setDevicePixelRatio(static_cast<float>(devicePixelRatioF()));
+    renderer_->setCanvasSize(static_cast<float>(width()),
+                             static_cast<float>(height()));
+    renderer_->setPan(0.0f, 0.0f);
+    renderer_->setZoom(1.0f);
+    renderer_->setRotation(0.0f);
+    renderer_->clear();
+
+    QMatrix4x4 transform;
+    transform.translate(width() * 0.5f, height() * 0.5f);
+    transform.rotate(static_cast<float>(rotationDegrees_), 0.0f, 0.0f, 1.0f);
+    transform.scale(static_cast<float>(zoom_), static_cast<float>(zoom_), 1.0f);
+    transform.translate(-image_.width() * 0.5f, -image_.height() * 0.5f);
+    renderer_->drawSpriteTransformed(0.0f, 0.0f,
+                                     static_cast<float>(image_.width()),
+                                     static_cast<float>(image_.height()),
+                                     transform, image_);
+    renderer_->flush();
+    renderer_->present();
+   }
+
+  private:
+   void ensureRenderer()
+   {
+    if (renderer_ || !isVisible()) {
+     return;
+    }
+    renderer_ = new ArtifactIRenderer();
+    renderer_->initialize(this);
+   }
+
+   QSize transformedSize() const
+   {
+    if (image_.isEmpty()) {
+     return QSize(1, 1);
+    }
+    const double radians = std::fmod(std::abs(rotationDegrees_), 180.0) *
+                           std::numbers::pi / 180.0;
+    const double width = std::abs(std::cos(radians)) * image_.width() +
+                         std::abs(std::sin(radians)) * image_.height();
+    const double height = std::abs(std::sin(radians)) * image_.width() +
+                          std::abs(std::cos(radians)) * image_.height();
+    return QSize(std::max(1, static_cast<int>(std::ceil(width * zoom_))),
+                 std::max(1, static_cast<int>(std::ceil(height * zoom_))));
+   }
+
+   ArtifactIRenderer* renderer_ = nullptr;
+   ArtifactCore::ImageF32x4_RGBA image_;
+   double zoom_ = 1.0;
+   double rotationDegrees_ = 0.0;
+  };
+
   class WaveformScopeWidget final : public QWidget
   {
   public:
@@ -619,6 +744,8 @@ namespace Artifact
    QLabel* viewerBadgeLabel = nullptr;
    QComboBox* viewerAssignmentCombo = nullptr;
    QComboBox* recentSourceCombo = nullptr;
+   QWidget* recentSourceStrip = nullptr;
+   QVector<QToolButton*> recentSourceButtons;
    QLabel* metaLabel = nullptr;
    QLabel* stateLabel = nullptr;
    QLabel* channelMetaLabel = nullptr;
@@ -654,6 +781,7 @@ namespace Artifact
    QStackedWidget* stackedWidget = nullptr;
    QScrollArea* imageScrollArea = nullptr;
    QLabel* imageLabel = nullptr;
+   GpuImagePreviewWidget* imageGpuPreview = nullptr;
    QTabWidget* imageTabs = nullptr;
    QWidget* imagePreviewPage = nullptr;
    ArtifactWidgets::ParadeScopeWidget* paradeScopeWidget = nullptr;
@@ -690,6 +818,7 @@ namespace Artifact
    double rotationDegrees = 0.0;
    bool imageFitMode = true;
    QPixmap originalImage;
+   ArtifactCore::ImageF32x4_RGBA gpuOriginalImage;
    QPoint lastMousePos;
    bool playbackRangeActive = false;
    qint64 playbackRangeStartMs = 0;
@@ -871,6 +1000,31 @@ namespace Artifact
    }
    recentSourceCombo->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
    recentSourceCombo->setToolTip(QStringLiteral("Select a recent source"));
+
+   for (int index = 0; index < recentSourceButtons.size(); ++index) {
+    auto* button = recentSourceButtons[index];
+    if (!button) {
+     continue;
+    }
+    if (index >= recentSourcePaths.size()) {
+     button->setVisible(false);
+     button->setProperty("contentsViewerRecentPath", QVariant());
+     continue;
+    }
+    const QString path = recentSourcePaths[index];
+    const QFileInfo info(path);
+    const QString label = info.fileName().isEmpty() ? path : info.fileName();
+    button->setText(button->fontMetrics().elidedText(
+        label, Qt::ElideMiddle, 132));
+    button->setToolTip(path);
+    button->setAccessibleName(QStringLiteral("Recent source: %1").arg(label));
+    button->setProperty("contentsViewerRecentPath", info.absoluteFilePath());
+    button->setChecked(info.absoluteFilePath() == currentPath);
+    button->setVisible(true);
+   }
+   if (recentSourceStrip) {
+    recentSourceStrip->setVisible(!recentSourcePaths.isEmpty());
+   }
   }
 
   void ArtifactContentsViewer::Impl::loadCompareSurfaceState()
@@ -1365,6 +1519,10 @@ namespace Artifact
    imageLabel->setFixedSize(QSize(0, 0));
   }
   originalImage = QPixmap();
+  gpuOriginalImage = ArtifactCore::ImageF32x4_RGBA();
+  if (imageGpuPreview) {
+   imageGpuPreview->setImage(gpuOriginalImage);
+  }
   syncParadeScopeFrame();
 
    if (modelViewer) {
@@ -1464,15 +1622,17 @@ namespace Artifact
    previewLayout->setSpacing(0);
 
    imageScrollArea = new QScrollArea(imagePreviewPage);
-   imageLabel = new QLabel();
+   imageLabel = new QLabel(imagePreviewPage);
    imageLabel->setAlignment(Qt::AlignCenter);
    imageLabel->setScaledContents(true);
+   imageLabel->hide();
+   imageGpuPreview = new GpuImagePreviewWidget();
 
-   imageScrollArea->setWidget(imageLabel);
+   imageScrollArea->setWidget(imageGpuPreview);
    imageScrollArea->setWidgetResizable(false);
    imageScrollArea->setAlignment(Qt::AlignCenter);
    imageScrollArea->viewport()->setMouseTracking(true);
-   imageLabel->setMouseTracking(true);
+   imageGpuPreview->setMouseTracking(true);
    {
     QPalette scrollPalette = imageScrollArea->palette();
     scrollPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -1482,7 +1642,7 @@ namespace Artifact
    imageScrollArea->setAutoFillBackground(true);
    if (owner_) {
     imageScrollArea->viewport()->installEventFilter(owner_);
-    imageLabel->installEventFilter(owner_);
+    imageGpuPreview->installEventFilter(owner_);
    }
 
    paradeScopeWidget = new ArtifactWidgets::ParadeScopeWidget(imageTabs);
@@ -1895,6 +2055,22 @@ namespace Artifact
    }
    imageLabel->setPixmap(pixmap);
    imageLabel->setFixedSize(pixmap.size());
+   gpuOriginalImage = ArtifactCore::ImageF32x4_RGBA();
+   if (!gpuOriginalImage.load(info.absoluteFilePath())) {
+    // Compatibility fallback for a decoder that only the established Qt
+    // preview path understands.  It still uploads and presents through
+    // Diligent; it is not used as the on-screen renderer itself.
+    const QImage rgba = originalImage.toImage().convertToFormat(QImage::Format_RGBA8888);
+    if (!rgba.isNull()) {
+     gpuOriginalImage.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
+    }
+    if (gpuOriginalImage.isEmpty()) {
+     qWarning() << "[ContentsViewer] GPU preview source load failed" << filepath;
+    }
+   }
+   if (imageGpuPreview) {
+    imageGpuPreview->setImage(gpuOriginalImage);
+   }
    imageScrollArea->setWidgetResizable(false);
    syncParadeScopeFrame();
    updateDisplayedPage();
@@ -1945,7 +2121,7 @@ namespace Artifact
 
   void ArtifactContentsViewer::Impl::fitImageToWindow()
   {
-   if (originalImage.isNull() || !imageScrollArea || !imageLabel) {
+   if (originalImage.isNull() || !imageScrollArea || !imageGpuPreview) {
     return;
    }
 
@@ -1989,6 +2165,10 @@ namespace Artifact
 
    imageLabel->setPixmap(transformed);
    imageLabel->setFixedSize(transformed.size());
+   if (imageGpuPreview) {
+    imageGpuPreview->setDisplayTransform(zoomLevel, rotationDegrees);
+    imageGpuPreview->setFixedSize(transformed.size());
+   }
    syncParadeScopeFrame();
    if (currentMode == ContentsViewerMode::Compare) {
     updateCompareSurface();
@@ -2690,18 +2870,12 @@ namespace Artifact
    titleRow->setContentsMargins(0, 0, 0, 0);
    titleRow->setSpacing(8);
    titleRow->addWidget(titleLabel, 1);
-   titleRow->addWidget(recentSourceCombo, 0, Qt::AlignRight);
    titleRow->addWidget(viewerAssignmentCombo, 0, Qt::AlignRight);
 
    textColumn->addLayout(titleRow);
    textColumn->addWidget(metaLabel);
 
-   auto* badgeColumn = new QVBoxLayout();
-   badgeColumn->setContentsMargins(0, 0, 0, 0);
-   badgeColumn->setSpacing(2);
-   badgeColumn->addWidget(viewerBadgeLabel, 0, Qt::AlignLeft);
-   badgeColumn->addWidget(typeBadgeLabel, 0, Qt::AlignLeft);
-   badgeColumn->addStretch(1);
+   viewerBadgeLabel->setVisible(false);
 
    auto* buttonRow = new QHBoxLayout();
    buttonRow->setContentsMargins(0, 0, 0, 0);
@@ -2725,16 +2899,24 @@ namespace Artifact
    rotateRightButton = createButton(QStringLiteral("⟳"), QStringLiteral("Rotate right"));
    resetButton = createButton(QStringLiteral("Reset"), QStringLiteral("Reset view state"));
    playButton = createButton(QStringLiteral("Play"), QStringLiteral("Play media"));
-   playButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Material/play_arrow.svg"))));
+   playButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/playback_play.svg"))));
    playButton->setIconSize(QSize(14, 14));
    playButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
    playButton->setFixedHeight(20);
    pauseButton = createButton(QStringLiteral("Pause"), QStringLiteral("Pause media"));
+   pauseButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/playback_pause.svg"))));
+   pauseButton->setIconSize(QSize(14, 14));
+   pauseButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
    stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop media"));
-   copyPathButton = createButton(QStringLiteral("Copy"), QStringLiteral("Copy file path"));
-   revealButton = createButton(QStringLiteral("Open"), QStringLiteral("Open containing folder"));
-   screenshotButton = createButton(QStringLiteral("Screenshot"),
+   stopButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/playback_stop.svg"))));
+   stopButton->setIconSize(QSize(14, 14));
+   stopButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+   copyPathButton = createButton(QStringLiteral("Copy Path"), QStringLiteral("Copy file path"));
+   revealButton = createButton(QStringLiteral("Reveal"), QStringLiteral("Open containing folder"));
+   revealButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/filemenu_reveal_folder.svg"))));
+   screenshotButton = createButton(QStringLiteral("Snapshot"),
                                    QStringLiteral("Save the current image view as a PNG"));
+   screenshotButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/camera_alt.svg"))));
 #if defined(Q_OS_MACOS)
    previewButton = createButton(QStringLiteral("Quick Look"), QStringLiteral("Open system preview"));
 #endif
@@ -2750,7 +2932,7 @@ namespace Artifact
    compareButton->setCheckable(true);
    compareWipeModeButton->setCheckable(true);
    compareSplitModeButton->setCheckable(true);
-   compareDifferenceModeButton->setCheckable(true);
+    compareDifferenceModeButton->setCheckable(true);
    seekSlider = new QSlider(Qt::Horizontal, parent);
    seekSlider->setRange(0, 0);
    seekSlider->setSingleStep(1000);
@@ -2761,9 +2943,10 @@ namespace Artifact
    seekSlider->setAccessibleName(QStringLiteral("Media position"));
    seekSlider->setAccessibleDescription(QStringLiteral("Scrub the current media position"));
 
-    buttonRow->addWidget(sourceButton);
-    buttonRow->addWidget(finalButton);
-    buttonRow->addWidget(compareButton);
+    titleRow->addWidget(sourceButton);
+    titleRow->addWidget(finalButton);
+    titleRow->addWidget(compareButton);
+    titleRow->addWidget(recentSourceCombo, 0, Qt::AlignRight);
    buttonRow->addWidget(compareSwapButton);
    buttonRow->addWidget(compareWipeModeButton);
    buttonRow->addWidget(compareSplitModeButton);
@@ -2778,21 +2961,13 @@ namespace Artifact
     buttonRow->addWidget(rotateRightButton);
     buttonRow->addWidget(resetButton);
     buttonRow->addSpacing(4);
-    buttonRow->addWidget(playButton);
-    buttonRow->addWidget(pauseButton);
-    buttonRow->addWidget(stopButton);
-    buttonRow->addSpacing(4);
-    buttonRow->addWidget(copyPathButton);
-   buttonRow->addWidget(revealButton);
-   buttonRow->addWidget(screenshotButton);
-#if defined(Q_OS_MACOS)
-    buttonRow->addWidget(previewButton);
-#endif
-
    transportStrip = new QWidget(parent);
-   auto* transportLayout = new QHBoxLayout(transportStrip);
-   transportLayout->setContentsMargins(8, 4, 8, 4);
-   transportLayout->setSpacing(10);
+   auto* transportLayout = new QVBoxLayout(transportStrip);
+   transportLayout->setContentsMargins(8, 5, 8, 5);
+   transportLayout->setSpacing(4);
+   auto* transportControls = new QHBoxLayout();
+   transportControls->setContentsMargins(0, 0, 0, 0);
+   transportControls->setSpacing(8);
 
    auto createTransportLabel = [this, parent](const QString& text) {
     auto* label = new QLabel(text, parent);
@@ -2810,15 +2985,61 @@ namespace Artifact
    transportFrameLabel = createTransportLabel(QStringLiteral("Frame 0 / 0"));
    transportRangeLabel = createTransportLabel(QStringLiteral("Range Off"));
    transportCompareLabel = createTransportLabel(QStringLiteral("Compare Wipe"));
-   transportLayout->addWidget(transportTimeLabel, 1);
-   transportLayout->addWidget(transportFrameLabel, 0);
-   transportLayout->addWidget(transportRangeLabel, 0);
-   transportLayout->addWidget(transportCompareLabel, 0);
+   transportControls->addWidget(transportTimeLabel, 1);
+   transportControls->addWidget(playButton, 0);
+   transportControls->addWidget(pauseButton, 0);
+   transportControls->addWidget(stopButton, 0);
+   transportControls->addWidget(transportFrameLabel, 0);
+   transportControls->addWidget(transportRangeLabel, 0);
+   transportControls->addWidget(transportCompareLabel, 0);
+   transportLayout->addWidget(seekSlider);
+   transportLayout->addLayout(transportControls);
 
    infoRow->addLayout(textColumn, 1);
-   infoRow->addLayout(badgeColumn, 0);
+   infoRow->addWidget(typeBadgeLabel, 0, Qt::AlignTop);
    headerLayout->addLayout(infoRow);
    headerLayout->addLayout(buttonRow);
+
+   recentSourceStrip = new QWidget(parent);
+   auto* recentLayout = new QHBoxLayout(recentSourceStrip);
+   recentLayout->setContentsMargins(8, 6, 8, 6);
+   recentLayout->setSpacing(6);
+   auto* recentLabel = new QLabel(QStringLiteral("Recent"), recentSourceStrip);
+   QFont recentFont = recentLabel->font();
+   recentFont.setWeight(QFont::DemiBold);
+   recentLabel->setFont(recentFont);
+   recentLayout->addWidget(recentLabel, 0, Qt::AlignTop);
+   for (int index = 0; index < 6; ++index) {
+    auto* button = new QToolButton(recentSourceStrip);
+    button->setCheckable(true);
+    button->setAutoExclusive(true);
+    button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    button->setIcon(QIcon(ArtifactCore::resolveIconPath(
+        QStringLiteral("Studio/asset_file_image.svg"))));
+    button->setIconSize(QSize(34, 34));
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    button->setMinimumWidth(72);
+    button->setMaximumWidth(150);
+    button->setFixedHeight(72);
+    button->setVisible(false);
+    button->setAccessibleName(QStringLiteral("Recent source %1").arg(index + 1));
+    button->installEventFilter(parent);
+    recentSourceButtons.push_back(button);
+    recentLayout->addWidget(button, 1);
+   }
+   recentLayout->addStretch(1);
+
+   auto* footer = new QWidget(parent);
+   auto* footerLayout = new QHBoxLayout(footer);
+   footerLayout->setContentsMargins(8, 4, 8, 6);
+   footerLayout->setSpacing(4);
+   footerLayout->addStretch(1);
+   footerLayout->addWidget(copyPathButton);
+   footerLayout->addWidget(revealButton);
+   footerLayout->addWidget(screenshotButton);
+#if defined(Q_OS_MACOS)
+   footerLayout->addWidget(previewButton);
+#endif
 
      QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
        fitImageToWindow();
@@ -2856,10 +3077,8 @@ namespace Artifact
     case ArtifactCore::FileType::Image:
      zoomLevel = 1.0;
      rotationDegrees = 0.0;
-     if (imageLabel && !originalImage.isNull()) {
-      imageLabel->setPixmap(originalImage);
-      imageLabel->setFixedSize(originalImage.size());
-      syncParadeScopeFrame();
+     if (!originalImage.isNull()) {
+      applyImageTransform();
      }
      if (imageScrollArea) {
       if (auto* hBar = imageScrollArea->horizontalScrollBar()) {
@@ -3161,9 +3380,10 @@ namespace Artifact
    layout->setContentsMargins(0, 0, 0, 0);
    layout->setSpacing(0);
    layout->addWidget(headerWidget);
-   layout->addWidget(seekSlider);
-   layout->addWidget(transportStrip);
-   layout->addWidget(stackedWidget);
+   layout->addWidget(stackedWidget, 1);
+   layout->addWidget(transportStrip, 0);
+   layout->addWidget(recentSourceStrip, 0);
+   layout->addWidget(footer, 0);
    parent->setLayout(layout);
 
    updateHeader();
@@ -3209,8 +3429,8 @@ namespace Artifact
    if (imageScrollArea && imageScrollArea->viewport()) {
     imageScrollArea->viewport()->installEventFilter(owner_);
    }
-   if (imageLabel) {
-    imageLabel->installEventFilter(owner_);
+   if (imageGpuPreview) {
+    imageGpuPreview->installEventFilter(owner_);
    }
    if (compareSourceHeader) {
     compareSourceHeader->installEventFilter(owner_);
@@ -3235,6 +3455,20 @@ namespace Artifact
   {
    if (!impl_) {
     return QWidget::eventFilter(watched, event);
+   }
+
+   if (event->type() == QEvent::MouseButtonRelease) {
+    if (auto* recentButton = qobject_cast<QToolButton*>(watched)) {
+     const QString recentPath =
+         recentButton->property("contentsViewerRecentPath").toString();
+     auto* mouseEvent = static_cast<QMouseEvent*>(event);
+     if (!recentPath.isEmpty() && mouseEvent->button() == Qt::LeftButton) {
+      if (recentPath != impl_->currentFilePath) {
+       setFilePath(recentPath);
+      }
+      return true;
+     }
+    }
    }
 
    if ((watched == impl_->compareSourceHeader || watched == impl_->compareFinalHeader) &&
@@ -3265,16 +3499,17 @@ namespace Artifact
     }
    }
 
-   if (impl_->currentFileType == ArtifactCore::FileType::Image && impl_->imageLabel && impl_->imageScrollArea) {
+   if (impl_->currentFileType == ArtifactCore::FileType::Image &&
+       impl_->imageLabel && impl_->imageGpuPreview && impl_->imageScrollArea) {
     const bool matchesViewport = watched == impl_->imageScrollArea->viewport();
-    const bool matchesLabel = watched == impl_->imageLabel;
-    if (matchesViewport || matchesLabel) {
+    const bool matchesPreview = watched == impl_->imageGpuPreview;
+    if (matchesViewport || matchesPreview) {
      switch (event->type()) {
      case QEvent::MouseMove: {
       auto* mouseEvent = static_cast<QMouseEvent*>(event);
-      const QPoint localPos = matchesLabel
+      const QPoint localPos = matchesPreview
                                   ? mouseEvent->position().toPoint()
-                                  : impl_->imageLabel->mapFrom(impl_->imageScrollArea->viewport(),
+                                  : impl_->imageGpuPreview->mapFrom(impl_->imageScrollArea->viewport(),
                                                               mouseEvent->position().toPoint());
       const QPixmap pixmap = impl_->imageLabel->pixmap();
       if (!pixmap.isNull()) {
@@ -3756,12 +3991,7 @@ void ArtifactContentsViewer::rotateLeft()
 
  impl_->rotationDegrees -= 90.0;
  impl_->imageFitMode = false;
- QTransform transform;
- transform.rotate(impl_->rotationDegrees);
- const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
- impl_->imageLabel->setPixmap(rotated);
- impl_->imageLabel->setFixedSize(rotated.size() * impl_->zoomLevel);
- impl_->syncParadeScopeFrame();
+ impl_->applyImageTransform();
  impl_->updateHeader();
  if (impl_->currentMode == ContentsViewerMode::Compare) {
   impl_->updateCompareSurface();
@@ -3776,12 +4006,7 @@ void ArtifactContentsViewer::rotateRight()
 
  impl_->rotationDegrees += 90.0;
  impl_->imageFitMode = false;
- QTransform transform;
- transform.rotate(impl_->rotationDegrees);
- const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
- impl_->imageLabel->setPixmap(rotated);
- impl_->imageLabel->setFixedSize(rotated.size() * impl_->zoomLevel);
- impl_->syncParadeScopeFrame();
+ impl_->applyImageTransform();
  impl_->updateHeader();
  if (impl_->currentMode == ContentsViewerMode::Compare) {
   impl_->updateCompareSurface();
@@ -3797,9 +4022,7 @@ void ArtifactContentsViewer::resetView()
  impl_->zoomLevel = 1.0;
  impl_->rotationDegrees = 0.0;
  impl_->imageFitMode = true;
- impl_->imageLabel->setPixmap(impl_->originalImage);
- impl_->imageLabel->setFixedSize(impl_->originalImage.size());
- impl_->syncParadeScopeFrame();
+ impl_->applyImageTransform();
  impl_->updateHeader();
  if (impl_->currentMode == ContentsViewerMode::Compare) {
   impl_->updateCompareSurface();

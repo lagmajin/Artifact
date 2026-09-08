@@ -800,14 +800,18 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
 
 void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
 {
-    qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: enter" << "image.isNull()=" << image.isNull()
-                                      << " pDevice?" << (impl_->pDevice_ != nullptr)
-                                      << " cmdBuf?" << (impl_->cmdBuf_ != nullptr)
-                                      << " overrideRTV?" << (impl_->m_overrideRTV != nullptr);
-    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) {
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: early return" << "image.isNull()=" << image.isNull()
+    if (primitiveRenderer2DLog().isDebugEnabled()) {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: enter" << "image.isNull()=" << image.isNull()
                                           << " pDevice?" << (impl_->pDevice_ != nullptr)
-                                          << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+                                          << " cmdBuf?" << (impl_->cmdBuf_ != nullptr)
+                                          << " overrideRTV?" << (impl_->m_overrideRTV != nullptr);
+    }
+    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) {
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: early return" << "image.isNull()=" << image.isNull()
+                                              << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                              << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+        }
         return;
     }
 
@@ -821,14 +825,20 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
+        }
     } else {
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache miss for key" << cacheKey;
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache miss for key" << cacheKey;
+        }
         const QImage rgba = (image.format() == QImage::Format_RGBA8888)
                                 ? image
                                 : image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
+        }
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -846,9 +856,13 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         initData.pSubResources = &subData;
         initData.NumSubresources = 1;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &pTexture);
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: CreateTexture returned pTexture=" << (pTexture != nullptr);
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: CreateTexture returned pTexture=" << (pTexture != nullptr);
+        }
         if (!pTexture) {
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
             qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: texture creation failed";
+        }
             return;
         }
         impl_->m_spriteTexCache[cacheKey] = { pTexture, impl_->m_frameCount };
@@ -856,7 +870,9 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
 
     auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     if (!pSRV) {
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: GetDefaultView returned null SRV";
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: GetDefaultView returned null SRV";
+        }
         return;
     }
 
@@ -969,15 +985,19 @@ void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, I
 
 void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity)
 {
-    qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: enter" << "maskImage.isNull()=" << maskImage.isNull()
-                                      << " sceneSRV?" << (sceneSRV != nullptr)
-                                      << " pDevice?" << (impl_->pDevice_ != nullptr)
-                                      << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
-    if (!impl_->cmdBuf_ || !sceneSRV || maskImage.isNull() || !impl_->pDevice_) {
-        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: early return" << "maskImage.isNull()=" << maskImage.isNull()
+    if (primitiveRenderer2DLog().isDebugEnabled()) {
+        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: enter" << "maskImage.isNull()=" << maskImage.isNull()
                                           << " sceneSRV?" << (sceneSRV != nullptr)
                                           << " pDevice?" << (impl_->pDevice_ != nullptr)
                                           << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+    }
+    if (!impl_->cmdBuf_ || !sceneSRV || maskImage.isNull() || !impl_->pDevice_) {
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: early return" << "maskImage.isNull()=" << maskImage.isNull()
+                                              << " sceneSRV?" << (sceneSRV != nullptr)
+                                              << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                              << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+        }
         return;
     }
 
@@ -991,14 +1011,20 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
     if (it != impl_->m_maskTexCache.end()) {
         pMaskTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
-        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache hit for key" << cacheKey << "-> pMaskTexture=" << (pMaskTexture != nullptr);
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache hit for key" << cacheKey << "-> pMaskTexture=" << (pMaskTexture != nullptr);
+        }
     } else {
-        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache miss for key" << cacheKey;
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache miss for key" << cacheKey;
+        }
         const QImage rgba = (maskImage.format() == QImage::Format_RGBA8888)
                                 ? maskImage
                                 : maskImage.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
-        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: creating mask texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: creating mask texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
+        }
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -1016,9 +1042,13 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
         initData.pSubResources = &subData;
         initData.NumSubresources = 1;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &pMaskTexture);
-        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: CreateTexture returned pMaskTexture=" << (pMaskTexture != nullptr);
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: CreateTexture returned pMaskTexture=" << (pMaskTexture != nullptr);
+        }
         if (!pMaskTexture) {
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
             qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: mask texture creation failed";
+        }
             return;
         }
         impl_->m_maskTexCache[cacheKey] = { pMaskTexture, impl_->m_frameCount };
@@ -1042,13 +1072,17 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
 {
-    qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): enter" << "image.isNull()=" << image.isNull()
-                                      << " pDevice?" << (impl_->pDevice_ != nullptr)
-                                      << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
-    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) {
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): early return" << "image.isNull()=" << image.isNull()
+    if (primitiveRenderer2DLog().isDebugEnabled()) {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): enter" << "image.isNull()=" << image.isNull()
                                           << " pDevice?" << (impl_->pDevice_ != nullptr)
                                           << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+    }
+    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) {
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): early return" << "image.isNull()=" << image.isNull()
+                                              << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                              << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+        }
         return;
     }
 
@@ -1166,13 +1200,19 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
+        }
     } else {
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): cache miss for key" << cacheKey;
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): cache miss for key" << cacheKey;
+        }
         const QImage rgba = (image.format() == QImage::Format_RGBA8888)
                                 ? image : image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
+        }
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -1191,9 +1231,13 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         initData.NumSubresources = 1;
         RefCntAutoPtr<ITexture> newTex;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
-        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): CreateTexture returned newTex=" << (newTex != nullptr);
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): CreateTexture returned newTex=" << (newTex != nullptr);
+        }
         if (!newTex) {
+        if (primitiveRenderer2DLog().isDebugEnabled()) {
             qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): texture creation failed";
+        }
             return;
         }
         impl_->m_spriteTexCache[cacheKey] = { newTex, impl_->m_frameCount };
@@ -1360,17 +1404,44 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
     if (!impl_->pGlyphAtlas_ || text.length() == 0 || !impl_->cmdBuf_) return;
 
     const auto codePoints = text.toStdU32String();
-    for (const char32_t codePoint : codePoints) {
-        const QString glyphText = QString::fromUcs4(&codePoint, 1);
-        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
+    // PERF: resolve once per unique code point. Repeated characters otherwise
+    // pay fromUcs4 + makeFont + family().toStdString() on every occurrence,
+    // twice (acquire + submit passes below). Atlas insertion order for unique
+    // keys is unchanged (first-occurrence order), so behavior is identical.
+    struct UniqueGlyph {
+        char32_t codePoint = 0;
+        QFont font;
         GlyphKey key;
-        key.codePoint = codePoint;
-        key.fontSize = style.fontSize;
-        key.fontFamily = resolvedFont.family().toStdString();
-        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
-                         static_cast<uint32_t>(style.fontStyle);
-        key.renderMode = renderModeForCodePoint(codePoint);
-        impl_->pGlyphAtlas_->acquire(key, resolvedFont);
+    };
+    std::vector<UniqueGlyph> uniqueGlyphs;
+    uniqueGlyphs.reserve(codePoints.size());
+    std::vector<size_t> glyphIndexOf;
+    glyphIndexOf.reserve(codePoints.size());
+    for (const char32_t codePoint : codePoints) {
+        size_t found = uniqueGlyphs.size();
+        for (size_t i = 0; i < uniqueGlyphs.size(); ++i) {
+            if (uniqueGlyphs[i].codePoint == codePoint) {
+                found = i;
+                break;
+            }
+        }
+        if (found == uniqueGlyphs.size()) {
+            const QString glyphText = QString::fromUcs4(&codePoint, 1);
+            const QFont resolvedFont = FontManager::makeFont(style, glyphText);
+            GlyphKey key;
+            key.codePoint = codePoint;
+            key.fontSize = style.fontSize;
+            key.fontFamily = resolvedFont.family().toStdString();
+            key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                             static_cast<uint32_t>(style.fontStyle);
+            key.renderMode = renderModeForCodePoint(codePoint);
+            found = uniqueGlyphs.size();
+            uniqueGlyphs.push_back({codePoint, resolvedFont, std::move(key)});
+        }
+        glyphIndexOf.push_back(found);
+    }
+    for (const UniqueGlyph& entry : uniqueGlyphs) {
+        impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
     }
     
     // Manage GPU texture for GlyphAtlas
@@ -1411,18 +1482,9 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
     
     float currentX = x;
-    for (const char32_t codePoint : codePoints) {
-        const QString glyphText = QString::fromUcs4(&codePoint, 1);
-        const QFont qfont = FontManager::makeFont(style, glyphText);
-        GlyphKey key;
-        key.codePoint = codePoint;
-        key.fontSize = style.fontSize;
-        key.fontFamily = qfont.family().toStdString();
-        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
-                         (static_cast<uint32_t>(style.fontStyle) << 0);
-        key.renderMode = renderModeForCodePoint(codePoint);
-        
-        GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
+    for (const size_t glyphIdx : glyphIndexOf) {
+        const UniqueGlyph& entry = uniqueGlyphs[glyphIdx];
+        GlyphRect rect = impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
         if (!rect.valid) continue;
         
         AtlasSpritePkt pkt;
@@ -1501,17 +1563,37 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
 {
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
 
-    for (const GlyphItem& glyph : glyphs) {
-        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
+    // PERF: same unique-code-point table as drawGlyphText. Key derivation
+    // here uses only charCode + style, so dedupe by charCode is exact.
+    struct UniqueGlyphItem {
+        char32_t codePoint = 0;
+        QFont font;
+        GlyphKey key;
+    };
+    std::vector<UniqueGlyphItem> uniqueGlyphs;
+    uniqueGlyphs.reserve(glyphs.size());
+    auto resolveGlyph = [&](char32_t codePoint) -> const UniqueGlyphItem& {
+        for (const UniqueGlyphItem& entry : uniqueGlyphs) {
+            if (entry.codePoint == codePoint) {
+                return entry;
+            }
+        }
+        const QString glyphText = QString::fromUcs4(&codePoint, 1);
         const QFont resolvedFont = FontManager::makeFont(style, glyphText);
         GlyphKey key;
-        key.codePoint = glyph.charCode;
+        key.codePoint = codePoint;
         key.fontSize = style.fontSize;
         key.fontFamily = resolvedFont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          static_cast<uint32_t>(style.fontStyle);
-        key.renderMode = renderModeForCodePoint(glyph.charCode);
-        impl_->pGlyphAtlas_->acquire(key, resolvedFont);
+        key.renderMode = renderModeForCodePoint(codePoint);
+        uniqueGlyphs.push_back({codePoint, resolvedFont, std::move(key)});
+        return uniqueGlyphs.back();
+    };
+
+    for (const GlyphItem& glyph : glyphs) {
+        const UniqueGlyphItem& entry = resolveGlyph(glyph.charCode);
+        impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
     }
 
     // Pre-laid-out glyph path: callers (text animators, hand-shaped runs) supply GlyphItems
@@ -1554,17 +1636,9 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
 
     for (const GlyphItem& glyph : glyphs) {
-        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
-        const QFont qfont = FontManager::makeFont(style, glyphText);
-        GlyphKey key;
-        key.codePoint = glyph.charCode;
-        key.fontSize   = style.fontSize;
-        key.fontFamily = qfont.family().toStdString();
-        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
-                         (static_cast<uint32_t>(style.fontStyle) << 0);
-        key.renderMode = renderModeForCodePoint(glyph.charCode);
+        const UniqueGlyphItem& entry = resolveGlyph(glyph.charCode);
 
-        const GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
+        const GlyphRect rect = impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
         if (!rect.valid) continue;
 
         // basePosition (line origin from layout) + offsetPosition (per-glyph animation offset)

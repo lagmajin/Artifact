@@ -32,6 +32,7 @@ module;
 #include <QSize>
 #include <QAbstractSpinBox>
 #include <QProxyStyle>
+#include <QFontDatabase>
 #include <QStyleFactory>
 #include <QStyleOption>
 #include <Layer/ArtifactSolidGradientUtil.hpp>
@@ -91,7 +92,9 @@ void applySolidDialogPresentation(QWidget* root) {
     QPalette field=pal;
     if(qobject_cast<QAbstractSpinBox*>(child) || qobject_cast<QAbstractSpinBox*>(child->parentWidget())) {
       field.setColor(QPalette::Text,QColor(246,198,111));
-      child->setFont(QFont(QStringLiteral("Consolas"),11));
+      QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+      fixedFont.setPointSize(11);
+      child->setFont(fixedFont);
     }
     child->setPalette(field);
     if(qobject_cast<QAbstractSpinBox*>(child) || qobject_cast<QComboBox*>(child) ||

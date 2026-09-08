@@ -6,6 +6,7 @@ module;
 #include <QMatrix4x4>
 #include <QQuaternion>
 #include <QFont>
+#include <QFontDatabase>
 #include <QRectF>
 #include <QString>
 #include <wobjectimpl.h>
@@ -292,8 +293,7 @@ BoundingBoxHit hitBoundingBoxHandle(const Ray& ray,
         result.scaleSigns = scaleSigns;
     };
 
-    // Corners drive all three dimensions. Shift can later collapse this to a
-    // uniform factor, while the default behavior remains non-uniform.
+    // Corners drive all three dimensions with a uniform factor.
     const float cornerSigns[][3] = {
         {-1.0f, -1.0f, -1.0f}, {1.0f, -1.0f, -1.0f},
         {1.0f, 1.0f, -1.0f}, {-1.0f, 1.0f, -1.0f},
@@ -791,8 +791,7 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
     hoverAxisDirectionSign_ = 1.0f;
     hoverScaleAxes_ = QVector3D();
     hoverScaleSigns_ = QVector3D(1.0f, 1.0f, 1.0f);
-    if (boundingBoxEnabled_ && mode_ == GizmoMode::Scale &&
-        (impl_->testingFullOverlay || fullModeDrag_)) {
+    if (boundingBoxEnabled_ && mode_ == GizmoMode::Scale) {
         const BoundingBoxGeometry geometry = boundingBoxGeometryFor(
             boundingBoxMin_, boundingBoxMax_, impl_->position, impl_->scale,
             basis);
@@ -1221,8 +1220,10 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
             factors[i] = std::max(kMinimumScale, factor);
         }
 
-        // Shift on a corner/edge keeps the affected dimensions proportional.
-        if (!numericInput && fineAdjustment_ &&
+        // Corners scale uniformly; Shift also keeps edge dimensions proportional.
+        const bool cornerHandle = impl_->dragScaleAxes.x() > 0.5f &&
+            impl_->dragScaleAxes.y() > 0.5f && impl_->dragScaleAxes.z() > 0.5f;
+        if (!numericInput && (cornerHandle || fineAdjustment_) &&
             impl_->dragScaleAxes.x() + impl_->dragScaleAxes.y() +
                     impl_->dragScaleAxes.z() > 1.5f) {
             float uniformFactor = 1.0f;
@@ -1973,15 +1974,28 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         static constexpr int edges[][2] = {
             {0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
             {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
-        const FloatColor edgeColor{1.0f, 0.56f, 0.18f, 0.92f};
+        const FloatColor edgeColor{0.62f, 0.78f, 0.96f, 0.86f};
         const FloatColor edgeShadow{0.02f, 0.03f, 0.04f, 0.74f};
         for (const auto& edge : edges) {
             const QVector3D& start = geometry.corners[edge[0]];
             const QVector3D& end = geometry.corners[edge[1]];
-            renderer->drawGizmoLine(toFloat3(start), toFloat3(end),
-                                    edgeShadow, 3.0f);
-            renderer->drawGizmoLine(toFloat3(start), toFloat3(end),
-                                    edgeColor, 1.45f);
+            // View-depth cue, not a mesh occlusion query: rear-half edges
+            // remain visible as subdued dashes through the volume.
+            const bool rear = (view * QVector4D((start + end) * 0.5f, 1.0f)).z() <
+                (view * QVector4D(interactionCenter, 1.0f)).z();
+            if (rear) {
+                for (int dash = 0; dash < 20; dash += 2) {
+                    renderer->drawGizmoLine(
+                        toFloat3(start + (end - start) * (dash / 20.0f)),
+                        toFloat3(start + (end - start) * ((dash + 1) / 20.0f)),
+                        FloatColor{0.48f, 0.60f, 0.74f, 0.42f}, 1.0f);
+                }
+            } else {
+                renderer->drawGizmoLine(toFloat3(start), toFloat3(end),
+                                        edgeShadow, 2.2f);
+                renderer->drawGizmoLine(toFloat3(start), toFloat3(end),
+                                        edgeColor, 1.2f);
+            }
         }
 
         if (mode_ == GizmoMode::Scale || mode_ == GizmoMode::Full) {
@@ -2241,7 +2255,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                 append(QStringLiteral("Z"),impl_->scale.z(),impl_->dragStartScale.z());
             renderer->drawOverlayPanel(canvas.x,canvas.y,220*iz,70*iz,
                 FloatColor{0.10f,0.11f,0.13f,0.95f},FloatColor{0.28f,0.29f,0.32f,0.8f});
-            QFont font(QStringLiteral("Consolas"));font.setPixelSize(12);
+            QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);font.setPixelSize(12);
             renderer->drawText(QRectF(canvas.x+8*iz,canvas.y+4*iz,204*iz,40*iz),text,font,
                 FloatColor{0.965f,0.776f,0.435f,1},Qt::AlignLeft|Qt::AlignTop);
             const QString space = space_ == GizmoSpace::Local ? QStringLiteral("Local")
@@ -2260,7 +2274,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
             const float invZoom = 1.0f / std::max(0.001f, renderer->getZoom());
             renderer->drawOverlayPanel(canvas.x, canvas.y, 140*invZoom, 50*invZoom,
                 FloatColor{0.10f, 0.11f, 0.13f, 0.95f}, FloatColor{0.28f, 0.29f, 0.32f, 0.8f});
-            QFont font(QStringLiteral("Consolas")); font.setPixelSize(13);
+            QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont); font.setPixelSize(13);
             const QString axis = activeAxis_ == GizmoAxis::X ? QStringLiteral("X")
                 : activeAxis_ == GizmoAxis::Y ? QStringLiteral("Y")
                 : activeAxis_ == GizmoAxis::Z ? QStringLiteral("Z") : QStringLiteral("View");

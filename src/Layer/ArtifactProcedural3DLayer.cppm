@@ -99,6 +99,51 @@ ArtifactCore::Mesh makeMesh(const ArtifactCore::Procedural3DMeshData& generated)
     return mesh;
 }
 
+bool drawCloth3DWireOverlay(ArtifactProcedural3DLayer* layer,
+                              ArtifactIRenderer* renderer,
+                              const QMatrix4x4& model,
+                              float opacity,
+                              float thickness)
+{
+    if (!layer || !renderer || !layer->hasCloth3DPhysics()) {
+        return false;
+    }
+    const auto cloth = layer->cloth3DDeformationMesh();
+    if (!cloth.isValid() || cloth.positions.size() < 9) {
+        return false;
+    }
+    const std::size_t vertexCount = cloth.positions.size() / 3;
+    const ArtifactCore::FloatColor color{1.0f, 1.0f, 1.0f, opacity};
+    // 三角形辺をなぞるだけ。PSO/マテリアル変更なしの最小可視化。
+    for (std::size_t i = 0; i + 2 < cloth.indices.size(); i += 3) {
+        const std::uint32_t ia = cloth.indices[i];
+        const std::uint32_t ib = cloth.indices[i + 1];
+        const std::uint32_t ic = cloth.indices[i + 2];
+        if (ia >= vertexCount || ib >= vertexCount || ic >= vertexCount) {
+            continue;
+        }
+        const QVector3D pa(cloth.positions[ia * 3],
+                           cloth.positions[ia * 3 + 1],
+                           cloth.positions[ia * 3 + 2]);
+        const QVector3D pb(cloth.positions[ib * 3],
+                           cloth.positions[ib * 3 + 1],
+                           cloth.positions[ib * 3 + 2]);
+        const QVector3D pc(cloth.positions[ic * 3],
+                           cloth.positions[ic * 3 + 1],
+                           cloth.positions[ic * 3 + 2]);
+        const QVector3D ma = model.map(pa);
+        const QVector3D mb = model.map(pb);
+        const QVector3D mc = model.map(pc);
+        renderer->draw3DLine({ma.x(), ma.y(), ma.z()},
+                             {mb.x(), mb.y(), mb.z()}, color, thickness);
+        renderer->draw3DLine({mb.x(), mb.y(), mb.z()},
+                             {mc.x(), mc.y(), mc.z()}, color, thickness);
+        renderer->draw3DLine({mc.x(), mc.y(), mc.z()},
+                             {ma.x(), ma.y(), ma.z()}, color, thickness);
+    }
+    return true;
+}
+
 QPointF cubicPoint(const QPointF& p0,
                    const QPointF& p1,
                    const QPointF& p2,
@@ -670,6 +715,7 @@ void ArtifactProcedural3DLayer::drawResolved(ArtifactIRenderer* renderer,
                        model,
                        opacity(),
                        static_cast<int>(impl_->shading));
+    drawCloth3DWireOverlay(this, renderer, model, opacity(), impl_->wireThickness);
 
     const auto size = sourceSize();
     drawFractureOverlay(renderer, model, QSizeF(size.width, size.height), opacity());

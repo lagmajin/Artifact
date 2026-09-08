@@ -6263,21 +6263,57 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->proxyGlobalToggle_->setFont(proxyFont);
         impl_->proxyGlobalToggle_->setMaximumHeight(22);
     }
-    // The detail pane intentionally keeps actions close to the selected item.
-    // A two-column grid avoids forcing the Project View wider than its content.
-    selectionButtons->addWidget(impl_->openSelectionButton, 0, 0);
-    selectionButtons->addWidget(impl_->revealSelectionButton, 0, 1);
-    selectionButtons->addWidget(impl_->generateProxyButton, 1, 0);
-    selectionButtons->addWidget(impl_->revealProxyButton, 1, 1);
-    selectionButtons->addWidget(impl_->clearProxyButton, 2, 0);
-    selectionButtons->addWidget(impl_->relinkSelectionButton, 2, 1);
-    selectionButtons->addWidget(impl_->generateSelectedProxiesButton, 3, 0);
-    selectionButtons->addWidget(impl_->clearSelectedProxiesButton, 3, 1);
-    selectionButtons->addWidget(impl_->regenerateStaleProxiesButton, 4, 0);
-    selectionButtons->addWidget(impl_->renameSelectionButton, 4, 1);
-    selectionButtons->addWidget(impl_->deleteSelectionButton, 5, 0);
-    selectionButtons->addWidget(impl_->copyPathButton, 5, 1);
-    selectionButtons->addWidget(impl_->proxyGlobalToggle_, 6, 0, 1, 2);
+    // Make the next action explicit before exposing the operational surface.
+    // The selected item's primary action gets the full row; the lower-density
+    // groups retain every existing command without presenting a wall of peers.
+    {
+        QPalette pal = impl_->openSelectionButton->palette();
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        pal.setColor(QPalette::Button, QColor(theme.accentColor));
+        pal.setColor(QPalette::ButtonText, Qt::white);
+        pal.setColor(QPalette::Highlight, QColor(theme.accentColor).lighter(112));
+        impl_->openSelectionButton->setPalette(pal);
+        impl_->openSelectionButton->setMinimumHeight(28);
+        impl_->openSelectionButton->setMaximumHeight(28);
+        QFont font = impl_->openSelectionButton->font();
+        font.setBold(true);
+        impl_->openSelectionButton->setFont(font);
+    }
+    auto* itemActionsLabel = new QLabel(QStringLiteral("Item"), selectionChrome);
+    itemActionsLabel->setObjectName(QStringLiteral("projectManagerActionGroupLabel"));
+    auto* proxyActionsLabel = new QLabel(QStringLiteral("Proxy"), selectionChrome);
+    proxyActionsLabel->setObjectName(QStringLiteral("projectManagerActionGroupLabel"));
+    {
+        QFont font = itemActionsLabel->font();
+        font.setPointSizeF(std::max<qreal>(8.5, font.pointSizeF() - 0.5));
+        font.setBold(true);
+        itemActionsLabel->setFont(font);
+        proxyActionsLabel->setFont(font);
+        QPalette pal = itemActionsLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+        itemActionsLabel->setPalette(pal);
+        proxyActionsLabel->setPalette(pal);
+    }
+    QPalette deletePalette = impl_->deleteSelectionButton->palette();
+    deletePalette.setColor(QPalette::ButtonText, QColor(0xF0, 0x78, 0x72));
+    deletePalette.setColor(QPalette::Highlight, QColor(0xA0, 0x3B, 0x38));
+    impl_->deleteSelectionButton->setPalette(deletePalette);
+
+    selectionButtons->addWidget(impl_->openSelectionButton, 0, 0, 1, 2);
+    selectionButtons->addWidget(itemActionsLabel, 1, 0, 1, 2);
+    selectionButtons->addWidget(impl_->revealSelectionButton, 2, 0);
+    selectionButtons->addWidget(impl_->renameSelectionButton, 2, 1);
+    selectionButtons->addWidget(impl_->relinkSelectionButton, 3, 0);
+    selectionButtons->addWidget(impl_->copyPathButton, 3, 1);
+    selectionButtons->addWidget(proxyActionsLabel, 4, 0, 1, 2);
+    selectionButtons->addWidget(impl_->generateProxyButton, 5, 0);
+    selectionButtons->addWidget(impl_->revealProxyButton, 5, 1);
+    selectionButtons->addWidget(impl_->clearProxyButton, 6, 0);
+    selectionButtons->addWidget(impl_->regenerateStaleProxiesButton, 6, 1);
+    selectionButtons->addWidget(impl_->generateSelectedProxiesButton, 7, 0);
+    selectionButtons->addWidget(impl_->clearSelectedProxiesButton, 7, 1);
+    selectionButtons->addWidget(impl_->proxyGlobalToggle_, 8, 0, 1, 2);
+    selectionButtons->addWidget(impl_->deleteSelectionButton, 9, 0, 1, 2);
     selectionButtons->setColumnStretch(0, 1);
     selectionButtons->setColumnStretch(1, 1);
     selectionChromeLayout->addLayout(selectionButtons);
@@ -6554,10 +6590,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* detailPanel = new QWidget(contentSplit);
     detailPanel->setObjectName(QStringLiteral("projectManagerDetailPanel"));
     detailPanel->setAutoFillBackground(true);
-    detailPanel->setMinimumWidth(260);
+    detailPanel->setMinimumWidth(280);
     detailPanel->setMaximumWidth(380);
     auto* detailLayout = new QVBoxLayout(detailPanel);
-    detailLayout->setContentsMargins(8, 8, 8, 8);
+    detailLayout->setContentsMargins(12, 10, 12, 10);
     detailLayout->setSpacing(6);
     detailLayout->addWidget(impl_->infoPanel_);
     detailLayout->addWidget(selectionChrome);

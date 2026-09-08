@@ -15,6 +15,7 @@ export namespace Artifact {
         SoftBody2D = 2,
         Fluid2D = 3,
         Mpm2D = 4,
+        Cloth3D = 5,
     };
 
     // Authoring-time contract shared by all layer-owned simulation kinds.
@@ -45,7 +46,7 @@ export namespace Artifact {
             solverKind = static_cast<PhysicsSolverKind>(std::clamp(
                 obj.value("solverKind").toInt(static_cast<int>(solverKind)),
                 static_cast<int>(PhysicsSolverKind::Disabled),
-                static_cast<int>(PhysicsSolverKind::Mpm2D)));
+                static_cast<int>(PhysicsSolverKind::Cloth3D)));
             startFrame = obj.value("startFrame").toInteger(startFrame);
             fixedTimeStep = static_cast<float>(std::clamp(
                 obj.value("fixedTimeStep").toDouble(fixedTimeStep),

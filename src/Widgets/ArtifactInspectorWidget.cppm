@@ -4595,7 +4595,9 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
           QStringLiteral("Target: Composition \"%1\"")
               .arg(comp->settings().compositionName().toQString()));
     } else if (comp->layerById(currentLayerId_)) {
-      effectsTargetLabel->setText(comp->layerById(currentLayerId_)->layerName());
+      effectsTargetLabel->setText(
+          QStringLiteral("%1\nLayer effects")
+              .arg(comp->layerById(currentLayerId_)->layerName()));
     } else {
       effectsTargetLabel->setText(QStringLiteral("Target: Layer unavailable"));
     }
@@ -6931,8 +6933,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectsHeaderFrame->setObjectName(QStringLiteral("inspectorEffectsHeaderFrame"));
   applyInspectorPalette(effectsHeaderFrame, false);
   auto *effectsHeaderLayout = new QVBoxLayout(effectsHeaderFrame);
-  effectsHeaderLayout->setContentsMargins(10, 10, 10, 10);
-  effectsHeaderLayout->setSpacing(6);
+  effectsHeaderLayout->setContentsMargins(16, 12, 16, 14);
+  effectsHeaderLayout->setSpacing(10);
 
   impl_->effectsStateLabel = createInspectorChromeLabel(
       QStringLiteral("Open a composition to manage effects."),
@@ -6945,7 +6947,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsTargetLabel = createInspectorChromeLabel(
       QStringLiteral("Target: Select a composition to inspect effects"),
       InspectorChromeLabelRole::Section, effectsHeaderFrame);
-  impl_->effectsTargetLabel->setMinimumHeight(30);
+  impl_->effectsTargetLabel->setMinimumHeight(54);
   impl_->effectsTargetLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsTargetLabel, false);
   effectsHeaderLayout->addWidget(impl_->effectsTargetLabel);
@@ -6956,6 +6958,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectPropertyFilterEdit->setPlaceholderText(
       QStringLiteral("Search effects / parameters"));
   impl_->effectPropertyFilterEdit->setFrame(false);
+  impl_->effectPropertyFilterEdit->setMinimumHeight(38);
   applyInspectorPalette(impl_->effectPropertyFilterEdit, true);
 
   QObject::connect(impl_->effectPropertyFilterEdit, &QLineEdit::textChanged,
@@ -6977,6 +6980,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorButton(impl_->effectsQuickAddButton, true);
   impl_->effectsQuickAddButton->setToolTip(
       QStringLiteral("Open a searchable picker and add an effect to the current target. Shortcut: Ctrl+Space."));
+  impl_->effectsQuickAddButton->setMinimumSize(132, 38);
   effectsToolbarLayout->addWidget(impl_->effectsQuickAddButton);
   effectsToolbarLayout->addWidget(impl_->effectPropertyFilterEdit, 1);
   effectsHeaderLayout->addLayout(effectsToolbarLayout);
@@ -6991,7 +6995,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   stackPanel->setObjectName(QStringLiteral("inspectorEffectsStackPanel"));
   applyInspectorPalette(stackPanel, false);
   auto *stackPanelLayout = new QVBoxLayout(stackPanel);
-  stackPanelLayout->setContentsMargins(8, 8, 8, 8);
+  stackPanelLayout->setContentsMargins(8, 0, 8, 0);
   stackPanelLayout->setSpacing(8);
 
   impl_->effectsStackSummaryLabel = createInspectorChromeLabel(
@@ -7008,15 +7012,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsEmptyStateWidget->setSizePolicy(QSizePolicy::Expanding,
                                                 QSizePolicy::Expanding);
   auto *effectsEmptyLayout = new QVBoxLayout(impl_->effectsEmptyStateWidget);
-  effectsEmptyLayout->setContentsMargins(18, 42, 18, 42);
-  effectsEmptyLayout->setSpacing(10);
+  effectsEmptyLayout->setContentsMargins(24, 48, 24, 48);
+  effectsEmptyLayout->setSpacing(12);
   effectsEmptyLayout->addStretch(1);
 
   impl_->effectsEmptyIconLabel = new QLabel(impl_->effectsEmptyStateWidget);
   impl_->effectsEmptyIconLabel->setAlignment(Qt::AlignCenter);
   impl_->effectsEmptyIconLabel->setPixmap(
       QIcon(QStringLiteral(":/icons/Studio/effectrack_empty.svg"))
-          .pixmap(QSize(64, 64)));
+          .pixmap(QSize(72, 72)));
   impl_->effectsEmptyIconLabel->setAccessibleName(
       QStringLiteral("No effects"));
   effectsEmptyLayout->addWidget(impl_->effectsEmptyIconLabel);

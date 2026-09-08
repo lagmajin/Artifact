@@ -152,7 +152,7 @@ int ArtifactBatchRenderer::addCompositions(
             QStringLiteral("Unable to create output directory: %1").arg(outputDir));
         return 0;
     }
-    const QString defaultPresetId = QStringLiteral("h264_mp4_standard");
+    const QString defaultPresetId = defaultTemplate().presetId;
     const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(
         defaultPresetId);
     if (!preset) {
@@ -284,7 +284,7 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
 
         // Determine extension from preset
         const QString presetId = tmpl.presetId.isEmpty()
-            ? QStringLiteral("h264_mp4_standard")
+            ? defaultTemplate().presetId
             : tmpl.presetId;
         const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
         if (!preset) {
@@ -425,7 +425,11 @@ BatchTemplate ArtifactBatchRenderer::defaultTemplate() const
 {
     BatchTemplate tmpl;
     tmpl.name = "Default";
-    tmpl.outputDirectory = QDir::homePath() + "/Desktop";
+    tmpl.outputDirectory = QStandardPaths::writableLocation(
+        QStandardPaths::DesktopLocation);
+    if (tmpl.outputDirectory.trimmed().isEmpty()) {
+        tmpl.outputDirectory = QDir::homePath();
+    }
     tmpl.fileNamePattern = "%compName%_%date%";
     tmpl.presetId = "h264_mp4_standard";
     tmpl.overrideWidth = 0;

@@ -43,6 +43,7 @@ module;
 #include <QPolygonF>
 #include <QStackedWidget>
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <cmath>
 #include <qtmetamacros.h>
@@ -4583,6 +4584,7 @@ public:
   QLabel *zoomSummaryLabel_ = nullptr;
   QLabel *selectionSummaryLabel_ = nullptr;
   ArtifactLayerTimelinePanelWrapper *layerTimelinePanel_ = nullptr;
+  QWidget *layerTimelinePanelSurface_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
   QWidget *timelinePainterPage_ = nullptr;
   ArtifactDiligentTimelineRenderWindow *gpuTimelineWindow_ = nullptr;
@@ -4593,12 +4595,15 @@ public:
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
   QWidget *curveEditorPage_ = nullptr;
   QStackedWidget *timelineModeStack_ = nullptr;
+  TimelineToolCallbackButton *timelineModeButton_ = nullptr;
+  TimelineToolCallbackButton *curveModeButton_ = nullptr;
   QWidget *curvePropertyPanel_ = nullptr;
   QLabel *curvePropertySummaryLabel_ = nullptr;
   QListWidget *curvePropertyList_ = nullptr;
   int focusedCurveTrackIndex_ = -1;
   QSet<QString> selectedPropertyPaths_;
   bool curveFocusPinned_ = false;
+  bool curveShowAllChannels_ = false;
   QLabel *curveEditorSummaryLabel_ = nullptr;
   QToolButton *curveEditorModeButton_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
@@ -4655,6 +4660,9 @@ public:
   // painter / labels 更新を 1 回にまとめる。
   bool pendingSelectionSync_ = false;
   bool pendingSelectionSyncForceRefresh_ = false;
+  // RAM preview events can arrive for many frames in one playback interval.
+  // Keep the expensive full cache-bar snapshot off the playhead hot path.
+  std::atomic_bool cacheVisualRefreshPending_ = false;
   QTimer* curveEditorRefreshTimer_ = nullptr;
   QTimer* playbackVisualTimer_ = nullptr;
   QTimer* audioPreviewStopTimer_ = nullptr;
@@ -4825,12 +4833,31 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                            : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
   const int selectionFocusTrack =
       curveTrackIndexForSelection(impl_->curveBindings_, markers);
-  if (selectionFocusTrack >= 0) {
-    impl_->focusedCurveTrackIndex_ = selectionFocusTrack;
+  if (impl_->curveShowAllChannels_) {
+    impl_->focusedCurveTrackIndex_ = -1;
     impl_->curveFocusPinned_ = false;
+  } else if (selectionFocusTrack >= 0) {
+    impl_->focusedCurveTrackIndex_ = selectionFocusTrack;
+    impl_->curveFocusPinned_ = true;
   } else if (!markers.isEmpty()) {
     impl_->focusedCurveTrackIndex_ = -1;
     impl_->curveFocusPinned_ = false;
+  } else if (impl_->graphEditorNeedsFit_ && !impl_->curveTracks_.empty()) {
+    const QString currentPropertyPath =
+        impl_->layerTimelinePanel_
+            ? impl_->layerTimelinePanel_->currentPropertyPath().trimmed()
+            : QString();
+    int preferredTrack = -1;
+    if (!currentPropertyPath.isEmpty()) {
+      for (int i = 0; i < impl_->curveBindings_.size(); ++i) {
+        if (impl_->curveBindings_[i].propertyPath == currentPropertyPath) {
+          preferredTrack = i;
+          break;
+        }
+      }
+    }
+    impl_->focusedCurveTrackIndex_ = preferredTrack >= 0 ? preferredTrack : 0;
+    impl_->curveFocusPinned_ = true;
   } else if (!impl_->curveFocusPinned_) {
     impl_->focusedCurveTrackIndex_ = -1;
   }
@@ -4842,37 +4869,19 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     const auto selectedMarkers =
         impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                  : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
-    summary = QStringLiteral("%1 | %2")
+    summary = QStringLiteral("%1  ·  %2")
                   .arg(impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
                            ? QStringLiteral("Speed Graph (read-only)")
                            : QStringLiteral("Value Graph"),
                        summary);
-    if (!selectedMarkers.isEmpty()) {
-      summary = QStringLiteral("%1 | %2")
-                    .arg(summary,
-                         formatSelectedKeyframeSummary(
-                             selectedMarkers,
-                             static_cast<qint64>(std::llround(
-                                 std::max(0.0, impl_->currentFrame_)))));
-    } else {
-      summary = QStringLiteral("%1 | Keys: none selected").arg(summary);
-    }
-    if (impl_->graphEditorVisible_ &&
-        selectionFocusTrack >= 0 &&
-        selectionFocusTrack < impl_->curveTracks_.size()) {
-      summary = QStringLiteral("%1 | Focus: %2")
-                    .arg(summary)
-                    .arg(impl_->curveTracks_[selectionFocusTrack].name);
-    }
-    summary = QStringLiteral("%1 | Display: %2")
-                  .arg(summary,
-                       impl_->curveFocusPinned_ ? QStringLiteral("solo")
-                                                : QStringLiteral("all tracks"));
-    summary = QStringLiteral("%1 | Handles: %2")
-                  .arg(summary,
-                       impl_->curveHandleEditingEnabled_ ? QStringLiteral("on")
-                                                         : QStringLiteral("off"));
     impl_->curveEditorSummaryLabel_->setText(summary);
+    impl_->curveEditorSummaryLabel_->setToolTip(
+        selectedMarkers.isEmpty()
+            ? QStringLiteral("No keyframes selected")
+            : formatSelectedKeyframeSummary(
+                  selectedMarkers,
+                  static_cast<qint64>(std::llround(
+                      std::max(0.0, impl_->currentFrame_)))));
   }
 
   if (impl_->curveEditorModeButton_) {
@@ -4946,12 +4955,12 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     const QSignalBlocker blocker(impl_->curveEditorPinButton_);
     impl_->curveEditorPinButton_->setChecked(impl_->curveFocusPinned_);
     impl_->curveEditorPinButton_->setText(
-        impl_->curveFocusPinned_ ? QStringLiteral("Solo")
-                                 : QStringLiteral("Solo Off"));
+        impl_->curveFocusPinned_ ? QStringLiteral("Selected Channel")
+                                 : QStringLiteral("All Channels"));
     impl_->curveEditorPinButton_->setToolTip(
         impl_->curveFocusPinned_
-            ? QStringLiteral("Only the selected parameter is shown in the graph editor")
-            : QStringLiteral("Show all curve tracks in the graph editor"));
+            ? QStringLiteral("Show only the selected or current channel")
+            : QStringLiteral("Show every visible curve channel"));
     QPalette pal = impl_->curveEditorPinButton_->palette();
     pal.setColor(QPalette::ButtonText,
                  impl_->curveFocusPinned_ ? QColor(255, 240, 170)
@@ -5479,12 +5488,13 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     item->setData(Qt::UserRole, i);
     item->setToolTip(track.name);
     item->setForeground(track.color);
-    if (impl_->focusedCurveTrackIndex_ >= 0 && impl_->focusedCurveTrackIndex_ != i) {
-      item->setHidden(true);
-    } else {
+    impl_->curvePropertyList_->addItem(item);
+    const bool visible = impl_->focusedCurveTrackIndex_ < 0 ||
+                         impl_->focusedCurveTrackIndex_ == i;
+    item->setHidden(!visible);
+    if (visible) {
       ++visibleCount;
     }
-    impl_->curvePropertyList_->addItem(item);
     ++propertyCount;
   }
   if (propertyCount == 0) {
@@ -5540,6 +5550,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftSplitter->setStretchFactor(0, 0); // ACR fixed
   leftSplitter->setStretchFactor(1, 1); // Layer Panel flexible
   leftSplitter->setHandleWidth(4);
+  impl_->layerTimelinePanelSurface_ = leftSplitter;
 
   auto leftHeader = new ArtifactTimeCodeWidget();             // Timecode
   auto searchBar = new ArtifactTimelineSearchBarWidget();     // Search
@@ -6072,6 +6083,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                     return;
                   }
                   impl_->graphEditorVisible_ = active;
+                  if (impl_->timelineModeButton_) {
+                    impl_->timelineModeButton_->setChecked(!active);
+                  }
+                  if (impl_->curveModeButton_) {
+                    impl_->curveModeButton_->setChecked(active);
+                  }
                   if (impl_->timelineModeStack_) {
                     impl_->timelineModeStack_->setCurrentWidget(
                         active ? impl_->curveEditorPage_
@@ -6087,10 +6104,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   if (impl_->curvePropertyPanel_) {
                     impl_->curvePropertyPanel_->setVisible(active);
                   }
+                  if (impl_->layerTimelinePanelSurface_) {
+                    impl_->layerTimelinePanelSurface_->setVisible(!active);
+                  }
                   if (!active) {
                     impl_->curveEditorDragging_ = false;
                     impl_->focusedCurveTrackIndex_ = -1;
                     impl_->curveFocusPinned_ = false;
+                    impl_->curveShowAllChannels_ = false;
                     if (impl_->curveEditorRefreshTimer_) {
                       impl_->curveEditorRefreshTimer_->stop();
                     }
@@ -6480,6 +6501,38 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftTopSpacer->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   leftTopSpacer->setAutoFillBackground(true);
+  auto *timelineModeButton = impl_->timelineModeButton_ =
+      new TimelineToolCallbackButton(headerWidget);
+  auto *curveModeButton = impl_->curveModeButton_ =
+      new TimelineToolCallbackButton(headerWidget);
+  timelineModeButton->setObjectName(QStringLiteral("timelineModeTimelineButton"));
+  curveModeButton->setObjectName(QStringLiteral("timelineModeCurveEditorButton"));
+  for (auto *button : {timelineModeButton, curveModeButton}) {
+    styleTimelineToolButton(button);
+    button->setCheckable(true);
+    button->setAutoExclusive(true);
+    button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  }
+  timelineModeButton->setText(QStringLiteral("Timeline"));
+  timelineModeButton->setToolTip(
+      QStringLiteral("Show the standard timeline (Ctrl+G)"));
+  timelineModeButton->setAccessibleName(QStringLiteral("Timeline mode"));
+  timelineModeButton->setAccessibleDescription(
+      QStringLiteral("Switch from the curve editor to the standard timeline"));
+  timelineModeButton->setChecked(true);
+  timelineModeButton->setCallback(
+      [this]() { toggleGraphEditorMode(false, Qt::MouseFocusReason); });
+  curveModeButton->setText(QStringLiteral("Curve Editor"));
+  curveModeButton->setToolTip(
+      QStringLiteral("Show the curve editor (Ctrl+G)"));
+  curveModeButton->setAccessibleName(QStringLiteral("Curve Editor mode"));
+  curveModeButton->setAccessibleDescription(
+      QStringLiteral("Switch from the standard timeline to the curve editor"));
+  curveModeButton->setChecked(false);
+  curveModeButton->setCallback(
+      [this]() { toggleGraphEditorMode(true, Qt::MouseFocusReason); });
+  searchBarLayout->insertWidget(1, timelineModeButton);
+  searchBarLayout->insertWidget(2, curveModeButton);
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
@@ -6509,7 +6562,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curvePropertyList->setFocusPolicy(Qt::StrongFocus);
   curvePropertyList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   curvePropertyList->setMinimumHeight(108);
-  curvePropertyList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
+  curvePropertyList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  curvePropertyPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   curvePropertyList->setAlternatingRowColors(false);
   curvePropertyList->setUniformItemSizes(true);
   curvePropertyLayout->addWidget(curvePropertySummary);
@@ -6525,6 +6579,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                          (impl_->focusedCurveTrackIndex_ == trackIndex) ? -1 : trackIndex;
       impl_->curveFocusPinned_ =
           impl_->focusedCurveTrackIndex_ >= 0;
+      impl_->curveShowAllChannels_ = false;
       impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
@@ -6542,6 +6597,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      }
                      impl_->curveFocusPinned_ =
                          impl_->focusedCurveTrackIndex_ >= 0;
+                     impl_->curveShowAllChannels_ = false;
                      impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
@@ -6554,7 +6610,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftLayout->addWidget(headerWidget);
   leftLayout->addWidget(leftSubHeaderSpacer);
   leftLayout->addWidget(leftSplitter, 1);
-  leftLayout->addWidget(curvePropertyPanel, 0);
+  leftLayout->addWidget(curvePropertyPanel, 1);
 
   auto leftPanel = new QWidget();
   leftPanel->setObjectName(QStringLiteral("timelineLeftPanel"));
@@ -6594,6 +6650,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto *curveHeader = new QWidget();
   curveHeader->setObjectName(QStringLiteral("timelineCurveHeader"));
   curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  for (auto *button : {keyframeAddButton, keyframeRemoveButton,
+                       keyframeCopyButton, keyframePasteButton,
+                       keyframeEaseCopyButton, keyframeEasePasteButton,
+                       keyframeSnippetButton, keyframeEaseInButton,
+                       keyframeEaseOutButton, keyframeEaseInOutButton}) {
+    button->setParent(curveHeader);
+    button->setVisible(false);
+  }
   {
     QPalette pal = curveHeader->palette();
     const auto& theme = ArtifactCore::currentDCCTheme();
@@ -6605,19 +6669,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->setContentsMargins(8, 5, 8, 5);
   curveHeaderLayout->setSpacing(4);
   impl_->curveEditorSummaryLabel_ = new QLabel(QStringLiteral("カーブエディタ"));
-  impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+  impl_->curveEditorSummaryLabel_->setMaximumWidth(260);
+  impl_->curveEditorSummaryLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
   impl_->curveEditorSummaryLabel_->setToolTip(QStringLiteral("選択したキーフレームのカーブ編集ビュー"));
   curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
-  curveHeaderLayout->addWidget(keyframeAddButton);
-  curveHeaderLayout->addWidget(keyframeRemoveButton);
-  curveHeaderLayout->addWidget(keyframeCopyButton);
-  curveHeaderLayout->addWidget(keyframePasteButton);
-  curveHeaderLayout->addWidget(keyframeEaseCopyButton);
-  curveHeaderLayout->addWidget(keyframeEasePasteButton);
-  curveHeaderLayout->addWidget(keyframeSnippetButton);
-  curveHeaderLayout->addWidget(keyframeEaseInButton);
-  curveHeaderLayout->addWidget(keyframeEaseOutButton);
-  curveHeaderLayout->addWidget(keyframeEaseInOutButton);
+  curveHeaderLayout->addSpacing(8);
   impl_->curveEditorModeButton_ = new QToolButton(curveHeader);
   impl_->curveEditorModeButton_->setObjectName(QStringLiteral("timelineCurveEditorModeButton"));
   styleTimelineToolButton(impl_->curveEditorModeButton_);
@@ -6753,6 +6810,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       });
   impl_->curveEditorFlatTangentButton_ = makeTangentButton(
       QStringLiteral("Flat"), QStringLiteral("Flat tangent for selected FCurve key"));
+  impl_->curveEditorFlatTangentButton_->setVisible(false);
   static_cast<TimelineToolCallbackButton *>(impl_->curveEditorFlatTangentButton_)
       ->setCallback([this, applyTangentEditWithUndo]() {
         applyTangentEditWithUndo(QStringLiteral("Flat Tangent"), [this]() {
@@ -6808,7 +6866,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   styleTimelineToolButton(impl_->curveEditorPinButton_);
   impl_->curveEditorPinButton_->setCheckable(true);
   impl_->curveEditorPinButton_->setChecked(false);
-  impl_->curveEditorPinButton_->setText(QStringLiteral("Solo Off"));
+  impl_->curveEditorPinButton_->setText(QStringLiteral("All Channels"));
   impl_->curveEditorPinButton_->setToolTip(
       QStringLiteral("Show all curve tracks in the graph editor"));
   {
@@ -6822,24 +6880,78 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        return;
                      }
                      impl_->curveFocusPinned_ = pinned;
+                     impl_->curveShowAllChannels_ = !pinned;
+                     if (impl_->curveShowAllChannels_) {
+                       impl_->focusedCurveTrackIndex_ = -1;
+                     } else if (impl_->focusedCurveTrackIndex_ < 0) {
+                       impl_->graphEditorNeedsFit_ = true;
+                     }
                      if (impl_->curveEditor_) {
                        impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      }
                      refreshCurveEditorTracks();
                    });
+  auto *curveEditorMoreButton = new TimelineToolCallbackButton(curveHeader);
+  styleTimelineToolButton(curveEditorMoreButton);
+  curveEditorMoreButton->setText(QStringLiteral("More..."));
+  curveEditorMoreButton->setToolTip(
+      QStringLiteral("Keyframe, easing, snippet, and advanced tangent actions"));
+  curveEditorMoreButton->setAccessibleName(QStringLiteral("More curve editor actions"));
+  curveEditorMoreButton->setCallback(
+      [this, curveEditorMoreButton, keyframeAddButton, keyframeRemoveButton,
+       keyframeCopyButton, keyframePasteButton, keyframeEaseCopyButton,
+       keyframeEasePasteButton, keyframeSnippetButton, keyframeEaseInButton,
+       keyframeEaseOutButton, keyframeEaseInOutButton,
+       applyTangentEditWithUndo]() {
+        QMenu menu(curveEditorMoreButton);
+        QAction *add = menu.addAction(QStringLiteral("Add Keyframe"));
+        QAction *remove = menu.addAction(QStringLiteral("Remove Keyframe"));
+        menu.addSeparator();
+        QAction *copy = menu.addAction(QStringLiteral("Copy Keyframes"));
+        QAction *paste = menu.addAction(QStringLiteral("Paste Keyframes"));
+        QAction *copyEase = menu.addAction(QStringLiteral("Copy Easing"));
+        QAction *pasteEase = menu.addAction(QStringLiteral("Paste Easing"));
+        QAction *snippet = menu.addAction(QStringLiteral("Snippets..."));
+        menu.addSeparator();
+        QAction *easeIn = menu.addAction(QStringLiteral("Ease In"));
+        QAction *easeOut = menu.addAction(QStringLiteral("Ease Out"));
+        QAction *easeInOut = menu.addAction(QStringLiteral("Ease In-Out"));
+        QAction *flat = menu.addAction(QStringLiteral("Flat Tangents"));
+        QAction *chosen = menu.exec(curveEditorMoreButton->mapToGlobal(
+            QPoint(0, curveEditorMoreButton->height())));
+        if (chosen == add) keyframeAddButton->click();
+        else if (chosen == remove) keyframeRemoveButton->click();
+        else if (chosen == copy) keyframeCopyButton->click();
+        else if (chosen == paste) keyframePasteButton->click();
+        else if (chosen == copyEase) keyframeEaseCopyButton->click();
+        else if (chosen == pasteEase) keyframeEasePasteButton->click();
+        else if (chosen == snippet) keyframeSnippetButton->click();
+        else if (chosen == easeIn) keyframeEaseInButton->click();
+        else if (chosen == easeOut) keyframeEaseOutButton->click();
+        else if (chosen == easeInOut) keyframeEaseInOutButton->click();
+        else if (chosen == flat)
+          applyTangentEditWithUndo(QStringLiteral("Flat Tangent"), [this]() {
+            return impl_ && impl_->curveEditor_ &&
+                   impl_->curveEditor_->setSelectedKeyFlatTangents();
+          });
+      });
+
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
+  curveHeaderLayout->addSpacing(8);
   curveHeaderLayout->addWidget(impl_->curveEditorValueButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFrameButton_);
+  curveHeaderLayout->addSpacing(8);
   curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorAutoTangentButton_);
-  curveHeaderLayout->addWidget(impl_->curveEditorFlatTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorLinearTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorBrokenTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorUnifiedTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorConstantButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorBezierButton_);
-  curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
+  curveHeaderLayout->addWidget(curveEditorMoreButton);
+  curveHeaderLayout->addStretch(1);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding,
@@ -7271,6 +7383,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      impl_->focusedCurveTrackIndex_ = event.trackIndex;
                      impl_->curveFocusPinned_ =
                          impl_->focusedCurveTrackIndex_ >= 0;
+                     impl_->curveShowAllChannels_ = false;
                      updateCurvePropertyList();
                      if (event.trackIndex >= 0 &&
                          event.trackIndex < impl_->curvePropertyList_->count()) {
@@ -7626,19 +7739,39 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   };
   QObject::connect(impl_->playbackVisualTimer_, &QTimer::timeout, this,
                    updateSmoothPlaybackPlayhead);
+  const auto requestCacheVisualRefresh = [this]() {
+    if (!impl_ || impl_->cacheVisualRefreshPending_.exchange(true)) {
+      return;
+    }
+
+    // Cache snapshots query every timeline frame.  Coalesce cache notifications
+    // before taking that snapshot so repaint pressure cannot stall the visual
+    // playhead timer.  The context object cancels this work during teardown.
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+          if (!impl_) {
+            return;
+          }
+          QTimer::singleShot(66, this, [this]() {
+            if (!impl_) {
+              return;
+            }
+            impl_->cacheVisualRefreshPending_.store(false);
+            updateCacheVisuals();
+          });
+        },
+        Qt::QueuedConnection);
+  };
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<PlaybackRamPreviewStateChangedEvent>(
-          [this](const PlaybackRamPreviewStateChangedEvent &) {
-            QMetaObject::invokeMethod(this, [this]() {
-              if (impl_) updateCacheVisuals();
-            }, Qt::QueuedConnection);
+          [requestCacheVisualRefresh](const PlaybackRamPreviewStateChangedEvent &) {
+            requestCacheVisualRefresh();
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<PlaybackRamPreviewStatsChangedEvent>(
-          [this](const PlaybackRamPreviewStatsChangedEvent &) {
-            QMetaObject::invokeMethod(this, [this]() {
-              if (impl_) updateCacheVisuals();
-            }, Qt::QueuedConnection);
+          [requestCacheVisualRefresh](const PlaybackRamPreviewStatsChangedEvent &) {
+            requestCacheVisualRefresh();
           }));
 
   const auto restartSmoothPlaybackPlayhead = [this]() {
@@ -7664,7 +7797,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<FrameChangedEvent>(
           [this, scrubBar, restartSmoothPlaybackPlayhead,
-           updateSmoothPlaybackPlayhead](const FrameChangedEvent &event) {
+           updateSmoothPlaybackPlayhead,
+           requestCacheVisualRefresh](const FrameChangedEvent &event) {
             if (impl_->compositionId_.isNil() ||
                 event.compositionId != impl_->compositionId_.toString()) {
               return;
@@ -7709,10 +7843,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               updateSmoothPlaybackPlayhead();
             }
 
-            // 再生中でも cache 可視化だけは追随させる。
-            // selection / keyframe の再構築は重いので停止時にだけ行うが、
-            // RAM preview の帯は frameChanged に合わせて更新しておく。
-            updateCacheVisuals();
+            // Cache-bar state is independent from the playhead.  Taking its
+            // full snapshot per FrameChangedEvent used to make timeline length
+            // directly affect playback smoothness, so only cache events may
+            // request the coalesced refresh.
+            if (!isPlaying) {
+              requestCacheVisualRefresh();
+            }
             if (!isPlaying) {
               updateSelectionState();
               if (frame.framePosition() % 15 == 0) {

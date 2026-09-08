@@ -641,14 +641,6 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
                              static_cast<float>(pixelAspectRatio());
   const auto color = this->color();
   const auto fillType = this->fillType();
-  const auto gradientStart = gradientStartColor();
-  const auto gradientEnd = gradientEndColor();
-  const float gradientAngle = gradientAngleDegrees();
-  const bool gradientReverseValue = gradientReverse();
-  const float gradientCenterXValue = gradientCenterX();
-  const float gradientCenterYValue = gradientCenterY();
-  const float gradientScaleValue = gradientScale();
-  const float gradientOffsetValue = gradientOffset();
 
   static int drawLogSamples = 0;
   if (drawLogSamples < 5) {
@@ -678,23 +670,16 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   }
   drawWithClonerEffect(
       this, baseTransform,
-      [renderer, size, displayWidth, color, fillType, gradientStart, gradientEnd, gradientAngle,
-       gradientReverseValue, gradientCenterXValue, gradientCenterYValue,
-       gradientScaleValue, gradientOffsetValue, this]
+      [renderer, size, displayWidth, color, fillType, this]
       (const QMatrix4x4 &transform, float weight) {
         if (fillType != ArtifactSolidFillType::Solid) {
-          QImage gradientImage = ArtifactSolidGradientUtil::makeSolidGradientImage(
-              QSize(size.width, size.height),
-              QColor::fromRgbF(gradientStart.r(), gradientStart.g(), gradientStart.b(),
-                         gradientStart.a() * this->opacity() * weight),
-              QColor::fromRgbF(gradientEnd.r(), gradientEnd.g(), gradientEnd.b(),
-                         gradientEnd.a() * this->opacity() * weight),
-              static_cast<int>(fillType), gradientAngle, gradientReverseValue,
-              gradientCenterXValue, gradientCenterYValue, gradientScaleValue,
-              gradientOffsetValue);
+          // PERF: gradient QImage は currentFillImage() のキャッシュを再利用する。
+          // 毎frame makeSolidGradientImage するとCPU生成+GPU uploadが走る。
+          // 不透明度は drawSprite 側の weight 乗算に寄せる（source-override経路と同一）。
+          const QImage& gradientImage = this->currentFillImage();
           renderer->drawSpriteTransformed(0.0f, 0.0f, displayWidth,
                                           static_cast<float>(size.height), transform,
-                                          gradientImage, 1.0f);
+                                          gradientImage, this->opacity() * weight);
           return;
         }
         const FloatColor cloneColor(color.r(), color.g(), color.b(),

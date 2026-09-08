@@ -2142,8 +2142,11 @@ void test() {
   cv::Mat glowed_image =
       applyVerticalGlow(mat, threshold, vertical_blur_radius, intensity);
   SetEnvironmentVariableW(L"COREHOST_TRACE", L"1");
-  SetEnvironmentVariableW(L"COREHOST_TRACEFILE",
-                          L"C:\\temp\\hostfxr_trace.log");
+  const std::wstring hostfxrTracePath =
+      QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+          .filePath(QStringLiteral("hostfxr_trace.log"))
+          .toStdWString();
+  SetEnvironmentVariableW(L"COREHOST_TRACEFILE", hostfxrTracePath.c_str());
 
   /*
   DotnetRuntimeHost host;
@@ -2154,8 +2157,8 @@ void test() {
   }
 
   // ② アセンブリパスを指定（.dll）→ ここでは MyApp.dll を仮定
-  QString dllPath =
-  "C:/Users/lagma/Desktop/Artifact/Artifact/App/Debug/net9.0/ArtifactScriptRunner.dll";
+  QString dllPath = QDir(QCoreApplication::applicationDirPath())
+      .filePath(QStringLiteral("ArtifactScriptRunner.dll"));
 
   // 呼び出し先の型名とメソッド名（C#側と一致させる）
   if (!host.loadAssembly(dllPath))
@@ -2423,7 +2426,9 @@ int main(int argc, char *argv[]) {
                        : 1u);
   auto parallelismControl = std::make_unique<StartupParallelismControl>(1u);
 
-  AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
+  const std::wstring applicationDirectory =
+      QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath().toStdWString();
+  AddDllDirectory(applicationDirectory.c_str());
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
                            LOAD_LIBRARY_SEARCH_USER_DIRS);
   // qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");

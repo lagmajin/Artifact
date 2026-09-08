@@ -46,6 +46,7 @@ import Artifact.Effect.ImplBase;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Render.ROI;
+import Artifact.Render.PointwiseEffectFusion;
 import Audio.Modulation.Router;
 
 export namespace Artifact {
@@ -129,6 +130,17 @@ public:
     ComputeMode computeMode() const;
     void setComputeMode(ComputeMode mode);
     virtual bool supportsGPU() const { return false; }
+
+    // GPU-resident raster paths ask effects to contribute their execution
+    // nodes; the renderer deliberately does not inspect concrete effect types.
+    // Returning false establishes an explicit CPU boundary for this effect.
+    virtual bool appendGpuPointwiseNodes(
+        ArtifactCore::PointwiseEffectStack& stack,
+        std::uint32_t& parameterSlot) const {
+        (void)stack;
+        (void)parameterSlot;
+        return false;
+    }
 
     // Opt-in: spatial effects may render beyond the source layer bounds.
     // Defaulting to false preserves legacy clipping behavior.

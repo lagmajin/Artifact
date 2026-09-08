@@ -135,6 +135,9 @@ public:
 
 private:
   void applyTableToBindings();
+  void applyShortcutProfile();
+  void filterShortcutRows();
+  void updateShortcutConflicts();
   void exportPreset();
   void importPreset();
 };

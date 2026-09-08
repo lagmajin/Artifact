@@ -1101,6 +1101,7 @@ public:
     float clonePhysicsInitialVelocityY_ = 0.0f;
     int clonePhysicsMaxBounces_ = 4;
     bool softBodyPhysicsEnabled_ = false;
+    bool cloth3DPhysicsEnabled_ = false;
     bool materialPhysicsEnabled_ = false;
     int materialPhysicsPreset_ = 0;
     bool motionDynamicsEnabled_ = false;
@@ -3042,6 +3043,22 @@ SoftBodyDeformationMesh ArtifactAbstractLayer::softBodyDeformationMesh() const {
   return mesh;
 }
 
+bool ArtifactAbstractLayer::hasCloth3DPhysics() const {
+  return ArtifactCore::PhysicsSystem::instance().hasCloth3D(id());
+}
+
+ClothDeformationMesh3D ArtifactAbstractLayer::cloth3DDeformationMesh() const {
+  ClothDeformationMesh3D mesh;
+  auto source = ArtifactCore::PhysicsSystem::instance().cloth3DDeformationMesh(id());
+  if (!source.isValid()) {
+    return mesh;
+  }
+  mesh.positions = std::move(source.positions);
+  mesh.uvs = std::move(source.uvs);
+  mesh.indices = std::move(source.indices);
+  return mesh;
+}
+
 bool ArtifactAbstractLayer::hasRigidBodyPhysics() const {
   auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
@@ -4419,6 +4436,54 @@ void ArtifactAbstractLayer::disableSoftBodyPhysics() {
         PhysicsSolverKind::Disabled;
   }
   ArtifactCore::PhysicsSystem::instance().unregisterSoftBody(id());
+}
+
+void ArtifactAbstractLayer::enableCloth3DPhysics() {
+  impl_->cloth3DPhysicsEnabled_ = true;
+  impl_->physicsComponent_.authoring().solverKind =
+      PhysicsSolverKind::Cloth3D;
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  if (!physics.getCloth3D(id())) {
+    physics.createCloth3D(id());
+  }
+}
+
+void ArtifactAbstractLayer::enableCloth3DPhysicsGrid(int columns, int rows, float stiffness) {
+  impl_->cloth3DPhysicsEnabled_ = true;
+  impl_->physicsComponent_.authoring().solverKind =
+      PhysicsSolverKind::Cloth3D;
+  const QRectF bounds = localBounds();
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    enableCloth3DPhysics();
+    return;
+  }
+  // 2D SoftBodyと同様、bounds自体をcollider化しない。外部colliderのみ使う。
+  physics.createCloth3DGrid(
+      id(),
+      static_cast<float>(bounds.left()),
+      static_cast<float>(bounds.top()),
+      static_cast<float>(bounds.width()),
+      static_cast<float>(bounds.height()),
+      0.0f,
+      columns,
+      rows,
+      1.0f,
+      stiffness,
+      true);
+  const auto& settings = impl_->physicsComponent_.settings();
+  physics.setCloth3DWind(id(), settings.windX, settings.windY, 0.0f,
+                         settings.windEnabled ? settings.windStrength : 0.0f);
+}
+
+void ArtifactAbstractLayer::disableCloth3DPhysics() {
+  impl_->cloth3DPhysicsEnabled_ = false;
+  if (impl_->physicsComponent_.authoring().solverKind ==
+      PhysicsSolverKind::Cloth3D) {
+    impl_->physicsComponent_.authoring().solverKind =
+        PhysicsSolverKind::Disabled;
+  }
+  ArtifactCore::PhysicsSystem::instance().unregisterCloth3D(id());
 }
 
 void ArtifactAbstractLayer::enableRigidBodyPhysics() {
@@ -5910,6 +5975,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj[QStringLiteral("clonePhysicsMaxBounces")] =
       impl_->clonePhysicsMaxBounces_;
   obj["softBodyPhysicsEnabled"] = impl_->softBodyPhysicsEnabled_;
+  obj["cloth3DPhysicsEnabled"] = impl_->cloth3DPhysicsEnabled_;
   obj["materialPhysicsEnabled"] = impl_->materialPhysicsEnabled_;
   obj["materialPhysicsPreset"] = impl_->materialPhysicsPreset_;
   QJsonObject motionObj;
@@ -6702,6 +6768,10 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("softBodyPhysicsEnabled") &&
       obj["softBodyPhysicsEnabled"].toBool(false)) {
       enableSoftBodyPhysicsGrid();
+  }
+  if (obj.contains("cloth3DPhysicsEnabled") &&
+      obj["cloth3DPhysicsEnabled"].toBool(false)) {
+      enableCloth3DPhysicsGrid();
   }
   if (obj.contains("materialPhysicsEnabled") &&
       obj["materialPhysicsEnabled"].toBool(false)) {
@@ -8642,6 +8712,14 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   softBodyEnabledProp->setTooltip(
       QStringLiteral("Simulate rectangular Shape layers as a deformable grid."));
   physicsGroup.addProperty(softBodyEnabledProp);
+
+  auto cloth3DEnabledProp =
+      makeProp(QStringLiteral("physics.cloth3D.enabled"), PropertyType::Boolean,
+               impl_->cloth3DPhysicsEnabled_, -99);
+  cloth3DEnabledProp->setDisplayLabel(QStringLiteral("Cloth 3D Grid"));
+  cloth3DEnabledProp->setTooltip(
+      QStringLiteral("Simulate this layer as a 3D cloth grid (base slice)."));
+  physicsGroup.addProperty(cloth3DEnabledProp);
 
   auto materialEnabledProp =
       makeProp(QStringLiteral("physics.material.enabled"), PropertyType::Boolean,
@@ -11085,6 +11163,16 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                         LayerDirtyReason::PropertyChanged);
     return true;
   }
+  if (propertyPath == QStringLiteral("physics.cloth3D.enabled")) {
+    if (value.toBool()) {
+      enableCloth3DPhysicsGrid();
+    } else {
+      disableCloth3DPhysics();
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    return true;
+  }
   if (propertyPath == QStringLiteral("physics.material.enabled")) {
     if (value.toBool()) {
       enableMaterialPhysics(impl_->materialPhysicsPreset_);
@@ -11223,6 +11311,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
         id(), settings.windX, settings.windY,
         settings.windEnabled ? settings.windStrength : 0.0f);
+    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+        id(), settings.windX, settings.windY, 0.0f,
+        settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wind.x")) {
@@ -11231,6 +11322,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     const auto& settings = impl_->physicsComponent_.settings();
     ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
         id(), settings.windX, settings.windY,
+        settings.windEnabled ? settings.windStrength : 0.0f);
+    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+        id(), settings.windX, settings.windY, 0.0f,
         settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
   }
@@ -11241,6 +11335,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
         id(), settings.windX, settings.windY,
         settings.windEnabled ? settings.windStrength : 0.0f);
+    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+        id(), settings.windX, settings.windY, 0.0f,
+        settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wind.strength")) {
@@ -11249,6 +11346,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     const auto& settings = impl_->physicsComponent_.settings();
     ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
         id(), settings.windX, settings.windY,
+        settings.windEnabled ? settings.windStrength : 0.0f);
+    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+        id(), settings.windX, settings.windY, 0.0f,
         settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
   }

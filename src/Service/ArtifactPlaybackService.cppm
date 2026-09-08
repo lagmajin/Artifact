@@ -74,6 +74,8 @@ import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
 import Undo.UndoManager;
+import Utils.Id;
+import Utils.String.UniString;
 
 namespace Artifact {
 
@@ -249,6 +251,26 @@ public:
   // edit can remove the old cache directory as well.
   QString previewDiskActiveNamespace_;
   QString previewDiskCompositionStateHash_;
+  // PERF: disk-cache namespace inputs. All comparisons below are
+  // allocation-free (Id/UniString ==, QString ==, scalars), so the steady
+  // frame path skips basis-string building, UTF-8 conversion and SHA-256.
+  QString previewDiskNamespaceCache_;
+  bool previewDiskNamespaceValid_ = false;
+  ArtifactCore::CompositionID previewDiskNamespaceCompId_;
+  ArtifactCore::UniString previewDiskNamespaceName_;
+  int previewDiskNamespaceW_ = 0;
+  int previewDiskNamespaceH_ = 0;
+  float previewDiskNamespaceFps_ = 0.0f;
+  std::int64_t previewDiskNamespaceDuration_ = 0;
+  QString previewDiskNamespaceContract_;
+  QString previewDiskNamespaceStateHash_;
+  // PERF: id().toString() allocates per call. Composition IDs are immutable,
+  // so hold the string and refresh it on composition switch (GUI thread).
+  QString cachedCurrentCompositionIdStr_;
+  // PERF: mkpath on an existing dir still costs a stat per frame. Remember
+  // the ensured directory per namespace key.
+  QString previewDiskEnsuredDirKey_;
+  QString previewDiskEnsuredDirPath_;
   // The final-frame cache is valid only for the render contract that produced
   // it.  Layer state is still invalidated by the composition edit paths;
   // this contract closes the quality/render-path gap at the service boundary.
@@ -706,9 +728,7 @@ public:
             return;
           }
 
-          const QString compositionId =
-              currentComposition_ ? currentComposition_->id().toString()
-                                  : QString();
+          const QString compositionId = cachedCurrentCompositionIdStr_;
 
           const int64_t frameNumber = position.framePosition();
           ArtifactCore::ImageF32x4_RGBA frameBuffer;
@@ -740,7 +760,7 @@ public:
                   1, std::memory_order_relaxed);
             }
             const QString currentCompositionId =
-                currentComposition_ ? currentComposition_->id().toString()
+                currentComposition_ ? cachedCurrentCompositionIdStr_
                                     : QString();
             if (compositionId.isEmpty() ||
                 currentCompositionId != compositionId) {
@@ -1224,30 +1244,56 @@ public:
 
     const auto settings = currentComposition_->settings();
     const QSize compSize = settings.compositionSize();
+    // Bind to the temporary without copying: UniString copy may allocate,
+    // comparison below does not. The trimmed QString is built only on the
+    // slow (recompute) path.
+    const ArtifactCore::UniString& compName = settings.compositionName();
+    const int w = std::max(1, compSize.width());
+    const int h = std::max(1, compSize.height());
+    const float fps = currentComposition_->frameRate().framerate();
+    const std::int64_t duration = currentComposition_->frameRange().duration();
+    const ArtifactCore::CompositionID compId = currentComposition_->id();
+    const QString stateHash = currentCompositionStateHash();
+    if (previewDiskNamespaceValid_ &&
+        previewDiskNamespaceCompId_ == compId &&
+        previewDiskNamespaceName_ == compName &&
+        previewDiskNamespaceW_ == w && previewDiskNamespaceH_ == h &&
+        previewDiskNamespaceFps_ == fps &&
+        previewDiskNamespaceDuration_ == duration &&
+        previewDiskNamespaceContract_ == previewDiskRenderContract_ &&
+        previewDiskNamespaceStateHash_ == stateHash) {
+      return previewDiskNamespaceCache_;
+    }
     // v3 adds the serialized composition state hash so edits cannot reuse a
     // prior composition namespace.  Older namespaces remain unreachable.
     // v2 deliberately separated files produced before disk-write generation
     // checks were introduced.  Do not reuse a v1 frame whose invalidation
     // provenance cannot be established.
     const QString basis = QStringLiteral("preview-frame-v3|%1|%2|%3x%4|%5|%6|%7|%8")
-                              .arg(currentComposition_->id().toString(),
-                                   settings.compositionName()
-                                       .toQString()
+                              .arg(compId.toString(),
+                                   compName.toQString()
                                        .trimmed(),
-                                   QString::number(std::max(1, compSize.width())),
-                                   QString::number(std::max(1, compSize.height())),
-                                   QString::number(
-                                       currentComposition_->frameRate()
-                                           .framerate(),
+                                   QString::number(w),
+                                   QString::number(h),
+                                   QString::number(static_cast<double>(fps),
                                        'f', 3),
-                                   QString::number(currentComposition_
-                                                       ->frameRange()
-                                                       .duration()),
+                                   QString::number(duration),
                                    previewDiskRenderContract_,
-                                   currentCompositionStateHash());
+                                   stateHash);
     const QByteArray digest =
         QCryptographicHash::hash(basis.toUtf8(), QCryptographicHash::Sha256);
-    return QString::fromLatin1(digest.toHex().left(24));
+    previewDiskNamespaceCache_ =
+        QString::fromLatin1(digest.toHex().left(24));
+    previewDiskNamespaceCompId_ = compId;
+    previewDiskNamespaceName_ = compName;
+    previewDiskNamespaceW_ = w;
+    previewDiskNamespaceH_ = h;
+    previewDiskNamespaceFps_ = fps;
+    previewDiskNamespaceDuration_ = duration;
+    previewDiskNamespaceContract_ = previewDiskRenderContract_;
+    previewDiskNamespaceStateHash_ = stateHash;
+    previewDiskNamespaceValid_ = true;
+    return previewDiskNamespaceCache_;
   }
 
   QString currentCompositionDiskCacheDir() {
@@ -1265,7 +1311,7 @@ public:
       return;
     }
 
-    const QString compositionId = currentComposition_->id().toString();
+    const QString compositionId = cachedCurrentCompositionIdStr_;
     QString namespaceToClear = previewDiskActiveNamespace_;
     if (namespaceToClear.isEmpty()) {
       namespaceToClear = currentCompositionDiskCacheNamespace();
@@ -1319,10 +1365,14 @@ public:
 
   QString previewDiskCacheFramePathForNamespace(const QString &compositionKey,
                                                 const int64_t frame) {
-    QDir root(previewDiskCacheRoot());
-    root.mkpath(compositionKey);
-    return root.filePath(compositionKey + QStringLiteral("/frame_%1.png")
-                                              .arg(frame, 8, 10, QChar('0')));
+    if (previewDiskEnsuredDirKey_ != compositionKey) {
+      QDir root(previewDiskCacheRoot());
+      root.mkpath(compositionKey);
+      previewDiskEnsuredDirKey_ = compositionKey;
+      previewDiskEnsuredDirPath_ = root.filePath(compositionKey);
+    }
+    return previewDiskEnsuredDirPath_ + QStringLiteral("/frame_%1.png")
+                                            .arg(frame, 8, 10, QChar('0'));
   }
 
   QString previewDiskCacheFramePath(const int64_t frame) {
@@ -3027,6 +3077,8 @@ void ArtifactPlaybackService::setCurrentComposition(
     // pointer; after replacement its state hash would address a new namespace.
     impl_->clearPreviewDiskCacheForCurrentComposition();
     impl_->currentComposition_ = composition;
+    impl_->cachedCurrentCompositionIdStr_ =
+        composition ? composition->id().toString() : QString();
     impl_->previewDiskRenderContract_ = QStringLiteral("unbound");
     impl_->cancelRamPreviewBuild(QStringLiteral("composition-changed"));
     

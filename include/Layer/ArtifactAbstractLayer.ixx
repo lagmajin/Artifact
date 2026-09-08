@@ -80,14 +80,25 @@ struct LayerRigidBodyContactState {
   bool affected = false;
  };
 
- struct SoftBodyDeformationMesh {
-  std::vector<float> vertices; // x, y, u, v per vertex
-  std::vector<std::uint32_t> indices;
+  struct SoftBodyDeformationMesh {
+   std::vector<float> vertices; // x, y, u, v per vertex
+   std::vector<std::uint32_t> indices;
 
-  bool isValid() const noexcept {
-   return !vertices.empty() && !indices.empty() && vertices.size() % 4 == 0;
-  }
- };
+   bool isValid() const noexcept {
+    return !vertices.empty() && !indices.empty() && vertices.size() % 4 == 0;
+   }
+  };
+
+  struct ClothDeformationMesh3D {
+   std::vector<float> positions; // x, y, z per vertex
+   std::vector<float> uvs; // u, v per vertex
+   std::vector<std::uint32_t> indices;
+
+   bool isValid() const noexcept {
+    return !positions.empty() && !indices.empty() && positions.size() % 3 == 0 &&
+        uvs.size() * 3 == positions.size() * 2;
+   }
+  };
 
 struct LayerComponentRuntimeSnapshot {
   SharedPtr<const void> storage;
@@ -438,13 +449,18 @@ public:
       const QMatrix4x4 &baseTransform) const;
   float4x4 getGlobalTransformMatrix() const;
   float4x4 getLocalTransformMatrix() const;
-  bool hasSoftBodyPhysics() const;
-  SoftBodyDeformationMesh softBodyDeformationMesh() const;
-  bool hasRigidBodyPhysics() const;
-  void enableSoftBodyPhysics();
-  void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
-  void disableSoftBodyPhysics();
-  void syncSoftBodyPhysicsColliderToBounds();
+   bool hasSoftBodyPhysics() const;
+   SoftBodyDeformationMesh softBodyDeformationMesh() const;
+   bool hasCloth3DPhysics() const;
+   ClothDeformationMesh3D cloth3DDeformationMesh() const;
+   bool hasRigidBodyPhysics() const;
+   void enableSoftBodyPhysics();
+   void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
+   void disableSoftBodyPhysics();
+   void syncSoftBodyPhysicsColliderToBounds();
+   void enableCloth3DPhysics();
+   void enableCloth3DPhysicsGrid(int columns = 8, int rows = 8, float stiffness = 1.0f);
+   void disableCloth3DPhysics();
   // Layer-local outline used by the Polygon collision shape (3). Empty means
   // the layer has no outline and collision falls back to auto bounds.
   virtual std::vector<QPointF> collisionOutlineLocalPoints() const;

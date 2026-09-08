@@ -26,7 +26,10 @@ void ArtifactAdjustableLayer::setComposition(QObject* comp)
 
 void ArtifactAdjustableLayer::setComposition(void *comp)
 {
-    ArtifactAbstractLayer::setComposition(comp);
+    // Calling the base void* overload would route back through the virtual
+    // QObject* overload and re-enter this class indefinitely.  Dispatch to
+    // the base QObject* implementation directly before applying our size sync.
+    ArtifactAbstractLayer::setComposition(static_cast<QObject*>(comp));
     if (auto *composition = static_cast<ArtifactAbstractComposition*>(comp)) {
         const auto compSize = composition->settings().compositionSize();
         if (compSize.width() > 0 && compSize.height() > 0) {

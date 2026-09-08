@@ -316,6 +316,15 @@ TextGizmo::TextGizmo() {}
 TextGizmo::~TextGizmo() {}
 
 void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
+    // sync2DGizmosForLayer() runs during every composition redraw.  Resetting
+    // the drag state when it rebinds the same layer cancels Move and text-box
+    // resize after the first render invalidation.
+    if (layer_ == layer) {
+        return;
+    }
+    if (isDragging_) {
+        cancelInteraction();
+    }
     layer_ = layer;
     isDragging_ = false;
     activeHandle_ = HandleType::None;
@@ -1173,7 +1182,25 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                 dragStartLayerPosition_.x() + moveX);
             const float newPosY = static_cast<float>(
                 dragStartLayerPosition_.y() + moveY);
-            start.setPosition(frame, newPosX, newPosY);
+            // AnimatableTransform3D::setPosition() accepts track-relative
+            // values and always creates keyframes.  Sending the absolute
+            // layer position here made a static text layer jump by its
+            // existing position and subsequently appear immovable.  Match
+            // the regular transform gizmo: preserve static transforms until
+            // position animation exists, otherwise convert absolute canvas
+            // coordinates to the track-relative values it expects.
+            if (start.hasPositionKeyFrameAt(frame) ||
+                start.getPositionKeyFrameCount() > 0) {
+                const float initialX = start.positionX() -
+                    start.positionXAt(frame);
+                const float initialY = start.positionY() -
+                    start.positionYAt(frame);
+                start.setPosition(frame, newPosX - initialX,
+                                  newPosY - initialY);
+            } else {
+                start.removePositionKeyFrameAt(frame);
+                start.setInitialPosition(frame, newPosX, newPosY);
+            }
             textSyncAnimatedProperty(
                 layer_, QStringLiteral("transform.position.x"), frame,
                 newPosX);

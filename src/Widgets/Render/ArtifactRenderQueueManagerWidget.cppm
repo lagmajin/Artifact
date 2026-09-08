@@ -2408,7 +2408,10 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     const QString filePath = QFileDialog::getSaveFileName(
         this,
         "Export Render History",
-        QDir::homePath() + "/Desktop/render_queue_history.log",
+        QDir(QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
+                 .isEmpty() ? QDir::homePath()
+                            : QStandardPaths::writableLocation(QStandardPaths::DesktopLocation))
+            .filePath("render_queue_history.log"),
         "Log Files (*.log *.txt);;All Files (*)");
     if (filePath.isEmpty()) return;
     QFile file(filePath);

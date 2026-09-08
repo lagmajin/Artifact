@@ -1844,20 +1844,23 @@ void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
   }
 
   const QStringList watchedFiles = fileWatcher_->files();
-  if (!watchedFiles.isEmpty()) {
-    fileWatcher_->removePaths(watchedFiles);
-  }
 
   auto project = projectManager().getCurrentProjectSharedPtr();
   if (!project) {
+    if (!watchedFiles.isEmpty()) fileWatcher_->removePaths(watchedFiles);
     return;
   }
 
   QStringList assetPaths;
+  // ProjectItem::children is user/project data and can temporarily contain a
+  // repeated or cyclic entry while a project mutation is being published.
+  // File-watcher discovery must remain a bounded read-only traversal.
+  QSet<ProjectItem*> visitedItems;
   std::function<void(ProjectItem*)> collectFootage = [&](ProjectItem* item) {
-    if (!item) {
+    if (!item || visitedItems.contains(item)) {
       return;
     }
+    visitedItems.insert(item);
     if (item->type() == eProjectItemType::Footage) {
       const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath)
                                .absoluteFilePath();
@@ -1870,22 +1873,26 @@ void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
       const auto composition = project->findComposition(
           compositionItem->compositionId).ptr.lock();
       if (composition) {
-        const QStringList sourceProperties = {
-            QStringLiteral("image.sourcePath"),
-            QStringLiteral("video.sourcePath"),
-            QStringLiteral("audio.sourcePath"),
-            QStringLiteral("svg.sourcePath")};
         for (const auto& layer : composition->allLayerRef()) {
           if (!layer) continue;
-          const QJsonObject layerJson = layer->toJson();
-          for (const QString& property : sourceProperties) {
-            const QString sourcePath = layerJson.value(property).toString().trimmed();
-            if (sourcePath.isEmpty()) continue;
-            const QString absolutePath = QDir::cleanPath(
-                QFileInfo(sourcePath).absoluteFilePath());
-            if (QFileInfo::exists(absolutePath)) {
-              assetPaths.append(absolutePath);
-            }
+          // Watcher discovery only needs source paths, not a serialization of
+          // every effect, keyframe, and particle emitter on every edit.
+          QString sourcePath;
+          if (const auto* image = dynamic_cast<const ArtifactImageLayer*>(layer.get())) {
+            sourcePath = image->sourcePath();
+          } else if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(layer.get())) {
+            sourcePath = video->sourcePath();
+          } else if (const auto* audio = dynamic_cast<const ArtifactAudioLayer*>(layer.get())) {
+            sourcePath = audio->sourcePath();
+          } else if (const auto* svg = dynamic_cast<const ArtifactSvgLayer*>(layer.get())) {
+            sourcePath = svg->sourcePath();
+          }
+          sourcePath = sourcePath.trimmed();
+          if (sourcePath.isEmpty()) continue;
+          const QString absolutePath = QDir::cleanPath(
+              QFileInfo(sourcePath).absoluteFilePath());
+          if (QFileInfo::exists(absolutePath)) {
+            assetPaths.append(absolutePath);
           }
         }
       }
@@ -1899,9 +1906,16 @@ void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
     collectFootage(root);
   }
   assetPaths.removeDuplicates();
-  if (!assetPaths.isEmpty()) {
-    fileWatcher_->addPaths(assetPaths);
+  QStringList removedPaths;
+  QStringList addedPaths;
+  for (const auto& path : watchedFiles) {
+    if (!assetPaths.contains(path)) removedPaths.append(path);
   }
+  for (const auto& path : assetPaths) {
+    if (!watchedFiles.contains(path)) addedPaths.append(path);
+  }
+  if (!removedPaths.isEmpty()) fileWatcher_->removePaths(removedPaths);
+  if (!addedPaths.isEmpty()) fileWatcher_->addPaths(addedPaths);
 }
 
 void ArtifactProjectService::Impl::updateAllAssetStatuses() {

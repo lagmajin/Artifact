@@ -119,8 +119,13 @@ public:
 
   int calculateInterval() const {
     // フレームレートと再生速度からタイマー間隔を計算
-    double fps = frameRate_.framerate() * playbackSpeed_;
-    return static_cast<int>(1000.0 / fps);
+    // 旧 int(1000/fps) は切捨てで60fps→16ms（加速ドリフト）になるため四捨五入する。
+    // PreciseTicker::Duration は milliseconds のためμs精度化は別途設計が必要。
+    const double fps = frameRate_.framerate() * playbackSpeed_;
+    if (!(fps > 0.0) || !std::isfinite(fps)) {
+      return 33;
+    }
+    return static_cast<int>(std::lround(1000.0 / fps));
   }
 
   /// In/Out Points を考慮した有効なフレーム範囲を取得

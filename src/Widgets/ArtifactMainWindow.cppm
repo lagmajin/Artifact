@@ -635,45 +635,89 @@ constexpr auto kUnsavedCloseGuardSatisfiedProperty =
 bool confirmUnsavedChangesForClose(QWidget *parent)
 {
   auto *service = ArtifactProjectService::instance();
-  if (!service || !service->hasProject()) {
-    return true;
-  }
-
-  auto project = service->getCurrentProjectSharedPtr();
-  if (!project) {
-    return true;
-  }
-
-  bool hasUnsavedChanges = project->isDirty();
+  auto project = service && service->hasProject()
+                     ? service->getCurrentProjectSharedPtr()
+                     : nullptr;
+  bool hasUnsavedChanges = project && project->isDirty();
   if (!hasUnsavedChanges) {
     if (auto *undoManager = UndoManager::instance()) {
       hasUnsavedChanges = undoManager->hasUnsavedChanges();
     }
   }
-  if (!hasUnsavedChanges) {
-    return true;
-  }
 
   QMessageBox box(parent);
-  box.setWindowTitle(QStringLiteral("保存の確認"));
-  box.setIcon(QMessageBox::Warning);
-  box.setText(QStringLiteral(
-      "プロジェクトに変更があります。終了前に保存しますか？"));
-  box.setInformativeText(QStringLiteral(
-      "未保存の変更は失われる可能性があります。"));
-  auto *saveButton = box.addButton(QStringLiteral("保存"),
-                                    QMessageBox::AcceptRole);
-  auto *discardButton = box.addButton(QStringLiteral("破棄"),
-                                       QMessageBox::DestructiveRole);
+  box.setWindowTitle(QStringLiteral("ArtifactStudio"));
+  QPalette palette = box.palette();
+  palette.setColor(QPalette::Window, QColor(25, 28, 30));
+  palette.setColor(QPalette::Base, QColor(25, 28, 30));
+  palette.setColor(QPalette::Button, QColor(35, 38, 41));
+  palette.setColor(QPalette::WindowText, QColor(242, 244, 246));
+  palette.setColor(QPalette::Text, QColor(214, 218, 222));
+  palette.setColor(QPalette::ButtonText, QColor(242, 244, 246));
+  palette.setColor(QPalette::Highlight, QColor(255, 181, 32));
+  palette.setColor(QPalette::HighlightedText, QColor(20, 22, 24));
+  box.setPalette(palette);
+  box.setMinimumWidth(520);
+
+  QPushButton *saveButton = nullptr;
+  QPushButton *discardButton = nullptr;
   auto *cancelButton = box.addButton(QStringLiteral("キャンセル"),
-                                      QMessageBox::RejectRole);
-  box.setDefaultButton(saveButton);
+                                     QMessageBox::RejectRole);
+  QPushButton *exitButton = nullptr;
+  if (hasUnsavedChanges) {
+    box.setIcon(QMessageBox::Warning);
+    box.setText(QStringLiteral("変更を保存して終了しますか？"));
+    const QString serviceProjectName = service
+                                           ? service->projectName().toQString()
+                                           : QString();
+    const QString projectName = serviceProjectName.isEmpty()
+                                    ? QStringLiteral("Untitled")
+                                    : serviceProjectName;
+    box.setInformativeText(QStringLiteral(
+        "プロジェクト「%1」に未保存の変更があります。\n"
+        "保存せずに終了すると、変更は失われます。").arg(projectName));
+    discardButton = box.addButton(QStringLiteral("保存せず終了"),
+                                  QMessageBox::DestructiveRole);
+    saveButton = box.addButton(QStringLiteral("保存して終了"),
+                               QMessageBox::AcceptRole);
+    QPalette savePalette = saveButton->palette();
+    savePalette.setColor(QPalette::Button, QColor(255, 181, 32));
+    savePalette.setColor(QPalette::ButtonText, QColor(20, 22, 24));
+    saveButton->setPalette(savePalette);
+  } else {
+    box.setIcon(QMessageBox::Information);
+    box.setText(QStringLiteral("ArtifactStudioを終了しますか？"));
+    box.setInformativeText(QStringLiteral("すべての変更は保存されています。"));
+    exitButton = box.addButton(QStringLiteral("終了"), QMessageBox::AcceptRole);
+    QPalette exitPalette = exitButton->palette();
+    exitPalette.setColor(QPalette::Button, QColor(255, 181, 32));
+    exitPalette.setColor(QPalette::ButtonText, QColor(20, 22, 24));
+    exitButton->setPalette(exitPalette);
+  }
+
+  // The common style opts every widget into styled backgrounds.  Keep message
+  // labels transparent so their per-label surface is not painted as a black
+  // band over this dialog's uniform background.
+  for (QLabel *label : box.findChildren<QLabel *>()) {
+    if (!label) {
+      continue;
+    }
+    label->setAttribute(Qt::WA_StyledBackground, false);
+    label->setAutoFillBackground(false);
+    label->setPalette(palette);
+  }
+
+  box.setDefaultButton(hasUnsavedChanges ? saveButton : exitButton);
   box.exec();
 
   if (box.clickedButton() == static_cast<QAbstractButton *>(cancelButton)) {
     return false;
   }
   if (box.clickedButton() == static_cast<QAbstractButton *>(discardButton)) {
+    return true;
+  }
+  if (!hasUnsavedChanges &&
+      box.clickedButton() == static_cast<QAbstractButton *>(exitButton)) {
     return true;
   }
 
@@ -3842,19 +3886,13 @@ void ArtifactMainWindow::closeEvent(QCloseEvent *event) {
     event->ignore();
     return;
   }
-  if (ArtifactMessageBox::confirmAction(
-          this, QStringLiteral("終了"),
-          QStringLiteral("Artifact を終了しますか？"))) {
-    event->accept();
+  event->accept();
     // QADS floating containers are independent top-level windows. Relying on
     // QApplication::lastWindowClosed can therefore leave the event loop alive
     // after the main editor disappears. Closing the main editor is an explicit
     // application-exit request, so terminate the event loop regardless of any
     // auxiliary/floating window that is still registered.
     QApplication::quit();
-  } else {
-    event->ignore();
-  }
 }
 
 void ArtifactMainWindow::showEvent(QShowEvent *event) {

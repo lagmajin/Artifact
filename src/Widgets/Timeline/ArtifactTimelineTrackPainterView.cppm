@@ -12,6 +12,7 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QFocusEvent>
 #include <QHash>
 #include <QIcon>
 #include <QKeyEvent>
@@ -85,6 +86,7 @@ import Artifact.Timeline.KeyframeUndoCommand;
 import Artifact.Timeline.KeyframeApplyCommands;
 import Time.Rational;
 import UI.ShortcutBindings;
+import Input.Operator;
 import Utils.Path;
 
 namespace Artifact {
@@ -11485,6 +11487,22 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
                    : QString()));
   update();
   event->accept();
+}
+
+void ArtifactTimelineTrackPainterView::focusInEvent(QFocusEvent* event) {
+  QWidget::focusInEvent(event);
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    input->setActiveContext(QStringLiteral("Panel.Timeline.Right"));
+  }
+}
+
+void ArtifactTimelineTrackPainterView::focusOutEvent(QFocusEvent* event) {
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    if (input->activeContext() == QStringLiteral("Panel.Timeline.Right")) {
+      input->setActiveContext(QStringLiteral("Global"));
+    }
+  }
+  QWidget::focusOutEvent(event);
 }
 
 void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {

@@ -42,6 +42,7 @@ import Artifact.Layer.Particle;
 import Artifact.Layer.Camera;
 import Artifact.Application.Manager;
 import Artifact.Widgets.CompositionEditor;
+import Artifact.Widgets.TransformGizmo;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Service.ActiveContext;
@@ -264,7 +265,13 @@ class ArtifactCompositionRenderWidget::Impl {
   QSize pendingResizeSize_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
-  QString lastRamPreviewFallbackSummary_;
+   // PERF: compare diagnostic components before building the summary
+   // string. The old code paid 4 QString allocs (.arg x4) every render.
+   bool lastRamPreviewFallback_ = false;
+   QString lastRamPreviewFallbackReason_;
+   bool lastRamPreviewPlaying_ = false;
+   bool lastRamPreviewAllowPlaying_ = false;
+   bool ramPreviewFallbackSummaryValid_ = false;
   CompositionViewportLayout viewportLayout_ = CompositionViewportLayout::Single;
   std::array<ViewState, 4> viewportStates_{};
   int activeViewportIndex_ = 0;
@@ -302,6 +309,7 @@ class ArtifactCompositionRenderWidget::Impl {
   int64_t dragFrame_ = 0;
   QPointF dragAppliedDelta_;
   std::chrono::steady_clock::time_point lastDragMutationNotify_{};
+  QString modalTransformNumericInput_;
   
   Impl() = default;
   ~Impl() { destroy(); }
@@ -533,16 +541,21 @@ class ArtifactCompositionRenderWidget::Impl {
      }
     }
     if (!isCurrentGeneration()) return;
-    const QString ramPreviewFallbackSummary =
-        QStringLiteral("ramPreviewFallback=%1 reason=%2 playing=%3 allowPlaying=%4")
-            .arg(useRamPreviewFallback ? 1 : 0)
-            .arg(ramPreviewFallbackReason)
-            .arg(playbackPlaying ? 1 : 0)
-            .arg(playbackAllowsRamFallbackWhilePlaying ? 1 : 0);
-    if (ramPreviewFallbackSummary != lastRamPreviewFallbackSummary_) {
-     lastRamPreviewFallbackSummary_ = ramPreviewFallbackSummary;
+    if (!ramPreviewFallbackSummaryValid_ ||
+        useRamPreviewFallback != lastRamPreviewFallback_ ||
+        ramPreviewFallbackReason != lastRamPreviewFallbackReason_ ||
+        playbackPlaying != lastRamPreviewPlaying_ ||
+        playbackAllowsRamFallbackWhilePlaying != lastRamPreviewAllowPlaying_) {
+     lastRamPreviewFallback_ = useRamPreviewFallback;
+     lastRamPreviewFallbackReason_ = ramPreviewFallbackReason;
+     lastRamPreviewPlaying_ = playbackPlaying;
+     lastRamPreviewAllowPlaying_ = playbackAllowsRamFallbackWhilePlaying;
+     ramPreviewFallbackSummaryValid_ = true;
      qCDebug(compositionWidgetLog) << "[CompositionRenderWidget][RamPreviewFallback]"
-                                   << ramPreviewFallbackSummary;
+                                   << "ramPreviewFallback=" << (useRamPreviewFallback ? 1 : 0)
+                                   << "reason=" << ramPreviewFallbackReason
+                                   << "playing=" << (playbackPlaying ? 1 : 0)
+                                   << "allowPlaying=" << (playbackAllowsRamFallbackWhilePlaying ? 1 : 0);
     }
     if (comp) {
      if (!isCurrentGeneration()) return;
@@ -924,8 +937,17 @@ void ArtifactCompositionRenderWidget::setClearColor(const FloatColor& color) {
  }
 
  void ArtifactCompositionRenderWidget::focusOutEvent(QFocusEvent* event) {
+  if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
+   if (auto* controller = editor->renderController();
+       controller && controller->isModalGizmoInteractionActive()) {
+    controller->cancelGizmoInteraction();
+    impl_->modalTransformNumericInput_.clear();
+    releaseMouse();
+   }
+  }
   if (auto* input = ArtifactCore::InputOperator::instance()) {
-    if (input->activeContext() == QStringLiteral("Viewport.Composition")) {
+    if (input->activeContext() == QStringLiteral("Viewport.Composition") ||
+        input->activeContext() == QStringLiteral("Modal.Transform")) {
       input->setActiveContext(QStringLiteral("Global"));
     }
   }
@@ -1036,6 +1058,26 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                                 << "modifiers:" << event->modifiers();
 
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+  if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
+   if (auto* controller = editor->renderController();
+       controller && controller->isModalGizmoInteractionActive() &&
+       (event->button() == Qt::LeftButton || event->button() == Qt::RightButton)) {
+    const bool committed = event->button() == Qt::LeftButton
+        ? controller->commitModalGizmoInteraction()
+        : controller->cancelGizmoInteraction();
+    if (committed) {
+     impl_->modalTransformNumericInput_.clear();
+     if (auto* input = ArtifactCore::InputOperator::instance()) {
+      input->setActiveContext(QStringLiteral("Viewport.Composition"));
+     }
+     releaseMouse();
+     impl_->updateHoverCursor(event->position());
+     impl_->requestRender();
+     event->accept();
+     return;
+    }
+   }
+  }
   if (event->button() == Qt::LeftButton && tm &&
       tm->activeTool() == ToolType::Zoom && impl_->renderer_) {
    impl_->zoomMarqueeStart_ = event->position();
@@ -1502,6 +1544,16 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                                 << "buttons:" << event->buttons();
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
 
+  if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
+   if (auto* controller = editor->renderController();
+       controller && controller->isModalGizmoInteractionActive()) {
+    controller->handleMouseMove(event->position());
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
+  }
+
   if ((impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||
        impl_->isDraggingParticleEffector_ ||
        impl_->isDraggingParticleInfluenceRadius_) &&
@@ -1756,6 +1808,109 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   auto& shortcuts = ShortcutBindings::instance();
   auto* renderController = editor ? editor->renderController() : nullptr;
   const auto activeTool = tm ? tm->activeTool() : ToolType::Selection;
+  if (event && !event->isAutoRepeat() && renderController) {
+   if (renderController->isModalGizmoInteractionActive()) {
+    const QPointF pointer = mapFromGlobal(QCursor::pos());
+    const auto finishModal = [&](bool committed) {
+     const bool finished = committed
+         ? renderController->commitModalGizmoInteraction()
+         : renderController->cancelGizmoInteraction();
+     if (!finished) return false;
+     impl_->modalTransformNumericInput_.clear();
+     if (auto* input = ArtifactCore::InputOperator::instance()) {
+      input->setActiveContext(QStringLiteral("Viewport.Composition"));
+     }
+     releaseMouse();
+     impl_->updateHoverCursor(pointer);
+     impl_->requestRender();
+     return true;
+    };
+    if (event->key() == Qt::Key_Escape) {
+     if (finishModal(false)) {
+      event->accept();
+      return;
+     }
+    }
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+     if (finishModal(true)) {
+      event->accept();
+      return;
+     }
+    }
+    if (event->key() == Qt::Key_X || event->key() == Qt::Key_Y ||
+        event->key() == Qt::Key_Z) {
+     const int axis = event->key() == Qt::Key_X ? 0
+                    : event->key() == Qt::Key_Y ? 1 : 2;
+     if (renderController->constrainModalGizmoInteraction(axis, pointer)) {
+      event->accept();
+      return;
+     }
+    }
+    if (event->key() == Qt::Key_Backspace) {
+     if (!impl_->modalTransformNumericInput_.isEmpty()) {
+      impl_->modalTransformNumericInput_.chop(1);
+      bool valid = false;
+      const float value = impl_->modalTransformNumericInput_.toFloat(&valid);
+      if (valid) {
+       renderController->setModalGizmoNumericInput(value, pointer);
+      } else {
+       renderController->clearModalGizmoNumericInput();
+      }
+     }
+     event->accept();
+     return;
+    }
+    const QString text = event->text();
+    if (text.size() == 1) {
+     const QChar character = text.front();
+     const bool digit = character.isDigit();
+     const bool decimal = character == QChar(u'.') &&
+         !impl_->modalTransformNumericInput_.contains(QChar(u'.'));
+     const bool sign = (character == QChar(u'-') || character == QChar(u'+')) &&
+         impl_->modalTransformNumericInput_.isEmpty();
+     if (digit || decimal || sign) {
+      impl_->modalTransformNumericInput_.append(character);
+      bool valid = false;
+      const float value = impl_->modalTransformNumericInput_.toFloat(&valid);
+      if (valid) {
+       renderController->setModalGizmoNumericInput(value, pointer);
+      }
+      event->accept();
+      return;
+     }
+    }
+    event->accept();
+    return;
+   }
+
+   if (event->modifiers() == Qt::NoModifier &&
+       (event->key() == Qt::Key_G || event->key() == Qt::Key_R ||
+        event->key() == Qt::Key_S)) {
+    const auto mode = event->key() == Qt::Key_G
+        ? TransformGizmo::Mode::Move
+        : event->key() == Qt::Key_R ? TransformGizmo::Mode::Rotate
+                                    : TransformGizmo::Mode::Scale;
+    if (renderController->beginModalGizmoInteraction(
+            mode, mapFromGlobal(QCursor::pos()))) {
+     impl_->modalTransformNumericInput_.clear();
+     if (auto* input = ArtifactCore::InputOperator::instance()) {
+      input->setActiveContext(QStringLiteral("Modal.Transform"));
+     }
+     setCursor(mode == TransformGizmo::Mode::Move
+                   ? hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                               Qt::ClosedHandCursor)
+                   : mode == TransformGizmo::Mode::Rotate
+                         ? hudCursor(QStringLiteral("hud_cursor_rotate.svg"),
+                                     Qt::CrossCursor)
+                         : hudCursor(QStringLiteral("hud_cursor_scale_uniform.svg"),
+                                     Qt::SizeAllCursor));
+     grabMouse();
+     impl_->requestRender();
+     event->accept();
+     return;
+    }
+   }
+  }
   if (event && !event->isAutoRepeat() && event->key() == Qt::Key_Escape &&
       (impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||
        impl_->isDraggingParticleEffector_ ||
@@ -1929,18 +2084,8 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
               zoomFit();
           }
       }
-      else if (event->key() == Qt::Key_R && event->modifiers() == Qt::NoModifier) {
-          rotateCanvas(0.0f);
-          event->accept();
-          return;
-      }
       else if (event->key() == Qt::Key_1 && (event->modifiers() & Qt::ControlModifier)) {
           zoom100();
-      }
-      else if (event->key() == Qt::Key_G) {
-          if (auto* ctrl = editor ? editor->renderController() : nullptr) {
-              ctrl->setShowGrid(!ctrl->isShowGrid());
-          }
       }
       else if (event->key() == Qt::Key_Apostrophe) {
           if (auto* ctrl = editor ? editor->renderController() : nullptr) {

@@ -1857,12 +1857,12 @@ void ArtifactLayerEditorWidget::setTargetLayer(const LayerID& id)
 
  void ArtifactLayerEditorWidget::resetView()
  {
- impl_->zoomLevel_ = 1.0f;
   if (impl_->renderer_) {
    impl_->renderer_->resetView();
+   impl_->zoomLevel_ = impl_->renderer_->getZoom();
    impl_->requestRender();
   }
-}
+ }
  
  void ArtifactLayerEditorWidget::fitToViewport()
   {

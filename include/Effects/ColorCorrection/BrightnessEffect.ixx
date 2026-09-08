@@ -49,6 +49,20 @@ public:
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 
     bool supportsGPU() const override { return true; }
+    bool appendGpuPointwiseNodes(ArtifactCore::PointwiseEffectStack& stack,
+                                 std::uint32_t& slot) const override {
+        if (std::abs(highlights_) > 1.0e-6f || std::abs(shadows_) > 1.0e-6f) return false;
+        if (std::abs(brightness_) > 1.0e-6f) {
+            stack.addNode(ArtifactCore::PointwiseNodeKind::Offset, slot);
+            stack.setParameter(slot++, brightness_);
+        }
+        if (std::abs(contrast_) > 1.0e-6f) {
+            const float c = std::clamp(contrast_, -0.999f, 0.999f);
+            stack.addNode(ArtifactCore::PointwiseNodeKind::Contrast, slot);
+            stack.setParameter(slot++, (1.0f + c) / (1.0f - c));
+        }
+        return slot < ArtifactCore::PointwiseEffectStack::kParameterSlotCount;
+    }
 };
 
 } // namespace Artifact

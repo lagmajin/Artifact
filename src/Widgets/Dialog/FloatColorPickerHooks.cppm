@@ -20,6 +20,7 @@ module;
 #include <QPushButton>
 #include <QLineEdit>
 #include <QDoubleSpinBox>
+#include <QAbstractSpinBox>
 #include <QSettings>
 #include <QStringList>
 #include <QTimerEvent>
@@ -34,6 +35,8 @@ module;
 #include <QColor>
 #include <QPen>
 #include <QPaintEvent>
+#include <QFrame>
+#include <QFont>
 
 module Artifact.Widgets.Dialog.FloatColorPickerHooks;
 
@@ -174,9 +177,9 @@ class ColorSample final : public QPushButton {
 public:
     ColorSample(ArtifactWidgets::FloatColorPicker* picker, ArtifactCore::FloatColor color, bool current)
         : QPushButton(picker), picker_(picker), color_(color), current_(current) {
-        setFixedSize(current ? 96 : 32, 32);
+        setFixedSize(current ? 156 : 38, current ? 44 : 38);
         setAutoDefault(false);
-        setAccessibleName(current ? QStringLiteral("選択中の色") : QColor::fromRgbF(color.r(), color.g(), color.b(), color.a()).name(QColor::HexArgb));
+        setAccessibleName(current ? QStringLiteral("Current color") : QColor::fromRgbF(color.r(), color.g(), color.b(), color.a()).name(QColor::HexArgb));
         setToolTip(accessibleName());
     }
 protected:
@@ -193,6 +196,24 @@ protected:
         picker_->colorChanged(color_); // Reuse the existing preview route.
     }
 };
+
+QFrame* makeSeparator(QWidget* parent)
+{
+    auto* separator = new QFrame(parent);
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Plain);
+    QPalette palette = separator->palette();
+    palette.setColor(QPalette::WindowText, QColor(62, 67, 75));
+    separator->setPalette(palette);
+    return separator;
+}
+
+void makeMuted(QLabel* label)
+{
+    QPalette palette = label->palette();
+    palette.setColor(QPalette::WindowText, QColor(174, 180, 190));
+    label->setPalette(palette);
+}
 
 class ChannelPresentation final : public QObject {
     ArtifactWidgets::FloatColorPicker* picker_;
@@ -409,24 +430,41 @@ void configureFloatColorPicker(QWidget* pickerRoot, ColorSelectionPurpose purpos
     for (auto* child : children) child->hide();
     delete picker->layout();
     auto* layout = new QVBoxLayout(picker);
-    layout->setContentsMargins(20, 18, 20, 18);
-    layout->setSpacing(14);
+    layout->setContentsMargins(28, 22, 28, 22);
+    layout->setSpacing(16);
     const bool creation = purpose == ColorSelectionPurpose::Creation;
-    auto* context = new QLabel(creation ? QStringLiteral("新規作成用の色") : QStringLiteral("既存の色を変更"), picker);
-    layout->addWidget(context);
+    auto* contextRow = new QHBoxLayout;
+    auto* context = new QLabel(creation ? QStringLiteral("Create color") : QStringLiteral("Edit color"), picker);
+    QFont contextFont = context->font();
+    contextFont.setBold(true);
+    contextFont.setPointSizeF(contextFont.pointSizeF() * 1.08);
+    context->setFont(contextFont);
+    contextRow->addWidget(context);
+    contextRow->addStretch();
+    auto* format = new QLabel(QStringLiteral("Linear sRGB  ·  float RGBA"), picker);
+    makeMuted(format);
+    contextRow->addWidget(format);
+    layout->addLayout(contextRow);
     auto* preview = new QHBoxLayout;
+    preview->setSpacing(14);
     if (!creation) {
-        preview->addWidget(new QLabel(QStringLiteral("変更前"), picker));
+        auto* previousLabel = new QLabel(QStringLiteral("Previous"), picker);
+        previousLabel->setMinimumWidth(62);
+        preview->addWidget(previousLabel);
         auto* previous = new ColorSample(picker, picker->getColor(), false);
-        previous->setFixedWidth(96);
-        previous->setAccessibleName(QStringLiteral("変更前の色に戻す"));
+        previous->setFixedSize(156, 44);
+        previous->setAccessibleName(QStringLiteral("Restore previous color"));
         previous->setToolTip(previous->accessibleName());
         preview->addWidget(previous);
     }
-    preview->addWidget(new QLabel(creation ? QStringLiteral("作成色") : QStringLiteral("変更後"), picker));
+    preview->addSpacing(18);
+    auto* currentLabel = new QLabel(creation ? QStringLiteral("Color") : QStringLiteral("New"), picker);
+    currentLabel->setMinimumWidth(42);
+    preview->addWidget(currentLabel);
     preview->addWidget(new ColorSample(picker, picker->getColor(), true));
     preview->addStretch();
     layout->addLayout(preview);
+    layout->addWidget(makeSeparator(picker));
     tabs->setExpanding(false);
     tabs->setTabVisible(0, true);
     tabs->setTabText(0, QStringLiteral("HSV"));
@@ -434,6 +472,9 @@ void configureFloatColorPicker(QWidget* pickerRoot, ColorSelectionPurpose purpos
     for (auto* label : pages->widget(0)->findChildren<QLabel*>())
         if (label->text() == QStringLiteral("B")) label->setText(QStringLiteral("V"));
     tabs->setCurrentIndex(1);
+    QFont tabFont = tabs->font();
+    tabFont.setBold(true);
+    tabs->setFont(tabFont);
     layout->addWidget(tabs); tabs->show();
     layout->addWidget(pages); pages->show();
     for (int page = 0; page < 3; ++page) {
@@ -442,7 +483,11 @@ void configureFloatColorPicker(QWidget* pickerRoot, ColorSelectionPurpose purpos
             sliders[channel]->setMinimumHeight(38);
             new ChannelPresentation(picker, sliders[channel], page * 3 + channel);
         }
-        if (auto* box = qobject_cast<QVBoxLayout*>(pages->widget(page)->layout())) box->setSpacing(10);
+        for (auto* spin : pages->widget(page)->findChildren<QAbstractSpinBox*>()) {
+            spin->setFixedWidth(78);
+            spin->setMinimumHeight(30);
+        }
+        if (auto* box = qobject_cast<QVBoxLayout*>(pages->widget(page)->layout())) box->setSpacing(12);
     }
     // Append to preserve the existing tab-index to stacked-page connection.
     pages->addWidget(new NumericColorModelPage(picker, true, pages));
@@ -450,18 +495,33 @@ void configureFloatColorPicker(QWidget* pickerRoot, ColorSelectionPurpose purpos
     pages->addWidget(new NumericColorModelPage(picker, false, pages));
     tabs->addTab(QStringLiteral("XYZ"));
     auto* alphaRow = new QHBoxLayout;
-    alphaRow->addWidget(new QLabel(QStringLiteral("A"), picker));
+    alphaRow->setSpacing(12);
+    auto* alphaLabel = new QLabel(QStringLiteral("A"), picker);
+    alphaLabel->setFixedWidth(24);
+    alphaRow->addWidget(alphaLabel);
     alphaRow->addWidget(alpha, 1); alpha->show(); alpha->setMinimumHeight(38);
+    alphaSpin->setFixedWidth(78);
+    alphaSpin->setMinimumHeight(30);
     alphaRow->addWidget(alphaSpin); alphaSpin->show();
     new ChannelPresentation(picker, alpha, 9);
     layout->addLayout(alphaRow);
     auto* hexRow = new QHBoxLayout;
-    hexRow->addWidget(new QLabel(QStringLiteral("HEX"), picker));
-    hex->setFixedWidth(150); hex->setToolTip(QStringLiteral("RRGGBB または RRGGBBAA"));
+    hexRow->setSpacing(12);
+    auto* hexLabel = new QLabel(QStringLiteral("HEX"), picker);
+    hexLabel->setFixedWidth(36);
+    hexRow->addWidget(hexLabel);
+    hex->setFixedWidth(190); hex->setMinimumHeight(32); hex->setToolTip(QStringLiteral("RRGGBB or RRGGBBAA"));
     hexRow->addWidget(hex); hex->show(); hexRow->addStretch();
-    hexRow->addWidget(new QLabel(QStringLiteral("RGB / Alpha  0–1"), picker));
+    auto* numericHint = new QLabel(QStringLiteral("RGB / Alpha  0–1"), picker);
+    makeMuted(numericHint);
+    hexRow->addWidget(numericHint);
     layout->addLayout(hexRow);
-    layout->addWidget(new QLabel(QStringLiteral("最近確定した色"), picker));
+    layout->addWidget(makeSeparator(picker));
+    auto* recentLabel = new QLabel(QStringLiteral("Recent colors"), picker);
+    QFont recentFont = recentLabel->font();
+    recentFont.setBold(true);
+    recentLabel->setFont(recentFont);
+    layout->addWidget(recentLabel);
     auto* history = new QHBoxLayout;
     const auto recent = QSettings().value(QStringLiteral("ColorPicker/recentFloatRgba")).toStringList();
     int count = 0;
@@ -480,18 +540,29 @@ void configureFloatColorPicker(QWidget* pickerRoot, ColorSelectionPurpose purpos
             ArtifactCore::FloatColor(values[0], values[1], values[2], values[3]), false));
         if (++count == 12) break;
     }
-    if (!count) history->addWidget(new QLabel(QStringLiteral("色を確定すると、ここに保存されます"), picker));
+    if (!count) {
+        auto* emptyHistory = new QLabel(QStringLiteral("Applied colors will appear here."), picker);
+        makeMuted(emptyHistory);
+        history->addWidget(emptyHistory);
+    }
     history->addStretch(); layout->addLayout(history);
+    layout->addWidget(makeSeparator(picker));
     auto* footer = new QHBoxLayout;
-    buttons[0]->setText(creation ? QStringLiteral("初期色に戻す") : QStringLiteral("変更前に戻す"));
-    buttons[1]->setText(creation ? QStringLiteral("この色を使う") : QStringLiteral("変更を確定"));
-    buttons[2]->setText(QStringLiteral("キャンセル"));
+    buttons[0]->setText(creation ? QStringLiteral("Reset") : QStringLiteral("Restore previous"));
+    buttons[1]->setText(creation ? QStringLiteral("Use color") : QStringLiteral("Apply"));
+    buttons[2]->setText(QStringLiteral("Cancel"));
     footer->addWidget(buttons[0]); footer->addStretch();
     footer->addWidget(buttons[2]); footer->addWidget(buttons[1]);
-    for (auto* button : buttons) { button->show(); button->setMinimumHeight(32); }
+    for (auto* button : buttons) { button->show(); button->setMinimumSize(108, 36); }
+    buttons[1]->setDefault(true);
+    QPalette primaryPalette = buttons[1]->palette();
+    primaryPalette.setColor(QPalette::Button, QColor(43, 111, 232));
+    primaryPalette.setColor(QPalette::ButtonText, Qt::white);
+    buttons[1]->setPalette(primaryPalette);
+    buttons[1]->setAutoFillBackground(true);
     layout->addLayout(footer);
-    picker->setMinimumSize(560, 440);
-    picker->resize(620, 460);
+    picker->setMinimumSize(700, 540);
+    picker->resize(820, 600);
     new PickerPresentation(picker);
 }
 

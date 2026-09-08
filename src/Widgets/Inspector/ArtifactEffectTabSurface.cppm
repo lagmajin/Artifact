@@ -2,8 +2,10 @@ module;
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QPen>
 #include <QVBoxLayout>
 #include <QToolTip>
+#include <cmath>
 
 module Artifact.Widgets.Inspector.EffectTabSurface;
 
@@ -26,7 +28,7 @@ class EffectTabCanvas final : public QWidget {
 class OfxHostStatusWidget final : public QWidget {
  public:
   explicit OfxHostStatusWidget(QWidget* parent = nullptr) : QWidget(parent) {
-    setFixedHeight(30);
+    setFixedHeight(48);
     setCursor(Qt::PointingHandCursor);
     setToolTip(QStringLiteral("Click to rescan OFX plug-ins"));
     setAccessibleName(QStringLiteral("OFX plug-in status"));
@@ -51,20 +53,36 @@ class OfxHostStatusWidget final : public QWidget {
     const QPalette pal = palette();
     painter.fillRect(rect(), pal.color(QPalette::AlternateBase));
     painter.setPen(pal.color(QPalette::Mid));
+    painter.drawLine(rect().topLeft(), rect().topRight());
     painter.drawLine(rect().bottomLeft(), rect().bottomRight());
     painter.setPen(pal.color(QPalette::Text));
-    painter.drawText(QRect(12, 0, width() - 24, height()),
+    painter.drawText(QRect(16, 0, width() - 150, height()),
                      Qt::AlignVCenter | Qt::AlignLeft, text_);
     painter.setPen(pal.color(QPalette::PlaceholderText));
-    painter.drawText(QRect(12, 0, width() - 24, height()),
+    painter.drawText(QRect(16, 0, width() - 54, height()),
                      Qt::AlignVCenter | Qt::AlignRight,
                      QStringLiteral("Rescan"));
+
+    const int centerX = width() - 24;
+    const int centerY = height() / 2;
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(pal.color(QPalette::Text), 2));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(QPoint(centerX, centerY), 7, 7);
+    painter.drawEllipse(QPoint(centerX, centerY), 2, 2);
+    for (int i = 0; i < 8; ++i) {
+      const double angle = i * 3.14159265358979323846 / 4.0;
+      painter.drawLine(QPointF(centerX + std::cos(angle) * 8.0,
+                               centerY + std::sin(angle) * 8.0),
+                       QPointF(centerX + std::cos(angle) * 11.0,
+                               centerY + std::sin(angle) * 11.0));
+    }
   }
 
  private:
   void refreshText() {
     const auto& plugins = Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins();
-    text_ = QStringLiteral("Plug-ins  ·  %1 loaded%2")
+    text_ = QStringLiteral("Plug-ins   %1 loaded%2")
                 .arg(static_cast<qsizetype>(plugins.size()))
                 .arg(QString());
     QStringList details;

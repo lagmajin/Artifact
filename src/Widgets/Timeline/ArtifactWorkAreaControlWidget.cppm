@@ -5,6 +5,7 @@ module;
 #include <QFontMetrics>
 #include <QPaintEvent>
 #include <QPen>
+#include <QPointF>
 #include <QRect>
 #include <QRectF>
 #include <QString>
@@ -231,26 +232,33 @@ namespace Artifact
                fm.elidedText(durationText, Qt::ElideRight, labelRect.width()));
   }
 
-  // Handles (Blue AE style) - highlight on hover
+  // High-contrast range handles use the same two-line grip language as the
+  // navigator, while retaining the work area's warm color role.
   const int handleTopInset = 1;
   const int handleHeight = std::max(1, height() - 2);
+  const auto drawHandle = [&p, &theme, &workAreaColor](
+                              const QRectF& handleRect, bool highlighted) {
+   p.setBrush(highlighted ? workAreaColor.lighter(128)
+                          : workAreaColor.lighter(112));
+   p.setPen(QPen(theme.border.darker(145), 1));
+   p.drawRoundedRect(handleRect, 2, 2);
+   p.setPen(QPen(QColor(63, 49, 28), 2));
+   const qreal centerX = handleRect.center().x();
+   const qreal gripTop = handleRect.top() + 6.0;
+   const qreal gripBottom = handleRect.bottom() - 6.0;
+   p.drawLine(QPointF(centerX - 2.0, gripTop),
+              QPointF(centerX - 2.0, gripBottom));
+   p.drawLine(QPointF(centerX + 2.0, gripTop),
+              QPointF(centerX + 2.0, gripBottom));
+  };
   
   // Left handle
-  if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(workAreaColor.lighter(118));
-  } else {
-    p.setBrush(workAreaColor.darker(108));
-  }
-  p.setPen(QPen(theme.border.darker(120), 1));
-  p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
+  drawHandle(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight),
+             impl_->hoveringLeft || impl_->draggingLeft);
   
   // Right handle
-  if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(workAreaColor.lighter(118));
-  } else {
-    p.setBrush(workAreaColor.darker(108));
-  }
-  p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
+  drawHandle(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight),
+             impl_->hoveringRight || impl_->draggingRight);
 
   const float safeLastFrame = std::max(1.0f, totalFrames - 1.0f);
   const float clampedFrame = std::clamp(currentFrame, 0.0f, safeLastFrame);

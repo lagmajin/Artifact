@@ -3,7 +3,6 @@ module;
 #include <QTime>
 #include <QWidget>
 #include <QDialog>
-#include <QTabWidget>
 #include <QTabBar>
 #include <QDialogButtonBox>
 #include <QBoxLayout>
@@ -33,6 +32,7 @@ module;
 #include <QSignalBlocker>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QFontDatabase>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -46,6 +46,7 @@ module;
 #include <QProxyStyle>
 #include <QStyleOption>
 #include <QSet>
+#include <QScrollArea>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -413,12 +414,12 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   QElapsedTimer ctorTimer;
   ctorTimer.start();
   auto mainLayout = new QVBoxLayout(this);
-  mainLayout->setContentsMargins(4, 12, 4, 8);
-  mainLayout->setSpacing(10);
+  mainLayout->setContentsMargins(4, 8, 4, 4);
+  mainLayout->setSpacing(6);
 
   auto formLayout = new QFormLayout();
   formLayout->setLabelAlignment(Qt::AlignRight);
-  formLayout->setVerticalSpacing(14);
+  formLayout->setVerticalSpacing(8);
   formLayout->setHorizontalSpacing(20);
 
   impl_->widthSpinBox = new DragSpinBox();
@@ -630,8 +631,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   }
 
-  auto anchorLabel = new QLabel(QStringLiteral("Anchor Point"), this);
-  formLayout->addRow(anchorLabel);
+  auto anchorLabel = new QLabel(QStringLiteral("Anchor Point:"), this);
   auto* anchorWidget = new QWidget(this);
   auto* anchorRootLayout = new QHBoxLayout(anchorWidget);
   anchorRootLayout->setContentsMargins(0, 0, 0, 0);
@@ -667,7 +667,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
       auto* button = new QPushButton(anchorLabels[row][col], anchorPresetHost);
       button->setCheckable(true);
       button->setToolTip(anchorTooltips[row][col]);
-      button->setFixedSize(38, 38);
+      button->setFixedSize(34, 34);
       button->setFont(QFont(QStringLiteral("Segoe UI Symbol"), 13));
       impl_->anchorPresetButtons[row][col] = button;
       impl_->anchorPresetGroup->addButton(button, static_cast<int>(anchorPresets[row][col]));
@@ -697,7 +697,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   anchorRootLayout->addWidget(anchorPresetHost, 0, Qt::AlignTop);
   anchorRootLayout->addWidget(anchorValueHost, 1);
 
-  formLayout->addRow(anchorWidget);
+  formLayout->addRow(anchorLabel, anchorWidget);
 
   const auto syncAnchorPresetFromSpinBoxes = [this]() {
     if (!impl_ || !impl_->anchorPresetGroup || !impl_->anchorXSpinBox || !impl_->anchorYSpinBox) {
@@ -765,7 +765,6 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
  public:
   Impl(CreateCompositionDialog* pDialog = nullptr);
   CompositionSettingPage* compositionSettingPage_ = nullptr;
-  QTabWidget* pTabWidget = nullptr;
   QPoint m_dragPosition;
   bool m_isDragging = false;
   bool okCalled_ = false;
@@ -816,10 +815,18 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   auto* header = new CompositionDialogHeader(this);
   mainLayout->addWidget(header);
 
-  // Content Area
-  auto content = new QVBoxLayout();
-  content->setContentsMargins(20, 20, 20, 10);
-  content->setSpacing(15);
+  // Keep the action footer visible when the form grows at high DPI or with a
+  // larger system font.  The Basic page used to be nested in a hidden-tab
+  // widget, whose viewport could clip the Anchor Point controls.
+  auto* contentScrollArea = new QScrollArea(this);
+  contentScrollArea->setWidgetResizable(true);
+  contentScrollArea->setFrameShape(QFrame::NoFrame);
+  contentScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  contentScrollArea->setAccessibleName(QStringLiteral("Composition settings content"));
+  auto* contentHost = new QWidget(contentScrollArea);
+  auto content = new QVBoxLayout(contentHost);
+  content->setContentsMargins(20, 12, 20, 6);
+  content->setSpacing(8);
 
   auto nameRow = new QHBoxLayout();
   auto nameLbl = new QLabel("Name:");
@@ -832,18 +839,15 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   nameRow->addWidget(impl_->compositionNameEdit_);
   content->addLayout(nameRow);
 
-  impl_->pTabWidget = new QTabWidget();
-  impl_->pTabWidget->setAccessibleName(QStringLiteral("Composition settings sections"));
-  impl_->compositionSettingPage_ = new CompositionSettingPage();
-  impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Basic");
-  impl_->pTabWidget->tabBar()->hide();
+  impl_->compositionSettingPage_ = new CompositionSettingPage(contentHost);
   auto* basicHeading = new QLabel(QStringLiteral("Basic"));
   QFont sectionFont = font(); sectionFont.setBold(true);
   basicHeading->setFont(sectionFont);
   content->addWidget(basicHeading);
-  impl_->pTabWidget->setMinimumWidth(520);
-  content->addWidget(impl_->pTabWidget);
-  mainLayout->addLayout(content);
+  impl_->compositionSettingPage_->setMinimumWidth(520);
+  content->addWidget(impl_->compositionSettingPage_);
+  contentScrollArea->setWidget(contentHost);
+  mainLayout->addWidget(contentScrollArea, 1);
 
   // Footer / Buttons
   auto footer = new QWidget();
@@ -893,7 +897,9 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
         widget->accessibleName() == QStringLiteral("Start timecode");
     if (number) {
       fieldPalette.setColor(QPalette::Text,QColor(246,198,111));
-      widget->setFont(QFont(QStringLiteral("Consolas"),11));
+      QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+      fixedFont.setPointSize(11);
+      widget->setFont(fixedFont);
     }
     // Preserve the actual color of the background swatch.
     if (widget->accessibleName() != QStringLiteral("Background color")) widget->setPalette(fieldPalette);

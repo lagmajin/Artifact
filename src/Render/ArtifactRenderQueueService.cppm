@@ -2821,7 +2821,11 @@ namespace Artifact
             }
 
             const QString fpsStr = QString::number(job.frameRate > 0.0 ? job.frameRate : 30.0, 'f', 2);
-            const QString inputPattern = QDir(sequenceDir).filePath(QStringLiteral("%1_%05d.png").arg(job.compositionId.toString()));
+            const QString inputPattern = QDir(sequenceDir).filePath(
+                QStringLiteral("%1_%2%3d.png")
+                    .arg(job.compositionId.toString())
+                    .arg(QLatin1Char('%'))
+                    .arg(std::clamp(job.framePadding, 1, 10)));
             
             QStringList args;
             args << QStringLiteral("-y")
@@ -3048,7 +3052,10 @@ namespace Artifact
             const QString fileName = QStringLiteral("%1_%2_%3.png").arg(safeName).arg(index + 1).arg(stamp);
 
             if (target.isEmpty()) {
-                return QDir(QDir::homePath() + QStringLiteral("/Desktop")).filePath(fileName);
+                QString desktop = QStandardPaths::writableLocation(
+                    QStandardPaths::DesktopLocation);
+                if (desktop.trimmed().isEmpty()) desktop = QDir::homePath();
+                return QDir(desktop).filePath(fileName);
             }
 
             QFileInfo info(target);
@@ -3058,7 +3065,9 @@ namespace Artifact
 
             QString dir = info.absolutePath();
             if (dir.isEmpty()) {
-                dir = QDir::homePath() + QStringLiteral("/Desktop");
+                dir = QStandardPaths::writableLocation(
+                    QStandardPaths::DesktopLocation);
+                if (dir.trimmed().isEmpty()) dir = QDir::homePath();
             }
             QString base = info.completeBaseName();
             if (base.isEmpty()) {
@@ -3874,7 +3883,7 @@ namespace Artifact
         job.compositionId = ArtifactCore::CompositionID::Nil();
         job.compositionName = "New Render Job";
         job.status = ArtifactRenderJob::Status::Pending;
-        job.outputPath = QDir::homePath() + "/Desktop/output.mp4";
+        job.outputPath.clear();
         job.outputFormat = "MP4";
         job.codec = "H.264";
         job.codecProfile.clear();
@@ -3896,7 +3905,7 @@ namespace Artifact
         job.compositionId = compositionId;
         job.compositionName = compositionName.trimmed().isEmpty() ? QStringLiteral("Composition") : compositionName.trimmed();
         job.status = ArtifactRenderJob::Status::Pending;
-        job.outputPath = QDir::homePath() + "/Desktop/output.mp4";
+        job.outputPath.clear();
         job.outputFormat = "MP4";
         job.codec = "H.264";
         job.codecProfile.clear();
@@ -3945,7 +3954,7 @@ namespace Artifact
         job.compositionId = compositionId;
         job.compositionName = compositionName.trimmed().isEmpty() ? QStringLiteral("Composition") : compositionName.trimmed();
         job.status = ArtifactRenderJob::Status::Pending;
-        job.outputPath = QDir::homePath() + "/Desktop/output";
+        job.outputPath.clear();
         job.outputFormat = "MP4";
         job.codec = "H.264";
         job.codecProfile.clear();
@@ -3964,12 +3973,9 @@ namespace Artifact
             job.codec = preset->codec;
             job.codecProfile = preset->codecProfile;
             if (preset->isImageSequence) {
-                job.outputPath = QDir::homePath() + "/Desktop/output_sequence";
+                job.outputPath = defaultOutputPathForJob(job);
             } else if (preset->isAnimatedImage) {
-                const QString suffix = preset->container.trimmed().isEmpty()
-                    ? QStringLiteral("gif")
-                    : preset->container.trimmed();
-                job.outputPath = QDir::homePath() + "/Desktop/output." + suffix;
+                job.outputPath = defaultOutputPathForJob(job);
             } else {
                 job.outputPath = defaultOutputPathForJob(job);
             }
@@ -7569,7 +7575,9 @@ namespace Artifact
         auto& pm = ArtifactProjectManager::getInstance();
         const auto items = pm.projectItems();
         int added = 0;
-        const QString desktop = QDir::homePath() + QStringLiteral("/Desktop");
+        QString desktop = QStandardPaths::writableLocation(
+            QStandardPaths::DesktopLocation);
+        if (desktop.trimmed().isEmpty()) desktop = QDir::homePath();
         const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
 
         for (const auto* item : items) {
@@ -7615,7 +7623,9 @@ namespace Artifact
     {
         auto& pm = ArtifactProjectManager::getInstance();
         int added = 0;
-        const QString desktop = QDir::homePath() + QStringLiteral("/Desktop");
+        QString desktop = QStandardPaths::writableLocation(
+            QStandardPaths::DesktopLocation);
+        if (desktop.trimmed().isEmpty()) desktop = QDir::homePath();
         const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
 
         for (const auto& compId : compIds) {

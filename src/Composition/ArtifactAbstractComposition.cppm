@@ -1637,6 +1637,20 @@ void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
   auto world = physics.getCompositionRigidWorld(id_);
   if (!world) { jointSignatures_.clear(); return; }
 
+  // PERF fast path (provably equivalent): no joints, no bodies, no cached
+  // signatures. Enable/disable/sync above already ran, so newly created
+  // bodies fall through to the full path via hasBodies(). Below this point
+  // every branch needs a body or joint: cleanup has nothing to clean,
+  // proxies only exist via the joint path (needs a primary body), and the
+  // per-owner loop can only reach the removal branch whose
+  // removeLayerJoint(miss)/removeBody(null)/erase(miss) are all no-ops.
+  // A stale signature with an empty world also falls through and self-heals
+  // via the erase in that branch.
+  if (world->getJoints().empty() && !world->hasBodies() &&
+      jointSignatures_.empty()) {
+    return;
+  }
+
   // Deleted layers cannot leave invisible bodies or owned anchor proxies.
   for (const auto& body : world->getBodies()) {
     if (body && body->ownerLayerId &&
@@ -1826,6 +1840,10 @@ void ArtifactAbstractComposition::Impl::evaluateJointBreaks()
 {
   auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(id_);
   if (!world) return;
+  // PERF: the loop body requires hasLayerJoint (a live joint). With no
+  // joints every iteration hits `continue`; the property lookups are pure
+  // overhead for plain compositions.
+  if (world->getJoints().empty()) return;
   for (const auto& layer : layerMultiIndex_.all()) {
     if (!layer || layer->isJointBroken() || !layerBooleanProperty(
             layer, QStringLiteral("component.joint.enabled"), false)) continue;

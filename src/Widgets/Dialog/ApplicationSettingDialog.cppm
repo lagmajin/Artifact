@@ -2,6 +2,7 @@ module;
 #include <QCheckBox>
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -16,6 +17,7 @@ module;
 #include <QFileInfo>
 #include <QFileInfoList>
 #include <QFont>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -37,6 +39,7 @@ module;
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
+#include <QStringList>
 #include <QTableWidget>
 #include <QThread>
 #include <QTimer>
@@ -635,6 +638,35 @@ public:
   QComboBox *gpuDeviceCombo_;
 };
 
+namespace {
+
+QLabel* makePreviewSectionHeading(const QString& text, QWidget* parent) {
+  auto* heading = new QLabel(text, parent);
+  QFont font = heading->font();
+  font.setBold(true);
+  font.setPointSizeF(font.pointSizeF() + 1.0);
+  heading->setFont(font);
+  heading->setAccessibleName(text);
+  return heading;
+}
+
+QLabel* makePreviewFieldLabel(const QString& text, QWidget* parent) {
+  auto* label = new QLabel(text, parent);
+  label->setMinimumWidth(188);
+  label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  return label;
+}
+
+QFrame* makePreviewDivider(QWidget* parent) {
+  auto* divider = new QFrame(parent);
+  divider->setFrameShape(QFrame::HLine);
+  divider->setFrameShadow(QFrame::Plain);
+  divider->setFixedHeight(1);
+  return divider;
+}
+
+} // namespace
+
 PreviewSettingPage::Impl::Impl() {}
 
 PreviewSettingPage::Impl::~Impl() {}
@@ -644,33 +676,30 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   setAccessibleName(QStringLiteral("Preview settings"));
   setAccessibleDescription(QStringLiteral("Configure preview quality, caches, thumbnails, and GPU acceleration"));
   auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(18, 8, 18, 18);
+  mainLayout->setSpacing(12);
 
-  // Preview Quality Group
-  auto *qualityGroup = new QGroupBox("Preview Quality", this);
-  auto *qualityLayout = new QVBoxLayout(qualityGroup);
+  auto *qualityLayout = new QVBoxLayout();
+  qualityLayout->setSpacing(10);
+  qualityLayout->addWidget(makePreviewSectionHeading(QStringLiteral("Preview Quality"), this));
 
   // Quality Preset
   auto *presetLayout = new QHBoxLayout();
-  presetLayout->addWidget(new QLabel("Quality Preset:", this));
+  presetLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Quality Preset"), this));
   impl_->previewQualityCombo_ = new QComboBox(this);
   impl_->previewQualityCombo_->setAccessibleName(QStringLiteral("Preview quality preset"));
   impl_->previewQualityCombo_->setAccessibleDescription(QStringLiteral("Choose the quality preset used for previews"));
   impl_->previewQualityCombo_->addItems(
       {"Draft", "Fast", "Adaptive", "Full Quality"});
   impl_->previewQualityCombo_->setCurrentText("Adaptive");
+  impl_->previewQualityCombo_->setMinimumSize(220, 28);
   presetLayout->addWidget(impl_->previewQualityCombo_);
   presetLayout->addStretch();
   qualityLayout->addLayout(presetLayout);
 
   // Preview Resolution
-  auto *resolutionLayout = new QVBoxLayout();
-  auto *resLabelLayout = new QHBoxLayout();
-  resLabelLayout->addWidget(new QLabel("Preview Resolution:", this));
-  impl_->resolutionLabel_ = new QLabel("50%", this);
-  resLabelLayout->addWidget(impl_->resolutionLabel_);
-  resLabelLayout->addStretch();
-  resolutionLayout->addLayout(resLabelLayout);
-
+  auto *resolutionLayout = new QHBoxLayout();
+  resolutionLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Preview Resolution"), this));
   impl_->previewResolutionSlider_ = new QSlider(Qt::Horizontal, this);
   impl_->previewResolutionSlider_->setAccessibleName(QStringLiteral("Preview resolution"));
   impl_->previewResolutionSlider_->setAccessibleDescription(QStringLiteral("Set preview resolution from 25 to 100 percent"));
@@ -678,7 +707,12 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   impl_->previewResolutionSlider_->setValue(50);
   impl_->previewResolutionSlider_->setTickPosition(QSlider::TicksBelow);
   impl_->previewResolutionSlider_->setTickInterval(25);
+  impl_->previewResolutionSlider_->setMinimumWidth(220);
   resolutionLayout->addWidget(impl_->previewResolutionSlider_);
+  impl_->resolutionLabel_ = new QLabel("50%", this);
+  impl_->resolutionLabel_->setMinimumWidth(42);
+  resolutionLayout->addWidget(impl_->resolutionLabel_);
+  resolutionLayout->addStretch();
   qualityLayout->addLayout(resolutionLayout);
 
   QObject::connect(impl_->previewResolutionSlider_, &QSlider::valueChanged,
@@ -689,25 +723,27 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
 
   // Anti-aliasing mode
   auto *aaLayout = new QHBoxLayout();
-  aaLayout->addWidget(new QLabel("Anti-aliasing:", this));
+  aaLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Anti-aliasing"), this));
   impl_->antiAliasingModeCombo_ = new QComboBox(this);
   impl_->antiAliasingModeCombo_->setAccessibleName(QStringLiteral("Anti-aliasing mode"));
   impl_->antiAliasingModeCombo_->setAccessibleDescription(QStringLiteral("Choose the viewport anti-aliasing mode for 3D content"));
   impl_->antiAliasingModeCombo_->addItem(QStringLiteral("Off"), 0);
   impl_->antiAliasingModeCombo_->addItem(QStringLiteral("FXAA"), 1);
   impl_->antiAliasingModeCombo_->addItem(QStringLiteral("MSAA 4x"), 2);
+  impl_->antiAliasingModeCombo_->setMinimumSize(220, 28);
   aaLayout->addWidget(impl_->antiAliasingModeCombo_);
   aaLayout->addStretch();
   qualityLayout->addLayout(aaLayout);
 
   // Motion blur shutter
   auto *shutterLayout = new QHBoxLayout();
-  shutterLayout->addWidget(new QLabel("Motion Blur Shutter Angle:", this));
+  shutterLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Motion Blur Shutter Angle"), this));
   impl_->shutterAngleSpinBox_ = new QDoubleSpinBox(this);
   impl_->shutterAngleSpinBox_->setAccessibleName(QStringLiteral("Motion blur shutter angle"));
   impl_->shutterAngleSpinBox_->setAccessibleDescription(QStringLiteral("Shutter angle in degrees used by timeline motion blur"));
   impl_->shutterAngleSpinBox_->setRange(0.0, 720.0);
   impl_->shutterAngleSpinBox_->setSuffix(QString::fromUtf8("°"));
+  impl_->shutterAngleSpinBox_->setMinimumSize(130, 28);
   shutterLayout->addWidget(impl_->shutterAngleSpinBox_);
   shutterLayout->addWidget(new QLabel("Phase:", this));
   impl_->shutterPhaseSpinBox_ = new QDoubleSpinBox(this);
@@ -715,15 +751,17 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   impl_->shutterPhaseSpinBox_->setAccessibleDescription(QStringLiteral("Shutter phase offset in degrees applied to motion blur samples"));
   impl_->shutterPhaseSpinBox_->setRange(-360.0, 360.0);
   impl_->shutterPhaseSpinBox_->setSuffix(QString::fromUtf8("°"));
+  impl_->shutterPhaseSpinBox_->setMinimumSize(130, 28);
   shutterLayout->addWidget(impl_->shutterPhaseSpinBox_);
   shutterLayout->addStretch();
   qualityLayout->addLayout(shutterLayout);
 
-  mainLayout->addWidget(qualityGroup);
+  mainLayout->addLayout(qualityLayout);
+  mainLayout->addWidget(makePreviewDivider(this));
 
-  // Cache Settings Group
-  auto *cacheGroup = new QGroupBox("Cache Settings", this);
-  auto *cacheLayout = new QVBoxLayout(cacheGroup);
+  auto *cacheLayout = new QVBoxLayout();
+  cacheLayout->setSpacing(10);
+  cacheLayout->addWidget(makePreviewSectionHeading(QStringLiteral("Cache"), this));
 
   impl_->enableCacheCheckBox_ = new QCheckBox("Enable RAM cache", this);
   impl_->enableCacheCheckBox_->setAccessibleName(QStringLiteral("Enable RAM cache"));
@@ -732,7 +770,7 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   cacheLayout->addWidget(impl_->enableCacheCheckBox_);
 
   auto *cacheSizeLayout = new QHBoxLayout();
-  cacheSizeLayout->addWidget(new QLabel("Cache Size:", this));
+  cacheSizeLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Cache Size"), this));
   impl_->cacheSizeSpinBox_ = new QSpinBox(this);
   impl_->cacheSizeSpinBox_->setAccessibleName(QStringLiteral("RAM cache size"));
   impl_->cacheSizeSpinBox_->setAccessibleDescription(QStringLiteral("Maximum RAM cache size in megabytes"));
@@ -740,6 +778,7 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   impl_->cacheSizeSpinBox_->setValue(4096);
   impl_->cacheSizeSpinBox_->setSuffix(" MB");
   impl_->cacheSizeSpinBox_->setSingleStep(512);
+  impl_->cacheSizeSpinBox_->setMinimumSize(160, 28);
   cacheSizeLayout->addWidget(impl_->cacheSizeSpinBox_);
   cacheSizeLayout->addStretch();
   cacheLayout->addLayout(cacheSizeLayout);
@@ -750,11 +789,12 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   impl_->enableDiskCacheCheckBox_->setChecked(false);
   cacheLayout->addWidget(impl_->enableDiskCacheCheckBox_);
 
-  mainLayout->addWidget(cacheGroup);
+  mainLayout->addLayout(cacheLayout);
+  mainLayout->addWidget(makePreviewDivider(this));
 
-  // Thumbnail Settings Group (using FFmpegThumbnailExtractor)
-  auto *thumbnailGroup = new QGroupBox("Thumbnail Generation", this);
-  auto *thumbnailLayout = new QVBoxLayout(thumbnailGroup);
+  auto *thumbnailLayout = new QVBoxLayout();
+  thumbnailLayout->setSpacing(10);
+  thumbnailLayout->addWidget(makePreviewSectionHeading(QStringLiteral("Thumbnail Generation"), this));
 
   impl_->generateThumbnailsCheckBox_ =
       new QCheckBox("Generate thumbnails for media files", this);
@@ -764,21 +804,23 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   thumbnailLayout->addWidget(impl_->generateThumbnailsCheckBox_);
 
   auto *thumbQualityLayout = new QHBoxLayout();
-  thumbQualityLayout->addWidget(new QLabel("Thumbnail Quality:", this));
+  thumbQualityLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Thumbnail Quality"), this));
   impl_->thumbnailQualityCombo_ = new QComboBox(this);
   impl_->thumbnailQualityCombo_->setAccessibleName(QStringLiteral("Thumbnail quality"));
   impl_->thumbnailQualityCombo_->setAccessibleDescription(QStringLiteral("Choose the quality of generated media thumbnails"));
   impl_->thumbnailQualityCombo_->addItems({"Low", "Medium", "High"});
   impl_->thumbnailQualityCombo_->setCurrentText("Medium");
+  impl_->thumbnailQualityCombo_->setMinimumSize(220, 28);
   thumbQualityLayout->addWidget(impl_->thumbnailQualityCombo_);
   thumbQualityLayout->addStretch();
   thumbnailLayout->addLayout(thumbQualityLayout);
 
-  mainLayout->addWidget(thumbnailGroup);
+  mainLayout->addLayout(thumbnailLayout);
+  mainLayout->addWidget(makePreviewDivider(this));
 
-  // GPU Acceleration Group
-  auto *gpuGroup = new QGroupBox("GPU Acceleration", this);
-  auto *gpuLayout = new QVBoxLayout(gpuGroup);
+  auto *gpuLayout = new QVBoxLayout();
+  gpuLayout->setSpacing(10);
+  gpuLayout->addWidget(makePreviewSectionHeading(QStringLiteral("GPU Acceleration"), this));
 
   impl_->enableGPUCheckBox_ = new QCheckBox("Enable GPU acceleration", this);
   impl_->enableGPUCheckBox_->setAccessibleName(QStringLiteral("Enable GPU acceleration"));
@@ -787,18 +829,19 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   gpuLayout->addWidget(impl_->enableGPUCheckBox_);
 
   auto *gpuDeviceLayout = new QHBoxLayout();
-  gpuDeviceLayout->addWidget(new QLabel("GPU Device:", this));
+  gpuDeviceLayout->addWidget(makePreviewFieldLabel(QStringLiteral("GPU Device"), this));
   impl_->gpuDeviceCombo_ = new QComboBox(this);
   impl_->gpuDeviceCombo_->setAccessibleName(QStringLiteral("GPU device"));
   impl_->gpuDeviceCombo_->setAccessibleDescription(QStringLiteral("Choose the GPU used for preview processing"));
   impl_->gpuDeviceCombo_->addItems(
       {"Auto (Best Available)", "NVIDIA GPU", "AMD GPU", "Intel GPU"});
   impl_->gpuDeviceCombo_->setCurrentText("Auto (Best Available)");
+  impl_->gpuDeviceCombo_->setMinimumSize(260, 28);
   gpuDeviceLayout->addWidget(impl_->gpuDeviceCombo_);
   gpuDeviceLayout->addStretch();
   gpuLayout->addLayout(gpuDeviceLayout);
 
-  mainLayout->addWidget(gpuGroup);
+  mainLayout->addLayout(gpuLayout);
 
   mainLayout->addStretch();
 }
@@ -1533,11 +1576,71 @@ public:
   QVBoxLayout *layout_ = nullptr;
   QLabel *descriptionLabel_ = nullptr;
   QLabel *contextsLabel_ = nullptr;
+  QComboBox *profileCombo_ = nullptr;
+  QComboBox *contextCombo_ = nullptr;
+  QLineEdit *filterEdit_ = nullptr;
+  QLabel *conflictLabel_ = nullptr;
   QTableWidget *table_ = nullptr;
   QPushButton *importPresetButton_ = nullptr;
   QPushButton *exportPresetButton_ = nullptr;
   QPushButton *resetDefaultsButton_ = nullptr;
 };
+
+namespace {
+QString shortcutContext(ArtifactCore::ShortcutId id) {
+  using ArtifactCore::ShortcutId;
+  const int value = static_cast<int>(id);
+  if (id == ShortcutId::Undo || id == ShortcutId::Redo) return QStringLiteral("Global");
+  if (value >= static_cast<int>(ShortcutId::SelectionTool) &&
+      value <= static_cast<int>(ShortcutId::AnchorPointTool))
+    return QStringLiteral("Viewport.Composition");
+  if (id == ShortcutId::PlaybackToggle) return QStringLiteral("Workspace.Composition");
+  if (value >= static_cast<int>(ShortcutId::TimelineCopySelectedKeyframes) &&
+      value <= static_cast<int>(ShortcutId::TimelinePreviousMarker))
+    return QStringLiteral("Workspace.Timeline");
+  if (value >= static_cast<int>(ShortcutId::ContentsViewerFit) &&
+      value <= static_cast<int>(ShortcutId::ContentsViewerViewer4))
+    return QStringLiteral("Panel.ContentsViewer");
+  if (value >= static_cast<int>(ShortcutId::ProjectExpandAll) &&
+      value <= static_cast<int>(ShortcutId::ProjectDeleteSelected))
+    return QStringLiteral("Workspace.Project");
+  if (value >= static_cast<int>(ShortcutId::AnimationAddKeyframe) &&
+      value <= static_cast<int>(ShortcutId::AnimationGoToLastKeyframe))
+    return QStringLiteral("Workspace.Timeline");
+  if (id == ShortcutId::EffectShowInspector) return QStringLiteral("Panel.Inspector");
+  if (id == ShortcutId::CompositionCreate || id == ShortcutId::CompositionColor)
+    return QStringLiteral("Workspace.Composition");
+  if (value >= static_cast<int>(ShortcutId::ViewZoomIn) &&
+      value <= static_cast<int>(ShortcutId::ViewToggleIsolation))
+    return QStringLiteral("Viewport.Composition");
+  if (value >= static_cast<int>(ShortcutId::RenderAddCurrentToQueue) &&
+      value <= static_cast<int>(ShortcutId::RenderStart))
+    return QStringLiteral("Workspace.Render");
+  if (value >= static_cast<int>(ShortcutId::LayerCreateSolid) &&
+      value <= static_cast<int>(ShortcutId::LayerDistributeSpacing))
+    return QStringLiteral("Panel.LayerTree");
+  if (value >= static_cast<int>(ShortcutId::ImportPlacementNextSizeMode) &&
+      value <= static_cast<int>(ShortcutId::ImportPlacementReset))
+    return QStringLiteral("Modal.Import");
+  if (value >= static_cast<int>(ShortcutId::ViewUndo) &&
+      value <= static_cast<int>(ShortcutId::ViewToggleCameraFrustum))
+    return QStringLiteral("Viewport.Composition");
+  return QStringLiteral("Workspace.Timeline");
+}
+
+QString shortcutCategory(ArtifactCore::ShortcutId id) {
+  const QString context = shortcutContext(id);
+  if (context == QStringLiteral("Global")) return QStringLiteral("General");
+  if (context.contains(QStringLiteral("Timeline"))) return QStringLiteral("Timeline");
+  if (context.contains(QStringLiteral("Viewport")) ||
+      context.contains(QStringLiteral("Composition"))) return QStringLiteral("Composition");
+  if (context.contains(QStringLiteral("Project")) ||
+      context.contains(QStringLiteral("Layer"))) return QStringLiteral("Layers & Project");
+  if (context.contains(QStringLiteral("Inspector"))) return QStringLiteral("Effects");
+  if (context.contains(QStringLiteral("Render"))) return QStringLiteral("Render");
+  return QStringLiteral("Tools");
+}
+}
 
 ShortcutSettingPage::Impl::Impl() = default;
 ShortcutSettingPage::Impl::~Impl() = default;
@@ -1559,19 +1662,47 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->contextsLabel_ = new QLabel(this);
   impl_->contextsLabel_->setWordWrap(true);
   impl_->contextsLabel_->setText(QStringLiteral(
-      "Active shortcut contexts: Global, Workspace.Timeline, Workspace.Project, "
-      "Viewport.Composition, Panel.LayerTree, Panel.AssetBrowser, Panel.Inspector."));
+      "Context priority: Modal > Panel / Viewport > Workspace > Global. "
+      "Bindings only conflict inside the same context."));
   impl_->layout_->addWidget(impl_->contextsLabel_);
+
+  auto* controls = new QHBoxLayout;
+  impl_->profileCombo_ = new QComboBox(this);
+  impl_->profileCombo_->addItems({QStringLiteral("Artifact Studio"),
+                                  QStringLiteral("Blender (viewport transform)"),
+                                  QStringLiteral("After Effects (current defaults)"),
+                                  QStringLiteral("Custom")});
+  impl_->profileCombo_->setAccessibleName(QStringLiteral("Keymap preset"));
+  impl_->profileCombo_->installEventFilter(this);
+  impl_->profileCombo_->view()->viewport()->installEventFilter(this);
+  controls->addWidget(impl_->profileCombo_);
+  impl_->contextCombo_ = new QComboBox(this);
+  impl_->contextCombo_->setAccessibleName(QStringLiteral("Shortcut context filter"));
+  impl_->contextCombo_->addItem(QStringLiteral("All contexts"));
+  impl_->contextCombo_->installEventFilter(this);
+  impl_->contextCombo_->view()->viewport()->installEventFilter(this);
+  controls->addWidget(impl_->contextCombo_);
+  impl_->filterEdit_ = new QLineEdit(this);
+  impl_->filterEdit_->setPlaceholderText(QStringLiteral("Search actions or shortcuts"));
+  impl_->filterEdit_->setAccessibleName(QStringLiteral("Search shortcuts"));
+  impl_->filterEdit_->installEventFilter(this);
+  controls->addWidget(impl_->filterEdit_, 1);
+  impl_->layout_->addLayout(controls);
+
+  impl_->conflictLabel_ = new QLabel(QStringLiteral("No context conflicts"), this);
+  impl_->layout_->addWidget(impl_->conflictLabel_);
 
   impl_->table_ = new QTableWidget(this);
   impl_->table_->setAccessibleName(QStringLiteral("Shortcut bindings table"));
-  impl_->table_->setAccessibleDescription(QStringLiteral("Read-only list of shortcut categories, actions, defaults, and current bindings"));
-  impl_->table_->setColumnCount(4);
+  impl_->table_->setAccessibleDescription(QStringLiteral("Editable shortcut list grouped by category and input context"));
+  impl_->table_->setColumnCount(6);
   impl_->table_->setHorizontalHeaderLabels({
       QStringLiteral("Category"),
+      QStringLiteral("Context"),
       QStringLiteral("Action"),
       QStringLiteral("Default"),
       QStringLiteral("Current"),
+      QStringLiteral("Status"),
   });
   impl_->table_->horizontalHeader()->setStretchLastSection(true);
   impl_->table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -1615,10 +1746,12 @@ void ShortcutSettingPage::resetToDefaults() {
   const auto &bindings = ArtifactCore::ShortcutBindings::instance();
   for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
     const auto id = ids[static_cast<std::size_t>(row)];
-    if (auto *editor = qobject_cast<QKeySequenceEdit *>(impl_->table_->cellWidget(row, 3))) {
+    if (auto *editor = qobject_cast<QKeySequenceEdit *>(impl_->table_->cellWidget(row, 4))) {
       editor->setKeySequence(bindings.defaultShortcut(id));
     }
   }
+  if (impl_->profileCombo_) impl_->profileCombo_->setCurrentIndex(0);
+  updateShortcutConflicts();
 }
 
 void ShortcutSettingPage::applyTableToBindings() {
@@ -1630,9 +1763,98 @@ void ShortcutSettingPage::applyTableToBindings() {
   auto &bindings = ArtifactCore::ShortcutBindings::instance();
   for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
     const auto id = ids[static_cast<std::size_t>(row)];
-    if (auto *editor = qobject_cast<QKeySequenceEdit *>(impl_->table_->cellWidget(row, 3))) {
+    if (auto *editor = qobject_cast<QKeySequenceEdit *>(impl_->table_->cellWidget(row, 4))) {
       bindings.setShortcut(id, editor->keySequence());
     }
+  }
+}
+
+void ShortcutSettingPage::applyShortcutProfile() {
+  if (!impl_ || !impl_->profileCombo_ || !impl_->table_) return;
+  const int profile = impl_->profileCombo_->currentIndex();
+  if (profile == 3) return;
+  resetToDefaults();
+  impl_->profileCombo_->setCurrentIndex(profile);
+  if (profile == 1) {
+    auto set = [this](ArtifactCore::ShortcutId id, const QKeySequence& sequence) {
+      const int row = static_cast<int>(id);
+      if (row >= 0 && row < impl_->table_->rowCount()) {
+        if (auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4)))
+          editor->setKeySequence(sequence);
+      }
+    };
+    set(ArtifactCore::ShortcutId::SelectionTool, QKeySequence(Qt::Key_Q));
+    set(ArtifactCore::ShortcutId::HandTool, QKeySequence(Qt::Key_H));
+    set(ArtifactCore::ShortcutId::ZoomTool, QKeySequence(Qt::Key_Z));
+    // R is reserved for the viewport's Blender-style transform modal.
+    set(ArtifactCore::ShortcutId::RotateTool, QKeySequence());
+    set(ArtifactCore::ShortcutId::TimelineSelectionTool, QKeySequence(Qt::Key_Q));
+    set(ArtifactCore::ShortcutId::TimelineHandTool, QKeySequence(Qt::Key_H));
+    set(ArtifactCore::ShortcutId::TimelineZoomTool, QKeySequence(Qt::Key_Z));
+    set(ArtifactCore::ShortcutId::TimelineRotateTool, QKeySequence(Qt::Key_R));
+    set(ArtifactCore::ShortcutId::TimelineSlideTool, QKeySequence(Qt::Key_G));
+    set(ArtifactCore::ShortcutId::ViewFitToScreen, QKeySequence(Qt::Key_Home));
+  }
+  updateShortcutConflicts();
+  filterShortcutRows();
+}
+
+void ShortcutSettingPage::filterShortcutRows() {
+  if (!impl_ || !impl_->table_) return;
+  const QString context = impl_->contextCombo_ ? impl_->contextCombo_->currentText() : QString();
+  const QString query = impl_->filterEdit_ ? impl_->filterEdit_->text().trimmed() : QString();
+  for (int row = 0; row < impl_->table_->rowCount(); ++row) {
+    const QString rowContext = impl_->table_->item(row, 1)
+                                   ? impl_->table_->item(row, 1)->text() : QString();
+    const QString action = impl_->table_->item(row, 2)
+                               ? impl_->table_->item(row, 2)->text() : QString();
+    const auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4));
+    const QString shortcut = editor
+                                 ? editor->keySequence().toString(QKeySequence::NativeText)
+                                 : QString();
+    const bool contextMatches = context.isEmpty() || context == QStringLiteral("All contexts") ||
+                                rowContext == context;
+    const bool queryMatches = query.isEmpty() || action.contains(query, Qt::CaseInsensitive) ||
+                              rowContext.contains(query, Qt::CaseInsensitive) ||
+                              shortcut.contains(query, Qt::CaseInsensitive);
+    impl_->table_->setRowHidden(row, !contextMatches || !queryMatches);
+  }
+}
+
+void ShortcutSettingPage::updateShortcutConflicts() {
+  if (!impl_ || !impl_->table_) return;
+  int conflicts = 0;
+  for (int row = 0; row < impl_->table_->rowCount(); ++row) {
+    auto* status = impl_->table_->item(row, 5);
+    if (!status) {
+      status = new QTableWidgetItem;
+      impl_->table_->setItem(row, 5, status);
+    }
+    status->setText(QString());
+    const QString context = impl_->table_->item(row, 1)
+                                ? impl_->table_->item(row, 1)->text() : QString();
+    const auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4));
+    const QKeySequence sequence = editor ? editor->keySequence() : QKeySequence();
+    if (sequence.isEmpty()) continue;
+    for (int other = 0; other < row; ++other) {
+      const QString otherContext = impl_->table_->item(other, 1)
+                                       ? impl_->table_->item(other, 1)->text() : QString();
+      const auto* otherEditor = qobject_cast<QKeySequenceEdit*>(
+          impl_->table_->cellWidget(other, 4));
+      if (context == otherContext && otherEditor && otherEditor->keySequence() == sequence) {
+        status->setText(QStringLiteral("Conflict"));
+        if (auto* otherStatus = impl_->table_->item(other, 5))
+          otherStatus->setText(QStringLiteral("Conflict"));
+        ++conflicts;
+        break;
+      }
+    }
+  }
+  if (impl_->conflictLabel_) {
+    impl_->conflictLabel_->setText(
+        conflicts == 0 ? QStringLiteral("No context conflicts")
+                       : QStringLiteral("%1 context conflict(s) — review rows marked Conflict before applying")
+                             .arg(conflicts));
   }
 }
 
@@ -1703,6 +1925,7 @@ void ShortcutSettingPage::importPreset() {
     return;
   }
 
+  if (impl_->profileCombo_) impl_->profileCombo_->setCurrentIndex(3);
   loadSettings();
 }
 
@@ -1714,23 +1937,40 @@ void ShortcutSettingPage::loadSettings() {
   const auto ids = ArtifactCore::allShortcutIds();
   const auto &bindings = ArtifactCore::ShortcutBindings::instance();
   impl_->table_->setRowCount(static_cast<int>(ids.size()));
+  if (impl_->contextCombo_) {
+    const QString selectedContext = impl_->contextCombo_->currentText();
+    impl_->contextCombo_->clear();
+    impl_->contextCombo_->addItem(QStringLiteral("All contexts"));
+    for (const auto id : ids) {
+      const QString context = shortcutContext(id);
+      if (impl_->contextCombo_->findText(context) < 0)
+        impl_->contextCombo_->addItem(context);
+    }
+    const int selectedIndex = impl_->contextCombo_->findText(selectedContext);
+    impl_->contextCombo_->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+  }
 
   for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
     const auto id = ids[static_cast<std::size_t>(row)];
-    const bool isTimeline = static_cast<int>(id) >= static_cast<int>(ArtifactCore::ShortcutId::TimelineCopySelectedKeyframes);
-    const QString category = isTimeline ? QStringLiteral("Timeline") : QStringLiteral("Core");
+    const QString category = shortcutCategory(id);
+    const QString context = shortcutContext(id);
     const QString actionLabel = ArtifactCore::shortcutDisplayName(id);
     const QString defaultShortcut = bindings.defaultShortcut(id).toString(QKeySequence::NativeText);
 
     impl_->table_->setItem(row, 0, new QTableWidgetItem(category));
-    impl_->table_->setItem(row, 1, new QTableWidgetItem(actionLabel));
-    impl_->table_->setItem(row, 2, new QTableWidgetItem(defaultShortcut));
+    impl_->table_->setItem(row, 1, new QTableWidgetItem(context));
+    impl_->table_->setItem(row, 2, new QTableWidgetItem(actionLabel));
+    impl_->table_->setItem(row, 3, new QTableWidgetItem(defaultShortcut));
     auto *editor = new QKeySequenceEdit(impl_->table_);
     editor->setKeySequence(bindings.shortcut(id));
     editor->setMaximumWidth(240);
-    impl_->table_->setCellWidget(row, 3, editor);
+    editor->installEventFilter(this);
+    impl_->table_->setCellWidget(row, 4, editor);
+    impl_->table_->setItem(row, 5, new QTableWidgetItem);
   }
   impl_->table_->resizeColumnsToContents();
+  updateShortcutConflicts();
+  filterShortcutRows();
 }
 
 void ShortcutSettingPage::saveSettings() {
@@ -1739,11 +1979,34 @@ void ShortcutSettingPage::saveSettings() {
   }
 
   applyTableToBindings();
+  updateShortcutConflicts();
 }
 
 bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
   if (impl_ && watched && event) {
-    if (watched == impl_->importPresetButton_) {
+    const bool profileControl = watched == impl_->profileCombo_ ||
+        (impl_->profileCombo_ && watched == impl_->profileCombo_->view()->viewport());
+    const bool contextControl = watched == impl_->contextCombo_ ||
+        (impl_->contextCombo_ && watched == impl_->contextCombo_->view()->viewport());
+    if (watched == impl_->filterEdit_ &&
+        (event->type() == QEvent::KeyRelease || event->type() == QEvent::FocusOut)) {
+      filterShortcutRows();
+    } else if (profileControl &&
+               (event->type() == QEvent::MouseButtonRelease ||
+                event->type() == QEvent::KeyRelease)) {
+      QTimer::singleShot(0, this, [this]() { applyShortcutProfile(); });
+    } else if (contextControl &&
+               (event->type() == QEvent::MouseButtonRelease ||
+                event->type() == QEvent::KeyRelease)) {
+      QTimer::singleShot(0, this, [this]() { filterShortcutRows(); });
+    } else if (qobject_cast<QKeySequenceEdit*>(watched) &&
+               (event->type() == QEvent::KeyRelease || event->type() == QEvent::FocusOut)) {
+      if (impl_->profileCombo_) impl_->profileCombo_->setCurrentIndex(3);
+      QTimer::singleShot(0, this, [this]() {
+        updateShortcutConflicts();
+        filterShortcutRows();
+      });
+    } else if (watched == impl_->importPresetButton_) {
       const auto type = event->type();
       if (type == QEvent::MouseButtonRelease) {
         auto *mouseEvent = static_cast<QMouseEvent *>(event);
@@ -1827,6 +2090,8 @@ public:
   QLineEdit *searchBox_;
   QLabel *overrideSummary_;
   QPushButton *resetOverridesButton_;
+  QLabel *pageTitle_;
+  QLabel *pageDescription_;
 
   GeneralSettingPage *generalPage_;
   ImportSettingPage *importPage_;
@@ -1883,6 +2148,7 @@ ApplicationSettingDialog::Impl::Impl()
       searchBox_(nullptr),
       overrideSummary_(nullptr),
       resetOverridesButton_(nullptr),
+      pageTitle_(nullptr), pageDescription_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
       projectPage_(nullptr), compositionPage_(nullptr), memoryPage_(nullptr),
       shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr) {}
@@ -1890,36 +2156,50 @@ ApplicationSettingDialog::Impl::Impl()
 ApplicationSettingDialog::Impl::~Impl() {}
 
 void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
-  // Main layout
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor background(theme.backgroundColor);
+  const QColor surface(theme.secondaryBackgroundColor);
+  const QColor text(theme.textColor);
+  const QColor accent(theme.accentColor);
+  QPalette dialogPalette = dialog->palette();
+  dialogPalette.setColor(QPalette::Window, background);
+  dialogPalette.setColor(QPalette::WindowText, text);
+  dialogPalette.setColor(QPalette::Base, surface);
+  dialogPalette.setColor(QPalette::AlternateBase, background.darker(108));
+  dialogPalette.setColor(QPalette::Button, surface);
+  dialogPalette.setColor(QPalette::ButtonText, text);
+  dialogPalette.setColor(QPalette::Text, text);
+  dialogPalette.setColor(QPalette::Highlight, accent);
+  dialogPalette.setColor(QPalette::HighlightedText, QColor(Qt::white));
+  dialogPalette.setColor(QPalette::Mid, surface.lighter(116));
+  dialog->setPalette(dialogPalette);
+
   auto *mainLayout = new QVBoxLayout(dialog);
+  mainLayout->setContentsMargins(18, 16, 18, 14);
+  mainLayout->setSpacing(14);
+
+  auto *contentLayout = new QHBoxLayout();
+  contentLayout->setContentsMargins(0, 0, 0, 0);
+  contentLayout->setSpacing(20);
+
+  auto *navigationLayout = new QVBoxLayout();
+  navigationLayout->setContentsMargins(0, 0, 0, 0);
+  navigationLayout->setSpacing(12);
 
   searchBox_ = new SettingSearchEdit(dialog);
   searchBox_->setPlaceholderText(QStringLiteral("Search settings..."));
   searchBox_->setAccessibleName(QStringLiteral("Search settings"));
   searchBox_->setAccessibleDescription(QStringLiteral("Filter settings by name or description"));
-  mainLayout->addWidget(searchBox_);
+  searchBox_->setMinimumHeight(30);
+  navigationLayout->addWidget(searchBox_);
 
-  overrideSummary_ = new QLabel(dialog);
-  overrideSummary_->setAccessibleName(QStringLiteral("Project setting overrides"));
-  QPalette summaryPalette = overrideSummary_->palette();
-  summaryPalette.setColor(QPalette::WindowText, QColor(70, 130, 220));
-  overrideSummary_->setPalette(summaryPalette);
-  mainLayout->addWidget(overrideSummary_);
-  resetOverridesButton_ = new ResetButtonHandler(dialog);
-  resetOverridesButton_->setText(QStringLiteral("Reset Project Overrides"));
-  resetOverridesButton_->setAccessibleName(QStringLiteral("Reset project overrides"));
-  resetOverridesButton_->setAccessibleDescription(QStringLiteral("Remove all project-specific setting overrides"));
-  resetOverridesButton_->setEnabled(false);
-  mainLayout->addWidget(resetOverridesButton_);
-
-  // Content area (category list + settings pages)
-  auto *contentLayout = new QHBoxLayout();
-
-  // Category list (left side)
   categoryList_ = new QListWidget(dialog);
   categoryList_->setAccessibleName(QStringLiteral("Settings categories"));
   categoryList_->setAccessibleDescription(QStringLiteral("Choose an application settings category"));
-  categoryList_->setMaximumWidth(150);
+  categoryList_->setMinimumWidth(204);
+  categoryList_->setMaximumWidth(204);
+  categoryList_->setFrameShape(QFrame::NoFrame);
+  categoryList_->setSpacing(2);
   categoryList_->addItem("General");
   categoryList_->addItem("Import");
   categoryList_->addItem("Preview");
@@ -1930,9 +2210,51 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   categoryList_->addItem("Audio Scrubbing");
   categoryList_->addItem("Plugins");
   categoryList_->setCurrentRow(0);
-  contentLayout->addWidget(categoryList_);
+  navigationLayout->addWidget(categoryList_, 1);
+  contentLayout->addLayout(navigationLayout);
 
-  // Settings pages (right side)
+  auto *pageLayout = new QVBoxLayout();
+  pageLayout->setContentsMargins(0, 0, 0, 0);
+  pageLayout->setSpacing(12);
+
+  auto *pageHeaderLayout = new QHBoxLayout();
+  pageHeaderLayout->setContentsMargins(0, 0, 0, 0);
+  auto *titleLayout = new QVBoxLayout();
+  titleLayout->setSpacing(3);
+  pageTitle_ = new QLabel(dialog);
+  QFont titleFont = pageTitle_->font();
+  titleFont.setBold(true);
+  titleFont.setPointSizeF(titleFont.pointSizeF() + 6.0);
+  pageTitle_->setFont(titleFont);
+  pageTitle_->setAccessibleName(QStringLiteral("Settings page title"));
+  titleLayout->addWidget(pageTitle_);
+  pageDescription_ = new QLabel(dialog);
+  pageDescription_->setWordWrap(true);
+  QPalette descriptionPalette = pageDescription_->palette();
+  descriptionPalette.setColor(QPalette::WindowText, text.darker(130));
+  pageDescription_->setPalette(descriptionPalette);
+  pageDescription_->setAccessibleName(QStringLiteral("Settings page description"));
+  titleLayout->addWidget(pageDescription_);
+  pageHeaderLayout->addLayout(titleLayout, 1);
+
+  auto *overrideLayout = new QVBoxLayout();
+  overrideLayout->setAlignment(Qt::AlignRight | Qt::AlignTop);
+  overrideSummary_ = new QLabel(dialog);
+  overrideSummary_->setAccessibleName(QStringLiteral("Project setting overrides"));
+  QPalette summaryPalette = overrideSummary_->palette();
+  summaryPalette.setColor(QPalette::WindowText, accent);
+  overrideSummary_->setPalette(summaryPalette);
+  overrideLayout->addWidget(overrideSummary_, 0, Qt::AlignRight);
+  resetOverridesButton_ = new ResetButtonHandler(dialog);
+  resetOverridesButton_->setText(QStringLiteral("Reset Project Overrides"));
+  resetOverridesButton_->setAccessibleName(QStringLiteral("Reset project overrides"));
+  resetOverridesButton_->setAccessibleDescription(QStringLiteral("Remove all project-specific setting overrides"));
+  resetOverridesButton_->setEnabled(false);
+  overrideLayout->addWidget(resetOverridesButton_, 0, Qt::AlignRight);
+  pageHeaderLayout->addLayout(overrideLayout);
+  pageLayout->addLayout(pageHeaderLayout);
+  pageLayout->addWidget(makePreviewDivider(dialog));
+
   settingPages_ = new QStackedWidget(dialog);
   settingPages_->setAccessibleName(QStringLiteral("Settings page"));
 
@@ -1958,9 +2280,9 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   pages_ = {generalPage_, importPage_, previewPage_, projectPage_, compositionPage_,
             memoryPage_, shortcutPage_, audioScrubPage_, pluginPage_};
 
-  contentLayout->addWidget(settingPages_, 1);
-
-  mainLayout->addLayout(contentLayout);
+  pageLayout->addWidget(settingPages_, 1);
+  contentLayout->addLayout(pageLayout, 1);
+  mainLayout->addLayout(contentLayout, 1);
 
   // Button box
   buttonBox_ = new QDialogButtonBox(
@@ -1970,6 +2292,12 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   if (auto* ok = buttonBox_->button(QDialogButtonBox::Ok)) {
     ok->setAccessibleName(QStringLiteral("Save and close settings"));
     ok->setAccessibleDescription(QStringLiteral("Save changes and close the settings dialog"));
+    QPalette okPalette = ok->palette();
+    okPalette.setColor(QPalette::Button, accent);
+    okPalette.setColor(QPalette::ButtonText, QColor(Qt::white));
+    ok->setPalette(okPalette);
+    ok->setAutoFillBackground(true);
+    ok->setDefault(true);
   }
   if (auto* cancel = buttonBox_->button(QDialogButtonBox::Cancel)) {
     cancel->setAccessibleName(QStringLiteral("Cancel settings"));
@@ -1996,10 +2324,27 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
       [this](const QString &query) { applySearch(query); });
   static_cast<ResetButtonHandler *>(resetOverridesButton_)->setHandler(
       [this]() { resetProjectOverrides(); });
+
+  onCategoryChanged(categoryList_->currentRow());
 }
 
 void ApplicationSettingDialog::Impl::onCategoryChanged(int index) {
   settingPages_->setCurrentIndex(index);
+  if (!pageTitle_ || !pageDescription_ || index < 0 || index >= categoryList_->count()) {
+    return;
+  }
+  static const QStringList descriptions = {
+      QStringLiteral("Saving, interface, theme, and accessibility preferences."),
+      QStringLiteral("Default handling for imported footage and image sequences."),
+      QStringLiteral("Preview quality, cache, thumbnails, and GPU acceleration."),
+      QStringLiteral("Defaults used when creating new compositions and projects."),
+      QStringLiteral("Viewport interaction and composition display preferences."),
+      QStringLiteral("Memory budget, CPU allocation, and background performance."),
+      QStringLiteral("Review and customize keyboard commands by workspace context."),
+      QStringLiteral("Audio feedback settings used while scrubbing the timeline."),
+      QStringLiteral("Discover and manage installed application plugins.")};
+  pageTitle_->setText(categoryList_->item(index)->text());
+  pageDescription_->setText(descriptions.value(index));
 }
 
 void ApplicationSettingDialog::Impl::applySearch(const QString &query) {
@@ -2074,7 +2419,7 @@ ApplicationSettingDialog::ApplicationSettingDialog(
   setWindowTitle("Application Settings");
   setAccessibleName(QStringLiteral("Application Settings Dialog"));
   setAccessibleDescription(QStringLiteral("Configure application, import, preview, composition, and accessibility settings"));
-  setMinimumSize(700, 500);
+  setMinimumSize(900, 650);
 
   impl_->setupUI(this);
 }

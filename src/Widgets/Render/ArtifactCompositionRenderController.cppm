@@ -3501,13 +3501,19 @@ QColor toQColor(const FloatColor &color) {
 
 
 
+namespace {
+constexpr int kFallbackPreviewIntervalMs = 16;
+constexpr float kMinimumViewportZoom = 0.05f;
+constexpr float kMaximumViewportZoom = 64.0f;
+}
+
 int compositionPreviewIntervalMs(const ArtifactCompositionPtr &comp) {
 
   const double fps = comp ? comp->frameRate().framerate() : 0.0;
 
   if (fps <= 0.0) {
 
-    return 16;
+    return kFallbackPreviewIntervalMs;
 
   }
 
@@ -3564,6 +3570,153 @@ QRectF effectExpandedLayerBounds(const ArtifactAbstractLayer *layer) {
   return bounds.adjusted(-expansion, -expansion, expansion, expansion);
 }
 
+bool buildGpuPointwiseColorStack(
+    ArtifactAbstractLayer *layer,
+    ArtifactCore::PointwiseEffectStack *outStack) {
+  if (!layer || !outStack || layer->isAdjustmentLayer()) {
+    return false;
+  }
+
+  ArtifactCore::PointwiseEffectStack stack;
+  std::uint32_t parameterSlot = 0;
+  for (const auto &effect : layer->getEffects()) {
+    if (!effect || !effect->isEnabled()) {
+      continue;
+    }
+    if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+        effect->computeMode() == ComputeMode::CPU ||
+        effect->hasEffectRegion() || effect->hasMask() ||
+        effect->effectMaskImageCount() > 0 ||
+        std::abs(effect->mix() - 1.0f) > 1.0e-6f) {
+      return false;
+    }
+
+    // The renderer only owns common execution constraints. Concrete effects
+    // contribute their GPU representation through ArtifactAbstractEffect.
+    if (!effect->appendGpuPointwiseNodes(stack, parameterSlot)) {
+      return false;
+    }
+
+#if 0 // Replaced by ArtifactAbstractEffect::appendGpuPointwiseNodes().
+    const auto exposure = ArtifactCore::dynamicPointerCast<ExposureEffect>(effect);
+    const auto hueAndSaturation =
+        ArtifactCore::dynamicPointerCast<HueAndSaturation>(effect);
+    const auto levels = ArtifactCore::dynamicPointerCast<LevelsEffect>(effect);
+    const auto brightness = ArtifactCore::dynamicPointerCast<BrightnessEffect>(effect);
+    const auto whiteBalance = ArtifactCore::dynamicPointerCast<WhiteBalanceEffect>(effect);
+    const auto invert = ArtifactCore::dynamicPointerCast<InvertEffect>(effect);
+    const auto grayscale = ArtifactCore::dynamicPointerCast<GrayscaleEffect>(effect);
+
+    if (exposure) {
+      stack.addNode(ArtifactCore::PointwiseNodeKind::Exposure, parameterSlot);
+      stack.setParameter(parameterSlot++, {exposure->exposure(), 0.0f, 0.0f, 0.0f});
+      if (std::abs(exposure->offset()) > 1.0e-6f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Offset, parameterSlot);
+        stack.setParameter(parameterSlot++, {exposure->offset(), 0.0f, 0.0f, 0.0f});
+      }
+      if (std::abs(exposure->gammaCorrection() - 1.0f) > 1.0e-6f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Gamma, parameterSlot);
+        stack.setParameter(parameterSlot++,
+                           {exposure->gammaCorrection(), 0.0f, 0.0f, 0.0f});
+      }
+    } else if (hueAndSaturation) {
+      if (std::abs(hueAndSaturation->lightness()) > 1.0e-6f ||
+          hueAndSaturation->isColorize()) {
+        return false;
+      }
+      if (std::abs(hueAndSaturation->saturation() - 1.0f) > 1.0e-6f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Saturation, parameterSlot);
+        stack.setParameter(parameterSlot++,
+                           {hueAndSaturation->saturation(), 0.0f, 0.0f, 0.0f});
+      }
+      if (std::abs(hueAndSaturation->hue()) > 1.0e-6f) {
+        constexpr float kPi = 3.14159265358979323846f;
+        stack.addNode(ArtifactCore::PointwiseNodeKind::HueRotate, parameterSlot);
+        stack.setParameter(parameterSlot++,
+                           {hueAndSaturation->hue() * kPi / 180.0f,
+                            0.0f, 0.0f, 0.0f});
+      }
+    } else if (levels) {
+      const auto &settings = levels->settings();
+      constexpr double kEpsilon = 1.0e-6;
+      if (settings.perChannel || std::abs(settings.inputGamma - 1.0) > kEpsilon ||
+          std::abs(settings.outputBlack) > kEpsilon ||
+          std::abs(settings.outputWhite - 255.0) > kEpsilon ||
+          settings.inputWhite <= settings.inputBlack + kEpsilon) {
+        return false;
+      }
+      stack.addNode(ArtifactCore::PointwiseNodeKind::Levels, parameterSlot);
+      stack.setParameter(parameterSlot++,
+                         {static_cast<float>(std::clamp(settings.inputBlack / 255.0,
+                                                        0.0, 1.0)),
+                          0.0f, 0.0f, 0.0f});
+      stack.setParameter(parameterSlot++,
+                         {static_cast<float>(std::clamp(settings.inputWhite / 255.0,
+                                                        0.0, 1.0)),
+                          0.0f, 0.0f, 0.0f});
+    } else if (brightness) {
+      if (std::abs(brightness->highlights()) > 1.0e-6f ||
+          std::abs(brightness->shadows()) > 1.0e-6f) {
+        return false;
+      }
+      if (std::abs(brightness->brightness()) > 1.0e-6f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Offset, parameterSlot);
+        stack.setParameter(parameterSlot++,
+                           {brightness->brightness(), 0.0f, 0.0f, 0.0f});
+      }
+      if (std::abs(brightness->contrast()) > 1.0e-6f) {
+        const float c = std::clamp(brightness->contrast(), -0.999f, 0.999f);
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Contrast, parameterSlot);
+        stack.setParameter(parameterSlot++, {(1.0f + c) / (1.0f - c),
+                                             0.0f, 0.0f, 0.0f});
+      }
+    } else if (invert) {
+      if (invert->channel() != 0) {
+        return false;
+      }
+      const float factor = 1.0f - 2.0f * std::clamp(invert->strength(), 0.0f, 1.0f);
+      if (std::abs(factor - 1.0f) > 1.0e-6f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Contrast, parameterSlot);
+        stack.setParameter(parameterSlot++, {factor, 0.0f, 0.0f, 0.0f});
+      }
+    } else if (grayscale) {
+      if (grayscale->mode() != 0) {
+        return false;
+      }
+      const float strength = std::clamp(grayscale->strength(), 0.0f, 1.0f);
+      if (std::abs(strength - 1.0f) > 1.0e-6f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Saturation, parameterSlot);
+        stack.setParameter(parameterSlot++, {1.0f - strength, 0.0f, 0.0f, 0.0f});
+      }
+    } else if (whiteBalance) {
+      if (std::abs(whiteBalance->temperature() - 6500.0f) > 1.0e-4f ||
+          std::abs(whiteBalance->brightness()) > 1.0e-6f) {
+        return false;
+      }
+      if (std::abs(whiteBalance->tint()) > 1.0e-6f) {
+        const float tint = whiteBalance->tint();
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Tint, parameterSlot);
+        stack.setParameter(parameterSlot++, {1.0f - tint * 0.5f,
+                                             1.0f + tint * 0.5f,
+                                             1.0f - tint * 0.5f, 0.0f});
+      }
+    } else {
+      return false;
+    }
+#endif
+
+    if (parameterSlot >= ArtifactCore::PointwiseEffectStack::kParameterSlotCount) {
+      return false;
+    }
+  }
+
+  if (stack.nodes().empty()) {
+    return false;
+  }
+  *outStack = std::move(stack);
+  return true;
+}
+
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
                                   const QImage &surface,
@@ -3572,7 +3725,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
                                   const bool interactivePreview = false,
 
-                                  const float resolutionScale = 1.0f) {
+                                  const float resolutionScale = 1.0f,
+                                  const bool deferRasterizerEffectsToGpu = false) {
 
   if (!targetLayer || surface.isNull() || !outBuffer) {
 
@@ -3603,6 +3757,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   }
 
 
+
+  hasRasterizerEffect = hasRasterizerEffect && !deferRasterizerEffectsToGpu;
 
   if (!hasRasterizerEffect && !hasMasks) {
 
@@ -3773,7 +3929,19 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
           interactivePreview, resolutionScale));
 
-      effect->applyConfigured(current, next);
+      // This surface builder owns a CPU-resident F32 image and its caller
+      // uploads the completed surface only after the whole effect stack has
+      // finished. Running an AUTO/GPU implementation here would upload each
+      // intermediate, synchronously WaitForIdle for readback, and then upload
+      // the result again. Keep this CPU boundary explicit; effects that can
+      // remain GPU-resident are handled by the render-pipeline fast paths.
+      if (effect->cpuImpl()) {
+        effect->applyCPUOnly(current, next);
+      } else {
+        // Preserve GPU-only effect semantics until those effects gain a
+        // texture-native render-pipeline contract.
+        effect->applyConfigured(current, next);
+      }
 
       current = next;
 
@@ -5853,6 +6021,39 @@ buildMotionPathSamples(const ArtifactAbstractLayerPtr &layer,
 
 
 
+bool historicalBoundsSupported(const ArtifactAbstractLayerPtr &layer) {
+  if (layer) {
+    if (const auto *variant = layer->getActiveVariant(); variant &&
+        HasFlag(variant->overrideFlags_, VariantOverrideFlags::Transform)) return false;
+    for (auto parent = layer->parentLayer(); parent; parent = parent->parentLayer()) {
+      if (parent->is3D()) return false;
+    }
+    const ArtifactAbstractLayer *readOnlyLayer = layer.get();
+    if (readOnlyLayer->animationLayerStack(QStringLiteral("transform.scale.x")) ||
+        readOnlyLayer->animationLayerStack(QStringLiteral("transform.scale.y"))) return false;
+  }
+  return layer && !layer->is3D() && !layer->isLocked() &&
+      !layer->isSelectionLocked() && layer->isVisible() &&
+      (dynamic_cast<ArtifactImageLayer *>(layer.get()) ||
+       dynamic_cast<ArtifactShapeLayer *>(layer.get())) &&
+      layer->localBounds().isValid();
+}
+
+// Shared by drawing and picking: cap visual density to the latest eight
+// position keys before the current frame. Geometry is evaluated at key time.
+QVector<int64_t> historicalBoundsFrames(const ArtifactAbstractLayerPtr &layer,
+                                       int currentFrame, int fps) {
+  QVector<int64_t> frames;
+  if (!historicalBoundsSupported(layer)) return frames;
+  const auto times = motionPathPositionKeyTimes(layer, fps);
+  for (const auto &time : times) {
+    const auto frame = time.toFrameCount(fps);
+    if (frame < currentFrame) frames.push_back(frame);
+  }
+  while (frames.size() > 8) frames.removeFirst();
+  return frames;
+}
+
 bool hitTestMotionPathSample(const QVector<MotionPathSample> &samples,
 
                              const QPointF &canvasPos, float threshold,
@@ -7795,7 +7996,8 @@ void drawLayerForCompositionView(
     quint64 surfaceGeneration = 1,
     const std::function<Diligent::ITextureView*(ArtifactAbstractLayer*,
                                                 int64_t, const QSize&)>*
-        precompGpuResolver = nullptr) {
+        precompGpuResolver = nullptr,
+    bool deferRasterizerEffectsToGpu = false) {
 
   if (!layer || !renderer) {
 
@@ -8256,6 +8458,9 @@ void drawLayerForCompositionView(
     cacheSignature += QStringLiteral("|effectScale=%1")
                           .arg(effectResolutionScale, 0, 'f', 2);
 
+    cacheSignature += QStringLiteral("|gpuPointwise=%1")
+                          .arg(deferRasterizerEffectsToGpu ? 1 : 0);
+
     cacheSignature += QStringLiteral("|overscan=%1").arg(overscanPixels, 0, 'f', 3);
 
     cacheSignature += matteSourceSignature;
@@ -8349,7 +8554,7 @@ void drawLayerForCompositionView(
           // here makes Blur and Gaussian Blur disappear in Draft/interactive views.
           if (buildRasterizedSurfaceBuffer(
                   layer, surface, &processed, interactiveDraft,
-                  effectResolutionScale)) {
+                  effectResolutionScale, deferRasterizerEffectsToGpu)) {
 
             processedBuffer =
                 ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
@@ -8413,7 +8618,7 @@ void drawLayerForCompositionView(
 
       if (buildRasterizedSurfaceBuffer(
               layer, surface, &processed, interactiveDraft,
-              effectResolutionScale) &&
+              effectResolutionScale, deferRasterizerEffectsToGpu) &&
 
           !processed.isEmpty()) {
         directProcessedBuffer =
@@ -10557,7 +10762,8 @@ public:
 
       bool preserveSceneDepth, RenderPipeline* renderPipeline,
       Diligent::ITextureView* msaaColorRTV = nullptr,
-      Diligent::ITextureView* msaaDepthDSV = nullptr) {
+      Diligent::ITextureView* msaaDepthDSV = nullptr,
+      ArtifactCore::PointwiseEffectStack* outLayerPointwiseStack = nullptr) {
 
     // Mesh draws require color/depth attachments with the same dimensions.
     // Without this explicit depth target, the layer RTV is paired with the
@@ -10842,6 +11048,14 @@ public:
 
 
 
+    ArtifactCore::PointwiseEffectStack layerPointwiseStack;
+    const bool deferRasterizerEffectsToGpu =
+        blendPipeline_ && renderer_->immediateContext() &&
+        buildGpuPointwiseColorStack(layer, &layerPointwiseStack);
+    if (outLayerPointwiseStack) {
+      *outLayerPointwiseStack = layerPointwiseStack;
+    }
+
     QString* dbgOut = &lastVideoDebug_;
 
     const std::function<Diligent::ITextureView*(ArtifactAbstractLayer*,
@@ -10869,7 +11083,7 @@ public:
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
                     viewportOrientationActive_, surfaceGeneration(layer),
-        &precompGpuResolver);
+        &precompGpuResolver, deferRasterizerEffectsToGpu);
 
     renderer_->flush();
 
@@ -11037,6 +11251,55 @@ public:
 
 
 
+  bool applyGpuPointwiseToLayer(
+      RenderPipeline& renderPipeline, Diligent::ITextureView* inputSRV,
+      Diligent::ITextureView* outputUAV, Diligent::ITextureView* scratchUAV,
+      const ArtifactCore::PointwiseEffectStack& stack) {
+    if (stack.nodes().empty()) {
+      return true;
+    }
+    if (!blendPipeline_ || !inputSRV || !outputUAV || !scratchUAV) {
+      return false;
+    }
+    const auto validation = stack.validate();
+    const auto segments = stack.segments();
+    auto context = renderer_->immediateContext();
+    if (!validation.valid || segments.empty() || !context ||
+        !blendPipeline_->updatePointwiseParameters(context.RawPtr(), stack)) {
+      return false;
+    }
+
+    Diligent::ITextureView* sourceSRV = inputSRV;
+    auto* parameterBuffer = blendPipeline_->createPointwiseParameterBuffer();
+    if (!parameterBuffer) {
+      return false;
+    }
+    for (const auto& segment : segments) {
+      if (!ArtifactCore::PointwiseEffectFusion::validateSegment(
+              stack.nodes(), segment).valid) {
+        return false;
+      }
+      const auto plan = ArtifactCore::PointwiseEffectFusion::makeComputePlan(
+          "diligent", "rgba16f", stack.nodes(), segment,
+          renderPipeline.width(), renderPipeline.height());
+      if (!plan.valid() || !blendPipeline_->applyPointwise(
+              context.RawPtr(), sourceSRV, scratchUAV, parameterBuffer, plan)) {
+        return false;
+      }
+
+      Diligent::CopyTextureAttribs copyAttrs = {};
+      copyAttrs.pSrcTexture = scratchUAV->GetTexture();
+      copyAttrs.SrcTextureTransitionMode =
+          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+      copyAttrs.pDstTexture = outputUAV->GetTexture();
+      copyAttrs.DstTextureTransitionMode =
+          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+      context->CopyTexture(copyAttrs);
+      sourceSRV = renderPipeline.layerFloatSRV();
+    }
+    return true;
+  }
+
   Diligent::ITextureView* prepareGpuLayerForBlend(
 
       ArtifactAbstractLayer* layer, RenderPipeline& renderPipeline,
@@ -11044,6 +11307,8 @@ public:
       Diligent::ITextureView* layerSRV, Diligent::ITextureView* layerFloatSRV,
 
       Diligent::ITextureView* layerFloatUAV, Diligent::ITextureView* tempUAV,
+
+      const ArtifactCore::PointwiseEffectStack* pointwiseStack,
 
       const QHash<ArtifactCore::Id, QImage>& matteSourceImages,
 
@@ -11076,6 +11341,15 @@ public:
 
 
     ++layerToFloatConvertCount;
+
+    if (pointwiseStack && !pointwiseStack->nodes().empty() &&
+        !applyGpuPointwiseToLayer(renderPipeline, layerFloatSRV, layerFloatUAV,
+                                  tempUAV, *pointwiseStack)) {
+      qWarning() << "[CompositionView] layer pointwise GPU pass failed; "
+                    "rejecting the layer rather than displaying unmodified colors"
+                 << "layer=" << layer->id().toString();
+      return nullptr;
+    }
 
     const auto mattes = layer->matteReferences();
 
@@ -13017,6 +13291,15 @@ public:
 
   // A historical fixed-Plane frame is edited without moving the playhead.
   bool isDraggingPastPlaneFrame_ = false;
+  ArtifactAbstractLayerWeak historicalScaleLayer_;
+  bool historicalScaleDragging_ = false;
+  bool historicalScaleChanged_ = false;
+  int64_t historicalScaleFrame_ = 0;
+  ArtifactCore::RationalTime historicalScaleTime_;
+  MotionPathScaleState historicalScaleBefore_;
+  QTransform historicalScaleInverse_;
+  QPointF historicalScaleAnchor_;
+  QPointF historicalScaleStart_;
   // Two-node camera POI handle drag state.
   bool isDraggingCameraPoi_ = false;
   // Main-VP custom path vertex editing (Pen/Selection on shape layers).
@@ -13896,7 +14179,7 @@ public:
     draggingMotionPathTangentBefore_ = {};
     draggingMotionPathTangentBroken_ = false;
     if (layer) {
-      const ArtifactCore::RationalTime time(frame, 24);
+      const auto time = gizmoTransformTime(layer, frame);
       draggingMotionPathTangentBefore_.present =
           layer->transform3D().positionKeyFrameSpatialTangentsAt(
               time, draggingMotionPathTangentBefore_.tangents);
@@ -13930,7 +14213,7 @@ public:
     }
 
     auto &t3d = layer->transform3D();
-    const ArtifactCore::RationalTime time(draggingMotionPathTangentFrame_, 24);
+    const auto time = gizmoTransformTime(layer, draggingMotionPathTangentFrame_);
     const QPointF keyPosition(t3d.positionXAt(time), t3d.positionYAt(time));
     const QPointF delta = localHandlePos - keyPosition;
     ArtifactCore::PositionSpatialTangents tangents;
@@ -14086,7 +14369,7 @@ public:
 
     auto &t3d = layer->transform3D();
 
-    const ArtifactCore::RationalTime time(draggingMotionPathFrame_, 24);
+    const auto time = gizmoTransformTime(layer, draggingMotionPathFrame_);
 
     const QPointF delta = localPos - draggingMotionPathStartLocalPos_;
     if (draggingMotionPathGroupBefore_.size() > 1) {
@@ -17900,6 +18183,8 @@ int CompositionRenderController::onionSkinOpacity() const {
 
   impl_->showMotionPathOverlay_ = show;
 
+  if (!show && impl_->historicalScaleDragging_) cancelGizmoInteraction();
+
   impl_->invalidateOverlayComposite();
 
   markRenderDirty();
@@ -18200,7 +18485,7 @@ bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFra
 
   auto *mgr = UndoManager::instance();
   if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
-                            layer, currentFrame.framePosition(), before, after))) {
+                            layer, time, before, after))) {
     if (before.hasPositionKey) {
       t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
     } else {
@@ -18305,7 +18590,7 @@ bool CompositionRenderController::removeSelectedLayerMotionPathKeyframeAtCurrent
 
   auto *mgr = UndoManager::instance();
   if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
-                            layer, currentFrame.framePosition(), before, after))) {
+                            layer, time, before, after))) {
     t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
@@ -18432,7 +18717,7 @@ bool CompositionRenderController::setSelectedLayerMotionPathInterpolationAtCurre
 
   auto *mgr = UndoManager::instance();
   if (mgr && !mgr->push(std::make_unique<MotionPathInterpolationUndoCommand>(
-                            layer, currentFrame.framePosition(), before, after))) {
+                            layer, time, before, after))) {
     t3d.setPositionKeyFrameInterpolationAt(
         time,
         static_cast<ArtifactCore::InterpolationType>(before.xInterpolation),
@@ -19146,6 +19431,29 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     renderer_->setUseExternalMatrices(true);
   }
 
+  if (layer->id() == selectedLayerId) {
+    for (const auto frame : historicalBoundsFrames(layer, currentFrameNum, motionPathFps)) {
+      const auto bounds = layer->localBounds();
+      const auto matrix = layer->getGlobalTransformAt(frame);
+      const QPointF corners[4] = {matrix.map(bounds.topLeft()),
+          matrix.map(bounds.topRight()), matrix.map(bounds.bottomRight()),
+          matrix.map(bounds.bottomLeft())};
+      const bool active = selectedMotionPathFrames_.contains(frame) ||
+          (historicalScaleDragging_ && historicalScaleFrame_ == frame);
+      const FloatColor color = active ? FloatColor{1.0f, 0.72f, 0.25f, 0.95f}
+                                     : FloatColor{0.58f, 0.65f, 0.73f, 0.55f};
+      for (int i = 0; i < 4; ++i) {
+        const auto &a = corners[i];
+        const auto &b = corners[(i + 1) % 4];
+        renderer_->drawDashedLineLocal(
+            {static_cast<float>(a.x()), static_cast<float>(a.y())},
+            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+            std::max(1.0f, invZoom), 2.0f, 4.0f, color);
+        renderer_->drawPoint(static_cast<float>(a.x()), static_cast<float>(a.y()),
+                             4.0f * invZoom, color);
+      }
+    }
+  }
   if (!motionPathCache_.pathPoints.empty()) {
     Detail::float2 lastPos;
     int lastFrame = 0;
@@ -19804,7 +20112,8 @@ void CompositionRenderController::zoomAtFactor(const QPointF &viewportPos,
       : currentZoom;
   const QPointF physicalAnchor = viewportPos * impl_->devicePixelRatio_;
   impl_->smoothZoomStart_ = currentZoom;
-  impl_->smoothZoomTarget_ = std::clamp(baseZoom * factor, 0.05f, 64.0f);
+  impl_->smoothZoomTarget_ = std::clamp(
+      baseZoom * factor, kMinimumViewportZoom, kMaximumViewportZoom);
   impl_->smoothZoomAnchorViewportPx_ = physicalAnchor;
   impl_->smoothZoomStartedAt_ = std::chrono::steady_clock::now();
   impl_->smoothZoomActive_ = true;
@@ -22417,10 +22726,10 @@ bool CompositionRenderController::beginModalGizmoInteraction(
   setInfoOverlayText(
       QStringLiteral("Transform"),
       mode == TransformGizmo::Mode::Move
-          ? QStringLiteral("Move — X/Y/Z constrain, Enter or click confirm")
+          ? QStringLiteral("Move — X/Y/Z constrain, Shift precise, Ctrl snap, Enter or click confirm")
           : mode == TransformGizmo::Mode::Rotate
-                ? QStringLiteral("Rotate — X/Y/Z constrain, Enter or click confirm")
-                : QStringLiteral("Scale — X/Y/Z constrain, Enter or click confirm"));
+                ? QStringLiteral("Rotate — X/Y/Z constrain, Shift precise, Ctrl snap, Enter or click confirm")
+                : QStringLiteral("Scale — X/Y/Z constrain, Shift precise, Ctrl snap, Enter or click confirm"));
   markRenderDirty();
   return true;
 }
@@ -23067,6 +23376,11 @@ bool selectedCameraPoiHoverable(const ArtifactAbstractLayerPtr &layer);
 
 void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   impl_->projectedFrameSnapCache_.invalidate();
+  if (event && impl_->historicalScaleDragging_) {
+    if (event->button() == Qt::RightButton) cancelGizmoInteraction();
+    event->accept();
+    return;
+  }
   if (event && impl_->constructionDragLayer_) {
     if (event->button() == Qt::RightButton) cancelGizmoInteraction();
     event->accept();
@@ -24464,6 +24778,56 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       impl_->renderer_) {
 
+    // Historical bounds own corner hits before Shift's legacy key insertion.
+    if ((activeTool == ToolType::Selection || activeTool == ToolType::Move ||
+         activeTool == ToolType::Scale) && historicalBoundsSupported(selectedLayer) &&
+        !event->modifiers().testFlag(Qt::AltModifier) &&
+        !event->modifiers().testFlag(Qt::ControlModifier)) {
+      const auto cursor = impl_->renderer_->viewportToCanvas(
+          {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+      const QPointF canvas(cursor.x, cursor.y);
+      const int fps = std::max(1, static_cast<int>(std::round(comp->frameRate().framerate())));
+      const auto frames = historicalBoundsFrames(selectedLayer,
+          static_cast<int>(selectedLayer->currentFrame()), fps);
+      const double radius = 8.0 * impl_->devicePixelRatio_ /
+          std::max(0.001f, impl_->renderer_->getZoom());
+      for (auto it = frames.crbegin(); it != frames.crend(); ++it) {
+        const auto matrix = selectedLayer->getGlobalTransformAt(*it);
+        bool invertible = false;
+        const auto inverse = matrix.inverted(&invertible);
+        if (!invertible) continue;
+        const auto bounds = selectedLayer->localBounds();
+        const QPointF corners[4] = {bounds.topLeft(), bounds.topRight(),
+                                    bounds.bottomRight(), bounds.bottomLeft()};
+        for (const auto &corner : corners) {
+          const QPointF delta = matrix.map(corner) - canvas;
+          if (QPointF::dotProduct(delta, delta) > radius * radius) continue;
+          const auto time = gizmoTransformTime(selectedLayer, *it);
+          MotionPathScaleState before;
+          if (!UndoManager::instance() || !captureMotionPathScale(selectedLayer, time, before)) continue;
+          const auto &transform = selectedLayer->transform3D();
+          const QPointF anchor(transform.anchorXAt(time), transform.anchorYAt(time));
+          const QPointF start = inverse.map(canvas) - anchor;
+          if (std::abs(start.x()) < 0.001 || std::abs(start.y()) < 0.001) continue;
+          impl_->historicalScaleLayer_ = selectedLayer;
+          impl_->historicalScaleFrame_ = *it;
+          impl_->historicalScaleTime_ = time;
+          impl_->historicalScaleBefore_ = before;
+          impl_->historicalScaleInverse_ = inverse;
+          impl_->historicalScaleAnchor_ = anchor;
+          impl_->historicalScaleStart_ = start;
+          impl_->historicalScaleDragging_ = true;
+          impl_->historicalScaleChanged_ = false;
+          impl_->selectedMotionPathFrames_.clear();
+          impl_->selectedMotionPathFrames_.push_back(*it);
+          setInfoOverlayText(QStringLiteral("Motion Path"),
+              QStringLiteral("Frame %1: scale around anchor; Shift: uniform; Esc: cancel").arg(*it));
+          markRenderDirty();
+          event->accept();
+          return;
+        }
+      }
+    }
     if (event->modifiers().testFlag(Qt::ShiftModifier)) {
 
       if (setSelectedLayerMotionPathKeyframeAtCurrentFrame()) {
@@ -24583,7 +24947,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       const auto &t3d = selectedLayer->transform3D();
 
-      const ArtifactCore::RationalTime time(hitSample.framePosition, 24);
+      const auto time = gizmoTransformTime(selectedLayer, hitSample.framePosition);
 
       if (event->modifiers().testFlag(Qt::ControlModifier) &&
           !event->modifiers().testFlag(Qt::ShiftModifier)) {
@@ -24624,7 +24988,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
           auto *mgr = UndoManager::instance();
           if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
-                                    selectedLayer, hitSample.framePosition,
+                                    selectedLayer, time,
                                     before, after))) {
             mutableT3d.setPositionKeyFrameValueAt(
                 time, before.x, before.y);
@@ -26040,6 +26404,48 @@ void CompositionRenderController::handleMouseMove(
       markRenderDirty();
       return;
     }
+  }
+
+  if (impl_->historicalScaleDragging_) {
+    auto layer = impl_->historicalScaleLayer_.lock();
+    if (!impl_->renderer_ || !historicalBoundsSupported(layer) || !impl_->showMotionPathOverlay_ ||
+        layer->id() != impl_->selectedLayerId_) {
+      cancelGizmoInteraction();
+      return;
+    }
+    const auto cursor = impl_->renderer_->viewportToCanvas(
+        {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+    const auto local = impl_->historicalScaleInverse_.map(QPointF(cursor.x, cursor.y)) -
+                       impl_->historicalScaleAnchor_;
+    double x = local.x() / impl_->historicalScaleStart_.x();
+    double y = local.y() / impl_->historicalScaleStart_.y();
+    if (QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) {
+      x = y = QPointF::dotProduct(local, impl_->historicalScaleStart_) /
+              QPointF::dotProduct(impl_->historicalScaleStart_, impl_->historicalScaleStart_);
+    }
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    // Keep the original reflection and avoid collapsing the transform to zero.
+    x = std::clamp(x, 0.001, 1000.0);
+    y = std::clamp(y, 0.001, 1000.0);
+    if (!impl_->historicalScaleChanged_ && std::abs(x - 1.0) < 0.00001 &&
+        std::abs(y - 1.0) < 0.00001) return;
+    auto after = impl_->historicalScaleBefore_;
+    after.present[0] = after.present[1] = true;
+    after.values[0] = after.values[0].toDouble() * x;
+    after.values[1] = after.values[1].toDouble() * y;
+    if (applyMotionPathScale(layer, impl_->historicalScaleTime_, after)) {
+      impl_->historicalScaleChanged_ = true;
+      impl_->motionPathCache_.valid = false;
+      impl_->invalidateBaseComposite();
+      impl_->invalidateOverlayComposite();
+      setInfoOverlayText(QStringLiteral("Motion Path"),
+          QStringLiteral("Frame %1 · Scale %2% / %3%")
+              .arg(impl_->historicalScaleFrame_)
+              .arg(after.values[0].toDouble() * 100.0, 0, 'f', 1)
+              .arg(after.values[1].toDouble() * 100.0, 0, 'f', 1));
+      markRenderDirty();
+    }
+    return;
   }
 
   if (impl_->isDraggingMotionPathTangent_) {
@@ -27703,6 +28109,22 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 bool CompositionRenderController::cancelGizmoInteraction() {
+  if (impl_->historicalScaleDragging_) {
+    if (auto layer = impl_->historicalScaleLayer_.lock(); layer && impl_->historicalScaleChanged_) {
+      applyMotionPathScale(layer, impl_->historicalScaleTime_,
+                            impl_->historicalScaleBefore_);
+    }
+    impl_->historicalScaleDragging_ = false;
+    impl_->historicalScaleLayer_.reset();
+    impl_->historicalScaleChanged_ = false;
+    impl_->motionPathCache_.valid = false;
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    setInfoOverlayText(QString(), QString());
+    finishViewportInteraction();
+    markRenderDirty();
+    return true;
+  }
   if (const auto layer = impl_->constructionDragLayer_) {
     layer->setConstructionItem(impl_->constructionDragHandle_.index, impl_->constructionDragBefore_);
     impl_->constructionDragLayer_.reset();
@@ -27861,6 +28283,32 @@ bool CompositionRenderController::cancelGizmoInteraction() {
 }
 
 void CompositionRenderController::handleMouseRelease() {
+  if (impl_->historicalScaleDragging_) {
+    if (auto layer = impl_->historicalScaleLayer_.lock(); layer && impl_->historicalScaleChanged_) {
+      const auto time = impl_->historicalScaleTime_;
+      MotionPathScaleState after;
+      auto *manager = UndoManager::instance();
+      const bool captured = captureMotionPathScale(layer, time, after);
+      const bool unchanged = captured &&
+          std::abs(after.values[0].toDouble() - impl_->historicalScaleBefore_.values[0].toDouble()) < 0.000001 &&
+          std::abs(after.values[1].toDouble() - impl_->historicalScaleBefore_.values[1].toDouble()) < 0.000001;
+      if (!captured || unchanged || !manager ||
+          !manager->push(std::make_unique<MotionPathScaleUndoCommand>(
+              layer, time, impl_->historicalScaleBefore_, after))) {
+        applyMotionPathScale(layer, time, impl_->historicalScaleBefore_);
+      }
+    }
+    impl_->historicalScaleDragging_ = false;
+    impl_->historicalScaleChanged_ = false;
+    impl_->historicalScaleLayer_.reset();
+    impl_->motionPathCache_.valid = false;
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    setInfoOverlayText(QString(), QString());
+    finishViewportInteraction();
+    markRenderDirty();
+    return;
+  }
   if (const auto layer = impl_->physicsDragLayer_.lock()) {
     layer->endRigidBodyMouseDrag();
     impl_->physicsDragLayer_.reset();
@@ -28304,8 +28752,7 @@ void CompositionRenderController::handleMouseRelease() {
   if (impl_->isDraggingMotionPathTangent_) {
     auto layer = impl_->draggingMotionPathTangentLayer_.lock();
     if (layer) {
-      const ArtifactCore::RationalTime time(
-          impl_->draggingMotionPathTangentFrame_, 24);
+      const auto time = gizmoTransformTime(layer, impl_->draggingMotionPathTangentFrame_);
       MotionPathTangentSnapshot after;
       after.present = layer->transform3D().positionKeyFrameSpatialTangentsAt(
           time, after.tangents);
@@ -28318,10 +28765,9 @@ void CompositionRenderController::handleMouseRelease() {
       if (changed) {
         auto *mgr = UndoManager::instance();
         if (mgr && !mgr->push(std::make_unique<MotionPathTangentUndoCommand>(
-                                  layer, impl_->draggingMotionPathTangentFrame_,
+                                  layer, time,
                                   before, after))) {
-          const auto restoreTime = ArtifactCore::RationalTime(
-              impl_->draggingMotionPathTangentFrame_, 24);
+          const auto restoreTime = time;
           auto &transform = layer->transform3D();
           if (before.present) {
             transform.setPositionKeyFrameSpatialTangentsAt(
@@ -28369,8 +28815,7 @@ void CompositionRenderController::handleMouseRelease() {
   if (impl_->isDraggingPastPlaneFrame_) {
     auto layer = impl_->draggingPastPlaneLayer_.lock();
     if (layer) {
-      const auto time = ArtifactCore::RationalTime(
-          impl_->draggingPastPlaneFrame_, 24);
+      const auto time = gizmoTransformTime(layer, impl_->draggingPastPlaneFrame_);
       const auto &transform = layer->transform3D();
       MotionPathPositionSnapshot after;
       after.hasPositionKey = transform.hasPositionKeyFrameAt(time);
@@ -28378,7 +28823,7 @@ void CompositionRenderController::handleMouseRelease() {
       after.y = transform.positionYAt(time);
       auto *mgr = UndoManager::instance();
       if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
-                                layer, impl_->draggingPastPlaneFrame_,
+                                layer, time,
                                 impl_->draggingPastPlaneBefore_, after))) {
         const auto &before = impl_->draggingPastPlaneBefore_;
         auto &mutableTransform = layer->transform3D();
@@ -28444,10 +28889,10 @@ void CompositionRenderController::handleMouseRelease() {
                groupAfter.push_back(current);
              }
             pushed = mgr->push(std::make_unique<MotionPathGroupUndoCommand>(
-                layer, impl_->draggingMotionPathGroupBefore_, groupAfter));
+                layer, time.scale(), impl_->draggingMotionPathGroupBefore_, groupAfter));
           } else {
             pushed = mgr->push(std::make_unique<MotionPathUndoCommand>(
-                layer, impl_->draggingMotionPathFrame_,
+                layer, time,
                 impl_->draggingMotionPathBefore_, after));
           }
         }
@@ -35639,6 +36084,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               &renderPipeline, layerRTV, layerSRV, layerFloatSRV,
 
               layerFloatUAV, accumSRV, tempUAV};
+          ArtifactCore::PointwiseEffectStack layerPointwiseStack;
 
           FunctionalRenderPass layerRasterPass(
 
@@ -35674,7 +36120,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     useLayerMsaa
                         ? static_cast<Diligent::ITextureView*>(
                               previewRenderSlot.msaaDepthTargetView)
-                        : nullptr);
+                        : nullptr,
+                    &layerPointwiseStack);
                 // applyPointwise() may swap the accumulation ping-pong
                 // textures. Keep the following mask/blend passes on the
                 // resulting resource rather than the pre-effect SRV.
@@ -35803,7 +36250,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     resources.layerFloatSRV, resources.layerFloatUAV,
 
-                    resources.tempUAV, matteSourceImages,
+                    resources.tempUAV, &layerPointwiseStack, matteSourceImages,
                     matteSourceGpuViews, layerToFloatConvertCount,
                     convertedLayerToFloat);
 
@@ -38024,56 +38471,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               pt.interpolation = interp;
 
-              const QRectF localBounds = layer->localBounds();
-
-              if (localBounds.isValid() && localBounds.width() > 0.0 &&
-
-                  localBounds.height() > 0.0) {
-
-                const QPointF tl = gTrans.map(localBounds.topLeft());
-
-                const QPointF tr = gTrans.map(localBounds.topRight());
-
-                const QPointF br = gTrans.map(localBounds.bottomRight());
-
-                const QPointF bl = gTrans.map(localBounds.bottomLeft());
-
-                const float minX =
-
-                    static_cast<float>(std::min(std::min(tl.x(), tr.x()),
-
-                                                std::min(br.x(), bl.x())));
-
-                const float minY =
-
-                    static_cast<float>(std::min(std::min(tl.y(), tr.y()),
-
-                                                std::min(br.y(), bl.y())));
-
-                const float maxX =
-
-                    static_cast<float>(std::max(std::max(tl.x(), tr.x()),
-
-                                                std::max(br.x(), bl.x())));
-
-                const float maxY =
-
-                    static_cast<float>(std::max(std::max(tl.y(), tr.y()),
-
-                                                std::max(br.y(), bl.y())));
-
-                pt.frameX = minX;
-
-                pt.frameY = minY;
-
-                pt.frameW = std::max(0.0f, maxX - minX);
-
-                pt.frameH = std::max(0.0f, maxY - minY);
-
-                pt.hasFrameRect = true;
-
-              }
-
               motionPathCache_.keyPoints.push_back(pt);
 
             }
@@ -38083,6 +38480,38 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
 
 
+
+          // Historical bounds must use the four transformed corners. An
+          // axis-aligned QRect loses the layer's rotation and makes the past
+          // scale look identical at several keyframes.
+          if (layer->id() == selectedLayerId_) {
+            for (const auto frame : historicalBoundsFrames(
+                     layer, currentFrameNum, motionPathFps)) {
+              const QRectF bounds = layer->localBounds();
+              const QTransform transform = layer->getGlobalTransformAt(frame);
+              const QPointF corners[4] = {
+                  transform.map(bounds.topLeft()),
+                  transform.map(bounds.topRight()),
+                  transform.map(bounds.bottomRight()),
+                  transform.map(bounds.bottomLeft())};
+              const bool active = selectedMotionPathFrames_.contains(frame) ||
+                  (historicalScaleDragging_ && historicalScaleFrame_ == frame);
+              const FloatColor color =
+                  active ? FloatColor{1.0f, 0.72f, 0.25f, 0.95f}
+                         : FloatColor{0.58f, 0.65f, 0.73f, 0.55f};
+              for (int corner = 0; corner < 4; ++corner) {
+                const QPointF &a = corners[corner];
+                const QPointF &b = corners[(corner + 1) % 4];
+                renderer_->drawDashedLineLocal(
+                    {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                    {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                    std::max(1.0f, invZoom), 2.0f, 4.0f, color);
+                renderer_->drawPoint(static_cast<float>(a.x()),
+                                     static_cast<float>(a.y()),
+                                     4.0f * invZoom, color);
+              }
+            }
+          }
 
           // Render from cache (no getGlobalTransformAt() calls on a hit).
 
@@ -38158,42 +38587,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             const FloatColor keyColor =
 
                 motionPathInterpolationColor(pt.interpolation, isCurrent);
-
-            if (pt.hasFrameRect) {
-
-              const FloatColor frameShadow{0.0f, 0.0f, 0.0f,
-
-                                           isCurrent ? 0.30f : 0.18f};
-
-              const FloatColor frameColor =
-
-                  isCurrent ? FloatColor{0.98f, 0.88f, 0.35f, 0.95f}
-
-                            : FloatColor{0.78f, 0.82f, 0.90f, 0.62f};
-
-              const float dashThickness =
-
-                  isCurrent ? std::max(1.5f, 2.2f * invZoom)
-
-                            : std::max(1.0f, 1.6f * invZoom);
-
-              const float dashLen = std::max(6.0f, 10.0f * invZoom);
-
-              const float gapLen = std::max(4.0f, 7.0f * invZoom);
-
-              renderer_->drawDashedRectOutline(
-
-                  pt.frameX, pt.frameY, pt.frameW, pt.frameH, frameShadow,
-
-                  dashThickness * 1.8f, dashLen, gapLen);
-
-              renderer_->drawDashedRectOutline(
-
-                  pt.frameX, pt.frameY, pt.frameW, pt.frameH, frameColor,
-
-                  dashThickness, dashLen, gapLen);
-
-            }
 
             const float outerRadius =
 

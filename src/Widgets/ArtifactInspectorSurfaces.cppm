@@ -248,7 +248,14 @@ class InspectorChromeLabel final : public QLabel {
     painter.setPen(isEnabled() ? pal.color(QPalette::WindowText)
                                : pal.color(QPalette::Disabled,
                                            QPalette::WindowText));
-    int flags = Qt::AlignLeft | Qt::AlignVCenter;
+    int flags = alignment();
+    if (!(flags & (Qt::AlignLeft | Qt::AlignRight | Qt::AlignHCenter |
+                   Qt::AlignJustify))) {
+      flags |= Qt::AlignLeft;
+    }
+    if (!(flags & (Qt::AlignTop | Qt::AlignBottom | Qt::AlignVCenter))) {
+      flags |= Qt::AlignVCenter;
+    }
     if (wordWrap()) {
       flags |= Qt::TextWordWrap;
     }

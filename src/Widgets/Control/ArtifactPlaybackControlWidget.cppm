@@ -6,6 +6,7 @@ module;
 #include <QFrame>
 #include <QSizePolicy>
 #include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QPalette>
 #include <QColor>
@@ -232,7 +233,8 @@ public:
         QFont currentFont = font();
         currentFont.setPointSize(14);
         currentFont.setStyleHint(QFont::Monospace);
-        currentFont.setFamily(QStringLiteral("Consolas"));
+        currentFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        currentFont.setPointSize(14);
         currentFont.setWeight(QFont::DemiBold);
         QFont labelFont = font();
         labelFont.setPointSize(8);
@@ -294,7 +296,8 @@ protected:
         QFont currentFont = font();
         currentFont.setPointSize(14);
         currentFont.setStyleHint(QFont::Monospace);
-        currentFont.setFamily(QStringLiteral("Consolas"));
+        currentFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        currentFont.setPointSize(14);
         currentFont.setWeight(QFont::DemiBold);
         QFont labelFont = font();
         labelFont.setPointSize(8);

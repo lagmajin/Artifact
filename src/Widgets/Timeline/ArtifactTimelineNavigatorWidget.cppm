@@ -1,9 +1,9 @@
 module;
 #include <QColor>
-#include <QLinearGradient>
 #include <QPaintEvent>
 #include <QPainterPath>
 #include <QPen>
+#include <QPointF>
 #include <QRect>
 #include <QRectF>
 #include <QMouseEvent>
@@ -25,8 +25,13 @@ namespace Artifact
 
  namespace
  {
-  constexpr int kHandleHalfW = 6;
+  constexpr int kHandleHalfW = 7;
   constexpr int kHandleW = kHandleHalfW * 2;
+  const QColor kNavigatorRangeFill(110, 140, 166);
+  const QColor kNavigatorRangeEdge(170, 197, 218);
+  const QColor kNavigatorHandleFill(184, 204, 218);
+  const QColor kNavigatorHandleBorder(62, 80, 96);
+  const QColor kNavigatorHandleGrip(42, 56, 68);
 
   struct TimelineTheme
   {
@@ -201,20 +206,30 @@ namespace Artifact
    }
   }
 
-  const QRect rangeRect(clampedX1, trackRect.top(), std::max(1, clampedX2 - clampedX1), trackRect.height());
-  QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0.0, playheadColor.lighter(110));
-  grad.setColorAt(1.0, playheadColor.darker(135));
-  p.setPen(QPen(playheadColor.lighter(120), 1));
-  p.setBrush(grad);
+  const QRect rangeRect(clampedX1, trackRect.top(),
+                        std::max(1, clampedX2 - clampedX1),
+                        trackRect.height());
+  p.setPen(QPen(kNavigatorRangeEdge, 1));
+  p.setBrush(kNavigatorRangeFill);
   p.drawRoundedRect(rangeRect.adjusted(0, 0, -1, 0), 3, 3);
 
   const QRectF leftHandleRect(clampedX1 - kHandleHalfW, 2, kHandleW, height() - 4);
   const QRectF rightHandleRect(clampedX2 - kHandleHalfW, 2, kHandleW, height() - 4);
-  p.setBrush(theme.surface.lighter(130));
-  p.setPen(QPen(theme.border.darker(135), 1));
-  p.drawRoundedRect(leftHandleRect, 2, 2);
-  p.drawRoundedRect(rightHandleRect, 2, 2);
+  const auto drawHandle = [&p](const QRectF& handleRect) {
+   p.setBrush(kNavigatorHandleFill);
+   p.setPen(QPen(kNavigatorHandleBorder, 1));
+   p.drawRoundedRect(handleRect, 2, 2);
+   p.setPen(QPen(kNavigatorHandleGrip, 2));
+   const qreal centerX = handleRect.center().x();
+   const qreal gripTop = handleRect.top() + 4.0;
+   const qreal gripBottom = handleRect.bottom() - 4.0;
+   p.drawLine(QPointF(centerX - 2.0, gripTop),
+              QPointF(centerX - 2.0, gripBottom));
+   p.drawLine(QPointF(centerX + 2.0, gripTop),
+              QPointF(centerX + 2.0, gripBottom));
+  };
+  drawHandle(leftHandleRect);
+  drawHandle(rightHandleRect);
 
   if (currentFrame_ >= 0.0 && impl_->totalFrames_ > 1) {
    // Keep the navigator playhead on the same visible-range mapping used by

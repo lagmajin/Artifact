@@ -3446,7 +3446,9 @@ public:
         const auto currentFrame =
             playback ? playback->currentFrame()
                      : (comp ? comp->framePosition() : FramePosition(0));
-        const RationalTime time(currentFrame.framePosition(), 24);
+        const auto timeScale = std::max<int64_t>(
+            1, static_cast<int64_t>(std::llround(safeCompositionFrameRate(comp))));
+        const RationalTime time(currentFrame.framePosition(), timeScale);
         const bool hasMotionPathKey =
             layer->transform3D().hasPositionKeyFrameAt(time);
         const auto currentMotionPathInterpolation =

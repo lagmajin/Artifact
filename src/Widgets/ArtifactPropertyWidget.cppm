@@ -479,6 +479,9 @@ public:
   bool favoriteOnly = false;
   bool isPlaying = false;
   int localPropertyEditDepth = 0;
+  ArtifactAbstractLayerPtr pendingEffectPreviewLayer;
+  bool effectPreviewPending = false;
+  quint64 effectPreviewRevision = 0;
   QMultiHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
   QSet<QString> channelLockedPaths;
   QSet<QString> selectedChannelPaths;
@@ -511,6 +514,40 @@ public:
     }
     invalidatePropertyValueCache();
     updateValuesTimer->start(updateValuesDebounceMs);
+  }
+
+  void scheduleEffectPreview(const ArtifactAbstractLayerPtr &layer) {
+    if (!layer || !owner) {
+      return;
+    }
+
+    pendingEffectPreviewLayer = layer;
+    if (effectPreviewPending) {
+      return;
+    }
+
+    effectPreviewPending = true;
+    const quint64 revision = ++effectPreviewRevision;
+    // Color effects can still cross the GPU/CPU boundary in the fallback
+    // renderer. Coalesce slider motion to a responsive preview cadence while
+    // preserving the immediate, authoritative commit callback below.
+    QTimer::singleShot(33, owner, [this, revision]() {
+      if (revision != effectPreviewRevision) {
+        return;
+      }
+
+      effectPreviewPending = false;
+      const auto layer = pendingEffectPreviewLayer;
+      pendingEffectPreviewLayer.reset();
+      notifyLayerPropertyPreviewChanged(layer);
+    });
+  }
+
+  void commitEffectPreview(const ArtifactAbstractLayerPtr &layer) {
+    ++effectPreviewRevision;
+    effectPreviewPending = false;
+    pendingEffectPreviewLayer.reset();
+    notifyLayerPropertyAnimationChanged(layer);
   }
 
   QString computeRebuildSignature() const;
@@ -3486,7 +3523,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
             effect->setEffectRegion(region);
           } else if (!effect->setCommonPropertyValue(name, value)) effect->setPropertyValue(name, value);
-          notifyLayerPropertyAnimationChanged(layer);
+          commitEffectPreview(layer);
         },
         [this, layer, effect](const QString &name, const QVariant &value) {
           ScopedPropertyEditGuard guard(localPropertyEditDepth);
@@ -3501,7 +3538,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             else if (name.endsWith(QStringLiteral(" Height"))) region.setHeight(std::max(0.0, value.toDouble()));
             effect->setEffectRegion(region);
           } else if (!effect->setCommonPropertyValue(name, value)) effect->setPropertyValue(name, value);
-          notifyLayerPropertyPreviewChanged(layer);
+          scheduleEffectPreview(layer);
         },
         currentLayerTime,
         notifyLayerKeyframeChanged,

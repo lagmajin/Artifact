@@ -11,10 +11,14 @@ module;
 #include <QAbstractItemView>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QContextMenuEvent>
+#include <QEvent>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QHeaderView>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -53,6 +57,142 @@ import VectorScopeWidget;
 import WaveformScopeWidget;
 import ParadeScopeWidget;
 namespace Artifact {
+
+namespace {
+
+class ScopeDashboard final : public QWidget {
+public:
+  enum class ViewMode { Grid, Parade, Vectorscope, Waveform, Histogram };
+
+  explicit ScopeDashboard(QWidget *parent = nullptr)
+      : QWidget(parent), grid_(new QGridLayout(this)) {
+    grid_->setContentsMargins(0, 0, 0, 0);
+    grid_->setHorizontalSpacing(6);
+    grid_->setVerticalSpacing(6);
+    setContextMenuPolicy(Qt::DefaultContextMenu);
+    setAccessibleName(QStringLiteral("Scopes dashboard"));
+    setAccessibleDescription(QStringLiteral(
+        "RGB parade, vectorscope, luma waveform, and histogram dashboard"));
+  }
+
+  void setScopes(QWidget *parade, QWidget *vectorscope, QWidget *waveform,
+                 QWidget *histogram) {
+    paradeTile_ = makeTile(QStringLiteral("RGB PARADE"), parade);
+    vectorscopeTile_ = makeTile(QStringLiteral("VECTORSCOPE"), vectorscope);
+    waveformTile_ = makeTile(QStringLiteral("LUMA WAVEFORM"), waveform);
+    histogramTile_ = makeTile(QStringLiteral("HISTOGRAM"), histogram);
+    applyViewMode(ViewMode::Grid);
+  }
+
+protected:
+  void contextMenuEvent(QContextMenuEvent *event) override {
+    QMenu menu(this);
+    QAction *gridAction = menu.addAction(QStringLiteral("2 x 2 Grid"));
+    menu.addSeparator();
+    QAction *paradeAction = menu.addAction(QStringLiteral("RGB Parade"));
+    QAction *vectorscopeAction = menu.addAction(QStringLiteral("Vectorscope"));
+    QAction *waveformAction = menu.addAction(QStringLiteral("Luma Waveform"));
+    QAction *histogramAction = menu.addAction(QStringLiteral("Histogram"));
+
+    QAction *selected = menu.exec(event->globalPos());
+    if (selected == gridAction) {
+      applyViewMode(ViewMode::Grid);
+    } else if (selected == paradeAction) {
+      applyViewMode(ViewMode::Parade);
+    } else if (selected == vectorscopeAction) {
+      applyViewMode(ViewMode::Vectorscope);
+    } else if (selected == waveformAction) {
+      applyViewMode(ViewMode::Waveform);
+    } else if (selected == histogramAction) {
+      applyViewMode(ViewMode::Histogram);
+    }
+  }
+
+  bool eventFilter(QObject *watched, QEvent *event) override {
+    if (event && event->type() == QEvent::MouseButtonDblClick) {
+      QWidget *tile = qobject_cast<QWidget *>(watched);
+      if (viewMode_ == ViewMode::Grid) {
+        if (tile == paradeTile_) applyViewMode(ViewMode::Parade);
+        else if (tile == vectorscopeTile_) applyViewMode(ViewMode::Vectorscope);
+        else if (tile == waveformTile_) applyViewMode(ViewMode::Waveform);
+        else if (tile == histogramTile_) applyViewMode(ViewMode::Histogram);
+      } else {
+        applyViewMode(ViewMode::Grid);
+      }
+      return true;
+    }
+    return QWidget::eventFilter(watched, event);
+  }
+
+private:
+  QFrame *makeTile(const QString &title, QWidget *scope) {
+    auto *tile = new QFrame(this);
+    tile->setFrameShape(QFrame::StyledPanel);
+    tile->setMinimumSize(220, 150);
+    tile->setAccessibleName(title);
+    tile->installEventFilter(this);
+
+    auto *layout = new QVBoxLayout(tile);
+    layout->setContentsMargins(6, 4, 6, 6);
+    layout->setSpacing(4);
+
+    auto *label = new QLabel(title, tile);
+    label->setAccessibleName(title + QStringLiteral(" title"));
+    layout->addWidget(label);
+
+    if (scope) {
+      scope->setParent(tile);
+      scope->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+      layout->addWidget(scope, 1);
+    }
+    return tile;
+  }
+
+  void applyViewMode(ViewMode mode) {
+    viewMode_ = mode;
+    QWidget *tiles[] = {paradeTile_, vectorscopeTile_, waveformTile_, histogramTile_};
+    for (QWidget *tile : tiles) {
+      if (!tile) continue;
+      grid_->removeWidget(tile);
+      tile->hide();
+    }
+
+    if (mode == ViewMode::Grid) {
+      grid_->addWidget(paradeTile_, 0, 0);
+      grid_->addWidget(vectorscopeTile_, 0, 1);
+      grid_->addWidget(waveformTile_, 1, 0);
+      grid_->addWidget(histogramTile_, 1, 1);
+      for (QWidget *tile : tiles) {
+        if (tile) tile->show();
+      }
+      setAccessibleDescription(QStringLiteral(
+          "Four-up RGB parade, vectorscope, luma waveform, and histogram dashboard"));
+      return;
+    }
+
+    QWidget *active = nullptr;
+    if (mode == ViewMode::Parade) active = paradeTile_;
+    else if (mode == ViewMode::Vectorscope) active = vectorscopeTile_;
+    else if (mode == ViewMode::Waveform) active = waveformTile_;
+    else if (mode == ViewMode::Histogram) active = histogramTile_;
+
+    if (active) {
+      grid_->addWidget(active, 0, 0);
+      active->show();
+      setAccessibleDescription(
+          QStringLiteral("Single expanded scope; double-click to return to the 2 x 2 grid"));
+    }
+  }
+
+  QGridLayout *grid_ = nullptr;
+  QFrame *paradeTile_ = nullptr;
+  QFrame *vectorscopeTile_ = nullptr;
+  QFrame *waveformTile_ = nullptr;
+  QFrame *histogramTile_ = nullptr;
+  ViewMode viewMode_ = ViewMode::Grid;
+};
+
+} // namespace
 
 class ArtifactColorSciencePanel::Impl {
 public:
@@ -103,7 +243,7 @@ public:
   QPushButton *snapToPaletteButton_ = nullptr;
   QLineEdit *snapColorEdit_ = nullptr;
   QLabel *snapResultLabel_ = nullptr;
-  QTabWidget *scopeTabs_ = nullptr;
+  ScopeDashboard *scopeDashboard_ = nullptr;
   QLabel *scopeStatusLabel_ = nullptr;
   ArtifactWidgets::HistogramWidget *histogramWidget_ = nullptr;
   ArtifactWidgets::VectorScopeWidget *vectorScopeWidget_ = nullptr;
@@ -352,29 +492,38 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
   scopeHeader->setWordWrap(true);
   scopeLayout->addWidget(scopeHeader);
 
-  scopeTabs_ = new QTabWidget(scopeGroup);
+  auto *scopeToolbar = new QHBoxLayout();
+  auto *layoutLabel = new QLabel(QStringLiteral("Layout: 2 x 2"), scopeGroup);
+  auto *layoutHint = new QLabel(
+      QStringLiteral("Right-click to choose a scope; double-click to focus or restore"),
+      scopeGroup);
+  layoutHint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  scopeToolbar->addWidget(layoutLabel);
+  scopeToolbar->addStretch(1);
+  scopeToolbar->addWidget(layoutHint);
+  scopeLayout->addLayout(scopeToolbar);
 
-  histogramWidget_ = new ArtifactWidgets::HistogramWidget(scopeTabs_);
+  scopeDashboard_ = new ScopeDashboard(scopeGroup);
+
+  histogramWidget_ = new ArtifactWidgets::HistogramWidget(scopeDashboard_);
   histogramWidget_->setMode(ArtifactWidgets::HistogramMode::Combined);
   histogramWidget_->setLogScale(true);
-  scopeTabs_->addTab(histogramWidget_, QStringLiteral("Histogram"));
 
-  vectorScopeWidget_ = new ArtifactWidgets::VectorScopeWidget(scopeTabs_);
+  vectorScopeWidget_ = new ArtifactWidgets::VectorScopeWidget(scopeDashboard_);
   vectorScopeWidget_->setMode(ArtifactWidgets::VectorScopeMode::Skin);
   vectorScopeWidget_->setIntensity(1.1f);
-  scopeTabs_->addTab(vectorScopeWidget_, QStringLiteral("Vectorscope"));
 
-  waveformScopeWidget_ = new ArtifactWidgets::WaveformScopeWidget(scopeTabs_);
-  waveformScopeWidget_->setMode(ArtifactWidgets::WaveformMode::RGB);
+  waveformScopeWidget_ = new ArtifactWidgets::WaveformScopeWidget(scopeDashboard_);
+  waveformScopeWidget_->setMode(ArtifactWidgets::WaveformMode::Luma);
   waveformScopeWidget_->setIntensity(1.0f);
-  scopeTabs_->addTab(waveformScopeWidget_, QStringLiteral("Waveform"));
 
-  paradeScopeWidget_ = new ArtifactWidgets::ParadeScopeWidget(scopeTabs_);
+  paradeScopeWidget_ = new ArtifactWidgets::ParadeScopeWidget(scopeDashboard_);
   paradeScopeWidget_->setMode(ArtifactWidgets::ParadeMode::RGB);
   paradeScopeWidget_->setIntensity(1.0f);
-  scopeTabs_->addTab(paradeScopeWidget_, QStringLiteral("Parade"));
 
-  scopeLayout->addWidget(scopeTabs_);
+  scopeDashboard_->setScopes(paradeScopeWidget_, vectorScopeWidget_,
+                             waveformScopeWidget_, histogramWidget_);
+  scopeLayout->addWidget(scopeDashboard_, 1);
 
   scopeStatusLabel_ = new QLabel(QStringLiteral("Waiting for Composition Editor preview"), scopeGroup);
   scopeStatusLabel_->setWordWrap(true);
