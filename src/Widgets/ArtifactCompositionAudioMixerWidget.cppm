@@ -7,6 +7,10 @@ module;
 #include <cmath>
 #include <QAction>
 #include <QColor>
+#include <QDialog>
+#include <QIcon>
+#include <QSize>
+#include <QSizePolicy>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
@@ -24,6 +28,7 @@ module;
 #include <QPainter>
 #include <QPalette>
 #include <QPointer>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -87,6 +92,7 @@ public:
   QWidget *contentWidget_ = nullptr;
   QHBoxLayout *contentLayout_ = nullptr;
   QLabel *summaryLabel_ = nullptr;
+  QLabel *compositionLabel_ = nullptr;
   QLabel *emptyLabel_ = nullptr;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -112,6 +118,17 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
       QStringLiteral("Monitor and adjust audio buses for the active composition."));
   setAttribute(Qt::WA_StyledBackground, true);
   setAutoFillBackground(true);
+
+  QPalette mixerPalette = palette();
+  mixerPalette.setColor(QPalette::Window, QColor(36, 38, 41));
+  mixerPalette.setColor(QPalette::WindowText, QColor(222, 224, 227));
+  mixerPalette.setColor(QPalette::Base, QColor(29, 31, 34));
+  mixerPalette.setColor(QPalette::Text, QColor(222, 224, 227));
+  mixerPalette.setColor(QPalette::Button, QColor(43, 45, 48));
+  mixerPalette.setColor(QPalette::ButtonText, QColor(222, 224, 227));
+  mixerPalette.setColor(QPalette::Highlight, QColor(228, 173, 83));
+  mixerPalette.setColor(QPalette::PlaceholderText, QColor(151, 154, 158));
+  setPalette(mixerPalette);
 
   impl_->mixer_ = new AudioMixer(this);
 
@@ -149,14 +166,18 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     headerPalette.setColor(QPalette::Window, QColor(31, 34, 37));
     header->setPalette(headerPalette);
   }
-  auto *headerLayout = new QVBoxLayout(header);
-  headerLayout->setContentsMargins(12, 9, 12, 9);
-  headerLayout->setSpacing(1);
+  auto *headerLayout = new QHBoxLayout(header);
+  headerLayout->setContentsMargins(10, 6, 10, 6);
+  headerLayout->setSpacing(10);
 
   auto *titleLabel = new QLabel(QStringLiteral("Audio Mixer"), header);
-  auto *subtitleLabel = new QLabel(
-      QStringLiteral("Master bus and current composition audio layers"),
-      header);
+  auto *mixerIcon = new QLabel(header);
+  mixerIcon->setPixmap(QIcon(QStringLiteral(":/icons/Studio/mixer_panel.svg")).pixmap(QSize(20, 20)));
+  mixerIcon->setFixedSize(22, 22);
+  impl_->compositionLabel_ = new QLabel(header);
+  impl_->compositionLabel_->setAccessibleName(QStringLiteral("Current mixer composition"));
+  impl_->compositionLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  impl_->compositionLabel_->setMinimumWidth(60);
   {
     QPalette titlePalette = titleLabel->palette();
     titlePalette.setColor(QPalette::WindowText, QColor(240, 243, 246));
@@ -167,13 +188,14 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
                                                      : 11);
     titleLabel->setFont(titleFont);
 
-    QPalette subtitlePalette = subtitleLabel->palette();
-    subtitlePalette.setColor(QPalette::WindowText, QColor(166, 179, 195));
-    subtitleLabel->setPalette(subtitlePalette);
+    QPalette compositionPalette = impl_->compositionLabel_->palette();
+    compositionPalette.setColor(QPalette::WindowText, QColor(190, 193, 197));
+    impl_->compositionLabel_->setPalette(compositionPalette);
   }
 
+  headerLayout->addWidget(mixerIcon);
   headerLayout->addWidget(titleLabel);
-  headerLayout->addWidget(subtitleLabel);
+  headerLayout->addWidget(impl_->compositionLabel_, 1);
   impl_->summaryLabel_ = new QLabel(header);
   {
     impl_->summaryLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -188,10 +210,12 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
                                                          : 9);
     impl_->summaryLabel_->setFont(summaryFont);
   }
-  headerLayout->addWidget(impl_->summaryLabel_, 0, Qt::AlignRight);
 
   auto *routingButton = new AudioRoutingButton(header);
-  routingButton->setText(QStringLiteral("Advanced Routing…"));
+  routingButton->setText(QStringLiteral("Routing…"));
+  routingButton->setIcon(QIcon(QStringLiteral(":/icons/Studio/mixer_routing.svg")));
+  routingButton->setIconSize(QSize(16, 16));
+  routingButton->setToolTip(QStringLiteral("Edit output routes and sends"));
   routingButton->setAccessibleName(QStringLiteral("Open advanced audio routing"));
   routingButton->setAccessibleDescription(
       QStringLiteral("Edit bus output routes and sidechain sends for the current composition."));
@@ -277,13 +301,41 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     impl_->contentWidget_->setPalette(contentPalette);
   }
   impl_->contentLayout_ = new QHBoxLayout(impl_->contentWidget_);
-  impl_->contentLayout_->setContentsMargins(10, 10, 10, 10);
-  impl_->contentLayout_->setSpacing(6);
+  impl_->contentLayout_->setContentsMargins(6, 6, 6, 6);
+  impl_->contentLayout_->setSpacing(2);
   impl_->contentLayout_->addStretch();
   scrollArea->setWidget(impl_->contentWidget_);
 
   rootLayout->addWidget(header);
   rootLayout->addWidget(scrollArea, 1);
+  auto *footer = new QWidget(this);
+  auto *footerLayout = new QHBoxLayout(footer);
+  footerLayout->setContentsMargins(6, 4, 6, 4);
+  footerLayout->setSpacing(4);
+  const auto addTransport = [footer, footerLayout](const QString &label,
+      const QString &iconPath, std::function<void()> action) {
+    auto *button = new AudioRoutingButton(footer);
+    button->setIcon(QIcon(iconPath));
+    button->setIconSize(QSize(18, 18));
+    button->setFixedSize(34, 28);
+    button->setAccessibleName(label);
+    button->setToolTip(label);
+    button->invoked = std::move(action);
+    footerLayout->addWidget(button);
+  };
+  addTransport(QStringLiteral("Play composition"), QStringLiteral(":/icons/Studio/mixer_play.svg"), [] {
+    if (auto *service = ArtifactPlaybackService::instance()) service->play();
+  });
+  addTransport(QStringLiteral("Pause composition"), QStringLiteral(":/icons/Studio/mixer_pause.svg"), [] {
+    if (auto *service = ArtifactPlaybackService::instance()) service->pause();
+  });
+  addTransport(QStringLiteral("Stop composition"), QStringLiteral(":/icons/Studio/mixer_stop.svg"), [] {
+    if (auto *service = ArtifactPlaybackService::instance()) service->stop();
+  });
+  impl_->summaryLabel_->setContentsMargins(10, 4, 10, 4);
+  impl_->summaryLabel_->setWordWrap(true);
+  footerLayout->addWidget(impl_->summaryLabel_, 1);
+  rootLayout->addWidget(footer);
 
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>(
@@ -312,6 +364,12 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
   ArtifactCompositionPtr composition;
   if (auto *service = ArtifactProjectService::instance()) {
     composition = service->currentComposition().lock();
+  }
+  if (impl_->compositionLabel_) {
+    const QString name = composition ? composition->settings().compositionName().toQString()
+                                     : QStringLiteral("No composition");
+    impl_->compositionLabel_->setText(name);
+    impl_->compositionLabel_->setToolTip(name);
   }
   ArtifactAudioService::instance()->syncCurrentComposition();
   impl_->mixer_->connectToCoreMixer(
@@ -404,20 +462,16 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
     impl_->contentLayout_->addWidget(impl_->emptyLabel_);
     impl_->contentLayout_->addStretch();
   } else {
-    if (auto *masterBus = impl_->mixer_->masterBus()) {
-      impl_->contentLayout_->addWidget(
-          createAudioMixerMasterRow(masterBus, impl_->contentWidget_));
-    }
-    impl_->contentLayout_->addWidget(
-        new AudioStripSeparatorWidget(impl_->contentWidget_));
     for (int i = 0; i < strips.size(); ++i) {
       auto *strip = strips.at(i);
       impl_->contentLayout_->addWidget(
           createAudioMixerStripRow(strip, impl_->contentWidget_, this));
-      if (i + 1 < strips.size()) {
-        impl_->contentLayout_->addWidget(
-            new AudioStripSeparatorWidget(impl_->contentWidget_));
-      }
+    }
+    if (auto *masterBus = impl_->mixer_->masterBus()) {
+      impl_->contentLayout_->addWidget(
+          new AudioStripSeparatorWidget(impl_->contentWidget_));
+      impl_->contentLayout_->addWidget(
+          createAudioMixerMasterRow(masterBus, impl_->contentWidget_));
     }
   }
   if (!strips.isEmpty()) {

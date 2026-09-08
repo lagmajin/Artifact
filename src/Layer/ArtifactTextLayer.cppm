@@ -3066,22 +3066,15 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                                     impl_->textStyle_.shadowOffsetY),
                 displayText, font, shadowColor, transform, alignment, opacity);
           }
+          const FloatColor outlineColor = strokeColor;
+          float outlineThickness = 0.0f;
           if (impl_->textStyle_.strokeEnabled) {
-            const float radius =
+            outlineThickness =
                 std::max(1.0f, impl_->textStyle_.strokeWidth * 0.5f);
-            static constexpr std::array<QPointF, 8> offsets = {
-                QPointF(-1.0, 0.0), QPointF(1.0, 0.0), QPointF(0.0, -1.0),
-                QPointF(0.0, 1.0),   QPointF(-1.0, -1.0), QPointF(1.0, -1.0),
-                QPointF(-1.0, 1.0),  QPointF(1.0, 1.0)};
-            for (const auto &off : offsets) {
-              renderer->drawTextTransformed(
-                  textRect.translated(off.x() * radius, off.y() * radius),
-                  displayText, font, strokeColor, transform, alignment,
-                  opacity);
-            }
           }
           renderer->drawTextTransformed(textRect, displayText, font, fillColor,
-                                        transform, alignment, opacity);
+                                        transform, alignment, opacity,
+                                        outlineColor, outlineThickness);
         });
     return;
   }

@@ -647,18 +647,13 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
        gradientScaleValue, gradientOffsetValue, this]
       (const QMatrix4x4 &transform, float weight) {
         if (fillType != ArtifactSolidFillType::Solid) {
-          QImage gradientImage = ArtifactSolidGradientUtil::makeSolidGradientImage(
-              QSize(size.width, size.height),
-              QColor::fromRgbF(gradientStart.r(), gradientStart.g(), gradientStart.b(),
-                         gradientStart.a() * this->opacity() * weight),
-              QColor::fromRgbF(gradientEnd.r(), gradientEnd.g(), gradientEnd.b(),
-                         gradientEnd.a() * this->opacity() * weight),
-              static_cast<int>(fillType), gradientAngle, gradientReverseValue,
-              gradientCenterXValue, gradientCenterYValue, gradientScaleValue,
-              gradientOffsetValue);
-          renderer->drawSpriteTransformed(0.0f, 0.0f, static_cast<float>(size.width),
-                                          static_cast<float>(size.height), transform,
-                                          gradientImage, 1.0f);
+          const QImage &cachedGradient = this->currentFillImage();
+          if (!cachedGradient.isNull()) {
+            renderer->drawSpriteTransformed(
+                0.0f, 0.0f, static_cast<float>(size.width),
+                static_cast<float>(size.height), transform, cachedGradient,
+                this->opacity() * weight);
+          }
           return;
         }
         const FloatColor cloneColor(color.r(), color.g(), color.b(),
