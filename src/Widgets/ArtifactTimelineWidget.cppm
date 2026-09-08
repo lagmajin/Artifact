@@ -4395,15 +4395,34 @@ public:
     const int availableWidth =
         std::max(0, host_->width() - margins.left() - margins.right());
 
-    const int timecodeWidth = std::max(timecode_->minimumSizeHint().width(),
-                                       timecode_->sizeHint().width());
+    int mandatoryWidth = 0;
+    int mandatoryCount = 0;
+    if (layout) {
+      for (int i = 0; i < layout->count(); ++i) {
+        QWidget *widget = layout->itemAt(i)->widget();
+        if (!widget || widget == searchBar_ || widget == switches_ ||
+            !widget->isVisibleTo(host_)) {
+          continue;
+        }
+        mandatoryWidth += std::max(widget->minimumSizeHint().width(),
+                                   widget->sizeHint().width());
+        ++mandatoryCount;
+      }
+    }
     const int switchesWidth = std::max(switches_->minimumSizeHint().width(),
                                        switches_->sizeHint().width());
-    const int requiredForSearch = timecodeWidth + spacing + searchMinimumWidth_;
-    const int requiredForSwitches = requiredForSearch + spacing + switchesWidth;
+    const int mandatorySpacing = spacing * std::max(0, mandatoryCount - 1);
+    const int baseWidth = mandatoryWidth + mandatorySpacing;
 
-    const bool showSearch = availableWidth >= requiredForSearch;
-    const bool showSwitches = availableWidth >= requiredForSwitches;
+    // Preserve the mode controls and the compact global switches first. Search
+    // is useful, but it is the only wide control and can safely collapse when
+    // the dock is narrow without squeezing the timecode or adjacent buttons.
+    const bool showSwitches =
+        availableWidth >= baseWidth + spacing + switchesWidth;
+    const int reservedForSwitches = showSwitches ? spacing + switchesWidth : 0;
+    const bool showSearch =
+        availableWidth >= baseWidth + reservedForSwitches + spacing +
+                              searchMinimumWidth_;
 
     timecode_->setVisible(true);
     searchBar_->setVisible(showSearch);
@@ -4413,9 +4432,8 @@ public:
       return;
     }
 
-    const int reservedForSwitches = showSwitches ? spacing + switchesWidth : 0;
     const int maxSearchWidth =
-        std::max(searchMinimumWidth_, availableWidth - timecodeWidth - spacing -
+        std::max(searchMinimumWidth_, availableWidth - baseWidth - spacing -
                                           reservedForSwitches);
     searchBar_->setFixedWidth(
         std::clamp(maxSearchWidth, searchMinimumWidth_, searchPreferredWidth_));

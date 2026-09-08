@@ -104,7 +104,13 @@ namespace Artifact
   impl_->frameNumberLabel_->setMinimumHeight(frameMetrics.height() + 5);
   setMinimumHeight(timeMetrics.height() + frameMetrics.height() + 18);
 
-  const int minimumWidth = 10 + timeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 8;
+  // Include the layout's left/right margins. Omitting them let the label paint
+  // into the neighbouring mode button when the timeline dock became narrow.
+  const QMargins margins = layout->contentsMargins();
+  const int minimumWidth = margins.left() +
+                           timeMetrics.horizontalAdvance(
+                               QStringLiteral("00:00:00:00")) +
+                           margins.right();
   setMinimumWidth(minimumWidth);
   setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
  }
