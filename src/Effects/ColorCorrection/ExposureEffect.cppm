@@ -5,6 +5,10 @@ module;
 #include <cmath>
 #include <memory>
 #include <QVariant>
+#include <QElapsedTimer>
+#include <QSettings>
+#include <QDebug>
+#include <QtGlobal>
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -72,6 +76,7 @@ public:
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
     mutable bool pipelineReady_ = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -79,9 +84,20 @@ public:
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+        const auto previousDevice = device_;
+        const auto previousContext = context_;
+        SharedRenderDeviceLease lease;
+        if (!lease.acquire(device_, context_)) {
             applyCPU(src, dst);
             return;
+        }
+        if (previousDevice != device_ || previousContext != context_) {
+            executor_.reset();
+            gpuContext_.reset();
+            paramsCB_.Release();
+            outputTex_.Release();
+            stagingTex_.Release();
+            pipelineReady_ = false;
         }
 
         if (!gpuContext_) {
@@ -130,6 +146,8 @@ public:
             pipelineReady_ = true;
         }
 
+        QElapsedTimer phaseTimer;
+        phaseTimer.start();
         Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
         if (!createTextureFromImage(src, device_, &inputTex, "Exposure/InputTexture")) {
             applyCPU(src, dst);
@@ -171,14 +189,29 @@ public:
             return;
         }
 
+        const qint64 prepareNs = phaseTimer.nsecsElapsed();
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        const qint64 submitNs = phaseTimer.nsecsElapsed();
 
-        if (!readbackTexture(device_, context_, outputTex_, dst, src.image().colorDescriptor(), "Exposure/StagingTexture")) {
+        if (!readbackTexture(device_, context_, outputTex_, stagingTex_, dst, src.image().colorDescriptor(), "Exposure/StagingTexture")) {
             applyCPU(src, dst);
             return;
         }
         dst.image().setColorDescriptor(src.image().colorDescriptor());
+        const qint64 finishNs = phaseTimer.nsecsElapsed();
+        const QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+        if (settings.value(QStringLiteral("Diagnostics/EffectProfiling"),
+                qEnvironmentVariableIntValue("ARTIFACT_EFFECT_PROFILE") != 0).toBool()) {
+            const quint64 bytes = static_cast<quint64>(outDesc.Width) * outDesc.Height * 16;
+            // CPU wall durations: readback includes queue completion, mapping
+            // and the CPU copy. These are not GPU timestamp measurements.
+            qInfo() << "[ExposureTransferProfile] prepare_us=" << prepareNs / 1000
+                    << "submit_us=" << (submitNs - prepareNs) / 1000
+                    << "readback_us=" << (finishNs - submitNs) / 1000
+                    << "uploadBytes=" << bytes << "readbackBytes=" << bytes
+                    << "idleWaits=1";
+        }
     }
 
 private:
@@ -261,6 +294,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     static bool readbackTexture(Diligent::IRenderDevice* device,
                                 Diligent::IDeviceContext* ctx,
                                 Diligent::ITexture* src,
+                                Diligent::RefCntAutoPtr<Diligent::ITexture>& staging,
                              ImageF32x4RGBAWithCache& dst,
                              const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                              const char* name)
@@ -280,8 +314,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
         stagingDesc.Usage = Diligent::USAGE_STAGING;
         stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
         stagingDesc.Name = name;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
-        device->CreateTexture(stagingDesc, nullptr, &staging);
+        if (!staging || staging->GetDesc().Width != stagingDesc.Width ||
+            staging->GetDesc().Height != stagingDesc.Height ||
+            staging->GetDesc().Format != stagingDesc.Format) {
+            staging.Release();
+            device->CreateTexture(stagingDesc, nullptr, &staging);
+        }
         if (!staging) {
             return false;
         }

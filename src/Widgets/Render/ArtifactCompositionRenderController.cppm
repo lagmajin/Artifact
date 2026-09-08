@@ -1,6 +1,9 @@
 module;
 
 #include <DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 
 #define NOMINMAX
 
@@ -283,6 +286,7 @@ import Artifact.Color.OCIOManager;
 import Artifact.Widgets.ViewportColorPipeline;
 
 import Graphics.LayerBlendPipeline;
+import Container.NamedVector;
 
 import Graphics.GPUcomputeContext;
 
@@ -7969,6 +7973,200 @@ static void applyLayerMatteToSurface(
 
 
 
+// Renderer-owned, bounded GPU results for spatially constant pointwise inputs.
+// No global device state: a backend/context replacement invalidates all entries.
+class SolidPointwisePreviewCache final {
+  struct Entry {
+    QString owner;
+    QString signature;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> input;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> output;
+    QRgb sourceRgba = 0;
+    quint64 used = 0;
+  };
+  ArtifactCore::NamedVector<Entry> entries_;
+  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+  std::unique_ptr<ArtifactCore::LayerBlendPipeline> pipeline_;
+  quint64 requests_ = 0, hits_ = 0, dispatches_ = 0, uploads_ = 0;
+
+public:
+  void clear(ArtifactIRenderer* renderer = nullptr) {
+    if (renderer) renderer->flush();
+    entries_.clear();
+    pipeline_.reset();
+    context_.Release();
+    device_.Release();
+  }
+
+  Diligent::ITextureView* resolve(ArtifactAbstractLayer* layer,
+                                 ArtifactIRenderer* renderer,
+                                 const QRectF& bounds) {
+    if (!layer || !renderer || layer->is3D() || layer->isAdjustmentLayer() ||
+        layer->hasMasks() || layer->hasModifiers() ||
+        layerHasEnabledMatteReferences(layer)) return nullptr;
+    ArtifactCore::FloatColor color;
+    if (auto* solid = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
+      if (solid->fillType() != ArtifactSolidFillType::Solid) return nullptr;
+      color = solid->color();
+    } else if (auto* solid = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
+      if (solid->fillType() != ArtifactSolidFillType::Solid) return nullptr;
+      color = solid->color();
+    } else {
+      return nullptr;
+    }
+    // Legacy surfaces evaluate RGB in their premultiplied storage domain.
+    // Only opaque sources are equivalent to the straight pointwise contract.
+    if (color.a() != 1.0f) return nullptr;
+    const QColor sourceColor = toQColor(color);
+    const std::array<float, 4> pixel{
+        sourceColor.blue() / 255.0f, sourceColor.green() / 255.0f,
+        sourceColor.red() / 255.0f, 1.0f};
+    // Match the existing controller's ARGB32 -> CV_32FC4 storage order.
+    // Channel-order normalization is a separate compatibility change.
+    ArtifactCore::PointwiseEffectStack stack;
+    QString signature = QString::number(sourceColor.rgba());
+    std::uint32_t slot = 0;
+    const auto effects = layer->getEffects();
+    // Reject the entire stack before evaluating or submitting any prefix.
+    for (const auto& effect : effects) {
+      if (!effect || !effect->isEnabled()) continue;
+      if (!ArtifactCore::dynamicPointerCast<ExposureEffect>(effect) ||
+          effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+          effect->computeMode() == ComputeMode::CPU) return nullptr;
+    }
+    for (const auto& effect : effects) {
+      if (!effect || !effect->isEnabled()) continue;
+      effect->setContext(makeControllerEffectContext(layer,
+          QRectF(0, 0, bounds.width(), bounds.height())));
+      if (effect->mix() != 1.0f || effect->hasEffectRegion() ||
+          effect->maskEnabled() || effect->effectMaskImageCount() != 0 ||
+          effect->allowOverscan() || slot + 5 > stack.kParameterSlotCount)
+        return nullptr;
+      const auto exposure = ArtifactCore::dynamicPointerCast<ExposureEffect>(effect);
+      const float ev = exposure->exposure();
+      const float offset = exposure->offset();
+      const float gamma = exposure->gammaCorrection();
+      if (!std::isfinite(ev) || !std::isfinite(offset) || !std::isfinite(gamma))
+        return nullptr;
+      signature += QStringLiteral("|%1,%2,%3").arg(ev, 0, 'g', 9)
+          .arg(offset, 0, 'g', 9).arg(gamma, 0, 'g', 9);
+      stack.addNode(ArtifactCore::PointwiseNodeKind::Exposure, slot);
+      stack.setParameter(slot++, ev);
+      stack.addNode(ArtifactCore::PointwiseNodeKind::Offset, slot);
+      stack.setParameter(slot++, offset);
+      // Match ExposureEffect's GPU identity-gamma threshold exactly.
+      if (std::abs(1.0f / std::max(0.0001f, gamma) - 1.0f) > 0.0001f) {
+        stack.addNode(ArtifactCore::PointwiseNodeKind::Gamma, slot);
+        stack.setParameter(slot++, gamma);
+      }
+      stack.addNode(ArtifactCore::PointwiseNodeKind::Clamp, slot);
+      stack.setParameter(slot++, 0.0f);
+      stack.setParameter(slot++, 1.0f);
+    }
+    if (stack.nodes().empty()) return nullptr;
+    // Match convertImageForUpload(Rgba32LinearStraight) at the legacy
+    // unknown-transfer boundary, after all effects have clamped to [0,1].
+    stack.addNode(ArtifactCore::PointwiseNodeKind::SrgbToLinear);
+    const auto device = renderer->device();
+    const auto context = renderer->immediateContext();
+    if (!device || !context) return nullptr;
+    if (device_ != device || context_ != context) {
+      renderer->flush();
+      clear();
+      device_ = device;
+      context_ = context;
+    }
+    ++requests_;
+    const QString owner = layer->id().toString();
+    Entry* entry = nullptr;
+    for (auto& candidate : entries_) {
+      if (candidate.owner == owner) { entry = &candidate; break; }
+    }
+    if (entry && entry->signature == signature && entry->output) {
+      ++hits_;
+      entry->used = requests_;
+      report();
+      return entry->output->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+    }
+    // Submit queued sprites before reusing/evicting a texture they reference.
+    // Same-context resource transitions order subsequent compute and sampling;
+    // no CPU readback or queue-idle wait is needed.
+    renderer->flush();
+    if (!pipeline_) {
+      pipeline_ = renderer->createLayerBlendPipeline();
+      if (!pipeline_ || !pipeline_->initialize()) {
+        pipeline_.reset();
+        return nullptr;
+      }
+    }
+    if (!entry) {
+      if (entries_.size() < 64) {
+        entries_.push_back(Entry{});
+        entry = entries_.last();
+      } else {
+        entry = &*std::min_element(entries_.begin(), entries_.end(),
+            [](const Entry& a, const Entry& b) { return a.used < b.used; });
+      }
+      entry->owner = owner;
+    }
+    entry->signature.clear();
+    entry->used = requests_;
+    Diligent::TextureDesc desc;
+    desc.Name = "Solid pointwise preview input";
+    desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+    desc.Width = desc.Height = 1;
+    desc.MipLevels = 1;
+    desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+    desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+    desc.Usage = Diligent::USAGE_IMMUTABLE;
+    Diligent::TextureSubResData data;
+    data.pData = pixel.data();
+    data.Stride = sizeof(pixel);
+    Diligent::TextureData initial;
+    initial.pSubResources = &data;
+    initial.NumSubresources = 1;
+    if (!entry->input || entry->sourceRgba != sourceColor.rgba()) {
+      entry->input.Release();
+      device->CreateTexture(desc, &initial, &entry->input);
+      if (!entry->input) return nullptr;
+      entry->sourceRgba = sourceColor.rgba();
+      ++uploads_;
+    }
+    if (!entry->output) {
+      desc.Name = "Solid pointwise preview result";
+      desc.Usage = Diligent::USAGE_DEFAULT;
+      desc.BindFlags = Diligent::BIND_SHADER_RESOURCE | Diligent::BIND_UNORDERED_ACCESS;
+      device->CreateTexture(desc, nullptr, &entry->output);
+    }
+    if (!entry->output) return nullptr;
+    const auto segments = stack.segments(ArtifactCore::PointwiseAlphaMode::Straight);
+    if (segments.size() != 1 || !stack.validate().valid) return nullptr;
+    const auto plan = ArtifactCore::PointwiseEffectFusion::makeComputePlan(
+        "diligent", "rgba32f", stack.nodes(), segments.front(), 1, 1);
+    if (!pipeline_->updatePointwiseParameters(context, stack) ||
+        !pipeline_->applyPointwise(context,
+            entry->input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE),
+            entry->output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS),
+            pipeline_->createPointwiseParameterBuffer(), plan)) return nullptr;
+    entry->signature = signature;
+    ++dispatches_;
+    report();
+    return entry->output->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+  }
+
+private:
+  void report() const {
+    if (requests_ != 1 && requests_ % 120 != 0) return;
+    const QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+    if (!settings.value(QStringLiteral("Diagnostics/EffectProfiling"),
+            qEnvironmentVariableIntValue("ARTIFACT_EFFECT_PROFILE") != 0).toBool()) return;
+    qInfo() << "[SolidPointwisePreview] requests=" << requests_ << "hits=" << hits_
+            << "dispatches=" << dispatches_ << "uploadBytes=" << uploads_ * 16
+            << "readbackBytes=0 idleWaits=0 entries=" << entries_.size();
+  }
+};
+
 void drawLayerForCompositionView(
 
     ArtifactAbstractLayer *layer, ArtifactIRenderer *renderer,
@@ -7997,7 +8195,8 @@ void drawLayerForCompositionView(
     const std::function<Diligent::ITextureView*(ArtifactAbstractLayer*,
                                                 int64_t, const QSize&)>*
         precompGpuResolver = nullptr,
-    bool deferRasterizerEffectsToGpu = false) {
+    bool deferRasterizerEffectsToGpu = false,
+    SolidPointwisePreviewCache* solidPointwiseCache = nullptr) {
 
   if (!layer || !renderer) {
 
@@ -8044,6 +8243,18 @@ void drawLayerForCompositionView(
   const QTransform globalTransform = layer->getGlobalTransform();
 
   const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
+
+  if (useGpuPath && solidPointwiseCache && !applyViewportCameraTo2D &&
+      (!sceneLights || sceneLights->empty())) {
+    if (auto* srv = solidPointwiseCache->resolve(layer, renderer, localRect)) {
+      const float opacity = opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
+      renderer->drawSpriteTransformed(
+          static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
+          static_cast<float>(localRect.width()), static_cast<float>(localRect.height()),
+          globalTransform4x4, srv, opacity);
+      return;
+    }
+  }
 
 
   // Keep a queued 3D overlay bound to the camera that produced it. The scope
@@ -11083,7 +11294,8 @@ public:
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
                     viewportOrientationActive_, surfaceGeneration(layer),
-        &precompGpuResolver, deferRasterizerEffectsToGpu);
+        &precompGpuResolver, deferRasterizerEffectsToGpu,
+        &solidPointwiseCache_);
 
     renderer_->flush();
 
@@ -13502,6 +13714,7 @@ public:
   CompositionID lastBackgroundCompositionId_;
 
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
+  SolidPointwisePreviewCache solidPointwiseCache_;
 
   QHash<QString, quint64> surfaceGenerations_;
 
@@ -15473,6 +15686,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                 impl_->surfaceCache_.clear();
 
+                impl_->solidPointwiseCache_.clear(impl_->renderer_.get());
+
                 impl_->surfaceGenerations_.clear();
 
                 if (impl_->gpuTextureCacheManager_) {
@@ -16142,6 +16357,8 @@ void CompositionRenderController::destroy() {
 
   impl_->surfaceCache_.clear();
 
+  impl_->solidPointwiseCache_.clear(impl_->renderer_.get());
+
   impl_->surfaceGenerations_.clear();
 
   if (impl_->gpuTextureCacheManager_) {
@@ -16717,6 +16934,8 @@ void CompositionRenderController::setComposition(
 
       impl_->surfaceCache_.clear();
 
+      impl_->solidPointwiseCache_.clear(impl_->renderer_.get());
+
       impl_->surfaceGenerations_.clear();
 
       if (impl_->gpuTextureCacheManager_) {
@@ -16771,6 +16990,8 @@ void CompositionRenderController::setComposition(
   impl_->compositionChangedSubscription_.disconnect();
 
   impl_->surfaceCache_.clear();
+
+  impl_->solidPointwiseCache_.clear(impl_->renderer_.get());
 
   impl_->clearPrecompGpuOutputs();
 
