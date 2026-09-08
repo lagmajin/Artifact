@@ -12,6 +12,9 @@
 #include <QPalette>
 #include <QMetaObject>
 #include <QThread>
+#include <QStyle>
+#include <QSize>
+#include <QIcon>
 
 #include <iostream>
 #include <vector>
@@ -57,9 +60,43 @@ namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactUndoHistoryWidget)
 
+namespace {
+QIcon historyIconForLabel(QStyle* style, const QString& label) {
+ if (!style) return {};
+ if (label.contains(QStringLiteral("keyframe"), Qt::CaseInsensitive))
+  return style->standardIcon(QStyle::SP_DialogApplyButton);
+ if (label.contains(QStringLiteral("delete"), Qt::CaseInsensitive) ||
+     label.contains(QStringLiteral("remove"), Qt::CaseInsensitive))
+  return style->standardIcon(QStyle::SP_TrashIcon);
+ if (label.contains(QStringLiteral("add"), Qt::CaseInsensitive) ||
+     label.contains(QStringLiteral("create"), Qt::CaseInsensitive))
+  return style->standardIcon(QStyle::SP_FileDialogNewFolder);
+ if (label.contains(QStringLiteral("move"), Qt::CaseInsensitive) ||
+     label.contains(QStringLiteral("position"), Qt::CaseInsensitive))
+  return style->standardIcon(QStyle::SP_ArrowRight);
+ if (label.contains(QStringLiteral("font"), Qt::CaseInsensitive) ||
+     label.contains(QStringLiteral("text"), Qt::CaseInsensitive))
+  return style->standardIcon(QStyle::SP_FileIcon);
+ return style->standardIcon(QStyle::SP_CommandLink);
+}
+
+void addHistoryRows(QListWidget* list, const QStringList& labels,
+                    QStyle* style) {
+ if (!list) return;
+ for (const QString& label : labels) {
+  auto* item = new QListWidgetItem(historyIconForLabel(style, label), label);
+  item->setToolTip(label);
+  item->setSizeHint(QSize(item->sizeHint().width(), 30));
+  list->addItem(item);
+ }
+}
+} // namespace
+
 class ArtifactUndoHistoryWidget::Impl {
 public:
  QLabel* summaryLabel = nullptr;
+ QLabel* nextUndoLabel = nullptr;
+ QLabel* nextRedoLabel = nullptr;
  QListWidget* undoList = nullptr;
  QListWidget* redoList = nullptr;
  QPushButton* undoButton = nullptr;
@@ -82,6 +119,17 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
  widgetPalette.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
  setPalette(widgetPalette);
 
+ auto* toolbar = new QHBoxLayout();
+ toolbar->setSpacing(6);
+ impl_->undoButton = new QPushButton("Undo", this);
+ impl_->redoButton = new QPushButton("Redo", this);
+ impl_->clearButton = new QPushButton("Clear History", this);
+ impl_->undoButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+ impl_->redoButton->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
+ impl_->clearButton->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+ toolbar->addWidget(impl_->undoButton);
+ toolbar->addWidget(impl_->redoButton);
+ toolbar->addStretch();
  impl_->summaryLabel = new QLabel("Undo: 0 / Redo: 0", this);
  {
   QFont f = impl_->summaryLabel->font();
@@ -91,7 +139,10 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
   pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
   impl_->summaryLabel->setPalette(pal);
  }
- root->addWidget(impl_->summaryLabel);
+ toolbar->addWidget(impl_->summaryLabel);
+ toolbar->addSpacing(8);
+ toolbar->addWidget(impl_->clearButton);
+ root->addLayout(toolbar);
 
  auto* split = new QHBoxLayout();
  split->setSpacing(8);
@@ -100,8 +151,15 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
  undoFrame->setFrameShape(QFrame::StyledPanel);
   auto* undoLayout = new QVBoxLayout(undoFrame);
   undoLayout->setContentsMargins(6, 6, 6, 6);
-  undoLayout->addWidget(new QLabel("Undo Stack", undoFrame));
+  auto* undoTitle = new QLabel("Undo Stack", undoFrame);
+  QFont undoTitleFont = undoTitle->font();
+  undoTitleFont.setBold(true);
+  undoTitle->setFont(undoTitleFont);
+  undoLayout->addWidget(undoTitle);
+ impl_->nextUndoLabel = new QLabel("Next undo: —", undoFrame);
+ undoLayout->addWidget(impl_->nextUndoLabel);
  impl_->undoList = new QListWidget(undoFrame);
+ impl_->undoList->setIconSize(QSize(18, 18));
  {
   QPalette pal = impl_->undoList->palette();
   pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
@@ -111,14 +169,21 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
   impl_->undoList->setPalette(pal);
  }
   undoLayout->addWidget(impl_->undoList);
- split->addWidget(undoFrame, 1);
+ split->addWidget(undoFrame, 3);
 
  auto* redoFrame = new QFrame(this);
  redoFrame->setFrameShape(QFrame::StyledPanel);
  auto* redoLayout = new QVBoxLayout(redoFrame);
  redoLayout->setContentsMargins(6, 6, 6, 6);
- redoLayout->addWidget(new QLabel("Redo Stack", redoFrame));
+ auto* redoTitle = new QLabel("Redo Stack", redoFrame);
+ QFont redoTitleFont = redoTitle->font();
+ redoTitleFont.setBold(true);
+ redoTitle->setFont(redoTitleFont);
+ redoLayout->addWidget(redoTitle);
+ impl_->nextRedoLabel = new QLabel("Next redo: —", redoFrame);
+ redoLayout->addWidget(impl_->nextRedoLabel);
  impl_->redoList = new QListWidget(redoFrame);
+ impl_->redoList->setIconSize(QSize(18, 18));
  {
   QPalette pal = impl_->redoList->palette();
   pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
@@ -128,15 +193,10 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
   impl_->redoList->setPalette(pal);
  }
   redoLayout->addWidget(impl_->redoList);
- split->addWidget(redoFrame, 1);
+ split->addWidget(redoFrame, 2);
 
  root->addLayout(split, 1);
 
- auto* buttons = new QHBoxLayout();
- buttons->setSpacing(6);
- impl_->undoButton = new QPushButton("Undo", this);
- impl_->redoButton = new QPushButton("Redo", this);
- impl_->clearButton = new QPushButton("Clear", this);
  {
   QPalette pal = impl_->undoButton->palette();
   pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
@@ -145,12 +205,6 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
   impl_->redoButton->setPalette(pal);
   impl_->clearButton->setPalette(pal);
  }
-  buttons->addWidget(impl_->undoButton);
-  buttons->addWidget(impl_->redoButton);
-  buttons->addStretch();
-  buttons->addWidget(impl_->clearButton);
-  root->addLayout(buttons);
-
  UndoManager* mgr = UndoManager::instance();
  connect(impl_->undoButton, &QPushButton::clicked, this, [mgr]() {
   if (mgr) mgr->undo();
@@ -193,11 +247,21 @@ void ArtifactUndoHistoryWidget::refreshHistory() {
 
  impl_->undoList->clear();
  impl_->redoList->clear();
- impl_->undoList->addItems(undoLabels);
- impl_->redoList->addItems(redoLabels);
+ addHistoryRows(impl_->undoList, undoLabels, style());
+ addHistoryRows(impl_->redoList, redoLabels, style());
+
+ if (!undoLabels.isEmpty()) {
+  impl_->undoList->setCurrentRow(0);
+ }
 
  impl_->undoButton->setEnabled(mgr->canUndo());
  impl_->redoButton->setEnabled(mgr->canRedo());
+ impl_->nextUndoLabel->setText(
+     QStringLiteral("Next undo: %1")
+         .arg(undoLabels.isEmpty() ? QStringLiteral("—") : undoLabels.front()));
+ impl_->nextRedoLabel->setText(
+     QStringLiteral("Next redo: %1")
+         .arg(redoLabels.isEmpty() ? QStringLiteral("—") : redoLabels.front()));
  impl_->summaryLabel->setText(QString("Undo: %1 / Redo: %2").arg(undoLabels.size()).arg(redoLabels.size()));
 }
 
