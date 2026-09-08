@@ -1113,39 +1113,29 @@ public:
     const bool playing = owner_ && owner_->state() == PlaybackState::Playing;
     const bool reverse = owner_ && owner_->playbackSpeed() < 0.0f;
 
-    std::vector<int64_t> forwardBand;
-    std::vector<int64_t> backwardBand;
     orderedFrames.reserve(static_cast<size_t>(endExclusive - start));
-    forwardBand.reserve(static_cast<size_t>(endExclusive - start));
-    backwardBand.reserve(static_cast<size_t>(endExclusive - start));
-
     for (int64_t frame = start; frame < endExclusive; ++frame) {
-      if (frame == currentFrame) {
-        orderedFrames.push_back(frame);
-        continue;
-      }
-      const bool onDirectionalSide = reverse ? frame < currentFrame : frame > currentFrame;
-      if (playing && onDirectionalSide) {
-        forwardBand.push_back(frame);
-      } else {
-        backwardBand.push_back(frame);
-      }
+      orderedFrames.push_back(frame);
     }
-
-    auto appendByDistance = [&](std::vector<int64_t> &frames) {
-      std::stable_sort(frames.begin(), frames.end(), [&](int64_t a, int64_t b) {
-        const int64_t da = std::llabs(a - currentFrame);
-        const int64_t db = std::llabs(b - currentFrame);
-        if (da != db) {
-          return da < db;
-        }
-        return reverse ? a > b : a < b;
-      });
-      orderedFrames.insert(orderedFrames.end(), frames.begin(), frames.end());
+    const bool loop = playing && owner_ && owner_->isLooping() &&
+                      currentFrame >= start && currentFrame < endExclusive;
+    const int64_t count = endExclusive - start;
+    auto distance = [&](int64_t frame) -> int64_t {
+      const int64_t delta = reverse ? currentFrame - frame : frame - currentFrame;
+      if (loop) return (delta + count) % count;
+      return std::llabs(frame - currentFrame);
     };
-
-    appendByDistance(forwardBand);
-    appendByDistance(backwardBand);
+    std::stable_sort(orderedFrames.begin(), orderedFrames.end(),
+        [&](int64_t a, int64_t b) {
+          if (a == currentFrame || b == currentFrame) return a == currentFrame && a != b;
+          if (playing && !loop) {
+            const bool aheadA = reverse ? a < currentFrame : a > currentFrame;
+            const bool aheadB = reverse ? b < currentFrame : b > currentFrame;
+            if (aheadA != aheadB) return aheadA;
+          }
+          const auto da = distance(a), db = distance(b);
+          return da != db ? da < db : (reverse ? a > b : a < b);
+        });
     return orderedFrames;
   }
 
@@ -2335,9 +2325,14 @@ public:
         start, end - 1);
     const bool reverse = owner_ && owner_->playbackSpeed() < 0.0f;
     const int64_t leadFrames = std::min<int64_t>(8, end - start);
+    const bool loop = owner_ && owner_->isLooping();
     for (int64_t i = 0; i < leadFrames; ++i) {
-      const int64_t frame = current + (reverse ? -i : i);
-      if (frame < start || frame >= end || !isFrameReadyForRamPreview(frame)) {
+      int64_t frame = current + (reverse ? -i : i);
+      if (frame < start || frame >= end) {
+        if (!loop) break; // Only the remaining frames are needed to finish playback.
+        frame = start + (frame - start + (end - start)) % (end - start);
+      }
+      if (!isFrameReadyForRamPreview(frame)) {
         return false;
       }
     }
@@ -3530,6 +3525,7 @@ bool ArtifactPlaybackService::ramPreviewPlaybackFallbackWhilePlaying() const {
   }
   return impl_->ramPreviewPlaybackFallbackWhilePlaying_ ||
          impl_->ramPreviewAutoPlaybackActive_ ||
+         (isPlaying() && impl_->ramPreviewPlaybackStartReady()) ||
          impl_->ramPreviewBuildRangeReady();
 }
 
