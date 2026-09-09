@@ -524,6 +524,7 @@ public:
     
     void setKeyframeChecked(bool checked);
     void setKeyframeModeEnabled(bool enabled);
+    void setKeyframeAnchor(ArtifactCore::KeyFrame::Anchor anchor);
     void setKeyframeAnchorHandler(std::function<void(ArtifactCore::KeyFrame::Anchor)> handler);
     void setKeyframeColorLabelHandler(std::function<void(ArtifactCore::KeyFrame::ColorLabel)> handler);
     bool isKeyframeModeEnabled() const;
@@ -563,6 +564,8 @@ private:
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
     std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
     bool currentFrameKeyframed_ = false;
+    ArtifactCore::KeyFrame::Anchor currentFrameKeyframeAnchor_ =
+        ArtifactCore::KeyFrame::Anchor::Absolute;
     bool expanded_ = false;
     QPointer<QWidget> inlineEditorWidget_;
     bool keyframeModeEnabled_ = false;

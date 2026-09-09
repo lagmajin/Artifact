@@ -4,6 +4,7 @@ module;
 #include <QPainterPath>
 #include <QPixmap>
 #include <QPen>
+#include <QPolygonF>
 #include <QtGlobal>
 module Artifact.Widgets.Timeline.KeyframeIconHelper;
 
@@ -11,14 +12,15 @@ namespace Artifact {
 namespace {
 QString cacheKey(const KeyframeIconStyle& style)
 {
-  return QStringLiteral("%1x%2:%3:%4:%5:%6:%7")
+  return QStringLiteral("%1x%2:%3:%4:%5:%6:%7:%8")
       .arg(style.size.width())
       .arg(style.size.height())
       .arg(style.fillColor.rgba(), 8, 16, QLatin1Char('0'))
       .arg(style.outlineColor.rgba(), 8, 16, QLatin1Char('0'))
       .arg(static_cast<int>(style.state))
       .arg(static_cast<int>(style.meaning))
-      .arg(style.currentFrame ? 1 : 0);
+      .arg(style.currentFrame ? 1 : 0)
+      .arg(style.layerTimePinned ? 1 : 0);
 }
 }
 
@@ -48,15 +50,34 @@ QIcon makeKeyframeIcon(const KeyframeIconStyle& style)
 
   painter.setPen(QPen(outline, penWidth));
   painter.setBrush(fill);
-  painter.translate(width * 0.5, height * 0.5);
-  painter.rotate(45.0);
-
-  const QRectF square(-width * 0.24, -height * 0.24, width * 0.48, height * 0.48);
-  painter.drawRoundedRect(square, 0.8, 0.8);
+  const qreal centerX = width * 0.5;
+  const qreal pinSpace = style.layerTimePinned ? qMax<qreal>(2.0, height * 0.2) : 0.0;
+  const qreal top = 1.0;
+  const qreal bottom = qMax(top + 2.0, height - 1.0 - pinSpace);
+  const qreal halfWidth = qMin(width * 0.31, (bottom - top) * 0.38);
+  const qreal centerY = (top + bottom) * 0.5;
+  const QPolygonF diamond{
+      QPointF(centerX, top), QPointF(centerX + halfWidth, centerY),
+      QPointF(centerX, bottom), QPointF(centerX - halfWidth, centerY)};
+  painter.drawPolygon(diamond);
 
   if (style.currentFrame) {
     painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(square.adjusted(-1.0, -1.0, 1.0, 1.0), 1.2, 1.2);
+    painter.drawPolygon(diamond);
+  }
+
+  if (style.layerTimePinned) {
+    QColor pinColor = style.state == KeyframeIconState::Selected ? outline : fill;
+    if (style.state == KeyframeIconState::Disabled) {
+      pinColor.setAlphaF(pinColor.alphaF() * 0.35);
+    }
+    const qreal y = height - 1.25;
+    const qreal pinHalfWidth = qMax<qreal>(2.0, halfWidth * 0.62);
+    painter.setPen(QPen(pinColor, qMax<qreal>(1.0, height * 0.09),
+                        Qt::SolidLine, Qt::FlatCap));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawLine(QPointF(centerX - pinHalfWidth, y),
+                     QPointF(centerX + pinHalfWidth, y));
   }
 
   painter.end();

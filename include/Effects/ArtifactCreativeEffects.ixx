@@ -200,12 +200,11 @@ public:
 
 class ArtifactWireObjectRemoverEffect : public ArtifactAbstractEffect {
 private: class Impl; Impl* impl_;
-protected:
-    void apply(const ImageF32x4RGBAWithCache&, ImageF32x4RGBAWithCache&) override;
-    void onContextUpdated(const EffectContext&) override;
+    void syncImpls();
 public:
     ArtifactWireObjectRemoverEffect();
     ~ArtifactWireObjectRemoverEffect() override;
+    bool supportsGPU() const override { return true; }
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const ArtifactCore::UniString&, const QVariant&) override;
     EffectROIHint roiHint() const override;
@@ -251,12 +250,11 @@ public:
 
 class ArtifactPixelDustFixerEffect : public ArtifactAbstractEffect {
 private: class Impl; Impl* impl_;
-protected:
-    void apply(const ImageF32x4RGBAWithCache&, ImageF32x4RGBAWithCache&) override;
-    void onContextUpdated(const EffectContext&) override;
+    void syncImpls();
 public:
     ArtifactPixelDustFixerEffect();
     ~ArtifactPixelDustFixerEffect() override;
+    bool supportsGPU() const override { return true; }
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const ArtifactCore::UniString&, const QVariant&) override;
     EffectROIHint roiHint() const override;

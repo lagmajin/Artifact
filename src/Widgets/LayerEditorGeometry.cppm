@@ -264,6 +264,66 @@ bool hitTestMaskVertexGeometry(const ArtifactAbstractLayerPtr& layer,
  return false;
 }
 
+bool hitTestMaskBezierSegmentGeometry(
+    const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos,
+    float threshold, int& maskIndex, int& pathIndex, int& segmentIndex)
+{
+ if (!layer || threshold <= 0.0f) return false;
+ bool invertible = false;
+ const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
+ if (!invertible) return false;
+ const QPointF local = inverse.map(canvasPos);
+ const qreal thresholdSq = static_cast<qreal>(threshold) * threshold;
+ const auto cubic = [](const MaskVertex& from, const MaskVertex& to, qreal t) {
+  const qreal mt = 1.0 - t;
+  const QPointF p0 = from.position;
+  const QPointF p1 = from.position + from.outTangent;
+  const QPointF p2 = to.position + to.inTangent;
+  return p0 * (mt * mt * mt) + p1 * (3.0 * mt * mt * t) +
+         p2 * (3.0 * mt * t * t) + to.position * (t * t * t);
+ };
+ const auto distanceSq = [](const QPointF& point, const QPointF& a,
+                            const QPointF& b) {
+  const QPointF edge = b - a;
+  const qreal lengthSq = QPointF::dotProduct(edge, edge);
+  if (lengthSq <= 0.000001) {
+   const QPointF delta = point - a;
+   return QPointF::dotProduct(delta, delta);
+  }
+  const qreal t = std::clamp(
+      QPointF::dotProduct(point - a, edge) / lengthSq, 0.0, 1.0);
+  const QPointF delta = point - (a + edge * t);
+  return QPointF::dotProduct(delta, delta);
+ };
+ constexpr int kSteps = 18;
+ for (int mask = 0; mask < layer->maskCount(); ++mask) {
+  const LayerMask layerMask = layer->mask(mask);
+  if (!layerMask.isEnabled()) continue;
+  for (int path = 0; path < layerMask.maskPathCount(); ++path) {
+   const MaskPath maskPath = layerMask.maskPath(path);
+   const int count = maskPath.vertexCount();
+   const int segmentCount = maskPath.isClosed() ? count : count - 1;
+   for (int segment = 0; segment < segmentCount; ++segment) {
+    const MaskVertex from = maskPath.vertex(segment);
+    const MaskVertex to = maskPath.vertex((segment + 1) % count);
+    QPointF previous = from.position;
+    for (int step = 1; step <= kSteps; ++step) {
+     const QPointF current = cubic(
+         from, to, static_cast<qreal>(step) / static_cast<qreal>(kSteps));
+     if (distanceSq(local, previous, current) <= thresholdSq) {
+      maskIndex = mask;
+      pathIndex = path;
+      segmentIndex = segment;
+      return true;
+     }
+     previous = current;
+    }
+   }
+  }
+ }
+ return false;
+}
+
 std::vector<QPointF> buildShapeEditSeedPoints(const ArtifactShapeLayer& shape)
 {
  const float w = static_cast<float>(std::max(1, shape.shapeWidth()));

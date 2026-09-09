@@ -4,6 +4,7 @@ module;
 #include <QTransform>
 
 #include <algorithm>
+#include <cmath>
 
 module Artifact.Widgets.LayerEditor.MaskOverlay;
 
@@ -76,6 +77,45 @@ bool matches(int mask, int path, int vertex, int handle,
         handle == static_cast<int>(expectedHandle);
 }
 
+bool selected(const LayerEditorMaskOverlayState& state,
+              int mask, int path, int vertex)
+{
+ if (!state.selectedVertices) return false;
+ return std::find(state.selectedVertices->begin(), state.selectedVertices->end(),
+                  std::make_tuple(mask, path, vertex)) !=
+        state.selectedVertices->end();
+}
+
+QPointF cubicPoint(const MaskVertex& from, const MaskVertex& to, qreal t)
+{
+ const qreal mt = 1.0 - t;
+ const QPointF p0 = from.position;
+ const QPointF p1 = from.position + from.outTangent;
+ const QPointF p2 = to.position + to.inTangent;
+ const QPointF p3 = to.position;
+ return p0 * (mt * mt * mt) + p1 * (3.0 * mt * mt * t) +
+        p2 * (3.0 * mt * t * t) + p3 * (t * t * t);
+}
+
+void drawBezierSegment(ArtifactIRenderer* renderer, const QTransform& transform,
+                       const MaskVertex& from, const MaskVertex& to,
+                       const FloatColor& shadow, const FloatColor& line,
+                       const FloatColor& highlight, bool active)
+{
+ constexpr int kSteps = 18;
+ QPointF previous = transform.map(from.position);
+ for (int step = 1; step <= kSteps; ++step) {
+  const QPointF point = transform.map(cubicPoint(
+      from, to, static_cast<qreal>(step) / static_cast<qreal>(kSteps)));
+  const Detail::float2 a{static_cast<float>(previous.x()), static_cast<float>(previous.y())};
+  const Detail::float2 b{static_cast<float>(point.x()), static_cast<float>(point.y())};
+  renderer->drawThickLineLocal(a, b, active ? 8.8f : 7.0f, shadow);
+  renderer->drawThickLineLocal(a, b, active ? 5.2f : 4.1f, line);
+  renderer->drawThickLineLocal(a, b, active ? 2.2f : 1.5f, highlight);
+  previous = point;
+ }
+}
+
 }
 
 void drawLayerEditorMaskOverlay(
@@ -106,7 +146,6 @@ void drawLayerEditorMaskOverlay(
    const FloatColor tangentIn = alpha(brighten(base, 1.16f), 0.92f);
    const FloatColor tangentOut = alpha(mix(base, {0.92f, 0.84f, 0.58f, 1.0f}, 0.26f), 0.92f);
 
-   Detail::float2 previous{};
    for (int vertexIndex = 0; vertexIndex < count; ++vertexIndex) {
     const MaskVertex vertex = path.vertex(vertexIndex);
     const QPointF point = transform.map(vertex.position);
@@ -151,38 +190,48 @@ void drawLayerEditorMaskOverlay(
           (state.hoveredVertex == vertexIndex || state.hoveredVertex == vertexIndex - 1));
      const FloatColor activeLine = segmentActive
          ? mix(line, hover, state.draggingVertex ? 0.72f : 0.58f) : line;
-     renderer->drawThickLineLocal(previous, current, segmentActive ? 8.8f : 7.0f, lineShadow);
-     renderer->drawThickLineLocal(previous, current, segmentActive ? 5.2f : 4.1f, activeLine);
-     renderer->drawThickLineLocal(previous, current, segmentActive ? 2.2f : 1.5f,
-                                  brighten(segmentActive ? activeLine : lineHighlight,
-                                           segmentActive ? 1.16f : 1.0f));
+     drawBezierSegment(renderer, transform, path.vertex(vertexIndex - 1), vertex,
+                       lineShadow, activeLine,
+                       brighten(segmentActive ? activeLine : lineHighlight,
+                                segmentActive ? 1.16f : 1.0f), segmentActive);
     }
-    previous = current;
    }
 
    if (path.isClosed() && count > 1) {
-    const QPointF first = transform.map(path.vertex(0).position);
-    const Detail::float2 firstPoint{static_cast<float>(first.x()), static_cast<float>(first.y())};
-    renderer->drawThickLineLocal(previous, firstPoint, 7.4f, lineShadow);
-    renderer->drawThickLineLocal(previous, firstPoint, 4.3f, line);
-    renderer->drawThickLineLocal(previous, firstPoint, 1.6f, lineHighlight);
+    drawBezierSegment(renderer, transform, path.vertex(count - 1), path.vertex(0),
+                      lineShadow, line, lineHighlight, false);
    }
 
    for (int vertexIndex = 0; vertexIndex < count; ++vertexIndex) {
     const QPointF point = transform.map(path.vertex(vertexIndex).position);
     const Detail::float2 current{static_cast<float>(point.x()), static_cast<float>(point.y())};
+    const bool isSelected = selected(state, maskIndex, pathIndex, vertexIndex);
     const bool dragging = state.draggingVertex && state.draggingMask == maskIndex &&
                           state.draggingPath == pathIndex && state.draggingVertexIndex == vertexIndex;
     const bool hovering = state.hoveredMask == maskIndex && state.hoveredPath == pathIndex &&
                           state.hoveredVertex == vertexIndex;
-    const FloatColor color = dragging ? drag : hovering ? hover : vertexBase;
-    const float size = dragging ? 15.0f : hovering ? 14.0f : 12.0f;
+    const FloatColor color = dragging ? drag : hovering ? hover
+                                      : isSelected ? brighten(base, 1.38f) : vertexBase;
+    const float size = dragging ? 15.0f : hovering ? 14.0f : isSelected ? 13.5f : 12.0f;
     renderer->drawSolidRect(current.x - (size + 3.2f) * 0.5f,
                             current.y - (size + 3.2f) * 0.5f,
                             size + 3.2f, size + 3.2f, pointShadow, 1.0f);
-    drawSolidHandle(renderer, current, size, color, dragging || hovering);
+    drawSolidHandle(renderer, current, size, color, dragging || hovering || isSelected);
    }
   }
+ }
+
+ if (state.rubberBandSelecting) {
+  const qreal left = std::min(state.rubberBandStart.x(), state.rubberBandCurrent.x());
+  const qreal top = std::min(state.rubberBandStart.y(), state.rubberBandCurrent.y());
+  const qreal width = std::abs(state.rubberBandCurrent.x() - state.rubberBandStart.x());
+  const qreal height = std::abs(state.rubberBandCurrent.y() - state.rubberBandStart.y());
+  renderer->drawSolidRect(static_cast<float>(left), static_cast<float>(top),
+                          static_cast<float>(width), static_cast<float>(height),
+                          {0.24f, 0.68f, 0.94f, 0.10f}, 1.0f);
+  renderer->drawRectOutline(static_cast<float>(left), static_cast<float>(top),
+                            static_cast<float>(width), static_cast<float>(height),
+                            {0.35f, 0.82f, 1.0f, 0.95f});
  }
 }
 

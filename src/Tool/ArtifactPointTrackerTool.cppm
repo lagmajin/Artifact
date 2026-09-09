@@ -29,7 +29,7 @@ namespace Artifact {
 export class ArtifactPointTrackerTool {
 public:
     struct ApplyOptions {
-        int pointId = 0;
+        int pointId = -1;              ///< -1 は最初に登録された点を使用
         bool createNullLayer = true;       ///< Null レイヤーを新規作成する
         bool writeAnchor = true;           ///< アンカーポイントを追跡点中心に設定する
         bool applyToSelectedLayer = false;  ///< 選択中レイヤーに直接書き出す
@@ -46,9 +46,14 @@ public:
         const ApplyOptions& options,
         ArtifactAbstractLayerPtr targetLayer = nullptr)
     {
-        if (!comp || options.pointId < 0) return false;
+        if (!comp) return false;
 
-        const auto exportedKeyframes = tracker.exportKeyframes(options.pointId);
+        const int pointId = options.pointId >= 0
+                                ? options.pointId
+                                : tracker.firstTrackPointId();
+        if (pointId < 0) return false;
+
+        const auto exportedKeyframes = tracker.exportKeyframes(pointId);
         std::vector<std::pair<double, QPointF>> keyframes;
         keyframes.reserve(exportedKeyframes.size());
         for (const auto& [timeSeconds, pos] : exportedKeyframes) {
@@ -73,7 +78,7 @@ public:
         } else if (options.createNullLayer) {
             ArtifactLayerFactory factory;
             ArtifactLayerInitParams nullParams(
-                QStringLiteral("Track Point %1").arg(options.pointId),
+                QStringLiteral("Track Point %1").arg(pointId),
                 LayerType::Null);
             writeLayer = factory.createNewLayer(nullParams);
             if (!writeLayer) return false;

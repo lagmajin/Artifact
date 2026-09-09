@@ -51,6 +51,9 @@ struct MaskVertex {
     QPointF outTangent;   // 出力タンジェント（relative to position）
 };
 
+/// VP と Layer Solo View が共有する mask 頂点の選択アドレス。
+using MaskVertexAddress = std::tuple<int, int, int>;
+
 struct MaskConversionParams {
     float simplificationTolerance = 1.5f;
     float cornerThreshold = 10.0f;

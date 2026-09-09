@@ -790,13 +790,13 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
   QColor outlineColor = QColor(QStringLiteral("#B6C0CD"));
   KeyframeIconState state = KeyframeIconState::Normal;
   if (modeEnabled) {
-    fillColor = QColor(QStringLiteral("#A786FF"));
-    outlineColor = QColor(QStringLiteral("#D9CCFF"));
-    state = KeyframeIconState::Selected;
+    fillColor = QColor(Qt::transparent);
+    outlineColor = QColor(QStringLiteral("#C6A34B"));
+    state = KeyframeIconState::Normal;
   }
   if (hasCurrentFrameKey) {
-    fillColor = QColor(QStringLiteral("#FFD84D"));
-    outlineColor = QColor(QStringLiteral("#FFF1A8"));
+    fillColor = QColor(QStringLiteral("#C6A34B"));
+    outlineColor = QColor(QStringLiteral("#E1C36C"));
     state = KeyframeIconState::Selected;
   }
   if (!enabled) {
@@ -808,10 +808,17 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
   style.fillColor = fillColor;
   style.outlineColor = outlineColor;
   style.state = state;
+  style.layerTimePinned =
+      hasCurrentFrameKey &&
+      currentFrameKeyframeAnchor_ == ArtifactCore::KeyFrame::Anchor::LockToIn;
   keyframeButton_->setIcon(cachedKeyframeIcon(style));
   keyframeButton_->setToolTip(
       hasCurrentFrameKey
-          ? QStringLiteral("Current frame has a keyframe: %1").arg(propertyName_)
+          ? (style.layerTimePinned
+                 ? QStringLiteral("Current keyframe is pinned to layer time: %1")
+                       .arg(propertyName_)
+                 : QStringLiteral("Current frame has a keyframe: %1")
+                       .arg(propertyName_))
           : modeEnabled
                 ? QStringLiteral("Animation enabled for property: %1").arg(propertyName_)
                 : QStringLiteral("Toggle keyframe at current frame: %1")
@@ -837,6 +844,15 @@ void ArtifactPropertyEditorRowWidget::setKeyframeModeEnabled(
   keyframeModeEnabled_ = enabled;
   updateKeyframeButtonIcon();
   update();
+}
+
+void ArtifactPropertyEditorRowWidget::setKeyframeAnchor(
+    const ArtifactCore::KeyFrame::Anchor anchor) {
+  if (currentFrameKeyframeAnchor_ == anchor) {
+    return;
+  }
+  currentFrameKeyframeAnchor_ = anchor;
+  updateKeyframeButtonIcon();
 }
 
 bool ArtifactPropertyEditorRowWidget::isKeyframeModeEnabled() const {
@@ -1060,9 +1076,9 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   QAction *colorPurpleAction = nullptr;
   QAction *colorGrayAction = nullptr;
   if (keyframeAnchorHandler_) {
-    anchorMenu = menu.addMenu(propertyUiText(QStringLiteral("property.menu.keyframe_anchor"), QStringLiteral("Keyframe Anchor")));
+    anchorMenu = menu.addMenu(propertyUiText(QStringLiteral("property.menu.keyframe_time_constraint"), QStringLiteral("Keyframe Time Constraint")));
     anchorAbsoluteAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.absolute"), QStringLiteral("Absolute")));
-    anchorLockToInAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.lock_in"), QStringLiteral("Lock to In Point")));
+    anchorLockToInAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.pin_layer_time"), QStringLiteral("Pin to Layer Time")));
     anchorLockToOutAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.lock_out"), QStringLiteral("Lock to Out Point")));
     anchorStretchAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.stretch"), QStringLiteral("Stretch with Layer")));
   }

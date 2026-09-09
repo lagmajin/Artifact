@@ -194,6 +194,32 @@ bool ArtifactParametricCompositionLayer::beginInputBindingScope()
             return false;
         }
     }
+
+    if (const auto definition = impl_->instance_.definition()) {
+        for (const auto& parameter : definition->parameters()) {
+            if (parameter.targetLayerId.trimmed().isEmpty() ||
+                parameter.targetPropertyPath.trimmed().isEmpty()) {
+                continue;
+            }
+            const auto target = source->layerById(LayerID(parameter.targetLayerId));
+            const auto property = target
+                ? target->getProperty(parameter.targetPropertyPath)
+                : SharedPtr<ArtifactCore::AbstractProperty>{};
+            if (!target || !property) {
+                continue;
+            }
+            impl_->inputSnapshots_.push_back(
+                {LayerID(parameter.targetLayerId), parameter.targetPropertyPath,
+                 property->getValue()});
+            if (!target->setLayerPropertyValue(
+                    parameter.targetPropertyPath,
+                    impl_->instance_.parameterValue(parameter.key,
+                                                     parameter.defaultValue))) {
+                endInputBindingScope();
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -243,9 +269,12 @@ void ArtifactParametricCompositionLayer::bindSlot(
     }
     ParametricCompositionInputBinding b = binding;
     b.slotId = normalizedSlotId;
-    if (const auto def = impl_->instance_.definition(); def &&
-        b.wouldCreateCycle(def->definitionId())) {
-        return;
+    if (const auto def = impl_->instance_.definition(); def) {
+        const auto* slot = def->slot(normalizedSlotId);
+        if (!slot || slot->role != ParametricCompositionSlotRole::Input ||
+            b.wouldCreateCycle(def->definitionId())) {
+            return;
+        }
     }
     const auto& bindings = impl_->instance_.inputBindings();
     for (int i = 0; i < bindings.size(); ++i) {
@@ -343,6 +372,37 @@ bool ArtifactParametricCompositionLayer::addParameterDefinition(
         return false;
     }
 
+    setDefinition(updatedDefinition);
+    return true;
+}
+
+bool ArtifactParametricCompositionLayer::setParameterTarget(
+    const QString& key, const QString& targetLayerId, const QString& targetPropertyPath)
+{
+    const QString normalizedKey = key.trimmed();
+    const QString normalizedLayerId = targetLayerId.trimmed();
+    const QString normalizedPropertyPath = targetPropertyPath.trimmed();
+    if (normalizedKey.isEmpty() || normalizedLayerId.isEmpty() ||
+        normalizedPropertyPath.isEmpty()) {
+        return false;
+    }
+
+    const auto currentDefinition = impl_->instance_.definition();
+    if (!currentDefinition || !currentDefinition->hasParameter(normalizedKey)) {
+        return false;
+    }
+    auto updatedDefinition =
+        ArtifactCore::makeShared<ParametricCompositionDefinition>(*currentDefinition);
+    const auto* currentParameter = updatedDefinition->parameter(normalizedKey);
+    if (!currentParameter) {
+        return false;
+    }
+    auto updatedParameter = *currentParameter;
+    updatedParameter.targetLayerId = normalizedLayerId;
+    updatedParameter.targetPropertyPath = normalizedPropertyPath;
+    if (!updatedDefinition->setParameter(updatedParameter)) {
+        return false;
+    }
     setDefinition(updatedDefinition);
     return true;
 }

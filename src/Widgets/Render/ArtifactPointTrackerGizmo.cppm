@@ -7,6 +7,7 @@ module;
 #include <array>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 module Artifact.Widgets.PointTrackerGizmo;
@@ -18,6 +19,25 @@ import Tracking.MotionTracker;
 import Color.Float;
 
 namespace Artifact {
+
+namespace {
+
+int frameIndexForPathIndex(const ArtifactCore::TrackResult& result,
+                           int pointId, int pathIndex) {
+    if (pathIndex < 0) return -1;
+    int pathCount = 0;
+    for (int frameIndex = 0;
+         frameIndex < static_cast<int>(result.frames.size()); ++frameIndex) {
+        if (!result.frames[static_cast<std::size_t>(frameIndex)].findPoint(pointId)) {
+            continue;
+        }
+        if (pathCount == pathIndex) return frameIndex;
+        ++pathCount;
+    }
+    return -1;
+}
+
+} // namespace
 
 // ============================================================================
 // ArtifactPointTrackerGizmo::Impl
@@ -189,8 +209,10 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
 
     // --- モーションパス軌跡 (tracker 参照がある場合) ---
     if (impl_->tracker && impl_->tracker->hasResult()) {
-        // 最初のトラッキングポイント(=pointId 0) の軌跡を描画
-        const auto path = impl_->tracker->motionPath(0);
+        // 最初に登録された点の実IDで軌跡を描画する。MotionTrackerの
+        // ID採番は0始まりとは限らないため、固定IDを仮定しない。
+        const int pointId = impl_->tracker->firstTrackPointId();
+        const auto path = impl_->tracker->motionPath(pointId);
         if (path.size() >= 2) {
             std::vector<Detail::float2> pts;
             pts.reserve(path.size());
@@ -208,8 +230,11 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
             const auto result = impl_->tracker->result();
             for (size_t i = 0; i < pts.size(); ++i) {
                 float confidence = 1.0f;
-                if (i < result.frames.size()) {
-                    if (const auto *point = result.frames[i].findPoint(0)) {
+                const int frameIndex = frameIndexForPathIndex(
+                    result, pointId, static_cast<int>(i));
+                if (frameIndex >= 0) {
+                    if (const auto *point = result.frames[
+                            static_cast<std::size_t>(frameIndex)].findPoint(pointId)) {
                         confidence = static_cast<float>(std::clamp(
                             point->confidence, 0.0, 1.0));
                     }
@@ -220,9 +245,27 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
                 drawTrackerPinOverlay(renderer, pts[i].x, pts[i].y, dotSize,
                                       confidenceFill, dotAccent, false);
             }
-            const int currentIndex = std::clamp(
-                static_cast<int>(std::llround(impl_->currentTime)), 0,
-                static_cast<int>(pts.size()) - 1);
+            int currentIndex = 0;
+            if (!result.frames.empty()) {
+                double bestDistance = std::numeric_limits<double>::max();
+                int pathIndex = 0;
+                for (int frameIndex = 0;
+                     frameIndex < static_cast<int>(result.frames.size());
+                     ++frameIndex) {
+                    if (!result.frames[static_cast<std::size_t>(frameIndex)]
+                             .findPoint(pointId)) {
+                        continue;
+                    }
+                    const double distance =
+                        std::abs(result.frames[static_cast<std::size_t>(frameIndex)].time -
+                                 impl_->currentTime);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        currentIndex = pathIndex;
+                    }
+                    ++pathIndex;
+                }
+            }
             const auto &currentPoint = pts[static_cast<size_t>(currentIndex)];
             renderer->drawPoint(currentPoint.x, currentPoint.y,
                                 10.0f * invZoom,
@@ -239,6 +282,15 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
                                          'f', 2)),
                 confidenceFont, {0.75f, 1.0f, 0.78f, 0.95f},
                 Qt::AlignLeft | Qt::AlignVCenter);
+            if (!result.failureFrames.empty()) {
+                renderer->drawText(
+                    QRectF(cx + st.outerHalfW + 8.0f,
+                           cy - st.outerHalfH + 10.0f, 128.0f, 16.0f),
+                    QStringLiteral("Problems %1")
+                        .arg(static_cast<int>(result.failureFrames.size())),
+                    confidenceFont, {1.0f, 0.45f, 0.35f, 0.95f},
+                    Qt::AlignLeft | Qt::AlignVCenter);
+            }
         }
     }
 }
@@ -274,7 +326,7 @@ ArtifactPointTrackerGizmo::HandleType ArtifactPointTrackerGizmo::hitTest(
     const float iy2 = cy + st.innerHalfH;
 
     struct Corner { QPointF pos; HandleType type; };
-    std::vector<Corner> corners = {
+    const std::array<Corner, 4> corners = {
         {{ix1, iy1}, HandleType::InnerScale_TL},
         {{ix2, iy1}, HandleType::InnerScale_TR},
         {{ix1, iy2}, HandleType::InnerScale_BL},
@@ -284,6 +336,24 @@ ArtifactPointTrackerGizmo::HandleType ArtifactPointTrackerGizmo::hitTest(
     for (const auto& c : corners) {
         if (canvasRectForHandle(c.pos, 4.0f, zoom).contains(mouseCanvas)) {
             return c.type;
+        }
+    }
+
+    // After a track is available, path points take precedence over the ROI
+    // body so a point inside the feature box can still be corrected directly.
+    if (impl_->tracker && impl_->tracker->trackerType() ==
+            ArtifactCore::TrackerType::Point &&
+        impl_->tracker->hasResult()) {
+        const int pointId = impl_->tracker->firstTrackPointId();
+        const auto path = impl_->tracker->motionPath(pointId);
+        const float pathHitRadius = 6.0f / zoom;
+        for (int i = 0; i < static_cast<int>(path.size()); ++i) {
+            const float dx = mouseCanvas.x() - path[i].x();
+            const float dy = mouseCanvas.y() - path[i].y();
+            if (dx * dx + dy * dy < pathHitRadius * pathHitRadius) {
+                const_cast<Impl*>(impl_)->hitPathIndex = i;
+                return HandleType::PathPoint;
+            }
         }
     }
 
@@ -302,21 +372,6 @@ ArtifactPointTrackerGizmo::HandleType ArtifactPointTrackerGizmo::hitTest(
     if (mouseCanvas.x() >= ix1 && mouseCanvas.x() <= ix2 &&
         mouseCanvas.y() >= iy1 && mouseCanvas.y() <= iy2) {
         return HandleType::InnerMove;
-    }
-
-    // モーションパス上のポイントを確認 (tracker 参照がある場合)
-    if (impl_->tracker && impl_->tracker->hasResult()) {
-        const auto path = impl_->tracker->motionPath(0);
-        const float pathHitRadius = 6.0f / zoom;
-        for (int i = 0; i < static_cast<int>(path.size()); ++i) {
-            const float dx = mouseCanvas.x() - path[i].x();
-            const float dy = mouseCanvas.y() - path[i].y();
-            if (dx * dx + dy * dy < pathHitRadius * pathHitRadius) {
-                // PathPoint のインデックスを記録 (const cast で const メソッド内で一時保存)
-                const_cast<Impl*>(impl_)->hitPathIndex = i;
-                return HandleType::PathPoint;
-            }
-        }
     }
 
     return HandleType::None;
@@ -348,6 +403,10 @@ Qt::CursorShape ArtifactPointTrackerGizmo::cursorShapeForViewportPos(
     case HandleType::PathPoint:
         return Qt::PointingHandCursor;
     default:
+        if (impl_->tracker && impl_->tracker->trackerType() ==
+                ArtifactCore::TrackerType::Point) {
+            return Qt::CrossCursor;
+        }
         return Qt::ArrowCursor;
     }
 }
@@ -376,6 +435,27 @@ int ArtifactPointTrackerGizmo::draggedPathIndex() const {
 
 bool ArtifactPointTrackerGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
     const HandleType ht = hitTest(viewportPos, renderer);
+    if (ht == HandleType::None && renderer && impl_->tracker &&
+        impl_->tracker->trackerType() == ArtifactCore::TrackerType::Point) {
+        if (impl_->tracker->hasResult()) {
+            impl_->tracker->clearTrackingData();
+        }
+        const auto canvas = renderer->viewportToCanvas(
+            {static_cast<float>(viewportPos.x()),
+             static_cast<float>(viewportPos.y())});
+        impl_->state.innerCenter = QPointF(canvas.x, canvas.y);
+        impl_->state.outerHalfW = std::max(
+            impl_->state.outerHalfW, impl_->state.innerHalfW + 2.0f);
+        impl_->state.outerHalfH = std::max(
+            impl_->state.outerHalfH, impl_->state.innerHalfH + 2.0f);
+        impl_->activeHandle = HandleType::InnerMove;
+        impl_->isDragging = true;
+        impl_->dragStartViewport = viewportPos;
+        impl_->dragStartCenter = impl_->state.innerCenter;
+        impl_->dragStartInnerHalfW = impl_->state.innerHalfW;
+        impl_->dragStartInnerHalfH = impl_->state.innerHalfH;
+        return true;
+    }
     if (ht == HandleType::None) return false;
 
     impl_->activeHandle = ht;
@@ -384,7 +464,8 @@ bool ArtifactPointTrackerGizmo::handleMousePress(const QPointF& viewportPos, Art
 
     if (ht == HandleType::PathPoint && impl_->tracker && impl_->tracker->hasResult()) {
         // PathPoint ドラッグ開始
-        const auto path = impl_->tracker->motionPath(0);
+        const int pointId = impl_->tracker->firstTrackPointId();
+        const auto path = impl_->tracker->motionPath(pointId);
         const int idx = impl_->hitPathIndex;
         if (idx >= 0 && idx < static_cast<int>(path.size())) {
             impl_->draggedPathIndex = idx;
@@ -423,8 +504,12 @@ bool ArtifactPointTrackerGizmo::handleMouseMove(const QPointF& viewportPos, Arti
         const auto result = impl_->tracker->result();
         const auto& frames = result.frames;
         const int idx = impl_->draggedPathIndex;
-        if (idx < static_cast<int>(frames.size())) {
-            impl_->tracker->applyCorrection(frames[idx].time, 0, correctedPos);
+        const int pointId = impl_->tracker->firstTrackPointId();
+        const int frameIndex = frameIndexForPathIndex(result, pointId, idx);
+        if (pointId >= 0 && frameIndex >= 0) {
+            impl_->tracker->applyCorrection(
+                frames[static_cast<std::size_t>(frameIndex)].time, pointId,
+                correctedPos);
         }
         return true;
     }

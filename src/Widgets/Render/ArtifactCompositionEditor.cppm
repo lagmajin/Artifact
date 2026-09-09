@@ -37,6 +37,7 @@ module;
 #include <QInputMethodEvent>
 #include <QImageReader>
 #include <QKeySequence>
+#include <QLayout>
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -151,12 +152,14 @@ import Time.Rational;
 import Artifact.Layer.Video;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Tool.Manager;
 import Artifact.Tool.PuppetTool;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Artifact.Widgets.CreateCameraLayerDialog;
+import Artifact.Widgets.CreateLightLayerDialog;
 import Artifact.Widgets.CreateNoiseLayerDialog;
 import Clipboard.ClipboardManager;
 import Utils.Path;
@@ -3919,9 +3922,21 @@ public:
         if (!service) {
           return;
         }
-        ArtifactLayerInitParams params(QStringLiteral("Light 1"),
+        CreateLightLayerDialog dialog(this);
+        if (dialog.exec() != QDialog::Accepted) {
+          return;
+        }
+        ArtifactLayerInitParams params(
+            dialog.lightName().isEmpty() ? QStringLiteral("Light 1") : dialog.lightName(),
                                        LayerType::Light);
         service->addLayerToCurrentComposition(params);
+        auto* selectionManager = ArtifactLayerSelectionManager::instance();
+        const auto light = selectionManager
+            ? ArtifactCore::dynamicPointerCast<ArtifactLightLayer>(selectionManager->currentLayer())
+            : ArtifactLightLayerPtr{};
+        if (light) {
+          dialog.applyTo(*light);
+        }
       });
       add(QStringLiteral("New 3D Plane Layer"), [this]() {
         auto *service = ArtifactProjectService::instance();
@@ -4143,9 +4158,21 @@ public:
             [this, ctrl = controller_]() {
               if (ctrl) ctrl->trackerTrackAll();
             });
+        add(QStringLiteral("Stop Tracking"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerStop();
+            }, controller_->trackerJobRunning());
+        add(QStringLiteral("Review Next Problem Frame"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerNextProblemFrame();
+            });
         add(QStringLiteral("Use Planar Tracker"),
             [this, ctrl = controller_]() {
               if (ctrl) ctrl->trackerUsePlanarMode();
+            });
+        add(QStringLiteral("Use Point Tracker"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerUsePointMode();
             });
         addSeparator();
         add(QStringLiteral("Apply to Layer Position"),
@@ -7919,6 +7946,8 @@ public:
 
   CompositionViewport *compositionView_ = nullptr;
   QWidget *viewportHost_ = nullptr;
+  QWidget *viewportShell_ = nullptr;
+  QHBoxLayout *viewportShellLayout_ = nullptr;
   QSplitter *viewportRowsSplitter_ = nullptr;
   QSplitter *viewportTopSplitter_ = nullptr;
   QSplitter *viewportBottomSplitter_ = nullptr;
@@ -7987,6 +8016,18 @@ public:
   QAction *vectorScopeAction_ = nullptr;
   QPointer<QDialog> vectorScopeDialog_;
   QToolButton *toolModeButton_ = nullptr;
+  ViewportLayoutButton *trackerModeButton_ = nullptr;
+  ViewportLayoutButton *trackerPointModeButton_ = nullptr;
+  ViewportLayoutButton *trackerBackwardButton_ = nullptr;
+  ViewportLayoutButton *trackerStopButton_ = nullptr;
+  ViewportLayoutButton *trackerForwardButton_ = nullptr;
+  ViewportLayoutButton *trackerAllButton_ = nullptr;
+  ViewportLayoutButton *trackerReviewButton_ = nullptr;
+  QFrame *trackerPanel_ = nullptr;
+  QLabel *trackerPanelModeLabel_ = nullptr;
+  QLabel *trackerPanelQualityLabel_ = nullptr;
+  QLabel *trackerPanelProblemsLabel_ = nullptr;
+  QLabel *trackerPanelFramesLabel_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
@@ -8059,6 +8100,7 @@ public:
       forceFrontForPlanarEditingTool(toolManager->activeTool());
     }
     syncOverlayGeometry(owner);
+    refreshTrackerPanel();
     if (overlayView_) {
       overlayView_->update();
     }
@@ -8815,6 +8857,54 @@ public:
     syncOverlayGeometry(owner);
   }
 
+  void refreshTrackerPanel() {
+    if (!trackerPanel_) {
+      return;
+    }
+    auto *controller = activeRenderController();
+    if (!controller) {
+      if (trackerPanelModeLabel_) trackerPanelModeLabel_->setText(QStringLiteral("Point Tracker"));
+      if (trackerPanelQualityLabel_) trackerPanelQualityLabel_->setText(QStringLiteral("Confidence —"));
+      if (trackerPanelProblemsLabel_) trackerPanelProblemsLabel_->setText(QStringLiteral("Problem frames —"));
+      if (trackerPanelFramesLabel_) trackerPanelFramesLabel_->setText(QStringLiteral("Frames —"));
+      return;
+    }
+    if (trackerPanelModeLabel_) {
+      trackerPanelModeLabel_->setText(controller->trackerModeLabel());
+    }
+    const bool tracking = controller->trackerJobRunning();
+    if (trackerPanelQualityLabel_) {
+      trackerPanelQualityLabel_->setText(
+          tracking
+              ? QStringLiteral("Tracking…")
+              : controller->trackerHasResult()
+                    ? QStringLiteral("Confidence %1%")
+                          .arg(controller->trackerAverageConfidence() * 100.0, 0, 'f', 1)
+                    : QStringLiteral("Confidence —"));
+    }
+    if (trackerPanelProblemsLabel_) {
+      trackerPanelProblemsLabel_->setText(
+          tracking
+              ? QStringLiteral("Problem frames —")
+              : QStringLiteral("Problem frames %1")
+                    .arg(controller->trackerProblemFrameCount()));
+    }
+    if (trackerPanelFramesLabel_) {
+      trackerPanelFramesLabel_->setText(
+          tracking
+              ? QStringLiteral("Tracked frames —")
+              : QStringLiteral("Tracked frames %1")
+                    .arg(controller->trackerResultFrameCount()));
+    }
+    if (trackerPanel_->isVisible() && tracking) {
+      QTimer::singleShot(100, trackerPanel_, [this]() {
+        if (impl_) {
+          impl_->refreshTrackerPanel();
+        }
+      });
+    }
+  }
+
   void syncToolLabel(ArtifactCompositionEditor *owner) {
     if (!owner || !toolModeButton_) {
       return;
@@ -8823,6 +8913,17 @@ public:
     auto *toolManager = app ? app->toolManager() : nullptr;
     const auto type =
         toolManager ? toolManager->activeTool() : ToolType::Selection;
+    const bool trackingTool = type == ToolType::TrackPoint;
+    if (trackerPanel_) {
+      trackerPanel_->setVisible(trackingTool);
+      refreshTrackerPanel();
+      syncOverlayGeometry(owner);
+    }
+    for (auto *button : {trackerBackwardButton_, trackerStopButton_,
+                         trackerForwardButton_, trackerAllButton_,
+                         trackerReviewButton_}) {
+      if (button) button->setVisible(trackingTool);
+    }
     forceFrontForPlanarEditingTool(type);
     switch (type) {
     case ToolType::Selection:
@@ -9232,6 +9333,18 @@ public:
   }
 
   void refreshViewportStateLabels() {
+    if (zoom100Action_) {
+      auto *controller = activeRenderController();
+      auto *renderer = controller ? controller->renderer() : nullptr;
+      const int zoomPercent = renderer
+                                  ? std::max(1, static_cast<int>(std::lround(
+                                                    renderer->getZoom() * 100.0f)))
+                                  : 100;
+      zoom100Action_->setText(QStringLiteral("%1%").arg(zoomPercent));
+      zoom100Action_->setToolTip(
+          QStringLiteral("Current zoom: %1% (click to reset to 100%)")
+              .arg(zoomPercent));
+    }
     if (shadingButton_) {
       shadingButton_->setText(compactViewportControls_
                                   ? QStringLiteral("View")
@@ -9826,6 +9939,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewportBottomSplitter_->addWidget(impl_->panes_[2].view);
   impl_->viewportBottomSplitter_->addWidget(impl_->panes_[3].view);
   viewportHostLayout->addWidget(impl_->viewportRowsSplitter_);
+  impl_->viewportShell_ = new QWidget(this);
+  impl_->viewportShell_->setObjectName(QStringLiteral("compositionViewportShell"));
+  impl_->viewportShellLayout_ = new QHBoxLayout(impl_->viewportShell_);
+  impl_->viewportShellLayout_->setContentsMargins(0, 0, 0, 0);
+  impl_->viewportShellLayout_->setSpacing(0);
+  impl_->viewportShellLayout_->addWidget(impl_->viewportHost_, 1);
   impl_->viewportBottomSplitter_->hide();
   impl_->compositionView_->setResizeCallback([this]() {
     if (impl_) {
@@ -10502,6 +10621,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         impl_->toolModeButton_->setText(text);
         impl_->toolModeButton_->setIcon(loadIconWithFallback(iconName));
       }
+      impl_->syncToolLabel(this);
     });
   };
   addToolAction(QStringLiteral("Select"),
@@ -10574,6 +10694,213 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->toolModeButton_->setAccessibleName(QStringLiteral("Editing tool"));
   impl_->toolModeButton_->setAccessibleDescription(QStringLiteral("Choose the current composition editing tool"));
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
+
+  const auto makeTrackerButton = [this](const QString &text,
+                                        const QString &tooltip) {
+    auto *button = new ViewportLayoutButton(impl_->topToolbar_);
+    button->setText(text);
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button->setAutoRaise(true);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setToolTip(tooltip);
+    button->hide();
+    impl_->topToolbar_->addWidget(button);
+    return button;
+  };
+  impl_->trackerModeButton_ = makeTrackerButton(
+      QStringLiteral("Planar"), QStringLiteral("Enter planar tracking mode"));
+  impl_->trackerModeButton_->show();
+  impl_->trackerModeButton_->setActivatedCallback([this]() {
+    if (!impl_) return;
+    if (auto *toolManager = ArtifactApplicationManager::instance()
+                                ? ArtifactApplicationManager::instance()
+                                      ->toolManager()
+                                : nullptr) {
+      toolManager->setActiveTool(ToolType::TrackPoint);
+    }
+    impl_->forceFrontForPlanarEditingTool(ToolType::TrackPoint);
+    if (auto *controller = impl_->activeRenderController()) {
+      controller->trackerUsePlanarMode();
+    }
+    impl_->syncToolLabel(this);
+  });
+  impl_->trackerPointModeButton_ = makeTrackerButton(
+      QStringLiteral("Point"), QStringLiteral("Enter point tracking mode"));
+  impl_->trackerPointModeButton_->show();
+  impl_->trackerPointModeButton_->setActivatedCallback([this]() {
+    if (!impl_) return;
+    if (auto *toolManager = ArtifactApplicationManager::instance()
+                                ? ArtifactApplicationManager::instance()
+                                      ->toolManager()
+                                : nullptr) {
+      toolManager->setActiveTool(ToolType::TrackPoint);
+    }
+    impl_->forceFrontForPlanarEditingTool(ToolType::TrackPoint);
+    if (auto *controller = impl_->activeRenderController()) {
+      controller->trackerUsePointMode();
+    }
+    impl_->syncToolLabel(this);
+  });
+  impl_->trackerBackwardButton_ = makeTrackerButton(
+      QStringLiteral("◀"), QStringLiteral("Track backward"));
+  impl_->trackerStopButton_ = makeTrackerButton(
+      QStringLiteral("■"), QStringLiteral("Stop tracking"));
+  impl_->trackerForwardButton_ = makeTrackerButton(
+      QStringLiteral("▶"), QStringLiteral("Track forward"));
+  impl_->trackerAllButton_ = makeTrackerButton(
+      QStringLiteral("Track All"), QStringLiteral("Track full image sequence"));
+  impl_->trackerReviewButton_ = makeTrackerButton(
+      QStringLiteral("Review"), QStringLiteral("Jump to the next problem frame"));
+  impl_->trackerBackwardButton_->setActivatedCallback([this]() {
+    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+      controller->trackerTrackBackward();
+    }
+  });
+  impl_->trackerStopButton_->setActivatedCallback([this]() {
+    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+      controller->trackerStop();
+    }
+  });
+  impl_->trackerForwardButton_->setActivatedCallback([this]() {
+    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+      controller->trackerTrackForward();
+    }
+  });
+  impl_->trackerAllButton_->setActivatedCallback([this]() {
+    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+      controller->trackerTrackAll();
+    }
+  });
+  impl_->trackerReviewButton_->setActivatedCallback([this]() {
+    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+      controller->trackerNextProblemFrame();
+    }
+  });
+
+  // Compact Tracker dock for the VP. It mirrors the mockup's right-side
+  // controls while reusing the controller's existing command surface.
+  impl_->trackerPanel_ = new QFrame(impl_->viewportShell_);
+  impl_->trackerPanel_->setObjectName(QStringLiteral("compositionTrackerPanel"));
+  impl_->trackerPanel_->setFrameShape(QFrame::StyledPanel);
+  impl_->trackerPanel_->setAutoFillBackground(true);
+  impl_->trackerPanel_->setMinimumWidth(248);
+  impl_->trackerPanel_->setMaximumWidth(292);
+  QPalette trackerPanelPalette = impl_->trackerPanel_->palette();
+  trackerPanelPalette.setColor(QPalette::Window,
+                               trackerPanelPalette.color(QPalette::Base));
+  impl_->trackerPanel_->setPalette(trackerPanelPalette);
+  auto *trackerPanelLayout = new QVBoxLayout(impl_->trackerPanel_);
+  trackerPanelLayout->setContentsMargins(12, 10, 12, 10);
+  trackerPanelLayout->setSpacing(7);
+
+  auto *trackerTitle = new QLabel(QStringLiteral("Tracker"),
+                                  impl_->trackerPanel_);
+  QFont trackerTitleFont = trackerTitle->font();
+  trackerTitleFont.setBold(true);
+  trackerTitle->setFont(trackerTitleFont);
+  trackerPanelLayout->addWidget(trackerTitle);
+  impl_->trackerPanelModeLabel_ = new QLabel(QStringLiteral("Point Tracker"),
+                                             impl_->trackerPanel_);
+  trackerPanelLayout->addWidget(impl_->trackerPanelModeLabel_);
+
+  const auto makePanelButton = [this](QLayout *layout, const QString &text,
+                                      const QString &tooltip,
+                                      std::function<void()> callback) {
+    auto *button = new ViewportLayoutButton(impl_->trackerPanel_);
+    button->setText(text);
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button->setAutoRaise(true);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setToolTip(tooltip);
+    button->setActivatedCallback(
+        [this, callback = std::move(callback)]() mutable {
+          if (callback) {
+            callback();
+          }
+          if (impl_) {
+            impl_->refreshTrackerPanel();
+          }
+        });
+    layout->addWidget(button);
+    return button;
+  };
+  makePanelButton(trackerPanelLayout, QStringLiteral("Set Track Point"),
+                  QStringLiteral("Activate point tracking and place the feature point"),
+                  [this]() {
+                    if (!impl_) return;
+                    if (auto *toolManager = ArtifactApplicationManager::instance()
+                                                ? ArtifactApplicationManager::instance()->toolManager()
+                                                : nullptr) {
+                      toolManager->setActiveTool(ToolType::TrackPoint);
+                    }
+                    if (auto *controller = impl_->activeRenderController()) {
+                      controller->trackerUsePointMode();
+                    }
+                    impl_->syncToolLabel(this);
+                  });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Use Planar Tracker"),
+                  QStringLiteral("Switch to four-corner planar tracking"),
+                  [this]() {
+                    if (!impl_) return;
+                    if (auto *toolManager = ArtifactApplicationManager::instance()
+                                                ? ArtifactApplicationManager::instance()->toolManager()
+                                                : nullptr) {
+                      toolManager->setActiveTool(ToolType::TrackPoint);
+                    }
+                    if (auto *controller = impl_->activeRenderController()) {
+                      controller->trackerUsePlanarMode();
+                    }
+                    impl_->syncToolLabel(this);
+                  });
+
+  auto *analyzeLabel = new QLabel(QStringLiteral("Analyze"),
+                                  impl_->trackerPanel_);
+  trackerPanelLayout->addWidget(analyzeLabel);
+  auto *analyzeRow = new QHBoxLayout();
+  analyzeRow->setSpacing(4);
+  makePanelButton(analyzeRow, QStringLiteral("|◀"), QStringLiteral("Track backward"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackBackward(); });
+  makePanelButton(analyzeRow, QStringLiteral("■"), QStringLiteral("Stop tracking"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerStop(); });
+  makePanelButton(analyzeRow, QStringLiteral("▶"), QStringLiteral("Track forward"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackForward(); });
+  makePanelButton(analyzeRow, QStringLiteral("▶|"), QStringLiteral("Track full sequence"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackAll(); });
+  trackerPanelLayout->addLayout(analyzeRow);
+  makePanelButton(trackerPanelLayout, QStringLiteral("Review Problem Frames"),
+                  QStringLiteral("Jump to the next problem frame"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerNextProblemFrame(); });
+
+  impl_->trackerPanelQualityLabel_ = new QLabel(QStringLiteral("Confidence —"),
+                                                impl_->trackerPanel_);
+  impl_->trackerPanelProblemsLabel_ = new QLabel(QStringLiteral("Problem frames 0"),
+                                                 impl_->trackerPanel_);
+  impl_->trackerPanelFramesLabel_ = new QLabel(QStringLiteral("Tracked frames 0"),
+                                               impl_->trackerPanel_);
+  trackerPanelLayout->addWidget(impl_->trackerPanelQualityLabel_);
+  trackerPanelLayout->addWidget(impl_->trackerPanelProblemsLabel_);
+  trackerPanelLayout->addWidget(impl_->trackerPanelFramesLabel_);
+
+  auto *applyLabel = new QLabel(QStringLiteral("Apply"), impl_->trackerPanel_);
+  trackerPanelLayout->addWidget(applyLabel);
+  makePanelButton(trackerPanelLayout, QStringLiteral("Bake Position"),
+                  QStringLiteral("Apply the point track to position"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyToPosition(); });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Bake Anchor"),
+                  QStringLiteral("Apply the point track to anchor"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyToAnchor(); });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Create Nulls for All Points"),
+                  QStringLiteral("Create one Null layer per tracked point"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyAllPoints(); });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Corner Pin (Planar)"),
+                  QStringLiteral("Apply planar tracking to Corner Pin"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyPlanarCornerPin(); });
+  trackerPanelLayout->addStretch(1);
+  if (impl_->viewportShellLayout_) {
+    impl_->viewportShellLayout_->addWidget(impl_->trackerPanel_, 0);
+  }
+  impl_->trackerPanel_->hide();
+  impl_->trackerPanel_->raise();
 
   auto *gizmoMenu = new QMenu(this);
   polishEditorMenu(gizmoMenu, this);
@@ -10847,6 +11174,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        action == impl_->motionPathAction_ ||
                        widget == impl_->workspaceModeButton_ ||
                        widget == impl_->toolModeButton_ ||
+                       widget == impl_->trackerModeButton_ ||
+                       widget == impl_->trackerPointModeButton_ ||
+                       widget == impl_->trackerBackwardButton_ ||
+                       widget == impl_->trackerStopButton_ ||
+                       widget == impl_->trackerForwardButton_ ||
+                       widget == impl_->trackerAllButton_ ||
+                       widget == impl_->trackerReviewButton_ ||
                        widget == impl_->gizmoModeButton_ ||
                        widget == impl_->pivotModeButton_ ||
                        widget == impl_->screenshotButton_ ||
@@ -11933,7 +12267,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   // Assembly
   mainLayout->addWidget(impl_->chromeStrip_);
   mainLayout->addWidget(impl_->topToolbar_);
-  mainLayout->addWidget(impl_->viewportHost_, 1);
+  mainLayout->addWidget(impl_->viewportShell_, 1);
   mainLayout->addWidget(impl_->bottomBar_);
   mainLayout->addWidget(impl_->statusStrip_);
   impl_->topToolbar_->setAutoFillBackground(true);
@@ -12670,6 +13004,7 @@ void ArtifactCompositionEditor::setComposition(
   if (impl_) {
     impl_->queueSelectionSync(this);
     impl_->syncChromeSummary(this);
+    impl_->refreshTrackerPanel();
     impl_->syncOverlayGeometry(this);
   }
 }
@@ -12706,6 +13041,7 @@ void ArtifactCompositionEditor::refreshEnabledState() {
     impl_->lockViewAction_->setChecked(impl_->lockViewToSelection_);
     impl_->lockViewAction_->setEnabled(enabled);
   }
+  impl_->refreshTrackerPanel();
 }
 
 CompositionRenderController* ArtifactCompositionEditor::renderController() const {
@@ -12753,6 +13089,7 @@ void ArtifactCompositionEditor::stop() {
 void ArtifactCompositionEditor::resetView() {
   if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
     controller->resetView();
+    impl_->refreshViewportStateLabels();
   }
 }
 
@@ -12762,6 +13099,7 @@ void ArtifactCompositionEditor::zoomIn() {
   if (controller && view) {
     controller->zoomInAt(
         QPointF(view->width() * 0.5, view->height() * 0.5));
+    impl_->refreshViewportStateLabels();
   }
 }
 
@@ -12771,24 +13109,28 @@ void ArtifactCompositionEditor::zoomOut() {
   if (controller && view) {
     controller->zoomOutAt(
         QPointF(view->width() * 0.5, view->height() * 0.5));
+    impl_->refreshViewportStateLabels();
   }
 }
 
 void ArtifactCompositionEditor::zoomFit() {
   if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
     controller->zoomFit();
+    impl_->refreshViewportStateLabels();
   }
 }
 
 void ArtifactCompositionEditor::zoomFill() {
   if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
     controller->zoomFill();
+    impl_->refreshViewportStateLabels();
   }
 }
 
 void ArtifactCompositionEditor::zoom100() {
   if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
     controller->zoom100();
+    impl_->refreshViewportStateLabels();
   }
 }
 

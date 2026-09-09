@@ -4,6 +4,8 @@ module;
 #include <QColor>
 #include <QDialogButtonBox>
 #include <QFileInfo>
+#include <QFont>
+#include <QFrame>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -13,6 +15,7 @@ module;
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QRegularExpression>
+#include <QStringList>
 
 module Artifact.Widgets.ImportAssetsDialog;
 
@@ -71,10 +74,10 @@ bool isSequenceName(const QString& path)
 ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files, QWidget* parent)
     : QDialog(parent)
 {
-  setWindowTitle(QStringLiteral("Project/Assets に取り込み"));
+  setWindowTitle(QStringLiteral("Import Assets"));
   setAccessibleName(QStringLiteral("Import Assets Dialog"));
   setAccessibleDescription(QStringLiteral("Select asset groups to copy into the project Assets folder"));
-  resize(560, 360);
+  setMinimumSize(820, 540);
 
   ArtifactCore::FileTypeDetector detector;
   ImportGroup stillImages{QStringLiteral("静止画（連番以外）")};
@@ -115,23 +118,43 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   }
 
   auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(24, 20, 24, 18);
+  layout->setSpacing(14);
+  auto* title = new QLabel(QStringLiteral("Import Assets"), this);
+  QFont titleFont = title->font();
+  titleFont.setBold(true);
+  titleFont.setPointSize(14);
+  title->setFont(titleFont);
+  layout->addWidget(title);
   auto* description = new QLabel(
       QStringLiteral("選択したアセットは現在のプロジェクトの Assets フォルダへコピーしてから取り込みます。"),
       this);
   description->setWordWrap(true);
   description->setAccessibleName(QStringLiteral("Import destination description"));
+  QPalette descriptionPalette = description->palette();
+  descriptionPalette.setColor(QPalette::WindowText,
+                              palette().color(QPalette::PlaceholderText));
+  description->setPalette(descriptionPalette);
   layout->addWidget(description);
 
-  auto* summary = new QWidget(this);
+  auto* summary = new QFrame(this);
+  summary->setFrameShape(QFrame::StyledPanel);
   auto* summaryLayout = new QHBoxLayout(summary);
-  summaryLayout->setContentsMargins(10, 6, 10, 6);
-  summaryLayout->addWidget(new QLabel(
-      QStringLiteral("%1 ファイル").arg(files.size()), summary));
+  summaryLayout->setContentsMargins(18, 12, 18, 12);
+  auto* countLabel = new QLabel(QStringLiteral("%1 files\nSelected for import").arg(files.size()), summary);
+  auto* sizeLabel = new QLabel(QStringLiteral("%1\nTotal size").arg(formatByteSize(totalBytes)), summary);
+  auto* destinationLabel = new QLabel(QStringLiteral("Project/Assets\nDestination folder"), summary);
+  QFont summaryFont = countLabel->font();
+  summaryFont.setBold(true);
+  summaryFont.setPointSize(11);
+  countLabel->setFont(summaryFont);
+  sizeLabel->setFont(summaryFont);
+  destinationLabel->setFont(summaryFont);
+  summaryLayout->addWidget(countLabel);
   summaryLayout->addStretch();
-  summaryLayout->addWidget(new QLabel(
-      QStringLiteral("合計 %1").arg(formatByteSize(totalBytes)), summary));
+  summaryLayout->addWidget(sizeLabel);
   summaryLayout->addStretch();
-  summaryLayout->addWidget(new QLabel(QStringLiteral("Project/Assets"), summary));
+  summaryLayout->addWidget(destinationLabel);
   layout->addWidget(summary);
 
   auto* tree = new QTreeWidget(this);
@@ -140,6 +163,7 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   tree->setRootIsDecorated(false);
   tree->setSelectionMode(QAbstractItemView::NoSelection);
   tree->setAlternatingRowColors(true);
+  tree->setMinimumHeight(220);
   tree->setAccessibleName(QStringLiteral("Asset import groups"));
   tree->setAccessibleDescription(QStringLiteral("Checked groups will be copied into the project Assets folder"));
   layout->addWidget(tree);
@@ -164,9 +188,10 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   tree->resizeColumnToContents(0);
   tree->resizeColumnToContents(1);
 
-  auto* resultRow = new QWidget(this);
+  auto* resultRow = new QFrame(this);
+  resultRow->setFrameShape(QFrame::StyledPanel);
   auto* resultLayout = new QHBoxLayout(resultRow);
-  resultLayout->setContentsMargins(0, 2, 0, 2);
+  resultLayout->setContentsMargins(12, 8, 12, 8);
   auto* warningLabel = new QLabel(resultRow);
   if (duplicateFileCount > 0) {
     warningLabel->setText(QStringLiteral("⚠ %1 件の同名ファイルは確認が必要です")
@@ -191,6 +216,13 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   buttons->button(QDialogButtonBox::Ok)->setAccessibleDescription(QStringLiteral("Copy checked asset groups into the project Assets folder"));
   buttons->button(QDialogButtonBox::Cancel)->setAccessibleName(QStringLiteral("Cancel asset import"));
   buttons->button(QDialogButtonBox::Cancel)->setAccessibleDescription(QStringLiteral("Close without importing assets"));
+  buttons->button(QDialogButtonBox::Ok)->setMinimumHeight(36);
+  buttons->button(QDialogButtonBox::Cancel)->setMinimumHeight(36);
+  QPalette importPalette = buttons->button(QDialogButtonBox::Ok)->palette();
+  importPalette.setColor(QPalette::Button, QColor(43, 111, 232));
+  importPalette.setColor(QPalette::ButtonText, Qt::white);
+  buttons->button(QDialogButtonBox::Ok)->setPalette(importPalette);
+  buttons->button(QDialogButtonBox::Ok)->setAutoFillBackground(true);
   layout->addWidget(buttons);
   QObject::connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
   QObject::connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

@@ -79,6 +79,7 @@ import Artifact.Effect.CornerPin;
 import Artifact.Effect.Rasterizer.ChromaticAberration;
 import Artifact.Effect.Rasterizer.DataMosh;
 import Artifact.Effect.Rasterizer.Deflicker;
+import Artifact.Effect.Rasterizer.DeBlink;
 import Artifact.Effect.Rasterizer.LightTrails;
 import Artifact.Effect.Rasterizer.MotionTrail;
 import Artifact.Effect.Rasterizer.OpticalFlowBlur;
@@ -527,12 +528,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Data Mosh"));
    return effect;
   }
-  if (effectId == QStringLiteral("deflicker")) {
-   auto effect = std::make_unique<DeflickerEffect>();
-   effect->setEffectID(UniString::fromQString(effectId));
-   effect->setDisplayName(QStringLiteral("Deflicker"));
-   return effect;
-  }
+   if (effectId == QStringLiteral("deflicker")) {
+    auto effect = std::make_unique<DeflickerEffect>();
+    effect->setEffectID(UniString::fromQString(effectId));
+    effect->setDisplayName(QStringLiteral("Deflicker"));
+    return effect;
+   }
+   if (effectId == QStringLiteral("deblink")) {
+    auto effect = std::make_unique<DeBlinkEffect>();
+    effect->setEffectID(UniString::fromQString(effectId));
+    effect->setDisplayName(QStringLiteral("DeBlink"));
+    return effect;
+   }
   if (effectId == QStringLiteral("light_trails")) {
    auto effect = std::make_unique<LightTrailsEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -1171,6 +1178,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("chromatic_aberration"), "Chromatic Aberration"});
   effects.push_back({EffectID("data_mosh"), "Data Mosh"});
   effects.push_back({EffectID("deflicker"), "Deflicker"});
+  effects.push_back({EffectID("deblink"), "DeBlink"});
   effects.push_back({EffectID("light_trails"), "Light Trails"});
   effects.push_back({EffectID("motion_trail"), "Motion Trail"});
   effects.push_back({EffectID("optical_flow_blur"), "Optical Flow Blur"});

@@ -828,6 +828,52 @@ bool restorePrecomposeSnapshot(
 // Repeated redo/undo rely on the ids being stable across the round trip,
 // which holds because layer/comp ids are not recycled within a session.
 
+class AddCompositionLayerUndoCommand final : public UndoCommand {
+public:
+  explicit AddCompositionLayerUndoCommand(CompositionID source)
+      : sourceCompositionId_(source) {
+    if (auto* svc = ArtifactProjectService::instance()) {
+      if (auto comp = svc->currentComposition().lock()) targetCompositionId_ = comp->id();
+    }
+  }
+  void redo() override {
+    lastOperationSucceeded_ = false;
+    auto* svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (!svc || !comp || comp->id() != targetCompositionId_) return;
+    if (!svc->addCompositionLayerToCurrentComposition(sourceCompositionId_)) return;
+    auto* selected = ArtifactLayerSelectionManager::instance();
+    auto layer = selected ? selected->currentLayer() : ArtifactAbstractLayerPtr{};
+    if (!layer) return;
+    layerId_ = layer->id();
+    lastOperationSucceeded_ = true;
+    if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+  void undo() override {
+    lastOperationSucceeded_ = false;
+    auto* svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    auto project = svc ? svc->getCurrentProjectSharedPtr() : nullptr;
+    if (!project || !comp || comp->id() != targetCompositionId_ || layerId_.isNil()) return;
+    auto layer = comp->layerById(layerId_);
+    if (!layer || !ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer)) return;
+    if (!project->removeLayerFromComposition(targetCompositionId_, layerId_)) return;
+    ArtifactCore::PreComposeManager::instance().unregisterPrecompLayer(
+        targetCompositionId_, layerId_, sourceCompositionId_);
+    svc->selectLayer(LayerID());
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    lastOperationSucceeded_ = true;
+    if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+  QString label() const override { return QStringLiteral("Add Composition Layer"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+private:
+  CompositionID sourceCompositionId_;
+  CompositionID targetCompositionId_;
+  LayerID layerId_;
+  bool lastOperationSucceeded_ = false;
+};
+
 class PrecomposeUndoCommand : public UndoCommand {
 public:
   PrecomposeUndoCommand(QVector<LayerID> layerIds, UniString name,
@@ -3026,6 +3072,73 @@ void ArtifactProjectService::addLayer(const CompositionID &id,
 void ArtifactProjectService::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params) {
   impl_->addLayerToCurrentComposition(params, true);
+}
+
+bool ArtifactProjectService::addCompositionLayerToCurrentComposition(
+    const CompositionID &sourceCompositionId) {
+  auto project = getCurrentProjectSharedPtr();
+  auto target = currentComposition().lock();
+  auto source = sourceCompositionId.isNil()
+                    ? ArtifactCompositionPtr{}
+                    : findComposition(sourceCompositionId).ptr.lock();
+  if (!project || !target || !source || target->id() == source->id()) {
+    return false;
+  }
+
+  // Reject a direct or transitive self-reference before mutating the project.
+  std::deque<CompositionID> pending{source->id()};
+  QSet<QString> visited;
+  while (!pending.empty()) {
+    const CompositionID currentId = pending.front();
+    pending.pop_front();
+    const QString key = currentId.toString();
+    if (visited.contains(key)) continue;
+    visited.insert(key);
+    if (currentId == target->id()) return false;
+    auto current = findComposition(currentId).ptr.lock();
+    if (!current) continue;
+    for (const auto &layer : current->allLayer()) {
+      auto nested = ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
+      if (nested && !nested->sourceCompositionId().isNil()) {
+        pending.push_back(nested->sourceCompositionId());
+      }
+    }
+  }
+
+  ArtifactCompositionLayerInitParams params;
+  auto result = project->createLayerAndAddToComposition(target->id(), params);
+  if (!result.success || !result.layer) return false;
+  auto layer = ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(result.layer);
+  if (!layer) {
+    project->removeLayerFromComposition(target->id(), result.layer->id());
+    return false;
+  }
+  layer->setCompositionId(source->id());
+  layer->setLayerName(source->settings().compositionName().toQString());
+  const auto now = target->framePosition().framePosition();
+  layer->setInPoint(FramePosition(now));
+  layer->setOutPoint(FramePosition(now + std::max<int64_t>(1, source->frameRange().duration())));
+  layer->setStartTime(FramePosition(0));
+  ArtifactCore::PreComposeManager::instance().registerPrecompLayer(
+      target->id(), layer->id(), source->id());
+  selectLayer(layer->id());
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+  return true;
+}
+
+bool ArtifactProjectService::addCompositionLayerToCurrentCompositionWithUndo(
+    const CompositionID &sourceCompositionId) {
+  auto* mgr = UndoManager::instance();
+  if (!mgr) return addCompositionLayerToCurrentComposition(sourceCompositionId);
+  auto command = std::make_unique<AddCompositionLayerUndoCommand>(sourceCompositionId);
+  auto* commandState = command.get();
+  const size_t undoCountBefore = mgr->undoCount();
+  if (!mgr->push(std::move(command))) return false;
+  if (!commandState->lastOperationSucceeded()) {
+    if (mgr->undoCount() == undoCountBefore + 1) mgr->undo();
+    return false;
+  }
+  return true;
 }
 
 void ArtifactProjectService::Impl::setDefaultNewLayerHidden(bool hidden) {

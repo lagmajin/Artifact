@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <QString>
 #include <QVariant>
+#include <QPointF>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -26,6 +27,9 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Tracking.MotionTracker;
+import Memory.SharedPtr;
+import ImageProcessing;
 
 namespace Artifact {
 
@@ -1325,24 +1329,580 @@ EffectROIHint ArtifactMatchGrainEffect::roiHint() const {
             .expansionPixels = impl_->grainSize * 3.0f};
 }
 
-class ArtifactWireObjectRemoverEffect::Impl {
-public:
-    float startX = 0.25f;
-    float startY = 0.2f;
-    float endX = 0.75f;
-    float endY = 0.8f;
+struct WireSegmentParams {
+    float x1 = 0.0f;
+    float y1 = 0.0f;
+    float x2 = 0.0f;
+    float y2 = 0.0f;
+    bool enabled = false;
+};
+
+// Shared snapshot of every Wire / Object Remover property. The effect owns
+// one in its Impl and mirrors it into the CPU/GPU impls on each setter.
+struct WireRemoverJob {
+    WireSegmentParams segs[3];
     float width = 8.0f;
     float feather = 5.0f;
     float cloneOffsetX = 32.0f;
     float cloneOffsetY = 0.0f;
     float mix = 1.0f;
-    int method = 0;
+    float inpaintRadius = 4.0f;
+    int method = 0; // 0=SideAverage 1=CloneOffset 2=Blur 3=Telea 4=NS
     int temporalOffset = 0;
-    bool lineEnabled = false;
+    bool viewMask = false;
     QString maskInput = QStringLiteral("remove_mask");
     QString cleanInput = QStringLiteral("clean_plate");
-    IEffectFrameSampler* sampler = nullptr;
-    std::int64_t frame = 0;
+    bool trackLinkEnabled = false;
+    int trackerId = 0;
+    int startPointId = 0;
+    int endPointId = 1;
+    std::int64_t trackRefFrame = 0;
+};
+
+namespace {
+
+bool trackedWirePoint(ArtifactCore::MotionTracker* tracker, int pointId,
+                      double time, QPointF& out) {
+    if (!tracker || !tracker->hasResult()) return false;
+    const ArtifactCore::TrackFrame frame = tracker->result().interpolateAt(time);
+    const ArtifactCore::TrackPoint* p = frame.findPoint(pointId);
+    if (!p || !p->active) return false;
+    if (!std::isfinite(p->position.x()) || !std::isfinite(p->position.y())) return false;
+    if (std::abs(p->position.x()) > 1.0e7 || std::abs(p->position.y()) > 1.0e7) return false;
+    out = p->position;
+    return true;
+}
+
+} // namespace
+
+// Applies tracker linkage to segment 0: the user endpoints are exact at the
+// reference frame, other frames follow the tracked delta. The tracker is
+// assumed to be built on the same layer (same pixel space). Returns false
+// when unlinked/invalid, in which case the user endpoints stand.
+bool resolveWireSegments(WireRemoverJob& job, double timeSec, double frameRate,
+                         int width, int height) {
+    if (!job.trackLinkEnabled || job.trackerId <= 0 || width <= 0 || height <= 0)
+        return false;
+    ArtifactCore::MotionTracker* tracker =
+        ArtifactCore::TrackerManager::instance().tracker(job.trackerId);
+    if (!tracker || !tracker->hasResult()) return false;
+    const double refTime = static_cast<double>(job.trackRefFrame) /
+        std::max(1.0, frameRate);
+    QPointF sNow, sRef, eNow, eRef;
+    if (!trackedWirePoint(tracker, job.startPointId, timeSec, sNow)) return false;
+    if (!trackedWirePoint(tracker, job.startPointId, refTime, sRef)) return false;
+    if (!trackedWirePoint(tracker, job.endPointId, timeSec, eNow)) return false;
+    if (!trackedWirePoint(tracker, job.endPointId, refTime, eRef)) return false;
+    const float dsx = static_cast<float>(sNow.x() - sRef.x());
+    const float dsy = static_cast<float>(sNow.y() - sRef.y());
+    const float dex = static_cast<float>(eNow.x() - eRef.x());
+    const float dey = static_cast<float>(eNow.y() - eRef.y());
+    const float limit = static_cast<float>(std::max(width, height)) * 4.0f;
+    if (std::abs(dsx) > limit || std::abs(dsy) > limit ||
+        std::abs(dex) > limit || std::abs(dey) > limit)
+        return false;
+    job.segs[0].x1 = std::clamp(job.segs[0].x1 + dsx / width, -1.0f, 2.0f);
+    job.segs[0].y1 = std::clamp(job.segs[0].y1 + dsy / height, -1.0f, 2.0f);
+    job.segs[0].x2 = std::clamp(job.segs[0].x2 + dex / width, -1.0f, 2.0f);
+    job.segs[0].y2 = std::clamp(job.segs[0].y2 + dey / height, -1.0f, 2.0f);
+    return true;
+}
+
+// Effect-side property store mirrors into Repair::WireRemoveParams per
+// setter; the pixel pipeline itself lives in ArtifactCore.
+ArtifactCore::Repair::WireRemoveParams toCoreWireParams(const WireRemoverJob& job) {
+    ArtifactCore::Repair::WireRemoveParams params;
+    for (int i = 0; i < 3; ++i) {
+        params.segs[i].x1 = job.segs[i].x1;
+        params.segs[i].y1 = job.segs[i].y1;
+        params.segs[i].x2 = job.segs[i].x2;
+        params.segs[i].y2 = job.segs[i].y2;
+        params.segs[i].enabled = job.segs[i].enabled;
+    }
+    params.width = job.width;
+    params.feather = job.feather;
+    params.cloneOffsetX = job.cloneOffsetX;
+    params.cloneOffsetY = job.cloneOffsetY;
+    params.mix = job.mix;
+    params.inpaintRadius = job.inpaintRadius;
+    params.method = job.method;
+    params.viewMask = job.viewMask;
+    return params;
+}
+
+// Samples one auxiliary RGBA input into a caller-owned float buffer holder.
+// Returns the float plane pointer, or nullptr when unavailable.
+const float* sampleWireAuxPlane(cv::Mat& storage, IEffectFrameSampler* sampler,
+                                const QString& inputId, std::int64_t frame,
+                                int width, int height, bool extractMask) {
+    if (!sampler || inputId.trimmed().isEmpty()) return nullptr;
+    ImageF32x4RGBAWithCache auxImage;
+    if (!sampler->sampleNamedInput(inputId, frame, auxImage)) return nullptr;
+    cv::Mat rgba;
+    if (!prepareAuxiliaryImage(auxImage, width, height, rgba)) return nullptr;
+    if (extractMask) {
+        storage = extractAuxiliaryMask(rgba);
+        if (storage.empty() || !storage.isContinuous()) {
+            if (storage.empty()) return nullptr;
+            storage = storage.clone();
+        }
+        return storage.ptr<float>();
+    }
+    if (!rgba.isContinuous()) rgba = rgba.clone();
+    storage = rgba;
+    return storage.ptr<float>();
+}
+
+// Full CPU path shared by the CPU impl and the GPU fallback: tracker
+// resolve, auxiliary sampling, then the ArtifactCore pixel pipeline.
+bool runWireEffectCPU(const ArtifactCore::ImageF32x4_RGBA& srcImage,
+                      ArtifactCore::ImageF32x4_RGBA& resultImage,
+                      WireRemoverJob job, IEffectFrameSampler* sampler,
+                      std::int64_t frame, double timeSec, double frameRate) {
+    const int width = srcImage.width();
+    const int height = srcImage.height();
+    if (!srcImage.rgba32fData() || width <= 0 || height <= 0) return false;
+    resolveWireSegments(job, timeSec, frameRate, width, height);
+
+    cv::Mat maskStorage, cleanStorage;
+    const float* namedMask = sampleWireAuxPlane(maskStorage, sampler,
+                                                job.maskInput, frame,
+                                                width, height, true);
+    const float* clean = sampleWireAuxPlane(cleanStorage, sampler,
+                                            job.cleanInput, frame,
+                                            width, height, false);
+    cv::Mat temporalStorage;
+    if (!clean && sampler && job.temporalOffset != 0) {
+        ImageF32x4RGBAWithCache temporalImage;
+        if (sampler->sampleCurrentLayerFrame(frame + job.temporalOffset,
+                                             temporalImage) &&
+            prepareAuxiliaryImage(temporalImage, width, height,
+                                  temporalStorage)) {
+            if (!temporalStorage.isContinuous())
+                temporalStorage = temporalStorage.clone();
+            clean = temporalStorage.ptr<float>();
+        }
+    }
+
+    resultImage = srcImage;
+    float* dstData = resultImage.rgba32fData();
+    if (!dstData) return false;
+    const ArtifactCore::Repair::WireRemoveBuffers buffers{
+        srcImage.rgba32fData(), dstData, clean, namedMask, width, height};
+    if (!ArtifactCore::Repair::processWireRemove(buffers,
+                                                 toCoreWireParams(job)))
+        return false;
+    resultImage.setColorDescriptor(srcImage.colorDescriptor());
+    return true;
+}
+
+// (pixel pipeline moved to ArtifactCore::Repair::processWireRemove)
+
+class ArtifactWireObjectRemoverEffect::Impl {
+public:
+    WireRemoverJob job;
+    Impl() {
+        job.segs[0].x1 = 0.25f;
+        job.segs[0].y1 = 0.2f;
+        job.segs[0].x2 = 0.75f;
+        job.segs[0].y2 = 0.8f;
+        job.segs[0].enabled = false;
+    }
+};
+
+class WireRemoverCPUImpl final : public ArtifactEffectImplBase {
+public:
+    WireRemoverJob job_{};
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        ArtifactCore::ImageF32x4_RGBA result;
+        if (!runWireEffectCPU(src.image(), result, job_, context_.sampler,
+                              context_.compositionFrame, context_.timeSeconds,
+                              context_.frameRate)) {
+            dst = src;
+            return;
+        }
+        dst = ImageF32x4RGBAWithCache(result);
+    }
+};
+
+class WireRemoverGPUImpl final : public ArtifactEffectImplBase {
+public:
+    WireRemoverJob job_{};
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        ArtifactCore::ImageF32x4_RGBA result;
+        if (!runWireEffectCPU(src.image(), result, job_, context_.sampler,
+                              context_.compositionFrame, context_.timeSeconds,
+                              context_.frameRate)) {
+            dst = src;
+            return;
+        }
+        dst = ImageF32x4RGBAWithCache(result);
+    }
+
+    void applyGPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        // Blur and true inpainting are iterative CPU algorithms; the GPU
+        // path covers the line/mask + side-average/clone + clean-plate
+        // cases and falls back otherwise.
+        if (job_.method >= 2) {
+            applyCPU(src, dst);
+            return;
+        }
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+            applyCPU(src, dst);
+            return;
+        }
+        const auto& srcImage = src.image();
+        const int width = srcImage.width();
+        const int height = srcImage.height();
+        if (!srcImage.rgba32fData() || width <= 0 || height <= 0) {
+            dst = src;
+            return;
+        }
+        WireRemoverJob job = job_;
+        resolveWireSegments(job, context_.timeSeconds, context_.frameRate,
+                            width, height);
+
+        Diligent::RefCntAutoPtr<Diligent::ITexture> maskTex;
+        bool useMaskTex = false;
+        ImageF32x4RGBAWithCache maskImage;
+        if (context_.sampler && !job.maskInput.trimmed().isEmpty() &&
+            context_.sampler->sampleNamedInput(job.maskInput,
+                                               context_.compositionFrame,
+                                               maskImage)) {
+            cv::Mat maskRgba;
+            if (prepareAuxiliaryImage(maskImage, width, height, maskRgba)) {
+                const cv::Mat extracted = extractAuxiliaryMask(maskRgba);
+                if (!extracted.empty()) {
+                    cv::Mat packed;
+                    cv::Mat ones(height, width, CV_32F, cv::Scalar(1.0f));
+                    cv::Mat in[] = {extracted, extracted, extracted, ones};
+                    cv::merge(in, 4, packed);
+                    useMaskTex = createFloatTexture(packed.ptr<float>(), width,
+                                                    height, device_, &maskTex,
+                                                    "WireRemover/Mask");
+                }
+            }
+        }
+        Diligent::RefCntAutoPtr<Diligent::ITexture> cleanTex;
+        bool useCleanTex = false;
+        ImageF32x4RGBAWithCache replacementImage;
+        if (context_.sampler && !job.cleanInput.trimmed().isEmpty() &&
+            context_.sampler->sampleNamedInput(job.cleanInput,
+                                               context_.compositionFrame,
+                                               replacementImage)) {
+            cv::Mat replacement;
+            if (prepareAuxiliaryImage(replacementImage, width, height,
+                                      replacement)) {
+                useCleanTex = createFloatTexture(replacement.ptr<float>(), width,
+                                                 height, device_, &cleanTex,
+                                                 "WireRemover/Clean");
+            }
+        }
+        if (!useCleanTex && context_.sampler && job.temporalOffset != 0 &&
+            context_.sampler->sampleCurrentLayerFrame(
+                context_.compositionFrame + job.temporalOffset,
+                replacementImage)) {
+            cv::Mat replacement;
+            if (prepareAuxiliaryImage(replacementImage, width, height,
+                                      replacement)) {
+                useCleanTex = createFloatTexture(replacement.ptr<float>(), width,
+                                                 height, device_, &cleanTex,
+                                                 "WireRemover/Temporal");
+            }
+        }
+
+        if (!gpuContext_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+        }
+        if (!executor_) {
+            applyCPU(src, dst);
+            return;
+        }
+        if (!paramsCB_) {
+            Diligent::BufferDesc cbDesc;
+            cbDesc.Name = "WireRemover/ParamsCB";
+            cbDesc.Size = sizeof(ParamsCB);
+            cbDesc.Usage = Diligent::USAGE_DYNAMIC;
+            cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+            cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+            device_->CreateBuffer(cbDesc, nullptr, &paramsCB_);
+        }
+        if (!paramsCB_) {
+            applyCPU(src, dst);
+            return;
+        }
+        static Diligent::ShaderResourceVariableDesc vars[] = {
+            {Diligent::SHADER_TYPE_COMPUTE, "WireParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "ForegroundTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "MaskTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "CleanTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        };
+        if (!pipelineReady_) {
+            ArtifactCore::ComputePipelineDesc desc;
+            desc.name = "WireRemover/PSO";
+            desc.shaderSource = kShader;
+            desc.entryPoint = "main";
+            desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+            desc.variables = vars;
+            desc.variableCount = 5;
+            desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true) ||
+                !executor_->setBuffer("WireParams", paramsCB_)) {
+                applyCPU(src, dst);
+                return;
+            }
+            pipelineReady_ = true;
+        }
+        Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
+        if (!createFloatTexture(srcImage.rgba32fData(), width, height, device_,
+                                &inputTex, "WireRemover/Input")) {
+            applyCPU(src, dst);
+            return;
+        }
+        Diligent::TextureDesc outDesc = inputTex->GetDesc();
+        outDesc.Usage = Diligent::USAGE_DEFAULT;
+        outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
+        outDesc.Name = "WireRemover/Output";
+        if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width ||
+            outputTex_->GetDesc().Height != outDesc.Height) {
+            outputTex_.Release();
+            device_->CreateTexture(outDesc, nullptr, &outputTex_);
+        }
+        if (!outputTex_) {
+            applyCPU(src, dst);
+            return;
+        }
+        // A 1x1 black fallback keeps unbound texture slots valid.
+        Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex = fallbackTexture();
+        Diligent::ITexture* maskSlot = useMaskTex ? maskTex.RawPtr() : fallbackTex.RawPtr();
+        Diligent::ITexture* cleanSlot = useCleanTex ? cleanTex.RawPtr() : fallbackTex.RawPtr();
+        if (!maskSlot || !cleanSlot) {
+            applyCPU(src, dst);
+            return;
+        }
+        void* mapped = nullptr;
+        context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        if (!mapped) {
+            applyCPU(src, dst);
+            return;
+        }
+        ParamsCB params{};
+        for (int i = 0; i < 3; ++i) {
+            params.segs[i][0] = job.segs[i].x1;
+            params.segs[i][1] = job.segs[i].y1;
+            params.segs[i][2] = job.segs[i].x2;
+            params.segs[i][3] = job.segs[i].y2;
+        }
+        params.enableMask = (job.segs[0].enabled ? 1 : 0) |
+            (job.segs[1].enabled ? 2 : 0) | (job.segs[2].enabled ? 4 : 0);
+        params.widthPx = job.width;
+        params.featherPx = job.feather;
+        params.mix = job.mix;
+        params.cloneOffsetX = job.cloneOffsetX;
+        params.cloneOffsetY = job.cloneOffsetY;
+        params.invWidth = 1.0f / width;
+        params.invHeight = 1.0f / height;
+        params.method = job.method;
+        params.useMaskTex = useMaskTex ? 1 : 0;
+        params.useCleanTex = useCleanTex ? 1 : 0;
+        params.viewMask = job.viewMask ? 1 : 0;
+        std::memcpy(mapped, &params, sizeof(params));
+        context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        if (!executor_->setTextureView("ForegroundTexture",
+                inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("MaskTexture",
+                maskSlot->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("CleanTexture",
+                cleanSlot->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("OutputTexture",
+                outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+            applyCPU(src, dst);
+            return;
+        }
+        auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+            outDesc.Width, outDesc.Height, 1, 16, 16, 1);
+        executor_->dispatch(context_, attribs,
+                            Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (!readbackTexture(device_, context_, outputTex_, dst,
+                             "WireRemover/Staging",
+                             srcImage.colorDescriptor())) {
+            applyCPU(src, dst);
+        }
+    }
+
+private:
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex_;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
+    bool pipelineReady_ = false;
+
+    struct ParamsCB {
+        float segs[3][4];
+        int enableMask = 0;
+        float widthPx = 8.0f;
+        float featherPx = 5.0f;
+        float mix = 1.0f;
+        float cloneOffsetX = 32.0f;
+        float cloneOffsetY = 0.0f;
+        float invWidth = 1.0f;
+        float invHeight = 1.0f;
+        int method = 0;
+        int useMaskTex = 0;
+        int useCleanTex = 0;
+        int viewMask = 0;
+    };
+
+    static constexpr const char* kShader = R"(
+Texture2D<float4> ForegroundTexture : register(t0);
+Texture2D<float4> MaskTexture : register(t1);
+Texture2D<float4> CleanTexture : register(t2);
+RWTexture2D<float4> OutputTexture : register(u0);
+cbuffer WireParams : register(b0) {
+  float4 SegA; float4 SegB; float4 SegC;
+  int EnableMask; float WidthPx; float FeatherPx; float Mix;
+  float CloneOffsetX; float CloneOffsetY; float InvWidth; float InvHeight;
+  int Method; int UseMaskTex; int UseCleanTex; int ViewMask;
+};
+float segWeight(float2 p, float4 seg, float innerR, float outerR, float feather) {
+  float2 a = seg.xy, b = seg.zw;
+  float2 d = b - a;
+  float len2 = max(dot(d, d), 1e-8);
+  float t = saturate(dot(p - a, d) / len2);
+  float dist = length(p - (a + d * t));
+  if (dist <= innerR) return 1.0;
+  if (dist >= outerR || feather <= 0) return 0.0;
+  float v = saturate((dist - innerR) / feather);
+  return 1.0 - v * v * (3.0 - 2.0 * v);
+}
+float4 bilinearFg(float2 p, uint w, uint h) {
+  float2 c = clamp(p, float2(0, 0), float2(w - 1, h - 1));
+  int2 p0 = (int2)floor(c);
+  int2 p1 = min(p0 + 1, int2(w - 1, h - 1));
+  float2 f = c - (float2)p0;
+  float4 t0 = lerp(ForegroundTexture[uint2(p0)], ForegroundTexture[uint2(p1.x, p0.y)], f.x);
+  float4 t1 = lerp(ForegroundTexture[uint2(p0.x, p1.y)], ForegroundTexture[uint2(p1)], f.x);
+  return lerp(t0, t1, f.y);
+}
+[numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
+  uint w, h; OutputTexture.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  float2 dims = float2(w, h);
+  float2 p = float2(id.xy);
+  float innerR = WidthPx * 0.5;
+  float outerR = innerR + FeatherPx;
+  float4 segs[3] = { SegA * dims.xyxy, SegB * dims.xyxy, SegC * dims.xyxy };
+  float mask = 0;
+  float2 bestN = float2(1, 0);
+  float bestD = 1e9;
+  for (int i = 0; i < 3; ++i) {
+    if ((EnableMask & (1 << i)) == 0) continue;
+    float2 a = segs[i].xy, b = segs[i].zw;
+    float2 d = b - a;
+    float len2 = max(dot(d, d), 1e-8);
+    float t = saturate(dot(p - a, d) / len2);
+    float2 q = a + d * t;
+    float dist = length(p - q);
+    float c = segWeight(p, segs[i], innerR, outerR, FeatherPx);
+    if (c > mask) mask = c;
+    if (dist < bestD) { bestD = dist; bestN = d / max(sqrt(len2), 1e-5); }
+  }
+  if (UseMaskTex != 0) {
+    float4 m = MaskTexture[id.xy];
+    mask = max(mask, saturate(max(max(m.r, m.g), max(m.b, m.a))));
+  }
+  float4 src = ForegroundTexture[id.xy];
+  float3 fill;
+  if (UseCleanTex != 0) {
+    fill = CleanTexture[id.xy].rgb;
+  } else if (Method == 0) {
+    float2 n = float2(-bestN.y, bestN.x);
+    float side = innerR + FeatherPx + 2.0;
+    fill = (bilinearFg(p + n * side, w, h).rgb + bilinearFg(p - n * side, w, h).rgb) * 0.5;
+  } else {
+    fill = bilinearFg(p + float2(CloneOffsetX, CloneOffsetY), w, h).rgb;
+  }
+  float amount = saturate(mask * Mix);
+  float3 rgb = lerp(src.rgb, fill, amount);
+  if (ViewMask != 0) { OutputTexture[id.xy] = float4(mask, mask, mask, 1.0); return; }
+  OutputTexture[id.xy] = float4(rgb, src.a);
+})";
+
+    static bool createFloatTexture(const float* data, int width, int height,
+                                   Diligent::IRenderDevice* device,
+                                   Diligent::ITexture** outTex, const char* name) {
+        if (!data || width <= 0 || height <= 0 || !device || !outTex) return false;
+        Diligent::TextureDesc desc;
+        desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        desc.Width = width;
+        desc.Height = height;
+        desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+        desc.ArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleCount = 1;
+        desc.Usage = Diligent::USAGE_IMMUTABLE;
+        desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+        desc.Name = name;
+        Diligent::TextureSubResData sub{};
+        sub.pData = data;
+        sub.Stride = static_cast<Diligent::Uint64>(width) * sizeof(float) * 4ull;
+        Diligent::TextureData init{};
+        init.pSubResources = &sub;
+        init.NumSubresources = 1;
+        device->CreateTexture(desc, &init, outTex);
+        return *outTex != nullptr;
+    }
+
+    Diligent::ITexture* fallbackTexture() {
+        if (fallbackTex_) return fallbackTex_.RawPtr();
+        static const float black[4] = {0, 0, 0, 0};
+        createFloatTexture(black, 1, 1, device_, &fallbackTex_, "WireRemover/Fallback");
+        return fallbackTex_.RawPtr();
+    }
+
+    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx,
+                                Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst,
+                                const char* name, const auto& colorDescriptor) {
+        if (!device || !ctx || !src) return false;
+        const auto desc = src->GetDesc();
+        Diligent::TextureDesc stagingDesc;
+        stagingDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        stagingDesc.Width = desc.Width;
+        stagingDesc.Height = desc.Height;
+        stagingDesc.Format = desc.Format;
+        stagingDesc.ArraySize = 1;
+        stagingDesc.MipLevels = 1;
+        stagingDesc.SampleCount = 1;
+        stagingDesc.Usage = Diligent::USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+        stagingDesc.Name = name;
+        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
+        device->CreateTexture(stagingDesc, nullptr, &staging);
+        if (!staging) return false;
+        Diligent::CopyTextureAttribs copy(src, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                          staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx->CopyTexture(copy);
+        ctx->Flush();
+        ctx->WaitForIdle();
+        Diligent::MappedTextureSubresource mapped{};
+        ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
+        if (!mapped.pData || mapped.Stride == 0) return false;
+        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width),
+                     CV_32FC4, mapped.pData, mapped.Stride);
+        dst.image().setFromCVMat(temp, colorDescriptor);
+        ctx->UnmapTextureSubresource(staging, 0, 0);
+        return true;
+    }
 };
 
 ArtifactWireObjectRemoverEffect::ArtifactWireObjectRemoverEffect()
@@ -1351,6 +1911,10 @@ ArtifactWireObjectRemoverEffect::ArtifactWireObjectRemoverEffect()
     setDisplayName(ArtifactCore::UniString("Wire / Object Remover"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setAllowOverscan(true);
+    setCPUImpl(ArtifactCore::makeShared<WireRemoverCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<WireRemoverGPUImpl>());
+    syncImpls();
+    setComputeMode(ComputeMode::AUTO);
 }
 
 ArtifactWireObjectRemoverEffect::~ArtifactWireObjectRemoverEffect() {
@@ -1358,151 +1922,48 @@ ArtifactWireObjectRemoverEffect::~ArtifactWireObjectRemoverEffect() {
     impl_ = nullptr;
 }
 
-void ArtifactWireObjectRemoverEffect::onContextUpdated(
-    const EffectContext& context) {
-    impl_->sampler = context.sampler;
-    impl_->frame = context.compositionFrame;
-}
-
-void ArtifactWireObjectRemoverEffect::apply(
-    const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    const auto& image = src.image();
-    const int width = image.width();
-    const int height = image.height();
-    const float* source = image.rgba32fData();
-    if (!source || width <= 0 || height <= 0) {
-        dst = src;
-        return;
-    }
-
-    cv::Mat mask(height, width, CV_32F, cv::Scalar(0.0f));
-    cv::Mat namedMask;
-    ImageF32x4RGBAWithCache maskImage;
-    if (impl_->sampler && !impl_->maskInput.trimmed().isEmpty() &&
-        impl_->sampler->sampleNamedInput(impl_->maskInput, impl_->frame,
-                                         maskImage)) {
-        cv::Mat maskRgba;
-        if (prepareAuxiliaryImage(maskImage, width, height, maskRgba)) {
-            namedMask = extractAuxiliaryMask(maskRgba);
-            cv::max(mask, namedMask, mask);
-        }
-    }
-
-    const cv::Point2f start(impl_->startX * (width - 1),
-                            impl_->startY * (height - 1));
-    const cv::Point2f end(impl_->endX * (width - 1),
-                          impl_->endY * (height - 1));
-    cv::Point2f direction = end - start;
-    const float lengthSquared = direction.dot(direction);
-    const float length = std::sqrt(std::max(lengthSquared, 1.0e-8f));
-    const cv::Point2f normal(-direction.y / length, direction.x / length);
-    if (impl_->lineEnabled && lengthSquared > 1.0e-8f) {
-        const float innerRadius = impl_->width * 0.5f;
-        const float outerRadius = innerRadius + impl_->feather;
-        for (int y = 0; y < height; ++y) {
-            float* maskRow = mask.ptr<float>(y);
-            for (int x = 0; x < width; ++x) {
-                const cv::Point2f point(static_cast<float>(x), static_cast<float>(y));
-                const float t = std::clamp((point - start).dot(direction) /
-                                           lengthSquared, 0.0f, 1.0f);
-                const float distance = cv::norm(point - (start + direction * t));
-                float weight = 0.0f;
-                if (distance <= innerRadius) weight = 1.0f;
-                else if (distance < outerRadius && impl_->feather > 0.0f) {
-                    weight = 1.0f - smoothMask((distance - innerRadius) /
-                                               impl_->feather);
-                }
-                maskRow[x] = std::max(maskRow[x], weight);
-            }
-        }
-    }
-    if (cv::countNonZero(mask > 0.0001f) == 0) {
-        dst = src;
-        return;
-    }
-
-    cv::Mat replacement;
-    bool hasReplacement = false;
-    ImageF32x4RGBAWithCache replacementImage;
-    if (impl_->sampler && !impl_->cleanInput.trimmed().isEmpty() &&
-        impl_->sampler->sampleNamedInput(impl_->cleanInput, impl_->frame,
-                                         replacementImage)) {
-        hasReplacement = prepareAuxiliaryImage(replacementImage, width, height,
-                                               replacement);
-    }
-    if (!hasReplacement && impl_->sampler && impl_->temporalOffset != 0 &&
-        impl_->sampler->sampleCurrentLayerFrame(
-            impl_->frame + impl_->temporalOffset, replacementImage)) {
-        hasReplacement = prepareAuxiliaryImage(replacementImage, width, height,
-                                               replacement);
-    }
-    if (!hasReplacement) {
-        replacement = cv::Mat(height, width, CV_32FC4,
-                              const_cast<float*>(source)).clone();
-    }
-
-    cv::Mat blurredSource;
-    if (impl_->method == 2 && !hasReplacement) {
-        cv::GaussianBlur(replacement, blurredSource, cv::Size(),
-                         std::max(1.0f, impl_->width));
-    }
-
-    auto result = image.DeepCopy();
-    float* output = result.rgba32fData();
-    const float sideDistance = impl_->width * 0.5f + impl_->feather + 2.0f;
-    for (int y = 0; y < height; ++y) {
-        const float* maskRow = mask.ptr<float>(y);
-        for (int x = 0; x < width; ++x) {
-            const std::size_t offset =
-                (static_cast<std::size_t>(y) * width + x) * 4u;
-            const float amount = std::clamp(maskRow[x] * impl_->mix, 0.0f, 1.0f);
-            if (amount <= 0.0f) continue;
-            for (int channel = 0; channel < 3; ++channel) {
-                float fill = source[offset + channel];
-                if (hasReplacement) {
-                    fill = replacement.at<cv::Vec4f>(y, x)[channel];
-                } else if (impl_->method == 0 && impl_->lineEnabled) {
-                    const float a = sampleHeatwaveChannel(
-                        source, width, height, x + normal.x * sideDistance,
-                        y + normal.y * sideDistance, channel);
-                    const float b = sampleHeatwaveChannel(
-                        source, width, height, x - normal.x * sideDistance,
-                        y - normal.y * sideDistance, channel);
-                    fill = (a + b) * 0.5f;
-                } else if (impl_->method == 2) {
-                    fill = blurredSource.at<cv::Vec4f>(y, x)[channel];
-                } else {
-                    fill = sampleHeatwaveChannel(
-                        source, width, height, x + impl_->cloneOffsetX,
-                        y + impl_->cloneOffsetY, channel);
-                }
-                output[offset + channel] = std::lerp(source[offset + channel],
-                                                     fill, amount);
-            }
-            output[offset + 3] = source[offset + 3];
-        }
-    }
-    result.setColorDescriptor(image.colorDescriptor());
-    dst = ImageF32x4RGBAWithCache(result);
+void ArtifactWireObjectRemoverEffect::syncImpls() {
+    if (auto* cpu = dynamic_cast<WireRemoverCPUImpl*>(cpuImpl().get()))
+        cpu->job_ = impl_->job;
+    if (auto* gpu = dynamic_cast<WireRemoverGPUImpl*>(gpuImpl().get()))
+        gpu->job_ = impl_->job;
 }
 
 std::vector<ArtifactCore::AbstractProperty>
 ArtifactWireObjectRemoverEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> properties;
-    addCreativeBoolean(properties, "lineEnabled", "Enable Wire Line", impl_->lineEnabled);
-    addCreativeFloat(properties, "startX", "Start X", impl_->startX, 0.0f, 1.0f);
-    addCreativeFloat(properties, "startY", "Start Y", impl_->startY, 0.0f, 1.0f);
-    addCreativeFloat(properties, "endX", "End X", impl_->endX, 0.0f, 1.0f);
-    addCreativeFloat(properties, "endY", "End Y", impl_->endY, 0.0f, 1.0f);
-    addCreativeFloat(properties, "width", "Removal Width", impl_->width, 0.5f, 256.0f);
-    addCreativeFloat(properties, "feather", "Feather", impl_->feather, 0.0f, 128.0f);
-    addCreativeInteger(properties, "method", "Fill Method", impl_->method, 0, 2);
-    addCreativeFloat(properties, "cloneOffsetX", "Clone Offset X", impl_->cloneOffsetX, -2048.0f, 2048.0f);
-    addCreativeFloat(properties, "cloneOffsetY", "Clone Offset Y", impl_->cloneOffsetY, -2048.0f, 2048.0f);
-    addCreativeInteger(properties, "temporalOffset", "Source Frame Offset", impl_->temporalOffset, -120, 120);
-    addCreativeFloat(properties, "mix", "Mix", impl_->mix, 0.0f, 1.0f);
-    addCreativeString(properties, "maskInput", "Removal Mask Input", impl_->maskInput);
-    addCreativeString(properties, "cleanInput", "Clean Plate Input", impl_->cleanInput);
+    const auto& job = impl_->job;
+    addCreativeBoolean(properties, "lineEnabled", "Enable Wire 1", job.segs[0].enabled);
+    addCreativeFloat(properties, "startX", "Wire 1 Start X", job.segs[0].x1, -1.0f, 2.0f);
+    addCreativeFloat(properties, "startY", "Wire 1 Start Y", job.segs[0].y1, -1.0f, 2.0f);
+    addCreativeFloat(properties, "endX", "Wire 1 End X", job.segs[0].x2, -1.0f, 2.0f);
+    addCreativeFloat(properties, "endY", "Wire 1 End Y", job.segs[0].y2, -1.0f, 2.0f);
+    addCreativeBoolean(properties, "line2Enabled", "Enable Wire 2", job.segs[1].enabled);
+    addCreativeFloat(properties, "startX2", "Wire 2 Start X", job.segs[1].x1, -1.0f, 2.0f);
+    addCreativeFloat(properties, "startY2", "Wire 2 Start Y", job.segs[1].y1, -1.0f, 2.0f);
+    addCreativeFloat(properties, "endX2", "Wire 2 End X", job.segs[1].x2, -1.0f, 2.0f);
+    addCreativeFloat(properties, "endY2", "Wire 2 End Y", job.segs[1].y2, -1.0f, 2.0f);
+    addCreativeBoolean(properties, "line3Enabled", "Enable Wire 3", job.segs[2].enabled);
+    addCreativeFloat(properties, "startX3", "Wire 3 Start X", job.segs[2].x1, -1.0f, 2.0f);
+    addCreativeFloat(properties, "startY3", "Wire 3 Start Y", job.segs[2].y1, -1.0f, 2.0f);
+    addCreativeFloat(properties, "endX3", "Wire 3 End X", job.segs[2].x2, -1.0f, 2.0f);
+    addCreativeFloat(properties, "endY3", "Wire 3 End Y", job.segs[2].y2, -1.0f, 2.0f);
+    addCreativeFloat(properties, "width", "Removal Width", job.width, 0.5f, 256.0f);
+    addCreativeFloat(properties, "feather", "Feather", job.feather, 0.0f, 128.0f);
+    addCreativeInteger(properties, "method", "Fill Method", job.method, 0, 4);
+    addCreativeFloat(properties, "inpaintRadius", "Inpaint Radius", job.inpaintRadius, 1.0f, 24.0f);
+    addCreativeFloat(properties, "cloneOffsetX", "Clone Offset X", job.cloneOffsetX, -2048.0f, 2048.0f);
+    addCreativeFloat(properties, "cloneOffsetY", "Clone Offset Y", job.cloneOffsetY, -2048.0f, 2048.0f);
+    addCreativeInteger(properties, "temporalOffset", "Source Frame Offset", job.temporalOffset, -120, 120);
+    addCreativeFloat(properties, "mix", "Mix", job.mix, 0.0f, 1.0f);
+    addCreativeBoolean(properties, "viewMask", "View Removal Mask", job.viewMask);
+    addCreativeString(properties, "maskInput", "Removal Mask Input", job.maskInput);
+    addCreativeString(properties, "cleanInput", "Clean Plate Input", job.cleanInput);
+    addCreativeBoolean(properties, "trackLinkEnabled", "Link Wire 1 To Tracker", job.trackLinkEnabled);
+    addCreativeInteger(properties, "trackerId", "Tracker ID", job.trackerId, 0, 99999);
+    addCreativeInteger(properties, "startPointId", "Start Track Point", job.startPointId, 0, 9999);
+    addCreativeInteger(properties, "endPointId", "End Track Point", job.endPointId, 0, 9999);
+    addCreativeInteger(properties, "trackRefFrame", "Tracker Reference Frame", static_cast<int>(job.trackRefFrame), -1000000, 1000000);
     return properties;
 }
 
@@ -1511,29 +1972,57 @@ void ArtifactWireObjectRemoverEffect::setPropertyValue(
     const QString key = name.toQString();
     const float raw = value.toFloat();
     const float number = std::isfinite(raw) ? raw : 0.0f;
-    if (key == QStringLiteral("lineEnabled")) impl_->lineEnabled = value.toBool();
-    else if (key == QStringLiteral("startX")) impl_->startX = std::clamp(number, 0.0f, 1.0f);
-    else if (key == QStringLiteral("startY")) impl_->startY = std::clamp(number, 0.0f, 1.0f);
-    else if (key == QStringLiteral("endX")) impl_->endX = std::clamp(number, 0.0f, 1.0f);
-    else if (key == QStringLiteral("endY")) impl_->endY = std::clamp(number, 0.0f, 1.0f);
-    else if (key == QStringLiteral("width")) impl_->width = std::clamp(number, 0.5f, 256.0f);
-    else if (key == QStringLiteral("feather")) impl_->feather = std::clamp(number, 0.0f, 128.0f);
-    else if (key == QStringLiteral("method")) impl_->method = std::clamp(value.toInt(), 0, 2);
-    else if (key == QStringLiteral("cloneOffsetX")) impl_->cloneOffsetX = std::clamp(number, -2048.0f, 2048.0f);
-    else if (key == QStringLiteral("cloneOffsetY")) impl_->cloneOffsetY = std::clamp(number, -2048.0f, 2048.0f);
-    else if (key == QStringLiteral("temporalOffset")) impl_->temporalOffset = std::clamp(value.toInt(), -120, 120);
-    else if (key == QStringLiteral("mix")) impl_->mix = std::clamp(number, 0.0f, 1.0f);
-    else if (key == QStringLiteral("maskInput")) impl_->maskInput = value.toString();
-    else if (key == QStringLiteral("cleanInput")) impl_->cleanInput = value.toString();
-    else ArtifactAbstractEffect::setPropertyValue(name, value);
+    auto& job = impl_->job;
+    auto setSeg = [&](int i, float v, float WireSegmentParams::*m) {
+        if (i < 0 || i > 2 || m == nullptr) return;
+        job.segs[i].*m = std::clamp(v, -1.0f, 2.0f);
+    };
+    if (key == QStringLiteral("lineEnabled")) job.segs[0].enabled = value.toBool();
+    else if (key == QStringLiteral("startX")) setSeg(0, number, &WireSegmentParams::x1);
+    else if (key == QStringLiteral("startY")) setSeg(0, number, &WireSegmentParams::y1);
+    else if (key == QStringLiteral("endX")) setSeg(0, number, &WireSegmentParams::x2);
+    else if (key == QStringLiteral("endY")) setSeg(0, number, &WireSegmentParams::y2);
+    else if (key == QStringLiteral("line2Enabled")) job.segs[1].enabled = value.toBool();
+    else if (key == QStringLiteral("startX2")) setSeg(1, number, &WireSegmentParams::x1);
+    else if (key == QStringLiteral("startY2")) setSeg(1, number, &WireSegmentParams::y1);
+    else if (key == QStringLiteral("endX2")) setSeg(1, number, &WireSegmentParams::x2);
+    else if (key == QStringLiteral("endY2")) setSeg(1, number, &WireSegmentParams::y2);
+    else if (key == QStringLiteral("line3Enabled")) job.segs[2].enabled = value.toBool();
+    else if (key == QStringLiteral("startX3")) setSeg(2, number, &WireSegmentParams::x1);
+    else if (key == QStringLiteral("startY3")) setSeg(2, number, &WireSegmentParams::y1);
+    else if (key == QStringLiteral("endX3")) setSeg(2, number, &WireSegmentParams::x2);
+    else if (key == QStringLiteral("endY3")) setSeg(2, number, &WireSegmentParams::y2);
+    else if (key == QStringLiteral("width")) job.width = std::clamp(number, 0.5f, 256.0f);
+    else if (key == QStringLiteral("feather")) job.feather = std::clamp(number, 0.0f, 128.0f);
+    else if (key == QStringLiteral("method")) job.method = std::clamp(value.toInt(), 0, 4);
+    else if (key == QStringLiteral("inpaintRadius")) job.inpaintRadius = std::clamp(number, 1.0f, 24.0f);
+    else if (key == QStringLiteral("cloneOffsetX")) job.cloneOffsetX = std::clamp(number, -2048.0f, 2048.0f);
+    else if (key == QStringLiteral("cloneOffsetY")) job.cloneOffsetY = std::clamp(number, -2048.0f, 2048.0f);
+    else if (key == QStringLiteral("temporalOffset")) job.temporalOffset = std::clamp(value.toInt(), -120, 120);
+    else if (key == QStringLiteral("mix")) job.mix = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("viewMask")) job.viewMask = value.toBool();
+    else if (key == QStringLiteral("maskInput")) job.maskInput = value.toString();
+    else if (key == QStringLiteral("cleanInput")) job.cleanInput = value.toString();
+    else if (key == QStringLiteral("trackLinkEnabled")) job.trackLinkEnabled = value.toBool();
+    else if (key == QStringLiteral("trackerId")) job.trackerId = std::clamp(value.toInt(), 0, 99999);
+    else if (key == QStringLiteral("startPointId")) job.startPointId = std::clamp(value.toInt(), 0, 9999);
+    else if (key == QStringLiteral("endPointId")) job.endPointId = std::clamp(value.toInt(), 0, 9999);
+    else if (key == QStringLiteral("trackRefFrame")) job.trackRefFrame = std::clamp(value.toInt(), -1000000, 1000000);
+    else {
+        ArtifactAbstractEffect::setPropertyValue(name, value);
+        return;
+    }
+    syncImpls();
 }
 
 EffectROIHint ArtifactWireObjectRemoverEffect::roiHint() const {
+    const auto& job = impl_->job;
     return {.kind = EffectROIHintKind::Mask,
-            .expansionPixels = std::max({impl_->width + impl_->feather,
-                                        std::abs(impl_->cloneOffsetX),
-                                        std::abs(impl_->cloneOffsetY)}),
-            .requiresFullFrame = impl_->temporalOffset != 0};
+            .expansionPixels = std::max({job.width + job.feather,
+                                        std::abs(job.cloneOffsetX),
+                                        std::abs(job.cloneOffsetY),
+                                        job.inpaintRadius * 2.0f}),
+            .requiresFullFrame = job.temporalOffset != 0 || job.method >= 3};
 }
 
 class ArtifactDepthRelightEffect::Impl {
@@ -2033,8 +2522,7 @@ EffectROIHint ArtifactSpillKillerProEffect::roiHint() const {
     return {.kind = EffectROIHintKind::Matte};
 }
 
-class ArtifactPixelDustFixerEffect::Impl {
-public:
+struct DustFixerJob {
     float threshold = 0.12f;
     float softness = 0.05f;
     float amount = 1.0f;
@@ -2043,15 +2531,495 @@ public:
     bool repairBright = true;
     bool repairDark = true;
     bool maskOnly = false;
+    bool temporalDetect = true;
+    float temporalThreshold = 0.08f;
+    float motionReject = 0.5f;
+    bool temporalRepair = true;
+    bool scratchDetect = false;
+    float scratchThreshold = 0.1f;
+    int scratchMinLength = 24;
     QString maskInput = QStringLiteral("repair_mask");
-    IEffectFrameSampler* sampler = nullptr;
-    std::int64_t frame = 0;
+};
+
+class ArtifactPixelDustFixerEffect::Impl {
+public:
+    DustFixerJob job;
+};
+
+bool runDustEffectCPU(const ArtifactCore::ImageF32x4_RGBA& srcImage,
+                      ArtifactCore::ImageF32x4_RGBA& resultImage,
+                      const DustFixerJob& job, IEffectFrameSampler* sampler,
+                      std::int64_t frame) {
+    const int width = srcImage.width();
+    const int height = srcImage.height();
+    const float* source = srcImage.rgba32fData();
+    if (!source || width <= 0 || height <= 0) return false;
+    // Temporal neighbors for single-frame dirt detection (Furnace-style).
+    cv::Mat prevStorage, nextStorage, namedStorage;
+    const float* prevPlane = nullptr;
+    const float* nextPlane = nullptr;
+    const float* namedPlane = nullptr;
+    if (!job.maskOnly && job.temporalDetect && sampler) {
+        ImageF32x4RGBAWithCache neighborImage;
+        if (sampler->sampleCurrentLayerFrameRelative(-1, neighborImage) &&
+            prepareAuxiliaryImage(neighborImage, width, height, prevStorage)) {
+            if (!prevStorage.isContinuous()) prevStorage = prevStorage.clone();
+            prevPlane = prevStorage.ptr<float>();
+        }
+        if (sampler->sampleCurrentLayerFrameRelative(1, neighborImage) &&
+            prepareAuxiliaryImage(neighborImage, width, height, nextStorage)) {
+            if (!nextStorage.isContinuous()) nextStorage = nextStorage.clone();
+            nextPlane = nextStorage.ptr<float>();
+        }
+    }
+    if (sampler && !job.maskInput.trimmed().isEmpty()) {
+        ImageF32x4RGBAWithCache maskImage;
+        cv::Mat maskRgba;
+        if (sampler->sampleNamedInput(job.maskInput, frame, maskImage) &&
+            prepareAuxiliaryImage(maskImage, width, height, maskRgba)) {
+            namedStorage = extractAuxiliaryMask(maskRgba);
+            if (!namedStorage.empty()) {
+                if (!namedStorage.isContinuous())
+                    namedStorage = namedStorage.clone();
+                namedPlane = namedStorage.ptr<float>();
+            }
+        }
+    }
+
+    ArtifactCore::Repair::FilmRepairParams params;
+    params.threshold = job.threshold;
+    params.softness = job.softness;
+    params.amount = job.amount;
+    params.mix = job.mix;
+    params.radius = job.radius;
+    params.repairBright = job.repairBright;
+    params.repairDark = job.repairDark;
+    params.temporalDetect = job.temporalDetect;
+    params.temporalThreshold = job.temporalThreshold;
+    params.motionReject = job.motionReject;
+    params.temporalRepair = job.temporalRepair;
+    params.temporalRepair = job.temporalRepair;
+    params.scratchDetect = job.scratchDetect;
+    params.scratchThreshold = job.scratchThreshold;
+    params.scratchMinLength = job.scratchMinLength;
+    params.namedMaskOnly = job.maskOnly;
+
+    resultImage = srcImage;
+    float* output = resultImage.rgba32fData();
+    if (!output) return false;
+    const ArtifactCore::Repair::FilmRepairBuffers buffers{
+        source, output, prevPlane, nextPlane, namedPlane, width, height};
+    if (!ArtifactCore::Repair::processFilmRepair(buffers, params))
+        return false;
+    resultImage.setColorDescriptor(srcImage.colorDescriptor());
+    return true;
+}
+
+class DustFixerCPUImpl final : public ArtifactEffectImplBase {
+public:
+    DustFixerJob job_{};
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        ArtifactCore::ImageF32x4_RGBA result;
+        if (!runDustEffectCPU(src.image(), result, job_, context_.sampler,
+                              context_.compositionFrame)) {
+            dst = src;
+            return;
+        }
+        dst = ImageF32x4RGBAWithCache(result);
+    }
+};
+
+class DustFixerGPUImpl final : public ArtifactEffectImplBase {
+public:
+    DustFixerJob job_{};
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        ArtifactCore::ImageF32x4_RGBA result;
+        if (!runDustEffectCPU(src.image(), result, job_, context_.sampler,
+                              context_.compositionFrame)) {
+            dst = src;
+            return;
+        }
+        dst = ImageF32x4RGBAWithCache(result);
+    }
+
+    void applyGPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        // Median repair beyond 3x3 and scratch morphology stay on the CPU;
+        // the GPU path covers spatial/temporal detection with radius 1.
+        if (job_.radius != 1 || job_.scratchDetect) {
+            applyCPU(src, dst);
+            return;
+        }
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+            applyCPU(src, dst);
+            return;
+        }
+        const auto& srcImage = src.image();
+        const int width = srcImage.width();
+        const int height = srcImage.height();
+        if (!srcImage.rgba32fData() || width <= 0 || height <= 0) {
+            dst = src;
+            return;
+        }
+        // Neighbor + mask textures sampled on the host, uploaded for fill.
+        Diligent::RefCntAutoPtr<Diligent::ITexture> prevTex;
+        Diligent::RefCntAutoPtr<Diligent::ITexture> nextTex;
+        Diligent::RefCntAutoPtr<Diligent::ITexture> maskTex;
+        bool usePrev = false, useNext = false, useMaskTex = false;
+        ImageF32x4RGBAWithCache auxImage;
+        cv::Mat auxRgba;
+        if (!job_.maskOnly && job_.temporalDetect && context_.sampler) {
+            if (context_.sampler->sampleCurrentLayerFrameRelative(-1, auxImage) &&
+                prepareAuxiliaryImage(auxImage, width, height, auxRgba))
+                usePrev = createFloatTexture(auxRgba.ptr<float>(), width, height,
+                                             device_, &prevTex, "DustFixer/Prev");
+            if (context_.sampler->sampleCurrentLayerFrameRelative(1, auxImage) &&
+                prepareAuxiliaryImage(auxImage, width, height, auxRgba))
+                useNext = createFloatTexture(auxRgba.ptr<float>(), width, height,
+                                             device_, &nextTex, "DustFixer/Next");
+        }
+        if (context_.sampler && !job_.maskInput.trimmed().isEmpty() &&
+            context_.sampler->sampleNamedInput(job_.maskInput,
+                                               context_.compositionFrame,
+                                               auxImage) &&
+            prepareAuxiliaryImage(auxImage, width, height, auxRgba)) {
+            const cv::Mat extracted = extractAuxiliaryMask(auxRgba);
+            if (!extracted.empty()) {
+                cv::Mat packed;
+                cv::Mat ones(height, width, CV_32F, cv::Scalar(1.0f));
+                cv::Mat in[] = {extracted, extracted, extracted, ones};
+                cv::merge(in, 4, packed);
+                useMaskTex = createFloatTexture(packed.ptr<float>(), width, height,
+                                                device_, &maskTex, "DustFixer/Mask");
+            }
+        }
+
+        if (!gpuContext_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+        }
+        if (!executor_) {
+            applyCPU(src, dst);
+            return;
+        }
+        if (!paramsCB_) {
+            Diligent::BufferDesc cbDesc;
+            cbDesc.Name = "DustFixer/ParamsCB";
+            cbDesc.Size = sizeof(ParamsCB);
+            cbDesc.Usage = Diligent::USAGE_DYNAMIC;
+            cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+            cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+            device_->CreateBuffer(cbDesc, nullptr, &paramsCB_);
+        }
+        if (!paramsCB_) {
+            applyCPU(src, dst);
+            return;
+        }
+        static Diligent::ShaderResourceVariableDesc vars[] = {
+            {Diligent::SHADER_TYPE_COMPUTE, "DustParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "ForegroundTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "PrevTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "NextTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "MaskTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE, "OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        };
+        if (!pipelineReady_) {
+            ArtifactCore::ComputePipelineDesc desc;
+            desc.name = "DustFixer/PSO";
+            desc.shaderSource = kShader;
+            desc.entryPoint = "main";
+            desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+            desc.variables = vars;
+            desc.variableCount = 6;
+            desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true) ||
+                !executor_->setBuffer("DustParams", paramsCB_)) {
+                applyCPU(src, dst);
+                return;
+            }
+            pipelineReady_ = true;
+        }
+        Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
+        if (!createFloatTexture(srcImage.rgba32fData(), width, height, device_,
+                                &inputTex, "DustFixer/Input")) {
+            applyCPU(src, dst);
+            return;
+        }
+        Diligent::TextureDesc outDesc = inputTex->GetDesc();
+        outDesc.Usage = Diligent::USAGE_DEFAULT;
+        outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
+        outDesc.Name = "DustFixer/Output";
+        if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width ||
+            outputTex_->GetDesc().Height != outDesc.Height) {
+            outputTex_.Release();
+            device_->CreateTexture(outDesc, nullptr, &outputTex_);
+        }
+        if (!outputTex_) {
+            applyCPU(src, dst);
+            return;
+        }
+        Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex = fallbackTexture();
+        Diligent::ITexture* prevSlot = usePrev ? prevTex.RawPtr() : fallbackTex.RawPtr();
+        Diligent::ITexture* nextSlot = useNext ? nextTex.RawPtr() : fallbackTex.RawPtr();
+        Diligent::ITexture* maskSlot = useMaskTex ? maskTex.RawPtr() : fallbackTex.RawPtr();
+        if (!prevSlot || !nextSlot || !maskSlot) {
+            applyCPU(src, dst);
+            return;
+        }
+        void* mapped = nullptr;
+        context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        if (!mapped) {
+            applyCPU(src, dst);
+            return;
+        }
+        ParamsCB params{};
+        params.threshold = job_.threshold;
+        params.softness = std::max(job_.softness, 1.0e-5f);
+        params.amount = job_.amount;
+        params.mix = job_.mix;
+        params.repairBright = job_.repairBright ? 1 : 0;
+        params.repairDark = job_.repairDark ? 1 : 0;
+        params.maskOnly = job_.maskOnly ? 1 : 0;
+        params.temporalDetect = (!job_.maskOnly && job_.temporalDetect) ? 1 : 0;
+        params.temporalThreshold = job_.temporalThreshold;
+        params.motionReject = job_.motionReject;
+        params.temporalRepair = job_.temporalRepair ? 1 : 0;
+        params.usePrev = usePrev ? 1 : 0;
+        params.useNext = useNext ? 1 : 0;
+        params.useMaskTex = useMaskTex ? 1 : 0;
+        std::memcpy(mapped, &params, sizeof(params));
+        context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        if (!executor_->setTextureView("ForegroundTexture",
+                inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("PrevTexture",
+                prevSlot->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("NextTexture",
+                nextSlot->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("MaskTexture",
+                maskSlot->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("OutputTexture",
+                outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+            applyCPU(src, dst);
+            return;
+        }
+        auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+            outDesc.Width, outDesc.Height, 1, 16, 16, 1);
+        executor_->dispatch(context_, attribs,
+                            Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (!readbackTexture(device_, context_, outputTex_, dst,
+                             "DustFixer/Staging", srcImage.colorDescriptor())) {
+            applyCPU(src, dst);
+        }
+    }
+
+private:
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex_;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
+    bool pipelineReady_ = false;
+
+    struct ParamsCB {
+        float threshold = 0.12f;
+        float softness = 0.05f;
+        float amount = 1.0f;
+        float mix = 1.0f;
+        int repairBright = 1;
+        int repairDark = 1;
+        int maskOnly = 0;
+        int temporalDetect = 0;
+        float temporalThreshold = 0.08f;
+        float motionReject = 0.5f;
+        int temporalRepair = 1;
+        int usePrev = 0;
+        int useNext = 0;
+        int useMaskTex = 0;
+        float pad0 = 0.0f;
+        float pad1 = 0.0f;
+    };
+
+    static constexpr const char* kShader = R"(
+Texture2D<float4> ForegroundTexture : register(t0);
+Texture2D<float4> PrevTexture : register(t1);
+Texture2D<float4> NextTexture : register(t2);
+Texture2D<float4> MaskTexture : register(t3);
+RWTexture2D<float4> OutputTexture : register(u0);
+cbuffer DustParams : register(b0) {
+  float Threshold; float Softness; float Amount; float Mix;
+  int RepairBright; int RepairDark; int MaskOnly; int TemporalDetect;
+  float TemporalThreshold; float MotionReject; int TemporalRepair; int UsePrev;
+  int UseNext; int UseMaskTex; float Pad0; float Pad1;
+};
+float lumaOf(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+float smooth01(float v) { v = saturate(v); return v * v * (3.0 - 2.0 * v); }
+// 3x3 median via insertion sort (radius 1 path only).
+float median9(float v[9]) {
+  for (int i = 1; i < 9; ++i) {
+    float key = v[i];
+    int j = i - 1;
+    while (j >= 0 && v[j] > key) { v[j + 1] = v[j]; --j; }
+    v[j + 1] = key;
+  }
+  return v[4];
+}
+[numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
+  uint w, h; OutputTexture.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  float4 src = ForegroundTexture[id.xy];
+  float window[9];
+  float3 med = 0;
+  for (int c = 0; c < 3; ++c) {
+    int n = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
+        float4 s = ForegroundTexture[uint2(q)];
+        window[n++] = (c == 0) ? s.r : ((c == 1) ? s.g : s.b);
+      }
+    float m = median9(window);
+    med[c] = m;
+  }
+  float luma = lumaOf(src.rgb);
+  float medLuma = lumaOf(med);
+  float mask = 0;
+  if (MaskOnly == 0) {
+    float residual = luma - medLuma;
+    bool eligible = (residual >= 0 && RepairBright != 0) ||
+                    (residual < 0 && RepairDark != 0);
+    if (eligible)
+      mask = max(mask, smooth01((abs(residual) - Threshold) / max(Softness, 1e-5)));
+    if (TemporalDetect != 0 && UsePrev != 0 && UseNext != 0) {
+      float pl = lumaOf(PrevTexture[id.xy].rgb);
+      float nl = lumaOf(NextTexture[id.xy].rgb);
+      float toPrev = luma - pl, toNext = luma - nl;
+      if (toPrev * toNext > 0) {
+        float mag = min(abs(toPrev), abs(toNext));
+        if (mag >= TemporalThreshold) {
+          bool elig = (toPrev >= 0 && RepairBright != 0) ||
+                      (toPrev < 0 && RepairDark != 0);
+          float nd = abs(pl - nl);
+          if (elig && nd <= MotionReject) {
+            float agree = max(TemporalThreshold * 0.5, 1e-4);
+            float gate = 1.0 - saturate(nd / agree);
+            mask = max(mask, smooth01((mag - TemporalThreshold) / max(Softness, 1e-5)) * saturate(gate));
+          }
+        }
+      }
+    }
+  }
+  if (UseMaskTex != 0) {
+    float4 m = MaskTexture[id.xy];
+    float named = saturate(max(max(m.r, m.g), max(m.b, m.a)));
+    mask = (MaskOnly != 0) ? named : max(mask, named);
+  }
+  float3 fill = med;
+  if (TemporalRepair != 0 && UsePrev != 0 && UseNext != 0 && TemporalDetect != 0 && MaskOnly == 0) {
+    // Recompute the temporal weight to pick the neighbor fill.
+    float pl = lumaOf(PrevTexture[id.xy].rgb);
+    float nl = lumaOf(NextTexture[id.xy].rgb);
+    float toPrev = luma - pl, toNext = luma - nl;
+    float tw = 0;
+    if (toPrev * toNext > 0) {
+      float mag = min(abs(toPrev), abs(toNext));
+      if (mag >= TemporalThreshold) {
+        bool elig = (toPrev >= 0 && RepairBright != 0) ||
+                    (toPrev < 0 && RepairDark != 0);
+        float nd = abs(pl - nl);
+        if (elig && nd <= MotionReject) {
+          float agree = max(TemporalThreshold * 0.5, 1e-4);
+          tw = smooth01((mag - TemporalThreshold) / max(Softness, 1e-5)) * saturate(1.0 - saturate(nd / agree));
+        }
+      }
+    }
+    float3 navg = (PrevTexture[id.xy].rgb + NextTexture[id.xy].rgb) * 0.5;
+    fill = lerp(fill, navg, saturate(tw));
+  }
+  float blend = saturate(mask * Amount * Mix);
+  OutputTexture[id.xy] = float4(lerp(src.rgb, fill, blend), src.a);
+})";
+
+    static bool createFloatTexture(const float* data, int width, int height,
+                                   Diligent::IRenderDevice* device,
+                                   Diligent::ITexture** outTex, const char* name) {
+        if (!data || width <= 0 || height <= 0 || !device || !outTex) return false;
+        Diligent::TextureDesc desc;
+        desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        desc.Width = width;
+        desc.Height = height;
+        desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+        desc.ArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleCount = 1;
+        desc.Usage = Diligent::USAGE_IMMUTABLE;
+        desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+        desc.Name = name;
+        Diligent::TextureSubResData sub{};
+        sub.pData = data;
+        sub.Stride = static_cast<Diligent::Uint64>(width) * sizeof(float) * 4ull;
+        Diligent::TextureData init{};
+        init.pSubResources = &sub;
+        init.NumSubresources = 1;
+        device->CreateTexture(desc, &init, outTex);
+        return *outTex != nullptr;
+    }
+
+    Diligent::ITexture* fallbackTexture() {
+        if (fallbackTex_) return fallbackTex_.RawPtr();
+        static const float black[4] = {0, 0, 0, 0};
+        createFloatTexture(black, 1, 1, device_, &fallbackTex_, "DustFixer/Fallback");
+        return fallbackTex_.RawPtr();
+    }
+
+    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx,
+                                Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst,
+                                const char* name, const auto& colorDescriptor) {
+        if (!device || !ctx || !src) return false;
+        const auto desc = src->GetDesc();
+        Diligent::TextureDesc stagingDesc;
+        stagingDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        stagingDesc.Width = desc.Width;
+        stagingDesc.Height = desc.Height;
+        stagingDesc.Format = desc.Format;
+        stagingDesc.ArraySize = 1;
+        stagingDesc.MipLevels = 1;
+        stagingDesc.SampleCount = 1;
+        stagingDesc.Usage = Diligent::USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+        stagingDesc.Name = name;
+        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
+        device->CreateTexture(stagingDesc, nullptr, &staging);
+        if (!staging) return false;
+        Diligent::CopyTextureAttribs copy(src, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                          staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx->CopyTexture(copy);
+        ctx->Flush();
+        ctx->WaitForIdle();
+        Diligent::MappedTextureSubresource mapped{};
+        ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
+        if (!mapped.pData || mapped.Stride == 0) return false;
+        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width),
+                     CV_32FC4, mapped.pData, mapped.Stride);
+        dst.image().setFromCVMat(temp, colorDescriptor);
+        ctx->UnmapTextureSubresource(staging, 0, 0);
+        return true;
+    }
 };
 
 ArtifactPixelDustFixerEffect::ArtifactPixelDustFixerEffect() : impl_(new Impl()) {
     setEffectID(ArtifactCore::UniString("builtin.pixel_dust_fixer"));
     setDisplayName(ArtifactCore::UniString("Pixel / Dust Fixer"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
+    setCPUImpl(ArtifactCore::makeShared<DustFixerCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<DustFixerGPUImpl>());
+    syncImpls();
+    setComputeMode(ComputeMode::AUTO);
 }
 
 ArtifactPixelDustFixerEffect::~ArtifactPixelDustFixerEffect() {
@@ -2059,95 +3027,33 @@ ArtifactPixelDustFixerEffect::~ArtifactPixelDustFixerEffect() {
     impl_ = nullptr;
 }
 
-void ArtifactPixelDustFixerEffect::onContextUpdated(const EffectContext& context) {
-    impl_->sampler = context.sampler;
-    impl_->frame = context.compositionFrame;
-}
-
-void ArtifactPixelDustFixerEffect::apply(const ImageF32x4RGBAWithCache& src,
-                                         ImageF32x4RGBAWithCache& dst) {
-    const auto& image = src.image();
-    const int width = image.width();
-    const int height = image.height();
-    const float* source = image.rgba32fData();
-    if (!source || width <= 0 || height <= 0) {
-        dst = src;
-        return;
-    }
-    cv::Mat rgba(height, width, CV_32FC4, const_cast<float*>(source));
-    std::vector<cv::Mat> channels;
-    cv::split(rgba, channels);
-    std::vector<cv::Mat> medianChannels(3);
-    const int kernel = impl_->radius * 2 + 1;
-    for (int channel = 0; channel < 3; ++channel) {
-        cv::medianBlur(channels[channel], medianChannels[channel], kernel);
-    }
-    cv::Mat luma = channels[0] * 0.2126f + channels[1] * 0.7152f +
-                   channels[2] * 0.0722f;
-    cv::Mat medianLuma = medianChannels[0] * 0.2126f +
-                         medianChannels[1] * 0.7152f +
-                         medianChannels[2] * 0.0722f;
-    cv::Mat repairMask(height, width, CV_32F, cv::Scalar(0.0f));
-    for (int y = 0; y < height; ++y) {
-        const float* lumaRow = luma.ptr<float>(y);
-        const float* medianRow = medianLuma.ptr<float>(y);
-        float* maskRow = repairMask.ptr<float>(y);
-        for (int x = 0; x < width; ++x) {
-            const float residual = lumaRow[x] - medianRow[x];
-            const bool eligible = (residual >= 0.0f && impl_->repairBright) ||
-                                  (residual < 0.0f && impl_->repairDark);
-            if (!eligible || impl_->maskOnly) continue;
-            const float normalized = (std::abs(residual) - impl_->threshold) /
-                                     std::max(impl_->softness, 1.0e-5f);
-            maskRow[x] = smoothMask(normalized);
-        }
-    }
-    ImageF32x4RGBAWithCache maskImage;
-    cv::Mat maskRgba;
-    if (impl_->sampler && !impl_->maskInput.trimmed().isEmpty() &&
-        impl_->sampler->sampleNamedInput(impl_->maskInput, impl_->frame,
-                                         maskImage) &&
-        prepareAuxiliaryImage(maskImage, width, height, maskRgba)) {
-        cv::Mat namedMask = extractAuxiliaryMask(maskRgba);
-        if (impl_->maskOnly) repairMask = namedMask;
-        else cv::max(repairMask, namedMask, repairMask);
-    }
-
-    auto result = image.DeepCopy();
-    float* output = result.rgba32fData();
-    for (int y = 0; y < height; ++y) {
-        const float* maskRow = repairMask.ptr<float>(y);
-        const float* medianRows[3] = {medianChannels[0].ptr<float>(y),
-                                      medianChannels[1].ptr<float>(y),
-                                      medianChannels[2].ptr<float>(y)};
-        for (int x = 0; x < width; ++x) {
-            const std::size_t offset =
-                (static_cast<std::size_t>(y) * width + x) * 4u;
-            const float blend = std::clamp(maskRow[x] * impl_->amount *
-                                           impl_->mix, 0.0f, 1.0f);
-            for (int channel = 0; channel < 3; ++channel) {
-                output[offset + channel] = std::lerp(source[offset + channel],
-                                                     medianRows[channel][x], blend);
-            }
-            output[offset + 3] = source[offset + 3];
-        }
-    }
-    result.setColorDescriptor(image.colorDescriptor());
-    dst = ImageF32x4RGBAWithCache(result);
+void ArtifactPixelDustFixerEffect::syncImpls() {
+    if (auto* cpu = dynamic_cast<DustFixerCPUImpl*>(cpuImpl().get()))
+        cpu->job_ = impl_->job;
+    if (auto* gpu = dynamic_cast<DustFixerGPUImpl*>(gpuImpl().get()))
+        gpu->job_ = impl_->job;
 }
 
 std::vector<ArtifactCore::AbstractProperty>
 ArtifactPixelDustFixerEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> properties;
-    addCreativeInteger(properties, "radius", "Repair Radius", impl_->radius, 1, 2);
-    addCreativeFloat(properties, "threshold", "Detection Threshold", impl_->threshold, 0.0f, 2.0f);
-    addCreativeFloat(properties, "softness", "Detection Softness", impl_->softness, 0.001f, 1.0f);
-    addCreativeFloat(properties, "amount", "Repair Amount", impl_->amount, 0.0f, 2.0f);
-    addCreativeFloat(properties, "mix", "Mix", impl_->mix, 0.0f, 1.0f);
-    addCreativeBoolean(properties, "repairBright", "Repair Bright Pixels", impl_->repairBright);
-    addCreativeBoolean(properties, "repairDark", "Repair Dark Pixels", impl_->repairDark);
-    addCreativeBoolean(properties, "maskOnly", "Use Mask Only", impl_->maskOnly);
-    addCreativeString(properties, "maskInput", "Repair Mask Input", impl_->maskInput);
+    const auto& job = impl_->job;
+    addCreativeInteger(properties, "radius", "Repair Radius", job.radius, 1, 2);
+    addCreativeFloat(properties, "threshold", "Detection Threshold", job.threshold, 0.0f, 2.0f);
+    addCreativeFloat(properties, "softness", "Detection Softness", job.softness, 0.001f, 1.0f);
+    addCreativeFloat(properties, "amount", "Repair Amount", job.amount, 0.0f, 2.0f);
+    addCreativeFloat(properties, "mix", "Mix", job.mix, 0.0f, 1.0f);
+    addCreativeBoolean(properties, "repairBright", "Repair Bright Pixels", job.repairBright);
+    addCreativeBoolean(properties, "repairDark", "Repair Dark Pixels", job.repairDark);
+    addCreativeBoolean(properties, "temporalDetect", "Temporal Dirt Detection", job.temporalDetect);
+    addCreativeFloat(properties, "temporalThreshold", "Temporal Threshold", job.temporalThreshold, 0.0f, 1.0f);
+    addCreativeFloat(properties, "motionReject", "Motion Rejection", job.motionReject, 0.0f, 2.0f);
+    addCreativeBoolean(properties, "temporalRepair", "Repair From Neighbors", job.temporalRepair);
+    addCreativeBoolean(properties, "scratchDetect", "Vertical Scratch Detection", job.scratchDetect);
+    addCreativeFloat(properties, "scratchThreshold", "Scratch Threshold", job.scratchThreshold, 0.0f, 1.0f);
+    addCreativeInteger(properties, "scratchMinLength", "Scratch Min Length", job.scratchMinLength, 4, 256);
+    addCreativeBoolean(properties, "maskOnly", "Use Mask Only", job.maskOnly);
+    addCreativeString(properties, "maskInput", "Repair Mask Input", job.maskInput);
     return properties;
 }
 
@@ -2156,21 +3062,35 @@ void ArtifactPixelDustFixerEffect::setPropertyValue(
     const QString key = name.toQString();
     const float raw = value.toFloat();
     const float number = std::isfinite(raw) ? raw : 0.0f;
-    if (key == QStringLiteral("radius")) impl_->radius = std::clamp(value.toInt(), 1, 2);
-    else if (key == QStringLiteral("threshold")) impl_->threshold = std::clamp(number, 0.0f, 2.0f);
-    else if (key == QStringLiteral("softness")) impl_->softness = std::clamp(number, 0.001f, 1.0f);
-    else if (key == QStringLiteral("amount")) impl_->amount = std::clamp(number, 0.0f, 2.0f);
-    else if (key == QStringLiteral("mix")) impl_->mix = std::clamp(number, 0.0f, 1.0f);
-    else if (key == QStringLiteral("repairBright")) impl_->repairBright = value.toBool();
-    else if (key == QStringLiteral("repairDark")) impl_->repairDark = value.toBool();
-    else if (key == QStringLiteral("maskOnly")) impl_->maskOnly = value.toBool();
-    else if (key == QStringLiteral("maskInput")) impl_->maskInput = value.toString();
-    else ArtifactAbstractEffect::setPropertyValue(name, value);
+    auto& job = impl_->job;
+    if (key == QStringLiteral("radius")) job.radius = std::clamp(value.toInt(), 1, 2);
+    else if (key == QStringLiteral("threshold")) job.threshold = std::clamp(number, 0.0f, 2.0f);
+    else if (key == QStringLiteral("softness")) job.softness = std::clamp(number, 0.001f, 1.0f);
+    else if (key == QStringLiteral("amount")) job.amount = std::clamp(number, 0.0f, 2.0f);
+    else if (key == QStringLiteral("mix")) job.mix = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("repairBright")) job.repairBright = value.toBool();
+    else if (key == QStringLiteral("repairDark")) job.repairDark = value.toBool();
+    else if (key == QStringLiteral("temporalDetect")) job.temporalDetect = value.toBool();
+    else if (key == QStringLiteral("temporalThreshold")) job.temporalThreshold = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("motionReject")) job.motionReject = std::clamp(number, 0.0f, 2.0f);
+    else if (key == QStringLiteral("temporalRepair")) job.temporalRepair = value.toBool();
+    else if (key == QStringLiteral("scratchDetect")) job.scratchDetect = value.toBool();
+    else if (key == QStringLiteral("scratchThreshold")) job.scratchThreshold = std::clamp(number, 0.0f, 1.0f);
+    else if (key == QStringLiteral("scratchMinLength")) job.scratchMinLength = std::clamp(value.toInt(), 4, 256);
+    else if (key == QStringLiteral("maskOnly")) job.maskOnly = value.toBool();
+    else if (key == QStringLiteral("maskInput")) job.maskInput = value.toString();
+    else {
+        ArtifactAbstractEffect::setPropertyValue(name, value);
+        return;
+    }
+    syncImpls();
 }
 
 EffectROIHint ArtifactPixelDustFixerEffect::roiHint() const {
+    const auto& job = impl_->job;
     return {.kind = EffectROIHintKind::Matte,
-            .expansionPixels = static_cast<float>(impl_->radius * 2 + 1)};
+            .expansionPixels = static_cast<float>(job.radius * 2 + 1),
+            .requiresFullFrame = job.temporalDetect || job.scratchDetect};
 }
 
 class ArtifactReflectionComposerEffect::Impl {

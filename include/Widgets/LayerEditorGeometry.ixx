@@ -73,4 +73,8 @@ bool hitTestMaskVertexGeometry(const ArtifactAbstractLayerPtr& layer,
                                int& maskIndex, int& pathIndex,
                                int& vertexIndex);
 
+bool hitTestMaskBezierSegmentGeometry(
+    const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos,
+    float threshold, int& maskIndex, int& pathIndex, int& segmentIndex);
+
 }

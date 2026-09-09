@@ -51,6 +51,7 @@ public:
     void applyDataRow(const QVariantMap& rowValues);
     QVariantMap dataRowValues() const;
     bool addParameterDefinition(const QString& key, const QVariant& defaultValue, const QString& displayName = QString());
+    bool setParameterTarget(const QString& key, const QString& targetLayerId, const QString& targetPropertyPath);
     bool publishParameter(const QString& key, const QString& controlId = QString(), const QString& displayName = QString());
     bool unpublishControl(const QString& controlId);
 

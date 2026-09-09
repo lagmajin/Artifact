@@ -1,5 +1,7 @@
 module;
 
+#include <algorithm>
+#include <tuple>
 #include <utility>
 
 module Artifact.Widgets.LayerEditor.MaskPressInteractionController;
@@ -23,6 +25,20 @@ LayerEditorMaskPressInteractionController::handle(
  LayerEditorMaskPressController pressController;
  auto result = pressController.handle(
      layer, canvasPosition, zoom, state.proportionalEditingEnabled, editSession);
+ if (result.kind == LayerEditorMaskPressKind::Empty) return {};
+
+ if (state.selectedVertices && result.vertexIndex >= 0) {
+  const auto address = std::make_tuple(
+      result.maskIndex, result.pathIndex, result.vertexIndex);
+  const auto found = std::find(state.selectedVertices->begin(),
+                               state.selectedVertices->end(), address);
+  if (!state.additiveSelection) {
+   state.selectedVertices->clear();
+   state.selectedVertices->push_back(address);
+  } else if (found == state.selectedVertices->end()) {
+   state.selectedVertices->push_back(address);
+  }
+ }
  if (result.kind == LayerEditorMaskPressKind::DragHandle) {
   if (state.draggingVertex) *state.draggingVertex = false;
   if (state.draggingHandle) *state.draggingHandle = true;
@@ -57,7 +73,7 @@ LayerEditorMaskPressInteractionController::handle(
       .handleType = result.kind == LayerEditorMaskPressKind::DragHandle
           ? result.handleType : MaskHandleType::None});
  }
- return {true,
+ return {result.kind != LayerEditorMaskPressKind::Empty,
          result.kind == LayerEditorMaskPressKind::GeometryChanged,
          startsDrag};
 }

@@ -10,6 +10,7 @@ export module Artifact.Test.PreCompose;
 
 import Composition.PreCompose;
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Composition;
 import Artifact.Service.Project;
 import Undo.UndoManager;
 
@@ -90,6 +91,15 @@ export int runPreComposeTests()
             QStringLiteral("core unprecompose command undo restores nesting hierarchy"));
         report.check(unprecomposeCommand->redo(),
                      QStringLiteral("core unprecompose command redo re-applies unprecompose"));
+        manager.setPrecomposeLayerStartFrame(demoPrecomposeResult.newLayerId, 12.0);
+        report.check(
+            NestedTimeUtils::convertTimeThroughLayerPath(
+                30.0, QVector<LayerID>{demoPrecomposeResult.newLayerId}, {}) == 42.0,
+            QStringLiteral("explicit layer path converts child time to parent time"));
+        report.check(
+            NestedTimeUtils::convertTimeThroughLayerPath(
+                42.0, {}, QVector<LayerID>{demoPrecomposeResult.newLayerId}) == 30.0,
+            QStringLiteral("explicit layer path converts parent time to child time"));
     }
 
     auto* service = ArtifactProjectService::instance();
@@ -330,6 +340,46 @@ export int runPreComposeTests()
                         report.check(static_cast<bool>(service->findComposition(childCompBeforeDrop).ptr.lock()),
                                       QStringLiteral("undo restores the child composition after keepComposition=false"));
                     }
+                }
+            }
+        }
+    }
+
+    if (service) {
+        if (auto* undoManager = UndoManager::instance()) undoManager->clearHistory();
+        service->createComposition(UniString(QStringLiteral("Reusable Source")));
+        auto reusableSource = service->currentComposition().lock();
+        if (reusableSource) {
+            service->addLayerToCurrentComposition(
+                ArtifactNullLayerInitParams(QStringLiteral("Reusable Source Layer")), false);
+            const auto sourceId = reusableSource->id();
+            service->createComposition(UniString(QStringLiteral("Reusable Target")));
+            auto reusableTarget = service->currentComposition().lock();
+            report.check(static_cast<bool>(reusableTarget),
+                         QStringLiteral("reusable target composition exists"));
+            if (reusableTarget) {
+                const bool firstAdd = service->addCompositionLayerToCurrentCompositionWithUndo(sourceId);
+                const bool secondAdd = service->addCompositionLayerToCurrentCompositionWithUndo(sourceId);
+                report.check(firstAdd && secondAdd,
+                             QStringLiteral("same composition can be added twice as a layer"));
+                QVector<LayerID> reusableLayerIds;
+                for (const auto& layer : reusableTarget->allLayer()) {
+                    if (ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer)) {
+                        reusableLayerIds.push_back(layer->id());
+                    }
+                }
+                report.check(reusableLayerIds.size() == 2,
+                             QStringLiteral("two reusable composition layer instances exist"));
+                if (undoManager && reusableLayerIds.size() == 2) {
+                    undoManager->undo();
+                    report.check(reusableTarget->layerCount() == 1,
+                                 QStringLiteral("undo removes only one reusable instance"));
+                    report.check(PreComposeManager::instance()
+                                     .getPrecompLayersForChild(sourceId).size() == 1,
+                                 QStringLiteral("remaining reusable instance keeps its nesting reference"));
+                    undoManager->redo();
+                    report.check(reusableTarget->layerCount() == 2,
+                                 QStringLiteral("redo restores the removed reusable instance"));
                 }
             }
         }

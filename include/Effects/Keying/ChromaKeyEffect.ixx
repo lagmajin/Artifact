@@ -44,17 +44,23 @@ export namespace Artifact {
 
  using namespace ArtifactCore;
 
+// Keylight-style classical keyer. Breaking reorg of the legacy
+// similarity/smoothness Euclidean-RGB keyer: YCbCr screen matte +
+// despill modes + edge finishing + matte views. EffectID is preserved so
+// existing projects reload; legacy property names are migrated in
+// setPropertyValue().
 class ChromaKeyEffectCPUImpl : public ArtifactEffectImplBase {
 private:
-    FloatRGBA keyColor_{0.0f, 1.0f, 0.0f, 1.0f}; // Green
-    float similarity_ = 0.4f;
-    float smoothness_ = 0.1f;
-    float spillReduction_ = 0.5f;
-    float spillDesaturation_ = 1.0f;
-    float blackClip_ = 0.0f;
-    float whiteClip_ = 1.0f;
-    bool previewMatte_ = false;
-    bool lumaOnly_ = false;
+    FloatRGBA keyColor_{0.0f, 1.0f, 0.0f, 1.0f};
+    float hueTolerance_ = 0.28f;
+    float edgeSoftness_ = 0.12f;
+    float clipBlack_ = 0.0f;
+    float clipWhite_ = 1.0f;
+    float despillStrength_ = 0.7f;
+    int despillMode_ = 1;
+    float choke_ = 0.0f;
+    float matteBlur_ = 0.0f;
+    int viewMode_ = 0;
 
 public:
     ChromaKeyEffectCPUImpl() = default;
@@ -71,25 +77,24 @@ public:
     }
     const FloatRGBA& keyColor() const { return keyColor_; }
 
-    void setSimilarity(float val) { similarity_ = val; }
-    float similarity() const { return similarity_; }
-
-    void setSmoothness(float val) { smoothness_ = val; }
-    float smoothness() const { return smoothness_; }
-    
-    void setSpillReduction(float val) { spillReduction_ = val; }
-    float spillReduction() const { return spillReduction_; }
-    void setSpillDesaturation(float val) { spillDesaturation_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 1.0f; }
-    float spillDesaturation() const { return spillDesaturation_; }
-
-    void setBlackClip(float val) { blackClip_ = val; }
-    float blackClip() const { return blackClip_; }
-    void setWhiteClip(float val) { whiteClip_ = val; }
-    float whiteClip() const { return whiteClip_; }
-    void setPreviewMatte(bool enabled) { previewMatte_ = enabled; }
-    bool previewMatte() const { return previewMatte_; }
-    void setLumaOnly(bool enabled) { lumaOnly_ = enabled; }
-    bool lumaOnly() const { return lumaOnly_; }
+    void setHueTolerance(float val) { hueTolerance_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 0.28f; }
+    float hueTolerance() const { return hueTolerance_; }
+    void setEdgeSoftness(float val) { edgeSoftness_ = std::isfinite(val) ? std::clamp(val, 0.0001f, 1.0f) : 0.12f; }
+    float edgeSoftness() const { return edgeSoftness_; }
+    void setClipBlack(float val) { clipBlack_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 0.0f; }
+    float clipBlack() const { return clipBlack_; }
+    void setClipWhite(float val) { clipWhite_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 1.0f; }
+    float clipWhite() const { return clipWhite_; }
+    void setDespillStrength(float val) { despillStrength_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 0.7f; }
+    float despillStrength() const { return despillStrength_; }
+    void setDespillMode(int mode) { despillMode_ = std::clamp(mode, 0, 2); }
+    int despillMode() const { return despillMode_; }
+    void setChoke(float val) { choke_ = std::isfinite(val) ? std::clamp(val, -1.0f, 1.0f) : 0.0f; }
+    float choke() const { return choke_; }
+    void setMatteBlur(float val) { matteBlur_ = std::isfinite(val) ? std::clamp(val, 0.0f, 2.0f) : 0.0f; }
+    float matteBlur() const { return matteBlur_; }
+    void setViewMode(int mode) { viewMode_ = std::clamp(mode, 0, 3); }
+    int viewMode() const { return viewMode_; }
 
     void applyCPU(const ArtifactCore::ImageF32x4RGBAWithCache& src, ArtifactCore::ImageF32x4RGBAWithCache& dst) override;
 };
@@ -97,6 +102,8 @@ public:
 class ChromaKeyEffect : public ArtifactAbstractEffect {
 private:
     SharedPtr<ChromaKeyEffectCPUImpl> typedCpuImpl_;
+
+    void syncGpuImpl();
 
 public:
     ChromaKeyEffect();
@@ -109,25 +116,24 @@ public:
     void setKeyColor(const FloatRGBA& color);
     const FloatRGBA& keyColor() const;
 
-    void setSimilarity(float val);
-    float similarity() const;
-
-    void setSmoothness(float val);
-    float smoothness() const;
-    
-    void setSpillReduction(float val);
-    float spillReduction() const;
-    void setSpillDesaturation(float val);
-    float spillDesaturation() const;
-
-    void setBlackClip(float val);
-    float blackClip() const;
-    void setWhiteClip(float val);
-    float whiteClip() const;
-    void setPreviewMatte(bool enabled);
-    bool previewMatte() const;
-    void setLumaOnly(bool enabled);
-    bool lumaOnly() const;
+    void setHueTolerance(float val);
+    float hueTolerance() const;
+    void setEdgeSoftness(float val);
+    float edgeSoftness() const;
+    void setClipBlack(float val);
+    float clipBlack() const;
+    void setClipWhite(float val);
+    float clipWhite() const;
+    void setDespillStrength(float val);
+    float despillStrength() const;
+    void setDespillMode(int mode);
+    int despillMode() const;
+    void setChoke(float val);
+    float choke() const;
+    void setMatteBlur(float val);
+    float matteBlur() const;
+    void setViewMode(int mode);
+    int viewMode() const;
 };
 
 }

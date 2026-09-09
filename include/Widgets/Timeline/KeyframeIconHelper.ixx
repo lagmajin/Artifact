@@ -25,11 +25,12 @@ enum class KeyframeIconMeaning {
 
 struct KeyframeIconStyle {
   QSize size = QSize(14, 14);
-  QColor fillColor = QColor(QStringLiteral("#FFD84D"));
-  QColor outlineColor = QColor(QStringLiteral("#FFF1A8"));
+  QColor fillColor = QColor(QStringLiteral("#C6A34B"));
+  QColor outlineColor = QColor(QStringLiteral("#E1C36C"));
   KeyframeIconState state = KeyframeIconState::Normal;
   KeyframeIconMeaning meaning = KeyframeIconMeaning::Normal;
   bool currentFrame = false;
+  bool layerTimePinned = false;
 };
 
 QIcon makeKeyframeIcon(const KeyframeIconStyle& style);

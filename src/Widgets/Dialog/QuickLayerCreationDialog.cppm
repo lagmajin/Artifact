@@ -1,9 +1,11 @@
 module;
 #include <QComboBox>
 #include <QCheckBox>
+#include <QColor>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFont>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -12,6 +14,7 @@ module;
 #include <QDoubleSpinBox>
 #include <QSettings>
 #include <QPushButton>
+#include <QPalette>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
 module Artifact.Widgets.QuickLayerCreationDialog;
@@ -42,10 +45,26 @@ public:
 QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl()) {
   setWindowTitle(QStringLiteral("クイックレイヤー作成"));
-  resize(460, 560);
+  setMinimumSize(790, 560);
 
   auto* root = new QVBoxLayout(this);
-  auto* basic = new QGroupBox(QStringLiteral("平面"), this);
+  root->setContentsMargins(24, 20, 24, 18);
+  root->setSpacing(14);
+  auto* title = new QLabel(QStringLiteral("Create Layer"), this);
+  QFont titleFont = title->font();
+  titleFont.setBold(true);
+  titleFont.setPointSize(14);
+  title->setFont(titleFont);
+  root->addWidget(title);
+
+  auto* columns = new QHBoxLayout();
+  columns->setSpacing(14);
+  auto* leftColumn = new QVBoxLayout();
+  leftColumn->setSpacing(14);
+  auto* rightColumn = new QVBoxLayout();
+  rightColumn->setSpacing(14);
+
+  auto* basic = new QGroupBox(QStringLiteral("SOURCE"), this);
   auto* form = new QFormLayout(basic);
   impl_->name = new QLineEdit(QStringLiteral("平面 1"), basic);
   impl_->source = new QComboBox(basic);
@@ -64,12 +83,15 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   impl_->height->setRange(1, 16384);
   impl_->width->setValue(1920);
   impl_->height->setValue(1080);
-  form->addRow(QStringLiteral("種別"), impl_->source);
-  form->addRow(QStringLiteral("名前"), impl_->name);
-  form->addRow(QStringLiteral("画像"), imageRow);
-  form->addRow(QStringLiteral("幅"), impl_->width);
-  form->addRow(QStringLiteral("高さ"), impl_->height);
-  root->addWidget(basic);
+  form->addRow(QStringLiteral("Type"), impl_->source);
+  form->addRow(QStringLiteral("Name"), impl_->name);
+  form->addRow(QStringLiteral("Image"), imageRow);
+  auto* sizeBox = new QGroupBox(QStringLiteral("SIZE"), this);
+  auto* sizeForm = new QFormLayout(sizeBox);
+  sizeForm->addRow(QStringLiteral("Width"), impl_->width);
+  sizeForm->addRow(QStringLiteral("Height"), impl_->height);
+  leftColumn->addWidget(basic, 1);
+  leftColumn->addWidget(sizeBox);
   impl_->imagePath->setEnabled(false);
   browse->setEnabled(false);
   QObject::connect(impl_->source, &QComboBox::currentIndexChanged, this,
@@ -94,7 +116,7 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   impl_->feather->setSuffix(QStringLiteral(" px"));
   maskForm->addRow(QStringLiteral("形状"), impl_->mask);
   maskForm->addRow(QStringLiteral("Feather"), impl_->feather);
-  root->addWidget(maskBox);
+  rightColumn->addWidget(maskBox, 1);
 
   auto* envelopeBox = new QGroupBox(QStringLiteral("入場 / 退場 Envelope"), this);
   auto* envelopeForm = new QFormLayout(envelopeBox);
@@ -123,7 +145,6 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   envelopeForm->addRow(QStringLiteral("追従"), impl_->timing);
   envelopeForm->addRow(QStringLiteral("カーブ"), impl_->curve);
   envelopeForm->addRow(QStringLiteral("長さ"), impl_->frames);
-  root->addWidget(envelopeBox);
 
   auto* placementBox = new QGroupBox(QStringLiteral("配置"), this);
   auto* placementForm = new QFormLayout(placementBox);
@@ -137,7 +158,11 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   impl_->placement->addItem(QStringLiteral("現在フレーム"),
                             static_cast<int>(LayerCreationPlacementMode::Playhead));
   placementForm->addRow(QStringLiteral("追加位置"), impl_->placement);
-  root->addWidget(placementBox);
+  rightColumn->addWidget(placementBox);
+  columns->addLayout(leftColumn, 1);
+  columns->addLayout(rightColumn, 1);
+  root->addLayout(columns);
+  root->addWidget(envelopeBox);
 
   setAccessibleName(QStringLiteral("Quick layer creation"));
   setAccessibleDescription(QStringLiteral("Create a plane or image layer with optional mask and envelope settings"));
@@ -166,6 +191,11 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok, this);
   buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("作成"));
   buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("キャンセル"));
+  QPalette createPalette = buttons->button(QDialogButtonBox::Ok)->palette();
+  createPalette.setColor(QPalette::Button, QColor(43, 111, 232));
+  createPalette.setColor(QPalette::ButtonText, Qt::white);
+  buttons->button(QDialogButtonBox::Ok)->setPalette(createPalette);
+  buttons->button(QDialogButtonBox::Ok)->setAutoFillBackground(true);
   buttons->button(QDialogButtonBox::Ok)->setAccessibleName(QStringLiteral("Create layer"));
   buttons->button(QDialogButtonBox::Ok)->setAccessibleDescription(QStringLiteral("Create the new layer with these settings"));
   buttons->button(QDialogButtonBox::Cancel)->setAccessibleName(QStringLiteral("Cancel layer creation"));

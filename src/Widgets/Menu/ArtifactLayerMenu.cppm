@@ -58,6 +58,7 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Text;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Paint;
 import Artifact.Layer.FormParticle;
@@ -80,6 +81,7 @@ import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.QuickLayerCreationDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
+import Artifact.Widgets.CreateLightLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
 import Tracking.MotionTracker;
@@ -864,6 +866,7 @@ public:
     QAction* addDebugParticleLayerAction = nullptr;
 
     QAction* precomposeAction = nullptr;
+    QAction* addCompositionLayerAction = nullptr;
     QAction* unprecomposeAction = nullptr;
     QAction* groupSelectionAction = nullptr;
     QAction* ungroupAction = nullptr;
@@ -969,6 +972,7 @@ public:
     void handleApplyLipSyncToSwitchLayer();
 
     void handlePrecompose();
+    void handleAddCompositionLayer();
     void handleUnprecompose();
     void handleGroupSelection();
     void handleUngroup();
@@ -1497,6 +1501,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_view_comfy.svg")));
     unprecomposeAction = new QAction("プリコンポーズを解除", menu);
+    addCompositionLayerAction = new QAction("コンポジションをレイヤーとして追加...", menu);
     unprecomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
     groupSelectionAction = new QAction("グループ化(&G)...", menu);
     groupSelectionAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
@@ -1529,6 +1534,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addAction(applyLipSyncAction);
     menu->addSeparator();
     menu->addAction(precomposeAction);
+    menu->addAction(addCompositionLayerAction);
     menu->addAction(unprecomposeAction);
     menu->addAction(groupSelectionAction);
     menu->addAction(ungroupAction);
@@ -1845,6 +1851,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             return;
         }
         if (action == precomposeAction) { handlePrecompose(); return; }
+        if (action == addCompositionLayerAction) { handleAddCompositionLayer(); return; }
         if (action == unprecomposeAction) { handleUnprecompose(); return; }
         if (action == groupSelectionAction) { handleGroupSelection(); return; }
         if (action == ungroupAction) { handleUngroup(); return; }
@@ -2146,6 +2153,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     }
     applyLipSyncAction->setEnabled(canApplyLipSync);
     precomposeAction->setEnabled(hasLayer);
+    addCompositionLayerAction->setEnabled(hasCurrentComposition());
     bool isPrecomposeLayer = false;
     if (hasLayer) {
         if (auto *svc = ArtifactProjectService::instance()) {
@@ -2723,9 +2731,26 @@ void ArtifactLayerMenu::Impl::handleCreateLight()
         return;
     }
 
-    ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Light 1")),
+    QWidget* const parentWindow = menu_ ? menu_->window() : nullptr;
+    CreateLightLayerDialog dialog(parentWindow);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    ArtifactLayerInitParams params(
+        uniqueLayerName(dialog.lightName().isEmpty() ? QStringLiteral("Light 1")
+                                                     : dialog.lightName()),
                                    LayerType::Light);
     service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+
+    auto* const app = ArtifactApplicationManager::instance();
+    auto* const selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto light = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactLightLayer>(selectionManager->currentLayer())
+        : ArtifactLightLayerPtr{};
+    if (light) {
+        dialog.applyTo(*light);
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateAudio(bool spatial)
@@ -3860,6 +3885,49 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
             selectedIds, UniString(dialog.newCompositionName()),
             dialog.openNewComposition(), dialog.matchWorkspaceDuration(), mode)) {
         QMessageBox::warning(menu_->window(), "プリコンポーズ", "プリコンポーズに失敗しました。");
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleAddCompositionLayer()
+{
+    auto* service = ArtifactProjectService::instance();
+    auto target = service ? service->currentComposition().lock() : nullptr;
+    if (!service || !target) return;
+
+    QStringList names;
+    QVector<CompositionID> ids;
+    std::function<void(const QVector<ProjectItem*>&)> collect =
+        [&](const QVector<ProjectItem*>& items) {
+            for (auto* item : items) {
+                if (!item) continue;
+                if (item->type() == eProjectItemType::Composition) {
+                    auto* compItem = static_cast<CompositionItem*>(item);
+                    if (compItem->compositionId != target->id()) {
+                        auto comp = service->findComposition(compItem->compositionId).ptr.lock();
+                        if (comp) {
+                            names.append(comp->settings().compositionName().toQString());
+                            ids.append(comp->id());
+                        }
+                    }
+                }
+                collect(item->children);
+            }
+        };
+    collect(service->projectItems());
+    if (names.isEmpty()) {
+        QMessageBox::information(menu_->window(), QStringLiteral("コンポジションを追加"),
+                                 QStringLiteral("追加できる別コンポジションがありません。"));
+        return;
+    }
+    bool accepted = false;
+    const QString choice = QInputDialog::getItem(
+        menu_->window(), QStringLiteral("コンポジションをレイヤーとして追加"),
+        QStringLiteral("コンポジション"), names, 0, false, &accepted);
+    if (!accepted) return;
+    const int index = names.indexOf(choice);
+    if (index < 0 || !service->addCompositionLayerToCurrentCompositionWithUndo(ids[index])) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("コンポジションを追加"),
+                             QStringLiteral("循環参照、またはレイヤー追加により失敗しました。"));
     }
 }
 

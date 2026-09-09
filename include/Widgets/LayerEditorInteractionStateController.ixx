@@ -41,6 +41,7 @@ struct LayerEditorInteractionStateBindings {
  std::vector<QPointF>* selectedPolygonBefore = nullptr;
  std::vector<int>* selectedPathIndices = nullptr;
  std::vector<CustomPathVertex>* selectedPathBefore = nullptr;
+ std::vector<MaskVertexAddress>* selectedMaskVertices = nullptr;
  LayerEditorMaskHoverController* maskHover = nullptr;
  LayerEditorShapeHoverController* shapeHover = nullptr;
  LayerEditorShapeParameterController* shapeParameter = nullptr;
@@ -55,7 +56,7 @@ public:
  LayerEditorShapePressInteractionState shapePressState(
      bool proportionalEditingEnabled) const;
  LayerEditorMaskPressInteractionState maskPressState(
-     bool proportionalEditingEnabled) const;
+     bool proportionalEditingEnabled, bool additiveSelection = false) const;
  LayerEditorShapeMoveState shapeMoveState(
      bool proportionalEditingEnabled, float proportionalEditRadius) const;
  LayerEditorMaskMoveState maskMoveState(float proportionalEditRadius) const;

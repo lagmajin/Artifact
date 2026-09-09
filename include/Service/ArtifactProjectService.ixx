@@ -195,6 +195,8 @@ export namespace Artifact {
        PrecomposeMode mode = PrecomposeMode::MoveSelected);
   bool unprecomposeLayerInCurrentComposition(const LayerID& layerId,
                                              bool keepComposition = true);
+  bool addCompositionLayerToCurrentComposition(const CompositionID& sourceCompositionId);
+  bool addCompositionLayerToCurrentCompositionWithUndo(const CompositionID& sourceCompositionId);
 
   // M-UG-1: 子コンポ長さ変更時の親プリコンポレイヤーへの伝播を一時停止する。
   // ロード/修復/Python 一括操作の前後に set し、余計な伝播を抑止する。

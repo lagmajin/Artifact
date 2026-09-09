@@ -35,6 +35,7 @@ module;
 #include <QRect>
 #include <QRectF>
 #include <QPointer>
+#include <QBrush>
 #include <QSet>
 #include <QSize>
 #include <QStringList>
@@ -265,7 +266,6 @@ TimelineThemeColors timelineThemeColors() {
 
 constexpr int kDefaultTrackHeight = 28;
 constexpr int kTrackSpacing = 0;
-constexpr int kClipCorner = 4;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
 constexpr double kMarkerLaneStep = 8.0;
@@ -273,6 +273,51 @@ constexpr double kKeyframeSnapToPlayheadThresholdFrames = 0.35;
 
 QIcon timelineStudioIcon(const QString &name) {
   return QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/%1.svg").arg(name)));
+}
+
+void drawClipBar(QPainter& painter, const QRectF& rect,
+                 const ArtifactTimelineTrackPainterView::ClipBarStyle style,
+                 const QColor& fill, const QPen& pen,
+                 const bool fillClip = true) {
+  painter.setPen(pen);
+  painter.setBrush(fillClip ? QBrush(fill) : QBrush(Qt::NoBrush));
+  if (style == ArtifactTimelineTrackPainterView::ClipBarStyle::Notched &&
+      rect.width() >= 16.0 && rect.height() >= 8.0) {
+    const qreal notch = std::min({4.0, rect.height() * 0.26,
+                                  rect.width() * 0.12});
+    const qreal middleY = rect.center().y();
+    const QPointF points[] = {
+        QPointF(rect.left() + notch, rect.top()),
+        QPointF(rect.right() - notch, rect.top()),
+        QPointF(rect.right(), rect.top() + notch),
+        QPointF(rect.right() - notch, middleY),
+        QPointF(rect.right(), rect.bottom() - notch),
+        QPointF(rect.right() - notch, rect.bottom()),
+        QPointF(rect.left() + notch, rect.bottom()),
+        QPointF(rect.left(), rect.bottom() - notch),
+        QPointF(rect.left() + notch, middleY),
+        QPointF(rect.left(), rect.top() + notch),
+    };
+    painter.drawPolygon(points, 10);
+  } else {
+    const qreal radius =
+        style == ArtifactTimelineTrackPainterView::ClipBarStyle::SoftBevel
+            ? 2.0
+            : 0.0;
+    painter.drawRoundedRect(rect, radius, radius);
+  }
+
+  if (fillClip &&
+      style == ArtifactTimelineTrackPainterView::ClipBarStyle::SoftBevel &&
+      rect.height() >= 8.0) {
+    QColor topHighlight = fill.lighter(122);
+    topHighlight.setAlpha(76);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(topHighlight);
+    painter.drawRoundedRect(QRectF(rect.left() + 1.0, rect.top() + 1.0,
+                                   std::max(0.0, rect.width() - 2.0), 1.5),
+                            0.75, 0.75);
+  }
 }
 
 void setActionIcon(QAction *action, const QString &name) {
@@ -3138,49 +3183,14 @@ QColor keyframeColorLabelColor(const ArtifactCore::KeyFrame::ColorLabel label) {
 
 QColor keyframeInterpolationColor(const ArtifactCore::InterpolationType type,
                                   const bool selectedLayer) {
-  if (selectedLayer) {
-    return QColor(255, 255, 255);
-  }
-  switch (type) {
-  case ArtifactCore::InterpolationType::Constant:
-    return QColor(236, 184, 74);
-  case ArtifactCore::InterpolationType::Linear:
-    return QColor(247, 204, 83);
-  case ArtifactCore::InterpolationType::EaseIn:
-    return QColor(101, 190, 255);
-  case ArtifactCore::InterpolationType::EaseOut:
-    return QColor(83, 217, 188);
-  case ArtifactCore::InterpolationType::EaseInOut:
-    return QColor(110, 214, 255);
-  case ArtifactCore::InterpolationType::Bezier:
-    return QColor(126, 176, 255);
-  case ArtifactCore::InterpolationType::CatmullRom:
-    return QColor(170, 130, 255);
-  case ArtifactCore::InterpolationType::Hermite:
-    return QColor(205, 120, 245);
-  case ArtifactCore::InterpolationType::BounceIn:
-  case ArtifactCore::InterpolationType::BounceOut:
-  case ArtifactCore::InterpolationType::BounceInOut:
-  case ArtifactCore::InterpolationType::ElasticIn:
-  case ArtifactCore::InterpolationType::ElasticOut:
-  case ArtifactCore::InterpolationType::ElasticInOut:
-  case ArtifactCore::InterpolationType::BackOut:
-  case ArtifactCore::InterpolationType::BackIn:
-  case ArtifactCore::InterpolationType::BackInOut:
-    return QColor(255, 151, 101);
-  case ArtifactCore::InterpolationType::Sine:
-  case ArtifactCore::InterpolationType::Cubic:
-  case ArtifactCore::InterpolationType::Exponential:
-    return QColor(149, 222, 129);
-  default:
-    return QColor(247, 204, 83);
-  }
+  Q_UNUSED(type);
+  return selectedLayer ? QColor(225, 195, 108) : QColor(198, 163, 75);
 }
 
 QString keyframeAnchorLabel(const ArtifactCore::KeyFrame::Anchor anchor) {
   switch (anchor) {
   case ArtifactCore::KeyFrame::Anchor::LockToIn:
-    return tt("timeline.lock_to_in", "Lock to In");
+    return tt("timeline.pinned_to_layer_time", "Pinned to Layer Time");
   case ArtifactCore::KeyFrame::Anchor::LockToOut:
     return tt("timeline.lock_to_out", "Lock to Out");
   case ArtifactCore::KeyFrame::Anchor::StretchWithLayer:
@@ -4443,6 +4453,8 @@ public:
   LayerID contextLayerId_;
   QString contextPropertyPath_;
   double pixelsPerFrame_ = 2.0;
+  ArtifactTimelineTrackPainterView::ClipBarStyle clipBarStyle_ =
+      ArtifactTimelineTrackPainterView::ClipBarStyle::SoftBevel;
   double horizontalOffset_ = 0.0;
   double verticalOffset_ = 0.0;
   QVector<int> trackHeights_;
@@ -4787,6 +4799,20 @@ void ArtifactTimelineTrackPainterView::setPixelsPerFrame(const double value) {
 
 double ArtifactTimelineTrackPainterView::pixelsPerFrame() const {
   return impl_->pixelsPerFrame_;
+}
+
+void ArtifactTimelineTrackPainterView::setClipBarStyle(
+    const ClipBarStyle style) {
+  if (impl_->clipBarStyle_ == style) {
+    return;
+  }
+  impl_->clipBarStyle_ = style;
+  update();
+}
+
+ArtifactTimelineTrackPainterView::ClipBarStyle
+ArtifactTimelineTrackPainterView::clipBarStyle() const {
+  return impl_->clipBarStyle_;
 }
 
 void ArtifactTimelineTrackPainterView::setHorizontalOffset(const double value) {
@@ -6510,9 +6536,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         sourceFill.setAlpha(54);
         QColor sourceBorder = clip.fillColor.lighter(118);
         sourceBorder.setAlpha(92);
-        p.setPen(QPen(sourceBorder, 1.0));
-        p.setBrush(sourceFill);
-        p.drawRoundedRect(sourceRect, kClipCorner, kClipCorner);
+        drawClipBar(p, sourceRect, impl_->clipBarStyle_, sourceFill,
+                    QPen(sourceBorder, 1.0));
       }
     }
 
@@ -6527,9 +6552,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     selectedFill.setAlpha(36);
     const QColor border = isSelected ? theme.accent.lighter(130)
                                      : theme.border.darker(160);
-    p.setPen(QPen(border, isSelected ? 2 : 1));
-    p.setBrush(isSelected ? selectedFill : fill);
-    p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
+    drawClipBar(p, clipRect, impl_->clipBarStyle_,
+                isSelected ? selectedFill : fill,
+                QPen(border, isSelected ? 2 : 1));
 
     if (clip.sourceState != TrackClipVisual::SourceState::Ready && clipRect.width() > 18.0) {
       const bool warning = clip.sourceState == TrackClipVisual::SourceState::Proxy;
@@ -6558,10 +6583,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (isSelected || isHovered) {
       const QColor rim = isSelected ? QColor(theme.accent.lighter(135))
                                     : QColor(255, 255, 255, 60);
-      p.setBrush(Qt::NoBrush);
-      p.setPen(QPen(rim, isSelected ? 2.0 : 1.0));
-      p.drawRoundedRect(clipRect.adjusted(1.0, 1.0, -1.0, -1.0), kClipCorner,
-                        kClipCorner);
+      drawClipBar(p, clipRect.adjusted(1.0, 1.0, -1.0, -1.0),
+                  impl_->clipBarStyle_, QColor(),
+                  QPen(rim, isSelected ? 2.0 : 1.0), false);
     }
 
     if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
@@ -7026,25 +7050,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                              size * 2.0);
     const QPolygonF markerShape =
         keyframeShapePolygon(diamondRect, marker.interpolation);
-    const QRectF coreRect(diamondRect.center().x() - size * 0.18,
-                          diamondRect.center().y() - size * 0.18,
-                          size * 0.36, size * 0.36);
-    if (atCurrentFrame) {
-      const qreal haloRadius = marker.selectedLayer ? 9.0 : 7.0;
-      QColor haloColor = marker.selectedLayer ? theme.accent.lighter(120)
-                                              : marker.color.lighter(120);
-      haloColor.setAlpha(marker.selectedLayer ? 86 : 62);
-      p.setPen(Qt::NoPen);
-      p.setBrush(haloColor);
-      p.drawEllipse(center, haloRadius, haloRadius);
-    }
-    if (nearestToCurrent && !atCurrentFrame) {
-      QColor nearestGlow = theme.text.lighter(140);
-      nearestGlow.setAlpha(42);
-      p.setPen(Qt::NoPen);
-      p.setBrush(nearestGlow);
-      p.drawEllipse(center, 5.0, 5.0);
-    }
     if (marker.laneCount > 1) {
       QColor stackFill = marker.selectedLayer ? theme.accent.darker(135)
                                               : marker.color.darker(145);
@@ -7057,41 +7062,28 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
           diamondRect.translated(2.2, -2.2), marker.interpolation));
     }
     if (marker.selected) {
-      p.setPen(QPen(theme.accent.lighter(isHovered ? 178 : 160),
-                    isHovered ? 2.8 : 2.2));
-      p.setBrush(Qt::NoBrush);
-      p.drawPolygon(markerShape);
-      p.setPen(QPen(theme.background.darker(175), 2.0));
-      p.drawPolygon(markerShape);
-      p.setPen(QPen(theme.text.lighter(125), 1.0));
-      p.setBrush(theme.accent.lighter(isHovered ? 150 : 140));
+      p.setPen(QPen(isHovered ? QColor(255, 231, 166)
+                              : QColor(225, 195, 108),
+                    isHovered ? 1.6 : 1.2));
+      p.setBrush(QColor(240, 213, 138));
       p.drawPolygon(markerShape);
     } else if (marker.selectedLayer) {
-      p.setPen(QPen(atCurrentFrame ? theme.accent.lighter(148)
-                                   : theme.background.darker(175),
-                    atCurrentFrame ? 2.6 : 2.1));
-      p.setBrush(Qt::NoBrush);
-      p.drawPolygon(markerShape);
-      p.setPen(QPen(atCurrentFrame ? theme.accent.lighter(130)
-                                   : theme.text.lighter(110),
-                    atCurrentFrame ? 1.3 : 1.0));
-      p.setBrush(atCurrentFrame
-                     ? theme.accent.lighter(isHovered ? 145 : 132)
-                     : (isHovered ? theme.text.lighter(125)
-                                  : theme.text.lighter(110)));
+      p.setPen(QPen(isHovered ? QColor(240, 213, 138)
+                              : QColor(151, 123, 52),
+                    isHovered ? 1.4 : 1.0));
+      p.setBrush(isHovered ? QColor(214, 181, 100) : marker.color);
       p.drawPolygon(markerShape);
     } else {
-      p.setPen(QPen(isHovered ? theme.text.lighter(150)
-                               : theme.border.darker(160),
-                    isHovered ? 1.7 : 1.0));
+      p.setPen(QPen(isHovered ? QColor(240, 213, 138)
+                               : QColor(126, 101, 40),
+                    isHovered ? 1.4 : 1.0));
       p.setBrush(isHovered ? marker.color.lighter(115)
                            : (marker.eased ? marker.color.lighter(102)
                                            : marker.color));
       p.drawPolygon(markerShape);
     }
     if (isHovered && !marker.selected) {
-      QColor hoverStroke = theme.accent.lighter(145);
-      hoverStroke.setAlpha(80);
+      QColor hoverStroke(240, 213, 138, 150);
       p.setPen(QPen(hoverStroke, 1.0));
       p.setBrush(Qt::NoBrush);
       p.drawPolygon(markerShape);
@@ -7144,29 +7136,27 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.drawRoundedRect(tagRect.adjusted(0.4, 0.4, -0.4, -0.4), 1.8, 1.8);
     }
     if (marker.anchor != ArtifactCore::KeyFrame::Anchor::Absolute) {
-      QColor anchorColor = marker.selectedLayer ? theme.accent.lighter(145)
-                                                : theme.text.lighter(135);
-      anchorColor.setAlpha(marker.selected ? 230 : 175);
+      QColor anchorColor = marker.selected ? QColor(240, 213, 138)
+                                           : QColor(198, 163, 75);
+      anchorColor.setAlpha(marker.selected ? 255 : 220);
       p.setPen(QPen(anchorColor, marker.selected ? 1.6 : 1.25,
-                    marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer
-                        ? Qt::SolidLine
-                        : Qt::DashLine,
-                    Qt::RoundCap, Qt::RoundJoin));
+                    Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
       p.setBrush(Qt::NoBrush);
       const qreal y = diamondRect.bottom() + 2.2;
-      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::LockToIn ||
-          marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
-        p.drawLine(QPointF(diamondRect.left() - 1.0, y - 2.3),
-                   QPointF(diamondRect.left() - 1.0, y + 2.3));
-      }
-      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::LockToOut ||
-          marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
-        p.drawLine(QPointF(diamondRect.right() + 1.0, y - 2.3),
-                   QPointF(diamondRect.right() + 1.0, y + 2.3));
-      }
-      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
-        p.drawLine(QPointF(diamondRect.left() - 1.0, y),
-                   QPointF(diamondRect.right() + 1.0, y));
+      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::LockToIn) {
+        const qreal halfWidth = diamondRect.width() * 0.3;
+        p.drawLine(QPointF(center.x() - halfWidth, y),
+                   QPointF(center.x() + halfWidth, y));
+      } else {
+        if (marker.anchor == ArtifactCore::KeyFrame::Anchor::LockToOut ||
+            marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
+          p.drawLine(QPointF(diamondRect.right() + 1.0, y - 2.3),
+                     QPointF(diamondRect.right() + 1.0, y + 2.3));
+        }
+        if (marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
+          p.drawLine(QPointF(diamondRect.left() - 1.0, y),
+                     QPointF(diamondRect.right() + 1.0, y));
+        }
       }
     }
     if (atCurrentFrame) {
@@ -9287,10 +9277,10 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *colorPurpleAct = nullptr;
   QAction *colorGrayAct = nullptr;
   if (!selectedMarkers.isEmpty()) {
-    QMenu *anchorMenu = menu.addMenu(tt("timeline.keyframe_anchor", "Keyframe Anchor"));
+    QMenu *anchorMenu = menu.addMenu(tt("timeline.keyframe_time_constraint", "Keyframe Time Constraint"));
     setMenuIcon(anchorMenu, QStringLiteral("timeline_keyframe_anchor"));
     anchorAbsoluteAct = anchorMenu->addAction(tt("timeline.absolute", "Absolute"));
-    anchorLockToInAct = anchorMenu->addAction(tt("timeline.lock_to_in_point", "Lock to In Point"));
+    anchorLockToInAct = anchorMenu->addAction(tt("timeline.pin_to_layer_time", "Pin to Layer Time"));
     anchorLockToOutAct = anchorMenu->addAction(tt("timeline.lock_to_out_point", "Lock to Out Point"));
     anchorStretchAct = anchorMenu->addAction(tt("timeline.stretch_with_layer", "Stretch with Layer"));
     setActionIcon(anchorAbsoluteAct, QStringLiteral("timeline_keyframe_anchor"));

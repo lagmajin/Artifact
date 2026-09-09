@@ -1,7 +1,11 @@
 module;
+#include <cmath>
 #include <QDialog>
+#include <QColor>
+#include <QFont>
 #include <QLabel>
-#include <QComboBox>
+#include <QListWidget>
+#include <QPalette>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -13,7 +17,10 @@ module;
 #include <QPen>
 #include <QBrush>
 #include <QSize>
+#include <QSizePolicy>
 #include <QString>
+#include <QStringList>
+#include <QWidget>
 #include <algorithm>
 #include <wobjectimpl.h>
 module Artifact.Widgets.ResolutionRemapDialog;
@@ -49,31 +56,21 @@ protected:
         const int cx = width() / 2;
         const int cy = height() / 2;
 
-        // Compute bounding rect for old aspect
-        const double oldAspect = static_cast<double>(oldSize_.width()) / oldSize_.height();
-        int oldW, oldH;
-        if (oldAspect > 1.0) {
-            oldW = w;
-            oldH = static_cast<int>(w / oldAspect);
-        } else {
-            oldH = h;
-            oldW = static_cast<int>(h * oldAspect);
-        }
-        oldW = std::max(oldW, 20);
-        oldH = std::max(oldH, 20);
-
-        // Compute bounding rect for new aspect
-        const double newAspect = static_cast<double>(newSize_.width()) / newSize_.height();
-        int newW, newH;
-        if (newAspect > 1.0) {
-            newW = w;
-            newH = static_cast<int>(w / newAspect);
-        } else {
-            newH = h;
-            newW = static_cast<int>(h * newAspect);
-        }
-        newW = std::max(newW, 20);
-        newH = std::max(newH, 20);
+        const auto fitAspect = [w, h](const QSize& size) {
+            const double aspect = static_cast<double>(size.width()) / size.height();
+            const double availableAspect = static_cast<double>(w) / h;
+            const int fittedWidth = availableAspect > aspect
+                ? static_cast<int>(h * aspect) : w;
+            const int fittedHeight = availableAspect > aspect
+                ? h : static_cast<int>(w / aspect);
+            return QSize(std::max(fittedWidth, 20), std::max(fittedHeight, 20));
+        };
+        const QSize oldPreviewSize = fitAspect(oldSize_);
+        const QSize newPreviewSize = fitAspect(newSize_);
+        const int oldW = oldPreviewSize.width();
+        const int oldH = oldPreviewSize.height();
+        const int newW = newPreviewSize.width();
+        const int newH = newPreviewSize.height();
 
         // Draw old aspect (blue, filled)
         QRect oldRect(cx - oldW / 2, cy - oldH / 2, oldW, oldH);
@@ -103,7 +100,7 @@ public:
     QSize oldSize_;
     QSize newSize_;
     RemapImpact impact_;
-    QComboBox* policyCombo_ = nullptr;
+    QListWidget* policyList_ = nullptr;
     AspectPreviewWidget* preview_ = nullptr;
     bool remapRequested_ = false;
 
@@ -134,30 +131,43 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
     setWindowTitle(QStringLiteral("Resolution Change — Remap Wizard"));
     setAccessibleName(QStringLiteral("Resolution remap"));
     setAccessibleDescription(QStringLiteral("Choose how masks, keyframes, and anchors adapt to the new resolution"));
-    setMinimumWidth(420);
+    setMinimumSize(820, 600);
 
     auto* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(24, 20, 24, 18);
+    mainLayout->setSpacing(14);
 
-    // Header: size change summary
+    auto* title = new QLabel(QStringLiteral("Resolution Change — Remap Wizard"), this);
+    QFont titleFont = title->font();
+    titleFont.setBold(true);
+    titleFont.setPointSize(14);
+    title->setFont(titleFont);
+    mainLayout->addWidget(title);
+
     auto* headerLabel = new QLabel(QStringLiteral(
-        "<b>Resolution Change</b><br>"
-        "%1x%2 → %3x%4  (aspect: %5 → %6)")
+        "%1 × %2  (%5)    →    %3 × %4  (%6)")
         .arg(oldSize.width()).arg(oldSize.height())
         .arg(newSize.width()).arg(newSize.height())
         .arg(impact.oldAspectRatio, 0, 'f', 3)
-        .arg(impact.newAspectRatio, 0, 'f', 3));
+        .arg(impact.newAspectRatio, 0, 'f', 3), this);
+    QFont summaryFont = headerLabel->font();
+    summaryFont.setBold(true);
+    summaryFont.setPointSize(11);
+    headerLabel->setFont(summaryFont);
     headerLabel->setWordWrap(true);
     mainLayout->addWidget(headerLabel);
 
-    // Aspect ratio preview
+    auto* comparisonRow = new QHBoxLayout();
+    comparisonRow->setSpacing(14);
+    auto* previewPanel = new QGroupBox(QStringLiteral("OLD VS NEW FRAME"), this);
+    auto* previewLayout = new QVBoxLayout(previewPanel);
     impl_->preview_ = new AspectPreviewWidget(this);
     impl_->preview_->oldSize_ = oldSize;
     impl_->preview_->newSize_ = newSize;
-    mainLayout->addWidget(impl_->preview_);
+    previewLayout->addWidget(impl_->preview_);
+    comparisonRow->addWidget(previewPanel, 3);
 
-    // Impact summary
-    if (impact.hasImpact()) {
-        auto* impactGroup = new QGroupBox(QStringLiteral("Impact"));
+    auto* impactGroup = new QGroupBox(QStringLiteral("IMPACT"), this);
         auto* impactLayout = new QVBoxLayout(impactGroup);
 
         QStringList details;
@@ -179,29 +189,33 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
         auto* impactLabel = new QLabel(details.join(QStringLiteral("<br>")));
         impactLabel->setWordWrap(true);
         impactLayout->addWidget(impactLabel);
-        mainLayout->addWidget(impactGroup);
-    }
+        comparisonRow->addWidget(impactGroup, 2);
+    mainLayout->addLayout(comparisonRow, 1);
 
     // Policy selector
     auto* policyGroup = new QGroupBox(QStringLiteral("Remap Policy"));
     auto* policyLayout = new QVBoxLayout(policyGroup);
 
-    impl_->policyCombo_ = new QComboBox();
+    impl_->policyList_ = new QListWidget(policyGroup);
     for (int i = 0; i <= static_cast<int>(RemapPolicy::FitWithCrop); ++i) {
         const auto policy = static_cast<RemapPolicy>(i);
-        impl_->policyCombo_->addItem(impl_->policyLabel(policy));
+        impl_->policyList_->addItem(impl_->policyLabel(policy));
     }
-    impl_->policyCombo_->setCurrentIndex(static_cast<int>(RemapPolicy::CenterLocked));
-    impl_->policyCombo_->setAccessibleName(QStringLiteral("Remap policy"));
-    impl_->policyCombo_->setAccessibleDescription(QStringLiteral("Choose how coordinate-dependent data adapts to the new resolution"));
-    policyLayout->addWidget(impl_->policyCombo_);
+    impl_->policyList_->setCurrentRow(static_cast<int>(RemapPolicy::CenterLocked));
+    impl_->policyList_->setAlternatingRowColors(true);
+    impl_->policyList_->setMinimumHeight(150);
+    impl_->policyList_->setAccessibleName(QStringLiteral("Remap policy"));
+    impl_->policyList_->setAccessibleDescription(QStringLiteral("Choose how coordinate-dependent data adapts to the new resolution"));
+    policyLayout->addWidget(impl_->policyList_);
     mainLayout->addWidget(policyGroup);
 
     // Warning for aspect ratio change
     if (std::abs(impact.oldAspectRatio - impact.newAspectRatio) > 0.01) {
         auto* warnLabel = new QLabel(QStringLiteral(
-            "<span style='color:orange;'><b>⚠ Aspect ratio changed.</b> "
-            "Masks and keyframes may shift. Review the preview before applying.</span>"));
+            "⚠  Aspect ratio changed. Masks and keyframes may shift; review before applying."), this);
+        QPalette warningPalette = warnLabel->palette();
+        warningPalette.setColor(QPalette::WindowText, QColor(225, 151, 63));
+        warnLabel->setPalette(warningPalette);
         warnLabel->setWordWrap(true);
         mainLayout->addWidget(warnLabel);
     }
@@ -214,6 +228,13 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
     skipButton->setAccessibleDescription(QStringLiteral("Keep existing coordinates without remapping"));
     applyButton->setAccessibleName(QStringLiteral("Apply remap"));
     applyButton->setAccessibleDescription(QStringLiteral("Apply the selected resolution remap policy"));
+    applyButton->setMinimumSize(130, 36);
+    skipButton->setMinimumHeight(36);
+    QPalette applyPalette = applyButton->palette();
+    applyPalette.setColor(QPalette::Button, QColor(43, 111, 232));
+    applyPalette.setColor(QPalette::ButtonText, Qt::white);
+    applyButton->setPalette(applyPalette);
+    applyButton->setAutoFillBackground(true);
 
     buttonLayout->addWidget(skipButton);
     buttonLayout->addStretch();
@@ -235,7 +256,7 @@ ArtifactResolutionRemapDialog::~ArtifactResolutionRemapDialog() {
 }
 
 RemapPolicy ArtifactResolutionRemapDialog::selectedPolicy() const {
-    const int idx = impl_->policyCombo_->currentIndex();
+    const int idx = impl_->policyList_->currentRow();
     return static_cast<RemapPolicy>(idx);
 }
 

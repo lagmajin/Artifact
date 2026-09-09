@@ -14,11 +14,11 @@ import Artifact.Widgets.LayerEditor.Geometry;
 export namespace Artifact {
 
 enum class LayerEditorMaskPressKind {
- Consumed, DragHandle, DragVertex, GeometryChanged
+ Empty, DragHandle, DragVertex, GeometryChanged
 };
 
 struct LayerEditorMaskPressResult {
- LayerEditorMaskPressKind kind = LayerEditorMaskPressKind::Consumed;
+ LayerEditorMaskPressKind kind = LayerEditorMaskPressKind::Empty;
  int maskIndex = -1;
  int pathIndex = -1;
  int vertexIndex = -1;

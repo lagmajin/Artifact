@@ -12,9 +12,13 @@ module;
 #include <QImage>
 #include <QCursor>
 #include <QPointer>
+#include <QRectF>
 #include <QStandardPaths>
+#include <QTransform>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <tuple>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -198,6 +202,12 @@ bool isShapeEditingMode(EditMode mode)
   std::vector<QPointF> proportionalShapePointsBefore_;
   std::vector<CustomPathVertex> proportionalPathVerticesBefore_;
   bool isDraggingMaskHandle_ = false;
+  std::vector<MaskVertexAddress> selectedMaskVertices_;
+  std::vector<std::pair<MaskVertexAddress, MaskVertex>> selectedMaskVerticesBefore_;
+  QPointF selectedMaskDragOrigin_;
+  bool isMaskRubberBandSelecting_ = false;
+  QPointF maskRubberBandStartCanvas_;
+  QPointF maskRubberBandCurrentCanvas_;
   bool isDraggingShapeVertex_ = false;
   int draggingShapeVertexIndex_ = -1;
    LayerEditorShapeHoverController shapeHoverController_;
@@ -301,6 +311,7 @@ ArtifactLayerEditorWidget::Impl::Impl()
      .selectedPolygonBefore = &selectedShapeDragBefore_,
      .selectedPathIndices = &selectedPathVertexIndices_,
      .selectedPathBefore = &selectedPathDragBefore_,
+     .selectedMaskVertices = &selectedMaskVertices_,
      .maskHover = &maskHoverController_,
      .shapeHover = &shapeHoverController_,
      .shapeParameter = &shapeParameterController_});
@@ -872,6 +883,10 @@ void ArtifactLayerEditorWidget::Impl::drawMaskOverlay(
  state.hoveredPath = hover.pathIndex;
  state.hoveredVertex = hover.vertexIndex;
  state.hoveredHandleType = static_cast<int>(hover.handleType);
+ state.selectedVertices = &selectedMaskVertices_;
+ state.rubberBandSelecting = isMaskRubberBandSelecting_;
+ state.rubberBandStart = maskRubberBandStartCanvas_;
+ state.rubberBandCurrent = maskRubberBandCurrentCanvas_;
  drawLayerEditorMaskOverlay(renderer_.get(), layer, state);
 }
 
@@ -1318,8 +1333,35 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
     const auto layer = impl_->targetLayer();
     const bool editable = layer && layer->isVisible() && !layer->isLocked();
     if (editable) impl_->beginMaskEditTransaction(layer);
-    const bool handled = editable &&
-        impl_->maskHoverController_.deleteHoveredVertex(layer);
+    bool handled = false;
+    if (editable && !impl_->selectedMaskVertices_.empty()) {
+      auto selected = impl_->selectedMaskVertices_;
+      std::sort(selected.begin(), selected.end(), std::greater<>());
+      for (const auto& address : selected) {
+        const int maskIndex = std::get<0>(address);
+        const int pathIndex = std::get<1>(address);
+        const int vertexIndex = std::get<2>(address);
+        if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
+        LayerMask mask = layer->mask(maskIndex);
+        if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
+        MaskPath path = mask.maskPath(pathIndex);
+        if (vertexIndex < 0 || vertexIndex >= path.vertexCount()) continue;
+        if (path.vertexCount() <= 1) mask.removeMaskPath(pathIndex);
+        else {
+          path.removeVertex(vertexIndex);
+          if (path.vertexCount() < 3) path.setClosed(false);
+          mask.setMaskPath(pathIndex, path);
+        }
+        layer->setMask(maskIndex, mask);
+        handled = true;
+      }
+      if (handled) {
+        impl_->selectedMaskVertices_.clear();
+        impl_->maskHoverController_.clear();
+      }
+    } else if (editable) {
+      handled = impl_->maskHoverController_.deleteHoveredVertex(layer);
+    }
     if (handled) impl_->markMaskEditDirty();
     impl_->commitMaskEditTransaction();
     return handled;
@@ -1444,12 +1486,34 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
    const Detail::float2 canvas = impl_->renderer_->viewportToCanvas(
        {static_cast<float>(event->position().x()),
         static_cast<float>(event->position().y())});
+   const bool additiveSelection =
+       event->modifiers().testFlag(Qt::ShiftModifier);
    const auto state = impl_->interactionStateController_.maskPressState(
-       impl_->proportionalEditingEnabled_);
+       impl_->proportionalEditingEnabled_, additiveSelection);
    const auto result = impl_->maskPressInteractionController_.handle(
        layer, QPointF(canvas.x, canvas.y), impl_->renderer_->getZoom(), state,
        impl_->maskHoverController_, impl_->maskEditSession_);
    if (result.consumed) {
+    if (impl_->isDraggingMaskVertex_ && !impl_->proportionalEditingEnabled_ && layer) {
+     impl_->selectedMaskVerticesBefore_.clear();
+     for (const auto& address : impl_->selectedMaskVertices_) {
+      const int maskIndex = std::get<0>(address);
+      const int pathIndex = std::get<1>(address);
+      const int vertexIndex = std::get<2>(address);
+      if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
+      const LayerMask mask = layer->mask(maskIndex);
+      if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
+      const MaskPath path = mask.maskPath(pathIndex);
+      if (vertexIndex < 0 || vertexIndex >= path.vertexCount()) continue;
+      const MaskVertex vertex = path.vertex(vertexIndex);
+      impl_->selectedMaskVerticesBefore_.emplace_back(address, vertex);
+      if (maskIndex == impl_->draggingMaskIndex_ &&
+          pathIndex == impl_->draggingPathIndex_ &&
+          vertexIndex == impl_->draggingVertexIndex_) {
+       impl_->selectedMaskDragOrigin_ = vertex.position;
+      }
+     }
+    }
     if (result.useMoveCursor) {
      setCursor(layerEditorHudCursor(QStringLiteral("hud_cursor_move.svg"),
                          Qt::ClosedHandCursor));
@@ -1457,6 +1521,37 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
     if (result.requestRender) {
      impl_->requestRender();
     }
+    event->accept();
+    return;
+   }
+   int segmentMask = -1;
+   int segmentPath = -1;
+   int segmentIndex = -1;
+   if (layer && hitTestMaskBezierSegmentGeometry(
+                    layer, QPointF(canvas.x, canvas.y),
+                    6.0f / std::max(0.1f, impl_->renderer_->getZoom()),
+                    segmentMask, segmentPath, segmentIndex)) {
+    if (!additiveSelection) impl_->selectedMaskVertices_.clear();
+    const LayerMask mask = layer->mask(segmentMask);
+    const MaskPath path = mask.maskPath(segmentPath);
+    for (int vertexIndex = 0; vertexIndex < path.vertexCount(); ++vertexIndex) {
+     const auto address = std::make_tuple(segmentMask, segmentPath, vertexIndex);
+     if (std::find(impl_->selectedMaskVertices_.begin(),
+                   impl_->selectedMaskVertices_.end(), address) ==
+         impl_->selectedMaskVertices_.end()) {
+      impl_->selectedMaskVertices_.push_back(address);
+     }
+    }
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
+   if (layer && layer->isVisible() && !layer->isLocked()) {
+    impl_->isMaskRubberBandSelecting_ = true;
+    impl_->maskRubberBandStartCanvas_ = QPointF(canvas.x, canvas.y);
+    impl_->maskRubberBandCurrentCanvas_ = impl_->maskRubberBandStartCanvas_;
+    if (!additiveSelection) impl_->selectedMaskVertices_.clear();
+    impl_->requestRender();
     event->accept();
     return;
    }
@@ -1485,6 +1580,36 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
    return;
   }
 
+  if (impl_->isMaskRubberBandSelecting_ && event->button() == Qt::LeftButton) {
+   const auto layer = impl_->targetLayer();
+   const QRectF selectionRect(
+       impl_->maskRubberBandStartCanvas_, impl_->maskRubberBandCurrentCanvas_);
+   const QRectF normalized = selectionRect.normalized();
+   if (layer && normalized.width() >= 2.0 && normalized.height() >= 2.0) {
+    const QTransform transform = layer->getGlobalTransform();
+    for (int maskIndex = 0; maskIndex < layer->maskCount(); ++maskIndex) {
+     const LayerMask mask = layer->mask(maskIndex);
+     if (!mask.isEnabled()) continue;
+     for (int pathIndex = 0; pathIndex < mask.maskPathCount(); ++pathIndex) {
+      const MaskPath path = mask.maskPath(pathIndex);
+      for (int vertexIndex = 0; vertexIndex < path.vertexCount(); ++vertexIndex) {
+       if (!normalized.contains(transform.map(path.vertex(vertexIndex).position))) continue;
+       const auto address = std::make_tuple(maskIndex, pathIndex, vertexIndex);
+       if (std::find(impl_->selectedMaskVertices_.begin(),
+                     impl_->selectedMaskVertices_.end(), address) ==
+           impl_->selectedMaskVertices_.end()) {
+        impl_->selectedMaskVertices_.push_back(address);
+       }
+      }
+     }
+    }
+   }
+   impl_->isMaskRubberBandSelecting_ = false;
+   impl_->requestRender();
+   event->accept();
+   return;
+  }
+
   auto state = impl_->interactionStateController_.releaseState(
       impl_->modalTransform_.active(),
       impl_->editMode_ == EditMode::Mask,
@@ -1505,6 +1630,7 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
       .releaseGizmo = [this]() { impl_->transformGizmo_->handleMouseRelease(); }};
   const auto result = impl_->releaseController_.handle(state, callbacks);
   if (result.consumed) {
+   impl_->selectedMaskVerticesBefore_.clear();
    if (result.requestRender) impl_->requestRender();
    if (result.unsetCursor) unsetCursor();
    event->accept();
@@ -1534,13 +1660,23 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
   QWidget::mouseDoubleClickEvent(event);
  }
 
- void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
+void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
  {
   if (impl_->isPanning_) {
    const QPointF currentPos = event->position();
    const QPointF delta = currentPos - impl_->lastMousePos_;
    impl_->lastMousePos_ = currentPos;
    panBy(delta);
+   event->accept();
+   return;
+  }
+
+  if (impl_->isMaskRubberBandSelecting_ && impl_->renderer_) {
+   const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
+       {static_cast<float>(event->position().x()),
+        static_cast<float>(event->position().y())});
+   impl_->maskRubberBandCurrentCanvas_ = QPointF(canvasPos.x, canvasPos.y);
+   impl_->requestRender();
    event->accept();
    return;
   }
@@ -1585,6 +1721,36 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
    const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
        {static_cast<float>(event->position().x()),
         static_cast<float>(event->position().y())});
+   if (layer && impl_->isDraggingMaskVertex_ &&
+       impl_->selectedMaskVerticesBefore_.size() > 1 &&
+       !impl_->proportionalEditingEnabled_) {
+    bool invertible = false;
+    const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
+    if (invertible) {
+     const QPointF target = inverse.map(QPointF(canvasPos.x, canvasPos.y));
+     const QPointF delta = target - impl_->selectedMaskDragOrigin_;
+     for (const auto& entry : impl_->selectedMaskVerticesBefore_) {
+      const auto& address = entry.first;
+      const int maskIndex = std::get<0>(address);
+      const int pathIndex = std::get<1>(address);
+      const int vertexIndex = std::get<2>(address);
+      if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
+      LayerMask mask = layer->mask(maskIndex);
+      if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
+      MaskPath path = mask.maskPath(pathIndex);
+      if (vertexIndex < 0 || vertexIndex >= path.vertexCount()) continue;
+      MaskVertex vertex = entry.second;
+      vertex.position += delta;
+      path.setVertex(vertexIndex, vertex);
+      mask.setMaskPath(pathIndex, path);
+      layer->setMask(maskIndex, mask);
+     }
+     impl_->maskEditSession_.markDirty();
+     impl_->requestRender();
+     event->accept();
+     return;
+    }
+   }
    const auto state = impl_->interactionStateController_.maskMoveState(
        impl_->proportionalEditRadius_);
    const auto result = impl_->maskMoveController_.handle(
@@ -1702,7 +1868,7 @@ void ArtifactLayerEditorWidget::contextMenuEvent(QContextMenuEvent* event)
       this, event->globalPos(), event->pos(), impl_->renderer_.get(),
       impl_->targetLayer(), impl_->shapeHoverController_,
       impl_->shapeEditSession_);
-  if (result.consumed) {
+ if (result.consumed) {
    if (result.changed) impl_->requestRender();
    event->accept();
    return;

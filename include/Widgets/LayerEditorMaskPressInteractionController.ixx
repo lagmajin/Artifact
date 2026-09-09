@@ -27,6 +27,8 @@ struct LayerEditorMaskPressInteractionState {
  std::vector<MaskVertex>* proportionalMaskBefore = nullptr;
  std::vector<QPointF>* proportionalPolygonBefore = nullptr;
  std::vector<CustomPathVertex>* proportionalPathBefore = nullptr;
+ std::vector<MaskVertexAddress>* selectedVertices = nullptr;
+ bool additiveSelection = false;
 };
 
 struct LayerEditorMaskPressInteractionResult {

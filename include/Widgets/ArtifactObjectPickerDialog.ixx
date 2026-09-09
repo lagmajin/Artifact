@@ -3,6 +3,7 @@
 
 #include <wobjectdefs.h>
 #include <QDialog>
+#include <QString>
 export module Artifact.Widgets.ObjectPicker;
 
 

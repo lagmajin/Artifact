@@ -42,6 +42,7 @@ void LayerEditorInteractionStateController::resetForClearTarget()
  if (bindings_.draggingPathTangent) *bindings_.draggingPathTangent = false;
  if (bindings_.draggingPathVertexIndex) *bindings_.draggingPathVertexIndex = -1;
  if (bindings_.selectedPathBefore) bindings_.selectedPathBefore->clear();
+ if (bindings_.selectedMaskVertices) bindings_.selectedMaskVertices->clear();
 }
 
 void LayerEditorInteractionStateController::resetForTargetChange()
@@ -53,6 +54,7 @@ void LayerEditorInteractionStateController::resetForTargetChange()
  if (bindings_.selectedPolygonBefore) bindings_.selectedPolygonBefore->clear();
  if (bindings_.selectedPathIndices) bindings_.selectedPathIndices->clear();
  if (bindings_.selectedPathBefore) bindings_.selectedPathBefore->clear();
+ if (bindings_.selectedMaskVertices) bindings_.selectedMaskVertices->clear();
 }
 
 void LayerEditorInteractionStateController::resetForNonMaskMode()
@@ -71,6 +73,7 @@ void LayerEditorInteractionStateController::resetForNonMaskMode()
  if (bindings_.selectedPathIndices) bindings_.selectedPathIndices->clear();
  if (bindings_.selectedPathBefore) bindings_.selectedPathBefore->clear();
  if (bindings_.maskHover) bindings_.maskHover->clear();
+ if (bindings_.selectedMaskVertices) bindings_.selectedMaskVertices->clear();
 }
 
 LayerEditorShapePressInteractionState
@@ -98,7 +101,7 @@ LayerEditorInteractionStateController::shapePressState(
 
 LayerEditorMaskPressInteractionState
 LayerEditorInteractionStateController::maskPressState(
-    bool proportionalEditingEnabled) const
+    bool proportionalEditingEnabled, bool additiveSelection) const
 {
  return {
      .proportionalEditingEnabled = proportionalEditingEnabled,
@@ -112,7 +115,9 @@ LayerEditorInteractionStateController::maskPressState(
      .proportionalDragOrigin = bindings_.proportionalDragOrigin,
      .proportionalMaskBefore = bindings_.proportionalMaskBefore,
      .proportionalPolygonBefore = bindings_.proportionalPolygonBefore,
-     .proportionalPathBefore = bindings_.proportionalPathBefore};
+     .proportionalPathBefore = bindings_.proportionalPathBefore,
+     .selectedVertices = bindings_.selectedMaskVertices,
+     .additiveSelection = additiveSelection};
 }
 
 LayerEditorShapeMoveState LayerEditorInteractionStateController::shapeMoveState(

@@ -1,6 +1,12 @@
+module;
+
+#include <QPointF>
+#include <vector>
+
 export module Artifact.Widgets.LayerEditor.MaskOverlay;
 
 import Artifact.Layer.Abstract;
+import Artifact.Mask.Path;
 import Artifact.Render.IRenderer;
 
 export namespace Artifact {
@@ -16,6 +22,10 @@ struct LayerEditorMaskOverlayState {
  int hoveredPath = -1;
  int hoveredVertex = -1;
  int hoveredHandleType = -1;
+ const std::vector<MaskVertexAddress>* selectedVertices = nullptr;
+ bool rubberBandSelecting = false;
+ QPointF rubberBandStart;
+ QPointF rubberBandCurrent;
 };
 
 void drawLayerEditorMaskOverlay(

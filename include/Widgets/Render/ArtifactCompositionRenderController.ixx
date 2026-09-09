@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <string>
+#include <cstdint>
 
 #include <wobjectdefs.h>
 #include <QObject>
@@ -483,15 +484,26 @@ void pushViewHistory();
 
   // Tracker operations (TrackPoint tool)
   void trackerInitialize();
+  void trackerUsePointMode();
   void trackerUsePlanarMode();
   void trackerTrackForward();
   void trackerTrackBackward();
   void trackerTrackAll();
+  void trackerStop();
+  bool trackerJobRunning() const;
+  QString trackerModeLabel() const;
+  double trackerAverageConfidence() const;
+  int trackerProblemFrameCount() const;
+  int trackerResultFrameCount() const;
+  bool trackerHasResult() const;
+  void trackerNextProblemFrame();
   void trackerApplyToPosition();
   void trackerApplyToAnchor();
   void trackerApplyAllPoints();
   void trackerApplyPlanarCornerPin();
   void trackerDelete();
+  void trackerCaptureNextFrame(std::uint64_t generation);
+  void trackerPollJob(std::uint64_t generation);
   void cancelMotionSketch();
   bool cancelBrushStroke();
   bool undoSelectedPaintStroke();

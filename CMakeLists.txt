@@ -1095,6 +1095,7 @@ set(ARTIFACT_EFFECTS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/LuminescenceCausticsEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Noise/NoiseEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ChromaticReliefEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeBlinkEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeflickerEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DifferenceMatteEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FeedbackEffect.ixx"
@@ -1198,6 +1199,7 @@ set(ARTIFACT_EFFECTS_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FeedbackEffect.cppm"
@@ -1953,12 +1955,14 @@ set(ARTIFACT_EFFECTS_DIGITAL_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DataMoshEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/GlitchEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FilmDamageEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeBlinkEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeflickerEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_DIGITAL_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
 )
 
@@ -2384,6 +2388,7 @@ set(ARTIFACT_EFFECTS_RASTERIZER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ChromaticAberrationEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ChromaticReliefEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DataMoshEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeBlinkEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeflickerEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DifferenceMatteEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DropShadowEffect.ixx"
@@ -2416,6 +2421,7 @@ set(ARTIFACT_EFFECTS_RASTERIZER_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cppm"

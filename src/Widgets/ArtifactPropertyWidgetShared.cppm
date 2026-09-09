@@ -1396,6 +1396,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       const auto now = currentTimeProvider ? currentTimeProvider()
                                            : currentPlaybackTime(playback);
       row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
+      row->setKeyframeAnchor(propertyPtr->getKeyFrameAnchorAt(now));
       row->setKeyframeModeEnabled(!track.empty());
       const QVariant animatedValue = propertyPtr->interpolateValue(now);
       if (animatedValue.isValid()) {
@@ -1403,6 +1404,9 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       }
     } else {
       row->setKeyframeChecked(!track.empty());
+      row->setKeyframeAnchor(
+          track.empty() ? ArtifactCore::KeyFrame::Anchor::Absolute
+                        : track.front().anchor);
       row->setKeyframeModeEnabled(!track.empty());
     }
 
@@ -1443,6 +1447,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           }
           row->setKeyframeModeEnabled(!propertyPtr->getKeyFrames().empty());
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+          row->setKeyframeAnchor(propertyPtr->getKeyFrameAnchorAt(nowTime));
           row->setNavigationEnabled(true);
           if (keyframeChanged) {
             keyframeChanged(propertyName);
@@ -1450,7 +1455,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         });
 
     row->setKeyframeAnchorHandler([propertyPtr, keyframeChanged, propertyName,
-                                   layer](
+                                   layer, row](
                                       ArtifactCore::KeyFrame::Anchor anchor) {
       if (!propertyPtr) {
         return;
@@ -1464,6 +1469,9 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         propertyPtr->setKeyFrameAnchorAt(keyframe.time, anchor);
       }
       const auto afterKeyframes = propertyPtr->getKeyFrames();
+      if (!afterKeyframes.empty()) {
+        row->setKeyframeAnchor(anchor);
+      }
       if (isLayerProperty &&
           !sameKeyframeSequence(beforeKeyframes, afterKeyframes)) {
         if (auto *mgr = UndoManager::instance()) {

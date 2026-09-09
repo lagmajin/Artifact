@@ -2,9 +2,13 @@ module;
 #include <utility>
 
 #include <wobjectimpl.h>
+#include <QAbstractItemView>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QColor>
+#include <QFont>
 #include <QLabel>
+#include <QPalette>
 #include <QHeaderView>
 #include <QTreeWidget>
 #include <QLineEdit>
@@ -27,15 +31,32 @@ ArtifactObjectPickerDialog::ArtifactObjectPickerDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("Select Object"));
-    setMinimumSize(400, 500);
+    setMinimumSize(620, 680);
     
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(24, 20, 24, 18);
+    layout->setSpacing(14);
+
+    auto* title = new QLabel(QStringLiteral("Select Object"), this);
+    title->setObjectName(QStringLiteral("objectPickerTitle"));
+    QFont titleFont = title->font();
+    titleFont.setBold(true);
+    titleFont.setPointSize(14);
+    title->setFont(titleFont);
+    layout->addWidget(title);
+    auto* description = new QLabel(
+        QStringLiteral("Search for an object or select it from the hierarchy below."), this);
+    QPalette descriptionPalette = description->palette();
+    descriptionPalette.setColor(QPalette::WindowText,
+                                palette().color(QPalette::PlaceholderText));
+    description->setPalette(descriptionPalette);
+    layout->addWidget(description);
     
     // 検索フィルター
     auto* filterLayout = new QHBoxLayout();
-    filterLayout->addWidget(new QLabel(QStringLiteral("Filter:"), this));
     searchEdit_ = new QLineEdit(this);
-    searchEdit_->setPlaceholderText(QStringLiteral("Search..."));
+    searchEdit_->setPlaceholderText(QStringLiteral("Search by name or type…"));
+    searchEdit_->setMinimumHeight(36);
     filterLayout->addWidget(searchEdit_, 1);
     layout->addLayout(filterLayout);
     
@@ -44,6 +65,10 @@ ArtifactObjectPickerDialog::ArtifactObjectPickerDialog(QWidget* parent)
     objectTree_->setHeaderLabels(QStringList{QStringLiteral("Name"), QStringLiteral("ID"), QStringLiteral("Type")});
     objectTree_->setSelectionMode(QAbstractItemView::SingleSelection);
     objectTree_->setExpandsOnDoubleClick(false);
+    objectTree_->setAlternatingRowColors(true);
+    objectTree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    objectTree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    objectTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     layout->addWidget(objectTree_, 1);
     
     // OK/Cancel ボタン
@@ -51,6 +76,15 @@ ArtifactObjectPickerDialog::ArtifactObjectPickerDialog(QWidget* parent)
     buttonRow_ = buttons.widget;
     okButton_ = buttons.okButton;
     cancelButton_ = buttons.cancelButton;
+    okButton_->setText(QStringLiteral("Select"));
+    cancelButton_->setText(QStringLiteral("Cancel"));
+    okButton_->setMinimumSize(110, 36);
+    cancelButton_->setMinimumSize(110, 36);
+    QPalette selectPalette = okButton_->palette();
+    selectPalette.setColor(QPalette::Button, QColor(43, 111, 232));
+    selectPalette.setColor(QPalette::ButtonText, Qt::white);
+    okButton_->setPalette(selectPalette);
+    okButton_->setAutoFillBackground(true);
     layout->addWidget(buttonRow_);
     
     // シグナル接続
@@ -70,10 +104,13 @@ ArtifactObjectPickerDialog::~ArtifactObjectPickerDialog()
 void ArtifactObjectPickerDialog::setReferenceType(const QString& typeName)
 {
     referenceType_ = typeName;
+    auto* title = findChild<QLabel*>(QStringLiteral("objectPickerTitle"));
     if (referenceType_.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
         setWindowTitle(QStringLiteral("Select Layer"));
+        if (title) title->setText(QStringLiteral("Select Layer"));
     } else {
         setWindowTitle(QStringLiteral("Select Object"));
+        if (title) title->setText(QStringLiteral("Select Object"));
     }
 }
 

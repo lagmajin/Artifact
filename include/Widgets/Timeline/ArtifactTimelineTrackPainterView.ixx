@@ -40,6 +40,9 @@ export namespace Artifact
 
  public:
   enum class PropertyChannelFilter { All, Transform, Audio, Effect };
+  // Clip shape is intentionally a compact visual-only preference. It does
+  // not alter hit testing, trim ranges, or clip timing semantics.
+  enum class ClipBarStyle { Flat, SoftBevel, Notched };
  struct KeyframeMarkerVisual {
    LayerID layerId;
    QString propertyPath;
@@ -66,7 +69,7 @@ export namespace Artifact
        ArtifactCore::InterpolationType::Linear;
    ArtifactCore::KeyFrame::Anchor anchor =
        ArtifactCore::KeyFrame::Anchor::Absolute;
-   QColor color = QColor(247, 204, 83);
+   QColor color = QColor(198, 163, 75);
    QColor labelColor;
    QString label;
   };
@@ -74,7 +77,7 @@ export namespace Artifact
   struct CompositionMarkerVisual {
    double frame = 0.0;
    QString comment;
-   QColor color = QColor(247, 204, 83);
+   QColor color = QColor(198, 163, 75);
    bool chapter = false;
   };
 
@@ -144,6 +147,9 @@ export namespace Artifact
 
   void setPixelsPerFrame(double value);
   double pixelsPerFrame() const;
+
+  void setClipBarStyle(ClipBarStyle style);
+  ClipBarStyle clipBarStyle() const;
 
   void setHorizontalOffset(double value);
   double horizontalOffset() const;

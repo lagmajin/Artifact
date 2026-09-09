@@ -7,6 +7,7 @@ module;
 #include <QImage>
 #include <QDebug>
 #include <QFileInfo>
+#include <cstdint>
 
 export module Artifact.Render.OffscreenComposition;
 
@@ -55,6 +56,10 @@ namespace Artifact
 
         // QImageとして取得
         QImage renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition);
+
+        // 指定レイヤーだけを透明背景へ描画してQImageとして取得
+        QImage renderLayerToQImage(const FramePosition& position,
+                                   ArtifactAbstractLayer* layer);
 
     private:
         RefCntAutoPtr<IRenderDevice> pDevice_;
@@ -161,6 +166,18 @@ namespace Artifact
     {
         renderFrame(position, composition);
         return renderer_->readbackToImage();
+    }
+
+    QImage OffscreenCompositionRenderer::renderLayerToQImage(
+        const FramePosition& position, ArtifactAbstractLayer* layer)
+    {
+        const int64_t previousFrame = layer ? layer->currentFrame() : 0;
+        renderLayerFrame(position, layer);
+        const QImage image = renderer_ ? renderer_->readbackToImage() : QImage();
+        if (layer) {
+            layer->goToFrame(previousFrame);
+        }
+        return image;
     }
 
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)
