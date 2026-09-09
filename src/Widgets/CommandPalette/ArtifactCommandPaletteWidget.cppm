@@ -433,6 +433,8 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
         {"palette.dummy.noop", "No-Op", "Does nothing (dummy)", "Palette"},
         {"palette.layer.addMask", "Add Mask", "Add a full-source rectangular mask to the selected layer", "Layer"},
         {"palette.layer.soloSelected", "Solo Selected Layer", "Solo the selected layer and its related layers", "Layer"},
+        {"palette.timeline.gotoInPoint", "Go to Composition In", "Move the playhead to the composition In point", "Timeline"},
+        {"palette.timeline.gotoOutPoint", "Go to Composition Out", "Move the playhead to the composition Out point", "Timeline"},
     };
     for (const auto& d : kDummies) {
         if (mgr->getAction(QString::fromUtf8(d.id))) {
@@ -483,6 +485,18 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
                         layer->addMask(mask);
                         layer->setDirty(LayerDirtyFlag::Mask);
                         layer->changed();
+                    }
+                    return;
+                }
+                if (id == QStringLiteral("palette.timeline.gotoInPoint")) {
+                    if (auto* service = ArtifactPlaybackService::instance()) {
+                        service->goToInPoint();
+                    }
+                    return;
+                }
+                if (id == QStringLiteral("palette.timeline.gotoOutPoint")) {
+                    if (auto* service = ArtifactPlaybackService::instance()) {
+                        service->goToOutPoint();
                     }
                     return;
                 }
