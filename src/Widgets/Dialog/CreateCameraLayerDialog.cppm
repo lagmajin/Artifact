@@ -46,6 +46,19 @@ W_OBJECT_IMPL(CreateCameraLayerDialog)
 // ─────────────────────────────────────────────────────────────────────────────
 namespace {
 
+const QColor kCameraLabelColor(QStringLiteral("#8F918D"));
+const QColor kCameraValueColor(QStringLiteral("#BBB8B0"));
+const QColor kCameraUnitColor(QStringLiteral("#777A78"));
+
+void applyCameraValuePalette(QWidget* widget)
+{
+    if (!widget) return;
+    QPalette pal = widget->palette();
+    pal.setColor(QPalette::Text, kCameraValueColor);
+    pal.setColor(QPalette::ButtonText, kCameraValueColor);
+    widget->setPalette(pal);
+}
+
 class DialogCloseButton final : public QPushButton {
 public:
   explicit DialogCloseButton(QWidget* parent = nullptr) : QPushButton(u8"×", parent) {
@@ -104,24 +117,27 @@ protected:
         const float halfAngle = std::atan2(h * 0.35f, focalPx);
         const float dx = focalPx * std::cos(0.0f);
         const float dy = focalPx * std::tan(halfAngle);
-        QPen conePen(QColor(0x5F, 0xAA, 0xDD, 200), 1.5f);
+        const QColor accent(ArtifactCore::currentDCCTheme().accentColor);
+        const QColor diagramLine(QStringLiteral("#777A78"));
+        const QColor diagramText(QStringLiteral("#AAA79F"));
+        QPen conePen(diagramLine, 1.2f);
         p.setPen(conePen);
         p.drawLine(QPointF(cx, cy), QPointF(cx + dx, cy - dy));
         p.drawLine(QPointF(cx, cy), QPointF(cx + dx, cy + dy));
 
         // Focal plane vertical line (dashed)
-        QPen focalPen(QColor(0x5F, 0xAA, 0xDD), 1.5f, Qt::DashLine);
+        QPen focalPen(diagramLine.lighter(120), 1.2f);
         p.setPen(focalPen);
         p.drawLine(QPointF(cx + focalPx, cy - h * 0.38f),
                    QPointF(cx + focalPx, cy + h * 0.38f));
 
         // Dashed horizontal center line
-        QPen dashPen(QColor(0x5F, 0xAA, 0xDD, 100), 1.0f, Qt::DashLine);
+        QPen dashPen(accent, 1.0f, Qt::DashLine);
         p.setPen(dashPen);
         p.drawLine(QPointF(cx, cy), QPointF(w * 0.92f, cy));
 
         // Focal length label
-        p.setPen(QColor(0x5F, 0xAA, 0xDD));
+        p.setPen(diagramText);
         QFont labelFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         labelFont.setPointSize(8);
         p.setFont(labelFont);
@@ -131,18 +147,18 @@ protected:
 
         // Focus point crosshair
         const float fpx = cx + focalPx;
-        QPen crossPen(QColor(0x44, 0xCC, 0xFF), 1.5f);
+        QPen crossPen(accent, 1.5f);
         p.setPen(crossPen);
         p.drawLine(QPointF(fpx - 6, cy), QPointF(fpx + 6, cy));
         p.drawLine(QPointF(fpx, cy - 6), QPointF(fpx, cy + 6));
 
         // Camera body icon
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x44, 0x88, 0xCC));
+        p.setBrush(diagramLine.lighter(118));
         p.drawRoundedRect(QRectF(cx - 14, cy - 10, 28, 20), 3, 3);
-        p.setBrush(QColor(0x22, 0x66, 0xAA));
+        p.setBrush(diagramLine.darker(125));
         p.drawEllipse(QPointF(cx, cy), 6.0, 6.0);
-        p.setBrush(QColor(0x88, 0xCC, 0xFF, 180));
+        p.setBrush(accent);
         p.drawEllipse(QPointF(cx, cy), 3.5, 3.5);
     }
 
@@ -359,7 +375,8 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
             font.setPointSize(11);
             lbl->setFont(font);
             QPalette pal = lbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#888888"));
+            pal.setColor(QPalette::WindowText,
+                         QColor(ArtifactCore::currentDCCTheme().accentColor));
             lbl->setPalette(pal);
         }
         l->addWidget(lbl);
@@ -388,10 +405,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = lbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             lbl->setPalette(pal);
         }
         impl_->nameEdit = new QLineEdit(uniqueCameraLayerName(), row);
+        applyCameraValuePalette(impl_->nameEdit);
         lbl->setBuddy(impl_->nameEdit);
         impl_->nameEdit->setAccessibleName(u8"カメラレイヤー名");
         impl_->nameEdit->setAccessibleDescription(u8"作成するカメラレイヤーの名前");
@@ -413,10 +431,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = lbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             lbl->setPalette(pal);
         }
         impl_->presetCombo = new QComboBox(row);
+        applyCameraValuePalette(impl_->presetCombo);
         lbl->setBuddy(impl_->presetCombo);
         impl_->presetCombo->setAccessibleName(u8"レンズプリセット");
         impl_->presetCombo->setAccessibleDescription(u8"カメラの焦点距離プリセット");
@@ -437,10 +456,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = lbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             lbl->setPalette(pal);
         }
         impl_->focalLengthSpin = new QDoubleSpinBox(row);
+        applyCameraValuePalette(impl_->focalLengthSpin);
         impl_->focalLengthSpin->setRange(1.0, 2000.0);
         impl_->focalLengthSpin->setDecimals(2);
         impl_->focalLengthSpin->setSingleStep(1.0);
@@ -463,10 +483,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = lbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             lbl->setPalette(pal);
         }
         impl_->fovSpin = new QDoubleSpinBox(row);
+        applyCameraValuePalette(impl_->fovSpin);
         impl_->fovSpin->setRange(0.5, 170.0);
         impl_->fovSpin->setDecimals(2);
         impl_->fovSpin->setValue(fovFromFocalLength(35.0));
@@ -500,10 +521,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = lbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             lbl->setPalette(pal);
         }
         impl_->apertureFCombo = new QComboBox(row);
+        applyCameraValuePalette(impl_->apertureFCombo);
         for (const auto& f : kFStops) impl_->apertureFCombo->addItem(f);
         impl_->apertureFCombo->setCurrentText("f/4");
         lbl->setBuddy(impl_->apertureFCombo);
@@ -524,10 +546,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         fdLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = fdLbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             fdLbl->setPalette(pal);
         }
         impl_->focusDistSpin = new QDoubleSpinBox(row);
+        applyCameraValuePalette(impl_->focusDistSpin);
         impl_->focusDistSpin->setRange(0.0, 1000000.0);
         impl_->focusDistSpin->setDecimals(1);
         impl_->focusDistSpin->setValue(1000.0);
@@ -535,11 +558,12 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         blurLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = blurLbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             blurLbl->setPalette(pal);
         }
         blurLbl->setFixedWidth(60);
         impl_->blurAmountSpin = new QDoubleSpinBox(row);
+        applyCameraValuePalette(impl_->blurAmountSpin);
         impl_->blurAmountSpin->setRange(0.0, 100.0);
         impl_->blurAmountSpin->setDecimals(0);
         impl_->blurAmountSpin->setValue(100.0);
@@ -552,7 +576,7 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* pctLbl = new QLabel("%", row);
         {
             QPalette pal = pctLbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#888888"));
+            pal.setColor(QPalette::WindowText, kCameraUnitColor);
             pctLbl->setPalette(pal);
         }
         rl->addWidget(fdLbl);
@@ -605,11 +629,12 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         zoomLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         {
             QPalette pal = zoomLbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            pal.setColor(QPalette::WindowText, kCameraLabelColor);
             zoomLbl->setPalette(pal);
         }
         zoomLbl->setFixedWidth(50);
         impl_->zoomSpin = new QDoubleSpinBox(rightCol);
+        applyCameraValuePalette(impl_->zoomSpin);
         impl_->zoomSpin->setRange(1.0, 100000.0);
         impl_->zoomSpin->setDecimals(1);
         impl_->zoomSpin->setValue(1000.0);
@@ -619,7 +644,7 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* pxLbl = new QLabel("px", rightCol);
         {
             QPalette pal = pxLbl->palette();
-            pal.setColor(QPalette::WindowText, QColor("#888888"));
+            pal.setColor(QPalette::WindowText, kCameraUnitColor);
             pxLbl->setPalette(pal);
         }
         rl2->addWidget(zoomLbl);

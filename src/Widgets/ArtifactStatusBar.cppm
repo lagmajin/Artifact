@@ -94,6 +94,16 @@ namespace Artifact
   }
   return QStringLiteral("StatusLabel");
  }
+
+ void setLabelTextColor(QLabel* label, const QColor& color)
+ {
+  if (!label || label->palette().color(QPalette::WindowText) == color) {
+   return;
+  }
+  QPalette p = label->palette();
+  p.setColor(QPalette::WindowText, color);
+  label->setPalette(p);
+ }
  }
 
  ArtifactStatusBar::ArtifactStatusBar(QWidget* parent)
@@ -106,14 +116,15 @@ namespace Artifact
   const QColor surfaceColor = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
   const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
   const QColor mutedTextColor = Accessibility::adjustColorForDeficiency(
-      textColor.darker(130));
+      QColor(QStringLiteral("#858783")));
+  const QColor valueTextColor = Accessibility::adjustColorForDeficiency(
+      QColor(QStringLiteral("#BBB8B0")));
   const QColor accentColor = Accessibility::adjustColorForDeficiency(
       QColor(ArtifactCore::currentDCCTheme().accentColor));
-  const QColor dangerColor = Accessibility::adjustColorForDeficiency(
-      QColor(QStringLiteral("#E91E63")));
   const QColor borderColor = QColor(ArtifactCore::currentDCCTheme().borderColor);
 
   setSizeGripEnabled(true);
+  setFixedHeight(Accessibility::scaledSize(24));
   setAutoFillBackground(true);
   QPalette statusPalette = palette();
   statusPalette.setColor(QPalette::Window, backgroundColor);
@@ -149,15 +160,19 @@ namespace Artifact
   labels_[itemIndex(Item::Coordinates)]->setMinimumWidth(110);
   labels_[itemIndex(Item::Selection)]->setMinimumWidth(60);
   labels_[itemIndex(Item::Console)]->setFont(boldFont);
+  setLabelTextColor(labels_[itemIndex(Item::Console)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Coordinates)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Frame)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Selection)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Zoom)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::FPS)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Memory)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Drops)], valueTextColor);
+  setLabelTextColor(labels_[itemIndex(Item::Accessibility)], valueTextColor);
   {
       QPalette p = labels_[itemIndex(Item::TimelineDebug)]->palette();
       p.setColor(QPalette::WindowText, accentColor);
       labels_[itemIndex(Item::TimelineDebug)]->setPalette(p);
-  }
-  {
-      QPalette p = labels_[itemIndex(Item::Console)]->palette();
-      p.setColor(QPalette::WindowText, dangerColor);
-      labels_[itemIndex(Item::Console)]->setPalette(p);
   }
 
   addWidget(labels_[itemIndex(Item::TimelineDebug)]);
@@ -275,6 +290,10 @@ namespace Artifact
   if (auto* label = itemLabel(Item::Drops))
   {
    label->setText(QStringLiteral("DROP: %1").arg(text.toUpper()));
+   const bool hasDrops = text.toLongLong() > 0;
+   setLabelTextColor(label, Accessibility::adjustColorForDeficiency(
+       QColor(hasDrops ? QStringLiteral("#D6A44B")
+                       : QStringLiteral("#BBB8B0"))));
   }
  }
 
@@ -295,6 +314,12 @@ namespace Artifact
   if (auto* label = itemLabel(Item::Console))
   {
    label->setText(QStringLiteral("LOGS: %1E %2W").arg(errors).arg(warnings));
+   const QColor stateColor = errors > 0
+       ? QColor(QStringLiteral("#D86666"))
+       : (warnings > 0 ? QColor(QStringLiteral("#D6A44B"))
+                       : QColor(QStringLiteral("#BBB8B0")));
+   setLabelTextColor(
+       label, Accessibility::adjustColorForDeficiency(stateColor));
   }
  }
 

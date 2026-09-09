@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <utility>
 #include <QDialog>
 #include <QWidget>
@@ -19,6 +20,12 @@ module;
 #include <QGuiApplication>
 #include <QScreen>
 #include <QPalette>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPen>
+#include <QRect>
+#include <QSizePolicy>
+#include <QStringList>
 #include <wobjectimpl.h>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
@@ -29,6 +36,70 @@ import Widgets.Utils.CSS;
 namespace Artifact {
 
 W_OBJECT_IMPL(PrecomposeDialog)
+
+namespace {
+
+class PrecomposePreviewWidget final : public QWidget {
+public:
+    explicit PrecomposePreviewWidget(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumSize(220, 124);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setAccessibleName(u8"プリコンポーズ予定プレビュー");
+        setAccessibleDescription(u8"選択レイヤーの構成を簡略表示");
+    }
+
+    void setLayerNames(const QStringList& names)
+    {
+        if (layerNames_ == names) return;
+        layerNames_ = names;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        const QColor background(theme.backgroundColor);
+        const QColor surface(theme.secondaryBackgroundColor);
+        const QColor border(theme.borderColor);
+        const QColor text(theme.textColor);
+        const QColor accent(theme.accentColor);
+
+        painter.fillRect(rect(), background.darker(112));
+        painter.setPen(QPen(border, 1));
+        painter.drawRect(rect().adjusted(0, 0, -1, -1));
+
+        const int visibleCount =
+            std::min(3, static_cast<int>(layerNames_.size()));
+        const int cardWidth = std::max(80, width() - 54);
+        for (int i = visibleCount - 1; i >= 0; --i) {
+            const int y = 18 + i * 24;
+            QRect card(22 + i * 5, y, cardWidth - i * 10, 42);
+            QColor cardColor = surface;
+            cardColor.setAlpha(225);
+            painter.setBrush(cardColor);
+            painter.setPen(QPen(border.lighter(112), 1));
+            painter.drawRect(card);
+            painter.setPen(i == 1 ? accent : text.darker(112));
+            painter.drawText(card.adjusted(10, 0, -10, 0),
+                             Qt::AlignCenter,
+                             layerNames_.value(i));
+        }
+        if (visibleCount == 0) {
+            painter.setPen(text.darker(150));
+            painter.drawText(rect(), Qt::AlignCenter, u8"選択レイヤーなし");
+        }
+    }
+
+private:
+    QStringList layerNames_;
+};
+
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Impl
@@ -43,6 +114,8 @@ public:
     QCheckBox*    openNewCompCheck     = nullptr;
     QCheckBox*    addAdjLayerCheck     = nullptr;
     QCheckBox*    matchDurationCheck   = nullptr;
+    PrecomposePreviewWidget* previewWidget = nullptr;
+    QLabel*       previewLayerCount    = nullptr;
 
     int totalLayerCount = 0;
     QPoint dragPos;
@@ -108,9 +181,47 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
 
     // ── Body ──────────────────────────────────────────────────────────────
     auto* body = new QWidget(this);
-    auto* bLay = new QVBoxLayout(body);
-    bLay->setContentsMargins(20, 16, 20, 8);
+    auto* bodyLayout = new QHBoxLayout(body);
+    bodyLayout->setContentsMargins(20, 16, 20, 8);
+    bodyLayout->setSpacing(20);
+    auto* mainBody = new QWidget(body);
+    auto* bLay = new QVBoxLayout(mainBody);
+    bLay->setContentsMargins(0, 0, 0, 0);
     bLay->setSpacing(10);
+    bodyLayout->addWidget(mainBody, 3);
+
+    auto* previewPane = new QWidget(body);
+    previewPane->setMinimumWidth(240);
+    auto* previewLayout = new QVBoxLayout(previewPane);
+    previewLayout->setContentsMargins(16, 0, 0, 0);
+    previewLayout->setSpacing(8);
+    auto* previewTitle = new QLabel(u8"プリコンポーズ予定", previewPane);
+    {
+        QPalette pal = previewTitle->palette();
+        pal.setColor(QPalette::WindowText,
+                     QColor(ArtifactCore::currentDCCTheme().accentColor));
+        previewTitle->setPalette(pal);
+    }
+    impl_->previewWidget = new PrecomposePreviewWidget(previewPane);
+    auto* previewResolution = new QLabel(u8"出力設定: 現在のコンポジション", previewPane);
+    auto* previewDuration = new QLabel(u8"期間: ワークエリア", previewPane);
+    impl_->previewLayerCount = new QLabel(u8"0 レイヤー", previewPane);
+    auto* previewUpdateHint = new QLabel(u8"選択変更時に更新", previewPane);
+    {
+        QPalette pal = previewUpdateHint->palette();
+        pal.setColor(QPalette::WindowText,
+                     QColor(ArtifactCore::currentDCCTheme().textColor).darker(155));
+        previewUpdateHint->setPalette(pal);
+    }
+    previewLayout->addWidget(previewTitle);
+    previewLayout->addWidget(impl_->previewWidget);
+    previewLayout->addWidget(previewResolution);
+    previewLayout->addWidget(previewDuration);
+    previewLayout->addWidget(impl_->previewLayerCount);
+    previewLayout->addSpacing(8);
+    previewLayout->addWidget(previewUpdateHint);
+    previewLayout->addStretch();
+    bodyLayout->addWidget(previewPane, 2);
     root->addWidget(body, 1);
 
     const auto makeSeparator = [&]() -> QFrame* {
@@ -322,6 +433,11 @@ void PrecomposeDialog::setSelectedLayerNames(const QStringList& names)
     for (const auto& name : names) {
         auto* item = new QListWidgetItem(u8"🔲 " + name);
         impl_->layerListWidget->addItem(item);
+    }
+    if (impl_->previewWidget) impl_->previewWidget->setLayerNames(names);
+    if (impl_->previewLayerCount) {
+        impl_->previewLayerCount->setText(
+            QString(u8"%1 レイヤー").arg(names.size()));
     }
     impl_->updateLayerCountLabel(names.size());
 }

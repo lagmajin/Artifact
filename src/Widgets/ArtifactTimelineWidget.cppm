@@ -4223,7 +4223,9 @@ private:
   static bool isHandleInteraction(const QPoint &pos, const int width,
                                   const int height, const float start,
                                   const float end) {
-    const int handleHalfW = 6;
+    // Match ArtifactTimelineNavigatorWidget's painted and interactive geometry.
+    // A narrower reservation lets HeaderSeekFilter steal edge presses.
+    const int handleHalfW = 7;
     const int handleW = handleHalfW * 2;
     const int usableWidth = std::max(1, width - handleW);
     const int x1 = handleHalfW + static_cast<int>(start * usableWidth);
@@ -4640,6 +4642,7 @@ public:
   CurveEditorGraphMode curveEditorGraphMode_ = CurveEditorGraphMode::Value;
   bool syncingLayerSelection_ = false;
   bool syncingVerticalOffset_ = false;
+  bool syncingNavigatorViewport_ = false;
   double currentFrame_ = 0.0;
   bool curveEditorDragging_ = false;
   bool curveEditorUndoPending_ = false;
@@ -7320,7 +7323,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           impl_->workArea_->setRulerHorizontalOffset(offset);
         }
 
-        if (impl_->navigator_) {
+        if (impl_->navigator_ && !impl_->syncingNavigatorViewport_) {
           const double visibleStart = offset / (duration * zoom);
           const double visibleEnd = (offset + static_cast<double>(viewW)) / (duration * zoom);
           const QSignalBlocker blocker(impl_->navigator_);
@@ -9909,6 +9912,7 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
   }
 
   const double duration = impl_->painterTrackView_->durationFrames();
+  const double navigatorStart = impl_->navigator_->startValue();
   const double range = std::max(
       0.01, static_cast<double>(impl_->navigator_->endValue() -
                                 impl_->navigator_->startValue()));
@@ -9919,6 +9923,7 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
   }
 
   const double newZoom = viewW / (duration * range);
+  impl_->syncingNavigatorViewport_ = true;
   impl_->painterTrackView_->setPixelsPerFrame(newZoom);
   if (impl_->scrubBar_) {
     impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
@@ -9929,9 +9934,9 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
 
   zoomLevelChanged(newZoom * 100.0);
 
-  const double offset =
-      impl_->navigator_->startValue() * duration * newZoom;
+  const double offset = navigatorStart * duration * newZoom;
   syncTimelineHorizontalOffset(offset);
+  impl_->syncingNavigatorViewport_ = false;
   syncPlayheadOverlay();
 }
 
