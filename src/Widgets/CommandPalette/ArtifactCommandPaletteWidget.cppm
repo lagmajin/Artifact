@@ -494,7 +494,11 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
                         return;
                     }
                     if (auto* service = ArtifactProjectService::instance()) {
-                        service->soloOnlyLayerInCurrentComposition(layer->id());
+                        if (layer->isSolo()) {
+                            service->clearAllLayerSoloInCurrentComposition();
+                        } else {
+                            service->soloOnlyLayerInCurrentComposition(layer->id());
+                        }
                     }
                     return;
                 }
