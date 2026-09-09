@@ -1869,7 +1869,10 @@ QImage ArtifactIRenderer::Impl::readbackToImage() const
 
 ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() const
 {
-  std::vector<float> rgba;
+  // Readback is serialized per renderer, while render workers may use
+  // different threads. Keep one reusable staging vector per calling thread so
+  // steady-state frames retain capacity without sharing mutable CPU storage.
+  thread_local std::vector<float> rgba;
   int width = 0;
   int height = 0;
   if (!readbackTextureViewToFloatBuffer(activeColorView(), rgba, width, height) ||

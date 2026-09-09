@@ -6100,7 +6100,9 @@ namespace Artifact
         std::mutex outputBufferMutex;
         std::condition_variable outputBufferCv;
         std::condition_variable bufferSpaceCv;
-        std::map<int, FrameRenderOutput> outputBuffer;
+        std::vector<std::pair<int, FrameRenderOutput>> outputBuffer;
+        outputBuffer.reserve(static_cast<size_t>(
+            std::max(1, maxOutputBufferFrames_ + numWorkers)));
         std::atomic<size_t> outputBufferMemory{0};
         std::atomic<int> nextFrameToRender{startF};
         std::atomic<bool> anyWorkerFailed{false};
@@ -6168,8 +6170,19 @@ namespace Artifact
                         4 * channelMultiplier;
                     outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
                 }
-                // Always write to buffer so consumer can proceed
-                outputBuffer[f] = ok ? std::move(frameOutput) : FrameRenderOutput{};
+                // Always write to the bounded buffer so the consumer can
+                // proceed. Reuse its reserved storage instead of allocating a
+                // tree node for every completed frame.
+                auto bufferedFrame = std::find_if(
+                    outputBuffer.begin(), outputBuffer.end(),
+                    [f](const auto& entry) { return entry.first == f; });
+                if (bufferedFrame != outputBuffer.end()) {
+                    bufferedFrame->second = ok
+                        ? std::move(frameOutput) : FrameRenderOutput{};
+                } else {
+                    outputBuffer.emplace_back(
+                        f, ok ? std::move(frameOutput) : FrameRenderOutput{});
+                }
                 if (!ok && !anyWorkerFailed.load(std::memory_order_relaxed)) {
                     // First failure for this frame — log it
                     workerFailureReasons.push_back(
@@ -6395,7 +6408,13 @@ namespace Artifact
             FrameRenderOutput frameOutput;
             {
                 std::unique_lock<std::mutex> lock(outputBufferMutex);
-                while (outputBuffer.count(f) == 0 && !anyWorkerFailed.load() &&
+                auto findBufferedFrame = [&]() {
+                    return std::find_if(
+                        outputBuffer.begin(), outputBuffer.end(),
+                        [f](const auto& entry) { return entry.first == f; });
+                };
+                while (findBufferedFrame() == outputBuffer.end() &&
+                       !anyWorkerFailed.load() &&
                        !shutdownRequested_.load(std::memory_order_acquire)) {
                     outputBufferCv.wait_for(lock, std::chrono::milliseconds(50));
                 }
@@ -6412,7 +6431,7 @@ namespace Artifact
                     success.store(false, std::memory_order_relaxed);
                     break;
                 }
-                auto it = outputBuffer.find(f);
+                auto it = findBufferedFrame();
                 if (it == outputBuffer.end()) {
                     success.store(false, std::memory_order_relaxed);
                     failureReason = QStringLiteral("Frame %1: missing output").arg(f);
@@ -6439,7 +6458,9 @@ namespace Artifact
                     for (int w = 0; w < 120 && farmMaster.isBusy() && !shutdownRequested_; ++w) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
                         std::lock_guard<std::mutex> lock(outputBufferMutex);
-                        auto it = outputBuffer.find(f);
+                        auto it = std::find_if(
+                            outputBuffer.begin(), outputBuffer.end(),
+                            [f](const auto& entry) { return entry.first == f; });
                         if (it != outputBuffer.end()) {
                             frameOutput = std::move(it->second);
                             outputBuffer.erase(it);
