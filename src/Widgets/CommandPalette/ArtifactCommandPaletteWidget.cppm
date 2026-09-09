@@ -432,6 +432,7 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
         {"palette.palette.about", "About Command Palette", "Show command palette information", "Palette"},
         {"palette.dummy.noop", "No-Op", "Does nothing (dummy)", "Palette"},
         {"palette.layer.addMask", "Add Mask", "Add a full-source rectangular mask to the selected layer", "Layer"},
+        {"palette.layer.soloSelected", "Solo Selected Layer", "Solo the selected layer and its related layers", "Layer"},
     };
     for (const auto& d : kDummies) {
         if (mgr->getAction(QString::fromUtf8(d.id))) {
@@ -482,6 +483,18 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
                         layer->addMask(mask);
                         layer->setDirty(LayerDirtyFlag::Mask);
                         layer->changed();
+                    }
+                    return;
+                }
+                if (id == QStringLiteral("palette.layer.soloSelected")) {
+                    auto* selection = ArtifactLayerSelectionManager::instance();
+                    const auto layer = selection ? selection->currentLayer()
+                                                 : ArtifactAbstractLayerPtr{};
+                    if (!layer) {
+                        return;
+                    }
+                    if (auto* service = ArtifactProjectService::instance()) {
+                        service->soloOnlyLayerInCurrentComposition(layer->id());
                     }
                     return;
                 }
