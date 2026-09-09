@@ -1294,9 +1294,10 @@ namespace Artifact
             }
         }
     }
-    static QString registerRenderQueueContextSnapshot(const ArtifactRenderJob& job,
-                                                      const ArtifactCompositionPtr& composition,
-                                                      int frameNumber)
+    static void registerRenderQueueContextSnapshot(const ArtifactRenderJob& job,
+                                                   const QString& compositionId,
+                                                   const ArtifactCompositionPtr& composition,
+                                                   int frameNumber)
     {
         const QSize outputSize(std::max(1, job.resolutionWidth), std::max(1, job.resolutionHeight));
         const QSize compSize = composition
@@ -1319,12 +1320,11 @@ namespace Artifact
 
         const QString key = RenderContextRegistry::instance().makeKey(
             RenderPurpose::FinalExport,
-            job.compositionId.toString(),
+            compositionId,
             frameNumber,
             ctx->resolutionScale);
         auto snapshot = createRenderContextSnapshot(*ctx, RenderPurpose::FinalExport, key);
         RenderContextRegistry::instance().registerSnapshot(snapshot);
-        return key;
     }
 
     // レンダリングキューマネージャクラス
@@ -2532,6 +2532,7 @@ namespace Artifact
             int frameNumber = 0;
             int jobIndex = 0;
             ArtifactCompositionPtr composition;
+            QString compositionId;
             bool compositionIsIsolated = false;
             ArtifactRenderJob job;
             bool useGpuBackend = false;
@@ -5631,7 +5632,8 @@ namespace Artifact
             frameStateLock.lock();
         }
 
-        registerRenderQueueContextSnapshot(snap.job, snap.composition, snap.frameNumber);
+        registerRenderQueueContextSnapshot(
+            snap.job, snap.compositionId, snap.composition, snap.frameNumber);
 
         if (snap.useGpuBackend) {
             const auto compSize = snap.composition->effectiveCompositionSize();
@@ -6087,6 +6089,7 @@ namespace Artifact
         FrameRenderSnapshot baseSnap;
         baseSnap.jobIndex = jobIndex;
         baseSnap.composition = compositionForRender;
+        baseSnap.compositionId = job.compositionId.toString();
         baseSnap.job = job;
         baseSnap.useGpuBackend = useGpuBackend;
         baseSnap.isVideo = isVideo;
