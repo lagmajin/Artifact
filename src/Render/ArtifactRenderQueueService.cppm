@@ -27,6 +27,7 @@ module;
 #include <QStringList>
 #include <QPointF>
 #include <QRegularExpression>
+#include <QLoggingCategory>
 #include <QProcess>
 #include <QCoreApplication>
 #include <QTextStream>
@@ -135,6 +136,10 @@ import Memory.SharedPtr;
 
 namespace Artifact
 {
+    Q_LOGGING_CATEGORY(renderQueueFrameLog,
+                       "artifact.render.queue.frames",
+                       QtWarningMsg)
+
     namespace {
         FootageItem* findProjectRenderInput(const ArtifactCore::Id& projectItemId) {
             if (projectItemId.isNil()) return {};
@@ -6135,11 +6140,11 @@ namespace Artifact
             FrameRenderOutput frameOutput;
             QString frameError;
             bool ok = false;
-            qInfo() << "[EncodeSession][Frame] render begin"
-                    << "job=" << jobIndex
-                    << "frame=" << f
-                    << "renderBackend=" << (useGpuBackend ? "gpu" : "cpu");
-            ArtifactCore::Logger::instance()->flushFile();
+            qCDebug(renderQueueFrameLog)
+                << "[EncodeSession][Frame] render begin"
+                << "job=" << jobIndex
+                << "frame=" << f
+                << "renderBackend=" << (useGpuBackend ? "gpu" : "cpu");
             try {
                 // Keep the job-local surface cache alive across frames. Its
                 // signatures already include animated effect, crop, sequence,
@@ -6153,12 +6158,12 @@ namespace Artifact
             } catch (...) {
                 frameError = QStringLiteral("Unknown exception during frame render");
             }
-            qInfo() << "[EncodeSession][Frame] render end"
-                    << "job=" << jobIndex
-                    << "frame=" << f
-                    << "success=" << ok
-                    << "reason=" << frameError;
-            ArtifactCore::Logger::instance()->flushFile();
+            qCDebug(renderQueueFrameLog)
+                << "[EncodeSession][Frame] render end"
+                << "job=" << jobIndex
+                << "frame=" << f
+                << "success=" << ok
+                << "reason=" << frameError;
 
             {
                 std::lock_guard<std::mutex> lock(outputBufferMutex);
@@ -6194,6 +6199,7 @@ namespace Artifact
                                << "renderBackend="
                                << (useGpuBackend ? "gpu" : "cpu")
                                << "reason=" << frameError;
+                    ArtifactCore::Logger::instance()->flushFile();
                 }
             }
             outputBufferCv.notify_one();
@@ -6518,11 +6524,11 @@ namespace Artifact
             }
 
             if (isVideo) {
-                qInfo() << "[EncodeSession][Frame] encode begin"
-                        << "job=" << jobIndex
-                        << "frame=" << f
-                        << "size=" << qimg.size();
-                ArtifactCore::Logger::instance()->flushFile();
+                qCDebug(renderQueueFrameLog)
+                    << "[EncodeSession][Frame] encode begin"
+                    << "job=" << jobIndex
+                    << "frame=" << f
+                    << "size=" << qimg.size();
                 if (!videoBackend->addFrame(qimg, f, &failureReason)) {
                     qWarning() << "[EncodeSession][Frame] encoder rejected frame"
                                << "job=" << jobIndex
@@ -6530,13 +6536,14 @@ namespace Artifact
                                << "size=" << qimg.size()
                                << "format=" << static_cast<int>(qimg.format())
                                << "reason=" << failureReason;
+                    ArtifactCore::Logger::instance()->flushFile();
                     success.store(false, std::memory_order_relaxed);
                     break;
                 }
-                qInfo() << "[EncodeSession][Frame] encode end"
-                        << "job=" << jobIndex
-                        << "frame=" << f;
-                ArtifactCore::Logger::instance()->flushFile();
+                qCDebug(renderQueueFrameLog)
+                    << "[EncodeSession][Frame] encode end"
+                    << "job=" << jobIndex
+                    << "frame=" << f;
             } else if (isHtmlPlayer) {
                 const QString frameExt = QStringLiteral("png");
                 QString baseName = outInfo.completeBaseName();
@@ -6689,6 +6696,7 @@ namespace Artifact
                    !workerFailureReasons.isEmpty()) {
             sessionLedger_.recordRenderFailed(jobIndex, failureReason);
         }
+        ArtifactCore::Logger::instance()->flushFile();
     }
 
     void ArtifactRenderQueueService::startAllJobs() {
