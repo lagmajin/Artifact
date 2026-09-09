@@ -1,6 +1,7 @@
 module;
 
 #include <memory>
+#include <utility>
 
 #include <QDebug>
 #include <QString>
@@ -14,6 +15,7 @@ import Property.Group;
 import Property.SerializationBridge;
 import Time.Rational;
 import Animation.Value;
+import Animation.Transform3D;
 import Frame.Position;
 import Memory.SharedPtr;
 
@@ -119,6 +121,61 @@ export int runPropertyKeyframeTests()
     report.check(roundTripped->hasKeyFrameAt(RationalTime(9007199254740992LL, 1)), QStringLiteral("roundtrip preserves first large keyframe time"));
     report.check(roundTripped->hasKeyFrameAt(RationalTime(9007199254740993LL, 1)), QStringLiteral("roundtrip preserves adjacent large keyframe time"));
     report.check(roundTripped->hasKeyFrameAt(RationalTime(36, 24)), QStringLiteral("roundtrip preserves second keyframe time"));
+
+    // Native transforms and timeline properties must have one key store.
+    using ArtifactCore::AnimatableTransform3D;
+    using ArtifactCore::TransformChannel;
+    AnimatableTransform3D transform;
+    auto x = transform.channelProperty(TransformChannel::PositionX);
+    auto y = transform.channelProperty(TransformChannel::PositionY);
+    transform.setInitialPosition(RationalTime(0, 24), 100.0f, 200.0f);
+    report.check(x->getKeyFrames().empty() && y->getKeyFrames().empty(),
+                 QStringLiteral("initial placement does not enable animation"));
+    x->addKeyFrame(RationalTime(0, 24), 100.0f);
+    x->addKeyFrame(RationalTime(24, 24), 140.0f);
+    report.check(transform.snapshotAt(RationalTime(12, 24)).positionX == 120.0f,
+                 QStringLiteral("native evaluation reads timeline position keys"));
+    report.check(y->getKeyFrames().empty(),
+                 QStringLiteral("position X keys do not enable position Y"));
+    transform.setPosition(RationalTime(24, 24), 60.0f, 0.0f);
+    report.check(x->interpolateValue(RationalTime(24, 24)).toFloat() == 160.0f,
+                 QStringLiteral("native relative position writes canonical absolute key"));
+    x->clearKeyFrames();
+    y->clearKeyFrames();
+    report.check(transform.getPositionKeyFrameCount() == 0,
+                 QStringLiteral("timeline clear leaves no native position keys"));
+    transform.setInitialScale(RationalTime(0, 24), 2.0f, 3.0f);
+    report.check(transform.snapshotAt(RationalTime(0, 24)).scaleX == 2.0f,
+                 QStringLiteral("static scale is applied once"));
+    transform.setInitialRotation(RationalTime(0, 24), 30.0f);
+    report.check(transform.channelProperty(TransformChannel::Rotation)->getValue().toFloat() == 30.0f
+                     && transform.snapshotAt(RationalTime(0, 24)).rotation == 30.0f,
+                 QStringLiteral("initial rotation agrees with canonical property"));
+    auto sx = transform.channelProperty(TransformChannel::ScaleX);
+    sx->addKeyFrame(RationalTime(12, 24), 4.0f);
+    transform.setKeyframeTimeScale(60);
+    report.check(sx->hasKeyFrameAt(RationalTime(30, 60))
+                     && transform.snapshotAt(RationalTime(30, 60)).scaleX == 4.0f,
+                 QStringLiteral("frame rate change preserves key time"));
+    AnimatableTransform3D copied(transform);
+    copied.channelProperty(TransformChannel::ScaleX)->clearKeyFrames();
+    report.check(sx->getKeyFrames().size() == 1,
+                 QStringLiteral("copied layer owns independent keys"));
+    AnimatableTransform3D assigned;
+    const auto bound = assigned.channelProperty(TransformChannel::ScaleX);
+    assigned = transform;
+    report.check(bound.get() == assigned.channelProperty(TransformChannel::ScaleX).get()
+                     && bound->getKeyFrames().size() == 1,
+                 QStringLiteral("copy assignment preserves bound property identity"));
+    assigned = AnimatableTransform3D{};
+    report.check(bound.get() == assigned.channelProperty(TransformChannel::ScaleX).get()
+                     && bound->getKeyFrames().empty(),
+                 QStringLiteral("move reset clears keys without detaching editor"));
+    const auto channelJson = PropertySerializationBridge::serializeProperty(sx);
+    auto restored = assigned.channelProperty(TransformChannel::ScaleX);
+    PropertySerializationBridge::deserializeProperty(restored, channelJson);
+    report.check(assigned.snapshotAt(RationalTime(12, 24)).scaleX == 4.0f,
+                 QStringLiteral("deserialization updates native evaluation directly"));
 
     qInfo().noquote() << "[PropertyKeyframe Test] failures:" << report.failures;
     return report.failures;

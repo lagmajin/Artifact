@@ -440,6 +440,24 @@ void captureGizmoKeyState(const ArtifactAbstractLayerPtr &layer, int64_t frame,
   snapshot.rotationAnimated = transform.getRotationKeyFrameCount() > 0;
   snapshot.scaleAnimated = transform.getScaleKeyFrameCount() > 0;
   captureGizmoPropertyKeys(layer, time, snapshot);
+  // The drag must start from the same evaluated values as the inspector and
+  // renderer, including keys authored only through the timeline.
+  for (const auto &saved : snapshot.properties) {
+    const auto property = layer->getProperty(saved.path);
+    if (!property) continue;
+    bool ok = false;
+    const float value = property->interpolateValue(time).toFloat(&ok);
+    if (!ok || !std::isfinite(value)) continue;
+    if (saved.path == QStringLiteral("transform.position.x")) snapshot.position.setX(value);
+    else if (saved.path == QStringLiteral("transform.position.y")) snapshot.position.setY(value);
+    else if (saved.path == QStringLiteral("transform.position.z")) snapshot.position.setZ(value);
+    else if (saved.path == QStringLiteral("transform.scale.x")) snapshot.scale.setX(value);
+    else if (saved.path == QStringLiteral("transform.scale.y")) snapshot.scale.setY(value);
+    else if (saved.path == QStringLiteral("transform.scale.z")) snapshot.scale.setZ(value);
+    else if (saved.path == QStringLiteral("transform.rotation")) snapshot.rotation.setZ(value);
+    else if (saved.path == QStringLiteral("transform.rotation.x")) snapshot.rotation.setX(value);
+    else if (saved.path == QStringLiteral("transform.rotation.y")) snapshot.rotation.setY(value);
+  }
 }
 
 void applyPlanarGizmoTransform(const ArtifactAbstractLayerPtr &layer,
@@ -449,38 +467,7 @@ void applyPlanarGizmoTransform(const ArtifactAbstractLayerPtr &layer,
     return;
   }
 
-  auto &transform = layer->transform3D();
-  const auto time = gizmoTransformTime(layer, frame);
-  if (snapshot.hasPositionKey) {
-    const float initialX = transform.positionX() - transform.positionXAt(time);
-    const float initialY = transform.positionY() - transform.positionYAt(time);
-    transform.setPosition(time, snapshot.position.x() - initialX,
-                          snapshot.position.y() - initialY);
-  } else {
-    transform.removePositionKeyFrameAt(time);
-    if (!snapshot.positionAnimated) {
-      transform.setInitialPosition(time, snapshot.position.x(),
-                                   snapshot.position.y());
-    }
-  }
-
-  if (snapshot.hasRotationKey) {
-    transform.setRotation(time, snapshot.rotation.z());
-  } else {
-    transform.removeRotationKeyFrameAt(time);
-    if (!snapshot.rotationAnimated) {
-      transform.setInitialRotation(time, snapshot.rotation.z());
-    }
-  }
-
-  if (snapshot.hasScaleKey) {
-    transform.setScale(time, snapshot.scale.x(), snapshot.scale.y());
-  } else {
-    transform.removeScaleKeyFrameAt(time);
-    if (!snapshot.scaleAnimated) {
-      transform.setInitialScale(time, snapshot.scale.x(), snapshot.scale.y());
-    }
-  }
+  restoreGizmoPropertyKeys(layer, gizmoTransformTime(layer, frame), snapshot);
 }
 
 bool gizmoAutoKeyApplies(const ArtifactAbstractLayerPtr &layer,
@@ -520,8 +507,10 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
                              const GizmoTransformSnapshot &before,
                              const GizmoTransformSnapshot &current) {
   if (!layer) return;
-  auto &transform = layer->transform3D();
   const auto time = gizmoTransformTime(layer, frame);
+  // A drag is evaluated from its start snapshot on every update, so moving
+  // back to the start removes keys introduced by an earlier mouse move.
+  restoreGizmoPropertyKeys(layer, time, before);
   const bool autoKeyPosition = gizmoAutoKeyApplies(
       layer, QStringLiteral("transform.position"));
   const bool autoKeyRotation = gizmoAutoKeyApplies(
@@ -529,83 +518,19 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
   const bool autoKeyScale = gizmoAutoKeyApplies(
       layer, QStringLiteral("transform.scale"));
 
-  const bool positionPropertiesAnimated =
-      before.propertyAnimated(QStringLiteral("transform.position.x")) ||
-      before.propertyAnimated(QStringLiteral("transform.position.y")) ||
-      before.propertyAnimated(QStringLiteral("transform.position.z"));
-  const bool scalePropertiesAnimated =
-      before.propertyAnimated(QStringLiteral("transform.scale.x")) ||
-      before.propertyAnimated(QStringLiteral("transform.scale.y")) ||
-      before.propertyAnimated(QStringLiteral("transform.scale.z"));
-  const bool positionKeyed = before.hasPositionKey || before.positionAnimated ||
-                             positionPropertiesAnimated || autoKeyPosition;
-  const bool rotationKeyed = before.hasRotationKey || before.rotationAnimated ||
-      before.propertyAnimated(QStringLiteral("transform.rotation")) || autoKeyRotation;
-  const bool scaleKeyed = before.hasScaleKey || before.scaleAnimated ||
-                          scalePropertiesAnimated || autoKeyScale;
-
   const bool positionChanged =
       (current.position - before.position).lengthSquared() > 0.000001f;
   const bool rotationChanged =
       (current.rotation - before.rotation).lengthSquared() > 0.000001f;
   const bool scaleChanged =
       (current.scale - before.scale).lengthSquared() > 0.000001f;
-  if (positionChanged) {
-    if (positionKeyed) {
-      const float initialX = transform.positionX() - transform.positionXAt(time);
-      const float initialY = transform.positionY() - transform.positionYAt(time);
-      transform.setPosition(time, current.position.x() - initialX,
-                            current.position.y() - initialY);
-    } else {
-      transform.setInitialPosition(time, current.position.x(),
-                                   current.position.y());
-    }
-    if (std::abs(current.position.z() - before.position.z()) > 0.000001f) {
-      if (positionKeyed) {
-        transform.setPositionZ(time, current.position.z());
-      } else {
-        transform.setCurrentPositionZ(current.position.z());
-      }
-    }
-  }
-
-  if (rotationChanged) {
-    if (current.is3D) {
-      if (rotationKeyed) {
-        transform.setRotationX(time, current.rotation.x());
-        transform.setRotationY(time, current.rotation.y());
-        transform.setRotationZ(time, current.rotation.z());
-      } else {
-        transform.setCurrentRotationX(current.rotation.x());
-        transform.setCurrentRotationY(current.rotation.y());
-        transform.setCurrentRotationZ(current.rotation.z());
-      }
-    } else if (rotationKeyed) {
-      transform.setRotation(time, current.rotation.z());
-    } else {
-      transform.setInitialRotation(time, current.rotation.z());
-    }
-  }
-
-  if (scaleChanged) {
-    if (scaleKeyed) {
-      transform.setScale(time, current.scale.x(), current.scale.y());
-    } else {
-      transform.setInitialScale(time, current.scale.x(), current.scale.y());
-    }
-    if (current.is3D &&
-        std::abs(current.scale.z() - before.scale.z()) > 0.000001f) {
-      transform.setScale(time, current.scale.x(), current.scale.y(),
-                         current.scale.z());
-    }
-  }
-  const float currentRotation = current.is3D
-      ? current.rotation.x()
-      : current.rotation.z();
+  const float currentRotation = current.rotation.z();
   const auto syncProperty = [&](const QString &path, const QVariant &value,
                                 bool keyed) {
     const auto property = layer->getProperty(path);
     if (!property || !property->isAnimatable()) return;
+    const auto old = property->interpolateValue(time);
+    if (old.isValid() && std::abs(old.toDouble() - value.toDouble()) <= 0.000001) return;
     if (keyed) {
       // Preserve interpolation/labels when editing an existing property key.
       for (const auto &saved : before.properties) {
@@ -620,18 +545,17 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
         }
       }
       property->addKeyFrame(time, value);
+    } else {
+      property->setValue(value);
     }
   };
-  // Existing property channels are authoritative. A Transform3D-only animation
-  // still seeds property mirrors, but must not turn an unkeyed sibling into an
-  // animated channel when the left pane has keyed only X or Y.
+  // Each axis owns its keying state. Shared native storage is not a reason to
+  // key an unanimated sibling when the timeline has keyed only X or Y.
   const auto positionChannelKeyed = [&](const QString &path) {
-    return before.propertyAnimated(path) || autoKeyPosition ||
-           (!positionPropertiesAnimated && positionKeyed);
+    return before.propertyAnimated(path) || autoKeyPosition;
   };
   const auto scaleChannelKeyed = [&](const QString &path) {
-    return before.propertyAnimated(path) || autoKeyScale ||
-           (!scalePropertiesAnimated && scaleKeyed);
+    return before.propertyAnimated(path) || autoKeyScale;
   };
   if (positionChanged) {
     syncProperty(QStringLiteral("transform.position.x"),
@@ -645,7 +569,13 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
   }
   if (rotationChanged) {
     syncProperty(QStringLiteral("transform.rotation"), currentRotation,
-                 rotationKeyed);
+                 before.propertyAnimated(QStringLiteral("transform.rotation")) || autoKeyRotation);
+    if (current.is3D) {
+      syncProperty(QStringLiteral("transform.rotation.x"), current.rotation.x(),
+          before.propertyAnimated(QStringLiteral("transform.rotation.x")) || autoKeyRotation);
+      syncProperty(QStringLiteral("transform.rotation.y"), current.rotation.y(),
+          before.propertyAnimated(QStringLiteral("transform.rotation.y")) || autoKeyRotation);
+    }
   }
   if (scaleChanged) {
     syncProperty(QStringLiteral("transform.scale.x"), current.scale.x(),
@@ -6039,6 +5969,8 @@ bool historicalBoundsSupported(const ArtifactAbstractLayerPtr &layer) {
   return layer && !layer->is3D() && !layer->isLocked() &&
       !layer->isSelectionLocked() && layer->isVisible() &&
       (dynamic_cast<ArtifactImageLayer *>(layer.get()) ||
+       dynamic_cast<ArtifactSolid2DLayer *>(layer.get()) ||
+       dynamic_cast<ArtifactSolidImageLayer *>(layer.get()) ||
        dynamic_cast<ArtifactShapeLayer *>(layer.get())) &&
       layer->localBounds().isValid();
 }
@@ -15762,6 +15694,12 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                        layerId == impl_->selectedLayerId_);
 
+                  // Source pixels can be reused for transform edits, but the
+                  // cached final frames still contain the previous placement.
+                  if (skipCacheInvalidation) {
+                    invalidatesFinalPreview = true;
+                  }
+
                   if (!skipCacheInvalidation) {
 
                     impl_->invalidateLayerSurfaceCache(layer);
@@ -15794,6 +15732,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                       QStringLiteral("composition-content-changed"));
                 }
               }
+
+              impl_->invalidateOverlayComposite();
 
               // ギズモドラッグ中はオーバーレイ同期コストを省く（ドラッグ終了時に一括同期）
 
@@ -19669,7 +19609,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
         renderer_->drawDashedLineLocal(
             {static_cast<float>(a.x()), static_cast<float>(a.y())},
             {static_cast<float>(b.x()), static_cast<float>(b.y())},
-            std::max(1.0f, invZoom), 2.0f, 4.0f, color);
+            std::max(1.0f, invZoom), 2.0f * invZoom, 4.0f * invZoom, color);
         renderer_->drawPoint(static_cast<float>(a.x()), static_cast<float>(a.y()),
                              4.0f * invZoom, color);
       }
@@ -25496,14 +25436,13 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                 QLineF(viewportPos, fixedPoint).length() > 0.5;
           }
         } else {
-          const QRectF localBounds = selectedLayer->localBounds();
-          const QRectF frameBounds = localBounds;
-          QPointF fixedLocal;
-          if (projectedFrameScaleFixedPoint(frameBounds, frameHandle,
-                                            scaleFromCenter, fixedLocal)) {
+          const auto& transform = selectedLayer->transform3D();
+          const auto time = gizmoTransformTime(selectedLayer,
+                                               selectedLayer->currentFrame());
+          {
             const QVector3D fixedWorld = selectedLayer->getGlobalTransform4x4().map(
-                QVector3D(static_cast<float>(fixedLocal.x()),
-                          static_cast<float>(fixedLocal.y()), 0.0f));
+                QVector3D(transform.anchorXAt(time), transform.anchorYAt(time),
+                          transform.anchorZAt(time)));
             const QVector3D fixedProjected = ViewportMath::projectToTopDown(
                 fixedWorld, frameView, frameProjection, frameViewport);
             if (std::isfinite(fixedProjected.x()) &&
@@ -27830,95 +27769,17 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
           }
         }
 
-        // Keep the opposite frame handle fixed in the layer's parent space.
-        // The previous half-width correction assumed a centered anchor and
-        // wrote a world-space offset into local position, which caused drift
-        // for custom anchors, rotation, existing scale, and parented layers.
+        // Single-layer frame scaling keeps the authored anchor fixed (AE).
+        // Position must not be adjusted or keyed as a side effect of Scale.
         impl_->projectedFrameCorrectedLocalPositionValid_ = false;
         if ((projectedCorner || projectedEdge) &&
-            !impl_->gizmoGroupTransformActive_ &&
-            !modifiers.testFlag(Qt::ControlModifier)) {
-          const QRectF localBounds = sel3DLayer->localBounds();
-          const QRectF frameBounds = localBounds;
-          QPointF fixedLocal = frameBounds.center();
-          switch (projectedHandle) {
-          case TransformGizmo::HandleType::Scale_TL:
-            fixedLocal = frameBounds.bottomRight();
-            break;
-          case TransformGizmo::HandleType::Scale_TR:
-            fixedLocal = frameBounds.bottomLeft();
-            break;
-          case TransformGizmo::HandleType::Scale_BL:
-            fixedLocal = frameBounds.topRight();
-            break;
-          case TransformGizmo::HandleType::Scale_BR:
-            fixedLocal = frameBounds.topLeft();
-            break;
-          case TransformGizmo::HandleType::Scale_T:
-            fixedLocal = QPointF(frameBounds.center().x(),
-                                 frameBounds.bottom());
-            break;
-          case TransformGizmo::HandleType::Scale_B:
-            fixedLocal = QPointF(frameBounds.center().x(), frameBounds.top());
-            break;
-          case TransformGizmo::HandleType::Scale_L:
-            fixedLocal = QPointF(frameBounds.right(),
-                                 frameBounds.center().y());
-            break;
-          case TransformGizmo::HandleType::Scale_R:
-            fixedLocal = QPointF(frameBounds.left(),
-                                 frameBounds.center().y());
-            break;
-          default:
-            break;
-          }
-
-          const auto &transform = sel3DLayer->transform3D();
-          const auto time = gizmoTransformTime(sel3DLayer,
-                                               sel3DLayer->currentFrame());
-          const QVector3D anchor(transform.anchorXAt(time),
-                                 transform.anchorYAt(time),
-                                 transform.anchorZAt(time));
-          const QVector3D beforeScale =
-              impl_->gizmoLayerTransformBefore_.scale;
-          QVector3D currentScale = impl_->gizmo3D_->scale();
-          if (!sel3DLayer->is3D()) {
-            const auto visualBefore = impl_->gizmoUndoBefore_.scale;
-            currentScale.setX(beforeScale.x() * currentScale.x() /
-                (std::abs(visualBefore.x()) > 0.001f ? visualBefore.x() : 0.001f));
-            currentScale.setY(beforeScale.y() * currentScale.y() /
-                (std::abs(visualBefore.y()) > 0.001f ? visualBefore.y() : 0.001f));
-          }
-          const auto rotation = impl_->gizmoLayerTransformBefore_.rotation;
-          QMatrix4x4 beforeLinear;
-          beforeLinear.rotate(rotation.x(), 1.0f, 0.0f, 0.0f);
-          beforeLinear.rotate(rotation.y(), 0.0f, 1.0f, 0.0f);
-          beforeLinear.rotate(rotation.z(), 0.0f, 0.0f, 1.0f);
-          QMatrix4x4 currentLinear = beforeLinear;
-          beforeLinear.scale(beforeScale);
-          currentLinear.scale(currentScale);
-          const QVector3D localOffset = QVector3D(
-              static_cast<float>(fixedLocal.x()),
-              static_cast<float>(fixedLocal.y()), 0.0f) - anchor;
-          const QVector3D beforeOffset = beforeLinear.mapVector(localOffset);
-          const QVector3D currentOffset = currentLinear.mapVector(localOffset);
-          const QVector3D beforePosition =
+            !impl_->gizmoGroupTransformActive_) {
+          impl_->projectedFrameCorrectedLocalPosition_ =
               impl_->gizmoLayerTransformBefore_.position;
-          const QVector3D correctedLocalPosition(
-              beforePosition.x() +
-                  static_cast<float>(beforeOffset.x() - currentOffset.x()),
-              beforePosition.y() +
-                  static_cast<float>(beforeOffset.y() - currentOffset.y()),
-              beforePosition.z() + beforeOffset.z() - currentOffset.z());
-          if (std::isfinite(correctedLocalPosition.x()) &&
-              std::isfinite(correctedLocalPosition.y())) {
-            impl_->projectedFrameCorrectedLocalPosition_ =
-                correctedLocalPosition;
-            impl_->projectedFrameCorrectedLocalPositionValid_ = true;
-            impl_->gizmo3D_->setTransform(
-                impl_->projectedFrameParentWorld_.map(correctedLocalPosition),
-                impl_->gizmo3D_->rotation());
-          }
+          impl_->projectedFrameCorrectedLocalPositionValid_ = true;
+          impl_->gizmo3D_->setTransform(
+              impl_->projectedFrameStartWorldAnchor_,
+              impl_->gizmo3D_->rotation());
         }
 
         // AE-style rotation snap for the 3D gizmo. Ctrl explicitly disables
@@ -28403,8 +28264,8 @@ bool CompositionRenderController::cancelGizmoInteraction() {
       auto &transform = layer->transform3D();
       const auto time = gizmoTransformTime(layer, frame);
       if (snapshot.hasPositionKey) {
-        const float initialX = transform.positionX() - transform.positionXAt(time);
-        const float initialY = transform.positionY() - transform.positionYAt(time);
+        const float initialX = transform.snapshotAt(time).positionX - transform.positionXAt(time);
+        const float initialY = transform.snapshotAt(time).positionY - transform.positionYAt(time);
         transform.setPosition(time, snapshot.position.x() - initialX,
                               snapshot.position.y() - initialY);
       } else {
@@ -38726,7 +38587,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 renderer_->drawDashedLineLocal(
                     {static_cast<float>(a.x()), static_cast<float>(a.y())},
                     {static_cast<float>(b.x()), static_cast<float>(b.y())},
-                    std::max(1.0f, invZoom), 2.0f, 4.0f, color);
+                    std::max(1.0f, invZoom), 2.0f * invZoom, 4.0f * invZoom, color);
                 renderer_->drawPoint(static_cast<float>(a.x()),
                                      static_cast<float>(a.y()),
                                      4.0f * invZoom, color);

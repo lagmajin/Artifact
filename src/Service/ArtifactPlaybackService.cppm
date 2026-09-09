@@ -1298,16 +1298,17 @@ public:
     if (!currentComposition_) {
       previewDiskActiveNamespace_.clear();
       previewDiskCompositionStateHash_.clear();
+      previewDiskNamespaceCache_.clear();
+      previewDiskNamespaceValid_ = false;
       return;
     }
 
     const QString compositionId = cachedCurrentCompositionIdStr_;
     QString namespaceToClear = previewDiskActiveNamespace_;
-    if (namespaceToClear.isEmpty()) {
-      namespaceToClear = currentCompositionDiskCacheNamespace();
+    if (namespaceToClear.isEmpty() && previewDiskNamespaceValid_) {
+      namespaceToClear = previewDiskNamespaceCache_;
     }
     QDir root(previewDiskCacheRoot());
-    QDir dir(root.filePath(namespaceToClear));
     {
       // A queued frame write belongs to the old cache generation and must not
       // recreate this directory after it has been cleared.
@@ -1317,13 +1318,21 @@ public:
                                             const PreviewDiskWriteTask &task) {
         return task.compositionId == compositionId;
       });
-      if (dir.exists()) {
-        dir.removeRecursively();
+      if (!namespaceToClear.isEmpty()) {
+        QDir dir(root.filePath(namespaceToClear));
+        if (dir.exists()) {
+          dir.removeRecursively();
+        }
       }
-      if (previewDiskActiveNamespace_ == namespaceToClear) {
-        previewDiskActiveNamespace_.clear();
+      if (previewDiskEnsuredDirKey_ == namespaceToClear) {
+        previewDiskEnsuredDirKey_.clear();
+        previewDiskEnsuredDirPath_.clear();
       }
+      previewDiskActiveNamespace_.clear();
       previewDiskCompositionStateHash_.clear();
+      previewDiskNamespaceCache_.clear();
+      previewDiskNamespaceStateHash_.clear();
+      previewDiskNamespaceValid_ = false;
     }
   }
 

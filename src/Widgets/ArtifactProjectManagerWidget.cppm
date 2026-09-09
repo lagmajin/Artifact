@@ -4345,7 +4345,7 @@ public:
             const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
             const float newFrameRate = static_cast<float>(
                 std::max(1.0, compositionFrameRateSpin->value()));
-            const FrameRange newRange(FramePosition(startFrame), FramePosition(endFrame));
+            const FrameRange newRange{FramePosition(startFrame), FramePosition(endFrame)};
             const QColor bg = compositionBackgroundButton->selectedColor();
             const FloatColor newBackground(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF());
             bool remapRequested = false;

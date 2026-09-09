@@ -118,7 +118,6 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
     // Keep random-access transform evaluation (used by motion paths) in sync
     // with the initial transform state.
     transform.setCurrentPosition(anchorX, anchorY);
-    transform.setAnchor(ArtifactCore::RationalTime(0, 1), anchorX, anchorY);
     transform.setCurrentAnchor(anchorX, anchorY);
    } else {
     solidLayer->setSize(1920, 1080);

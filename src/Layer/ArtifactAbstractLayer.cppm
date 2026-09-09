@@ -99,6 +99,7 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 using LayerAbstractUtilities::finiteClampedValue;
+using namespace LayerAbstractUtilities;
 
 namespace {
 ArtifactLayerJsonFactory g_layerJsonFactory = nullptr;
@@ -199,102 +200,28 @@ using float4x4 = Diligent::float4x4;
 
 W_OBJECT_IMPL(ArtifactAbstractLayer)
 
-QJsonObject layerEffectEnvelopeToJson(const LayerEffectEnvelope &envelope) {
-  QJsonObject obj;
-  obj["enabled"] = envelope.enabled;
-  obj["entry"] = envelope.entry;
-  obj["exit"] = envelope.exit;
-  obj["timing"] = static_cast<int>(envelope.timing);
-  obj["curve"] = static_cast<int>(envelope.curve);
-  obj["durationFrames"] = static_cast<qint64>(envelope.durationFrames);
-  obj["effectStart"] = static_cast<double>(envelope.effectStart);
-  obj["effectEnd"] = static_cast<double>(envelope.effectEnd);
-  return obj;
+bool isTimelineHiddenLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeTimelineHiddenLayerPropertyGroup(groupName);
 }
 
-LayerEffectEnvelope layerEffectEnvelopeFromJson(const QJsonObject &obj) {
-  LayerEffectEnvelope envelope;
-  envelope.enabled = obj.value(QStringLiteral("enabled")).toBool(false);
-  envelope.entry = obj.value(QStringLiteral("entry")).toBool(false);
-  envelope.exit = obj.value(QStringLiteral("exit")).toBool(false);
-  const int timing = std::clamp(obj.value(QStringLiteral("timing")).toInt(0), 0, 2);
-  envelope.timing = static_cast<LayerEnvelopeTiming>(timing);
-  const int curve = std::clamp(obj.value(QStringLiteral("curve")).toInt(0), 0, 4);
-  envelope.curve = static_cast<LayerEnvelopeCurve>(curve);
-  envelope.durationFrames = std::max<std::int64_t>(
-      1, obj.value(QStringLiteral("durationFrames")).toVariant().toLongLong());
-  envelope.effectStart = static_cast<float>(
-      std::clamp(obj.value(QStringLiteral("effectStart")).toDouble(0.0), 0.0, 1.0));
-  envelope.effectEnd = static_cast<float>(
-      std::clamp(obj.value(QStringLiteral("effectEnd")).toDouble(1.0), 0.0, 1.0));
-  return envelope;
+bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeTimelineExpandedByDefaultLayerPropertyGroup(groupName);
 }
 
-float applyLayerEffectEnvelopeOpacity(const LayerEffectEnvelope &envelope,
-                                      const float opacity,
-                                      const std::int64_t currentFrame,
-                                      const FramePosition &inPoint,
-                                      const FramePosition &outPoint,
-                                      const FramePosition &startTime) {
-  if (!envelope.enabled || envelope.durationFrames <= 0) {
-    return std::clamp(opacity, 0.0f, 1.0f);
-  }
-
-  const std::int64_t layerDuration =
-      std::max<std::int64_t>(0, outPoint.framePosition() - inPoint.framePosition());
-  const std::int64_t visibleFrame = currentFrame - startTime.framePosition();
-  const std::int64_t clampedVisibleFrame =
-      std::clamp<std::int64_t>(visibleFrame, 0, layerDuration);
-  const std::int64_t duration =
-      std::max<std::int64_t>(1, envelope.durationFrames);
-
-  float multiplier = 1.0f;
-  if (envelope.entry && clampedVisibleFrame < duration) {
-    multiplier *= envelope.sample(clampedVisibleFrame, false).opacity;
-  }
-  if (envelope.exit) {
-    const std::int64_t framesToEnd = layerDuration - clampedVisibleFrame;
-    if (framesToEnd <= duration) {
-      multiplier *= envelope.sample(framesToEnd, false).opacity;
-    }
-  }
-  return std::clamp(opacity * multiplier, 0.0f, 1.0f);
+bool isInspectorHiddenLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeInspectorHiddenLayerPropertyGroup(groupName);
 }
 
-bool isTimelineHiddenLayerPropertyGroup(const QString &groupName) {
-  const QString normalized = groupName.trimmed();
-  return normalized.compare(QStringLiteral("Transform"),
-                            Qt::CaseInsensitive) != 0;
+bool isInspectorExpandedByDefaultLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeInspectorExpandedByDefaultLayerPropertyGroup(groupName);
 }
 
-bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
-  const QString normalized = groupName.trimmed();
-  if (normalized.compare(QStringLiteral("Transform"), Qt::CaseInsensitive) == 0) {
-    return true;
-  }
-  // The standard timeline property surface is Transform-only.
-  return false;
+bool isClonerLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeClonerLayerPropertyGroup(groupName);
 }
 
-bool isInspectorHiddenLayerPropertyGroup(const QString &groupName) {
-  const QString normalized = groupName.trimmed();
-  return normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0;
-}
-
-bool isInspectorExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
-  return groupName.trimmed().compare(QStringLiteral("Initial"),
-                                     Qt::CaseInsensitive) == 0;
-}
-
-bool isClonerLayerPropertyGroup(const QString &groupName) {
-  return groupName.trimmed().compare(QStringLiteral("Cloner"),
-                                     Qt::CaseInsensitive) == 0;
-}
-
-bool isSourceReframeLayerPropertyGroup(const QString &groupName) {
-  return groupName.trimmed().compare(QStringLiteral("Source Reframe"),
-                                     Qt::CaseInsensitive) == 0;
+bool isSourceReframeLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeSourceReframeLayerPropertyGroup(groupName);
 }
 
 namespace {
@@ -336,72 +263,6 @@ void applyCompositionTransformFields(
   positionY += adjustment.positionOffset.y();
   scaleX *= adjustment.scaleMultiplier;
   scaleY *= adjustment.scaleMultiplier;
-}
-
-QRectF mapRectWithMatrix(const QMatrix4x4 &matrix, const QRectF &rect) {
-  if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
-    return QRectF();
-  }
-
-  const QVector4D corners[] = {
-      QVector4D(static_cast<float>(rect.left()), static_cast<float>(rect.top()),
-                0.0f, 1.0f),
-      QVector4D(static_cast<float>(rect.right()), static_cast<float>(rect.top()),
-                0.0f, 1.0f),
-      QVector4D(static_cast<float>(rect.right()),
-                static_cast<float>(rect.bottom()), 0.0f, 1.0f),
-      QVector4D(static_cast<float>(rect.left()),
-                static_cast<float>(rect.bottom()), 0.0f, 1.0f)};
-
-  float minX = std::numeric_limits<float>::infinity();
-  float minY = std::numeric_limits<float>::infinity();
-  float maxX = -std::numeric_limits<float>::infinity();
-  float maxY = -std::numeric_limits<float>::infinity();
-
-  for (const auto &corner : corners) {
-    const QVector4D mapped = matrix * corner;
-    minX = std::min(minX, mapped.x());
-    minY = std::min(minY, mapped.y());
-    maxX = std::max(maxX, mapped.x());
-    maxY = std::max(maxY, mapped.y());
-  }
-
-  if (!std::isfinite(minX) || !std::isfinite(minY) || !std::isfinite(maxX) ||
-      !std::isfinite(maxY) || maxX <= minX || maxY <= minY) {
-    return QRectF();
-  }
-
-  return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
-}
-
-QMatrix4x4 matrixFromTransform2D(const QTransform& transform) {
-  return QMatrix4x4(
-      static_cast<float>(transform.m11()), static_cast<float>(transform.m21()), 0.0f, static_cast<float>(transform.m31()),
-      static_cast<float>(transform.m12()), static_cast<float>(transform.m22()), 0.0f, static_cast<float>(transform.m32()),
-      0.0f,                               0.0f,                               1.0f, 0.0f,
-      static_cast<float>(transform.m13()), static_cast<float>(transform.m23()), 0.0f, static_cast<float>(transform.m33()));
-}
-
-QString slugifyEffectId(const QString &text) {
-  QString slug;
-  slug.reserve(text.size());
-  bool lastWasDash = false;
-  for (const QChar ch : text.trimmed().toLower()) {
-    if (ch.isLetterOrNumber()) {
-      slug.append(ch);
-      lastWasDash = false;
-    } else if (!slug.isEmpty() && !lastWasDash) {
-      slug.append(QChar('-'));
-      lastWasDash = true;
-    }
-  }
-  while (slug.endsWith(QChar('-'))) {
-    slug.chop(1);
-  }
-  if (slug.isEmpty()) {
-    slug = QStringLiteral("effect");
-  }
-  return slug;
 }
 
 QString uniqueEffectIdForLayer(
@@ -2327,24 +2188,19 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   auto evaluateDouble = [this, &time, hasTransVar](const QString &propertyPath,
                                       double fallback) {
     if (hasTransVar) return fallback;
-    const auto it = impl_->propertyCache_.constFind(propertyPath);
-    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
-      return fallback;
-    }
-    const auto &property = *it.value();
-    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
-      return fallback;
-    }
+    const auto handle = getProperty(propertyPath);
+    if (!handle) return fallback;
+    const auto &property = *handle;
     const QVariant animatedValue = property.interpolateValue(time);
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
 
   const bool useSpatialPosition = !hasTransVar && t.hasPositionSpatialTangents();
   double positionX = useSpatialPosition
-      ? t.positionXAt(time)
+      ? t.snapshotAt(time).positionX
       : evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
   double positionY = useSpatialPosition
-      ? t.positionYAt(time)
+      ? t.snapshotAt(time).positionY
       : evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
   double rotation =
       evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
@@ -2690,10 +2546,9 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
                                                                   double fallback) {
     if (hasTransVar) return fallback;
     double evaluated = fallback;
-    const auto it = impl_->propertyCache_.constFind(propertyPath);
-    if (it != impl_->propertyCache_.constEnd() && it.value()) {
-      const auto &property = *it.value();
-      if (property.isAnimatable() && !property.getKeyFrames().empty()) {
+    if (const auto handle = getProperty(propertyPath)) {
+      const auto &property = *handle;
+      if (property.isAnimatable()) {
         const QVariant animatedValue = property.interpolateValue(time);
         if (animatedValue.isValid()) {
           evaluated = animatedValue.toDouble();
@@ -2710,10 +2565,10 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
 
   const bool useSpatialPosition = !hasTransVar && t.hasPositionSpatialTangents();
   double positionX = useSpatialPosition
-      ? t.positionXAt(time)
+      ? t.snapshotAt(time).positionX
       : evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
   double positionY = useSpatialPosition
-      ? t.positionYAt(time)
+      ? t.snapshotAt(time).positionY
       : evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
   if (useSpatialPosition) {
     if (const auto *stack = animationLayerStack(QStringLiteral("transform.position.x"));
@@ -2831,23 +2686,18 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const double fps = effectiveLayerFrameRate(this);
   auto evaluateDouble = [this, &time](const QString &propertyPath,
                                       double fallback) {
-    const auto it = impl_->propertyCache_.constFind(propertyPath);
-    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
-      return fallback;
-    }
-    const auto &property = *it.value();
-    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
-      return fallback;
-    }
+    const auto handle = getProperty(propertyPath);
+    if (!handle) return fallback;
+    const auto &property = *handle;
     const QVariant animatedValue = property.interpolateValue(time);
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
   const bool useSpatialPosition = t.hasPositionSpatialTangents();
   double positionX = useSpatialPosition
-      ? t.positionXAt(time)
+      ? t.snapshotAt(time).positionX
       : evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
   double positionY = useSpatialPosition
-      ? t.positionYAt(time)
+      ? t.snapshotAt(time).positionY
       : evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
   const double positionZ = t.positionZAt(time);
   double rotation =
@@ -5841,56 +5691,37 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   // behavior across project save/load.  The enum values are part of the
   // public Transform3D contract (Off, AlongPath, AlongPathAtFrameStart).
   trans["autoOrientMode"] = static_cast<int>(t3.autoOrientMode());
-  QJsonArray positionKeyframes;
-  for (const auto &time : t3.getPositionKeyFrameTimes()) {
-    const auto frame = time.rescaledTo(24);
-    QJsonObject keyframe;
-    keyframe["frame"] = static_cast<qint64>(frame);
-    keyframe["x"] = t3.positionXAt(time);
-    keyframe["y"] = t3.positionYAt(time);
-    keyframe["xInterpolation"] = static_cast<int>(
-        t3.positionXKeyFrameInterpolationAt(time));
-    keyframe["yInterpolation"] = static_cast<int>(
-        t3.positionYKeyFrameInterpolationAt(time));
-    ArtifactCore::PositionSpatialTangents tangents;
-    if (t3.positionKeyFrameSpatialTangentsAt(time, tangents)) {
-      keyframe["inTangentX"] = tangents.inTangent.x;
-      keyframe["inTangentY"] = tangents.inTangent.y;
-      keyframe["outTangentX"] = tangents.outTangent.x;
-      keyframe["outTangentY"] = tangents.outTangent.y;
-      keyframe["tangentsLinked"] = tangents.linked;
-    }
-    positionKeyframes.append(keyframe);
+  trans["channelSchema"] = 1;
+  trans["initialRotation"] = t3.initialRotation();
+  QJsonObject channels;
+  for (int index = 0; index <= static_cast<int>(ArtifactCore::TransformChannel::AnchorZ); ++index) {
+    const auto property = t3.channelProperty(static_cast<ArtifactCore::TransformChannel>(index));
+    const auto serialized = ArtifactCore::PropertySerializationBridge::serializeProperty(property);
+    QJsonObject entry;
+    entry["value"] = serialized.value;
+    entry["keyframes"] = serialized.keyframes;
+    entry["expression"] = serialized.expression;
+    entry["envelopes"] = serialized.envelopes;
+    entry["metadata"] = serialized.metadata;
+    channels[property->getName()] = entry;
   }
-  if (!positionKeyframes.isEmpty()) {
-    trans["positionKeyframes"] = positionKeyframes;
+  trans["channels"] = channels;
+  // Spatial handles are metadata, not a second copy of position key values.
+  QJsonArray spatialTangents;
+  for (const auto& time : t3.getPositionKeyFrameTimes()) {
+    ArtifactCore::PositionSpatialTangents tangent;
+    if (!t3.positionKeyFrameSpatialTangentsAt(time, tangent)) continue;
+    QJsonObject entry;
+    entry["timeValue"] = time.value();
+    entry["timeScale"] = time.scale();
+    entry["inX"] = tangent.inTangent.x;
+    entry["inY"] = tangent.inTangent.y;
+    entry["outX"] = tangent.outTangent.x;
+    entry["outY"] = tangent.outTangent.y;
+    entry["linked"] = tangent.linked;
+    spatialTangents.append(entry);
   }
-  QJsonArray rotationKeyframes;
-  for (const auto &time : t3.getRotationKeyFrameTimes()) {
-    const auto frame = time.rescaledTo(24);
-    QJsonObject keyframe;
-    keyframe["frame"] = static_cast<qint64>(frame);
-    keyframe["value"] = t3.rotationZAt(time);
-    keyframe["x"] = t3.rotationXAt(time);
-    keyframe["y"] = t3.rotationYAt(time);
-    keyframe["z"] = t3.rotationZAt(time);
-    rotationKeyframes.append(keyframe);
-  }
-  if (!rotationKeyframes.isEmpty()) {
-    trans["rotationKeyframes"] = rotationKeyframes;
-  }
-  QJsonArray scaleKeyframes;
-  for (const auto &time : t3.getScaleKeyFrameTimes()) {
-    const auto frame = time.rescaledTo(24);
-    QJsonObject keyframe;
-    keyframe["frame"] = static_cast<qint64>(frame);
-    keyframe["x"] = t3.scaleXAt(time);
-    keyframe["y"] = t3.scaleYAt(time);
-    scaleKeyframes.append(keyframe);
-  }
-  if (!scaleKeyframes.isEmpty()) {
-    trans["scaleKeyframes"] = scaleKeyframes;
-  }
+  trans["spatialTangents"] = spatialTangents;
   obj["transform"] = trans;
 
   // Modifiers and effects
@@ -6574,40 +6405,29 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     const auto finiteTransformValue = [](double value, double fallback) {
       return std::isfinite(value) ? value : fallback;
     };
-    // Time zero only needs a stable scale; avoid implying a fake fps.
-    RationalTime t0(0, 1);
-    if (trans.contains("px"))
-      t3.setPosition(
-          t0,
-          finiteTransformValue(trans["px"].toDouble(), 0.0),
-          finiteTransformValue(trans["py"].toDouble(0.0), 0.0));
-    if (trans.contains("pz"))
-      t3.setPositionZ(t0, finiteTransformValue(trans["pz"].toDouble(), 0.0));
-    const bool hasRotationAxes = trans.contains("rotationX") ||
-                                 trans.contains("rotationY") ||
-                                 trans.contains("rotationZ");
-    if (hasRotationAxes) {
-      t3.setRotationX(t0, static_cast<float>(finiteTransformValue(
-          trans["rotationX"].toDouble(0.0), 0.0)));
-      t3.setRotationY(t0, static_cast<float>(finiteTransformValue(
-          trans["rotationY"].toDouble(0.0), 0.0)));
-      t3.setRotationZ(t0, static_cast<float>(finiteTransformValue(
-          trans["rotationZ"].toDouble(0.0), 0.0)));
-    } else if (trans.contains("rx")) {
-      t3.setRotationZ(t0, static_cast<float>(finiteTransformValue(
-          trans["rx"].toDouble(), 0.0)));
-    }
-    if (trans.contains("sx"))
-      t3.setScale(
-          t0,
-          finiteTransformValue(trans["sx"].toDouble(1.0), 1.0),
-          finiteTransformValue(trans["sy"].toDouble(1.0), 1.0));
-    if (trans.contains("ax"))
-      t3.setAnchor(
-          t0,
-          finiteTransformValue(trans["ax"].toDouble(), 0.0),
-          finiteTransformValue(trans["ay"].toDouble(0.0), 0.0),
-          finiteTransformValue(trans["az"].toDouble(0.0), 0.0));
+    if (!trans.value("channels").isObject()) {
+      // Legacy scalar values are defaults, not animation keys. Only the
+      // explicit legacy key arrays below may enable a channel's animation.
+      t3 = ArtifactCore::AnimatableTransform3D{};
+      t3.setKeyframeTimeScale(effectiveLayerFrameRate(this));
+      const auto restoreBase = [&](ArtifactCore::TransformChannel channel,
+                                   const char* name, double fallback) {
+        t3.channelProperty(channel)->setValue(
+            finiteTransformValue(trans.value(QLatin1String(name)).toDouble(fallback), fallback));
+      };
+      using ArtifactCore::TransformChannel;
+      restoreBase(TransformChannel::PositionX, "px", 0.0);
+      restoreBase(TransformChannel::PositionY, "py", 0.0);
+      restoreBase(TransformChannel::PositionZ, "pz", 0.0);
+      restoreBase(TransformChannel::RotationX, "rotationX", 0.0);
+      restoreBase(TransformChannel::RotationY, "rotationY", 0.0);
+      restoreBase(TransformChannel::Rotation,
+                  trans.contains("rotationZ") ? "rotationZ" : "rx", 0.0);
+      restoreBase(TransformChannel::ScaleX, "sx", 1.0);
+      restoreBase(TransformChannel::ScaleY, "sy", 1.0);
+      restoreBase(TransformChannel::AnchorX, "ax", 0.0);
+      restoreBase(TransformChannel::AnchorY, "ay", 0.0);
+      restoreBase(TransformChannel::AnchorZ, "az", 0.0);
     if (trans.contains("autoOrientMode")) {
       const int mode = std::clamp(
           trans["autoOrientMode"].toInt(),
@@ -6699,6 +6519,46 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         }
       }
     }
+    } else {
+      // New format is authoritative, including empty key arrays. Never merge
+      // legacy keys into a channel that the user explicitly cleared.
+      t3 = ArtifactCore::AnimatableTransform3D{};
+      t3.setKeyframeTimeScale(effectiveLayerFrameRate(this));
+      t3.setInitialRotation(RationalTime(0, 1),
+          finiteTransformValue(trans.value("initialRotation").toDouble(), 0.0));
+      const auto channels = trans.value("channels").toObject();
+      for (int index = 0; index <= static_cast<int>(ArtifactCore::TransformChannel::AnchorZ); ++index) {
+        auto property = t3.channelProperty(static_cast<ArtifactCore::TransformChannel>(index));
+        const auto entryValue = channels.value(property->getName());
+        if (!entryValue.isObject()) continue;
+        const auto entry = entryValue.toObject();
+        ArtifactCore::SerializedProperty serialized;
+        serialized.name = property->getName();
+        serialized.type = static_cast<int>(ArtifactCore::PropertyType::Float);
+        serialized.value = entry.value("value");
+        serialized.keyframes = entry.value("keyframes").toArray();
+        serialized.expression = entry.value("expression").toString();
+        serialized.envelopes = entry.value("envelopes").toArray();
+        serialized.metadata = entry.value("metadata").toObject();
+        ArtifactCore::PropertySerializationBridge::deserializeProperty(property, serialized);
+      }
+      t3.setAutoOrientMode(static_cast<AutoOrientMode>(std::clamp(
+          trans.value("autoOrientMode").toInt(), 0, 2)));
+      for (const auto& value : trans.value("spatialTangents").toArray()) {
+        const auto entry = value.toObject();
+        const auto scale = entry.value("timeScale").toInteger();
+        if (scale <= 0) continue;
+        const RationalTime time(entry.value("timeValue").toInteger(), scale);
+        ArtifactCore::PositionSpatialTangents tangent;
+        tangent.inTangent.x = finiteTransformValue(entry.value("inX").toDouble(), 0.0);
+        tangent.inTangent.y = finiteTransformValue(entry.value("inY").toDouble(), 0.0);
+        tangent.outTangent.x = finiteTransformValue(entry.value("outX").toDouble(), 0.0);
+        tangent.outTangent.y = finiteTransformValue(entry.value("outY").toDouble(), 0.0);
+        tangent.linked = entry.value("linked").toBool(true);
+        t3.setPositionKeyFrameSpatialTangentsAt(time, tangent);
+      }
+    }
+
   }
 
   if (obj.contains("modifiers") && obj["modifiers"].isArray()) {
@@ -10823,8 +10683,40 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentProp
   return groups;
 }
 
+namespace {
+SharedPtr<ArtifactCore::AbstractProperty> transformChannelProperty(
+    const ArtifactCore::AnimatableTransform3D& transform, const QString& path) {
+  if (path == QStringLiteral("transform.position.x"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::PositionX);
+  if (path == QStringLiteral("transform.position.y"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::PositionY);
+  if (path == QStringLiteral("transform.position.z"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::PositionZ);
+  if (path == QStringLiteral("transform.rotation"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::Rotation);
+  if (path == QStringLiteral("transform.rotation.x"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::RotationX);
+  if (path == QStringLiteral("transform.rotation.y"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::RotationY);
+  if (path == QStringLiteral("transform.scale.x"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::ScaleX);
+  if (path == QStringLiteral("transform.scale.y"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::ScaleY);
+  if (path == QStringLiteral("transform.scale.z"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::ScaleZ);
+  if (path == QStringLiteral("transform.anchor.x"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::AnchorX);
+  if (path == QStringLiteral("transform.anchor.y"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::AnchorY);
+  if (path == QStringLiteral("transform.anchor.z"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::AnchorZ);
+  return {};
+}
+}
+
 SharedPtr<ArtifactCore::AbstractProperty>
 ArtifactAbstractLayer::getProperty(const QString &name) const {
+  if (auto channel = transformChannelProperty(transform3D(), name)) return channel;
   std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
   auto &cache = impl_->propertyCache_;
   auto it = cache.find(name);
@@ -10841,6 +10733,8 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
                                                int priority) const {
   std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
   auto &cache = impl_->propertyCache_;
+  const auto channel = transformChannelProperty(transform3D(), propertyPath);
+  if (channel) cache.insert(propertyPath, channel);
   auto it = cache.find(propertyPath);
   if (it == cache.end() || !it.value()) {
     it = cache.insert(propertyPath, makeShared<AbstractProperty>());
@@ -10850,7 +10744,7 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
       property->isAnimatable() && !property->getKeyFrames().empty();
   property->setName(propertyPath);
   property->setType(type);
-  if (!hasAnimatedValue && !property->hasExpression()) {
+  if (!channel && !hasAnimatedValue && !property->hasExpression()) {
     property->setValue(value);
   }
   property->setDisplayPriority(priority);
@@ -13223,11 +13117,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     }
     return std::isfinite(fallback) ? fallback : 0.0;
   };
-  const auto propertyHasKeys = [this](const QString &path) {
-    const auto property = getProperty(path);
-    return property && property->isAnimatable() &&
-           !property->getKeyFrames().empty();
-  };
+
 
   if (impl_->fluidComponentEnabled_ && impl_->fluidMode_ == 1 &&
       propertyPath.startsWith(QStringLiteral("transform."))) {
@@ -13253,68 +13143,24 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       }
   }
 
-  if (propertyPath == QStringLiteral("transform.position.x")) {
-    const double x = finiteTransformInput(value.toDouble(),
-                                          t3.positionXAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      const float initialX = t3.positionX() - t3.positionXAt(currentTime);
-      t3.setPosition(currentTime, x - initialX, t3.positionYAt(currentTime));
+  if (auto property = transformChannelProperty(t3, propertyPath)) {
+    const double number = value.toDouble();
+    if (!std::isfinite(number)) return false;
+    if (!property->getKeyFrames().empty()) {
+      const auto keys = property->getKeyFrames();
+      const auto existing = std::find_if(keys.begin(), keys.end(),
+          [&currentTime](const auto& key) { return key.time == currentTime; });
+      if (existing != keys.end()) {
+        const auto& key = *existing;
+        property->addKeyFrame(currentTime, number, key.interpolation,
+            key.cp1_x, key.cp1_y, key.cp2_x, key.cp2_y, key.roving);
+        property->setKeyFrameAnchorAt(currentTime, key.anchor);
+        property->setKeyFrameColorLabelAt(currentTime, key.colorLabel);
+      } else {
+        property->addKeyFrame(currentTime, number);
+      }
     } else {
-      t3.removePositionKeyFrameAt(currentTime);
-      t3.setInitialPosition(currentTime, x, t3.positionY());
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
-                        LayerDirtyReason::TransformChanged);
-    return true;
-  }
-  if (propertyPath == QStringLiteral("transform.position.y")) {
-    const double y = finiteTransformInput(value.toDouble(),
-                                          t3.positionYAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      const float initialY = t3.positionY() - t3.positionYAt(currentTime);
-      t3.setPosition(currentTime, t3.positionXAt(currentTime), y - initialY);
-    } else {
-      t3.removePositionKeyFrameAt(currentTime);
-      t3.setInitialPosition(currentTime, t3.positionX(), y);
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
-                        LayerDirtyReason::TransformChanged);
-    return true;
-  }
-  if (propertyPath == QStringLiteral("transform.scale.x")) {
-    const double scaleX = finiteTransformInput(
-        value.toDouble(), t3.scaleXAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      t3.setScale(currentTime, scaleX, t3.scaleY());
-    } else {
-      t3.removeScaleKeyFrameAt(currentTime);
-      t3.setInitialScale(currentTime, scaleX, t3.scaleY());
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
-                        LayerDirtyReason::TransformChanged);
-    return true;
-  }
-  if (propertyPath == QStringLiteral("transform.scale.y")) {
-    const double scaleY = finiteTransformInput(
-        value.toDouble(), t3.scaleYAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      t3.setScale(currentTime, t3.scaleX(), scaleY);
-    } else {
-      t3.removeScaleKeyFrameAt(currentTime);
-      t3.setInitialScale(currentTime, t3.scaleX(), scaleY);
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
-                        LayerDirtyReason::TransformChanged);
-    return true;
-  }
-  if (propertyPath == QStringLiteral("transform.rotation")) {
-    const double rotation = finiteTransformInput(
-        value.toDouble(), t3.rotationAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      t3.setRotation(currentTime, rotation);
-    } else {
-      t3.removeRotationKeyFrameAt(currentTime);
-      t3.setInitialRotation(currentTime, rotation);
+      property->setValue(number);
     }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
@@ -13328,33 +13174,6 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
                         LayerDirtyReason::TransformChanged);
     return true;
   }
-  if (propertyPath == QStringLiteral("transform.anchor.x")) {
-    const double anchorX = finiteTransformInput(
-        value.toDouble(), t3.anchorXAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      t3.setAnchor(currentTime, anchorX, t3.anchorYAt(currentTime),
-                   t3.anchorZAt(currentTime));
-    } else {
-      t3.setCurrentAnchor(anchorX, t3.anchorY(), t3.anchorZ());
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
-                        LayerDirtyReason::TransformChanged);
-    return true;
-  }
-  if (propertyPath == QStringLiteral("transform.anchor.y")) {
-    const double anchorY = finiteTransformInput(
-        value.toDouble(), t3.anchorYAt(currentTime));
-    if (propertyHasKeys(propertyPath)) {
-      t3.setAnchor(currentTime, t3.anchorXAt(currentTime), anchorY,
-                   t3.anchorZAt(currentTime));
-    } else {
-      t3.setCurrentAnchor(t3.anchorX(), anchorY, t3.anchorZ());
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
-                        LayerDirtyReason::TransformChanged);
-    return true;
-  }
-
   if (propertyPath == QStringLiteral("time.inPoint")) {
     setInPoint(FramePosition(value.toLongLong()));
     return true;

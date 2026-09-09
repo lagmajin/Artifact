@@ -28,6 +28,7 @@ struct GizmoPropertyKeySnapshot {
   ArtifactCore::KeyFrame key;
   bool hasKey = false;
   bool animated = false;
+  QVariant baseValue;
 };
 
 struct GizmoTransformSnapshot {
@@ -41,11 +42,13 @@ struct GizmoTransformSnapshot {
   bool positionAnimated = false;
   bool rotationAnimated = false;
   bool scaleAnimated = false;
-  GizmoPropertyKeySnapshot properties[7] = {
+  GizmoPropertyKeySnapshot properties[9] = {
       {QStringLiteral("transform.position.x"), {}},
       {QStringLiteral("transform.position.y"), {}},
       {QStringLiteral("transform.position.z"), {}},
       {QStringLiteral("transform.rotation"), {}},
+      {QStringLiteral("transform.rotation.x"), {}},
+      {QStringLiteral("transform.rotation.y"), {}},
       {QStringLiteral("transform.scale.x"), {}},
       {QStringLiteral("transform.scale.y"), {}},
       {QStringLiteral("transform.scale.z"), {}}};
@@ -67,6 +70,7 @@ void captureGizmoPropertyKeys(const ArtifactAbstractLayerPtr &layer,
     saved.hasKey = false;
     saved.animated = false;
     if (!property) continue;
+    saved.baseValue = property->getValue();
     const auto keys = property->getKeyFrames();
     saved.animated = !keys.empty();
     for (const auto &key : keys) {
@@ -86,6 +90,7 @@ void restoreGizmoPropertyKeys(const ArtifactAbstractLayerPtr &layer,
   for (const auto &saved : snapshot.properties) {
     const auto property = layer->getProperty(saved.path);
     if (!property || !property->isAnimatable()) continue;
+    if (saved.baseValue.isValid()) property->setValue(saved.baseValue);
     if (saved.hasKey) {
       const auto &key = saved.key;
       property->addKeyFrame(key.time, key.value, key.interpolation,
@@ -128,41 +133,6 @@ ArtifactCore::RationalTime transformTime(
       frame, std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps))));
 }
 
-void applyPlanarTransform(const ArtifactAbstractLayerPtr &layer, int64_t frame,
-                          const GizmoTransformSnapshot &snapshot) {
-  if (!layer) return;
-  auto &transform = layer->transform3D();
-  const auto time = transformTime(layer, frame);
-  if (snapshot.hasPositionKey) {
-    const float initialX = transform.positionX() - transform.positionXAt(time);
-    const float initialY = transform.positionY() - transform.positionYAt(time);
-    transform.setPosition(time, snapshot.position.x() - initialX,
-                          snapshot.position.y() - initialY);
-  } else {
-    transform.removePositionKeyFrameAt(time);
-    if (!snapshot.positionAnimated) {
-      transform.setInitialPosition(time, snapshot.position.x(),
-                                   snapshot.position.y());
-    }
-  }
-  if (snapshot.hasRotationKey) {
-    transform.setRotation(time, snapshot.rotation.z());
-  } else {
-    transform.removeRotationKeyFrameAt(time);
-    if (!snapshot.rotationAnimated) {
-      transform.setInitialRotation(time, snapshot.rotation.z());
-    }
-  }
-  if (snapshot.hasScaleKey) {
-    transform.setScale(time, snapshot.scale.x(), snapshot.scale.y());
-  } else {
-    transform.removeScaleKeyFrameAt(time);
-    if (!snapshot.scaleAnimated) {
-      transform.setInitialScale(time, snapshot.scale.x(), snapshot.scale.y());
-    }
-  }
-}
-
 void restorePropertyKeyState(const ArtifactAbstractLayerPtr &layer,
                              int64_t frame,
                              const GizmoTransformSnapshot &snapshot) {
@@ -191,51 +161,6 @@ private:
   bool apply(const GizmoTransformSnapshot &snapshot) {
     auto layer = layer_.lock();
     if (!layer) return false;
-    if (snapshot.is3D) {
-      auto &transform = layer->transform3D();
-      const auto time = transformTime(layer, frame_);
-      if (snapshot.hasPositionKey) {
-        const float initialX = transform.positionX() - transform.positionXAt(time);
-        const float initialY = transform.positionY() - transform.positionYAt(time);
-        transform.setPosition(time, snapshot.position.x() - initialX,
-                              snapshot.position.y() - initialY);
-      } else {
-        transform.removePositionKeyFrameAt(time);
-        if (!snapshot.positionAnimated) {
-          transform.setInitialPosition(time, snapshot.position.x(),
-                                       snapshot.position.y());
-        }
-      }
-      transform.setCurrentPositionZ(snapshot.position.z());
-      if (snapshot.hasRotationKey) {
-        transform.setRotationX(time, snapshot.rotation.x());
-        transform.setRotationY(time, snapshot.rotation.y());
-        transform.setRotationZ(time, snapshot.rotation.z());
-      } else {
-        transform.removeRotationKeyFrameAt(time);
-        if (!snapshot.rotationAnimated) {
-          transform.setCurrentRotationX(snapshot.rotation.x());
-          transform.setCurrentRotationY(snapshot.rotation.y());
-          transform.setInitialRotation(time, snapshot.rotation.z());
-        }
-      }
-      if (snapshot.hasScaleKey) {
-        transform.setScale(time, snapshot.scale.x(), snapshot.scale.y());
-      } else {
-        transform.removeScaleKeyFrameAt(time);
-        if (!snapshot.scaleAnimated) {
-          transform.setInitialScale(time, snapshot.scale.x(),
-                                    snapshot.scale.y());
-        }
-      }
-      if (std::abs(transform.snapshotAt(time).scaleZ - snapshot.scale.z()) >
-          0.000001f) {
-        transform.setScale(time, snapshot.scale.x(), snapshot.scale.y(),
-                           snapshot.scale.z());
-      }
-    } else {
-      applyPlanarTransform(layer, frame_, snapshot);
-    }
     restorePropertyKeyState(layer, frame_, snapshot);
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
@@ -286,51 +211,6 @@ private:
         continue;
       }
       const auto &snapshot = useAfter ? entry.after : entry.before;
-      if (snapshot.is3D) {
-        auto &transform = layer->transform3D();
-        const auto time = transformTime(layer, entry.frame);
-        if (snapshot.hasPositionKey) {
-          const float initialX = transform.positionX() - transform.positionXAt(time);
-          const float initialY = transform.positionY() - transform.positionYAt(time);
-          transform.setPosition(time, snapshot.position.x() - initialX,
-                                snapshot.position.y() - initialY);
-        } else {
-          transform.removePositionKeyFrameAt(time);
-          if (!snapshot.positionAnimated) {
-            transform.setInitialPosition(time, snapshot.position.x(),
-                                         snapshot.position.y());
-          }
-        }
-        transform.setCurrentPositionZ(snapshot.position.z());
-        if (snapshot.hasRotationKey) {
-          transform.setRotationX(time, snapshot.rotation.x());
-          transform.setRotationY(time, snapshot.rotation.y());
-          transform.setRotationZ(time, snapshot.rotation.z());
-        } else {
-          transform.removeRotationKeyFrameAt(time);
-          if (!snapshot.rotationAnimated) {
-            transform.setCurrentRotationX(snapshot.rotation.x());
-            transform.setCurrentRotationY(snapshot.rotation.y());
-            transform.setInitialRotation(time, snapshot.rotation.z());
-          }
-        }
-        if (snapshot.hasScaleKey) {
-          transform.setScale(time, snapshot.scale.x(), snapshot.scale.y());
-        } else {
-          transform.removeScaleKeyFrameAt(time);
-          if (!snapshot.scaleAnimated) {
-            transform.setInitialScale(time, snapshot.scale.x(),
-                                      snapshot.scale.y());
-          }
-        }
-        if (std::abs(transform.snapshotAt(time).scaleZ - snapshot.scale.z()) >
-            0.000001f) {
-          transform.setScale(time, snapshot.scale.x(), snapshot.scale.y(),
-                             snapshot.scale.z());
-        }
-      } else {
-        applyPlanarTransform(layer, entry.frame, snapshot);
-      }
       restorePropertyKeyState(layer, entry.frame, snapshot);
       layer->setDirty(LayerDirtyFlag::Transform);
       layer->changed();

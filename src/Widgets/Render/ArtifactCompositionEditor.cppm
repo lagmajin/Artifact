@@ -58,6 +58,7 @@ module;
 #include <QLineEdit>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSize>
 #include <QSpinBox>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -7944,9 +7945,19 @@ public:
   QToolBar *zoomHud_ = nullptr;
   bool viewportToolboxesVisible_ = true;
   QFrame *chromeStrip_ = nullptr;
+  QFrame *statusStrip_ = nullptr;
   QLabel *chromeTitleLabel_ = nullptr;
   QLabel *chromeDetailLabel_ = nullptr;
   QLabel *chromeMetaLabel_ = nullptr;
+  QLabel *viewerTimecodeLabel_ = nullptr;
+  QLabel *statusResolutionLabel_ = nullptr;
+  QLabel *statusFrameRateLabel_ = nullptr;
+  QToolButton *zoomControlButton_ = nullptr;
+  QToolButton *fitControlButton_ = nullptr;
+  QToolButton *cameraControlButton_ = nullptr;
+  ViewportLayoutButton *previousFrameButton_ = nullptr;
+  ViewportLayoutButton *playPauseButton_ = nullptr;
+  ViewportLayoutButton *nextFrameButton_ = nullptr;
   QAction *resetAction_ = nullptr;
   QAction *zoomInAction_ = nullptr;
   QAction *zoomOutAction_ = nullptr;
@@ -8430,8 +8441,6 @@ public:
     auto *selection = ArtifactLayerSelectionManager::instance();
     const auto current =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
-    const int selectedCount =
-        selection ? selection->selectedLayers().size() : 0;
     const QString compName =
         comp ? comp->settings().compositionName().toQString()
              : QStringLiteral("<no composition>");
@@ -8440,12 +8449,58 @@ public:
                                          ? current->id().toString()
                                          : current->layerName().trimmed())
                                   : QStringLiteral("<none>");
-    chromeTitleLabel_->setText(QStringLiteral("Composition: %1").arg(compName));
+    chromeTitleLabel_->setText(comp ? compName : QStringLiteral("Composition"));
     chromeDetailLabel_->setText(
-        QStringLiteral("Layer: %1  |  Selection: %2")
-            .arg(layerName)
-            .arg(selectedCount));
+        current ? QStringLiteral("Layer Solo  ·  %1").arg(layerName)
+                : QStringLiteral("Layer Solo"));
+    chromeDetailLabel_->setEnabled(static_cast<bool>(current));
     chromeMetaLabel_->hide();
+
+    const qint64 frame = comp ? comp->framePosition().framePosition() : 0;
+    const double fps = safeCompositionFrameRate(comp.get());
+    syncViewerFrame(frame);
+    syncPlaybackButtonState();
+    if (statusResolutionLabel_) {
+      const QSize size = comp ? comp->settings().compositionSize() : QSize();
+      statusResolutionLabel_->setText(
+          size.isValid() ? QStringLiteral("%1 × %2").arg(size.width()).arg(size.height())
+                         : QStringLiteral("— × —"));
+    }
+    if (statusFrameRateLabel_) {
+      statusFrameRateLabel_->setText(
+          comp ? QStringLiteral("%1 fps").arg(fps, 0, 'f',
+                                               std::abs(fps - std::round(fps)) < 0.001 ? 0 : 2)
+               : QStringLiteral("— fps"));
+    }
+  }
+
+  void syncViewerFrame(const qint64 frame) {
+    const auto comp = renderController_ ? renderController_->composition()
+                                        : ArtifactCompositionPtr{};
+    const double fps = safeCompositionFrameRate(comp.get());
+    const qint64 fpsBase = std::max<qint64>(1, std::llround(fps));
+    const qint64 safeFrame = std::max<qint64>(0, frame);
+    const qint64 totalSeconds = safeFrame / fpsBase;
+    const qint64 framePart = safeFrame % fpsBase;
+    if (viewerTimecodeLabel_) {
+      viewerTimecodeLabel_->setText(
+          QStringLiteral("%1:%2:%3:%4")
+              .arg(totalSeconds / 3600, 2, 10, QLatin1Char('0'))
+              .arg((totalSeconds / 60) % 60, 2, 10, QLatin1Char('0'))
+              .arg(totalSeconds % 60, 2, 10, QLatin1Char('0'))
+              .arg(framePart, 2, 10, QLatin1Char('0')));
+    }
+  }
+
+  void syncPlaybackButtonState() {
+    if (!playPauseButton_) return;
+    const bool playing = ArtifactPlaybackService::instance() &&
+                         ArtifactPlaybackService::instance()->isPlaying();
+    playPauseButton_->setIcon(loadIconWithFallback(
+        playing ? QStringLiteral("Studio/playback_pause.svg")
+                : QStringLiteral("Studio/playback_play.svg")));
+    playPauseButton_->setToolTip(playing ? QStringLiteral("Pause")
+                                        : QStringLiteral("Play"));
   }
 
   void openCreateCompositionDialog(ArtifactCompositionEditor *owner) {
@@ -8889,63 +8944,38 @@ public:
     // The bottom controls duplicate commands already available in the View
     // menu.  Keep the full set while it fits, then retain one compact entry
     // point instead of allowing an overlay to extend past the viewport.
-    const bool compactControls = overlayWidth < 360;
+    const bool compactControls = overlayWidth < 760;
     const bool controlDensityChanged =
         compactViewportControls_ != compactControls;
     if (controlDensityChanged) {
       compactViewportControls_ = compactControls;
     }
     if (resolutionCombo_) {
-      resolutionCombo_->setVisible(!compactControls);
+      resolutionCombo_->setVisible(true);
     }
     if (fastPreviewBtn_) {
       fastPreviewBtn_->setVisible(!compactControls);
     }
+    if (hdrDisplayBtn_) {
+      hdrDisplayBtn_->setVisible(!compactControls);
+    }
+    if (zoomControlButton_) {
+      zoomControlButton_->setVisible(!compactControls);
+    }
+    if (cameraControlButton_) {
+      cameraControlButton_->setToolButtonStyle(
+          compactControls ? Qt::ToolButtonIconOnly
+                          : Qt::ToolButtonTextBesideIcon);
+    }
     if (displayOptionsBtn_) {
-      displayOptionsBtn_->setVisible(!compactControls);
+      displayOptionsBtn_->setVisible(true);
     }
     if (controlDensityChanged) {
       refreshViewportStateLabels();
     }
 
-    const auto placeHud = [&](QWidget *hud, const QPoint &defaultPosition) {
-      if (!hud) {
-        return;
-      }
-      hud->adjustSize();
-      hud->setProperty("artifactHudViewportBounds", viewportGeometry);
-      const QVariant savedOffset = hud->property("artifactHudOffset");
-      QPoint position = savedOffset.isValid()
-                            ? viewportGeometry.topLeft() + savedOffset.toPoint()
-                            : defaultPosition;
-      position.setX(std::clamp(
-          position.x(), viewportGeometry.left(),
-          std::max(viewportGeometry.left(),
-                   viewportGeometry.right() - hud->width() + 1)));
-      position.setY(std::clamp(
-          position.y(), viewportGeometry.top(),
-          std::max(viewportGeometry.top(),
-                   viewportGeometry.bottom() - hud->height() + 1)));
-      hud->move(position);
-      const bool shouldShow = hasComposition && viewportToolboxesVisible_;
-      if (hud->isVisible() != shouldShow) {
-        hud->setVisible(shouldShow);
-      }
-      if (hud->isVisible()) {
-        hud->raise();
-      }
-    };
-    if (toolHud_) {
-      toolHud_->adjustSize();
-      placeHud(toolHud_, QPoint(viewportGeometry.left() + 42,
-                                viewportGeometry.top() + 34));
-    }
-    if (zoomHud_) {
-      zoomHud_->adjustSize();
-      placeHud(zoomHud_, QPoint(viewportGeometry.center().x() -
-                                    zoomHud_->width() / 2,
-                                viewportGeometry.top() + 34));
-    }
+    // Tool and zoom controls are part of the external viewer chrome.  Keep
+    // the legacy HUD instances dormant so they cannot cover the canvas.
 
     if (overlayView_) {
       overlayView_->setGeometry(viewportGeometry);
@@ -9010,34 +9040,19 @@ public:
         viewOrientationWidget_->raise();
       }
     }
+    if (bottomBar_) {
+      if (bottomBar_->isVisible() != hasComposition) {
+        bottomBar_->setVisible(hasComposition);
+      }
+    }
     if (chromeStrip_) {
-      chromeStrip_->adjustSize();
-      const int width = std::min({440, chromeStrip_->sizeHint().width(),
-                                  overlayWidth});
-      chromeStrip_->setGeometry(viewportGeometry.left() + overlayInset,
-                                viewportGeometry.bottom() -
-                                    chromeStrip_->sizeHint().height() - overlayInset + 1,
-                                width, chromeStrip_->sizeHint().height());
       if (chromeStrip_->isVisible() != hasComposition) {
         chromeStrip_->setVisible(hasComposition);
       }
-      if (chromeStrip_->isVisible()) {
-        chromeStrip_->raise();
-      }
     }
-    if (bottomBar_) {
-      bottomBar_->adjustSize();
-      const QSize sz = bottomBar_->sizeHint();
-      const int width = std::min(sz.width(), overlayWidth);
-      bottomBar_->setGeometry(viewportGeometry.right() - width - overlayInset + 1,
-                              viewportGeometry.bottom() - sz.height() - overlayInset + 1,
-                              width, sz.height());
-      const bool showBottomBar = hasComposition && width >= 96;
-      if (bottomBar_->isVisible() != showBottomBar) {
-        bottomBar_->setVisible(showBottomBar);
-      }
-      if (bottomBar_->isVisible()) {
-        bottomBar_->raise();
+    if (statusStrip_) {
+      if (statusStrip_->isVisible() != hasComposition) {
+        statusStrip_->setVisible(hasComposition);
       }
     }
     if (profilerOverlay_) {
@@ -10626,7 +10641,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->chromeStrip_->setFrameShape(QFrame::StyledPanel);
   impl_->chromeStrip_->setFrameShadow(QFrame::Plain);
   impl_->chromeStrip_->setAutoFillBackground(true);
-  impl_->chromeStrip_->setMinimumHeight(40);
+  impl_->chromeStrip_->setFixedHeight(34);
   impl_->chromeStrip_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   {
     QPalette pal = impl_->chromeStrip_->palette();
@@ -10635,15 +10650,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->chromeStrip_->setPalette(pal);
   }
   auto *chromeLayout = new QHBoxLayout(impl_->chromeStrip_);
-  chromeLayout->setContentsMargins(12, 6, 12, 6);
-  chromeLayout->setSpacing(12);
-  auto *chromeTextColumn = new QVBoxLayout();
-  chromeTextColumn->setContentsMargins(0, 0, 0, 0);
-  chromeTextColumn->setSpacing(1);
+  chromeLayout->setContentsMargins(6, 0, 6, 0);
+  chromeLayout->setSpacing(2);
   impl_->chromeTitleLabel_ =
-      new QLabel(QStringLiteral("Composition: <none>"), impl_->chromeStrip_);
+      new QLabel(QStringLiteral("Composition"), impl_->chromeStrip_);
   impl_->chromeDetailLabel_ = new QLabel(
-      QStringLiteral("Layer: <none>  |  Selection: 0  |  Idle"),
+      QStringLiteral("Layer Solo"),
       impl_->chromeStrip_);
   impl_->chromeMetaLabel_ =
       new QLabel(QStringLiteral("Render paused  |  No focus"),
@@ -10653,9 +10665,25 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   titleFont.setBold(true);
   titleFont.setPointSize(std::max(8, titleFont.pointSize()));
   impl_->chromeTitleLabel_->setFont(titleFont);
-  chromeTextColumn->addWidget(impl_->chromeTitleLabel_);
-  chromeTextColumn->addWidget(impl_->chromeDetailLabel_);
-  chromeLayout->addLayout(chromeTextColumn, 1);
+  for (QLabel *tab : {impl_->chromeTitleLabel_, impl_->chromeDetailLabel_}) {
+    tab->setFrameShape(QFrame::StyledPanel);
+    tab->setFrameShadow(QFrame::Plain);
+    tab->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    tab->setContentsMargins(12, 0, 12, 0);
+    tab->setMinimumWidth(132);
+    tab->setMaximumHeight(30);
+    tab->setAutoFillBackground(true);
+    QPalette tabPalette = tab->palette();
+    tabPalette.setColor(QPalette::Window,
+                        tab == impl_->chromeTitleLabel_
+                            ? QColor(theme.buttonPressedColor)
+                            : QColor(theme.secondaryBackgroundColor));
+    tabPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    tab->setPalette(tabPalette);
+  }
+  chromeLayout->addWidget(impl_->chromeTitleLabel_, 0);
+  chromeLayout->addWidget(impl_->chromeDetailLabel_, 0);
+  chromeLayout->addStretch(1);
   chromeLayout->addWidget(impl_->chromeMetaLabel_, 0,
                           Qt::AlignRight | Qt::AlignVCenter);
 
@@ -10768,21 +10796,6 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     hud->setPalette(pal);
     hud->hide();
   };
-  const auto moveToolbarWidget = [](QToolBar *from, QToolBar *to,
-                                    QWidget *widget) {
-    if (!from || !to || !widget) {
-      return;
-    }
-    const auto actions = from->actions();
-    for (QAction *action : actions) {
-      if (from->widgetForAction(action) == widget) {
-        from->removeAction(action);
-        to->addAction(action);
-        return;
-      }
-    }
-  };
-
   impl_->toolHud_ = new QToolBar(this);
   impl_->toolHud_->setObjectName(QStringLiteral("compositionToolHud"));
   configureHud(impl_->toolHud_);
@@ -10792,9 +10805,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           QStringLiteral("Viewport/Hud/ToolOffset")));
   impl_->toolHud_->addWidget(new ViewportHudGrip(
       impl_->toolHud_, QStringLiteral("Viewport/Hud/ToolOffset")));
-  moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->toolModeButton_);
-  moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->gizmoModeButton_);
-  moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->pivotModeButton_);
+  // Keep editing tools in the permanent toolbar.  The viewport remains a
+  // clean render/manipulation surface instead of carrying floating chrome.
   impl_->gizmoModeButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
   impl_->gizmoModeButton_->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_move.svg")));
@@ -10805,8 +10817,6 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_text.svg")));
   impl_->motionPathAction_->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_pen.svg")));
-  impl_->toolHud_->addAction(impl_->editTextAction_);
-  impl_->toolHud_->addAction(impl_->motionPathAction_);
 
   impl_->zoomHud_ = new QToolBar(this);
   impl_->zoomHud_->setObjectName(QStringLiteral("compositionZoomHud"));
@@ -10829,22 +10839,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       loadIconWithFallback(QStringLiteral("Studio/toolbar_zoom_100.svg")));
   impl_->immersiveAction_->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/fit_screen.svg")));
-  for (QAction *action : {impl_->resetAction_, impl_->zoomOutAction_,
-                          impl_->zoomInAction_, impl_->zoomFitAction_,
-                          impl_->zoom100Action_, impl_->immersiveAction_}) {
-    impl_->topToolbar_->removeAction(action);
-    impl_->zoomHud_->addAction(action);
-  }
-
   const auto topActions = impl_->topToolbar_->actions();
   for (QAction *action : topActions) {
     QWidget *widget = impl_->topToolbar_->widgetForAction(action);
     const bool keep = action == impl_->previewOrbitAction_ ||
-                      widget == impl_->viewportLayoutButton_ ||
-                      widget == impl_->viewPresetButton_ ||
-                      widget == impl_->workspaceModeButton_ ||
-                      widget == impl_->screenshotButton_ ||
-                      widget == impl_->viewportRenderOutputButton_;
+                       action == impl_->editTextAction_ ||
+                       action == impl_->motionPathAction_ ||
+                       widget == impl_->workspaceModeButton_ ||
+                       widget == impl_->toolModeButton_ ||
+                       widget == impl_->gizmoModeButton_ ||
+                       widget == impl_->pivotModeButton_ ||
+                       widget == impl_->screenshotButton_ ||
+                       widget == impl_->viewportRenderOutputButton_;
     if (!keep) {
       impl_->topToolbar_->removeAction(action);
     }
@@ -10865,8 +10871,21 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
 
   auto *bottomLayout = new QHBoxLayout(impl_->bottomBar_);
-  bottomLayout->setContentsMargins(6, 0, 6, 0);
-  bottomLayout->setSpacing(8);
+  bottomLayout->setContentsMargins(6, 2, 6, 2);
+  bottomLayout->setSpacing(4);
+
+  const auto makeActionButton = [this](QAction *action) {
+    auto *button = new QToolButton(impl_->bottomBar_);
+    button->setDefaultAction(action);
+    button->setAutoRaise(true);
+    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setMinimumHeight(24);
+    return button;
+  };
+  impl_->zoom100Action_->setText(QStringLiteral("100%"));
+  impl_->zoomFitAction_->setText(QStringLiteral("Fit"));
+  impl_->zoomControlButton_ = makeActionButton(impl_->zoom100Action_);
+  impl_->fitControlButton_ = makeActionButton(impl_->zoomFitAction_);
 
   // Resolution Dropdown — wired to PreviewQualityPreset
   impl_->resolutionCombo_ = new QComboBox(impl_->bottomBar_);
@@ -11794,16 +11813,129 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->refreshViewportStateLabels();
   }
 
+  impl_->cameraControlButton_ = new QToolButton(impl_->bottomBar_);
+  impl_->cameraControlButton_->setText(QStringLiteral("Active Camera"));
+  impl_->cameraControlButton_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_camera.svg")));
+  impl_->cameraControlButton_->setMenu(viewPresetMenu);
+  impl_->cameraControlButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->cameraControlButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  impl_->cameraControlButton_->setToolTip(
+      QStringLiteral("Viewport orientation and camera view"));
+
+  auto *bottomLayoutButton = new ViewportLayoutButton(impl_->bottomBar_);
+  bottomLayoutButton->setText(impl_->viewportLayoutLabel());
+  bottomLayoutButton->setAutoRaise(true);
+  bottomLayoutButton->setFocusPolicy(Qt::NoFocus);
+  bottomLayoutButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  bottomLayoutButton->setToolTip(
+      QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
+  bottomLayoutButton->setActivatedCallback([this, setViewportLayout]() {
+    if (impl_) setViewportLayout(impl_->nextViewportLayoutMode());
+  });
+  impl_->viewportLayoutButton_ = bottomLayoutButton;
+
+  impl_->viewerTimecodeLabel_ = new QLabel(
+      QStringLiteral("00:00:00:00"), impl_->bottomBar_);
+  impl_->viewerTimecodeLabel_->setAlignment(Qt::AlignCenter);
+  impl_->viewerTimecodeLabel_->setMinimumWidth(112);
+  impl_->viewerTimecodeLabel_->setFrameShape(QFrame::StyledPanel);
+  QFont timecodeFont = impl_->viewerTimecodeLabel_->font();
+  timecodeFont.setStyleHint(QFont::Monospace);
+  timecodeFont.setBold(true);
+  impl_->viewerTimecodeLabel_->setFont(timecodeFont);
+  {
+    QPalette pal = impl_->viewerTimecodeLabel_->palette();
+    pal.setColor(QPalette::WindowText, QColor(theme.accentColor));
+    impl_->viewerTimecodeLabel_->setPalette(pal);
+  }
+
+  const auto makeTransportButton = [this](const QString &icon,
+                                           const QString &tooltip) {
+    auto *button = new ViewportLayoutButton(impl_->bottomBar_);
+    button->setIcon(loadIconWithFallback(icon));
+    button->setToolTip(tooltip);
+    button->setAutoRaise(true);
+    button->setFixedSize(28, 24);
+    return button;
+  };
+  impl_->previousFrameButton_ = makeTransportButton(
+      QStringLiteral("Studio/playback_previous.svg"),
+      QStringLiteral("Previous frame"));
+  impl_->playPauseButton_ = makeTransportButton(
+      QStringLiteral("Studio/playback_play.svg"), QStringLiteral("Play"));
+  impl_->nextFrameButton_ = makeTransportButton(
+      QStringLiteral("Studio/playback_next.svg"), QStringLiteral("Next frame"));
+  impl_->previousFrameButton_->setActivatedCallback([this]() {
+    if (auto *playback = ArtifactPlaybackService::instance()) {
+      playback->goToPreviousFrame();
+      if (impl_) {
+        impl_->syncViewerFrame(playback->currentFrame().framePosition());
+      }
+    }
+  });
+  impl_->playPauseButton_->setActivatedCallback([this]() {
+    togglePlayPause();
+    if (impl_) {
+      if (auto *playback = ArtifactPlaybackService::instance()) {
+        impl_->syncViewerFrame(playback->currentFrame().framePosition());
+        impl_->syncPlaybackButtonState();
+      }
+    }
+  });
+  impl_->nextFrameButton_->setActivatedCallback([this]() {
+    if (auto *playback = ArtifactPlaybackService::instance()) {
+      playback->goToNextFrame();
+      if (impl_) {
+        impl_->syncViewerFrame(playback->currentFrame().framePosition());
+      }
+    }
+  });
+
+  bottomLayout->addWidget(impl_->zoomControlButton_);
+  bottomLayout->addWidget(impl_->fitControlButton_);
   bottomLayout->addWidget(impl_->resolutionCombo_);
   bottomLayout->addWidget(impl_->fastPreviewBtn_);
   bottomLayout->addWidget(impl_->hdrDisplayBtn_);
   bottomLayout->addWidget(impl_->shadingButton_);
   bottomLayout->addWidget(impl_->displayOptionsBtn_);
   bottomLayout->addStretch();
+  bottomLayout->addWidget(impl_->cameraControlButton_);
+  bottomLayout->addWidget(impl_->viewportLayoutButton_);
+  bottomLayout->addWidget(impl_->viewerTimecodeLabel_);
+  bottomLayout->addWidget(impl_->previousFrameButton_);
+  bottomLayout->addWidget(impl_->playPauseButton_);
+  bottomLayout->addWidget(impl_->nextFrameButton_);
+
+  impl_->statusStrip_ = new QFrame(this);
+  impl_->statusStrip_->setObjectName(QStringLiteral("compositionStatusStrip"));
+  impl_->statusStrip_->setFixedHeight(22);
+  impl_->statusStrip_->setFrameShape(QFrame::StyledPanel);
+  impl_->statusStrip_->setFrameShadow(QFrame::Plain);
+  impl_->statusStrip_->setAutoFillBackground(true);
+  {
+    QPalette pal = impl_->statusStrip_->palette();
+    pal.setColor(QPalette::Window, QColor(theme.backgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(115));
+    impl_->statusStrip_->setPalette(pal);
+  }
+  auto *statusLayout = new QHBoxLayout(impl_->statusStrip_);
+  statusLayout->setContentsMargins(10, 0, 10, 0);
+  statusLayout->setSpacing(12);
+  impl_->statusResolutionLabel_ =
+      new QLabel(QStringLiteral("— × —"), impl_->statusStrip_);
+  impl_->statusFrameRateLabel_ =
+      new QLabel(QStringLiteral("— fps"), impl_->statusStrip_);
+  statusLayout->addWidget(impl_->statusResolutionLabel_);
+  statusLayout->addWidget(impl_->statusFrameRateLabel_);
+  statusLayout->addStretch(1);
 
   // Assembly
+  mainLayout->addWidget(impl_->chromeStrip_);
   mainLayout->addWidget(impl_->topToolbar_);
   mainLayout->addWidget(impl_->viewportHost_, 1);
+  mainLayout->addWidget(impl_->bottomBar_);
+  mainLayout->addWidget(impl_->statusStrip_);
   impl_->topToolbar_->setAutoFillBackground(true);
   QPalette topPalette = impl_->topToolbar_->palette();
   topPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -12145,6 +12277,25 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             if (impl_) {
               impl_->queueSelectionSync(this);
             }
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<FrameChangedEvent>(
+          [this](const FrameChangedEvent &event) {
+            if (!impl_ || !impl_->renderController_) return;
+            const auto comp = impl_->renderController_->composition();
+            if (!comp || comp->id().toString() != event.compositionId) return;
+            impl_->syncViewerFrame(event.frame);
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackStateChangedEvent>(
+          [this](const PlaybackStateChangedEvent &) {
+            if (!impl_) return;
+            const auto *playback = ArtifactPlaybackService::instance();
+            impl_->syncViewerFrame(
+                playback ? playback->currentFrame().framePosition() : 0);
+            impl_->syncPlaybackButtonState();
           }));
 
   impl_->eventBusSubscriptions_.push_back(

@@ -3296,6 +3296,25 @@ if(WIN32)
         COMMENT "Deploying Qt platform plugin for Artifact"
         VERBATIM
     )
+    # Diligent loads DXC dynamically for Shader Model 6.x.  It is not a link
+    # dependency, so TARGET_RUNTIME_DLLS cannot deploy it automatically.
+    set(_ARTIFACT_DXC_RUNTIME_DIR
+        "${_artifact_windows_sdk_root}/bin/${_artifact_windows_sdk_version_name}/x64")
+    if(EXISTS "${_ARTIFACT_DXC_RUNTIME_DIR}/dxcompiler.dll"
+       AND EXISTS "${_ARTIFACT_DXC_RUNTIME_DIR}/dxil.dll")
+        add_custom_command(TARGET Artifact POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${_ARTIFACT_DXC_RUNTIME_DIR}/dxcompiler.dll"
+                "${_ARTIFACT_DXC_RUNTIME_DIR}/dxil.dll"
+                "$<TARGET_FILE_DIR:Artifact>/"
+            COMMENT "Deploying DXC runtime for Diligent Shader Model 6.x"
+            VERBATIM
+        )
+    else()
+        message(WARNING
+            "DXC runtime (dxcompiler.dll/dxil.dll) was not found under ${_ARTIFACT_DXC_RUNTIME_DIR}; "
+            "Diligent Shader Model 6.x pipelines will be unavailable at runtime.")
+    endif()
     if(TARGET ArtifactProxyWorker)
         add_custom_command(TARGET Artifact POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different

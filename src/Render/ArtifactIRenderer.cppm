@@ -507,6 +507,7 @@ namespace {
    RefCntAutoPtr<ITexture> staging;
    RefCntAutoPtr<IFence>   fence;
    ArtifactCore::SharedPtr<std::atomic_bool> busy = ArtifactCore::makeShared<std::atomic_bool>(false);
+   Uint64 signaledValue = 0;
    Uint32 width = 0;
    Uint32 height = 0;
    TEXTURE_FORMAT format = TEX_FORMAT_UNKNOWN;
@@ -2444,6 +2445,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   RefCntAutoPtr<IFence> fence;
   ArtifactCore::SharedPtr<std::atomic_bool> busyFlag;
   bool cachedSlot = false;
+  Uint64 waitValue = 1;
 
   auto createAsyncResources = [&](RefCntAutoPtr<ITexture>& outStaging,
                                   RefCntAutoPtr<IFence>& outFence,
@@ -2484,6 +2486,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
         for (auto& slot : m_asyncReadbackRing) {
           slot.staging = nullptr;
           slot.fence = nullptr;
+          slot.signaledValue = 0;
           slot.width = 0;
           slot.height = 0;
           slot.format = TEX_FORMAT_UNKNOWN;
@@ -2515,11 +2518,13 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
         if (!createAsyncResources(slot.staging, slot.fence, "AsyncReadbackRing")) {
           slot.staging = nullptr;
           slot.fence = nullptr;
+          slot.signaledValue = 0;
           slot.width = 0;
           slot.height = 0;
           slot.format = TEX_FORMAT_UNKNOWN;
           continue;
         }
+        slot.signaledValue = 0;
         slot.width = srcWidth;
         slot.height = srcHeight;
         slot.format = stagingFormat;
@@ -2529,6 +2534,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
       fence = slot.fence;
       busyFlag = slot.busy;
       cachedSlot = true;
+      waitValue = ++slot.signaledValue;
       m_asyncReadbackRingIndex = (index + 1) % kAsyncReadbackRingSize;
       m_asyncReadbackStagingWidth = srcWidth;
       m_asyncReadbackStagingHeight = srcHeight;
@@ -2555,7 +2561,6 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   ctx->CopyTexture(copyAttribs);
 
   // Signal fence and flush (non-blocking)
-  const Uint64 waitValue = 1;
   ctx->EnqueueSignal(fence, waitValue);
   ctx->Flush();
 
@@ -3079,6 +3084,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   for (auto& slot : m_asyncReadbackRing) {
    slot.staging = nullptr;
    slot.fence = nullptr;
+   slot.signaledValue = 0;
    slot.width = 0;
    slot.height = 0;
    slot.format = TEX_FORMAT_UNKNOWN;

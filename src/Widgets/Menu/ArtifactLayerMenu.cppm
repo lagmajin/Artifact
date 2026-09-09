@@ -766,6 +766,10 @@ public:
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
     QMenu* createMenu = nullptr;
+    QMenu* create2DMenu = nullptr;
+    QMenu* createUtilityMenu = nullptr;
+    QMenu* createParticleMenu = nullptr;
+    QMenu* createAudioMenu = nullptr;
     QMenu* createShapeMenu = nullptr;
     QMenu* create3DMenu = nullptr;
     QMenu* createPlacementMenu = nullptr;
@@ -1018,8 +1022,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createQuickLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
     createQuickLayerAction->setToolTip(QStringLiteral("平面、マスク、入場・退場をまとめて作成します"));
 
-    createQuickLayerAction = new QAction(QStringLiteral("クイック平面作成..."), createMenu);
-
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
     createNullAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateNull));
@@ -1159,26 +1161,43 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeMenu->addAction(cycleShapeForwardAction);
     createShapeMenu->addAction(cycleShapeReverseAction);
 
+    create2DMenu = new QMenu(QStringLiteral("2Dレイヤー(&2)"), createMenu);
+    create2DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
+    create2DMenu->addMenu(createShapeMenu);
+    create2DMenu->addAction(createTextAction);
+    create2DMenu->addAction(createAdjustAction);
+    create2DMenu->addAction(createPaintAction);
+    create2DMenu->addAction(createSvgAction);
+
+    createUtilityMenu = new QMenu(QStringLiteral("補助レイヤー(&U)"), createMenu);
+    createUtilityMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    createUtilityMenu->addAction(createNullAction);
+    createUtilityMenu->addAction(createRigAction);
+    createUtilityMenu->addAction(createConstructionAction);
+    createUtilityMenu->addSeparator();
+    createUtilityMenu->addAction(createQuickLayerAction);
+
+    createParticleMenu = new QMenu(QStringLiteral("パーティクル(&P)"), createMenu);
+    createParticleMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createParticleMenu->addAction(createParticleAction);
+    createParticleMenu->addAction(createFormParticleAction);
+    createParticleMenu->addAction(createParticle3DAction);
+
+    createAudioMenu = new QMenu(QStringLiteral("オーディオ(&A)"), createMenu);
+    createAudioMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
+    createAudioMenu->addAction(createAudioAction);
+    createAudioMenu->addAction(createSpatialAudioAction);
+
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
     trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
     createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
 
     createMenu->addAction(createSolidAction);
-    createMenu->addAction(createRigAction);
-    createMenu->addAction(createQuickLayerAction);
-    createMenu->addAction(createNullAction);
-    createMenu->addAction(createConstructionAction);
-    createMenu->addAction(createAdjustAction);
-    createMenu->addAction(createTextAction);
-    createMenu->addAction(createParticleAction);
-    createMenu->addAction(createParticle3DAction);
-    createMenu->addAction(createPaintAction);
-    createMenu->addAction(createFormParticleAction);
-    createMenu->addAction(createCameraAction);
-    createMenu->addAction(createLightAction);
-    createMenu->addAction(createAudioAction);
-    createMenu->addAction(createSpatialAudioAction);
-    createMenu->addAction(createSvgAction);
+    createMenu->addSeparator();
+    createMenu->addMenu(create2DMenu);
+    createMenu->addMenu(createUtilityMenu);
+    createMenu->addMenu(createParticleMenu);
+    createMenu->addMenu(createAudioMenu);
     create3DMenu = new QMenu(QStringLiteral("3Dレイヤー(&3)"), createMenu);
     create3DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     create3DMenu->addAction(createModel3DAction);
@@ -1195,10 +1214,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     create3DMenu->addAction(createTerrainAction);
     create3DMenu->addAction(createPathTubeAction);
     createMenu->addMenu(create3DMenu);
+    createMenu->addSeparator();
     createMenu->addMenu(createPlacementMenu);
     createMenu->addAction(cycleLayerForwardAction);
     createMenu->addAction(cycleLayerReverseAction);
-    createMenu->addMenu(createShapeMenu);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(

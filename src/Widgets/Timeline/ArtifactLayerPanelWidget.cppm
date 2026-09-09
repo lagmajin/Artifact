@@ -1118,18 +1118,14 @@ namespace {
     return false;
    }
 
+   ArtifactTimelineKeyframeModel model;
    if (property->hasKeyFrameAt(currentTime)) {
-    property->removeKeyFrame(currentTime);
-   } else {
-    const QVariant value = property->interpolateValue(currentTime);
-    property->addKeyFrame(currentTime, value.isValid() ? value : property->getValue());
+    return model.removeKeyframe(composition->id(), layer->id(),
+                                trimmedPropertyPath, currentTime);
    }
-
-   layer->changed();
-   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-       LayerChangedEvent{composition->id().toString(), layer->id().toString(),
-                         LayerChangedEvent::ChangeType::Modified});
-   return true;
+   const QVariant value = property->interpolateValue(currentTime);
+   return model.addKeyframe(composition->id(), layer->id(), trimmedPropertyPath,
+                            currentTime, value.isValid() ? value : property->getValue());
   }
  }
 

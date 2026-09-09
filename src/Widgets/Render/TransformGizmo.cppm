@@ -1329,8 +1329,8 @@ void setAbsolutePosition(ArtifactCore::AnimatableTransform3D& t3d,
                          const ArtifactCore::RationalTime& time,
                          float x, float y)
 {
- const float initialX = t3d.positionX() - t3d.positionXAt(time);
- const float initialY = t3d.positionY() - t3d.positionYAt(time);
+ const float initialX = t3d.snapshotAt(time).positionX - t3d.positionXAt(time);
+ const float initialY = t3d.snapshotAt(time).positionY - t3d.positionYAt(time);
  t3d.setPosition(time, x - initialX, y - initialY);
 }
 

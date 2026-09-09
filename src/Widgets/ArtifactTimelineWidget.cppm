@@ -4670,6 +4670,7 @@ public:
   int audioPreviewFrame_ = 0;
   qint64 lastInteractiveSeekFrame_ = std::numeric_limits<qint64>::min();
   double playbackVisualBaseFrame_ = 0.0;
+  double playbackVisualPresentedFrame_ = 0.0;
   double playbackVisualRateFps_ = 1.0;
   double playbackVisualSpeed_ = 1.0;
   bool graphEditorVisible_ = false;
@@ -7710,6 +7711,24 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     const FrameRange range = playback->frameRange();
     const double startFrame = static_cast<double>(std::min(range.start(), range.end()));
     const double endFrame = static_cast<double>(std::max(range.start(), range.end()));
+
+    // The engine's every-frame policy deliberately slows down when rendering
+    // cannot sustain realtime.  Do not let the wall-clock interpolation run
+    // several frames ahead and then jump backwards when the next presented
+    // frame arrives.  Interpolate only through the interval immediately after
+    // the latest authoritative frame; under load the playhead will wait at the
+    // next frame instead of oscillating.
+    const double authoritativeFrame = std::clamp(
+        impl_->playbackVisualPresentedFrame_, startFrame, endFrame);
+    if (impl_->playbackVisualSpeed_ >= 0.0) {
+      visualFrame = std::clamp(
+          visualFrame, authoritativeFrame,
+          std::min(endFrame, authoritativeFrame + 1.0));
+    } else {
+      visualFrame = std::clamp(
+          visualFrame, std::max(startFrame, authoritativeFrame - 1.0),
+          authoritativeFrame);
+    }
     visualFrame = std::clamp(visualFrame, startFrame, endFrame);
 
     impl_->currentFrame_ = visualFrame;
@@ -7784,6 +7803,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
     impl_->playbackVisualBaseFrame_ =
         static_cast<double>(playback->currentFrame().framePosition());
+    impl_->playbackVisualPresentedFrame_ = impl_->playbackVisualBaseFrame_;
     impl_->playbackVisualRateFps_ = safeTimelineFrameRate(
         static_cast<double>(playback->frameRate().framerate()));
     impl_->playbackVisualSpeed_ =
@@ -7805,6 +7825,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             }
 
             const FramePosition frame(event.frame);
+            impl_->playbackVisualPresentedFrame_ =
+                static_cast<double>(frame.framePosition());
             impl_->lastInteractiveSeekFrame_ = frame.framePosition();
             const bool isPlaying = ArtifactPlaybackService::instance() &&
                                    ArtifactPlaybackService::instance()->isPlaying();
@@ -7856,6 +7878,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                 updateKeyframeState();
               }
             }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackSpeedChangedEvent>(
+          [restartSmoothPlaybackPlayhead](const PlaybackSpeedChangedEvent &) {
+            restartSmoothPlaybackPlayhead();
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<WorkAreaChangedEvent>(
