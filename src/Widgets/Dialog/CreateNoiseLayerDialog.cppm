@@ -1,5 +1,7 @@
 module;
 #include <cstdint>
+#include <algorithm>
+#include <cstdlib>
 #include <utility>
 #include <QDialog>
 #include <QWidget>
@@ -12,14 +14,21 @@ module;
 #include <QSpinBox>
 #include <QPushButton>
 #include <QFrame>
+#include <QGridLayout>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QApplication>
+#include <QColor>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QPainter>
+#include <QPaintEvent>
 #include <QFont>
 #include <QPalette>
+#include <QRectF>
+#include <QSizePolicy>
+#include <QObject>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CreateNoiseLayerDialog;
@@ -31,6 +40,158 @@ namespace Artifact {
 W_OBJECT_IMPL(CreateNoiseLayerDialog)
 
 namespace {
+
+const QColor kDialogBackground(30, 32, 36);
+const QColor kPanelBackground(35, 38, 43);
+const QColor kPreviewBackground(20, 22, 25);
+const QColor kBorderColor(61, 66, 74);
+const QColor kPrimaryText(224, 226, 231);
+const QColor kMutedText(145, 151, 161);
+const QColor kAccentColor(225, 151, 63);
+
+void setWindowColor(QWidget* widget, const QColor& color)
+{
+  widget->setAutoFillBackground(true);
+  QPalette palette = widget->palette();
+  palette.setColor(QPalette::Window, color);
+  widget->setPalette(palette);
+}
+
+void setTextColor(QLabel* label, const QColor& color)
+{
+  QPalette palette = label->palette();
+  palette.setColor(QPalette::WindowText, color);
+  label->setPalette(palette);
+}
+
+QLabel* makeSectionLabel(const QString& text, QWidget* parent)
+{
+  auto* label = new QLabel(text, parent);
+  QFont font = label->font();
+  font.setBold(true);
+  font.setPointSize(9);
+  label->setFont(font);
+  setTextColor(label, kAccentColor);
+  return label;
+}
+
+class NoisePreviewWidget final : public QWidget {
+public:
+  explicit NoisePreviewWidget(QWidget* parent = nullptr) : QWidget(parent)
+  {
+    setMinimumSize(260, 210);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setAccessibleName(QStringLiteral("Noise preview"));
+    setAccessibleDescription(QStringLiteral("Preview updated only when noise settings change"));
+  }
+
+  void setSources(QComboBox* kind, QSpinBox* seed)
+  {
+    kind_ = kind;
+    seed_ = seed;
+    update();
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override
+  {
+    const int kind = kind_ ? kind_->currentData().toInt() : 0;
+    const std::uint32_t seed = seed_ ? static_cast<std::uint32_t>(seed_->value()) : 42u;
+    if (!valid_ || kind != cachedKind_ || seed != cachedSeed_) {
+      rebuild(kind, seed);
+    }
+
+    QPainter painter(this);
+    painter.fillRect(rect(), kPreviewBackground);
+    const QRect target = rect().adjusted(1, 1, -1, -1);
+    const qreal cellWidth = static_cast<qreal>(target.width()) / kSide;
+    const qreal cellHeight = static_cast<qreal>(target.height()) / kSide;
+    painter.setPen(Qt::NoPen);
+    for (int y = 0; y < kSide; ++y) {
+      for (int x = 0; x < kSide; ++x) {
+        const int value = pixels_[static_cast<std::size_t>(y * kSide + x)];
+        painter.setBrush(QColor(value, value, value));
+        painter.drawRect(QRectF(target.left() + x * cellWidth,
+                                target.top() + y * cellHeight,
+                                cellWidth + 0.5, cellHeight + 0.5));
+      }
+    }
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(kBorderColor);
+    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+  }
+
+private:
+  static constexpr int kSide = 48;
+  std::uint8_t pixels_[kSide * kSide] {};
+  QComboBox* kind_ = nullptr;
+  QSpinBox* seed_ = nullptr;
+  int cachedKind_ = -1;
+  std::uint32_t cachedSeed_ = 0;
+  bool valid_ = false;
+
+  static std::uint32_t hash(std::uint32_t value)
+  {
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16);
+  }
+
+  void rebuild(int kind, std::uint32_t seed)
+  {
+    cachedKind_ = kind;
+    cachedSeed_ = seed;
+    valid_ = true;
+    for (int y = 0; y < kSide; ++y) {
+      for (int x = 0; x < kSide; ++x) {
+        const int coarseX = x >> 2;
+        const int coarseY = y >> 2;
+        const auto sample = [seed, kind](int sx, int sy) {
+          const std::uint32_t key = seed
+              ^ (static_cast<std::uint32_t>(sx) * 0x9e3779b9u)
+              ^ (static_cast<std::uint32_t>(sy) * 0x85ebca6bu)
+              ^ (static_cast<std::uint32_t>(kind + 1) * 0xc2b2ae35u);
+          return static_cast<int>((hash(key) >> 24) & 0xffu);
+        };
+        int value = sample(coarseX, coarseY);
+        if (kind == static_cast<int>(ArtifactCore::ProceduralTextureGeneratorKind::White)) {
+          value = sample(x, y);
+        } else if (kind == static_cast<int>(ArtifactCore::ProceduralTextureGeneratorKind::Gradient)) {
+          value = (x * 255) / (kSide - 1);
+        } else if (kind == static_cast<int>(ArtifactCore::ProceduralTextureGeneratorKind::Voronoi)) {
+          value = 255 - std::min(255, std::abs((x % 12) - 6) * 28 + std::abs((y % 12) - 6) * 28);
+        } else {
+          const int nextX = sample(coarseX + 1, coarseY);
+          const int nextY = sample(coarseX, coarseY + 1);
+          value = (value * 2 + nextX + nextY) / 4;
+        }
+        pixels_[static_cast<std::size_t>(y * kSide + x)] = static_cast<std::uint8_t>(value);
+      }
+    }
+  }
+};
+
+class NoisePreviewRefreshFilter final : public QObject {
+public:
+  explicit NoisePreviewRefreshFilter(NoisePreviewWidget* preview, QObject* parent)
+      : QObject(parent), preview_(preview) {}
+
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override
+  {
+    const auto type = event->type();
+    if (type == QEvent::KeyRelease || type == QEvent::MouseButtonRelease ||
+        type == QEvent::Wheel || type == QEvent::FocusOut) {
+      preview_->update();
+    }
+    return QObject::eventFilter(watched, event);
+  }
+
+private:
+  NoisePreviewWidget* preview_ = nullptr;
+};
 
 class DialogCloseButton final : public QPushButton {
 public:
@@ -83,6 +244,7 @@ public:
   QSpinBox* seedSpin = nullptr;
   QSpinBox* widthSpin = nullptr;
   QSpinBox* heightSpin = nullptr;
+  NoisePreviewWidget* preview = nullptr;
 
   QPoint dragPos;
   bool dragging = false;
@@ -97,6 +259,9 @@ CreateNoiseLayerDialog::CreateNoiseLayerDialog(QWidget* parent)
   setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
   setModal(true);
+  setWindowTitle(QStringLiteral("Create Noise Layer"));
+  setMinimumSize(720, 430);
+  setWindowColor(this, kDialogBackground);
 
   auto* mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -108,20 +273,20 @@ CreateNoiseLayerDialog::CreateNoiseLayerDialog(QWidget* parent)
   header->setAutoFillBackground(true);
   {
     QPalette pal = header->palette();
-    pal.setColor(QPalette::Window, QColor("#2a2a2a"));
+    pal.setColor(QPalette::Window, kPanelBackground);
     header->setPalette(pal);
   }
   auto* headerLayout = new QHBoxLayout(header);
   headerLayout->setContentsMargins(15, 0, 10, 0);
 
-  auto* titleLabel = new QLabel(u8"ノイズ設定", header);
+  auto* titleLabel = new QLabel(QStringLiteral("Create Noise Layer"), header);
   {
     QFont font = titleLabel->font();
     font.setBold(true);
     font.setPointSize(13);
     titleLabel->setFont(font);
     QPalette pal = titleLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor("#e0e0e0"));
+    pal.setColor(QPalette::WindowText, kPrimaryText);
     titleLabel->setPalette(pal);
   }
 
@@ -132,26 +297,39 @@ CreateNoiseLayerDialog::CreateNoiseLayerDialog(QWidget* parent)
   headerLayout->addWidget(closeButton);
   mainLayout->addWidget(header);
 
-  // Form
+  // Settings and preview
   auto* content = new QWidget(this);
-  auto* form = new QFormLayout(content);
-  form->setContentsMargins(20, 15, 20, 15);
-  form->setSpacing(10);
+  setWindowColor(content, kDialogBackground);
+  auto* contentLayout = new QHBoxLayout(content);
+  contentLayout->setContentsMargins(24, 20, 24, 18);
+  contentLayout->setSpacing(24);
+
+  auto* settingsPanel = new QWidget(content);
+  settingsPanel->setMinimumWidth(300);
+  auto* settingsLayout = new QVBoxLayout(settingsPanel);
+  settingsLayout->setContentsMargins(0, 0, 0, 0);
+  settingsLayout->setSpacing(10);
+  settingsLayout->addWidget(makeSectionLabel(QStringLiteral("NOISE SETTINGS"), settingsPanel));
+  auto* form = new QFormLayout();
+  form->setContentsMargins(0, 4, 0, 0);
+  form->setHorizontalSpacing(14);
+  form->setVerticalSpacing(12);
+  form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
   impl_->nameEdit = new QLineEdit(QStringLiteral("Noise Layer 1"), content);
-  form->addRow(u8"名前", impl_->nameEdit);
+  form->addRow(QStringLiteral("Name"), impl_->nameEdit);
 
   impl_->kindCombo = new QComboBox(content);
   for (int i = 0; i <= static_cast<int>(ArtifactCore::ProceduralTextureGeneratorKind::Gradient); ++i) {
     const auto kind = static_cast<ArtifactCore::ProceduralTextureGeneratorKind>(i);
     impl_->kindCombo->addItem(generatorKindLabel(kind), i);
   }
-  form->addRow(u8"種別", impl_->kindCombo);
+  form->addRow(QStringLiteral("Type"), impl_->kindCombo);
 
   impl_->seedSpin = new QSpinBox(content);
   impl_->seedSpin->setRange(0, 9999);
   impl_->seedSpin->setValue(42);
-  form->addRow(u8"シード", impl_->seedSpin);
+  form->addRow(QStringLiteral("Seed"), impl_->seedSpin);
 
   auto* sizeRow = new QWidget(content);
   auto* sizeLayout = new QHBoxLayout(sizeRow);
@@ -165,7 +343,27 @@ CreateNoiseLayerDialog::CreateNoiseLayerDialog(QWidget* parent)
   sizeLayout->addWidget(new QLabel(u8"×", sizeRow));
   sizeLayout->addWidget(impl_->heightSpin);
   sizeLayout->addStretch();
-  form->addRow(u8"サイズ", sizeRow);
+  form->addRow(QStringLiteral("Size"), sizeRow);
+  settingsLayout->addLayout(form);
+  settingsLayout->addStretch();
+
+  auto* previewPanel = new QWidget(content);
+  auto* previewLayout = new QVBoxLayout(previewPanel);
+  previewLayout->setContentsMargins(0, 0, 0, 0);
+  previewLayout->setSpacing(8);
+  previewLayout->addWidget(makeSectionLabel(QStringLiteral("PREVIEW"), previewPanel));
+  impl_->preview = new NoisePreviewWidget(previewPanel);
+  impl_->preview->setSources(impl_->kindCombo, impl_->seedSpin);
+  auto* previewRefreshFilter = new NoisePreviewRefreshFilter(impl_->preview, this);
+  impl_->kindCombo->installEventFilter(previewRefreshFilter);
+  impl_->seedSpin->installEventFilter(previewRefreshFilter);
+  previewLayout->addWidget(impl_->preview, 1);
+  auto* previewHint = new QLabel(QStringLiteral("Preview updates when Type or Seed changes."), previewPanel);
+  setTextColor(previewHint, kMutedText);
+  previewLayout->addWidget(previewHint);
+
+  contentLayout->addWidget(settingsPanel);
+  contentLayout->addWidget(previewPanel, 1);
 
   mainLayout->addWidget(content, 1);
 
@@ -176,7 +374,7 @@ CreateNoiseLayerDialog::CreateNoiseLayerDialog(QWidget* parent)
 
   auto* okBtn = new QPushButton("OK", footer);
   okBtn->setFixedSize(80, 28);
-  auto* cancelBtn = new QPushButton(u8"キャンセル", footer);
+  auto* cancelBtn = new QPushButton(QStringLiteral("Cancel"), footer);
   cancelBtn->setFixedSize(80, 28);
   footerLayout->addStretch();
   footerLayout->addWidget(okBtn);
@@ -187,8 +385,6 @@ CreateNoiseLayerDialog::CreateNoiseLayerDialog(QWidget* parent)
   connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
   connect(closeButton, &QPushButton::clicked, this, &QDialog::reject);
 
-  adjustSize();
-  setMinimumSize(size());
 }
 
 CreateNoiseLayerDialog::~CreateNoiseLayerDialog()
@@ -204,6 +400,9 @@ void CreateNoiseLayerDialog::setCompositionSize(int width, int height)
   }
   if (impl_->heightSpin && height >= Impl::kMinSize && height <= Impl::kMaxSize) {
     impl_->heightSpin->setValue(height);
+  }
+  if (impl_->preview) {
+    impl_->preview->update();
   }
 }
 

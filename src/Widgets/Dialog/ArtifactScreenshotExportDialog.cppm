@@ -4,15 +4,24 @@ module;
 #include <algorithm>
 
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
+#include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QObject>
+#include <QPainter>
+#include <QPalette>
+#include <QPaintEvent>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -26,6 +35,138 @@ namespace Artifact
 
 namespace
 {
+
+const QColor kDialogBackground(30, 32, 36);
+const QColor kPanelBackground(35, 38, 43);
+const QColor kBorderColor(61, 66, 74);
+const QColor kPrimaryText(224, 226, 231);
+const QColor kMutedText(145, 151, 161);
+const QColor kAccentColor(225, 151, 63);
+
+QString normalizedScreenshotFormat(const QString& format);
+
+void setWindowColor(QWidget* widget, const QColor& color)
+{
+ QPalette palette = widget->palette();
+ palette.setColor(QPalette::Window, color);
+ widget->setPalette(palette);
+ widget->setAutoFillBackground(true);
+}
+
+void setLabelColor(QLabel* label, const QColor& color)
+{
+ QPalette palette = label->palette();
+ palette.setColor(QPalette::WindowText, color);
+ label->setPalette(palette);
+}
+
+QLabel* makeSectionLabel(const QString& text, QWidget* parent)
+{
+ auto* label = new QLabel(text, parent);
+ QFont font = label->font();
+ font.setBold(true);
+ font.setPointSize(9);
+ label->setFont(font);
+ setLabelColor(label, kAccentColor);
+ return label;
+}
+
+class ScreenshotSummaryWidget final : public QWidget
+{
+public:
+ explicit ScreenshotSummaryWidget(QWidget* parent = nullptr) : QWidget(parent)
+ {
+  setMinimumWidth(250);
+  setAccessibleName(QStringLiteral("Screenshot export summary"));
+ }
+
+ void setSources(QLineEdit* path, QComboBox* format, QSpinBox* quality,
+                 QCheckBox* wholeWindow, QCheckBox* multiChannel)
+ {
+  path_ = path;
+  format_ = format;
+  quality_ = quality;
+  wholeWindow_ = wholeWindow;
+  multiChannel_ = multiChannel;
+ }
+
+protected:
+ void paintEvent(QPaintEvent*) override
+ {
+  QPainter painter(this);
+  painter.fillRect(rect(), kPanelBackground);
+  painter.setPen(kBorderColor);
+  painter.drawRect(rect().adjusted(0, 0, -1, -1));
+
+  QFont heading = painter.font();
+  heading.setBold(true);
+  painter.setFont(heading);
+  painter.setPen(kPrimaryText);
+  painter.drawText(18, 30, QStringLiteral("Export summary"));
+
+  heading.setBold(false);
+  painter.setFont(heading);
+  int y = 64;
+  drawRow(painter, y, QStringLiteral("Destination"),
+          path_ && !path_->text().trimmed().isEmpty()
+              ? QFileInfo(path_->text()).fileName() : QStringLiteral("Not selected"));
+  drawRow(painter, y, QStringLiteral("Format"),
+          format_ ? format_->currentText() : QStringLiteral("PNG"));
+  if (format_ && normalizedScreenshotFormat(format_->currentData().toString()) == QStringLiteral("jpg")) {
+   drawRow(painter, y, QStringLiteral("Quality"),
+           quality_ ? QString::number(quality_->value()) : QStringLiteral("95"));
+  }
+  drawRow(painter, y, QStringLiteral("Capture"),
+          wholeWindow_ && wholeWindow_->isChecked()
+              ? QStringLiteral("Whole editor window") : QStringLiteral("Renderer area"));
+  drawRow(painter, y, QStringLiteral("Channels"),
+          multiChannel_ && multiChannel_->isChecked()
+              ? QStringLiteral("Multi-channel AOV") : QStringLiteral("Standard image"));
+
+  painter.setPen(kMutedText);
+  painter.drawText(rect().adjusted(18, y + 10, -18, -16),
+                   Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                   QStringLiteral("Summary only. No preview image or additional GPU readback is generated."));
+ }
+
+private:
+ QLineEdit* path_ = nullptr;
+ QComboBox* format_ = nullptr;
+ QSpinBox* quality_ = nullptr;
+ QCheckBox* wholeWindow_ = nullptr;
+ QCheckBox* multiChannel_ = nullptr;
+
+ static void drawRow(QPainter& painter, int& y, const QString& label, const QString& value)
+ {
+  painter.setPen(kMutedText);
+  painter.drawText(18, y, label);
+  painter.setPen(kPrimaryText);
+  painter.drawText(QRect(104, y - 16, painter.viewport().width() - 122, 22),
+                   Qt::AlignRight | Qt::AlignVCenter, value);
+  y += 34;
+ }
+};
+
+class SummaryRefreshFilter final : public QObject
+{
+public:
+ explicit SummaryRefreshFilter(ScreenshotSummaryWidget* summary, QObject* parent)
+     : QObject(parent), summary_(summary) {}
+
+protected:
+ bool eventFilter(QObject* watched, QEvent* event) override
+ {
+  const auto type = event->type();
+  if (type == QEvent::KeyRelease || type == QEvent::MouseButtonRelease ||
+      type == QEvent::Wheel || type == QEvent::FocusOut) {
+   summary_->update();
+  }
+  return QObject::eventFilter(watched, event);
+ }
+
+private:
+ ScreenshotSummaryWidget* summary_ = nullptr;
+};
 
 QString normalizedScreenshotFormat(const QString& format)
 {
@@ -87,6 +228,7 @@ public:
  QCheckBox* captureWholeWindowCheck = nullptr;
  QCheckBox* multiChannelCheck = nullptr;
  QDialogButtonBox* buttonBox = nullptr;
+ ScreenshotSummaryWidget* summary = nullptr;
 
  void syncFormatUi(ArtifactScreenshotExportDialog* dialog);
  void browseForFile(ArtifactScreenshotExportDialog* dialog);
@@ -115,6 +257,9 @@ void ArtifactScreenshotExportDialog::Impl::syncFormatUi(ArtifactScreenshotExport
   const QSignalBlocker blocker(filePathEdit);
   filePathEdit->setText(pathWithScreenshotSuffix(filePathEdit->text(), format));
  }
+ if (summary) {
+  summary->update();
+ }
  Q_UNUSED(dialog);
 }
 
@@ -142,6 +287,9 @@ void ArtifactScreenshotExportDialog::Impl::browseForFile(ArtifactScreenshotExpor
  } else {
   dialog->setFormat(formatCombo ? formatCombo->currentData().toString() : QStringLiteral("png"));
  }
+ if (summary) {
+  summary->update();
+ }
 }
 
 W_OBJECT_IMPL(ArtifactScreenshotExportDialog)
@@ -149,19 +297,36 @@ W_OBJECT_IMPL(ArtifactScreenshotExportDialog)
 ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
- setWindowTitle(QStringLiteral("Advanced Screenshot"));
+ setWindowTitle(QStringLiteral("Screenshot Export"));
  setAccessibleName(QStringLiteral("Screenshot Export Dialog"));
  setAccessibleDescription(QStringLiteral("Configure the destination and format for a composition screenshot"));
- setMinimumWidth(420);
+ setMinimumSize(760, 430);
+ setWindowColor(this, kDialogBackground);
 
  auto* root = new QVBoxLayout(this);
- auto* pathRow = new QHBoxLayout();
- auto* formatRow = new QHBoxLayout();
- auto* qualityRow = new QHBoxLayout();
+ root->setContentsMargins(24, 22, 24, 18);
+ root->setSpacing(16);
+ auto* title = new QLabel(QStringLiteral("Screenshot Export"), this);
+ QFont titleFont = title->font();
+ titleFont.setBold(true);
+ titleFont.setPointSize(14);
+ title->setFont(titleFont);
+ setLabelColor(title, kPrimaryText);
+ root->addWidget(title);
 
- auto* pathLabel = new QLabel(QStringLiteral("File"), this);
- impl_->filePathEdit = new QLineEdit(this);
- impl_->browseButton = new QPushButton(QStringLiteral("Browse..."), this);
+ auto* body = new QHBoxLayout();
+ body->setSpacing(24);
+ auto* controls = new QWidget(this);
+ auto* controlsLayout = new QVBoxLayout(controls);
+ controlsLayout->setContentsMargins(0, 0, 0, 0);
+ controlsLayout->setSpacing(10);
+
+ controlsLayout->addWidget(makeSectionLabel(QStringLiteral("OUTPUT DESTINATION"), controls));
+ auto* pathRow = new QHBoxLayout();
+
+ auto* pathLabel = new QLabel(QStringLiteral("File"), controls);
+ impl_->filePathEdit = new QLineEdit(controls);
+ impl_->browseButton = new QPushButton(QStringLiteral("Browse..."), controls);
  pathLabel->setBuddy(impl_->filePathEdit);
  impl_->filePathEdit->setAccessibleName(QStringLiteral("Screenshot file path"));
  impl_->filePathEdit->setAccessibleDescription(QStringLiteral("Path where the screenshot will be saved"));
@@ -170,42 +335,73 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
  pathRow->addWidget(pathLabel);
  pathRow->addWidget(impl_->filePathEdit, 1);
  pathRow->addWidget(impl_->browseButton);
+ controlsLayout->addLayout(pathRow);
 
- auto* formatLabel = new QLabel(QStringLiteral("Format"), this);
- impl_->formatCombo = new QComboBox(this);
+ auto addDivider = [controls, controlsLayout]() {
+  auto* divider = new QFrame(controls);
+  divider->setFrameShape(QFrame::HLine);
+  divider->setFrameShadow(QFrame::Plain);
+  QPalette palette = divider->palette();
+  palette.setColor(QPalette::WindowText, kBorderColor);
+  divider->setPalette(palette);
+  controlsLayout->addWidget(divider);
+ };
+ addDivider();
+ controlsLayout->addWidget(makeSectionLabel(QStringLiteral("IMAGE FORMAT"), controls));
+ auto* formatGrid = new QGridLayout();
+ formatGrid->setHorizontalSpacing(12);
+ formatGrid->setVerticalSpacing(10);
+
+ auto* formatLabel = new QLabel(QStringLiteral("Format"), controls);
+ impl_->formatCombo = new QComboBox(controls);
  formatLabel->setBuddy(impl_->formatCombo);
  impl_->formatCombo->setAccessibleName(QStringLiteral("Screenshot format"));
  impl_->formatCombo->setAccessibleDescription(QStringLiteral("Image format for the screenshot"));
  impl_->formatCombo->addItem(QStringLiteral("PNG"), QStringLiteral("png"));
  impl_->formatCombo->addItem(QStringLiteral("JPEG"), QStringLiteral("jpg"));
  impl_->formatCombo->addItem(QStringLiteral("EXR"), QStringLiteral("exr"));
- formatRow->addWidget(formatLabel);
- formatRow->addWidget(impl_->formatCombo, 1);
+ formatGrid->addWidget(formatLabel, 0, 0);
+ formatGrid->addWidget(impl_->formatCombo, 0, 1);
 
- impl_->jpegQualityLabel = new QLabel(QStringLiteral("JPEG Quality"), this);
- impl_->jpegQualitySpin = new QSpinBox(this);
+ impl_->jpegQualityLabel = new QLabel(QStringLiteral("JPEG Quality"), controls);
+ impl_->jpegQualitySpin = new QSpinBox(controls);
  impl_->jpegQualityLabel->setBuddy(impl_->jpegQualitySpin);
  impl_->jpegQualitySpin->setAccessibleName(QStringLiteral("JPEG quality"));
  impl_->jpegQualitySpin->setAccessibleDescription(QStringLiteral("JPEG compression quality from 1 to 100"));
  impl_->jpegQualitySpin->setRange(1, 100);
  impl_->jpegQualitySpin->setValue(95);
- qualityRow->addWidget(impl_->jpegQualityLabel);
- qualityRow->addWidget(impl_->jpegQualitySpin, 1);
+ formatGrid->addWidget(impl_->jpegQualityLabel, 1, 0);
+ formatGrid->addWidget(impl_->jpegQualitySpin, 1, 1);
+ controlsLayout->addLayout(formatGrid);
 
  impl_->captureWholeWindowCheck =
-     new QCheckBox(QStringLiteral("Capture whole editor window"), this);
+     new QCheckBox(QStringLiteral("Capture whole editor window"), controls);
  impl_->captureWholeWindowCheck->setAccessibleName(QStringLiteral("Capture whole editor window"));
  impl_->captureWholeWindowCheck->setAccessibleDescription(QStringLiteral("Capture the entire editor window instead of the renderer area"));
  impl_->captureWholeWindowCheck->setChecked(false);
  impl_->multiChannelCheck =
-     new QCheckBox(QStringLiteral("Multi-channel EXR (AOV)"), this);
+     new QCheckBox(QStringLiteral("Multi-channel EXR (AOV)"), controls);
  impl_->multiChannelCheck->setAccessibleName(QStringLiteral("Multi-channel EXR AOV"));
  impl_->multiChannelCheck->setAccessibleDescription(QStringLiteral("Include multiple render channels when exporting EXR"));
  impl_->multiChannelCheck->setChecked(false);
 
+ addDivider();
+ controlsLayout->addWidget(makeSectionLabel(QStringLiteral("CAPTURE RANGE"), controls));
+ controlsLayout->addWidget(impl_->captureWholeWindowCheck);
+ controlsLayout->addWidget(impl_->multiChannelCheck);
+ controlsLayout->addStretch();
+
+ impl_->summary = new ScreenshotSummaryWidget(this);
+ impl_->summary->setSources(impl_->filePathEdit, impl_->formatCombo, impl_->jpegQualitySpin,
+                           impl_->captureWholeWindowCheck, impl_->multiChannelCheck);
+ body->addWidget(controls, 3);
+ body->addWidget(impl_->summary, 2);
+ root->addLayout(body, 1);
+
  impl_->buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
  impl_->buttonBox->setAccessibleName(QStringLiteral("Screenshot export actions"));
  if (auto* okButton = impl_->buttonBox->button(QDialogButtonBox::Ok)) {
+  okButton->setText(QStringLiteral("Export"));
   okButton->setAccessibleName(QStringLiteral("Export screenshot"));
   okButton->setAccessibleDescription(QStringLiteral("Save the screenshot with the selected settings"));
  }
@@ -214,12 +410,14 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
   cancelButton->setAccessibleDescription(QStringLiteral("Close without exporting"));
  }
 
- root->addLayout(pathRow);
- root->addLayout(formatRow);
- root->addLayout(qualityRow);
- root->addWidget(impl_->captureWholeWindowCheck);
- root->addWidget(impl_->multiChannelCheck);
  root->addWidget(impl_->buttonBox);
+
+ auto* refreshFilter = new SummaryRefreshFilter(impl_->summary, this);
+ impl_->filePathEdit->installEventFilter(refreshFilter);
+ impl_->formatCombo->installEventFilter(refreshFilter);
+ impl_->jpegQualitySpin->installEventFilter(refreshFilter);
+ impl_->captureWholeWindowCheck->installEventFilter(refreshFilter);
+ impl_->multiChannelCheck->installEventFilter(refreshFilter);
 
  QObject::connect(impl_->browseButton, &QPushButton::clicked, this, [this]() {
   impl_->browseForFile(this);
@@ -266,6 +464,9 @@ void ArtifactScreenshotExportDialog::setFilePath(const QString& path)
   return;
  }
  impl_->filePathEdit->setText(path);
+ if (impl_->summary) {
+  impl_->summary->update();
+ }
 }
 
 QString ArtifactScreenshotExportDialog::filePath() const
@@ -298,6 +499,9 @@ void ArtifactScreenshotExportDialog::setJpegQuality(int quality)
 {
  if (impl_ && impl_->jpegQualitySpin) {
   impl_->jpegQualitySpin->setValue(std::clamp(quality, 1, 100));
+  if (impl_->summary) {
+   impl_->summary->update();
+  }
  }
 }
 
@@ -311,6 +515,9 @@ void ArtifactScreenshotExportDialog::setCaptureSource(ScreenshotCaptureSource so
  if (impl_ && impl_->captureWholeWindowCheck) {
   const QSignalBlocker blocker(impl_->captureWholeWindowCheck);
   impl_->captureWholeWindowCheck->setChecked(source == ScreenshotCaptureSource::WholeWindow);
+  if (impl_->summary) {
+   impl_->summary->update();
+  }
  }
 }
 
@@ -329,6 +536,9 @@ void ArtifactScreenshotExportDialog::setMultiChannelEnabled(bool enabled)
  if (impl_->multiChannelCheck) {
   const QSignalBlocker blocker(impl_->multiChannelCheck);
   impl_->multiChannelCheck->setChecked(enabled);
+  if (impl_->summary) {
+   impl_->summary->update();
+  }
  }
 }
 
