@@ -25,6 +25,7 @@ module;
 #include <QPainter>
 #include <QImage>
 #include <QVector>
+#include <QSettings>
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <wobjectimpl.h>
@@ -568,24 +569,28 @@ void ArtifactFileMenu::Impl::handleNewComposition()
 
     bool ok = false;
     QStringList presetLabels;
-    presetLabels.reserve(presets.size());
-    for (const auto& preset : presets) {
-        presetLabels.push_back(preset.label);
+    presetLabels.reserve(presets.size() + 1);
+    QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+    const QString recentPreset = settings.value(QStringLiteral("recentCompositionPresetLabel")).toString();
+    int recentIndex = -1;
+    for (int i = 0; i < presets.size(); ++i) {
+        if (presets.at(i).label == recentPreset) { recentIndex = i; break; }
     }
-    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presetLabels, 0, false, &ok);
+    if (recentIndex >= 0) presetLabels.push_back(QStringLiteral("★ %1").arg(recentPreset));
+    for (const auto& preset : presets) presetLabels.push_back(preset.label);
+    const QString selected = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presetLabels, 0, false, &ok);
     if (!ok) return;
+    const QString preset = selected.startsWith(QStringLiteral("★ ")) ? selected.mid(2) : selected;
 
     ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
     for (const auto& entry : presets) {
-        if (entry.label == preset) {
-            params = entry.params;
-            break;
-        }
+        if (entry.label == preset) { params = entry.params; break; }
     }
 
     const QString name = QInputDialog::getText(menu_, "コンポジション名", "名前:", QLineEdit::Normal, "Composition", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
 
+    settings.setValue(QStringLiteral("recentCompositionPresetLabel"), preset);
     params.setCompositionName(UniString(name.trimmed()));
     if (auto* svc = ArtifactProjectService::instance()) {
         svc->createComposition(params);
