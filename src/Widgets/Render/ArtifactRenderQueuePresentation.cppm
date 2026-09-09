@@ -186,18 +186,18 @@ class RenderQueueJobCard final : public QFrame
   {
     setFrameShape(QFrame::StyledPanel);
     auto* root = new QHBoxLayout(this);
-    root->setContentsMargins(12, 10, 14, 10);
-    root->setSpacing(14);
+    root->setContentsMargins(8, 7, 10, 7);
+    root->setSpacing(10);
 
     statusLabel = new QLabel("WAIT");
-    statusLabel->setMinimumWidth(86);
+    statusLabel->setMinimumWidth(74);
     statusLabel->setAlignment(Qt::AlignCenter);
     statusIconLabel = new QLabel();
     statusIconLabel->setFixedSize(18, 18);
     statusIconLabel->setAlignment(Qt::AlignCenter);
 
     thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
-    thumbnailLabel->setFixedSize(280, 172);
+    thumbnailLabel->setFixedSize(112, 64);
     thumbnailLabel->setAlignment(Qt::AlignCenter);
     thumbnailLabel->setScaledContents(false);
     thumbnailLabel->setAutoFillBackground(true);
@@ -208,16 +208,16 @@ class RenderQueueJobCard final : public QFrame
     root->addWidget(thumbnailLabel);
 
     auto* body = new QVBoxLayout();
-    body->setSpacing(7);
+    body->setSpacing(3);
     nameLabel = new QLabel();
     QFont nameFont = nameLabel->font();
-    nameFont.setPointSize(nameFont.pointSize() + 2);
+    nameFont.setPointSize(nameFont.pointSize() + 1);
     nameFont.setBold(true);
     nameLabel->setFont(nameFont);
     outputLabel = new QLabel();
     backendLabel = new QLabel();
-    outputLabel->setWordWrap(true);
-    backendLabel->setWordWrap(true);
+    outputLabel->setWordWrap(false);
+    backendLabel->setWordWrap(false);
     auto* cardHeader = new QHBoxLayout();
     cardHeader->setContentsMargins(0, 0, 0, 0);
     cardHeader->addWidget(nameLabel, 1);
@@ -226,11 +226,11 @@ class RenderQueueJobCard final : public QFrame
     body->addLayout(cardHeader);
     body->addWidget(outputLabel);
     body->addWidget(backendLabel);
-    body->addStretch();
     progressBar = new QProgressBar();
     progressBar->setRange(0, 100);
     progressBar->setTextVisible(true);
-    progressBar->setMinimumWidth(190);
+    progressBar->setMinimumWidth(160);
+    progressBar->setMaximumHeight(12);
     body->addWidget(progressBar);
     root->addLayout(body, 1);
   }

@@ -6004,7 +6004,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->projectNameLabel = new QLabel(QStringLiteral("Project View"));
     impl_->projectNameLabel->setObjectName(QStringLiteral("projectManagerSectionLabel"));
-    impl_->projectNameLabel->setMaximumHeight(24);
+    impl_->projectNameLabel->setContentsMargins(12, 7, 12, 7);
+    impl_->projectNameLabel->setMinimumHeight(38);
+    impl_->projectNameLabel->setMaximumHeight(38);
     {
         QFont titleFont = impl_->projectNameLabel->font();
         titleFont.setPointSizeF(std::max<qreal>(13.0, titleFont.pointSizeF() + 1.0));
@@ -6080,6 +6082,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->filterSummaryLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->filterSummaryLabel);
+    impl_->filterSummaryLabel->setVisible(false);
     impl_->selectionStateLabel = new QLabel(QStringLiteral("0 items  ·  0 selected"), selectionChrome);
     impl_->selectionStateLabel->setWordWrap(true);
     impl_->selectionStateLabel->setMaximumHeight(40);
@@ -6457,6 +6460,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         QStringLiteral("Filter project items by name, path, type, or status."));
     impl_->searchBar->setPlaceholderText(QStringLiteral("Search project"));
     impl_->searchBar->setClearButtonEnabled(true);
+    impl_->searchBar->setMinimumHeight(32);
+    impl_->searchBar->setMaximumHeight(32);
     {
         QFont f = impl_->searchBar->font();
         f.setPointSize(11);
@@ -6482,19 +6487,26 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->typeFilterBox->setAccessibleDescription(
         QStringLiteral("Limit the project view to a selected item type."));
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage"
-                                                 << "Input Source" << "Folder" << "Solid");
+                                                  << "Input Source" << "Folder" << "Solid");
+    impl_->typeFilterBox->setMinimumWidth(128);
+    impl_->typeFilterBox->setMinimumHeight(30);
+    impl_->typeFilterBox->setMaximumHeight(30);
     impl_->viewModeBox = new QComboBox(filterBarHost);
     impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
     impl_->viewModeBox->setAccessibleName(QStringLiteral("Project view mode"));
     impl_->viewModeBox->setAccessibleDescription(
         QStringLiteral("Choose hierarchy Tree view or visual Tile view."));
     impl_->viewModeBox->addItems(QStringList() << "Tree" << "Tile");
+    impl_->viewModeBox->setMinimumWidth(92);
+    impl_->viewModeBox->setMinimumHeight(30);
+    impl_->viewModeBox->setMaximumHeight(30);
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
     impl_->unusedOnlyCheck->setAccessibleName(QStringLiteral("Unused items only"));
     impl_->unusedOnlyCheck->setAccessibleDescription(
         QStringLiteral("Show only project items not referenced by the current composition."));
+    impl_->unusedOnlyCheck->setMinimumHeight(30);
     QSettings projectViewSettings;
     impl_->typeFilterBox->setCurrentText(projectViewSettings.value(
         QStringLiteral("ProjectView/TypeFilter"), QStringLiteral("All")).toString());
@@ -6538,8 +6550,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* searchFilterRow = new QWidget(chromePanel);
     searchFilterRow->setObjectName(QStringLiteral("projectManagerSearchFilterRow"));
     auto* searchFilterLayout = new QHBoxLayout(searchFilterRow);
-    searchFilterLayout->setContentsMargins(10, 0, 10, 6);
-    searchFilterLayout->setSpacing(8);
+    searchFilterLayout->setContentsMargins(12, 8, 12, 8);
+    searchFilterLayout->setSpacing(10);
     searchFilterLayout->addWidget(impl_->searchBar, 1);
     searchFilterLayout->addWidget(filterBarHost);
     chromeLayout->addWidget(searchFilterRow);
@@ -6572,6 +6584,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     projectPaneLayout->setSpacing(0);
     auto* browseContextBar = new QWidget(projectPane);
     browseContextBar->setObjectName(QStringLiteral("projectManagerBrowseContextBar"));
+    browseContextBar->setAutoFillBackground(true);
+    {
+        QPalette pal = browseContextBar->palette();
+        pal.setColor(QPalette::Window,
+                     QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(106));
+        browseContextBar->setPalette(pal);
+    }
     auto* browseContextLayout = new QHBoxLayout(browseContextBar);
     browseContextLayout->setContentsMargins(10, 4, 10, 4);
     browseContextLayout->setSpacing(8);
@@ -6590,25 +6609,49 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* detailPanel = new QWidget(contentSplit);
     detailPanel->setObjectName(QStringLiteral("projectManagerDetailPanel"));
     detailPanel->setAutoFillBackground(true);
-    detailPanel->setMinimumWidth(280);
-    detailPanel->setMaximumWidth(380);
+    {
+        QPalette pal = detailPanel->palette();
+        pal.setColor(QPalette::Window,
+                     QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(110));
+        detailPanel->setPalette(pal);
+    }
+    detailPanel->setMinimumWidth(300);
+    detailPanel->setMaximumWidth(360);
     auto* detailLayout = new QVBoxLayout(detailPanel);
-    detailLayout->setContentsMargins(12, 10, 12, 10);
-    detailLayout->setSpacing(6);
+    detailLayout->setContentsMargins(14, 12, 14, 12);
+    detailLayout->setSpacing(8);
     detailLayout->addWidget(impl_->infoPanel_);
     detailLayout->addWidget(selectionChrome);
     detailLayout->addWidget(impl_->compositionEditorPanel);
     detailLayout->addStretch(1);
-    detailLayout->addWidget(impl_->syncStateLabel);
-    detailLayout->addWidget(impl_->projectHealthLabel);
     contentSplit->addWidget(detailPanel);
     contentSplit->setStretchFactor(0, 1);
     contentSplit->setStretchFactor(1, 0);
-    contentSplit->setSizes({720, 300});
+    contentSplit->setSizes({820, 320});
     mainLayout->addWidget(contentSplit, 1);
 
     impl_->toolBox = new ArtifactProjectManagerToolBox(this);
     mainLayout->addWidget(impl_->toolBox);
+
+    auto* statusBar = new QWidget(this);
+    statusBar->setObjectName(QStringLiteral("projectManagerStatusBar"));
+    statusBar->setAutoFillBackground(true);
+    {
+        QPalette pal = statusBar->palette();
+        pal.setColor(QPalette::Window,
+                     QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(108));
+        statusBar->setPalette(pal);
+    }
+    statusBar->setMinimumHeight(28);
+    statusBar->setMaximumHeight(28);
+    auto* statusLayout = new QHBoxLayout(statusBar);
+    statusLayout->setContentsMargins(10, 0, 10, 0);
+    statusLayout->setSpacing(8);
+    impl_->projectHealthLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    impl_->syncStateLabel->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+    statusLayout->addWidget(impl_->projectHealthLabel, 1);
+    statusLayout->addWidget(impl_->syncStateLabel);
+    mainLayout->addWidget(statusBar);
 
     connect(impl_->searchBar, &QLineEdit::textChanged, [this](const QString& t) { impl_->handleSearch(t); });
     connect(impl_->typeFilterBox, &QComboBox::currentTextChanged, [this](const QString&) {
