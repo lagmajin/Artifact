@@ -6141,11 +6141,12 @@ namespace Artifact
                     << "renderBackend=" << (useGpuBackend ? "gpu" : "cpu");
             ArtifactCore::Logger::instance()->flushFile();
             try {
-                // gpuSurfaceCache belongs to the GPU render worker. Clearing it in
-                // the consumer races the worker as soon as the next frame starts.
-                if (useGpuBackend) {
-                    gpuSurfaceCache.clear();
-                }
+                // Keep the job-local surface cache alive across frames. Its
+                // signatures already include animated effect, crop, sequence,
+                // video, shape, and other frame-dependent identities; entries
+                // with changed content are replaced under the serialized GPU
+                // render boundary. This retains QHash and image-buffer capacity
+                // while preserving the existing signature validation.
                 ok = renderSingleFrame(snap, frameOutput, frameError);
             } catch (const std::exception& e) {
                 frameError = QString::fromUtf8(e.what());
