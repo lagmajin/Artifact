@@ -22,6 +22,7 @@ export module Artifact.Widgets.CompositionRenderController;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.Render.ViewportScaleOverlay;
 import Artifact.Grid.System;
@@ -117,10 +118,11 @@ enum class CompositionViewportPresentationLayout {
  class CompositionRenderController : public QObject
  {
  W_OBJECT(CompositionRenderController)
- private:
-  class Impl;
-  Impl* impl_;
- public:
+  private:
+   class Impl;
+   Impl* impl_;
+   ArtifactCore::SharedPtr<ArtifactImageLayer> selectedCropLayer() const;
+  public:
   enum class ViewportRulerUnit { Pixels, Percent };
   enum class ViewportOriginMode { TopLeft, Center, BottomLeft };
   explicit CompositionRenderController(QObject* parent = nullptr);
@@ -327,7 +329,24 @@ void zoomFill();
   bool setSelected3DTransform(const QVector3D& position,
                               const QVector3D& rotation,
                               const QVector3D& scale);
-  bool resetSelected2DAnchorToCenter();
+   bool resetSelected2DAnchorToCenter();
+   // Quick-set the 2D anchor to one of the nine local-bounds presets:
+   // 0..2 top, 3..5 middle, 6..8 bottom (left/center/right).
+   bool setSelected2DAnchorPreset(int preset);
+   // One-shot arrangement ops on the gizmo selection (AE Fit To Comp /
+   // Align / Distribute). Return true when at least one layer changed.
+   bool fitSelectedToComp(ArrangeFitMode mode);
+   bool alignSelectedLayers(ArrangeAlignMode mode);
+   bool distributeSelectedLayers(ArrangeDistributeAxis axis);
+   // Image-layer source crop (V1). Rect is in source pixels. Enabling is
+   // implicit on first set; reset keeps the rect and only disables.
+   bool selectedSupportsCrop() const;
+   bool setSelectedCropRect(const QRectF& sourceRect);
+   bool resetSelectedCrop();
+   bool setSelectedCropEnabled(bool enabled);
+   // Content edit mode drives the ContentGizmo (crop/size/gradient handles).
+   void setContentEditMode(bool enabled);
+   bool contentEditMode() const;
   ArtifactIRenderer* renderer() const;
   QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;

@@ -40,6 +40,7 @@ parseMaskPropertyPath(const QString &propertyPath) {
       field == QStringLiteral("featherVertical") ||
       field == QStringLiteral("featherInner") ||
       field == QStringLiteral("featherOuter") ||
+      field == QStringLiteral("falloff") ||
       field == QStringLiteral("expansion") ||
       field == QStringLiteral("inverted") ||
       field == QStringLiteral("mode") ||

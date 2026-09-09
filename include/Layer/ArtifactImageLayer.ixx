@@ -11,14 +11,15 @@
 export module Artifact.Layer.Image;
 
 
-import Artifact.Layers.Abstract._2D;
+ import Artifact.Layers.Abstract._2D;
 
-import Image;
-import Image.ImageF32x4_RGBA;
-import Mesh;
-import Image.DepthMap;
-import Geometry.DepthMeshGenerator;
-import Core.AI.ImageSegmenter;
+ import Image;
+ import Image.ImageF32x4_RGBA;
+ import Mesh;
+ import Image.DepthMap;
+ import Geometry.DepthMeshGenerator;
+ import Core.AI.ImageSegmenter;
+ import Artifact.Layer.SourceCrop;
 
 export namespace Artifact {
 
@@ -63,8 +64,11 @@ export namespace Artifact {
   QUuid sourceAssetId() const;
   std::uint64_t sourceVersion() const;
   bool canShareSourceGpuTexture() const;
-  bool sourceCropEnabled() const;
-  QString sourceCropSignature() const;
+   bool sourceCropEnabled() const;
+   // Whole-value read for VP/undo use. Writes go through the
+   // sourceCrop.* property paths so clamping and keyframes stay consistent.
+   SourceCrop sourceCrop() const;
+   QString sourceCropSignature() const;
   void refreshAnimatedSourceCrop();
   bool localizeSourceIdentity();
   bool relinkSourceIdentityToShared();

@@ -882,6 +882,9 @@ void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
     path.setFeatherOuter(static_cast<float>(
         resolveDouble(pathPrefix + QStringLiteral(".featherOuter"),
                       static_cast<double>(path.featherOuter()))));
+    path.setFalloff(static_cast<MaskFeatherFalloff>(
+        resolveInt(pathPrefix + QStringLiteral(".falloff"),
+                   static_cast<int>(path.falloff()))));
     path.setExpansion(static_cast<float>(
         resolveDouble(pathPrefix + QStringLiteral(".expansion"),
                       static_cast<double>(path.expansion()))));
@@ -6135,6 +6138,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
         pobj["featherVertical"] = static_cast<double>(path.featherVertical());
         pobj["featherInner"] = static_cast<double>(path.featherInner());
         pobj["featherOuter"] = static_cast<double>(path.featherOuter());
+        pobj["falloff"] = static_cast<int>(path.falloff());
         pobj["expansion"] = static_cast<double>(path.expansion());
         pobj["inverted"] = path.isInverted();
         pobj["mode"] = static_cast<int>(path.mode());
@@ -6153,6 +6157,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
             kfobj["featherVertical"] = static_cast<double>(kf.featherVertical);
             kfobj["featherInner"] = static_cast<double>(kf.featherInner);
             kfobj["featherOuter"] = static_cast<double>(kf.featherOuter);
+            kfobj["falloff"] = static_cast<int>(kf.falloff);
             kfobj["expansion"] = static_cast<double>(kf.expansion);
             kfobj["inverted"] = kf.inverted;
             kfobj["mode"] = static_cast<int>(kf.mode);
@@ -7375,6 +7380,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             path.setFeatherInner(static_cast<float>(pobj["featherInner"].toDouble(0.0)));
           if (pobj.contains("featherOuter"))
             path.setFeatherOuter(static_cast<float>(pobj["featherOuter"].toDouble(0.0)));
+          if (pobj.contains("falloff"))
+            path.setFalloff(static_cast<MaskFeatherFalloff>(pobj["falloff"].toInt(0)));
           if (pobj.contains("expansion"))
             path.setExpansion(static_cast<float>(pobj["expansion"].toDouble(0.0)));
           if (pobj.contains("inverted"))
@@ -7400,6 +7407,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
               snap.featherVertical = static_cast<float>(kfobj["featherVertical"].toDouble(0.0));
               snap.featherInner = static_cast<float>(kfobj["featherInner"].toDouble(0.0));
               snap.featherOuter = static_cast<float>(kfobj["featherOuter"].toDouble(0.0));
+              snap.falloff = static_cast<MaskFeatherFalloff>(kfobj["falloff"].toInt(0));
               snap.expansion = static_cast<float>(kfobj["expansion"].toDouble(0.0));
               snap.inverted = kfobj["inverted"].toBool(false);
               snap.mode = static_cast<MaskMode>(kfobj["mode"].toInt(static_cast<int>(MaskMode::Add)));
@@ -10491,6 +10499,16 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       foProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather Outer"));
       maskGroup.addProperty(foProp);
 
+      auto falloffProp = makeProp(pathPrefix + QStringLiteral(".falloff"),
+                                  PropertyType::Integer,
+                                  static_cast<int>(path.falloff()),
+                                  -236 - pathIndex);
+      falloffProp->setAnimatable(false);
+      falloffProp->setTooltip(
+          QStringLiteral("0=Gaussian,1=Linear,2=Smooth,3=Sharp"));
+      falloffProp->setDisplayLabel(pathLabel + QStringLiteral(" Falloff"));
+      maskGroup.addProperty(falloffProp);
+
       auto expansionProp = makeProp(pathPrefix + QStringLiteral(".expansion"),
                                     PropertyType::Float,
                                     static_cast<double>(path.expansion()),
@@ -11025,6 +11043,8 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       path.setFeatherInner(static_cast<float>(value.toDouble()));
     } else if (maskAddress->field == QStringLiteral("featherOuter")) {
       path.setFeatherOuter(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("falloff")) {
+      path.setFalloff(static_cast<MaskFeatherFalloff>(value.toInt()));
     } else if (maskAddress->field == QStringLiteral("expansion")) {
       path.setExpansion(static_cast<float>(value.toDouble()));
     } else if (maskAddress->field == QStringLiteral("inverted")) {

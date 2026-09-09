@@ -84,6 +84,7 @@ static qint64 maskSignatureForLayer(const ArtifactAbstractLayer *layer, int widt
             mix(static_cast<int>(std::lround(path.featherVertical() * 1000.0f)));
             mix(static_cast<int>(std::lround(path.featherInner() * 1000.0f)));
             mix(static_cast<int>(std::lround(path.featherOuter() * 1000.0f)));
+            mix(static_cast<int>(path.falloff()));
             mix(static_cast<int>(std::lround(path.expansion() * 1000.0f)));
             mix(path.vertexCount());
             mix(qHash(path.name().toQString()));

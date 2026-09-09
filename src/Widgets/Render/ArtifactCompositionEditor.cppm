@@ -646,6 +646,127 @@ struct PendingDroppedAsset {
   QString layerName;
   ArtifactCore::FileType fileType = ArtifactCore::FileType::Unknown;
   bool svgShapeFile = false;
+  QPointF dropViewportPos;
+  bool hasDropViewportPos = false;
+  // Image replacement keeps the current transform by default. Holding Shift
+  // at drop time opts into a fresh, centered placement for the new source.
+  Qt::KeyboardModifiers dropModifiers = Qt::NoModifier;
+};
+
+// Single-image drop onto an image layer replaces its source in place. The
+// default keeps the transform; Shift requests a fresh centered placement.
+class ImageSourceReplaceCommand final : public UndoCommand {
+ public:
+  ImageSourceReplaceCommand(ArtifactAbstractLayerPtr layer, QString beforePath,
+                            QString afterPath,
+                            bool resetPlacement = false)
+      : layer_(std::move(layer)),
+        beforePath_(std::move(beforePath)),
+        afterPath_(std::move(afterPath)),
+        resetPlacement_(resetPlacement) {
+    if (layer_ && resetPlacement_) {
+      const auto time = ArtifactCore::RationalTime(layer_->currentFrame(), 30);
+      const auto snapshot = layer_->transform3D().snapshotAt(time);
+      beforeTransform_.position =
+          QVector3D(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+      beforeTransform_.scale =
+          QVector3D(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+      beforeTransform_.anchor =
+          QVector3D(snapshot.anchorX, snapshot.anchorY, snapshot.anchorZ);
+      beforeTransform_.rotation = snapshot.rotation;
+      beforeTransformCaptured_ = true;
+    }
+  }
+
+  void undo() override {
+    lastOperationSucceeded_ = apply(beforePath_, false);
+    if (lastOperationSucceeded_ && resetPlacement_ && beforeTransformCaptured_) {
+      restoreBeforeTransform();
+    }
+  }
+  void redo() override { lastOperationSucceeded_ = apply(afterPath_, resetPlacement_); }
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
+  }
+  QString label() const override {
+    return QStringLiteral("Replace Image Source");
+  }
+
+ private:
+  bool apply(const QString& path, bool resetPlacement) {
+    if (!layer_ || path.isEmpty()) {
+      return false;
+    }
+    const auto imageLayer =
+        ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer_);
+    if (!imageLayer) {
+      return false;
+    }
+    const bool loaded = imageLayer->loadFromPath(path);
+    if (!loaded) {
+      return false;
+    }
+    if (resetPlacement) {
+      const auto time = ArtifactCore::RationalTime(layer_->currentFrame(), 30);
+      const auto sourceBounds = layer_->localBounds();
+      const QPointF anchor = sourceBounds.isValid() ? sourceBounds.center()
+                                                     : QPointF(0.0, 0.0);
+      QSize compSize;
+      if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+              layer_->composition())) {
+        compSize = comp->settings().compositionSize();
+      }
+      const float compW = static_cast<float>(compSize.width() > 0
+                                                 ? compSize.width()
+                                                 : 1920);
+      const float compH = static_cast<float>(compSize.height() > 0
+                                                 ? compSize.height()
+                                                 : 1080);
+      auto &transform = layer_->transform3D();
+      transform.setAnchor(time, static_cast<float>(anchor.x()),
+                          static_cast<float>(anchor.y()), 0.0f);
+      transform.setPosition(time, compW * 0.5f, compH * 0.5f);
+      transform.setScale(time, 1.0f, 1.0f, 1.0f);
+      transform.setRotation(time, 0.0f);
+      layer_->setDirty(LayerDirtyFlag::Transform);
+    }
+    layer_->changed();
+    if (auto* manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+    return true;
+  }
+
+  void restoreBeforeTransform() {
+    if (!layer_) return;
+    const auto time = ArtifactCore::RationalTime(layer_->currentFrame(), 30);
+    auto &transform = layer_->transform3D();
+    transform.setAnchor(time, beforeTransform_.anchor.x(),
+                        beforeTransform_.anchor.y(), beforeTransform_.anchor.z());
+    transform.setPosition(time, beforeTransform_.position.x(),
+                          beforeTransform_.position.y());
+    transform.setPositionZ(time, beforeTransform_.position.z());
+    transform.setScale(time, beforeTransform_.scale.x(), beforeTransform_.scale.y(),
+                       beforeTransform_.scale.z());
+    transform.setRotation(time, beforeTransform_.rotation);
+    layer_->setDirty(LayerDirtyFlag::Transform);
+    layer_->changed();
+  }
+
+  struct TransformState {
+    QVector3D position;
+    QVector3D scale{1.0f, 1.0f, 1.0f};
+    QVector3D anchor;
+    float rotation = 0.0f;
+  };
+
+  ArtifactAbstractLayerPtr layer_;
+  QString beforePath_;
+  QString afterPath_;
+  bool resetPlacement_ = false;
+  bool beforeTransformCaptured_ = false;
+  TransformState beforeTransform_;
+  bool lastOperationSucceeded_ = true;
 };
 
 // Invisible input surface for the in-viewport text editing session. The
@@ -4199,6 +4320,81 @@ public:
       }
     }
 
+    if (selectedCount > 0) {
+      addSeparator();
+      const auto arrangeHasSelection = selectedCount > 0;
+      add(QStringLiteral("Compにフィット"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->fitSelectedToComp(Artifact::ArrangeFitMode::Fit);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("Compにフィル"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->fitSelectedToComp(Artifact::ArrangeFitMode::Fill);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("Compにストレッチ"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->fitSelectedToComp(Artifact::ArrangeFitMode::Stretch);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("整列: 左"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->alignSelectedLayers(Artifact::ArrangeAlignMode::Left);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("整列: 中央（横）"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->alignSelectedLayers(Artifact::ArrangeAlignMode::CenterH);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("整列: 右"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->alignSelectedLayers(Artifact::ArrangeAlignMode::Right);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("整列: 上"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->alignSelectedLayers(Artifact::ArrangeAlignMode::Top);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("整列: 中央（縦）"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->alignSelectedLayers(Artifact::ArrangeAlignMode::CenterV);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("整列: 下"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->alignSelectedLayers(Artifact::ArrangeAlignMode::Bottom);
+          },
+          arrangeHasSelection);
+      add(QStringLiteral("等間隔: 横"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->distributeSelectedLayers(
+                Artifact::ArrangeDistributeAxis::Horizontal);
+          },
+          selectedCount >= 3);
+      add(QStringLiteral("等間隔: 縦"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->distributeSelectedLayers(
+                Artifact::ArrangeDistributeAxis::Vertical);
+          },
+          selectedCount >= 3);
+    }
+    if (controller_ && controller_->selectedSupportsCrop()) {
+      addSeparator();
+      add(QStringLiteral("クロップ編集モード"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->setContentEditMode(!ctrl->contentEditMode());
+          },
+          true);
+      add(QStringLiteral("クロップをリセット"),
+          [this, ctrl = controller_]() {
+            if (ctrl) ctrl->resetSelectedCrop();
+          },
+          true);
+    }
+
     viewportOverlayActions_ = actions;
     viewportOverlayEnabledStates_ = enabledStates;
     controller_->showContextMenuOverlay(viewportPos, items, title, subtitle,
@@ -4223,7 +4419,10 @@ public:
   }
 
   void enqueueDroppedAssets(const QStringList &paths,
-                            const QStringList &importedPaths) {
+                            const QStringList &importedPaths,
+                            const QPointF &dropViewportPos = QPointF(),
+                            bool hasDropViewportPos = false,
+                            Qt::KeyboardModifiers dropModifiers = Qt::NoModifier) {
     ArtifactCore::FileTypeDetector detector;
     // インポート済みリストは連番シーケンスが代表パスへ集約済みのため、
     // そちらを正として列挙する（元パス列挙だとシーケンスが再展開される）。
@@ -4239,6 +4438,9 @@ public:
           resolveImportedAssetPathForSource(path, importedPaths);
       asset.fileType = asset.svgShapeFile ? ArtifactCore::FileType::Image
                                           : detector.detectByExtension(path);
+      asset.dropViewportPos = dropViewportPos;
+      asset.hasDropViewportPos = hasDropViewportPos;
+      asset.dropModifiers = dropModifiers;
       pendingDroppedAssets_.push_back(asset);
     }
 
@@ -4253,16 +4455,21 @@ public:
     }
   }
 
-  void importDroppedPaths(const QStringList &paths) {
+  void importDroppedPaths(const QStringList &paths,
+                          const QPointF &dropViewportPos = QPointF(),
+                          bool hasDropViewportPos = false,
+                          Qt::KeyboardModifiers dropModifiers = Qt::NoModifier) {
     auto *svc = ArtifactProjectService::instance();
     if (!svc || paths.isEmpty()) {
       return;
     }
     QPointer<CompositionViewport> self(this);
     svc->importAssetsFromPathsAsync(
-        paths, [self, paths](const QStringList &importedPaths) mutable {
+        paths, [self, paths, dropViewportPos, hasDropViewportPos,
+                dropModifiers](const QStringList &importedPaths) mutable {
           if (self) {
-            self->enqueueDroppedAssets(paths, importedPaths);
+            self->enqueueDroppedAssets(paths, importedPaths, dropViewportPos,
+                                       hasDropViewportPos, dropModifiers);
           }
         });
   }
@@ -4301,6 +4508,56 @@ public:
     }
   }
 
+  // Single-image drop onto an image layer replaces its source in place.
+  bool tryReplaceImageLayerSource(const PendingDroppedAsset &asset) {
+    if (!controller_ || !asset.hasDropViewportPos) {
+      return false;
+    }
+    const LayerID hitId =
+        controller_->layerAtViewportPos(asset.dropViewportPos);
+    if (hitId.isNil()) {
+      return false;
+    }
+    auto *svc = ArtifactProjectService::instance();
+    const auto comp =
+        svc ? svc->currentComposition().lock() : ArtifactCompositionPtr{};
+    const auto layer =
+        comp ? comp->layerById(hitId) : ArtifactAbstractLayerPtr{};
+    const auto imageLayer =
+        layer ? ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)
+              : ArtifactCore::SharedPtr<ArtifactImageLayer>{};
+    if (!imageLayer || imageLayer->isLocked() ||
+        imageLayer->isSelectionLocked()) {
+      return false;
+    }
+    const QString before = imageLayer->sourcePath();
+    const QString after = asset.importedPath.isEmpty() ? asset.originalPath
+                                                       : asset.importedPath;
+    if (after.isEmpty() || before == after) {
+      return false;
+    }
+    auto *undoManager = UndoManager::instance();
+    auto command =
+        std::make_unique<ImageSourceReplaceCommand>(
+            imageLayer, before, after,
+            asset.dropModifiers.testFlag(Qt::ShiftModifier));
+    bool pushed = undoManager == nullptr;
+    if (undoManager) {
+      pushed = undoManager->push(std::move(command));
+    }
+    if (!pushed) {
+      return false;
+    }
+    const bool resetPlacement =
+        asset.dropModifiers.testFlag(Qt::ShiftModifier);
+    controller_->setInfoOverlayText(
+        QStringLiteral("Replace"),
+        resetPlacement
+            ? QStringLiteral("画像ソースを差し替え（Shift: サイズ・位置をリセット）")
+            : QStringLiteral("画像ソースを差し替え（サイズ・位置を維持）"));
+    return true;
+  }
+
   void processPendingDroppedAssets() {
     if (processingDroppedAssets_) {
       return;
@@ -4316,6 +4573,7 @@ public:
     processingDroppedAssets_ = true;
     constexpr int kAssetsPerTick = 2;
     int processed = 0;
+    const bool singleDrop = pendingDroppedAssets_.size() == 1;
 
     while (processed < kAssetsPerTick && !pendingDroppedAssets_.empty()) {
       const PendingDroppedAsset asset = pendingDroppedAssets_.front();
@@ -4329,6 +4587,9 @@ public:
         params.setSvgPath(asset.importedPath);
         svc->addLayerToCurrentComposition(params, shouldSelectThisLayer);
       } else if (asset.fileType == FT::Image) {
+        if (singleDrop && tryReplaceImageLayerSource(asset)) {
+          continue;
+        }
         ArtifactImageInitParams params(asset.layerName);
         params.setImagePath(asset.importedPath);
         svc->addLayerToCurrentComposition(params, shouldSelectThisLayer);
@@ -4451,7 +4712,8 @@ protected:
       return;
     }
 
-    importDroppedPaths(paths);
+    importDroppedPaths(paths, event->position(), true,
+                       event->keyboardModifiers());
     event->acceptProposedAction();
   }
 
@@ -7983,6 +8245,7 @@ public:
   QLabel *statusFrameRateLabel_ = nullptr;
   QToolButton *zoomControlButton_ = nullptr;
   QToolButton *fitControlButton_ = nullptr;
+  QToolButton *arrangeHudButton_ = nullptr;
   QToolButton *cameraControlButton_ = nullptr;
   ViewportLayoutButton *previousFrameButton_ = nullptr;
   ViewportLayoutButton *playPauseButton_ = nullptr;
@@ -11018,58 +11281,27 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   polishEditorMenu(pivotMenu, this);
   auto *pivotGroup = new QActionGroup(this);
   pivotGroup->setExclusive(true);
-  const auto applyPivotPreset = [this](const bool useCenter) {
-    auto *selection = ArtifactLayerSelectionManager::instance();
-    const auto comp = resolvePreferredComposition();
-    const auto layer =
-        selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
-    if (!layer || !impl_ || !impl_->renderController_ || !comp) {
-      return;
-    }
-
-    const QRectF localBounds = layer->localBounds();
-    if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
-        localBounds.height() <= 0.0) {
-      return;
-    }
-
-    const QPointF targetAnchor =
-        useCenter ? localBounds.center() : localBounds.topLeft();
-
-    auto &t3d = layer->transform3D();
-    const RationalTime time(layer->currentFrame(), 30);
-    const QPointF currentAnchor(t3d.anchorX(), t3d.anchorY());
-    const QPointF delta = targetAnchor - currentAnchor;
-    const double radians = t3d.rotation() * 3.14159265358979323846 / 180.0;
-    const double cosA = std::cos(radians);
-    const double sinA = std::sin(radians);
-    const QPointF compensation(
-        delta.x() * t3d.scaleX() * cosA - delta.y() * t3d.scaleY() * sinA,
-        delta.x() * t3d.scaleX() * sinA + delta.y() * t3d.scaleY() * cosA);
-
-    t3d.setAnchor(time, static_cast<float>(targetAnchor.x()),
-                  static_cast<float>(targetAnchor.y()), t3d.anchorZ());
-    t3d.setPosition(time,
-                    t3d.positionX() + static_cast<float>(compensation.x()),
-                    t3d.positionY() + static_cast<float>(compensation.y()));
-    layer->setDirty(LayerDirtyFlag::Transform);
-    layer->addDirtyReason(LayerDirtyReason::UserEdit);
-    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                          LayerChangedEvent::ChangeType::Modified});
-    impl_->renderController_->markRenderDirty();
-  };
-  const auto addPivotAction = [&](const QString &text, bool useCenter,
+  const auto addPivotAction = [&](const QString &text, int preset,
                                   bool checked) {
     QAction *action = pivotMenu->addAction(text);
     action->setCheckable(true);
     action->setChecked(checked);
     pivotGroup->addAction(action);
-    connect(action, &QAction::triggered, this,
-            [applyPivotPreset, useCenter]() { applyPivotPreset(useCenter); });
+    connect(action, &QAction::triggered, this, [this, preset]() {
+      if (impl_ && impl_->renderController_) {
+        impl_->renderController_->setSelected2DAnchorPreset(preset);
+      }
+    });
   };
-  addPivotAction(QStringLiteral("Pivot: Center"), true, false);
-  addPivotAction(QStringLiteral("Pivot: Top Left"), false, false);
+  addPivotAction(QStringLiteral("Pivot: Top Left"), 0, false);
+  addPivotAction(QStringLiteral("Pivot: Top Center"), 1, false);
+  addPivotAction(QStringLiteral("Pivot: Top Right"), 2, false);
+  addPivotAction(QStringLiteral("Pivot: Center Left"), 3, false);
+  addPivotAction(QStringLiteral("Pivot: Center"), 4, false);
+  addPivotAction(QStringLiteral("Pivot: Center Right"), 5, false);
+  addPivotAction(QStringLiteral("Pivot: Bottom Left"), 6, false);
+  addPivotAction(QStringLiteral("Pivot: Bottom Center"), 7, false);
+  addPivotAction(QStringLiteral("Pivot: Bottom Right"), 8, false);
   impl_->pivotModeButton_ = new QToolButton(impl_->topToolbar_);
   impl_->pivotModeButton_->setText(QStringLiteral("Pivot"));
   impl_->pivotModeButton_->setMenu(pivotMenu);
@@ -11220,6 +11452,67 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->zoomFitAction_->setText(QStringLiteral("Fit"));
   impl_->zoomControlButton_ = makeActionButton(impl_->zoom100Action_);
   impl_->fitControlButton_ = makeActionButton(impl_->zoomFitAction_);
+
+  // Compact VP arrangement HUD. Keeping these actions in the persistent
+  // bottom strip makes multi-layer layout a one-click operation without
+  // reopening the viewport context menu.
+  impl_->arrangeHudButton_ = new QToolButton(impl_->bottomBar_);
+  impl_->arrangeHudButton_->setText(QStringLiteral("Arrange"));
+  impl_->arrangeHudButton_->setToolTip(
+      QStringLiteral("Fit, align, and distribute selected layers"));
+  impl_->arrangeHudButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->arrangeHudButton_->setAutoRaise(true);
+  impl_->arrangeHudButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  auto *arrangeMenu = new QMenu(this);
+  polishEditorMenu(arrangeMenu, this);
+  const auto addArrangeAction = [this, arrangeMenu](
+                                    const QString &label,
+                                    std::function<void(CompositionRenderController *)> fn) {
+    QAction *action = arrangeMenu->addAction(label);
+    QObject::connect(action, &QAction::triggered, this, [this, fn = std::move(fn)]() {
+      if (impl_) {
+        if (auto *controller = impl_->activeRenderController()) {
+          fn(controller);
+        }
+      }
+    });
+  };
+  addArrangeAction(QStringLiteral("Fit to Comp"), [](auto *c) {
+    c->fitSelectedToComp(Artifact::ArrangeFitMode::Fit);
+  });
+  addArrangeAction(QStringLiteral("Fill Comp"), [](auto *c) {
+    c->fitSelectedToComp(Artifact::ArrangeFitMode::Fill);
+  });
+  addArrangeAction(QStringLiteral("Stretch to Comp"), [](auto *c) {
+    c->fitSelectedToComp(Artifact::ArrangeFitMode::Stretch);
+  });
+  arrangeMenu->addSeparator();
+  addArrangeAction(QStringLiteral("Align Left"), [](auto *c) {
+    c->alignSelectedLayers(Artifact::ArrangeAlignMode::Left);
+  });
+  addArrangeAction(QStringLiteral("Align Center"), [](auto *c) {
+    c->alignSelectedLayers(Artifact::ArrangeAlignMode::CenterH);
+  });
+  addArrangeAction(QStringLiteral("Align Right"), [](auto *c) {
+    c->alignSelectedLayers(Artifact::ArrangeAlignMode::Right);
+  });
+  addArrangeAction(QStringLiteral("Align Top"), [](auto *c) {
+    c->alignSelectedLayers(Artifact::ArrangeAlignMode::Top);
+  });
+  addArrangeAction(QStringLiteral("Align Middle"), [](auto *c) {
+    c->alignSelectedLayers(Artifact::ArrangeAlignMode::CenterV);
+  });
+  addArrangeAction(QStringLiteral("Align Bottom"), [](auto *c) {
+    c->alignSelectedLayers(Artifact::ArrangeAlignMode::Bottom);
+  });
+  arrangeMenu->addSeparator();
+  addArrangeAction(QStringLiteral("Distribute Horizontal"), [](auto *c) {
+    c->distributeSelectedLayers(Artifact::ArrangeDistributeAxis::Horizontal);
+  });
+  addArrangeAction(QStringLiteral("Distribute Vertical"), [](auto *c) {
+    c->distributeSelectedLayers(Artifact::ArrangeDistributeAxis::Vertical);
+  });
+  impl_->arrangeHudButton_->setMenu(arrangeMenu);
 
   // Resolution Dropdown — wired to PreviewQualityPreset
   impl_->resolutionCombo_ = new QComboBox(impl_->bottomBar_);
@@ -12228,6 +12521,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   bottomLayout->addWidget(impl_->zoomControlButton_);
   bottomLayout->addWidget(impl_->fitControlButton_);
+  bottomLayout->addWidget(impl_->arrangeHudButton_);
   bottomLayout->addWidget(impl_->resolutionCombo_);
   bottomLayout->addWidget(impl_->fastPreviewBtn_);
   bottomLayout->addWidget(impl_->hdrDisplayBtn_);

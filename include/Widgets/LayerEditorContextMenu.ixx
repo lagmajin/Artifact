@@ -39,9 +39,10 @@ enum class LayerEditorShapeContextCommand {
  TogglePolygonClosed,
  ConvertToPath,
  ConvertToPolygon,
- DeletePathPoint,
- TogglePathSmooth,
- TogglePathClosed
+  DeletePathPoint,
+  TogglePathSmooth,
+  TogglePathClosed,
+  RevertToParametric
 };
 
 struct LayerEditorShapeContextChoice {

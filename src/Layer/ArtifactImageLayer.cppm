@@ -1742,6 +1742,11 @@ bool ArtifactImageLayer::sourceCropEnabled() const
     return impl_->sourceCrop_.enabled();
 }
 
+SourceCrop ArtifactImageLayer::sourceCrop() const
+{
+    return impl_->sourceCrop_;
+}
+
 QString ArtifactImageLayer::sourceCropSignature() const
 {
     const QRectF rect = impl_->sourceCrop_.cropRect();

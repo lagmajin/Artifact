@@ -82,6 +82,7 @@ void applySnapshotToPath(MaskPath& path, const MaskPathKeyframeSnapshot& snapsho
     path.setFeatherVertical(snapshot.featherVertical);
     path.setFeatherInner(snapshot.featherInner);
     path.setFeatherOuter(snapshot.featherOuter);
+    path.setFalloff(snapshot.falloff);
     path.setExpansion(snapshot.expansion);
     path.setInverted(snapshot.inverted);
     path.setMode(snapshot.mode);
@@ -120,6 +121,7 @@ MaskPathKeyframeSnapshot interpolateSnapshot(const MaskPathKeyframeSnapshot& a,
     out.featherVertical = a.featherVertical + (b.featherVertical - a.featherVertical) * t;
     out.featherInner = a.featherInner + (b.featherInner - a.featherInner) * t;
     out.featherOuter = a.featherOuter + (b.featherOuter - a.featherOuter) * t;
+    out.falloff = t < 0.5f ? a.falloff : b.falloff;
     out.expansion = a.expansion + (b.expansion - a.expansion) * t;
     out.inverted = t < 0.5f ? a.inverted : b.inverted;
     out.mode = t < 0.5f ? a.mode : b.mode;
@@ -152,6 +154,7 @@ public:
     float featherVertical = 0.0f;
     float featherInner = 0.0f;
     float featherOuter = 0.0f;
+    MaskFeatherFalloff falloff = MaskFeatherFalloff::Gaussian;
     float expansion = 0.0f;
     bool inverted = false;
     MaskMode mode = MaskMode::Add;
@@ -278,6 +281,11 @@ void MaskPath::setFeatherOuter(float feather) {
     if (!std::isfinite(feather)) return;
     impl_->featherOuter = std::max(0.0f, feather);
 }
+MaskFeatherFalloff MaskPath::falloff() const { return impl_->falloff; }
+void MaskPath::setFalloff(MaskFeatherFalloff falloff) {
+    const int v = static_cast<int>(falloff);
+    impl_->falloff = static_cast<MaskFeatherFalloff>(std::clamp(v, 0, 3));
+}
 
 float MaskPath::expansion() const { return impl_->expansion; }
 void MaskPath::setExpansion(float expansion) {
@@ -318,6 +326,8 @@ void MaskPath::setAnimationKeyframe(int64_t frame, const MaskPathKeyframeSnapsho
         0.0f, finiteOr(stored.featherInner, impl_->featherInner));
     stored.featherOuter = std::max(
         0.0f, finiteOr(stored.featherOuter, impl_->featherOuter));
+    stored.falloff = static_cast<MaskFeatherFalloff>(
+        std::clamp(static_cast<int>(stored.falloff), 0, 3));
     stored.expansion = finiteOr(stored.expansion, impl_->expansion);
     const auto finitePointOr = [](const QPointF& value, const QPointF& fallback) {
         return QPointF(std::isfinite(value.x()) ? value.x() : fallback.x(),
@@ -601,24 +611,84 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     const float uniformFeather = impl_->feather * ((safeScaleX + safeScaleY) * 0.5f);
     const float featherX = (impl_->featherHorizontal > 0.0f ? impl_->featherHorizontal : uniformFeather);
     const float featherY = (impl_->featherVertical > 0.0f ? impl_->featherVertical : uniformFeather);
-    if (impl_->featherOuter > 0.0f || impl_->featherInner > 0.0f) {
-        cv::Mat outerMask = mask8.clone();
-        cv::Mat innerMask = mask8.clone();
-        const int outerK = static_cast<int>(std::max(0.0f, impl_->featherOuter * ((safeScaleX + safeScaleY) * 0.5f)) * 2.0f) | 1;
-        const int innerK = static_cast<int>(std::max(0.0f, impl_->featherInner * ((safeScaleX + safeScaleY) * 0.5f)) * 2.0f) | 1;
-        if (outerK > 1) {
-            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(outerK, outerK));
-            cv::dilate(outerMask, outerMask, kernel);
+    const bool hasInner = impl_->featherInner > 0.0f;
+    const bool hasOuter = impl_->featherOuter > 0.0f;
+    if (hasInner || hasOuter) {
+        // Inner/outer feather zones: dilate/erode defines the zone width,
+        // blur defines softness. Constrain each side so inner-only never
+        // bleeds outward and outer-only never eats into the core.
+        cv::Mat outerBase = mask8;
+        cv::Mat innerBase = mask8;
+        const float avgScale = (safeScaleX + safeScaleY) * 0.5f;
+        if (hasOuter) {
+            const int outerK = static_cast<int>(std::max(0.0f, impl_->featherOuter * avgScale) * 2.0f) | 1;
+            if (outerK > 1) {
+                cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(outerK, outerK));
+                cv::dilate(mask8, outerBase, kernel);
+            }
         }
-        if (innerK > 1) {
-            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(innerK, innerK));
-            cv::erode(innerMask, innerMask, kernel);
+        if (hasInner) {
+            const int innerK = static_cast<int>(std::max(0.0f, impl_->featherInner * avgScale) * 2.0f) | 1;
+            if (innerK > 1) {
+                cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(innerK, innerK));
+                cv::erode(mask8, innerBase, kernel);
+            }
         }
-        outerMask = blurMask(outerMask, featherX, featherY);
-        innerMask = blurMask(innerMask, featherX, featherY);
-        featherMask = cv::max(innerMask, outerMask);
+        cv::Mat outerBlur = blurMask(hasOuter ? outerBase : mask8, featherX, featherY);
+        cv::Mat innerBlur = blurMask(hasInner ? innerBase : mask8, featherX, featherY);
+        if (hasInner && hasOuter) {
+            // Inside original edge: inner result. Outside: outer result.
+            // result = inner*base01 + outer*(1-base01), base01 from sharp mask8.
+            cv::Mat base01;
+            mask8.convertTo(base01, CV_32FC1, 1.0 / 255.0);
+            cv::Mat inner01;
+            innerBlur.convertTo(inner01, CV_32FC1, 1.0 / 255.0);
+            cv::Mat outer01;
+            outerBlur.convertTo(outer01, CV_32FC1, 1.0 / 255.0);
+            cv::Mat invBase = cv::Scalar(1.0f) - base01;
+            cv::Mat insidePart;
+            cv::multiply(inner01, base01, insidePart);
+            cv::Mat outsidePart;
+            cv::multiply(outer01, invBase, outsidePart);
+            cv::Mat combined01 = insidePart + outsidePart;
+            combined01.convertTo(featherMask, CV_8UC1, 255.0);
+        } else if (hasOuter) {
+            // Keep core fully opaque, feather only outward.
+            cv::max(mask8, outerBlur, featherMask);
+        } else {
+            // Keep outside fully transparent, feather only inward.
+            cv::min(mask8, innerBlur, featherMask);
+        }
     } else {
         featherMask = blurMask(mask8, featherX, featherY);
+    }
+
+    // Feather falloff remap (AE差別化): Gaussianは恒等、他は8bit LUT付け替え。
+    // LUTはスタック生成のみでホットパス追加確保なし。
+    if (impl_->falloff != MaskFeatherFalloff::Gaussian && !featherMask.empty()) {
+        unsigned char table[256];
+        for (int i = 0; i < 256; ++i) {
+            const float t = static_cast<float>(i) / 255.0f;
+            float v = t;
+            switch (impl_->falloff) {
+                case MaskFeatherFalloff::Linear:
+                    v = std::pow(t, 0.85f);
+                    break;
+                case MaskFeatherFalloff::Smooth:
+                    v = t * t * (3.0f - 2.0f * t);
+                    break;
+                case MaskFeatherFalloff::Sharp:
+                    v = std::pow(t, 1.6f);
+                    break;
+                case MaskFeatherFalloff::Gaussian:
+                default:
+                    v = t;
+                    break;
+            }
+            table[i] = static_cast<unsigned char>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+        cv::Mat lut(1, 256, CV_8UC1, table);
+        cv::LUT(featherMask, lut, featherMask);
     }
 
     // Convert to float 0~1

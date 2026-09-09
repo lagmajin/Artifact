@@ -69,6 +69,15 @@ enum class MaskMode {
     Difference
 };
 
+/// Feather減衰カーブ (AEのGaussian固定に対する差別化)
+/// Gaussian=恒等(従来通り)、Linear/Smooth/Sharpはぼけ上がりを付け替える
+enum class MaskFeatherFalloff {
+    Gaussian,
+    Linear,
+    Smooth,
+    Sharp
+};
+
 /// MaskPath のアニメーション用スナップショット
 struct MaskPathKeyframeSnapshot {
     int64_t frame = 0;
@@ -80,6 +89,7 @@ struct MaskPathKeyframeSnapshot {
     float featherVertical = 0.0f;
     float featherInner = 0.0f;
     float featherOuter = 0.0f;
+    MaskFeatherFalloff falloff = MaskFeatherFalloff::Gaussian;
     float expansion = 0.0f;
     bool inverted = false;
     MaskMode mode = MaskMode::Add;
@@ -124,6 +134,8 @@ public:
     void setFeatherInner(float feather);
     float featherOuter() const;
     void setFeatherOuter(float feather);
+    MaskFeatherFalloff falloff() const;
+    void setFalloff(MaskFeatherFalloff falloff);
 
     float expansion() const;
     void setExpansion(float expansion);

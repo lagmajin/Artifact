@@ -495,6 +495,7 @@ QJsonObject maskPathSnapshotToJson(const MaskPathKeyframeSnapshot& snapshot)
     obj["featherVertical"] = static_cast<double>(snapshot.featherVertical);
     obj["featherInner"] = static_cast<double>(snapshot.featherInner);
     obj["featherOuter"] = static_cast<double>(snapshot.featherOuter);
+    obj["falloff"] = static_cast<int>(snapshot.falloff);
     obj["expansion"] = static_cast<double>(snapshot.expansion);
     obj["inverted"] = snapshot.inverted;
     obj["mode"] = static_cast<int>(snapshot.mode);
@@ -518,6 +519,7 @@ MaskPathKeyframeSnapshot maskPathSnapshotFromJson(const QJsonObject& obj)
     snapshot.featherVertical = static_cast<float>(obj.value("featherVertical").toDouble(0.0));
     snapshot.featherInner = static_cast<float>(obj.value("featherInner").toDouble(0.0));
     snapshot.featherOuter = static_cast<float>(obj.value("featherOuter").toDouble(0.0));
+    snapshot.falloff = static_cast<MaskFeatherFalloff>(std::clamp(obj.value("falloff").toInt(0), 0, 3));
     snapshot.expansion = static_cast<float>(obj.value("expansion").toDouble(0.0));
     snapshot.inverted = obj.value("inverted").toBool(false);
     snapshot.mode = static_cast<MaskMode>(std::clamp(
@@ -549,6 +551,7 @@ QJsonObject maskPathToJson(const MaskPath& path)
     obj["featherVertical"] = static_cast<double>(path.featherVertical());
     obj["featherInner"] = static_cast<double>(path.featherInner());
     obj["featherOuter"] = static_cast<double>(path.featherOuter());
+    obj["falloff"] = static_cast<int>(path.falloff());
     obj["expansion"] = static_cast<double>(path.expansion());
     obj["inverted"] = path.isInverted();
     obj["mode"] = static_cast<int>(path.mode());
@@ -580,6 +583,7 @@ MaskPath maskPathFromJson(const QJsonObject& obj)
     path.setFeatherVertical(static_cast<float>(obj.value("featherVertical").toDouble(0.0)));
     path.setFeatherInner(static_cast<float>(obj.value("featherInner").toDouble(0.0)));
     path.setFeatherOuter(static_cast<float>(obj.value("featherOuter").toDouble(0.0)));
+    path.setFalloff(static_cast<MaskFeatherFalloff>(std::clamp(obj.value("falloff").toInt(0), 0, 3)));
     path.setExpansion(static_cast<float>(obj.value("expansion").toDouble(0.0)));
     path.setInverted(obj.value("inverted").toBool(false));
     path.setMode(static_cast<MaskMode>(std::clamp(

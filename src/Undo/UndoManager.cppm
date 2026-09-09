@@ -2760,6 +2760,7 @@ QJsonObject encodeMask(const LayerMask& mask) {
             {QStringLiteral("featherHorizontal"), path.featherHorizontal()},
             {QStringLiteral("featherVertical"), path.featherVertical()},
             {QStringLiteral("featherInner"), path.featherInner()}, {QStringLiteral("featherOuter"), path.featherOuter()},
+            {QStringLiteral("falloff"), static_cast<int>(path.falloff())},
             {QStringLiteral("expansion"), path.expansion()}, {QStringLiteral("inverted"), path.isInverted()},
             {QStringLiteral("mode"), static_cast<int>(path.mode())}, {QStringLiteral("name"), path.name().toQString()}});
     }
@@ -2781,6 +2782,7 @@ LayerMask decodeMask(const QJsonObject& object) {
         path.setFeatherVertical(static_cast<float>(pathObject.value(QStringLiteral("featherVertical")).toDouble()));
         path.setFeatherInner(static_cast<float>(pathObject.value(QStringLiteral("featherInner")).toDouble()));
         path.setFeatherOuter(static_cast<float>(pathObject.value(QStringLiteral("featherOuter")).toDouble()));
+        path.setFalloff(static_cast<MaskFeatherFalloff>(pathObject.value(QStringLiteral("falloff")).toInt(0)));
         path.setExpansion(static_cast<float>(pathObject.value(QStringLiteral("expansion")).toDouble()));
         path.setInverted(pathObject.value(QStringLiteral("inverted")).toBool(false));
         path.setMode(static_cast<MaskMode>(pathObject.value(QStringLiteral("mode")).toInt()));
@@ -2832,6 +2834,13 @@ bool maskJsonStructureValid(const QJsonObject& object) {
             if (!jsonEnumInt(path.value(QStringLiteral("mode")), mode) ||
                 mode < static_cast<int>(MaskMode::Add) ||
                 mode > static_cast<int>(MaskMode::Difference)) {
+                return false;
+            }
+        }
+        if (path.contains(QStringLiteral("falloff"))) {
+            int falloff = 0;
+            if (!jsonEnumInt(path.value(QStringLiteral("falloff")), falloff) ||
+                falloff < 0 || falloff > 3) {
                 return false;
             }
         }

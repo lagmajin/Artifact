@@ -234,6 +234,15 @@ public:
   ArtifactCore::PathFillRule customPathFillRule() const;
   void setCustomPathFillRule(ArtifactCore::PathFillRule rule);
 
+  // Parametric-alive: custom polygon/path overrides are edits layered on
+  // top of the numeric parametric base (type/size/corner/star/polygon).
+  // The base is never destroyed by vertex editing, so overrides can always
+  // be dropped to restore the parametric shape (AE breaks this by forcing
+  // a destructive Bezier conversion).
+  bool hasParametricOverrides() const;
+  bool revertToParametric();
+  int parametricBasePointCount() const;
+
   // Multi-content (1レイヤー複数パス). Empty list = legacy single shape.
    // addShapeContent snapshots the legacy shape as contents[0] on first use
    // so the existing look is preserved.
@@ -318,6 +327,17 @@ public:
   // The shape layer itself remains unchanged; callers decide whether to add
   // the returned mask as a one-shot conversion or use it as a live source.
   LayerMask createMaskFromShape() const;
+
+  // Shape->Mask live link: the mask slot at live index follows shape
+  // geometry automatically (AE has one-shot Auto-trace only). Geometry is
+  // owned by the shape; per-path style (feather/opacity/expansion/...) on
+  // the linked slot is preserved across refreshes. Refreshes never create
+  // undo entries; only the link setup itself is undoable via the menu.
+  bool shapeMaskLiveLink() const;
+  int shapeMaskLiveIndex() const;
+  void setShapeMaskLiveLink(bool enabled, int maskIndex = -1);
+  void clearShapeMaskLiveLink();
+  bool syncLiveLinkedMask();
 
   // Convert to a core ShapeLayer (processed paths + fill/stroke settings)
   // for vector export pipelines (e.g. SvgFrameExporter).

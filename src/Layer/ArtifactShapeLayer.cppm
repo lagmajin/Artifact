@@ -1694,10 +1694,15 @@ public:
          strokeGradientEnabled_;
  }
 
- // Phase 5: Bezier path override
- std::vector<CustomPathVertex> customPathVertices_;
- bool customPathClosed_ = true;
- ArtifactCore::PathFillRule customPathFillRule_ = ArtifactCore::PathFillRule::Winding;
+  // Phase 5: Bezier path override
+  std::vector<CustomPathVertex> customPathVertices_;
+  bool customPathClosed_ = true;
+  ArtifactCore::PathFillRule customPathFillRule_ = ArtifactCore::PathFillRule::Winding;
+  // Shape->Mask live link: linked slot follows shape geometry via markDirty.
+  ArtifactShapeLayer* outer_ = nullptr;
+  bool shapeMaskLiveLink_ = false;
+  int shapeMaskLiveIndex_ = -1;
+  bool liveSyncing_ = false;
   std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
   ShapeCompatibilityFallback lastLoggedFallback_ = ShapeCompatibilityFallback::None;
 
@@ -1766,6 +1771,11 @@ public:
      nativeGeometryCacheDirty_ = true;
      shapeGeometryCacheDirty_ = true;
      contentCache_.valid = false;
+     if (shapeMaskLiveLink_ && !liveSyncing_ && outer_) {
+      liveSyncing_ = true;
+      outer_->syncLiveLinkedMask();
+      liveSyncing_ = false;
+     }
     }
 
    const std::vector<NativePathGeometry>& nativeGeometry(
@@ -1970,7 +1980,7 @@ public:
 // Constructor / Destructor
 // ============================================================
 
-ArtifactShapeLayer::ArtifactShapeLayer() : impl_(new Impl()) {}
+ArtifactShapeLayer::ArtifactShapeLayer() : impl_(new Impl()) { impl_->outer_ = this; }
 ArtifactShapeLayer::~ArtifactShapeLayer() { delete impl_; }
 void ArtifactShapeLayer::addShape()
 {
@@ -2373,6 +2383,31 @@ void ArtifactShapeLayer::clearCustomPath() {
 }
 std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
 bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
+// Parametric-alive: numeric base (type/size/corner/star/polygon) survives
+// vertex editing, so overrides can be dropped without data loss.
+bool ArtifactShapeLayer::hasParametricOverrides() const {
+  return hasCustomPolygon() || hasCustomPath();
+}
+bool ArtifactShapeLayer::revertToParametric() {
+  if (!hasParametricOverrides()) return false;
+  impl_->customPolygonPoints_.clear();
+  impl_->customPolygonClosed_ = true;
+  impl_->customPathVertices_.clear();
+  impl_->customPathClosed_ = true;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
+}
+int ArtifactShapeLayer::parametricBasePointCount() const {
+  if (!impl_) return 0;
+  const std::vector<QPointF> empty;
+  return static_cast<int>(buildRenderablePoints(
+      impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+      empty, true).size());
+}
 ArtifactCore::PathFillRule ArtifactShapeLayer::customPathFillRule() const {
  return impl_->customPathFillRule_;
 }
@@ -2451,6 +2486,91 @@ LayerMask ArtifactShapeLayer::createMaskFromShape() const
     mask.setEnabled(false);
   }
   return mask;
+}
+
+bool ArtifactShapeLayer::shapeMaskLiveLink() const {
+  return impl_ && impl_->shapeMaskLiveLink_;
+}
+int ArtifactShapeLayer::shapeMaskLiveIndex() const {
+  return impl_ ? impl_->shapeMaskLiveIndex_ : -1;
+}
+void ArtifactShapeLayer::setShapeMaskLiveLink(bool enabled, int maskIndex) {
+  if (!impl_) return;
+  if (!enabled) {
+    clearShapeMaskLiveLink();
+    return;
+  }
+  if (maskIndex < 0 || maskIndex >= maskCount()) return;
+  impl_->shapeMaskLiveLink_ = true;
+  impl_->shapeMaskLiveIndex_ = maskIndex;
+  syncLiveLinkedMask();
+  Q_EMIT changed();
+}
+void ArtifactShapeLayer::clearShapeMaskLiveLink() {
+  if (!impl_) return;
+  if (!impl_->shapeMaskLiveLink_ && impl_->shapeMaskLiveIndex_ < 0) return;
+  impl_->shapeMaskLiveLink_ = false;
+  impl_->shapeMaskLiveIndex_ = -1;
+  Q_EMIT changed();
+}
+bool ArtifactShapeLayer::syncLiveLinkedMask() {
+  if (!impl_ || !impl_->shapeMaskLiveLink_) return false;
+  const int index = impl_->shapeMaskLiveIndex_;
+  if (index < 0 || index >= maskCount()) {
+    // Linked slot is gone (deleted by user): self-heal to unlinked.
+    impl_->shapeMaskLiveLink_ = false;
+    impl_->shapeMaskLiveIndex_ = -1;
+    return false;
+  }
+  std::vector<MaskPath> fresh;
+  for (const auto& shapePath : nativeShapePaths()) {
+    for (auto& maskPath : MaskPath::fromShapePath(shapePath)) {
+      if (maskPath.vertexCount() > 0) fresh.push_back(maskPath);
+    }
+  }
+  if (fresh.empty()) return false;
+  const LayerMask current = mask(index);
+  bool same = current.maskPathCount() == static_cast<int>(fresh.size());
+  if (same) {
+    for (size_t i = 0; i < fresh.size(); ++i) {
+      const MaskPath existing = current.maskPath(static_cast<int>(i));
+      const MaskPath& next = fresh[i];
+      if (existing.vertexCount() != next.vertexCount() ||
+          existing.isClosed() != next.isClosed()) {
+        same = false;
+        break;
+      }
+      for (int v = 0; v < next.vertexCount(); ++v) {
+        const MaskVertex a = existing.vertex(v);
+        const MaskVertex b = next.vertex(v);
+        if (a.position != b.position || a.inTangent != b.inTangent ||
+            a.outTangent != b.outTangent) {
+          same = false;
+          break;
+        }
+      }
+      if (!same) break;
+    }
+  }
+  if (same) return false;
+  // Merge geometry only: user style tweaks on the slot survive refreshes.
+  LayerMask merged;
+  merged.setEnabled(current.isEnabled());
+  merged.setLocked(current.isLocked());
+  merged.setColor(current.color());
+  const size_t keep = std::min(static_cast<size_t>(current.maskPathCount()), fresh.size());
+  for (size_t i = 0; i < keep; ++i) {
+    MaskPath path = current.maskPath(static_cast<int>(i));
+    const MaskPath& next = fresh[i];
+    path.clearVertices();
+    for (int v = 0; v < next.vertexCount(); ++v) path.addVertex(next.vertex(v));
+    path.setClosed(next.isClosed());
+    merged.addMaskPath(path);
+  }
+  for (size_t i = keep; i < fresh.size(); ++i) merged.addMaskPath(fresh[i]);
+  setMask(index, merged);
+  setDirty(LayerDirtyFlag::Mask);
+  return true;
 }
 
 ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
@@ -7258,6 +7378,8 @@ obj["shapeContents"] = contents;
    }
    obj["shapeStackNodes"] = stackNodes;
     obj["activeContentIndex"] = impl_->activeContentIndex_;
+    obj["shapeMaskLiveLink"] = impl_->shapeMaskLiveLink_;
+    obj["shapeMaskLiveIndex"] = impl_->shapeMaskLiveIndex_;
     return obj;
   }
 
@@ -7326,6 +7448,9 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->setStarInnerRadius(
       static_cast<float>(obj["starInnerRadius"].toDouble(0.382)));
   layer->setPolygonSides(obj["polygonSides"].toInt(6));
+  layer->impl_->shapeMaskLiveLink_ = obj["shapeMaskLiveLink"].toBool(false);
+  layer->impl_->shapeMaskLiveIndex_ = std::clamp(
+      obj["shapeMaskLiveIndex"].toInt(-1), -1, 1024);
   layer->impl_->customPolygonClosed_ = obj["customPolygonClosed"].toBool(true);
   layer->impl_->customPolygonPoints_.clear();
   const QJsonArray customPolygonPoints = obj["customPolygonPoints"].toArray();

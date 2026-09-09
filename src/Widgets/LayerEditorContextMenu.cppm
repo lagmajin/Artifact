@@ -170,16 +170,20 @@ LayerEditorShapeContextChoice showLayerEditorShapeContextMenu(
             validHover && vertices[static_cast<size_t>(hoveredPathVertex)].smooth
                 ? QStringLiteral("Make Corner") : QStringLiteral("Make Smooth"),
             LayerEditorShapeContextCommand::TogglePathSmooth, validHover);
-  addChoice(menu, choices,
-            shape.customPathClosed() ? QStringLiteral("Open Path")
-                                     : QStringLiteral("Close Path"),
-            LayerEditorShapeContextCommand::TogglePathClosed);
- }
+   addChoice(menu, choices,
+             shape.customPathClosed() ? QStringLiteral("Open Path")
+                                      : QStringLiteral("Close Path"),
+             LayerEditorShapeContextCommand::TogglePathClosed);
+  }
+  if (shape.hasParametricOverrides()) {
+   addChoice(menu, choices, QStringLiteral("Revert to Parametric"),
+             LayerEditorShapeContextCommand::RevertToParametric);
+  }
 
- auto* chosen = executeMenu(menu, globalPosition);
- for (const auto& candidate : choices)
-  if (candidate.action == chosen) return candidate.choice;
- return {};
+  auto* chosen = executeMenu(menu, globalPosition);
+  for (const auto& candidate : choices)
+   if (candidate.action == chosen) return candidate.choice;
+  return {};
 }
 
 bool applyShapeOperatorCommand(
@@ -435,16 +439,42 @@ LayerEditorShapeContextApplyResult applyLayerEditorShapeContextCommand(
     shape.changed();
     converted = false;
    }
+    result.handled = true;
+    result.hoverTarget = converted ? LayerEditorShapeContextResultTarget::Polygon
+                                   : LayerEditorShapeContextResultTarget::Path;
+    result.hoveredVertex = converted ? (points.empty() ? -1 : 0)
+                                     : hoveredPathVertex;
+    result.hoveredSegment = converted && points.size() >= 2 ? 0 : -1;
+    return result;
+   }
+  }
+  if (choice.command == LayerEditorShapeContextCommand::RevertToParametric) {
+   if (!shape.hasParametricOverrides()) return result;
+   const auto beforePolygon = shape.customPolygonPoints();
+   const bool beforePolygonClosed = shape.customPolygonClosed();
+   const auto beforePath = shape.customPathVertices();
+   const bool beforePathClosed = shape.customPathClosed();
+   shape.revertToParametric();
+   auto* undo = UndoManager::instance();
+   bool reverted = true;
+   if (undo && !undo->push(makeShapeConversionCommand(
+           layer, beforePolygon, beforePolygonClosed, beforePath, beforePathClosed,
+           std::vector<QPointF>{}, true, std::vector<CustomPathVertex>{}, true))) {
+    if (beforePolygon.size() >= 3) shape.setCustomPolygonPoints(beforePolygon, beforePolygonClosed);
+    else shape.clearCustomPolygonPoints();
+    if (beforePath.size() >= 3) shape.setCustomPathVertices(beforePath, beforePathClosed);
+    else shape.clearCustomPath();
+    shape.changed();
+    reverted = false;
+   }
    result.handled = true;
-   result.hoverTarget = converted ? LayerEditorShapeContextResultTarget::Polygon
-                                  : LayerEditorShapeContextResultTarget::Path;
-   result.hoveredVertex = converted ? (points.empty() ? -1 : 0)
-                                    : hoveredPathVertex;
-   result.hoveredSegment = converted && points.size() >= 2 ? 0 : -1;
+   result.hoverTarget = LayerEditorShapeContextResultTarget::None;
+   result.hoveredVertex = -1;
+   result.hoveredSegment = -1;
+   (void)reverted;
    return result;
   }
- }
- return result;
+  return result;
 }
 
 LayerEditorBackgroundContextCommand showLayerEditorBackgroundContextMenu(

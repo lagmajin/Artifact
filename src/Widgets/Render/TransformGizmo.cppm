@@ -2779,6 +2779,7 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
   activeSnapLines_.clear();
   activeSnapLabels_.clear();
   if (activeHandle_ == HandleType::Move ||
+      activeHandle_ == HandleType::Anchor ||
       activeHandle_ == HandleType::Scale_Center ||
       (activeHandle_ >= HandleType::Scale_TL &&
        activeHandle_ <= HandleType::Scale_R)) {
@@ -3013,6 +3014,19 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
        targetLocalAnchor.setY(hl);
        break;
       }
+     }
+
+     // Anchor snapping uses the same composition/peer-layer guide cache as
+     // move and scale. Convert the candidate through the drag-start transform
+     // so comp center, comp edges and visible layer guides remain in canvas
+     // space even when the layer is rotated or scaled.
+     if (!cachedSnapVLines_.empty() || !cachedSnapHLines_.empty()) {
+      QPointF worldAnchor = dragStartGlobalTransform_.map(targetLocalAnchor);
+      snapValueToGuides(worldAnchor.rx(), cachedSnapVLines_, SNAP_DIST, true,
+                        comp, activeSnapLines_);
+      snapValueToGuides(worldAnchor.ry(), cachedSnapHLines_, SNAP_DIST, false,
+                        comp, activeSnapLines_);
+      targetLocalAnchor = inv.map(worldAnchor);
      }
     }
 
@@ -3633,6 +3647,300 @@ bool TransformGizmo::cancelInteraction() {
  activeSnapLines_.clear();
  activeSnapLabels_.clear();
  return true;
+}
+
+namespace {
+
+QPointF arrangeParentSpaceDelta(const ArtifactAbstractLayerPtr& target,
+                                const QPointF& canvasDelta)
+{
+ if (!target) {
+  return canvasDelta;
+ }
+ if (const auto parent = target->parentLayer()) {
+  bool invertible = false;
+  const QTransform inverse = parent->getGlobalTransform().inverted(&invertible);
+  if (invertible) {
+   return inverse.map(canvasDelta) - inverse.map(QPointF(0.0, 0.0));
+  }
+ }
+ return canvasDelta;
+}
+
+void arrangeSetPosition(const ArtifactAbstractLayerPtr& target,
+                        const ArtifactCore::RationalTime& time,
+                        float x, float y,
+                        const TransformSnapshot& before)
+{
+ auto& t3d = target->transform3D();
+ if (before.hasPositionKey || before.positionAnimated) {
+  setAbsolutePosition(t3d, time, x, y);
+ } else {
+  t3d.removePositionKeyFrameAt(time);
+  t3d.setInitialPosition(time, x, y);
+ }
+ syncAnimatedPositionProperties(target, time, x, y);
+}
+
+void arrangeSetScale(const ArtifactAbstractLayerPtr& target,
+                     const ArtifactCore::RationalTime& time,
+                     float x, float y,
+                     const TransformSnapshot& before)
+{
+ auto& t3d = target->transform3D();
+ if (before.hasScaleKey || before.scaleAnimated) {
+  t3d.setScale(time, x, y);
+ } else {
+  t3d.removeScaleKeyFrameAt(time);
+  t3d.setInitialScale(time, x, y);
+ }
+ syncAnimatedProperty(target, QStringLiteral("transform.scale.x"), time, x);
+ syncAnimatedProperty(target, QStringLiteral("transform.scale.y"), time, y);
+}
+
+std::vector<ArtifactAbstractLayerPtr> arrangeTargetsOf(const TransformGizmo& self)
+{
+ const auto& stored = self.targetLayers();
+ std::vector<ArtifactAbstractLayerPtr> out;
+ out.reserve(stored.size());
+ for (const auto& candidate : stored) {
+  if (candidate && !candidate->isLocked() && !candidate->isSelectionLocked()) {
+   out.push_back(candidate);
+  }
+ }
+ return out;
+}
+
+bool arrangePushUndo(int64_t frame, std::vector<MultiTransformEntry> entries)
+{
+ if (entries.empty()) {
+  return false;
+ }
+ auto* manager = UndoManager::instance();
+ if (manager && !manager->push(std::make_unique<MultiTransformUndoCommand>(
+                          frame, std::move(entries)))) {
+  return false;
+ }
+ return true;
+}
+
+} // namespace
+
+std::vector<ArtifactAbstractLayerPtr> TransformGizmo::fitTargetsToRect(
+    const QRectF& canvasRect, ArrangeFitMode mode)
+{
+ std::vector<ArtifactAbstractLayerPtr> changed;
+ if (canvasRect.width() <= 0.0 || canvasRect.height() <= 0.0) {
+  return changed;
+ }
+ const auto targets = arrangeTargetsOf(*this);
+ if (targets.empty()) {
+  return changed;
+ }
+ const int64_t frame = layer_ ? layer_->currentFrame() : 0;
+ std::vector<MultiTransformEntry> entries;
+ entries.reserve(targets.size());
+ for (const auto& target : targets) {
+  const QRectF bounds = target->transformedBoundingBox();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+   continue;
+  }
+  auto& t3d = target->transform3D();
+  const ArtifactCore::RationalTime time =
+      currentTransformKeyframeTime(target.get());
+  const TransformSnapshot before = captureTransformSnapshot(target, time);
+  const double kx = canvasRect.width() / bounds.width();
+  const double ky = canvasRect.height() / bounds.height();
+  if (!std::isfinite(kx) || !std::isfinite(ky) || kx <= 0.0 || ky <= 0.0) {
+   continue;
+  }
+  double scaleKx = 1.0;
+  double scaleKy = 1.0;
+  switch (mode) {
+   case ArrangeFitMode::Fit: scaleKx = scaleKy = std::min(kx, ky); break;
+   case ArrangeFitMode::Fill: scaleKx = scaleKy = std::max(kx, ky); break;
+   case ArrangeFitMode::Stretch: scaleKx = kx; scaleKy = ky; break;
+   case ArrangeFitMode::Center: scaleKx = scaleKy = 1.0; break;
+  }
+  const float newScaleX = before.scaleX * static_cast<float>(scaleKx);
+  const float newScaleY = before.scaleY * static_cast<float>(scaleKy);
+  if (!std::isfinite(newScaleX) || !std::isfinite(newScaleY)) {
+   continue;
+  }
+  const QPointF worldAnchor = target->getGlobalTransform().map(
+      QPointF(t3d.anchorX(), t3d.anchorY()));
+  const QPointF newCenter(
+      worldAnchor.x() + (bounds.center().x() - worldAnchor.x()) * scaleKx,
+      worldAnchor.y() + (bounds.center().y() - worldAnchor.y()) * scaleKy);
+  const QPointF parentDelta =
+      arrangeParentSpaceDelta(target, newCenter - bounds.center());
+  const float newPosX = before.positionX + static_cast<float>(parentDelta.x());
+  const float newPosY = before.positionY + static_cast<float>(parentDelta.y());
+  arrangeSetScale(target, time, newScaleX, newScaleY, before);
+  arrangeSetPosition(target, time, newPosX, newPosY, before);
+  target->setDirty(LayerDirtyFlag::Transform);
+  const TransformSnapshot after = captureTransformSnapshot(target, time);
+  const bool moved =
+      std::abs(before.positionX - after.positionX) > 0.0001f ||
+      std::abs(before.positionY - after.positionY) > 0.0001f ||
+      std::abs(before.scaleX - after.scaleX) > 0.0001f ||
+      std::abs(before.scaleY - after.scaleY) > 0.0001f;
+  if (!moved) {
+   continue;
+  }
+  entries.push_back(MultiTransformEntry{target, before, after});
+  changed.push_back(target);
+ }
+ if (!arrangePushUndo(frame, std::move(entries))) {
+  changed.clear();
+ }
+ return changed;
+}
+
+std::vector<ArtifactAbstractLayerPtr> TransformGizmo::alignTargets(
+    ArrangeAlignMode mode, const QRectF& referenceRect)
+{
+ std::vector<ArtifactAbstractLayerPtr> changed;
+ if (!referenceRect.isValid()) {
+  return changed;
+ }
+ const auto targets = arrangeTargetsOf(*this);
+ if (targets.empty()) {
+  return changed;
+ }
+ const int64_t frame = layer_ ? layer_->currentFrame() : 0;
+ std::vector<MultiTransformEntry> entries;
+ entries.reserve(targets.size());
+ for (const auto& target : targets) {
+  const QRectF bounds = target->transformedBoundingBox();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+   continue;
+  }
+  double dx = 0.0;
+  double dy = 0.0;
+  switch (mode) {
+   case ArrangeAlignMode::Left: dx = referenceRect.left() - bounds.left(); break;
+   case ArrangeAlignMode::CenterH:
+    dx = referenceRect.center().x() - bounds.center().x();
+    break;
+   case ArrangeAlignMode::Right:
+    dx = referenceRect.right() - bounds.right();
+    break;
+   case ArrangeAlignMode::Top: dy = referenceRect.top() - bounds.top(); break;
+   case ArrangeAlignMode::CenterV:
+    dy = referenceRect.center().y() - bounds.center().y();
+    break;
+   case ArrangeAlignMode::Bottom:
+    dy = referenceRect.bottom() - bounds.bottom();
+    break;
+  }
+  if (std::abs(dx) < 0.0001 && std::abs(dy) < 0.0001) {
+   continue;
+  }
+  const ArtifactCore::RationalTime time =
+      currentTransformKeyframeTime(target.get());
+  const TransformSnapshot before = captureTransformSnapshot(target, time);
+  const QPointF parentDelta = arrangeParentSpaceDelta(target, QPointF(dx, dy));
+  arrangeSetPosition(target, time,
+                     before.positionX + static_cast<float>(parentDelta.x()),
+                     before.positionY + static_cast<float>(parentDelta.y()),
+                     before);
+  target->setDirty(LayerDirtyFlag::Transform);
+  const TransformSnapshot after = captureTransformSnapshot(target, time);
+  const bool moved =
+      std::abs(before.positionX - after.positionX) > 0.0001f ||
+      std::abs(before.positionY - after.positionY) > 0.0001f;
+  if (!moved) {
+   continue;
+  }
+  entries.push_back(MultiTransformEntry{target, before, after});
+  changed.push_back(target);
+ }
+ if (!arrangePushUndo(frame, std::move(entries))) {
+  changed.clear();
+ }
+ return changed;
+}
+
+std::vector<ArtifactAbstractLayerPtr> TransformGizmo::distributeTargets(
+    ArrangeDistributeAxis axis)
+{
+ std::vector<ArtifactAbstractLayerPtr> changed;
+ struct Item {
+  ArtifactAbstractLayerPtr target;
+  QRectF bounds;
+ };
+ std::vector<Item> items;
+ for (const auto& target : arrangeTargetsOf(*this)) {
+  const QRectF bounds = target->transformedBoundingBox();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+   continue;
+  }
+  items.push_back({target, bounds});
+ }
+ if (items.size() < 3) {
+  return changed;
+ }
+ const bool horizontal = axis == ArrangeDistributeAxis::Horizontal;
+ std::sort(items.begin(), items.end(), [horizontal](const Item& a, const Item& b) {
+  return horizontal ? a.bounds.center().x() < b.bounds.center().x()
+                    : a.bounds.center().y() < b.bounds.center().y();
+ });
+ const auto edgeMin = [horizontal](const QRectF& rect) {
+  return horizontal ? rect.left() : rect.top();
+ };
+ const auto edgeMax = [horizontal](const QRectF& rect) {
+  return horizontal ? rect.right() : rect.bottom();
+ };
+ const auto edgeSize = [horizontal](const QRectF& rect) {
+  return horizontal ? rect.width() : rect.height();
+ };
+ double span = edgeMax(items.back().bounds) - edgeMin(items.front().bounds);
+ double total = 0.0;
+ for (const auto& item : items) {
+  total += edgeSize(item.bounds);
+ }
+ double gap = (items.size() > 1) ? (span - total) / (items.size() - 1) : 0.0;
+ if (!std::isfinite(gap)) {
+  return changed;
+ }
+ if (gap < 0.0) {
+  gap = 0.0;
+ }
+ const int64_t frame = layer_ ? layer_->currentFrame() : 0;
+ std::vector<MultiTransformEntry> entries;
+ entries.reserve(items.size());
+ double cursor = edgeMin(items.front().bounds);
+ for (const auto& item : items) {
+  const double wanted = cursor - edgeMin(item.bounds);
+  cursor += edgeSize(item.bounds) + gap;
+  if (std::abs(wanted) < 0.0001) {
+   continue;
+  }
+  const QPointF canvasDelta = horizontal ? QPointF(wanted, 0.0) : QPointF(0.0, wanted);
+  const ArtifactCore::RationalTime time =
+      currentTransformKeyframeTime(item.target.get());
+  const TransformSnapshot before = captureTransformSnapshot(item.target, time);
+  const QPointF parentDelta = arrangeParentSpaceDelta(item.target, canvasDelta);
+  arrangeSetPosition(item.target, time,
+                     before.positionX + static_cast<float>(parentDelta.x()),
+                     before.positionY + static_cast<float>(parentDelta.y()),
+                     before);
+  item.target->setDirty(LayerDirtyFlag::Transform);
+  const TransformSnapshot after = captureTransformSnapshot(item.target, time);
+  const bool moved =
+      std::abs(before.positionX - after.positionX) > 0.0001f ||
+      std::abs(before.positionY - after.positionY) > 0.0001f;
+  if (!moved) {
+   continue;
+  }
+  entries.push_back(MultiTransformEntry{item.target, before, after});
+  changed.push_back(item.target);
+ }
+ if (!arrangePushUndo(frame, std::move(entries))) {
+  changed.clear();
+ }
+ return changed;
 }
 
 }

@@ -231,6 +231,8 @@ import Artifact.Widgets.TransformGizmo;
 
 import Artifact.Widgets.TextGizmo;
 
+import Artifact.Widgets.ContentGizmo;
+
 import Artifact.Widgets.Gizmo3D;
 
 import Artifact.Widgets.ViewportMath;
@@ -4388,6 +4390,17 @@ bool insertVertexOnMaskSegment(const ArtifactAbstractLayerPtr &layer,
 bool layerUsesTextGizmo(const ArtifactAbstractLayerPtr &layer) {
 
   return layer && dynamic_cast<ArtifactTextLayer *>(layer.get()) != nullptr;
+
+}
+
+bool layerUsesContentGizmo(const ArtifactAbstractLayerPtr &layer) {
+
+  if (!layer) {
+    return false;
+  }
+  return dynamic_cast<ArtifactImageLayer *>(layer.get()) != nullptr ||
+         dynamic_cast<ArtifactSolid2DLayer *>(layer.get()) != nullptr ||
+         dynamic_cast<ArtifactSolidImageLayer *>(layer.get()) != nullptr;
 
 }
 
@@ -10122,6 +10135,11 @@ public:
 
   std::unique_ptr<TextGizmo> textGizmo_;
 
+  std::unique_ptr<ContentGizmo> contentGizmo_;
+
+  // Content edit mode (image crop / solid size+gradient handles).
+  bool contentEditMode_ = false;
+
   std::unique_ptr<Artifact3DGizmo> gizmo3D_;
 
   std::unique_ptr<ArtifactPointTrackerGizmo> trackerGizmo_;
@@ -12290,6 +12308,8 @@ public:
 
   bool textGizmoDragActive_ = false;
 
+  bool contentGizmoDragActive_ = false;
+
   bool trackerGizmoDragActive_ = false;
 
   bool motionSketchWasPlaying_ = false;
@@ -13543,6 +13563,12 @@ public:
 
   QString infoOverlayDetail_;
 
+  // Transient result outline for VP Fit/Fill/Stretch operations. The comp
+  // frame plus the post-operation bounds make Fit's letterbox area explicit.
+  bool fitGuideVisible_ = false;
+  QRectF fitGuideCompRect_;
+  QRectF fitGuideResultRect_;
+
   bool commandPaletteVisible_ = false;
 
   QString commandPaletteQuery_;
@@ -14672,6 +14698,14 @@ public:
 
     }
 
+    if (contentGizmo_) {
+
+      const bool useContentGizmo =
+          contentEditMode_ && layerUsesContentGizmo(layer);
+      contentGizmo_->setLayer(useContentGizmo ? layer : nullptr);
+
+    }
+
     if (gizmo_) {
 
       if (useTextGizmo || use3DGizmoOnly) {
@@ -15467,6 +15501,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
 
   impl_->textGizmo_ = std::make_unique<TextGizmo>();
+
+  impl_->contentGizmo_ = std::make_unique<ContentGizmo>();
 
   impl_->gizmo3D_ = std::make_unique<Artifact3DGizmo>(this);
   impl_->viewportOrientationNavigator_.snapTo(
@@ -22641,7 +22677,270 @@ bool CompositionRenderController::resetSelectedTransformComponent(
   return true;
 }
 
+namespace {
+QRectF arrangeSelectionUnion(
+    const std::vector<ArtifactAbstractLayerPtr> &targets) {
+  QRectF out;
+  bool hasRect = false;
+  for (const auto &target : targets) {
+    if (!target) {
+      continue;
+    }
+    const QRectF bounds = target->transformedBoundingBox();
+    if (!bounds.isValid() || bounds.width() <= 0.0 ||
+        bounds.height() <= 0.0) {
+      continue;
+    }
+    if (!hasRect) {
+      out = bounds;
+      hasRect = true;
+    } else {
+      out = out.united(bounds);
+    }
+  }
+  return hasRect ? out : QRectF();
+}
+
+QRectF arrangeCompRect(CompositionRenderController::Impl *impl) {
+  const auto comp =
+      impl ? impl->previewPipeline_.composition() : ArtifactCompositionPtr{};
+  QSize size;
+  if (comp) {
+    size = comp->settings().compositionSize();
+  }
+  const double width = size.width() > 0 ? size.width() : 1920.0;
+  const double height = size.height() > 0 ? size.height() : 1080.0;
+  return QRectF(0.0, 0.0, width, height);
+}
+
+std::vector<ArtifactAbstractLayerPtr> arrangeGizmoTargets(
+    TransformGizmo *gizmo) {
+  std::vector<ArtifactAbstractLayerPtr> targets;
+  if (!gizmo) {
+    return targets;
+  }
+  for (const auto &candidate : gizmo->targetLayers()) {
+    if (candidate && !candidate->isLocked() &&
+        !candidate->isSelectionLocked()) {
+      targets.push_back(candidate);
+    }
+  }
+  return targets;
+}
+}  // namespace
+
+bool CompositionRenderController::fitSelectedToComp(ArrangeFitMode mode) {
+  if (!impl_ || !impl_->gizmo_) {
+    return false;
+  }
+  const auto changed =
+      impl_->gizmo_->fitTargetsToRect(arrangeCompRect(impl_.get()), mode);
+  if (changed.empty()) {
+    return false;
+  }
+  for (const auto &target : changed) {
+    target->changed();
+    impl_->publishLayerModified(target);
+  }
+  impl_->fitGuideCompRect_ = arrangeCompRect(impl_.get());
+  impl_->fitGuideResultRect_ = arrangeSelectionUnion(changed);
+  impl_->fitGuideVisible_ = impl_->fitGuideCompRect_.isValid() &&
+                            impl_->fitGuideResultRect_.isValid();
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::alignSelectedLayers(ArrangeAlignMode mode) {
+  if (!impl_ || !impl_->gizmo_) {
+    return false;
+  }
+  const auto targets = arrangeGizmoTargets(impl_->gizmo_.get());
+  if (targets.empty()) {
+    return false;
+  }
+  // Multi-selection aligns within itself; a single layer aligns to the comp.
+  const QRectF reference = targets.size() > 1
+                               ? arrangeSelectionUnion(targets)
+                               : arrangeCompRect(impl_.get());
+  const auto changed = impl_->gizmo_->alignTargets(mode, reference);
+  if (changed.empty()) {
+    return false;
+  }
+  for (const auto &target : changed) {
+    target->changed();
+    impl_->publishLayerModified(target);
+  }
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::distributeSelectedLayers(
+    ArrangeDistributeAxis axis) {
+  if (!impl_ || !impl_->gizmo_) {
+    return false;
+  }
+  const auto changed = impl_->gizmo_->distributeTargets(axis);
+  if (changed.empty()) {
+    return false;
+  }
+  for (const auto &target : changed) {
+    target->changed();
+    impl_->publishLayerModified(target);
+  }
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+ArtifactCore::SharedPtr<ArtifactImageLayer>
+CompositionRenderController::selectedCropLayer() const {
+  if (!impl_ || impl_->selectedLayerId_.isNil()) {
+    return {};
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto layer =
+      comp ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
+  if (!layer || layer->isLocked() || layer->isSelectionLocked()) {
+    return {};
+  }
+  return ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+}
+
+bool CompositionRenderController::selectedSupportsCrop() const {
+  return static_cast<bool>(selectedCropLayer());
+}
+
+bool CompositionRenderController::setSelectedCropEnabled(bool enabled) {
+  const auto imageLayer = selectedCropLayer();
+  if (!imageLayer) {
+    return false;
+  }
+  const auto before = imageLayer->sourceCrop();
+  if (before.enabled() == enabled) {
+    return true;
+  }
+  auto after = before;
+  after.setEnabled(enabled);
+  if (enabled && !after.cropRect().isValid()) {
+    after.reset();
+    after.setEnabled(true);
+  }
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
+                                     after.enabled());
+  auto *manager = UndoManager::instance();
+  bool pushed = manager == nullptr;
+  if (manager) {
+    pushed = manager->push(std::make_unique<SourceCropRectUndoCommand>(
+        imageLayer, before, imageLayer->sourceCrop()));
+  }
+  if (!pushed) {
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
+                                       before.enabled());
+    return false;
+  }
+  impl_->publishLayerModified(imageLayer);
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::setSelectedCropRect(const QRectF &sourceRect) {
+  const auto imageLayer = selectedCropLayer();
+  if (!imageLayer || !sourceRect.isValid() || sourceRect.width() <= 0.0 ||
+      sourceRect.height() <= 0.0) {
+    return false;
+  }
+  const auto before = imageLayer->sourceCrop();
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
+                                     sourceRect.x());
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
+                                     sourceRect.y());
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"),
+                                     sourceRect.width());
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"),
+                                     sourceRect.height());
+  const auto after = imageLayer->sourceCrop();
+  if (before.enabled() == after.enabled() &&
+      before.cropRect() == after.cropRect()) {
+    return true;
+  }
+  auto *manager = UndoManager::instance();
+  bool pushed = manager == nullptr;
+  if (manager) {
+    pushed = manager->push(
+        std::make_unique<SourceCropRectUndoCommand>(imageLayer, before, after));
+  }
+  if (!pushed) {
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
+                                       before.enabled());
+    const QRectF rect = before.cropRect();
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
+                                       rect.x());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
+                                       rect.y());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"),
+                                       rect.width());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"),
+                                       rect.height());
+    return false;
+  }
+  impl_->publishLayerModified(imageLayer);
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::resetSelectedCrop() {
+  const auto imageLayer = selectedCropLayer();
+  if (!imageLayer || !imageLayer->sourceCropEnabled()) {
+    return false;
+  }
+  const auto before = imageLayer->sourceCrop();
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), false);
+  const auto after = imageLayer->sourceCrop();
+  auto *manager = UndoManager::instance();
+  bool pushed = manager == nullptr;
+  if (manager) {
+    pushed = manager->push(
+        std::make_unique<SourceCropRectUndoCommand>(imageLayer, before, after));
+  }
+  if (!pushed) {
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
+                                       before.enabled());
+    return false;
+  }
+  impl_->publishLayerModified(imageLayer);
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::setContentEditMode(bool enabled) {
+  if (!impl_) {
+    return;
+  }
+  impl_->contentEditMode_ = enabled;
+  markRenderDirty();
+}
+
+bool CompositionRenderController::contentEditMode() const {
+  return impl_ && impl_->contentEditMode_;
+}
+
 bool CompositionRenderController::resetSelected2DAnchorToCenter() {
+  return setSelected2DAnchorPreset(4);
+}
+
+bool CompositionRenderController::setSelected2DAnchorPreset(int preset) {
   if (!impl_ || impl_->selectedLayerId_.isNil()) return false;
   const auto comp = impl_->previewPipeline_.composition();
   const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
@@ -22664,7 +22963,18 @@ bool CompositionRenderController::resetSelected2DAnchorToCenter() {
   const QVector3D beforePosition(transform.positionXAt(time),
                                  transform.positionYAt(time),
                                  transform.positionZAt(time));
-  const QPointF target = bounds.center();
+  const int normalizedPreset = std::clamp(preset, 0, 8);
+  const int column = normalizedPreset % 3;
+  const int row = normalizedPreset / 3;
+  const double targetX = column == 0
+                             ? bounds.left()
+                             : (column == 1 ? bounds.center().x()
+                                            : bounds.right());
+  const double targetY = row == 0
+                             ? bounds.top()
+                             : (row == 1 ? bounds.center().y()
+                                         : bounds.bottom());
+  const QPointF target(targetX, targetY);
   const QPointF delta(target.x() - beforeAnchor.x(),
                       target.y() - beforeAnchor.y());
   const double radians = transform.rotationAt(time) *
@@ -25674,7 +25984,27 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
     }
 
-    if (impl_->textGizmo_ && layerUsesTextGizmo(gizmoLayer)) {
+    if (impl_->contentEditMode_ && impl_->contentGizmo_ &&
+        layerUsesContentGizmo(gizmoLayer)) {
+
+      impl_->contentGizmo_->setLayer(gizmoLayer);
+
+      impl_->contentGizmo_->handleMousePress(viewportPos,
+                                             impl_->renderer_.get());
+
+      if (impl_->contentGizmo_->isDragging()) {
+
+        impl_->contentGizmoDragActive_ = true;
+
+        notifyViewportInteractionActivity();
+
+        impl_->gizmoDragRenderTimer_.restart();
+
+        return;
+
+      }
+
+    } else if (impl_->textGizmo_ && layerUsesTextGizmo(gizmoLayer)) {
 
       impl_->textGizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
 
@@ -28177,6 +28507,22 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
+  if (impl_->contentGizmo_ && impl_->contentGizmo_->isDragging()) {
+
+    impl_->contentGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+
+    notifyViewportInteractionActivity();
+
+    impl_->invalidateBaseComposite();
+
+    markRenderDirty();
+
+    return;
+
+  }
+
+
+
   if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
 
     impl_->textGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
@@ -28272,6 +28618,15 @@ bool CompositionRenderController::cancelGizmoInteraction() {
     impl_->invalidateLayerSurfaceCache(layer);
     impl_->invalidateBaseComposite(); impl_->invalidateOverlayComposite(); markRenderDirty();
     return true;
+  }
+  if (impl_->contentGizmo_ && impl_->contentGizmo_->isDragging()) {
+    if (impl_->contentGizmo_->cancelInteraction()) {
+      impl_->invalidateBaseComposite();
+      impl_->invalidateOverlayComposite();
+      finishViewportInteraction();
+      markRenderDirty();
+      return true;
+    }
   }
   if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
     if (impl_->textGizmo_->cancelInteraction()) {
@@ -29671,6 +30026,28 @@ void CompositionRenderController::handleMouseRelease() {
     impl_->invalidateOverlayComposite();
 
     if (wasDragging) {
+
+      finishViewportInteraction();
+
+    }
+
+    markRenderDirty();
+
+  }
+
+
+
+  if (impl_->contentGizmo_) {
+
+    const bool wasContentDragging = impl_->contentGizmoDragActive_;
+
+    impl_->contentGizmoDragActive_ = false;
+
+    impl_->contentGizmo_->handleMouseRelease();
+
+    impl_->invalidateOverlayComposite();
+
+    if (wasContentDragging) {
 
       finishViewportInteraction();
 
@@ -33072,6 +33449,15 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
       return impl_->gizmoDragActive_ ? Qt::ClosedHandCursor
                                      : Qt::SizeAllCursor;
     }
+
+  }
+
+  if (impl_->contentEditMode_ && impl_->contentGizmo_ &&
+      selectedLayer && layerUsesContentGizmo(selectedLayer)) {
+
+    return impl_->contentGizmo_->cursorShapeForViewportPos(physPos,
+
+                                                          impl_->renderer_.get());
 
   }
 
@@ -37273,7 +37659,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           sync2DGizmosForLayer(selectedLayer);
 
-          if (layerUsesTextGizmo(selectedLayer) && textGizmo_) {
+          if (contentEditMode_ && layerUsesContentGizmo(selectedLayer) &&
+              contentGizmo_) {
+
+            ArtifactCore::ProfileScope _profG2DDrawCall(
+
+                "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
+
+            contentGizmo_->draw(renderer_.get());
+
+          } else if (layerUsesTextGizmo(selectedLayer) && textGizmo_) {
 
             ArtifactCore::ProfileScope _profG2DDrawCall(
 
@@ -42164,6 +42559,25 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
 
     float cw, float ch) {
 
+  if (renderer_ && fitGuideVisible_ && fitGuideCompRect_.isValid() &&
+      fitGuideResultRect_.isValid()) {
+    const auto drawRectOutline = [this](const QRectF &rect,
+                                         const FloatColor &color,
+                                         float width) {
+      const float l = static_cast<float>(rect.left());
+      const float t = static_cast<float>(rect.top());
+      const float r = static_cast<float>(rect.right());
+      const float b = static_cast<float>(rect.bottom());
+      renderer_->drawSolidLine({l, t}, {r, t}, color, width);
+      renderer_->drawSolidLine({r, t}, {r, b}, color, width);
+      renderer_->drawSolidLine({r, b}, {l, b}, color, width);
+      renderer_->drawSolidLine({l, b}, {l, t}, color, width);
+    };
+    const float lineWidth = 1.25f / std::max(0.001f, renderer_->getZoom());
+    drawRectOutline(fitGuideCompRect_, {0.70f, 0.78f, 0.90f, 0.72f}, lineWidth);
+    drawRectOutline(fitGuideResultRect_, {0.25f, 0.90f, 0.98f, 0.95f}, lineWidth);
+  }
+
   if (renderer_ && maskSnapPreviewValid_ && pendingMaskCreation_) {
     const float markerSize = std::clamp(
         12.0f / std::max(0.001f, renderer_->getZoom()), 6.0f, 20.0f);
@@ -42776,7 +43190,16 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
         sync2DGizmosForLayer(selectedLayer);
 
-        if (layerUsesTextGizmo(selectedLayer) && textGizmo_) {
+        if (contentEditMode_ && layerUsesContentGizmo(selectedLayer) &&
+            contentGizmo_) {
+
+          ArtifactCore::ProfileScope _profG2DDrawCall(
+
+              "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
+
+          contentGizmo_->draw(renderer_.get());
+
+        } else if (layerUsesTextGizmo(selectedLayer) && textGizmo_) {
 
           ArtifactCore::ProfileScope _profG2DDrawCall(
 

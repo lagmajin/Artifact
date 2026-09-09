@@ -35,11 +35,17 @@ export namespace Artifact {
   GuideType type = GuideType::LayerEdge;
  };
 
- struct SnapLabel {
-  bool isVertical = false;
-  QPointF position;
-  QString text;
- };
+  struct SnapLabel {
+   bool isVertical = false;
+   QPointF position;
+   QString text;
+  };
+
+  // One-shot arrangement ops (AE Fit To Comp / Align / Distribute gaps).
+  // Unlike VP drags these run to completion and push a single undo entry.
+  enum class ArrangeFitMode { Fit, Fill, Stretch, Center };
+  enum class ArrangeAlignMode { Left, CenterH, Right, Top, CenterV, Bottom };
+  enum class ArrangeDistributeAxis { Horizontal, Vertical };
 
  export class TransformGizmo {
  public:
@@ -92,11 +98,19 @@ export namespace Artifact {
   void handleMouseRelease();
   bool cancelInteraction();
 
-  bool isDragging() const { return isDragging_; }
-  HandleType activeHandle() const { return activeHandle_; }
-  const std::vector<SnapLine>& activeSnapLines() const { return activeSnapLines_; }
-  const std::vector<SnapLabel>& activeSnapLabels() const { return activeSnapLabels_; }
-  QRectF currentCanvasBoundingRect() const;
+   bool isDragging() const { return isDragging_; }
+   HandleType activeHandle() const { return activeHandle_; }
+   const std::vector<SnapLine>& activeSnapLines() const { return activeSnapLines_; }
+   const std::vector<SnapLabel>& activeSnapLabels() const { return activeSnapLabels_; }
+   QRectF currentCanvasBoundingRect() const;
+   // Changed targets (empty = no-op). Operates on targetLayers_ (falls back
+   // to the single layer_). Respects lock/selection-lock, skips bad bounds.
+   std::vector<ArtifactAbstractLayerPtr> fitTargetsToRect(
+       const QRectF& canvasRect, ArrangeFitMode mode);
+   std::vector<ArtifactAbstractLayerPtr> alignTargets(
+       ArrangeAlignMode mode, const QRectF& referenceRect);
+   std::vector<ArtifactAbstractLayerPtr> distributeTargets(
+       ArrangeDistributeAxis axis);
 
 private:
   struct MultiDragState;

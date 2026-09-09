@@ -1,6 +1,8 @@
 module;
 
 #include <QMatrix4x4>
+#include <QRectF>
+#include <QSize>
 #include <QString>
 #include <QVariant>
 #include <QVector3D>
@@ -16,7 +18,12 @@ export module Artifact.Widgets.CompositionGizmoUndoCommands;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
+import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
+import Artifact.Layer.SourceCrop;
 import Event.Bus;
+import Memory.SharedPtr;
 import Property.Abstract;
 import Time.Rational;
 import Undo.UndoManager;
@@ -228,6 +235,162 @@ private:
   }
 
   std::vector<GizmoGroupUndoEntry> entries_;
+  bool lastOperationSucceeded_ = true;
+};
+
+// VP crop drags drive the sourceCrop.* property paths (clamping and keyframe
+// semantics stay identical to numeric edits). Snapshots are whole values.
+class SourceCropRectUndoCommand final : public UndoCommand {
+ public:
+  SourceCropRectUndoCommand(ArtifactAbstractLayerPtr layer, SourceCrop before,
+                            SourceCrop after)
+      : layer_(layer), before_(before), after_(after) {}
+
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QString label() const override { return QStringLiteral("Crop Image Layer"); }
+
+ private:
+  bool apply(const SourceCrop &snapshot) {
+    auto layer = layer_.lock();
+    if (!layer) return false;
+    const auto imageLayer =
+        ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+    if (!imageLayer) return false;
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
+                                       snapshot.enabled());
+    const QRectF rect = snapshot.cropRect();
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
+                                       rect.x());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
+                                       rect.y());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"),
+                                       rect.width());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"),
+                                       rect.height());
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto *manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+    return true;
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  SourceCrop before_;
+  SourceCrop after_;
+  bool lastOperationSucceeded_ = true;
+};
+
+// VP solid-size drags. Size is not keyframable: plain before/after values.
+class SolidSizeUndoCommand final : public UndoCommand {
+ public:
+  SolidSizeUndoCommand(ArtifactAbstractLayerPtr layer, QSize before,
+                       QSize after)
+      : layer_(layer), before_(before), after_(after) {}
+
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QString label() const override { return QStringLiteral("Resize Solid Layer"); }
+
+ private:
+  bool apply(const QSize &size) {
+    auto layer = layer_.lock();
+    if (!layer) return false;
+    const auto solidLayer =
+        ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer);
+    if (!solidLayer) return false;
+    if (size.width() < 1 || size.height() < 1) return false;
+    solidLayer->setSize(size.width(), size.height());
+    layer->setDirty(LayerDirtyFlag::Source);
+    layer->changed();
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto *manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+    return true;
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  QSize before_;
+  QSize after_;
+  bool lastOperationSucceeded_ = true;
+};
+
+// VP solid-gradient drags drive the solid.gradientCenterX/Y/AngleDegrees
+// property paths (same semantics as numeric edits).
+class SolidGradientUndoCommand final : public UndoCommand {
+ public:
+  struct AxisState {
+    double centerX = 0.5;
+    double centerY = 0.5;
+    double angleDegrees = 90.0;
+  };
+  SolidGradientUndoCommand(ArtifactAbstractLayerPtr layer, AxisState before,
+                           AxisState after)
+      : layer_(layer), before_(before), after_(after) {}
+
+  void undo() override { lastOperationSucceeded_ = apply(before_); }
+  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QString label() const override { return QStringLiteral("Edit Solid Gradient"); }
+
+ private:
+  bool apply(const AxisState &snapshot) {
+    auto layer = layer_.lock();
+    if (!layer) return false;
+    // Solid2D and SolidImage share the solid.gradient* property paths.
+    const auto solid2D =
+        ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer);
+    const auto solidImage =
+        solid2D ? ArtifactAbstractLayerPtr{}
+                : ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(
+                      layer);
+    if (!solid2D && !solidImage) return false;
+    const auto applyPath = [&](const QString &path, double value) {
+      if (solid2D) {
+        solid2D->setLayerPropertyValue(path, value);
+      } else {
+        solidImage->setLayerPropertyValue(path, value);
+      }
+    };
+    const auto applyPath = [&](const QString &path, double value) {
+      if (solid2D) {
+        solid2D->setLayerPropertyValue(path, value);
+      } else {
+        solidImage->setLayerPropertyValue(path, value);
+      }
+    };
+    applyPath(QStringLiteral("solid.gradientCenterX"), snapshot.centerX);
+    applyPath(QStringLiteral("solid.gradientCenterY"), snapshot.centerY);
+    applyPath(QStringLiteral("solid.gradientAngleDegrees"),
+              snapshot.angleDegrees);
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto *manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+    return true;
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  AxisState before_;
+  AxisState after_;
   bool lastOperationSucceeded_ = true;
 };
 

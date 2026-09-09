@@ -852,6 +852,7 @@ public:
     QAction* loadMaskPresetAction = nullptr;
     QAction* createMaskFromTextAction = nullptr;
     QAction* convertShapeToMaskAction = nullptr;
+    QAction* linkShapeToMaskAction = nullptr;
     QAction* convertMaskToShapeAction = nullptr;
 
     QAction* selectParentAction = nullptr;
@@ -963,6 +964,7 @@ public:
     void handleLoadMaskPreset();
     void handleCreateMaskFromText();
     void handleConvertShapeToMask();
+    void handleLinkShapeToMask();
     void handleConvertMaskToShape();
 
     void handleSelectParent();
@@ -1315,6 +1317,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMaskFromTextAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     convertShapeToMaskAction = maskMenu->addAction(QStringLiteral("シェイプをマスクに変換"));
     convertShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    linkShapeToMaskAction = maskMenu->addAction(QStringLiteral("シェイプをマスクにリンク（live）"));
+    linkShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     convertMaskToShapeAction = maskMenu->addAction(QStringLiteral("マスクをシェイプに変換"));
     convertMaskToShapeAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyEighthAction, proxyHalfAction, proxyFullAction}) {
@@ -1631,6 +1635,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == loadMaskPresetAction) { handleLoadMaskPreset(); return; }
         if (action == createMaskFromTextAction) { handleCreateMaskFromText(); return; }
         if (action == convertShapeToMaskAction) { handleConvertShapeToMask(); return; }
+        if (action == linkShapeToMaskAction) { handleLinkShapeToMask(); return; }
         if (action == convertMaskToShapeAction) { handleConvertMaskToShape(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
@@ -2101,6 +2106,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         }
     }
     convertShapeToMaskAction->setEnabled(isShapeLayerSelected);
+    linkShapeToMaskAction->setEnabled(isShapeLayerSelected);
     cacheDefaultAction->setEnabled(hasLayer);
     cacheEnabledAction->setEnabled(hasLayer);
     cacheDisabledAction->setEnabled(hasLayer);
@@ -3625,6 +3631,46 @@ void ArtifactLayerMenu::Impl::handleConvertShapeToMask()
             QStringLiteral("シェイプをマスクへ変換できませんでした。"));
         return;
     }
+}
+
+void ArtifactLayerMenu::Impl::handleLinkShapeToMask()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto shapeLayer = composition
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              composition->layerById(selectedLayerId_))
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!shapeLayer) {
+        return;
+    }
+    if (shapeLayer->shapeMaskLiveLink()) {
+        QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクにリンク"),
+                                 QStringLiteral("既にliveリンク中です。"));
+        return;
+    }
+
+    const LayerMask convertedMask = shapeLayer->createMaskFromShape();
+    if (convertedMask.maskPathCount() == 0) {
+        QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクにリンク"),
+                                 QStringLiteral("変換可能なパスがありません。"));
+        return;
+    }
+
+    const int maskIndex = shapeLayer->maskCount();
+    if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerMaskCommand>(
+            shapeLayer, convertedMask, maskIndex))) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("シェイプをマスクにリンク"),
+            QStringLiteral("シェイプをマスクへ変換できませんでした。"));
+        return;
+    }
+    // Link setup itself is not undoable; the pushed slot above is.
+    // Later shape edits refresh the slot geometry without undo entries.
+    shapeLayer->setShapeMaskLiveLink(true, maskIndex);
 }
 
 void ArtifactLayerMenu::Impl::handleConvertMaskToShape()

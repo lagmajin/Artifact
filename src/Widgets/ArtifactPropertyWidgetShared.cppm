@@ -774,6 +774,9 @@ QString humanizePropertyLabel(QString name) {
         if (field.compare(QStringLiteral("featherOuter"), Qt::CaseInsensitive) == 0) {
           return pathLabel + QStringLiteral(" / Feather Outer");
         }
+        if (field.compare(QStringLiteral("falloff"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Falloff");
+        }
         if (field.compare(QStringLiteral("expansion"), Qt::CaseInsensitive) == 0) {
           return pathLabel + QStringLiteral(" / Expansion");
         }
