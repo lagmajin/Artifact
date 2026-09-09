@@ -465,7 +465,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
                        .arg(shortBackendLabel(job.renderBackend)),
                    job.errorMessage,
                    job.progress, data.textColor);
-      item->setSizeHint(QSize(0, 196));
+      item->setSizeHint(QSize(0, 82));
       jobListWidget->setItemWidget(item, card);
       visibleToSource.push_back(i);
     }
@@ -975,8 +975,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   setAccessibleDescription(
       QStringLiteral("Review, reorder, and monitor composition render jobs."));
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(10, 10, 10, 8);
-  layout->setSpacing(8);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
 
   const auto& theme = ArtifactCore::currentDCCTheme();
   setAutoFillBackground(true);
@@ -989,9 +989,9 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   
   // Header
   auto* top = new QHBoxLayout();
-  top->setContentsMargins(4, 0, 4, 4);
+  top->setContentsMargins(16, 8, 16, 8);
   top->setSpacing(12);
-  auto* title = new QLabel("RENDER MANAGER");
+  auto* title = new QLabel("Render Manager");
   title->setObjectName("renderQueueTitle");
   QFont titleFont = title->font();
   titleFont.setPointSize(titleFont.pointSize() + 2);
@@ -1003,7 +1003,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->searchEdit = new RenderQueueSearchEdit();
   impl_->searchEdit->setPlaceholderText("Search jobs...");
   impl_->searchEdit->setMinimumHeight(
-      Artifact::Accessibility::scaledSize(24));
+      Artifact::Accessibility::scaledSize(30));
   impl_->searchEdit->setAccessibleName(QStringLiteral("Render job search"));
   impl_->searchEdit->setAccessibleDescription(
       QStringLiteral("Filter the render queue by job name or composition."));
@@ -1064,8 +1064,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
 
   auto* filterSide = new QFrame();
   filterSide->setFrameShape(QFrame::StyledPanel);
-  filterSide->setMinimumWidth(216);
-  filterSide->setMaximumWidth(244);
+  filterSide->setMinimumWidth(190);
+  filterSide->setMaximumWidth(224);
   auto* filterLayout = new QVBoxLayout(filterSide);
   filterLayout->setContentsMargins(12, 12, 12, 12);
   filterLayout->setSpacing(8);
@@ -1141,15 +1141,16 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     impl_->syncJobsFromService();
   };
   impl_->jobListWidget->setAlternatingRowColors(true);
-  impl_->jobListWidget->setSpacing(4);
-  impl_->jobListWidget->setMinimumWidth(560);
+  impl_->jobListWidget->setSpacing(1);
+  impl_->jobListWidget->setMinimumWidth(500);
   
   auto* leftSide = new QWidget();
-  leftSide->setMinimumWidth(560);
+  leftSide->setMinimumWidth(500);
   auto* leftLayout = new QVBoxLayout(leftSide);
-  leftLayout->setContentsMargins(0, 0, 0, 0);
+  leftLayout->setContentsMargins(12, 12, 8, 0);
+  leftLayout->setSpacing(8);
   auto* queueHeader = new QHBoxLayout();
-  auto* queueTitle = new QLabel(QStringLiteral("QUEUE"));
+  auto* queueTitle = new QLabel(QStringLiteral("Render queue"));
   QFont queueTitleFont = queueTitle->font();
   queueTitleFont.setBold(true);
   queueTitle->setFont(queueTitleFont);
@@ -1225,13 +1226,13 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   
   // Right Pane: Job Details (Scrollable)
   auto* detailScroll = new QScrollArea();
-  detailScroll->setMinimumWidth(340);
+  detailScroll->setMinimumWidth(320);
   detailScroll->setWidgetResizable(true);
   detailScroll->setObjectName("renderQueueDetailScroll");
   auto* detailWidget = new QWidget();
   detailWidget->setMinimumWidth(320);
   auto* detailLayout = new QVBoxLayout(detailWidget);
-  detailLayout->setContentsMargins(8, 0, 8, 0);
+  detailLayout->setContentsMargins(12, 12, 12, 12);
   detailLayout->setSpacing(8);
 
   auto* inspectorHeader = new QHBoxLayout();
@@ -1944,7 +1945,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   splitter->setStretchFactor(0, 0);
   splitter->setStretchFactor(1, 3);
   splitter->setStretchFactor(2, 2);
-  splitter->setSizes({224, 760, 400});
+  splitter->setSizes({208, 720, 360});
   layout->addWidget(splitter, 1);
 
   auto* historyGroup = new QGroupBox("Render History / Log");
@@ -1997,7 +1998,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   historyButtonLayout->addWidget(impl_->exportHistoryButton);
   historyButtonLayout->addStretch();
   historyLayout->addLayout(historyButtonLayout);
-  historyGroup->setFixedHeight(78);
+  historyGroup->setFixedHeight(64);
   layout->addWidget(historyGroup);
   impl_->loadHistory();
 
