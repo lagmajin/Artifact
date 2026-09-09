@@ -2420,6 +2420,7 @@ namespace Artifact
         QImage lastPreviewFrame_;
         int lastPreviewFrameNumber_ = 0;
         int lastPreviewJobIndex_ = -1;
+        std::atomic<bool> previewUpdatePending_{false};
         std::mutex previewMutex_;
 
         std::unique_ptr<ArtifactIRenderer> gpuRenderer_;
@@ -2436,6 +2437,86 @@ namespace Artifact
         // Render backend selection
         enum class RenderBackend { Auto, CPU, GPU };
         RenderBackend renderBackend_ = RenderBackend::Auto;
+
+        struct GpuMatteResourceSlot {
+            void* colorTarget = nullptr;
+            void* depthTarget = nullptr;
+            void* computeTarget = nullptr;
+        };
+
+        struct GpuMatteResourcePool {
+            explicit GpuMatteResourcePool(ArtifactIRenderer* rendererValue)
+                : renderer(rendererValue) {
+                slots.reserve(8);
+            }
+
+            ~GpuMatteResourcePool() {
+                reset();
+            }
+
+            GpuMatteResourcePool(const GpuMatteResourcePool&) = delete;
+            GpuMatteResourcePool& operator=(const GpuMatteResourcePool&) = delete;
+
+            void beginFrame(const QSize& requestedSize) {
+                cursor = 0;
+                if (size != requestedSize) {
+                    reset();
+                    size = requestedSize;
+                }
+            }
+
+            GpuMatteResourceSlot* acquire(bool requireComputeTarget) {
+                if (!renderer || size.isEmpty()) {
+                    return nullptr;
+                }
+                if (cursor == slots.size()) {
+                    slots.emplace_back();
+                }
+                auto& slot = slots[cursor++];
+                if (!slot.colorTarget) {
+                    slot.colorTarget = renderer->createOffscreenTexture(
+                        size.width(), size.height());
+                }
+                if (!slot.depthTarget) {
+                    slot.depthTarget = renderer->createOffscreenDepthTexture(
+                        size.width(), size.height());
+                }
+                if (requireComputeTarget && !slot.computeTarget) {
+                    slot.computeTarget = renderer->createOffscreenComputeTexture(
+                        size.width(), size.height());
+                }
+                if (!slot.colorTarget || !slot.depthTarget ||
+                    (requireComputeTarget && !slot.computeTarget)) {
+                    release(slot);
+                    return nullptr;
+                }
+                return &slot;
+            }
+
+        private:
+            void release(GpuMatteResourceSlot& slot) {
+                if (renderer) {
+                    renderer->destroyOffscreenTexture(slot.colorTarget);
+                    renderer->destroyOffscreenTexture(slot.depthTarget);
+                    renderer->destroyOffscreenTexture(slot.computeTarget);
+                }
+                slot = {};
+            }
+
+            void reset() {
+                for (auto& slot : slots) {
+                    release(slot);
+                }
+                slots.clear();
+                cursor = 0;
+                size = {};
+            }
+
+            ArtifactIRenderer* renderer = nullptr;
+            QSize size;
+            std::vector<GpuMatteResourceSlot> slots;
+            size_t cursor = 0;
+        };
 
         // Tile render mode (Phase 6: Tiled ROI Engine)
         ArtifactRenderQueueService::TileRenderMode tileRenderMode_ = ArtifactRenderQueueService::TileRenderMode::FullFrame;
@@ -2457,6 +2538,7 @@ namespace Artifact
             IVideoEncodeBackend* videoBackend = nullptr;
             QHash<QString, LayerSurfaceCacheEntry>* gpuSurfaceCache = nullptr;
             GPUTextureCacheManager* gpuTextureCacheManager = nullptr;
+            GpuMatteResourcePool* gpuMatteResourcePool = nullptr;
             QStringList* htmlFrameFiles = nullptr;
         };
 
@@ -5635,36 +5717,6 @@ namespace Artifact
                 }
             }
 
-            struct GpuMatteFrameResources {
-                ArtifactIRenderer* renderer = nullptr;
-                std::vector<void*> ownedTargets;
-                ~GpuMatteFrameResources() {
-                    if (!renderer) {
-                        return;
-                    }
-                    for (void* target : ownedTargets) {
-                        renderer->destroyOffscreenTexture(target);
-                    }
-                }
-                void* own(void* target) {
-                    if (target) {
-                        ownedTargets.push_back(target);
-                    }
-                    return target;
-                }
-                void release(void* target) {
-                    if (!renderer || !target) {
-                        return;
-                    }
-                    const auto it = std::find(ownedTargets.begin(),
-                                              ownedTargets.end(), target);
-                    if (it != ownedTargets.end()) {
-                        ownedTargets.erase(it);
-                        renderer->destroyOffscreenTexture(target);
-                    }
-                }
-            } gpuMatteResources{gpuRenderer_.get()};
-
             QHash<ArtifactCore::Id, Diligent::ITextureView*> matteSourceGpuViews;
             if (!gpuMattePipeline_ || !gpuMattePipeline_->ready()) {
                 gpuMattePipeline_ = gpuRenderer_->createLayerBlendPipeline();
@@ -5701,6 +5753,9 @@ namespace Artifact
             const QSize gpuMatteSize(
                 std::max(1, gpuRendererWidth_),
                 std::max(1, gpuRendererHeight_));
+            if (snap.gpuMatteResourcePool) {
+                snap.gpuMatteResourcePool->beginFrame(gpuMatteSize);
+            }
 
             if (gpuMattePipelineReady && gpuMatteSize.width() > 0 &&
                 gpuMatteSize.height() > 0) {
@@ -5736,12 +5791,13 @@ namespace Artifact
                             continue;
                         }
 
-                        void* sourceTarget = gpuMatteResources.own(
-                            gpuRenderer_->createOffscreenTexture(
-                                gpuMatteSize.width(), gpuMatteSize.height()));
-                        void* sourceDepth = gpuMatteResources.own(
-                            gpuRenderer_->createOffscreenDepthTexture(
-                                gpuMatteSize.width(), gpuMatteSize.height()));
+                        auto* sourceResources = snap.gpuMatteResourcePool
+                            ? snap.gpuMatteResourcePool->acquire(false)
+                            : nullptr;
+                        void* sourceTarget = sourceResources
+                            ? sourceResources->colorTarget : nullptr;
+                        void* sourceDepth = sourceResources
+                            ? sourceResources->depthTarget : nullptr;
                         auto* sourceSRV = gpuRenderer_->offscreenTextureShaderResourceView(
                             sourceTarget);
                         if (!sourceTarget || !sourceDepth || !sourceSRV) {
@@ -5767,6 +5823,7 @@ namespace Artifact
                     !layer->isActiveAt(gpuPos)) continue;
                 layer->goToFrame(snap.frameNumber);
                 std::vector<LayerMatteReference> gpuMatteRefs;
+                gpuMatteRefs.reserve(3);
                 if (gpuMattePipelineReady && !layer->is3D()) {
                     for (const auto& ref : layer->matteReferences()) {
                         if (!ref.enabled || ref.sourceLayerId.isNil() ||
@@ -5785,15 +5842,15 @@ namespace Artifact
                     }
                 }
                 if (!gpuMatteRefs.empty()) {
-                    void* layerTarget = gpuMatteResources.own(
-                        gpuRenderer_->createOffscreenTexture(
-                            gpuMatteSize.width(), gpuMatteSize.height()));
-                    void* layerDepth = gpuMatteResources.own(
-                        gpuRenderer_->createOffscreenDepthTexture(
-                            gpuMatteSize.width(), gpuMatteSize.height()));
-                    void* outputTarget = gpuMatteResources.own(
-                        gpuRenderer_->createOffscreenComputeTexture(
-                            gpuMatteSize.width(), gpuMatteSize.height()));
+                    auto* layerResources = snap.gpuMatteResourcePool
+                        ? snap.gpuMatteResourcePool->acquire(true)
+                        : nullptr;
+                    void* layerTarget = layerResources
+                        ? layerResources->colorTarget : nullptr;
+                    void* layerDepth = layerResources
+                        ? layerResources->depthTarget : nullptr;
+                    void* outputTarget = layerResources
+                        ? layerResources->computeTarget : nullptr;
                     auto* layerSRV = gpuRenderer_->offscreenTextureShaderResourceView(layerTarget);
                     auto* outputSRV = gpuRenderer_->offscreenTextureShaderResourceView(outputTarget);
                     auto* outputUAV = gpuRenderer_->offscreenTextureUnorderedAccessView(outputTarget);
@@ -5841,15 +5898,9 @@ namespace Artifact
                                 0.0f, 0.0f, static_cast<float>(gpuMatteSize.width()),
                                 static_cast<float>(gpuMatteSize.height()), outputSRV, 1.0f);
                             gpuRenderer_->flush();
-                            gpuMatteResources.release(layerTarget);
-                            gpuMatteResources.release(layerDepth);
-                            gpuMatteResources.release(outputTarget);
                             continue;
                         }
                     }
-                    gpuMatteResources.release(layerTarget);
-                    gpuMatteResources.release(layerDepth);
-                    gpuMatteResources.release(outputTarget);
                 }
                 drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
                                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
@@ -5867,29 +5918,53 @@ namespace Artifact
                     return false;
                 }
             } else {
-                auto beautyBuffer = gpuRenderer_->readbackToImageF32();
-                if (!beautyBuffer.isEmpty()) {
+                // Preserve the established F32 path whenever the composition
+                // owns effects. The common no-effect path can read RGBA8
+                // directly and avoid a full-size float buffer plus conversion.
+                const bool hasCompositionEffects =
+                    !snap.composition->getEffects().empty();
+                if (!hasCompositionEffects) {
+                    output.beauty = gpuRenderer_->readbackToImage();
                     if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
-                        const QRect fullRect(0, 0, beautyBuffer.width(), beautyBuffer.height());
+                        const QRect fullRect(0, 0, output.beauty.width(),
+                                             output.beauty.height());
                         const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
                                                  snap.job.cropW, snap.job.cropH)
                                                .intersected(fullRect);
                         if (!crop.isEmpty()) {
-                            beautyBuffer = beautyBuffer.crop(
-                                crop.x(), crop.y(), crop.width(), crop.height());
+                            output.beauty = output.beauty.copy(crop);
                         }
                     }
-                    applyCompositionFinalEffectsToBuffer(snap.composition.get(), beautyBuffer);
-                    output.beauty = beautyBuffer.toQImage();
                 } else {
-                    output.beauty = gpuRenderer_->readbackToImage();
-                    if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
-                        const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
-                                                 snap.job.cropW, snap.job.cropH)
-                                               .intersected(output.beauty.rect());
-                        if (!crop.isEmpty()) output.beauty = output.beauty.copy(crop);
+                    auto beautyBuffer = gpuRenderer_->readbackToImageF32();
+                    if (!beautyBuffer.isEmpty()) {
+                        if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                            const QRect fullRect(0, 0, beautyBuffer.width(),
+                                                 beautyBuffer.height());
+                            const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
+                                                     snap.job.cropW, snap.job.cropH)
+                                                   .intersected(fullRect);
+                            if (!crop.isEmpty()) {
+                                beautyBuffer = beautyBuffer.crop(
+                                    crop.x(), crop.y(), crop.width(), crop.height());
+                            }
+                        }
+                        applyCompositionFinalEffectsToBuffer(
+                            snap.composition.get(), beautyBuffer);
+                        output.beauty = beautyBuffer.toQImage();
+                    } else {
+                        output.beauty = gpuRenderer_->readbackToImage();
+                        if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                            const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
+                                                     snap.job.cropW, snap.job.cropH)
+                                                   .intersected(output.beauty.rect());
+                            if (!crop.isEmpty()) {
+                                output.beauty = output.beauty.copy(crop);
+                            }
+                        }
+                        applyCompositionFinalEffectsToImage(
+                            snap.composition.get(), output.beauty);
                     }
-                    applyCompositionFinalEffectsToImage(snap.composition.get(), output.beauty);
                 }
             }
         } else {
@@ -6003,6 +6078,7 @@ namespace Artifact
             }
         }
 
+        GpuMatteResourcePool gpuMatteResourcePool(gpuRenderer_.get());
         FrameRenderSnapshot baseSnap;
         baseSnap.jobIndex = jobIndex;
         baseSnap.composition = compositionForRender;
@@ -6016,6 +6092,8 @@ namespace Artifact
         baseSnap.videoBackend = videoBackend;
         baseSnap.gpuSurfaceCache = &gpuSurfaceCache;
         baseSnap.gpuTextureCacheManager = gpuTextureCacheManager;
+        baseSnap.gpuMatteResourcePool = useGpuBackend
+            ? &gpuMatteResourcePool : nullptr;
         baseSnap.htmlFrameFiles = &htmlFrameFiles;
 
         std::atomic<int> framesRendered{0};
@@ -6125,6 +6203,7 @@ namespace Artifact
 
         // Legacy: raw thread pool for frame-at-a-time dispatch
         std::vector<std::thread> renderWorkers;
+        renderWorkers.reserve(static_cast<size_t>(numWorkers));
         std::atomic<int> nextFrameCounter{startF};
 
         if (useFarm) {
@@ -6387,27 +6466,34 @@ namespace Artifact
             }
 
             QImage qimg = std::move(frameOutput.beauty);
-            QImage previewImage = job.multiChannelExportEnabled
-                ? makeMultiChannelPreview(frameOutput.channels, QSize(320, 180))
-                : qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            const bool isFinalFrame = f + 1 >= endF;
+            const bool shouldPublishPreview = isFinalFrame ||
+                !previewUpdatePending_.exchange(true, std::memory_order_acq_rel);
+            if (shouldPublishPreview) {
+                previewUpdatePending_.store(true, std::memory_order_release);
+                QImage previewImage = job.multiChannelExportEnabled
+                    ? makeMultiChannelPreview(frameOutput.channels, QSize(320, 180))
+                    : qimg.scaled(320, 180, Qt::KeepAspectRatio,
+                                  Qt::SmoothTransformation);
 
-            {
-                ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
-                std::lock_guard<std::mutex> lock(previewMutex_);
-                lastPreviewFrame_ = std::move(previewImage);
-                lastPreviewFrameNumber_ = f;
-                lastPreviewJobIndex_ = jobIndex;
-            }
-
-            QMetaObject::invokeMethod(service, [service, jobIndex, f]() {
-                if (!service || !service->impl_) {
-                    return;
+                {
+                    ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
+                    std::lock_guard<std::mutex> lock(previewMutex_);
+                    lastPreviewFrame_ = std::move(previewImage);
+                    lastPreviewFrameNumber_ = f;
+                    lastPreviewJobIndex_ = jobIndex;
                 }
-                service->impl_->publishServiceEvent(
-                    RenderQueueServiceChangedEvent{
-                        RenderQueueServiceChangeKind::PreviewFrameReady,
-                        jobIndex, f});
-            }, Qt::QueuedConnection);
+
+                QMetaObject::invokeMethod(service, [service, jobIndex, f]() {
+                    if (!service || !service->impl_) {
+                        return;
+                    }
+                    service->impl_->publishServiceEvent(
+                        RenderQueueServiceChangedEvent{
+                            RenderQueueServiceChangeKind::PreviewFrameReady,
+                            jobIndex, f});
+                }, Qt::QueuedConnection);
+            }
 
             if (isVideo) {
                 qInfo() << "[EncodeSession][Frame] encode begin"
@@ -6846,6 +6932,9 @@ namespace Artifact
                 std::atomic<int> framesRendered = 0;
                 QString failureReason;
                 QStringList htmlFrameFiles;
+                if (isHtmlPlayer) {
+                    htmlFrameFiles.reserve(totalFrames);
+                }
 
                 if (impl_->usesExternalRenderer(job)) {
                     const bool externalSuccess = impl_->runExternalRendererJob(
@@ -7667,6 +7756,7 @@ namespace Artifact
     QImage ArtifactRenderQueueService::lastRenderedFrame() const {
         ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
         std::lock_guard<std::mutex> lock(impl_->previewMutex_);
+        impl_->previewUpdatePending_.store(false, std::memory_order_release);
         return impl_->lastPreviewFrame_;
     }
 

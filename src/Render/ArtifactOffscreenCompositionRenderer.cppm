@@ -147,55 +147,14 @@ namespace Artifact
 
     ArtifactCore::ImageF32x4_RGBA OffscreenCompositionRenderer::captureImage()
     {
-        // 1. Staging Textureの作成（読み取り用）
-        TextureDesc StagingDesc;
-        StagingDesc.Name           = "Staging Texture";
-        StagingDesc.Type           = RESOURCE_DIM_TEX_2D;
-        StagingDesc.Width          = width_;
-        StagingDesc.Height         = height_;
-        StagingDesc.Format         = pRenderTarget_->GetDesc().Format;
-        StagingDesc.Usage          = USAGE_STAGING;
-        StagingDesc.CPUAccessFlags = CPU_ACCESS_READ;
-
-        RefCntAutoPtr<ITexture> pStagingTex;
-        pDevice_->CreateTexture(StagingDesc, nullptr, &pStagingTex);
-
-        // 2. GPUバッファからStagingへコピー
-        CopyTextureAttribs CopyAttribs(pRenderTarget_, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-                                       pStagingTex, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        pContext_->CopyTexture(CopyAttribs);
-        
-        // 描画完了を待機
-        pContext_->Flush();
-        pContext_->WaitForIdle(); // 簡略化のためアイドル待機
-
-        // 3. Mapしてデータを取得
-        MappedTextureSubresource MappedData;
-        pContext_->MapTextureSubresource(pStagingTex, 0, 0, MAP_READ, MAP_FLAG_NONE, nullptr, MappedData);
-
-        ArtifactCore::ImageF32x4_RGBA image;
-        image.resize(width_, height_);
-        float* imagePixels = image.rgba32fData();
-        
-        // ピクセルデータのコピー (RGBA8 -> FloatRGBA)
-        const uint8_t* pSrc = static_cast<const uint8_t*>(MappedData.pData);
-        ArtifactCore::Parallel::ForTiles(static_cast<int>(width_), static_cast<int>(height_), 32, 32,
-            [&](int x0, int y0, int x1, int y1) {
-            for (int y = y0; y < y1; ++y) {
-            for (int x = x0; x < x1; ++x) {
-                const uint8_t* pPixel = pSrc + y * MappedData.Stride + x * 4;
-                float* destination = imagePixels +
-                    (static_cast<size_t>(y) * width_ + x) * 4u;
-                destination[0] = pPixel[0] / 255.0f;
-                destination[1] = pPixel[1] / 255.0f;
-                destination[2] = pPixel[2] / 255.0f;
-                destination[3] = pPixel[3] / 255.0f;
-            }
-            }
-        });
-
-        pContext_->UnmapTextureSubresource(pStagingTex, 0, 0);
-        return image;
+        // ArtifactIRenderer owns a size/format-aware staging ring and fence.
+        // Reuse it instead of creating and idling a staging texture per frame.
+        if (!renderer_ || !pRenderTarget_) {
+            return {};
+        }
+        renderer_->setOverrideRTV(
+            pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET));
+        return renderer_->readbackToImageF32();
     }
 
     QImage OffscreenCompositionRenderer::renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition)
