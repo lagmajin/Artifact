@@ -118,6 +118,7 @@ public:
 
     void initialize(QWidget* widget);
     void initializeHeadless();
+    void initializeHeadlessWithAdapter(int adapterId);
     void createSwapChain(QWidget* widget);
     void recreateSwapChain(QWidget* widget);
     void markDeviceLost();

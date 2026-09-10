@@ -641,6 +641,14 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
                              static_cast<float>(pixelAspectRatio());
   const auto color = this->color();
   const auto fillType = this->fillType();
+  const auto gradientStart = gradientStartColor();
+  const auto gradientEnd = gradientEndColor();
+  const float gradientAngle = gradientAngleDegrees();
+  const bool gradientReverseValue = gradientReverse();
+  const float gradientCenterXValue = gradientCenterX();
+  const float gradientCenterYValue = gradientCenterY();
+  const float gradientScaleValue = gradientScale();
+  const float gradientOffsetValue = gradientOffset();
 
   static int drawLogSamples = 0;
   if (drawLogSamples < 5) {
@@ -670,19 +678,16 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   }
   drawWithClonerEffect(
       this, baseTransform,
-      [renderer, size, displayWidth, color, fillType, this]
+      [renderer, size, displayWidth, color, fillType, gradientStart, gradientEnd,
+       gradientAngle, gradientReverseValue, gradientCenterXValue,
+       gradientCenterYValue, gradientScaleValue, gradientOffsetValue, this]
       (const QMatrix4x4 &transform, float weight) {
         if (fillType != ArtifactSolidFillType::Solid) {
-          // PERF: gradient QImage は currentFillImage() のキャッシュを再利用する。
-          // 毎frame makeSolidGradientImage するとCPU生成+GPU uploadが走る。
-          // 不透明度は drawSprite 側の weight 乗算に寄せる（source-override経路と同一）。
-          const QImage &cachedGradient = this->currentFillImage();
-          if (!cachedGradient.isNull()) {
-            renderer->drawSpriteTransformed(
-                0.0f, 0.0f, displayWidth,
-                static_cast<float>(size.height), transform, cachedGradient,
-                this->opacity() * weight);
-          }
+          renderer->drawGradientRectTransformed(
+              0.0f, 0.0f, displayWidth, static_cast<float>(size.height), transform,
+              gradientStart, gradientEnd, static_cast<int>(fillType), gradientAngle,
+              gradientReverseValue, gradientCenterXValue, gradientCenterYValue,
+              gradientScaleValue, gradientOffsetValue, this->opacity() * weight);
           return;
         }
         const FloatColor cloneColor(color.r(), color.g(), color.b(),

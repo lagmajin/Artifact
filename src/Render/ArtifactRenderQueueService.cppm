@@ -98,6 +98,7 @@ import Audio.Effect.Spectrum;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
+import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Render.Context;
 import Artifact.Render.ROI;
@@ -2566,6 +2567,34 @@ namespace Artifact
         };
 
         bool renderSingleFrame(const FrameRenderSnapshot& snap, FrameRenderOutput& output, QString& failureReason);
+        bool renderSingleFrameNoLock(
+            ArtifactIRenderer* renderer,
+            std::unique_ptr<ArtifactCore::LayerBlendPipeline>* mattePipelineSlot,
+            int rendererWidth,
+            int rendererHeight,
+            const FrameRenderSnapshot& snap,
+            FrameRenderOutput& output,
+            QString& failureReason);
+
+        struct GpuFinalWorker {
+            std::unique_ptr<ArtifactIRenderer> renderer;
+            ArtifactCompositionPtr composition;
+            QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
+            std::unique_ptr<GPUTextureCacheManager> textureCache;
+            std::unique_ptr<ArtifactCore::LayerBlendPipeline> mattePipeline;
+            std::unique_ptr<GpuMatteResourcePool> matteResourcePool;
+            int rendererWidth = 0;
+            int rendererHeight = 0;
+            int adapterId = -1;
+        };
+
+        std::vector<int> resolveDiscreteD3D12AdapterIds();
+        bool ensureWorkerRendererInitialized(
+            GpuFinalWorker& worker, int width, int height, int adapterId,
+            QString* failureReason);
+        bool renderSingleFrameOnWorker(
+            GpuFinalWorker& worker, const FrameRenderSnapshot& snapTemplate,
+            int frameNumber, FrameRenderOutput& output, QString& failureReason);
         void processFramesForJob(
             ArtifactRenderQueueService* service,
             int jobIndex,
@@ -3129,6 +3158,80 @@ namespace Artifact
             gpuRendererWidth_ = width;
             gpuRendererHeight_ = height;
             return true;
+        }
+
+        std::vector<int> resolveDiscreteD3D12AdapterIds()
+        {
+            std::vector<int> adapterIds;
+            DiligentDeviceManager probe;
+            const auto candidates = probe.availableAdapters();
+            for (const auto& candidate : candidates) {
+                if (candidate.backend.compare(
+                        QStringLiteral("d3d12"), Qt::CaseInsensitive) != 0 ||
+                    candidate.type.compare(
+                        QStringLiteral("Discrete"), Qt::CaseInsensitive) != 0) {
+                    continue;
+                }
+                adapterIds.push_back(static_cast<int>(candidate.adapterId));
+            }
+            return adapterIds;
+        }
+
+        bool ensureWorkerRendererInitialized(
+            GpuFinalWorker& worker, int width, int height, int adapterId,
+            QString* failureReason)
+        {
+            // Diligent device creation is serialized; each completed worker
+            // then owns its renderer and immediate context exclusively.
+            static std::mutex deviceCreationMutex;
+            std::lock_guard<std::mutex> creationLock(deviceCreationMutex);
+            if (!worker.renderer) {
+                worker.renderer = std::make_unique<ArtifactIRenderer>();
+            }
+            worker.renderer->initializeHeadlessWithAdapter(
+                width, height, adapterId);
+            if (!worker.renderer->isInitialized()) {
+                if (failureReason) {
+                    *failureReason = QStringLiteral(
+                        "Failed to initialize GPU worker renderer (adapterId=%1)")
+                        .arg(adapterId);
+                }
+                return false;
+            }
+
+            worker.rendererWidth = width;
+            worker.rendererHeight = height;
+            worker.adapterId = adapterId;
+            worker.textureCache = std::make_unique<GPUTextureCacheManager>();
+            worker.textureCache->setDevice(
+                worker.renderer->device(), worker.renderer->immediateContext());
+            worker.matteResourcePool =
+                std::make_unique<GpuMatteResourcePool>(worker.renderer.get());
+            return true;
+        }
+
+        bool renderSingleFrameOnWorker(
+            GpuFinalWorker& worker, const FrameRenderSnapshot& snapTemplate,
+            int frameNumber, FrameRenderOutput& output, QString& failureReason)
+        {
+            if (!worker.renderer || !worker.renderer->isInitialized() ||
+                !worker.composition) {
+                failureReason = QStringLiteral(
+                    "GPU worker not initialized (frame %1)").arg(frameNumber);
+                return false;
+            }
+
+            FrameRenderSnapshot snap = snapTemplate;
+            snap.frameNumber = frameNumber;
+            snap.composition = worker.composition;
+            snap.compositionIsIsolated = true;
+            snap.gpuSurfaceCache = &worker.surfaceCache;
+            snap.gpuTextureCacheManager = worker.textureCache.get();
+            snap.gpuMatteResourcePool = worker.matteResourcePool.get();
+            return renderSingleFrameNoLock(
+                worker.renderer.get(), &worker.mattePipeline,
+                worker.rendererWidth, worker.rendererHeight,
+                snap, output, failureReason);
         }
 
         QString resolveDummyOutputPath(const ArtifactRenderJob& job, int index) const {
@@ -5632,6 +5735,28 @@ namespace Artifact
             frameStateLock.lock();
         }
 
+        return renderSingleFrameNoLock(
+            gpuRenderer_.get(), &gpuMattePipeline_, gpuRendererWidth_,
+            gpuRendererHeight_, snap, output, failureReason);
+    }
+
+    bool ArtifactRenderQueueService::Impl::renderSingleFrameNoLock(
+        ArtifactIRenderer* renderer,
+        std::unique_ptr<ArtifactCore::LayerBlendPipeline>* mattePipelineSlot,
+        int rendererWidth,
+        int rendererHeight,
+        const FrameRenderSnapshot& snap,
+        FrameRenderOutput& output,
+        QString& failureReason) {
+        if (!snap.composition) {
+            failureReason = QStringLiteral("Null composition in frame snapshot");
+            return false;
+        }
+        if (snap.useGpuBackend && (!renderer || !mattePipelineSlot)) {
+            failureReason = QStringLiteral("Invalid GPU renderer state in frame snapshot");
+            return false;
+        }
+
         registerRenderQueueContextSnapshot(
             snap.job, snap.compositionId, snap.composition, snap.frameNumber);
 
@@ -5645,9 +5770,9 @@ namespace Artifact
                         << grid.gridWidth << "x" << grid.gridHeight
                         << " tileSize=" << tileSz;
             }
-            configureRendererChannelsForRenderQueueJob(*gpuRenderer_, snap.job);
-            gpuRenderer_->setClearColor(snap.composition->backgroundColor());
-            gpuRenderer_->clear();
+            configureRendererChannelsForRenderQueueJob(*renderer, snap.job);
+            renderer->setClearColor(snap.composition->backgroundColor());
+            renderer->clear();
             const bool reuseComponentFrame =
                 snap.composition->hasAuthoritativeLayerComponentSimulation() &&
                 snap.composition->framePosition().framePosition() ==
@@ -5725,15 +5850,15 @@ namespace Artifact
             }
 
             QHash<ArtifactCore::Id, Diligent::ITextureView*> matteSourceGpuViews;
-            if (!gpuMattePipeline_ || !gpuMattePipeline_->ready()) {
-                gpuMattePipeline_ = gpuRenderer_->createLayerBlendPipeline();
-                if (gpuMattePipeline_ &&
-                    (!gpuMattePipeline_->initialize() ||
-                     !gpuMattePipeline_->ready())) {
-                    gpuMattePipeline_.reset();
+            if (!*mattePipelineSlot || !(*mattePipelineSlot)->ready()) {
+                *mattePipelineSlot = renderer->createLayerBlendPipeline();
+                if (*mattePipelineSlot &&
+                    (!(*mattePipelineSlot)->initialize() ||
+                     !(*mattePipelineSlot)->ready())) {
+                    mattePipelineSlot->reset();
                 }
             }
-            auto* gpuMattePipeline = gpuMattePipeline_.get();
+            auto* gpuMattePipeline = mattePipelineSlot->get();
             const bool gpuMattePipelineReady = gpuMattePipeline != nullptr;
 
             const auto shaderModeFor = [](const LayerMatteReference& ref) {
@@ -5758,8 +5883,8 @@ namespace Artifact
             // effective composition size can differ when a render preset or
             // crop selects a smaller output surface.
             const QSize gpuMatteSize(
-                std::max(1, gpuRendererWidth_),
-                std::max(1, gpuRendererHeight_));
+                std::max(1, rendererWidth),
+                std::max(1, rendererHeight));
             if (snap.gpuMatteResourcePool) {
                 snap.gpuMatteResourcePool->beginFrame(gpuMatteSize);
             }
@@ -5805,21 +5930,21 @@ namespace Artifact
                             ? sourceResources->colorTarget : nullptr;
                         void* sourceDepth = sourceResources
                             ? sourceResources->depthTarget : nullptr;
-                        auto* sourceSRV = gpuRenderer_->offscreenTextureShaderResourceView(
+                        auto* sourceSRV = renderer->offscreenTextureShaderResourceView(
                             sourceTarget);
                         if (!sourceTarget || !sourceDepth || !sourceSRV) {
                             continue;
                         }
-                        gpuRenderer_->pushRenderTarget(sourceTarget, sourceDepth);
-                        gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-                        gpuRenderer_->clear();
+                        renderer->pushRenderTarget(sourceTarget, sourceDepth);
+                        renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                        renderer->clear();
                         sourceLayer->goToFrame(snap.frameNumber);
                         drawLayerForCompositionView(
-                            sourceLayer.get(), gpuRenderer_.get(), 1.0f, nullptr,
+                            sourceLayer.get(), renderer, 1.0f, nullptr,
                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
                             snap.frameNumber, true, DetailLevel::High, nullptr, nullptr);
-                        gpuRenderer_->flush();
-                        gpuRenderer_->popRenderTarget();
+                        renderer->flush();
+                        renderer->popRenderTarget();
                         matteSourceGpuViews.insert(matteRef.sourceLayerId, sourceSRV);
                     }
                 }
@@ -5858,20 +5983,20 @@ namespace Artifact
                         ? layerResources->depthTarget : nullptr;
                     void* outputTarget = layerResources
                         ? layerResources->computeTarget : nullptr;
-                    auto* layerSRV = gpuRenderer_->offscreenTextureShaderResourceView(layerTarget);
-                    auto* outputSRV = gpuRenderer_->offscreenTextureShaderResourceView(outputTarget);
-                    auto* outputUAV = gpuRenderer_->offscreenTextureUnorderedAccessView(outputTarget);
+                    auto* layerSRV = renderer->offscreenTextureShaderResourceView(layerTarget);
+                    auto* outputSRV = renderer->offscreenTextureShaderResourceView(outputTarget);
+                    auto* outputUAV = renderer->offscreenTextureUnorderedAccessView(outputTarget);
                     if (layerTarget && layerDepth && outputTarget && layerSRV &&
                         outputSRV && outputUAV) {
-                        gpuRenderer_->pushRenderTarget(layerTarget, layerDepth);
-                        gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-                        gpuRenderer_->clear();
+                        renderer->pushRenderTarget(layerTarget, layerDepth);
+                        renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                        renderer->clear();
                         drawLayerForCompositionView(
-                            layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
+                            layer.get(), renderer, 1.0f, nullptr,
                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
                             snap.frameNumber, true, DetailLevel::High, nullptr, nullptr);
-                        gpuRenderer_->flush();
-                        gpuRenderer_->popRenderTarget();
+                        renderer->flush();
+                        renderer->popRenderTarget();
 
                         ArtifactCore::MatteTrackParams params;
                         params.matteCount = static_cast<unsigned int>(gpuMatteRefs.size());
@@ -5894,29 +6019,29 @@ namespace Artifact
                             params.matteOpacity2 = std::clamp(gpuMatteRefs[2].opacity, 0.0f, 1.0f);
                         }
                         params.lumaMode = 0;
-                        if (gpuRenderer_->applyTrackMatte(
+                        if (renderer->applyTrackMatte(
                                 gpuMattePipeline, layerSRV, matteViews[0],
                                 gpuMatteRefs.size() > 1 ? matteViews[1] : nullptr,
                                 gpuMatteRefs.size() > 2 ? matteViews[2] : nullptr,
                                 outputUAV, params,
                                 static_cast<Diligent::Uint32>(gpuMatteSize.width()),
                                 static_cast<Diligent::Uint32>(gpuMatteSize.height()))) {
-                            gpuRenderer_->drawSprite(
+                            renderer->drawSprite(
                                 0.0f, 0.0f, static_cast<float>(gpuMatteSize.width()),
                                 static_cast<float>(gpuMatteSize.height()), outputSRV, 1.0f);
-                            gpuRenderer_->flush();
+                            renderer->flush();
                             continue;
                         }
                     }
                 }
-                drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
+                drawLayerForCompositionView(layer.get(), renderer, 1.0f, nullptr,
                                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
                                             snap.frameNumber, true, DetailLevel::High, nullptr,
                                             &matteSourceImages);
             }
-            gpuRenderer_->flush();
+            renderer->flush();
             if (snap.job.multiChannelExportEnabled) {
-                output.channels = gpuRenderer_->readbackToMultiChannelImage();
+                output.channels = renderer->readbackToMultiChannelImage();
                 const QStringList missing = missingRequestedMultiChannelChannels(
                     snap.job, output.channels);
                 if (!missing.isEmpty()) {
@@ -5931,7 +6056,7 @@ namespace Artifact
                 const bool hasCompositionEffects =
                     !snap.composition->getEffects().empty();
                 if (!hasCompositionEffects) {
-                    output.beauty = gpuRenderer_->readbackToImage();
+                    output.beauty = renderer->readbackToImage();
                     if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
                         const QRect fullRect(0, 0, output.beauty.width(),
                                              output.beauty.height());
@@ -5943,7 +6068,7 @@ namespace Artifact
                         }
                     }
                 } else {
-                    auto beautyBuffer = gpuRenderer_->readbackToImageF32();
+                    auto beautyBuffer = renderer->readbackToImageF32();
                     if (!beautyBuffer.isEmpty()) {
                         if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
                             const QRect fullRect(0, 0, beautyBuffer.width(),
@@ -5960,7 +6085,7 @@ namespace Artifact
                             snap.composition.get(), beautyBuffer);
                         output.beauty = beautyBuffer.toQImage();
                     } else {
-                        output.beauty = gpuRenderer_->readbackToImage();
+                        output.beauty = renderer->readbackToImage();
                         if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
                             const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
                                                      snap.job.cropW, snap.job.cropH)
@@ -6063,9 +6188,8 @@ namespace Artifact
                 }
             }
         }
-        // CPU workers receive an independent composition snapshot.  GPU work
-        // remains serialized because the Diligent immediate context, renderer,
-        // surface cache, and encoder ownership are still shared.
+        // CPU MFR workers and multi-GPU workers each receive an independent
+        // composition snapshot. The legacy single-GPU path remains serialized.
         bool useMfr = !useGpuBackend && totalFrames > 1;
         int numWorkers = useMfr
             ? std::max(1, std::min(maxInFlightFrames_, totalFrames))
@@ -6104,6 +6228,56 @@ namespace Artifact
             ? &gpuMatteResourcePool : nullptr;
         baseSnap.htmlFrameFiles = &htmlFrameFiles;
 
+        std::vector<std::unique_ptr<GpuFinalWorker>> multiGpuWorkers;
+        bool useMultiGpu = false;
+        const bool mainRendererUsesD3D12 =
+            useGpuBackend && gpuRenderer_ && gpuRenderer_->device() &&
+            gpuRenderer_->device()->GetDeviceInfo().Type ==
+                Diligent::RENDER_DEVICE_TYPE_D3D12;
+        if (mainRendererUsesD3D12 && !usesComponentSimulation &&
+            totalFrames > 1) {
+            const auto adapterIds = resolveDiscreteD3D12AdapterIds();
+            if (adapterIds.size() >= 2) {
+                const int requestedWorkers = std::min(
+                    {static_cast<int>(adapterIds.size()), totalFrames,
+                     std::max(1, maxInFlightFrames_)});
+                bool workersReady = true;
+                multiGpuWorkers.reserve(static_cast<size_t>(requestedWorkers));
+                for (int workerIndex = 0;
+                     workerIndex < requestedWorkers; ++workerIndex) {
+                    auto worker = std::make_unique<GpuFinalWorker>();
+                    worker->composition =
+                        cloneCompositionSnapshot(compositionForRender);
+                    if (!worker->composition) {
+                        workersReady = false;
+                        break;
+                    }
+                    QString workerError;
+                    const int adapterId =
+                        adapterIds[static_cast<size_t>(workerIndex)];
+                    if (!ensureWorkerRendererInitialized(
+                            *worker, gpuRendererWidth_, gpuRendererHeight_,
+                            adapterId, &workerError)) {
+                        qWarning() << "[RenderQueue] Multi-GPU worker init failed; using single GPU"
+                                   << "worker=" << workerIndex
+                                   << "adapterId=" << adapterId
+                                   << "reason=" << workerError;
+                        workersReady = false;
+                        break;
+                    }
+                    multiGpuWorkers.push_back(std::move(worker));
+                }
+                if (workersReady && multiGpuWorkers.size() >= 2) {
+                    useMultiGpu = true;
+                    numWorkers = static_cast<int>(multiGpuWorkers.size());
+                    qInfo() << "[RenderQueue] Multi-GPU final render active"
+                            << "workers=" << numWorkers;
+                } else {
+                    multiGpuWorkers.clear();
+                }
+            }
+        }
+
         std::atomic<int> framesRendered{0};
         std::mutex outputBufferMutex;
         std::condition_variable outputBufferCv;
@@ -6120,7 +6294,8 @@ namespace Artifact
         // Does NOT set anyWorkerFailed — caller (renderFrame) owns retry/failure logic.
         auto renderOneFrame = [&](int f,
                                   const ArtifactCompositionPtr& workerComposition,
-                                  bool compositionIsIsolated) -> bool {
+                                  bool compositionIsIsolated,
+                                  GpuFinalWorker* gpuWorker = nullptr) -> bool {
             if (shutdownRequested_.load(std::memory_order_acquire))
                 return false;
 
@@ -6147,7 +6322,9 @@ namespace Artifact
                 << "[EncodeSession][Frame] render begin"
                 << "job=" << jobIndex
                 << "frame=" << f
-                << "renderBackend=" << (useGpuBackend ? "gpu" : "cpu");
+                << "renderBackend="
+                << (gpuWorker ? "gpu-multi" :
+                    (useGpuBackend ? "gpu" : "cpu"));
             try {
                 // Keep the job-local surface cache alive across frames. Its
                 // signatures already include animated effect, crop, sequence,
@@ -6155,7 +6332,10 @@ namespace Artifact
                 // with changed content are replaced under the serialized GPU
                 // render boundary. This retains QHash and image-buffer capacity
                 // while preserving the existing signature validation.
-                ok = renderSingleFrame(snap, frameOutput, frameError);
+                ok = gpuWorker
+                    ? renderSingleFrameOnWorker(
+                          *gpuWorker, snap, f, frameOutput, frameError)
+                    : renderSingleFrame(snap, frameOutput, frameError);
             } catch (const std::exception& e) {
                 frameError = QString::fromUtf8(e.what());
             } catch (...) {
@@ -6200,7 +6380,8 @@ namespace Artifact
                                << "job=" << jobIndex
                                << "frame=" << f
                                << "renderBackend="
-                               << (useGpuBackend ? "gpu" : "cpu")
+                               << (gpuWorker ? "gpu-multi" :
+                                   (useGpuBackend ? "gpu" : "cpu"))
                                << "reason=" << frameError;
                     ArtifactCore::Logger::instance()->flushFile();
                 }
@@ -6388,13 +6569,21 @@ namespace Artifact
                 farmCompleted = true;
             }
         } else {
-            // Legacy path: worker threads pull from atomic counter
+            // Local workers pull frames from one counter. CPU MFR and
+            // multi-GPU workers own isolated composition state.
             auto renderWorker = [&](int workerIndex) {
-                const bool hasIsolatedComposition =
+                GpuFinalWorker* gpuWorker =
+                    useMultiGpu && workerIndex >= 0 &&
+                    workerIndex < static_cast<int>(multiGpuWorkers.size())
+                        ? multiGpuWorkers[static_cast<size_t>(workerIndex)].get()
+                        : nullptr;
+                const bool hasCpuIsolatedComposition =
                     useMfr && workerIndex >= 0 &&
                     workerIndex < static_cast<int>(workerCompositions.size());
                 const ArtifactCompositionPtr& workerComposition =
-                    hasIsolatedComposition
+                    gpuWorker
+                        ? gpuWorker->composition
+                        : hasCpuIsolatedComposition
                         ? workerCompositions[static_cast<size_t>(workerIndex)]
                         : compositionForRender;
                 while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
@@ -6404,7 +6593,10 @@ namespace Artifact
                         anyWorkerFailed.store(true, std::memory_order_relaxed);
                         break;
                     }
-                    renderOneFrame(f, workerComposition, hasIsolatedComposition);
+                    renderOneFrame(
+                        f, workerComposition,
+                        gpuWorker != nullptr || hasCpuIsolatedComposition,
+                        gpuWorker);
                 }
             };
 

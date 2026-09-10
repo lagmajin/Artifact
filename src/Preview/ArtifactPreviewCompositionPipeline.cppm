@@ -268,6 +268,26 @@ namespace Artifact
                                       transform, surface,
                                       opacity * weight);
      });
+    } else if (solid2D->isGradientEnabled()) {
+     const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
+     drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, solid2D, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = previewLayerOpacity(layerPtr);
+      renderer->drawGradientRectTransformed(static_cast<float>(localRect.x()),
+                                         static_cast<float>(localRect.y()),
+                                         static_cast<float>(localRect.width()),
+                                         static_cast<float>(localRect.height()),
+                                         transform,
+                                         solid2D->gradientStartColor(),
+                                         solid2D->gradientEndColor(),
+                                         static_cast<int>(solid2D->fillType()),
+                                         solid2D->gradientAngleDegrees(),
+                                         solid2D->gradientReverse(),
+                                         solid2D->gradientCenterX(),
+                                         solid2D->gradientCenterY(),
+                                         solid2D->gradientScale(),
+                                         solid2D->gradientOffset(),
+                                         opacity * weight);
+     });
     } else {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, solid2D, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
@@ -308,16 +328,25 @@ namespace Artifact
                                        opacity * weight);
       });
      } else if (gradientEnabled) {
+      // GPU生成を正規とし、QImageはrasterizer時のfallback分岐に残す。
       const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
-      const QImage surface = solidImage->toQImage();
-      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, solidImage, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
        const float opacity = previewLayerOpacity(layerPtr);
-       renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
-                                       static_cast<float>(localRect.y()),
-                                       static_cast<float>(localRect.width()),
-                                       static_cast<float>(localRect.height()),
-                                       transform, surface,
-                                       opacity * weight);
+       renderer->drawGradientRectTransformed(static_cast<float>(localRect.x()),
+                                      static_cast<float>(localRect.y()),
+                                      static_cast<float>(localRect.width()),
+                                      static_cast<float>(localRect.height()),
+                                      transform,
+                                      solidImage->gradientStartColor(),
+                                      solidImage->gradientEndColor(),
+                                      static_cast<int>(solidImage->fillType()),
+                                      solidImage->gradientAngleDegrees(),
+                                      solidImage->gradientReverse(),
+                                      solidImage->gradientCenterX(),
+                                      solidImage->gradientCenterY(),
+                                      solidImage->gradientScale(),
+                                      solidImage->gradientOffset(),
+                                      opacity * weight);
       });
      } else {
       const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
@@ -336,6 +365,11 @@ namespace Artifact
    }
 
    if (const auto imageLayer = dynamic_cast<ArtifactImageLayer*>(layerPtr)) {
+    // GPU描画 (ImageF32バッファ) を正規とし、QImageはrasterizer/mask時のfallbackに残す。
+    if (!hasRasterizerEffects(layerPtr) && !layerPtr->hasMasks()) {
+     imageLayer->draw(renderer);
+     return;
+    }
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();

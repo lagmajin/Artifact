@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <QHash>
 #include <QPointF>
@@ -490,6 +491,7 @@ public:
 
     QString registerSnapshot(const RenderContextSnapshot& snapshot)
     {
+        const std::lock_guard<std::mutex> lock(mutex_);
         const QString key = snapshot.key.isEmpty()
             ? makeKey(snapshot.purpose, QString(), snapshot.currentFrame, snapshot.resolutionScale)
             : snapshot.key;
@@ -499,26 +501,31 @@ public:
 
     bool contains(const QString& key) const
     {
+        const std::lock_guard<std::mutex> lock(mutex_);
         return snapshots_.contains(key);
     }
 
     RenderContextSnapshot snapshot(const QString& key) const
     {
+        const std::lock_guard<std::mutex> lock(mutex_);
         return snapshots_.value(key);
     }
 
     RenderContextSnapshot snapshotOrDefault(const QString& key,
                                             const RenderContextSnapshot& fallback = RenderContextSnapshot()) const
     {
+        const std::lock_guard<std::mutex> lock(mutex_);
         return snapshots_.contains(key) ? snapshots_.value(key) : fallback;
     }
 
     void clear()
     {
+        const std::lock_guard<std::mutex> lock(mutex_);
         snapshots_.clear();
     }
 
 private:
+    mutable std::mutex mutex_;
     QHash<QString, RenderContextSnapshot> snapshots_;
 };
 

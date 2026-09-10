@@ -1144,6 +1144,7 @@ namespace {
 
   void initialize(QWidget* parent);
   void initializeHeadless(int width, int height);
+  void initializeHeadlessWithAdapter(int width, int height, int adapterId);
   QImage readbackToImage() const;
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
   QImage readbackDepthToImage() const;
@@ -1758,13 +1759,23 @@ namespace {
 
  void ArtifactIRenderer::Impl::initializeHeadless(int width, int height)
  {
+  initializeHeadlessWithAdapter(width, height, -1);
+ }
+
+ void ArtifactIRenderer::Impl::initializeHeadlessWithAdapter(int width, int height,
+                                                              int adapterId)
+ {
   m_offlineWidth  = width;
   m_offlineHeight = height;
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
   gpuContext_.reset();
 
-  deviceManager_.initializeHeadless();
+  if (adapterId >= 0) {
+   deviceManager_.initializeHeadlessWithAdapter(adapterId);
+  } else {
+   deviceManager_.initializeHeadless();
+  }
   if (!deviceManager_.isInitialized()) return;
 
   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
@@ -3291,6 +3302,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
  void ArtifactIRenderer::initialize(QWidget* widget)       { impl_->initialize(widget); }
  void ArtifactIRenderer::initializeHeadless(int w, int h)  { impl_->initializeHeadless(w, h); }
+ void ArtifactIRenderer::initializeHeadlessWithAdapter(int w, int h, int adapterId)
+ { impl_->initializeHeadlessWithAdapter(w, h, adapterId); }
  void ArtifactIRenderer::createSwapChain(QWidget* widget)  { impl_->createSwapChain(widget); }
  void ArtifactIRenderer::recreateSwapChain(QWidget* widget){ impl_->recreateSwapChain(widget); }
 
