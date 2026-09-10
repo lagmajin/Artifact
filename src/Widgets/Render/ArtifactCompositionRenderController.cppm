@@ -13502,6 +13502,34 @@ public:
   int draggingShapePathTangent_ = 0; // 0=vertex, 1=inTangent, 2=outTangent
   int hoveredShapePathVertex_ = -1;
   int hoveredShapePathTangent_ = 0;
+  int hoveredShapePathSegment_ = -1; // segment start index, -1 = none
+  std::vector<int> selectedShapePathVertices_; // F4 multi-selection
+  // F2: Rect/Square cornerRadius and Star innerRadius parameter handles.
+  int shapeParamDragMode_ = 0; // 0 = none, 1 = cornerRadius, 2 = starInnerRadius
+  ArtifactAbstractLayerWeak shapeParamDragLayer_;
+  float shapeParamBefore_ = 0.0f;
+  float shapeParamStart_ = 0.0f;
+  float shapeParamMax_ = 0.0f;
+  float shapeParamAnchorX_ = 0.0f;
+  int hoveredShapeParam_ = 0; // 0 = none, 1 = cornerRadius, 2 = starInnerRadius
+  // F2: custom polygon vertex drag/insert (customPathVertices stays on its
+  // existing begin/update/end path above).
+  bool isDraggingShapePolygon_ = false;
+  int draggingShapePolygonIndex_ = -1;
+  ArtifactAbstractLayerWeak shapePolygonDragLayer_;
+  std::vector<QPointF> shapePolygonBefore_;
+  bool shapePolygonBeforeClosed_ = true;
+  bool shapePolygonDragDirty_ = false;
+  // F5: operator handle drags (trim start/end/offset, single-value diamond).
+  int shapeOpDragOp_ = -1;
+  int shapeOpDragField_ = 0; // 1=trimStart 2=trimEnd 3=trimOffset 4=primary
+  ArtifactAbstractLayerWeak shapeOpDragLayer_;
+  double shapeOpBefore_ = 0.0;
+  double shapeOpStartValue_ = 0.0;
+  float shapeOpAnchorCanvasX_ = 0.0f;
+  float shapeOpPathLength_ = 1.0f;
+  int hoveredShapeOp_ = -1;
+  int hoveredShapeOpField_ = 0;
   bool shapePathEditPending_ = false;
   bool shapePathEditDirty_ = false;
   ArtifactAbstractLayerWeak shapePathEditLayer_;
@@ -25246,10 +25274,46 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   // Main-VP custom path vertex editing (Selection tool on shape layers).
   if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
       activeTool != ToolType::Rectangle && impl_->renderer_) {
+    // F2: parameter handles first (Rect/Square/Star), then F5 operator
+    // handles (offset markers keep vertex handles grabbable), then polygon
+    // vertices/insert, then custom path vertices. Each owns its press.
+    if (beginShapeParamDrag(viewportPos)) {
+      notifyViewportInteractionActivity();
+      event->accept();
+      return;
+    }
+    if (beginShapeOperatorDrag(viewportPos)) {
+      notifyViewportInteractionActivity();
+      event->accept();
+      return;
+    }
+    if (beginShapePolygonDrag(viewportPos)) {
+      notifyViewportInteractionActivity();
+      event->accept();
+      return;
+    }
     if (beginShapePathVertexDrag(viewportPos)) {
       notifyViewportInteractionActivity();
       event->accept();
       return;
+    }
+    // F4: a press on the selected shape body without a vertex/param handle
+    // clears the vertex selection. The event keeps flowing so gizmo and
+    // transform paths still own the press.
+    if (!impl_->selectedShapePathVertices_.empty() && selectedLayer &&
+        impl_->renderer_) {
+      if (dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())) {
+        const auto missCanvas = impl_->renderer_->viewportToCanvas(
+            {static_cast<float>(viewportPos.x()),
+             static_cast<float>(viewportPos.y())});
+        QRectF missBounds = selectedLayer->transformedBoundingBox();
+        const float pad =
+            4.0f / std::max(0.001f, impl_->renderer_->getZoom());
+        missBounds.adjust(-pad, -pad, pad, pad);
+        if (missBounds.contains(QPointF(missCanvas.x, missCanvas.y))) {
+          clearShapePathSelection();
+        }
+      }
     }
   }
   // Two-node camera POI handle drag. Tested before the motion-path block so
@@ -26928,7 +26992,28 @@ void CompositionRenderController::handleMouseMove(
     notifyViewportInteractionActivity();
     return;
   }
-  if (impl_->isDraggingCameraPoi_) {
+  // F2: parameter and polygon drags own their sessions.
+  if (impl_->shapeParamDragMode_ != 0) {
+    updateShapeParamDrag(viewportPos);
+    notifyViewportInteractionActivity();
+    return;
+  }
+  // F5: operator handle drag owns its session.
+  if (impl_->shapeOpDragOp_ >= 0) {
+    updateShapeOperatorDrag(viewportPos);
+    notifyViewportInteractionActivity();
+    return;
+  }
+  if (impl_->isDraggingShapePolygon_) {
+    updateShapePolygonDrag(viewportPos);
+    notifyViewportInteractionActivity();
+    return;
+  }
+  // F1: shape vertex/tangent/segment hover for the overlay emphasis.
+  // Read-only; drag ownership and mask/pen paths are untouched.
+  if (!impl_->isDraggingLineEndpoint_ && activeTool != ToolType::Pen) {
+    updateShapePathHover(viewportPos);
+  }  if (impl_->isDraggingCameraPoi_) {
     if (impl_->renderer_) {
       const Ray poiRay = createPickingRay(viewportPos * impl_->devicePixelRatio_);
       QVector3D nextPoi;
@@ -29286,6 +29371,20 @@ void CompositionRenderController::handleMouseRelease() {
     endShapePathVertexDrag();
     return;
   }
+  // F2: parameter and polygon drag sessions end with their own Undo commit.
+  if (impl_->shapeParamDragMode_ != 0) {
+    endShapeParamDrag();
+    return;
+  }
+  // F5: operator drag session ends with its own Undo commit.
+  if (impl_->shapeOpDragOp_ >= 0) {
+    endShapeOperatorDrag();
+    return;
+  }
+  if (impl_->isDraggingShapePolygon_) {
+    endShapePolygonDrag();
+    return;
+  }
   if (impl_->isDraggingCameraPoi_) {
     auto poiLayer = impl_->draggingCameraPoiLayer_.lock();
     if (poiLayer) {
@@ -30216,6 +30315,1126 @@ void CompositionRenderController::cancelPendingShapePathCreation() {
 
 }
 
+namespace {
+// F4: Shift toggles, Ctrl adds, plain press replaces the vertex selection.
+// Returns true when the selection changed. Stale indices are pruned first
+// so vertex deletion cannot leave dangling selections behind.
+bool applyShapeVertexSelectionGrammar(std::vector<int> &selected, int count,
+                                       int hit) {
+  selected.erase(std::remove_if(selected.begin(), selected.end(),
+                                [count](int index) {
+                                  return index < 0 || index >= count;
+                                }),
+                 selected.end());
+  const auto modifiers = QGuiApplication::keyboardModifiers();
+  if (modifiers.testFlag(Qt::ShiftModifier)) {
+    const auto it = std::find(selected.begin(), selected.end(), hit);
+    if (it != selected.end()) {
+      selected.erase(it);
+    } else {
+      selected.push_back(hit);
+    }
+    return true;
+  }
+  if (modifiers.testFlag(Qt::ControlModifier)) {
+    if (std::find(selected.begin(), selected.end(), hit) == selected.end()) {
+      selected.push_back(hit);
+      return true;
+    }
+    return false;
+  }
+  if (selected.size() != 1 || selected.front() != hit) {
+    selected.clear();
+    selected.push_back(hit);
+    return true;
+  }
+  return false;
+}
+
+// F2: parameter handle local positions mirror
+// shapeCornerRadiusHandlePosition/shapeStarInnerRadiusHandlePosition so the
+// main VP and Solo View agree without a new module dependency.
+QPointF shapeParamHandleLocal(const ArtifactShapeLayer &shape, int mode) {  if (mode == 1) {
+    const float corner = shape.cornerRadius();
+    const float width = static_cast<float>(shape.shapeWidth());
+    if (shape.shapeType() == ShapeType::Square) {
+      const float height = static_cast<float>(shape.shapeHeight());
+      const float side = std::min(width, height);
+      return QPointF((width - side) * 0.5f + side - corner,
+                     (height - side) * 0.5f);
+    }
+    return QPointF(width - corner, 0.0f);
+  }
+  const float outerRadius =
+      std::min(shape.shapeWidth(), shape.shapeHeight()) * 0.5f;
+  return QPointF(shape.shapeWidth() * 0.5f,
+                 shape.shapeHeight() * 0.5f - outerRadius * shape.starInnerRadius());
+}
+} // namespace
+
+bool CompositionRenderController::beginShapeParamDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_) {
+    return false;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape =
+      selectedLayer ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape || selectedLayer->isLocked() || selectedLayer->isSelectionLocked()) {
+    return false;
+  }
+  int mode = 0;
+  if (shape->shapeType() == ShapeType::Rect ||
+      shape->shapeType() == ShapeType::Square) {
+    mode = 1;
+  } else if (shape->shapeType() == ShapeType::Star) {
+    mode = 2;
+  } else {
+    return false;
+  }
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  const QPointF canvasPoint(cPos.x, cPos.y);
+  const QTransform globalTransform = selectedLayer->getGlobalTransform();
+  const QPointF handleCanvas =
+      globalTransform.map(shapeParamHandleLocal(*shape, mode));
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const float hitRadius = 12.0f / zoom;
+  const float dx = static_cast<float>(handleCanvas.x() - canvasPoint.x());
+  const float dy = static_cast<float>(handleCanvas.y() - canvasPoint.y());
+  if (dx * dx + dy * dy > hitRadius * hitRadius) {
+    return false;
+  }
+  impl_->shapeParamDragMode_ = mode;
+  impl_->shapeParamDragLayer_ = selectedLayer;
+  if (mode == 1) {
+    impl_->shapeParamBefore_ = impl_->shapeParamStart_ = shape->cornerRadius();
+    impl_->shapeParamMax_ =
+        std::min(shape->shapeWidth(), shape->shapeHeight()) * 0.5f;
+  } else {
+    impl_->shapeParamBefore_ = impl_->shapeParamStart_ = shape->starInnerRadius();
+    impl_->shapeParamMax_ = 0.0f;
+  }
+  impl_->shapeParamAnchorX_ = static_cast<float>(viewportPos.x());
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::updateShapeParamDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_ || impl_->shapeParamDragMode_ == 0) {
+    return;
+  }
+  auto layer = impl_->shapeParamDragLayer_.lock();
+  auto *shape =
+      layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+  if (!shape) {
+    return;
+  }
+  if (impl_->shapeParamDragMode_ == 1) {
+    const float delta =
+        static_cast<float>(viewportPos.x()) - impl_->shapeParamAnchorX_;
+    shape->setCornerRadius(std::clamp(impl_->shapeParamStart_ + delta * 0.5f,
+                                      0.0f, impl_->shapeParamMax_));
+  } else {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {static_cast<float>(viewportPos.x()),
+         static_cast<float>(viewportPos.y())});
+    bool invertible = false;
+    const QTransform invTransform =
+        layer->getGlobalTransform().inverted(&invertible);
+    if (!invertible) {
+      return;
+    }
+    const QPointF local = invTransform.map(QPointF(cPos.x, cPos.y));
+    const float outerRadius =
+        std::min(shape->shapeWidth(), shape->shapeHeight()) * 0.5f;
+    const QPointF center(shape->shapeWidth() * 0.5, shape->shapeHeight() * 0.5);
+    const float distance = static_cast<float>(QLineF(center, local).length());
+    shape->setStarInnerRadius(outerRadius > 0.001f
+                                  ? std::clamp(distance / outerRadius, 0.05f, 0.99f)
+                                  : impl_->shapeParamStart_);
+  }
+  shape->setDirty(LayerDirtyFlag::Property);
+  markRenderDirty();
+}
+
+void CompositionRenderController::endShapeParamDrag() {
+  if (!impl_ || impl_->shapeParamDragMode_ == 0) {
+    return;
+  }
+  const int mode = impl_->shapeParamDragMode_;
+  impl_->shapeParamDragMode_ = 0;
+  auto layer = impl_->shapeParamDragLayer_.lock();
+  impl_->shapeParamDragLayer_.reset();
+  auto *shape =
+      layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+  if (!shape) {
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
+  }
+  const float after =
+      mode == 1 ? shape->cornerRadius() : shape->starInnerRadius();
+  if (std::abs(after - impl_->shapeParamBefore_) > 0.001f) {
+    auto *mgr = UndoManager::instance();
+    bool pushed = false;
+    if (mgr) {
+      if (mode == 1) {
+        pushed = mgr->push(std::make_unique<ShapeCornerRadiusUndoCommand>(
+            layer, impl_->shapeParamBefore_, after));
+      } else {
+        pushed = mgr->push(std::make_unique<ShapeStarInnerRadiusUndoCommand>(
+            layer, impl_->shapeParamBefore_, after));
+      }
+    }
+    if (!pushed && mgr) {
+      if (mode == 1) {
+        shape->setCornerRadius(impl_->shapeParamBefore_);
+      } else {
+        shape->setStarInnerRadius(impl_->shapeParamBefore_);
+      }
+      shape->setDirty(LayerDirtyFlag::Property);
+      shape->changed();
+    } else {
+      impl_->publishLayerModified(layer, true);
+    }
+  }
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isEditingShapeParam() const {
+  return impl_ && impl_->shapeParamDragMode_ != 0;
+}
+
+bool CompositionRenderController::beginShapePolygonDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_) {
+    return false;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape =
+      selectedLayer ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape || !shape->hasCustomPolygon() || selectedLayer->isLocked() ||
+      selectedLayer->isSelectionLocked()) {
+    return false;
+  }
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  const QPointF canvasPoint(cPos.x, cPos.y);
+  const QTransform globalTransform = selectedLayer->getGlobalTransform();
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const float hitRadius = 12.0f / zoom;
+  auto points = shape->customPolygonPoints();
+  for (int i = 0; i < static_cast<int>(points.size()); ++i) {
+    const QPointF worldPos = globalTransform.map(points[static_cast<size_t>(i)]);
+    const float dx = static_cast<float>(worldPos.x() - canvasPoint.x());
+    const float dy = static_cast<float>(worldPos.y() - canvasPoint.y());
+    if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+      // F4: press updates the vertex selection grammar before the drag.
+      applyShapeVertexSelectionGrammar(impl_->selectedShapePathVertices_,
+                                       static_cast<int>(points.size()), i);
+      impl_->isDraggingShapePolygon_ = true;
+      impl_->draggingShapePolygonIndex_ = i;
+      impl_->shapePolygonDragLayer_ = selectedLayer;
+      impl_->shapePolygonBefore_ = points;
+      impl_->shapePolygonBeforeClosed_ = shape->customPolygonClosed();
+      impl_->shapePolygonDragDirty_ = false;
+      markRenderDirty();
+      return true;
+    }
+  }
+  // Shift-click on a segment inserts a vertex and starts dragging it.
+  if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier) &&
+      points.size() >= 2) {
+    const float segRadius = 10.0f / zoom;
+    const bool closed = shape->customPolygonClosed();
+    const int segCount = closed ? static_cast<int>(points.size())
+                                : static_cast<int>(points.size()) - 1;
+    float best = segRadius * segRadius;
+    int bestSeg = -1;
+    double bestT = 0.0;
+    for (int s = 0; s < segCount; ++s) {
+      const int next = (s + 1) % static_cast<int>(points.size());
+      const QPointF a = globalTransform.map(points[static_cast<size_t>(s)]);
+      const QPointF b = globalTransform.map(points[static_cast<size_t>(next)]);
+      const QPointF ab = b - a;
+      const double len2 = QPointF::dotProduct(ab, ab);
+      double t = 0.0;
+      if (len2 > 1e-9) {
+        t = QPointF::dotProduct(canvasPoint - a, ab) / len2;
+        t = std::clamp(t, 0.0, 1.0);
+      }
+      const QPointF proj = a + ab * t;
+      const float dx = static_cast<float>(proj.x() - canvasPoint.x());
+      const float dy = static_cast<float>(proj.y() - canvasPoint.y());
+      const float d2 = dx * dx + dy * dy;
+      if (d2 <= best) {
+        best = d2;
+        bestSeg = s;
+        bestT = t;
+      }
+    }
+    if (bestSeg >= 0) {
+      bool invertible = false;
+      globalTransform.inverted(&invertible);
+      if (!invertible) {
+        return false;
+      }
+      const int next = (bestSeg + 1) % static_cast<int>(points.size());
+      const QPointF localMid = (points[static_cast<size_t>(bestSeg)] +
+                                points[static_cast<size_t>(next)]) *
+                               0.5;
+      (void)bestT;
+      impl_->shapePolygonBefore_ = points;
+      impl_->shapePolygonBeforeClosed_ = shape->customPolygonClosed();
+      points.insert(points.begin() + bestSeg + 1, localMid);
+      shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
+      shape->setDirty(LayerDirtyFlag::Source);
+      impl_->isDraggingShapePolygon_ = true;
+      impl_->draggingShapePolygonIndex_ = bestSeg + 1;
+      impl_->shapePolygonDragLayer_ = selectedLayer;
+      impl_->shapePolygonDragDirty_ = true;
+      // F4: the inserted vertex becomes the sole selection.
+      impl_->selectedShapePathVertices_.clear();
+      impl_->selectedShapePathVertices_.push_back(bestSeg + 1);
+      markRenderDirty();
+      return true;
+    }
+  }
+  return false;
+}
+
+void CompositionRenderController::updateShapePolygonDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_ || !impl_->isDraggingShapePolygon_) {
+    return;
+  }
+  auto layer = impl_->shapePolygonDragLayer_.lock();
+  auto *shape =
+      layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+  if (!shape) {
+    return;
+  }
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  bool invertible = false;
+  const QTransform invTransform =
+      layer->getGlobalTransform().inverted(&invertible);
+  if (!invertible) {
+    return;
+  }
+  const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+  auto points = shape->customPolygonPoints();
+  const int index = impl_->draggingShapePolygonIndex_;
+  if (index < 0 || index >= static_cast<int>(points.size())) {
+    return;
+  }
+  points[static_cast<size_t>(index)] = localPos;
+  shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
+  shape->setDirty(LayerDirtyFlag::Source);
+  impl_->shapePolygonDragDirty_ = true;
+  markRenderDirty();
+}
+
+void CompositionRenderController::endShapePolygonDrag() {
+  if (!impl_ || !impl_->isDraggingShapePolygon_) {
+    return;
+  }
+  impl_->isDraggingShapePolygon_ = false;
+  impl_->draggingShapePolygonIndex_ = -1;
+  auto layer = impl_->shapePolygonDragLayer_.lock();
+  impl_->shapePolygonDragLayer_.reset();
+  auto *shape =
+      layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+  if (layer && shape && impl_->shapePolygonDragDirty_) {
+    auto *mgr = UndoManager::instance();
+    const auto afterPoints = shape->customPolygonPoints();
+    const bool afterClosed = shape->customPolygonClosed();
+    const bool pushed = !mgr || mgr->push(
+        std::make_unique<ShapePolygonPointsUndoCommand>(
+            layer, impl_->shapePolygonBefore_, afterPoints,
+            impl_->shapePolygonBeforeClosed_, afterClosed));
+    if (!pushed) {
+      shape->setCustomPolygonPoints(impl_->shapePolygonBefore_,
+                                    impl_->shapePolygonBeforeClosed_);
+      shape->setDirty(LayerDirtyFlag::Source);
+      shape->changed();
+    } else {
+      impl_->publishLayerModified(layer, true);
+    }
+  }
+  impl_->shapePolygonBefore_.clear();
+  impl_->shapePolygonDragDirty_ = false;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isEditingShapePolygon() const {
+  return impl_ && impl_->isDraggingShapePolygon_;
+}
+
+bool CompositionRenderController::deleteSelectedShapePathVertices() {
+  if (!impl_ || impl_->isDraggingShapePathVertex_ ||
+      impl_->isDraggingShapePolygon_ || impl_->shapeParamDragMode_ != 0 ||
+      impl_->shapeOpDragOp_ >= 0 ||
+      impl_->selectedShapePathVertices_.empty()) {
+    return false;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape = selectedLayer
+                    ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape || selectedLayer->isLocked() || selectedLayer->isSelectionLocked()) {
+    return false;
+  }
+  auto *mgr = UndoManager::instance();
+  if (shape->hasCustomPath()) {
+    const auto before = shape->customPathVertices();
+    const bool beforeClosed = shape->customPathClosed();
+    // Delete descending so earlier indices stay valid.
+    auto selected = impl_->selectedShapePathVertices_;
+    std::sort(selected.begin(), selected.end(), std::greater<int>());
+    auto after = before;
+    for (const int index : selected) {
+      if (index >= 0 && index < static_cast<int>(after.size())) {
+        after.erase(after.begin() + index);
+      }
+    }
+    if (after.size() == before.size()) {
+      return false;
+    }
+    if (after.size() >= 2) {
+      shape->setCustomPathVertices(after, beforeClosed);
+    } else {
+      shape->clearCustomPath();
+    }
+    shape->setDirty(LayerDirtyFlag::Source);
+    const auto applied = shape->customPathVertices();
+    const bool pushed = !mgr || mgr->push(
+        std::make_unique<ShapePathVertexEditCommand>(
+            selectedLayer, before, applied, beforeClosed,
+            shape->customPathClosed()));
+    if (!pushed) {
+      if (before.size() >= 2) {
+        shape->setCustomPathVertices(before, beforeClosed);
+      } else {
+        shape->clearCustomPath();
+      }
+      shape->setDirty(LayerDirtyFlag::Source);
+      shape->changed();
+      return false;
+    }
+  } else if (shape->hasCustomPolygon()) {
+    const auto before = shape->customPolygonPoints();
+    const bool beforeClosed = shape->customPolygonClosed();
+    auto selected = impl_->selectedShapePathVertices_;
+    std::sort(selected.begin(), selected.end(), std::greater<int>());
+    auto after = before;
+    for (const int index : selected) {
+      if (index >= 0 && index < static_cast<int>(after.size())) {
+        after.erase(after.begin() + index);
+      }
+    }
+    if (after.size() == before.size()) {
+      return false;
+    }
+    if (after.size() >= 3) {
+      shape->setCustomPolygonPoints(after, beforeClosed);
+    } else {
+      shape->clearCustomPolygonPoints();
+    }
+    shape->setDirty(LayerDirtyFlag::Source);
+    const auto applied = shape->customPolygonPoints();
+    const bool pushed = !mgr || mgr->push(
+        std::make_unique<ShapePolygonPointsUndoCommand>(
+            selectedLayer, before, applied, beforeClosed,
+            shape->customPolygonClosed()));
+    if (!pushed) {
+      if (before.size() >= 3) {
+        shape->setCustomPolygonPoints(before, beforeClosed);
+      } else {
+        shape->clearCustomPolygonPoints();
+      }
+      shape->setDirty(LayerDirtyFlag::Source);
+      shape->changed();
+      return false;
+    }
+  } else {
+    return false;
+  }
+  impl_->selectedShapePathVertices_.clear();
+  impl_->hoveredShapePathVertex_ = -1;
+  impl_->hoveredShapePathTangent_ = 0;
+  impl_->hoveredShapePathSegment_ = -1;
+  impl_->publishLayerModified(selectedLayer, true);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::selectAllShapePathVertices() {
+  if (!impl_) {
+    return;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape = selectedLayer
+                    ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape) {
+    return;
+  }
+  impl_->selectedShapePathVertices_.clear();
+  if (shape->hasCustomPath()) {
+    const int count = static_cast<int>(shape->customPathVertices().size());
+    for (int i = 0; i < count; ++i) {
+      impl_->selectedShapePathVertices_.push_back(i);
+    }
+  } else if (shape->hasCustomPolygon()) {
+    const int count = static_cast<int>(shape->customPolygonPoints().size());
+    for (int i = 0; i < count; ++i) {
+      impl_->selectedShapePathVertices_.push_back(i);
+    }
+  } else {
+    return;
+  }
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::clearShapePathSelection() {
+  if (!impl_ || impl_->selectedShapePathVertices_.empty()) {
+    return false;
+  }
+  impl_->selectedShapePathVertices_.clear();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+int CompositionRenderController::selectedShapePathVertexCount() const {
+  return impl_ ? static_cast<int>(impl_->selectedShapePathVertices_.size()) : 0;
+}
+
+namespace {
+// F5: editable polyline for operator handles: custom path positions first,
+// custom polygon points second. Returns false when neither exists.
+bool shapeEditablePolyline(ArtifactShapeLayer *shape,
+                           std::vector<QPointF> &local, bool &closed) {
+  if (!shape) {
+    return false;
+  }
+  if (shape->hasCustomPath()) {
+    const auto verts = shape->customPathVertices();
+    if (verts.size() < 2) {
+      return false;
+    }
+    local.clear();
+    local.reserve(verts.size());
+    for (const auto &v : verts) {
+      local.push_back(v.pos);
+    }
+    closed = shape->customPathClosed();
+    return true;
+  }
+  if (shape->hasCustomPolygon()) {
+    const auto points = shape->customPolygonPoints();
+    if (points.size() < 2) {
+      return false;
+    }
+    local = points;
+    closed = shape->customPolygonClosed();
+    return true;
+  }
+  return false;
+}
+
+// Fraction [0,1] of the total polyline length nearest to the canvas point.
+double shapePolylineFraction(const std::vector<QPointF> &local, bool closed,
+                             const QTransform &global,
+                             const QPointF &canvasPoint) {
+  const int count = static_cast<int>(local.size());
+  if (count < 2) {
+    return 0.0;
+  }
+  const int segCount = closed ? count : count - 1;
+  std::vector<double> lengths(static_cast<size_t>(segCount), 0.0);
+  double total = 0.0;
+  for (int s = 0; s < segCount; ++s) {
+    const int next = (s + 1) % count;
+    lengths[static_cast<size_t>(s)] =
+        QLineF(global.map(local[static_cast<size_t>(s)]),
+               global.map(local[static_cast<size_t>(next)])).length();
+    total += lengths[static_cast<size_t>(s)];
+  }
+  if (!(total > 1e-9)) {
+    return 0.0;
+  }
+  float best = std::numeric_limits<float>::max();
+  double bestFraction = 0.0;
+  double run = 0.0;
+  for (int s = 0; s < segCount; ++s) {
+    const int next = (s + 1) % count;
+    const QPointF a = global.map(local[static_cast<size_t>(s)]);
+    const QPointF b = global.map(local[static_cast<size_t>(next)]);
+    const QPointF ab = b - a;
+    const double len2 = QPointF::dotProduct(ab, ab);
+    double t = 0.0;
+    if (len2 > 1e-9) {
+      t = QPointF::dotProduct(canvasPoint - a, ab) / len2;
+      t = std::clamp(t, 0.0, 1.0);
+    }
+    const QPointF proj = a + ab * t;
+    const float dx = static_cast<float>(proj.x() - canvasPoint.x());
+    const float dy = static_cast<float>(proj.y() - canvasPoint.y());
+    const float d2 = dx * dx + dy * dy;
+    if (d2 < best) {
+      best = d2;
+      bestFraction = (run + lengths[static_cast<size_t>(s)] * t) / total;
+    }
+    run += lengths[static_cast<size_t>(s)];
+  }
+  return std::clamp(bestFraction, 0.0, 1.0);
+}
+
+// First draggable operators: a TrimPaths for start/end/offset triangles and
+// one single-value op (offset/amount/radius) for the midpoint diamond.
+void findDraggableShapeOps(ArtifactShapeLayer *shape, int &trimOp,
+                           int &primaryOp, QString &primaryField) {
+  trimOp = -1;
+  primaryOp = -1;
+  primaryField.clear();
+  if (!shape) {
+    return;
+  }
+  const int count = shape->shapeOperatorCount();
+  for (int i = 0; i < count; ++i) {
+    const auto type = shape->shapeOperatorTypeAt(i);
+    if (trimOp < 0 &&
+        type == ArtifactCore::ShapeOperatorType::TrimPaths) {
+      trimOp = i;
+    }
+    if (primaryOp < 0) {
+      if (type == ArtifactCore::ShapeOperatorType::OffsetPaths) {
+        primaryOp = i;
+        primaryField = QStringLiteral("offset");
+      } else if (type == ArtifactCore::ShapeOperatorType::PuckerBloat) {
+        primaryOp = i;
+        primaryField = QStringLiteral("amount");
+      } else if (type == ArtifactCore::ShapeOperatorType::RoundedCorners) {
+        primaryOp = i;
+        primaryField = QStringLiteral("radius");
+      }
+    }
+    if (trimOp >= 0 && primaryOp >= 0) {
+      break;
+    }
+  }
+}
+
+QString shapeOpFieldName(int field, const QString &primaryField) {
+  if (field == 1) return QStringLiteral("start");
+  if (field == 2) return QStringLiteral("end");
+  if (field == 3) return QStringLiteral("offset");
+  return primaryField;
+}
+} // namespace
+
+bool CompositionRenderController::beginShapeOperatorDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_) {
+    return false;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape = selectedLayer
+                    ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape || selectedLayer->isLocked() || selectedLayer->isSelectionLocked()) {
+    return false;
+  }
+  std::vector<QPointF> local;
+  bool closed = false;
+  if (!shapeEditablePolyline(shape, local, closed)) {
+    return false;
+  }
+  int trimOp = -1;
+  int primaryOp = -1;
+  QString primaryField;
+  findDraggableShapeOps(shape, trimOp, primaryOp, primaryField);
+  if (trimOp < 0 && primaryOp < 0) {
+    return false;
+  }
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  const QPointF canvasPoint(cPos.x, cPos.y);
+  const QTransform globalTransform = selectedLayer->getGlobalTransform();
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const float hitRadius = 12.0f / zoom;
+  const auto canvasOf = [&](const QPointF &p) {
+    return globalTransform.map(p);
+  };
+  const float markerOff = 26.0f / zoom;
+  const auto endpointNormal = [&](bool atStart) {
+    // Unit normal of the endpoint segment for marker placement.
+    QPointF dir(1.0, 0.0);
+    if (local.size() >= 2) {
+      if (atStart) {
+        dir = local[1] - local.front();
+      } else {
+        dir = local.back() - local[local.size() - 2];
+      }
+      const QPointF a = canvasOf(atStart ? local.front() : local[local.size() - 2]);
+      const QPointF b = canvasOf(atStart ? local[1] : local.back());
+      dir = b - a;
+    }
+    const double len = std::hypot(dir.x(), dir.y());
+    if (!(len > 1e-9)) {
+      return QPointF(0.0, -1.0);
+    }
+    return QPointF(-dir.y() / len, dir.x() / len);
+  };
+  // Trim triangles at the path endpoints first, then the midpoint diamond.
+  // Markers sit off the path along the endpoint normal so vertex handles
+  // underneath stay grabbable. Shift prefers segment insert: the diamond
+  // (which shares the chord midpoint) is skipped while Shift is held.
+  if (trimOp >= 0 && !local.empty()) {
+    const QPointF startCanvas = canvasOf(local.front());
+    const QPointF endCanvas = canvasOf(local.back());
+    const QPointF startMarker = startCanvas + endpointNormal(true) * markerOff;
+    const QPointF endMarker = endCanvas + endpointNormal(false) * markerOff;
+    const float sdx = static_cast<float>(startMarker.x() - canvasPoint.x());
+    const float sdy = static_cast<float>(startMarker.y() - canvasPoint.y());
+    const float edx = static_cast<float>(endMarker.x() - canvasPoint.x());
+    const float edy = static_cast<float>(endMarker.y() - canvasPoint.y());
+    const float s2 = sdx * sdx + sdy * sdy;
+    const float e2 = edx * edx + edy * edy;
+    int field = 0;
+    if (s2 <= hitRadius * hitRadius &&
+        (e2 > hitRadius * hitRadius || s2 <= e2)) {
+      field = 1;
+    } else if (e2 <= hitRadius * hitRadius) {
+      field = 2;
+    }
+    if (field != 0) {
+      const QString name = shapeOpFieldName(field, primaryField);
+      const double before =
+          shape->shapeOperatorValue(trimOp, name).toDouble();
+      impl_->shapeOpDragOp_ = trimOp;
+      impl_->shapeOpDragField_ = field;
+      impl_->shapeOpDragLayer_ = selectedLayer;
+      impl_->shapeOpBefore_ = before;
+      markRenderDirty();
+      return true;
+    }
+  }
+  // Midpoint diamond: trim offset when a Trim exists, else the primary value.
+  // Skipped while Shift is held so segment insert keeps the midpoint.
+  int diamondOp = trimOp >= 0 ? trimOp : primaryOp;
+  int diamondField = trimOp >= 0 ? 3 : 4;
+  const bool shiftHeld =
+      QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+  if (diamondOp >= 0 && local.size() >= 2 && !shiftHeld) {
+    const QPointF midLocal =
+        (local.front() + local.back()) * 0.5;
+    const QPointF midCanvas = canvasOf(midLocal);
+    const float mdx = static_cast<float>(midCanvas.x() - canvasPoint.x());
+    const float mdy = static_cast<float>(midCanvas.y() - canvasPoint.y());
+    if (mdx * mdx + mdy * mdy <= hitRadius * hitRadius) {
+      const QString name = shapeOpFieldName(diamondField, primaryField);
+      const double before =
+          shape->shapeOperatorValue(diamondOp, name).toDouble();
+      impl_->shapeOpDragOp_ = diamondOp;
+      impl_->shapeOpDragField_ = diamondField;
+      impl_->shapeOpDragLayer_ = selectedLayer;
+      impl_->shapeOpBefore_ = before;
+      impl_->shapeOpStartValue_ = before;
+      impl_->shapeOpAnchorCanvasX_ = static_cast<float>(canvasPoint.x());
+      std::vector<QPointF> measure = local;
+      double total = 0.0;
+      const int segCount = closed ? static_cast<int>(measure.size())
+                                  : static_cast<int>(measure.size()) - 1;
+      for (int s = 0; s < segCount; ++s) {
+        const int next = (s + 1) % static_cast<int>(measure.size());
+        total += QLineF(canvasOf(measure[static_cast<size_t>(s)]),
+                        canvasOf(measure[static_cast<size_t>(next)])).length();
+      }
+      impl_->shapeOpPathLength_ = static_cast<float>(std::max(1.0, total));
+      markRenderDirty();
+      return true;
+    }
+  }
+  return false;
+}
+
+void CompositionRenderController::updateShapeOperatorDrag(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_ || impl_->shapeOpDragOp_ < 0 ||
+      impl_->shapeOpDragField_ == 0) {
+    return;
+  }
+  auto layer = impl_->shapeOpDragLayer_.lock();
+  auto *shape = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+  if (!shape || impl_->shapeOpDragOp_ >= shape->shapeOperatorCount()) {
+    return;
+  }
+  const auto cPos = impl_->renderer_->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()),
+       static_cast<float>(viewportPos.y())});
+  const QPointF canvasPoint(cPos.x, cPos.y);
+  int primaryOp = -1;
+  int trimOp = -1;
+  QString primaryField;
+  findDraggableShapeOps(shape, trimOp, primaryOp, primaryField);
+  const QString name =
+      shapeOpFieldName(impl_->shapeOpDragField_, primaryField);
+  if (impl_->shapeOpDragField_ == 1 || impl_->shapeOpDragField_ == 2) {
+    std::vector<QPointF> local;
+    bool closed = false;
+    if (!shapeEditablePolyline(shape, local, closed)) {
+      return;
+    }
+    const double fraction = shapePolylineFraction(
+        local, closed, layer->getGlobalTransform(), canvasPoint);
+    const double value = std::clamp(fraction * 100.0, 0.0, 100.0);
+    const QString path = QStringLiteral("shape.operator.%1.%2")
+                             .arg(impl_->shapeOpDragOp_)
+                             .arg(name);
+    shape->setLayerPropertyValue(path, QVariant(value));
+    shape->setDirty(LayerDirtyFlag::Property);
+  } else {
+    // Delta-based fields ride on horizontal canvas movement.
+    const double dxCanvas =
+        static_cast<double>(canvasPoint.x()) - impl_->shapeOpAnchorCanvasX_;
+    double value = impl_->shapeOpStartValue_;
+    if (impl_->shapeOpDragField_ == 3) {
+      value = impl_->shapeOpStartValue_ +
+              dxCanvas / std::max(1.0f, impl_->shapeOpPathLength_) * 100.0;
+      value = std::clamp(value, -100000.0, 100000.0);
+    } else {
+      value = impl_->shapeOpStartValue_ + dxCanvas;
+      if (name == QStringLiteral("radius")) {
+        value = std::clamp(value, 0.0, 100000.0);
+      } else {
+        value = std::clamp(value, -100000.0, 100000.0);
+      }
+    }
+    const QString path = QStringLiteral("shape.operator.%1.%2")
+                             .arg(impl_->shapeOpDragOp_)
+                             .arg(name);
+    shape->setLayerPropertyValue(path, QVariant(value));
+    shape->setDirty(LayerDirtyFlag::Property);
+  }
+  markRenderDirty();
+}
+
+void CompositionRenderController::endShapeOperatorDrag() {
+  if (!impl_ || impl_->shapeOpDragOp_ < 0 || impl_->shapeOpDragField_ == 0) {
+    return;
+  }
+  const int op = impl_->shapeOpDragOp_;
+  const int field = impl_->shapeOpDragField_;
+  impl_->shapeOpDragOp_ = -1;
+  impl_->shapeOpDragField_ = 0;
+  auto layer = impl_->shapeOpDragLayer_.lock();
+  impl_->shapeOpDragLayer_.reset();
+  auto *shape = layer ? dynamic_cast<ArtifactShapeLayer *>(layer.get()) : nullptr;
+  if (!shape || op >= shape->shapeOperatorCount()) {
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
+  }
+  int trimOp = -1;
+  int primaryOp = -1;
+  QString primaryField;
+  findDraggableShapeOps(shape, trimOp, primaryOp, primaryField);
+  const QString name = shapeOpFieldName(field, primaryField);
+  const double after = shape->shapeOperatorValue(op, name).toDouble();
+  if (std::abs(after - impl_->shapeOpBefore_) > 0.0001) {
+    auto *mgr = UndoManager::instance();
+    const bool pushed =
+        !mgr || mgr->push(std::make_unique<ShapeOperatorValueUndoCommand>(
+                   layer, op, name, impl_->shapeOpBefore_, after));
+    if (!pushed) {
+      const QString path =
+          QStringLiteral("shape.operator.%1.%2").arg(op).arg(name);
+      shape->setLayerPropertyValue(path, QVariant(impl_->shapeOpBefore_));
+      shape->setDirty(LayerDirtyFlag::Property);
+      shape->changed();
+    } else {
+      impl_->publishLayerModified(layer, true);
+    }
+  }
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isEditingShapeOperator() const {
+  return impl_ && impl_->shapeOpDragOp_ >= 0;
+}
+
+void CompositionRenderController::updateShapePathHover(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->renderer_ || impl_->isDraggingShapePathVertex_ ||
+      impl_->shapeParamDragMode_ != 0 || impl_->isDraggingShapePolygon_ ||
+      impl_->shapeOpDragOp_ >= 0) {
+    return;
+  }
+  const int prevVertex = impl_->hoveredShapePathVertex_;
+  const int prevTangent = impl_->hoveredShapePathTangent_;
+  const int prevSegment = impl_->hoveredShapePathSegment_;
+  const int prevParam = impl_->hoveredShapeParam_;
+  const int prevOp = impl_->hoveredShapeOp_;
+  const int prevOpField = impl_->hoveredShapeOpField_;
+  impl_->hoveredShapePathVertex_ = -1;
+  impl_->hoveredShapePathTangent_ = 0;
+  impl_->hoveredShapePathSegment_ = -1;
+  impl_->hoveredShapeParam_ = 0;
+  impl_->hoveredShapeOp_ = -1;
+  impl_->hoveredShapeOpField_ = 0;
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape = selectedLayer
+                    ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (shape && !selectedLayer->isLocked() &&
+      !selectedLayer->isSelectionLocked()) {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {static_cast<float>(viewportPos.x()),
+         static_cast<float>(viewportPos.y())});
+    const QTransform globalTransform = selectedLayer->getGlobalTransform();
+    const QPointF canvasPoint(cPos.x, cPos.y);
+    const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+    const float hitRadius = 12.0f / zoom;
+    // F2: parameter handles for Rect/Square/Star primitives.
+    int paramMode = 0;
+    if (shape->shapeType() == ShapeType::Rect ||
+        shape->shapeType() == ShapeType::Square) {
+      paramMode = 1;
+    } else if (shape->shapeType() == ShapeType::Star) {
+      paramMode = 2;
+    }
+    if (paramMode != 0) {
+      const QPointF handleCanvas =
+          globalTransform.map(shapeParamHandleLocal(*shape, paramMode));
+      const float dx = static_cast<float>(handleCanvas.x() - canvasPoint.x());
+      const float dy = static_cast<float>(handleCanvas.y() - canvasPoint.y());
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        impl_->hoveredShapeParam_ = paramMode;
+      }
+    }
+    if (shape->hasCustomPath()) {
+    const auto verts = shape->customPathVertices();
+    for (int vI = 0; vI < static_cast<int>(verts.size()); ++vI) {
+      const QPointF tangentPoints[2] = {
+          verts[static_cast<size_t>(vI)].pos +
+              verts[static_cast<size_t>(vI)].inTangent,
+          verts[static_cast<size_t>(vI)].pos +
+              verts[static_cast<size_t>(vI)].outTangent};
+      for (int t = 0; t < 2; ++t) {
+        if (verts[static_cast<size_t>(vI)].smooth ||
+            verts[static_cast<size_t>(vI)].inTangent != QPointF(0, 0) ||
+            verts[static_cast<size_t>(vI)].outTangent != QPointF(0, 0)) {
+          const QPointF worldTangent = globalTransform.map(tangentPoints[t]);
+          const float dx = static_cast<float>(worldTangent.x() - canvasPoint.x());
+          const float dy = static_cast<float>(worldTangent.y() - canvasPoint.y());
+          if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+            impl_->hoveredShapePathVertex_ = vI;
+            impl_->hoveredShapePathTangent_ = t == 0 ? 1 : 2;
+            break;
+          }
+        }
+      }
+      if (impl_->hoveredShapePathVertex_ >= 0) {
+        break;
+      }
+      const QPointF worldPos =
+          globalTransform.map(verts[static_cast<size_t>(vI)].pos);
+      const float dx = static_cast<float>(worldPos.x() - canvasPoint.x());
+      const float dy = static_cast<float>(worldPos.y() - canvasPoint.y());
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        impl_->hoveredShapePathVertex_ = vI;
+        impl_->hoveredShapePathTangent_ = 0;
+        break;
+      }
+    }
+    if (impl_->hoveredShapePathVertex_ < 0 &&
+        static_cast<int>(verts.size()) >= 2) {
+      const float segRadius = 10.0f / zoom;
+      const bool closed = shape->customPathClosed();
+      const int segCount = closed ? static_cast<int>(verts.size())
+                                  : static_cast<int>(verts.size()) - 1;
+      float best = segRadius * segRadius;
+      for (int s = 0; s < segCount; ++s) {
+        const int next = (s + 1) % static_cast<int>(verts.size());
+        const QPointF a = globalTransform.map(verts[static_cast<size_t>(s)].pos);
+        const QPointF b = globalTransform.map(verts[static_cast<size_t>(next)].pos);
+        const QPointF ab = b - a;
+        const double len2 = QPointF::dotProduct(ab, ab);
+        double t = 0.0;
+        if (len2 > 1e-9) {
+          t = QPointF::dotProduct(canvasPoint - a, ab) / len2;
+          t = std::clamp(t, 0.0, 1.0);
+        }
+        const QPointF proj = a + ab * t;
+        const float dx = static_cast<float>(proj.x() - canvasPoint.x());
+        const float dy = static_cast<float>(proj.y() - canvasPoint.y());
+        const float d2 = dx * dx + dy * dy;
+        if (d2 <= best) {
+          best = d2;
+          impl_->hoveredShapePathSegment_ = s;
+        }
+      }
+    }
+    } // hasCustomPath
+    // F2: custom polygon hover shares the vertex/segment fields; polygon and
+    // custom path data are mutually exclusive so the indices never collide.
+    if (!shape->hasCustomPath() && shape->hasCustomPolygon() &&
+        impl_->hoveredShapePathVertex_ < 0) {
+      const auto points = shape->customPolygonPoints();
+      for (int i = 0; i < static_cast<int>(points.size()); ++i) {
+        const QPointF worldPos =
+            globalTransform.map(points[static_cast<size_t>(i)]);
+        const float dx = static_cast<float>(worldPos.x() - canvasPoint.x());
+        const float dy = static_cast<float>(worldPos.y() - canvasPoint.y());
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+          impl_->hoveredShapePathVertex_ = i;
+          impl_->hoveredShapePathTangent_ = 0;
+          break;
+        }
+      }
+      if (impl_->hoveredShapePathVertex_ < 0 && points.size() >= 2) {
+        const float segRadius = 10.0f / zoom;
+        const bool closed = shape->customPolygonClosed();
+        const int segCount = closed ? static_cast<int>(points.size())
+                                    : static_cast<int>(points.size()) - 1;
+        float best = segRadius * segRadius;
+        for (int s = 0; s < segCount; ++s) {
+          const int next = (s + 1) % static_cast<int>(points.size());
+          const QPointF a = globalTransform.map(points[static_cast<size_t>(s)]);
+          const QPointF b = globalTransform.map(points[static_cast<size_t>(next)]);
+          const QPointF ab = b - a;
+          const double len2 = QPointF::dotProduct(ab, ab);
+          double t = 0.0;
+          if (len2 > 1e-9) {
+            t = QPointF::dotProduct(canvasPoint - a, ab) / len2;
+            t = std::clamp(t, 0.0, 1.0);
+          }
+          const QPointF proj = a + ab * t;
+          const float dx = static_cast<float>(proj.x() - canvasPoint.x());
+          const float dy = static_cast<float>(proj.y() - canvasPoint.y());
+          const float d2 = dx * dx + dy * dy;
+          if (d2 <= best) {
+            best = d2;
+            impl_->hoveredShapePathSegment_ = s;
+          }
+        }
+      }
+    }
+    // F5: operator handle hover (trim triangles + midpoint diamond).
+    // Marker geometry mirrors beginShapeOperatorDrag by design.
+    {
+      std::vector<QPointF> opLocal;
+      bool opClosed = false;
+      int trimOp = -1;
+      int primaryOp = -1;
+      QString primaryField;
+      findDraggableShapeOps(shape, trimOp, primaryOp, primaryField);
+      if ((trimOp >= 0 || primaryOp >= 0) &&
+          shapeEditablePolyline(shape, opLocal, opClosed) &&
+          opLocal.size() >= 2) {
+        const float opHit = 12.0f / zoom;
+        const float opOff = 26.0f / zoom;
+        const auto opCanvas = [&](const QPointF &p) {
+          return globalTransform.map(p);
+        };
+        const auto opNormal = [&](bool atStart) {
+          QPointF a;
+          QPointF b;
+          if (atStart) {
+            a = opCanvas(opLocal.front());
+            b = opCanvas(opLocal[1]);
+          } else {
+            a = opCanvas(opLocal[opLocal.size() - 2]);
+            b = opCanvas(opLocal.back());
+          }
+          QPointF dir = b - a;
+          const double len = std::hypot(dir.x(), dir.y());
+          if (!(len > 1e-9)) {
+            return QPointF(0.0, -1.0);
+          }
+          return QPointF(-dir.y() / len, dir.x() / len);
+        };
+        const QPointF startCanvas = opCanvas(opLocal.front());
+        const QPointF endCanvas = opCanvas(opLocal.back());
+        if (trimOp >= 0) {
+          const QPointF startMarker = startCanvas + opNormal(true) * opOff;
+          const QPointF endMarker = endCanvas + opNormal(false) * opOff;
+          const float sdx = static_cast<float>(startMarker.x() - canvasPoint.x());
+          const float sdy = static_cast<float>(startMarker.y() - canvasPoint.y());
+          const float edx = static_cast<float>(endMarker.x() - canvasPoint.x());
+          const float edy = static_cast<float>(endMarker.y() - canvasPoint.y());
+          const float s2 = sdx * sdx + sdy * sdy;
+          const float e2 = edx * edx + edy * edy;
+          if (s2 <= opHit * opHit && (e2 > opHit * opHit || s2 <= e2)) {
+            impl_->hoveredShapeOp_ = trimOp;
+            impl_->hoveredShapeOpField_ = 1;
+          } else if (e2 <= opHit * opHit) {
+            impl_->hoveredShapeOp_ = trimOp;
+            impl_->hoveredShapeOpField_ = 2;
+          }
+        }
+        const bool hoverShift =
+            QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+        if (impl_->hoveredShapeOp_ < 0 && !hoverShift) {
+          const int diamondOp = trimOp >= 0 ? trimOp : primaryOp;
+          const int diamondField = trimOp >= 0 ? 3 : 4;
+          const QPointF midCanvas = globalTransform.map(
+              (opLocal.front() + opLocal.back()) * 0.5);
+          const float mdx = static_cast<float>(midCanvas.x() - canvasPoint.x());
+          const float mdy = static_cast<float>(midCanvas.y() - canvasPoint.y());
+          if (mdx * mdx + mdy * mdy <= opHit * opHit) {
+            impl_->hoveredShapeOp_ = diamondOp;
+            impl_->hoveredShapeOpField_ = diamondField;
+          }
+        }
+      }
+    }
+  }
+  if (prevVertex != impl_->hoveredShapePathVertex_ ||
+      prevTangent != impl_->hoveredShapePathTangent_ ||
+      prevSegment != impl_->hoveredShapePathSegment_ ||
+      prevParam != impl_->hoveredShapeParam_ ||
+      prevOp != impl_->hoveredShapeOp_ ||
+      prevOpField != impl_->hoveredShapeOpField_) {
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+}
+
 bool CompositionRenderController::beginShapePathVertexDrag(
     const QPointF &viewportPos) {
   if (!impl_ || !impl_->renderer_) {
@@ -30298,6 +31517,9 @@ bool CompositionRenderController::beginShapePathVertexDrag(
     return false;
 
   }
+  // F4: press updates the vertex selection grammar before the drag owns it.
+  applyShapeVertexSelectionGrammar(impl_->selectedShapePathVertices_,
+                                   static_cast<int>(verts.size()), hitVertex);
   impl_->shapePathEditPending_ = true;
   impl_->shapePathEditDirty_ = false;
   impl_->shapePathEditLayer_ = selectedLayer;
@@ -40769,6 +41991,34 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       ::Artifact::drawSelectionOverlay(
           renderer_.get(), selectedLayer, overlayViewMatrix,
           overlayProjMatrix);
+
+      // F1 (Phase D-1): shape vertex/tangent/segment emphasis on top of
+      // the selection overlay. DTO only; no layer mutation here.
+      if (dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())) {
+        ::Artifact::ShapeVertexOverlayState shapeState;
+        shapeState.hoveredVertex = impl_->hoveredShapePathVertex_;
+        shapeState.hoveredTangent = impl_->hoveredShapePathTangent_;
+        shapeState.draggingVertex = impl_->isDraggingShapePathVertex_
+                                        ? impl_->draggingShapePathVertexIndex_
+                                        : -1;
+        shapeState.draggingTangent = impl_->isDraggingShapePathVertex_
+                                         ? impl_->draggingShapePathTangent_
+                                         : 0;
+        shapeState.hoveredSegment = impl_->hoveredShapePathSegment_;
+        shapeState.showSegmentInsert =
+            impl_->hoveredShapePathSegment_ >= 0 &&
+            impl_->hoveredShapePathVertex_ < 0 &&
+            QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+        shapeState.selectedVertices = impl_->selectedShapePathVertices_;
+        shapeState.hoveredParam = impl_->hoveredShapeParam_;
+        shapeState.draggingParam = impl_->shapeParamDragMode_;
+        shapeState.hoveredOp = impl_->hoveredShapeOp_;
+        shapeState.hoveredOpField = impl_->hoveredShapeOpField_;
+        shapeState.draggingOp = impl_->shapeOpDragOp_;
+        shapeState.draggingOpField = impl_->shapeOpDragField_;
+        ::Artifact::drawShapeVertexOverlay(renderer_.get(), selectedLayer,
+                                           shapeState);
+      }
 
       // Keep the active layer's gizmo path above, while also showing the
       // selection overlay for every selected 3D layer. This makes the Phase 2

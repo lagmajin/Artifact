@@ -351,6 +351,11 @@ public:
   int shapeOperatorCount() const;
   ArtifactCore::ShapeOperatorType shapeOperatorTypeAt(int index) const;
   void restoreOperatorsFromJson(const QJsonArray& operators);
+  // F5: read-only viewport access to the numeric operator fields the main VP
+  // can drag (trim start/end/offset, repeater copies/offset/rotation,
+  // offset-paths offset, pucker amount, rounded radius). Anything else
+  // returns an invalid QVariant; writes stay on setLayerPropertyValue.
+  QVariant shapeOperatorValue(int index, const QString& field) const;
 
   // Layer interface
   QRectF localBounds() const override;

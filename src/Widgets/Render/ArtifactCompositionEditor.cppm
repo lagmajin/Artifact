@@ -6140,6 +6140,13 @@ protected:
       event->accept();
       return;
     }
+    // F4: Escape clears the main-VP shape vertex selection.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->clearShapePathSelection()) {
+      clearNavigationFeedback();
+      event->accept();
+      return;
+    }
     if (!event->isAutoRepeat() && event->key() == Qt::Key_Tab &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
       if (auto *toolManager = ArtifactApplicationManager::instance()
@@ -6238,7 +6245,8 @@ protected:
     }
     if (!event->isAutoRepeat() &&
         (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
-        controller_ && (controller_->deleteSelectedMaskVertices() ||
+        controller_ && (controller_->deleteSelectedShapePathVertices() ||
+                        controller_->deleteSelectedMaskVertices() ||
                         controller_->deleteHoveredMaskVertex())) {
       event->accept();
       return;
@@ -6250,6 +6258,16 @@ protected:
                                   : nullptr;
           toolManager && toolManager->activeTool() == ToolType::Pen) {
         controller_->selectAllMaskVertices();
+        event->accept();
+        return;
+      }
+      // F4: Ctrl+A selects all shape vertices in the main VP.
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && (toolManager->activeTool() == ToolType::Selection ||
+                          toolManager->activeTool() == ToolType::Shape)) {
+        controller_->selectAllShapePathVertices();
         event->accept();
         return;
       }

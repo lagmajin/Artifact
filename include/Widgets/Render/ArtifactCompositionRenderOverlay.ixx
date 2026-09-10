@@ -40,6 +40,29 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const QMatrix4x4 *cameraView = nullptr,
                           const QMatrix4x4 *cameraProj = nullptr);
 
+// F1 (Phase D-1): shape vertex/tangent/segment emphasis drawn on top of
+// drawSelectionOverlay for the selected shape layer. Thin DTO; the caller
+// (RenderController) owns hit-testing and selection state.
+struct ShapeVertexOverlayState {
+  int hoveredVertex = -1;     // customPathVertices index, -1 = none
+  int hoveredTangent = 0;     // 0 = none, 1 = in, 2 = out
+  int draggingVertex = -1;
+  int draggingTangent = 0;
+  int hoveredSegment = -1;    // segment start index, -1 = none
+  bool showSegmentInsert = false; // Shift held and segment hovered
+  std::vector<int> selectedVertices; // F4 multi-selection, empty = none
+  int hoveredParam = 0;       // F2: 0 = none, 1 = cornerRadius, 2 = starInner
+  int draggingParam = 0;      // F2: active parameter drag, same encoding
+  int hoveredOp = -1;         // F5: operator index under cursor, -1 = none
+  int hoveredOpField = 0;     // F5: 1=trimStart 2=trimEnd 3=trimOffset 4=primary
+  int draggingOp = -1;        // F5: active operator drag target
+  int draggingOpField = 0;    // F5: same encoding as hoveredOpField
+};
+
+void drawShapeVertexOverlay(ArtifactIRenderer *renderer,
+                            const ArtifactAbstractLayerPtr &layer,
+                            const ShapeVertexOverlayState &state);
+
 void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                const ArtifactAbstractLayerPtr &layer,
                                const FloatColor &color,

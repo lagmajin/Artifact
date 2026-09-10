@@ -2783,6 +2783,33 @@ ArtifactCore::ShapeOperatorType ArtifactShapeLayer::shapeOperatorTypeAt(int inde
   return impl_->shapeOperators_[static_cast<size_t>(index)]->type();
 }
 
+QVariant ArtifactShapeLayer::shapeOperatorValue(int index, const QString& field) const
+{
+ if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
+  return QVariant();
+ }
+ const auto &op = impl_->shapeOperators_[static_cast<size_t>(index)];
+ if (auto trim = dynamic_cast<const ArtifactCore::TrimPaths *>(op.get())) {
+  if (field == QStringLiteral("start")) return QVariant(trim->start());
+  if (field == QStringLiteral("end")) return QVariant(trim->end());
+  if (field == QStringLiteral("offset")) return QVariant(trim->offset());
+  if (field == QStringLiteral("trimMode")) return QVariant(static_cast<int>(trim->trimMode()));
+ } else if (auto repeater = dynamic_cast<const ArtifactCore::Repeater *>(op.get())) {
+  if (field == QStringLiteral("copies")) return QVariant(repeater->copies());
+  if (field == QStringLiteral("offset")) return QVariant(repeater->offset());
+  if (field == QStringLiteral("rotation")) return QVariant(repeater->rotation());
+  if (field == QStringLiteral("startOpacity")) return QVariant(repeater->startOpacity());
+  if (field == QStringLiteral("endOpacity")) return QVariant(repeater->endOpacity());
+ } else if (auto offset = dynamic_cast<const ArtifactCore::OffsetPaths *>(op.get())) {
+  if (field == QStringLiteral("offset")) return QVariant(offset->offset());
+ } else if (auto pb = dynamic_cast<const ArtifactCore::PuckerBloat *>(op.get())) {
+  if (field == QStringLiteral("amount")) return QVariant(pb->amount());
+ } else if (auto rc = dynamic_cast<const ArtifactCore::RoundedCorners *>(op.get())) {
+  if (field == QStringLiteral("radius")) return QVariant(rc->radius());
+ }
+ return QVariant();
+}
+
 bool ArtifactShapeLayer::removeShapeOperatorAt(int index)
 {
  if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {

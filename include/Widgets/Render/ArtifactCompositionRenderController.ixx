@@ -405,8 +405,30 @@ void handleMouseMove(const QPointF& viewportPos);
   // Main-VP custom shape path vertex editing.
   bool beginShapePathVertexDrag(const QPointF& viewportPos);
   void updateShapePathVertexDrag(const QPointF& viewportPos);
+  void updateShapePathHover(const QPointF& viewportPos);
   void endShapePathVertexDrag();
   bool isEditingShapePathVertices() const;
+  // F2: Rect/Square cornerRadius and Star innerRadius parameter handles.
+  bool beginShapeParamDrag(const QPointF& viewportPos);
+  void updateShapeParamDrag(const QPointF& viewportPos);
+  void endShapeParamDrag();
+  bool isEditingShapeParam() const;
+  // F2: custom polygon vertex drag/insert.
+  bool beginShapePolygonDrag(const QPointF& viewportPos);
+  void updateShapePolygonDrag(const QPointF& viewportPos);
+  void endShapePolygonDrag();
+  bool isEditingShapePolygon() const;
+  // F4: vertex selection grammar (Shift toggle, Ctrl add, plain replace;
+  // miss-click on the shape body clears; Delete removes; Escape clears).
+  bool deleteSelectedShapePathVertices();
+  void selectAllShapePathVertices();
+  bool clearShapePathSelection();
+  int selectedShapePathVertexCount() const;
+  // F5: operator HUD/trim handles (first TrimPaths + first single-value op).
+  bool beginShapeOperatorDrag(const QPointF& viewportPos);
+  void updateShapeOperatorDrag(const QPointF& viewportPos);
+  void endShapeOperatorDrag();
+  bool isEditingShapeOperator() const;
   bool cancelTextToolInteraction();
   bool deleteSelectedPuppetPin();
   bool resetSelectedPuppetPinRotation();
