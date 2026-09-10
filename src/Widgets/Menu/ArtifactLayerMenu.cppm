@@ -65,6 +65,8 @@ import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Switch;
+import Artifact.Layer.Svg;
+import Artifact.Widgets.CompositionLayerUndoCommands;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
@@ -822,6 +824,7 @@ public:
     QAction* createShapeTriangleAction = nullptr;
     QAction* createShapeEllipseAction = nullptr;
     QAction* createShapeStarAction = nullptr;
+    QAction* createShapeLineAction = nullptr;
     QAction* trackCameraAction = nullptr;
     QAction* createMotionTrackerAction = nullptr;
 
@@ -854,6 +857,8 @@ public:
     QAction* convertShapeToMaskAction = nullptr;
     QAction* linkShapeToMaskAction = nullptr;
     QAction* convertMaskToShapeAction = nullptr;
+    QAction* importSvgIntoShapeAction = nullptr;
+    QAction* createShapesFromVectorAction = nullptr;
 
     QAction* selectParentAction = nullptr;
     QAction* clearParentAction = nullptr;
@@ -966,6 +971,8 @@ public:
     void handleConvertShapeToMask();
     void handleLinkShapeToMask();
     void handleConvertMaskToShape();
+    void handleImportSvgIntoShape();
+    void handleCreateShapesFromVectorLayer();
 
     void handleSelectParent();
     void handleClearParent();
@@ -1157,12 +1164,15 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeEllipseAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_ellipse.svg")));
     createShapeStarAction = new QAction("星形", createShapeMenu);
     createShapeStarAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_star.svg")));
+    createShapeLineAction = new QAction("ライン", createShapeMenu);
+    createShapeLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     createShapeMenu->addAction(createShapeRectAction);
     createShapeMenu->addAction(createShapeSquareAction);
     createShapeMenu->addAction(createShapePolygonAction);
     createShapeMenu->addAction(createShapeTriangleAction);
     createShapeMenu->addAction(createShapeEllipseAction);
     createShapeMenu->addAction(createShapeStarAction);
+    createShapeMenu->addAction(createShapeLineAction);
     createShapeMenu->addSeparator();
     createShapeMenu->addAction(cycleShapeForwardAction);
     createShapeMenu->addAction(cycleShapeReverseAction);
@@ -1321,6 +1331,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     linkShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     convertMaskToShapeAction = maskMenu->addAction(QStringLiteral("マスクをシェイプに変換"));
     convertMaskToShapeAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    maskMenu->addSeparator();
+    importSvgIntoShapeAction = maskMenu->addAction(QStringLiteral("SVGをシェイプに取り込み..."));
+    importSvgIntoShapeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
+    createShapesFromVectorAction = maskMenu->addAction(QStringLiteral("ベクターレイヤーからシェイプを作成"));
+    createShapesFromVectorAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyEighthAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
@@ -1606,6 +1621,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createShapeTriangleAction) { handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); return; }
         if (action == createShapeEllipseAction) { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); return; }
         if (action == createShapeStarAction) { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return; }
+        if (action == createShapeLineAction) { handleCreateShape(ShapeType::Line, QStringLiteral("Line 1")); return; }
         if (action == cycleShapeForwardAction) { handleCycleShapeCreation(false); return; }
         if (action == cycleShapeReverseAction) { handleCycleShapeCreation(true); return; }
         if (action == duplicateLayerAction) { handleDuplicateLayer(); return; }
@@ -1637,6 +1653,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == convertShapeToMaskAction) { handleConvertShapeToMask(); return; }
         if (action == linkShapeToMaskAction) { handleLinkShapeToMask(); return; }
         if (action == convertMaskToShapeAction) { handleConvertMaskToShape(); return; }
+        if (action == importSvgIntoShapeAction) { handleImportSvgIntoShape(); return; }
+        if (action == createShapesFromVectorAction) { handleCreateShapesFromVectorLayer(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
         if (action == applyLipSyncAction) { handleApplyLipSyncToSwitchLayer(); return; }
@@ -2049,6 +2067,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createShapeTriangleAction->setEnabled(hasProject);
     createShapeEllipseAction->setEnabled(hasProject);
     createShapeStarAction->setEnabled(hasProject);
+    createShapeLineAction->setEnabled(hasProject);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
@@ -2107,6 +2126,16 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     }
     convertShapeToMaskAction->setEnabled(isShapeLayerSelected);
     linkShapeToMaskAction->setEnabled(isShapeLayerSelected);
+    importSvgIntoShapeAction->setEnabled(isShapeLayerSelected);
+    bool isSvgLayerSelected = false;
+    if (hasLayer && service) {
+        if (auto comp = service->currentComposition().lock()) {
+            isSvgLayerSelected = static_cast<bool>(
+                ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(
+                    comp->layerById(selectedLayerId_)));
+        }
+    }
+    createShapesFromVectorAction->setEnabled(isSvgLayerSelected);
     cacheDefaultAction->setEnabled(hasLayer);
     cacheEnabledAction->setEnabled(hasLayer);
     cacheDisabledAction->setEnabled(hasLayer);
@@ -3737,6 +3766,125 @@ void ArtifactLayerMenu::Impl::handleConvertMaskToShape()
             QStringLiteral("マスクをシェイプへ変換できませんでした。"));
         return;
     }
+}
+
+// F9: SVG file import into the selected shape layer. Parsing runs first so
+// the Undo command only ever carries convertible contents.
+void ArtifactLayerMenu::Impl::handleImportSvgIntoShape()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto shapeLayer = composition
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              composition->layerById(selectedLayerId_))
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!shapeLayer) {
+        return;
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        menu_ ? menu_->window() : nullptr,
+        QStringLiteral("SVGをシェイプに取り込み"),
+        QString(),
+        QStringLiteral("SVG Files (*.svg);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    QFile file(filePath);
+    if (!file.exists() || file.size() > 64 * 1024 * 1024) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
+                             QStringLiteral("ファイルを開けません(64MB上限)。"));
+        return;
+    }
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
+                             QStringLiteral("ファイルを読み込めませんでした。"));
+        return;
+    }
+    const QString text = QString::fromUtf8(file.readAll());
+    file.close();
+    const std::vector<Artifact::ShapeContent> parsed =
+        ArtifactShapeLayer::parseShapeContentsFromSvg(text);
+    if (parsed.empty()) {
+        QMessageBox::information(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
+                                 QStringLiteral("変換可能なシェイプがありません。"));
+        return;
+    }
+
+    const int beforeCount = shapeLayer->shapeContentCount();
+    if (!applyLayerMenuUndoCommand(std::make_unique<ShapeSvgImportUndoCommand>(
+            shapeLayer, beforeCount, parsed))) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
+                             QStringLiteral("シェイプへ取り込めませんでした。"));
+        return;
+    }
+    service->selectLayer(shapeLayer->id());
+}
+
+// F9: AE "Create Shapes from Vector Layer" equivalent. The selected SVG
+// layer stays untouched; a new undoable shape layer receives the contents.
+void ArtifactLayerMenu::Impl::handleCreateShapesFromVectorLayer()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto svgLayer = composition
+        ? ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(
+              composition->layerById(selectedLayerId_))
+        : ArtifactCore::SharedPtr<ArtifactSvgLayer>{};
+    if (!svgLayer || !composition) {
+        return;
+    }
+    const QString sourcePath = svgLayer->sourcePath();
+    QFile file(sourcePath);
+    if (sourcePath.trimmed().isEmpty() || !file.exists() ||
+        file.size() > 64 * 1024 * 1024) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
+                             QStringLiteral("SVGソースを開けません。"));
+        return;
+    }
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
+                             QStringLiteral("SVGソースを読み込めませんでした。"));
+        return;
+    }
+    const QString text = QString::fromUtf8(file.readAll());
+    file.close();
+    const std::vector<Artifact::ShapeContent> parsed =
+        ArtifactShapeLayer::parseShapeContentsFromSvg(text);
+    if (parsed.empty()) {
+        QMessageBox::information(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
+                                 QStringLiteral("変換可能なシェイプがありません。"));
+        return;
+    }
+
+    auto shapeLayer = ArtifactCore::makeShared<ArtifactShapeLayer>();
+    shapeLayer->setLayerName(uniqueLayerName(svgLayer->layerName() + QStringLiteral(" Shapes")));
+    const auto sourceSize = svgLayer->sourceSize();
+    shapeLayer->setSize(std::max(1, sourceSize.width), std::max(1, sourceSize.height));
+    for (const auto& content : parsed) {
+        if (shapeLayer->addShapeContent(content) < 0) {
+            QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
+                                 QStringLiteral("シェイプ内容を追加できませんでした。"));
+            return;
+        }
+    }
+    auto transaction = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Create Shapes from Vector Layer"));
+    transaction->addChild(
+        std::make_unique<AddLayerCommand>(composition, shapeLayer));
+    if (!applyLayerMenuUndoCommand(std::move(transaction))) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
+                             QStringLiteral("シェイプレイヤーを作成できませんでした。"));
+        return;
+    }
+    service->selectLayer(shapeLayer->id());
 }
 
 void ArtifactLayerMenu::Impl::handleLoadMaskPreset()
