@@ -46,7 +46,8 @@ int64_t componentSnapshotFrameFromJson(const QJsonObject& object,
 }
 
 void submitFractureRenderElement(ArtifactIRenderer *renderer,
-                                 const FractureRenderElement &element) {
+                                 const FractureRenderElement &element,
+                                 Diligent::ITextureView* sourceTexture) {
   if (!renderer || element.empty()) {
     return;
   }
@@ -54,7 +55,17 @@ void submitFractureRenderElement(ArtifactIRenderer *renderer,
     renderer->drawParticles(element.debris);
   }
   for (const auto &shard : element.shards) {
-    renderer->drawSolidPolygonLocal(shard.polygon, shard.color);
+    if (sourceTexture && shard.polygon.size() >= 3U &&
+        shard.polygon.size() == shard.uv.size()) {
+      for (std::size_t i = 1; i + 1 < shard.polygon.size(); ++i) {
+        renderer->drawTexturedTriangleTransformed(
+            shard.polygon[0], shard.polygon[i], shard.polygon[i + 1],
+            shard.uv[0], shard.uv[i], shard.uv[i + 1], QMatrix4x4{},
+            sourceTexture, shard.color.a());
+      }
+    } else {
+      renderer->drawSolidPolygonLocal(shard.polygon, shard.color);
+    }
   }
 }
 

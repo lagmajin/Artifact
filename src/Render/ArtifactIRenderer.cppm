@@ -4410,6 +4410,26 @@ void ArtifactIRenderer::drawSolidTriangleLocal(Detail::float2 p0, Detail::float2
 void ArtifactIRenderer::drawSolidPolygonLocal(const std::vector<Detail::float2>& points,
                                               const FloatColor& color)
 { impl_->drawSolidPolygonLocal(points, color); }
+void ArtifactIRenderer::drawTexturedTriangleTransformed(
+    Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 uv0,
+    Detail::float2 uv1, Detail::float2 uv2, const QMatrix4x4 &transform,
+    Diligent::ITextureView *texture, float opacity)
+{
+  impl_->primitiveRenderer_.drawTexturedTriangleTransformed(
+      toDiligentFloat2(p0), toDiligentFloat2(p1), toDiligentFloat2(p2),
+      toDiligentFloat2(uv0), toDiligentFloat2(uv1), toDiligentFloat2(uv2),
+      transform, texture, opacity);
+}
+
+Diligent::ITextureView* ArtifactIRenderer::textureForImage(
+    const ArtifactCore::ImageF32x4_RGBA& image) {
+  return impl_->primitiveRenderer_.textureForImage(image);
+}
+
+Diligent::ITextureView* ArtifactIRenderer::textureForImage(
+    const QImage& image) {
+  return impl_->primitiveRenderer_.textureForImage(image);
+}
 void ArtifactIRenderer::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
 { impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
  void ArtifactIRenderer::drawCrosshair(float x, float y, float size, const FloatColor& color)

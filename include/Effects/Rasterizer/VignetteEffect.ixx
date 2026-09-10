@@ -34,6 +34,20 @@ public:
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
     bool supportsGPU() const override { return true; }
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        if (radius_ <= 0.0f) return false;
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Vignette;
+        node.parameters[0] = amount_;
+        node.parameters[1] = radius_;
+        node.parameters[2] = feather_;
+        node.parameters[3] = cx_;
+        node.parameters[4] = cy_;
+        return stack.append(node);
+    }
 
 private:
     float amount_=0.7f,radius_=0.8f,feather_=0.4f,cx_=0.5f,cy_=0.5f;

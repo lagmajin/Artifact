@@ -10,6 +10,10 @@ module;
 #include <limits>
 #include <vector>
 
+namespace Diligent {
+struct ITextureView;
+}
+
 export module Artifact.Layer.RuntimeRenderSupport;
 
 import Artifact.Render.IRenderer;
@@ -22,6 +26,7 @@ export namespace Artifact {
 
 struct FractureShardRenderPrimitive {
   std::vector<Detail::float2> polygon;
+  std::vector<Detail::float2> uv;
   ArtifactCore::FloatColor color;
 };
 
@@ -49,7 +54,8 @@ std::int64_t componentSnapshotFrameFromJson(const QJsonObject& object,
                                             const QString& key);
 
 void submitFractureRenderElement(ArtifactIRenderer* renderer,
-                                 const FractureRenderElement& element);
+                                 const FractureRenderElement& element,
+                                 Diligent::ITextureView* sourceTexture = nullptr);
 ArtifactCore::ParticleRenderData makeLiquid2DRenderData(
     const ArtifactCore::LiquidSnapshot2D& snapshot,
     const QRectF& bounds,

@@ -3022,10 +3022,14 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      // space even when the layer is rotated or scaled.
      if (!cachedSnapVLines_.empty() || !cachedSnapHLines_.empty()) {
       QPointF worldAnchor = dragStartGlobalTransform_.map(targetLocalAnchor);
-      snapValueToGuides(worldAnchor.rx(), cachedSnapVLines_, SNAP_DIST, true,
+      float worldAnchorX = static_cast<float>(worldAnchor.x());
+      float worldAnchorY = static_cast<float>(worldAnchor.y());
+      snapValueToGuides(worldAnchorX, cachedSnapVLines_, SNAP_DIST, true,
                         comp, activeSnapLines_);
-      snapValueToGuides(worldAnchor.ry(), cachedSnapHLines_, SNAP_DIST, false,
+      snapValueToGuides(worldAnchorY, cachedSnapHLines_, SNAP_DIST, false,
                         comp, activeSnapLines_);
+      worldAnchor.setX(static_cast<qreal>(worldAnchorX));
+      worldAnchor.setY(static_cast<qreal>(worldAnchorY));
       targetLocalAnchor = inv.map(worldAnchor);
      }
     }

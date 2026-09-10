@@ -38,7 +38,8 @@ QVector<qint64> transientFrames(const QVector<float>& peaks, qint64 begin, qint6
     const double value = std::abs(peaks[i]);
     if (value >= threshold && value >= std::abs(peaks[i - 1]) && value > std::abs(peaks[i + 1])) {
       frames.push_back(begin + static_cast<qint64>(std::llround(
-          static_cast<double>(i) * duration / std::max(1, peaks.size() - 1))));
+          static_cast<double>(i) * duration /
+          std::max<qsizetype>(1, peaks.size() - 1))));
     }
   }
   return frames;
@@ -194,7 +195,8 @@ void ArtifactAudioMiniWidget::refresh() {
       impl_->transients = transientFrames(impl_->peaks, impl_->begin, impl_->duration);
       const BeatAnalysis analysis = analyzeBeats(
           impl_->peaks, impl_->begin, impl_->duration,
-          std::max(1.0, composition->frameRate().framerate()));
+          std::max<double>(1.0,
+                           static_cast<double>(composition->frameRate().framerate())));
       impl_->beats = analysis.frames;
       impl_->bpm = analysis.bpm;
       impl_->sections = analyzeSections(impl_->peaks, impl_->begin, impl_->duration);
@@ -225,7 +227,10 @@ void ArtifactAudioMiniWidget::paintEvent(QPaintEvent*) {
   painter.setPen(QColor(97, 205, 146));
   const int center = wave.center().y();
   for (int x = 0; x < wave.width(); ++x) {
-    const int index = std::clamp(static_cast<int>(static_cast<double>(x) * impl_->peaks.size() / wave.width()), 0, impl_->peaks.size() - 1);
+    const int index = std::clamp(
+        static_cast<int>(static_cast<double>(x) * impl_->peaks.size() /
+                         wave.width()),
+        0, static_cast<int>(impl_->peaks.size() - 1));
     const int amplitude = static_cast<int>(std::clamp(std::abs(impl_->peaks[index]), 0.0f, 1.0f) * wave.height() * 0.48f);
     painter.drawLine(wave.left() + x, center - amplitude, wave.left() + x, center + amplitude);
   }
@@ -291,7 +296,8 @@ void ArtifactAudioMiniWidget::seekBeat(bool next) {
     target = impl_->beats.front();
     for (const qint64 frame : impl_->beats) { if (frame >= impl_->currentFrame) break; target = frame; }
   }
-  ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(TimelineSeekRequestedEvent{target});
+  ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
+      TimelineSeekRequestedEvent{static_cast<double>(target)});
 }
 
 bool ArtifactAudioMiniWidget::addGuideMarkers(bool everyFourBeats) {
@@ -337,7 +343,8 @@ void ArtifactAudioMiniWidget::mouseReleaseEvent(QMouseEvent* event) {
   if (!wave.contains(event->pos())) return;
   const double ratio = std::clamp((event->position().x() - wave.left()) / std::max(1.0, static_cast<double>(wave.width())), 0.0, 1.0);
   const qint64 frame = impl_->begin + static_cast<qint64>(std::llround(ratio * impl_->duration));
-  ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(TimelineSeekRequestedEvent{frame});
+  ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
+      TimelineSeekRequestedEvent{static_cast<double>(frame)});
 }
 
 void ArtifactAudioMiniWidget::keyPressEvent(QKeyEvent* event) {

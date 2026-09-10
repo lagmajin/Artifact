@@ -20,6 +20,7 @@ module;
 export module Artifact.Widgets.CompositionRenderController;
 
 import Color.Float;
+import Memory.SharedPtr;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;

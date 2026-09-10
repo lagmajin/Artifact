@@ -2580,6 +2580,9 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                         transform, buffer, this->opacity() * weight * lensOpacity, uvRect);
                 });
         }
+        drawFractureOverlay(renderer, baseTransform,
+                            QSizeF(size.width, size.height), opacity(),
+                            renderer->textureForImage(buffer));
         return;
     }
 
@@ -2623,7 +2626,8 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
             });
     }
 
-    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
+    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height),
+                        opacity(), renderer->textureForImage(img));
 }
 
 QImage ArtifactImageLayer::toQImage() const

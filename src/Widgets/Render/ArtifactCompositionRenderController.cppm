@@ -3510,7 +3510,7 @@ QRectF effectExpandedLayerBounds(const ArtifactAbstractLayer *layer) {
   return bounds.adjusted(-expansion, -expansion, expansion, expansion);
 }
 
-bool buildGpuPointwiseColorStack(
+[[maybe_unused]] bool buildGpuPointwiseColorStack(
     ArtifactAbstractLayer *layer,
     ArtifactCore::PointwiseEffectStack *outStack) {
   if (!layer || !outStack || layer->isAdjustmentLayer()) {
@@ -3655,6 +3655,103 @@ bool buildGpuPointwiseColorStack(
   }
   *outStack = std::move(stack);
   return true;
+}
+
+[[maybe_unused]] bool buildGpuSpatialEffectStack(
+    ArtifactAbstractLayer* layer, GpuSpatialEffectStack* outStack) {
+  if (!layer || !outStack || layer->isAdjustmentLayer()) return false;
+  GpuSpatialEffectStack stack;
+  for (const auto& effect : layer->getEffects()) {
+    if (!effect || !effect->isEnabled()) continue;
+    if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+        effect->computeMode() == ComputeMode::CPU || effect->hasEffectRegion() ||
+        effect->hasMask() || effect->effectMaskImageCount() > 0 ||
+        std::abs(effect->mix() - 1.0f) > 1.0e-6f ||
+        !effect->appendGpuSpatialNodes(stack)) {
+      return false;
+    }
+  }
+  *outStack = stack;
+  return stack.count > 0;
+}
+
+enum class GpuRasterPassKind : std::uint8_t {
+  Pointwise,
+  Spatial,
+};
+
+struct GpuRasterPass {
+  GpuRasterPassKind kind = GpuRasterPassKind::Pointwise;
+  ArtifactCore::PointwiseEffectStack pointwise;
+  GpuSpatialEffectNode spatial;
+};
+
+struct GpuRasterEffectPlan {
+  static constexpr std::size_t kCapacity = GpuSpatialEffectStack::kCapacity;
+  std::array<GpuRasterPass, kCapacity> passes{};
+  std::size_t count = 0;
+
+  bool appendPointwise(ArtifactCore::PointwiseEffectStack&& stack) {
+    if (count >= passes.size()) return false;
+    passes[count].kind = GpuRasterPassKind::Pointwise;
+    passes[count].pointwise = std::move(stack);
+    ++count;
+    return true;
+  }
+
+  bool appendSpatial(const GpuSpatialEffectNode& node) {
+    if (count >= passes.size()) return false;
+    passes[count].kind = GpuRasterPassKind::Spatial;
+    passes[count].spatial = node;
+    ++count;
+    return true;
+  }
+};
+
+bool buildGpuRasterEffectPlan(
+    ArtifactAbstractLayer* layer, GpuRasterEffectPlan* outPlan) {
+  if (!layer || !outPlan || layer->isAdjustmentLayer()) return false;
+  GpuRasterEffectPlan plan;
+  ArtifactCore::PointwiseEffectStack pointwise;
+  std::uint32_t parameterSlot = 0;
+  for (const auto& effect : layer->getEffects()) {
+    if (!effect || !effect->isEnabled()) continue;
+    if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+        effect->computeMode() == ComputeMode::CPU || effect->hasEffectRegion() ||
+        effect->hasMask() || effect->effectMaskImageCount() > 0 ||
+        std::abs(effect->mix() - 1.0f) > 1.0e-6f) {
+      return false;
+    }
+
+    if (effect->gpuRasterEffectDomain() == GpuRasterEffectDomain::Pointwise) {
+      if (!effect->appendGpuPointwiseNodes(pointwise, parameterSlot) ||
+          parameterSlot >= ArtifactCore::PointwiseEffectStack::kParameterSlotCount) {
+        return false;
+      }
+      continue;
+    }
+
+    if (effect->gpuRasterEffectDomain() != GpuRasterEffectDomain::Spatial) {
+      return false;
+    }
+    if (!pointwise.nodes().empty()) {
+      if (!plan.appendPointwise(std::move(pointwise))) return false;
+      pointwise = {};
+      parameterSlot = 0;
+    }
+    GpuSpatialEffectStack spatial;
+    if (!effect->appendGpuSpatialNodes(spatial) || spatial.count == 0) {
+      return false;
+    }
+    for (std::size_t index = 0; index < spatial.count; ++index) {
+      if (!plan.appendSpatial(spatial.nodes[index])) return false;
+    }
+  }
+  if (!pointwise.nodes().empty() && !plan.appendPointwise(std::move(pointwise))) {
+    return false;
+  }
+  *outPlan = std::move(plan);
+  return outPlan->count > 0;
 }
 
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
@@ -5117,6 +5214,31 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
   }
 
 
+
+  if (auto *shapeLayer = dynamic_cast<ArtifactShapeLayer *>(layer)) {
+    bool animated = shapeLayer->hasPathKeyframes();
+    if (!animated) {
+      for (const auto &group : shapeLayer->getLayerPropertyGroups()) {
+        for (const auto &property : group.sortedProperties()) {
+          if (property && !property->getKeyFrames().empty()) {
+            animated = true;
+            break;
+          }
+        }
+        if (animated) {
+          break;
+        }
+      }
+    }
+    key += QStringLiteral("|shape|w=%1|h=%2|type=%3")
+               .arg(shapeLayer->shapeWidth())
+               .arg(shapeLayer->shapeHeight())
+               .arg(static_cast<int>(shapeLayer->shapeType()));
+    if (animated) {
+      key += QStringLiteral("|frame=%1").arg(frameNumber);
+    }
+    return key;
+  }
 
   if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(layer)) {
 
@@ -9102,6 +9224,29 @@ void drawLayerForCompositionView(
 
   }
 
+  if (auto *shapeLayer = dynamic_cast<ArtifactShapeLayer *>(layer)) {
+    // The composition GPU path already renders this layer into the reusable
+    // per-layer RTV. When the complete rasterizer stack has a GPU node
+    // representation, keep the vector draw on that target and let
+    // prepareGpuLayerForBlend() run the pointwise or spatial passes. Falling through
+    // to toQImage() here would rasterize with QPainter, convert on CPU, and
+    // upload the same frame again.
+    if (deferRasterizerEffectsToGpu && !layer->hasMasks()) {
+      shapeLayer->draw(renderer);
+      return;
+    }
+    if (layerHasRasterizerEffectsOrMasks(layer)) {
+      const QImage shapeImg = shapeLayer->toQImage();
+      if (!shapeImg.isNull()) {
+        applySurfaceAndDraw(shapeImg, localRect, true);
+        return;
+      }
+    } else {
+      shapeLayer->draw(renderer);
+      return;
+    }
+  }
+
 
 
   if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(layer)) {
@@ -10955,7 +11100,7 @@ public:
       bool preserveSceneDepth, RenderPipeline* renderPipeline,
       Diligent::ITextureView* msaaColorRTV = nullptr,
       Diligent::ITextureView* msaaDepthDSV = nullptr,
-      ArtifactCore::PointwiseEffectStack* outLayerPointwiseStack = nullptr) {
+      GpuRasterEffectPlan* outRasterEffectPlan = nullptr) {
 
     // Mesh draws require color/depth attachments with the same dimensions.
     // Without this explicit depth target, the layer RTV is paired with the
@@ -11240,13 +11385,33 @@ public:
 
 
 
-    ArtifactCore::PointwiseEffectStack layerPointwiseStack;
+    GpuRasterEffectPlan rasterEffectPlan;
     const bool deferRasterizerEffectsToGpu =
         blendPipeline_ && renderer_->immediateContext() &&
-        buildGpuPointwiseColorStack(layer, &layerPointwiseStack);
-    if (outLayerPointwiseStack) {
-      *outLayerPointwiseStack = layerPointwiseStack;
+        buildGpuRasterEffectPlan(layer, &rasterEffectPlan);
+    if (deferRasterizerEffectsToGpu) {
+      const bool interactiveDraft =
+          viewportInteracting_ ||
+          previewDownsample_ >= interactivePreviewDownsampleFloor_;
+      const float effectResolutionScale = interactiveDraft
+          ? 0.25f
+          : lod == DetailLevel::Low
+                ? 0.25f
+                : lod == DetailLevel::Medium ? 0.5f : 1.0f;
+      for (std::size_t index = 0; index < rasterEffectPlan.count; ++index) {
+        auto& pass = rasterEffectPlan.passes[index];
+        if (pass.kind != GpuRasterPassKind::Spatial) continue;
+        auto& node = pass.spatial;
+        for (std::size_t parameterIndex = 0;
+             parameterIndex < node.parameters.size(); ++parameterIndex) {
+          if ((node.resolutionScaledParameterMask &
+               (1u << parameterIndex)) != 0) {
+            node.parameters[parameterIndex] *= effectResolutionScale;
+          }
+        }
+      }
     }
+    if (outRasterEffectPlan) *outRasterEffectPlan = std::move(rasterEffectPlan);
 
     QString* dbgOut = &lastVideoDebug_;
 
@@ -11501,7 +11666,7 @@ public:
 
       Diligent::ITextureView* layerFloatUAV, Diligent::ITextureView* tempUAV,
 
-      const ArtifactCore::PointwiseEffectStack* pointwiseStack,
+      const GpuRasterEffectPlan* rasterEffectPlan,
 
       const QHash<ArtifactCore::Id, QImage>& matteSourceImages,
 
@@ -11535,13 +11700,29 @@ public:
 
     ++layerToFloatConvertCount;
 
-    if (pointwiseStack && !pointwiseStack->nodes().empty() &&
-        !applyGpuPointwiseToLayer(renderPipeline, layerFloatSRV, layerFloatUAV,
-                                  tempUAV, *pointwiseStack)) {
-      qWarning() << "[CompositionView] layer pointwise GPU pass failed; "
-                    "rejecting the layer rather than displaying unmodified colors"
-                 << "layer=" << layer->id().toString();
-      return nullptr;
+    if (rasterEffectPlan && rasterEffectPlan->count > 0) {
+      const auto context = renderer_->immediateContext();
+      if (!context) return nullptr;
+      for (std::size_t index = 0; index < rasterEffectPlan->count; ++index) {
+        const auto& pass = rasterEffectPlan->passes[index];
+        if (pass.kind == GpuRasterPassKind::Pointwise) {
+          if (!applyGpuPointwiseToLayer(renderPipeline, layerFloatSRV,
+                                        layerFloatUAV, tempUAV,
+                                        pass.pointwise)) {
+            qWarning() << "[CompositionView] layer pointwise GPU pass failed"
+                       << "layer=" << layer->id().toString();
+            return nullptr;
+          }
+        } else if (!renderPipeline.applySpatialEffect(
+                       context.RawPtr(), layerFloatSRV, tempUAV, layerFloatUAV,
+                       pass.spatial)) {
+          qWarning() << "[CompositionView] layer spatial GPU pass failed; "
+                        "rejecting the layer rather than dropping an effect"
+                     << "layer=" << layer->id().toString()
+                     << "node=" << static_cast<int>(pass.spatial.kind);
+          return nullptr;
+        }
+      }
     }
 
     const auto mattes = layer->matteReferences();
@@ -37850,7 +38031,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               &renderPipeline, layerRTV, layerSRV, layerFloatSRV,
 
               layerFloatUAV, accumSRV, tempUAV};
-          ArtifactCore::PointwiseEffectStack layerPointwiseStack;
+          GpuRasterEffectPlan layerRasterEffectPlan;
 
           FunctionalRenderPass layerRasterPass(
 
@@ -37887,7 +38068,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                         ? static_cast<Diligent::ITextureView*>(
                               previewRenderSlot.msaaDepthTargetView)
                         : nullptr,
-                    &layerPointwiseStack);
+                    &layerRasterEffectPlan);
                 // applyPointwise() may swap the accumulation ping-pong
                 // textures. Keep the following mask/blend passes on the
                 // resulting resource rather than the pre-effect SRV.
@@ -38016,7 +38197,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     resources.layerFloatSRV, resources.layerFloatUAV,
 
-                    resources.tempUAV, &layerPointwiseStack, matteSourceImages,
+                    resources.tempUAV, &layerRasterEffectPlan,
+                    matteSourceImages,
                     matteSourceGpuViews, layerToFloatConvertCount,
                     convertedLayerToFloat);
 

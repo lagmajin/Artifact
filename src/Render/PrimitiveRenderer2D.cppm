@@ -1149,6 +1149,112 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     impl_->cmdBuf_->append(pkt);
 }
 
+void PrimitiveRenderer2D::drawTexturedTriangleTransformed(
+    float2 p0, float2 p1, float2 p2, float2 uv0, float2 uv1, float2 uv2,
+    const QMatrix4x4& transform, ITextureView* texture, float opacity)
+{
+    if (!impl_->cmdBuf_ || !texture) return;
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    QMatrix4x4 canvasToNdc;
+    canvasToNdc.setToIdentity();
+    canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+    canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+    canvasToNdc.scale(zoom, zoom, 1.0f);
+    canvasToNdc.translate(viewportCB.offset.x / zoom,
+                          viewportCB.offset.y / zoom, 0.0f);
+    const QMatrix4x4 finalTransform = canvasToNdc * transform;
+    TexturedTriangleXformPkt pkt;
+    pkt.mat.row0 = {finalTransform.row(0).x(), finalTransform.row(0).y(), finalTransform.row(0).z(), finalTransform.row(0).w()};
+    pkt.mat.row1 = {finalTransform.row(1).x(), finalTransform.row(1).y(), finalTransform.row(1).z(), finalTransform.row(1).w()};
+    pkt.mat.row2 = {finalTransform.row(2).x(), finalTransform.row(2).y(), finalTransform.row(2).z(), finalTransform.row(2).w()};
+    pkt.mat.row3 = {finalTransform.row(3).x(), finalTransform.row(3).y(), finalTransform.row(3).z(), finalTransform.row(3).w()};
+    pkt.p0 = p0;
+    pkt.p1 = p1;
+    pkt.p2 = p2;
+    pkt.uv0 = uv0;
+    pkt.uv1 = uv1;
+    pkt.uv2 = uv2;
+    pkt.pSRV = texture;
+    pkt.color = {1.0f, 1.0f, 1.0f, opacity};
+    impl_->cmdBuf_->append(pkt);
+}
+
+ITextureView* PrimitiveRenderer2D::textureForImage(
+    const ArtifactCore::ImageF32x4_RGBA& image) {
+    if (image.isEmpty() || !impl_->pDevice_) return nullptr;
+    ++impl_->m_frameCount;
+    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    const qint64 cacheKey = computeImageContentKey(image);
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it == impl_->m_spriteTexCache.end()) {
+        const auto upload = ArtifactCore::convertImageForUpload(
+            image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight);
+        if (!upload.isValid()) return nullptr;
+        TextureDesc desc;
+        desc.Type = RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Uint32>(upload.width);
+        desc.Height = static_cast<Uint32>(upload.height);
+        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        desc.MipLevels = 1;
+        desc.Usage = USAGE_IMMUTABLE;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        TextureSubResData subData;
+        subData.pData = upload.bytes.data();
+        subData.Stride = upload.rowStride;
+        TextureData data;
+        data.pSubResources = &subData;
+        data.NumSubresources = 1;
+        RefCntAutoPtr<ITexture> texture;
+        impl_->pDevice_->CreateTexture(desc, &data, &texture);
+        if (!texture) return nullptr;
+        impl_->m_spriteTexCache[cacheKey] = {texture, impl_->m_frameCount};
+        it = impl_->m_spriteTexCache.find(cacheKey);
+    }
+    it->second.lastUsedFrame = impl_->m_frameCount;
+    return it->second.pTexture
+        ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+        : nullptr;
+}
+
+ITextureView* PrimitiveRenderer2D::textureForImage(const QImage& image) {
+    if (image.isNull() || !impl_->pDevice_) return nullptr;
+    ++impl_->m_frameCount;
+    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    const qint64 cacheKey = computeImageContentKey(image);
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it == impl_->m_spriteTexCache.end()) {
+        const QImage rgba = image.format() == QImage::Format_RGBA8888
+            ? image : image.convertToFormat(QImage::Format_RGBA8888);
+        if (rgba.isNull()) return nullptr;
+        TextureDesc desc;
+        desc.Type = RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Uint32>(rgba.width());
+        desc.Height = static_cast<Uint32>(rgba.height());
+        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        desc.MipLevels = 1;
+        desc.Usage = USAGE_IMMUTABLE;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        TextureSubResData subData;
+        subData.pData = rgba.constBits();
+        subData.Stride = static_cast<Uint64>(rgba.bytesPerLine());
+        TextureData data;
+        data.pSubResources = &subData;
+        data.NumSubresources = 1;
+        RefCntAutoPtr<ITexture> texture;
+        impl_->pDevice_->CreateTexture(desc, &data, &texture);
+        if (!texture) return nullptr;
+        impl_->m_spriteTexCache[cacheKey] = {texture, impl_->m_frameCount};
+        it = impl_->m_spriteTexCache.find(cacheKey);
+    }
+    it->second.lastUsedFrame = impl_->m_frameCount;
+    return it->second.pTexture
+        ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+        : nullptr;
+}
+
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity, const QRectF& uvRect)
 {
     if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) return;

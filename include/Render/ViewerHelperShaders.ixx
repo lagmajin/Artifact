@@ -59,6 +59,7 @@ export namespace Artifact
         if (grid.x < thickness || grid.y < thickness)
             return gridColor;
         discard;
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
     )HLSL";
 }

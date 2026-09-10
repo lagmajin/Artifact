@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <QString>
 #include <QVariant>
 #include <QPointF>
@@ -1517,9 +1521,10 @@ public:
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
         ArtifactCore::ImageF32x4_RGBA result;
-        if (!runWireEffectCPU(src.image(), result, job_, context_.sampler,
-                              context_.compositionFrame, context_.timeSeconds,
-                              context_.frameRate)) {
+        if (!runWireEffectCPU(src.image(), result, job_, ArtifactEffectImplBase::context_.sampler,
+                              ArtifactEffectImplBase::context_.compositionFrame,
+                              ArtifactEffectImplBase::context_.timeSeconds,
+                              ArtifactEffectImplBase::context_.frameRate)) {
             dst = src;
             return;
         }
@@ -1534,9 +1539,10 @@ public:
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
         ArtifactCore::ImageF32x4_RGBA result;
-        if (!runWireEffectCPU(src.image(), result, job_, context_.sampler,
-                              context_.compositionFrame, context_.timeSeconds,
-                              context_.frameRate)) {
+        if (!runWireEffectCPU(src.image(), result, job_, ArtifactEffectImplBase::context_.sampler,
+                              ArtifactEffectImplBase::context_.compositionFrame,
+                              ArtifactEffectImplBase::context_.timeSeconds,
+                              ArtifactEffectImplBase::context_.frameRate)) {
             dst = src;
             return;
         }
@@ -1552,7 +1558,7 @@ public:
             applyCPU(src, dst);
             return;
         }
-        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_, deviceContext_)) {
             applyCPU(src, dst);
             return;
         }
@@ -1564,15 +1570,16 @@ public:
             return;
         }
         WireRemoverJob job = job_;
-        resolveWireSegments(job, context_.timeSeconds, context_.frameRate,
+        resolveWireSegments(job, ArtifactEffectImplBase::context_.timeSeconds,
+                            ArtifactEffectImplBase::context_.frameRate,
                             width, height);
 
         Diligent::RefCntAutoPtr<Diligent::ITexture> maskTex;
         bool useMaskTex = false;
         ImageF32x4RGBAWithCache maskImage;
-        if (context_.sampler && !job.maskInput.trimmed().isEmpty() &&
-            context_.sampler->sampleNamedInput(job.maskInput,
-                                               context_.compositionFrame,
+        if (ArtifactEffectImplBase::context_.sampler && !job.maskInput.trimmed().isEmpty() &&
+            ArtifactEffectImplBase::context_.sampler->sampleNamedInput(job.maskInput,
+                                               ArtifactEffectImplBase::context_.compositionFrame,
                                                maskImage)) {
             cv::Mat maskRgba;
             if (prepareAuxiliaryImage(maskImage, width, height, maskRgba)) {
@@ -1591,9 +1598,9 @@ public:
         Diligent::RefCntAutoPtr<Diligent::ITexture> cleanTex;
         bool useCleanTex = false;
         ImageF32x4RGBAWithCache replacementImage;
-        if (context_.sampler && !job.cleanInput.trimmed().isEmpty() &&
-            context_.sampler->sampleNamedInput(job.cleanInput,
-                                               context_.compositionFrame,
+        if (ArtifactEffectImplBase::context_.sampler && !job.cleanInput.trimmed().isEmpty() &&
+            ArtifactEffectImplBase::context_.sampler->sampleNamedInput(job.cleanInput,
+                                               ArtifactEffectImplBase::context_.compositionFrame,
                                                replacementImage)) {
             cv::Mat replacement;
             if (prepareAuxiliaryImage(replacementImage, width, height,
@@ -1603,9 +1610,9 @@ public:
                                                  "WireRemover/Clean");
             }
         }
-        if (!useCleanTex && context_.sampler && job.temporalOffset != 0 &&
-            context_.sampler->sampleCurrentLayerFrame(
-                context_.compositionFrame + job.temporalOffset,
+        if (!useCleanTex && ArtifactEffectImplBase::context_.sampler && job.temporalOffset != 0 &&
+            ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrame(
+                ArtifactEffectImplBase::context_.compositionFrame + job.temporalOffset,
                 replacementImage)) {
             cv::Mat replacement;
             if (prepareAuxiliaryImage(replacementImage, width, height,
@@ -1617,7 +1624,7 @@ public:
         }
 
         if (!gpuContext_) {
-            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, deviceContext_);
             executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
         }
         if (!executor_) {
@@ -1680,7 +1687,7 @@ public:
             return;
         }
         // A 1x1 black fallback keeps unbound texture slots valid.
-        Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex = fallbackTexture();
+        Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex(fallbackTexture());
         Diligent::ITexture* maskSlot = useMaskTex ? maskTex.RawPtr() : fallbackTex.RawPtr();
         Diligent::ITexture* cleanSlot = useCleanTex ? cleanTex.RawPtr() : fallbackTex.RawPtr();
         if (!maskSlot || !cleanSlot) {
@@ -1688,7 +1695,7 @@ public:
             return;
         }
         void* mapped = nullptr;
-        context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        deviceContext_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
             applyCPU(src, dst);
             return;
@@ -1714,7 +1721,7 @@ public:
         params.useCleanTex = useCleanTex ? 1 : 0;
         params.viewMask = job.viewMask ? 1 : 0;
         std::memcpy(mapped, &params, sizeof(params));
-        context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        deviceContext_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("ForegroundTexture",
                 inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
             !executor_->setTextureView("MaskTexture",
@@ -1728,9 +1735,9 @@ public:
         }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
             outDesc.Width, outDesc.Height, 1, 16, 16, 1);
-        executor_->dispatch(context_, attribs,
+        executor_->dispatch(deviceContext_, attribs,
                             Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if (!readbackTexture(device_, context_, outputTex_, dst,
+        if (!readbackTexture(device_, deviceContext_, outputTex_, dst,
                              "WireRemover/Staging",
                              srcImage.colorDescriptor())) {
             applyCPU(src, dst);
@@ -1739,7 +1746,7 @@ public:
 
 private:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
-    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> deviceContext_;
     Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex_;
@@ -2622,8 +2629,8 @@ public:
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
         ArtifactCore::ImageF32x4_RGBA result;
-        if (!runDustEffectCPU(src.image(), result, job_, context_.sampler,
-                              context_.compositionFrame)) {
+        if (!runDustEffectCPU(src.image(), result, job_, ArtifactEffectImplBase::context_.sampler,
+                              ArtifactEffectImplBase::context_.compositionFrame)) {
             dst = src;
             return;
         }
@@ -2638,8 +2645,8 @@ public:
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
         ArtifactCore::ImageF32x4_RGBA result;
-        if (!runDustEffectCPU(src.image(), result, job_, context_.sampler,
-                              context_.compositionFrame)) {
+        if (!runDustEffectCPU(src.image(), result, job_, ArtifactEffectImplBase::context_.sampler,
+                              ArtifactEffectImplBase::context_.compositionFrame)) {
             dst = src;
             return;
         }
@@ -2654,7 +2661,7 @@ public:
             applyCPU(src, dst);
             return;
         }
-        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_, deviceContext_)) {
             applyCPU(src, dst);
             return;
         }
@@ -2672,19 +2679,19 @@ public:
         bool usePrev = false, useNext = false, useMaskTex = false;
         ImageF32x4RGBAWithCache auxImage;
         cv::Mat auxRgba;
-        if (!job_.maskOnly && job_.temporalDetect && context_.sampler) {
-            if (context_.sampler->sampleCurrentLayerFrameRelative(-1, auxImage) &&
+        if (!job_.maskOnly && job_.temporalDetect && ArtifactEffectImplBase::context_.sampler) {
+            if (ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrameRelative(-1, auxImage) &&
                 prepareAuxiliaryImage(auxImage, width, height, auxRgba))
                 usePrev = createFloatTexture(auxRgba.ptr<float>(), width, height,
                                              device_, &prevTex, "DustFixer/Prev");
-            if (context_.sampler->sampleCurrentLayerFrameRelative(1, auxImage) &&
+            if (ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrameRelative(1, auxImage) &&
                 prepareAuxiliaryImage(auxImage, width, height, auxRgba))
                 useNext = createFloatTexture(auxRgba.ptr<float>(), width, height,
                                              device_, &nextTex, "DustFixer/Next");
         }
-        if (context_.sampler && !job_.maskInput.trimmed().isEmpty() &&
-            context_.sampler->sampleNamedInput(job_.maskInput,
-                                               context_.compositionFrame,
+        if (ArtifactEffectImplBase::context_.sampler && !job_.maskInput.trimmed().isEmpty() &&
+            ArtifactEffectImplBase::context_.sampler->sampleNamedInput(job_.maskInput,
+                                               ArtifactEffectImplBase::context_.compositionFrame,
                                                auxImage) &&
             prepareAuxiliaryImage(auxImage, width, height, auxRgba)) {
             const cv::Mat extracted = extractAuxiliaryMask(auxRgba);
@@ -2699,7 +2706,7 @@ public:
         }
 
         if (!gpuContext_) {
-            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, deviceContext_);
             executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
         }
         if (!executor_) {
@@ -2762,7 +2769,7 @@ public:
             applyCPU(src, dst);
             return;
         }
-        Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex = fallbackTexture();
+        Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex(fallbackTexture());
         Diligent::ITexture* prevSlot = usePrev ? prevTex.RawPtr() : fallbackTex.RawPtr();
         Diligent::ITexture* nextSlot = useNext ? nextTex.RawPtr() : fallbackTex.RawPtr();
         Diligent::ITexture* maskSlot = useMaskTex ? maskTex.RawPtr() : fallbackTex.RawPtr();
@@ -2771,7 +2778,7 @@ public:
             return;
         }
         void* mapped = nullptr;
-        context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        deviceContext_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
             applyCPU(src, dst);
             return;
@@ -2792,7 +2799,7 @@ public:
         params.useNext = useNext ? 1 : 0;
         params.useMaskTex = useMaskTex ? 1 : 0;
         std::memcpy(mapped, &params, sizeof(params));
-        context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        deviceContext_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("ForegroundTexture",
                 inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
             !executor_->setTextureView("PrevTexture",
@@ -2808,9 +2815,9 @@ public:
         }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
             outDesc.Width, outDesc.Height, 1, 16, 16, 1);
-        executor_->dispatch(context_, attribs,
+        executor_->dispatch(deviceContext_, attribs,
                             Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if (!readbackTexture(device_, context_, outputTex_, dst,
+        if (!readbackTexture(device_, deviceContext_, outputTex_, dst,
                              "DustFixer/Staging", srcImage.colorDescriptor())) {
             applyCPU(src, dst);
         }
@@ -2818,7 +2825,7 @@ public:
 
 private:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
-    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> deviceContext_;
     Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> fallbackTex_;
@@ -3710,24 +3717,61 @@ EffectROIHint ArtifactEdgeColorCompositeEffect::roiHint() const {
 
 namespace {
 
+// Reused creative-compute state. Previously every call rebuilt the compute
+// pipeline (a shader compile) and created output/staging textures from
+// scratch, and never released the shared-device lease. Pipelines live per
+// label; output/staging textures per label+size+format. The per-frame input
+// texture stays immutable-uploaded because its pixels change every call.
+struct CreativeComputeSlot {
+    const char* shaderSource = nullptr;
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor;
+    bool pipelineReady = false;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> output;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
+    Diligent::Uint32 width = 0;
+    Diligent::Uint32 height = 0;
+    Diligent::TEX_FORMAT format = Diligent::TEX_FORMAT_UNKNOWN;
+};
+
+struct CreativeComputeCache {
+    std::mutex mutex;
+    std::unordered_map<std::string, CreativeComputeSlot> slots;
+};
+
+CreativeComputeCache& creativeComputeCache() {
+    static CreativeComputeCache cache;
+    return cache;
+}
+
 bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
                         ImageF32x4RGBAWithCache& dst,
                         const char* label,
                         const char* hlsl) {
+    if (!label || !hlsl) return false;
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
     if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) return false;
     const auto& image = src.image();
     const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView());
-    if (!upload.isValid() || image.width() <= 0 || image.height() <= 0) return false;
+    if (!upload.isValid() || image.width() <= 0 || image.height() <= 0) {
+        releaseSharedRenderDevice();
+        return false;
+    }
+    const Diligent::TEX_FORMAT format =
+        upload.format == ArtifactCore::GpuImageFormat::Rgba16Float
+        ? Diligent::TEX_FORMAT_RGBA16_FLOAT
+        : Diligent::TEX_FORMAT_RGBA32_FLOAT;
+    const auto width = static_cast<Diligent::Uint32>(image.width());
+    const auto height = static_cast<Diligent::Uint32>(image.height());
 
     Diligent::TextureDesc inputDesc;
     inputDesc.Name = label;
     inputDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
-    inputDesc.Width = image.width(); inputDesc.Height = image.height();
-    inputDesc.Format = upload.format == ArtifactCore::GpuImageFormat::Rgba16Float
-        ? Diligent::TEX_FORMAT_RGBA16_FLOAT
-        : Diligent::TEX_FORMAT_RGBA32_FLOAT;
+    inputDesc.Width = width; inputDesc.Height = height;
+    inputDesc.Format = format;
     inputDesc.MipLevels = 1; inputDesc.ArraySize = 1; inputDesc.SampleCount = 1;
     inputDesc.Usage = Diligent::USAGE_IMMUTABLE;
     inputDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
@@ -3739,51 +3783,99 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
     textureData.NumSubresources = 1;
     Diligent::RefCntAutoPtr<Diligent::ITexture> input;
     device->CreateTexture(inputDesc, &textureData, &input);
-    if (!input) return false;
-
-    Diligent::TextureDesc outputDesc = inputDesc;
-    outputDesc.Name = label;
-    outputDesc.Usage = Diligent::USAGE_DEFAULT;
-    outputDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
-    Diligent::RefCntAutoPtr<Diligent::ITexture> output;
-    device->CreateTexture(outputDesc, nullptr, &output);
-    if (!output) return false;
+    if (!input) {
+        releaseSharedRenderDevice();
+        return false;
+    }
 
     static Diligent::ShaderResourceVariableDesc vars[] = {
         {Diligent::SHADER_TYPE_COMPUTE, "g_InputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
         {Diligent::SHADER_TYPE_COMPUTE, "g_OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
-    ArtifactCore::GpuContext gpuContext{device, context};
-    ArtifactCore::ComputeExecutor executor{gpuContext};
-    ArtifactCore::ComputePipelineDesc pipeline{};
-    pipeline.name = label; pipeline.shaderSource = hlsl; pipeline.entryPoint = "main";
-    pipeline.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-    pipeline.variables = vars; pipeline.variableCount = 2;
-    pipeline.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-    if (!executor.build(pipeline) || !executor.createShaderResourceBinding(true) ||
-        !executor.setTextureView("g_InputTexture", input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-        !executor.setTextureView("g_OutputTexture", output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) return false;
-    executor.dispatch(context, ArtifactCore::ComputeExecutor::makeDispatchAttribs(outputDesc.Width, outputDesc.Height, 1, 8, 8, 1), Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    Diligent::TextureDesc stagingDesc = outputDesc;
-    stagingDesc.Name = label; stagingDesc.Usage = Diligent::USAGE_STAGING;
-    stagingDesc.BindFlags = Diligent::BIND_NONE; stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
-    Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
-    device->CreateTexture(stagingDesc, nullptr, &staging);
-    if (!staging) return false;
-    Diligent::CopyTextureAttribs copy(
-        output, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-        staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    context->CopyTexture(copy);
-    context->Flush(); context->WaitForIdle();
-    Diligent::MappedTextureSubresource mapped{};
-    context->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
-    if (!mapped.pData || !mapped.Stride) return false;
-    cv::Mat result(static_cast<int>(outputDesc.Height), static_cast<int>(outputDesc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-    auto outputDescriptor = image.colorDescriptor();
-    outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
-    dst.image().setFromCVMat(result, outputDescriptor);
-    context->UnmapTextureSubresource(staging, 0, 0);
-    return true;
+    bool ok = false;
+    {
+        CreativeComputeCache& cache = creativeComputeCache();
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        const std::string key(label);
+        CreativeComputeSlot& slot = cache.slots[key];
+        if (!slot.device || slot.device.Get() != device.Get() ||
+            slot.shaderSource != hlsl) {
+            // Fresh device, backend switch, or a new shader behind this label:
+            // drop everything and start over. COM refs release themselves.
+            slot = CreativeComputeSlot{};
+            slot.device = device;
+            slot.context = context;
+            slot.shaderSource = hlsl;
+        }
+        if (!slot.gpuContext) {
+            slot.gpuContext = std::make_unique<ArtifactCore::GpuContext>(device, context);
+            slot.executor = std::make_unique<ArtifactCore::ComputeExecutor>(*slot.gpuContext);
+        }
+        if (!slot.output || !slot.staging || slot.width != width ||
+            slot.height != height || slot.format != format) {
+            slot.output.Release();
+            slot.staging.Release();
+            Diligent::TextureDesc outputDesc = inputDesc;
+            outputDesc.Name = label;
+            outputDesc.Usage = Diligent::USAGE_DEFAULT;
+            outputDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
+            device->CreateTexture(outputDesc, nullptr, &slot.output);
+            Diligent::TextureDesc stagingDesc = outputDesc;
+            stagingDesc.Name = label; stagingDesc.Usage = Diligent::USAGE_STAGING;
+            stagingDesc.BindFlags = Diligent::BIND_NONE; stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+            device->CreateTexture(stagingDesc, nullptr, &slot.staging);
+            if (!slot.output || !slot.staging) {
+                slot.output.Release();
+                slot.staging.Release();
+                releaseSharedRenderDevice();
+                return false;
+            }
+            slot.width = width; slot.height = height; slot.format = format;
+        }
+        if (!slot.pipelineReady) {
+            ArtifactCore::ComputePipelineDesc pipeline{};
+            pipeline.name = label; pipeline.shaderSource = hlsl; pipeline.entryPoint = "main";
+            pipeline.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+            pipeline.variables = vars; pipeline.variableCount = 2;
+            pipeline.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+            if (!slot.executor->build(pipeline) ||
+                !slot.executor->createShaderResourceBinding(true)) {
+                cache.slots.erase(key);
+                releaseSharedRenderDevice();
+                return false;
+            }
+            slot.pipelineReady = true;
+        }
+        // Views are (re-)bound every call: the input texture is fresh per call
+        // and the output texture may have been recreated on resize. This
+        // mirrors BlurEffectGPUImpl's per-dispatch binding.
+        if (!slot.executor->setTextureView("g_InputTexture", input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !slot.executor->setTextureView("g_OutputTexture", slot.output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+            releaseSharedRenderDevice();
+            return false;
+        }
+        slot.executor->dispatch(context, ArtifactCore::ComputeExecutor::makeDispatchAttribs(width, height, 1, 8, 8, 1), Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        Diligent::CopyTextureAttribs copy(
+            slot.output, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+            slot.staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        context->CopyTexture(copy);
+        context->Flush(); context->WaitForIdle();
+        Diligent::MappedTextureSubresource mapped{};
+        context->MapTextureSubresource(slot.staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
+        if (!mapped.pData || !mapped.Stride) {
+            releaseSharedRenderDevice();
+            return false;
+        }
+        cv::Mat result(static_cast<int>(height), static_cast<int>(width), CV_32FC4, mapped.pData, mapped.Stride);
+        auto outputDescriptor = image.colorDescriptor();
+        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+        dst.image().setFromCVMat(result, outputDescriptor);
+        context->UnmapTextureSubresource(slot.staging, 0, 0);
+        ok = true;
+    }
+    releaseSharedRenderDevice();
+    return ok;
 }
 
 constexpr char kGlitchComputeHlsl[] = R"(

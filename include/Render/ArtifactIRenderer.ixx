@@ -434,6 +434,15 @@ public:
                               Detail::float2 p2, const FloatColor &color);
   void drawSolidPolygonLocal(const std::vector<Detail::float2> &points,
                              const FloatColor &color);
+  void drawTexturedTriangleTransformed(Detail::float2 p0, Detail::float2 p1,
+                                       Detail::float2 p2, Detail::float2 uv0,
+                                       Detail::float2 uv1, Detail::float2 uv2,
+                                       const QMatrix4x4 &transform,
+                                       Diligent::ITextureView *texture,
+                                       float opacity = 1.0f);
+  Diligent::ITextureView* textureForImage(
+      const ArtifactCore::ImageF32x4_RGBA& image);
+  Diligent::ITextureView* textureForImage(const QImage& image);
 
   // Gizmo specialized APIs
   void drawCircle(float x, float y, float radius, const FloatColor &color,

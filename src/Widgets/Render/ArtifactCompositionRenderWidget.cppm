@@ -1883,34 +1883,6 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
     return;
    }
 
-   const bool transformMove = shortcuts.matches(event, ShortcutId::TransformMove);
-   const bool transformRotate = shortcuts.matches(event, ShortcutId::TransformRotate);
-   const bool transformScale = shortcuts.matches(event, ShortcutId::TransformScale);
-   if (transformMove || transformRotate || transformScale) {
-    const auto mode = transformMove
-        ? TransformGizmo::Mode::Move
-        : transformRotate ? TransformGizmo::Mode::Rotate
-                          : TransformGizmo::Mode::Scale;
-    if (renderController->beginModalGizmoInteraction(
-            mode, mapFromGlobal(QCursor::pos()))) {
-     impl_->modalTransformNumericInput_.clear();
-     if (auto* input = ArtifactCore::InputOperator::instance()) {
-      input->setActiveContext(QStringLiteral("Modal.Transform"));
-     }
-     setCursor(mode == TransformGizmo::Mode::Move
-                   ? hudCursor(QStringLiteral("hud_cursor_move.svg"),
-                               Qt::ClosedHandCursor)
-                   : mode == TransformGizmo::Mode::Rotate
-                         ? hudCursor(QStringLiteral("hud_cursor_rotate.svg"),
-                                     Qt::CrossCursor)
-                         : hudCursor(QStringLiteral("hud_cursor_scale_uniform.svg"),
-                                     Qt::SizeAllCursor));
-     grabMouse();
-     impl_->requestRender();
-     event->accept();
-     return;
-    }
-   }
   }
   if (event && !event->isAutoRepeat() && event->key() == Qt::Key_Escape &&
       (impl_->isDraggingParticleEmitter_ || impl_->isDraggingParticleDirection_ ||

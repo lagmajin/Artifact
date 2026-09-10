@@ -118,6 +118,18 @@ public:
         return true;
     }
 
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::SeparableGaussianBlur;
+        node.parameters[0] = sigma();
+        node.resolutionScaledParameterMask = 1u << 0;
+        return stack.append(node);
+    }
+
     /**
      * @brief ROI 拡張ヒント
      *

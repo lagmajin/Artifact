@@ -365,13 +365,6 @@ class SolidGradientUndoCommand final : public UndoCommand {
         solidImage->setLayerPropertyValue(path, value);
       }
     };
-    const auto applyPath = [&](const QString &path, double value) {
-      if (solid2D) {
-        solid2D->setLayerPropertyValue(path, value);
-      } else {
-        solidImage->setLayerPropertyValue(path, value);
-      }
-    };
     applyPath(QStringLiteral("solid.gradientCenterX"), snapshot.centerX);
     applyPath(QStringLiteral("solid.gradientCenterY"), snapshot.centerY);
     applyPath(QStringLiteral("solid.gradientAngleDegrees"),

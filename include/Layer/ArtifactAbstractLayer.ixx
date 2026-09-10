@@ -491,7 +491,8 @@ public:
   void resetFractureState();
   void applyFractureImpact(const ArtifactCore::FractureImpact& impact);
   void drawFractureOverlay(ArtifactIRenderer* renderer, const QMatrix4x4& baseTransform,
-                           const QSizeF& sourceSize, float opacityScale = 1.0f);
+                           const QSizeF& sourceSize, float opacityScale = 1.0f,
+                           Diligent::ITextureView* sourceTexture = nullptr);
   ArtifactAbstractLayerPtr parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);

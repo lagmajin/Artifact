@@ -2218,13 +2218,13 @@ public:
          // F11/F13: wave phase/frequency/amount and taper ease follow
          // keyframes on the legacy path; contents strokes stay static.
          const float ease = static_cast<float>(animatedShapeNumber(
-             this, "shape.taperEase", impl_->strokeTaperEase_));
+             outer_, "shape.taperEase", strokeTaperEase_));
          const float waveAmount = static_cast<float>(animatedShapeNumber(
-             this, "shape.waveAmount", impl_->strokeWaveAmount_));
+             outer_, "shape.waveAmount", strokeWaveAmount_));
          const float waveFrequency = static_cast<float>(animatedShapeNumber(
-             this, "shape.waveFrequency", impl_->strokeWaveFrequency_));
+             outer_, "shape.waveFrequency", strokeWaveFrequency_));
          const float wavePhase = static_cast<float>(animatedShapeNumber(
-             this, "shape.wavePhase", impl_->strokeWavePhase_));
+             outer_, "shape.wavePhase", strokeWavePhase_));
          drawStrokePath(painter, points, pathClosed, strokeWidth_,
                         strokeTaperStart_, strokeTaperEnd_, ease,
                         strokeWaveEnabled_, waveAmount, waveFrequency,
@@ -4598,7 +4598,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
         this, lensPass.transform,
-        [renderer, this, contentItems, contentFieldWeight,
+        [renderer, this, &contentItems, contentFieldWeight,
          lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
          const float baseOpacity =
              this->opacity() * weight * contentFieldWeight * lensOpacity;
@@ -4663,7 +4663,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
    drawWithClonerEffect(
        this, lensPass.transform,
-        [renderer, impl, processedPaths = processedOperatorPaths, fill, stroke,
+        [renderer, impl, &processedOperatorPaths, fill, stroke,
         contentFieldWeight, this, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
         const float opacity = this->opacity() * weight * contentFieldWeight * lensOpacity;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
@@ -4673,7 +4673,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
                                          static_cast<double>(transform(1, 1)));
         const double renderScale = std::max({1.0, scaleX, scaleY});
-        const auto& geometry = impl->nativeGeometry(processedPaths,
+        const auto& geometry = impl->nativeGeometry(processedOperatorPaths,
                                                     0.25 / renderScale,
                                                     !geomAnimated && !pathAnimated);
         for (const auto& pathGeometry : geometry) {
@@ -4798,7 +4798,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
         this, lensPass.transform,
-        [renderer, this, legacyItems, contentFieldWeight,
+        [renderer, this, &legacyItems, contentFieldWeight,
          lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
          const float baseOpacity =
              this->opacity() * weight * contentFieldWeight * lensOpacity;
@@ -4819,7 +4819,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
   drawWithClonerEffect(this, lensPass.transform,
                        [renderer, impl, this, contentFieldWeight, geomDims,
-                        pathAnimated, evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+                        pathAnimated, &evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
         impl->fillColor_.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);

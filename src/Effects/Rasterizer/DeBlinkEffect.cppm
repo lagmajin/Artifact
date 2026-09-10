@@ -98,7 +98,7 @@ public:
         cpu.strength_ = strength_;
         cpu.sceneCut_ = sceneCut_;
         cpu.maxGain_ = maxGain_;
-        cpu.setContext(context_);
+        cpu.setContext(ArtifactEffectImplBase::context_);
         cpu.applyCPU(s, d);
     }
 
@@ -113,13 +113,13 @@ public:
         const double curLuma = Repair::frameLuma(sd, W, H);
         double prevLuma = std::numeric_limits<double>::quiet_NaN();
         double nextLuma = std::numeric_limits<double>::quiet_NaN();
-        if (context_.sampler) {
+        if (ArtifactEffectImplBase::context_.sampler) {
             ImageF32x4RGBAWithCache neighbor;
-            if (context_.sampler->sampleCurrentLayerFrameRelative(-1, neighbor) &&
+            if (ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrameRelative(-1, neighbor) &&
                 neighbor.image().rgba32fData())
                 prevLuma = Repair::frameLuma(neighbor.image().rgba32fData(),
                                              neighbor.width(), neighbor.height());
-            if (context_.sampler->sampleCurrentLayerFrameRelative(1, neighbor) &&
+            if (ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrameRelative(1, neighbor) &&
                 neighbor.image().rgba32fData())
                 nextLuma = Repair::frameLuma(neighbor.image().rgba32fData(),
                                              neighbor.width(), neighbor.height());
@@ -136,12 +136,12 @@ public:
             dst = src;
             return;
         }
-        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_, deviceContext_)) {
             applyCPU(src, dst);
             return;
         }
         if (!gpuContext_) {
-            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, deviceContext_);
             executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
         }
         if (!executor_) {
@@ -201,7 +201,7 @@ public:
             return;
         }
         void* mapped = nullptr;
-        context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        deviceContext_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
             applyCPU(src, dst);
             return;
@@ -209,7 +209,7 @@ public:
         ParamsCB cb{};
         cb.gain = static_cast<float>(gain);
         std::memcpy(mapped, &cb, sizeof(cb));
-        context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        deviceContext_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("g_InputTexture",
                 inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
             !executor_->setTextureView("g_OutputTexture",
@@ -219,9 +219,9 @@ public:
         }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
             outDesc.Width, outDesc.Height, 1, 16, 16, 1);
-        executor_->dispatch(context_, attribs,
+        executor_->dispatch(deviceContext_, attribs,
                             Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if (!readbackTexture(device_, context_, outputTex_, dst,
+        if (!readbackTexture(device_, deviceContext_, outputTex_, dst,
                              "DeBlink/StagingTexture",
                              si.colorDescriptor())) {
             applyCPU(src, dst);
@@ -230,7 +230,7 @@ public:
 
 private:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
-    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> deviceContext_;
     Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;

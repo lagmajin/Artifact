@@ -31,6 +31,20 @@ public:
     float threshold() const;
     void setThreshold(float v);
 
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Sharpen;
+        node.parameters[0] = amount_;
+        node.parameters[1] = sigma_;
+        node.parameters[2] = threshold_;
+        node.resolutionScaledParameterMask = 1u << 1;
+        return stack.append(node);
+    }
+
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 };

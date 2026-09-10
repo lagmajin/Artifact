@@ -144,7 +144,7 @@ void ArtifactAnimationTimelineWidget::paintEvent(QPaintEvent*) {
                        : QStringLiteral("Animation Timeline · select a layer"));
   if (!impl_ || impl_->spans.isEmpty()) return;
   const qint64 start = impl_->spans.front().begin;
-  const qint64 end = std::max(start + 1, impl_->spans.back().end);
+  const qint64 end = std::max<qint64>(start + 1, impl_->spans.back().end);
   const QRect bar(content.left(), content.top() + 28, content.width(), std::max(24, content.height() - 36));
   for (const auto& span : impl_->spans) {
     const double begin = static_cast<double>(span.begin - start) / (end - start);
@@ -166,7 +166,7 @@ void ArtifactAnimationTimelineWidget::mousePressEvent(QMouseEvent* event) {
   const QRect bar = rect().adjusted(10, 36, -10, -8);
   if (!bar.contains(event->pos())) return;
   const qint64 start = impl_->spans.front().begin;
-  const qint64 end = std::max(start + 1, impl_->spans.back().end);
+  const qint64 end = std::max<qint64>(start + 1, impl_->spans.back().end);
   for (int i = 0; i + 1 < impl_->spans.size(); ++i) {
     const double ratio = static_cast<double>(impl_->spans[i].end - start) / (end - start);
     const int boundaryX = bar.left() + static_cast<int>(ratio * bar.width());
@@ -264,7 +264,8 @@ void ArtifactAnimationTimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
   const qint64 end = std::max(start + 1, impl_->spans.back().end);
   const double ratio = std::clamp((event->position().x() - bar.left()) / std::max(1.0, static_cast<double>(bar.width())), 0.0, 1.0);
   ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
-      TimelineSeekRequestedEvent{start + static_cast<qint64>(std::llround(ratio * (end - start)))});
+      TimelineSeekRequestedEvent{static_cast<double>(
+          start + static_cast<qint64>(std::llround(ratio * (end - start))))});
 }
 
 } // namespace Artifact

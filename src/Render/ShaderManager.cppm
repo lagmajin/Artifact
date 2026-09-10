@@ -493,9 +493,13 @@ float4 main(PS_INPUT input) : SV_TARGET
     createShaderOrWarn(solidRectTransformVsInfo,   solidRectTransformShaders_.VS);
     createShaderOrWarn(solidRectPsInfo2,          solidRectTransformShaders_.PS);
     createShaderOrWarn(gradientPsInfo,             gradientShaders_.PS);
-    gradientShaders_.VS = solidShaders_.VS;
-    gradientTransformShaders_.VS = solidRectTransformShaders_.VS;
-    gradientTransformShaders_.PS = gradientShaders_.PS;
+    const auto retainShader = [](IShader* shader) {
+        if (shader) shader->AddRef();
+        return shader;
+    };
+    gradientShaders_.VS = retainShader(solidShaders_.VS);
+    gradientTransformShaders_.VS = retainShader(solidRectTransformShaders_.VS);
+    gradientTransformShaders_.PS = retainShader(gradientShaders_.PS);
     createShaderOrWarn(spriteTransformVsInfo,     spriteTransformShaders_.VS);
     createShaderOrWarn(spriteTransformVsInfo,     maskedSpriteShaders_.VS);
     createShaderOrWarn(maskedSpritePsInfo,        maskedSpriteShaders_.PS);
@@ -512,7 +516,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 
     // Glyph transform VS: separate from glyphQuadShaders_.VS (matrix CB + per-vertex color)
     createShaderOrWarn(glyphTransformVsInfo, glyphQuadTransformShaders_.VS);
-    glyphQuadTransformShaders_.PS = glyphQuadShaders_.PS; // reuse the same glyph PS
+    glyphQuadTransformShaders_.PS =
+        retainShader(glyphQuadShaders_.PS); // reuse the same glyph PS
 
 
     // Skybox VS: full-screen triangle via vertex ID (no vertex buffer needed)
@@ -552,6 +557,11 @@ float4 main(PS_INPUT input) : SV_TARGET
     };
     TextureCube g_envMap : register(t0);
     SamplerState g_sampler : register(s0);
+    cbuffer SkyboxCB : register(b0)
+    {
+        float4x4 g_InvViewProj;
+        float4 g_Settings;
+    };
     float4 main(PSIn input) : SV_TARGET
     {
         float angle = g_Settings.y;
@@ -575,12 +585,12 @@ float4 main(PS_INPUT input) : SV_TARGET
     createShaderOrWarn(skyboxPsInfo, skyboxShaders_.PS);
     // Post-parallel pointer assignments (no CreateShader needed, just sharing refs)
     solidTriangleShaders_              = solidShaders_;
-    solidRectTransformShaders_.PS      = solidShaders_.PS;
-    spriteTransformShaders_.PS         = spriteShaders_.PS;
-    checkerboardShaders_.VS            = solidShaders_.VS;
-    gridShaders_.VS                    = solidShaders_.VS;
-    glyphQuadShaders_.VS               = spriteShaders_.VS;
-    gizmo3DShaders_.PS                 = lineShaders_.PS;
+    solidRectTransformShaders_.PS      = retainShader(solidShaders_.PS);
+    spriteTransformShaders_.PS         = retainShader(spriteShaders_.PS);
+    checkerboardShaders_.VS            = retainShader(solidShaders_.VS);
+    gridShaders_.VS                    = retainShader(solidShaders_.VS);
+    glyphQuadShaders_.VS               = retainShader(spriteShaders_.VS);
+    gizmo3DShaders_.PS                 = retainShader(lineShaders_.PS);
 }
 
 QString ShaderManager::Impl::psoCacheFilePath() const
@@ -604,7 +614,7 @@ QString ShaderManager::Impl::psoCacheFilePath() const
 
     // Bump the schema whenever shader interfaces or input-layout contracts
     // change so an old backend PSO blob cannot mask the new contract.
-    constexpr int kPsoCacheSchema = 3;
+    constexpr int kPsoCacheSchema = 4;
     const QString signature = QStringLiteral("schema=%1|backend=%2|rtv=%3|vendorId=%4|deviceId=%5|api=%6.%7")
                                   .arg(kPsoCacheSchema)
                                   .arg(static_cast<int>(deviceInfo.Type))
@@ -1255,12 +1265,10 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
 
     static const ShaderResourceVariableDesc checkerVars[] = {
         { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-        { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
     };
     static const LayoutElement checkerLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+        LayoutElement{0, 0, 2, VT_FLOAT32, false}
     };
 
     GraphicsPipelineStateCreateInfo checkerInfo;

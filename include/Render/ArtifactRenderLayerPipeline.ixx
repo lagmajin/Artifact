@@ -10,6 +10,7 @@ module;
 export module Artifact.Render.Pipeline;
 import Layer.Blend;
 import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 import Artifact.Render.PointwiseEffectFusion;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
@@ -70,6 +71,13 @@ export namespace Artifact
    ITextureView* lutSRV = nullptr,
    ITextureView* historySRV = nullptr
   );
+
+  // Execute one backend-neutral spatial node over existing GPU-resident
+  // RGBA16F targets. Scratch and output must be distinct UAVs.
+  bool applySpatialEffect(
+   IDeviceContext* ctx, ITextureView* inputSRV,
+   ITextureView* scratchUAV, ITextureView* outputUAV,
+   const GpuSpatialEffectNode& node);
 
   ITextureView* accumSRV() const;
   ITextureView* accumUAV() const;

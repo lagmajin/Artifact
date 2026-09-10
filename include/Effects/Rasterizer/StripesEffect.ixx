@@ -28,6 +28,20 @@ public:
     float offset() const;
     void  setOffset(float v);
 
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Stripes;
+        node.parameters[0] = frequency_;
+        node.parameters[1] = angle_;
+        node.parameters[2] = thickness_;
+        node.parameters[3] = offset_;
+        return stack.append(node);
+    }
+
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
     bool supportsGPU() const override { return true; }

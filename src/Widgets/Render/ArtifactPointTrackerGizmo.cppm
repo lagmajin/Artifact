@@ -326,12 +326,12 @@ ArtifactPointTrackerGizmo::HandleType ArtifactPointTrackerGizmo::hitTest(
     const float iy2 = cy + st.innerHalfH;
 
     struct Corner { QPointF pos; HandleType type; };
-    const std::array<Corner, 4> corners = {
-        {{ix1, iy1}, HandleType::InnerScale_TL},
-        {{ix2, iy1}, HandleType::InnerScale_TR},
-        {{ix1, iy2}, HandleType::InnerScale_BL},
-        {{ix2, iy2}, HandleType::InnerScale_BR}
-    };
+    const std::array<Corner, 4> corners{{
+        Corner{QPointF{ix1, iy1}, HandleType::InnerScale_TL},
+        Corner{QPointF{ix2, iy1}, HandleType::InnerScale_TR},
+        Corner{QPointF{ix1, iy2}, HandleType::InnerScale_BL},
+        Corner{QPointF{ix2, iy2}, HandleType::InnerScale_BR}
+    }};
 
     for (const auto& c : corners) {
         if (canvasRectForHandle(c.pos, 4.0f, zoom).contains(mouseCanvas)) {

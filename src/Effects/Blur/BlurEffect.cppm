@@ -238,34 +238,48 @@ public:
         cv::Mat floatMat = sourceView.clone();
         convertBlurColorSpace(floatMat, true, premultiplied_);
 
+        // Downsampled blur: Gaussian blur is scale-covariant, so a wide blur
+        // done at half resolution with halved sigma approximates the full-res
+        // result after an upscale, at roughly 1/4 the pixel cost plus a much
+        // smaller kernel. Only kicks in for wide blurs where the resampling
+        // error hides underneath the blur itself.
+        const float sigma = std::max(0.1f, evaluationRadius() * 0.5f);
+        const bool useHalfRes = sigma >= 3.0f && floatMat.cols >= 16 && floatMat.rows >= 16;
+        const float workSigma = useHalfRes ? sigma * 0.5f : sigma;
+        cv::Mat workMat;
+        if (useHalfRes) {
+            cv::resize(floatMat, workMat, cv::Size(), 0.5, 0.5, cv::INTER_AREA);
+        } else {
+            workMat = floatMat;
+        }
+
         std::vector<cv::Mat> channels;
-        cv::split(floatMat, channels);
+        cv::split(workMat, channels);
         cv::Mat color;
         cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, color);
         cv::Mat alpha = channels[3];
 
-        const float sigma = std::max(0.1f, evaluationRadius() * 0.5f);
-        const int ksize = std::max(3, static_cast<int>(sigma * 6.0f) | 1);
+        const int ksize = std::max(3, static_cast<int>(workSigma * 6.0f) | 1);
         for (int i = 0; i < iterations_; ++i) {
             cv::GaussianBlur(color, color, cv::Size(ksize, ksize),
-                             sigma,
-                             sigma,
+                             workSigma,
+                             workSigma,
                              cv::BORDER_REPLICATE);
             if (premultiplied_) {
                 cv::GaussianBlur(alpha, alpha, cv::Size(ksize, ksize),
-                                 sigma,
-                                 sigma,
+                                 workSigma,
+                                 workSigma,
                                  cv::BORDER_REPLICATE);
             }
             if (mode_ == BlurMode::EdgePreserving) {
                 cv::GaussianBlur(color, color, cv::Size(ksize, ksize),
-                                 std::max(0.1f, sigma * 0.6f),
-                                 std::max(0.1f, sigma * 0.6f),
+                                 std::max(0.1f, workSigma * 0.6f),
+                                 std::max(0.1f, workSigma * 0.6f),
                                  cv::BORDER_REPLICATE);
                 if (premultiplied_) {
                     cv::GaussianBlur(alpha, alpha, cv::Size(ksize, ksize),
-                                     std::max(0.1f, sigma * 0.6f),
-                                     std::max(0.1f, sigma * 0.6f),
+                                     std::max(0.1f, workSigma * 0.6f),
+                                     std::max(0.1f, workSigma * 0.6f),
                                      cv::BORDER_REPLICATE);
                 }
             }
@@ -276,6 +290,12 @@ public:
         outChannels.push_back(alpha);
         cv::Mat dstMat;
         cv::merge(outChannels, dstMat);
+        if (useHalfRes) {
+            cv::Mat upscaled;
+            cv::resize(dstMat, upscaled, cv::Size(floatMat.cols, floatMat.rows),
+                       0, 0, cv::INTER_LINEAR);
+            dstMat = upscaled;
+        }
         convertBlurColorSpace(dstMat, false, premultiplied_);
         dst.image().setFromRGBA32F(
             dstMat.ptr<float>(), dstMat.cols, dstMat.rows,

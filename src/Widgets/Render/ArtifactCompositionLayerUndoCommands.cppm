@@ -345,7 +345,7 @@ class ShapeSvgImportUndoCommand final : public UndoCommand {
   }
 
  private:
-  Artifact::ArtifactAbstractLayerPtr lockedShape() const {
+  ArtifactCore::SharedPtr<ArtifactShapeLayer> lockedShape() const {
     auto layer = layer_.lock();
     auto shape = layer
         ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)

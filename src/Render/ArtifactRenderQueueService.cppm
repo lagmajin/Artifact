@@ -2453,7 +2453,7 @@ namespace Artifact
         struct GpuMatteResourcePool {
             explicit GpuMatteResourcePool(ArtifactIRenderer* rendererValue)
                 : renderer(rendererValue) {
-                slots.reserve(8);
+                resourceSlots.reserve(8);
             }
 
             ~GpuMatteResourcePool() {
@@ -2475,10 +2475,10 @@ namespace Artifact
                 if (!renderer || size.isEmpty()) {
                     return nullptr;
                 }
-                if (cursor == slots.size()) {
-                    slots.emplace_back();
+                if (cursor == resourceSlots.size()) {
+                    resourceSlots.emplace_back();
                 }
-                auto& slot = slots[cursor++];
+                auto& slot = resourceSlots[cursor++];
                 if (!slot.colorTarget) {
                     slot.colorTarget = renderer->createOffscreenTexture(
                         size.width(), size.height());
@@ -2510,17 +2510,17 @@ namespace Artifact
             }
 
             void reset() {
-                for (auto& slot : slots) {
+                for (auto& slot : resourceSlots) {
                     release(slot);
                 }
-                slots.clear();
+                resourceSlots.clear();
                 cursor = 0;
                 size = {};
             }
 
             ArtifactIRenderer* renderer = nullptr;
             QSize size;
-            std::vector<GpuMatteResourceSlot> slots;
+            std::vector<GpuMatteResourceSlot> resourceSlots;
             size_t cursor = 0;
         };
 
@@ -2588,13 +2588,6 @@ namespace Artifact
             int adapterId = -1;
         };
 
-        std::vector<int> resolveDiscreteD3D12AdapterIds();
-        bool ensureWorkerRendererInitialized(
-            GpuFinalWorker& worker, int width, int height, int adapterId,
-            QString* failureReason);
-        bool renderSingleFrameOnWorker(
-            GpuFinalWorker& worker, const FrameRenderSnapshot& snapTemplate,
-            int frameNumber, FrameRenderOutput& output, QString& failureReason);
         void processFramesForJob(
             ArtifactRenderQueueService* service,
             int jobIndex,

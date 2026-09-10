@@ -26,6 +26,20 @@ public:
     float angle() const;
     void  setAngle(float v);
 
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::HexGrid;
+        node.parameters[0] = cellSize_;
+        node.parameters[1] = lineWidth_;
+        node.parameters[2] = angle_;
+        node.resolutionScaledParameterMask = (1u << 0) | (1u << 1);
+        return stack.append(node);
+    }
+
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
     bool supportsGPU() const override { return true; }

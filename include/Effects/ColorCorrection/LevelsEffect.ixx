@@ -52,6 +52,9 @@ public:
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 
     bool supportsGPU() const override { return true; }
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Pointwise;
+    }
     bool appendGpuPointwiseNodes(ArtifactCore::PointwiseEffectStack& stack,
                                  std::uint32_t& slot) const override {
         constexpr double kEpsilon = 1.0e-6;

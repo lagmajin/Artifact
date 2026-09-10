@@ -9,9 +9,11 @@ module;
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMargins>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPalette>
 #include <QPainter>
 #include <QPointer>
@@ -299,6 +301,20 @@ void scaleMenuFont(QWidget* widget)
   widget->setProperty("artifactMenuFontScaled", true);
 }
 
+bool isMessageBoxTextLabel(const QWidget* widget)
+{
+  if (!qobject_cast<const QLabel*>(widget)) {
+    return false;
+  }
+  for (const QWidget* parent = widget->parentWidget(); parent;
+       parent = parent->parentWidget()) {
+    if (qobject_cast<const QMessageBox*>(parent)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, const QWidget* widget)
 {
   if (!widget || !widget->property("artifactFramedToolButton").toBool()) {
@@ -434,7 +450,14 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     return;
   }
 
-  widget->setAttribute(Qt::WA_StyledBackground, true);
+  // QMessageBox owns the dialog surface. Its internal title and informative
+  // labels must remain transparent, otherwise this global styled-background
+  // policy paints each label with a separate palette surface.
+  const bool transparentMessageLabel = isMessageBoxTextLabel(widget);
+  widget->setAttribute(Qt::WA_StyledBackground, !transparentMessageLabel);
+  if (transparentMessageLabel) {
+    widget->setAutoFillBackground(false);
+  }
   // Avoid relaying out and repainting heavyweight viewport/timeline children
   // on every handle pixel while a splitter is dragged.
   if (auto* splitter = qobject_cast<QSplitter*>(widget)) {

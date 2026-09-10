@@ -346,7 +346,8 @@ export int runPreComposeTests()
     }
 
     if (service) {
-        if (auto* undoManager = UndoManager::instance()) undoManager->clearHistory();
+        auto* undoManager = UndoManager::instance();
+        if (undoManager) undoManager->clearHistory();
         service->createComposition(UniString(QStringLiteral("Reusable Source")));
         auto reusableSource = service->currentComposition().lock();
         if (reusableSource) {

@@ -833,6 +833,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, SpriteXformPkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, AtlasSpritePkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitAtlasSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, AtlasSpriteXformPkt>){ recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitAtlasSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, TexturedTriangleXformPkt>){ recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.TexturedTriangle"); submitTexturedTriangleXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitMaskedSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, BillboardPkt>)       submitBillboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, BillboardImagePkt>)  submitBillboardImage(p, recordCtx, pRTV);
@@ -1495,6 +1496,44 @@ void DiligentImmediateSubmitter::submitAtlasSpriteXform(const AtlasSpriteXformPk
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
     recordDrawCall(m_frameCostStats_, true);
     ctx->DrawIndexed(drawAttrs);
+}
+
+void DiligentImmediateSubmitter::submitTexturedTriangleXform(
+    const TexturedTriangleXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO ||
+        !m_draw_sprite_transform_pso_and_srb.pSRB ||
+        !m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb ||
+        !m_var_spriteXform_gTexture_ || !m_sprite_sampler) return;
+
+    SpriteVertex vertices[3] = {
+        {{p.p0.x, p.p0.y}, {p.uv0.x, p.uv0.y}, p.color},
+        {{p.p1.x, p.p1.y}, {p.uv1.x, p.uv1.y}, p.color},
+        {{p.p2.x, p.p2.y}, {p.uv2.x, p.uv2.y}, p.color},
+    };
+    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                    sizeof(vertices), m_frameCostStats_);
+    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat,
+                    sizeof(p.mat), m_frameCostStats_);
+    if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_sprite_transform_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_sprite_transform_pso_and_srb.pPSO;
+    }
+    m_var_spriteXform_gTexture_->Set(p.pSRV);
+    recordShaderResourceCommit(m_frameCostStats_);
+    ctx->CommitShaderResources(m_draw_sprite_transform_pso_and_srb.pSRB,
+                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* buffers[] = {m_draw_sprite_vertex_buffer};
+    Uint64 offsets[] = {0};
+    ctx->SetVertexBuffers(0, 1, buffers, offsets,
+                          RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                          SET_VERTEX_BUFFERS_FLAG_RESET);
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = 3;
+    drawAttrs.Flags = DRAW_FLAG_NONE;
+    recordDrawCall(m_frameCostStats_, true);
+    ctx->Draw(drawAttrs);
 }
 
 void DiligentImmediateSubmitter::submitMaskedSprite(const MaskedSpritePkt& p, IDeviceContext* ctx, ITextureView* pRTV)

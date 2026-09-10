@@ -57,6 +57,39 @@ class ArtifactAbstractEffect;
 using ArtifactAbstractEffectPtr = SharedPtr<ArtifactAbstractEffect>;
 using ArtifactAbstractEffectWeakPtr = WeakPtr<ArtifactAbstractEffect>;
 
+enum class GpuSpatialEffectKind : std::uint8_t {
+    SeparableGaussianBlur,
+    Sharpen,
+    Stripes,
+    HexGrid,
+    Vignette,
+    ChromaticAberration,
+};
+
+enum class GpuRasterEffectDomain : std::uint8_t {
+    None,
+    Pointwise,
+    Spatial,
+};
+
+struct GpuSpatialEffectNode {
+    GpuSpatialEffectKind kind = GpuSpatialEffectKind::SeparableGaussianBlur;
+    std::array<float, 8> parameters{};
+    std::uint8_t resolutionScaledParameterMask = 0;
+};
+
+struct GpuSpatialEffectStack {
+    static constexpr std::size_t kCapacity = 8;
+    std::array<GpuSpatialEffectNode, kCapacity> nodes{};
+    std::size_t count = 0;
+
+    bool append(const GpuSpatialEffectNode& node) {
+        if (count >= nodes.size()) return false;
+        nodes[count++] = node;
+        return true;
+    }
+};
+
 class LIBRARY_DLL_API EffectID {
 public:
     EffectID() = default;
@@ -139,6 +172,17 @@ public:
         std::uint32_t& parameterSlot) const {
         (void)stack;
         (void)parameterSlot;
+        return false;
+    }
+
+    virtual GpuRasterEffectDomain gpuRasterEffectDomain() const {
+        return GpuRasterEffectDomain::None;
+    }
+
+    // Effects contribute backend-neutral spatial nodes. The renderer owns
+    // execution and resources and never inspects concrete effect types.
+    virtual bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const {
+        (void)stack;
         return false;
     }
 

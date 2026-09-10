@@ -1398,7 +1398,15 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(fractureCrackThreshold_);
   fracture.settings[QStringLiteral("shatterThreshold")] =
       static_cast<double>(fractureShatterThreshold_);
+  fracture.settings[QStringLiteral("shardDamping")] =
+      static_cast<double>(fractureShardDamping_);
+  fracture.settings[QStringLiteral("shardGravity")] =
+      static_cast<double>(fractureShardGravity_);
+  fracture.settings[QStringLiteral("impactSensitivity")] =
+      static_cast<double>(fractureImpactSensitivity_);
   fracture.settings[QStringLiteral("preGenerate")] = fracturePreGenerate_;
+  fracture.settings[QStringLiteral("triggerFrame")] =
+      static_cast<qint64>(fractureTriggerFrame_);
   componentHost_.upsert(std::move(fracture));
 
   auto emitter = makeParticleEmitterComponentDescriptor(
@@ -3169,13 +3177,21 @@ const LayerEvaluationState& ArtifactAbstractLayer::layerEvaluationState() const 
 void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                                                 const QMatrix4x4& baseTransform,
                                                 const QSizeF& sourceSize,
-                                                float opacityScale) {
+                                                float opacityScale,
+                                                Diligent::ITextureView* sourceTexture) {
   if (!renderer) {
     return;
   }
   Q_UNUSED(sourceSize);
 
   const int64_t frame = currentTimelineFrame(this);
+  const bool discontinuousFractureFrame =
+      impl_->fractureMotionLastFrame_ != std::numeric_limits<int64_t>::min() &&
+      frame != impl_->fractureMotionLastFrame_ + 1 &&
+      frame != impl_->fractureMotionLastFrame_;
+  if (discontinuousFractureFrame) {
+    resetFractureState();
+  }
   if (impl_->fractureEnabled_ && impl_->fractureTriggerFrame_ >= 0) {
     if (frame < impl_->fractureTriggerFrame_) {
       if (impl_->fractureTriggerLastFrame_ >= impl_->fractureTriggerFrame_) {
@@ -4042,11 +4058,16 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       const FloatColor cloneColor(
           shardColor.r(), shardColor.g(), shardColor.b(),
           shardColor.a() * cloneOpacity);
+      std::vector<Detail::float2> cloneUV;
+      cloneUV.reserve(geometry->localUV.size());
+      for (const QVector2D& uv : geometry->localUV) {
+        cloneUV.push_back({uv.x(), uv.y()});
+      }
       fractureElement.shards.push_back(
-          {std::move(clonePolygon), cloneColor});
+          {std::move(clonePolygon), std::move(cloneUV), cloneColor});
     }
   }
-  submitFractureRenderElement(renderer, fractureElement);
+  submitFractureRenderElement(renderer, fractureElement, sourceTexture);
 }
 
 void ArtifactAbstractLayer::resetFractureState() {
@@ -4056,6 +4077,7 @@ void ArtifactAbstractLayer::resetFractureState() {
   impl_->componentEvaluationState_.fragmentGeometry.clear();
   impl_->componentEvaluationState_.clearTransientEvents();
   impl_->fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
+  impl_->fractureTriggerLastFrame_ = std::numeric_limits<int64_t>::min();
   impl_->lastCollisionImpactFrame_ = std::numeric_limits<int64_t>::min();
   impl_->lastRigidWindForceFrame_ = std::numeric_limits<int64_t>::min();
   if (impl_->particleEmitterComponentEnabled_) {
@@ -5830,10 +5852,6 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   fractureObj["impactSensitivity"] = static_cast<double>(impl_->fractureImpactSensitivity_);
   fractureObj["preGenerate"] = impl_->fracturePreGenerate_;
   fractureObj["triggerFrame"] = static_cast<qint64>(impl_->fractureTriggerFrame_);
-  fractureObj["stateKind"] = static_cast<int>(impl_->fractureState_.kind);
-  fractureObj["stateDamage"] = static_cast<double>(impl_->fractureState_.damage);
-  fractureObj["stateLastImpact"] = static_cast<double>(impl_->fractureState_.lastImpact);
-  fractureObj["stateCrackProgress"] = static_cast<double>(impl_->fractureState_.crackProgress);
   obj["fracture"] = fractureObj;
   QJsonObject trailObj;
   trailObj["enabled"] = impl_->motionTrailEnabled_;
@@ -6686,14 +6704,9 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           ? static_cast<int64_t>(fractureObj.value(
                 QStringLiteral("triggerFrame")).toVariant().toLongLong())
           : -1;
-      impl_->fractureState_.kind = static_cast<FractureStateKind>(
-          fractureObj.value(QStringLiteral("stateKind")).toInt(static_cast<int>(FractureStateKind::Intact)));
-      impl_->fractureState_.damage = static_cast<float>(
-          fractureObj.value(QStringLiteral("stateDamage")).toDouble(0.0));
-      impl_->fractureState_.lastImpact = static_cast<float>(
-          fractureObj.value(QStringLiteral("stateLastImpact")).toDouble(0.0));
-      impl_->fractureState_.crackProgress = static_cast<float>(
-          fractureObj.value(QStringLiteral("stateCrackProgress")).toDouble(0.0));
+      // Runtime fracture state is reconstructed from authoring settings and
+      // timeline; it is intentionally not restored from project data.
+      resetFractureState();
   }
   if (obj.contains("trail") && obj["trail"].isObject()) {
       const QJsonObject trailObj = obj["trail"].toObject();
@@ -7236,6 +7249,52 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     impl_->componentHost_.fromJson(
         obj.value(QStringLiteral("componentGraph")).toArray());
     impl_->syncBuiltinBoolsFromHost();
+    // New component-only documents may not carry the legacy top-level
+    // `fracture` object. In that case restore fracture settings from the
+    // descriptor graph; legacy documents keep their top-level values.
+    if (!obj.contains(QStringLiteral("fracture"))) {
+      if (const auto *fracture = impl_->componentHost_.findByType(
+              QStringLiteral("artifact.component.fracture"))) {
+        const auto &settings = fracture->settings;
+        impl_->fracturePreset_ = std::clamp(
+            settings.value(QStringLiteral("preset"))
+                .toInt(impl_->fracturePreset_),
+            0, static_cast<int>(FracturePreset::Dust));
+        impl_->fractureShardCount_ = std::clamp(
+            settings.value(QStringLiteral("shardCount"))
+                .toInt(impl_->fractureShardCount_),
+            1, 256);
+        impl_->fractureCrackThreshold_ = static_cast<float>(finiteClamped(
+            settings.value(QStringLiteral("crackThreshold"))
+                .toDouble(impl_->fractureCrackThreshold_),
+            impl_->fractureCrackThreshold_, 0.0, 1000.0));
+        impl_->fractureShatterThreshold_ = static_cast<float>(finiteClamped(
+            settings.value(QStringLiteral("shatterThreshold"))
+                .toDouble(impl_->fractureShatterThreshold_),
+            impl_->fractureShatterThreshold_, 0.0, 1000.0));
+        impl_->fractureShardDamping_ = static_cast<float>(finiteClamped(
+            settings.value(QStringLiteral("shardDamping"))
+                .toDouble(impl_->fractureShardDamping_),
+            impl_->fractureShardDamping_, 0.0, 1.0));
+        impl_->fractureShardGravity_ = static_cast<float>(finiteClamped(
+            settings.value(QStringLiteral("shardGravity"))
+                .toDouble(impl_->fractureShardGravity_),
+            impl_->fractureShardGravity_, -5000.0, 5000.0));
+        impl_->fractureImpactSensitivity_ = static_cast<float>(finiteClamped(
+            settings.value(QStringLiteral("impactSensitivity"))
+                .toDouble(impl_->fractureImpactSensitivity_),
+            impl_->fractureImpactSensitivity_, 0.0, 10.0));
+        impl_->fracturePreGenerate_ =
+            settings.value(QStringLiteral("preGenerate"))
+                .toBool(impl_->fracturePreGenerate_);
+        if (settings.contains(QStringLiteral("triggerFrame"))) {
+          impl_->fractureTriggerFrame_ =
+              settings.value(QStringLiteral("triggerFrame"))
+                  .toVariant()
+                  .toLongLong();
+        }
+      }
+    }
   } else {
     impl_->componentHost_.fromJson(QJsonArray{});
     impl_->syncBuiltinComponentDescriptors();
@@ -11456,7 +11515,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.enabled")) {
-    impl_->fractureEnabled_ = value.toBool();
+    const bool enabled = value.toBool();
+    if (impl_->fractureEnabled_ != enabled) {
+      impl_->fractureEnabled_ = enabled;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
@@ -11470,8 +11533,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.triggerFrame")) {
-    impl_->fractureTriggerFrame_ = std::max<int64_t>(-1, value.toLongLong());
-    impl_->fractureTriggerLastFrame_ = std::numeric_limits<int64_t>::min();
+    const int64_t triggerFrame = std::max<int64_t>(-1, value.toLongLong());
+    if (impl_->fractureTriggerFrame_ != triggerFrame) {
+      impl_->fractureTriggerFrame_ = triggerFrame;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
@@ -11485,14 +11551,22 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.crackThreshold")) {
-    impl_->fractureCrackThreshold_ = finiteClampedValue(
+    const float threshold = finiteClampedValue(
         value.toDouble(), impl_->fractureCrackThreshold_, 0.0, 1000.0);
+    if (impl_->fractureCrackThreshold_ != threshold) {
+      impl_->fractureCrackThreshold_ = threshold;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shatterThreshold")) {
-    impl_->fractureShatterThreshold_ = finiteClampedValue(
+    const float threshold = finiteClampedValue(
         value.toDouble(), impl_->fractureShatterThreshold_, 0.0, 1000.0);
+    if (impl_->fractureShatterThreshold_ != threshold) {
+      impl_->fractureShatterThreshold_ = threshold;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
@@ -11506,20 +11580,32 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardDamping")) {
-    impl_->fractureShardDamping_ = finiteClampedValue(
+    const float damping = finiteClampedValue(
         value.toDouble(), impl_->fractureShardDamping_, 0.0, 1.0);
+    if (impl_->fractureShardDamping_ != damping) {
+      impl_->fractureShardDamping_ = damping;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardGravity")) {
-    impl_->fractureShardGravity_ = finiteClampedValue(
+    const float gravity = finiteClampedValue(
         value.toDouble(), impl_->fractureShardGravity_, -5000.0, 5000.0);
+    if (impl_->fractureShardGravity_ != gravity) {
+      impl_->fractureShardGravity_ = gravity;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.impactSensitivity")) {
-    impl_->fractureImpactSensitivity_ = finiteClampedValue(
+    const float sensitivity = finiteClampedValue(
         value.toDouble(), impl_->fractureImpactSensitivity_, 0.0, 10.0);
+    if (impl_->fractureImpactSensitivity_ != sensitivity) {
+      impl_->fractureImpactSensitivity_ = sensitivity;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }

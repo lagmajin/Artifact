@@ -32,6 +32,19 @@ public:
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
     bool supportsGPU() const override { return true; }
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::ChromaticAberration;
+        node.parameters[0] = redShift_;
+        node.parameters[1] = blueShift_;
+        node.parameters[2] = cx_;
+        node.parameters[3] = cy_;
+        node.resolutionScaledParameterMask = (1u << 0) | (1u << 1);
+        return stack.append(node);
+    }
 
 private:
     float redShift_=2.0f,blueShift_=2.0f,cx_=0.5f,cy_=0.5f;

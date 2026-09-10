@@ -211,7 +211,7 @@ void ArtifactHistoryTimelineWidget::refreshHistory() {
   int branch = 1;
   for (const QString& label : redoLabels) {
     auto* item = new QListWidgetItem(
-        QStringLiteral("└─○  Alternate %1 · %2").arg(branch++, label), impl_->projectList);
+        QStringLiteral("└─○  Alternate %1 · %2").arg(branch++).arg(label), impl_->projectList);
     item->setData(UndoDepthRole, -1);
     item->setData(HistoryKindRole, QStringLiteral("Redo branch"));
     item->setForeground(QColor(128, 135, 145));

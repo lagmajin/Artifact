@@ -22,6 +22,7 @@ module Artifact.Render.Pipeline;
 import std;
 import Layer.Blend;
 import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
 import Graphics.Compute;
@@ -176,6 +177,281 @@ void FastApproximateAntiAliasingCS(uint3 dispatchId : SV_DispatchThreadID)
     g_DestinationColor[dispatchId.xy] = float4(lerp(center.rgb, filtered, edge * 0.55), center.a);
 }
 )";
+
+  inline constexpr const char* kGaussianBlurShader = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer GaussianBlurParams : register(b0)
+{
+    float g_Sigma;
+    uint g_Horizontal;
+    float2 g_Pad;
+};
+
+float gaussianWeight(float x, float sigma)
+{
+    return exp(-0.5 * x * x / max(0.0001, sigma * sigma));
+}
+
+[numthreads(8, 8, 1)]
+void GaussianBlurCS(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const float sigma = max(0.1, g_Sigma);
+    const int radius = min(64, (int)ceil(sigma * 3.0));
+    float4 sum = 0.0;
+    float weightSum = 0.0;
+    [loop] for (int i = -radius; i <= radius; ++i) {
+        int2 p = int2(id.xy);
+        if (g_Horizontal != 0) p.x = clamp(p.x + i, 0, int(width) - 1);
+        else p.y = clamp(p.y + i, 0, int(height) - 1);
+        const float weight = gaussianWeight((float)i, sigma);
+        const float4 sample = g_InputTexture.Load(int3(p, 0));
+        sum.rgb += sample.rgb * sample.a * weight;
+        sum.a += sample.a * weight;
+        weightSum += weight;
+    }
+    sum /= max(weightSum, 0.0001);
+    if (sum.a > 0.00001) sum.rgb /= sum.a;
+    g_OutputTexture[id.xy] = sum;
+}
+)";
+
+  inline constexpr const char* kVignetteShader = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer VignetteParams : register(b0)
+{
+    float g_Amount;
+    float g_Radius;
+    float g_Feather;
+    float g_CenterX;
+    float g_CenterY;
+    float3 g_Pad;
+};
+
+[numthreads(8, 8, 1)]
+void VignetteCS(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const float cx = g_CenterX * width;
+    const float cy = g_CenterY * height;
+    const float maxX = max(cx, width - cx);
+    const float maxY = max(cy, height - cy);
+    const float maxDistance = sqrt(maxX * maxX + maxY * maxY) *
+                              max(g_Radius, 0.0001);
+    const float distance = length(float2(id.x - cx, id.y - cy));
+    const float feather = clamp(g_Feather, 0.01, 2.0);
+    const float edge = saturate((distance - maxDistance * feather) /
+                                (maxDistance * (1.0 - feather) + 0.001));
+    const float factor = 1.0 - edge * saturate(g_Amount);
+    const float4 color = g_InputTexture.Load(int3(id.xy, 0));
+    g_OutputTexture[id.xy] = float4(color.rgb * factor, color.a);
+}
+)";
+
+  inline constexpr const char* kSharpenShader = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer SharpenParams : register(b0)
+{
+    float g_Amount;
+    float g_Sigma;
+    float g_Threshold;
+    float g_Pad;
+};
+
+float4 sampleClamped(int2 p, uint width, uint height)
+{
+    return g_InputTexture.Load(int3(clamp(p, int2(0, 0),
+        int2(width - 1, height - 1)), 0));
+}
+
+[numthreads(8, 8, 1)]
+void SharpenCS(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const float sigma = max(g_Sigma, 0.1);
+    const int radius = max(1, (int)ceil(sigma * 3.0));
+    float4 blurred = float4(0.0, 0.0, 0.0, 0.0);
+    float weightSum = 0.0;
+    [loop] for (int y = -radius; y <= radius; ++y) {
+        [loop] for (int x = -radius; x <= radius; ++x) {
+            const float distanceSquared = float(x * x + y * y);
+            const float weight = exp(-0.5 * distanceSquared / (sigma * sigma));
+            blurred += sampleClamped(int2(id.xy) + int2(x, y), width, height) * weight;
+            weightSum += weight;
+        }
+    }
+    const float4 source = g_InputTexture.Load(int3(id.xy, 0));
+    blurred /= max(weightSum, 0.0001);
+    float4 result = source + (source - blurred) * g_Amount;
+    if (g_Threshold > 0.0) {
+        const float3 difference = abs(source.rgb - blurred.rgb) * g_Amount;
+        const float enabled = step(g_Threshold,
+            max(difference.r, max(difference.g, difference.b)));
+        result.rgb = lerp(source.rgb, result.rgb, enabled);
+    }
+    g_OutputTexture[id.xy] = float4(max(result.rgb, 0.0), source.a);
+}
+)";
+
+  inline constexpr const char* kStripesShader = R"(
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer StripesParams : register(b0)
+{
+    float g_Frequency;
+    float g_Angle;
+    float g_Thickness;
+    float g_Offset;
+};
+
+[numthreads(8, 8, 1)]
+void StripesCS(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const float radians = g_Angle * 3.14159265359 / 180.0;
+    const float projection = (float(id.x) * cos(radians) + float(id.y) * sin(radians)) *
+        max(g_Frequency, 0.5) / max(float(width), float(height)) + g_Offset;
+    const float stripe = abs(projection - trunc(projection)) < saturate(g_Thickness) ? 1.0 : 0.0;
+    g_OutputTexture[id.xy] = float4(stripe, stripe, stripe, 1.0);
+}
+)";
+
+  inline constexpr const char* kHexGridShader = R"(
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer HexGridParams : register(b0)
+{
+    float g_CellSize;
+    float g_LineWidth;
+    float g_Angle;
+    float g_Pad;
+};
+
+[numthreads(8, 8, 1)]
+void HexGridCS(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const float cell = max(g_CellSize, 4.0);
+    const float line = max(g_LineWidth, 0.5);
+    const float radians = g_Angle * 0.0174532925;
+    const float rotatedX = float(id.x) * cos(radians) - float(id.y) * sin(radians);
+    const float rotatedY = float(id.x) * sin(radians) + float(id.y) * cos(radians);
+    const float hexHeight = cell * 0.8660254;
+    const float q = rotatedX / cell;
+    const float r = rotatedY / hexHeight;
+    const float qFraction = q - floor(q);
+    const float rFraction = r - floor(r);
+    const int row = int(floor(r));
+    const float2 delta = (row & 1) == 0
+        ? float2((qFraction - 0.5) * cell, (rFraction - 0.5) * hexHeight)
+        : float2(qFraction * cell, (rFraction - 0.5) * hexHeight);
+    const float distance = max(abs(delta.x) / cell, abs(delta.y) / hexHeight) * 2.0;
+    const float value = distance > 1.0 - line / cell ? 0.0 : 1.0;
+    g_OutputTexture[id.xy] = float4(value, value, value, 1.0);
+}
+)";
+
+  inline constexpr const char* kChromaticAberrationShader = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer ChromaticAberrationParams : register(b0)
+{
+    float g_RedShift;
+    float g_BlueShift;
+    float g_CenterX;
+    float g_CenterY;
+};
+
+float4 sampleClamped(int2 p, uint width, uint height)
+{
+    return g_InputTexture.Load(int3(clamp(p, int2(0, 0),
+        int2(width - 1, height - 1)), 0));
+}
+
+[numthreads(8, 8, 1)]
+void ChromaticAberrationCS(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const float2 position = float2(id.xy);
+    const float2 center = float2(g_CenterX * width, g_CenterY * height);
+    const float2 delta = position - center;
+    const float distance = length(delta);
+    const float2 direction = distance > 0.0 ? delta / distance : float2(0.0, 0.0);
+    const float normalizedDistance = distance / max(max(width, height) * 0.7, 1.0);
+    const float4 red = sampleClamped(
+        int2(position + direction * normalizedDistance * g_RedShift + 0.5),
+        width, height);
+    const float4 blue = sampleClamped(
+        int2(position - direction * normalizedDistance * g_BlueShift + 0.5),
+        width, height);
+    float4 output = g_InputTexture.Load(int3(id.xy, 0));
+    output.r = red.r;
+    output.b = blue.b;
+    g_OutputTexture[id.xy] = output;
+}
+)";
+
+  struct GaussianBlurParams
+  {
+   float sigma = 0.0f;
+   Uint32 horizontal = 0;
+   float pad[2] = {};
+  };
+
+  struct VignetteParams
+  {
+   float amount = 0.0f;
+   float radius = 0.0f;
+   float feather = 0.0f;
+   float centerX = 0.5f;
+   float centerY = 0.5f;
+   float pad[3] = {};
+  };
+
+  struct SharpenParams
+  {
+   float amount = 1.0f;
+   float sigma = 1.0f;
+   float threshold = 0.0f;
+   float pad = 0.0f;
+  };
+
+  struct StripesParams
+  {
+   float frequency = 10.0f;
+   float angle = 0.0f;
+   float thickness = 0.5f;
+   float offset = 0.0f;
+  };
+
+  struct HexGridParams
+  {
+   float cellSize = 32.0f;
+   float lineWidth = 2.0f;
+   float angle = 0.0f;
+   float pad = 0.0f;
+  };
+
+  struct ChromaticAberrationParams
+  {
+   float redShift = 0.0f;
+   float blueShift = 0.0f;
+   float centerX = 0.5f;
+   float centerY = 0.5f;
+  };
 
   inline constexpr const char* kScreenSpaceGlobalIlluminationResolveShader = R"(
 cbuffer SSGIResolveParams : register(b0)
@@ -384,6 +660,18 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   RefCntAutoPtr<IBuffer> screenSpaceGIResolveParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceAOCompositeExecutor_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> fastApproximateAntiAliasingExecutor_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> gaussianBlurExecutor_;
+  RefCntAutoPtr<IBuffer> gaussianBlurParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> sharpenExecutor_;
+  RefCntAutoPtr<IBuffer> sharpenParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> stripesExecutor_;
+  RefCntAutoPtr<IBuffer> stripesParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> hexGridExecutor_;
+  RefCntAutoPtr<IBuffer> hexGridParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> vignetteExecutor_;
+  RefCntAutoPtr<IBuffer> vignetteParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> chromaticAberrationExecutor_;
+  RefCntAutoPtr<IBuffer> chromaticAberrationParams_;
   TextureBundle screenSpaceGIHistory_[2];
   Uint32 screenSpaceGIHistoryWriteIndex_ = 0;
   bool screenSpaceGIHistoryValid_ = false;
@@ -490,6 +778,18 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->screenSpaceGIResolveParams_.Release();
   impl_->screenSpaceAOCompositeExecutor_.reset();
   impl_->fastApproximateAntiAliasingExecutor_.reset();
+  impl_->gaussianBlurExecutor_.reset();
+  impl_->gaussianBlurParams_.Release();
+  impl_->sharpenExecutor_.reset();
+  impl_->sharpenParams_.Release();
+  impl_->stripesExecutor_.reset();
+  impl_->stripesParams_.Release();
+  impl_->hexGridExecutor_.reset();
+  impl_->hexGridParams_.Release();
+  impl_->vignetteExecutor_.reset();
+  impl_->vignetteParams_.Release();
+  impl_->chromaticAberrationExecutor_.reset();
+  impl_->chromaticAberrationParams_.Release();
   impl_->screenSpaceGIHistory_[0] = {};
   impl_->screenSpaceGIHistory_[1] = {};
   impl_->screenSpaceGIHistoryWriteIndex_ = 0;
@@ -499,6 +799,393 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->format_ = TEX_FORMAT_UNKNOWN;
   impl_->emissionEnabled_ = false;
   impl_->device_ = nullptr;
+ }
+
+ bool RenderPipeline::applySpatialEffect(
+    IDeviceContext* ctx, ITextureView* inputSRV,
+    ITextureView* scratchUAV, ITextureView* outputUAV,
+    const GpuSpatialEffectNode& node)
+ {
+  if (!ctx || !impl_->device_ || !inputSRV || !scratchUAV || !outputUAV ||
+      scratchUAV == outputUAV ||
+      impl_->width_ == 0 || impl_->height_ == 0) {
+   return false;
+  }
+  if (node.kind == GpuSpatialEffectKind::HexGrid) {
+   if (!impl_->hexGridExecutor_) {
+    impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+        ? impl_->screenSpaceGIContext_
+        : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+    impl_->hexGridExecutor_ =
+        std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+    BufferDesc bufferDesc;
+    bufferDesc.Name = "Composition Hex Grid Params";
+    bufferDesc.Usage = USAGE_DYNAMIC;
+    bufferDesc.Size = sizeof(HexGridParams);
+    bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+    bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+    impl_->device_->CreateBuffer(bufferDesc, nullptr, &impl_->hexGridParams_);
+    static const ShaderResourceVariableDesc variables[] = {
+        {SHADER_TYPE_COMPUTE, "HexGridParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    };
+    ArtifactCore::ComputePipelineDesc desc;
+    desc.name = "Composition Hex Grid PSO";
+    desc.shaderSource = kHexGridShader;
+    desc.entryPoint = "HexGridCS";
+    desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = variables;
+    desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+    desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!impl_->hexGridParams_ || !impl_->hexGridExecutor_->build(desc) ||
+        !impl_->hexGridExecutor_->createShaderResourceBinding(true) ||
+        !impl_->hexGridExecutor_->setBuffer("HexGridParams", impl_->hexGridParams_)) {
+     impl_->hexGridExecutor_.reset();
+     impl_->hexGridParams_.Release();
+     return false;
+    }
+   }
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->hexGridParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   HexGridParams params;
+   params.cellSize = std::clamp(node.parameters[0], 4.0f, 1024.0f);
+   params.lineWidth = std::clamp(node.parameters[1], 0.5f, 1024.0f);
+   params.angle = std::isfinite(node.parameters[2]) ? node.parameters[2] : 0.0f;
+   std::memcpy(mapped, &params, sizeof(params));
+   ctx->UnmapBuffer(impl_->hexGridParams_, MAP_WRITE);
+   if (!impl_->hexGridExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+    return false;
+   }
+   impl_->hexGridExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+  if (node.kind == GpuSpatialEffectKind::Stripes) {
+   if (!impl_->stripesExecutor_) {
+    impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+        ? impl_->screenSpaceGIContext_
+        : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+    impl_->stripesExecutor_ =
+        std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+    BufferDesc bufferDesc;
+    bufferDesc.Name = "Composition Stripes Params";
+    bufferDesc.Usage = USAGE_DYNAMIC;
+    bufferDesc.Size = sizeof(StripesParams);
+    bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+    bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+    impl_->device_->CreateBuffer(bufferDesc, nullptr, &impl_->stripesParams_);
+    static const ShaderResourceVariableDesc variables[] = {
+        {SHADER_TYPE_COMPUTE, "StripesParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    };
+    ArtifactCore::ComputePipelineDesc desc;
+    desc.name = "Composition Stripes PSO";
+    desc.shaderSource = kStripesShader;
+    desc.entryPoint = "StripesCS";
+    desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = variables;
+    desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+    desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!impl_->stripesParams_ || !impl_->stripesExecutor_->build(desc) ||
+        !impl_->stripesExecutor_->createShaderResourceBinding(true) ||
+        !impl_->stripesExecutor_->setBuffer("StripesParams", impl_->stripesParams_)) {
+     impl_->stripesExecutor_.reset();
+     impl_->stripesParams_.Release();
+     return false;
+    }
+   }
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->stripesParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   StripesParams params;
+   params.frequency = std::clamp(node.parameters[0], 0.5f, 512.0f);
+   params.angle = std::isfinite(node.parameters[1]) ? node.parameters[1] : 0.0f;
+   params.thickness = std::clamp(node.parameters[2], 0.0f, 1.0f);
+   params.offset = std::isfinite(node.parameters[3]) ? node.parameters[3] : 0.0f;
+   std::memcpy(mapped, &params, sizeof(params));
+   ctx->UnmapBuffer(impl_->stripesParams_, MAP_WRITE);
+   if (!impl_->stripesExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+    return false;
+   }
+   impl_->stripesExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+  if (node.kind == GpuSpatialEffectKind::Sharpen) {
+   if (!impl_->sharpenExecutor_) {
+    impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+        ? impl_->screenSpaceGIContext_
+        : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+    impl_->sharpenExecutor_ =
+        std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+    BufferDesc bufferDesc;
+    bufferDesc.Name = "Composition Sharpen Params";
+    bufferDesc.Usage = USAGE_DYNAMIC;
+    bufferDesc.Size = sizeof(SharpenParams);
+    bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+    bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+    impl_->device_->CreateBuffer(bufferDesc, nullptr, &impl_->sharpenParams_);
+    static const ShaderResourceVariableDesc variables[] = {
+        {SHADER_TYPE_COMPUTE, "SharpenParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_InputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    };
+    ArtifactCore::ComputePipelineDesc desc;
+    desc.name = "Composition Sharpen PSO";
+    desc.shaderSource = kSharpenShader;
+    desc.entryPoint = "SharpenCS";
+    desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = variables;
+    desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+    desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!impl_->sharpenParams_ || !impl_->sharpenExecutor_->build(desc) ||
+        !impl_->sharpenExecutor_->createShaderResourceBinding(true) ||
+        !impl_->sharpenExecutor_->setBuffer("SharpenParams", impl_->sharpenParams_)) {
+     impl_->sharpenExecutor_.reset();
+     impl_->sharpenParams_.Release();
+     return false;
+    }
+   }
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->sharpenParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   SharpenParams params;
+   params.amount = std::clamp(node.parameters[0], 0.0f, 10.0f);
+   params.sigma = std::clamp(node.parameters[1], 0.0f, 10.0f);
+   params.threshold = std::clamp(node.parameters[2], 0.0f, 1.0f);
+   std::memcpy(mapped, &params, sizeof(params));
+   ctx->UnmapBuffer(impl_->sharpenParams_, MAP_WRITE);
+   if (!impl_->sharpenExecutor_->setTextureView("g_InputTexture", inputSRV) ||
+       !impl_->sharpenExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+    return false;
+   }
+   impl_->sharpenExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+  if (node.kind == GpuSpatialEffectKind::ChromaticAberration) {
+   if (!impl_->chromaticAberrationExecutor_) {
+    impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+        ? impl_->screenSpaceGIContext_
+        : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+    impl_->chromaticAberrationExecutor_ =
+        std::make_unique<ArtifactCore::ComputeExecutor>(
+            *impl_->screenSpaceGIContext_);
+    BufferDesc bufferDesc;
+    bufferDesc.Name = "Composition Chromatic Aberration Params";
+    bufferDesc.Usage = USAGE_DYNAMIC;
+    bufferDesc.Size = sizeof(ChromaticAberrationParams);
+    bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+    bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+    impl_->device_->CreateBuffer(bufferDesc, nullptr,
+                                 &impl_->chromaticAberrationParams_);
+    static const ShaderResourceVariableDesc variables[] = {
+        {SHADER_TYPE_COMPUTE, "ChromaticAberrationParams",
+         SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_InputTexture",
+         SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_OutputTexture",
+         SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    };
+    ArtifactCore::ComputePipelineDesc desc;
+    desc.name = "Composition Chromatic Aberration PSO";
+    desc.shaderSource = kChromaticAberrationShader;
+    desc.entryPoint = "ChromaticAberrationCS";
+    desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = variables;
+    desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+    desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!impl_->chromaticAberrationParams_ ||
+        !impl_->chromaticAberrationExecutor_->build(desc) ||
+        !impl_->chromaticAberrationExecutor_->createShaderResourceBinding(true) ||
+        !impl_->chromaticAberrationExecutor_->setBuffer(
+            "ChromaticAberrationParams",
+            impl_->chromaticAberrationParams_)) {
+     impl_->chromaticAberrationExecutor_.reset();
+     impl_->chromaticAberrationParams_.Release();
+     return false;
+    }
+   }
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->chromaticAberrationParams_, MAP_WRITE,
+                  MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   ChromaticAberrationParams params;
+   params.redShift = std::clamp(node.parameters[0], 0.0f, 50.0f);
+   params.blueShift = std::clamp(node.parameters[1], 0.0f, 50.0f);
+   params.centerX = std::clamp(node.parameters[2], 0.0f, 1.0f);
+   params.centerY = std::clamp(node.parameters[3], 0.0f, 1.0f);
+   std::memcpy(mapped, &params, sizeof(params));
+   ctx->UnmapBuffer(impl_->chromaticAberrationParams_, MAP_WRITE);
+   if (!impl_->chromaticAberrationExecutor_->setTextureView(
+           "g_InputTexture", inputSRV) ||
+       !impl_->chromaticAberrationExecutor_->setTextureView(
+           "g_OutputTexture", scratchUAV)) {
+    return false;
+   }
+   impl_->chromaticAberrationExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+  if (node.kind == GpuSpatialEffectKind::Vignette) {
+   if (!impl_->vignetteExecutor_) {
+    impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+        ? impl_->screenSpaceGIContext_
+        : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+    impl_->vignetteExecutor_ =
+        std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+    BufferDesc bufferDesc;
+    bufferDesc.Name = "Composition Vignette Params";
+    bufferDesc.Usage = USAGE_DYNAMIC;
+    bufferDesc.Size = sizeof(VignetteParams);
+    bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+    bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+    impl_->device_->CreateBuffer(bufferDesc, nullptr, &impl_->vignetteParams_);
+    static const ShaderResourceVariableDesc variables[] = {
+        {SHADER_TYPE_COMPUTE, "VignetteParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_InputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    };
+    ArtifactCore::ComputePipelineDesc desc;
+    desc.name = "Composition Vignette PSO";
+    desc.shaderSource = kVignetteShader;
+    desc.entryPoint = "VignetteCS";
+    desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = variables;
+    desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+    desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!impl_->vignetteParams_ || !impl_->vignetteExecutor_->build(desc) ||
+        !impl_->vignetteExecutor_->createShaderResourceBinding(true) ||
+        !impl_->vignetteExecutor_->setBuffer(
+            "VignetteParams", impl_->vignetteParams_)) {
+     impl_->vignetteExecutor_.reset();
+     impl_->vignetteParams_.Release();
+     return false;
+    }
+   }
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->vignetteParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   VignetteParams params;
+   params.amount = std::clamp(node.parameters[0], 0.0f, 1.0f);
+   params.radius = std::clamp(node.parameters[1], 0.0f, 2.0f);
+   params.feather = std::clamp(node.parameters[2], 0.01f, 2.0f);
+   params.centerX = std::clamp(node.parameters[3], 0.0f, 1.0f);
+   params.centerY = std::clamp(node.parameters[4], 0.0f, 1.0f);
+   std::memcpy(mapped, &params, sizeof(params));
+   ctx->UnmapBuffer(impl_->vignetteParams_, MAP_WRITE);
+   if (!impl_->vignetteExecutor_->setTextureView("g_InputTexture", inputSRV) ||
+       !impl_->vignetteExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+    return false;
+   }
+   impl_->vignetteExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+  if (node.kind != GpuSpatialEffectKind::SeparableGaussianBlur) return false;
+  const float sigma = node.parameters[0];
+  if (sigma <= 0.0f) return false;
+  if (!impl_->gaussianBlurExecutor_) {
+   impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+       ? impl_->screenSpaceGIContext_
+       : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+   impl_->gaussianBlurExecutor_ =
+       std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+   BufferDesc bufferDesc;
+   bufferDesc.Name = "Composition Gaussian Blur Params";
+   bufferDesc.Usage = USAGE_DYNAMIC;
+   bufferDesc.Size = sizeof(GaussianBlurParams);
+   bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+   bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+   impl_->device_->CreateBuffer(bufferDesc, nullptr, &impl_->gaussianBlurParams_);
+   static const ShaderResourceVariableDesc variables[] = {
+       {SHADER_TYPE_COMPUTE, "GaussianBlurParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+       {SHADER_TYPE_COMPUTE, "g_InputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+       {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+   };
+   ArtifactCore::ComputePipelineDesc desc;
+   desc.name = "Composition Gaussian Blur PSO";
+   desc.shaderSource = kGaussianBlurShader;
+   desc.entryPoint = "GaussianBlurCS";
+   desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+   desc.variables = variables;
+   desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+   desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+   if (!impl_->gaussianBlurParams_ ||
+       !impl_->gaussianBlurExecutor_->build(desc) ||
+       !impl_->gaussianBlurExecutor_->createShaderResourceBinding(true) ||
+       !impl_->gaussianBlurExecutor_->setBuffer(
+           "GaussianBlurParams", impl_->gaussianBlurParams_)) {
+    impl_->gaussianBlurExecutor_.reset();
+    impl_->gaussianBlurParams_.Release();
+    return false;
+   }
+  }
+  auto dispatchPass = [&](ITextureView* source, ITextureView* destination,
+                          Uint32 horizontal) {
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->gaussianBlurParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   GaussianBlurParams params;
+   params.sigma = std::clamp(sigma, 0.1f, 64.0f);
+   params.horizontal = horizontal;
+   std::memcpy(mapped, &params, sizeof(params));
+   ctx->UnmapBuffer(impl_->gaussianBlurParams_, MAP_WRITE);
+   if (!impl_->gaussianBlurExecutor_->setTextureView("g_InputTexture", source) ||
+       !impl_->gaussianBlurExecutor_->setTextureView("g_OutputTexture", destination)) {
+    return false;
+   }
+   impl_->gaussianBlurExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   return true;
+  };
+  auto* scratchSRV = scratchUAV->GetTexture()->GetDefaultView(
+      TEXTURE_VIEW_SHADER_RESOURCE);
+  return scratchSRV && dispatchPass(inputSRV, scratchUAV, 1) &&
+         dispatchPass(scratchSRV, outputUAV, 0);
  }
 
  bool RenderPipeline::applyPointwise(

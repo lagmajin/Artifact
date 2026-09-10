@@ -1958,6 +1958,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
   }
 
+  if (auto* shapeLayer = dynamic_cast<ArtifactShapeLayer*>(layer)) {
+    if (hasRasterizerEffectsOrMasks(layer)) {
+      const QImage shapeImg = downsampleForLOD(shapeLayer->toQImage(), lod);
+      if (!shapeImg.isNull()) {
+        applySurfaceAndDraw(shapeImg, localRect, true);
+        return;
+      }
+    } else {
+      shapeLayer->draw(renderer);
+      return;
+    }
+  }
+
   if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
     if (svgLayer->isLoaded()) {
       if (!hasRasterizerEffectsOrMasks(layer) &&

@@ -695,18 +695,6 @@ bool confirmUnsavedChangesForClose(QWidget *parent)
     exitButton->setPalette(exitPalette);
   }
 
-  // The common style opts every widget into styled backgrounds.  Keep message
-  // labels transparent so their per-label surface is not painted as a black
-  // band over this dialog's uniform background.
-  for (QLabel *label : box.findChildren<QLabel *>()) {
-    if (!label) {
-      continue;
-    }
-    label->setAttribute(Qt::WA_StyledBackground, false);
-    label->setAutoFillBackground(false);
-    label->setPalette(palette);
-  }
-
   box.setDefaultButton(hasUnsavedChanges ? saveButton : exitButton);
   box.exec();
 

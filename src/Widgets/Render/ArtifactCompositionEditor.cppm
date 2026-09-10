@@ -8821,7 +8821,7 @@ public:
       QAction *action = breadcrumbMenu_->addAction(labels.at(i));
       action->setEnabled(i != chain.size() - 1);
       const auto id = chain.at(i);
-      QObject::connect(action, &QAction::triggered, this, [this, id]() {
+      QObject::connect(action, &QAction::triggered, breadcrumbMenu_, [this, id]() {
         if (auto *svc = ArtifactProjectService::instance()) {
           const auto result = svc->changeCurrentComposition(id);
           if (result.success) syncChromeSummary(nullptr);
@@ -9258,9 +9258,7 @@ public:
     }
     if (trackerPanel_->isVisible() && tracking) {
       QTimer::singleShot(100, trackerPanel_, [this]() {
-        if (impl_) {
-          impl_->refreshTrackerPanel();
-        }
+        refreshTrackerPanel();
       });
     }
   }
@@ -11285,19 +11283,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   addGizmoAction(QStringLiteral("Gizmo: Selection (Move + Frame)"),
                  QStringLiteral("MaterialVS/neutral/view_sidebar.svg"),
                  TransformGizmo::Mode::All, true);
-  const auto modalShortcut = [](ArtifactCore::ShortcutId id) {
-    return ArtifactCore::ShortcutBindings::instance().shortcutText(id);
-  };
-  addGizmoAction(QStringLiteral("Gizmo: Move (%1)").arg(
-                     modalShortcut(ArtifactCore::ShortcutId::TransformMove)),
+  addGizmoAction(QStringLiteral("Gizmo: Move"),
                  QStringLiteral("MaterialVS/neutral/transform.svg"),
                  TransformGizmo::Mode::Move, false);
-  addGizmoAction(QStringLiteral("Gizmo: Rotate (%1)").arg(
-                     modalShortcut(ArtifactCore::ShortcutId::TransformRotate)),
+  addGizmoAction(QStringLiteral("Gizmo: Rotate"),
                  QStringLiteral("Material/redo.svg"),
                  TransformGizmo::Mode::Rotate, false);
-  addGizmoAction(QStringLiteral("Gizmo: Scale (%1)").arg(
-                     modalShortcut(ArtifactCore::ShortcutId::TransformScale)),
+  addGizmoAction(QStringLiteral("Gizmo: Scale"),
                  QStringLiteral("MaterialVS/neutral/crop.svg"),
                  TransformGizmo::Mode::Scale, false);
   gizmoMenu->addSeparator();

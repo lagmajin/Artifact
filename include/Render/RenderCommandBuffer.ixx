@@ -151,6 +151,21 @@ struct AtlasSpriteXformPkt {
     float4                 color;
 };
 
+// A single textured triangle using the existing transformed-sprite PSO.
+// Positions are normalized to the packet's local unit rectangle; the matrix
+// maps that rectangle into canvas space.
+struct TexturedTriangleXformPkt {
+    RenderSolidRectTransform2D mat;
+    float2 p0;
+    float2 p1;
+    float2 p2;
+    float2 uv0;
+    float2 uv1;
+    float2 uv2;
+    ITextureView* pSRV = nullptr;
+    float4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+};
+
 struct MaskedSpritePkt {
     RenderSolidTransform2D xform;
     ITextureView*      sceneSRV = nullptr;
@@ -213,7 +228,7 @@ using DrawPacket = std::variant<
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, MaskedSpritePkt,
-    AtlasSpritePkt, AtlasSpriteXformPkt,
+    AtlasSpritePkt, AtlasSpriteXformPkt, TexturedTriangleXformPkt,
     BillboardPkt, BillboardImagePkt, ParticlePkt,
     GlyphTextPkt, GlyphTextXformPkt
 >;
