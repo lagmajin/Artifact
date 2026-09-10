@@ -89,6 +89,7 @@ private:
   QLabel *baseUrlLabel_;
   QLabel *modelCountLabel_ = nullptr;
   QLabel *modelSelectionLabel_ = nullptr;
+  QLabel *connectionStatusLabel_ = nullptr;
   QLabel *connectionProviderLabel_ = nullptr;
   QLabel *connectionEndpointLabel_ = nullptr;
   QLabel *connectionApiKeyLabel_ = nullptr;

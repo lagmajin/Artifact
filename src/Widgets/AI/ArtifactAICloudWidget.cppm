@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
@@ -1048,8 +1048,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
            << "active=" << QSslSocket::activeBackend();
 
   auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(12, 12, 12, 12);
-  layout->setSpacing(10);
+  layout->setContentsMargins(6, 6, 6, 6);
+  layout->setSpacing(6);
 
   auto *splitter = new QSplitter(Qt::Horizontal, this);
   splitter->setObjectName(QStringLiteral("aiCloudMainSplitter"));
@@ -1061,13 +1061,13 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->setSpacing(10);
 
-  auto *headerFrame = new QFrame(leftPanel);
+  auto *headerFrame = new QFrame(this);
   headerFrame->setObjectName(QStringLiteral("aiCloudHeaderFrame"));
   headerFrame->setFrameShape(QFrame::StyledPanel);
   headerFrame->setFrameShadow(QFrame::Plain);
-  auto *headerLayout = new QVBoxLayout(headerFrame);
-  headerLayout->setContentsMargins(10, 8, 10, 8);
-  headerLayout->setSpacing(2);
+  auto *headerLayout = new QHBoxLayout(headerFrame);
+  headerLayout->setContentsMargins(12, 8, 10, 8);
+  headerLayout->setSpacing(8);
   auto *headerTitle = new QLabel(QStringLiteral("AI Cloud"), headerFrame);
   QFont headerFont = headerTitle->font();
   headerFont.setBold(true);
@@ -1075,18 +1075,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
     headerFont.setPointSize(headerFont.pointSize() + 2);
   }
   headerTitle->setFont(headerFont);
-  auto *headerSubtitle = new QLabel(
-      QStringLiteral("VSCode-style cloud assistant panel"), headerFrame);
-  headerSubtitle->setWordWrap(true);
-  auto *headerHint = new QLabel(
-      QStringLiteral(
-          "OpenRouter, Kilo Gateway, and OpenAI-compatible endpoints"),
-      headerFrame);
-  headerHint->setWordWrap(true);
   headerLayout->addWidget(headerTitle);
-  headerLayout->addWidget(headerSubtitle);
-  headerLayout->addWidget(headerHint);
-  leftLayout->addWidget(headerFrame);
+  headerLayout->addStretch(1);
 
   providerCombo_ = new QComboBox(leftPanel);
   providerCombo_->setAccessibleName(QStringLiteral("AI provider"));
@@ -1134,17 +1124,50 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   modelCombo_->setObjectName(QStringLiteral("aiCloudModelCombo"));
   modelCombo_->setVisible(false);
 
+  modelSelectionLabel_ = new QLabel(headerFrame);
+  modelSelectionLabel_->setCursor(Qt::PointingHandCursor);
+  modelSelectionLabel_->setTextFormat(Qt::RichText);
+  modelSelectionLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
+  modelSelectionLabel_->setToolTip(QStringLiteral("Click to choose a model"));
+  modelSelectionLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  QPalette modelPalette = modelSelectionLabel_->palette();
+  modelPalette.setColor(QPalette::WindowText, QColor(191, 224, 255));
+  modelSelectionLabel_->setPalette(modelPalette);
+  modelSelectionLabel_->installEventFilter(this);
+  headerLayout->addWidget(modelSelectionLabel_);
+
+  connectionStatusLabel_ = new QLabel(QStringLiteral("Setup required"), headerFrame);
+  connectionStatusLabel_->setObjectName(QStringLiteral("aiCloudConnectionStatusLabel"));
+  connectionStatusLabel_->setAlignment(Qt::AlignCenter);
+  headerLayout->addWidget(connectionStatusLabel_);
+
+  auto *panelToggleButton =
+      new QPushButton(QStringLiteral("Details"), headerFrame);
+  panelToggleButton->setObjectName(QStringLiteral("aiCloudPanelToggleButton"));
+  panelToggleButton->setAccessibleName(QStringLiteral("Show cloud controls panel"));
+  panelToggleButton->setToolTip(
+      QStringLiteral("Show or hide connection, tools, and MCP details"));
+  panelToggleButton->setCheckable(true);
+  panelToggleButton->setChecked(false);
+  headerLayout->addWidget(panelToggleButton);
+
+  openSettingsButton_ = new QPushButton(QStringLiteral("Settings"), headerFrame);
+  openSettingsButton_->setAccessibleName(QStringLiteral("Open cloud AI settings"));
+  openSettingsButton_->setObjectName(QStringLiteral("aiCloudOpenSettingsButton"));
+  headerLayout->addWidget(openSettingsButton_);
+  layout->addWidget(headerFrame);
+
   auto *advancedToggleRow = new QHBoxLayout();
   advancedToggleRow->setContentsMargins(0, 0, 0, 0);
   advancedToggleRow->setSpacing(6);
-  auto *advancedToggle = new QPushButton(QStringLiteral("More"), leftPanel);
+  auto *advancedToggle =
+      new QPushButton(QStringLiteral("Connection / Tools / MCP"), leftPanel);
   advancedToggle->setAccessibleName(QStringLiteral("Toggle advanced AI controls"));
   advancedToggle->setObjectName(QStringLiteral("aiCloudAdvancedToggleButton"));
   advancedToggle->setCheckable(true);
   advancedToggle->setChecked(false);
   advancedToggle->setFlat(true);
   advancedToggle->setToolTip(QStringLiteral("Show advanced cloud controls"));
-  advancedToggle->setMaximumWidth(72);
   advancedToggleRow->addWidget(advancedToggle);
   advancedToggleRow->addStretch();
   leftLayout->addLayout(advancedToggleRow);
@@ -1399,8 +1422,9 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   connect(advancedToggle, &QPushButton::toggled, this,
           [advancedPanel, advancedToggle](bool checked) {
             advancedPanel->setVisible(checked);
-            advancedToggle->setText(checked ? QStringLiteral("Less")
-                                            : QStringLiteral("More"));
+            advancedToggle->setText(
+                checked ? QStringLiteral("Hide connection / tools / MCP")
+                        : QStringLiteral("Connection / Tools / MCP"));
           });
 
   auto *rightPanel = new QWidget(splitter);
@@ -1409,30 +1433,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   rightLayout->setContentsMargins(0, 0, 0, 0);
   rightLayout->setSpacing(10);
 
-  auto *panelControlRow = new QHBoxLayout();
-  panelControlRow->setContentsMargins(0, 0, 0, 0);
-  panelControlRow->setSpacing(6);
-  auto *panelToggleButton =
-      new QPushButton(QStringLiteral("Show Cloud Panel"), rightPanel);
-  panelToggleButton->setObjectName(QStringLiteral("aiCloudPanelToggleButton"));
-  panelToggleButton->setAccessibleName(QStringLiteral("Show cloud controls panel"));
-  panelToggleButton->setToolTip(
-      QStringLiteral("Show or hide the left-side cloud controls panel"));
-  panelToggleButton->setCheckable(true);
-  panelToggleButton->setChecked(false);
-  panelControlRow->addWidget(panelToggleButton);
-  panelControlRow->addStretch();
-  openSettingsButton_ = new QPushButton(QStringLiteral("Cloud Settings..."),
-                                        rightPanel);
-  openSettingsButton_->setAccessibleName(QStringLiteral("Open cloud AI settings"));
-  openSettingsButton_->setObjectName(QStringLiteral("aiCloudOpenSettingsButton"));
-  panelControlRow->addWidget(openSettingsButton_);
-  rightLayout->addLayout(panelControlRow);
-
   const auto transcriptCard = makeSectionCard(
-      rightPanel, QStringLiteral("Conversation"),
-      QStringLiteral(
-          "User messages appear on the right, assistant replies on the left."));
+      rightPanel, QStringLiteral("Conversation"));
   auto *transcriptToolbar = new QHBoxLayout();
   transcriptToolbar->setContentsMargins(0, 0, 0, 0);
   transcriptToolbar->setSpacing(6);
@@ -1441,13 +1443,9 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   requestStatusLabel_->setWordWrap(true);
   requestStatusLabel_->setVisible(false);
   transcriptToolbar->addWidget(requestStatusLabel_, 1);
-  auto *transcriptHint = new QLabel(
-      QStringLiteral("Copy the full conversation as plain text."), rightPanel);
-  transcriptHint->setWordWrap(true);
-  transcriptToolbar->addWidget(transcriptHint, 1);
   transcriptToolbar->addStretch();
   copyTranscriptButton_ =
-      new QPushButton(QStringLiteral("Copy Conversation"), rightPanel);
+      new QPushButton(QStringLiteral("Copy"), rightPanel);
   copyTranscriptButton_->setAccessibleName(QStringLiteral("Copy AI conversation"));
   copyTranscriptButton_->setObjectName(QStringLiteral("aiCloudCopyTranscriptButton"));
   transcriptToolbar->addWidget(copyTranscriptButton_);
@@ -1477,33 +1475,29 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   loadApiKey();
 
   const auto promptCard = makeSectionCard(
-      rightPanel, QStringLiteral("Composer"),
-      QStringLiteral(
-          "Write a prompt, then send or cancel from the same button."));
+      rightPanel, QStringLiteral("Message"));
   promptEdit_ = new QTextEdit(rightPanel);
   promptEdit_->setAccessibleName(QStringLiteral("AI prompt"));
   promptEdit_->setAccessibleDescription(QStringLiteral("Enter a prompt to send to the AI assistant"));
   promptEdit_->setObjectName(QStringLiteral("aiCloudPromptEdit"));
-  promptEdit_->setPlaceholderText(QStringLiteral("Enter your prompt here..."));
-  promptEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-  promptEdit_->setMinimumHeight(140);
+  promptEdit_->setPlaceholderText(QStringLiteral("Send a message..."));
+  promptEdit_->setMinimumHeight(72);
+  promptEdit_->setMaximumHeight(132);
   promptEdit_->setAcceptRichText(false);
   promptCard.body->addWidget(promptEdit_);
 
   auto *sendRow = new QHBoxLayout();
   sendRow->setContentsMargins(0, 0, 0, 0);
   sendRow->setSpacing(6);
-  auto *sendHint = new QLabel(
-      QStringLiteral("Enter to send, Esc to cancel while generating"),
-      rightPanel);
-  sendHint->setWordWrap(true);
-  sendRow->addWidget(sendHint, 1);
+  auto *sendHint = new QLabel(QStringLiteral("Enter to send · Shift+Enter for a new line"),
+                              rightPanel);
+  sendRow->addWidget(sendHint);
   sendRow->addStretch();
-  sendButton_ = new QPushButton(QStringLiteral("Send to AI"), rightPanel);
+  sendButton_ = new QPushButton(QStringLiteral("Send"), rightPanel);
   sendButton_->setAccessibleName(QStringLiteral("Send prompt to AI"));
   sendButton_->setAccessibleDescription(QStringLiteral("Send the current prompt to the AI assistant"));
   sendButton_->setObjectName(QStringLiteral("aiCloudSendButton"));
-  sendButton_->setMinimumWidth(120);
+  sendButton_->setMinimumWidth(88);
   sendButton_->setMinimumHeight(30);
   sendButton_->setEnabled(false);
   connect(sendButton_, &QPushButton::clicked, this,
@@ -1511,27 +1505,6 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   sendRow->addWidget(sendButton_);
   promptCard.body->addLayout(sendRow);
 
-  auto *modelPickRow = new QHBoxLayout();
-  modelPickRow->setContentsMargins(0, 0, 0, 0);
-  modelPickRow->setSpacing(6);
-  modelPickRow->addStretch();
-  modelSelectionLabel_ = new QLabel(rightPanel);
-  modelSelectionLabel_->setCursor(Qt::PointingHandCursor);
-  modelSelectionLabel_->setTextFormat(Qt::RichText);
-  modelSelectionLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
-  modelSelectionLabel_->setToolTip(QStringLiteral("Click to choose a model"));
-  modelSelectionLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  QFont modelFont = modelSelectionLabel_->font();
-  if (modelFont.pointSize() > 0) {
-    modelFont.setPointSize(std::max(1, modelFont.pointSize() - 1));
-  }
-  modelSelectionLabel_->setFont(modelFont);
-  QPalette modelPalette = modelSelectionLabel_->palette();
-  modelPalette.setColor(QPalette::WindowText, QColor(191, 224, 255));
-  modelSelectionLabel_->setPalette(modelPalette);
-  modelSelectionLabel_->installEventFilter(this);
-  modelPickRow->addWidget(modelSelectionLabel_);
-  promptCard.body->addLayout(modelPickRow);
   updateModelSelectionLabel();
 
   rightLayout->addWidget(promptCard.frame);
@@ -1550,9 +1523,9 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
                                QStringLiteral("AICloud"));
             settings.setValue(QStringLiteral("cloudPanelVisible"), checked);
             leftPanel->setVisible(checked);
-            panelToggleButton->setText(checked ? QStringLiteral("Hide Cloud Panel")
-                                               : QStringLiteral("Show Cloud Panel"));
-            splitter->setSizes(checked ? QList<int>{320, 880}
+            panelToggleButton->setText(checked ? QStringLiteral("Hide Details")
+                                               : QStringLiteral("Details"));
+            splitter->setSizes(checked ? QList<int>{280, 920}
                                        : QList<int>{0, 1200});
           });
   connect(openSettingsButton_, &QPushButton::clicked, this, [this]() {
@@ -2088,6 +2061,19 @@ void Artifact::ArtifactAICloudWidget::updateConnectionSummary() {
           .toString();
   const QString apiKey =
       settings.value(QStringLiteral("apiKey")).toString().trimmed();
+  if (connectionStatusLabel_) {
+    const bool connected = !apiKey.isEmpty() &&
+                           !currentChatCompletionsUrl().isEmpty();
+    connectionStatusLabel_->setText(
+        connected ? QStringLiteral("● Connected")
+                  : QStringLiteral("○ Setup required"));
+    QPalette statusPalette = connectionStatusLabel_->palette();
+    statusPalette.setColor(QPalette::WindowText,
+                           connected ? QColor(103, 222, 142)
+                                     : palette().color(QPalette::Disabled,
+                                                       QPalette::WindowText));
+    connectionStatusLabel_->setPalette(statusPalette);
+  }
   if (connectionProviderLabel_) {
     connectionProviderLabel_->setText(
         QStringLiteral("Provider: %1").arg(providerName));
@@ -2137,7 +2123,7 @@ void Artifact::ArtifactAICloudWidget::updateSendButtonState() {
     canSend = canSend && !currentChatCompletionsUrl().isEmpty();
   }
   sendButton_->setEnabled(canSend);
-  sendButton_->setText(QStringLiteral("Send to AI"));
+  sendButton_->setText(QStringLiteral("Send"));
   if (requestStatusLabel_) {
     requestStatusLabel_->setVisible(false);
   }
@@ -2416,15 +2402,13 @@ void Artifact::ArtifactAICloudWidget::updateModelSelectionLabel() {
     return;
   }
 
-  QString text = QStringLiteral("<u>Model: ");
   const QString currentModel =
       modelCombo_ ? modelCombo_->currentData().toString().trimmed() : QString();
-  if (currentModel.isEmpty()) {
-    text += QStringLiteral("Choose...");
-  } else {
-    text += currentModel.toHtmlEscaped();
-  }
-  text += QStringLiteral("</u>");
+  const QString displayModel =
+      currentModel.isEmpty() ? QStringLiteral("Cloud Agent")
+                             : currentModel.left(32);
+  const QString text = QStringLiteral("<u>%1 ▾</u>")
+                           .arg(displayModel.toHtmlEscaped());
   modelSelectionLabel_->setText(text);
 }
 

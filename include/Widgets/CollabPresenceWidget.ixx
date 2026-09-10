@@ -52,6 +52,9 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
+    void refreshPresenceRows();
+    void updatePresenceRow(const UserPresence& presence);
+
     class Impl;
     Impl* impl_;
 };
