@@ -1089,7 +1089,7 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                               nodeColor);
         }
       }
-    } else if (type == ShapeType::Line) {
+    } else if (type == ShapeType::Line && !shape->hasCustomPath()) {
       // Line uses the existing width/height + Transform model.  Expose its
       // two local endpoints before adding drag semantics.
       const QPointF localStart(0.0, static_cast<qreal>(shape->shapeHeight()) * 0.5);
@@ -1222,6 +1222,7 @@ void drawShapeOperatorHud(ArtifactIRenderer *renderer,
       case ArtifactCore::ShapeOperatorType::ZigZag: return QStringLiteral("ZigZag");
       case ArtifactCore::ShapeOperatorType::Twist: return QStringLiteral("Twist");
       case ArtifactCore::ShapeOperatorType::HandDrawnWobble: return QStringLiteral("Wobble");
+      case ArtifactCore::ShapeOperatorType::WavePaths: return QStringLiteral("Wave");
       default: return QStringLiteral("Op");
     }
   };
@@ -1234,14 +1235,18 @@ void drawShapeOperatorHud(ArtifactIRenderer *renderer,
     const auto type = shape->shapeOperatorTypeAt(i);
     QString detail;
     if (type == ArtifactCore::ShapeOperatorType::TrimPaths) {
-      detail = QStringLiteral("S:%1 E:%2 O:%3")
+      detail = QStringLiteral("S:%1 E:%2 O:%3 M:%4")
                    .arg(num(shape->shapeOperatorValue(i, QStringLiteral("start"))),
                         num(shape->shapeOperatorValue(i, QStringLiteral("end"))),
-                        num(shape->shapeOperatorValue(i, QStringLiteral("offset"))));
+                        num(shape->shapeOperatorValue(i, QStringLiteral("offset"))),
+                        shape->shapeOperatorValue(i, QStringLiteral("trimMode")).toInt() == 0
+                            ? QStringLiteral("Sim") : QStringLiteral("Ind"));
     } else if (type == ArtifactCore::ShapeOperatorType::Repeater) {
-      detail = QStringLiteral("x%1 R:%2")
+      detail = QStringLiteral("x%1 R:%2 %3")
                    .arg(shape->shapeOperatorValue(i, QStringLiteral("copies")).toInt())
-                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("rotation"))));
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("rotation"))),
+                        shape->shapeOperatorValue(i, QStringLiteral("composite")).toInt() == 0
+                            ? QStringLiteral("A") : QStringLiteral("B"));
     } else if (type == ArtifactCore::ShapeOperatorType::OffsetPaths) {
       detail = QStringLiteral("d:%1")
                    .arg(num(shape->shapeOperatorValue(i, QStringLiteral("offset"))));
@@ -1251,6 +1256,10 @@ void drawShapeOperatorHud(ArtifactIRenderer *renderer,
     } else if (type == ArtifactCore::ShapeOperatorType::RoundedCorners) {
       detail = QStringLiteral("r:%1")
                    .arg(num(shape->shapeOperatorValue(i, QStringLiteral("radius"))));
+    } else if (type == ArtifactCore::ShapeOperatorType::WavePaths) {
+      detail = QStringLiteral("a:%1 f:%2")
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("amount"))),
+                        num(shape->shapeOperatorValue(i, QStringLiteral("frequency"))));
     } else {
       detail = QStringLiteral("#%1").arg(i + 1);
     }
@@ -1266,7 +1275,7 @@ void drawShapeOperatorHud(ArtifactIRenderer *renderer,
   QFont font = QApplication::font();
   font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
   const float rowH = 20.0f / safeZoom;
-  const float panelW = 208.0f / safeZoom;
+  const float panelW = 236.0f / safeZoom;
   const float panelH = (lines.size() * rowH) + 14.0f / safeZoom;
   renderer->drawOverlayPanel(static_cast<float>(anchor.x()),
                              static_cast<float>(anchor.y()), panelW, panelH,
@@ -1379,7 +1388,8 @@ void drawShapeVertexOverlay(ArtifactIRenderer *renderer,
       if (primaryOp < 0 &&
           (type == ArtifactCore::ShapeOperatorType::OffsetPaths ||
            type == ArtifactCore::ShapeOperatorType::PuckerBloat ||
-           type == ArtifactCore::ShapeOperatorType::RoundedCorners)) {
+           type == ArtifactCore::ShapeOperatorType::RoundedCorners ||
+           type == ArtifactCore::ShapeOperatorType::WavePaths)) {
         primaryOp = i;
       }
     }

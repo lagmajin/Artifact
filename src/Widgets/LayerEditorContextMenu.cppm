@@ -43,6 +43,7 @@ QString operatorTypeName(ArtifactCore::ShapeOperatorType type)
   case ArtifactCore::ShapeOperatorType::ZigZag: return QStringLiteral("Zig Zag");
   case ArtifactCore::ShapeOperatorType::Twist: return QStringLiteral("Twist");
   case ArtifactCore::ShapeOperatorType::HandDrawnWobble: return QStringLiteral("Hand Drawn Wobble");
+  case ArtifactCore::ShapeOperatorType::WavePaths: return QStringLiteral("Wave");
   default: return QStringLiteral("Unknown Operator");
  }
 }
@@ -116,15 +117,32 @@ LayerEditorShapeContextChoice showLayerEditorShapeContextMenu(
  addChoice(*addOperatorMenu, choices,
            addOperatorMenu->addAction(QStringLiteral("Twist")),
            LayerEditorShapeContextCommand::AddTwist);
- addChoice(*addOperatorMenu, choices,
-           addOperatorMenu->addAction(QStringLiteral("Hand Drawn Wobble")),
-           LayerEditorShapeContextCommand::AddHandDrawnWobble);
+  addChoice(*addOperatorMenu, choices,
+            addOperatorMenu->addAction(QStringLiteral("Hand Drawn Wobble")),
+            LayerEditorShapeContextCommand::AddHandDrawnWobble);
+  addChoice(*addOperatorMenu, choices,
+            addOperatorMenu->addAction(QStringLiteral("Wave")),
+            LayerEditorShapeContextCommand::AddWavePaths);
 
  addChoice(menu, choices, QStringLiteral("Clear Shape Operators"),
            LayerEditorShapeContextCommand::ClearOperators,
            shape.shapeOperatorCount() > 0);
- if (shape.shapeOperatorCount() > 0) {
-  auto* manageMenu = menu.addMenu(QStringLiteral("Manage Operators"));
+  if (shape.shapeOperatorCount() > 0) {
+   auto* manageMenu = menu.addMenu(QStringLiteral("Manage Operators"));
+   bool hasTrim = false;
+   for (int index = 0; index < shape.shapeOperatorCount(); ++index) {
+    if (shape.shapeOperatorTypeAt(index) ==
+        ArtifactCore::ShapeOperatorType::TrimPaths) {
+     hasTrim = true;
+     break;
+    }
+   }
+   // F11c: AE Trim Multiple Shapes switch without leaving the viewport.
+   if (hasTrim) {
+    addChoice(*manageMenu, choices,
+              manageMenu->addAction(QStringLiteral("Toggle Trim Simultaneous/Individual")),
+              LayerEditorShapeContextCommand::ToggleTrimMode);
+   }
   for (int index = 0; index < shape.shapeOperatorCount(); ++index) {
    auto* itemMenu = manageMenu->addMenu(
        QString::number(index + 1) + QStringLiteral(". ") +
@@ -227,6 +245,9 @@ bool applyShapeOperatorCommand(
   case LayerEditorShapeContextCommand::AddHandDrawnWobble:
    shape.addShapeOperator(ArtifactCore::ShapeOperatorType::HandDrawnWobble);
    break;
+  case LayerEditorShapeContextCommand::AddWavePaths:
+   shape.addShapeOperator(ArtifactCore::ShapeOperatorType::WavePaths);
+   break;
   case LayerEditorShapeContextCommand::RemoveOperator:
    if (choice.operatorIndex >= 0 && choice.operatorIndex < shape.shapeOperatorCount())
     shape.removeShapeOperatorAt(choice.operatorIndex);
@@ -243,6 +264,27 @@ bool applyShapeOperatorCommand(
     shape.moveShapeOperator(choice.operatorIndex, choice.operatorIndex + 1);
    else handled = false;
    break;
+  case LayerEditorShapeContextCommand::ToggleTrimMode: {
+   // F11c: flip the first TrimPaths op; the surrounding JSON snapshot
+   // keeps the toggle undoable like every other stack command here.
+   int trimIndex = -1;
+   for (int index = 0; index < shape.shapeOperatorCount(); ++index) {
+    if (shape.shapeOperatorTypeAt(index) ==
+        ArtifactCore::ShapeOperatorType::TrimPaths) {
+     trimIndex = index;
+     break;
+    }
+   }
+   if (trimIndex < 0) {
+    handled = false;
+    break;
+   }
+   const QString path =
+       QStringLiteral("shape.operator.%1.trimMode").arg(trimIndex);
+   const int current = shape.shapeOperatorValue(trimIndex, QStringLiteral("trimMode")).toInt();
+   shape.setLayerPropertyValue(path, QVariant(current == 0 ? 1 : 0));
+   break;
+  }
   default:
    handled = false;
    break;

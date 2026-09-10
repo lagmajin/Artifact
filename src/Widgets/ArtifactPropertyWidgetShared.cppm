@@ -408,7 +408,8 @@ std::vector<AbstractPropertyPtr> filteredGroupProperties(
             name == QStringLiteral("shape.fillGradientAngle") ||
             name == QStringLiteral("shape.fillGradientCenterX") ||
             name == QStringLiteral("shape.fillGradientCenterY") ||
-            name == QStringLiteral("shape.fillGradientRadius");
+            name == QStringLiteral("shape.fillGradientRadius") ||
+            name == QStringLiteral("shape.fillGradientStops");
         if (isGradientOnly) {
           continue;
         }

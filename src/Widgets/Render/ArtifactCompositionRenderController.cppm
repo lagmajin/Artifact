@@ -25251,9 +25251,10 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
 
 
-  // Line endpoints take precedence over custom paths and the transform gizmo.
+  // Straight lines expose endpoint handles. Converted Line paths use the
+  // normal Bézier vertex/tangent interaction below instead.
   if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen && selectedLayer && impl_->renderer_) {
-    if (auto *line = dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get()); line && line->shapeType() == ShapeType::Line) {
+    if (auto *line = dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get()); line && line->shapeType() == ShapeType::Line && !line->hasCustomPath()) {
       const QTransform global = line->getGlobalTransform();
       const QPointF a = global.map(QPointF(0.0, line->shapeHeight() * 0.5));
       const QPointF b = global.map(QPointF(line->shapeWidth(), line->shapeHeight() * 0.5));
@@ -30942,6 +30943,9 @@ void findDraggableShapeOps(ArtifactShapeLayer *shape, int &trimOp,
       } else if (type == ArtifactCore::ShapeOperatorType::RoundedCorners) {
         primaryOp = i;
         primaryField = QStringLiteral("radius");
+      } else if (type == ArtifactCore::ShapeOperatorType::WavePaths) {
+        primaryOp = i;
+        primaryField = QStringLiteral("amount");
       }
     }
     if (trimOp >= 0 && primaryOp >= 0) {

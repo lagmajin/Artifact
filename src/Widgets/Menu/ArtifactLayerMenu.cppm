@@ -67,6 +67,7 @@ import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Switch;
 import Artifact.Layer.Svg;
 import Artifact.Widgets.CompositionLayerUndoCommands;
+import Artifact.Widgets.CompositionEditUndoCommands;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
@@ -775,6 +776,7 @@ public:
     QMenu* createParticleMenu = nullptr;
     QMenu* createAudioMenu = nullptr;
     QMenu* createShapeMenu = nullptr;
+    QMenu* createLineMenu = nullptr;
     QMenu* create3DMenu = nullptr;
     QMenu* createPlacementMenu = nullptr;
     QMenu* switchMenu = nullptr;
@@ -825,6 +827,11 @@ public:
     QAction* createShapeEllipseAction = nullptr;
     QAction* createShapeStarAction = nullptr;
     QAction* createShapeLineAction = nullptr;
+    QAction* createShapeDashedLineAction = nullptr;
+    QAction* createShapeBezierCurveAction = nullptr;
+    QAction* createShapeArcAction = nullptr;
+    QAction* createShapeArrowAction = nullptr;
+    QAction* createShapeDoubleArrowAction = nullptr;
     QAction* trackCameraAction = nullptr;
     QAction* createMotionTrackerAction = nullptr;
 
@@ -857,6 +864,8 @@ public:
     QAction* convertShapeToMaskAction = nullptr;
     QAction* linkShapeToMaskAction = nullptr;
     QAction* convertMaskToShapeAction = nullptr;
+    QAction* convertLineToBezierPathAction = nullptr;
+    QAction* restoreBezierPathToLineAction = nullptr;
     QAction* importSvgIntoShapeAction = nullptr;
     QAction* createShapesFromVectorAction = nullptr;
 
@@ -947,6 +956,11 @@ public:
     void handleCycleLayerCreation(bool reverse);
     void handleCycleShapeCreation(bool reverse);
     void handleCreateShape(ShapeType type, const QString& nameBase);
+    void handleCreateDashedLine();
+    void handleCreateBezierCurve();
+    void handleCreateArc();
+    void handleCreateArrow();
+    void handleCreateDoubleArrow();
     void handleCreateMotionTracker();
 
     void handleDuplicateLayer();
@@ -971,6 +985,8 @@ public:
     void handleConvertShapeToMask();
     void handleLinkShapeToMask();
     void handleConvertMaskToShape();
+    void handleConvertLineToBezierPath();
+    void handleRestoreBezierPathToLine();
     void handleImportSvgIntoShape();
     void handleCreateShapesFromVectorLayer();
 
@@ -1166,13 +1182,33 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeStarAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_star.svg")));
     createShapeLineAction = new QAction("ライン", createShapeMenu);
     createShapeLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createShapeDashedLineAction = new QAction("破線", createShapeMenu);
+    createShapeDashedLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createShapeBezierCurveAction = new QAction("ベジェ曲線", createShapeMenu);
+    createShapeBezierCurveAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_pen.svg")));
+    createShapeArcAction = new QAction("円弧", createShapeMenu);
+    createShapeArcAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_pen.svg")));
+    createShapeArrowAction = new QAction("矢印", createShapeMenu);
+    createShapeArrowAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createShapeDoubleArrowAction = new QAction("双方向矢印", createShapeMenu);
+    createShapeDoubleArrowAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createLineMenu = new QMenu(QStringLiteral("ライン"), createShapeMenu);
+    createLineMenu->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createLineMenu->addAction(createShapeLineAction);
+    createLineMenu->addAction(createShapeDashedLineAction);
+    createLineMenu->addSeparator();
+    createLineMenu->addAction(createShapeBezierCurveAction);
+    createLineMenu->addAction(createShapeArcAction);
+    createLineMenu->addSeparator();
+    createLineMenu->addAction(createShapeArrowAction);
+    createLineMenu->addAction(createShapeDoubleArrowAction);
     createShapeMenu->addAction(createShapeRectAction);
     createShapeMenu->addAction(createShapeSquareAction);
     createShapeMenu->addAction(createShapePolygonAction);
     createShapeMenu->addAction(createShapeTriangleAction);
     createShapeMenu->addAction(createShapeEllipseAction);
     createShapeMenu->addAction(createShapeStarAction);
-    createShapeMenu->addAction(createShapeLineAction);
+    createShapeMenu->addMenu(createLineMenu);
     createShapeMenu->addSeparator();
     createShapeMenu->addAction(cycleShapeForwardAction);
     createShapeMenu->addAction(cycleShapeReverseAction);
@@ -1331,6 +1367,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     linkShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     convertMaskToShapeAction = maskMenu->addAction(QStringLiteral("マスクをシェイプに変換"));
     convertMaskToShapeAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    convertLineToBezierPathAction = maskMenu->addAction(QStringLiteral("ラインをベジェパスに変換"));
+    convertLineToBezierPathAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    restoreBezierPathToLineAction = maskMenu->addAction(QStringLiteral("ベジェパスを直線に戻す"));
+    restoreBezierPathToLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     maskMenu->addSeparator();
     importSvgIntoShapeAction = maskMenu->addAction(QStringLiteral("SVGをシェイプに取り込み..."));
     importSvgIntoShapeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
@@ -1622,6 +1662,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createShapeEllipseAction) { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); return; }
         if (action == createShapeStarAction) { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return; }
         if (action == createShapeLineAction) { handleCreateShape(ShapeType::Line, QStringLiteral("Line 1")); return; }
+        if (action == createShapeDashedLineAction) { handleCreateDashedLine(); return; }
+        if (action == createShapeBezierCurveAction) { handleCreateBezierCurve(); return; }
+        if (action == createShapeArcAction) { handleCreateArc(); return; }
+        if (action == createShapeArrowAction) { handleCreateArrow(); return; }
+        if (action == createShapeDoubleArrowAction) { handleCreateDoubleArrow(); return; }
         if (action == cycleShapeForwardAction) { handleCycleShapeCreation(false); return; }
         if (action == cycleShapeReverseAction) { handleCycleShapeCreation(true); return; }
         if (action == duplicateLayerAction) { handleDuplicateLayer(); return; }
@@ -1653,6 +1698,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == convertShapeToMaskAction) { handleConvertShapeToMask(); return; }
         if (action == linkShapeToMaskAction) { handleLinkShapeToMask(); return; }
         if (action == convertMaskToShapeAction) { handleConvertMaskToShape(); return; }
+        if (action == convertLineToBezierPathAction) { handleConvertLineToBezierPath(); return; }
+        if (action == restoreBezierPathToLineAction) { handleRestoreBezierPathToLine(); return; }
         if (action == importSvgIntoShapeAction) { handleImportSvgIntoShape(); return; }
         if (action == createShapesFromVectorAction) { handleCreateShapesFromVectorLayer(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
@@ -2068,6 +2115,11 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createShapeEllipseAction->setEnabled(hasProject);
     createShapeStarAction->setEnabled(hasProject);
     createShapeLineAction->setEnabled(hasProject);
+    createShapeDashedLineAction->setEnabled(hasProject);
+    createShapeBezierCurveAction->setEnabled(hasProject);
+    createShapeArcAction->setEnabled(hasProject);
+    createShapeArrowAction->setEnabled(hasProject);
+    createShapeDoubleArrowAction->setEnabled(hasProject);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
@@ -2116,16 +2168,29 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         }
     }
     createMaskFromTextAction->setEnabled(isTextLayerSelected);
-    bool isShapeLayerSelected = false;
+    ArtifactCore::SharedPtr<ArtifactShapeLayer> selectedShapeLayer;
     if (hasLayer && service) {
         if (auto comp = service->currentComposition().lock()) {
-            isShapeLayerSelected = static_cast<bool>(
-                ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
-                    comp->layerById(selectedLayerId_)));
+            selectedShapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+                comp->layerById(selectedLayerId_));
         }
     }
+    const bool isShapeLayerSelected = static_cast<bool>(selectedShapeLayer);
     convertShapeToMaskAction->setEnabled(isShapeLayerSelected);
     linkShapeToMaskAction->setEnabled(isShapeLayerSelected);
+    convertLineToBezierPathAction->setEnabled(
+        selectedShapeLayer &&
+        selectedShapeLayer->shapeType() == ShapeType::Line &&
+        !selectedShapeLayer->hasCustomPath());
+    const auto selectedPathVertices = selectedShapeLayer
+        ? selectedShapeLayer->customPathVertices()
+        : std::vector<CustomPathVertex>{};
+    const bool isThreePointLineBezier =
+        selectedShapeLayer && selectedShapeLayer->shapeType() == ShapeType::Line &&
+        !selectedShapeLayer->customPathClosed() &&
+        selectedPathVertices.size() == 3 && selectedPathVertices[1].smooth;
+    restoreBezierPathToLineAction->setEnabled(
+        isThreePointLineBezier);
     importSvgIntoShapeAction->setEnabled(isShapeLayerSelected);
     bool isSvgLayerSelected = false;
     if (hasLayer && service) {
@@ -3124,6 +3189,12 @@ void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& n
             if (auto current = selectionManager->currentLayer()) {
                 if (auto shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(current)) {
                     shapeLayer->setShapeType(type);
+                    // A design line is a one-dimensional stroke.  Keep the
+                    // default compact and immediately legible instead of
+                    // inheriting the generic shape's square bounds.
+                    if (type == ShapeType::Line) {
+                        shapeLayer->setSize(240, 1);
+                    }
                 }
             }
         }
@@ -3765,6 +3836,195 @@ void ArtifactLayerMenu::Impl::handleConvertMaskToShape()
             menu_->window(), QStringLiteral("マスクをシェイプに変換"),
             QStringLiteral("マスクをシェイプへ変換できませんでした。"));
         return;
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleCreateDashedLine()
+{
+    handleCreateShape(ShapeType::Line, QStringLiteral("Dashed Line 1"));
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto line = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              selectionManager->currentLayer())
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!line || line->shapeType() != ShapeType::Line) {
+        return;
+    }
+    line->setStrokeWidth(3.0f);
+    line->setDashPattern({12.0f, 8.0f});
+    line->setStrokeCap(StrokeCap::Round);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateBezierCurve()
+{
+    handleCreateShape(ShapeType::Line, QStringLiteral("Curve 1"));
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto curve = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              selectionManager->currentLayer())
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!curve || curve->shapeType() != ShapeType::Line) {
+        return;
+    }
+
+    constexpr float kWidth = 240.0f;
+    constexpr float kHeight = 120.0f;
+    constexpr float kHandle = 48.0f;
+    curve->setSize(static_cast<int>(kWidth), static_cast<int>(kHeight));
+    curve->setCustomPathVertices(
+        {{QPointF(0.0f, kHeight * 0.75f), QPointF(), QPointF(), false},
+         {QPointF(kWidth * 0.5f, kHeight * 0.25f), QPointF(-kHandle, 0.0f),
+          QPointF(kHandle, 0.0f), true},
+         {QPointF(kWidth, kHeight * 0.75f), QPointF(), QPointF(), false}},
+        false);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateArc()
+{
+    handleCreateShape(ShapeType::Line, QStringLiteral("Arc 1"));
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto arc = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              selectionManager->currentLayer())
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!arc || arc->shapeType() != ShapeType::Line) {
+        return;
+    }
+
+    constexpr float kWidth = 240.0f;
+    constexpr float kHeight = 120.0f;
+    constexpr float kCurveHandle = 66.0f;
+    arc->setSize(static_cast<int>(kWidth), static_cast<int>(kHeight));
+    arc->setCustomPathVertices(
+        {{QPointF(0.0f, kHeight), QPointF(), QPointF(0.0f, -kCurveHandle), true},
+         {QPointF(kWidth * 0.5f, 0.0f), QPointF(-kCurveHandle, 0.0f),
+          QPointF(kCurveHandle, 0.0f), true},
+         {QPointF(kWidth, kHeight), QPointF(0.0f, -kCurveHandle), QPointF(), true}},
+        false);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateArrow()
+{
+    handleCreateShape(ShapeType::Line, QStringLiteral("Arrow 1"));
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto arrow = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              selectionManager->currentLayer())
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!arrow || arrow->shapeType() != ShapeType::Line) {
+        return;
+    }
+
+    constexpr float kWidth = 240.0f;
+    constexpr float kHeight = 80.0f;
+    constexpr float kHeadLength = 32.0f;
+    constexpr float kHeadHalfHeight = 20.0f;
+    const float centerY = kHeight * 0.5f;
+    arrow->setSize(static_cast<int>(kWidth), static_cast<int>(kHeight));
+    arrow->setCustomPathVertices(
+        {{QPointF(0.0f, centerY), QPointF(), QPointF(), false},
+         {QPointF(kWidth, centerY), QPointF(), QPointF(), false},
+         {QPointF(kWidth - kHeadLength, centerY - kHeadHalfHeight), QPointF(),
+          QPointF(), false},
+         {QPointF(kWidth, centerY), QPointF(), QPointF(), false},
+         {QPointF(kWidth - kHeadLength, centerY + kHeadHalfHeight), QPointF(),
+          QPointF(), false}},
+        false);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateDoubleArrow()
+{
+    handleCreateShape(ShapeType::Line, QStringLiteral("Double Arrow 1"));
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto arrow = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              selectionManager->currentLayer())
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!arrow || arrow->shapeType() != ShapeType::Line) {
+        return;
+    }
+
+    constexpr float kWidth = 240.0f;
+    constexpr float kHeight = 80.0f;
+    constexpr float kHeadLength = 32.0f;
+    constexpr float kHeadHalfHeight = 20.0f;
+    const float centerY = kHeight * 0.5f;
+    arrow->setSize(static_cast<int>(kWidth), static_cast<int>(kHeight));
+    arrow->setCustomPathVertices(
+        {{QPointF(kHeadLength, centerY), QPointF(), QPointF(), false},
+         {QPointF(0.0f, centerY - kHeadHalfHeight), QPointF(), QPointF(), false},
+         {QPointF(kHeadLength, centerY), QPointF(), QPointF(), false},
+         {QPointF(0.0f, centerY + kHeadHalfHeight), QPointF(), QPointF(), false},
+         {QPointF(kHeadLength, centerY), QPointF(), QPointF(), false},
+         {QPointF(kWidth - kHeadLength, centerY), QPointF(), QPointF(), false},
+         {QPointF(kWidth, centerY - kHeadHalfHeight), QPointF(), QPointF(), false},
+         {QPointF(kWidth - kHeadLength, centerY), QPointF(), QPointF(), false},
+         {QPointF(kWidth, centerY + kHeadHalfHeight), QPointF(), QPointF(), false}},
+        false);
+}
+
+void ArtifactLayerMenu::Impl::handleConvertLineToBezierPath()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto line = composition
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              composition->layerById(selectedLayerId_))
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (!line || line->shapeType() != ShapeType::Line || line->hasCustomPath()) {
+        return;
+    }
+
+    const float width = static_cast<float>(std::max(1, line->shapeWidth()));
+    const float centerY = static_cast<float>(std::max(1, line->shapeHeight())) * 0.5f;
+    const float handle = width / 6.0f;
+    std::vector<CustomPathVertex> bezierPath{
+        {QPointF(0.0f, centerY), QPointF(), QPointF(), false},
+        {QPointF(width * 0.5f, centerY), QPointF(-handle, 0.0f),
+         QPointF(handle, 0.0f), true},
+        {QPointF(width, centerY), QPointF(), QPointF(), false}};
+    const auto before = line->customPathVertices();
+    const bool beforeClosed = line->customPathClosed();
+
+    line->setCustomPathVertices(bezierPath, false);
+    if (!applyLayerMenuUndoCommand(std::make_unique<ShapePathVertexEditCommand>(
+            line, before, bezierPath, beforeClosed, false))) {
+        line->clearCustomPath();
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleRestoreBezierPathToLine()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    const auto line = composition
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              composition->layerById(selectedLayerId_))
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    const auto vertices = line ? line->customPathVertices()
+                               : std::vector<CustomPathVertex>{};
+    if (!line || line->shapeType() != ShapeType::Line ||
+        line->customPathClosed() || vertices.size() != 3 || !vertices[1].smooth) {
+        return;
+    }
+
+    const auto before = vertices;
+    const bool beforeClosed = line->customPathClosed();
+    line->clearCustomPath();
+    if (!applyLayerMenuUndoCommand(std::make_unique<ShapePathVertexEditCommand>(
+            line, before, std::vector<CustomPathVertex>{}, beforeClosed, false))) {
+        line->setCustomPathVertices(before, beforeClosed);
     }
 }
 
