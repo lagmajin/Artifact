@@ -175,6 +175,9 @@ import Artifact.Widgets.ShaderGraphWidget;
 import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.DopeSheetWidget;
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.AnimationTimelineWidget;
+import Artifact.Widgets.AudioMiniWidget;
+import Artifact.Widgets.HistoryTimelineWidget;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.CompositionRenderController;
@@ -3240,6 +3243,15 @@ int main(int argc, char *argv[]) {
                               DockArea::Left, contentsViewer,
                               QStringLiteral("Project"));
     mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("History Timeline"), QStringLiteral("History Timeline"),
+        DockArea::Bottom,
+        [mw]() -> QWidget* {
+          auto* panel = new ArtifactHistoryTimelineWidget(mw);
+          panel->setMinimumHeight(260);
+          return panel;
+        },
+        QStringLiteral("timeline::"));
     static ArtifactCore::EventBus appEventBus = ArtifactCore::globalEventBus();
     static std::vector<ArtifactCore::EventBus::Subscription>
         appEventSubscriptions;
@@ -4028,10 +4040,24 @@ int main(int argc, char *argv[]) {
       const auto dopeSheetDockObjectId = [](const CompositionID &compId) {
         return QStringLiteral("dopesheet::%1").arg(compId.toString());
       };
+      const auto animationTimelineDockTitle =
+          [timelineDockTitle](const CompositionID &compId) {
+            return QStringLiteral("%1 Animation Timeline").arg(timelineDockTitle(compId));
+          };
+      const auto animationTimelineDockObjectId = [](const CompositionID &compId) {
+        return QStringLiteral("animation-timeline::%1").arg(compId.toString());
+      };
+      const auto audioMiniDockTitle = [timelineDockTitle](const CompositionID &compId) {
+        return QStringLiteral("%1 Audio Mini").arg(timelineDockTitle(compId));
+      };
+      const auto audioMiniDockObjectId = [](const CompositionID &compId) {
+        return QStringLiteral("audio-mini::%1").arg(compId.toString());
+      };
       appEventSubscriptions.push_back(
           appEventBus.subscribe<CompositionCreatedEvent>(
               [mw, timelineDockTitle, timelineDockObjectId, dopeSheetDockTitle,
-               dopeSheetDockObjectId,
+               dopeSheetDockObjectId, animationTimelineDockTitle,
+               animationTimelineDockObjectId, audioMiniDockTitle, audioMiniDockObjectId,
                status](const CompositionCreatedEvent &event) {
                 const CompositionID compId(event.compositionId);
                 if (!mw || compId.isNil()) {
@@ -4046,7 +4072,8 @@ int main(int argc, char *argv[]) {
                 QTimer::singleShot(
                     1, mw,
                     [mw, compId, timelineDockTitle, timelineDockObjectId,
-                     dopeSheetDockTitle, dopeSheetDockObjectId, status,
+                     dopeSheetDockTitle, dopeSheetDockObjectId, animationTimelineDockTitle,
+                     animationTimelineDockObjectId, audioMiniDockTitle, audioMiniDockObjectId, status,
                      event]() {
                       if (!mw) {
                         return;
@@ -4091,6 +4118,29 @@ int main(int argc, char *argv[]) {
                             panel->setMinimumHeight(180);
                             panel->setComposition(compId);
                             panel->setWindowTitle(dopeSheetDockTitle(compId));
+                            return panel;
+                          },
+                          QStringLiteral("timeline::"));
+                      mw->addLazyDockedWidgetTabbedWithId(
+                          animationTimelineDockTitle(compId),
+                          animationTimelineDockObjectId(compId),
+                          DockArea::Bottom,
+                          [mw, compId, animationTimelineDockTitle]() -> QWidget * {
+                            auto *panel = new ArtifactAnimationTimelineWidget(mw);
+                            panel->setMinimumHeight(96);
+                            panel->setComposition(compId);
+                            panel->setWindowTitle(animationTimelineDockTitle(compId));
+                            return panel;
+                          },
+                          QStringLiteral("timeline::"));
+                      mw->addLazyDockedWidgetTabbedWithId(
+                          audioMiniDockTitle(compId), audioMiniDockObjectId(compId),
+                          DockArea::Bottom,
+                          [mw, compId, audioMiniDockTitle]() -> QWidget * {
+                            auto *panel = new ArtifactAudioMiniWidget(mw);
+                            panel->setMinimumHeight(118);
+                            panel->setComposition(compId);
+                            panel->setWindowTitle(audioMiniDockTitle(compId));
                             return panel;
                           },
                           QStringLiteral("timeline::"));
@@ -4194,11 +4244,15 @@ int main(int argc, char *argv[]) {
       appEventSubscriptions.push_back(
           appEventBus.subscribe<CompositionRemovedEvent>(
               [mw, timelineDockObjectId,
-               dopeSheetDockObjectId](const CompositionRemovedEvent &event) {
+               dopeSheetDockObjectId, animationTimelineDockObjectId,
+               audioMiniDockObjectId](const CompositionRemovedEvent &event) {
                 mw->closeDock(
                     timelineDockObjectId(CompositionID(event.compositionId)));
                 mw->closeDock(
                     dopeSheetDockObjectId(CompositionID(event.compositionId)));
+                mw->closeDock(animationTimelineDockObjectId(
+                    CompositionID(event.compositionId)));
+                mw->closeDock(audioMiniDockObjectId(CompositionID(event.compositionId)));
               }));
       appEventSubscriptions.push_back(
           appEventBus.subscribe<ProjectCreatedEvent>(
