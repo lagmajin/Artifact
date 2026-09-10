@@ -5,7 +5,10 @@ module;
 #include <QLabel>
 #include <QPushButton>
 #include <QListWidget>
+#include <QFrame>
 #include <QFileInfo>
+#include <QDateTime>
+#include <QSize>
 #include <QDir>
 #include <QApplication>
 #include <QPalette>
@@ -52,17 +55,16 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     setPalette(pal);
 
     auto* root = new QVBoxLayout(this);
-    root->setAlignment(Qt::AlignCenter);
-    root->setContentsMargins(80, 40, 80, 40);
-    root->setSpacing(16);
+    root->setContentsMargins(56, 36, 56, 36);
+    root->setSpacing(18);
 
     auto* centerWidget = new QWidget(this);
-    centerWidget->setFixedWidth(480);
+    centerWidget->setMinimumWidth(760);
+    centerWidget->setMaximumWidth(1080);
     centerWidget->setPalette(pal);
     centerWidget->setAutoFillBackground(true);
     auto* center = new QVBoxLayout(centerWidget);
-    center->setAlignment(Qt::AlignCenter);
-    center->setSpacing(12);
+    center->setSpacing(14);
 
     impl_->titleLabel = new QLabel(QStringLiteral("Artifact"), centerWidget);
     QFont titleFont = impl_->titleLabel->font();
@@ -89,9 +91,32 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     }
     center->addWidget(impl_->subtitleLabel);
 
-    center->addSpacing(8);
+    center->addSpacing(12);
 
-    auto* recentLabel = new QLabel(QStringLiteral("Recent Projects"), centerWidget);
+    auto* contentLayout = new QHBoxLayout();
+    contentLayout->setContentsMargins(0, 0, 0, 0);
+    contentLayout->setSpacing(28);
+
+    auto* startPanel = new QFrame(centerWidget);
+    startPanel->setFrameShape(QFrame::NoFrame);
+    startPanel->setMinimumWidth(240);
+    startPanel->setMaximumWidth(300);
+    auto* startLayout = new QVBoxLayout(startPanel);
+    startLayout->setContentsMargins(0, 0, 0, 0);
+    startLayout->setSpacing(10);
+    auto* startLabel = new QLabel(QStringLiteral("Start"), startPanel);
+    QFont startFont = startLabel->font();
+    startFont.setPointSize(11);
+    startFont.setBold(true);
+    startLabel->setFont(startFont);
+    startLayout->addWidget(startLabel);
+
+    auto* recentPanel = new QFrame(centerWidget);
+    recentPanel->setFrameShape(QFrame::NoFrame);
+    auto* recentLayout = new QVBoxLayout(recentPanel);
+    recentLayout->setContentsMargins(0, 0, 0, 0);
+    recentLayout->setSpacing(10);
+    auto* recentLabel = new QLabel(QStringLiteral("Recent Projects"), recentPanel);
     QFont recentFont = recentLabel->font();
     recentFont.setPointSize(10);
     recentFont.setBold(true);
@@ -101,11 +126,12 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
       pal.setColor(QPalette::WindowText, QColor(theme.textColor).lighter(130));
       recentLabel->setPalette(pal);
     }
-    center->addWidget(recentLabel);
+    recentLayout->addWidget(recentLabel);
 
-    impl_->recentList = new QListWidget(centerWidget);
-    impl_->recentList->setMinimumHeight(120);
-    impl_->recentList->setMaximumHeight(200);
+    impl_->recentList = new QListWidget(recentPanel);
+    impl_->recentList->setMinimumHeight(240);
+    impl_->recentList->setMaximumHeight(360);
+    impl_->recentList->setSpacing(1);
     impl_->recentList->setObjectName(QStringLiteral("welcomeRecentList"));
     {
       QPalette pal = impl_->recentList->palette();
@@ -121,9 +147,9 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
             openRecentProject(path);
         }
     });
-    center->addWidget(impl_->recentList);
+    recentLayout->addWidget(impl_->recentList, 1);
 
-    impl_->emptyRecentLabel = new QLabel(QStringLiteral("No recent projects"), centerWidget);
+    impl_->emptyRecentLabel = new QLabel(QStringLiteral("No recent projects"), recentPanel);
     impl_->emptyRecentLabel->setAlignment(Qt::AlignCenter);
     {
       QPalette pal = impl_->emptyRecentLabel->palette();
@@ -132,16 +158,11 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     }
     impl_->emptyRecentLabel->setMinimumHeight(80);
     impl_->emptyRecentLabel->hide();
-    center->addWidget(impl_->emptyRecentLabel);
-
-    center->addSpacing(8);
-
-    auto* btnRow = new QHBoxLayout();
-    btnRow->setSpacing(12);
+    recentLayout->addWidget(impl_->emptyRecentLabel);
 
     auto makeButton = [&](const QString& text) -> QPushButton* {
-        auto* btn = new QPushButton(text, centerWidget);
-        btn->setMinimumHeight(36);
+        auto* btn = new QPushButton(text, startPanel);
+        btn->setMinimumHeight(46);
         btn->setCursor(Qt::PointingHandCursor);
         {
           QPalette pal = btn->palette();
@@ -155,18 +176,23 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
 
     impl_->newCompBtn = makeButton(QStringLiteral("New Composition"));
     QObject::connect(impl_->newCompBtn, &QPushButton::clicked, this, &ArtifactWelcomeWidget::createNewComposition);
-    btnRow->addWidget(impl_->newCompBtn);
+    startLayout->addWidget(impl_->newCompBtn);
 
     impl_->importBtn = makeButton(QStringLiteral("Import Asset"));
     QObject::connect(impl_->importBtn, &QPushButton::clicked, this, &ArtifactWelcomeWidget::importAsset);
-    btnRow->addWidget(impl_->importBtn);
+    startLayout->addWidget(impl_->importBtn);
 
     impl_->openProjectBtn = makeButton(QStringLiteral("Open Project"));
     QObject::connect(impl_->openProjectBtn, &QPushButton::clicked, this, &ArtifactWelcomeWidget::openProject);
-    btnRow->addWidget(impl_->openProjectBtn);
+    startLayout->addWidget(impl_->openProjectBtn);
+    startLayout->addStretch(1);
 
-    center->addLayout(btnRow);
-    root->addWidget(centerWidget, 0, Qt::AlignCenter);
+    contentLayout->addWidget(startPanel);
+    contentLayout->addWidget(recentPanel, 1);
+    center->addLayout(contentLayout, 1);
+    root->addStretch(1);
+    root->addWidget(centerWidget, 1, Qt::AlignHCenter);
+    root->addStretch(1);
 
     refreshRecentProjects();
 }
@@ -222,7 +248,11 @@ void ArtifactWelcomeWidget::refreshRecentProjects()
         if (!fi.exists()) continue;
 
         auto* item = new QListWidgetItem(impl_->recentList);
-        item->setText(fi.fileName());
+        item->setText(QStringLiteral("%1\n%2  ·  %3")
+                          .arg(fi.fileName(), fi.absolutePath(),
+                               fi.lastModified().toString(
+                                   QStringLiteral("yyyy-MM-dd  HH:mm"))));
+        item->setSizeHint(QSize(0, 56));
         item->setToolTip(path);
         item->setData(Qt::UserRole, path);
     }

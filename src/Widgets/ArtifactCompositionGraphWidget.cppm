@@ -7,6 +7,8 @@ module;
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QGraphicsPathItem>
 #include <QPainterPath>
 #include <QMenu>
@@ -16,6 +18,11 @@ module;
 #include <QGraphicsOpacityEffect>
 #include <QPalette>
 #include <QColor>
+#include <QFont>
+#include <QMap>
+#include <QPen>
+#include <QSize>
+#include <QVector>
 #include <QInputDialog>
 #include <QStringList>
 #include <functional>
@@ -230,6 +237,7 @@ namespace Artifact {
         QGraphicsView* view;
         QGraphicsScene* scene;
         QLineEdit* searchBar;
+        QLabel* statusLabel;
         QMap<LayerID, LayerNodeItem*> nodeMap;
         QMap<QString, QGraphicsRectItem*> projectNodeMap;
         ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -237,12 +245,22 @@ namespace Artifact {
 
         void setupUi(QWidget* parent) {
             auto layout = new QVBoxLayout(parent);
-            layout->setContentsMargins(0, 0, 0, 0);
+            layout->setContentsMargins(6, 6, 6, 6);
             layout->setSpacing(0);
 
-            // Search Bar Header
-            searchBar = new QLineEdit();
+            auto* headerLayout = new QHBoxLayout();
+            headerLayout->setContentsMargins(8, 4, 4, 6);
+            headerLayout->setSpacing(8);
+            auto* titleLabel = new QLabel(QStringLiteral("COMPOSITION GRAPH"), parent);
+            QFont titleFont = titleLabel->font();
+            titleFont.setBold(true);
+            titleLabel->setFont(titleFont);
+            headerLayout->addWidget(titleLabel);
+            headerLayout->addStretch(1);
+
+            searchBar = new QLineEdit(parent);
             searchBar->setPlaceholderText("Search layers...");
+            searchBar->setMaximumWidth(320);
             searchBar->setMinimumHeight(
                 Artifact::Accessibility::scaledSize(24));
             searchBar->setAccessibleName(QStringLiteral("Graph layer search"));
@@ -253,7 +271,8 @@ namespace Artifact {
             searchPalette.setColor(QPalette::Text, QColor(204, 204, 204));
             searchPalette.setColor(QPalette::PlaceholderText, QColor(136, 136, 136));
             searchBar->setPalette(searchPalette);
-            layout->addWidget(searchBar);
+            headerLayout->addWidget(searchBar);
+            layout->addLayout(headerLayout);
 
             scene = new QGraphicsScene(parent);
             view = new GraphView(scene, parent);
@@ -265,6 +284,13 @@ namespace Artifact {
             view->setBackgroundBrush(QColor(30, 30, 32));
 
             layout->addWidget(view);
+
+            statusLabel = new QLabel(QStringLiteral("No composition"), parent);
+            statusLabel->setContentsMargins(8, 5, 8, 5);
+            QPalette statusPalette = statusLabel->palette();
+            statusPalette.setColor(QPalette::WindowText, QColor(150, 156, 166));
+            statusLabel->setPalette(statusPalette);
+            layout->addWidget(statusLabel);
             
             view->setContextMenuPolicy(Qt::CustomContextMenu);
             QObject::connect(view, &QGraphicsView::customContextMenuRequested, [this, parent](const QPoint& pos) {
@@ -538,34 +564,38 @@ namespace Artifact {
             projectNodeMap.clear();
             auto service = ArtifactProjectService::instance();
             auto compPtr = service->currentComposition();
-            if (compPtr.expired()) return;
+            if (compPtr.expired()) {
+                statusLabel->setText(QStringLiteral("No composition"));
+                return;
+            }
             auto comp = compPtr.lock();
 
             auto layers = comp->allLayer();
+            int effectCount = 0;
 
             // Step 1: Create nodes with colorful palette
             int i = 0;
             for (auto layer : layers) {
                 if (!layer) continue;
                 
-                // Vibrant Palette
                 QColor nodeColor;
                 if (layer->isAdjustmentLayer()) {
-                    nodeColor = QColor(160, 80, 220); // Purple
+                    nodeColor = QColor(74, 67, 92);
                 } else if (layer->isNullLayer()) {
-                    nodeColor = QColor(220, 180, 50); // Yellow/Gold
+                    nodeColor = QColor(92, 78, 55);
                 } else {
                     static const QVector<QColor> palette = {
-                        QColor(30, 150, 220),  // Bright Blue
-                        QColor(40, 180, 100),  // Green
-                        QColor(220, 70, 70),   // Red
-                        QColor(220, 120, 40),  // Orange
-                        QColor(220, 60, 160)   // Pink
+                        QColor(55, 69, 82),
+                        QColor(57, 76, 70),
+                        QColor(78, 62, 64),
+                        QColor(82, 70, 55),
+                        QColor(76, 60, 74)
                     };
                     nodeColor = palette[i % palette.size()];
                 }
                 
                 const auto effects = layer->getEffects();
+                effectCount += static_cast<int>(effects.size());
                 const auto effectGraph = LayerGraphBuilder::build(
                     UniString(layer->layerName()), effects);
                 QStringList effectNames;
@@ -590,7 +620,11 @@ namespace Artifact {
                                      .arg(disabledEffectCount);
                 }
                 auto node = addNode(layer->id(), nodeTitle,
-                                    graphPosition(layer->id(), QPointF(0, i * 65)), nodeColor,
+                                    graphPosition(
+                                        layer->id(),
+                                        QPointF((i % 3) * 420.0,
+                                                (i / 3) * 120.0)),
+                                    nodeColor,
                                     layer->layerName() + QStringLiteral(" ") +
                                         effectNames.join(QStringLiteral(" ")));
                 node->setToolTip(QStringLiteral("%1\nEffects: %2")
@@ -618,6 +652,12 @@ namespace Artifact {
                     drawParentLink(nodeMap[pId], nodeMap[layer->id()]);
                 }
             }
+            searchBar->setPlaceholderText(QStringLiteral("Search layers..."));
+            statusLabel->setText(
+                QStringLiteral("%1 layers  ·  %2 effects  ·  %3")
+                    .arg(static_cast<int>(layers.size()))
+                    .arg(effectCount)
+                    .arg(comp->settings().compositionName().toQString()));
         }
 
         void refreshProject() {
@@ -718,6 +758,9 @@ namespace Artifact {
             view->fitInView(scene->itemsBoundingRect().adjusted(-40, -40, 40, 40),
                             Qt::KeepAspectRatio);
             searchBar->setPlaceholderText(QStringLiteral("Search project items..."));
+            statusLabel->setText(
+                QStringLiteral("Project Flowchart  ·  %1 items")
+                    .arg(itemNodes.size()));
         }
 
         void filterNodes(const QString& text) {
@@ -759,14 +802,9 @@ namespace Artifact {
                         .arg(layerId.toString()),
                     QVariantList{position.x(), position.y()});
             };
-            rect->setRect(0, 0, 160, 48);
-            
-            QLinearGradient grad(0, 0, 0, 48);
-            grad.setColorAt(0, color.lighter(120));
-            grad.setColorAt(1, color.darker(110));
-            
-            rect->setBrush(grad);
-            rect->setPen(QPen(color.lighter(150), 1.5));
+            rect->setRect(0, 0, 190, 58);
+            rect->setBrush(color);
+            rect->setPen(QPen(color.lighter(145), 1.25));
             rect->setPos(pos);
 
             auto text = new QGraphicsTextItem(title, rect);
@@ -782,8 +820,8 @@ namespace Artifact {
 
         void drawParentLink(QGraphicsRectItem* parentNode, QGraphicsRectItem* childNode) {
             QPainterPath path;
-            QPointF start = parentNode->pos() + QPointF(160, 24);
-            QPointF end = childNode->pos() + QPointF(0, 24);
+            QPointF start = parentNode->pos() + QPointF(190, 29);
+            QPointF end = childNode->pos() + QPointF(0, 29);
             
             path.moveTo(start);
             qreal midX = (start.x() + end.x()) / 2;
@@ -849,8 +887,8 @@ namespace Artifact {
 
                 QPainterPath path;
                 const QPointF effectScenePos = effectNode->scenePos();
-                path.moveTo(layerNode->scenePos() + QPointF(160.0, 24.0));
-                path.cubicTo(layerNode->scenePos() + QPointF(185.0, 24.0),
+                path.moveTo(layerNode->scenePos() + QPointF(190.0, 29.0));
+                path.cubicTo(layerNode->scenePos() + QPointF(205.0, 29.0),
                              effectScenePos + QPointF(-25.0, effectHeight * 0.5),
                              effectScenePos + QPointF(0.0, effectHeight * 0.5));
                 auto *link = new QGraphicsPathItem(path);
