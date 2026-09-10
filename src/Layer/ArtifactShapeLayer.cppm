@@ -291,38 +291,80 @@ bool drawMaterialGrid(Artifact::ArtifactShapeLayer* layer,
  return true;
 }
 
-QString dashPatternToString(const std::vector<float>& pattern) {
- if (pattern.empty()) return {};
+QString dashPatternToString(const std::vector<float>& pattern) { if (pattern.empty()) return {};
  QStringList parts;
  for (float v : pattern) parts << QString::number(static_cast<double>(v), 'f', 1);
  return parts.join(QStringLiteral(","));
 }
 
 std::vector<float> stringToDashPattern(const QString& str) {
- if (str.trimmed().isEmpty()) return {};
- const auto parts = str.split(QStringLiteral(","), Qt::SkipEmptyParts);
- std::vector<float> result;
- result.reserve(std::min(parts.size(),
-                         static_cast<qsizetype>(kMaxDashPatternEntries)));
- for (const auto& p : parts) {
-  if (result.size() >= kMaxDashPatternEntries) break;
-  bool ok = false;
-  const double parsed = p.trimmed().toDouble(&ok);
-  if (ok && std::isfinite(parsed) && parsed > 0.0) {
-   result.push_back(static_cast<float>(std::min(
-       parsed, static_cast<double>(kMaxShapeDimension))));
+  if (str.trimmed().isEmpty()) return {};
+  const auto parts = str.split(QStringLiteral(","), Qt::SkipEmptyParts);
+  std::vector<float> result;
+  result.reserve(std::min(parts.size(),
+                          static_cast<qsizetype>(kMaxDashPatternEntries)));
+  for (const auto& p : parts) {
+   if (result.size() >= kMaxDashPatternEntries) break;
+   bool ok = false;
+   const double parsed = p.trimmed().toDouble(&ok);
+   if (ok && std::isfinite(parsed) && parsed > 0.0) {
+    result.push_back(static_cast<float>(std::min(
+        parsed, static_cast<double>(kMaxShapeDimension))));
+   }
   }
- }
- return result;
+  return result;
+}
+
+// F10: property/JSON transport for gradient stops. Compact JSON array of
+// {o,r,g,b,a}; empty string = no stops. Validation funnels through
+// normalizedGradientStops so the cap/sort/clamp live in one place.
+// Forward: defined beside normalizedShapeColor below.
+std::vector<Artifact::ShapeGradientStop> normalizedGradientStops(
+    const std::vector<Artifact::ShapeGradientStop>& stops);
+
+QString gradientStopsToString(
+    const std::vector<Artifact::ShapeGradientStop>& stops) {
+  if (stops.empty()) return {};
+  QJsonArray arr;
+  for (const auto& stop : stops) {
+    QJsonObject s;
+    s["o"] = static_cast<double>(stop.offset);
+    s["r"] = static_cast<double>(stop.color.r());
+    s["g"] = static_cast<double>(stop.color.g());
+    s["b"] = static_cast<double>(stop.color.b());
+    s["a"] = static_cast<double>(stop.color.a());
+    arr.push_back(s);
+  }
+  return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+std::vector<Artifact::ShapeGradientStop> stringToGradientStops(
+    const QString& str) {
+  if (str.trimmed().isEmpty()) return {};
+  const QJsonDocument doc = QJsonDocument::fromJson(str.toUtf8());
+  if (!doc.isArray()) return {};
+  std::vector<Artifact::ShapeGradientStop> raw;
+  for (const auto& val : doc.array()) {
+    const QJsonObject s = val.toObject();
+    Artifact::ShapeGradientStop stop;
+    stop.offset = static_cast<float>(s["o"].toDouble(0.0));
+    stop.color = FloatColor(
+        static_cast<float>(s["r"].toDouble(1.0)),
+        static_cast<float>(s["g"].toDouble(1.0)),
+        static_cast<float>(s["b"].toDouble(1.0)),
+        static_cast<float>(s["a"].toDouble(1.0)));
+    raw.push_back(stop);
+  }
+  return normalizedGradientStops(raw);
 }
 
 FloatColor mixColor(const FloatColor& a, const FloatColor& b, const float t) {
- const float clampedT = std::clamp(t, 0.0f, 1.0f);
- return FloatColor(
-     a.r() + (b.r() - a.r()) * clampedT,
-     a.g() + (b.g() - a.g()) * clampedT,
-     a.b() + (b.b() - a.b()) * clampedT,
-     a.a() + (b.a() - a.a()) * clampedT);
+  const float clampedT = std::clamp(t, 0.0f, 1.0f);
+  return FloatColor(
+      a.r() + (b.r() - a.r()) * clampedT,
+      a.g() + (b.g() - a.g()) * clampedT,
+      a.b() + (b.b() - a.b()) * clampedT,
+      a.a() + (b.a() - a.a()) * clampedT);
 }
 
 QColor toQColor(const FloatColor& color) {
@@ -337,11 +379,107 @@ QColor toQColor(const FloatColor& color) {
 }
 
 FloatColor normalizedShapeColor(const FloatColor& color) {
- const auto channel = [](const float value, const float fallback) {
-  return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
- };
- return FloatColor(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
-                  channel(color.b(), 0.0f), channel(color.a(), 1.0f));
+  const auto channel = [](const float value, const float fallback) {
+   return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+  };
+  return FloatColor(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
+                   channel(color.b(), 0.0f), channel(color.a(), 1.0f));
+}
+
+// F10: multi-stop gradient sampling. Empty stops = legacy 2-stop lerp so
+// existing projects render identically. Stops are expected sorted by offset
+// (setFillGradientStops/normalizedShapeContent enforce it); the scan below
+// still terminates on unsorted input.
+constexpr size_t kMaxGradientStops = 32;
+
+std::vector<Artifact::ShapeGradientStop> normalizedGradientStops(
+    const std::vector<Artifact::ShapeGradientStop>& stops) {
+  std::vector<Artifact::ShapeGradientStop> out;
+  out.reserve(std::min(stops.size(), kMaxGradientStops));
+  for (const auto& stop : stops) {
+    if (out.size() >= kMaxGradientStops) {
+      break;
+    }
+    Artifact::ShapeGradientStop kept;
+    kept.offset = std::isfinite(stop.offset)
+        ? std::clamp(stop.offset, 0.0f, 1.0f) : 0.0f;
+    kept.color = normalizedShapeColor(stop.color);
+    out.push_back(kept);
+  }
+  std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+    return a.offset < b.offset;
+  });
+  return out;
+}
+
+FloatColor sampleGradientStops(
+    const std::vector<Artifact::ShapeGradientStop>& stops,
+    const FloatColor& start, const FloatColor& end, float t) {
+  if (stops.empty()) {
+    return mixColor(start, end, t);
+  }
+  const float clampedT = std::clamp(t, 0.0f, 1.0f);
+  if (clampedT <= stops.front().offset) {
+    return stops.front().color;
+  }
+  for (size_t i = 1; i < stops.size(); ++i) {
+    if (clampedT <= stops[i].offset) {
+      const float span = stops[i].offset - stops[i - 1].offset;
+      const float local = span > 1e-6f
+          ? (clampedT - stops[i - 1].offset) / span : 0.0f;
+      return mixColor(stops[i - 1].color, stops[i].color, local);
+    }
+  }
+  return stops.back().color;
+}
+
+// F11b: eased taper interpolation factor. ease in [-0.9, 3] biases the
+// width ramp as a power curve; 0 reproduces the legacy linear ramp exactly.
+float taperEaseFactor(float t, float ease) {
+  const float clampedT = std::clamp(t, 0.0f, 1.0f);
+  const float clampedEase = std::isfinite(ease) ? std::clamp(ease, -0.9f, 3.0f) : 0.0f;
+  if (std::abs(clampedEase) < 0.0001f) {
+    return clampedT;
+  }
+  return std::pow(clampedT, 1.0f + clampedEase);
+}
+
+// F11a: perpendicular sine displacement (px) at arclength fraction t.
+// amount/frequency/phase arrive pre-clamped from the setters; phase is in
+// cycles so keyframed 0->1 loops seamlessly.
+float strokeWaveOffset(float t, float amount, float frequency, float phase) {
+  if (!(amount > 0.0f) || !(frequency > 0.0f)) {
+    return 0.0f;
+  }
+  constexpr float kTwoPi = 6.283185307179586f;
+  return amount * std::sin(kTwoPi * (frequency * std::clamp(t, 0.0f, 1.0f) + phase));
+}
+
+// F10: QGradient stops-or-fallback shared by the legacy and contents paint
+// paths. Opacity multiplies alpha like the surrounding 2-stop code.
+void applyGradientStopsToQGradient(QGradient* grad,
+    const std::vector<Artifact::ShapeGradientStop>& stops,
+    const FloatColor& start, const FloatColor& end, float opacity) {
+  if (!grad) {
+    return;
+  }
+  const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+  if (stops.empty()) {
+    grad->setColorAt(0.0, toQColor(FloatColor(start.r(), start.g(), start.b(),
+                                              start.a() * alpha)));
+    grad->setColorAt(1.0, toQColor(FloatColor(end.r(), end.g(), end.b(),
+                                              end.a() * alpha)));
+    return;
+  }
+  QGradientStops qtStops;
+  qtStops.reserve(static_cast<int>(stops.size()));
+  for (const auto& stop : stops) {
+    qtStops.push_back(QGradientStop(
+        static_cast<qreal>(std::clamp(stop.offset, 0.0f, 1.0f)),
+        toQColor(FloatColor(stop.color.r(), stop.color.g(), stop.color.b(),
+                            stop.color.a() * alpha))));
+  }
+  grad->setStops(qtStops);
 }
 
 // Current composition timeline time used to evaluate animatable
@@ -403,9 +541,13 @@ inline bool sameShapeGeomDims(const ShapeGeomDims& a, const ShapeGeomDims& b) {
 }
 
 bool hasAnimatedShapeGeometry(const Artifact::ArtifactShapeLayer* layer) {
- static constexpr const char* kPaths[] = {
-     "shape.width", "shape.height", "shape.cornerRadius",
-     "shape.starPoints", "shape.starInnerRadius", "shape.polygonSides"};
+  // F11/F13: wave/ease keyframes also bypass the geometry caches. The name
+  // is historical; it now covers every keyframable legacy stroke channel.
+  static constexpr const char* kPaths[] = {
+      "shape.width", "shape.height", "shape.cornerRadius",
+      "shape.starPoints", "shape.starInnerRadius", "shape.polygonSides",
+      "shape.taperEase", "shape.waveAmount", "shape.waveFrequency",
+      "shape.wavePhase"};
  if (!layer) {
   return false;
  }
@@ -558,14 +700,42 @@ std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) 
  if (f1 <= f0) {
   return lower->second;
  }
- const double t = static_cast<double>(frame - f0) /
-                  static_cast<double>(f1 - f0);
- const auto& a = lower->second;
- const auto& b = upper->second;
- if (a.size() != b.size()) {
-  // Topology change between keys: snap instead of blending mismatched sets.
-  return t < 0.5 ? a : b;
- }
+  const double t = static_cast<double>(frame - f0) /
+                   static_cast<double>(f1 - f0);
+  const auto& a = lower->second;
+  const auto& b = upper->second;
+  if (a.size() != b.size()) {
+    // F13a: topology change between keys. Resample both sides through
+    // ShapePath::interpolate so star->heart style morphs glide instead of
+    // snapping, then convert the equidistant samples back to corner
+    // vertices. Falls back to snap when either side cannot form a path.
+    if (a.size() >= 2 && b.size() >= 2) {
+      const bool closed = customPathClosed();
+      ArtifactCore::ShapePath pathA = buildCustomShapePath(a, closed);
+      ArtifactCore::ShapePath pathB = buildCustomShapePath(b, closed);
+      if (!pathA.isEmpty() && !pathB.isEmpty()) {
+        constexpr int kMorphSamples = 64;
+        ArtifactCore::ShapePath morphed =
+            ArtifactCore::ShapePath::interpolate(pathA, pathB, t,
+                                                 kMorphSamples);
+        const auto sampled = morphed.sampleEquidistant(kMorphSamples);
+        if (sampled.size() >= 2) {
+          std::vector<CustomPathVertex> morphedVerts;
+          morphedVerts.reserve(sampled.size());
+          for (const auto& point : sampled) {
+            CustomPathVertex v;
+            v.pos = point;
+            v.inTangent = QPointF(0, 0);
+            v.outTangent = QPointF(0, 0);
+            v.smooth = false;
+            morphedVerts.push_back(v);
+          }
+          return morphedVerts;
+        }
+      }
+    }
+    return t < 0.5 ? a : b;
+  }
  std::vector<CustomPathVertex> blended;
  blended.reserve(a.size());
  for (size_t i = 0; i < a.size(); ++i) {
@@ -590,7 +760,7 @@ bool hasAnimatedShapeOperators(const Artifact::ArtifactShapeLayer* layer) {
   static const char* kFloatFields[] = {"start", "end", "offset", "copies",
                                        "rotation", "amount", "radius",
                                        "startOpacity", "endOpacity", "frequency",
-                                       "temporalPhase", "correlation"};
+                                       "temporalPhase", "correlation", "phase"};
   for (const char* field : kFloatFields) {
    const auto property =
        layer->getProperty(prefix + QString::fromLatin1(field));
@@ -601,6 +771,11 @@ bool hasAnimatedShapeOperators(const Artifact::ArtifactShapeLayer* layer) {
   const auto modeProperty = layer->getProperty(
       prefix + QStringLiteral("mode"));
   if (modeProperty && !modeProperty->getKeyFrames().empty()) {
+   return true;
+  }
+  const auto compositeProperty = layer->getProperty(
+      prefix + QStringLiteral("composite"));
+  if (compositeProperty && !compositeProperty->getKeyFrames().empty()) {
    return true;
   }
  }
@@ -684,8 +859,7 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
    applyFloat("frequency", [&](double v) { wiggle->setFrequency(static_cast<float>(v)); });
    applyFloat("temporalPhase", [&](double v) {
     wiggle->setTemporalPhase(static_cast<float>(v));
-   });
-   applyFloat("correlation", [&](double v) { wiggle->setCorrelation(static_cast<float>(v)); });
+   });   applyFloat("correlation", [&](double v) { wiggle->setCorrelation(static_cast<float>(v)); });
    const auto detailProperty = layer->getProperty(prefix + QStringLiteral("detail"));
    if (detailProperty && !detailProperty->getKeyFrames().empty()) {
     const QVariant value = detailProperty->interpolateValue(effectiveShapeTimelineTime(layer));
@@ -700,6 +874,28 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
    // Phase remains an offset and can itself be keyframed.
    wiggle->setTemporalPhase(wiggle->temporalPhase() + static_cast<float>(
        effectiveShapeTimelineTime(layer).toSeconds()));
+  } else if (auto* wave = dynamic_cast<ArtifactCore::WavePaths*>(&op)) {
+   applyFloat("amount", [&](double v) {
+    wave->setAmount(std::clamp(static_cast<float>(v), 0.0f, 100000.0f));
+   });
+   applyFloat("frequency", [&](double v) {
+    wave->setFrequency(std::clamp(static_cast<float>(v), 0.0f, 1024.0f));
+   });
+   applyFloat("phase", [&](double v) {
+    wave->setPhase(static_cast<float>(v));
+   });
+  }
+  // Repeater composite order follows integer keyframes like merge mode.
+  if (auto* repeater = dynamic_cast<ArtifactCore::Repeater*>(&op)) {
+   const auto compositeProperty =
+       layer->getProperty(prefix + QStringLiteral("composite"));
+   if (compositeProperty && !compositeProperty->getKeyFrames().empty()) {
+    const QVariant value = compositeProperty->interpolateValue(
+        effectiveShapeTimelineTime(layer));
+    if (value.isValid()) {
+     repeater->setCompositeBelow(value.toInt() != 0);
+    }
+   }
   }
  }
 }
@@ -810,6 +1006,8 @@ std::unique_ptr<ArtifactCore::ShapeOperator> createShapeOperator(ArtifactCore::S
     return std::make_unique<ArtifactCore::Twist>();
   case ArtifactCore::ShapeOperatorType::HandDrawnWobble:
     return std::make_unique<ArtifactCore::HandDrawnWobble>();
+  case ArtifactCore::ShapeOperatorType::WavePaths:
+    return std::make_unique<ArtifactCore::WavePaths>();
   default:
     return nullptr;
   }
@@ -900,6 +1098,13 @@ void normalizeRestoredShapeOperator(ArtifactCore::ShapeOperator *op) {
         ? std::clamp(zigzag->amount(), -100000.0f, 100000.0f) : 0.0f);
     zigzag->setFrequency(std::isfinite(zigzag->frequency())
         ? std::clamp(zigzag->frequency(), 0.0f, 10000.0f) : 1.0f);
+  } else if (auto wave = dynamic_cast<ArtifactCore::WavePaths *>(op)) {
+    wave->setAmount(std::isfinite(wave->amount())
+        ? std::clamp(wave->amount(), 0.0f, 100000.0f) : 0.0f);
+    wave->setFrequency(std::isfinite(wave->frequency())
+        ? std::clamp(wave->frequency(), 0.0f, 1024.0f) : 1.0f);
+    const float phase = wave->phase();
+    wave->setPhase(std::isfinite(phase) ? phase : 0.0f);
   } else if (auto wobble = dynamic_cast<ArtifactCore::HandDrawnWobble *>(op)) {
     wobble->setWobbleAmount(std::isfinite(wobble->wobbleAmount())
         ? std::clamp(wobble->wobbleAmount(), 0.0f, 100000.0f) : 0.0f);
@@ -1126,8 +1331,9 @@ static ArtifactCore::FloatColor contentGradientColorAt(const Artifact::ShapeCont
   if (fill.type == ArtifactSolidFillType::Solid) {
     return fill.color;
   }
-  return mixColor(fill.gradientStart, fill.gradientEnd,
-                  contentGradientT(fill, x, y, w, h));
+  return sampleGradientStops(fill.gradientStops, fill.gradientStart,
+                             fill.gradientEnd,
+                             contentGradientT(fill, x, y, w, h));
 }
 
 // Segmented variable-width / gradient-color stroker for the GPU path.
@@ -1140,6 +1346,11 @@ static void drawTaperedPolylineGPU(Artifact::ArtifactIRenderer* renderer,
                                    float width,
                                    float taperStart,
                                    float taperEnd,
+                                   float taperEase,
+                                   bool waveEnabled,
+                                   float waveAmount,
+                                   float waveFrequency,
+                                   float wavePhase,
                                    const ArtifactCore::FloatColor& gradStart,
                                    const ArtifactCore::FloatColor& gradEnd,
                                    bool gradientEnabled,
@@ -1169,9 +1380,25 @@ static void drawTaperedPolylineGPU(Artifact::ArtifactIRenderer* renderer,
   }
   const float t0 = std::clamp(taperStart, 0.0f, 1.0f);
   const float t1 = std::clamp(taperEnd, 0.0f, 1.0f);
+  const bool useWave = waveEnabled && waveAmount > 0.0f && waveFrequency > 0.0f;
+  // F11a: wave endpoint fractions share the segment arclength table.
+  const auto wavePoint = [&](size_t pointIndex, float nx, float ny,
+                             Artifact::Detail::float2 p) {
+    if (!useWave) {
+      return p;
+    }
+    const double s = cumulative[pointIndex % cumulative.size()] / total;
+    const float off = strokeWaveOffset(static_cast<float>(s), waveAmount,
+                                       waveFrequency, wavePhase);
+    p.x += nx * off;
+    p.y += ny * off;
+    return p;
+  };
   for (size_t i = 0; i < segmentCount; ++i) {
     const float midT = static_cast<float>((cumulative[i] + cumulative[i + 1]) * 0.5 / total);
-    const float segWidth = std::max(0.0f, width * (t0 + (t1 - t0) * midT));
+    // F11b: eased taper ramp (ease = 0 reproduces the legacy linear ramp).
+    const float segWidth = std::max(
+        0.0f, width * (t0 + (t1 - t0) * taperEaseFactor(midT, taperEase)));
     if (segWidth <= 0.0f) {
       continue;
     }
@@ -1180,6 +1407,17 @@ static void drawTaperedPolylineGPU(Artifact::ArtifactIRenderer* renderer,
         : baseColor;
     auto p0 = points[i % points.size()];
     auto p1 = points[(i + 1) % points.size()];
+    if (useWave) {
+      float dx = p1.x - p0.x;
+      float dy = p1.y - p0.y;
+      const float len = std::sqrt(dx * dx + dy * dy);
+      if (len > 1e-6f) {
+        const float nx = -dy / len;
+        const float ny = dx / len;
+        p0 = wavePoint(i, nx, ny, p0);
+        p1 = wavePoint(i + 1, nx, ny, p1);
+      }
+    }
     if (!closed && cap == Artifact::StrokeCap::Square) {
       const float dx = p1.x - p0.x;
       const float dy = p1.y - p0.y;
@@ -1325,48 +1563,93 @@ void drawStrokePath(QPainter& painter,
                     const float strokeWidth,
                     const float taperStart,
                     const float taperEnd,
+                    const float taperEase,
+                    const bool waveEnabled,
+                    const float waveAmount,
+                    const float waveFrequency,
+                    const float wavePhase,
                     const bool gradientEnabled,
                     const FloatColor& baseStrokeColor,
                     const FloatColor& gradientStartColor,
                     const FloatColor& gradientEndColor,
                     const Artifact::StrokeCap strokeCap) {
- if (points.size() < 2 || strokeWidth <= 0.0f) {
-  return;
- }
+  if (points.size() < 2 || strokeWidth <= 0.0f) {
+   return;
+  }
 
- std::vector<QPointF> polyline = points;
- if (polyline.size() >= 2 && polyline.front() == polyline.back()) {
-  polyline.pop_back();
- }
- if (polyline.size() < 2) {
-  return;
- }
+  std::vector<QPointF> polyline = points;
+  if (polyline.size() >= 2 && polyline.front() == polyline.back()) {
+   polyline.pop_back();
+  }
+  if (polyline.size() < 2) {
+   return;
+  }
 
- const size_t segmentCount = closed ? polyline.size() : (polyline.size() - 1);
- if (segmentCount == 0) {
-  return;
- }
+  const size_t segmentCount = closed ? polyline.size() : (polyline.size() - 1);
+  if (segmentCount == 0) {
+   return;
+  }
 
- std::vector<qreal> cumulative;
- cumulative.reserve(segmentCount + 1);
- cumulative.push_back(0.0);
- qreal totalLength = 0.0;
- for (size_t i = 0; i < segmentCount; ++i) {
-  const size_t next = (i + 1) % polyline.size();
-  const qreal segLength = QLineF(polyline[i], polyline[next]).length();
-  totalLength += segLength;
-  cumulative.push_back(totalLength);
- }
+  std::vector<qreal> cumulative;
+  cumulative.reserve(segmentCount + 1);
+  cumulative.push_back(0.0);
+  qreal totalLength = 0.0;
+  for (size_t i = 0; i < segmentCount; ++i) {
+   const size_t next = (i + 1) % polyline.size();
+   const qreal segLength = QLineF(polyline[i], polyline[next]).length();
+   totalLength += segLength;
+   cumulative.push_back(totalLength);
+  }
 
- if (totalLength <= 1e-5) {
-  return;
- }
+  if (totalLength <= 1e-5) {
+   return;
+  }
 
- auto widthAt = [&](const qreal t) -> float {
-  const float clampedT = std::clamp(static_cast<float>(t), 0.0f, 1.0f);
-  const float scale = taperStart + (taperEnd - taperStart) * clampedT;
-  return std::max(0.0f, strokeWidth * scale);
- };
+  // F11a: displace the spine perpendicular to the path before quad
+  // building so taper widths and gradients ride the wave. Each point uses
+  // the averaged normal of its adjacent segments, keeping closed loops
+  // watertight.
+  if (waveEnabled && waveAmount > 0.0f && waveFrequency > 0.0f) {
+   const size_t pointCount = polyline.size();
+   std::vector<QPointF> segNormals(segmentCount);
+   for (size_t i = 0; i < segmentCount; ++i) {
+    const size_t next = (i + 1) % pointCount;
+    QPointF dir = polyline[next] - polyline[i];
+    const qreal len = std::hypot(dir.x(), dir.y());
+    segNormals[i] = (len > 1e-9) ? QPointF(-dir.y() / len, dir.x() / len)
+                                 : QPointF(0.0, 0.0);
+   }
+   for (size_t j = 0; j < pointCount; ++j) {
+    QPointF normal;
+    if (closed) {
+     normal = segNormals[(j + segmentCount - 1) % segmentCount] +
+              segNormals[j % segmentCount];
+    } else if (j == 0) {
+     normal = segNormals.front();
+    } else if (j + 1 >= pointCount) {
+     normal = segNormals.back();
+    } else {
+     normal = segNormals[j - 1] + segNormals[j];
+    }
+    const qreal len = std::hypot(normal.x(), normal.y());
+    if (len <= 1e-9) {
+     continue;
+    }
+    normal /= len;
+    const size_t cumIndex = closed ? (j % cumulative.size()) : std::min(j, cumulative.size() - 1);
+    const float t = static_cast<float>(cumulative[cumIndex] / totalLength);
+    polyline[j] += normal * strokeWaveOffset(t, waveAmount, waveFrequency,
+                                             wavePhase);
+   }
+  }
+
+  auto widthAt = [&](const qreal t) -> float {
+   const float clampedT = std::clamp(static_cast<float>(t), 0.0f, 1.0f);
+   // F11b: eased taper ramp (ease = 0 reproduces the legacy linear ramp).
+   const float eased = taperEaseFactor(clampedT, taperEase);
+   const float scale = taperStart + (taperEnd - taperStart) * eased;
+   return std::max(0.0f, strokeWidth * scale);
+  };
  auto colorAt = [&](const qreal t) -> FloatColor {
   if (!gradientEnabled) {
    return baseStrokeColor;
@@ -1642,6 +1925,7 @@ QString operatorName(ArtifactCore::ShapeOperatorType type) {
   case ArtifactCore::ShapeOperatorType::ZigZag: return QStringLiteral("Zig Zag");
   case ArtifactCore::ShapeOperatorType::Twist: return QStringLiteral("Twist");
   case ArtifactCore::ShapeOperatorType::HandDrawnWobble: return QStringLiteral("Hand Drawn Wobble");
+  case ArtifactCore::ShapeOperatorType::WavePaths: return QStringLiteral("Wave");
   default: return QStringLiteral("Unknown Operator");
   }
 }
@@ -1655,6 +1939,8 @@ public:
   ArtifactSolidFillType fillType_ = ArtifactSolidFillType::Solid;
   FloatColor fillGradientStartColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
   FloatColor fillGradientEndColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  // F10: empty = legacy 2-stop behaviour.
+  std::vector<Artifact::ShapeGradientStop> fillGradientStops_;
   float fillGradientAngleDegrees_ = 0.0f;
   float fillGradientCenterX_ = 0.5f;
   float fillGradientCenterY_ = 0.5f;
@@ -1663,9 +1949,15 @@ public:
  float strokeWidth_ = 0.0f;
  bool fillEnabled_ = true;
  bool strokeEnabled_ = false;
- float strokeTaperStart_ = 1.0f;
- float strokeTaperEnd_ = 1.0f;
- bool strokeGradientEnabled_ = false;
+  float strokeTaperStart_ = 1.0f;
+  float strokeTaperEnd_ = 1.0f;
+  // F11b: taper ease exponent bias, 0 = linear. F11a: stroke spine wave.
+  float strokeTaperEase_ = 0.0f;
+  bool strokeWaveEnabled_ = false;
+  float strokeWaveAmount_ = 0.0f;
+  float strokeWaveFrequency_ = 1.0f;
+  float strokeWavePhase_ = 0.0f;
+  bool strokeGradientEnabled_ = false;
  FloatColor strokeGradientStartColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
  FloatColor strokeGradientEndColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -1688,11 +1980,14 @@ public:
   std::vector<float> dashPattern_;
   float dashOffset_ = 0.0f;
 
- bool hasCustomStrokeEffects() const {
-  return std::abs(strokeTaperStart_ - 1.0f) > kStrokeEffectEpsilon ||
-         std::abs(strokeTaperEnd_ - 1.0f) > kStrokeEffectEpsilon ||
-         strokeGradientEnabled_;
- }
+  bool hasCustomStrokeEffects() const {
+   return std::abs(strokeTaperStart_ - 1.0f) > kStrokeEffectEpsilon ||
+          std::abs(strokeTaperEnd_ - 1.0f) > kStrokeEffectEpsilon ||
+          std::abs(strokeTaperEase_) > kStrokeEffectEpsilon ||
+          (strokeWaveEnabled_ && strokeWaveAmount_ > 0.0f &&
+           strokeWaveFrequency_ > 0.0f) ||
+          strokeGradientEnabled_;
+  }
 
   // Phase 5: Bezier path override
   std::vector<CustomPathVertex> customPathVertices_;
@@ -1880,10 +2175,16 @@ public:
        auto* cg = new QConicalGradient(QPointF(cx, cy), fillGradientAngleDegrees_);
        grad = cg;
       }
-      grad->setColorAt(0.0, toQColor(fillGradientStartColor_));
-      grad->setColorAt(1.0, toQColor(fillGradientEndColor_));
-      fillBrush = QBrush(*grad);
-      delete grad;
+       grad->setColorAt(0.0, toQColor(fillGradientStartColor_));
+       grad->setColorAt(1.0, toQColor(fillGradientEndColor_));
+       // F10: multi-stop replaces the 2-stop endpoints when present.
+       if (!fillGradientStops_.empty()) {
+         applyGradientStopsToQGradient(grad, fillGradientStops_,
+                                       fillGradientStartColor_,
+                                       fillGradientEndColor_, 1.0f);
+       }
+       fillBrush = QBrush(*grad);
+       delete grad;
      } else {
       fillBrush = QColor(static_cast<int>(fillColor_.r() * 255),
                          static_cast<int>(fillColor_.g() * 255),
@@ -1914,9 +2215,20 @@ public:
         }
         for (const QPolygonF& subpath : subpaths) {
          const std::vector<QPointF> points = polygonToPoints(subpath);
+         // F11/F13: wave phase/frequency/amount and taper ease follow
+         // keyframes on the legacy path; contents strokes stay static.
+         const float ease = static_cast<float>(animatedShapeNumber(
+             this, "shape.taperEase", impl_->strokeTaperEase_));
+         const float waveAmount = static_cast<float>(animatedShapeNumber(
+             this, "shape.waveAmount", impl_->strokeWaveAmount_));
+         const float waveFrequency = static_cast<float>(animatedShapeNumber(
+             this, "shape.waveFrequency", impl_->strokeWaveFrequency_));
+         const float wavePhase = static_cast<float>(animatedShapeNumber(
+             this, "shape.wavePhase", impl_->strokeWavePhase_));
          drawStrokePath(painter, points, pathClosed, strokeWidth_,
-                        strokeTaperStart_, strokeTaperEnd_,
-                        strokeGradientEnabled_, strokeColor_,
+                        strokeTaperStart_, strokeTaperEnd_, ease,
+                        strokeWaveEnabled_, waveAmount, waveFrequency,
+                        wavePhase, strokeGradientEnabled_, strokeColor_,
                         gradientStart, gradientEnd, strokeCap_);
         }
        } else {
@@ -2109,6 +2421,14 @@ void ArtifactShapeLayer::setFillGradientCenterY(float v) { impl_->fillGradientCe
 float ArtifactShapeLayer::fillGradientCenterY() const { return impl_->fillGradientCenterY_; }
 void ArtifactShapeLayer::setFillGradientRadius(float v) { impl_->fillGradientRadius_ = std::isfinite(v) ? std::clamp(v, 0.0f, 100000.0f) : 0.5f; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::fillGradientRadius() const { return impl_->fillGradientRadius_; }
+void ArtifactShapeLayer::setFillGradientStops(const std::vector<Artifact::ShapeGradientStop>& stops) {
+  if (!impl_) return;
+  impl_->fillGradientStops_ = normalizedGradientStops(stops);
+  impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed();
+}
+std::vector<Artifact::ShapeGradientStop> ArtifactShapeLayer::fillGradientStops() const {
+  return impl_ ? impl_->fillGradientStops_ : std::vector<Artifact::ShapeGradientStop>{};
+}
 void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
  impl_->strokeColor_ = normalizedShapeColor(c);
  if (!impl_->strokeGradientEnabled_) {
@@ -2143,6 +2463,46 @@ void ArtifactShapeLayer::setStrokeTaper(float startScale, float endScale) {
 }
 float ArtifactShapeLayer::strokeTaperStart() const { return impl_->strokeTaperStart_; }
 float ArtifactShapeLayer::strokeTaperEnd() const { return impl_->strokeTaperEnd_; }
+void ArtifactShapeLayer::setStrokeTaperEase(float ease) {
+  impl_->strokeTaperEase_ = std::isfinite(ease) ? std::clamp(ease, -0.9f, 3.0f) : 0.0f;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+float ArtifactShapeLayer::strokeTaperEase() const { return impl_->strokeTaperEase_; }
+void ArtifactShapeLayer::setStrokeWaveEnabled(bool enabled) {
+  impl_->strokeWaveEnabled_ = enabled;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+bool ArtifactShapeLayer::strokeWaveEnabled() const { return impl_->strokeWaveEnabled_; }
+void ArtifactShapeLayer::setStrokeWaveAmount(float px) {
+  impl_->strokeWaveAmount_ = std::isfinite(px) ? std::clamp(px, 0.0f, 100000.0f) : 0.0f;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+float ArtifactShapeLayer::strokeWaveAmount() const { return impl_->strokeWaveAmount_; }
+void ArtifactShapeLayer::setStrokeWaveFrequency(float cycles) {
+  impl_->strokeWaveFrequency_ = std::isfinite(cycles) ? std::clamp(cycles, 0.0f, 1024.0f) : 1.0f;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+float ArtifactShapeLayer::strokeWaveFrequency() const { return impl_->strokeWaveFrequency_; }
+void ArtifactShapeLayer::setStrokeWavePhase(float cycles) {
+  impl_->strokeWavePhase_ = std::isfinite(cycles) ? cycles - std::floor(cycles) : 0.0f;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
+float ArtifactShapeLayer::strokeWavePhase() const { return impl_->strokeWavePhase_; }
 void ArtifactShapeLayer::setStrokeGradientEnabled(bool enabled) {
  impl_->strokeGradientEnabled_ = enabled;
  impl_->markDirty();
@@ -2600,6 +2960,13 @@ ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
       } else {
         cfill.gradientStart = toQColor(content.fill.gradientStart);
         cfill.gradientEnd = toQColor(content.fill.gradientEnd);
+        cfill.gradientStops.clear();
+        for (const auto& stop : content.fill.gradientStops) {
+          ArtifactCore::FillSettings::GradientStop coreStop;
+          coreStop.offset = std::clamp(static_cast<double>(stop.offset), 0.0, 1.0);
+          coreStop.color = toQColor(stop.color);
+          cfill.gradientStops.push_back(coreStop);
+        }
         cfill.gradientAngleDegrees = content.fill.gradientAngleDegrees;
         cfill.gradientCenterX = content.fill.gradientCenterX;
         cfill.gradientCenterY = content.fill.gradientCenterY;
@@ -2672,6 +3039,13 @@ ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
  } else {
   fill.gradientStart = toQColor(impl_->fillGradientStartColor_);
   fill.gradientEnd = toQColor(impl_->fillGradientEndColor_);
+  fill.gradientStops.clear();
+  for (const auto& stop : impl_->fillGradientStops_) {
+   ArtifactCore::FillSettings::GradientStop coreStop;
+   coreStop.offset = std::clamp(static_cast<double>(stop.offset), 0.0, 1.0);
+   coreStop.color = toQColor(stop.color);
+   fill.gradientStops.push_back(coreStop);
+  }
   fill.gradientAngleDegrees = impl_->fillGradientAngleDegrees_;
   fill.gradientCenterX = impl_->fillGradientCenterX_;
   fill.gradientCenterY = impl_->fillGradientCenterY_;
@@ -2783,6 +3157,38 @@ ArtifactCore::ShapeOperatorType ArtifactShapeLayer::shapeOperatorTypeAt(int inde
   return impl_->shapeOperators_[static_cast<size_t>(index)]->type();
 }
 
+QVariant ArtifactShapeLayer::shapeOperatorValue(int index, const QString& field) const
+{
+ if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
+  return QVariant();
+ }
+ const auto &op = impl_->shapeOperators_[static_cast<size_t>(index)];
+ if (auto trim = dynamic_cast<const ArtifactCore::TrimPaths *>(op.get())) {
+  if (field == QStringLiteral("start")) return QVariant(trim->start());
+  if (field == QStringLiteral("end")) return QVariant(trim->end());
+  if (field == QStringLiteral("offset")) return QVariant(trim->offset());
+  if (field == QStringLiteral("trimMode")) return QVariant(static_cast<int>(trim->trimMode()));
+  } else if (auto repeater = dynamic_cast<const ArtifactCore::Repeater *>(op.get())) {
+   if (field == QStringLiteral("copies")) return QVariant(repeater->copies());
+   if (field == QStringLiteral("offset")) return QVariant(repeater->offset());
+   if (field == QStringLiteral("rotation")) return QVariant(repeater->rotation());
+   if (field == QStringLiteral("startOpacity")) return QVariant(repeater->startOpacity());
+   if (field == QStringLiteral("endOpacity")) return QVariant(repeater->endOpacity());
+   if (field == QStringLiteral("composite")) return QVariant(repeater->compositeBelow() ? 1 : 0);
+ } else if (auto offset = dynamic_cast<const ArtifactCore::OffsetPaths *>(op.get())) {
+  if (field == QStringLiteral("offset")) return QVariant(offset->offset());
+ } else if (auto pb = dynamic_cast<const ArtifactCore::PuckerBloat *>(op.get())) {
+  if (field == QStringLiteral("amount")) return QVariant(pb->amount());
+  } else if (auto rc = dynamic_cast<const ArtifactCore::RoundedCorners *>(op.get())) {
+   if (field == QStringLiteral("radius")) return QVariant(rc->radius());
+  } else if (auto wave = dynamic_cast<const ArtifactCore::WavePaths *>(op.get())) {
+   if (field == QStringLiteral("amount")) return QVariant(wave->amount());
+   if (field == QStringLiteral("frequency")) return QVariant(wave->frequency());
+   if (field == QStringLiteral("phase")) return QVariant(wave->phase());
+  }
+  return QVariant();
+}
+
 bool ArtifactShapeLayer::removeShapeOperatorAt(int index)
 {
  if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
@@ -2876,6 +3282,7 @@ static Artifact::ShapeContent normalizedShapeContent(const Artifact::ShapeConten
   out.fill.color = normalizedShapeColor(out.fill.color);
   out.fill.gradientStart = normalizedShapeColor(out.fill.gradientStart);
   out.fill.gradientEnd = normalizedShapeColor(out.fill.gradientEnd);
+  out.fill.gradientStops = normalizedGradientStops(out.fill.gradientStops);
   {
     const int raw = std::clamp(static_cast<int>(out.fill.type),
                                static_cast<int>(ArtifactSolidFillType::Solid),
@@ -2921,6 +3328,15 @@ static Artifact::ShapeContent normalizedShapeContent(const Artifact::ShapeConten
       ? std::clamp(out.stroke.taperStart, 0.0f, 1.0f) : 1.0f;
   out.stroke.taperEnd = std::isfinite(out.stroke.taperEnd)
       ? std::clamp(out.stroke.taperEnd, 0.0f, 1.0f) : 1.0f;
+  // F11: taper ease exponent bias and spine wave parameters.
+  out.stroke.taperEase = std::isfinite(out.stroke.taperEase)
+      ? std::clamp(out.stroke.taperEase, -0.9f, 3.0f) : 0.0f;
+  out.stroke.waveAmount = std::isfinite(out.stroke.waveAmount)
+      ? std::clamp(out.stroke.waveAmount, 0.0f, 100000.0f) : 0.0f;
+  out.stroke.waveFrequency = std::isfinite(out.stroke.waveFrequency)
+      ? std::clamp(out.stroke.waveFrequency, 0.0f, 1024.0f) : 1.0f;
+  out.stroke.wavePhase = std::isfinite(out.stroke.wavePhase)
+      ? out.stroke.wavePhase - std::floor(out.stroke.wavePhase) : 0.0f;
   out.opacity = std::isfinite(out.opacity) ? std::clamp(out.opacity, 0.0f, 1.0f) : 1.0f;
   out.transform.scale.setX(std::isfinite(out.transform.scale.x())
       ? std::clamp(out.transform.scale.x(), -100.0, 100.0) : 1.0);
@@ -2961,6 +3377,7 @@ Artifact::ShapeContent ArtifactShapeLayer::makeContentFromLegacy() const {
   content.fill.type = impl_->fillType_;
   content.fill.gradientStart = impl_->fillGradientStartColor_;
   content.fill.gradientEnd = impl_->fillGradientEndColor_;
+  content.fill.gradientStops = impl_->fillGradientStops_;
   content.fill.gradientAngleDegrees = impl_->fillGradientAngleDegrees_;
   content.fill.gradientCenterX = impl_->fillGradientCenterX_;
   content.fill.gradientCenterY = impl_->fillGradientCenterY_;
@@ -2975,6 +3392,11 @@ Artifact::ShapeContent ArtifactShapeLayer::makeContentFromLegacy() const {
   content.stroke.dashOffset = impl_->dashOffset_;
   content.stroke.taperStart = impl_->strokeTaperStart_;
   content.stroke.taperEnd = impl_->strokeTaperEnd_;
+  content.stroke.taperEase = impl_->strokeTaperEase_;
+  content.stroke.waveEnabled = impl_->strokeWaveEnabled_;
+  content.stroke.waveAmount = impl_->strokeWaveAmount_;
+  content.stroke.waveFrequency = impl_->strokeWaveFrequency_;
+  content.stroke.wavePhase = impl_->strokeWavePhase_;
   content.stroke.gradientEnabled = impl_->strokeGradientEnabled_;
   content.stroke.gradientStart = impl_->strokeGradientStartColor_;
   content.stroke.gradientEnd = impl_->strokeGradientEndColor_;
@@ -3528,6 +3950,13 @@ QImage ArtifactShapeLayer::renderContentsToImage() const {
           content.fill.gradientEnd.r(), content.fill.gradientEnd.g(),
           content.fill.gradientEnd.b(),
           content.fill.gradientEnd.a() * content.opacity)));
+      // F10: multi-stop replaces the 2-stop endpoints when present.
+      if (!content.fill.gradientStops.empty()) {
+        applyGradientStopsToQGradient(grad, content.fill.gradientStops,
+                                      content.fill.gradientStart,
+                                      content.fill.gradientEnd,
+                                      content.opacity);
+      }
       fillBrush = QBrush(*grad);
       delete grad;
     } else {
@@ -3540,6 +3969,9 @@ QImage ArtifactShapeLayer::renderContentsToImage() const {
     const bool useTaper =
         std::abs(content.stroke.taperStart - 1.0f) > kStrokeEffectEpsilon ||
         std::abs(content.stroke.taperEnd - 1.0f) > kStrokeEffectEpsilon ||
+        std::abs(content.stroke.taperEase) > kStrokeEffectEpsilon ||
+        (content.stroke.waveEnabled && content.stroke.waveAmount > 0.0f &&
+         content.stroke.waveFrequency > 0.0f) ||
         content.stroke.gradientEnabled;
     const bool canTaper = useTaper &&
         content.stroke.align == StrokeAlign::Center &&
@@ -3569,7 +4001,12 @@ QImage ArtifactShapeLayer::renderContentsToImage() const {
           for (const QPolygonF& subpath : subpaths) {
             drawStrokePath(painter, polygonToPoints(subpath), pathClosed,
                            content.stroke.width, content.stroke.taperStart,
-                           content.stroke.taperEnd, content.stroke.gradientEnabled,
+                           content.stroke.taperEnd, content.stroke.taperEase,
+                           content.stroke.waveEnabled,
+                           content.stroke.waveAmount,
+                           content.stroke.waveFrequency,
+                           content.stroke.wavePhase,
+                           content.stroke.gradientEnabled,
                            content.stroke.color, gs, ge, content.stroke.cap);
           }
         } else {
@@ -4014,13 +4451,16 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
       }
     }
     if (hasStroke) {
+      // F11: ease and wave need the segmented stroker too (PolylineStyle
+      // has neither channel). Gradient-only and dashed strokes stay on
+      // drawStyledPolyline so joins, caps, dash phase and along-path
+      // gradient compose. Dash wins over taper/ease/wave.
       const bool hasTaper =
           std::abs(item.stroke.taperStart - 1.0f) > kStrokeEffectEpsilon ||
-          std::abs(item.stroke.taperEnd - 1.0f) > kStrokeEffectEpsilon;
-      // Taper needs the segmented stroker (PolylineStyle has no taper
-      // channel). Gradient-only and dashed strokes stay on
-      // drawStyledPolyline so joins, caps, dash phase and along-path
-      // gradient compose. Dash wins over taper.
+          std::abs(item.stroke.taperEnd - 1.0f) > kStrokeEffectEpsilon ||
+          std::abs(item.stroke.taperEase) > kStrokeEffectEpsilon ||
+          (item.stroke.waveEnabled && item.stroke.waveAmount > 0.0f &&
+           item.stroke.waveFrequency > 0.0f);
       const bool useTaper = hasTaper && item.stroke.dashPattern.empty();
       const float thickness = std::max(1.0f, item.stroke.width * renderScale);
       const ArtifactCore::FloatColor baseStroke = ArtifactCore::FloatColor(
@@ -4052,6 +4492,11 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
           if (useTaper) {
             drawTaperedPolylineGPU(renderer, points, closed, thickness,
                                    item.stroke.taperStart, item.stroke.taperEnd,
+                                   item.stroke.taperEase,
+                                   item.stroke.waveEnabled,
+                                   item.stroke.waveAmount,
+                                   item.stroke.waveFrequency,
+                                   item.stroke.wavePhase,
                                    gradStrokeStart, gradStrokeEnd,
                                    item.stroke.gradientEnabled, baseStroke,
                                    item.stroke.cap);
@@ -4333,6 +4778,16 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    legacyItem.stroke.dashOffset = impl->dashOffset_;
    legacyItem.stroke.taperStart = impl->strokeTaperStart_;
    legacyItem.stroke.taperEnd = impl->strokeTaperEnd_;
+   // F11/F13: legacy stroke wave/ease follow keyframes; contents stay static.
+   legacyItem.stroke.taperEase = static_cast<float>(animatedShapeNumber(
+       this, "shape.taperEase", impl->strokeTaperEase_));
+   legacyItem.stroke.waveEnabled = impl->strokeWaveEnabled_;
+   legacyItem.stroke.waveAmount = static_cast<float>(animatedShapeNumber(
+       this, "shape.waveAmount", impl->strokeWaveAmount_));
+   legacyItem.stroke.waveFrequency = static_cast<float>(animatedShapeNumber(
+       this, "shape.waveFrequency", impl->strokeWaveFrequency_));
+   legacyItem.stroke.wavePhase = static_cast<float>(animatedShapeNumber(
+       this, "shape.wavePhase", impl->strokeWavePhase_));
    legacyItem.stroke.gradientEnabled = impl->strokeGradientEnabled_;
    legacyItem.stroke.gradientStart = impl->strokeGradientStartColor_;
    legacyItem.stroke.gradientEnd = impl->strokeGradientEndColor_;
@@ -4478,11 +4933,13 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  shapeTypeProp->setTooltip(shapeTypeTooltip);
  shapeGroup.addProperty(shapeTypeProp);
 
- auto widthProp = makeProp(QStringLiteral("shape.width"),
+  auto widthProp = makeProp(QStringLiteral("shape.width"),
                            ArtifactCore::PropertyType::Integer, impl_->width_,
                            -219);
- widthProp->setDisplayLabel(QStringLiteral("Width"));
- widthProp->setHardRange(1, 16384);
+  widthProp->setDisplayLabel(impl_->shapeType_ == Artifact::ShapeType::Line
+                                 ? QStringLiteral("Length")
+                                 : QStringLiteral("Width"));
+  widthProp->setHardRange(1, 16384);
  shapeGroup.addProperty(widthProp);
 
  auto heightProp = makeProp(QStringLiteral("shape.height"),
@@ -4580,6 +5037,15 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
   fillGradRadiusProp->setDisplayLabel(QStringLiteral("Gradient Radius"));
    appearanceGroup.addProperty(fillGradRadiusProp);
 
+  // F10: multi-stop gradient as compact JSON [{o,r,g,b,a}]. Empty = 2-stop.
+  auto fillGradStopsProp = makeProp(QStringLiteral("shape.fillGradientStops"),
+                                    ArtifactCore::PropertyType::String,
+                                    gradientStopsToString(impl_->fillGradientStops_),
+                                    -192, false);
+  fillGradStopsProp->setDisplayLabel(QStringLiteral("Gradient Stops"));
+  fillGradStopsProp->setTooltip(QStringLiteral("JSON [{o,r,g,b,a}]; empty = 2-color"));
+   appearanceGroup.addProperty(fillGradStopsProp);
+
  auto strokeColorProp = makeProp(QStringLiteral("shape.strokeColor"),
                                  ArtifactCore::PropertyType::Color,
                                  QColor(
@@ -4615,14 +5081,58 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  strokeTaperStartProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
  appearanceGroup.addProperty(strokeTaperStartProp);
 
- auto strokeTaperEndProp = makeProp(QStringLiteral("shape.strokeTaperEnd"),
-                                    ArtifactCore::PropertyType::Float,
-                                    impl_->strokeTaperEnd_, -204, false);
- strokeTaperEndProp->setDisplayLabel(QStringLiteral("Taper End"));
- strokeTaperEndProp->setSoftRange(0.0, 1.0);
- strokeTaperEndProp->setHardRange(0.0, 1.0);
- strokeTaperEndProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
- appearanceGroup.addProperty(strokeTaperEndProp);
+  auto strokeTaperEndProp = makeProp(QStringLiteral("shape.strokeTaperEnd"),
+                                     ArtifactCore::PropertyType::Float,
+                                     impl_->strokeTaperEnd_, -204, false);
+  strokeTaperEndProp->setDisplayLabel(QStringLiteral("Taper End"));
+  strokeTaperEndProp->setSoftRange(0.0, 1.0);
+  strokeTaperEndProp->setHardRange(0.0, 1.0);
+  strokeTaperEndProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
+  appearanceGroup.addProperty(strokeTaperEndProp);
+
+  // F11b: taper ease exponent bias (keyframable).
+  auto strokeTaperEaseProp = makeProp(QStringLiteral("shape.taperEase"),
+                                      ArtifactCore::PropertyType::Float,
+                                      impl_->strokeTaperEase_, -191);
+  strokeTaperEaseProp->setDisplayLabel(QStringLiteral("Taper Ease"));
+  strokeTaperEaseProp->setSoftRange(-0.9, 3.0);
+  strokeTaperEaseProp->setHardRange(-0.9, 3.0);
+  strokeTaperEaseProp->setTooltip(QStringLiteral("0 = linear width ramp"));
+  appearanceGroup.addProperty(strokeTaperEaseProp);
+
+  // F11a: spine wave (amount/frequency/phase keyframable).
+  auto strokeWaveEnabledProp = makeProp(QStringLiteral("shape.waveEnabled"),
+                                        ArtifactCore::PropertyType::Boolean,
+                                        impl_->strokeWaveEnabled_, -190, false);
+  strokeWaveEnabledProp->setDisplayLabel(QStringLiteral("Stroke Wave"));
+  appearanceGroup.addProperty(strokeWaveEnabledProp);
+
+  auto strokeWaveAmountProp = makeProp(QStringLiteral("shape.waveAmount"),
+                                       ArtifactCore::PropertyType::Float,
+                                       impl_->strokeWaveAmount_, -189);
+  strokeWaveAmountProp->setDisplayLabel(QStringLiteral("Wave Amount"));
+  strokeWaveAmountProp->setSoftRange(0.0, 64.0);
+  strokeWaveAmountProp->setHardRange(0.0, 100000.0);
+  strokeWaveAmountProp->setTooltip(QStringLiteral("Perpendicular displacement in px"));
+  appearanceGroup.addProperty(strokeWaveAmountProp);
+
+  auto strokeWaveFrequencyProp = makeProp(QStringLiteral("shape.waveFrequency"),
+                                          ArtifactCore::PropertyType::Float,
+                                          impl_->strokeWaveFrequency_, -188);
+  strokeWaveFrequencyProp->setDisplayLabel(QStringLiteral("Wave Frequency"));
+  strokeWaveFrequencyProp->setSoftRange(0.0, 8.0);
+  strokeWaveFrequencyProp->setHardRange(0.0, 1024.0);
+  strokeWaveFrequencyProp->setTooltip(QStringLiteral("Sine cycles along the path"));
+  appearanceGroup.addProperty(strokeWaveFrequencyProp);
+
+  auto strokeWavePhaseProp = makeProp(QStringLiteral("shape.wavePhase"),
+                                      ArtifactCore::PropertyType::Float,
+                                      impl_->strokeWavePhase_, -187);
+  strokeWavePhaseProp->setDisplayLabel(QStringLiteral("Wave Phase"));
+  strokeWavePhaseProp->setSoftRange(0.0, 1.0);
+  strokeWavePhaseProp->setHardRange(-100000.0, 100000.0);
+  strokeWavePhaseProp->setTooltip(QStringLiteral("Sine phase in cycles"));
+  appearanceGroup.addProperty(strokeWavePhaseProp);
 
  auto strokeGradientEnabledProp = makeProp(QStringLiteral("shape.strokeGradientEnabled"),
                                            ArtifactCore::PropertyType::Boolean,
@@ -4961,11 +5471,18 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
                                       repeater->startOpacity(), -94);
      startOpacityProp->setHardRange(0.0, 100.0);
      opGroup.addProperty(startOpacityProp);
-     auto endOpacityProp = makeProp(prefix + QStringLiteral("endOpacity"),
-                                    ArtifactCore::PropertyType::Float,
-                                    repeater->endOpacity(), -93);
-     endOpacityProp->setHardRange(0.0, 100.0);
-     opGroup.addProperty(endOpacityProp);
+      auto endOpacityProp = makeProp(prefix + QStringLiteral("endOpacity"),
+                                     ArtifactCore::PropertyType::Float,
+                                     repeater->endOpacity(), -93);
+      endOpacityProp->setHardRange(0.0, 100.0);
+      opGroup.addProperty(endOpacityProp);
+      auto compositeProp = makeProp(prefix + QStringLiteral("composite"),
+                                    ArtifactCore::PropertyType::Integer,
+                                    repeater->compositeBelow() ? 1 : 0, -92);
+      compositeProp->setDisplayLabel(QStringLiteral("Composite"));
+      compositeProp->setHardRange(0, 1);
+      compositeProp->setTooltip(QStringLiteral("0=Above, 1=Below"));
+      opGroup.addProperty(compositeProp);
    } else if (auto offset =
                   dynamic_cast<const ArtifactCore::OffsetPaths *>(op.get())) {
      auto offsetProp = makeProp(prefix + QStringLiteral("offset"),
@@ -5045,29 +5562,50 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
      opGroup.addProperty(makeProp(prefix + QStringLiteral("angle"),
                                   ArtifactCore::PropertyType::Float,
                                   twist->angle(), -100));
-   } else if (auto wobble =
-                  dynamic_cast<const ArtifactCore::HandDrawnWobble *>(op.get())) {
-     auto amountProp = makeProp(prefix + QStringLiteral("wobbleAmount"),
-                                ArtifactCore::PropertyType::Float,
-                                wobble->wobbleAmount(), -100);
-     amountProp->setHardRange(0.0, 100000.0);
-     opGroup.addProperty(amountProp);
-     auto frequencyProp = makeProp(prefix + QStringLiteral("wobbleFrequency"),
+    } else if (auto wobble =
+                   dynamic_cast<const ArtifactCore::HandDrawnWobble *>(op.get())) {
+      auto amountProp = makeProp(prefix + QStringLiteral("wobbleAmount"),
+                                 ArtifactCore::PropertyType::Float,
+                                 wobble->wobbleAmount(), -100);
+      amountProp->setHardRange(0.0, 100000.0);
+      opGroup.addProperty(amountProp);
+      auto frequencyProp = makeProp(prefix + QStringLiteral("wobbleFrequency"),
+                                    ArtifactCore::PropertyType::Float,
+                                    wobble->wobbleFrequency(), -99);
+      frequencyProp->setHardRange(0.0, 10000.0);
+      opGroup.addProperty(frequencyProp);
+      auto pressureProp = makeProp(prefix + QStringLiteral("pressureJitter"),
                                    ArtifactCore::PropertyType::Float,
-                                   wobble->wobbleFrequency(), -99);
-     frequencyProp->setHardRange(0.0, 10000.0);
-     opGroup.addProperty(frequencyProp);
-     auto pressureProp = makeProp(prefix + QStringLiteral("pressureJitter"),
-                                  ArtifactCore::PropertyType::Float,
-                                  wobble->pressureJitter(), -98);
-     pressureProp->setHardRange(0.0, 1.0);
-     opGroup.addProperty(pressureProp);
-     auto gapProp = makeProp(prefix + QStringLiteral("gapProbability"),
-                             ArtifactCore::PropertyType::Float,
-                             wobble->gapProbability(), -97);
-     gapProp->setHardRange(0.0, 1.0);
-     opGroup.addProperty(gapProp);
-   }
+                                   wobble->pressureJitter(), -98);
+      pressureProp->setHardRange(0.0, 1.0);
+      opGroup.addProperty(pressureProp);
+      auto gapProp = makeProp(prefix + QStringLiteral("gapProbability"),
+                              ArtifactCore::PropertyType::Float,
+                              wobble->gapProbability(), -97);
+      gapProp->setHardRange(0.0, 1.0);
+      opGroup.addProperty(gapProp);
+    } else if (auto wave =
+                   dynamic_cast<const ArtifactCore::WavePaths *>(op.get())) {
+      auto amountProp = makeProp(prefix + QStringLiteral("amount"),
+                                 ArtifactCore::PropertyType::Float,
+                                 wave->amount(), -100);
+      amountProp->setHardRange(0.0, 100000.0);
+      amountProp->setDisplayLabel(QStringLiteral("Amount"));
+      opGroup.addProperty(amountProp);
+      auto frequencyProp = makeProp(prefix + QStringLiteral("frequency"),
+                                    ArtifactCore::PropertyType::Float,
+                                    wave->frequency(), -99);
+      frequencyProp->setHardRange(0.0, 1024.0);
+      frequencyProp->setDisplayLabel(QStringLiteral("Frequency"));
+      opGroup.addProperty(frequencyProp);
+      auto phaseProp = makeProp(prefix + QStringLiteral("phase"),
+                                ArtifactCore::PropertyType::Float,
+                                wave->phase(), -98);
+      phaseProp->setHardRange(-100000.0, 100000.0);
+      phaseProp->setDisplayLabel(QStringLiteral("Phase"));
+      phaseProp->setTooltip(QStringLiteral("Sine phase in cycles"));
+      opGroup.addProperty(phaseProp);
+    }
 
    groups.push_back(opGroup);
  }
@@ -5075,16 +5613,17 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
  if (impl_->shapeType_ == Artifact::ShapeType::Line) {
   for (auto& group : groups) {
    group.removeProperty(QStringLiteral("shape.height"));
-   for (const auto& property : {
-            QStringLiteral("shape.fillColor"),
-            QStringLiteral("shape.fillEnabled"),
-            QStringLiteral("shape.fillType"),
-            QStringLiteral("shape.fillGradientStartColor"),
-            QStringLiteral("shape.fillGradientEndColor"),
-            QStringLiteral("shape.fillGradientAngle"),
-            QStringLiteral("shape.fillGradientCenterX"),
-            QStringLiteral("shape.fillGradientCenterY"),
-            QStringLiteral("shape.fillGradientRadius")}) {
+    for (const auto& property : {
+             QStringLiteral("shape.fillColor"),
+             QStringLiteral("shape.fillEnabled"),
+             QStringLiteral("shape.fillType"),
+             QStringLiteral("shape.fillGradientStartColor"),
+             QStringLiteral("shape.fillGradientEndColor"),
+             QStringLiteral("shape.fillGradientAngle"),
+             QStringLiteral("shape.fillGradientCenterX"),
+             QStringLiteral("shape.fillGradientCenterY"),
+             QStringLiteral("shape.fillGradientRadius"),
+             QStringLiteral("shape.fillGradientStops")}) {
     group.removeProperty(property);
    }
   }
@@ -5144,6 +5683,11 @@ if (propertyPath == "shape.type") {
    setFillGradientRadius(value.toFloat());
    return true;
   }
+  // F10: compact JSON [{o,r,g,b,a}]; empty string clears the stops.
+  if (propertyPath == "shape.fillGradientStops") {
+   setFillGradientStops(stringToGradientStops(value.toString()));
+   return true;
+  }
  if (propertyPath == "shape.strokeColor") {
   auto c = value.value<QColor>();
   setStrokeColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
@@ -5161,10 +5705,31 @@ if (propertyPath == "shape.type") {
   setStrokeTaper(value.toFloat(), impl_->strokeTaperEnd_);
   return true;
  }
- if (propertyPath == "shape.strokeTaperEnd") {
-  setStrokeTaper(impl_->strokeTaperStart_, value.toFloat());
-  return true;
- }
+  if (propertyPath == "shape.strokeTaperEnd") {
+   setStrokeTaper(impl_->strokeTaperStart_, value.toFloat());
+   return true;
+  }
+  // F11: taper ease and spine wave.
+  if (propertyPath == "shape.taperEase") {
+   setStrokeTaperEase(value.toFloat());
+   return true;
+  }
+  if (propertyPath == "shape.waveEnabled") {
+   setStrokeWaveEnabled(value.toBool());
+   return true;
+  }
+  if (propertyPath == "shape.waveAmount") {
+   setStrokeWaveAmount(value.toFloat());
+   return true;
+  }
+  if (propertyPath == "shape.waveFrequency") {
+   setStrokeWaveFrequency(value.toFloat());
+   return true;
+  }
+  if (propertyPath == "shape.wavePhase") {
+   setStrokeWavePhase(value.toFloat());
+   return true;
+  }
  if (propertyPath == "shape.strokeGradientEnabled") {
   setStrokeGradientEnabled(value.toBool());
   return true;
@@ -5454,12 +6019,15 @@ if (propertyPath == "shape.dashOffset") {
            repeater->setStartOpacity(std::isfinite(opacity)
                ? std::clamp(opacity, 0.0f, 100.0f) : 100.0f);
            handled = true;
-         } else if (field == "endOpacity") {
-           const float opacity = value.toFloat();
-           repeater->setEndOpacity(std::isfinite(opacity)
-               ? std::clamp(opacity, 0.0f, 100.0f) : 100.0f);
-           handled = true;
-         }
+          } else if (field == "endOpacity") {
+            const float opacity = value.toFloat();
+            repeater->setEndOpacity(std::isfinite(opacity)
+                ? std::clamp(opacity, 0.0f, 100.0f) : 100.0f);
+            handled = true;
+          } else if (field == "composite") {
+            repeater->setCompositeBelow(value.toInt() != 0);
+            handled = true;
+          }
        } else if (auto offset =
                       dynamic_cast<ArtifactCore::OffsetPaths *>(op.get())) {
          if (field == "offset") {
@@ -5535,27 +6103,45 @@ if (propertyPath == "shape.dashOffset") {
            twist->setAngle(value.toFloat());
            handled = true;
          }
-       } else if (auto wobble =
-                      dynamic_cast<ArtifactCore::HandDrawnWobble *>(op.get())) {
-         const auto safeOperatorValue = [](const QVariant &input, const float fallback,
-                                           const float lower, const float upper) {
-           const float value = input.toFloat();
-           return std::isfinite(value) ? std::clamp(value, lower, upper) : fallback;
-         };
-         if (field == "wobbleAmount") {
-           wobble->setWobbleAmount(safeOperatorValue(value, 0.0f, 0.0f, 100000.0f));
-           handled = true;
-         } else if (field == "wobbleFrequency") {
-           wobble->setWobbleFrequency(safeOperatorValue(value, 1.0f, 0.0f, 10000.0f));
-           handled = true;
-         } else if (field == "pressureJitter") {
-           wobble->setPressureJitter(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
-           handled = true;
-         } else if (field == "gapProbability") {
-           wobble->setGapProbability(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
-           handled = true;
-         }
-       }
+        } else if (auto wobble =
+                       dynamic_cast<ArtifactCore::HandDrawnWobble *>(op.get())) {
+          const auto safeOperatorValue = [](const QVariant &input, const float fallback,
+                                            const float lower, const float upper) {
+            const float value = input.toFloat();
+            return std::isfinite(value) ? std::clamp(value, lower, upper) : fallback;
+          };
+          if (field == "wobbleAmount") {
+            wobble->setWobbleAmount(safeOperatorValue(value, 0.0f, 0.0f, 100000.0f));
+            handled = true;
+          } else if (field == "wobbleFrequency") {
+            wobble->setWobbleFrequency(safeOperatorValue(value, 1.0f, 0.0f, 10000.0f));
+            handled = true;
+          } else if (field == "pressureJitter") {
+            wobble->setPressureJitter(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
+            handled = true;
+          } else if (field == "gapProbability") {
+            wobble->setGapProbability(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
+            handled = true;
+          }
+        } else if (auto wave =
+                       dynamic_cast<ArtifactCore::WavePaths *>(op.get())) {
+          const auto safeOperatorValue = [](const QVariant &input, const float fallback,
+                                            const float lower, const float upper) {
+            const float value = input.toFloat();
+            return std::isfinite(value) ? std::clamp(value, lower, upper) : fallback;
+          };
+          if (field == "amount") {
+            wave->setAmount(safeOperatorValue(value, 0.0f, 0.0f, 100000.0f));
+            handled = true;
+          } else if (field == "frequency") {
+            wave->setFrequency(safeOperatorValue(value, 1.0f, 0.0f, 1024.0f));
+            handled = true;
+          } else if (field == "phase") {
+            const float raw = value.toFloat();
+            wave->setPhase(std::isfinite(raw) ? raw : 0.0f);
+            handled = true;
+          }
+        }
 
        if (handled) {
        impl_->markDirty();
@@ -5640,6 +6226,17 @@ static QJsonObject shapeContentToJson(const Artifact::ShapeContent& content) {
   fill["gradCenterX"] = static_cast<double>(content.fill.gradientCenterX);
   fill["gradCenterY"] = static_cast<double>(content.fill.gradientCenterY);
   fill["gradRadius"] = static_cast<double>(content.fill.gradientRadius);
+  QJsonArray gradStops;
+  for (const auto& stop : content.fill.gradientStops) {
+    QJsonObject s;
+    s["o"] = static_cast<double>(stop.offset);
+    s["r"] = static_cast<double>(stop.color.r());
+    s["g"] = static_cast<double>(stop.color.g());
+    s["b"] = static_cast<double>(stop.color.b());
+    s["a"] = static_cast<double>(stop.color.a());
+    gradStops.push_back(s);
+  }
+  fill["gradStops"] = gradStops;
   obj["fill"] = fill;
   QJsonObject stroke;
   stroke["enabled"] = content.stroke.enabled;
@@ -5655,6 +6252,11 @@ static QJsonObject shapeContentToJson(const Artifact::ShapeContent& content) {
   stroke["dashOffset"] = static_cast<double>(content.stroke.dashOffset);
   stroke["taperStart"] = static_cast<double>(content.stroke.taperStart);
   stroke["taperEnd"] = static_cast<double>(content.stroke.taperEnd);
+  stroke["taperEase"] = static_cast<double>(content.stroke.taperEase);
+  stroke["waveEnabled"] = content.stroke.waveEnabled;
+  stroke["waveAmount"] = static_cast<double>(content.stroke.waveAmount);
+  stroke["waveFrequency"] = static_cast<double>(content.stroke.waveFrequency);
+  stroke["wavePhase"] = static_cast<double>(content.stroke.wavePhase);
   stroke["gradEnabled"] = content.stroke.gradientEnabled;
   stroke["gradStartR"] = static_cast<double>(content.stroke.gradientStart.r());
   stroke["gradStartG"] = static_cast<double>(content.stroke.gradientStart.g());
@@ -5736,6 +6338,17 @@ static Artifact::ShapeContent shapeContentFromJson(const QJsonObject& obj) {
   content.fill.gradientCenterX = static_cast<float>(fill["gradCenterX"].toDouble(0.5));
   content.fill.gradientCenterY = static_cast<float>(fill["gradCenterY"].toDouble(0.5));
   content.fill.gradientRadius = static_cast<float>(fill["gradRadius"].toDouble(0.5));
+  for (const auto& val : fill["gradStops"].toArray()) {
+    const QJsonObject s = val.toObject();
+    Artifact::ShapeGradientStop stop;
+    stop.offset = static_cast<float>(s["o"].toDouble(0.0));
+    stop.color = FloatColor(
+        static_cast<float>(s["r"].toDouble(1.0)),
+        static_cast<float>(s["g"].toDouble(1.0)),
+        static_cast<float>(s["b"].toDouble(1.0)),
+        static_cast<float>(s["a"].toDouble(1.0)));
+    content.fill.gradientStops.push_back(stop);
+  }
   const QJsonObject stroke = obj["stroke"].toObject();
   content.stroke.enabled = stroke["enabled"].toBool(false);
   content.stroke.color = FloatColor(
@@ -5751,6 +6364,11 @@ static Artifact::ShapeContent shapeContentFromJson(const QJsonObject& obj) {
   content.stroke.dashOffset = static_cast<float>(stroke["dashOffset"].toDouble(0.0));
   content.stroke.taperStart = static_cast<float>(stroke["taperStart"].toDouble(1.0));
   content.stroke.taperEnd = static_cast<float>(stroke["taperEnd"].toDouble(1.0));
+  content.stroke.taperEase = static_cast<float>(stroke["taperEase"].toDouble(0.0));
+  content.stroke.waveEnabled = stroke["waveEnabled"].toBool(false);
+  content.stroke.waveAmount = static_cast<float>(stroke["waveAmount"].toDouble(0.0));
+  content.stroke.waveFrequency = static_cast<float>(stroke["waveFrequency"].toDouble(1.0));
+  content.stroke.wavePhase = static_cast<float>(stroke["wavePhase"].toDouble(0.0));
   content.stroke.gradientEnabled = stroke["gradEnabled"].toBool(false);
   content.stroke.gradientStart = FloatColor(
       static_cast<float>(stroke["gradStartR"].toDouble(0.0)),
@@ -7312,6 +7930,17 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["fillGradCenterX"] = static_cast<double>(impl_->fillGradientCenterX_);
   obj["fillGradCenterY"] = static_cast<double>(impl_->fillGradientCenterY_);
   obj["fillGradRadius"] = static_cast<double>(impl_->fillGradientRadius_);
+  QJsonArray fillGradStops;
+  for (const auto& stop : impl_->fillGradientStops_) {
+    QJsonObject s;
+    s["o"] = static_cast<double>(stop.offset);
+    s["r"] = static_cast<double>(stop.color.r());
+    s["g"] = static_cast<double>(stop.color.g());
+    s["b"] = static_cast<double>(stop.color.b());
+    s["a"] = static_cast<double>(stop.color.a());
+    fillGradStops.push_back(s);
+  }
+  obj["fillGradStops"] = fillGradStops;
   obj["strokeR"] = static_cast<double>(impl_->strokeColor_.r());
   obj["strokeG"] = static_cast<double>(impl_->strokeColor_.g());
   obj["strokeB"] = static_cast<double>(impl_->strokeColor_.b());
@@ -7320,6 +7949,11 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["strokeEnabled"] = impl_->strokeEnabled_;
   obj["strokeTaperStart"] = static_cast<double>(impl_->strokeTaperStart_);
   obj["strokeTaperEnd"] = static_cast<double>(impl_->strokeTaperEnd_);
+  obj["strokeTaperEase"] = static_cast<double>(impl_->strokeTaperEase_);
+  obj["strokeWaveEnabled"] = impl_->strokeWaveEnabled_;
+  obj["strokeWaveAmount"] = static_cast<double>(impl_->strokeWaveAmount_);
+  obj["strokeWaveFrequency"] = static_cast<double>(impl_->strokeWaveFrequency_);
+  obj["strokeWavePhase"] = static_cast<double>(impl_->strokeWavePhase_);
   obj["strokeGradientEnabled"] = impl_->strokeGradientEnabled_;
   obj["strokeGradientStartR"] = static_cast<double>(impl_->strokeGradientStartColor_.r());
   obj["strokeGradientStartG"] = static_cast<double>(impl_->strokeGradientStartColor_.g());
@@ -7409,6 +8043,24 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->setFillGradientCenterX(static_cast<float>(obj["fillGradCenterX"].toDouble(0.5)));
   layer->setFillGradientCenterY(static_cast<float>(obj["fillGradCenterY"].toDouble(0.5)));
   layer->setFillGradientRadius(static_cast<float>(obj["fillGradRadius"].toDouble(0.5)));
+  {
+    std::vector<Artifact::ShapeGradientStop> stops;
+    for (const auto& val : obj["fillGradStops"].toArray()) {
+      const QJsonObject s = val.toObject();
+      Artifact::ShapeGradientStop stop;
+      stop.offset = static_cast<float>(s["o"].toDouble(0.0));
+      stop.color = FloatColor(
+          static_cast<float>(s["r"].toDouble(1.0)),
+          static_cast<float>(s["g"].toDouble(1.0)),
+          static_cast<float>(s["b"].toDouble(1.0)),
+          static_cast<float>(s["a"].toDouble(1.0)));
+      stops.push_back(stop);
+    }
+    // Absent key = legacy file: leave the default empty stops untouched.
+    if (!stops.empty() || obj.contains(QStringLiteral("fillGradStops"))) {
+      layer->setFillGradientStops(stops);
+    }
+  }
   layer->setStrokeColor(FloatColor(
       static_cast<float>(obj["strokeR"].toDouble(0.0)),
       static_cast<float>(obj["strokeG"].toDouble(0.0)),
@@ -7419,6 +8071,11 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->setStrokeTaper(
       static_cast<float>(obj["strokeTaperStart"].toDouble(1.0)),
       static_cast<float>(obj["strokeTaperEnd"].toDouble(1.0)));
+  layer->setStrokeTaperEase(static_cast<float>(obj["strokeTaperEase"].toDouble(0.0)));
+  layer->setStrokeWaveEnabled(obj["strokeWaveEnabled"].toBool(false));
+  layer->setStrokeWaveAmount(static_cast<float>(obj["strokeWaveAmount"].toDouble(0.0)));
+  layer->setStrokeWaveFrequency(static_cast<float>(obj["strokeWaveFrequency"].toDouble(1.0)));
+  layer->setStrokeWavePhase(static_cast<float>(obj["strokeWavePhase"].toDouble(0.0)));
   layer->setStrokeGradientEnabled(obj["strokeGradientEnabled"].toBool(false));
   layer->setStrokeGradientStartColor(FloatColor(
       static_cast<float>(

@@ -11,6 +11,7 @@ module;
 #include <QRectF>
 #include <QSize>
 #include <QSizeF>
+#include <QVariant>
 #include <QPainter>
 #include <QPen>
 #include <QString>
@@ -24,6 +25,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 #include <QVector>
 
 module Artifact.Widgets.CompositionRenderOverlay;
@@ -1087,7 +1089,7 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                               nodeColor);
         }
       }
-    } else if (type == ShapeType::Line) {
+    } else if (type == ShapeType::Line && !shape->hasCustomPath()) {
       // Line uses the existing width/height + Transform model.  Expose its
       // two local endpoints before adding drag semantics.
       const QPointF localStart(0.0, static_cast<qreal>(shape->shapeHeight()) * 0.5);
@@ -1191,6 +1193,456 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
       continue;
     }
     drawCloneFrame(ctl, ctr, cbr, cbl);
+  }
+}
+
+// F5 (Phase D-5): persistent operator stack readout for the selected shape
+// layer. Values ride on shapeOperatorValue; editing stays in the Inspector
+// and on the trim/primary viewport handles below.
+void drawShapeOperatorHud(ArtifactIRenderer *renderer,
+                          const ArtifactCore::SharedPtr<ArtifactShapeLayer> &shape,
+                          const QTransform &globalTransform, float zoom)
+{
+  if (!renderer || !shape) {
+    return;
+  }
+  const int count = shape->shapeOperatorCount();
+  if (count <= 0) {
+    return;
+  }
+  const auto opName = [](ArtifactCore::ShapeOperatorType type) {
+    switch (type) {
+      case ArtifactCore::ShapeOperatorType::TrimPaths: return QStringLiteral("Trim");
+      case ArtifactCore::ShapeOperatorType::Repeater: return QStringLiteral("Repeat");
+      case ArtifactCore::ShapeOperatorType::MergePaths: return QStringLiteral("Merge");
+      case ArtifactCore::ShapeOperatorType::OffsetPaths: return QStringLiteral("Offset");
+      case ArtifactCore::ShapeOperatorType::PuckerBloat: return QStringLiteral("Pucker");
+      case ArtifactCore::ShapeOperatorType::RoundedCorners: return QStringLiteral("Round");
+      case ArtifactCore::ShapeOperatorType::WigglePaths: return QStringLiteral("Wiggle");
+      case ArtifactCore::ShapeOperatorType::ZigZag: return QStringLiteral("ZigZag");
+      case ArtifactCore::ShapeOperatorType::Twist: return QStringLiteral("Twist");
+      case ArtifactCore::ShapeOperatorType::HandDrawnWobble: return QStringLiteral("Wobble");
+      case ArtifactCore::ShapeOperatorType::WavePaths: return QStringLiteral("Wave");
+      default: return QStringLiteral("Op");
+    }
+  };
+  const auto num = [](const QVariant &v) {
+    return QString::number(v.toDouble(), 'f', 1);
+  };
+  QStringList lines;
+  const int shown = std::min(count, 4);
+  for (int i = 0; i < shown; ++i) {
+    const auto type = shape->shapeOperatorTypeAt(i);
+    QString detail;
+    if (type == ArtifactCore::ShapeOperatorType::TrimPaths) {
+      detail = QStringLiteral("S:%1 E:%2 O:%3 M:%4")
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("start"))),
+                        num(shape->shapeOperatorValue(i, QStringLiteral("end"))),
+                        num(shape->shapeOperatorValue(i, QStringLiteral("offset"))),
+                        shape->shapeOperatorValue(i, QStringLiteral("trimMode")).toInt() == 0
+                            ? QStringLiteral("Sim") : QStringLiteral("Ind"));
+    } else if (type == ArtifactCore::ShapeOperatorType::Repeater) {
+      detail = QStringLiteral("x%1 R:%2 %3")
+                   .arg(shape->shapeOperatorValue(i, QStringLiteral("copies")).toInt())
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("rotation"))),
+                        shape->shapeOperatorValue(i, QStringLiteral("composite")).toInt() == 0
+                            ? QStringLiteral("A") : QStringLiteral("B"));
+    } else if (type == ArtifactCore::ShapeOperatorType::OffsetPaths) {
+      detail = QStringLiteral("d:%1")
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("offset"))));
+    } else if (type == ArtifactCore::ShapeOperatorType::PuckerBloat) {
+      detail = QStringLiteral("a:%1")
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("amount"))));
+    } else if (type == ArtifactCore::ShapeOperatorType::RoundedCorners) {
+      detail = QStringLiteral("r:%1")
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("radius"))));
+    } else if (type == ArtifactCore::ShapeOperatorType::WavePaths) {
+      detail = QStringLiteral("a:%1 f:%2")
+                   .arg(num(shape->shapeOperatorValue(i, QStringLiteral("amount"))),
+                        num(shape->shapeOperatorValue(i, QStringLiteral("frequency"))));
+    } else {
+      detail = QStringLiteral("#%1").arg(i + 1);
+    }
+    lines.push_back(
+        QStringLiteral("%1 %2 %3").arg(i + 1).arg(opName(type), detail));
+  }
+  if (count > shown) {
+    lines.push_back(QStringLiteral("+%1 more").arg(count - shown));
+  }
+  // Anchor at the layer origin; viewport-scaled so text stays readable.
+  const QPointF anchor = globalTransform.map(QPointF(0.0, 0.0)) + QPointF(14.0, 14.0);
+  const float safeZoom = std::max(0.1f, zoom);
+  QFont font = QApplication::font();
+  font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+  const float rowH = 20.0f / safeZoom;
+  const float panelW = 236.0f / safeZoom;
+  const float panelH = (lines.size() * rowH) + 14.0f / safeZoom;
+  renderer->drawOverlayPanel(static_cast<float>(anchor.x()),
+                             static_cast<float>(anchor.y()), panelW, panelH,
+                             {0.06f, 0.09f, 0.13f, 0.88f},
+                             {0.42f, 0.72f, 0.98f, 0.90f});
+  renderer->drawText(QRectF(anchor.x() + 8.0f / safeZoom, anchor.y() + 7.0f / safeZoom,
+                            panelW - 16.0f / safeZoom, panelH - 14.0f / safeZoom),
+                     lines.join(QLatin1Char('\n')), font,
+                     {0.95f, 0.97f, 1.0f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignTop);
+}
+
+// F1 (Phase D-1): vertex/tangent/segment emphasis for the selected shape
+// layer. Drawn after drawSelectionOverlay; never changes layer data.
+// Failsafe: caps handled vertices at the layer's own vertex count and
+// returns early for locked layers, tiny zoom, or non-invertible input.
+void drawShapeVertexOverlay(ArtifactIRenderer *renderer,
+                            const ArtifactAbstractLayerPtr &layer,
+                            const ShapeVertexOverlayState &state)
+{
+  if (!renderer || !layer) {
+    return;
+  }
+  const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer);
+  if (!shape || layer->isLocked() || layer->isSelectionLocked()) {
+    return;
+  }
+  const bool hasPath = shape->hasCustomPath();
+  const bool hasPolygon = !hasPath && shape->hasCustomPolygon();
+  const QTransform globalTransform = layer->getGlobalTransform();
+  const float zoom = std::max(0.001f, renderer->getZoom());
+  // F5: operator HUD is persistent while handles stay hover-gated.
+  const int opCount = shape->shapeOperatorCount();
+  if (opCount > 0) {
+    drawShapeOperatorHud(renderer, shape, globalTransform, zoom);
+  }
+  const bool hasEmphasis = state.hoveredVertex >= 0 || state.draggingVertex >= 0 ||
+      state.hoveredTangent != 0 || state.draggingTangent != 0 ||
+      state.showSegmentInsert || !state.selectedVertices.empty() ||
+      state.hoveredParam != 0 || state.draggingParam != 0 ||
+      state.hoveredOp >= 0 || state.draggingOp >= 0;
+  if (!hasPath && !hasPolygon && state.hoveredParam == 0 &&
+      state.draggingParam == 0 && state.hoveredOp < 0 &&
+      state.draggingOp < 0) {
+    return;
+  }
+  if (!hasEmphasis) {
+    return;
+  }
+  // F2: Rect/Square cornerRadius and Star innerRadius handles. Local
+  // positions mirror shapeCornerRadiusHandlePosition /
+  // shapeStarInnerRadiusHandlePosition (Solo View) by design.
+  {
+    int paramMode = 0;
+    if (shape->shapeType() == ShapeType::Rect ||
+        shape->shapeType() == ShapeType::Square) {
+      paramMode = 1;
+    } else if (shape->shapeType() == ShapeType::Star) {
+      paramMode = 2;
+    }
+    if (paramMode != 0) {
+      QPointF local;
+      if (paramMode == 1) {
+        const float corner = shape->cornerRadius();
+        const float width = static_cast<float>(shape->shapeWidth());
+        if (shape->shapeType() == ShapeType::Square) {
+          const float height = static_cast<float>(shape->shapeHeight());
+          const float side = std::min(width, height);
+          local = QPointF((width - side) * 0.5f + side - corner,
+                          (height - side) * 0.5f);
+        } else {
+          local = QPointF(width - corner, 0.0f);
+        }
+      } else {
+        const float outerRadius =
+            std::min(shape->shapeWidth(), shape->shapeHeight()) * 0.5f;
+        local = QPointF(shape->shapeWidth() * 0.5f,
+                        shape->shapeHeight() * 0.5f -
+                            outerRadius * shape->starInnerRadius());
+      }
+      const QPointF canvasPt = globalTransform.map(local);
+      const bool active = state.draggingParam == paramMode;
+      const bool hovered = !active && state.hoveredParam == paramMode;
+      const float radius = std::max(4.0f, 7.0f / zoom) * (active ? 1.35f : 1.0f);
+      const FloatColor color = active ? FloatColor{1.0f, 0.42f, 0.24f, 1.0f}
+          : hovered                 ? FloatColor{1.0f, 0.65f, 0.15f, 1.0f}
+                                    : FloatColor{0.0f, 0.70f, 1.0f, 1.0f};
+      renderer->drawCircle(static_cast<float>(canvasPt.x()),
+                           static_cast<float>(canvasPt.y()), radius, color,
+                           1.0f, true);
+      renderer->drawCircle(static_cast<float>(canvasPt.x()),
+                           static_cast<float>(canvasPt.y()), radius,
+                           FloatColor{1.0f, 1.0f, 1.0f, 0.7f}, 1.0f, false);
+    }
+  }
+  if (!hasPath && !hasPolygon) {
+    return;
+  }
+  // F5: trim triangles + midpoint diamond. Marker geometry mirrors
+  // beginShapeOperatorDrag (26/zoom normal offset) by design.
+  {
+    int trimOp = -1;
+    int primaryOp = -1;
+    for (int i = 0; i < opCount; ++i) {
+      const auto type = shape->shapeOperatorTypeAt(i);
+      if (trimOp < 0 &&
+          type == ArtifactCore::ShapeOperatorType::TrimPaths) {
+        trimOp = i;
+      }
+      if (primaryOp < 0 &&
+          (type == ArtifactCore::ShapeOperatorType::OffsetPaths ||
+           type == ArtifactCore::ShapeOperatorType::PuckerBloat ||
+           type == ArtifactCore::ShapeOperatorType::RoundedCorners ||
+           type == ArtifactCore::ShapeOperatorType::WavePaths)) {
+        primaryOp = i;
+      }
+    }
+    std::vector<QPointF> opLocal;
+    if ((trimOp >= 0 || primaryOp >= 0) && (hasPath || hasPolygon)) {
+      if (hasPath) {
+        const auto verts = shape->customPathVertices();
+        opLocal.reserve(verts.size());
+        for (const auto &v : verts) {
+          opLocal.push_back(v.pos);
+        }
+      } else {
+        opLocal = shape->customPolygonPoints();
+      }
+    }
+    if (opLocal.size() >= 2) {
+      const float opOff = 26.0f / zoom;
+      const float triSize = std::max(5.0f, 11.0f / zoom);
+      const auto opCanvas = [&](const QPointF &p) {
+        return globalTransform.map(p);
+      };
+      const auto opNormal = [&](bool atStart) {
+        const QPointF a = opCanvas(atStart ? opLocal.front()
+                                           : opLocal[opLocal.size() - 2]);
+        const QPointF b =
+            opCanvas(atStart ? opLocal[1] : opLocal.back());
+        QPointF dir = b - a;
+        const double len = std::hypot(dir.x(), dir.y());
+        if (!(len > 1e-9)) {
+          return QPointF(0.0, -1.0);
+        }
+        return QPointF(-dir.y() / len, dir.x() / len);
+      };
+      const auto drawTriangle = [&](const QPointF &center, bool pointingUp,
+                                    const FloatColor &color) {
+        const float h = triSize;
+        const float w = triSize * 0.9f;
+        const float cx = static_cast<float>(center.x());
+        const float cy = static_cast<float>(center.y());
+        std::vector<Detail::float2> tri;
+        tri.reserve(3);
+        if (pointingUp) {
+          tri.push_back({cx, cy - h * 0.6f});
+          tri.push_back({cx - w * 0.5f, cy + h * 0.4f});
+          tri.push_back({cx + w * 0.5f, cy + h * 0.4f});
+        } else {
+          tri.push_back({cx, cy + h * 0.6f});
+          tri.push_back({cx - w * 0.5f, cy - h * 0.4f});
+          tri.push_back({cx + w * 0.5f, cy - h * 0.4f});
+        }
+        renderer->drawSolidPolygonLocal(tri, color);
+      };
+      if (trimOp >= 0) {
+        const QPointF startMarker =
+            opCanvas(opLocal.front()) + opNormal(true) * opOff;
+        const QPointF endMarker =
+            opCanvas(opLocal.back()) + opNormal(false) * opOff;
+        const bool startActive =
+            (state.draggingOp == trimOp && state.draggingOpField == 1) ||
+            (state.hoveredOp == trimOp && state.hoveredOpField == 1);
+        const bool endActive =
+            (state.draggingOp == trimOp && state.draggingOpField == 2) ||
+            (state.hoveredOp == trimOp && state.hoveredOpField == 2);
+        drawTriangle(startMarker, true,
+                     startActive ? FloatColor{0.45f, 1.0f, 0.55f, 1.0f}
+                                 : FloatColor{0.25f, 0.75f, 0.40f, 0.92f});
+        drawTriangle(endMarker, false,
+                     endActive ? FloatColor{1.0f, 0.70f, 0.30f, 1.0f}
+                               : FloatColor{0.85f, 0.55f, 0.20f, 0.92f});
+      }
+      const int diamondOp = trimOp >= 0 ? trimOp : primaryOp;
+      const int diamondField = trimOp >= 0 ? 3 : 4;
+      if (diamondOp >= 0) {
+        const QPointF mid =
+            opCanvas((opLocal.front() + opLocal.back()) * 0.5);
+        const bool active =
+            (state.draggingOp == diamondOp &&
+             state.draggingOpField == diamondField) ||
+            (state.hoveredOp == diamondOp &&
+             state.hoveredOpField == diamondField);
+        const float r = std::max(4.0f, 8.0f / zoom) * (active ? 1.3f : 1.0f);
+        const float mx = static_cast<float>(mid.x());
+        const float my = static_cast<float>(mid.y());
+        std::vector<Detail::float2> diamond;
+        diamond.reserve(4);
+        diamond.push_back({mx, my - r});
+        diamond.push_back({mx + r, my});
+        diamond.push_back({mx, my + r});
+        diamond.push_back({mx - r, my});
+        renderer->drawSolidPolygonLocal(
+            diamond, active ? FloatColor{0.45f, 1.0f, 0.90f, 1.0f}
+                            : FloatColor{0.20f, 0.70f, 0.80f, 0.90f});
+      }
+    }
+  }
+  // F2: custom polygon emphasis shares the vertex/segment fields; polygon
+  // and custom path data are mutually exclusive.
+  if (hasPolygon) {
+    const auto points = shape->customPolygonPoints();
+    const int polyCount = static_cast<int>(points.size());
+    if (polyCount <= 0) {
+      return;
+    }
+    const float polyRadius = std::max(4.5f, 9.0f / zoom);
+    const FloatColor polySelected{0.30f, 0.78f, 1.0f, 1.0f};
+    const FloatColor polyHover{1.0f, 0.72f, 0.22f, 1.0f};
+    const FloatColor polyDrag{1.0f, 0.42f, 0.24f, 1.0f};
+    for (int i = 0; i < polyCount; ++i) {
+      const QPointF canvasPt = globalTransform.map(points[static_cast<size_t>(i)]);
+      const bool dragging = state.draggingVertex == i;
+      const bool hovered = !dragging && state.hoveredVertex == i;
+      const bool selected =
+          std::find(state.selectedVertices.begin(), state.selectedVertices.end(),
+                    i) != state.selectedVertices.end();
+      FloatColor color{0.20f, 0.80f, 1.0f, 1.0f};
+      float radius = polyRadius;
+      if (dragging) {
+        color = polyDrag;
+        radius *= 1.35f;
+      } else if (hovered) {
+        color = polyHover;
+        radius *= 1.2f;
+      } else if (selected) {
+        color = polySelected;
+        radius *= 1.25f;
+      }
+      renderer->drawCircle(static_cast<float>(canvasPt.x()),
+                           static_cast<float>(canvasPt.y()), radius, color,
+                           1.0f, true);
+      renderer->drawCircle(static_cast<float>(canvasPt.x()),
+                           static_cast<float>(canvasPt.y()), radius,
+                           FloatColor{1.0f, 1.0f, 1.0f, 0.75f}, 1.0f, false);
+    }
+    if (shape->customPolygonClosed() && polyCount > 1) {
+      const QPointF a = globalTransform.map(points.back());
+      const QPointF b = globalTransform.map(points.front());
+      renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                              {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                              FloatColor{0.55f, 0.95f, 1.0f, 0.85f}, 1.6f);
+    }
+    if (state.showSegmentInsert && state.hoveredSegment >= 0 &&
+        state.hoveredSegment < polyCount) {
+      const int next = (state.hoveredSegment + 1) % polyCount;
+      if (shape->customPolygonClosed() || next != 0) {
+        const QPointF a = globalTransform.map(
+            points[static_cast<size_t>(state.hoveredSegment)]);
+        const QPointF b = globalTransform.map(points[static_cast<size_t>(next)]);
+        const QPointF middle = (a + b) * 0.5;
+        renderer->drawCircle(static_cast<float>(middle.x()),
+                             static_cast<float>(middle.y()),
+                             std::max(4.0f, 8.0f / zoom),
+                             FloatColor{0.42f, 0.95f, 0.65f, 0.95f}, 1.2f,
+                             true);
+      }
+    }
+    return;
+  }
+  const auto vertices = shape->customPathVertices();
+  const int count = static_cast<int>(vertices.size());
+  if (count <= 0) {
+    return;
+  }
+  const float vertexRadius = std::max(4.5f, 9.0f / zoom);
+  const float tangentRadius = std::max(3.5f, 7.0f / zoom);
+  const FloatColor selectedColor{0.30f, 0.78f, 1.0f, 1.0f};
+  const FloatColor hoverColor{1.0f, 0.72f, 0.22f, 1.0f};
+  const FloatColor dragColor{1.0f, 0.42f, 0.24f, 1.0f};
+  const FloatColor tangentLine{1.0f, 1.0f, 1.0f, 0.45f};
+  const FloatColor tangentColor{0.80f, 0.55f, 1.0f, 0.95f};
+  const FloatColor insertColor{0.42f, 0.95f, 0.65f, 0.95f};
+
+  const auto isSelected = [&](int index) {
+    return std::find(state.selectedVertices.begin(), state.selectedVertices.end(),
+                     index) != state.selectedVertices.end();
+  };
+  // Tangent handles first so vertex discs stay on top.
+  for (int i = 0; i < count; ++i) {
+    const auto &vertex = vertices[static_cast<size_t>(i)];
+    const QPointF anchor = globalTransform.map(vertex.pos);
+    const bool showTangents = vertex.smooth ||
+        vertex.inTangent != QPointF(0, 0) || vertex.outTangent != QPointF(0, 0);
+    if (!showTangents) {
+      continue;
+    }
+    const struct {
+      QPointF offset;
+      int kind;
+    } handles[2] = {{vertex.inTangent, 1}, {vertex.outTangent, 2}};
+    for (const auto &handle : handles) {
+      if (handle.offset == QPointF(0, 0)) {
+        continue;
+      }
+      const QPointF end = globalTransform.map(vertex.pos + handle.offset);
+      renderer->drawSolidLine({static_cast<float>(anchor.x()), static_cast<float>(anchor.y())},
+                              {static_cast<float>(end.x()), static_cast<float>(end.y())},
+                              tangentLine, 1.0f);
+      const bool hovered = (state.hoveredVertex == i && state.hoveredTangent == handle.kind) ||
+          (state.draggingVertex == i && state.draggingTangent == handle.kind);
+      renderer->drawCircle(static_cast<float>(end.x()), static_cast<float>(end.y()),
+                           hovered ? tangentRadius * 1.4f : tangentRadius,
+                           hovered ? hoverColor : tangentColor, 1.0f, true);
+    }
+  }
+  for (int i = 0; i < count; ++i) {
+    const QPointF canvasPt = globalTransform.map(vertices[static_cast<size_t>(i)].pos);
+    const bool dragging = state.draggingVertex == i && state.draggingTangent == 0;
+    const bool hovered = !dragging && state.hoveredVertex == i && state.hoveredTangent == 0;
+    FloatColor color{0.20f, 0.80f, 1.0f, 1.0f};
+    float radius = vertexRadius;
+    if (dragging) {
+      color = dragColor;
+      radius *= 1.35f;
+    } else if (hovered) {
+      color = hoverColor;
+      radius *= 1.2f;
+    } else if (isSelected(i)) {
+      color = selectedColor;
+      radius *= 1.25f;
+    }
+    renderer->drawCircle(static_cast<float>(canvasPt.x()), static_cast<float>(canvasPt.y()),
+                         radius, color, 1.0f, true);
+    renderer->drawCircle(static_cast<float>(canvasPt.x()), static_cast<float>(canvasPt.y()),
+                         radius, FloatColor{1.0f, 1.0f, 1.0f, 0.75f}, 1.0f, false);
+  }
+  // Open/closed highlight: closing segment redrawn brighter when closed.
+  if (shape->customPathClosed() && count > 1) {
+    const QPointF a = globalTransform.map(vertices.back().pos);
+    const QPointF b = globalTransform.map(vertices.front().pos);
+    renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            FloatColor{0.55f, 0.95f, 1.0f, 0.85f}, 1.6f);
+  }
+  // Segment insert marker (Shift only, supplied by the controller hover).
+  if (state.showSegmentInsert && state.hoveredSegment >= 0 &&
+      state.hoveredSegment < count) {
+    const int next = (state.hoveredSegment + 1) % count;
+    if (shape->customPathClosed() || next != 0) {
+      const QPointF a = globalTransform.map(
+          vertices[static_cast<size_t>(state.hoveredSegment)].pos);
+      const QPointF b = globalTransform.map(vertices[static_cast<size_t>(next)].pos);
+      const QPointF middle = (a + b) * 0.5;
+      renderer->drawCircle(static_cast<float>(middle.x()), static_cast<float>(middle.y()),
+                           std::max(4.0f, 8.0f / zoom), insertColor, 1.2f, true);
+      const float arm = std::max(3.0f, 6.0f / zoom);
+      renderer->drawSolidLine(
+          {static_cast<float>(middle.x() - arm), static_cast<float>(middle.y())},
+          {static_cast<float>(middle.x() + arm), static_cast<float>(middle.y())},
+          FloatColor{0.02f, 0.10f, 0.08f, 1.0f}, 1.4f);
+      renderer->drawSolidLine(
+          {static_cast<float>(middle.x()), static_cast<float>(middle.y() - arm)},
+          {static_cast<float>(middle.x()), static_cast<float>(middle.y() + arm)},
+          FloatColor{0.02f, 0.10f, 0.08f, 1.0f}, 1.4f);
+    }
   }
 }
 

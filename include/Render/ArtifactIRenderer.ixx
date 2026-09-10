@@ -144,6 +144,7 @@ public:
 
   void initialize(QWidget *widget);
   void initializeHeadless(int width, int height);
+  void initializeHeadlessWithAdapter(int width, int height, int adapterId);
   void createSwapChain(QWidget *widget);
   void recreateSwapChain(QWidget *widget);
 

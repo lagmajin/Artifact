@@ -61,12 +61,19 @@ struct ShapeStackNode {
   bool enabled = true;
 };
 
+struct ShapeGradientStop {
+  float offset = 0.0f;
+  FloatColor color = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+};
+
 struct ShapeContentFill {
   bool enabled = true;
   FloatColor color = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
   ArtifactSolidFillType type = ArtifactSolidFillType::Solid;
   FloatColor gradientStart = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
   FloatColor gradientEnd = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  // F10: optional multi-stop gradient. Empty = legacy 2-stop behaviour.
+  std::vector<ShapeGradientStop> gradientStops;
   float gradientAngleDegrees = 0.0f;
   float gradientCenterX = 0.5f;
   float gradientCenterY = 0.5f;
@@ -84,6 +91,13 @@ struct ShapeContentStroke {
   float dashOffset = 0.0f;
   float taperStart = 1.0f;
   float taperEnd = 1.0f;
+  // F11b: taper ease exponent bias [-0.9, 3]. 0 = linear width ramp.
+  float taperEase = 0.0f;
+  // F11a: perpendicular sine wave along the path spine.
+  bool waveEnabled = false;
+  float waveAmount = 0.0f;     // px displacement, >= 0
+  float waveFrequency = 1.0f;  // sine cycles along the path, >= 0
+  float wavePhase = 0.0f;      // sine phase in cycles
   bool gradientEnabled = false;
   FloatColor gradientStart = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
   FloatColor gradientEnd = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -162,6 +176,9 @@ public:
   float fillGradientCenterY() const;
   void setFillGradientRadius(float value);
   float fillGradientRadius() const;
+  // F10: legacy multi-stop gradient (empty = 2-stop start/end behaviour).
+  void setFillGradientStops(const std::vector<ShapeGradientStop>& stops);
+  std::vector<ShapeGradientStop> fillGradientStops() const;
   void setStrokeColor(const FloatColor &color);
   FloatColor strokeColor() const;
   void setStrokeWidth(float width);
@@ -173,6 +190,18 @@ public:
   void setStrokeTaper(float startScale, float endScale);
   float strokeTaperStart() const;
   float strokeTaperEnd() const;
+  // F11b: taper ease exponent bias [-0.9, 3]. 0 = linear width ramp.
+  void setStrokeTaperEase(float ease);
+  float strokeTaperEase() const;
+  // F11a: perpendicular sine wave along the stroke spine.
+  void setStrokeWaveEnabled(bool enabled);
+  bool strokeWaveEnabled() const;
+  void setStrokeWaveAmount(float px);
+  float strokeWaveAmount() const;
+  void setStrokeWaveFrequency(float cycles);
+  float strokeWaveFrequency() const;
+  void setStrokeWavePhase(float cycles);
+  float strokeWavePhase() const;
   void setStrokeGradientEnabled(bool enabled);
   bool strokeGradientEnabled() const;
   void setStrokeGradientStartColor(const FloatColor &color);
@@ -351,6 +380,11 @@ public:
   int shapeOperatorCount() const;
   ArtifactCore::ShapeOperatorType shapeOperatorTypeAt(int index) const;
   void restoreOperatorsFromJson(const QJsonArray& operators);
+  // F5: read-only viewport access to the numeric operator fields the main VP
+  // can drag (trim start/end/offset, repeater copies/offset/rotation,
+  // offset-paths offset, pucker amount, rounded radius). Anything else
+  // returns an invalid QVariant; writes stay on setLayerPropertyValue.
+  QVariant shapeOperatorValue(int index, const QString& field) const;
 
   // Layer interface
   QRectF localBounds() const override;

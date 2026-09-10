@@ -445,7 +445,8 @@ namespace {
         bool resolved = false;
     };
 
-    GpuAdapterSelection selectGpuAdapter(IEngineFactory* factory)
+    GpuAdapterSelection selectGpuAdapter(IEngineFactory* factory,
+                                         int explicitAdapterIndex = -1)
     {
         GpuAdapterSelection selection;
         selection.policy = gpuAdapterPolicyFromEnv();
@@ -463,7 +464,11 @@ namespace {
         adapters.resize(adapterCount);
 
         int selectedIndex = -1;
-        if (selection.policy == GpuAdapterPolicy::Specific) {
+        if (explicitAdapterIndex >= 0 &&
+            explicitAdapterIndex < static_cast<int>(adapterCount)) {
+            selectedIndex = explicitAdapterIndex;
+        }
+        if (selectedIndex < 0 && selection.policy == GpuAdapterPolicy::Specific) {
             const QString requested =
                 qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
             bool numericOk = false;
@@ -669,14 +674,18 @@ namespace {
     }
 
     bool tryCreateD3D12Device(RefCntAutoPtr<IRenderDevice>& outDevice,
-                              RefCntAutoPtr<IDeviceContext>& outImmediateContext)
+                              RefCntAutoPtr<IDeviceContext>& outImmediateContext,
+                              int explicitAdapterIndex = -1)
     {
         auto* pFactory = resolveD3D12Factory();
         if (!pFactory) {
             return false;
         }
 
-        const QString requestedAdapter = qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
+        const bool hasExplicitAdapter = explicitAdapterIndex >= 0;
+        const QString requestedAdapter = hasExplicitAdapter
+            ? QString()
+            : qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
         if (!requestedAdapter.isEmpty() && requestedAdapter.compare(QStringLiteral("auto"), Qt::CaseInsensitive) != 0) {
             ComPtr<IDXGIFactory6> dxgiFactory;
             if (SUCCEEDED(::CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory)))) {
@@ -754,7 +763,14 @@ namespace {
         }
 
         EngineD3D12CreateInfo creationAttribs = {};
-        const auto adapterSelection = selectGpuAdapter(pFactory);
+        const auto adapterSelection = selectGpuAdapter(pFactory, explicitAdapterIndex);
+        if (hasExplicitAdapter &&
+            (!adapterSelection.resolved ||
+             adapterSelection.adapterId != static_cast<Uint32>(explicitAdapterIndex))) {
+            qWarning() << "[DiligentDeviceManager] explicit D3D12 adapter is unavailable:"
+                       << explicitAdapterIndex;
+            return false;
+        }
         creationAttribs.AdapterId = adapterSelection.adapterId;
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
@@ -780,7 +796,8 @@ namespace {
             pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
         }
 
-        if (!outDevice && creationAttribs.AdapterId != DEFAULT_ADAPTER_ID) {
+        if (!outDevice && !hasExplicitAdapter &&
+            creationAttribs.AdapterId != DEFAULT_ADAPTER_ID) {
             qWarning() << "[DiligentDeviceManager] D3D12 adapter selection failed; "
                           "retrying default adapter"
                        << "policy=" << gpuAdapterPolicyName(adapterSelection.policy)
@@ -1065,6 +1082,7 @@ public:
 
     void initialize(QWidget* widget);
     void initializeHeadless();
+    void initializeHeadlessWithAdapter(int adapterId);
     void createSwapChain(QWidget* widget);
     void recreateSwapChain(QWidget* widget);
     void destroy();
@@ -1202,6 +1220,30 @@ void DiligentDeviceManager::Impl::initializeHeadless()
     agilityCapabilities_ = queryD3D12AgilityCapabilities(device_);
     qDebug() << "[DiligentDeviceManager] headless device created type="
              << deviceTypeName(device_->GetDeviceInfo().Type);
+    initialized_ = true;
+}
+
+void DiligentDeviceManager::Impl::initializeHeadlessWithAdapter(int adapterId)
+{
+    if (adapterId < 0) {
+        qWarning() << "DiligentDeviceManager::initializeHeadlessWithAdapter: invalid adapterId="
+                   << adapterId;
+        return;
+    }
+
+    const bool ok = tryCreateD3D12Device(
+        device_, immediateContext_, adapterId);
+    if (!ok) {
+        qWarning() << "DiligentDeviceManager::initializeHeadlessWithAdapter: failed to create D3D12 device."
+                   << "adapterId=" << adapterId;
+        return;
+    }
+
+    device_->CreateDeferredContext(&deferredContext_);
+    agilityCapabilities_ = queryD3D12AgilityCapabilities(device_);
+    qDebug() << "[DiligentDeviceManager] headless device created type="
+             << deviceTypeName(device_->GetDeviceInfo().Type)
+             << "explicitAdapterId=" << adapterId;
     initialized_ = true;
 }
 
@@ -1458,6 +1500,13 @@ void DiligentDeviceManager::initialize(QWidget* widget)
 void DiligentDeviceManager::initializeHeadless()
 {
     impl_->initializeHeadless();
+    qInfo().noquote() << "[DiligentDeviceManager][Agility]"
+                      << d3d12AgilityDebugState();
+}
+
+void DiligentDeviceManager::initializeHeadlessWithAdapter(int adapterId)
+{
+    impl_->initializeHeadlessWithAdapter(adapterId);
     qInfo().noquote() << "[DiligentDeviceManager][Agility]"
                       << d3d12AgilityDebugState();
 }
