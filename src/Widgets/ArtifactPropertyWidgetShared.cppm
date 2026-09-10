@@ -1721,6 +1721,18 @@ void addRowsFromProperties(
                               keyframeChanged, layer, registryScope,
                               rowValueChanged, beginValueEdit,
                               cancelValueEdit)) {
+      // Static help channels from property metadata. Runs before decorateRow
+      // so dynamic state text (e.g. "Mixed") and per-case tooltips win.
+      const auto meta = ptr->metadata();
+      if (!meta.tooltip.isEmpty()) {
+        row->setEditorToolTip(meta.tooltip);
+      }
+      if (!meta.inlineHelp.isEmpty()) {
+        row->setSupplementaryText(meta.inlineHelp);
+      }
+      if (!meta.whatsThis.isEmpty()) {
+        row->setWhatsThis(meta.whatsThis);
+      }
       if (decorateRow) {
         decorateRow(row, ptr);
       }

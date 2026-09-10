@@ -135,6 +135,8 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Image;
+import Artifact.Layer.Composition;
+import Artifact.Project.Items;
 import NLE.Core;
 import NLE.OTIO;
 import Artifact.Layers.SolidImage;
@@ -8240,6 +8242,9 @@ public:
   QLabel *chromeTitleLabel_ = nullptr;
   QLabel *chromeDetailLabel_ = nullptr;
   QLabel *chromeMetaLabel_ = nullptr;
+  QToolButton *breadcrumbButton_ = nullptr;
+  QMenu *breadcrumbMenu_ = nullptr;
+  ArtifactCore::CompositionID breadcrumbCompositionId_;
   QLabel *viewerTimecodeLabel_ = nullptr;
   QLabel *statusResolutionLabel_ = nullptr;
   QLabel *statusFrameRateLabel_ = nullptr;
@@ -8734,6 +8739,79 @@ public:
     renderController_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
   }
 
+  QVector<ArtifactCore::CompositionID> compositionBreadcrumb(
+      const ArtifactCore::CompositionID &currentId) const {
+    QVector<ArtifactCore::CompositionID> chain;
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || currentId.isNil()) return chain;
+    chain.push_back(currentId);
+    QSet<QString> visited;
+    visited.insert(currentId.toString());
+    for (int depth = 0; depth < 32; ++depth) {
+      const auto childId = chain.front();
+      ArtifactCore::CompositionID parentId;
+      const auto items = svc->projectItems();
+      std::function<void(ProjectItem *)> visit = [&](ProjectItem *item) {
+        if (!item || !parentId.isNil()) return;
+        if (item->type() == eProjectItemType::Composition) {
+          auto *compItem = static_cast<CompositionItem *>(item);
+          const auto parent = svc->findComposition(compItem->compositionId).ptr.lock();
+          if (parent) {
+            for (const auto &layer : parent->allLayerRef()) {
+              const auto precomp =
+                  ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
+              if (precomp && precomp->sourceCompositionId() == childId) {
+                parentId = compItem->compositionId;
+                return;
+              }
+            }
+          }
+        }
+        for (ProjectItem *child : item->children) visit(child);
+      };
+      for (ProjectItem *item : items) visit(item);
+      if (parentId.isNil() || visited.contains(parentId.toString())) break;
+      visited.insert(parentId.toString());
+      chain.prepend(parentId);
+    }
+    return chain;
+  }
+
+  void syncBreadcrumb(const ArtifactCompositionPtr &comp) {
+    if (!breadcrumbButton_ || !breadcrumbMenu_) return;
+    const auto currentId = comp ? comp->id() : ArtifactCore::CompositionID{};
+    if (currentId == breadcrumbCompositionId_) return;
+    breadcrumbCompositionId_ = currentId;
+    breadcrumbMenu_->clear();
+    const auto chain = compositionBreadcrumb(currentId);
+    if (chain.isEmpty()) {
+      breadcrumbButton_->setText(QStringLiteral("Navigate"));
+      breadcrumbButton_->setEnabled(false);
+      return;
+    }
+    QStringList labels;
+    auto *svc = ArtifactProjectService::instance();
+    for (const auto &id : chain) {
+      const auto item = svc ? svc->findComposition(id).ptr.lock()
+                            : ArtifactCompositionPtr{};
+      labels.push_back(item ? item->settings().compositionName().toQString()
+                            : id.toString());
+    }
+    breadcrumbButton_->setText(labels.join(QStringLiteral(" > ")));
+    breadcrumbButton_->setEnabled(chain.size() > 1);
+    for (int i = 0; i < chain.size(); ++i) {
+      QAction *action = breadcrumbMenu_->addAction(labels.at(i));
+      action->setEnabled(i != chain.size() - 1);
+      const auto id = chain.at(i);
+      QObject::connect(action, &QAction::triggered, this, [this, id]() {
+        if (auto *svc = ArtifactProjectService::instance()) {
+          const auto result = svc->changeCurrentComposition(id);
+          if (result.success) syncChromeSummary(nullptr);
+        }
+      });
+    }
+  }
+
   void syncChromeSummary(ArtifactCompositionEditor *owner) {
     Q_UNUSED(owner);
     if (!chromeStrip_ || !chromeTitleLabel_ || !chromeDetailLabel_ ||
@@ -8749,6 +8827,7 @@ public:
     const QString compName =
         comp ? comp->settings().compositionName().toQString()
              : QStringLiteral("<no composition>");
+    syncBreadcrumb(comp);
     const QString layerName = current
                                   ? (current->layerName().trimmed().isEmpty()
                                          ? current->id().toString()
@@ -11188,13 +11267,19 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   addGizmoAction(QStringLiteral("Gizmo: Selection (Move + Frame)"),
                  QStringLiteral("MaterialVS/neutral/view_sidebar.svg"),
                  TransformGizmo::Mode::All, true);
-  addGizmoAction(QStringLiteral("Gizmo: Move (W)"),
+  const auto modalShortcut = [](ArtifactCore::ShortcutId id) {
+    return ArtifactCore::ShortcutBindings::instance().shortcutText(id);
+  };
+  addGizmoAction(QStringLiteral("Gizmo: Move (%1)").arg(
+                     modalShortcut(ArtifactCore::ShortcutId::TransformMove)),
                  QStringLiteral("MaterialVS/neutral/transform.svg"),
                  TransformGizmo::Mode::Move, false);
-  addGizmoAction(QStringLiteral("Gizmo: Rotate (R)"),
+  addGizmoAction(QStringLiteral("Gizmo: Rotate (%1)").arg(
+                     modalShortcut(ArtifactCore::ShortcutId::TransformRotate)),
                  QStringLiteral("Material/redo.svg"),
                  TransformGizmo::Mode::Rotate, false);
-  addGizmoAction(QStringLiteral("Gizmo: Scale (S)"),
+  addGizmoAction(QStringLiteral("Gizmo: Scale (%1)").arg(
+                     modalShortcut(ArtifactCore::ShortcutId::TransformScale)),
                  QStringLiteral("MaterialVS/neutral/crop.svg"),
                  TransformGizmo::Mode::Scale, false);
   gizmoMenu->addSeparator();
@@ -11271,7 +11356,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     tabPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
     tab->setPalette(tabPalette);
   }
+  impl_->breadcrumbButton_ = new QToolButton(impl_->chromeStrip_);
+  impl_->breadcrumbButton_->setAutoRaise(true);
+  impl_->breadcrumbButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  impl_->breadcrumbButton_->setText(QStringLiteral("Navigate"));
+  impl_->breadcrumbButton_->setToolTip(
+      QStringLiteral("Navigate parent/child compositions"));
+  impl_->breadcrumbMenu_ = new QMenu(impl_->breadcrumbButton_);
+  polishEditorMenu(impl_->breadcrumbMenu_, this);
+  impl_->breadcrumbButton_->setMenu(impl_->breadcrumbMenu_);
+  impl_->breadcrumbButton_->setPopupMode(QToolButton::InstantPopup);
   chromeLayout->addWidget(impl_->chromeTitleLabel_, 0);
+  chromeLayout->addWidget(impl_->breadcrumbButton_, 1);
   chromeLayout->addWidget(impl_->chromeDetailLabel_, 0);
   chromeLayout->addStretch(1);
   chromeLayout->addWidget(impl_->chromeMetaLabel_, 0,

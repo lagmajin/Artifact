@@ -664,7 +664,9 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     coneAngleProp->setHardRange(0.1, 179.0);
     coneAngleProp->setSoftRange(1.0, 120.0);
     coneAngleProp->setUnit(QStringLiteral("deg"));
-    coneAngleProp->setTooltip(QStringLiteral("Spot-light outer cone angle (full apex angle, degrees)"));
+    coneAngleProp->setTooltip(QStringLiteral("Spot-light outer cone angle (full apex angle, degrees). Shapes the light falloff; the wireframe cone is a guide, not a visible shaft."));
+    coneAngleProp->setInlineHelp(QStringLiteral("Outer cone width; wireframe is a guide."));
+    coneAngleProp->setWhatsThis(QStringLiteral("Full apex angle of the Spot cone.\nShapes the light falloff together with Cone Feather.\nThe viewport wireframe is a guide, not a visible light shaft."));
     lightOptions.addProperty(coneAngleProp);
 
     auto coneFeatherProp = persistentLayerProperty(QStringLiteral("Light/Cone Feather"),
@@ -682,13 +684,17 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     coneLengthProp->setHardRange(1.0, 10000.0);
     coneLengthProp->setSoftRange(25.0, 1000.0);
     coneLengthProp->setUnit(QStringLiteral("px"));
-    coneLengthProp->setTooltip(QStringLiteral("Spot-light cone range in composition space"));
+    coneLengthProp->setTooltip(QStringLiteral("Spot-light cone range in composition space. Limits reach, does not draw a visible beam."));
+    coneLengthProp->setInlineHelp(QStringLiteral("How far the Spot reaches."));
+    coneLengthProp->setWhatsThis(QStringLiteral("Reach of the Spot light in composition units.\nLimits illumination distance; does not draw a visible beam."));
     lightOptions.addProperty(coneLengthProp);
 
     auto goboPathProp = persistentLayerProperty(
         QStringLiteral("Light/GOBO Texture"), ArtifactCore::PropertyType::String,
         lightImpl_->goboTexturePath_, -135);
-    goboPathProp->setTooltip(QStringLiteral("Image projected by this Spot light; empty disables GOBO"));
+    goboPathProp->setTooltip(QStringLiteral("Image projected by this Spot light; shows in 3D render output only. Empty or missing file disables GOBO silently."));
+    goboPathProp->setInlineHelp(QStringLiteral("Spot-only slide projection; render output only."));
+    goboPathProp->setWhatsThis(QStringLiteral("Image projected by this Spot light (slide/gobo).\nVisible in 3D render output only, not in the viewport gizmo.\nEmpty or missing file disables projection silently; re-link the path."));
     lightOptions.addProperty(goboPathProp);
     auto goboIntensityProp = persistentLayerProperty(
         QStringLiteral("Light/GOBO Intensity"), ArtifactCore::PropertyType::Float,
@@ -712,7 +718,9 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         QStringLiteral("Light/Shadows"),
         ArtifactCore::PropertyType::Boolean,
         lightImpl_->castsShadows_, -130);
-    shadowProp->setTooltip(QStringLiteral("Enable the light's shadow cue for 3D preview"));
+    shadowProp->setTooltip(QStringLiteral("Cast real shadows in the 3D preview (Directional/Spot only; Point/Area illuminate without casting)"));
+    shadowProp->setInlineHelp(QStringLiteral("Directional/Spot cast; Point/Area only light."));
+    shadowProp->setWhatsThis(QStringLiteral("Casts real shadows in the 3D preview.\nOnly Directional (Parallel) and Spot lights can cast. Point and Area lights illuminate without casting.\nThe caster is picked automatically: the first eligible visible light."));
     lightOptions.addProperty(shadowProp);
 
     auto radiusProp = persistentLayerProperty(
@@ -722,6 +730,9 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     radiusProp->setHardRange(0.0, 500.0);
     radiusProp->setSoftRange(0.0, 200.0);
     radiusProp->setUnit(QStringLiteral("px"));
+    radiusProp->setTooltip(QStringLiteral("Shadow softness: 0 = hard edge, 10 = default soft, larger = softer (3x3 PCF blend)"));
+    radiusProp->setInlineHelp(QStringLiteral("0 = hard edge; 10 = default soft."));
+    radiusProp->setWhatsThis(QStringLiteral("Softness of the cast shadow.\n0 draws a hard edge; 10 is the default soft look; larger spreads wider.\nNo effect when Shadows is off or on Point/Area lights."));
     lightOptions.addProperty(radiusProp);
 
     auto glowEnabledProp = persistentLayerProperty(
@@ -754,21 +765,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         QStringLiteral("Light Linking/Link Mode"),
         ArtifactCore::PropertyType::Integer,
         static_cast<int>(lightImpl_->linkMode_), -110);
-    linkModeProp->setTooltip(QStringLiteral("0: All, 1: Include Only, 2: Exclude List"));
+    linkModeProp->setTooltip(QStringLiteral("0: All layers, 1: Only the layers listed below, 2: All except the layers listed below. Tip: right-click the light row in the Timeline left panel for quick Include/Exclude."));
+    linkModeProp->setInlineHelp(QStringLiteral("Who this light affects."));
+    linkModeProp->setWhatsThis(QStringLiteral("0 All layers, 1 Only the Include list, 2 All except the Exclude list.\nTip: select layers, then right-click the light row in the Timeline left panel for quick Include/Exclude (Undo available)."));
     linkingOptions.addProperty(linkModeProp);
 
     auto includeProp = persistentLayerProperty(
         QStringLiteral("Light Linking/Include Layer IDs"),
         ArtifactCore::PropertyType::String,
         lightImpl_->linkedLayerIdsText_, -105);
-    includeProp->setTooltip(QStringLiteral("Comma-separated layer IDs that this light affects when Link Mode is Include Only"));
+    includeProp->setTooltip(QStringLiteral("Layer IDs this light affects when Link Mode is 1 (Only). Usually set via Timeline right-click Light Linking; manual comma-separated edit also works."));
+    includeProp->setInlineHelp(QStringLiteral("Used only when Link Mode is 1 (Only)."));
+    includeProp->setWhatsThis(QStringLiteral("Layer IDs this light affects when Link Mode is Only.\nPrefer the Timeline right-click quick action over hand-typing IDs.\nUnknown IDs are ignored silently."));
     linkingOptions.addProperty(includeProp);
 
     auto excludeProp = persistentLayerProperty(
         QStringLiteral("Light Linking/Exclude Layer IDs"),
         ArtifactCore::PropertyType::String,
         lightImpl_->excludedLayerIdsText_, -100);
-    excludeProp->setTooltip(QStringLiteral("Comma-separated layer IDs that this light ignores when Link Mode is Exclude List"));
+    excludeProp->setTooltip(QStringLiteral("Layer IDs this light ignores when Link Mode is 2 (Except). Usually set via Timeline right-click Light Linking; manual comma-separated edit also works."));
+    excludeProp->setInlineHelp(QStringLiteral("Used only when Link Mode is 2 (Except)."));
+    excludeProp->setWhatsThis(QStringLiteral("Layer IDs this light ignores when Link Mode is Except.\nPrefer the Timeline right-click quick action over hand-typing IDs.\nUnknown IDs are ignored silently."));
     linkingOptions.addProperty(excludeProp);
     
     groups.push_back(lightOptions);

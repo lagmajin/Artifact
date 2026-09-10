@@ -1883,13 +1883,14 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
     return;
    }
 
-   if (event->modifiers() == Qt::NoModifier &&
-       (event->key() == Qt::Key_G || event->key() == Qt::Key_R ||
-        event->key() == Qt::Key_S)) {
-    const auto mode = event->key() == Qt::Key_G
+   const bool transformMove = shortcuts.matches(event, ShortcutId::TransformMove);
+   const bool transformRotate = shortcuts.matches(event, ShortcutId::TransformRotate);
+   const bool transformScale = shortcuts.matches(event, ShortcutId::TransformScale);
+   if (transformMove || transformRotate || transformScale) {
+    const auto mode = transformMove
         ? TransformGizmo::Mode::Move
-        : event->key() == Qt::Key_R ? TransformGizmo::Mode::Rotate
-                                    : TransformGizmo::Mode::Scale;
+        : transformRotate ? TransformGizmo::Mode::Rotate
+                          : TransformGizmo::Mode::Scale;
     if (renderController->beginModalGizmoInteraction(
             mode, mapFromGlobal(QCursor::pos()))) {
      impl_->modalTransformNumericInput_.clear();

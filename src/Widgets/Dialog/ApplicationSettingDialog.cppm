@@ -1625,6 +1625,9 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
   if (value >= static_cast<int>(ShortcutId::ViewUndo) &&
       value <= static_cast<int>(ShortcutId::ViewToggleCameraFrustum))
     return QStringLiteral("Viewport.Composition");
+  if (id == ShortcutId::TransformMove || id == ShortcutId::TransformRotate ||
+      id == ShortcutId::TransformScale)
+    return QStringLiteral("Viewport.Composition");
   return QStringLiteral("Workspace.Timeline");
 }
 

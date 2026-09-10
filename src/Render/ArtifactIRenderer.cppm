@@ -1072,7 +1072,11 @@ namespace {
                            m_shadowLightViewProjection.constData(),
                            m_shadowMapEnabled && m_shadowMapReady &&
                                shadowLightIndex >= 0,
-                           shadowLightIndex);
+                           shadowLightIndex,
+                           0.0015f,
+                           (m_shadowLight && m_shadowLight->castsShadows())
+                               ? m_shadowLight->shadowSoftness()
+                               : 0.0f);
     if (m_shadowMapEnabled && shadowLightIndex >= 0 && alpha >= 0.9999f &&
         !material.hasOpacityTexture() &&
         std::find(m_shadowCasters.begin(), m_shadowCasters.end(), renderer) ==

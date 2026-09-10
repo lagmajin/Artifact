@@ -3627,6 +3627,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                 static_cast<int>(horizontalAlignment()), -88);
   alignmentProp->setTooltip(
       QStringLiteral("0=Left, 1=Center, 2=Right, 3=Justify"));
+  alignmentProp->setInlineHelp(QStringLiteral("Justify spreads words edge to edge."));
+  alignmentProp->setWhatsThis(QStringLiteral("Horizontal alignment inside the text box.\nJustify spreads words edge to edge except the last line."));
   alignmentProp->setDisplayLabel(QStringLiteral("Horizontal Alignment"));
   alignmentProp->setAnimatable(true);
   textGroup.addProperty(alignmentProp);
@@ -3646,6 +3648,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                static_cast<int>(wrapMode()), -86);
   wrapModeProp->setTooltip(
       QStringLiteral("0=NoWrap, 1=WordWrap, 2=WrapAnywhere, 3=ManualWrap"));
+  wrapModeProp->setInlineHelp(QStringLiteral("WordWrap breaks at spaces; Anywhere mid-word."));
+  wrapModeProp->setWhatsThis(QStringLiteral("Where lines may break in Box text.\nWordWrap breaks at spaces; WrapAnywhere also breaks mid-word (long URLs, CJK); ManualWrap breaks only at typed line feeds."));
   wrapModeProp->setDisplayLabel(QStringLiteral("Wrap Mode"));
   wrapModeProp->setAnimatable(true);
   textGroup.addProperty(wrapModeProp);
@@ -3655,6 +3659,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                   static_cast<int>(writingMode()), -85);
   writingModeProp->setTooltip(
       QStringLiteral("0=Horizontal, 1=Vertical"));
+  writingModeProp->setInlineHelp(QStringLiteral("Vertical stacks glyphs top to bottom."));
+  writingModeProp->setWhatsThis(QStringLiteral("Text flow direction.\nVertical stacks glyphs top to bottom (Japanese tategaki style).\nCombines with the Selector Vertical summary below."));
   writingModeProp->setDisplayLabel(QStringLiteral("Writing Mode"));
   writingModeProp->setAnimatable(true);
   textGroup.addProperty(writingModeProp);
@@ -3689,6 +3695,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   selectionTargetProp->setDisplayLabel(QStringLiteral("Selection Target"));
   selectionTargetProp->setTooltip(
       QStringLiteral("Detail used by Selector Overview: glyph, cluster, line-aware, or tag-aware."));
+  selectionTargetProp->setInlineHelp(QStringLiteral("Live summary: what selectors act on."));
+  selectionTargetProp->setWhatsThis(QStringLiteral("Live summary of the unit selectors act on.\nGlyph = single character; cluster = shaped group; line-aware/tag-aware = wider scope.\nChanges automatically with text content and animator setup."));
   textGroup.addProperty(selectionTargetProp);
   auto selectorOverviewProp = makeProp(QStringLiteral("text.selectorOverview"),
                                        ArtifactCore::PropertyType::String,
@@ -3696,6 +3704,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   selectorOverviewProp->setDisplayLabel(QStringLiteral("Selector Overview"));
   selectorOverviewProp->setTooltip(
       QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, script, vertical, token, clusters, and lines."));
+  selectorOverviewProp->setInlineHelp(QStringLiteral("Live summary: whole selector state."));
+  selectorOverviewProp->setWhatsThis(QStringLiteral("One-line health check of the text selector state.\nRead it when animation hits the wrong characters: it shows target, mode, unit and script at a glance.\nDetail rows (Script, Vertical, Token, Tag) break it down further."));
   textGroup.addProperty(selectorOverviewProp);
   auto fieldPreviewProp = makeProp(QStringLiteral("text.fieldPreview"),
                                    ArtifactCore::PropertyType::String,
@@ -3760,6 +3770,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   rubyScaleProp->setSoftRange(0.25, 0.8);
   rubyScaleProp->setStep(0.05);
   rubyScaleProp->setTooltip(QStringLiteral("0.1-1.0"));
+  rubyScaleProp->setInlineHelp(QStringLiteral("Furigana size vs base text."));
+  rubyScaleProp->setWhatsThis(QStringLiteral("Size of ruby (furigana) text relative to the base text.\n0.5 = half size. Only applies when ruby text is set."));
   textGroup.addProperty(rubyScaleProp);
 
   auto layoutModeProp = makeProp(QStringLiteral("text.layoutMode"),
@@ -3767,6 +3779,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                  static_cast<int>(layoutMode()), -76);
   layoutModeProp->setTooltip(
       QStringLiteral("0=Point text, 1=Box text"));
+  layoutModeProp->setInlineHelp(QStringLiteral("Box wraps; Point runs on."));
+  layoutModeProp->setWhatsThis(QStringLiteral("Point text runs as one line; Box text wraps inside Max Width / Box Height.\nSwitch to Box before Wrap Mode has any effect."));
   textGroup.addProperty(layoutModeProp);
 
   auto maxWidthProp =
@@ -3777,6 +3791,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   maxWidthProp->setStep(1.0);
   maxWidthProp->setTooltip(
       QStringLiteral("0 = Auto width, > 0 = fixed wrap width"));
+  maxWidthProp->setInlineHelp(QStringLiteral("0 = grow freely."));
+  maxWidthProp->setWhatsThis(QStringLiteral("Wrap width for Box text.\n0 grows freely with content; a fixed value wraps lines at that width.\nOnly applies in Box layout mode."));
   textGroup.addProperty(maxWidthProp);
 
   auto boxHeightProp =
@@ -3787,6 +3803,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   boxHeightProp->setStep(1.0);
   boxHeightProp->setTooltip(
       QStringLiteral("0 = Auto height, > 0 = fixed box height"));
+  boxHeightProp->setInlineHelp(QStringLiteral("0 = grow freely."));
+  boxHeightProp->setWhatsThis(QStringLiteral("Fixed height for Box text.\n0 grows with content.\nOnly applies in Box layout mode."));
   textGroup.addProperty(boxHeightProp);
 
   auto paragraphSpacingProp =
@@ -3803,6 +3821,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   twoPointFiveDEnabledProp->setDisplayLabel(QStringLiteral("2.5D Text"));
   twoPointFiveDEnabledProp->setTooltip(
       QStringLiteral("Use Text Animator Z with perspective projection and stable depth order."));
+  twoPointFiveDEnabledProp->setInlineHelp(QStringLiteral("Pop letters in Z with perspective."));
+  twoPointFiveDEnabledProp->setWhatsThis(QStringLiteral("Gives text-animator Z moves real perspective.\nLower Camera Distance below for a stronger effect.\nIndependent of the composition 3D camera."));
   textGroup.addProperty(twoPointFiveDEnabledProp);
   auto twoPointFiveDCameraDistanceProp = makeProp(
       QStringLiteral("text.twoPointFiveDCameraDistance"),
@@ -3815,6 +3835,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   twoPointFiveDCameraDistanceProp->setSoftRange(100.0, 5000.0);
   twoPointFiveDCameraDistanceProp->setTooltip(
       QStringLiteral("Lower values amplify Animator Z perspective."));
+  twoPointFiveDCameraDistanceProp->setInlineHelp(QStringLiteral("Smaller = stronger pop."));
+  twoPointFiveDCameraDistanceProp->setWhatsThis(QStringLiteral("Virtual camera distance for 2.5D text.\nSmaller values exaggerate Z differences; larger values flatten toward plain 2D.\nOnly applies while 2.5D Text is on."));
   textGroup.addProperty(twoPointFiveDCameraDistanceProp);
   auto twoPointFiveDDepthOfFieldProp = makeProp(
       QStringLiteral("text.twoPointFiveDDepthOfFieldEnabled"),
@@ -4001,6 +4023,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     expressionEnabledProp->setDisplayLabel(QStringLiteral("Expression Selector"));
     expressionEnabledProp->setTooltip(
         QStringLiteral("Evaluate an expression per glyph using textIndex and textTotal."));
+    expressionEnabledProp->setInlineHelp(QStringLiteral("Custom per-letter selection logic."));
+    expressionEnabledProp->setWhatsThis(QStringLiteral("Runs your expression once per glyph.\ntextIndex is the glyph number, textTotal the count; return 0..1 as the selection weight.\nExample: textIndex / textTotal selects a left-to-right wipe."));
     animatorGroup.addProperty(expressionEnabledProp);
 
     auto expressionProp = makeAnimatorProp(
@@ -4009,6 +4033,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     expressionProp->setDisplayLabel(QStringLiteral("Selector Expression"));
     expressionProp->setTooltip(
         QStringLiteral("Returns a selector weight from 0 to 1 for the current glyph."));
+    expressionProp->setInlineHelp(QStringLiteral("0 = skip glyph, 1 = full effect."));
+    expressionProp->setWhatsThis(QStringLiteral("Expression result per glyph, clamped to 0..1.\n0 skips the glyph, 1 applies the animator fully, 0.5 half.\nOnly evaluated while Expression Selector is on."));
     animatorGroup.addProperty(expressionProp);
 
     auto expressionSeedProp = makeAnimatorProp(
@@ -4091,6 +4117,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     regexEnabledProp->setDisplayLabel(QStringLiteral("Regex"));
     regexEnabledProp->setTooltip(
         QStringLiteral("Enable regular-expression filtering against cluster id, tag, and glyph index."));
+    regexEnabledProp->setInlineHelp(QStringLiteral("Pick letters by pattern."));
+    regexEnabledProp->setWhatsThis(QStringLiteral("Selects glyphs by regular-expression match.\nMatches against cluster id, script tag and glyph index.\nWrite the pattern in the Pattern row below."));
     animatorGroup.addProperty(regexEnabledProp);
 
     auto selectorPatternProp = makeAnimatorProp(
@@ -4099,6 +4127,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     selectorPatternProp->setDisplayLabel(QStringLiteral("Pattern"));
     selectorPatternProp->setTooltip(
         QStringLiteral("Pattern matched against cluster id, tag, and glyph index when Regex is on."));
+    selectorPatternProp->setInlineHelp(QStringLiteral("Example: [0-9] picks digits."));
+    selectorPatternProp->setWhatsThis(QStringLiteral("Regular-expression pattern for glyph selection.\nExample: [0-9] animates digits only; [A-Z] capitals only.\nIgnored unless Regex above is on."));
     animatorGroup.addProperty(selectorPatternProp);
 
     auto easeHighProp = makeAnimatorProp(

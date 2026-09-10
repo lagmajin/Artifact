@@ -133,24 +133,36 @@ public:
             QStringLiteral("environmentMap.hdriPath"), ArtifactCore::PropertyType::String,
             hdriPath_, -120);
         hdriPathProp->setDisplayLabel(QStringLiteral("HDRI Path"));
+        hdriPathProp->setTooltip(QStringLiteral("Panoramic image lighting the 3D scene (IBL). Empty disables environment light."));
+        hdriPathProp->setInlineHelp(QStringLiteral("Panorama lighting the scene; empty = off."));
+        hdriPathProp->setWhatsThis(QStringLiteral("Panoramic image used as image-based lighting for PBR materials.\nEmpty path disables environment light.\nIf the file moves, re-link it here."));
         envGroup.addProperty(hdriPathProp);
 
         auto intensityProp = persistentLayerProperty(
             QStringLiteral("environmentMap.intensity"), ArtifactCore::PropertyType::Float,
             intensity_, -119);
         intensityProp->setDisplayLabel(QStringLiteral("Intensity"));
+        intensityProp->setTooltip(QStringLiteral("Environment light strength. 0 keeps the skybox background while turning off its light."));
+        intensityProp->setInlineHelp(QStringLiteral("0 = background only, no light."));
+        intensityProp->setWhatsThis(QStringLiteral("Strength of the environment light.\n0 keeps the skybox background visible while contributing no light.\nScales diffuse, specular and transmission bounce together."));
         envGroup.addProperty(intensityProp);
 
         auto rotationProp = persistentLayerProperty(
             QStringLiteral("environmentMap.rotation"), ArtifactCore::PropertyType::Float,
             rotation_, -118);
         rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
+        rotationProp->setTooltip(QStringLiteral("Horizontal rotation of the environment light in degrees."));
+        rotationProp->setInlineHelp(QStringLiteral("Spins the environment light."));
+        rotationProp->setWhatsThis(QStringLiteral("Horizontal rotation of the environment light in degrees.\nMoves reflections and ambient direction without touching layer transforms."));
         envGroup.addProperty(rotationProp);
 
         auto visibleProp = persistentLayerProperty(
             QStringLiteral("environmentMap.visibleAsBackground"),
             ArtifactCore::PropertyType::Boolean, visibleAsBackground_, -117);
         visibleProp->setDisplayLabel(QStringLiteral("Visible as Background"));
+        visibleProp->setTooltip(QStringLiteral("Show the panorama behind the 3D scene. Off = lighting only, background stays as-is."));
+        visibleProp->setInlineHelp(QStringLiteral("Panorama behind the scene."));
+        visibleProp->setWhatsThis(QStringLiteral("Shows the panorama image behind the 3D scene.\nOff keeps the lighting while the background stays as-is.\nCombine with Intensity 0 for a background-only display."));
         envGroup.addProperty(visibleProp);
         groups.push_back(envGroup);
         return groups;

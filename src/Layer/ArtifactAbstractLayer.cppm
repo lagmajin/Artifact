@@ -8360,6 +8360,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       PropertyType::Boolean, impl_->twoPointFiveDEnabled_, -143);
   twoPointFiveDEnabled->setDisplayLabel(QStringLiteral("2.5D Lens"));
   twoPointFiveDEnabled->setTooltip(QStringLiteral("Uses a local 2D-stack lens; it does not use the composition 3D camera."));
+  twoPointFiveDEnabled->setInlineHelp(QStringLiteral("Fake 3D; ignores the comp camera."));
+  twoPointFiveDEnabled->setWhatsThis(QStringLiteral("Renders this layer with a local 2.5D lens for a pseudo-3D look.\nIt does NOT use the composition 3D camera or scene lights.\nFor real 3D, use a 3D layer type instead."));
   layerGroup.addProperty(twoPointFiveDEnabled);
   auto twoPointFiveDDepth = makeProp(QStringLiteral("layer.2_5d.depth"),
       PropertyType::Float, impl_->twoPointFiveDDepth_, -142);
@@ -8520,6 +8522,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       "Off: keep the current rotation.\n"
       "Along Path: rotate the layer to follow the motion path tangent.\n"
       "Along Path at Frame Start: use the tangent at the start of the current segment."));
+  autoOrientProp->setInlineHelp(QStringLiteral("Auto-rotate along the motion path."));
+  autoOrientProp->setWhatsThis(QStringLiteral("Rotates the layer automatically from its motion path.\nOff keeps keyframed rotation; Along Path follows the tangent.\nUseful for vehicles, arrows and characters walking a path."));
   transformGroup.addProperty(autoOrientProp);
 
   auto anchorXProp = makeProp(QStringLiteral("transform.anchor.x"),
@@ -8545,6 +8549,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<qint64>(inPoint().framePosition()), -90);
   inPointProp->setUnit(QStringLiteral("frames"));
   inPointProp->setTooltip(QStringLiteral("Layer in-point on timeline"));
+  inPointProp->setWhatsThis(QStringLiteral("First timeline frame where the layer is visible.\nDrag the clip head in the Timeline right pane to change it.\nCompare Start Time, which shifts the source content instead."));
   layerGroup.addProperty(inPointProp);
 
   auto outPointProp =
@@ -8552,6 +8557,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<qint64>(outPoint().framePosition()), -80);
   outPointProp->setUnit(QStringLiteral("frames"));
   outPointProp->setTooltip(QStringLiteral("Layer out-point on timeline"));
+  outPointProp->setWhatsThis(QStringLiteral("First timeline frame where the layer is already gone (exclusive end).\nDrag the clip tail in the Timeline right pane to change it."));
   layerGroup.addProperty(outPointProp);
 
   auto startTimeProp =
@@ -8560,6 +8566,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   startTimeProp->setUnit(QStringLiteral("frames"));
   startTimeProp->setTooltip(
       QStringLiteral("Layer start offset in source time"));
+  startTimeProp->setInlineHelp(QStringLiteral("Shifts source content, not visibility."));
+  startTimeProp->setWhatsThis(QStringLiteral("Offsets the source content against the timeline.\nIn/Out points decide WHEN the layer shows; Start Time decides WHAT part of the source shows."));
   layerGroup.addProperty(startTimeProp);
 
   // 物理演算プロパティグループ
@@ -8828,6 +8836,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   motionLagTauProp->setDisplayLabel(QStringLiteral("Lag Tau"));
   motionLagTauProp->setTooltip(
       QStringLiteral("Time constant used by the lag-follow mode."));
+  motionLagTauProp->setInlineHelp(QStringLiteral("Bigger = slower, floatier follow."));
+  motionLagTauProp->setWhatsThis(QStringLiteral("How sluggishly the layer follows in lag-follow mode.\nSmall values stick tightly; large values trail behind softly.\nPair with Clamp Overshoot to keep the trailing from swinging too far."));
   motionGroup.addProperty(motionLagTauProp);
 
   auto motionClampOvershootProp =
@@ -8836,6 +8846,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   motionClampOvershootProp->setDisplayLabel(QStringLiteral("Clamp Overshoot"));
   motionClampOvershootProp->setTooltip(
       QStringLiteral("Keep the solver from overshooting too far."));
+  motionClampOvershootProp->setInlineHelp(QStringLiteral("Caps the swing past the target."));
+  motionClampOvershootProp->setWhatsThis(QStringLiteral("Limits how far the follow-through may swing past its target.\nOff allows free overshoot (springier, wilder); on caps it at Overshoot Limit."));
   motionGroup.addProperty(motionClampOvershootProp);
 
   auto motionOvershootLimitProp =
@@ -8871,6 +8883,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   fractureTriggerFrameProp->setDisplayLabel(QStringLiteral("Trigger Frame"));
   fractureTriggerFrameProp->setTooltip(
       QStringLiteral("Start fracture at this composition frame. -1 disables the automatic trigger."));
+  fractureTriggerFrameProp->setInlineHelp(QStringLiteral("-1 = break manually only."));
+  fractureTriggerFrameProp->setWhatsThis(QStringLiteral("Composition frame where the layer breaks on its own.\n-1 disables the automatic trigger.\nPre-generate Shards first if downstream components need the pieces early."));
   fractureTriggerFrameProp->setHardRange(-1.0, 1000000.0);
   fractureGroup.addProperty(fractureTriggerFrameProp);
 
@@ -9071,6 +9085,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   collisionBodyTypeProp->setDisplayLabel(QStringLiteral("Body Type"));
   collisionBodyTypeProp->setTooltip(
       QStringLiteral("0=Dynamic, 1=Static, 2=Kinematic (animated collision body)."));
+  collisionBodyTypeProp->setInlineHelp(QStringLiteral("Dynamic falls; Static never moves."));
+  collisionBodyTypeProp->setWhatsThis(QStringLiteral("How the physics solver treats this body.\nDynamic falls and collides; Static never moves (walls, floors); Kinematic follows its animation and pushes Dynamic bodies.\nTo animate a collider by hand, use Kinematic, not Dynamic."));
   collisionBodyTypeProp->setHardRange(0.0, 2.0);
   collisionBodyTypeProp->setSoftRange(0.0, 2.0);
   collisionGroup.addProperty(collisionBodyTypeProp);
@@ -9155,6 +9171,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   jointTargetLayerProp->setDisplayLabel(QStringLiteral("Target Layer"));
   jointTargetLayerProp->setTooltip(
       QStringLiteral("Target layer ID or unique name. A 2D target with Collision or Joint enabled receives reaction forces; otherwise it is a fixed moving anchor. Empty disables the joint."));
+  jointTargetLayerProp->setInlineHelp(QStringLiteral("Empty = joint off."));
+  jointTargetLayerProp->setWhatsThis(QStringLiteral("Which layer the joint holds on to (ID or unique name).\nIf that layer also simulates physics, both sides push each other; otherwise it behaves as a fixed moving anchor.\nEmpty text disables the joint entirely."));
   jointGroup.addProperty(jointTargetLayerProp);
   {
     auto anchor = makeProp(QStringLiteral("component.joint.targetAnchorY"), PropertyType::Float,
@@ -9577,6 +9595,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   layoutModeProp->setDisplayLabel(QStringLiteral("Layout Mode"));
   layoutModeProp->setTooltip(
       QStringLiteral("0=Flow, 1=Offset, 2=Absolute."));
+  layoutModeProp->setInlineHelp(QStringLiteral("How children are arranged."));
+  layoutModeProp->setWhatsThis(QStringLiteral("Arrangement rule for child layers.\nFlow stacks them along Direction with Gap; Offset keeps manual positions; Absolute ignores the stack.\nOnly matters while Responsive to Composition is on."));
   layoutModeProp->setHardRange(0.0, 2.0);
   layoutGroup.addProperty(layoutModeProp);
   auto layoutResponsiveEnabledProp = makeProp(
@@ -9584,6 +9604,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       impl_->layoutResponsiveEnabled_, -87);
   layoutResponsiveEnabledProp->setDisplayLabel(QStringLiteral("Responsive to Composition"));
   layoutResponsiveEnabledProp->setTooltip(QStringLiteral("Resolve pins and scale against the composition bounds."));
+  layoutResponsiveEnabledProp->setInlineHelp(QStringLiteral("Master switch for the layout below."));
+  layoutResponsiveEnabledProp->setWhatsThis(QStringLiteral("Master switch for responsive layout.\nOff ignores every pin, scale and flow setting on this layer.\nOn resolves them against the composition bounds."));
   layoutGroup.addProperty(layoutResponsiveEnabledProp);
   auto layoutAlignmentProp = makeProp(
       QStringLiteral("component.layout.anchorMode"), PropertyType::Integer,
@@ -9597,18 +9619,24 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       PropertyType::Integer, impl_->layoutHorizontalPin_, -86);
   layoutHorizontalPinProp->setDisplayLabel(QStringLiteral("Horizontal Pin"));
   layoutHorizontalPinProp->setTooltip(QStringLiteral("0=Start, 1=Center, 2=End, 3=Stretch."));
+  layoutHorizontalPinProp->setInlineHelp(QStringLiteral("Which edge it sticks to."));
+  layoutHorizontalPinProp->setWhatsThis(QStringLiteral("Which horizontal edge this layer sticks to when the composition resizes.\nStretch resizes the layer with the composition (aspect may change)."));
   layoutHorizontalPinProp->setHardRange(0.0, 3.0);
   layoutGroup.addProperty(layoutHorizontalPinProp);
   auto layoutVerticalPinProp = makeProp(QStringLiteral("component.layout.verticalPin"),
       PropertyType::Integer, impl_->layoutVerticalPin_, -85);
   layoutVerticalPinProp->setDisplayLabel(QStringLiteral("Vertical Pin"));
   layoutVerticalPinProp->setTooltip(QStringLiteral("0=Start, 1=Center, 2=End, 3=Stretch."));
+  layoutVerticalPinProp->setInlineHelp(QStringLiteral("Which edge it sticks to."));
+  layoutVerticalPinProp->setWhatsThis(QStringLiteral("Which vertical edge this layer sticks to when the composition resizes.\nStretch resizes the layer with the composition (aspect may change)."));
   layoutVerticalPinProp->setHardRange(0.0, 3.0);
   layoutGroup.addProperty(layoutVerticalPinProp);
   auto layoutScaleModeProp = makeProp(QStringLiteral("component.layout.scaleMode"),
       PropertyType::Integer, impl_->layoutScaleMode_, -84);
   layoutScaleModeProp->setDisplayLabel(QStringLiteral("Responsive Scale"));
   layoutScaleModeProp->setTooltip(QStringLiteral("0=Original, 1=Fit, 2=Fill, 3=Stretch."));
+  layoutScaleModeProp->setInlineHelp(QStringLiteral("Fit keeps aspect; Fill/Stretch may crop or squash."));
+  layoutScaleModeProp->setWhatsThis(QStringLiteral("How this layer scales with the composition.\nOriginal ignores resizing; Fit keeps aspect inside the bounds; Fill covers the bounds (edges may crop); Stretch fills exactly (aspect may change)."));
   layoutScaleModeProp->setHardRange(0.0, 3.0);
   layoutGroup.addProperty(layoutScaleModeProp);
   auto layoutResponsiveOffsetXProp = makeProp(QStringLiteral("component.layout.responsiveOffsetX"),
@@ -10401,6 +10429,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                isAdjustmentLayer(), -50);
   isAdjustmentProp->setTooltip(
       QStringLiteral("Apply effects to all layers below"));
+  isAdjustmentProp->setInlineHelp(QStringLiteral("Effects here apply to layers below."));
+  isAdjustmentProp->setWhatsThis(QStringLiteral("Turns this layer into an adjustment layer.\nIts effects apply to every visible layer underneath it."));
   layerGroup.addProperty(isAdjustmentProp);
 
   std::vector<PropertyGroup> maskGroups;
@@ -10506,6 +10536,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       falloffProp->setAnimatable(false);
       falloffProp->setTooltip(
           QStringLiteral("0=Gaussian,1=Linear,2=Smooth,3=Sharp"));
+      falloffProp->setInlineHelp(QStringLiteral("How the feather fades."));
+      falloffProp->setWhatsThis(QStringLiteral("Shape of the mask feather fade.\nGaussian is the classic soft edge; Linear fades evenly; Smooth eases both ends; Sharp keeps a harder rim.\nTry Sharp when a soft mask looks washed out."));
       falloffProp->setDisplayLabel(pathLabel + QStringLiteral(" Falloff"));
       maskGroup.addProperty(falloffProp);
 
@@ -10533,6 +10565,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       modeProp->setAnimatable(true);
       modeProp->setTooltip(
           QStringLiteral("0=Add,1=Subtract,2=Intersect,3=Difference"));
+      modeProp->setInlineHelp(QStringLiteral("How this mask combines."));
+      modeProp->setWhatsThis(QStringLiteral("How this mask combines with the other masks on the layer.\nAdd shows, Subtract cuts out, Intersect keeps only the overlap, Difference keeps the non-overlap."));
       modeProp->setDisplayLabel(pathLabel + QStringLiteral(" Mode"));
       maskGroup.addProperty(modeProp);
     }

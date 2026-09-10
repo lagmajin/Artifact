@@ -4841,6 +4841,12 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
   }
 
 
+  // Shadow contract bridge: the layer owns the UI values (shadowRadius UI
+  // default 10 -> softness 1.0). Core::Light carries them renderer-neutral;
+  // MeshRenderer clamps softness to 0..2 for its 3x3 PCF path.
+  light.setCastsShadows(layer->castsShadows());
+  light.setShadowSoftness(layer->shadowRadius() / 10.0f);
+
 
   return light;
 
@@ -7938,6 +7944,11 @@ class SolidPointwisePreviewCache final {
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> pipeline_;
   quint64 requests_ = 0, hits_ = 0, dispatches_ = 0, uploads_ = 0;
+  const bool profilingEnabled_ =
+      QSettings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"))
+          .value(QStringLiteral("Diagnostics/EffectProfiling"),
+                 qEnvironmentVariableIntValue("ARTIFACT_EFFECT_PROFILE") != 0)
+          .toBool();
 
 public:
   void clear(ArtifactIRenderer* renderer = nullptr) {
@@ -8107,9 +8118,7 @@ public:
 private:
   void report() const {
     if (requests_ != 1 && requests_ % 120 != 0) return;
-    const QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
-    if (!settings.value(QStringLiteral("Diagnostics/EffectProfiling"),
-            qEnvironmentVariableIntValue("ARTIFACT_EFFECT_PROFILE") != 0).toBool()) return;
+    if (!profilingEnabled_) return;
     qInfo() << "[SolidPointwisePreview] requests=" << requests_ << "hits=" << hits_
             << "dispatches=" << dispatches_ << "uploadBytes=" << uploads_ * 16
             << "readbackBytes=0 idleWaits=0 entries=" << entries_.size();
