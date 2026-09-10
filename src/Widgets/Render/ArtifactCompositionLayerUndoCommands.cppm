@@ -316,6 +316,14 @@ class ShapeOperatorValueUndoCommand final : public UndoCommand {
     return true;
   }
 
+  ArtifactAbstractLayerWeak layer_;
+  int opIndex_ = -1;
+  QString field_;
+  double before_ = 0.0;
+  double after_ = 0.0;
+  bool lastOperationSucceeded_ = true;
+};
+
 // F9: SVG/vector import appends parsed contents. Undo removes exactly the
 // appended tail (restoring the pre-import count); redo re-appends the stored
 // contents. The first append may snapshot the legacy shape as contents[0];
