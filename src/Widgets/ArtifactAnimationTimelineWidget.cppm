@@ -29,10 +29,6 @@ struct SemanticSpan { QString name; qint64 begin = 0; qint64 end = 0; QColor col
 
 QVector<SemanticSpan> spansForLayer(const ArtifactAbstractLayerPtr& layer) {
   QVector<SemanticSpan> spans;
-  ArtifactAbstractLayerPtr layer;
-  int dragSpan = -1;
-  qint64 dragOriginalBegin = 0;
-  qint64 dragOriginalEnd = 0;
   if (!layer) return spans;
   const qint64 in = layer->inPoint().framePosition();
   const qint64 out = std::max(in + 1, layer->outPoint().framePosition());
@@ -41,32 +37,41 @@ QVector<SemanticSpan> spansForLayer(const ArtifactAbstractLayerPtr& layer) {
       ? std::max<int64_t>(1, static_cast<int64_t>(std::llround(
             composition->frameRate().framerate())))
       : 1;
-  qint64 first = out;
-  qint64 last = in;
-  bool hasKeys = false;
+  QVector<qint64> times;
   for (const auto& group : layer->getLayerPropertyGroups()) {
     for (const auto& property : group.sortedProperties()) {
       if (!property || !property->isAnimatable()) continue;
       for (const auto& key : property->getKeyFrames()) {
-        const qint64 frame = key.time.rescaledTo(frameScale);
-        first = std::min(first, frame);
-        last = std::max(last, frame);
-        hasKeys = true;
+        times.push_back(std::clamp<qint64>(key.time.rescaledTo(frameScale), in, out));
       }
     }
   }
-  if (!hasKeys) {
-    const qint64 length = out - in;
-    first = in + std::max<qint64>(1, length / 5);
-    last = out - std::max<qint64>(1, length / 5);
+  std::sort(times.begin(), times.end());
+  times.erase(std::unique(times.begin(), times.end()), times.end());
+  if (times.size() < 2) {
+    spans.push_back({QStringLiteral("IDLE"), in, out, QColor(91, 99, 110)});
+    return spans;
   }
-  first = std::clamp(first, in + 1, out - 1);
-  last = std::clamp(last, first, out - 1);
-  spans.push_back({QStringLiteral("ENTER"), in, first, QColor(74, 160, 220)});
-  if (last > first) {
-    spans.push_back({QStringLiteral("ANIMATE"), first, last, QColor(177, 118, 230)});
+  if (in < times.front()) {
+    spans.push_back({QStringLiteral("IDLE"), in, times.front(), QColor(91, 99, 110)});
   }
-  spans.push_back({QStringLiteral("EXIT"), last, out, QColor(226, 122, 109)});
+  spans.push_back({QStringLiteral("ENTER"), times[0], times[1], QColor(74, 160, 220)});
+  const qint64 idleThreshold = std::max<qint64>(2, frameScale / 2);
+  for (int i = 1; i + 2 < times.size(); ++i) {
+    const qint64 duration = times[i + 1] - times[i];
+    spans.push_back({duration > idleThreshold ? QStringLiteral("IDLE")
+                                             : QStringLiteral("ANIMATE"),
+                     times[i], times[i + 1],
+                     duration > idleThreshold ? QColor(91, 99, 110)
+                                              : QColor(177, 118, 230)});
+  }
+  if (times.size() > 2) {
+    spans.push_back({QStringLiteral("EXIT"), times[times.size() - 2], times.back(),
+                     QColor(226, 122, 109)});
+  }
+  if (times.back() < out) {
+    spans.push_back({QStringLiteral("IDLE"), times.back(), out, QColor(91, 99, 110)});
+  }
   return spans;
 }
 }
@@ -76,6 +81,10 @@ public:
   ArtifactCore::CompositionID compositionId;
   QString layerName;
   QVector<SemanticSpan> spans;
+  ArtifactAbstractLayerPtr layer;
+  int dragSpan = -1;
+  qint64 dragOriginalBegin = 0;
+  qint64 dragOriginalEnd = 0;
   ArtifactCore::EventBus::Subscription changedSubscription;
   ArtifactCore::EventBus::Subscription selectionSubscription;
 };

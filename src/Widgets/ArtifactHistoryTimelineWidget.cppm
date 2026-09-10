@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <QColor>
 #include <QAbstractItemView>
+#include <QDateTime>
 #include <QEvent>
 #include <QFont>
 #include <QFrame>
@@ -65,6 +66,7 @@ public:
   QLabel* selectedMeta = nullptr;
   QLabel* previewState = nullptr;
   QPushButton* previewButton = nullptr;
+  QPushButton* checkpointButton = nullptr;
   QPushButton* restoreButton = nullptr;
   QPushButton* partialRestoreButton = nullptr;
   ArtifactCore::EventBus eventBus = ArtifactCore::globalEventBus();
@@ -128,14 +130,17 @@ ArtifactHistoryTimelineWidget::ArtifactHistoryTimelineWidget(QWidget* parent)
   impl_->previewState->setMinimumHeight(64);
   inspectorLayout->addWidget(impl_->previewState);
   impl_->previewButton = new QPushButton(QStringLiteral("Preview State"), inspector);
+  impl_->checkpointButton = new QPushButton(QStringLiteral("Add Checkpoint"), inspector);
   impl_->restoreButton = new QPushButton(QStringLiteral("Restore to Selected"), inspector);
   impl_->partialRestoreButton = new QPushButton(QStringLiteral("Copy Settings to Current"), inspector);
   impl_->previewButton->installEventFilter(this);
+  impl_->checkpointButton->installEventFilter(this);
   impl_->restoreButton->installEventFilter(this);
   impl_->partialRestoreButton->setEnabled(false);
   impl_->partialRestoreButton->setToolTip(
       QStringLiteral("Available when the selected command exposes a serializable property payload."));
   inspectorLayout->addWidget(impl_->previewButton);
+  inspectorLayout->addWidget(impl_->checkpointButton);
   inspectorLayout->addWidget(impl_->restoreButton);
   inspectorLayout->addWidget(impl_->partialRestoreButton);
   inspectorLayout->addStretch();
@@ -229,7 +234,7 @@ void ArtifactHistoryTimelineWidget::updateInspector() {
   impl_->previewButton->setEnabled(depth >= 0);
   impl_->previewState->setText(
       depth > 0
-          ? QStringLiteral("Temporary state preview selected. The current project is unchanged.")
+          ? QStringLiteral("Inspection selected. The current project remains unchanged until Restore is clicked.")
           : QStringLiteral("This is the current project state."));
 }
 
@@ -249,6 +254,15 @@ bool ArtifactHistoryTimelineWidget::eventFilter(QObject* watched, QEvent* event)
     auto* mouse = static_cast<QMouseEvent*>(event);
     if (mouse->button() == Qt::LeftButton && watched == impl_->previewButton) {
       updateInspector();
+      return true;
+    }
+    if (mouse->button() == Qt::LeftButton && watched == impl_->checkpointButton) {
+      if (auto* manager = UndoManager::instance()) {
+        auto checkpoint = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Checkpoint: %1")
+                .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+        manager->push(std::move(checkpoint));
+      }
       return true;
     }
     if (mouse->button() == Qt::LeftButton && watched == impl_->restoreButton) {

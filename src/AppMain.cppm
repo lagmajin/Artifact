@@ -4138,7 +4138,7 @@ int main(int argc, char *argv[]) {
                           DockArea::Bottom,
                           [mw, compId, audioMiniDockTitle]() -> QWidget * {
                             auto *panel = new ArtifactAudioMiniWidget(mw);
-                            panel->setMinimumHeight(118);
+                            panel->setMinimumHeight(180);
                             panel->setComposition(compId);
                             panel->setWindowTitle(audioMiniDockTitle(compId));
                             return panel;

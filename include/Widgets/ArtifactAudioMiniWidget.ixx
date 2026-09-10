@@ -29,6 +29,7 @@ private:
   Impl* impl_ = nullptr;
   void refresh();
   void seekBeat(bool next);
+  bool addGuideMarkers(bool everyFourBeats);
 };
 
 } // namespace Artifact
