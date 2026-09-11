@@ -13681,6 +13681,10 @@ public:
   bool isDraggingCameraPoi_ = false;
   // Main-VP custom path vertex editing (Pen/Selection on shape layers).
   bool isDraggingShapePathVertex_ = false;
+  bool isShapeVertexMarqueeSelecting_ = false;
+  QPointF shapeVertexMarqueeStartViewportPos_;
+  QPointF shapeVertexMarqueeCurrentViewportPos_;
+  SelectionMode shapeVertexMarqueeSelectionMode_ = SelectionMode::Replace;
   // Line endpoint editing uses the existing shape width/height and 2D transform.
   bool isDraggingLineEndpoint_ = false;
   int draggingLineEndpoint_ = -1; // 0=start, 1=end
@@ -15165,6 +15169,12 @@ public:
 
   }
 
+  QRectF shapeVertexMarqueeCanvasRect() const {
+    return viewportRectToCanvasRect(renderer_.get(),
+                                    shapeVertexMarqueeStartViewportPos_,
+                                    shapeVertexMarqueeCurrentViewportPos_);
+  }
+
   QPolygonF lassoCanvasPolygon() const {
     QPolygonF polygon;
     if (!renderer_ || lassoViewportPoints_.size() < 3) {
@@ -15188,6 +15198,11 @@ public:
     isRubberBandSelecting_ = false;
     isLassoSelecting_ = false;
     lassoViewportPoints_.clear();
+
+    isShapeVertexMarqueeSelecting_ = false;
+    shapeVertexMarqueeStartViewportPos_ = {};
+    shapeVertexMarqueeCurrentViewportPos_ = {};
+    shapeVertexMarqueeSelectionMode_ = SelectionMode::Replace;
 
     dragGroupMove_ = false;
 
@@ -25508,6 +25523,65 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       }
     }
   }
+
+  // F12: a modifier drag over the editable shape, or a plain drag from
+  // empty canvas, selects custom-path/polygon vertices without stealing the
+  // ordinary layer move gesture from a click inside the selected layer.
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Selection &&
+      selectedLayer && comp && impl_->renderer_ &&
+      !selectedLayer->isLocked() && !selectedLayer->isSelectionLocked()) {
+    const auto *selectedShape =
+        dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get());
+    if (selectedShape &&
+        (selectedShape->hasCustomPath() || selectedShape->hasCustomPolygon())) {
+      const auto canvas = impl_->renderer_->viewportToCanvas(
+          {static_cast<float>(viewportPos.x()),
+           static_cast<float>(viewportPos.y())});
+      const QPointF canvasPoint(canvas.x, canvas.y);
+      const auto frame = currentFrameForComposition(comp);
+      const bool ignoreLocked =
+          event->modifiers().testFlag(Qt::AltModifier);
+      bool hitAnyLayer = false;
+      bool hitSelectedLayer = false;
+      for (const auto &candidate : comp->allLayerRef()) {
+        if (!isLayerEffectivelyVisible(candidate) ||
+            !candidate->isActiveAt(frame) ||
+            ((candidate->isLocked() || candidate->isSelectionLocked()) &&
+             !ignoreLocked)) {
+          continue;
+        }
+        bool hit = false;
+        bool invertible = false;
+        const QTransform inverse = candidate->getGlobalTransform().inverted(
+            &invertible);
+        if (invertible) {
+          hit = candidate->localBounds().contains(inverse.map(canvasPoint));
+        } else {
+          hit = candidate->transformedBoundingBox().contains(canvasPoint);
+        }
+        if (hit) {
+          hitAnyLayer = true;
+          hitSelectedLayer |= candidate->id() == selectedLayer->id();
+        }
+      }
+      const bool hasSelectionModifier =
+          event->modifiers().testFlag(Qt::ShiftModifier) ||
+          event->modifiers().testFlag(Qt::ControlModifier);
+      if ((!hasSelectionModifier && !hitAnyLayer) ||
+          (hasSelectionModifier && (hitSelectedLayer || !hitAnyLayer))) {
+        impl_->isShapeVertexMarqueeSelecting_ = true;
+        impl_->shapeVertexMarqueeStartViewportPos_ = viewportPos;
+        impl_->shapeVertexMarqueeCurrentViewportPos_ = viewportPos;
+        impl_->shapeVertexMarqueeSelectionMode_ =
+            selectionModeFromModifiers(event->modifiers());
+        impl_->invalidateOverlayComposite();
+        markRenderDirty();
+        event->accept();
+        return;
+      }
+    }
+  }
+
   // Two-node camera POI handle drag. Tested before the motion-path block so
   // the POI cross owns clicks near it when the camera layer is selected.
   if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen &&
@@ -27157,6 +27231,13 @@ void CompositionRenderController::handleMouseMove(
   }
 
 
+
+  if (impl_->isShapeVertexMarqueeSelecting_) {
+    impl_->shapeVertexMarqueeCurrentViewportPos_ = viewportPos;
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
+  }
 
   if (impl_->isRubberBandSelecting_) {
 
@@ -29822,6 +29903,59 @@ void CompositionRenderController::handleMouseRelease() {
 
 
 
+  if (impl_->isShapeVertexMarqueeSelecting_) {
+    const QRectF rect = impl_->shapeVertexMarqueeCanvasRect().normalized();
+    if (comp && impl_->renderer_ && rect.width() >= 2.0 &&
+        rect.height() >= 2.0) {
+      auto selectedLayer = !impl_->selectedLayerId_.isNil()
+          ? comp->layerById(impl_->selectedLayerId_)
+          : ArtifactAbstractLayerPtr{};
+      auto *shape = selectedLayer
+          ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+          : nullptr;
+      if (shape && !selectedLayer->isLocked() &&
+          !selectedLayer->isSelectionLocked()) {
+        const QTransform globalTransform = selectedLayer->getGlobalTransform();
+        auto toggleIndex = [&](int index) {
+          const auto it = std::find(impl_->selectedShapePathVertices_.begin(),
+                                    impl_->selectedShapePathVertices_.end(),
+                                    index);
+          if (impl_->shapeVertexMarqueeSelectionMode_ == SelectionMode::Toggle) {
+            if (it != impl_->selectedShapePathVertices_.end()) {
+              impl_->selectedShapePathVertices_.erase(it);
+            } else {
+              impl_->selectedShapePathVertices_.push_back(index);
+            }
+          } else if (it == impl_->selectedShapePathVertices_.end()) {
+            impl_->selectedShapePathVertices_.push_back(index);
+          }
+        };
+        if (impl_->shapeVertexMarqueeSelectionMode_ == SelectionMode::Replace) {
+          impl_->selectedShapePathVertices_.clear();
+        }
+        if (shape->hasCustomPath()) {
+          const auto vertices = shape->customPathVertices();
+          for (int index = 0; index < static_cast<int>(vertices.size()); ++index) {
+            if (rect.contains(globalTransform.map(vertices[static_cast<size_t>(index)].pos))) {
+              toggleIndex(index);
+            }
+          }
+        } else if (shape->hasCustomPolygon()) {
+          const auto points = shape->customPolygonPoints();
+          for (int index = 0; index < static_cast<int>(points.size()); ++index) {
+            if (rect.contains(globalTransform.map(points[static_cast<size_t>(index)]))) {
+              toggleIndex(index);
+            }
+          }
+        }
+      }
+    }
+    impl_->clearSelectionGestureState();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
+  }
+
   if (impl_->isRubberBandSelecting_) {
 
     auto *selection =
@@ -30834,7 +30968,25 @@ void CompositionRenderController::updateShapePolygonDrag(
   if (index < 0 || index >= static_cast<int>(points.size())) {
     return;
   }
-  points[static_cast<size_t>(index)] = localPos;
+  const auto selected = impl_->selectedShapePathVertices_;
+  const bool moveSelection = selected.size() > 1 &&
+      std::find(selected.begin(), selected.end(), index) != selected.end() &&
+      index < static_cast<int>(impl_->shapePolygonBefore_.size());
+  if (moveSelection) {
+    const QPointF delta =
+        localPos - impl_->shapePolygonBefore_[static_cast<size_t>(index)];
+    points = impl_->shapePolygonBefore_;
+    for (const int selectedIndex : selected) {
+      if (selectedIndex >= 0 &&
+          selectedIndex < static_cast<int>(points.size())) {
+        points[static_cast<size_t>(selectedIndex)] =
+            impl_->shapePolygonBefore_[static_cast<size_t>(selectedIndex)] +
+            delta;
+      }
+    }
+  } else {
+    points[static_cast<size_t>(index)] = localPos;
+  }
   shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
   shape->setDirty(LayerDirtyFlag::Source);
   impl_->shapePolygonDragDirty_ = true;
@@ -31890,9 +32042,9 @@ void CompositionRenderController::updateShapePathVertexDrag(
 
   }
   const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
-  auto verts = shape->customPathVertices();
   const int index = impl_->draggingShapePathVertexIndex_;
-  if (index < 0 || index >= static_cast<int>(verts.size())) {
+  const auto currentVerts = shape->customPathVertices();
+  if (index < 0 || index >= static_cast<int>(currentVerts.size())) {
 
     return;
 
@@ -31903,8 +32055,32 @@ void CompositionRenderController::updateShapePathVertexDrag(
     // untouched tangents keeps the handles glued (rigid follow), matching
     // mask vertex dragging. A previous revision subtracted the delta once
     // the session got dirty, pinning handles in world space mid-drag.
-    verts[static_cast<size_t>(index)].pos = localPos;
+    const auto selected = impl_->selectedShapePathVertices_;
+    const bool moveSelection = selected.size() > 1 &&
+        std::find(selected.begin(), selected.end(), index) != selected.end() &&
+        index < static_cast<int>(impl_->shapePathEditBefore_.size());
+    auto verts = moveSelection ? impl_->shapePathEditBefore_ : currentVerts;
+    if (moveSelection) {
+      const QPointF delta =
+          localPos - impl_->shapePathEditBefore_[static_cast<size_t>(index)].pos;
+      for (const int selectedIndex : selected) {
+        if (selectedIndex >= 0 &&
+            selectedIndex < static_cast<int>(verts.size())) {
+          verts[static_cast<size_t>(selectedIndex)].pos =
+              impl_->shapePathEditBefore_[static_cast<size_t>(selectedIndex)].pos +
+              delta;
+        }
+      }
+    } else {
+      verts[static_cast<size_t>(index)].pos = localPos;
+    }
+    shape->setCustomPathVertices(verts, shape->customPathClosed());
+    shape->setDirty(LayerDirtyFlag::Source);
+    impl_->shapePathEditDirty_ = true;
+    markRenderDirty();
+    return;
   } else if (tangentKind == 1) {
+    auto verts = currentVerts;
     verts[static_cast<size_t>(index)].inTangent =
         localPos - verts[static_cast<size_t>(index)].pos;
     // Alt breaks the smooth mirror for this drag only (parity with mask and
@@ -31927,6 +32103,7 @@ void CompositionRenderController::updateShapePathVertexDrag(
       }
     }
   } else {
+    auto verts = currentVerts;
     verts[static_cast<size_t>(index)].outTangent =
         localPos - verts[static_cast<size_t>(index)].pos;
     const bool breakMirror = QGuiApplication::keyboardModifiers().testFlag(
@@ -36667,7 +36844,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const bool forceContinuousRedraw =
 
-      viewportInteracting_ || isRubberBandSelecting_ || dropGhostVisible_ ||
+      viewportInteracting_ || isRubberBandSelecting_ ||
+      isShapeVertexMarqueeSelecting_ || dropGhostVisible_ ||
 
       (gizmo_ && gizmo_->isDragging()) ||
 
@@ -44166,6 +44344,18 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
         static_cast<float>(maskSnapPreviewCanvasPos_.x()),
         static_cast<float>(maskSnapPreviewCanvasPos_.y()), markerSize,
         FloatColor{0.30f, 0.92f, 1.0f, 0.95f});
+  }
+
+  if (renderer_ && isShapeVertexMarqueeSelecting_) {
+    const QRectF rect = shapeVertexMarqueeCanvasRect().normalized();
+    if (rect.isValid() && rect.width() > 0.0f && rect.height() > 0.0f) {
+      renderer_->drawSolidRect(
+          static_cast<float>(rect.left()), static_cast<float>(rect.top()),
+          static_cast<float>(rect.width()), static_cast<float>(rect.height()),
+          {0.20f, 0.92f, 0.72f, 0.12f}, 1.0f);
+      drawTaggedRectOutline(renderer_.get(), rect,
+                            {0.20f, 0.95f, 0.78f, 0.95f}, false);
+    }
   }
 
   if (renderer_ && isRubberBandSelecting_) {
