@@ -210,52 +210,64 @@ static ParagraphStyle paragraphStyleFromRectAndAlignment(const QRectF& rect,
     return paragraph;
 }
 
-static QImage atlasImageToRgba(const QImage& image)
+// GlyphAtlas owns a fixed-size RGBA8888 image. Keep its GPU counterpart alive
+// for the submitter lifetime, updating contents only when the atlas changed.
+// This path is used by the simple text layer route as well as transformed text.
+static bool updateGlyphAtlasTexture(RefCntAutoPtr<IRenderDevice> device,
+                                    IDeviceContext* context,
+                                    GlyphAtlas& atlas,
+                                    RefCntAutoPtr<ITexture>& texture,
+                                    RefCntAutoPtr<ITextureView>& srv)
 {
-    if (image.isNull()) {
-        return {};
+    if ((!atlas.isDirty() && texture && srv) || !device || !context) {
+        return texture && srv;
     }
-    return (image.format() == QImage::Format_RGBA8888)
-               ? image
-               : image.convertToFormat(QImage::Format_RGBA8888);
-}
-
-static RefCntAutoPtr<ITexture> createAtlasTexture(RefCntAutoPtr<IRenderDevice> device,
-                                                 const QImage& image)
-{
-    if (!device || image.isNull() || image.width() <= 0 || image.height() <= 0) {
-        return {};
+    const QImage& image = atlas.atlasImage();
+    if (image.isNull() || image.format() != QImage::Format_RGBA8888) {
+        return false;
+    }
+    if (!texture) {
+        TextureDesc desc;
+        desc.Name = "GlyphAtlasTexture";
+        desc.Type = RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Uint32>(image.width());
+        desc.Height = static_cast<Uint32>(image.height());
+        desc.MipLevels = 1;
+        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        desc.Usage = USAGE_DEFAULT;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        device->CreateTexture(desc, nullptr, &texture);
+        if (!texture) {
+            return false;
+        }
+    }
+    if (!srv) {
+        srv = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        if (!srv) {
+            return false;
+        }
+    }
+    if (!atlas.isDirty()) {
+        return true;
     }
 
-    const QImage rgba = atlasImageToRgba(image);
-    TextureDesc texDesc;
-    texDesc.Name = "GlyphAtlasTexture";
-    texDesc.Type = RESOURCE_DIM_TEX_2D;
-    texDesc.Width = static_cast<Uint32>(rgba.width());
-    texDesc.Height = static_cast<Uint32>(rgba.height());
-    texDesc.MipLevels = 1;
-    texDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
-    texDesc.Usage = USAGE_IMMUTABLE;
-    texDesc.BindFlags = BIND_SHADER_RESOURCE;
-    texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
-
-    TextureSubResData subRes;
-    subRes.pData = rgba.constBits();
-    subRes.Stride = static_cast<Uint64>(rgba.bytesPerLine());
-
-    TextureData initData;
-    initData.pSubResources = &subRes;
-    initData.NumSubresources = 1;
-
-    RefCntAutoPtr<ITexture> texture;
-    device->CreateTexture(texDesc, &initData, &texture);
-    return texture;
+    TextureSubResData subresource;
+    subresource.pData = image.constBits();
+    subresource.Stride = static_cast<Uint64>(image.bytesPerLine());
+    const Box updateBox(0, static_cast<Uint32>(image.width()), 0,
+                        static_cast<Uint32>(image.height()), 0, 1);
+    context->UpdateTexture(texture, 0, 0, updateBox, subresource,
+                           RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                           RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    atlas.clearDirty();
+    return true;
 }
 
 void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT /*rtvFormat*/)
 {
     if (!device) return;
     m_device = device;
+    m_glyph_submission_scratch_.reserve(1024);
 
     {
         BufferDesc desc;
@@ -1591,12 +1603,8 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
     }
 
     const float zoom = std::max(0.001f, p.xform.scale.x);
-    struct DrawGlyph {
-        GlyphItem item;
-        GlyphRect rect;
-    };
-    std::vector<DrawGlyph> drawGlyphs;
-    drawGlyphs.reserve(glyphs.size());
+    auto& drawGlyphs = m_glyph_submission_scratch_;
+    drawGlyphs.clear();
 
     for (const auto& glyph : glyphs) {
         const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
@@ -1618,16 +1626,8 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         }
     }
 
-    if (m_glyph_atlas.isDirty() || !m_glyph_atlas_texture) {
-        m_glyph_atlas_texture = createAtlasTexture(m_device, m_glyph_atlas.atlasImage());
-        m_glyph_atlas_srv = m_glyph_atlas_texture
-                                ? m_glyph_atlas_texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
-                                : nullptr;
-        if (m_glyph_atlas_texture) {
-            m_glyph_atlas.clearDirty();
-        }
-    }
-    if (!m_glyph_atlas_srv) {
+    if (!updateGlyphAtlasTexture(m_device, ctx, m_glyph_atlas,
+                                 m_glyph_atlas_texture, m_glyph_atlas_srv)) {
         return;
     }
 
@@ -1781,12 +1781,8 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         return;
     }
 
-    struct DrawGlyph {
-        GlyphItem item;
-        GlyphRect rect;
-    };
-    std::vector<DrawGlyph> drawGlyphs;
-    drawGlyphs.reserve(glyphs.size());
+    auto& drawGlyphs = m_glyph_submission_scratch_;
+    drawGlyphs.clear();
 
     for (const auto& glyph : glyphs) {
         const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
@@ -1808,16 +1804,8 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         }
     }
 
-    if (m_glyph_atlas.isDirty() || !m_glyph_atlas_texture) {
-        m_glyph_atlas_texture = createAtlasTexture(m_device, m_glyph_atlas.atlasImage());
-        m_glyph_atlas_srv = m_glyph_atlas_texture
-                                ? m_glyph_atlas_texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
-                                : nullptr;
-        if (m_glyph_atlas_texture) {
-            m_glyph_atlas.clearDirty();
-        }
-    }
-    if (!m_glyph_atlas_srv) {
+    if (!updateGlyphAtlasTexture(m_device, ctx, m_glyph_atlas,
+                                 m_glyph_atlas_texture, m_glyph_atlas_srv)) {
         return;
     }
 

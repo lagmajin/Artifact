@@ -75,6 +75,13 @@ private:
     RefCntAutoPtr<ITexture> m_glyph_atlas_texture;
     RefCntAutoPtr<ITextureView> m_glyph_atlas_srv;
     GlyphAtlas m_glyph_atlas;
+    struct GlyphSubmission {
+        GlyphItem item;
+        GlyphRect rect;
+    };
+    // Reused by both glyph submit paths.  Capacity is allocated during renderer
+    // setup so ordinary text edits do not allocate in frame submission.
+    std::vector<GlyphSubmission> m_glyph_submission_scratch_;
     ArtifactCore::RenderCostStats* m_frameCostStats_ = nullptr;
     PrimitiveRenderer3D* m_primitiveRenderer3D_ = nullptr;
     ArtifactCore::ParticleRenderer* m_particleRenderer_ = nullptr;

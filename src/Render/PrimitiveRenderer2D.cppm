@@ -188,9 +188,20 @@ class PrimitiveRenderer2D::Impl {
 public:
     ISwapChain*                  pSwapChain_ = nullptr;
     RefCntAutoPtr<IRenderDevice> pDevice_;
+    // Borrowed from ArtifactIRenderer for this renderer lifetime.  Glyph atlas
+    // changes must update this existing resource rather than recreate a 2048²
+    // texture while text is being edited.
+    IDeviceContext*              pContext_ = nullptr;
     
     std::unique_ptr<GlyphAtlas>  pGlyphAtlas_;
     RefCntAutoPtr<ITexture>      pGlyphAtlasTexture_;
+    struct ResolvedGlyph {
+        const GlyphItem* item = nullptr;
+        GlyphRect rect;
+    };
+    // Renderer-lifetime scratch for transformed text submission.  It avoids a
+    // transient glyph list allocation for each rendered text layer.
+    std::vector<ResolvedGlyph> glyphSubmissionScratch_;
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> pTexture;
@@ -236,6 +247,42 @@ public:
         if (m_overrideRTV) return m_overrideRTV;
         return pSwapChain_ ? pSwapChain_->GetCurrentBackBufferRTV() : nullptr;
     }
+    bool uploadGlyphAtlasIfNeeded() {
+        if (!pGlyphAtlas_ || (!pGlyphAtlas_->isDirty() && pGlyphAtlasTexture_)) {
+            return pGlyphAtlasTexture_ != nullptr;
+        }
+        const QImage& image = pGlyphAtlas_->atlasImage();
+        if (image.isNull() || !pDevice_ || !pContext_) {
+            return false;
+        }
+
+        if (!pGlyphAtlasTexture_) {
+            TextureDesc desc;
+            desc.Name = "GlyphAtlasTexture";
+            desc.Type = RESOURCE_DIM_TEX_2D;
+            desc.Width = image.width();
+            desc.Height = image.height();
+            desc.MipLevels = 1;
+            desc.Format = TEX_FORMAT_RGBA8_UNORM;
+            desc.Usage = USAGE_DEFAULT;
+            desc.BindFlags = BIND_SHADER_RESOURCE;
+            pDevice_->CreateTexture(desc, nullptr, &pGlyphAtlasTexture_);
+        }
+        if (!pGlyphAtlasTexture_) {
+            return false;
+        }
+
+        TextureSubResData subresource;
+        subresource.pData = image.constBits();
+        subresource.Stride = image.bytesPerLine();
+        const Box updateBox(0, image.width(), 0, image.height(), 0, 1);
+        pContext_->UpdateTexture(
+            pGlyphAtlasTexture_, 0, 0, updateBox, subresource,
+            RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        pGlyphAtlas_->clearDirty();
+        return true;
+    }
     bool hasRenderTarget() const {
         return cmdBuf_ != nullptr && (m_overrideRTV != nullptr || pSwapChain_ != nullptr);
     }
@@ -251,8 +298,9 @@ PrimitiveRenderer2D::~PrimitiveRenderer2D()
     delete impl_;
 }
 
-void PrimitiveRenderer2D::setContext(IDeviceContext* /*ctx*/, ISwapChain* swapChain)
+void PrimitiveRenderer2D::setContext(IDeviceContext* ctx, ISwapChain* swapChain)
 {
+    impl_->pContext_ = ctx;
     impl_->pSwapChain_ = swapChain;
 }
 
@@ -270,6 +318,7 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
     if (!impl_->pGlyphAtlas_) {
         impl_->pGlyphAtlas_ = std::make_unique<GlyphAtlas>();
     }
+    impl_->glyphSubmissionScratch_.reserve(1024);
 }
 
 void PrimitiveRenderer2D::destroy()
@@ -277,6 +326,7 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_spriteTexCache.clear();
     impl_->m_maskTexCache.clear();
     impl_->pDevice_      = nullptr;
+    impl_->pContext_     = nullptr;
     impl_->pSwapChain_   = nullptr;
     impl_->m_overrideRTV = nullptr;
     impl_->cmdBuf_       = nullptr;
@@ -1498,33 +1548,9 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
         impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
     }
     
-    // Manage GPU texture for GlyphAtlas
-    if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
-        const QImage& img = impl_->pGlyphAtlas_->atlasImage();
-        if (!img.isNull() && impl_->pDevice_) {
-            TextureDesc texDesc;
-            texDesc.Name           = "GlyphAtlasTexture";
-            texDesc.Type           = RESOURCE_DIM_TEX_2D;
-            texDesc.Width          = img.width();
-            texDesc.Height         = img.height();
-            texDesc.MipLevels      = 1;
-            texDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
-            texDesc.Usage          = USAGE_IMMUTABLE;
-            texDesc.BindFlags      = BIND_SHADER_RESOURCE;
-
-            TextureSubResData subData;
-            subData.pData  = img.constBits();
-            subData.Stride = img.bytesPerLine();
-
-            TextureData initData;
-            initData.pSubResources = &subData;
-            initData.NumSubresources = 1;
-
-            impl_->pGlyphAtlasTexture_.Release(); // Release old texture
-            impl_->pDevice_->CreateTexture(texDesc, &initData, &impl_->pGlyphAtlasTexture_);
-            impl_->pGlyphAtlas_->clearDirty();
-        }
-    }
+    // The fixed-size atlas is an updateable GPU resource.  Never recreate it
+    // merely because the editor added a previously unseen glyph.
+    if (!impl_->uploadGlyphAtlasIfNeeded()) return;
     
     if (!impl_->pGlyphAtlasTexture_) return;
     auto* pSRV = impl_->pGlyphAtlasTexture_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
@@ -1654,32 +1680,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     // whose basePosition/offsetPosition already encode final placement. We acquire each glyph
     // from the atlas and emit an AtlasSpritePkt — the same primitive drawGlyphText() uses —
     // so no extra GPU PSO is needed. This keeps animated text on the fast 2D path.
-    if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
-        const QImage& img = impl_->pGlyphAtlas_->atlasImage();
-        if (!img.isNull() && impl_->pDevice_) {
-            TextureDesc texDesc;
-            texDesc.Name           = "GlyphAtlasTexture";
-            texDesc.Type           = RESOURCE_DIM_TEX_2D;
-            texDesc.Width          = img.width();
-            texDesc.Height         = img.height();
-            texDesc.MipLevels      = 1;
-            texDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
-            texDesc.Usage          = USAGE_IMMUTABLE;
-            texDesc.BindFlags      = BIND_SHADER_RESOURCE;
-
-            TextureSubResData subData;
-            subData.pData  = img.constBits();
-            subData.Stride = img.bytesPerLine();
-
-            TextureData initData;
-            initData.pSubResources = &subData;
-            initData.NumSubresources = 1;
-
-            impl_->pGlyphAtlasTexture_.Release();
-            impl_->pDevice_->CreateTexture(texDesc, &initData, &impl_->pGlyphAtlasTexture_);
-            impl_->pGlyphAtlas_->clearDirty();
-        }
-    }
+    if (!impl_->uploadGlyphAtlasIfNeeded()) return;
     if (!impl_->pGlyphAtlasTexture_) return;
     auto* pSRV = impl_->pGlyphAtlasTexture_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     if (!pSRV) return;
@@ -1752,13 +1753,8 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
         return;
     }
 
-    struct ResolvedGlyph {
-        const GlyphItem* item = nullptr;
-        GlyphRect rect;
-    };
-
-    std::vector<ResolvedGlyph> resolvedGlyphs;
-    resolvedGlyphs.reserve(glyphs.size());
+    auto& resolvedGlyphs = impl_->glyphSubmissionScratch_;
+    resolvedGlyphs.clear();
     for (const GlyphItem& glyph : glyphs) {
         const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
         if (glyphText.isEmpty() || glyphText.at(0).isSpace()) {
@@ -1789,35 +1785,8 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
         });
     }
 
-    if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
-        const QImage& image = impl_->pGlyphAtlas_->atlasImage();
-        if (image.isNull()) {
-            return;
-        }
-
-        TextureDesc textureDesc;
-        textureDesc.Name = "GlyphAtlasTexture";
-        textureDesc.Type = RESOURCE_DIM_TEX_2D;
-        textureDesc.Width = image.width();
-        textureDesc.Height = image.height();
-        textureDesc.MipLevels = 1;
-        textureDesc.Format = TEX_FORMAT_RGBA8_UNORM;
-        textureDesc.Usage = USAGE_IMMUTABLE;
-        textureDesc.BindFlags = BIND_SHADER_RESOURCE;
-
-        TextureSubResData subresource;
-        subresource.pData = image.constBits();
-        subresource.Stride = image.bytesPerLine();
-        TextureData initialData;
-        initialData.pSubResources = &subresource;
-        initialData.NumSubresources = 1;
-
-        impl_->pGlyphAtlasTexture_.Release();
-        impl_->pDevice_->CreateTexture(textureDesc, &initialData,
-                                       &impl_->pGlyphAtlasTexture_);
-        if (impl_->pGlyphAtlasTexture_) {
-            impl_->pGlyphAtlas_->clearDirty();
-        }
+    if (!impl_->uploadGlyphAtlasIfNeeded()) {
+        return;
     }
 
     if (!impl_->pGlyphAtlasTexture_) {
