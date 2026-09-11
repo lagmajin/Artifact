@@ -4167,7 +4167,9 @@ if (!item.isFolder) {
           {QStringLiteral("image.sourcePath"), QStringLiteral("image.sourcePath")},
           {QStringLiteral("video.sourcePath"), QStringLiteral("video.sourcePath")},
           {QStringLiteral("audio.sourcePath"), QStringLiteral("audio.sourcePath")},
-          {QStringLiteral("svg.sourcePath"), QStringLiteral("svg.sourcePath")}};
+          {QStringLiteral("svg.sourcePath"), QStringLiteral("svg.sourcePath")},
+          {QStringLiteral("model.sourcePath"), QStringLiteral("model.sourcePath")},
+          {QStringLiteral("sourcePath"), QStringLiteral("sourcePath")}};
       if (project) {
         std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
           if (!item) return;
