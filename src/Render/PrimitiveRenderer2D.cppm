@@ -1691,7 +1691,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
 
     for (const GlyphItem& glyph : glyphs) {
-        const ResolvedGlyphFont& resolved =
+        const auto& resolved =
             impl_->resolvedGlyphFont(style, glyph.charCode);
         impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
     }
@@ -1711,7 +1711,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
 
     for (const GlyphItem& glyph : glyphs) {
-        const ResolvedGlyphFont& resolved =
+        const auto& resolved =
             impl_->resolvedGlyphFont(style, glyph.charCode);
 
         const GlyphRect rect =
@@ -1782,7 +1782,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
             continue;
         }
 
-        const ResolvedGlyphFont& resolved =
+        const auto& resolved =
             impl_->resolvedGlyphFont(style, glyph.charCode);
         const GlyphRect rect =
             impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
