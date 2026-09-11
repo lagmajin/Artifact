@@ -6392,6 +6392,8 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
       QDir::cleanPath(oldInfo.absoluteFilePath());
   const QString oldSuffix = oldInfo.suffix();
   const QString oldBase = oldInfo.completeBaseName();
+  const ArtifactCore::AssetType oldAssetType =
+      ArtifactCore::AssetImporter::detectType(oldFilePath);
   static const QRegularExpression sequencePattern(
       QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
   const auto oldSequenceMatch = sequencePattern.match(oldName);
@@ -6402,6 +6404,11 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
     const QFileInfo candidateInfo(iterator.next());
     if (QDir::cleanPath(candidateInfo.absoluteFilePath()) ==
         normalizedOldPath) {
+      continue;
+    }
+    if (oldAssetType == ArtifactCore::AssetType::Model &&
+        ArtifactCore::AssetImporter::detectType(candidateInfo.absoluteFilePath()) !=
+            ArtifactCore::AssetType::Model) {
       continue;
     }
     int score = 0;
