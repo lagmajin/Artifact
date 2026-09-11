@@ -28,6 +28,7 @@ import Utils.String.UniString;
 import Composition.Settings;
 import Container;
 import Asset.File;
+import Asset;
 
 import Artifact.Composition.Abstract;
 import Artifact.Composition._2D;
