@@ -226,6 +226,13 @@ void ArtifactProjectModel::Impl::refreshTree()
     return QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"),
                        QStringLiteral("woff2")}.contains(suffix);
   };
+  auto isModelFile = [](const QString& suffix) {
+    return QStringList{QStringLiteral("obj"), QStringLiteral("fbx"), QStringLiteral("gltf"),
+                       QStringLiteral("glb"), QStringLiteral("pmd"), QStringLiteral("ply"),
+                       QStringLiteral("las"), QStringLiteral("usd"), QStringLiteral("usda"),
+                       QStringLiteral("usdc"), QStringLiteral("abc"), QStringLiteral("stl")}
+        .contains(suffix);
+  };
 
   auto iconForProjectItem = [&](Artifact::ProjectItem* it) -> QIcon {
     if (!it) {
@@ -261,6 +268,9 @@ void ArtifactProjectModel::Impl::refreshTree()
       }
       if (isAudioFile(suffix)) {
         return iconOrFallback(QStringLiteral("MaterialVS/green/music_note.svg"), QColor(66, 148, 98), QStringLiteral("A"));
+      }
+      if (isModelFile(suffix)) {
+        return iconOrFallback(QStringLiteral("Studio/asset_file_3d.svg"), QColor(72, 122, 168), QStringLiteral("3D"));
       }
       return iconOrFallback(QStringLiteral("MaterialVS/green/attach_file.svg"), QColor(66, 148, 98), QStringLiteral("F"));
     }
