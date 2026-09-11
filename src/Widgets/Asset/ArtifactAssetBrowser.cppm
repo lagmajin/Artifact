@@ -4469,6 +4469,31 @@ if (!item.isFolder) {
     }
    });
   }
+  if (selectedAssetPaths.size() > 1) {
+   addAction(frequentMenu, QStringLiteral("Copy Asset IDs"),
+             [selectedAssetPaths]() {
+    QStringList lines;
+    lines.reserve(selectedAssetPaths.size());
+    for (const QString& selectedPath : selectedAssetPaths) {
+     const QFileInfo selectedInfo(selectedPath);
+     if (!selectedInfo.isFile()) continue;
+     const auto selectedMeta = ArtifactCore::ArtifactAssetMetaFile::load(
+         selectedPath);
+     const QUuid selectedId =
+         selectedMeta.isValid() && !selectedMeta.uuid().isNull()
+             ? selectedMeta.uuid()
+             : ArtifactCore::AssetDatabase::instance().findAssetByPath(
+                   selectedPath);
+     if (selectedId.isNull()) continue;
+     lines.append(QStringLiteral("%1\t%2")
+                      .arg(selectedPath)
+                      .arg(selectedId.toString(QUuid::WithoutBraces)));
+    }
+    if (auto* clipboard = QApplication::clipboard()) {
+     clipboard->setText(lines.join(QLatin1Char('\n')));
+    }
+   });
+  }
 
   // Rename action (F2)
   addAction(allMenu, QStringLiteral("Rename (F2)"), [this]() {
