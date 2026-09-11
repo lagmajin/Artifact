@@ -1681,37 +1681,10 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
 {
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
 
-    // PERF: same unique-code-point table as drawGlyphText. Key derivation
-    // here uses only charCode + style, so dedupe by charCode is exact.
-    struct UniqueGlyphItem {
-        char32_t codePoint = 0;
-        QFont font;
-        GlyphKey key;
-    };
-    std::vector<UniqueGlyphItem> uniqueGlyphs;
-    uniqueGlyphs.reserve(glyphs.size());
-    auto resolveGlyph = [&](char32_t codePoint) -> const UniqueGlyphItem& {
-        for (const UniqueGlyphItem& entry : uniqueGlyphs) {
-            if (entry.codePoint == codePoint) {
-                return entry;
-            }
-        }
-        const QString glyphText = QString::fromUcs4(&codePoint, 1);
-        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
-        GlyphKey key;
-        key.codePoint = codePoint;
-        key.fontSize = style.fontSize;
-        key.fontFamily = resolvedFont.family().toStdString();
-        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
-                         static_cast<uint32_t>(style.fontStyle);
-        key.renderMode = renderModeForCodePoint(codePoint);
-        uniqueGlyphs.push_back({codePoint, resolvedFont, std::move(key)});
-        return uniqueGlyphs.back();
-    };
-
     for (const GlyphItem& glyph : glyphs) {
-        const UniqueGlyphItem& entry = resolveGlyph(glyph.charCode);
-        impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
+        const ResolvedGlyphFont& resolved =
+            impl_->resolvedGlyphFont(style, glyph.charCode);
+        impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
     }
 
     // Pre-laid-out glyph path: callers (text animators, hand-shaped runs) supply GlyphItems
@@ -1729,9 +1702,11 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
 
     for (const GlyphItem& glyph : glyphs) {
-        const UniqueGlyphItem& entry = resolveGlyph(glyph.charCode);
+        const ResolvedGlyphFont& resolved =
+            impl_->resolvedGlyphFont(style, glyph.charCode);
 
-        const GlyphRect rect = impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
+        const GlyphRect rect =
+            impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
         if (!rect.valid) continue;
 
         // basePosition (line origin from layout) + offsetPosition (per-glyph animation offset)
