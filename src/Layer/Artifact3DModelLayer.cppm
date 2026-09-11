@@ -31,6 +31,7 @@ import Time.Rational;
 import MeshImporter;
 import Utils.String.UniString;
 import Material.Material;
+import Asset.Database;
 import Core.Parallel;
 import EnvironmentVariable.Expansion;
 
@@ -114,6 +115,7 @@ public:
   ArtifactCore::Material material_ = ArtifactCore::Material::makeDefault();
   Mesh mesh_; // The 3D mesh data
   QString sourcePath_;
+  QUuid sourceAssetId_;
   bool meshLoaded_ = false;
   bool affectedByLights_ = true;
   bool useTextureInSolid_ = false;
@@ -269,6 +271,9 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         : (sourceInfo.canonicalFilePath());
     // テンプレートを保持する (展開済み canonical パスではなく)
     impl_->sourcePath_ = containsExpansionMarker(templatePath) ? templatePath : normalizedSourcePath;
+    impl_->sourceAssetId_ = ArtifactCore::AssetDatabase::instance().registerAsset(
+        normalizedSourcePath, ArtifactCore::AssetType::Model,
+        impl_->sourceAssetId_);
     setLayerName(sourceInfo.baseName());
     Q_EMIT changed();
     return;
@@ -279,6 +284,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
              << "- using default cube";
   impl_->fixedGeometry_ = FixedGeometry3D::Cube;
   impl_->sourcePath_.clear();
+  impl_->sourceAssetId_ = QUuid();
   createCubeMesh();
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
@@ -293,6 +299,7 @@ void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
   }
   impl_->fixedGeometry_ = geometry;
   impl_->sourcePath_.clear();
+  impl_->sourceAssetId_ = QUuid();
   createFixedGeometryMesh(geometry);
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
@@ -307,12 +314,15 @@ FixedGeometry3D Artifact3DLayer::fixedGeometry() const
 
 QString Artifact3DLayer::sourcePath() const { return impl_->sourcePath_; }
 
+QUuid Artifact3DLayer::sourceAssetId() const { return impl_->sourceAssetId_; }
+
 UniString Artifact3DLayer::className() const { return QStringLiteral("Artifact3DLayer"); }
 
 QJsonObject Artifact3DLayer::toJson() const {
   QJsonObject obj = ArtifactAbstractLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
+  obj["model.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
   obj["animation.enabled"] = impl_->skinAnimationEnabled_;
   obj["animation.clipIndex"] = impl_->skinAnimationClipIndex_;
   obj["animation.playbackMode"] = impl_->animationPlaybackMode_;
@@ -389,6 +399,8 @@ QJsonObject Artifact3DLayer::toJson() const {
 void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 {
   ArtifactAbstractLayer::fromJsonProperties(obj);
+  impl_->sourceAssetId_ = QUuid::fromString(
+      obj.value(QStringLiteral("model.sourceAssetId")).toString());
 
   impl_->geometryWidth_ = finiteClamped(static_cast<float>(obj.value("geometry.width").toDouble(impl_->geometryWidth_)), impl_->geometryWidth_, 0.01f, 100000.0f);
   impl_->geometryHeight_ = finiteClamped(static_cast<float>(obj.value("geometry.height").toDouble(impl_->geometryHeight_)), impl_->geometryHeight_, 0.01f, 100000.0f);

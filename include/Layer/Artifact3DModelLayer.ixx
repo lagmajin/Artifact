@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <QString>
+#include <QUuid>
 #include <QJsonObject>
 #include <QRectF>
 #include <QMatrix4x4>
@@ -13,6 +14,7 @@ export module Artifact.Layers.Model3D;
 import Artifact.Layer.Abstract;
 import Material.Material;
 import Mesh;
+import AssetType;
 
 export namespace Artifact {
 
@@ -88,6 +90,7 @@ export namespace Artifact {
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
     QString sourcePath() const;
+    QUuid sourceAssetId() const;
     UniString className() const override;
 
     // Properties
