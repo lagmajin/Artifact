@@ -3429,7 +3429,10 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
       drawWithClonerEffect(
           this, lensPass.transform,
-          [renderer, runs, strokeColor, shadowColor,
+          // drawWithClonerEffect invokes the callback synchronously for every
+          // instance. Capturing by reference avoids copying all rich glyph
+          // runs into its std::function on each frame.
+          [renderer, &runs, strokeColor, shadowColor,
            this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
               const float drawOpacity = this->opacity() * weight * lensOpacity;
             for (const RichGpuRun& run : runs) {
