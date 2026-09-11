@@ -508,6 +508,16 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
           footageUp->assetId = AssetDatabase::instance().registerAsset(
               footageUp->filePath, detectedAssetType);
         }
+      } else if (!footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
+        const AssetType detectedAssetType =
+            AssetImporter::detectType(footageUp->filePath);
+        if (detectedAssetType != AssetType::Unknown) {
+          const QUuid registeredId = AssetDatabase::instance().registerAsset(
+              footageUp->filePath, detectedAssetType, footageUp->assetId);
+          if (!registeredId.isNull()) {
+            footageUp->assetId = registeredId;
+          }
+        }
       }
       footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
       footageUp->subimageIndex = std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
@@ -2002,6 +2012,16 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
         if (detectedAssetType != AssetType::Unknown) {
           footageUp->assetId = AssetDatabase::instance().registerAsset(
               footageUp->filePath, detectedAssetType);
+        }
+      } else if (!footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
+        const AssetType detectedAssetType =
+            AssetImporter::detectType(footageUp->filePath);
+        if (detectedAssetType != AssetType::Unknown) {
+          const QUuid registeredId = AssetDatabase::instance().registerAsset(
+              footageUp->filePath, detectedAssetType, footageUp->assetId);
+          if (!registeredId.isNull()) {
+            footageUp->assetId = registeredId;
+          }
         }
       }
       if (obj.value(QStringLiteral("assetUsage")).toString().compare(
