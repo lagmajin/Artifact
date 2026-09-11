@@ -3971,7 +3971,15 @@ if (!item.isFolder) {
   addAction(allMenu, QStringLiteral("Relink Selected Asset..."), [this, filePath, item]() {
     if (filePath.isEmpty()) return;
     // Show file dialog to select new file path
-    QString newPath = QFileDialog::getOpenFileName(nullptr, "Relink Asset", QDir::homePath(), "All Files (*.*)");
+    QString fileFilter = QStringLiteral("All Files (*.*)");
+    if (ArtifactCore::AssetImporter::detectType(filePath) ==
+        ArtifactCore::AssetType::Model) {
+      fileFilter = QStringLiteral(
+          "3D Models (*.obj *.fbx *.abc *.glb *.gltf *.stl *.ply *.pmd *.las *.usd *.usda);;"
+          "All Files (*.*)");
+    }
+    QString newPath = QFileDialog::getOpenFileName(
+        nullptr, QStringLiteral("Relink Asset"), QDir::homePath(), fileFilter);
     if (newPath.isEmpty()) return;
     // Relink the footage item by path
     auto* svc = ArtifactProjectService::instance();
