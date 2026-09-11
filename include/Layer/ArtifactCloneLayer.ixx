@@ -92,6 +92,10 @@ private:
     Impl* impl_;
     ArtifactCloneLayer(const ArtifactCloneLayer&) = delete;
     ArtifactCloneLayer& operator=(const ArtifactCloneLayer&) = delete;
+    // 3D source fast path: resolves sourceLayerId to a model layer and issues
+    // one instanced mesh draw. Returns true when the source is 3D (drawn or
+    // legitimately empty), so the 2D rect fallback is skipped.
+    bool drawInstancedSource(ArtifactIRenderer* renderer);
 public:
     ArtifactCloneLayer();
     ~ArtifactCloneLayer();

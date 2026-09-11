@@ -322,6 +322,9 @@ void zoomFill();
   float gizmoScale() const;
 
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
+  // Click-to-focus: exact ray-triangle hit distance projected onto the
+  // active camera forward axis. Returns true when a focus distance was set.
+  bool focusActiveCameraAtViewportPos(const QPointF& viewportPos);
   bool resetProjectedFrameHandleAt(const QPointF& viewportPos);
   bool resetSelected3DAnchorToCenter();
   bool resetSelected3DTransform();

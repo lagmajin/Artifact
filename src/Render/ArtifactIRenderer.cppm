@@ -729,7 +729,9 @@ namespace {
                 const QMatrix4x4& modelMatrix, float opacity,
                 int shadingMode,
                 const QMatrix4x4* previousModelMatrix,
-                Diligent::ITextureView* baseColorTextureView)
+                Diligent::ITextureView* baseColorTextureView,
+                const ArtifactCore::InstanceData* instancedData = nullptr,
+                size_t instancedCount = 0)
   {
     static const bool traceEnabled =
         !qEnvironmentVariableIsSet("ARTIFACT_DISABLE_3D_RENDER_TRACE");
@@ -771,6 +773,19 @@ namespace {
       return;
     }
 
+    // Instanced draw (CloneLayer 3D source): caller supplies per-instance
+    // model matrices. Clamped to a fixed budget; count==0 keeps the legacy
+    // single-instance path built from modelMatrix.
+    static constexpr size_t kMaxInstancedMeshDraw = 4096;
+    size_t wantedInstances = 1;
+    if (instancedData && instancedCount > 0) {
+      wantedInstances = std::min(instancedCount, kMaxInstancedMeshDraw);
+      if (instancedCount > kMaxInstancedMeshDraw) {
+        traceResult(QStringLiteral("instances-clamped"),
+                    wantedInstances, instancedCount);
+      }
+    }
+
     const auto cachedGeometry = meshRendererGeometry_.find(cacheKey);
     const auto meshRevision = mesh.revision();
     const bool geometryCacheCurrent =
@@ -807,20 +822,28 @@ namespace {
       const float values[] = {uv.x(), uv.y()};
       hashBytes(values, sizeof(values));
     }
+    for (const auto& color : data.colors) {
+      const float values[] = {color.x(), color.y(), color.z(), color.w()};
+      hashBytes(values, sizeof(values));
+    }
     for (const auto index : data.indices) {
       hashBytes(&index, sizeof(index));
     }
     const auto geometryIt = cachedGeometry;
+    const bool instanceCapacityChanged =
+        geometryIt != meshRendererGeometry_.end() &&
+        renderer->maxInstances() < wantedInstances;
     const bool geometrySizeChanged =
         geometryIt == meshRendererGeometry_.end() ||
         geometryIt->second.vertexCount != vertexCount ||
-        geometryIt->second.indexCount != indexCount;
+        geometryIt->second.indexCount != indexCount ||
+        instanceCapacityChanged;
     const bool geometryContentChanged =
         geometrySizeChanged || geometryIt->second.contentHash != geometryHash;
     geometryChangedForRayTracing = geometryContentChanged;
     if (geometrySizeChanged) {
       renderer->setFrameCostStats(&m_currentFrameCostStats_);
-      renderer->initialize(1, vertexCount, indexCount);
+      renderer->initialize(wantedInstances, vertexCount, indexCount);
     }
 
     if (geometryContentChanged) {
@@ -861,13 +884,33 @@ namespace {
         }
       }
 
+      std::vector<float> colors(vertexCount * 4u, 1.0f);
+      const bool hasColors = data.colors.size() == data.positions.size() && !data.colors.isEmpty();
+      if (hasColors) {
+        colors.reserve(vertexCount * 4u);
+        colors.clear();
+        for (const auto& c : data.colors) {
+          colors.push_back(c.x());
+          colors.push_back(c.y());
+          colors.push_back(c.z());
+          colors.push_back(c.w());
+        }
+      } else {
+        for (size_t i = 0; i < vertexCount; ++i) {
+          colors[i * 4u + 0u] = 1.0f;
+          colors[i * 4u + 1u] = 1.0f;
+          colors[i * 4u + 2u] = 1.0f;
+          colors[i * 4u + 3u] = 1.0f;
+        }
+      }
+
       std::vector<uint32_t> indices;
       indices.reserve(indexCount);
       for (const auto idx : data.indices) {
         indices.push_back(static_cast<uint32_t>(idx));
       }
       renderer->updateMeshGeometry(positions.data(), normals.data(), uvs.data(),
-                                   indices.data());
+                                   indices.data(), colors.data());
 
       // Prepare the mesh-shader resources alongside the indexed fallback.
       // The packed index stream is already expanded per meshlet by Mesh, so
@@ -919,10 +962,12 @@ namespace {
     }
 
     const bool rayTracingOpaque =
-        opacity >= 0.9999f && material.opacity() >= 0.9999f &&
+        wantedInstances == 1 && opacity >= 0.9999f && material.opacity() >= 0.9999f &&
         material.baseColor().alphaF() >= 0.9999f &&
         !material.hasOpacityTexture();
-    if (rayTracingManager_ && rayTracingManager_->isSupported()) {
+    // Instanced draws skip ray-tracing registration: one BLAS/TLAS entry per
+    // mesh cannot represent N instance transforms (future work).
+    if (wantedInstances == 1 && rayTracingManager_ && rayTracingManager_->isSupported()) {
       const ArtifactCore::UniString rayTracingId(cacheKey);
       if (!rayTracingOpaque) {
         if (rayTracingManager_->setInstanceActive(rayTracingId, false)) {
@@ -978,6 +1023,10 @@ namespace {
     renderer->setPrincipledFactors(material.specular(), material.ior(),
                                    material.transmission(), material.clearcoat(),
                                    material.clearcoatRoughness(), material.sheen());
+    renderer->setUvTransform(material.uvOffsetU(), material.uvOffsetV(),
+                             material.uvScaleU(), material.uvScaleV(),
+                             material.uvRotationDegrees());
+    renderer->setEnvironmentIntensity(material.environmentIntensity());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
     // Layer-owned material graph: MeshRenderer recompiles only when the
@@ -1007,6 +1056,45 @@ namespace {
         material.alphaMode() == ArtifactCore::MaterialAlphaMode::Masked;
     renderer->setAlphaMasked(alphaMasked);
     renderer->setAlphaCutoff(material.alphaCutoff());
+    const QColor color = material.baseColor();
+    const int effectiveShadingMode =
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ? 5 :
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId ? 6 :
+        meshEmissionOnlyPass_ ? 4 :
+        meshNormalOnlyPass_ ? 2 :
+        meshVelocityOnlyPass_ ? 7 :
+        meshAlbedoOnlyPass_ ? 1
+                            : std::clamp(shadingMode, 1, 8);
+    float combinedAlpha = 1.0f;
+    if (wantedInstances > 1 && instancedData) {
+      // Caller-owned matrices/colors (CloneLayer world instances). Reuse the
+      // buffer directly: no per-frame allocation on this path.
+      float minInstanceAlpha = 1.0f;
+      for (size_t i = 0; i < wantedInstances; ++i) {
+        minInstanceAlpha = std::min(minInstanceAlpha, instancedData[i].color[3]);
+      }
+      combinedAlpha = std::clamp(opacity * material.opacity() * color.alphaF() *
+                                 minInstanceAlpha, 0.0f, 1.0f);
+      renderer->setTransparentPass(
+          !alphaMasked && (material.alphaMode() == ArtifactCore::MaterialAlphaMode::Blended ||
+                           combinedAlpha < 0.9999f));
+      if (meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
+          meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId) {
+        // Debug ID passes need uniform colors: copy once (rare path only).
+        std::vector<ArtifactCore::InstanceData> idInstances(
+            instancedData, instancedData + wantedInstances);
+        for (auto& idInstance : idInstances) {
+          idInstance.color[0] = meshIdPassEncodedValue_;
+          idInstance.color[1] = meshIdPassEncodedValue_;
+          idInstance.color[2] = meshIdPassEncodedValue_;
+          idInstance.color[3] = 1.0f;
+          idInstance.timeOffset = static_cast<float>(effectiveShadingMode);
+        }
+        renderer->updateInstanceData(idInstances.data(), wantedInstances);
+      } else {
+        renderer->updateInstanceData(instancedData, wantedInstances);
+      }
+    } else {
     ArtifactCore::InstanceData instance{};
     const float* modelData = modelMatrix.constData();
     const QMatrix4x4& previousMatrix =
@@ -1019,8 +1107,8 @@ namespace {
             previousModelData[col * 4 + row];
       }
     }
-    const QColor color = material.baseColor();
     const float alpha = std::clamp(opacity * material.opacity() * color.alphaF(), 0.0f, 1.0f);
+    combinedAlpha = alpha;
     renderer->setTransparentPass(
         !alphaMasked && (material.alphaMode() == ArtifactCore::MaterialAlphaMode::Blended ||
                          alpha < 0.9999f));
@@ -1037,16 +1125,9 @@ namespace {
       instance.color[3] = alpha;
     }
     instance.weight = 1.0f;
-    const int effectiveShadingMode =
-        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ? 5 :
-        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId ? 6 :
-        meshEmissionOnlyPass_ ? 4 :
-        meshNormalOnlyPass_ ? 2 :
-        meshVelocityOnlyPass_ ? 7 :
-        meshAlbedoOnlyPass_ ? 1
-                            : std::clamp(shadingMode, 1, 8);
     instance.timeOffset = static_cast<float>(effectiveShadingMode);
     renderer->updateInstanceData(&instance, 1);
+    }
     int shadowLightIndex = -1;
     if (m_shadowMapEnabled && m_shadowLight) {
       const auto targetPosition = m_shadowLight->position();
@@ -1077,7 +1158,7 @@ namespace {
                            (m_shadowLight && m_shadowLight->castsShadows())
                                ? m_shadowLight->shadowSoftness()
                                : 0.0f);
-    if (m_shadowMapEnabled && shadowLightIndex >= 0 && alpha >= 0.9999f &&
+    if (m_shadowMapEnabled && shadowLightIndex >= 0 && combinedAlpha >= 0.9999f &&
         !material.hasOpacityTexture() &&
         std::find(m_shadowCasters.begin(), m_shadowCasters.end(), renderer) ==
             m_shadowCasters.end()) {
@@ -1108,7 +1189,9 @@ namespace {
       }
     }
     bool meshShaderDrawn = false;
-    if (renderer->meshShaderReady()) {
+    // The mesh-shader path shades a single instance; instanced draws stay on
+    // the indexed path which honors per-instance matrices.
+    if (wantedInstances == 1 && renderer->meshShaderReady()) {
       const QVector3D boundsMin = mesh.boundingBoxMin();
       const QVector3D boundsMax = mesh.boundingBoxMax();
       const QVector3D boundsCenter = (boundsMin + boundsMax) * 0.5f;
@@ -1127,7 +1210,7 @@ namespace {
     }
     if (!meshShaderDrawn) {
       renderer->prepare(ctx.RawPtr());
-      renderer->draw(ctx.RawPtr(), 1);
+      renderer->draw(ctx.RawPtr(), wantedInstances);
     }
     const auto state = meshRendererGeometry_.find(cacheKey);
     traceResult(QStringLiteral("gpu-draw-issued"),
@@ -4816,6 +4899,20 @@ void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Me
                                  Diligent::ITextureView* baseColorTextureView)
 { impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity, shadingMode,
                  previousModelMatrix, baseColorTextureView); }
+void ArtifactIRenderer::drawMeshInstanced(
+    const QString& cacheKey, const ArtifactCore::Mesh& mesh,
+    const ArtifactCore::Material& material,
+    const std::vector<ArtifactCore::InstanceData>& instances, float opacity,
+    int shadingMode)
+{
+  if (instances.empty()) {
+    return;
+  }
+  // Identity model matrix: instance transforms are already world-space.
+  const QMatrix4x4 identity;
+  impl_->drawMesh(cacheKey, mesh, material, identity, opacity, shadingMode,
+                 nullptr, nullptr, instances.data(), instances.size());
+}
  void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
  {
   impl_->m_upscaleEnabled = enable;

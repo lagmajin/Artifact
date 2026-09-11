@@ -22516,6 +22516,69 @@ LayerID CompositionRenderController::layerAtViewportPos(
 
 }
 
+bool CompositionRenderController::focusActiveCameraAtViewportPos(
+    const QPointF &viewportPos) {
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp) {
+    return false;
+  }
+  const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+  const Ray ray = createPickingRay(physPos);
+  if (ray.direction.lengthSquared() <= 1.0e-12f) {
+    return false;
+  }
+  const auto currentFrame = currentFrameForComposition(comp);
+  float nearestDistance = std::numeric_limits<float>::max();
+  bool hit = false;
+  for (const auto &layer : comp->allLayerRef()) {
+    if (!isLayerEffectivelyVisible(layer) || !layer->isActiveAt(currentFrame)) {
+      continue;
+    }
+    const auto modelLayer =
+        ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer);
+    float distance = 0.0f;
+    if (modelLayer && intersectModelLayerPickingRay(*modelLayer, ray, distance) &&
+        distance < nearestDistance) {
+      nearestDistance = distance;
+      hit = true;
+    }
+  }
+  if (!hit || !std::isfinite(nearestDistance) || nearestDistance <= 0.0f) {
+    return false;
+  }
+  ArtifactCameraLayer *activeCamera = nullptr;
+  for (const auto &l : comp->allLayerRef()) {
+    auto *cam = dynamic_cast<ArtifactCameraLayer *>(l.get());
+    if (cam && isLayerEffectivelyVisible(l) && cam->isActiveAt(currentFrame) &&
+        cam->isActiveCamera() &&
+        (!activeCamera || cam->cameraPriority() > activeCamera->cameraPriority())) {
+      activeCamera = cam;
+    }
+  }
+  if (!activeCamera) {
+    return false;
+  }
+  // Exact hit point is view-independent; project onto the active camera
+  // forward axis for a true focus-plane distance.
+  const QVector3D hitPoint = ray.origin + ray.direction * nearestDistance;
+  const QMatrix4x4 camGlobal = activeCamera->effectiveGlobalTransform();
+  const QVector3D camPos = camGlobal.map(QVector3D(0.0f, 0.0f, 0.0f));
+  QVector3D forward = camGlobal.mapVector(QVector3D(0.0f, 0.0f, -1.0f));
+  if (forward.lengthSquared() <= 1.0e-12f) {
+    return false;
+  }
+  forward.normalize();
+  const float distance =
+      QVector3D::dotProduct(hitPoint - camPos, forward);
+  if (!std::isfinite(distance) || distance <= 0.0f) {
+    return false;
+  }
+  const float clamped = std::clamp(distance, activeCamera->nearClipPlane(),
+                                   activeCamera->farClipPlane());
+  return activeCamera->setLayerPropertyValue(
+      QStringLiteral("Camera Options/Focus Distance"), clamped);
+}
+
 void CompositionRenderController::zoomFitWorkArea() {
   if (!impl_->renderer_) {
     return;

@@ -124,6 +124,10 @@ public:
   int skinAnimationClipIndex_ = 0;
   bool updatingSkinAnimation_ = false;
   bool skinAnimationEnabled_ = true;
+  // 0 = Loop (wrap with fmod), 1 = Hold (clamp at the last clip frame),
+  // 2 = PingPong (stateless triangle wave over 2x duration).
+  int animationPlaybackMode_ = 0;
+  float animationSpeed_ = 1.0f;
   QHash<QString, float> blendShapeWeightOverrides_;
   float normalLength_ = 25.0f;
   float pointSize_ = 1.0f;
@@ -237,6 +241,20 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       impl_->material_.setOpacityTexture(
           ArtifactCore::UniString::fromQString(importedOpacityTexture));
     }
+    // PBR scalar factors: apply only when the file specifies them, the ufbx
+    // backend produced them, and the material is still at its default (never
+    // user-edited), mirroring the texture isEmpty guards above.
+    const bool factorsFromUfbx =
+        importer.lastBackend() == ArtifactCore::MeshImporter::Backend::Ufbx ||
+        importer.lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf;
+    if (factorsFromUfbx && importer.hasLastMetallicFactor() &&
+        impl_->material_.metallic() == 0.0f) {
+      impl_->material_.setMetallic(importer.lastMetallicFactor());
+    }
+    if (factorsFromUfbx && importer.hasLastRoughnessFactor() &&
+        impl_->material_.roughness() == 0.5f) {
+      impl_->material_.setRoughness(importer.lastRoughnessFactor());
+    }
     if (impl_->material_.baseColorTexture().toQString().isEmpty()) {
       const QString detectedTexture = detectSiblingBaseColorTexture(normalizedInput);
       if (!detectedTexture.isEmpty()) {
@@ -297,6 +315,8 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["sourcePath"] = impl_->sourcePath_;
   obj["animation.enabled"] = impl_->skinAnimationEnabled_;
   obj["animation.clipIndex"] = impl_->skinAnimationClipIndex_;
+  obj["animation.playbackMode"] = impl_->animationPlaybackMode_;
+  obj["animation.speed"] = impl_->animationSpeed_;
   QJsonArray blendShapeWeights;
   for (auto it = impl_->blendShapeWeightOverrides_.cbegin();
        it != impl_->blendShapeWeightOverrides_.cend(); ++it) {
@@ -346,6 +366,12 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.emissionStrength"] = impl_->material_.emissionStrength();
   obj["material.normalStrength"] = impl_->material_.normalStrength();
   obj["material.occlusionStrength"] = impl_->material_.occlusionStrength();
+  obj["material.uv.offsetU"] = impl_->material_.uvOffsetU();
+  obj["material.uv.offsetV"] = impl_->material_.uvOffsetV();
+  obj["material.uv.scaleU"] = impl_->material_.uvScaleU();
+  obj["material.uv.scaleV"] = impl_->material_.uvScaleV();
+  obj["material.uv.rotation"] = impl_->material_.uvRotationDegrees();
+  obj["material.envIntensity"] = impl_->material_.environmentIntensity();
   obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
@@ -400,6 +426,18 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     impl_->skinAnimationClipIndex_ = clipCount > 0
         ? std::clamp(requestedClip, 0, clipCount - 1)
         : std::max(0, requestedClip);
+    impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  }
+  if (obj.contains("animation.playbackMode")) {
+    impl_->animationPlaybackMode_ = std::clamp(
+        obj.value("animation.playbackMode").toInt(0), 0, 2);
+    impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+  }
+  if (obj.contains("animation.speed")) {
+    const float speed = static_cast<float>(
+        obj.value("animation.speed").toDouble(impl_->animationSpeed_));
+    impl_->animationSpeed_ =
+        std::isfinite(speed) ? std::clamp(speed, 0.0f, 8.0f) : 1.0f;
     impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
   }
 
@@ -536,6 +574,24 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setOcclusionStrength(
       finiteClamped(static_cast<float>(obj.value("material.occlusionStrength").toDouble(impl_->material_.occlusionStrength())),
                     impl_->material_.occlusionStrength(), 0.0f, 1.0f));
+  impl_->material_.setUvOffsetU(
+      finiteClamped(static_cast<float>(obj.value("material.uv.offsetU").toDouble(impl_->material_.uvOffsetU())),
+                    impl_->material_.uvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setUvOffsetV(
+      finiteClamped(static_cast<float>(obj.value("material.uv.offsetV").toDouble(impl_->material_.uvOffsetV())),
+                    impl_->material_.uvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setUvScaleU(
+      finiteClamped(static_cast<float>(obj.value("material.uv.scaleU").toDouble(impl_->material_.uvScaleU())),
+                    impl_->material_.uvScaleU(), 0.01f, 10.0f));
+  impl_->material_.setUvScaleV(
+      finiteClamped(static_cast<float>(obj.value("material.uv.scaleV").toDouble(impl_->material_.uvScaleV())),
+                    impl_->material_.uvScaleV(), 0.01f, 10.0f));
+  impl_->material_.setUvRotationDegrees(
+      finiteClamped(static_cast<float>(obj.value("material.uv.rotation").toDouble(impl_->material_.uvRotationDegrees())),
+                    impl_->material_.uvRotationDegrees(), -360.0f, 360.0f));
+  impl_->material_.setEnvironmentIntensity(
+      finiteClamped(static_cast<float>(obj.value("material.envIntensity").toDouble(impl_->material_.environmentIntensity())),
+                    impl_->material_.environmentIntensity(), 0.0f, 4.0f));
 
   const QString baseColorTexture = obj.contains("material.baseColorTexture")
                                        ? obj.value("material.baseColorTexture").toString()
@@ -1374,6 +1430,11 @@ const ArtifactCore::Mesh& Artifact3DLayer::mesh() const
   return impl_->mesh_;
 }
 
+const ArtifactCore::Material& Artifact3DLayer::material() const
+{
+  return impl_->material_;
+}
+
 void Artifact3DLayer::setSkinPoseMatrices(
     const QVector<QMatrix4x4>& boneMatrices)
 {
@@ -1448,10 +1509,20 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
         std::isfinite(clip->timeEnd) && clip->timeEnd > clip->timeBegin) {
       const double duration = clip->timeEnd - clip->timeBegin;
       const double requestedTime = static_cast<double>(frame) / compositionFps;
-      const double relativeTime = std::isfinite(requestedTime)
-          ? std::fmod(std::max(0.0, requestedTime - clip->timeBegin),
-                      duration)
+      const double speed = std::isfinite(impl_->animationSpeed_)
+          ? std::clamp(impl_->animationSpeed_, 0.0f, 8.0f) : 1.0f;
+      const double local = std::isfinite(requestedTime)
+          ? std::max(0.0, requestedTime - clip->timeBegin) *
+            static_cast<double>(speed)
           : 0.0;
+      double relativeTime = std::fmod(local, duration);
+      if (impl_->animationPlaybackMode_ == 1) {
+        relativeTime = std::min(local, duration);
+      } else if (impl_->animationPlaybackMode_ == 2) {
+        const double span = duration * 2.0;
+        const double phase = span > 0.0 ? std::fmod(local, span) : 0.0;
+        relativeTime = phase <= duration ? phase : span - phase;
+      }
       setAnimationTime(clip->timeBegin + relativeTime,
                        impl_->skinAnimationClipIndex_);
     }
@@ -1860,6 +1931,23 @@ Artifact3DLayer::getLayerPropertyGroups() const {
     skinAnimationClipProp->setHardRange(0, 9999);
     renderGroup.addProperty(skinAnimationClipProp);
 
+    auto animationPlaybackModeProp = persistentLayerProperty(
+        QStringLiteral("animation.playbackMode"), PropertyType::Integer,
+        impl_->animationPlaybackMode_, -52);
+    animationPlaybackModeProp->setDisplayLabel(QStringLiteral("Playback Mode"));
+    animationPlaybackModeProp->setTooltip(QStringLiteral("0 = Loop, 1 = Hold last frame, 2 = PingPong"));
+    animationPlaybackModeProp->setHardRange(0, 2);
+    renderGroup.addProperty(animationPlaybackModeProp);
+
+    auto animationSpeedProp = persistentLayerProperty(
+        QStringLiteral("animation.speed"), PropertyType::Float,
+        impl_->animationSpeed_, -51);
+    animationSpeedProp->setDisplayLabel(QStringLiteral("Playback Speed"));
+    animationSpeedProp->setTooltip(QStringLiteral("Clip playback speed multiplier (0 = frozen)"));
+    animationSpeedProp->setHardRange(0.0, 8.0);
+    animationSpeedProp->setSoftRange(0.0, 2.0);
+    renderGroup.addProperty(animationSpeedProp);
+
     if (!impl_->mesh_.blendShapes().isEmpty()) {
       PropertyGroup morphGroup(QStringLiteral("Morphs"));
       for (int shapeIndex = 0;
@@ -2095,6 +2183,51 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   occlusionStrengthProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(occlusionStrengthProp);
 
+  auto uvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.uv.offsetU"), PropertyType::Float,
+      impl_->material_.uvOffsetU(), -28);
+  uvOffsetUProp->setDisplayLabel(QStringLiteral("UV Offset U"));
+  uvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(uvOffsetUProp);
+
+  auto uvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.uv.offsetV"), PropertyType::Float,
+      impl_->material_.uvOffsetV(), -27);
+  uvOffsetVProp->setDisplayLabel(QStringLiteral("UV Offset V"));
+  uvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(uvOffsetVProp);
+
+  auto uvScaleUProp = persistentLayerProperty(
+      QStringLiteral("material.uv.scaleU"), PropertyType::Float,
+      impl_->material_.uvScaleU(), -26);
+  uvScaleUProp->setDisplayLabel(QStringLiteral("UV Scale U"));
+  uvScaleUProp->setHardRange(0.01, 10.0);
+  materialGroup.addProperty(uvScaleUProp);
+
+  auto uvScaleVProp = persistentLayerProperty(
+      QStringLiteral("material.uv.scaleV"), PropertyType::Float,
+      impl_->material_.uvScaleV(), -25);
+  uvScaleVProp->setDisplayLabel(QStringLiteral("UV Scale V"));
+  uvScaleVProp->setHardRange(0.01, 10.0);
+  materialGroup.addProperty(uvScaleVProp);
+
+  auto uvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.uv.rotation"), PropertyType::Float,
+      impl_->material_.uvRotationDegrees(), -24);
+  uvRotationProp->setDisplayLabel(QStringLiteral("UV Rotation"));
+  uvRotationProp->setTooltip(QStringLiteral("Degrees, counter-clockwise around UV center"));
+  uvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(uvRotationProp);
+
+  auto envIntensityProp = persistentLayerProperty(
+      QStringLiteral("material.envIntensity"), PropertyType::Float,
+      impl_->material_.environmentIntensity(), -23);
+  envIntensityProp->setDisplayLabel(QStringLiteral("Environment Intensity"));
+  envIntensityProp->setTooltip(QStringLiteral("Per-material IBL scale for indirect light (0 = no environment response)"));
+  envIntensityProp->setHardRange(0.0, 4.0);
+  envIntensityProp->setSoftRange(0.0, 2.0);
+  materialGroup.addProperty(envIntensityProp);
+
   // MaterialX summary
   if (impl_->material_.materialXDocument().length() > 0) {
     auto materialXProp = persistentLayerProperty(
@@ -2176,6 +2309,18 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("animation.clipIndex")) {
     setSkinAnimationClipIndex(value.toInt());
+    return true;
+  } else if (propertyPath == QStringLiteral("animation.playbackMode")) {
+    impl_->animationPlaybackMode_ = std::clamp(value.toInt(), 0, 2);
+    impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("animation.speed")) {
+    const float speed = value.toFloat();
+    impl_->animationSpeed_ =
+        std::isfinite(speed) ? std::clamp(speed, 0.0f, 8.0f) : 1.0f;
+    impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
+    Q_EMIT changed();
     return true;
   } else if (propertyPath.startsWith(
                  QStringLiteral("deformers.blendShapes.")) &&
@@ -2318,6 +2463,30 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->material_.setOcclusionStrength(finiteClamped(value.toFloat(), impl_->material_.occlusionStrength(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.uv.offsetU")) {
+    impl_->material_.setUvOffsetU(finiteClamped(value.toFloat(), impl_->material_.uvOffsetU(), -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.uv.offsetV")) {
+    impl_->material_.setUvOffsetV(finiteClamped(value.toFloat(), impl_->material_.uvOffsetV(), -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.uv.scaleU")) {
+    impl_->material_.setUvScaleU(finiteClamped(value.toFloat(), impl_->material_.uvScaleU(), 0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.uv.scaleV")) {
+    impl_->material_.setUvScaleV(finiteClamped(value.toFloat(), impl_->material_.uvScaleV(), 0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.uv.rotation")) {
+    impl_->material_.setUvRotationDegrees(finiteClamped(value.toFloat(), impl_->material_.uvRotationDegrees(), -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.envIntensity")) {
+    impl_->material_.setEnvironmentIntensity(finiteClamped(value.toFloat(), impl_->material_.environmentIntensity(), 0.0f, 4.0f));
+    Q_EMIT changed();
+    return true;
   }
   return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
@@ -2340,7 +2509,7 @@ QString Artifact3DLayer::materialSignature() const
              "specular=%18|ior=%19|transmission=%20|clearcoat=%21|clearcoatRoughness=%22|"
              "alphaMode=%23|alphaCutoff=%24|emissionStrength=%25|opacity=%26|"
              "normalStrength=%27|occlusionStrength=%28|sheen=%29|solidTexture=%30|"
-             "wireOverlay=%31|graph=%32")
+             "wireOverlay=%31|graph=%32|uv=%33,%34,%35,%36,%37|env=%38")
       .arg(impl_->sourcePath_)
       .arg(impl_->material_.baseColorTexture().toQString())
       .arg(impl_->material_.metallicRoughnessTexture().toQString())
@@ -2372,7 +2541,13 @@ QString Artifact3DLayer::materialSignature() const
       .arg(impl_->material_.sheen(), 0, 'f', 6)
       .arg(impl_->useTextureInSolid_ ? 1 : 0)
       .arg(impl_->wireOverlay_ ? 1 : 0)
-      .arg(impl_->material_.materialGraphJson().toQString());
+      .arg(impl_->material_.materialGraphJson().toQString())
+      .arg(impl_->material_.uvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.uvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.uvScaleU(), 0, 'f', 6)
+      .arg(impl_->material_.uvScaleV(), 0, 'f', 6)
+      .arg(impl_->material_.uvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.environmentIntensity(), 0, 'f', 6);
 }
 
 void Artifact3DLayer::setMaterialGraphJson(const QString& json)

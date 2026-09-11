@@ -8566,12 +8566,73 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
 
   auto rotationProp = makeProp(QStringLiteral("transform.rotation"),
                                PropertyType::Float, t3.rotation(), -296);
-  rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
+  rotationProp->setDisplayLabel(is3D() ? QStringLiteral("Rotation Z")
+                                       : QStringLiteral("Rotation"));
   rotationProp->setUnit(QStringLiteral("deg"));
   rotationProp->setStep(1.0);
   rotationProp->setSoftRange(-180.0, 180.0);
   rotationProp->setAnimatable(true);
   transformGroup.addProperty(rotationProp);
+
+  // 3D layers animate X/Y rotation plus Z-axis position/scale/anchor, but the
+  // shared Transform group only exposed the 2D subset. Expose the remaining
+  // axis channels here (same Transform group, no new group) so 3-axis editing,
+  // keyframes, and expressions resolve without a separate UI contract.
+  if (is3D()) {
+    auto posZProp = makeProp(QStringLiteral("transform.position.z"),
+                             PropertyType::Float, t3.positionZ(), -293);
+    posZProp->setDisplayLabel(QStringLiteral("Position Z"));
+    posZProp->setUnit(QStringLiteral("px"));
+    posZProp->setStep(1.0);
+    posZProp->setSoftRange(-positionRangeX, positionRangeX);
+    posZProp->setAnimatable(true);
+    transformGroup.addProperty(posZProp);
+
+    auto rotXProp = makeProp(QStringLiteral("transform.rotation.x"),
+                             PropertyType::Float, t3.rotationX(), -292);
+    rotXProp->setDisplayLabel(QStringLiteral("Rotation X"));
+    rotXProp->setUnit(QStringLiteral("deg"));
+    rotXProp->setStep(1.0);
+    rotXProp->setSoftRange(-180.0, 180.0);
+    rotXProp->setAnimatable(true);
+    transformGroup.addProperty(rotXProp);
+
+    auto rotYProp = makeProp(QStringLiteral("transform.rotation.y"),
+                             PropertyType::Float, t3.rotationY(), -291);
+    rotYProp->setDisplayLabel(QStringLiteral("Rotation Y"));
+    rotYProp->setUnit(QStringLiteral("deg"));
+    rotYProp->setStep(1.0);
+    rotYProp->setSoftRange(-180.0, 180.0);
+    rotYProp->setAnimatable(true);
+    transformGroup.addProperty(rotYProp);
+
+    auto rotZProp = makeProp(QStringLiteral("transform.rotation.z"),
+                             PropertyType::Float, t3.rotation(), -290);
+    rotZProp->setDisplayLabel(QStringLiteral("Rotation Z (alias)"));
+    rotZProp->setTooltip(QStringLiteral("Same channel as Rotation; explicit Z path for expressions."));
+    rotZProp->setUnit(QStringLiteral("deg"));
+    rotZProp->setStep(1.0);
+    rotZProp->setSoftRange(-180.0, 180.0);
+    rotZProp->setAnimatable(true);
+    transformGroup.addProperty(rotZProp);
+
+    auto scaleZProp = makeProp(QStringLiteral("transform.scale.z"),
+                               PropertyType::Float, t3.scaleZ(), -289);
+    scaleZProp->setDisplayLabel(QStringLiteral("Scale Z"));
+    scaleZProp->setAnimatable(true);
+    scaleZProp->setStep(0.01);
+    scaleZProp->setSoftRange(0.0, 2.0);
+    transformGroup.addProperty(scaleZProp);
+
+    auto anchorZProp = makeProp(QStringLiteral("transform.anchor.z"),
+                                PropertyType::Float, t3.anchorZ(), -288);
+    anchorZProp->setDisplayLabel(QStringLiteral("Anchor Z"));
+    anchorZProp->setUnit(QStringLiteral("px"));
+    anchorZProp->setStep(1.0);
+    anchorZProp->setSoftRange(-anchorRangeX, anchorRangeX);
+    anchorZProp->setAnimatable(true);
+    transformGroup.addProperty(anchorZProp);
+  }
 
   auto autoOrientProp =
       makeProp(QStringLiteral("transform.autoOrient"), PropertyType::Integer,
@@ -10804,6 +10865,8 @@ SharedPtr<ArtifactCore::AbstractProperty> transformChannelProperty(
   if (path == QStringLiteral("transform.position.z"))
     return transform.channelProperty(ArtifactCore::TransformChannel::PositionZ);
   if (path == QStringLiteral("transform.rotation"))
+    return transform.channelProperty(ArtifactCore::TransformChannel::Rotation);
+  if (path == QStringLiteral("transform.rotation.z"))
     return transform.channelProperty(ArtifactCore::TransformChannel::Rotation);
   if (path == QStringLiteral("transform.rotation.x"))
     return transform.channelProperty(ArtifactCore::TransformChannel::RotationX);
