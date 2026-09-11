@@ -5229,6 +5229,33 @@ protected:
         event->accept();
         return;
       }
+      // F6: main-VP custom path vertex menu mirrors the Solo View context
+      // menu (Make Smooth/Corner, Open/Close Path). Pending-path creation
+      // stays disabled via hasHoveredShapePathVertex().
+      if (controller_->hasHoveredShapePathVertex()) {
+        QMenu shapeMenu(this);
+        QAction *smoothAction = shapeMenu.addAction(
+            controller_->hoveredShapePathVertexSmooth()
+                ? QStringLiteral("Make Corner")
+                : QStringLiteral("Make Smooth"));
+        smoothAction->setProperty("artifactShapeAction", QStringLiteral("smooth"));
+        QAction *closedAction = shapeMenu.addAction(
+            controller_->isSelectedShapePathClosed()
+                ? QStringLiteral("Open Path")
+                : QStringLiteral("Close Path"));
+        closedAction->setProperty("artifactShapeAction", QStringLiteral("closed"));
+        if (QAction *chosen = shapeMenu.exec(event->globalPos())) {
+          const QString action =
+              chosen->property("artifactShapeAction").toString();
+          if (action == QStringLiteral("smooth")) {
+            controller_->toggleHoveredShapePathSmooth();
+          } else if (action == QStringLiteral("closed")) {
+            controller_->toggleHoveredShapePathClosed();
+          }
+        }
+        event->accept();
+        return;
+      }
     }
     showViewportContextMenu(event->pos());
     event->accept();

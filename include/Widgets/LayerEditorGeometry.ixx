@@ -39,6 +39,12 @@ QPointF shapeStarInnerRadiusHandlePosition(const ArtifactShapeLayer& shape);
 int extrudePolygonVertex(std::vector<QPointF>& points, int sourceIndex);
 int extrudePathVertex(std::vector<CustomPathVertex>& vertices, int sourceIndex);
 
+// F6: corner<->bezier toggle for one custom-path vertex. Smooth-on seeds
+// handle offsets along the neighbor chord (keeps authored non-zero handles);
+// corner restores straight segments by discarding handle offsets.
+void togglePathVertexSmooth(std::vector<CustomPathVertex>& vertices, int index,
+                            bool closed);
+
 std::vector<QPointF> translateSelectedPolygon(
     const std::vector<QPointF>& source, const std::vector<int>& selected,
     const QPointF& delta);

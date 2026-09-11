@@ -347,6 +347,7 @@ import Artifact.Widgets.CompositionTextPuppetUndoCommands;
 import Artifact.Widgets.CompositionLayerUndoCommands;
 import Artifact.Widgets.CompositionEditUndoCommands;
 import Artifact.Widgets.CompositionGizmoUndoCommands;
+import Artifact.Widgets.LayerEditor.Geometry;
 
 
 
@@ -31023,6 +31024,141 @@ bool CompositionRenderController::clearShapePathSelection() {
 
 int CompositionRenderController::selectedShapePathVertexCount() const {
   return impl_ ? static_cast<int>(impl_->selectedShapePathVertices_.size()) : 0;
+}
+
+// F6: hovered-vertex open/closed and smooth/corner toggles. Mirrors the
+// deleteSelectedShapePathVertices guards and Undo tail; pending-path
+// creation disables every branch here by design.
+namespace {
+ArtifactShapeLayer *hoveredShapePathLayer(CompositionRenderController::Impl *impl,
+                                          ArtifactAbstractLayerPtr &layerOut) {
+  if (!impl || impl->pendingShapePathCreation_) {
+    return nullptr;
+  }
+  auto comp = impl->previewPipeline_.composition();
+  auto selectedLayer = (!impl->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape = selectedLayer
+                    ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape || !shape->hasCustomPath() || selectedLayer->isLocked() ||
+      selectedLayer->isSelectionLocked()) {
+    return nullptr;
+  }
+  const int hovered = impl->hoveredShapePathVertex_;
+  const auto vertices = shape->customPathVertices();
+  if (hovered < 0 || hovered >= static_cast<int>(vertices.size())) {
+    return nullptr;
+  }
+  layerOut = selectedLayer;
+  return shape;
+}
+}  // namespace
+
+bool CompositionRenderController::hasHoveredShapePathVertex() const {
+  if (!impl_) {
+    return false;
+  }
+  ArtifactAbstractLayerPtr layer;
+  return hoveredShapePathLayer(impl_, layer) != nullptr;
+}
+
+bool CompositionRenderController::hoveredShapePathVertexSmooth() const {
+  if (!impl_) {
+    return false;
+  }
+  ArtifactAbstractLayerPtr layer;
+  auto *shape = hoveredShapePathLayer(impl_, layer);
+  if (!shape) {
+    return false;
+  }
+  const auto vertices = shape->customPathVertices();
+  return vertices[static_cast<size_t>(impl_->hoveredShapePathVertex_)].smooth;
+}
+
+bool CompositionRenderController::isSelectedShapePathClosed() const {
+  if (!impl_ || impl_->pendingShapePathCreation_) {
+    return false;
+  }
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  auto *shape = selectedLayer
+                    ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
+                    : nullptr;
+  if (!shape || !shape->hasCustomPath()) {
+    return false;
+  }
+  return shape->customPathClosed();
+}
+
+bool CompositionRenderController::toggleHoveredShapePathClosed() {
+  if (!impl_ || impl_->isDraggingShapePathVertex_ ||
+      impl_->isDraggingShapePolygon_ || impl_->shapeParamDragMode_ != 0 ||
+      impl_->shapeOpDragOp_ >= 0) {
+    return false;
+  }
+  ArtifactAbstractLayerPtr selectedLayer;
+  auto *shape = hoveredShapePathLayer(impl_, selectedLayer);
+  if (!shape) {
+    return false;
+  }
+  const auto before = shape->customPathVertices();
+  const bool beforeClosed = shape->customPathClosed();
+  if (!beforeClosed && before.size() < 3) {
+    return false;
+  }
+  shape->setCustomPathVertices(before, !beforeClosed);
+  shape->setDirty(LayerDirtyFlag::Source);
+  auto *mgr = UndoManager::instance();
+  const bool pushed = !mgr || mgr->push(std::make_unique<ShapePathVertexEditCommand>(
+                                selectedLayer, before, before, beforeClosed,
+                                !beforeClosed));
+  if (!pushed) {
+    shape->setCustomPathVertices(before, beforeClosed);
+    shape->setDirty(LayerDirtyFlag::Source);
+    shape->changed();
+    return false;
+  }
+  impl_->publishLayerModified(selectedLayer, true);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::toggleHoveredShapePathSmooth() {
+  if (!impl_ || impl_->isDraggingShapePathVertex_ ||
+      impl_->isDraggingShapePolygon_ || impl_->shapeParamDragMode_ != 0 ||
+      impl_->shapeOpDragOp_ >= 0) {
+    return false;
+  }
+  ArtifactAbstractLayerPtr selectedLayer;
+  auto *shape = hoveredShapePathLayer(impl_, selectedLayer);
+  if (!shape) {
+    return false;
+  }
+  const auto before = shape->customPathVertices();
+  const bool beforeClosed = shape->customPathClosed();
+  auto after = before;
+  togglePathVertexSmooth(after, impl_->hoveredShapePathVertex_, beforeClosed);
+  shape->setCustomPathVertices(after, beforeClosed);
+  shape->setDirty(LayerDirtyFlag::Source);
+  auto *mgr = UndoManager::instance();
+  const bool pushed = !mgr || mgr->push(std::make_unique<ShapePathVertexEditCommand>(
+                                selectedLayer, before, after, beforeClosed,
+                                beforeClosed));
+  if (!pushed) {
+    shape->setCustomPathVertices(before, beforeClosed);
+    shape->setDirty(LayerDirtyFlag::Source);
+    shape->changed();
+    return false;
+  }
+  impl_->publishLayerModified(selectedLayer, true);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
 }
 
 namespace {

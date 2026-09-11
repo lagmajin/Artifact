@@ -20,6 +20,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ShapeCommands;
+import Artifact.Widgets.LayerEditor.Geometry;
 import Artifact.Widgets.LayerEditor.ShapeEditSession;
 import Artifact.Widgets.LayerEditor.ShapeHoverController;
 import Memory.SharedPtr;
@@ -437,13 +438,14 @@ LayerEditorShapeContextApplyResult applyLayerEditorShapeContextCommand(
    result.hoverTarget = LayerEditorShapeContextResultTarget::Path;
    return result;
   }
-  if (choice.command == LayerEditorShapeContextCommand::TogglePathSmooth) {
-   if (hoveredPathVertex < 0 ||
-       hoveredPathVertex >= static_cast<int>(vertices.size())) return result;
-   editSession.beginPath(layer);
-   auto& vertex = vertices[static_cast<size_t>(hoveredPathVertex)];
-   vertex.smooth = !vertex.smooth;
-   shape.setCustomPathVertices(vertices, closed);
+   if (choice.command == LayerEditorShapeContextCommand::TogglePathSmooth) {
+    if (hoveredPathVertex < 0 ||
+        hoveredPathVertex >= static_cast<int>(vertices.size())) return result;
+    editSession.beginPath(layer);
+    // F6: corner<->bezier also seeds/discards handle offsets so the
+    // tangent overlay and curve evaluation follow the flag.
+    togglePathVertexSmooth(vertices, hoveredPathVertex, closed);
+    shape.setCustomPathVertices(vertices, closed);
    editSession.markPathDirty();
    editSession.commitPath();
    result.handled = true;
