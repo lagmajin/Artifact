@@ -1795,8 +1795,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
     }
     if (useTwoPointFiveD) {
         std::stable_sort(resolvedGlyphs.begin(), resolvedGlyphs.end(),
-                         [](const ResolvedGlyph& left,
-                            const ResolvedGlyph& right) {
+                         [](const auto& left, const auto& right) {
             return left.item->offsetZ < right.item->offsetZ;
         });
     }
@@ -1922,7 +1921,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
         };
 
     constexpr float diagonal = 0.7071067811865476f;
-    for (const ResolvedGlyph& resolved : resolvedGlyphs) {
+    for (const auto& resolved : resolvedGlyphs) {
         const GlyphItem& glyph = *resolved.item;
         FloatColor fill = color;
         if (useGlyphColorOverrides && glyph.hasColorOverride) {
