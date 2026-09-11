@@ -293,7 +293,8 @@ public:
             return false;
         }
 
-        if (!pGlyphAtlasTexture_) {
+        const bool createdTexture = !pGlyphAtlasTexture_;
+        if (createdTexture) {
             TextureDesc desc;
             desc.Name = "GlyphAtlasTexture";
             desc.Type = RESOURCE_DIM_TEX_2D;
@@ -309,10 +310,18 @@ public:
             return false;
         }
 
+        const GlyphAtlasDirtyRegion dirtyRegion = pGlyphAtlas_->dirtyRegion();
+        const bool fullUpload = createdTexture || dirtyRegion.fullUpload ||
+                                !dirtyRegion.isValid();
+        const int updateX = fullUpload ? 0 : dirtyRegion.x;
+        const int updateY = fullUpload ? 0 : dirtyRegion.y;
+        const int updateWidth = fullUpload ? image.width() : dirtyRegion.width;
+        const int updateHeight = fullUpload ? image.height() : dirtyRegion.height;
         TextureSubResData subresource;
-        subresource.pData = image.constBits();
+        subresource.pData = image.constScanLine(updateY) + updateX * 4;
         subresource.Stride = image.bytesPerLine();
-        const Box updateBox(0, image.width(), 0, image.height(), 0, 1);
+        const Box updateBox(updateX, updateX + updateWidth, updateY,
+                            updateY + updateHeight, 0, 1);
         pContext_->UpdateTexture(
             pGlyphAtlasTexture_, 0, 0, updateBox, subresource,
             RESOURCE_STATE_TRANSITION_MODE_TRANSITION,

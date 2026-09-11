@@ -226,7 +226,8 @@ static bool updateGlyphAtlasTexture(RefCntAutoPtr<IRenderDevice> device,
     if (image.isNull() || image.format() != QImage::Format_RGBA8888) {
         return false;
     }
-    if (!texture) {
+    const bool createdTexture = !texture;
+    if (createdTexture) {
         TextureDesc desc;
         desc.Name = "GlyphAtlasTexture";
         desc.Type = RESOURCE_DIM_TEX_2D;
@@ -247,15 +248,24 @@ static bool updateGlyphAtlasTexture(RefCntAutoPtr<IRenderDevice> device,
             return false;
         }
     }
-    if (!atlas.isDirty()) {
+    if (!atlas.isDirty() && !createdTexture) {
         return true;
     }
 
+    const GlyphAtlasDirtyRegion dirtyRegion = atlas.dirtyRegion();
+    const bool fullUpload = createdTexture || dirtyRegion.fullUpload ||
+                            !dirtyRegion.isValid();
+    const int updateX = fullUpload ? 0 : dirtyRegion.x;
+    const int updateY = fullUpload ? 0 : dirtyRegion.y;
+    const int updateWidth = fullUpload ? image.width() : dirtyRegion.width;
+    const int updateHeight = fullUpload ? image.height() : dirtyRegion.height;
     TextureSubResData subresource;
-    subresource.pData = image.constBits();
+    subresource.pData = image.constScanLine(updateY) + updateX * 4;
     subresource.Stride = static_cast<Uint64>(image.bytesPerLine());
-    const Box updateBox(0, static_cast<Uint32>(image.width()), 0,
-                        static_cast<Uint32>(image.height()), 0, 1);
+    const Box updateBox(static_cast<Uint32>(updateX),
+                        static_cast<Uint32>(updateX + updateWidth),
+                        static_cast<Uint32>(updateY),
+                        static_cast<Uint32>(updateY + updateHeight), 0, 1);
     context->UpdateTexture(texture, 0, 0, updateBox, subresource,
                            RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
