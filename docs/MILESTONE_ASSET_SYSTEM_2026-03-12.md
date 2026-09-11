@@ -186,6 +186,7 @@ Project View／Project Model の tree、folder/bin、検索、type／unused／mi
 
 - Asset Browser and Project View classify the shared 3D model extension set and use the approved `asset_file_3d.svg` icon.
 - `FootageItem.assetId` is persisted in project JSON and restored into `AssetDatabase`; existing sidecar UUIDs are reused when available.
+- `Artifact3DLayer` persists `model.sourceAssetId` and registers the resolved model source with the same logical identity used by its Project Item.
 - Asset Browser displays 3D mesh metadata (vertex/polygon counts, bounds, importer backend, referenced textures) and exposes logical Asset ID copying.
 - Relink candidate search and confirmation preserve the logical Asset ID, invalidate decoded source payloads, and reject non-model replacements for model assets. Candidate reasons include same asset type.
 - Runtime/build acceptance remains pending. `blend`, `dae`, `usdz`, and `pmx` are classified as 3D by the detector but are not advertised as importer-supported until a matching backend exists.
