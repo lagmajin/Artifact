@@ -202,6 +202,35 @@ public:
     // Renderer-lifetime scratch for transformed text submission.  It avoids a
     // transient glyph list allocation for each rendered text layer.
     std::vector<ResolvedGlyph> glyphSubmissionScratch_;
+    struct ResolvedGlyphFont {
+        char32_t codePoint = 0;
+        QFont font;
+    };
+    // Font fallback is per code point.  Keep the resolved QFont values while
+    // the TextStyle is unchanged so a static text layer does not re-query the
+    // font database every frame.
+    std::optional<TextStyle> glyphFontCacheStyle_;
+    std::vector<ResolvedGlyphFont> glyphFontCache_;
+
+    const QFont& resolvedGlyphFont(const TextStyle& style,
+                                   char32_t codePoint) {
+        if (!glyphFontCacheStyle_ || *glyphFontCacheStyle_ != style) {
+            glyphFontCacheStyle_ = style;
+            glyphFontCache_.clear();
+        }
+        for (const ResolvedGlyphFont& entry : glyphFontCache_) {
+            if (entry.codePoint == codePoint) {
+                return entry.font;
+            }
+        }
+        if (glyphFontCache_.size() >= 2048) {
+            glyphFontCache_.clear();
+        }
+        const QString glyphText = QString::fromUcs4(&codePoint, 1);
+        glyphFontCache_.push_back(
+            {codePoint, FontManager::makeFont(style, glyphText)});
+        return glyphFontCache_.back().font;
+    }
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> pTexture;
@@ -319,6 +348,7 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
         impl_->pGlyphAtlas_ = std::make_unique<GlyphAtlas>();
     }
     impl_->glyphSubmissionScratch_.reserve(1024);
+    impl_->glyphFontCache_.reserve(1024);
 }
 
 void PrimitiveRenderer2D::destroy()
@@ -1756,12 +1786,12 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
     auto& resolvedGlyphs = impl_->glyphSubmissionScratch_;
     resolvedGlyphs.clear();
     for (const GlyphItem& glyph : glyphs) {
-        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
-        if (glyphText.isEmpty() || glyphText.at(0).isSpace()) {
+        if (QChar::isSpace(glyph.charCode)) {
             continue;
         }
 
-        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
+        const QFont& resolvedFont =
+            impl_->resolvedGlyphFont(style, glyph.charCode);
         GlyphKey key;
         key.codePoint = glyph.charCode;
         key.fontSize = style.fontSize;
