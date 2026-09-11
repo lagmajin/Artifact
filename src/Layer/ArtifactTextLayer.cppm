@@ -2988,13 +2988,10 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                             impl_->rubyText_.isEmpty() &&
                             impl_->textStyle_.leading <= 0.0f &&
                             impl_->paragraphStyle_.paragraphSpacing <= 0.0f;
-  // Keep the legacy immediate path for decorations/effects whose exact visual
-  // treatment has not yet moved to the cached-glyph renderer.  Plain fill-only
-  // text can reuse the layout computed below without shaping again per frame.
-  const bool cachedGlyphGpuText =
-      plainGpuText && !impl_->textStyle_.underline &&
-      !impl_->textStyle_.strikethrough && !impl_->textStyle_.strokeEnabled &&
-      !impl_->textStyle_.shadowEnabled;
+  // All eligible plain text shares this cached layout. Stroke and shadow use
+  // the same glyph quad primitives as the immediate path, so they do not need
+  // to trigger a second shaping pass.
+  const bool cachedGlyphGpuText = plainGpuText;
 
   if (plainGpuText) {
     impl_->renderPath_ = QStringLiteral("gpu-text");
@@ -3043,16 +3040,6 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       return;
     }
 
-    const qreal margin = textEffectMargin(impl_->textStyle_);
-    const qreal contentWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
-                                   ? impl_->paragraphStyle_.boxWidth
-                                   : std::max<qreal>(1.0, size.width - margin * 2.0);
-    const qreal contentHeight = boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
-                                    ? impl_->paragraphStyle_.boxHeight
-                                    : std::max<qreal>(1.0, size.height - margin * 2.0);
-    const QRectF textRect(margin, margin, contentWidth, contentHeight);
-    const QFont font = makeTextFont(impl_->textStyle_, displayText);
-    const Qt::Alignment alignment = alignmentFromParagraph(impl_->paragraphStyle_);
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
     const auto fillColor = FloatColor(
         impl_->textStyle_.fillColor.r(), impl_->textStyle_.fillColor.g(),
@@ -3068,37 +3055,29 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       impl_->renderPath_ = QStringLiteral("gpu-text-cached-glyphs");
       drawWithClonerEffect(
           this, baseTransform,
-          [renderer, fillColor, this](const QMatrix4x4 &transform,
-                                      float weight) {
+          [renderer, fillColor, strokeColor, shadowColor,
+           this](const QMatrix4x4 &transform, float weight) {
+            const float drawOpacity = this->opacity() * weight;
+            if (impl_->textStyle_.shadowEnabled) {
+              renderer->drawGlyphsTransformed(
+                  impl_->glyphs_, impl_->textStyle_, shadowColor, transform,
+                  impl_->glyphDrawOrigin_ +
+                      QPointF(impl_->textStyle_.shadowOffsetX,
+                              impl_->textStyle_.shadowOffsetY),
+                  drawOpacity, FloatColor(0.0f, 0.0f, 0.0f, 0.0f), 0.0f,
+                  0.0f, false);
+            }
+            const float outlineThickness = impl_->textStyle_.strokeEnabled
+                ? std::max(1.0f, impl_->textStyle_.strokeWidth * 0.5f)
+                : 0.0f;
             renderer->drawGlyphsTransformed(
                 impl_->glyphs_, impl_->textStyle_, fillColor, transform,
-                impl_->glyphDrawOrigin_, this->opacity() * weight);
+                impl_->glyphDrawOrigin_, drawOpacity, strokeColor,
+                outlineThickness, 0.0f, false);
           });
       return;
     }
-
-    drawWithClonerEffect(
-        this, baseTransform,
-        [renderer, textRect, displayText, font, alignment, fillColor,
-         strokeColor, shadowColor, this](const QMatrix4x4 &transform,
-                                         float weight) {
-          const float opacity = this->opacity() * weight;
-          if (impl_->textStyle_.shadowEnabled) {
-            renderer->drawTextTransformed(
-                textRect.translated(impl_->textStyle_.shadowOffsetX,
-                                    impl_->textStyle_.shadowOffsetY),
-                displayText, font, shadowColor, transform, alignment, opacity);
-          }
-          const FloatColor outlineColor = strokeColor;
-          float outlineThickness = 0.0f;
-          if (impl_->textStyle_.strokeEnabled) {
-            outlineThickness =
-                std::max(1.0f, impl_->textStyle_.strokeWidth * 0.5f);
-          }
-          renderer->drawTextTransformed(textRect, displayText, font, fillColor,
-                                        transform, alignment, opacity,
-                                        outlineColor, outlineThickness);
-        });
+    impl_->renderPath_ = QStringLiteral("gpu-text-empty-glyphs");
     return;
   }
 
