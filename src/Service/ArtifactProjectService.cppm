@@ -6165,13 +6165,15 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
     if (oldIdentity == newIdentity) {
       return true;
     }
-    if (ArtifactCore::AssetDatabase::instance().findAssetByPath(oldIdentity).isNull()) {
+    const QUuid assetId = ArtifactCore::AssetDatabase::instance().findAssetByPath(oldIdentity);
+    if (assetId.isNull()) {
       return true;
     }
     if (!ArtifactCore::AssetDatabase::instance().relinkAssetPath(oldIdentity,
                                                                    newIdentity)) {
       return false;
     }
+    ArtifactCore::AssetManager::instance().invalidateSource(assetId);
     databaseChanges.append(qMakePair(oldIdentity, newIdentity));
     return true;
   };
