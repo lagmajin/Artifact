@@ -555,6 +555,8 @@ namespace Artifact
                     sourcePath = json.value(QStringLiteral("image.sourcePath")).toString();
                 } else if (json.contains(QStringLiteral("svg.sourcePath"))) {
                     sourcePath = json.value(QStringLiteral("svg.sourcePath")).toString();
+                } else if (json.contains(QStringLiteral("model.sourcePath"))) {
+                    sourcePath = json.value(QStringLiteral("model.sourcePath")).toString();
                 } else if (json.contains(QStringLiteral("sourcePath"))) {
                     sourcePath = json.value(QStringLiteral("sourcePath")).toString();
                 }

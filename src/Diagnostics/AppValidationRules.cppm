@@ -47,6 +47,8 @@ auto ArtifactMissingFileRule::validate(const void* project) -> std::vector<Artif
             sourcePath = json.value("image.sourcePath").toString();
         } else if (json.contains("svg.sourcePath")) {
             sourcePath = json.value("svg.sourcePath").toString();
+        } else if (json.contains("model.sourcePath")) {
+            sourcePath = json.value("model.sourcePath").toString();
         } else if (json.contains("sourcePath")) {
             sourcePath = json.value("sourcePath").toString();
         }
