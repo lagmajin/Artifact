@@ -69,6 +69,7 @@ import Artifact.Service.Playback;
 import Artifact.Audio.ScrubController;
 import Asset.Manager;
 import Asset.Database;
+import Asset.Importer;
 import Undo.UndoManager;
 import Composition.PreCompose;
 import Control.OSC.Input;
@@ -6355,6 +6356,14 @@ bool ArtifactProjectService::relinkFootageByPath(const QString &oldFilePath,
   }
   auto *footage = findFootageItemByPath(oldFilePath);
   if (!footage) {
+    return false;
+  }
+  const ArtifactCore::AssetType oldType =
+      ArtifactCore::AssetImporter::detectType(oldFilePath);
+  const ArtifactCore::AssetType newType =
+      ArtifactCore::AssetImporter::detectType(newFilePath);
+  if (oldType == ArtifactCore::AssetType::Model &&
+      newType != ArtifactCore::AssetType::Model) {
     return false;
   }
   return relinkFootage(footage, newFilePath);
