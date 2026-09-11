@@ -32,6 +32,7 @@
 #include <QVector>
 #include <QColor>
 #include <QStringList>
+#include <QUuid>
 export module Artifact.Project.Items;
 
 
@@ -85,8 +86,10 @@ export namespace Artifact {
  // 2. ۃNXiKvȃf[^̂ݕێj
  class FootageItem : public ProjectItem {
  public:
-  eProjectItemType type() const override { return eProjectItemType::Footage; }
+ eProjectItemType type() const override { return eProjectItemType::Footage; }
   QString filePath;
+  // Stable logical asset identity; filePath remains the resolved local source.
+  QUuid assetId;
   QStringList sequencePaths;
   double frameRate = 0.0;
   bool isSequence = false;

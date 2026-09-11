@@ -42,6 +42,8 @@ import Artifact.Project.CreationDefaults;
 import Property.SerializationBridge;
 import Application.AppSettings;
 import Asset.Manager;
+import Asset.Database;
+import Asset.Importer;
 import Memory.SharedPtr;
 
 import Artifact.Project.Items;
@@ -257,6 +259,11 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   auto fi = QFileInfo(canonicalPath);
   auto footageUp = std::make_unique<FootageItem>();
   footageUp->filePath = canonicalPath;
+  const AssetType detectedAssetType = AssetImporter::detectType(canonicalPath);
+  const auto assetMeta = ArtifactAssetMetaFile::load(canonicalPath);
+  footageUp->assetId = AssetDatabase::instance().registerAsset(
+      canonicalPath, detectedAssetType,
+      assetMeta.isValid() ? assetMeta.uuid() : QUuid{});
   footageUp->name.setQString(fi.fileName());
   footageUp->sequencePaths = sequencePaths;
   footageUp->frameRate = frameRate > 0.0 ? frameRate : 0.0;
@@ -492,6 +499,16 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
         footageUp->id = Id(idStr);
       }
       footageUp->filePath = obj.value(QStringLiteral("filePath")).toString();
+      footageUp->assetId = QUuid::fromString(
+          obj.value(QStringLiteral("assetId")).toString());
+      if (footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
+        const AssetType detectedAssetType =
+            AssetImporter::detectType(footageUp->filePath);
+        if (detectedAssetType != AssetType::Unknown) {
+          footageUp->assetId = AssetDatabase::instance().registerAsset(
+              footageUp->filePath, detectedAssetType);
+        }
+      }
       footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
       footageUp->subimageIndex = std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
       footageUp->frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
@@ -882,6 +899,9 @@ QJsonArray compsArray;
        obj["type"] = "footage";
        const auto* footage = static_cast<const FootageItem*>(item);
        obj["filePath"] = footage->filePath;
+       if (!footage->assetId.isNull()) {
+        obj["assetId"] = footage->assetId.toString(QUuid::WithoutBraces);
+       }
        obj["filePathExists"] = QFileInfo(footage->filePath).exists();
        if (footage->subimageIndex >= 0) {
         obj["subimageIndex"] = footage->subimageIndex;
@@ -1974,6 +1994,16 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
       footageUp->name.setQString(name);
       footageUp->tags = tags;
       footageUp->filePath = obj["filePath"].toString();
+      footageUp->assetId = QUuid::fromString(
+          obj.value(QStringLiteral("assetId")).toString());
+      if (footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
+        const AssetType detectedAssetType =
+            AssetImporter::detectType(footageUp->filePath);
+        if (detectedAssetType != AssetType::Unknown) {
+          footageUp->assetId = AssetDatabase::instance().registerAsset(
+              footageUp->filePath, detectedAssetType);
+        }
+      }
       if (obj.value(QStringLiteral("assetUsage")).toString().compare(
               QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
         footageUp->assetUsage = ProjectAssetUsage::RenderInput;
