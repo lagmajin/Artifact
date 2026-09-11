@@ -3752,10 +3752,37 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
          .arg(QString::number(boundsMax.y(), 'f', 3))
          .arg(QString::number(boundsMax.z(), 'f', 3));
     }
-    info += QString("Importer: %1<br>").arg(
-        importer.lastBackend() == ArtifactCore::MeshImporter::Backend::None
-            ? QStringLiteral("Unavailable")
-            : QStringLiteral("Ready"));
+    QString importerName = QStringLiteral("None");
+    switch (importer.lastBackend()) {
+    case ArtifactCore::MeshImporter::Backend::Ufbx:
+      importerName = QStringLiteral("ufbx");
+      break;
+    case ArtifactCore::MeshImporter::Backend::UfbxGltf:
+      importerName = QStringLiteral("ufbx-gltf");
+      break;
+    case ArtifactCore::MeshImporter::Backend::TinyObj:
+      importerName = QStringLiteral("tinyobj");
+      break;
+    case ArtifactCore::MeshImporter::Backend::PMD:
+      importerName = QStringLiteral("PMD");
+      break;
+    case ArtifactCore::MeshImporter::Backend::Usda:
+      importerName = QStringLiteral("USDA");
+      break;
+    case ArtifactCore::MeshImporter::Backend::Stl:
+      importerName = QStringLiteral("STL");
+      break;
+    case ArtifactCore::MeshImporter::Backend::Ply:
+      importerName = QStringLiteral("PLY");
+      break;
+    case ArtifactCore::MeshImporter::Backend::Las:
+      importerName = QStringLiteral("LAS");
+      break;
+    default:
+      break;
+    }
+    info += QString("Importer: %1 (%2)<br>").arg(
+        importerName, mesh ? QStringLiteral("Loaded") : QStringLiteral("Failed"));
     const QString importError = importer.lastError().trimmed();
     if (!mesh && !importError.isEmpty()) {
      info += QString("Model import: %1<br>").arg(importError.toHtmlEscaped());
