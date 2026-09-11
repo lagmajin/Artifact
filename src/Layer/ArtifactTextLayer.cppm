@@ -165,6 +165,20 @@ public:
   };
   std::optional<CacheKey> lastCacheKey_;
 
+  struct RichGpuRun {
+    std::vector<GlyphItem> glyphs;
+    TextStyle style;
+    FloatColor fill;
+    QFont font;
+    QPointF origin;
+    int sourceUtf16Start = 0;
+    qreal width = 0.0;
+    bool underline = false;
+    bool strikethrough = false;
+  };
+  std::optional<CacheKey> richGpuCacheKey_;
+  std::vector<RichGpuRun> richGpuRuns_;
+
   Impl();
 };
 
@@ -3146,212 +3160,226 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       impl_->writingMode_ == TextWritingMode::Horizontal &&
       impl_->rubyText_.isEmpty();
   if (richGpuText) {
-    QTextDocument document;
-    document.setUndoRedoEnabled(false);
-    document.setDefaultFont(
-        FontManager::makeFont(impl_->textStyle_, displayText));
-
-    QTextOption option = document.defaultTextOption();
-    switch (impl_->paragraphStyle_.wrapMode) {
-    case TextWrapMode::NoWrap:
-      option.setWrapMode(QTextOption::NoWrap);
-      break;
-    case TextWrapMode::WrapAnywhere:
-      option.setWrapMode(QTextOption::WrapAnywhere);
-      break;
-    case TextWrapMode::ManualWrap:
-      option.setWrapMode(QTextOption::ManualWrap);
-      break;
-    case TextWrapMode::WordWrap:
-    default:
-      option.setWrapMode(QTextOption::WordWrap);
-      break;
+    const Impl::CacheKey richCacheKey{UniString(displayText), impl_->textStyle_,
+                                      impl_->paragraphStyle_,
+                                      impl_->writingMode_, impl_->rubyText_,
+                                      impl_->rubyScale_, impl_->layoutMode_,
+                                      impl_->pathSegments_};
+    if (hasEnabledAnimators) {
+      impl_->richGpuCacheKey_.reset();
     }
-    option.setAlignment(alignmentFromParagraph(impl_->paragraphStyle_));
-    document.setDefaultTextOption(option);
-    document.setHtml(displayText);
+    const bool reuseRichGpuRuns =
+        !hasEnabledAnimators && !impl_->isDirty_ &&
+        impl_->richGpuCacheKey_ &&
+        *impl_->richGpuCacheKey_ == richCacheKey &&
+        !impl_->richGpuRuns_.empty() && sourceSize().width > 0 &&
+        sourceSize().height > 0;
+    auto& runs = impl_->richGpuRuns_;
+    bool hasUnsupportedRichObject = false;
+    QString richPlainText;
 
-    if (impl_->paragraphStyle_.paragraphSpacing > 0.0f ||
-        impl_->textStyle_.leading > 0.0f) {
+    if (!reuseRichGpuRuns) {
+      impl_->richGpuCacheKey_.reset();
+      runs.clear();
+      QTextDocument document;
+      document.setUndoRedoEnabled(false);
+      document.setDefaultFont(
+          FontManager::makeFont(impl_->textStyle_, displayText));
+
+      QTextOption option = document.defaultTextOption();
+      switch (impl_->paragraphStyle_.wrapMode) {
+      case TextWrapMode::NoWrap:
+        option.setWrapMode(QTextOption::NoWrap);
+        break;
+      case TextWrapMode::WrapAnywhere:
+        option.setWrapMode(QTextOption::WrapAnywhere);
+        break;
+      case TextWrapMode::ManualWrap:
+        option.setWrapMode(QTextOption::ManualWrap);
+        break;
+      case TextWrapMode::WordWrap:
+      default:
+        option.setWrapMode(QTextOption::WordWrap);
+        break;
+      }
+      option.setAlignment(alignmentFromParagraph(impl_->paragraphStyle_));
+      document.setDefaultTextOption(option);
+      document.setHtml(displayText);
+
+      if (impl_->paragraphStyle_.paragraphSpacing > 0.0f ||
+          impl_->textStyle_.leading > 0.0f) {
+        for (QTextBlock block = document.begin(); block.isValid();
+             block = block.next()) {
+          QTextCursor cursor(block);
+          QTextBlockFormat format = block.blockFormat();
+          if (impl_->paragraphStyle_.paragraphSpacing > 0.0f) {
+            format.setBottomMargin(impl_->paragraphStyle_.paragraphSpacing);
+          }
+          if (impl_->textStyle_.leading > 0.0f) {
+            format.setLineHeight(impl_->textStyle_.leading * 100.0f,
+                                 QTextBlockFormat::ProportionalHeight);
+          }
+          cursor.setBlockFormat(format);
+        }
+      }
+      if (boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f) {
+        document.setTextWidth(impl_->paragraphStyle_.boxWidth);
+      }
+      document.adjustSize();
+      richPlainText = document.toPlainText();
+
+      const qreal documentWidth = document.size().width();
+      const qreal documentHeight = document.size().height();
+      const qreal contentWidth =
+          boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
+              ? impl_->paragraphStyle_.boxWidth
+              : documentWidth;
+      const qreal contentHeight =
+          boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
+              ? impl_->paragraphStyle_.boxHeight
+              : documentHeight;
+      const qreal margin =
+          24.0 +
+          (impl_->textStyle_.strokeEnabled ? impl_->textStyle_.strokeWidth
+                                           : 0.0) +
+          (impl_->textStyle_.shadowEnabled ? impl_->textStyle_.shadowBlur * 2.0
+                                           : 0.0);
+      const int width = std::max(
+          1, static_cast<int>(std::ceil(contentWidth + margin * 2.0)));
+      const int height = std::max(
+          1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)));
+      setSourceSize(Size_2D(width, height));
+
+      qreal verticalOffset = 0.0;
+      if (boxLayout && contentHeight > documentHeight) {
+        switch (impl_->paragraphStyle_.verticalAlignment) {
+        case TextVerticalAlignment::Middle:
+          verticalOffset = (contentHeight - documentHeight) * 0.5;
+          break;
+        case TextVerticalAlignment::Bottom:
+          verticalOffset = contentHeight - documentHeight;
+          break;
+        case TextVerticalAlignment::Top:
+        default:
+          break;
+        }
+      }
+
+      QAbstractTextDocumentLayout* documentLayout = document.documentLayout();
       for (QTextBlock block = document.begin(); block.isValid();
            block = block.next()) {
-        QTextCursor cursor(block);
-        QTextBlockFormat format = block.blockFormat();
-        if (impl_->paragraphStyle_.paragraphSpacing > 0.0f) {
-          format.setBottomMargin(impl_->paragraphStyle_.paragraphSpacing);
+        QTextLayout* blockLayout = block.layout();
+        const QRectF blockRect = documentLayout->blockBoundingRect(block);
+        for (auto fragmentIt = block.begin(); !fragmentIt.atEnd();
+             ++fragmentIt) {
+          const QTextFragment fragment = fragmentIt.fragment();
+          if (!fragment.isValid() || fragment.length() <= 0) {
+            continue;
+          }
+          if (fragment.charFormat().isImageFormat()) {
+            hasUnsupportedRichObject = true;
+            continue;
+          }
+          const int fragmentStart = fragment.position() - block.position();
+          const int fragmentEnd = fragmentStart + fragment.length();
+          for (int lineIndex = 0; lineIndex < blockLayout->lineCount();
+               ++lineIndex) {
+            const QTextLine line = blockLayout->lineAt(lineIndex);
+            const int lineStart = line.textStart();
+            const int lineEnd = lineStart + line.textLength();
+            const int runStart = std::max(fragmentStart, lineStart);
+            const int runEnd = std::min(fragmentEnd, lineEnd);
+            if (runStart >= runEnd) {
+              continue;
+            }
+
+            const QString runText = fragment.text().mid(
+                runStart - fragmentStart, runEnd - runStart);
+            if (runText.isEmpty()) {
+              continue;
+            }
+            const qreal cursorStart = line.cursorToX(runStart);
+            const qreal cursorEnd = line.cursorToX(runEnd);
+            const qreal runX = std::min(cursorStart, cursorEnd);
+            const qreal runWidth = std::abs(cursorEnd - cursorStart);
+
+            QFont runFont = fragment.charFormat().font();
+            if (runFont.family().isEmpty()) {
+              runFont.setFamily(document.defaultFont().family());
+            }
+            if (runFont.pointSizeF() <= 0.0) {
+              runFont.setPointSizeF(document.defaultFont().pointSizeF());
+            }
+
+            TextStyle runStyle = impl_->textStyle_;
+            runStyle.fontFamily = UniString(runFont.family());
+            runStyle.fontSize = static_cast<float>(runFont.pointSizeF());
+            runStyle.pixelSize = runStyle.fontSize;
+            runStyle.fontWeight =
+                runFont.bold() ? FontWeight::Bold : FontWeight::Normal;
+            runStyle.fontWeightValue = runFont.weight();
+            runStyle.fontStyle =
+                runFont.italic() ? FontStyle::Italic : FontStyle::Normal;
+            runStyle.allCaps = false;
+            runStyle.leading = -1.0f;
+
+            QColor runQColor;
+            if (fragment.charFormat().foreground().style() != Qt::NoBrush) {
+              runQColor = fragment.charFormat().foreground().color();
+            } else {
+              runQColor = QColor::fromRgbF(
+                  impl_->textStyle_.fillColor.r(),
+                  impl_->textStyle_.fillColor.g(),
+                  impl_->textStyle_.fillColor.b(),
+                  impl_->textStyle_.fillColor.a());
+            }
+            runStyle.fillColor = toFloatRGBA(runQColor);
+
+            ParagraphStyle runParagraph;
+            runParagraph.wrapMode = TextWrapMode::NoWrap;
+            const TextShapingResult shaped = layoutTextShape(
+                UniString(runText), runStyle, runParagraph,
+                impl_->writingMode_, {}, TextLayoutMode::Point, {});
+            if (shaped.glyphs.empty()) {
+              continue;
+            }
+
+            const QPointF linePosition = line.position();
+            Impl::RichGpuRun run;
+            run.glyphs = shaped.glyphs;
+            run.style = runStyle;
+            run.fill = FloatColor(
+                runQColor.redF(), runQColor.greenF(), runQColor.blueF(),
+                runQColor.alphaF());
+            run.font = runFont;
+            run.origin = QPointF(
+                margin + blockRect.left() + linePosition.x() + runX,
+                margin + verticalOffset + blockRect.top() + linePosition.y());
+            run.sourceUtf16Start = block.position() + runStart;
+            run.width = std::max<qreal>(
+                runWidth, QFontMetricsF(runFont).horizontalAdvance(runText));
+            run.underline = impl_->textStyle_.underline || runFont.underline();
+            run.strikethrough =
+                impl_->textStyle_.strikethrough || runFont.strikeOut();
+            runs.push_back(std::move(run));
+          }
         }
-        if (impl_->textStyle_.leading > 0.0f) {
-          format.setLineHeight(impl_->textStyle_.leading * 100.0f,
-                               QTextBlockFormat::ProportionalHeight);
-        }
-        cursor.setBlockFormat(format);
       }
-    }
-    if (boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f) {
-      document.setTextWidth(impl_->paragraphStyle_.boxWidth);
-    }
-    document.adjustSize();
 
-    const qreal documentWidth = document.size().width();
-    const qreal documentHeight = document.size().height();
-    const qreal contentWidth =
-        boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
-            ? impl_->paragraphStyle_.boxWidth
-            : documentWidth;
-    const qreal contentHeight =
-        boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
-            ? impl_->paragraphStyle_.boxHeight
-            : documentHeight;
-    const qreal margin =
-        24.0 +
-        (impl_->textStyle_.strokeEnabled ? impl_->textStyle_.strokeWidth
-                                         : 0.0) +
-        (impl_->textStyle_.shadowEnabled ? impl_->textStyle_.shadowBlur * 2.0
-                                         : 0.0);
-    const int width = std::max(
-        1, static_cast<int>(std::ceil(contentWidth + margin * 2.0)));
-    const int height = std::max(
-        1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)));
-    setSourceSize(Size_2D(width, height));
-
-    qreal verticalOffset = 0.0;
-    if (boxLayout && contentHeight > documentHeight) {
-      switch (impl_->paragraphStyle_.verticalAlignment) {
-      case TextVerticalAlignment::Middle:
-        verticalOffset = (contentHeight - documentHeight) * 0.5;
-        break;
-      case TextVerticalAlignment::Bottom:
-        verticalOffset = contentHeight - documentHeight;
-        break;
-      case TextVerticalAlignment::Top:
-      default:
-        break;
-      }
-    }
-
-    struct RichGpuRun {
-      std::vector<GlyphItem> glyphs;
-      TextStyle style;
-      FloatColor fill;
-      QFont font;
-      QPointF origin;
-      int sourceUtf16Start = 0;
-      qreal width = 0.0;
-      bool underline = false;
-      bool strikethrough = false;
-    };
-    std::vector<RichGpuRun> runs;
-    bool hasUnsupportedRichObject = false;
-    QAbstractTextDocumentLayout* documentLayout = document.documentLayout();
-    for (QTextBlock block = document.begin(); block.isValid();
-         block = block.next()) {
-      QTextLayout* blockLayout = block.layout();
-      const QRectF blockRect = documentLayout->blockBoundingRect(block);
-      for (auto fragmentIt = block.begin(); !fragmentIt.atEnd();
-           ++fragmentIt) {
-        const QTextFragment fragment = fragmentIt.fragment();
-        if (!fragment.isValid() || fragment.length() <= 0) {
-          continue;
-        }
-        if (fragment.charFormat().isImageFormat()) {
-          hasUnsupportedRichObject = true;
-          continue;
-        }
-        const int fragmentStart = fragment.position() - block.position();
-        const int fragmentEnd = fragmentStart + fragment.length();
-        for (int lineIndex = 0; lineIndex < blockLayout->lineCount();
-             ++lineIndex) {
-          const QTextLine line = blockLayout->lineAt(lineIndex);
-          const int lineStart = line.textStart();
-          const int lineEnd = lineStart + line.textLength();
-          const int runStart = std::max(fragmentStart, lineStart);
-          const int runEnd = std::min(fragmentEnd, lineEnd);
-          if (runStart >= runEnd) {
-            continue;
-          }
-
-          const QString runText = fragment.text().mid(
-              runStart - fragmentStart, runEnd - runStart);
-          if (runText.isEmpty()) {
-            continue;
-          }
-          const qreal cursorStart = line.cursorToX(runStart);
-          const qreal cursorEnd = line.cursorToX(runEnd);
-          const qreal runX = std::min(cursorStart, cursorEnd);
-          const qreal runWidth = std::abs(cursorEnd - cursorStart);
-
-          QFont runFont = fragment.charFormat().font();
-          if (runFont.family().isEmpty()) {
-            runFont.setFamily(document.defaultFont().family());
-          }
-          if (runFont.pointSizeF() <= 0.0) {
-            runFont.setPointSizeF(document.defaultFont().pointSizeF());
-          }
-
-          TextStyle runStyle = impl_->textStyle_;
-          runStyle.fontFamily = UniString(runFont.family());
-          runStyle.fontSize = static_cast<float>(runFont.pointSizeF());
-          runStyle.pixelSize = runStyle.fontSize;
-          runStyle.fontWeight =
-              runFont.bold() ? FontWeight::Bold : FontWeight::Normal;
-          runStyle.fontWeightValue = runFont.weight();
-          runStyle.fontStyle =
-              runFont.italic() ? FontStyle::Italic : FontStyle::Normal;
-          runStyle.allCaps = false;
-          runStyle.leading = -1.0f;
-
-          QColor runQColor;
-          if (fragment.charFormat().foreground().style() != Qt::NoBrush) {
-            runQColor = fragment.charFormat().foreground().color();
-          } else {
-            runQColor = QColor::fromRgbF(
-                impl_->textStyle_.fillColor.r(),
-                impl_->textStyle_.fillColor.g(),
-                impl_->textStyle_.fillColor.b(),
-                impl_->textStyle_.fillColor.a());
-          }
-          runStyle.fillColor = toFloatRGBA(runQColor);
-
-          ParagraphStyle runParagraph;
-          runParagraph.wrapMode = TextWrapMode::NoWrap;
-          const TextShapingResult shaped = layoutTextShape(
-              UniString(runText), runStyle, runParagraph,
-              impl_->writingMode_, {}, TextLayoutMode::Point, {});
-          if (shaped.glyphs.empty()) {
-            continue;
-          }
-
-          const QPointF linePosition = line.position();
-          RichGpuRun run;
-          run.glyphs = shaped.glyphs;
-          run.style = runStyle;
-          run.fill = FloatColor(
-              runQColor.redF(), runQColor.greenF(), runQColor.blueF(),
-              runQColor.alphaF());
-          run.font = runFont;
-          run.origin = QPointF(
-              margin + blockRect.left() + linePosition.x() + runX,
-              margin + verticalOffset + blockRect.top() + linePosition.y());
-          run.sourceUtf16Start = block.position() + runStart;
-          run.width = std::max<qreal>(
-              runWidth, QFontMetricsF(runFont).horizontalAdvance(runText));
-          run.underline = impl_->textStyle_.underline || runFont.underline();
-          run.strikethrough =
-              impl_->textStyle_.strikethrough || runFont.strikeOut();
-          runs.push_back(std::move(run));
-        }
+      if (!hasEnabledAnimators && !runs.empty() &&
+          !hasUnsupportedRichObject) {
+        impl_->richGpuCacheKey_ = richCacheKey;
       }
     }
 
     if (!runs.empty() && !hasUnsupportedRichObject) {
       if (hasEnabledAnimators) {
-        const QString plainText = document.toPlainText();
         TextShapingRequest metadataRequest;
-        metadataRequest.text = plainText;
+        metadataRequest.text = richPlainText;
         metadataRequest.style = impl_->textStyle_;
         metadataRequest.paragraph = impl_->paragraphStyle_;
         metadataRequest.writingMode = impl_->writingMode_;
-        metadataRequest.baseDirection = inferredBaseDirection(plainText);
+        metadataRequest.baseDirection = inferredBaseDirection(richPlainText);
         metadataRequest.locale = QLocale::system().name();
         const TextShapingResult metadata = QtShapingBackend{}.shape(metadataRequest);
         QHash<int, const GlyphItem *> metadataByIndex;
@@ -3365,7 +3393,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
         for (size_t runIndex = 0; runIndex < runs.size(); ++runIndex) {
           auto &run = runs[runIndex];
           const int codepointStart =
-              plainText.left(run.sourceUtf16Start).toUcs4().size();
+              richPlainText.left(run.sourceUtf16Start).toUcs4().size();
           for (size_t glyphIndex = 0; glyphIndex < run.glyphs.size(); ++glyphIndex) {
             GlyphItem glyph = run.glyphs[glyphIndex];
             const int globalIndex = codepointStart + glyph.index;
@@ -3394,7 +3422,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
             fieldDrivenGlyphWeights(this, evaluationGlyphs);
         TextAnimatorEngine::applyAnimatorSets(
             evaluationGlyphs, animatorStack,
-            static_cast<float>(animatorTime.toSeconds()), plainText,
+            static_cast<float>(animatorTime.toSeconds()), richPlainText,
             glyphFieldWeights);
 
         for (size_t i = 0; i < evaluationGlyphs.size(); ++i) {
@@ -3435,7 +3463,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           [renderer, &runs, strokeColor, shadowColor,
            this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
               const float drawOpacity = this->opacity() * weight * lensOpacity;
-            for (const RichGpuRun& run : runs) {
+            for (const Impl::RichGpuRun& run : runs) {
               if (impl_->textStyle_.shadowEnabled) {
                 renderer->drawGlyphsTransformed(
                     run.glyphs, run.style, shadowColor, transform,
@@ -3487,8 +3515,9 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       impl_->renderedBuffer_.reset();
       impl_->isDirty_ = false;
       impl_->renderPath_ = QStringLiteral("gpu-rich-text");
-      drawFractureOverlay(renderer, baseTransform, QSizeF(width, height),
-                          opacity());
+      const auto sourceSize = this->sourceSize();
+      drawFractureOverlay(renderer, baseTransform,
+                          QSizeF(sourceSize.width, sourceSize.height), opacity());
       return;
     }
     impl_->renderPath_ = hasUnsupportedRichObject
