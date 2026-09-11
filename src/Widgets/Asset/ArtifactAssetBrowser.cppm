@@ -115,6 +115,7 @@ import Widgets.Dialog.InterpretFootage;
 import Artifact.Event.Types;
 import Event.Bus;
 import Asset;
+import Asset.Database;
 import Configuration.LayeredConfigStore;
 import Artifact.Project.Manager;
 import Artifact.Project.PresetManager;
@@ -125,6 +126,7 @@ import AssetDirectoryModel;
 import Utils.String.UniString;
 import Media.SourceInterpret;
 import File.TypeDetector;
+import MeshImporter;
 import Codec.Thumbnail.FFmpeg;
 import Artifact.Audio.Waveform;
 import Audio.Segment;
@@ -3612,6 +3614,16 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
    }
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
+   const ArtifactCore::AssetType detectedAssetType =
+       ArtifactCore::AssetImporter::detectType(filePath);
+   if (detectedAssetType != ArtifactCore::AssetType::Unknown &&
+       detectedAssetType != ArtifactCore::AssetType::Folder) {
+    const QUuid assetId = ArtifactCore::AssetDatabase::instance().registerAsset(
+        filePath, detectedAssetType);
+    if (!assetId.isNull()) {
+     info += QString("Asset ID: %1<br>").arg(assetId.toString(QUuid::WithoutBraces));
+    }
+   }
    info += impl_->assetStatusInfoHtml(impl_->assetStatusForPaths(filePath, sequencePaths));
    info += QString("Source Uses: %1<br>").arg(impl_->sourceUseCountForPath(filePath, sequencePaths));
    info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
@@ -3719,6 +3731,48 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    else if (impl_->isFontFile(fileName)) {
     info += QString("Kind: Font<br>");
     // Font-specific information could be added here if needed
+   }
+   else if (impl_->fileType(fileName) == ArtifactCore::FileType::Model3D) {
+    ArtifactCore::MeshImporter importer;
+    const auto mesh = importer.importMeshFromFile(
+        ArtifactCore::UniString::fromQString(filePath));
+    info += QString("Kind: 3D Model<br>");
+    info += QString("Format: %1<br>").arg(fileInfo.suffix().toUpper());
+    if (mesh) {
+     info += QString("Vertices: %1<br>").arg(mesh->vertexCount());
+     info += QString("Polygons: %1<br>").arg(mesh->polygonCount());
+     const QVector3D boundsMin = mesh->boundingBoxMin();
+     const QVector3D boundsMax = mesh->boundingBoxMax();
+     info += QString("Bounds: (%1, %2, %3) → (%4, %5, %6)<br>")
+         .arg(QString::number(boundsMin.x(), 'f', 3))
+         .arg(QString::number(boundsMin.y(), 'f', 3))
+         .arg(QString::number(boundsMin.z(), 'f', 3))
+         .arg(QString::number(boundsMax.x(), 'f', 3))
+         .arg(QString::number(boundsMax.y(), 'f', 3))
+         .arg(QString::number(boundsMax.z(), 'f', 3));
+    }
+    info += QString("Importer: %1<br>").arg(
+        importer.lastBackend() == ArtifactCore::MeshImporter::Backend::None
+            ? QStringLiteral("Unavailable")
+            : QStringLiteral("Ready"));
+    const QString importError = importer.lastError().trimmed();
+    if (!mesh && !importError.isEmpty()) {
+     info += QString("Model import: %1<br>").arg(importError.toHtmlEscaped());
+    }
+    QStringList texturePaths;
+    const QString baseColor = importer.lastBaseColorTexture();
+    const QString metallicRoughness = importer.lastMetallicRoughnessTexture();
+    const QString normal = importer.lastNormalTexture();
+    const QString emission = importer.lastEmissionTexture();
+    const QString occlusion = importer.lastOcclusionTexture();
+    const QString opacity = importer.lastOpacityTexture();
+    for (const QString& texturePath : {baseColor, metallicRoughness, normal,
+                                       emission, occlusion, opacity}) {
+     if (!texturePath.isEmpty() && !texturePaths.contains(texturePath)) {
+      texturePaths.append(texturePath);
+     }
+    }
+    info += QString("Referenced Textures: %1<br>").arg(texturePaths.size());
    }
    else if (fileName.toLower().endsWith(QStringLiteral(".mask.json"))) {
     info += QString("Kind: Mask Preset<br>");
