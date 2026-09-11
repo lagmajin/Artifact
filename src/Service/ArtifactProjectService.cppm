@@ -6423,6 +6423,12 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
     oldAssetId = ArtifactCore::AssetDatabase::instance().findAssetByPath(
         oldFilePath);
   }
+  if (oldAssetId.isNull()) {
+    const auto oldMeta = ArtifactCore::ArtifactAssetMetaFile::load(oldFilePath);
+    if (oldMeta.isValid()) {
+      oldAssetId = oldMeta.uuid();
+    }
+  }
   QDirIterator iterator(root.absolutePath(), QDir::Files,
                         QDirIterator::Subdirectories);
   while (iterator.hasNext()) {
