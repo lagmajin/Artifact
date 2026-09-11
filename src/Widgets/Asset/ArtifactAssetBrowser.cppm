@@ -116,6 +116,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Asset;
 import Asset.Database;
+import AssetType;
 import Configuration.LayeredConfigStore;
 import Artifact.Project.Manager;
 import Artifact.Project.PresetManager;

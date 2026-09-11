@@ -44,6 +44,7 @@ import Application.AppSettings;
 import Asset.Manager;
 import Asset.Database;
 import Asset.Importer;
+import AssetType;
 import Memory.SharedPtr;
 
 import Artifact.Project.Items;
