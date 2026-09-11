@@ -3933,12 +3933,12 @@ if (item.isFolder) {
     });
    }
 
-// Relink action for footage items
+// Relink action for imported assets, including 3D model footage items.
 if (!item.isFolder) {
-  addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath, item]() {
+  addAction(allMenu, QStringLiteral("Relink Selected Asset..."), [this, filePath, item]() {
     if (filePath.isEmpty()) return;
     // Show file dialog to select new file path
-    QString newPath = QFileDialog::getOpenFileName(nullptr, "Relink Footage", QDir::homePath(), "All Files (*.*)");
+    QString newPath = QFileDialog::getOpenFileName(nullptr, "Relink Asset", QDir::homePath(), "All Files (*.*)");
     if (newPath.isEmpty()) return;
     // Relink the footage item by path
     auto* svc = ArtifactProjectService::instance();
@@ -3967,7 +3967,7 @@ if (!item.isFolder) {
                     "every expected frame with matching numbering and padding.\n\n"
                     "Current status: %1")
                     .arg(item.type.toQString())
-              : QStringLiteral("The selected footage could not be relinked."));
+              : QStringLiteral("The selected asset could not be relinked."));
     }
   });
 

@@ -6216,7 +6216,9 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
        QStringLiteral("image.sourcePath"),
        QStringLiteral("video.sourcePath"),
        QStringLiteral("audio.sourcePath"),
-       QStringLiteral("svg.sourcePath")};
+       QStringLiteral("svg.sourcePath"),
+       QStringLiteral("model.sourcePath"),
+       QStringLiteral("sourcePath")};
    std::function<void(ProjectItem*)> updateLayers = [&](ProjectItem* item) {
     if (!item) return;
     if (item->type() == eProjectItemType::Composition) {
