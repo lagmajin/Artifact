@@ -3738,7 +3738,7 @@ struct CreativeComputeSlot {
 
 struct CreativeComputeCache {
     std::mutex mutex;
-    std::unordered_map<std::string, CreativeComputeSlot> slots;
+    std::unordered_map<std::string, CreativeComputeSlot> entries;
 };
 
 CreativeComputeCache& creativeComputeCache() {
@@ -3797,8 +3797,8 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
         CreativeComputeCache& cache = creativeComputeCache();
         std::lock_guard<std::mutex> lock(cache.mutex);
         const std::string key(label);
-        CreativeComputeSlot& slot = cache.slots[key];
-        if (!slot.device || slot.device.Get() != device.Get() ||
+        CreativeComputeSlot& slot = cache.entries[key];
+        if (!slot.device || slot.device.RawPtr() != device.RawPtr() ||
             slot.shaderSource != hlsl) {
             // Fresh device, backend switch, or a new shader behind this label:
             // drop everything and start over. COM refs release themselves.
@@ -3840,7 +3840,7 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
             pipeline.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
             if (!slot.executor->build(pipeline) ||
                 !slot.executor->createShaderResourceBinding(true)) {
-                cache.slots.erase(key);
+                cache.entries.erase(key);
                 releaseSharedRenderDevice();
                 return false;
             }
