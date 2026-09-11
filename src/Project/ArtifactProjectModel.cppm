@@ -230,7 +230,9 @@ void ArtifactProjectModel::Impl::refreshTree()
     return QStringList{QStringLiteral("obj"), QStringLiteral("fbx"), QStringLiteral("gltf"),
                        QStringLiteral("glb"), QStringLiteral("pmd"), QStringLiteral("ply"),
                        QStringLiteral("las"), QStringLiteral("usd"), QStringLiteral("usda"),
-                       QStringLiteral("usdc"), QStringLiteral("abc"), QStringLiteral("stl")}
+                       QStringLiteral("usdc"), QStringLiteral("usdz"), QStringLiteral("abc"),
+                       QStringLiteral("blend"), QStringLiteral("dae"), QStringLiteral("pmx"),
+                       QStringLiteral("stl")}
         .contains(suffix);
   };
 

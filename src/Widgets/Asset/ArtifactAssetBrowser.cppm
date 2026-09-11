@@ -875,7 +875,9 @@ ArtifactAssetBrowser::Impl::~Impl()
           lower.endsWith(".pmd") || lower.endsWith(".ply") ||
           lower.endsWith(".las") || lower.endsWith(".usd") ||
           lower.endsWith(".usda") ||
-          lower.endsWith(".usdc") || lower.endsWith(".abc") ||
+          lower.endsWith(".usdc") || lower.endsWith(".usdz") ||
+          lower.endsWith(".abc") || lower.endsWith(".blend") ||
+          lower.endsWith(".dae") || lower.endsWith(".pmx") ||
           lower.endsWith(".stl");
   }
 
@@ -1234,7 +1236,10 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
   QStringLiteral("usd"),
   QStringLiteral("usda"),
   QStringLiteral("usdc"),
-  QStringLiteral("usdz")
+  QStringLiteral("usdz"),
+  QStringLiteral("blend"),
+  QStringLiteral("dae"),
+  QStringLiteral("pmx")
  };
  if (modelSuffixes.contains(suffix)) {
   const QIcon icon(QStringLiteral(":/icons/Studio/asset_file_3d.svg"));
