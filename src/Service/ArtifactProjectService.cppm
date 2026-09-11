@@ -6157,6 +6157,17 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
 
   const QString oldRepresentativePath = footage->filePath;
   const QStringList oldSequencePaths = footage->sequencePaths;
+  if (!footage->isSequence && !footage->assetId.isNull() &&
+      !oldRepresentativePath.trimmed().isEmpty() &&
+      ArtifactCore::AssetDatabase::instance().findAssetByPath(
+          oldRepresentativePath).isNull()) {
+    const ArtifactCore::AssetType sourceType =
+        ArtifactCore::AssetImporter::detectType(oldRepresentativePath);
+    if (sourceType != ArtifactCore::AssetType::Unknown) {
+      ArtifactCore::AssetDatabase::instance().registerAsset(
+          oldRepresentativePath, sourceType, footage->assetId);
+    }
+  }
   QVector<QPair<QString, QString>> databaseChanges;
   const auto registerDatabaseChange = [&](const QString& oldPath,
                                            const QString& newPath) {
