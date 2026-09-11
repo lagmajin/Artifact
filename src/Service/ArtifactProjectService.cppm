@@ -6406,9 +6406,10 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
         normalizedOldPath) {
       continue;
     }
+    const ArtifactCore::AssetType candidateAssetType =
+        ArtifactCore::AssetImporter::detectType(candidateInfo.absoluteFilePath());
     if (oldAssetType == ArtifactCore::AssetType::Model &&
-        ArtifactCore::AssetImporter::detectType(candidateInfo.absoluteFilePath()) !=
-            ArtifactCore::AssetType::Model) {
+        candidateAssetType != ArtifactCore::AssetType::Model) {
       continue;
     }
     int score = 0;
@@ -6485,6 +6486,11 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
         candidateInfo.size() == oldInfo.size()) {
       score += 10;
       reasons.append(QStringLiteral("same size"));
+    }
+    if (oldAssetType != ArtifactCore::AssetType::Unknown &&
+        candidateAssetType == oldAssetType) {
+      score += 15;
+      reasons.append(QStringLiteral("same asset type"));
     }
     const QString oldDirectory = QDir::cleanPath(oldInfo.absolutePath());
     const QString candidateDirectory =
