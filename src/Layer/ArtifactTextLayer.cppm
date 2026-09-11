@@ -2988,6 +2988,13 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                             impl_->rubyText_.isEmpty() &&
                             impl_->textStyle_.leading <= 0.0f &&
                             impl_->paragraphStyle_.paragraphSpacing <= 0.0f;
+  // Keep the legacy immediate path for decorations/effects whose exact visual
+  // treatment has not yet moved to the cached-glyph renderer.  Plain fill-only
+  // text can reuse the layout computed below without shaping again per frame.
+  const bool cachedGlyphGpuText =
+      plainGpuText && !impl_->textStyle_.underline &&
+      !impl_->textStyle_.strikethrough && !impl_->textStyle_.strokeEnabled &&
+      !impl_->textStyle_.shadowEnabled;
 
   if (plainGpuText) {
     impl_->renderPath_ = QStringLiteral("gpu-text");
@@ -3022,6 +3029,9 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       setSourceSize(Size_2D(
           std::max(1, static_cast<int>(std::ceil(contentWidth + margin * 2.0))),
           std::max(1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)))));
+      impl_->glyphBounds_ = glyphBounds;
+      impl_->glyphDrawOrigin_ =
+          QPointF(margin - glyphBounds.left(), margin - glyphBounds.top());
       impl_->renderedImage_ = QImage();
       impl_->renderedBuffer_.reset();
       impl_->lastCacheKey_ = currentKey;
@@ -3053,6 +3063,19 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     const auto shadowColor = FloatColor(
         impl_->textStyle_.shadowColor.r(), impl_->textStyle_.shadowColor.g(),
         impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a());
+
+    if (cachedGlyphGpuText && !impl_->glyphs_.empty()) {
+      impl_->renderPath_ = QStringLiteral("gpu-text-cached-glyphs");
+      drawWithClonerEffect(
+          this, baseTransform,
+          [renderer, fillColor, this](const QMatrix4x4 &transform,
+                                      float weight) {
+            renderer->drawGlyphsTransformed(
+                impl_->glyphs_, impl_->textStyle_, fillColor, transform,
+                impl_->glyphDrawOrigin_, this->opacity() * weight);
+          });
+      return;
+    }
 
     drawWithClonerEffect(
         this, baseTransform,
