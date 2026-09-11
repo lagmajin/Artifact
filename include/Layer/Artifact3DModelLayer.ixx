@@ -11,6 +11,7 @@ module;
 export module Artifact.Layers.Model3D;
 
 import Artifact.Layer.Abstract;
+import Material.Material;
 import Mesh;
 
 export namespace Artifact {
@@ -75,6 +76,7 @@ export namespace Artifact {
     ModelRenderMode renderMode() const;
     void setRenderMode(ModelRenderMode mode);
     const ArtifactCore::Mesh& mesh() const;
+    const ArtifactCore::Material& material() const;
     void setSkinPoseMatrices(const QVector<QMatrix4x4>& boneMatrices);
 
     // ArtifactIRenderer interface

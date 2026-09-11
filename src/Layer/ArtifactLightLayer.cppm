@@ -550,7 +550,13 @@ void ArtifactLightLayer::setGoboInvert(bool enabled)
 }
 
 float ArtifactLightLayer::shadowRadius() const { return lightImpl_->shadowRadius_; }
-void ArtifactLightLayer::setShadowRadius(float r) { lightImpl_->shadowRadius_ = r; changed(); }
+void ArtifactLightLayer::setShadowRadius(float r) {
+  // UI radius maps to Core softness via /10; MeshRenderer clamps softness to
+  // 0..2, so 0..20 is the effective range. Keep the stored value in range so
+  // the slider, JSON, and rendered result agree.
+  lightImpl_->shadowRadius_ = std::isfinite(r) ? std::clamp(r, 0.0f, 20.0f) : 10.0f;
+  changed();
+}
 
 bool ArtifactLightLayer::castsShadows() const { return lightImpl_->castsShadows_; }
 void ArtifactLightLayer::setCastsShadows(bool e) { lightImpl_->castsShadows_ = e; changed(); }
@@ -727,12 +733,12 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         QStringLiteral("Light/Shadow Radius"),
         ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->shadowRadius_), -120);
-    radiusProp->setHardRange(0.0, 500.0);
-    radiusProp->setSoftRange(0.0, 200.0);
+    radiusProp->setHardRange(0.0, 20.0);
+    radiusProp->setSoftRange(0.0, 10.0);
     radiusProp->setUnit(QStringLiteral("px"));
-    radiusProp->setTooltip(QStringLiteral("Shadow softness: 0 = hard edge, 10 = default soft, larger = softer (3x3 PCF blend)"));
-    radiusProp->setInlineHelp(QStringLiteral("0 = hard edge; 10 = default soft."));
-    radiusProp->setWhatsThis(QStringLiteral("Softness of the cast shadow.\n0 draws a hard edge; 10 is the default soft look; larger spreads wider.\nNo effect when Shadows is off or on Point/Area lights."));
+    radiusProp->setTooltip(QStringLiteral("Shadow softness: 0 = hard edge, 10 = default soft, 20 = softest (3x3 PCF blend)"));
+    radiusProp->setInlineHelp(QStringLiteral("0 = hard edge; 10 = default soft; 20 = softest."));
+    radiusProp->setWhatsThis(QStringLiteral("Softness of the cast shadow.\n0 draws a hard edge; 10 is the default soft look; 20 is the softest.\nNo effect when Shadows is off or on Point/Area lights."));
     lightOptions.addProperty(radiusProp);
 
     auto glowEnabledProp = persistentLayerProperty(

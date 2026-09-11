@@ -322,6 +322,9 @@ void zoomFill();
   float gizmoScale() const;
 
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
+  // Click-to-focus: exact ray-triangle hit distance projected onto the
+  // active camera forward axis. Returns true when a focus distance was set.
+  bool focusActiveCameraAtViewportPos(const QPointF& viewportPos);
   bool resetProjectedFrameHandleAt(const QPointF& viewportPos);
   bool resetSelected3DAnchorToCenter();
   bool resetSelected3DTransform();
@@ -425,6 +428,13 @@ void handleMouseMove(const QPointF& viewportPos);
   void selectAllShapePathVertices();
   bool clearShapePathSelection();
   int selectedShapePathVertexCount() const;
+  // F6: hovered-vertex open/closed and smooth/corner toggles for the main-VP
+  // right-click menu. No-ops while a pending path is being created.
+  bool hasHoveredShapePathVertex() const;
+  bool hoveredShapePathVertexSmooth() const;
+  bool isSelectedShapePathClosed() const;
+  bool toggleHoveredShapePathClosed();
+  bool toggleHoveredShapePathSmooth();
   // F5: operator HUD/trim handles (first TrimPaths + first single-value op).
   bool beginShapeOperatorDrag(const QPointF& viewportPos);
   void updateShapeOperatorDrag(const QPointF& viewportPos);

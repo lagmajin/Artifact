@@ -46,6 +46,45 @@ int extrudePathVertex(std::vector<CustomPathVertex>& vertices, int sourceIndex)
  return insertedIndex;
 }
 
+void togglePathVertexSmooth(std::vector<CustomPathVertex>& vertices, int index,
+                            bool closed)
+{
+ if (index < 0 || index >= static_cast<int>(vertices.size())) return;
+ auto& vertex = vertices[static_cast<size_t>(index)];
+ vertex.smooth = !vertex.smooth;
+ if (!vertex.smooth) {
+  vertex.inTangent = QPointF();
+  vertex.outTangent = QPointF();
+  return;
+ }
+ if (vertex.inTangent != QPointF() || vertex.outTangent != QPointF()) return;
+ const int count = static_cast<int>(vertices.size());
+ QPointF direction;
+ const auto neighborPos = [&](int i) { return vertices[static_cast<size_t>(i)].pos; };
+ if (count >= 3) {
+  const bool isFirst = index == 0;
+  const bool isLast = index == count - 1;
+  if (!closed && (isFirst || isLast)) {
+   const QPointF neighbor = isFirst ? neighborPos(1) : neighborPos(count - 2);
+   direction = isFirst ? neighbor - vertex.pos : vertex.pos - neighbor;
+  } else {
+   direction = neighborPos((index + 1) % count) -
+               neighborPos((index + count - 1) % count);
+  }
+ } else if (count == 2) {
+  direction = index == 0 ? neighborPos(1) - vertex.pos
+                         : vertex.pos - neighborPos(0);
+ }
+ double length = std::hypot(direction.x(), direction.y());
+ if (!(length > 0.0)) direction = QPointF(1.0, 0.0);
+ else direction /= length;
+ double neighborDistance = length;
+ double handleLength = std::clamp(neighborDistance * 0.25, 4.0, 64.0);
+ if (!(handleLength > 0.0)) handleLength = 16.0;
+ vertex.inTangent = -direction * handleLength;
+ vertex.outTangent = direction * handleLength;
+}
+
 std::vector<QPointF> translateSelectedPolygon(
     const std::vector<QPointF>& source, const std::vector<int>& selected,
     const QPointF& delta)

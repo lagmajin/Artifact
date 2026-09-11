@@ -22,6 +22,7 @@ module;
 #include <span>
 #include <string>
 #include <vector>
+#include <Graphics/InstanceData.h>
 
 struct ArtifactRendererFloat2 {
   float x = 0.0f;
@@ -489,6 +490,14 @@ public:
                 int shadingMode = 3,
                 const QMatrix4x4 *previousModelMatrix = nullptr,
                 Diligent::ITextureView *baseColorTextureView = nullptr);
+  // Instanced mesh draw for CloneLayer 3D sources. Instance transforms must
+  // already be world-space; the mesh-shader LOD path, ray-tracing
+  // registration, and debug shading-mode override stay single-instance only.
+  void drawMeshInstanced(const QString &cacheKey,
+                         const ArtifactCore::Mesh &mesh,
+                         const ArtifactCore::Material &material,
+                         const std::vector<ArtifactCore::InstanceData> &instances,
+                         float opacity = 1.0f, int shadingMode = 3);
 
   void drawCheckerboard(float x, float y, float w, float h, float tileSize,
                         const FloatColor &c1, const FloatColor &c2);

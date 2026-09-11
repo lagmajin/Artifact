@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstdint>
 #include <QSize>
 #include <QRectF>
 #include <QImage>
@@ -18,6 +19,7 @@ module;
 module Artifact.Layer.Clone;
 
 import Artifact.Layers;
+import Artifact.Layers.Model3D;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Clone.Core;
 import Artifact.Effect.Clone.Basic;
@@ -61,6 +63,12 @@ QString cloneModeName(CloneMode mode)
     }
     return QStringLiteral("Linear");
 }
+
+// Generation budget shared with the GPU instanced-draw clamp
+// (ArtifactIRenderer kMaxInstancedMeshDraw). Counts are lower-bounded by the
+// UI/JSON layer; this caps the upper end so a large grid cannot hang the
+// frame building CloneData every draw.
+static constexpr int kMaxGeneratedClones = 4096;
 
 float jitterSample(int seed, int index, int channel)
 {
@@ -268,6 +276,42 @@ void applyJsonToCloneEffector(AbstractCloneEffector& effector, const QJsonObject
         
         return instances;
     }
+
+    // World-space instances for 3D sources: premultiplies each clone matrix
+    // with the clone layer's global transform and bakes the layer opacity
+    // into the instance alpha (weight stays separate: the VS multiplies
+    // color by weight). Mirrors the transpose convention of
+    // ArtifactIRenderer::drawMesh's single-instance path: QMatrix4x4 storage
+    // is column-major, InstanceData.transform is row-major for mul(float4, M).
+    // Note: the Phase-2 converter above copies matrices without transposing,
+    // so it must not be reused for GPU submission; this helper replaces it
+    // on the 3D path.
+    std::vector<ArtifactCore::InstanceData> cloneDataToWorldInstanceData(
+        const std::vector<CloneData>& clones, const QMatrix4x4& global,
+        float layerOpacity)
+    {
+        std::vector<ArtifactCore::InstanceData> instances;
+        instances.reserve(clones.size());
+        for (const auto& clone : clones) {
+            if (!clone.visible) {
+                continue;
+            }
+            ArtifactCore::InstanceData instance = cloneDataToInstanceData(clone);
+            const QMatrix4x4 world = global * clone.transform;
+            const float* worldData = world.constData();
+            for (int row = 0; row < 4; ++row) {
+                for (int col = 0; col < 4; ++col) {
+                    instance.transform[row * 4 + col] = worldData[col * 4 + row];
+                    instance.previousTransform[row * 4 + col] =
+                        worldData[col * 4 + row];
+                }
+            }
+            instance.color[3] = std::clamp(
+                clone.color.alphaF() * layerOpacity, 0.0f, 1.0f);
+            instances.push_back(instance);
+        }
+        return instances;
+    }
 } // anonymous namespace
 
 
@@ -297,8 +341,50 @@ ArtifactCloneLayer::~ArtifactCloneLayer() {
     delete impl_;
 }
 
+bool ArtifactCloneLayer::drawInstancedSource(ArtifactIRenderer* renderer) {
+    const LayerID sourceId = impl_->settings_.sourceLayerId;
+    if (sourceId.isNil()) {
+        return false;
+    }
+    auto* composition =
+        dynamic_cast<ArtifactAbstractComposition*>(compositionObject());
+    if (!composition) {
+        return false;
+    }
+    const auto source = composition->layerById(sourceId);
+    const auto* modelSource =
+        source ? dynamic_cast<const Artifact3DLayer*>(source.get()) : nullptr;
+    if (!modelSource) {
+        return false;
+    }
+    const ArtifactCore::Mesh& mesh = modelSource->mesh();
+    if (mesh.vertexCount() <= 0) {
+        return true;
+    }
+    auto clones = generateCloneData();
+    if (clones.empty()) {
+        return true;
+    }
+    auto instances = cloneDataToWorldInstanceData(
+        clones, getGlobalTransform4x4(), opacity());
+    if (instances.empty()) {
+        return true;
+    }
+    // Geometry-identity key: source id plus mesh revision so source edits
+    // re-upload instead of serving stale geometry.
+    const QString cacheKey = QStringLiteral("clone3d|src=%1|rev=%2")
+        .arg(sourceId.toString(), QString::number(mesh.revision()));
+    renderer->drawMeshInstanced(cacheKey, mesh, modelSource->material(),
+                                instances, 1.0f, 3);
+    return true;
+}
+
 void ArtifactCloneLayer::draw(ArtifactIRenderer* renderer) {
     if (!renderer || !isVisible() || opacity() <= 0.0f) {
+        return;
+    }
+
+    if (drawInstancedSource(renderer)) {
         return;
     }
 
@@ -510,7 +596,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
     
     if (impl_->settings_.mode == CloneMode::Linear ||
         impl_->settings_.mode == CloneMode::LinearJitter) {
-        const int total = std::max(1, impl_->settings_.cloneCount);
+        const int total = std::min(kMaxGeneratedClones,
+                                   std::max(1, impl_->settings_.cloneCount));
         clones.reserve(static_cast<size_t>(total));
         for (int i = 0; i < total; ++i) {
             CloneData clone;
@@ -533,7 +620,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         }
     } else if (impl_->settings_.mode == CloneMode::Curve ||
                impl_->settings_.mode == CloneMode::Spline) {
-        const int total = std::max(1, impl_->settings_.cloneCount);
+        const int total = std::min(kMaxGeneratedClones,
+                                   std::max(1, impl_->settings_.cloneCount));
         clones.reserve(static_cast<size_t>(total));
         const float start = impl_->settings_.curveStartAngle;
         const float end = impl_->settings_.curveEndAngle;
@@ -556,7 +644,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             clones.push_back(clone);
         }
     } else if (impl_->settings_.mode == CloneMode::Random) {
-        const int total = std::max(1, impl_->settings_.cloneCount);
+        const int total = std::min(kMaxGeneratedClones,
+                                   std::max(1, impl_->settings_.cloneCount));
         clones.reserve(static_cast<size_t>(total));
         ArtifactCore::RandomStream rng(static_cast<uint64_t>(
             static_cast<uint32_t>(impl_->settings_.seed)));
@@ -597,14 +686,21 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         const int cols = std::max(1, impl_->settings_.columns);
         const int rows = std::max(1, impl_->settings_.rows);
         const int depth = std::max(1, impl_->settings_.depth);
-        const int total = cols * rows * depth;
+        const int64_t requested =
+            static_cast<int64_t>(cols) * static_cast<int64_t>(rows) *
+            static_cast<int64_t>(depth);
+        const int total = static_cast<int>(
+            std::min<int64_t>(requested, kMaxGeneratedClones));
         clones.reserve(static_cast<size_t>(total));
 
         QVector3D startPos = -impl_->settings_.gridSpacing * QVector3D(cols - 1, rows - 1, depth - 1) * 0.5f;
 
         for (int z = 0; z < depth; ++z) {
+            if (static_cast<int>(clones.size()) >= kMaxGeneratedClones) break;
             for (int y = 0; y < rows; ++y) {
+                if (static_cast<int>(clones.size()) >= kMaxGeneratedClones) break;
                 for (int x = 0; x < cols; ++x) {
+                    if (static_cast<int>(clones.size()) >= kMaxGeneratedClones) break;
                     CloneData clone;
                     clone.index = static_cast<int>(clones.size());
                     clone.sourceIndex = impl_->settings_.sourceIndex;
@@ -620,7 +716,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             }
         }
     } else if (impl_->settings_.mode == CloneMode::Radial) {
-        const int total = std::max(1, impl_->settings_.radialCount);
+        const int total = std::min(kMaxGeneratedClones,
+                                     std::max(1, impl_->settings_.radialCount));
         clones.reserve(static_cast<size_t>(total));
         // Curve モードと同じ終端契約: 最後のクローンが endAngle に到達する。
         const float angleStep = total > 1

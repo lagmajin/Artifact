@@ -1129,7 +1129,7 @@ public:
     case NavigationFeedbackMode::None:
       break;
     }
-    return QStringLiteral("Nav: Alt+LMB Orbit | MMB Pan | Wheel Zoom");
+    return QStringLiteral("Nav: Alt+LMB Orbit | MMB Pan | Wheel Zoom | Alt+2xClick Focus");
   }
   void setOverlayVisible(bool visible) {
     if (overlayWidget_) {
@@ -4990,6 +4990,14 @@ protected:
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
     if (controller_) {
+      // Alt+double-click: focus the active camera on the exact 3D hit point.
+      // Single Alt+LMB stays orbit; plain double-click keeps its reset/inline
+      // edit behavior below.
+      if (event->modifiers().testFlag(Qt::AltModifier) &&
+          controller_->focusActiveCameraAtViewportPos(event->position())) {
+        event->accept();
+        return;
+      }
       if (controller_->resetHoveredMaskTangent()) {
         event->accept();
         return;
@@ -5224,6 +5232,33 @@ protected:
             } else if (action == QStringLiteral("opacityOutSelected")) {
               controller_->adjustHoveredMaskOpacityForSelectedLayers(-0.1f);
             }
+          }
+        }
+        event->accept();
+        return;
+      }
+      // F6: main-VP custom path vertex menu mirrors the Solo View context
+      // menu (Make Smooth/Corner, Open/Close Path). Pending-path creation
+      // stays disabled via hasHoveredShapePathVertex().
+      if (controller_->hasHoveredShapePathVertex()) {
+        QMenu shapeMenu(this);
+        QAction *smoothAction = shapeMenu.addAction(
+            controller_->hoveredShapePathVertexSmooth()
+                ? QStringLiteral("Make Corner")
+                : QStringLiteral("Make Smooth"));
+        smoothAction->setProperty("artifactShapeAction", QStringLiteral("smooth"));
+        QAction *closedAction = shapeMenu.addAction(
+            controller_->isSelectedShapePathClosed()
+                ? QStringLiteral("Open Path")
+                : QStringLiteral("Close Path"));
+        closedAction->setProperty("artifactShapeAction", QStringLiteral("closed"));
+        if (QAction *chosen = shapeMenu.exec(event->globalPos())) {
+          const QString action =
+              chosen->property("artifactShapeAction").toString();
+          if (action == QStringLiteral("smooth")) {
+            controller_->toggleHoveredShapePathSmooth();
+          } else if (action == QStringLiteral("closed")) {
+            controller_->toggleHoveredShapePathClosed();
           }
         }
         event->accept();
