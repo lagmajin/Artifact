@@ -190,6 +190,7 @@ Project View／Project Model の tree、folder/bin、検索、type／unused／mi
 - Asset Browser displays 3D mesh metadata (vertex/polygon counts, bounds, importer backend, referenced textures) and exposes logical Asset ID copying.
 - Single-asset and bulk relink candidate flows include `model.sourcePath` and the legacy `sourcePath` fallback, preserving type-aware 3D relink behavior across both entry points.
 - Relink candidate search and confirmation preserve the logical Asset ID, invalidate decoded source payloads, and reject non-model replacements for model assets. Candidate reasons include same asset type.
+- Candidate ranking gives a matching sidecar logical Asset ID highest priority, allowing moved or renamed 3D sources to be recovered when their metadata travels with them.
 - Runtime/build acceptance remains pending. `blend`, `dae`, `usdz`, and `pmx` are classified as 3D by the detector but are not advertised as importer-supported until a matching backend exists.
 
 ## Update 2026-08-28 — Input Sources
