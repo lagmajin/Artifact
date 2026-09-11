@@ -4445,6 +4445,18 @@ if (!item.isFolder) {
    QApplication::clipboard()->setText(filePath);
   });
 
+  const auto assetMeta = ArtifactCore::ArtifactAssetMetaFile::load(filePath);
+  const QUuid assetId = assetMeta.isValid() && !assetMeta.uuid().isNull()
+      ? assetMeta.uuid()
+      : ArtifactCore::AssetDatabase::instance().findAssetByPath(filePath);
+  if (!assetId.isNull()) {
+   addAction(frequentMenu, QStringLiteral("Copy Asset ID"), [assetId]() {
+    if (auto* clipboard = QApplication::clipboard()) {
+     clipboard->setText(assetId.toString(QUuid::WithoutBraces));
+    }
+   });
+  }
+
   // Rename action (F2)
   addAction(allMenu, QStringLiteral("Rename (F2)"), [this]() {
    if (impl_) {
