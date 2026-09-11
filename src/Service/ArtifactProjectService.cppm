@@ -49,6 +49,7 @@ import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
+import Artifact.Layers.Model3D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Group;
 import Artifact.Project.Health;
@@ -3595,6 +3596,10 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
                ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
     oldSourcePath = videoLayer->sourcePath();
     propertyPath = QStringLiteral("video.sourcePath");
+  } else if (auto modelLayer =
+               ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer)) {
+    oldSourcePath = modelLayer->sourcePath();
+    propertyPath = QStringLiteral("model.sourcePath");
   }
 
   if (propertyPath.isEmpty() ||
