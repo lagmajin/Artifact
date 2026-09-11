@@ -6,6 +6,7 @@ module;
 #include <QColor>
 #include <QCryptographicHash>
 #include <QFileInfo>
+#include <QUuid>
 #include <QPainter>
 #include <QtSVG/QSvgRenderer>
 #include <iostream>
@@ -293,7 +294,12 @@ void ArtifactProjectModel::Impl::refreshTree()
         columnItem->setData(static_cast<Artifact::CompositionItem*>(it)->compositionId.toString(), compRole);
       }
       if (it->type() == Artifact::eProjectItemType::Footage) {
-        columnItem->setData(static_cast<Artifact::FootageItem*>(it)->filePath, assetRole);
+        const auto* footage = static_cast<const Artifact::FootageItem*>(it);
+        columnItem->setData(
+            footage->assetId.isNull()
+                ? QString()
+                : footage->assetId.toString(QUuid::WithoutBraces),
+            assetRole);
       }
     };
     setRoleData(item);
