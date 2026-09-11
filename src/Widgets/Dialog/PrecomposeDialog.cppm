@@ -27,10 +27,10 @@ module;
 #include <QSizePolicy>
 #include <QStringList>
 #include <wobjectimpl.h>
-#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
 module Artifact.Widgets.PrecomposeDialog;
 
+import Artifact.Widgets.DialogButtons;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -392,7 +392,7 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     auto* fLay = new QHBoxLayout(footer);
     fLay->setContentsMargins(15, 10, 15, 10);
 
-    const DialogButtonRow buttons = createWindowsDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
+    const DialogButtonRow buttons = createDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
     auto* okBtn = buttons.okButton;
     auto* cancelBtn = buttons.cancelButton;
     okBtn->setAccessibleName(u8"作成");

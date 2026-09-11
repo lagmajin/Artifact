@@ -32,9 +32,9 @@ module;
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QMessageBox>
-#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
+import Artifact.Widgets.DialogButtons;
 import Encoder.FFmpegEncoder;
 import Artifact.Render.Queue.Presets;
 import Artifact.Render.Queue.Service;
@@ -175,7 +175,7 @@ namespace Artifact
    contentLayout->addWidget(variantsGroup, 3);
    contentLayout->addWidget(detailGroup, 2);
 
-   const DialogButtonRow buttons = createWindowsDialogButtonRow(
+   const DialogButtonRow buttons = createDialogButtonRow(
        this, QStringLiteral("選択した出力をキューに追加"), QStringLiteral("キャンセル"));
    auto* queueButton = new CallbackButton(QStringLiteral("選択した出力をキューに追加"), buttons.widget);
    queueButton->setDefault(true);
@@ -1548,7 +1548,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         }
     });
     // OK/Cancel buttons
-    const DialogButtonRow buttons = createWindowsDialogButtonRow(this);
+    const DialogButtonRow buttons = createDialogButtonRow(this);
     impl_->buttonRow = buttons.widget;
     impl_->okButton = buttons.okButton;
     impl_->cancelButton = buttons.cancelButton;

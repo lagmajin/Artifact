@@ -3733,7 +3733,7 @@ struct CreativeComputeSlot {
     Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
     Diligent::Uint32 width = 0;
     Diligent::Uint32 height = 0;
-    Diligent::TEX_FORMAT format = Diligent::TEX_FORMAT_UNKNOWN;
+    Diligent::TEXTURE_FORMAT format = Diligent::TEX_FORMAT_UNKNOWN;
 };
 
 struct CreativeComputeCache {
@@ -3760,7 +3760,7 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
         releaseSharedRenderDevice();
         return false;
     }
-    const Diligent::TEX_FORMAT format =
+    const Diligent::TEXTURE_FORMAT format =
         upload.format == ArtifactCore::GpuImageFormat::Rgba16Float
         ? Diligent::TEX_FORMAT_RGBA16_FLOAT
         : Diligent::TEX_FORMAT_RGBA32_FLOAT;

@@ -13,10 +13,10 @@ module;
 #include <QTreeWidget>
 #include <QLineEdit>
 #include <QPushButton>
-#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
 module Artifact.Widgets.ObjectPicker;
 
+import Artifact.Widgets.DialogButtons;
 import std;
 import Artifact.Service.Project;
 import Artifact.Layer.Abstract;
@@ -72,7 +72,7 @@ ArtifactObjectPickerDialog::ArtifactObjectPickerDialog(QWidget* parent)
     layout->addWidget(objectTree_, 1);
     
     // OK/Cancel ボタン
-    const DialogButtonRow buttons = createWindowsDialogButtonRow(this);
+    const DialogButtonRow buttons = createDialogButtonRow(this);
     buttonRow_ = buttons.widget;
     okButton_ = buttons.okButton;
     cancelButton_ = buttons.cancelButton;

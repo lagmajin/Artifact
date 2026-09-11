@@ -28,10 +28,10 @@ module;
 #include <QPalette>
 #include <wobjectimpl.h>
 #include <cmath>
-#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
 module Artifact.Widgets.CreateCameraLayerDialog;
 
+import Artifact.Widgets.DialogButtons;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Abstract;
 import Artifact.Service.Project;
@@ -664,7 +664,7 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
     fLay->setContentsMargins(15, 10, 15, 10);
 
     // Visual buttons – explicit Windows order: [OK] [キャンセル]
-    const DialogButtonRow buttons = createWindowsDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
+    const DialogButtonRow buttons = createDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
     auto* okBtn = buttons.okButton;
     auto* cancelBtn = buttons.cancelButton;
     okBtn->setAccessibleName(u8"作成");

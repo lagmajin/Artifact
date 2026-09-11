@@ -3,7 +3,6 @@ module;
 #include <QWidget>
 #include <QFormLayout>
 #include <wobjectimpl.h>
-#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 #include <QBoxLayout>
 #include <QCryptographicHash>
 #include <QLabel>
@@ -128,6 +127,7 @@ module;
 #include <random>
 module Artifact.Widgets.ProjectManagerWidget;
 
+import Artifact.Widgets.DialogButtons;
 import Proxy.Service;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import FloatColorPickerDialog;
@@ -2573,7 +2573,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 }
                 layout->addWidget(infoLabel);
 
-                const DialogButtonRow buttons = createWindowsDialogButtonRow(dialog);
+                const DialogButtonRow buttons = createDialogButtonRow(dialog);
                 layout->addWidget(buttons.widget);
 
                 QObject::connect(dialog, &QDialog::rejected, dialog, [composition, originalBackgroundColor]() {

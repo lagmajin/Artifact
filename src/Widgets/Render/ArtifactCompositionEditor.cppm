@@ -10265,6 +10265,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                   impl_->densityHeatmapAction_->setChecked(
                       impl_->renderController_->isShowDensityHeatmapOverlay());
                 }
+                const auto gridSettings = settings->compositionGridSettings();
+                const bool showGrid = settings->compositionShowGrid();
+                impl_->renderController_->setGridSettings(gridSettings);
+                impl_->renderController_->setShowGrid(showGrid);
+                impl_->forEachActiveSecondaryController(
+                    [gridSettings, showGrid](CompositionRenderController *controller) {
+                      controller->setGridSettings(gridSettings);
+                      controller->setShowGrid(showGrid);
+                    });
               }
             }));
   }

@@ -10,13 +10,13 @@ module;
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtGui/QIcon>
-#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 #include <utility>
 #include <wobjectimpl.h>
 
 
 module Artifact.Widgets.RenderQueuePresetSelector;
 
+import Artifact.Widgets.DialogButtons;
 import std;
 
 import Artifact.Render.Queue.Presets;
@@ -291,7 +291,7 @@ ArtifactRenderQueuePresetDialog::ArtifactRenderQueuePresetDialog(
   layout->addWidget(impl_->presetSelector, 1);
 
   // ボタン
-  const DialogButtonRow buttons = createWindowsDialogButtonRow(this);
+  const DialogButtonRow buttons = createDialogButtonRow(this);
   impl_->buttonRow = buttons.widget;
   impl_->okButton = buttons.okButton;
   impl_->cancelButton = buttons.cancelButton;

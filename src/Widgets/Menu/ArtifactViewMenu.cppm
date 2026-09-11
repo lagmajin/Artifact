@@ -1281,8 +1281,6 @@ namespace Artifact {
                           CompositionViewCommandRequestedEvent{
                               CompositionViewCommandKind::SetGridVisible,
                               checked});
-                      QSettings settings;
-                      settings.setValue(QStringLiteral("viewport/showGrid"), checked);
                     });
    QObject::connect(showGuidesAction, &QAction::toggled, menu,
                     [](bool checked) {
@@ -1307,8 +1305,9 @@ namespace Artifact {
                         auto grid = controller->gridSettings();
                         grid.snapToGrid = checked;
                         controller->setGridSettings(grid);
-                        QSettings settings;
-                        settings.setValue(QStringLiteral("viewport/snapGrid"), checked);
+                        if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                          settings->setCompositionGridSettings(grid);
+                        }
                       }
                     });
    QObject::connect(gridAutoStepAction, &QAction::toggled, menu,
@@ -1917,12 +1916,13 @@ namespace Artifact {
     }
   }
   if (hasViewport) {
-    const bool showGrid = QSettings().value(
-        QStringLiteral("viewport/showGrid"),
-        editor->renderController()->isShowGrid()).toBool();
-    const bool snapGrid = QSettings().value(
-        QStringLiteral("viewport/snapGrid"),
-        editor->renderController()->gridSettings().snapToGrid).toBool();
+    const auto *appSettings = ArtifactCore::ArtifactAppSettings::instance();
+    const bool showGrid = appSettings
+        ? appSettings->compositionShowGrid()
+        : editor->renderController()->isShowGrid();
+    const bool snapGrid = appSettings
+        ? appSettings->compositionGridSettings().snapToGrid
+        : editor->renderController()->gridSettings().snapToGrid;
     editor->renderController()->setShowGrid(showGrid);
     auto grid = editor->renderController()->gridSettings();
     grid.snapToGrid = snapGrid;

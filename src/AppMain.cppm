@@ -40,6 +40,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
+#include <QDialogButtonBox>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -55,6 +56,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QImageReader>
 #include <QJsonDocument>
 #include <QLoggingCategory>
+#include <QLayout>
 #include <QMessageBox>
 #include <QMainWindow>
 #include <QMetaType>
@@ -63,6 +65,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QPixmap>
 #include <QPushButton>
 #include <QRectF>
+#include <QSizePolicy>
 #include <QEvent>
 #include <QSettings>
 #include <QSortFilterProxyModel>
@@ -229,6 +232,30 @@ using namespace ArtifactCore;
 namespace {
 constexpr int kMainWindowLayoutVersion = 11;
 
+void applyConfiguredMessageBoxButtonAlignment(QMessageBox* messageBox) {
+  if (!messageBox) {
+    return;
+  }
+  auto* settings = ArtifactCore::ArtifactAppSettings::instance();
+  if (!settings) {
+    return;
+  }
+  const QString alignment = settings->accessibilityDialogButtonAlignment();
+  if (alignment == QStringLiteral("platform")) {
+    return;
+  }
+  auto* buttonBox = messageBox->findChild<QDialogButtonBox*>();
+  auto* layout = messageBox->layout();
+  if (!buttonBox || !layout) {
+    return;
+  }
+
+  buttonBox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+  layout->setAlignment(buttonBox, alignment == QStringLiteral("left")
+                                     ? Qt::AlignLeft
+                                     : Qt::AlignRight);
+}
+
 class DialogLatencyEventFilter final : public QObject {
  public:
   DialogLatencyEventFilter() { clock_.start(); }
@@ -253,6 +280,7 @@ class DialogLatencyEventFilter final : public QObject {
         messageBox->setProperty("artifactDialogFirstPaintLogged", false);
         break;
       case QEvent::Show: {
+        applyConfiguredMessageBoxButtonAlignment(messageBox);
         messageBox->setProperty("artifactDialogShowNs", nowNs);
         const qint64 polishNs =
             messageBox->property("artifactDialogPolishNs").toLongLong();

@@ -137,6 +137,7 @@ public:
   QSpinBox *dockTabFontSizeSpinBox_;
   QComboBox *themeCombo_;
   QComboBox *handednessCombo_;
+  QComboBox *dialogButtonAlignmentCombo_;
   QCheckBox *largeTargetsCheckBox_;
   QCheckBox *highContrastHintsCheckBox_;
   QSpinBox *accessibilityFontScaleSpinBox_;
@@ -246,7 +247,7 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   auto *accessibilityGroup = new QGroupBox("Accessibility", this);
   accessibilityGroup->setAccessibleName(QStringLiteral("Accessibility settings"));
   accessibilityGroup->setAccessibleDescription(
-      QStringLiteral("Configure handedness, target size, contrast, text scale, and color vision assistance."));
+      QStringLiteral("Configure handedness, dialog button placement, target size, contrast, text scale, and color vision assistance."));
   auto *accessibilityLayout = new QVBoxLayout(accessibilityGroup);
   auto *handednessLayout = new QHBoxLayout();
   handednessLayout->addWidget(new QLabel("Preferred hand:", this));
@@ -261,6 +262,22 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   handednessLayout->addWidget(impl_->handednessCombo_);
   handednessLayout->addStretch();
   accessibilityLayout->addLayout(handednessLayout);
+
+  auto *dialogButtonAlignmentLayout = new QHBoxLayout();
+  dialogButtonAlignmentLayout->addWidget(new QLabel("Dialog buttons:", this));
+  impl_->dialogButtonAlignmentCombo_ = new QComboBox(this);
+  impl_->dialogButtonAlignmentCombo_->addItem("OS standard", "platform");
+  impl_->dialogButtonAlignmentCombo_->addItem("Align left", "left");
+  impl_->dialogButtonAlignmentCombo_->addItem("Align right", "right");
+  impl_->dialogButtonAlignmentCombo_->setAccessibleName(
+      QStringLiteral("Dialog button placement"));
+  impl_->dialogButtonAlignmentCombo_->setAccessibleDescription(
+      QStringLiteral("Choose OS standard, left-aligned, or right-aligned dialog action buttons. Existing button actions and order are unchanged."));
+  impl_->dialogButtonAlignmentCombo_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
+  dialogButtonAlignmentLayout->addWidget(impl_->dialogButtonAlignmentCombo_);
+  dialogButtonAlignmentLayout->addStretch();
+  accessibilityLayout->addLayout(dialogButtonAlignmentLayout);
 
   impl_->largeTargetsCheckBox_ = new QCheckBox("Use larger hit targets", this);
   impl_->highContrastHintsCheckBox_ = new QCheckBox("Emphasize high-contrast hints", this);
@@ -364,7 +381,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   colorDeficiencyLayout->addWidget(impl_->colorDeficiencyCombo_);
   colorDeficiencyLayout->addStretch();
   accessibilityLayout->addLayout(colorDeficiencyLayout);
-  setTabOrder(impl_->handednessCombo_, impl_->largeTargetsCheckBox_);
+  setTabOrder(impl_->handednessCombo_, impl_->dialogButtonAlignmentCombo_);
+  setTabOrder(impl_->dialogButtonAlignmentCombo_, impl_->largeTargetsCheckBox_);
   setTabOrder(impl_->largeTargetsCheckBox_,
               impl_->highContrastHintsCheckBox_);
   setTabOrder(impl_->highContrastHintsCheckBox_,
@@ -406,6 +424,9 @@ void GeneralSettingPage::loadSettings() {
   }
   impl_->handednessCombo_->setCurrentIndex(
       impl_->handednessCombo_->findData(settings->accessibilityHandedness()));
+  impl_->dialogButtonAlignmentCombo_->setCurrentIndex(
+      impl_->dialogButtonAlignmentCombo_->findData(
+          settings->accessibilityDialogButtonAlignment()));
   impl_->largeTargetsCheckBox_->setChecked(settings->accessibilityPreferLargeTargets());
   impl_->highContrastHintsCheckBox_->setChecked(settings->accessibilityPreferHighContrastHints());
   impl_->accessibilityFontScaleSpinBox_->setValue(settings->accessibilityFontScalePercent());
@@ -444,6 +465,8 @@ void GeneralSettingPage::saveSettings() {
   }
   settings->setAccessibilityHandedness(
       impl_->handednessCombo_->currentData().toString());
+  settings->setAccessibilityDialogButtonAlignment(
+      impl_->dialogButtonAlignmentCombo_->currentData().toString());
   settings->setAccessibilityPreferLargeTargets(
       impl_->largeTargetsCheckBox_->isChecked());
   settings->setAccessibilityPreferHighContrastHints(
@@ -471,6 +494,12 @@ QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
     items.push_back({"UI Theme",
                      "Built-in application theme preset",
                      "User Interface", impl_->themeCombo_, "UI/ThemeName"});
+  }
+  if (impl_ && impl_->dialogButtonAlignmentCombo_) {
+    items.push_back({"Dialog buttons",
+                     "Choose OS-standard, left, or right dialog button placement",
+                     "Accessibility", impl_->dialogButtonAlignmentCombo_,
+                     "Accessibility/DialogButtonAlignment"});
   }
   return items;
 }
