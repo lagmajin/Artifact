@@ -20,6 +20,8 @@ import Core.AI.McpBridge;
 import Core.AI.PromptGenerator;
 import Core.AI.ToolBridge;
 import Artifact.AI.WorkspaceAutomation;
+import Asset.Importer;
+import AssetType;
 
 namespace {
 
@@ -456,6 +458,13 @@ int runAIToolBridgeTests()
 
     const QJsonObject relinkFootageTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("relinkFootageByPath"));
     report.check(!relinkFootageTool.isEmpty(), QStringLiteral("workspace automation exposes relink by path"));
+    report.check(ArtifactCore::AssetImporter::detectType(QStringLiteral("model.obj")) ==
+                     ArtifactCore::AssetType::Model,
+                 QStringLiteral("3D model extension is classified as model asset"));
+    report.check(ArtifactCore::AssetImporter::isSupported(QStringLiteral("gltf")),
+                 QStringLiteral("supported 3D importer format is advertised"));
+    report.check(!ArtifactCore::AssetImporter::isSupported(QStringLiteral("blend")),
+                 QStringLiteral("unsupported 3D container is not advertised"));
 
     QJsonObject parsedToolCall;
     const bool parsed = ArtifactCore::ToolBridge::tryParseToolCall(
