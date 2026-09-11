@@ -350,6 +350,8 @@ private:
       ArtifactCore::PropertyGroup &transformGroup,
       const ArtifactCore::AnimatableTransform3D &transform,
       double positionRange, double anchorRange) const;
+  void appendMaskPropertyGroups(
+      std::vector<ArtifactCore::PropertyGroup> &groups) const;
 
 protected:
   void setSourceSize(const Size_2D &size);
