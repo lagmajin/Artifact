@@ -182,6 +182,14 @@ Project View／Project Model の tree、folder/bin、検索、type／unused／mi
 
 `AppMain` の selection guard 付き Project View ↔ Asset Browser 双方向同期、Asset Browser／Project View の sync chip、imported／missing／unused status、metadata／waveform 表示、selected／bulk relink と Undo、Project View import の非同期経路を追加確認した。統合基盤は実装済み相当だが、import／relink／missing／unused の cross-view 即時反映、再読込後の選択・active composition 維持、実データでの通し runtime 受入れは未検証とする。
 
+## Update 2026-09-11 — 3D model asset identity and recovery
+
+- Asset Browser and Project View classify the shared 3D model extension set and use the approved `asset_file_3d.svg` icon.
+- `FootageItem.assetId` is persisted in project JSON and restored into `AssetDatabase`; existing sidecar UUIDs are reused when available.
+- Asset Browser displays 3D mesh metadata (vertex/polygon counts, bounds, importer backend, referenced textures) and exposes logical Asset ID copying.
+- Relink candidate search and confirmation preserve the logical Asset ID, invalidate decoded source payloads, and reject non-model replacements for model assets. Candidate reasons include same asset type.
+- Runtime/build acceptance remains pending. `blend`, `dae`, `usdz`, and `pmx` are classified as 3D by the detector but are not advertised as importer-supported until a matching backend exists.
+
 ## Update 2026-08-28 — Input Sources
 
 Project View の Footage に `Production`／`Render Input` の用途分類と、Alpha Matte／Luma Matte／Displacement／Depth／Normal／Texture の入力役割を追加した。分類は既存の Project Item ID と source path を維持したまま JSON 保存・復元され、コピー／送信バンドルにも含まれる。Render Input はレイヤーを自動生成せず、Project View の専用フィルター、一覧／タイルの用途表示、右クリックの `Input Source Role` から管理し、通常の unused 判定から除外する。
