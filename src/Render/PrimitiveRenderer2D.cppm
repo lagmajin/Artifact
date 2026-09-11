@@ -205,31 +205,39 @@ public:
     struct ResolvedGlyphFont {
         char32_t codePoint = 0;
         QFont font;
+        GlyphKey key;
     };
-    // Font fallback is per code point.  Keep the resolved QFont values while
-    // the TextStyle is unchanged so a static text layer does not re-query the
-    // font database every frame.
+    // Font fallback and glyph-key construction are per code point. Keep both
+    // while the TextStyle is unchanged so a static text layer does not
+    // re-query the font database or rebuild the UTF-8 family key every frame.
     std::optional<TextStyle> glyphFontCacheStyle_;
     std::vector<ResolvedGlyphFont> glyphFontCache_;
 
-    const QFont& resolvedGlyphFont(const TextStyle& style,
-                                   char32_t codePoint) {
+    const ResolvedGlyphFont& resolvedGlyphFont(const TextStyle& style,
+                                                char32_t codePoint) {
         if (!glyphFontCacheStyle_ || *glyphFontCacheStyle_ != style) {
             glyphFontCacheStyle_ = style;
             glyphFontCache_.clear();
         }
         for (const ResolvedGlyphFont& entry : glyphFontCache_) {
             if (entry.codePoint == codePoint) {
-                return entry.font;
+                return entry;
             }
         }
         if (glyphFontCache_.size() >= 2048) {
             glyphFontCache_.clear();
         }
         const QString glyphText = QString::fromUcs4(&codePoint, 1);
-        glyphFontCache_.push_back(
-            {codePoint, FontManager::makeFont(style, glyphText)});
-        return glyphFontCache_.back().font;
+        QFont font = FontManager::makeFont(style, glyphText);
+        GlyphKey key;
+        key.codePoint = codePoint;
+        key.fontSize = style.fontSize;
+        key.fontFamily = font.family().toStdString();
+        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                         static_cast<uint32_t>(style.fontStyle);
+        key.renderMode = renderModeForCodePoint(codePoint);
+        glyphFontCache_.push_back({codePoint, std::move(font), std::move(key)});
+        return glyphFontCache_.back();
     }
 
     struct CachedTexture {
@@ -1790,16 +1798,10 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
             continue;
         }
 
-        const QFont& resolvedFont =
+        const ResolvedGlyphFont& resolved =
             impl_->resolvedGlyphFont(style, glyph.charCode);
-        GlyphKey key;
-        key.codePoint = glyph.charCode;
-        key.fontSize = style.fontSize;
-        key.fontFamily = resolvedFont.family().toStdString();
-        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
-                         static_cast<uint32_t>(style.fontStyle);
-        key.renderMode = renderModeForCodePoint(glyph.charCode);
-        const GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, resolvedFont);
+        const GlyphRect rect =
+            impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
         if (rect.valid) {
             resolvedGlyphs.push_back({&glyph, rect});
         }
