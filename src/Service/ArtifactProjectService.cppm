@@ -54,6 +54,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layer.Group;
 import Artifact.Project.Health;
 import Asset.Sequence;
+import Asset;
 import Artifact.Diagnostics.AppValidationRules;
 import Core.Diagnostics.DiagnosticEngine;
 import Image.PSDDocument;
@@ -6414,6 +6415,14 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
       QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
   const auto oldSequenceMatch = sequencePattern.match(oldName);
   const FootageItem *oldFootage = findFootageItemByPath(oldFilePath);
+  QUuid oldAssetId;
+  if (oldFootage) {
+    oldAssetId = oldFootage->assetId;
+  }
+  if (oldAssetId.isNull()) {
+    oldAssetId = ArtifactCore::AssetDatabase::instance().findAssetByPath(
+        oldFilePath);
+  }
   QDirIterator iterator(root.absolutePath(), QDir::Files,
                         QDirIterator::Subdirectories);
   while (iterator.hasNext()) {
@@ -6431,6 +6440,15 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
     int score = 0;
     bool identityMatch = false;
     QStringList reasons;
+    if (!oldAssetId.isNull()) {
+      const auto candidateMeta = ArtifactCore::ArtifactAssetMetaFile::load(
+          candidateInfo.absoluteFilePath());
+      if (candidateMeta.isValid() && candidateMeta.uuid() == oldAssetId) {
+        score += 500;
+        identityMatch = true;
+        reasons.append(QStringLiteral("same logical asset ID"));
+      }
+    }
     int sequenceExpectedFrames = 0;
     int sequenceFoundFrames = 0;
     if (candidateInfo.fileName().compare(oldName, Qt::CaseInsensitive) == 0) {
