@@ -346,6 +346,10 @@ class ArtifactAbstractLayer : public QObject {
 private:
   class Impl;
   Impl *impl_;
+  void append3DTransformProperties(
+      ArtifactCore::PropertyGroup &transformGroup,
+      const ArtifactCore::AnimatableTransform3D &transform,
+      double positionRange, double anchorRange) const;
 
 protected:
   void setSourceSize(const Size_2D &size);
