@@ -3618,8 +3618,9 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
        ArtifactCore::AssetImporter::detectType(filePath);
    if (detectedAssetType != ArtifactCore::AssetType::Unknown &&
        detectedAssetType != ArtifactCore::AssetType::Folder) {
+    const QUuid persistedAssetId = assetMeta.isValid() ? assetMeta.uuid() : QUuid{};
     const QUuid assetId = ArtifactCore::AssetDatabase::instance().registerAsset(
-        filePath, detectedAssetType);
+        filePath, detectedAssetType, persistedAssetId);
     if (!assetId.isNull()) {
      info += QString("Asset ID: %1<br>").arg(assetId.toString(QUuid::WithoutBraces));
     }
