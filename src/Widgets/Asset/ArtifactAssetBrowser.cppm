@@ -4081,7 +4081,9 @@ if (!item.isFolder) {
           QStringLiteral("image.sourcePath"),
           QStringLiteral("video.sourcePath"),
           QStringLiteral("audio.sourcePath"),
-          QStringLiteral("svg.sourcePath")};
+          QStringLiteral("svg.sourcePath"),
+          QStringLiteral("model.sourcePath"),
+          QStringLiteral("sourcePath")};
       const auto referenceCount = [&](const QString& oldPath) {
         if (!project) return 0;
         const QString normalizedOldPath = QDir::cleanPath(
