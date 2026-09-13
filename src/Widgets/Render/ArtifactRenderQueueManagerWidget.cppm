@@ -2039,7 +2039,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->totalProgressBar = new QProgressBar();
   impl_->summaryLabel = new QLabel("Ready");
   impl_->statusLabel = new QLabel("No active jobs");
-  impl_->startButton = new QPushButton("Start Queue");
+  impl_->startButton = new QPushButton("Render ready jobs");
   impl_->startButton->setAccessibleName(QStringLiteral("Start render queue"));
   impl_->startButton->setAccessibleDescription(
       QStringLiteral("Start processing the queued render jobs."));
@@ -2048,8 +2048,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
       loadIconWithFallback(QStringLiteral("Studio/figma_media_play.svg")));
   {
     QPalette buttonPalette = impl_->startButton->palette();
-    buttonPalette.setColor(QPalette::Button, QColor(theme.selectionColor));
-    buttonPalette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    buttonPalette.setColor(QPalette::Button, QColor(202, 146, 43));
+    buttonPalette.setColor(QPalette::ButtonText, QColor(28, 28, 28));
     impl_->startButton->setAutoFillBackground(true);
     impl_->startButton->setPalette(buttonPalette);
   }
