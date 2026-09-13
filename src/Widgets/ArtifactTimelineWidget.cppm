@@ -10081,14 +10081,17 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
         y < -radius || y > viewportHeight + radius) {
       continue;
     }
-    QColor color = marker.selected ? selectedKey : marker.color;
+    const bool atCurrentFrame =
+        std::abs(marker.frame - view->currentFrame()) < 0.05;
+    QColor color = (marker.selected || atCurrentFrame) ? selectedKey
+                                                        : marker.color;
     snapshot.triangles.push_back({QPointF(x, y - radius),
                                   QPointF(x + radius, y),
                                   QPointF(x, y + radius), color});
     snapshot.triangles.push_back({QPointF(x, y - radius),
                                   QPointF(x, y + radius),
                                   QPointF(x - radius, y), color});
-    if (marker.selected) {
+    if (marker.selected || atCurrentFrame) {
       QColor outline(245, 245, 245, 230);
       snapshot.lines.push_back({QPointF(x, y - radius),
                                 QPointF(x + radius, y), outline, 1.0f});
