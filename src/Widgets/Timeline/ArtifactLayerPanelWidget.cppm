@@ -1454,6 +1454,7 @@ struct VisibleRow {
  LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
  QString stateText;
  LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
+ QString transitionId;
 };
 
 QString groupLayerSummaryText(const ArtifactAbstractLayerPtr& layer)
@@ -2696,6 +2697,28 @@ public:
         ? LayerPresentationBadgeTone::Motion
         : summarizeLayerStateTone(node)
    });
+   // A transition belongs directly below its source clip, but deliberately
+   // remains a virtual row. Keeping it in the same row list aligns both
+   // timeline panes without lending it layer switches or selection semantics.
+   for (const auto& transition : comp->timelineTransitions()) {
+    if (!transition.enabled || transition.leftClipName != node->layerName()) {
+     continue;
+    }
+    visibleRows.push_back(VisibleRow{
+        nullptr,
+        depth + 1,
+        false,
+        false,
+        RowKind::Transition,
+        QStringLiteral("%1 \\u2192 %2").arg(transition.kind, transition.rightClipName),
+        QString(),
+        QString(),
+        QStringLiteral("Transition"),
+        LayerPresentationBadgeTone::Motion,
+        QString(),
+        LayerPresentationBadgeTone::Neutral,
+        transition.id});
+   }
    emitted.insert(nodeId);
 
    if (!hasChildren || !expanded) return;
@@ -3231,6 +3254,7 @@ ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
    descriptor.auxiliaryTone = row.auxiliaryTone;
    descriptor.stateText = row.stateText;
    descriptor.stateTone = row.stateTone;
+   descriptor.transitionId = row.transitionId;
    if (descriptor.auxiliaryText.isEmpty() &&
        (row.kind == RowKind::Mask || row.kind == RowKind::Matte)) {
     descriptor.auxiliaryText = row.label;
@@ -7160,6 +7184,25 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     int y = i * rowH;
     const auto& row = impl_->visibleRows[i];
     auto l = row.layer;
+    if (row.kind == RowKind::Transition) {
+      const bool hovered = i == impl_->hoveredLayerIndex;
+      const QColor barFill = hovered ? mixColor(surface, accent, 0.30)
+                                     : mixColor(surface, accent, 0.20);
+      const QRect barRect(nameStartX + row.depth * indent + 4, y + 5,
+                          std::max(42, width() - nameStartX - row.depth * indent - 12),
+                          std::max(12, rowH - 10));
+      p.fillRect(0, y, width(), rowH, background);
+      p.setPen(QPen(mixColor(border, accent, 0.58), 1.0));
+      p.setBrush(barFill);
+      p.drawRoundedRect(barRect, 3, 3);
+      p.setPen(mixColor(text, accent, 0.42));
+      const QFontMetrics fm(p.font());
+      p.drawText(barRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                 fm.elidedText(row.label, Qt::ElideRight, barRect.width() - 16));
+      p.setPen(border.darker(120));
+      p.drawLine(0, y + rowH, width(), y + rowH);
+      continue;
+    }
     if (!l) continue;
     const bool isGroupRow = (row.kind == RowKind::Group ||
                             row.kind == RowKind::MaskStack ||

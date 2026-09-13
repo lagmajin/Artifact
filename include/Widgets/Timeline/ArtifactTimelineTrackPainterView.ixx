@@ -83,9 +83,12 @@ export namespace Artifact
 
   struct TrackClipVisual {
    enum class Kind {
-    Generic,
-    Audio,
-    Video
+   Generic,
+   Audio,
+   Video,
+   // A composition transition is a compact relationship bar, never a layer
+   // clip. Its LayerID remains nil so layer selection/move paths cannot own it.
+   Transition
    };
    enum class SourceState { Ready, Missing, Proxy, Unreadable, SequenceGap };
 

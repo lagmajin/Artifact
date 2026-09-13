@@ -111,6 +111,7 @@ import Time.Rational;
 import UI.ShortcutBindings;
 import Artifact.Audio.ScrubController;
 import Utils.Path;
+import Utils.String.UniString;
 
 namespace Artifact {
 
@@ -8416,6 +8417,29 @@ void ArtifactTimelineWidget::refreshTracks() {
   }
   for (int rowIndex = 0; rowIndex < visibleRows.size(); ++rowIndex) {
     const auto &row = visibleRows[rowIndex];
+    if (row.kind == TimelineRowKind::Transition &&
+        !row.transitionId.trimmed().isEmpty()) {
+      const auto transition = composition
+          ? composition->timelineTransitionById(row.transitionId)
+          : std::optional<CompositionTimelineTransition>{};
+      if (!transition || transition->range.duration() <= 0 ||
+          !impl_->painterTrackView_) {
+        continue;
+      }
+      ArtifactTimelineTrackPainterView::TrackClipVisual visual;
+      visual.clipId = transition->id;
+      visual.trackIndex = rowIndex;
+      visual.startFrame = static_cast<double>(transition->range.start());
+      visual.durationFrame = static_cast<double>(transition->range.duration());
+      visual.trimMinStartFrame = visual.startFrame;
+      visual.trimMaxEndFrame = visual.startFrame + visual.durationFrame;
+      visual.title = QStringLiteral("%1 \\u2192 %2")
+                         .arg(transition->kind, transition->rightClipName);
+      visual.fillColor = QColor(77, 108, 144);
+      visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition;
+      painterClips.push_back(std::move(visual));
+      continue;
+    }
     if (row.kind != TimelineRowKind::Layer || row.layerId.isNil()) {
       continue;
     }
@@ -9975,6 +9999,7 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
   snapshot.lines.reserve(view->trackCount() * 2 + clips.size() * 4 +
                          keyframeMarkers.size() * 4 + 32);
   snapshot.triangles.reserve(keyframeMarkers.size() * 2);
+  snapshot.texts.reserve(clips.size());
 
   const QColor rowBase(35, 39, 44);
   const QColor rowAlternate(31, 35, 40);
@@ -10051,15 +10076,26 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
     }
     const double x = clip.startFrame * ppf - horizontalOffset;
     const double width = std::max(1.0, clip.durationFrame * ppf);
-    const double top = trackTops[clip.trackIndex] + 2.0;
-    const double height = std::max(1.0,
-        static_cast<double>(view->trackHeight(clip.trackIndex)) - 4.0);
+    const bool isTransition = clip.kind ==
+        ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition;
+    const double height = isTransition
+        ? std::min(16.0, std::max(10.0,
+                                  static_cast<double>(view->trackHeight(clip.trackIndex)) - 8.0))
+        : std::max(1.0, static_cast<double>(view->trackHeight(clip.trackIndex)) - 4.0);
+    const double top = trackTops[clip.trackIndex] +
+        (static_cast<double>(view->trackHeight(clip.trackIndex)) - height) * 0.5;
     if (x + width < 0.0 || x > viewportWidth ||
         top + height < 0.0 || top > viewportHeight) {
       continue;
     }
     const QColor fill = clip.selected ? selectedClip : clip.fillColor;
     snapshot.rects.push_back({QRectF(x, top, width, height), fill});
+    if (!clip.title.isEmpty() && width >= 42.0 && height >= 14.0) {
+      QColor labelColor(242, 246, 250, clip.selected ? 242 : 205);
+      snapshot.texts.push_back(
+          {QPointF(x + 7.0, top + height * 0.68),
+           ArtifactCore::UniString(clip.title), labelColor, 11.0f});
+    }
     QColor edge = clip.selected ? selectionEdge : fill.lighter(132);
     edge.setAlpha(clip.selected ? 235 : 180);
     // The top and bottom highlights make the layer span legible without

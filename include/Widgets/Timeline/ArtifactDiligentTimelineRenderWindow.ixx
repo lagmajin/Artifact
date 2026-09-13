@@ -4,11 +4,14 @@ module;
 #include <QEvent>
 #include <QPointF>
 #include <QRectF>
+#include <QString>
 #include <QVector>
 #include <QWindow>
 #include <QtGlobal>
 
 export module Artifact.Widgets.Timeline.DiligentRenderWindow;
+
+import Utils.String.UniString;
 
 export namespace Artifact {
 
@@ -31,11 +34,19 @@ struct DiligentTimelineTriangleVisual {
   QColor color;
 };
 
+struct DiligentTimelineTextVisual {
+  QPointF baseline;
+  ArtifactCore::UniString text;
+  QColor color;
+  float pixelSize = 11.0f;
+};
+
 struct DiligentTimelineVisualSnapshot {
   QColor background{38, 40, 46};
   QVector<DiligentTimelineRectVisual> rects;
   QVector<DiligentTimelineLineVisual> lines;
   QVector<DiligentTimelineTriangleVisual> triangles;
+  QVector<DiligentTimelineTextVisual> texts;
   quint64 generation = 0;
 };
 

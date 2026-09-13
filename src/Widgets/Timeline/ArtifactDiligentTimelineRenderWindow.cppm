@@ -29,6 +29,8 @@ import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Color.Float;
+import Text.Style;
+import Utils.String.UniString;
 
 namespace {
 
@@ -236,6 +238,16 @@ public:
            static_cast<float>(visual.p1.y())},
           {static_cast<float>(visual.p2.x()),
            static_cast<float>(visual.p2.y())},
+          toFloatColor(visual.color));
+    }
+    for (const auto& visual : snapshot->texts) {
+      ArtifactCore::TextStyle textStyle;
+      textStyle.fontSize = visual.pixelSize;
+      textStyle.pixelSize = visual.pixelSize;
+      primitiveRenderer_.drawGlyphText(
+          static_cast<float>(visual.baseline.x()),
+          static_cast<float>(visual.baseline.y()),
+          visual.text, textStyle,
           toFloatColor(visual.color));
     }
     submitter_.submit(commandBuffer_, immediateContext_);

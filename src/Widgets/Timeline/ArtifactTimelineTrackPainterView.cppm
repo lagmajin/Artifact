@@ -2853,6 +2853,8 @@ QString formatClipTooltip(
   const QString title = clip.title.isEmpty() ? clip.clipId : clip.title;
   const QString kindText = [&]() {
     switch (clip.kind) {
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition:
+      return tt("timeline.kind_transition", "Kind: Transition");
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio:
       return tt("timeline.kind_audio", "Kind: Audio");
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video:
@@ -6522,7 +6524,11 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const int trackH = impl_->trackHeights_[clip.trackIndex];
     const double x = clip.startFrame * ppf - xOffset;
     const double w = std::max(2.0, clip.durationFrame * ppf);
-    QRectF clipRect(x, trackTop + 2.0 - yOffset, w, std::max(8, trackH - 4));
+    const bool isTransition = clip.kind == TrackClipVisual::Kind::Transition;
+    const double barHeight = isTransition ? std::min(16.0, std::max(10.0, trackH - 8.0))
+                                          : std::max(8, trackH - 4);
+    QRectF clipRect(x, trackTop + (trackH - barHeight) * 0.5 - yOffset, w,
+                    barHeight);
     if (!clipRect.intersects(QRectF(fullRect))) {
       continue;
     }
@@ -7638,6 +7644,17 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       impl_->dragOrigTrimMaxEndFrame_ =
           impl_->clips_[hit.clipIndex].trimMaxEndFrame;
       const auto &clip = impl_->clips_[hit.clipIndex];
+      if (clip.kind == TrackClipVisual::Kind::Transition) {
+        // Transition editing is composition-owned. Do not route this virtual
+        // bar through layer selection or layer trim/move events.
+        impl_->dragMode_ = DragMode::None;
+        impl_->dragClipIndex_ = -1;
+        updateHoverToolTip(this, event->globalPosition().toPoint(),
+                           formatClipTooltip(clip), impl_->hoverToolTipText_);
+        setCursor(Qt::PointingHandCursor);
+        event->accept();
+        return;
+      }
       clipSelected(clip.clipId, clip.layerId);
       if (hit.mode == DragMode::MoveBody || hit.mode == DragMode::SlideBody)
         setCursor(Qt::ClosedHandCursor);

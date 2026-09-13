@@ -49,6 +49,9 @@ export namespace Artifact
    Layer,
    Group,
    Property,
+   // A timeline-owned relationship row. It intentionally has no layer
+   // switches or layer identity: transitions are not layers.
+   Transition,
    MaskStack,
    Mask,
    MatteStack,
@@ -74,6 +77,7 @@ export namespace Artifact
    LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
    QString stateText;
    LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
+   QString transitionId;
   };
 
   struct LayerPresentationDescriptor
