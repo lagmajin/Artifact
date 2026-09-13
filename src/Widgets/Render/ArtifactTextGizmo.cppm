@@ -497,35 +497,6 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
                                Qt::AlignHCenter | Qt::AlignVCenter);
         }
 
-        const QString summary =
-            QStringLiteral("%1 | %2")
-                .arg(textLayer->selectorOverviewSummary(),
-                     textLayer->selectorBoundarySummary());
-        const QString flowLabel =
-            textLayer->writingMode() == TextWritingMode::Vertical
-                ? QStringLiteral("visual column order")
-                : QStringLiteral("visual flow order");
-        const float labelH = 9.0f * invZoom;
-        const float labelY = heatY - labelH - 2.0f * invZoom;
-        const float labelW = std::max<float>(24.0f * invZoom,
-                                             static_cast<float>(bbox.width() * 0.25));
-        renderer->drawText(QRectF(bbox.left(), labelY, labelW, labelH),
-                           QStringLiteral("logical start"), labelFont,
-                           FloatColor{0.92f, 0.95f, 1.0f, 0.95f},
-                           Qt::AlignLeft | Qt::AlignVCenter);
-        renderer->drawText(QRectF(bbox.right() - labelW, labelY, labelW, labelH),
-                           QStringLiteral("logical end"), labelFont,
-                           FloatColor{0.92f, 0.95f, 1.0f, 0.95f},
-                           Qt::AlignRight | Qt::AlignVCenter);
-        renderer->drawText(QRectF(bbox.left() + labelW, labelY, bbox.width() - labelW * 2.0f, labelH),
-                           summary, labelFont,
-                           FloatColor{1.0f, 0.82f, 0.35f, 0.98f},
-                           Qt::AlignHCenter | Qt::AlignVCenter);
-        renderer->drawText(QRectF(bbox.left(), heatY + heatH + 1.0f * invZoom,
-                                  bbox.width(), labelH),
-                           flowLabel, labelFont,
-                           FloatColor{0.80f, 0.92f, 1.0f, 0.90f},
-                           Qt::AlignHCenter | Qt::AlignVCenter);
     }
 
     // Baseline / line-box overlays derived from the shaped glyph layout.
