@@ -6569,7 +6569,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
-  leftSubHeaderSpacer->setFixedHeight(0);
+  // Match the right pane's work-area strip (26px) after the shared 16px
+  // top row; without this 10px compensation, layer rows and clip bars drift.
+  leftSubHeaderSpacer->setFixedHeight(
+      Accessibility::scaledSize(kTimelineWorkAreaRowHeight - kTimelineTopRowHeight));
   leftSubHeaderSpacer->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
   leftSubHeaderSpacer->setAutoFillBackground(true);
