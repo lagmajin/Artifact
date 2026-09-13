@@ -502,6 +502,13 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
         }
       }));
   // Transfer ownership of the internal model to this QObject so Qt manages its lifetime
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CompositionCreatedEvent>(
+          [this](const CompositionCreatedEvent& event) {
+            if (!event.compositionId.isEmpty()) {
+              onCompositionCreated(CompositionID(event.compositionId));
+            }
+          }));
   if (impl_ && impl_->model_)
     impl_->model_->setParent(this);
 
