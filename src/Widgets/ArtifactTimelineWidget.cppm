@@ -9949,8 +9949,10 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
 
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
-  const auto& theme = ArtifactCore::currentDCCTheme();
-  snapshot.background = QColor(theme.backgroundColor);
+  // The generic application background is also used by the composition
+  // canvas and can be intentionally mid-grey. The timeline editing surface
+  // needs the denser charcoal hierarchy of the adopted DCC mock instead.
+  snapshot.background = QColor(29, 32, 36);
 
   const auto *view = impl_->painterTrackView_;
   const double ppf = std::max(0.001, view->pixelsPerFrame());
@@ -9964,6 +9966,24 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
       1, impl_->gpuTimelineContainer_
              ? impl_->gpuTimelineContainer_->height()
              : view->height());
+  const auto clips = view->clips();
+  const auto keyframeMarkers = view->keyframeMarkers();
+
+  // Reserve once for the visible timeline primitives. Snapshot construction is
+  // coalesced, but it can still run during a scroll or playback update.
+  snapshot.rects.reserve(view->trackCount() + clips.size() * 3);
+  snapshot.lines.reserve(view->trackCount() * 2 + clips.size() * 4 +
+                         keyframeMarkers.size() * 4 + 32);
+  snapshot.triangles.reserve(keyframeMarkers.size() * 2);
+
+  const QColor rowBase(35, 39, 44);
+  const QColor rowAlternate(31, 35, 40);
+  const QColor selectedRow(37, 61, 82);
+  const QColor separator(73, 79, 86, 156);
+  const QColor selectedClip(49, 122, 202);
+  const QColor selectionEdge(188, 227, 255);
+  const QColor selectedKey(228, 173, 83);
+  const QColor playheadColor(239, 91, 82);
 
   QVector<double> trackTops(view->trackCount() + 1, -verticalOffset);
   for (int track = 0; track < view->trackCount(); ++track) {
@@ -9973,15 +9993,21 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
     if (top + height < 0.0 || top > viewportHeight) {
       continue;
     }
-    QColor rowColor = QColor(theme.secondaryBackgroundColor);
-    if ((track & 1) != 0) {
-      rowColor = rowColor.darker(106);
+    bool rowSelected = false;
+    for (const auto& clip : clips) {
+      if (clip.trackIndex == track && clip.selected) {
+        rowSelected = true;
+        break;
+      }
     }
+    const QColor rowColor = rowSelected
+                                ? selectedRow
+                                : ((track & 1) != 0 ? rowAlternate : rowBase);
     snapshot.rects.push_back({QRectF(0.0, top, viewportWidth, height),
                               rowColor});
     snapshot.lines.push_back({QPointF(0.0, top + height - 0.5),
                               QPointF(viewportWidth, top + height - 0.5),
-                              QColor(theme.borderColor), 1.0f});
+                              separator, 1.0f});
   }
 
   const double firstFrame = horizontalOffset / ppf;
@@ -9995,8 +10021,7 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
                            : normalized <= 2.0 ? 2.0
                            : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
   const double firstGridFrame = std::floor(firstFrame / gridStep) * gridStep;
-  QColor gridColor(theme.borderColor);
-  gridColor.setAlpha(118);
+  QColor gridColor(104, 111, 118, 82);
   for (double frame = firstGridFrame; frame <= lastFrame + gridStep;
        frame += gridStep) {
     const double x = frame * ppf - horizontalOffset;
@@ -10004,7 +10029,7 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
                               gridColor, 1.0f});
   }
 
-  for (const auto& clip : view->clips()) {
+  for (const auto& clip : clips) {
     if (clip.trackIndex < 0 || clip.trackIndex >= view->trackCount()) {
       continue;
     }
@@ -10017,18 +10042,34 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
         top + height < 0.0 || top > viewportHeight) {
       continue;
     }
-    QColor fill = clip.fillColor;
-    if (clip.selected) {
-      fill = fill.lighter(125);
-    }
+    const QColor fill = clip.selected ? selectedClip : clip.fillColor;
     snapshot.rects.push_back({QRectF(x, top, width, height), fill});
+    QColor edge = clip.selected ? selectionEdge : fill.lighter(132);
+    edge.setAlpha(clip.selected ? 235 : 180);
+    // The top and bottom highlights make the layer span legible without
+    // adding labels before the GPU text path exists.
+    QColor highlight = edge;
+    highlight.setAlpha(clip.selected ? 245 : 178);
+    snapshot.lines.push_back({QPointF(x, top + 0.5),
+                              QPointF(x + width, top + 0.5), highlight,
+                              clip.selected ? 1.5f : 1.0f});
+    snapshot.lines.push_back({QPointF(x, top + height - 0.5),
+                              QPointF(x + width, top + height - 0.5),
+                              highlight, clip.selected ? 1.5f : 1.0f});
+    snapshot.lines.push_back({QPointF(x, top), QPointF(x, top + height),
+                              edge, clip.selected ? 2.0f : 1.0f});
+    snapshot.lines.push_back({QPointF(x + width, top),
+                              QPointF(x + width, top + height), edge,
+                              clip.selected ? 2.0f : 1.0f});
     if (clip.selected) {
-      snapshot.lines.push_back({QPointF(x, top), QPointF(x + width, top),
-                                QColor(theme.accentColor), 2.0f});
+      snapshot.rects.push_back({QRectF(x, top, 3.0, height), selectionEdge});
+      snapshot.rects.push_back(
+          {QRectF(x + std::max(0.0, width - 3.0), top, 3.0, height),
+           selectionEdge});
     }
   }
 
-  for (const auto& marker : view->keyframeMarkers()) {
+  for (const auto& marker : keyframeMarkers) {
     if (marker.trackIndex < 0 || marker.trackIndex >= view->trackCount()) {
       continue;
     }
@@ -10040,20 +10081,31 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
         y < -radius || y > viewportHeight + radius) {
       continue;
     }
-    QColor color = marker.selected ? QColor(theme.accentColor) : marker.color;
+    QColor color = marker.selected ? selectedKey : marker.color;
     snapshot.triangles.push_back({QPointF(x, y - radius),
                                   QPointF(x + radius, y),
                                   QPointF(x, y + radius), color});
     snapshot.triangles.push_back({QPointF(x, y - radius),
                                   QPointF(x, y + radius),
                                   QPointF(x - radius, y), color});
+    if (marker.selected) {
+      QColor outline(245, 245, 245, 230);
+      snapshot.lines.push_back({QPointF(x, y - radius),
+                                QPointF(x + radius, y), outline, 1.0f});
+      snapshot.lines.push_back({QPointF(x + radius, y),
+                                QPointF(x, y + radius), outline, 1.0f});
+      snapshot.lines.push_back({QPointF(x, y + radius),
+                                QPointF(x - radius, y), outline, 1.0f});
+      snapshot.lines.push_back({QPointF(x - radius, y),
+                                QPointF(x, y - radius), outline, 1.0f});
+    }
   }
 
   const double playheadX = view->currentFrame() * ppf - horizontalOffset;
   snapshot.lines.push_back({QPointF(playheadX, 0.0),
                             QPointF(playheadX, viewportHeight),
-                            QColor(theme.accentColor), 2.0f});
-  impl_->gpuTimelineWindow_->setSnapshot(snapshot);
+                            playheadColor, 2.0f});
+  impl_->gpuTimelineWindow_->setSnapshot(std::move(snapshot));
 }
 
 void ArtifactTimelineWidget::setGpuTimelinePreviewEnabled(const bool enabled)
