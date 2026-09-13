@@ -6,6 +6,7 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QVector>
+#include <QWidget>
 #include <QWindow>
 #include <QtGlobal>
 
@@ -66,9 +67,14 @@ public:
   explicit ArtifactDiligentTimelineRenderWindow(QWindow* parent = nullptr);
   ~ArtifactDiligentTimelineRenderWindow() override;
   void setSnapshot(const DiligentTimelineVisualSnapshot& snapshot);
+  void setSnapshot(DiligentTimelineVisualSnapshot&& snapshot);
   quint64 snapshotGeneration() const;
   bool initialize();
   bool isGpuReady() const;
+  // The Diligent surface owns presentation, while the existing QWidget
+  // remains the authoritative editor for hit testing and Undo-backed edits.
+  // Forwarding input keeps the GPU page usable instead of display-only.
+  void setInputTarget(QWidget* target);
   void requestRender();
 };
 

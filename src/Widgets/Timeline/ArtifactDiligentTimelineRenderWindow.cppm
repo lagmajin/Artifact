@@ -10,14 +10,20 @@ module;
 #include <QCoreApplication>
 #include <QEvent>
 #include <QExposeEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QString>
+#include <QWheelEvent>
+#include <QWidget>
 #include <QtMath>
 
 #include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 module Artifact.Widgets.Timeline.DiligentRenderWindow;
 
@@ -89,6 +95,7 @@ public:
   bool gpuReady_ = false;
   bool usingSharedDevice_ = false;
   std::atomic_bool renderEventPending_{false};
+  QPointer<QWidget> inputTarget_;
 
   static FloatColor toFloatColor(const QColor& color)
   {
@@ -283,6 +290,21 @@ void ArtifactDiligentTimelineRenderWindow::setSnapshot(
   requestRender();
 }
 
+void ArtifactDiligentTimelineRenderWindow::setSnapshot(
+    DiligentTimelineVisualSnapshot&& snapshot)
+{
+  {
+    std::scoped_lock lock(impl_->snapshotMutex_);
+    if (snapshot.generation < impl_->snapshot_->generation) {
+      return;
+    }
+    impl_->snapshot_ =
+        std::make_shared<const DiligentTimelineVisualSnapshot>(
+            std::move(snapshot));
+  }
+  requestRender();
+}
+
 quint64 ArtifactDiligentTimelineRenderWindow::snapshotGeneration() const
 {
   std::scoped_lock lock(impl_->snapshotMutex_);
@@ -299,6 +321,11 @@ bool ArtifactDiligentTimelineRenderWindow::isGpuReady() const
   return impl_->gpuReady_;
 }
 
+void ArtifactDiligentTimelineRenderWindow::setInputTarget(QWidget* target)
+{
+  impl_->inputTarget_ = target;
+}
+
 void ArtifactDiligentTimelineRenderWindow::requestRender()
 {
   if (!impl_->renderEventPending_.exchange(true, std::memory_order_acq_rel)) {
@@ -308,6 +335,21 @@ void ArtifactDiligentTimelineRenderWindow::requestRender()
 
 bool ArtifactDiligentTimelineRenderWindow::event(QEvent* event)
 {
+  if (event && impl_->inputTarget_) {
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::MouseMove:
+    case QEvent::Wheel:
+    case QEvent::KeyPress:
+    case QEvent::KeyRelease:
+      QCoreApplication::sendEvent(impl_->inputTarget_, event);
+      return true;
+    default:
+      break;
+    }
+  }
   if (event && event->type() == timelineGpuRenderEventType()) {
     impl_->renderEventPending_.store(false, std::memory_order_release);
     if (isExposed() && (impl_->gpuReady_ || initialize())) {

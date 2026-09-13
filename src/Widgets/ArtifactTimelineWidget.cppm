@@ -7687,6 +7687,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // layerTimelinePanel->setMaximumWidth(320);
 
   impl_->gpuTimelineWindow_ = new ArtifactDiligentTimelineRenderWindow();
+  // GPU presentation uses the established QWidget editor for hit testing and
+  // undo-backed mutations until the curve and timeline interaction models are
+  // fully moved behind the shared Diligent surface.
+  impl_->gpuTimelineWindow_->setInputTarget(painterTrackView);
   impl_->gpuTimelineContainer_ = QWidget::createWindowContainer(
       impl_->gpuTimelineWindow_, this);
   impl_->gpuTimelineContainer_->setFocusPolicy(Qt::NoFocus);
