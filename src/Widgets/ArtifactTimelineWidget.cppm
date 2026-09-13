@@ -10151,7 +10151,8 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
     if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio &&
         !clip.waveformPeaks.isEmpty()) {
       constexpr int kMaxWaveformBars = 64;
-      const int barCount = std::min(kMaxWaveformBars, clip.waveformPeaks.size());
+      const int barCount = std::min(
+          kMaxWaveformBars, static_cast<int>(clip.waveformPeaks.size()));
       const double centerY = top + height * 0.5;
       QColor waveformColor(235, 242, 248, clip.audioMuted ? 42 : 116);
       for (int bar = 0; bar < barCount; ++bar) {
