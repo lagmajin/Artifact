@@ -937,6 +937,14 @@ void ArtifactCompositionRenderWidget::setClearColor(const FloatColor& color) {
  }
 
  void ArtifactCompositionRenderWidget::focusOutEvent(QFocusEvent* event) {
+  if (impl_->isDraggingLayer_ || impl_->isRotatingViewport_ ||
+      impl_->isPanningViewport_ || impl_->dragMode_ != LayerDragMode::None) {
+   impl_->isDraggingLayer_ = false;
+   impl_->isRotatingViewport_ = false;
+   impl_->isPanningViewport_ = false;
+   impl_->dragMode_ = LayerDragMode::None;
+   releaseMouse();
+  }
   if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
    if (auto* controller = editor->renderController();
        controller && controller->isModalGizmoInteractionActive()) {
