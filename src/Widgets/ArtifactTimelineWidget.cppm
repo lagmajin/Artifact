@@ -4879,25 +4879,25 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   }
 
   if (impl_->curveEditorSummaryLabel_) {
-    QString summary =
+    const QString detailSummary =
         signatureChanged ? payload.summary
                          : curveEditorSummaryForTracks(impl_->curveTracks_);
     const auto selectedMarkers =
         impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                  : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
-    summary = QStringLiteral("%1  ·  %2")
-                  .arg(impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
-                           ? QStringLiteral("Speed Graph (read-only)")
-                           : QStringLiteral("Value Graph"),
-                       summary);
-    impl_->curveEditorSummaryLabel_->setText(summary);
+    impl_->curveEditorSummaryLabel_->setText(
+        impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
+            ? QStringLiteral("Speed Graph")
+            : QStringLiteral("Value Graph"));
     impl_->curveEditorSummaryLabel_->setToolTip(
-        selectedMarkers.isEmpty()
-            ? QStringLiteral("No keyframes selected")
-            : formatSelectedKeyframeSummary(
-                  selectedMarkers,
-                  static_cast<qint64>(std::llround(
-                      std::max(0.0, impl_->currentFrame_)))));
+        QStringLiteral("%1\n%2")
+            .arg(detailSummary,
+                 selectedMarkers.isEmpty()
+                     ? QStringLiteral("No keyframes selected")
+                     : formatSelectedKeyframeSummary(
+                           selectedMarkers,
+                           static_cast<qint64>(std::llround(
+                               std::max(0.0, impl_->currentFrame_))))));
   }
 
   if (impl_->curveEditorModeButton_) {
@@ -4950,11 +4950,13 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
             : (hasSelection
                    ? QStringLiteral("Set the numeric value of selected keyframes")
                    : QStringLiteral("Select one or more keyframes to set their value")));
+    impl_->curveEditorValueButton_->setVisible(hasSelection);
   }
   if (impl_->curveEditorFrameButton_) {
     const bool hasSelection =
         impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
     impl_->curveEditorFrameButton_->setEnabled(editableValueGraph && hasSelection);
+    impl_->curveEditorFrameButton_->setVisible(hasSelection);
   }
   for (auto *button : {impl_->curveEditorAutoTangentButton_,
                        impl_->curveEditorFlatTangentButton_,
