@@ -40,6 +40,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Text;
 import Artifact.Application.Manager;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.TransformGizmo;
@@ -1140,6 +1141,13 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                                   layer.get())) {
                               camera->setActiveCamera(true);
                           }
+                      });
+                      menu.addSeparator();
+                  }
+                  if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(hit.layer.get())) {
+                      menu.addAction("Add Text Animator", [textLayer]() {
+                          textLayer->addAnimator();
+                          textLayer->changed();
                       });
                       menu.addSeparator();
                   }
