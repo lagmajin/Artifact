@@ -458,9 +458,11 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
       item->setToolTip(data.tooltip);
       jobListWidget->addItem(item);
       auto* card = new RenderQueueJobCard(jobListWidget);
-      // The card is presentation-only. Let QListWidget receive the mouse
-      // press so currentItem()/selection stays aligned with the source index.
-      card->setAttribute(Qt::WA_TransparentForMouseEvents);
+      card->selected = [this, item]() {
+        if (!jobListWidget) return;
+        jobListWidget->setCurrentItem(item);
+        item->setSelected(true);
+      };
       card->setJob(normalizeStatus(job.status), job.name,
                    QFileInfo(job.outputPath).fileName(),
                    QStringLiteral("enc:%1  |  render:%2")
@@ -479,10 +481,14 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     if (!summaryLabel) return;
     int done = 0, failed = 0, running = 0, pending = 0;
     int totalProgress = 0;
-    for (const auto& j : jobs) {
-        QString s = normalizeStatus(j.status);
-        if (s == "Completed") done++;
-        else if (s == "Failed") failed++;
+    for (int index = 0; index < jobs.size(); ++index) {
+        const auto& j = jobs[index];
+        const bool preflightFailed = service && index < service->jobCount() &&
+            service->preflightRenderQueueAt(index).hasErrors();
+        const bool needsAttention = !j.errorMessage.trimmed().isEmpty() || preflightFailed;
+        const QString s = normalizeStatus(j.status);
+        if (needsAttention || s == "Failed") failed++;
+        else if (s == "Completed") done++;
         else if (s == "Rendering") running++;
         else if (s == "Pending" || s == "Paused") pending++;
         totalProgress += std::clamp(j.progress, 0, 100);
@@ -2365,11 +2371,22 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   });
 
   connect(impl_->removeButton, &QPushButton::clicked, this, [this]() {
-    if (impl_->service) {
-      const int index = impl_->selectedSourceIndex();
-      if (index >= 0) {
-        impl_->service->removeRenderQueueAt(index);
+    if (!impl_->service || !impl_->jobListWidget) return;
+    QList<int> indices;
+    for (int row = 0; row < impl_->jobListWidget->count(); ++row) {
+      auto* item = impl_->jobListWidget->item(row);
+      if (item && item->isSelected()) {
+        indices.append(item->data(Qt::UserRole).toInt());
       }
+    }
+    if (indices.isEmpty()) {
+      const int index = impl_->selectedSourceIndex();
+      if (index >= 0) indices.append(index);
+    }
+    if (!indices.isEmpty()) {
+      impl_->service->removeRenderQueuesAt(indices);
+      impl_->syncJobsFromService();
+      impl_->postQueueChanged(QStringLiteral("remove-jobs"));
     }
   });
 

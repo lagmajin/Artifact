@@ -173,6 +173,7 @@ class RenderQueueDoubleSpinBox final : public QDoubleSpinBox
 class RenderQueueJobCard final : public QFrame
 {
  public:
+  std::function<void()> selected;
   QLabel* statusLabel = nullptr;
   QLabel* statusIconLabel = nullptr;
   QLabel* thumbnailLabel = nullptr;
@@ -244,6 +245,17 @@ class RenderQueueJobCard final : public QFrame
     progressBar->setMaximumHeight(10);
     statusColumn->addWidget(progressBar);
     root->addLayout(statusColumn, 1);
+
+    // The card owns its presentation, but a click is still a list selection.
+    // Keep child controls out of the mouse route so it stays consistent across
+    // the preview, text, and status portions of the row.
+    thumbnailLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    outputLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    backendLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    statusIconLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    statusLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    progressBar->setAttribute(Qt::WA_TransparentForMouseEvents);
   }
 
   void setJob(const QString& status, const QString& name, const QString& output,
@@ -298,6 +310,15 @@ class RenderQueueJobCard final : public QFrame
     thumbnailLabel->setPixmap(pixmap.scaled(
         thumbnailLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     thumbnailLabel->setToolTip(QStringLiteral("Latest rendered frame"));
+  }
+
+ protected:
+  void mousePressEvent(QMouseEvent* event) override
+  {
+    if (event && event->button() == Qt::LeftButton && selected) {
+      selected();
+    }
+    QFrame::mousePressEvent(event);
   }
 };
 
