@@ -10030,6 +10030,22 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
   }
 
   for (const auto& clip : clips) {
+  // Keep the secondary divisions deliberately quiet: they provide the dense
+  // DCC timing rhythm without competing with keyframes or layer spans.
+  const double minorStep = gridStep / 5.0;
+  QColor minorGridColor(104, 111, 118, 30);
+  const double firstMinorFrame =
+      std::floor(firstFrame / minorStep) * minorStep;
+  for (double frame = firstMinorFrame; frame <= lastFrame + minorStep;
+       frame += minorStep) {
+    const double remainder = std::fmod(std::abs(frame), gridStep);
+    if (remainder < 0.001 || gridStep - remainder < 0.001) {
+      continue;
+    }
+    const double x = frame * ppf - horizontalOffset;
+    snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
+                              minorGridColor, 1.0f});
+  }
     if (clip.trackIndex < 0 || clip.trackIndex >= view->trackCount()) {
       continue;
     }
