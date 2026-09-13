@@ -186,18 +186,18 @@ class RenderQueueJobCard final : public QFrame
   {
     setFrameShape(QFrame::StyledPanel);
     auto* root = new QHBoxLayout(this);
-    root->setContentsMargins(8, 7, 10, 7);
-    root->setSpacing(10);
+    root->setContentsMargins(8, 5, 10, 5);
+    root->setSpacing(8);
 
     statusLabel = new QLabel("WAIT");
-    statusLabel->setMinimumWidth(74);
+    statusLabel->setMinimumWidth(64);
     statusLabel->setAlignment(Qt::AlignCenter);
     statusIconLabel = new QLabel();
     statusIconLabel->setFixedSize(18, 18);
     statusIconLabel->setAlignment(Qt::AlignCenter);
 
     thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
-    thumbnailLabel->setFixedSize(112, 64);
+    thumbnailLabel->setFixedSize(92, 52);
     thumbnailLabel->setAlignment(Qt::AlignCenter);
     thumbnailLabel->setScaledContents(false);
     thumbnailLabel->setAutoFillBackground(true);
@@ -208,7 +208,7 @@ class RenderQueueJobCard final : public QFrame
     root->addWidget(thumbnailLabel);
 
     auto* body = new QVBoxLayout();
-    body->setSpacing(3);
+    body->setSpacing(1);
     nameLabel = new QLabel();
     QFont nameFont = nameLabel->font();
     nameFont.setPointSize(nameFont.pointSize() + 1);
@@ -230,7 +230,7 @@ class RenderQueueJobCard final : public QFrame
     progressBar->setRange(0, 100);
     progressBar->setTextVisible(true);
     progressBar->setMinimumWidth(160);
-    progressBar->setMaximumHeight(12);
+    progressBar->setMaximumHeight(10);
     body->addWidget(progressBar);
     root->addLayout(body, 1);
   }
@@ -262,10 +262,16 @@ class RenderQueueJobCard final : public QFrame
             ? QColor(155, 165, 175)
             : QColor(225, 95, 85));
     outputLabel->setPalette(outputPalette);
+    // Backend details belong in the selected job inspector.  Keeping only
+    // errors and active progress in the compact queue matches the mock's
+    // scan-first list and lets several jobs fit without turning into cards.
     backendLabel->setText(errorMessage.trimmed().isEmpty()
-        ? backend
+        ? QString()
         : QStringLiteral("%1  |  action: retry").arg(backend));
+    backendLabel->setVisible(!backendLabel->text().isEmpty());
     progressBar->setValue(std::clamp(progress, 0, 100));
+    progressBar->setVisible(
+        status.compare(QStringLiteral("Rendering"), Qt::CaseInsensitive) == 0);
     QPalette palette = statusLabel->palette();
     palette.setColor(QPalette::WindowText, accent);
     statusLabel->setPalette(palette);

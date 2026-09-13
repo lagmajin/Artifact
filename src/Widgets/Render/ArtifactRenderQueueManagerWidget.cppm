@@ -468,7 +468,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
                        .arg(shortBackendLabel(job.renderBackend)),
                    job.errorMessage,
                    job.progress, data.textColor);
-      item->setSizeHint(QSize(0, 82));
+      item->setSizeHint(QSize(0, 66));
       jobListWidget->setItemWidget(item, card);
       visibleToSource.push_back(i);
     }

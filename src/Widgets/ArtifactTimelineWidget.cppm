@@ -10118,18 +10118,21 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 
   // Reserve once for the visible timeline primitives. Snapshot construction is
   // coalesced, but it can still run during a scroll or playback update.
-  snapshot.rects.reserve(view->trackCount() + clips.size() * 3);
+  snapshot.rects.reserve(view->trackCount() + clips.size() * 7);
   snapshot.lines.reserve(view->trackCount() * 2 + clips.size() * 4 +
                          keyframeMarkers.size() * 4 + 32);
   snapshot.triangles.reserve(keyframeMarkers.size() * 2);
   snapshot.texts.reserve(clips.size());
 
-  const QColor rowBase(35, 39, 44);
-  const QColor rowAlternate(31, 35, 40);
-  const QColor selectedRow(37, 61, 82);
-  const QColor separator(73, 79, 86, 156);
-  const QColor selectedClip(49, 122, 202);
-  const QColor selectionEdge(188, 227, 255);
+  // Keep the editing surface deliberately quiet.  The adopted timeline mock
+  // uses the clip itself (and not alternating high-contrast rows) as the
+  // primary landmark, so rows only establish a subtle reading rhythm.
+  const QColor rowBase(32, 35, 39);
+  const QColor rowAlternate(29, 32, 36);
+  const QColor selectedRow(35, 51, 65);
+  const QColor separator(66, 72, 79, 132);
+  const QColor selectedClip(50, 118, 192);
+  const QColor selectionEdge(176, 221, 255);
   const QColor selectedKey(228, 173, 83);
   const QColor playheadColor(239, 91, 82);
 
@@ -10160,7 +10163,9 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 
   const double firstFrame = horizontalOffset / ppf;
   const double lastFrame = (horizontalOffset + viewportWidth) / ppf;
-  const double targetGridPixels = 72.0;
+  // A major division about every 120 px matches the mock's sparse timing
+  // rhythm and leaves clip labels readable at ordinary zoom levels.
+  const double targetGridPixels = 120.0;
   const double rawStep = targetGridPixels / ppf;
   const double magnitude = std::pow(10.0, std::floor(std::log10(
       std::max(1.0, rawStep))));
@@ -10169,7 +10174,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
                            : normalized <= 2.0 ? 2.0
                            : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
   const double firstGridFrame = std::floor(firstFrame / gridStep) * gridStep;
-  QColor gridColor(104, 111, 118, 82);
+  QColor gridColor(102, 110, 119, 66);
   for (double frame = firstGridFrame; frame <= lastFrame + gridStep;
        frame += gridStep) {
     const double x = frame * ppf - horizontalOffset;
@@ -10179,8 +10184,8 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 
   // Keep the secondary divisions deliberately quiet: they provide the dense
   // DCC timing rhythm without competing with keyframes or layer spans.
-  const double minorStep = gridStep / 5.0;
-  QColor minorGridColor(104, 111, 118, 30);
+  const double minorStep = gridStep / 4.0;
+  QColor minorGridColor(104, 111, 118, 20);
   const double firstMinorFrame =
       std::floor(firstFrame / minorStep) * minorStep;
   for (double frame = firstMinorFrame; frame <= lastFrame + minorStep;
@@ -10202,10 +10207,13 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     const double width = std::max(1.0, clip.durationFrame * ppf);
     const bool isTransition = clip.kind ==
         ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition;
+    const double trackHeight =
+        static_cast<double>(view->trackHeight(clip.trackIndex));
     const double height = isTransition
-        ? std::min(16.0, std::max(10.0,
-                                  static_cast<double>(view->trackHeight(clip.trackIndex)) - 8.0))
-        : std::max(1.0, static_cast<double>(view->trackHeight(clip.trackIndex)) - 4.0);
+        ? std::min(16.0, std::max(10.0, trackHeight - 8.0))
+        // Leave a consistent four-pixel air gap above and below each clip.
+        // This stops a single-layer comp from reading as one giant blue row.
+        : std::max(12.0, trackHeight - 8.0);
     const double top = trackTops[clip.trackIndex] +
         (static_cast<double>(view->trackHeight(clip.trackIndex)) - height) * 0.5;
     if (x + width < 0.0 || x > viewportWidth ||
@@ -10237,6 +10245,17 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     snapshot.lines.push_back({QPointF(x + width, top),
                               QPointF(x + width, top + height), edge,
                               clip.selected ? 2.0f : 1.0f});
+    // Muted end caps make the in/out boundary visible at a glance without
+    // relying on an always-on selection outline.  The brighter caps remain
+    // reserved for an actively selected clip.
+    QColor trimCap = clip.selected ? selectionEdge : fill.darker(132);
+    trimCap.setAlpha(clip.selected ? 235 : 150);
+    const double capWidth = std::min(4.0, std::max(1.0, width * 0.12));
+    snapshot.rects.push_back({QRectF(x, top + 1.0, capWidth,
+                                     std::max(1.0, height - 2.0)), trimCap});
+    snapshot.rects.push_back({QRectF(x + width - capWidth, top + 1.0,
+                                     capWidth, std::max(1.0, height - 2.0)),
+                              trimCap});
     if (clip.selected) {
       snapshot.rects.push_back({QRectF(x, top, 3.0, height), selectionEdge});
       snapshot.rects.push_back(
