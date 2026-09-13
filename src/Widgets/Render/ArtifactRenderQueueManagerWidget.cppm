@@ -468,7 +468,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
                        .arg(shortBackendLabel(job.renderBackend)),
                    job.errorMessage,
                    job.progress, data.textColor);
-      item->setSizeHint(QSize(0, 66));
+      item->setSizeHint(QSize(0, 84));
       jobListWidget->setItemWidget(item, card);
       visibleToSource.push_back(i);
     }
@@ -553,9 +553,9 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     }
     if (filterAllLabel) filterAllLabel->setText(QStringLiteral("All   %1").arg(jobs.size()));
     if (filterRunningLabel) filterRunningLabel->setText(QStringLiteral("Running   %1").arg(running));
-    if (filterQueuedLabel) filterQueuedLabel->setText(QStringLiteral("Queued   %1").arg(pending));
+    if (filterQueuedLabel) filterQueuedLabel->setText(QStringLiteral("Ready   %1").arg(pending));
     if (filterCompletedLabel) filterCompletedLabel->setText(QStringLiteral("Completed   %1").arg(done));
-    if (filterFailedLabel) filterFailedLabel->setText(QStringLiteral("Failed   %1").arg(failed));
+    if (filterFailedLabel) filterFailedLabel->setText(QStringLiteral("Needs attention   %1").arg(failed));
     if (totalProgressBar) {
       totalProgressBar->setRange(0, 100);
       totalProgressBar->setValue(jobs.isEmpty() ? 0 : totalProgress / jobs.size());
@@ -1104,15 +1104,15 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     return row;
   };
   impl_->filterAllLabel = addFilterLabel(
-      QStringLiteral("All"), QStringLiteral("Studio/effectmenu_layers.svg"), true);
+      QStringLiteral("All"), QStringLiteral("Studio/figma_render_queue.svg"), true);
   impl_->filterRunningLabel = addFilterLabel(
-      QStringLiteral("Running"), QStringLiteral("Studio/figma_media_play.svg"));
+      QStringLiteral("Running"), QStringLiteral("Studio/render_status_rendering.svg"));
   impl_->filterQueuedLabel = addFilterLabel(
-      QStringLiteral("Queued"), QStringLiteral("Studio/animationmenu_schedule.svg"));
+      QStringLiteral("Ready"), QStringLiteral("Studio/render_status_ready.svg"));
   impl_->filterCompletedLabel = addFilterLabel(
-      QStringLiteral("Completed"), QStringLiteral("Studio/check_circle.svg"));
+      QStringLiteral("Completed"), QStringLiteral("Studio/render_status_completed.svg"));
   impl_->filterFailedLabel = addFilterLabel(
-      QStringLiteral("Failed"), QStringLiteral("Studio/asset_missing_small.svg"));
+      QStringLiteral("Needs attention"), QStringLiteral("Studio/render_status_attention.svg"));
   auto* filterDivider = new QFrame();
   filterDivider->setFrameShape(QFrame::HLine);
   filterDivider->setFrameShadow(QFrame::Sunken);

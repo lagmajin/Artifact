@@ -186,18 +186,11 @@ class RenderQueueJobCard final : public QFrame
   {
     setFrameShape(QFrame::StyledPanel);
     auto* root = new QHBoxLayout(this);
-    root->setContentsMargins(8, 5, 10, 5);
-    root->setSpacing(8);
-
-    statusLabel = new QLabel("WAIT");
-    statusLabel->setMinimumWidth(64);
-    statusLabel->setAlignment(Qt::AlignCenter);
-    statusIconLabel = new QLabel();
-    statusIconLabel->setFixedSize(18, 18);
-    statusIconLabel->setAlignment(Qt::AlignCenter);
+    root->setContentsMargins(10, 6, 14, 6);
+    root->setSpacing(16);
 
     thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
-    thumbnailLabel->setFixedSize(92, 52);
+    thumbnailLabel->setFixedSize(122, 68);
     thumbnailLabel->setAlignment(Qt::AlignCenter);
     thumbnailLabel->setScaledContents(false);
     thumbnailLabel->setAutoFillBackground(true);
@@ -207,73 +200,92 @@ class RenderQueueJobCard final : public QFrame
     thumbnailLabel->setPalette(thumbnailPalette);
     root->addWidget(thumbnailLabel);
 
-    auto* body = new QVBoxLayout();
-    body->setSpacing(1);
+    auto* nameColumn = new QVBoxLayout();
+    nameColumn->setContentsMargins(0, 0, 0, 0);
+    nameColumn->setSpacing(2);
     nameLabel = new QLabel();
     QFont nameFont = nameLabel->font();
     nameFont.setPointSize(nameFont.pointSize() + 1);
     nameFont.setBold(true);
     nameLabel->setFont(nameFont);
+    nameLabel->setMinimumWidth(150);
+    nameLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     outputLabel = new QLabel();
     backendLabel = new QLabel();
     outputLabel->setWordWrap(false);
     backendLabel->setWordWrap(false);
-    auto* cardHeader = new QHBoxLayout();
-    cardHeader->setContentsMargins(0, 0, 0, 0);
-    cardHeader->addWidget(nameLabel, 1);
-    cardHeader->addWidget(statusIconLabel);
-    cardHeader->addWidget(statusLabel);
-    body->addLayout(cardHeader);
-    body->addWidget(outputLabel);
-    body->addWidget(backendLabel);
+    outputLabel->setMinimumWidth(190);
+    outputLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    nameColumn->addStretch();
+    nameColumn->addWidget(nameLabel);
+    nameColumn->addStretch();
+    root->addLayout(nameColumn);
+    root->addWidget(outputLabel);
+
+    auto* statusColumn = new QVBoxLayout();
+    statusColumn->setContentsMargins(0, 0, 0, 0);
+    statusColumn->setSpacing(3);
+    auto* statusHeader = new QHBoxLayout();
+    statusHeader->setContentsMargins(0, 0, 0, 0);
+    statusIconLabel = new QLabel();
+    statusIconLabel->setFixedSize(18, 18);
+    statusIconLabel->setAlignment(Qt::AlignCenter);
+    statusLabel = new QLabel("WAIT");
+    statusLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    statusHeader->addWidget(statusIconLabel);
+    statusHeader->addWidget(statusLabel);
+    statusHeader->addStretch();
+    statusColumn->addLayout(statusHeader);
+    statusColumn->addWidget(backendLabel);
     progressBar = new QProgressBar();
     progressBar->setRange(0, 100);
     progressBar->setTextVisible(true);
     progressBar->setMinimumWidth(160);
     progressBar->setMaximumHeight(10);
-    body->addWidget(progressBar);
-    root->addLayout(body, 1);
+    statusColumn->addWidget(progressBar);
+    root->addLayout(statusColumn, 1);
   }
 
   void setJob(const QString& status, const QString& name, const QString& output,
               const QString& backend, const QString& errorMessage,
               int progress, const QColor& accent)
   {
-    statusLabel->setText(status.toUpper());
-    QString statusIcon = QStringLiteral("Studio/animationmenu_schedule.svg");
-    if (status.compare(QStringLiteral("Rendering"), Qt::CaseInsensitive) == 0) {
-      statusIcon = QStringLiteral("Studio/figma_media_play.svg");
-    } else if (status.compare(QStringLiteral("Completed"), Qt::CaseInsensitive) == 0) {
-      statusIcon = QStringLiteral("Studio/check_circle.svg");
-    } else if (status.compare(QStringLiteral("Failed"), Qt::CaseInsensitive) == 0) {
-      statusIcon = QStringLiteral("Studio/asset_missing_small.svg");
-    } else if (status.compare(QStringLiteral("Paused"), Qt::CaseInsensitive) == 0) {
-      statusIcon = QStringLiteral("Studio/animationmenu_pause.svg");
+    const bool needsAttention = !errorMessage.trimmed().isEmpty();
+    const QString visibleStatus = needsAttention
+        ? QStringLiteral("Needs attention")
+        : status;
+    statusLabel->setText(visibleStatus);
+    QString statusIcon = QStringLiteral("Studio/render_status_ready.svg");
+    if (needsAttention) {
+      statusIcon = QStringLiteral("Studio/render_status_attention.svg");
+    }
+    if (!needsAttention &&
+        status.compare(QStringLiteral("Rendering"), Qt::CaseInsensitive) == 0) {
+      statusIcon = QStringLiteral("Studio/render_status_rendering.svg");
+    } else if (!needsAttention &&
+               status.compare(QStringLiteral("Completed"), Qt::CaseInsensitive) == 0) {
+      statusIcon = QStringLiteral("Studio/render_status_completed.svg");
     }
     statusIconLabel->setPixmap(
         loadIconWithFallback(statusIcon).pixmap(QSize(16, 16)));
     nameLabel->setText(name);
-    outputLabel->setText(errorMessage.trimmed().isEmpty()
-        ? QStringLiteral("Output  •  %1").arg(output)
-        : QStringLiteral("Error  •  %1").arg(errorMessage));
+    outputLabel->setText(output);
     QPalette outputPalette = outputLabel->palette();
     outputPalette.setColor(QPalette::WindowText,
-        errorMessage.trimmed().isEmpty()
+        !needsAttention
             ? QColor(155, 165, 175)
-            : QColor(225, 95, 85));
+            : QColor(224, 174, 78));
     outputLabel->setPalette(outputPalette);
-    // Backend details belong in the selected job inspector.  Keeping only
-    // errors and active progress in the compact queue matches the mock's
-    // scan-first list and lets several jobs fit without turning into cards.
-    backendLabel->setText(errorMessage.trimmed().isEmpty()
-        ? QString()
-        : QStringLiteral("%1  |  action: retry").arg(backend));
-    backendLabel->setVisible(!backendLabel->text().isEmpty());
+    backendLabel->setText(needsAttention
+        ? QStringLiteral("Composition missing")
+        : backend);
+    backendLabel->setVisible(true);
     progressBar->setValue(std::clamp(progress, 0, 100));
     progressBar->setVisible(
         status.compare(QStringLiteral("Rendering"), Qt::CaseInsensitive) == 0);
     QPalette palette = statusLabel->palette();
-    palette.setColor(QPalette::WindowText, accent);
+    palette.setColor(QPalette::WindowText,
+                     needsAttention ? QColor(224, 174, 78) : accent);
     statusLabel->setPalette(palette);
     QPalette barPalette = progressBar->palette();
     barPalette.setColor(QPalette::Highlight, accent);
