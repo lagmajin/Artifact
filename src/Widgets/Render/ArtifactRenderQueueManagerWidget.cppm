@@ -1976,7 +1976,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   splitter->setSizes({208, 720, 360});
   layout->addWidget(splitter, 1);
 
-  auto* historyGroup = new QGroupBox("Render History / Log");
+  auto* historyGroup = new QGroupBox("Activity log");
   auto* historyLayout = new QVBoxLayout(historyGroup);
   impl_->historyListWidget = new QListWidget();
   impl_->historyListWidget->setObjectName("renderQueueHistory");
@@ -2026,7 +2026,12 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   historyButtonLayout->addWidget(impl_->exportHistoryButton);
   historyButtonLayout->addStretch();
   historyLayout->addLayout(historyButtonLayout);
-  historyGroup->setFixedHeight(64);
+  // The queue is the primary surface; history starts collapsed as a single
+  // activity strip and remains available from the History filter.
+  impl_->historyListWidget->setVisible(false);
+  impl_->clearHistoryButton->setVisible(false);
+  impl_->exportHistoryButton->setVisible(false);
+  historyGroup->setFixedHeight(30);
   layout->addWidget(historyGroup);
   impl_->loadHistory();
 
