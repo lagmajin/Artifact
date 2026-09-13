@@ -458,6 +458,9 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
       item->setToolTip(data.tooltip);
       jobListWidget->addItem(item);
       auto* card = new RenderQueueJobCard(jobListWidget);
+      // The card is presentation-only. Let QListWidget receive the mouse
+      // press so currentItem()/selection stays aligned with the source index.
+      card->setAttribute(Qt::WA_TransparentForMouseEvents);
       card->setJob(normalizeStatus(job.status), job.name,
                    QFileInfo(job.outputPath).fileName(),
                    QStringLiteral("enc:%1  |  render:%2")
@@ -2121,6 +2124,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     dialog.setIncludeAudio(impl_->service->jobIntegratedRenderEnabledAt(index));
     dialog.setMultiChannelEnabled(impl_->service->jobMultiChannelEnabledAt(index));
     dialog.setMultiChannelChannels(impl_->service->jobMultiChannelChannelsAt(index));
+    dialog.setDeepExportEnabled(impl_->service->jobDeepExportEnabledAt(index));
     dialog.setFramePadding(impl_->service->jobFramePaddingAt(index));
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
@@ -2146,6 +2150,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
       impl_->service->setJobIntegratedRenderEnabledAt(index, dialog.includeAudio());
       impl_->service->setJobMultiChannelEnabledAt(index, dialog.multiChannelEnabled());
       impl_->service->setJobMultiChannelChannelsAt(index, dialog.multiChannelChannels());
+      impl_->service->setJobDeepExportEnabledAt(index, dialog.deepExportEnabled());
       impl_->service->setJobFramePaddingAt(index, dialog.framePadding());
       impl_->service->setJobAudioCodecAt(index, dialog.audioCodec());
       impl_->service->setJobAudioBitrateKbpsAt(index, dialog.audioBitrateKbps());
