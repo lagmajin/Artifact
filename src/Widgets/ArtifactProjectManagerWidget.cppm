@@ -392,10 +392,17 @@ QPixmap projectViewIllustration(const QString& relativePath, const QSize& target
         return *it;
     }
     const QString path = projectViewIllustrationPath(relativePath);
-    if (path.isEmpty()) {
-        return {};
+    QPixmap pix;
+    if (!path.isEmpty()) {
+        pix.load(path);
     }
-    QPixmap pix(path);
+    // The source illustration is optional in packaged builds.  Keep the
+    // empty state visually intentional by falling back to a bundled Studio
+    // glyph instead of silently leaving a large blank panel.
+    if (pix.isNull()) {
+        pix = QIcon(QStringLiteral(":/icons/Studio/composition_empty_composition.svg"))
+                  .pixmap(targetSize);
+    }
     if (pix.isNull()) {
         return {};
     }
@@ -410,7 +417,8 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
         return;
     }
 
-    const int imageSide = std::clamp(std::min(contentRect.width(), contentRect.height()) / 3, 112, 220);
+    const int imageSide = std::clamp(
+        std::min(contentRect.width(), contentRect.height()) / 4, 96, 168);
     const QPixmap illustration = projectViewIllustration(
         QStringLiteral("Studio/project_view_empty.png"),
         QSize(imageSide, imageSide));
@@ -423,7 +431,7 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
                               illustration.width(),
                               illustration.height());
         painter.save();
-        painter.setOpacity(0.72);
+        painter.setOpacity(0.62);
         painter.drawPixmap(imageRect.topLeft(), illustration);
         painter.restore();
         y = imageRect.bottom() + 12;
@@ -433,9 +441,13 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     titleFont.setPointSize(std::max(10, titleFont.pointSize() + 1));
     titleFont.setBold(true);
     painter.setFont(titleFont);
+    const auto *service = ArtifactProjectService::instance();
+    const bool hasProject = service && service->hasProject();
     painter.setPen(QColor(218, 224, 232, 210));
     const QRect titleRect(contentRect.left() + 28, y, contentRect.width() - 56, 24);
-    painter.drawText(titleRect, Qt::AlignCenter, QStringLiteral("No project items to show"));
+    painter.drawText(titleRect, Qt::AlignCenter,
+                     hasProject ? QStringLiteral("No project items to show")
+                                : QStringLiteral("No project open"));
 
     QFont bodyFont = painter.font();
     bodyFont.setBold(false);
@@ -444,7 +456,9 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setPen(QColor(160, 170, 182, 185));
     const QRect bodyRect(contentRect.left() + 28, titleRect.bottom() + 4, contentRect.width() - 56, 22);
     painter.drawText(bodyRect, Qt::AlignCenter,
-                     QStringLiteral("Adjust the search or filters, or import assets and create a composition."));
+                     hasProject
+                         ? QStringLiteral("Adjust the search or filters, or import assets and create a composition.")
+                         : QStringLiteral("Open a project or create a composition to populate Project View."));
 }
 
 constexpr int kHeaderResizeHitRadius = 7;
@@ -533,20 +547,19 @@ public:
     };
 
     struct Colors {
-        static inline const QColor Background = QColor(0x0F, 0x17, 0x1F);
-        static inline const QColor HeaderBackground = QColor(0x14, 0x1E, 0x28);
-        static inline const QColor HeaderText = QColor(0xA8, 0xB4, 0xC1);
-        static inline const QColor HeaderSeparator = QColor(0x2D, 0x3D, 0x4D);
-        static inline const QColor HeaderHover = QColor(0x1D, 0x2B, 0x38);
-        static inline const QColor RowHover = QColor(0x1A, 0x29, 0x36);
-        static inline const QColor RowSelected = QColor(0x24, 0x4A, 0x82);
-        static inline const QColor RowSelectedText = QColor(0xF5, 0xF7, 0xFA);
-        static inline const QColor RowText = QColor(0xD5, 0xDF, 0xE8);
-        static inline const QColor RowBorder = QColor(0x25, 0x35, 0x45);
-        static inline const QColor BranchNormal = QColor(0x73, 0x88, 0x9B);
-        static inline const QColor BranchHover = QColor(0xD6, 0xE2, 0xEE);
-        static inline const QColor SelectionAccent = QColor(0x4E, 0x91, 0xFF);
-        static inline const QColor HierarchyGuide = QColor(0x35, 0x4B, 0x5F);
+        static QColor background() { return QColor(ArtifactCore::currentDCCTheme().backgroundColor); }
+        static QColor headerBackground() { return background().lighter(106); }
+        static QColor headerText() { return QColor(ArtifactCore::currentDCCTheme().textColor).darker(125); }
+        static QColor headerSeparator() { return background().lighter(122); }
+        static QColor headerHover() { return background().lighter(114); }
+        static QColor rowHover() { return background().lighter(110); }
+        static QColor rowSelected() { return QColor(ArtifactCore::currentDCCTheme().accentColor).darker(125); }
+        static QColor rowSelectedText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
+        static QColor rowText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
+        static QColor rowBorder() { return background().lighter(116); }
+        static QColor branchNormal() { return QColor(ArtifactCore::currentDCCTheme().textColor).darker(150); }
+        static QColor selectionAccent() { return QColor(ArtifactCore::currentDCCTheme().accentColor); }
+        static QColor hierarchyGuide() { return background().lighter(128); }
     };
 
     QAbstractItemModel* model = nullptr;
@@ -573,23 +586,23 @@ public:
     QModelIndex hoverBranchIndex;
     QLineEdit* nameEditor = nullptr;
     QModelIndex editingIndex;
-    int headerHeight = 30;
-    int rowHeight = 32;
+    int headerHeight = 36;
+    int rowHeight = 38;
     int indentWidth = 18;
     ArtifactProjectView::PresentationMode presentationMode = ArtifactProjectView::PresentationMode::List;
     QHash<QString, QPixmap> tilePreviewCache;
-    int tileMargin = 12;
-    int tileSpacing = 12;
-    int tileWidth = 204;
-    int tileHeight = 214;
-    int tilePreviewHeight = 112;
-    int tileContentTop = 18;
+    int tileMargin = 14;
+    int tileSpacing = 14;
+    int tileWidth = 248;
+    int tileHeight = 252;
+    int tilePreviewHeight = 132;
+    int tileContentTop = 14;
     int tileContentBottom = 12;
     int tileTextLines = 3;
-    int minTileWidth = 168;
-    int maxTileWidth = 320;
-    int minTileHeight = 192;
-    int maxTileHeight = 336;
+    int minTileWidth = 188;
+    int maxTileWidth = 332;
+    int minTileHeight = 214;
+    int maxTileHeight = 348;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -1298,7 +1311,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
 
-    painter.fillRect(rect(), Impl::Colors::Background);
+    painter.fillRect(rect(), Impl::Colors::background());
 
     const int contentWidth = std::max(width(), impl_->totalColumnWidth());
 
@@ -1325,15 +1338,15 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
         const bool selected = selectionModel() && selectionModel()->isRowSelected(index0.row(), index0.parent());
         const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
 
-        const QColor rowFill = selected ? Impl::Colors::RowSelected : (hovered ? Impl::Colors::RowHover : Impl::Colors::Background);
+        const QColor rowFill = selected ? Impl::Colors::rowSelected() : (hovered ? Impl::Colors::rowHover() : Impl::Colors::background());
         painter.fillRect(rowRect, rowFill);
 
         if (selected) {
             painter.fillRect(QRect(rowRect.left(), rowRect.top(), 3, rowRect.height()),
-                             Impl::Colors::SelectionAccent);
+                             Impl::Colors::selectionAccent());
         }
 
-        painter.setPen(Impl::Colors::RowBorder);
+        painter.setPen(Impl::Colors::rowBorder());
         painter.drawLine(rowRect.bottomLeft(), rowRect.bottomRight());
 
         int cellX = 0;
@@ -1346,7 +1359,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
             const QRect cellRect(cellX, rowRect.top(), width, rowRect.height());
 
             const QModelIndex cellIndex = index0.siblingAtColumn(column);
-            painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
+            painter.setPen(selected ? Impl::Colors::rowSelectedText() : Impl::Colors::rowText());
 
             if (column == 0) {
                 if (impl_->editingIndex.isValid() && impl_->editingIndex == index0 && impl_->nameEditor) {
@@ -1364,7 +1377,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
                     const QRect contentRect = cellRect.adjusted(8 + indent, 0, -8, 0);
                     if (visibleRow.depth > 0) {
                         painter.save();
-                        painter.setPen(QPen(Impl::Colors::HierarchyGuide, 1.0));
+                        painter.setPen(QPen(Impl::Colors::hierarchyGuide(), 1.0));
                         for (int depth = 0; depth < visibleRow.depth; ++depth) {
                             const int guideX = cellRect.left() + 14 + depth * impl_->indentWidth;
                             painter.drawLine(guideX, rowRect.top(), guideX, rowRect.bottom());
@@ -1386,7 +1399,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
                             branchPath.lineTo(branchRect.left() + 4, branchRect.bottom() - 2);
                             branchPath.lineTo(branchRect.right() - 2, branchRect.center().y());
                         }
-                        painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::RowSelectedText : Impl::Colors::BranchNormal);
+                        painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::rowSelectedText() : Impl::Colors::branchNormal());
                     }
                     int textLeft = contentRect.left() + (impl_->hasChildren(index0) ? 18 : 0);
                     const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
@@ -1406,7 +1419,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
                 if (column == 1 || column == 2 || column == 3) alignment = Qt::AlignVCenter | Qt::AlignRight;
                 painter.drawText(cellRect.adjusted(8, 0, -8, 0), alignment, painter.fontMetrics().elidedText(text, Qt::ElideRight, cellRect.width() - 16));
             }
-            painter.setPen(Impl::Colors::RowBorder);
+            painter.setPen(Impl::Colors::rowBorder());
             painter.drawLine(cellRect.topRight(), cellRect.bottomRight());
             cellX += width;
         }
@@ -1414,7 +1427,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
     painter.restore();
 
     // Draw Header
-    painter.fillRect(QRect(0, 0, width(), impl_->headerHeight), Impl::Colors::HeaderBackground);
+    painter.fillRect(QRect(0, 0, width(), impl_->headerHeight), Impl::Colors::headerBackground());
 
     int headerX = 0;
     const int configuredColumnCount = static_cast<int>(impl_->columnWidths.size());
@@ -1427,10 +1440,10 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
 
         if (headerRect.right() >= 0 && headerRect.left() <= this->width()) {
             if (impl_->hoverHeaderColumn == column && impl_->resizingColumn == -1) {
-                painter.fillRect(headerRect.adjusted(0, 0, -1, -1), Impl::Colors::HeaderHover);
+                painter.fillRect(headerRect.adjusted(0, 0, -1, -1), Impl::Colors::headerHover());
             }
 
-            painter.setPen(Impl::Colors::HeaderText);
+            painter.setPen(Impl::Colors::headerText());
             const QString label = impl_->model ? impl_->model->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString() : QString();
             painter.drawText(headerRect.adjusted(10, 0, -20, 0), Qt::AlignVCenter | Qt::AlignLeft, label);
 
@@ -1448,10 +1461,10 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
                     arrowPath.lineTo(arrowX + arrowSize/2, arrowY - arrowSize/4);
                     arrowPath.lineTo(arrowX, arrowY + arrowSize/4);
                 }
-                painter.fillPath(arrowPath, Impl::Colors::HeaderText);
+                painter.fillPath(arrowPath, Impl::Colors::headerText());
             }
 
-            painter.setPen(Impl::Colors::HeaderSeparator);
+            painter.setPen(Impl::Colors::headerSeparator());
             painter.drawLine(headerRect.topRight() + QPoint(0, 4), headerRect.bottomRight() - QPoint(0, 4));
 
             if (column + 1 < columnCount) {
@@ -1471,7 +1484,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
         }
         headerX += width;
     }
-    painter.setPen(Impl::Colors::HeaderSeparator);
+    painter.setPen(Impl::Colors::headerSeparator());
     painter.drawLine(0, impl_->headerHeight - 1, width(), impl_->headerHeight - 1);
 
     if (impl_->visibleRows.isEmpty()) {
@@ -1490,7 +1503,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
-    painter.fillRect(rect(), Impl::Colors::Background);
+    painter.fillRect(rect(), Impl::Colors::background());
 
     const QRect dirtyRect = event ? event->rect() : rect();
     const int viewWidth = std::max(1, width());
@@ -1525,13 +1538,13 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
         const bool hasChildren = impl_->hasChildren(index0);
 
-        QColor tileFill = selected ? Impl::Colors::RowSelected
-                                   : (hovered ? Impl::Colors::RowHover : QColor(0x20, 0x23, 0x29));
+        QColor tileFill = selected ? Impl::Colors::rowSelected()
+                                   : (hovered ? Impl::Colors::rowHover() : Impl::Colors::headerBackground());
         if (type == eProjectItemType::Folder) {
             tileFill = tileFill.lighter(selected ? 110 : 104);
         }
 
-        QColor border = selected ? Impl::Colors::SelectionAccent
+        QColor border = selected ? Impl::Colors::selectionAccent()
                                  : QColor(0x3A, 0x40, 0x4A);
         border.setAlpha(hovered ? 220 : 170);
 
@@ -1551,7 +1564,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
             accent = accent.lighter(115);
         }
         painter.fillRect(QRect(tileRect.left() + 1, tileRect.top() + 8, 3,
-                               tileRect.height() - 16), selected ? Impl::Colors::SelectionAccent : accent);
+                               tileRect.height() - 16), selected ? Impl::Colors::selectionAccent() : accent);
 
         const QRect previewRect = impl_->tilePreviewRect(tileRect);
         const QRect titleRect = impl_->tileTitleRect(tileRect);
@@ -1615,7 +1628,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         }
 
         const QString title = sourceIdx.data(Qt::DisplayRole).toString();
-        painter.setPen(selected ? Impl::Colors::RowSelectedText : QColor(240, 240, 240));
+        painter.setPen(selected ? Impl::Colors::rowSelectedText() : Impl::Colors::rowText());
         QFont titleFont = painter.font();
         titleFont.setPointSize(std::max(10, titleFont.pointSize()));
         titleFont.setBold(true);
@@ -3261,6 +3274,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
              const ArtifactCompositionInitParams params = dialog->acceptedInitParams();
              if (auto* svc = ArtifactProjectService::instance()) {
                  svc->createComposition(params);
+                 refreshVisibleContent();
              }
          }
          dialog->deleteLater();
@@ -3533,6 +3547,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         params.setSeed(dialog.seed());
         params.setKind(dialog.kind());
         svc->addLayerToCurrentComposition(params, true, false);
+        refreshVisibleContent();
     }, loadProjectViewIcon(QStringLiteral("Studio/noise_layer.svg")));
     const auto addNoisePreset = [this, svc, newMenu, &addTrackedNewAction](const QString& id,
                                                       const QString& label,
@@ -4138,6 +4153,13 @@ public:
     ProjectFilterProxyModel* proxyModel_ = nullptr;
     ProjectInfoPanel* infoPanel_ = nullptr;
     QLineEdit* searchBar = nullptr;
+    QShortcut* expandAllShortcut_ = nullptr;
+    QShortcut* collapseAllShortcut_ = nullptr;
+    QShortcut* focusSearchShortcut_ = nullptr;
+    QShortcut* clearSearchShortcut_ = nullptr;
+    QShortcut* renameShortcut_ = nullptr;
+    QShortcut* deleteShortcut_ = nullptr;
+    std::size_t shortcutListenerToken_ = 0;
     QComboBox* typeFilterBox = nullptr;
     QComboBox* viewModeBox = nullptr;
     QCheckBox* unusedOnlyCheck = nullptr;
@@ -4150,6 +4172,12 @@ public:
     QLabel* filterSummaryLabel = nullptr;
     QLabel* selectionStateLabel = nullptr;
     QLabel* selectionDetailLabel = nullptr;
+    QWidget* selectionChrome = nullptr;
+    QWidget* detailEmptyState = nullptr;
+    QLabel* detailEmptyTitle = nullptr;
+    QLabel* detailEmptyBody = nullptr;
+    QLabel* itemActionsLabel = nullptr;
+    QLabel* proxyActionsLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
     QPushButton* revealSelectionButton = nullptr;
     QPushButton* generateProxyButton = nullptr;
@@ -5037,7 +5065,9 @@ public:
     }
 
     QString syncStateText() const {
-        return QStringLiteral("Asset Browser linked");
+        const auto *svc = ArtifactProjectService::instance();
+        return svc && svc->hasProject() ? QStringLiteral("Asset Browser linked")
+                                        : QStringLiteral("No project");
     }
 
     QString projectHealthText() const {
@@ -5051,6 +5081,12 @@ public:
     }
 
     void refreshSelectionChrome() {
+        if (infoPanel_) {
+            const auto *svc = ArtifactProjectService::instance();
+            if (!svc || !svc->hasProject()) {
+                infoPanel_->updateInfo(QModelIndex());
+            }
+        }
         if (viewModeBox && projectView_) {
             const QString desiredMode = projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
                                             ? QStringLiteral("Tile")
@@ -5084,6 +5120,28 @@ public:
         refreshCompositionEditor();
         ProjectItem* item = currentSelectedItem();
         const bool hasItem = item != nullptr;
+        const auto* projectService = ArtifactProjectService::instance();
+        const bool hasProject = projectService && projectService->hasProject();
+        if (detailEmptyState) {
+            detailEmptyState->setVisible(!hasItem);
+        }
+        if (detailEmptyTitle) {
+            detailEmptyTitle->setText(
+                hasProject ? QStringLiteral("Nothing selected")
+                           : QStringLiteral("No project open"));
+        }
+        if (detailEmptyBody) {
+            detailEmptyBody->setText(
+                hasProject
+                    ? QStringLiteral("Select a project item to inspect its details and actions.")
+                    : QStringLiteral("Open a project to inspect its items."));
+        }
+        if (infoPanel_) {
+            infoPanel_->setVisible(hasItem);
+        }
+        if (selectionChrome) {
+            selectionChrome->setVisible(hasItem);
+        }
         const bool isFootage = item && item->type() == eProjectItemType::Footage;
         const bool isFolder = item && item->type() == eProjectItemType::Folder;
         const bool isComposition = item && item->type() == eProjectItemType::Composition;
@@ -5131,6 +5189,25 @@ public:
             clearProxyButton->setEnabled(isFootage && hasProxy);
         }
         const int selectedFootageCount = selectedFootageFilePaths().size();
+        const bool showFootageActions = isFootage || selectedFootageCount > 1;
+        if (itemActionsLabel) itemActionsLabel->setVisible(hasItem);
+        if (proxyActionsLabel) proxyActionsLabel->setVisible(showFootageActions);
+        if (revealSelectionButton) revealSelectionButton->setVisible(isFootage);
+        if (relinkSelectionButton) relinkSelectionButton->setVisible(isFootage);
+        if (copyPathButton) copyPathButton->setVisible(isFootage);
+        if (generateProxyButton) generateProxyButton->setVisible(isFootage);
+        if (revealProxyButton) revealProxyButton->setVisible(isFootage);
+        if (clearProxyButton) clearProxyButton->setVisible(isFootage);
+        if (regenerateStaleProxiesButton) {
+            regenerateStaleProxiesButton->setVisible(isFootage);
+        }
+        if (generateSelectedProxiesButton) {
+            generateSelectedProxiesButton->setVisible(selectedFootageCount > 1);
+        }
+        if (clearSelectedProxiesButton) {
+            clearSelectedProxiesButton->setVisible(selectedFootageCount > 1);
+        }
+        if (proxyGlobalToggle_) proxyGlobalToggle_->setVisible(showFootageActions);
         if (generateSelectedProxiesButton) {
             generateSelectedProxiesButton->setEnabled(selectedFootageCount > 1);
         }
@@ -5987,6 +6064,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->owner_ = this;
     setObjectName(QStringLiteral("artifactProjectManagerWidget"));
     setAutoFillBackground(true);
+    {
+        QPalette pal = palette();
+        pal.setColor(QPalette::Window,
+                     QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+        setPalette(pal);
+    }
 
     auto mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -5995,6 +6078,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* chromePanel = new QWidget(this);
     chromePanel->setObjectName(QStringLiteral("projectManagerChrome"));
     chromePanel->setAutoFillBackground(true);
+    chromePanel->setPalette(palette());
     auto* chromeLayout = new QVBoxLayout(chromePanel);
     chromeLayout->setContentsMargins(0, 0, 0, 0);
     chromeLayout->setSpacing(0);
@@ -6017,6 +6101,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->projectNameLabel->setPalette(titlePalette);
     }
     chromeLayout->addWidget(impl_->projectNameLabel);
+    // The dock tab already names this surface. Keep the working area aligned
+    // with the 2026-09-08 mock instead of repeating a second large title row.
+    impl_->projectNameLabel->setVisible(false);
 
     impl_->syncStateLabel = new QLabel(QStringLiteral("Asset Browser linked"), chromePanel);
     impl_->syncStateLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
@@ -6051,13 +6138,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->projectHealthLabel);
 
     auto* selectionChrome = new QWidget(chromePanel);
+    impl_->selectionChrome = selectionChrome;
     selectionChrome->setObjectName(QStringLiteral("projectManagerSelectionChrome"));
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
-    selectionChromeLayout->setContentsMargins(8, 0, 8, 5);
-    selectionChromeLayout->setSpacing(2);
+    selectionChromeLayout->setContentsMargins(0, 0, 0, 5);
+    selectionChromeLayout->setSpacing(6);
     impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Tree  ·  All  ·  All items"), selectionChrome);
-    impl_->selectionSummaryLabel->setWordWrap(true);
-    impl_->selectionSummaryLabel->setMaximumHeight(40);
+    impl_->selectionSummaryLabel->setWordWrap(false);
+    impl_->selectionSummaryLabel->setMaximumHeight(24);
     impl_->selectionSummaryLabel->setToolTip(QStringLiteral("Current view mode, active filter scope, and search text."));
     {
         QFont f = impl_->selectionSummaryLabel->font();
@@ -6084,8 +6172,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     selectionChromeLayout->addWidget(impl_->filterSummaryLabel);
     impl_->filterSummaryLabel->setVisible(false);
     impl_->selectionStateLabel = new QLabel(QStringLiteral("0 items  ·  0 selected"), selectionChrome);
-    impl_->selectionStateLabel->setWordWrap(true);
-    impl_->selectionStateLabel->setMaximumHeight(40);
+    impl_->selectionStateLabel->setWordWrap(false);
+    impl_->selectionStateLabel->setMaximumHeight(24);
     impl_->selectionStateLabel->setToolTip(QStringLiteral("Filtered result count and selection-specific state."));
     {
         QFont f = impl_->selectionStateLabel->font();
@@ -6276,15 +6364,17 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         pal.setColor(QPalette::ButtonText, Qt::white);
         pal.setColor(QPalette::Highlight, QColor(theme.accentColor).lighter(112));
         impl_->openSelectionButton->setPalette(pal);
-        impl_->openSelectionButton->setMinimumHeight(28);
-        impl_->openSelectionButton->setMaximumHeight(28);
+        impl_->openSelectionButton->setMinimumHeight(36);
+        impl_->openSelectionButton->setMaximumHeight(36);
         QFont font = impl_->openSelectionButton->font();
         font.setBold(true);
         impl_->openSelectionButton->setFont(font);
     }
     auto* itemActionsLabel = new QLabel(QStringLiteral("Item"), selectionChrome);
+    impl_->itemActionsLabel = itemActionsLabel;
     itemActionsLabel->setObjectName(QStringLiteral("projectManagerActionGroupLabel"));
     auto* proxyActionsLabel = new QLabel(QStringLiteral("Proxy"), selectionChrome);
+    impl_->proxyActionsLabel = proxyActionsLabel;
     proxyActionsLabel->setObjectName(QStringLiteral("projectManagerActionGroupLabel"));
     {
         QFont font = itemActionsLabel->font();
@@ -6304,19 +6394,19 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     selectionButtons->addWidget(impl_->openSelectionButton, 0, 0, 1, 2);
     selectionButtons->addWidget(itemActionsLabel, 1, 0, 1, 2);
-    selectionButtons->addWidget(impl_->revealSelectionButton, 2, 0);
-    selectionButtons->addWidget(impl_->renameSelectionButton, 2, 1);
-    selectionButtons->addWidget(impl_->relinkSelectionButton, 3, 0);
+    selectionButtons->addWidget(impl_->renameSelectionButton, 2, 0, 1, 2);
+    selectionButtons->addWidget(impl_->revealSelectionButton, 3, 0);
     selectionButtons->addWidget(impl_->copyPathButton, 3, 1);
-    selectionButtons->addWidget(proxyActionsLabel, 4, 0, 1, 2);
-    selectionButtons->addWidget(impl_->generateProxyButton, 5, 0);
-    selectionButtons->addWidget(impl_->revealProxyButton, 5, 1);
-    selectionButtons->addWidget(impl_->clearProxyButton, 6, 0);
-    selectionButtons->addWidget(impl_->regenerateStaleProxiesButton, 6, 1);
-    selectionButtons->addWidget(impl_->generateSelectedProxiesButton, 7, 0);
-    selectionButtons->addWidget(impl_->clearSelectedProxiesButton, 7, 1);
-    selectionButtons->addWidget(impl_->proxyGlobalToggle_, 8, 0, 1, 2);
-    selectionButtons->addWidget(impl_->deleteSelectionButton, 9, 0, 1, 2);
+    selectionButtons->addWidget(impl_->relinkSelectionButton, 4, 0, 1, 2);
+    selectionButtons->addWidget(proxyActionsLabel, 5, 0, 1, 2);
+    selectionButtons->addWidget(impl_->generateProxyButton, 6, 0);
+    selectionButtons->addWidget(impl_->revealProxyButton, 6, 1);
+    selectionButtons->addWidget(impl_->clearProxyButton, 7, 0);
+    selectionButtons->addWidget(impl_->regenerateStaleProxiesButton, 7, 1);
+    selectionButtons->addWidget(impl_->generateSelectedProxiesButton, 8, 0);
+    selectionButtons->addWidget(impl_->clearSelectedProxiesButton, 8, 1);
+    selectionButtons->addWidget(impl_->proxyGlobalToggle_, 9, 0, 1, 2);
+    selectionButtons->addWidget(impl_->deleteSelectionButton, 10, 0, 1, 2);
     selectionButtons->setColumnStretch(0, 1);
     selectionButtons->setColumnStretch(1, 1);
     selectionChromeLayout->addLayout(selectionButtons);
@@ -6458,8 +6548,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->searchBar->setAccessibleName(QStringLiteral("Project search"));
     impl_->searchBar->setAccessibleDescription(
         QStringLiteral("Filter project items by name, path, type, or status."));
-    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project"));
+    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project, tags, type..."));
     impl_->searchBar->setClearButtonEnabled(true);
+    impl_->searchBar->addAction(
+        loadProjectViewIcon(QStringLiteral("Studio/search.svg")),
+        QLineEdit::LeadingPosition);
     impl_->searchBar->setMinimumHeight(32);
     impl_->searchBar->setMaximumHeight(32);
     {
@@ -6478,6 +6571,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* filterBarHost = new QWidget(chromePanel);
     filterBarHost->setObjectName(QStringLiteral("projectManagerFilterBar"));
     filterBarHost->setAutoFillBackground(true);
+    filterBarHost->setPalette(chromePanel->palette());
     auto* filterBar = new QHBoxLayout(filterBarHost);
     filterBar->setContentsMargins(0, 0, 0, 0);
     filterBar->setSpacing(8);
@@ -6488,25 +6582,30 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         QStringLiteral("Limit the project view to a selected item type."));
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage"
                                                   << "Input Source" << "Folder" << "Solid");
-    impl_->typeFilterBox->setMinimumWidth(128);
-    impl_->typeFilterBox->setMinimumHeight(30);
-    impl_->typeFilterBox->setMaximumHeight(30);
+    impl_->typeFilterBox->setMinimumWidth(132);
+    impl_->typeFilterBox->setMinimumHeight(32);
+    impl_->typeFilterBox->setMaximumHeight(32);
     impl_->viewModeBox = new QComboBox(filterBarHost);
     impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
     impl_->viewModeBox->setAccessibleName(QStringLiteral("Project view mode"));
     impl_->viewModeBox->setAccessibleDescription(
         QStringLiteral("Choose hierarchy Tree view or visual Tile view."));
-    impl_->viewModeBox->addItems(QStringList() << "Tree" << "Tile");
-    impl_->viewModeBox->setMinimumWidth(92);
-    impl_->viewModeBox->setMinimumHeight(30);
-    impl_->viewModeBox->setMaximumHeight(30);
+    impl_->viewModeBox->addItem(
+        loadProjectViewIcon(QStringLiteral("Studio/view_list.svg")),
+        QStringLiteral("Tree"));
+    impl_->viewModeBox->addItem(
+        loadProjectViewIcon(QStringLiteral("Studio/grid_view.svg")),
+        QStringLiteral("Tile"));
+    impl_->viewModeBox->setMinimumWidth(104);
+    impl_->viewModeBox->setMinimumHeight(32);
+    impl_->viewModeBox->setMaximumHeight(32);
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
     impl_->unusedOnlyCheck->setAccessibleName(QStringLiteral("Unused items only"));
     impl_->unusedOnlyCheck->setAccessibleDescription(
         QStringLiteral("Show only project items not referenced by the current composition."));
-    impl_->unusedOnlyCheck->setMinimumHeight(30);
+    impl_->unusedOnlyCheck->setMinimumHeight(32);
     QSettings projectViewSettings;
     impl_->typeFilterBox->setCurrentText(projectViewSettings.value(
         QStringLiteral("ProjectView/TypeFilter"), QStringLiteral("All")).toString());
@@ -6519,12 +6618,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
             return;
         }
         QPalette pal = control->palette();
-        pal.setColor(QPalette::Base, QColor(0x0D, 0x13, 0x1A));
-        pal.setColor(QPalette::Button, QColor(0x18, 0x25, 0x31));
-        pal.setColor(QPalette::ButtonText, QColor(0xD5, 0xDF, 0xE8));
-        pal.setColor(QPalette::Text, QColor(0xD5, 0xDF, 0xE8));
-        pal.setColor(QPalette::PlaceholderText, QColor(0x7F, 0x91, 0xA2));
-        pal.setColor(QPalette::Highlight, QColor(0x2B, 0x6F, 0xC7));
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        pal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+        pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor).lighter(106));
+        pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+        pal.setColor(QPalette::Text, QColor(theme.textColor));
+        pal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(145));
+        pal.setColor(QPalette::Highlight, QColor(theme.accentColor));
         pal.setColor(QPalette::HighlightedText, Qt::white);
         control->setAutoFillBackground(true);
         control->setPalette(pal);
@@ -6539,8 +6639,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->addWidget(impl_->typeFilterBox);
     filterBar->addWidget(impl_->viewModeBox);
     filterBar->addWidget(impl_->unusedOnlyCheck);
-    filterBar->addStretch();
     filterBar->addWidget(impl_->proxyQueueProgress, 1);
+    filterBarHost->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     chromeLayout->addWidget(filterBarHost);
 
     // Search and filtering are one browse decision, so keep them on the same
@@ -6549,8 +6649,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->removeWidget(filterBarHost);
     auto* searchFilterRow = new QWidget(chromePanel);
     searchFilterRow->setObjectName(QStringLiteral("projectManagerSearchFilterRow"));
+    searchFilterRow->setAutoFillBackground(true);
+    searchFilterRow->setPalette(chromePanel->palette());
     auto* searchFilterLayout = new QHBoxLayout(searchFilterRow);
-    searchFilterLayout->setContentsMargins(12, 8, 12, 8);
+    searchFilterLayout->setContentsMargins(14, 8, 14, 8);
     searchFilterLayout->setSpacing(10);
     searchFilterLayout->addWidget(impl_->searchBar, 1);
     searchFilterLayout->addWidget(filterBarHost);
@@ -6573,6 +6675,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->projectView_->setPresentationMode(ArtifactProjectView::PresentationMode::Tile);
     }
 
+    impl_->toolBox = new ArtifactProjectManagerToolBox(this);
+    impl_->toolBox->setMaximumWidth(132);
+
     auto* contentSplit = new QSplitter(Qt::Horizontal, this);
     contentSplit->setObjectName(QStringLiteral("projectManagerContentSplit"));
     contentSplit->setChildrenCollapsible(false);
@@ -6588,11 +6693,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     {
         QPalette pal = browseContextBar->palette();
         pal.setColor(QPalette::Window,
-                     QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(106));
+                     QColor(ArtifactCore::currentDCCTheme().backgroundColor).lighter(105));
         browseContextBar->setPalette(pal);
     }
     auto* browseContextLayout = new QHBoxLayout(browseContextBar);
-    browseContextLayout->setContentsMargins(10, 4, 10, 4);
+    browseContextBar->setMinimumHeight(32);
+    browseContextBar->setMaximumHeight(32);
+    browseContextLayout->setContentsMargins(14, 4, 14, 4);
     browseContextLayout->setSpacing(8);
     // The list and tile content needs its own compact context row.  These
     // labels describe the current presentation and result set, not selection
@@ -6602,6 +6709,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     browseContextLayout->addWidget(impl_->selectionSummaryLabel);
     browseContextLayout->addStretch(1);
     browseContextLayout->addWidget(impl_->selectionStateLabel);
+    browseContextLayout->addWidget(impl_->toolBox);
     projectPaneLayout->addWidget(browseContextBar);
     projectPaneLayout->addWidget(impl_->projectView_, 1);
     contentSplit->addWidget(projectPane);
@@ -6612,26 +6720,58 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     {
         QPalette pal = detailPanel->palette();
         pal.setColor(QPalette::Window,
-                     QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(110));
+                     QColor(ArtifactCore::currentDCCTheme().backgroundColor).darker(106));
         detailPanel->setPalette(pal);
     }
-    detailPanel->setMinimumWidth(300);
-    detailPanel->setMaximumWidth(360);
+    detailPanel->setMinimumWidth(320);
+    detailPanel->setMaximumWidth(380);
     auto* detailLayout = new QVBoxLayout(detailPanel);
-    detailLayout->setContentsMargins(14, 12, 14, 12);
-    detailLayout->setSpacing(8);
+    detailLayout->setContentsMargins(16, 14, 16, 14);
+    detailLayout->setSpacing(10);
+
+    impl_->detailEmptyState = new QWidget(detailPanel);
+    impl_->detailEmptyState->setSizePolicy(QSizePolicy::Expanding,
+                                           QSizePolicy::Expanding);
+    auto* detailEmptyLayout = new QVBoxLayout(impl_->detailEmptyState);
+    detailEmptyLayout->setContentsMargins(18, 18, 18, 18);
+    detailEmptyLayout->setSpacing(8);
+    detailEmptyLayout->addStretch(1);
+    impl_->detailEmptyTitle = new QLabel(QStringLiteral("No project open"),
+                                         impl_->detailEmptyState);
+    impl_->detailEmptyTitle->setAlignment(Qt::AlignCenter);
+    {
+        QFont font = impl_->detailEmptyTitle->font();
+        font.setPointSizeF(std::max<qreal>(12.0, font.pointSizeF() + 1.0));
+        font.setBold(true);
+        impl_->detailEmptyTitle->setFont(font);
+        QPalette pal = impl_->detailEmptyTitle->palette();
+        pal.setColor(QPalette::WindowText,
+                     QColor(ArtifactCore::currentDCCTheme().textColor));
+        impl_->detailEmptyTitle->setPalette(pal);
+    }
+    impl_->detailEmptyBody = new QLabel(
+        QStringLiteral("Open a project to inspect its items."),
+        impl_->detailEmptyState);
+    impl_->detailEmptyBody->setAlignment(Qt::AlignCenter);
+    impl_->detailEmptyBody->setWordWrap(true);
+    {
+        QPalette pal = impl_->detailEmptyBody->palette();
+        pal.setColor(QPalette::WindowText,
+                     QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+        impl_->detailEmptyBody->setPalette(pal);
+    }
+    detailEmptyLayout->addWidget(impl_->detailEmptyTitle);
+    detailEmptyLayout->addWidget(impl_->detailEmptyBody);
+    detailEmptyLayout->addStretch(1);
+    detailLayout->addWidget(impl_->detailEmptyState, 1);
     detailLayout->addWidget(impl_->infoPanel_);
     detailLayout->addWidget(selectionChrome);
     detailLayout->addWidget(impl_->compositionEditorPanel);
-    detailLayout->addStretch(1);
     contentSplit->addWidget(detailPanel);
     contentSplit->setStretchFactor(0, 1);
     contentSplit->setStretchFactor(1, 0);
-    contentSplit->setSizes({820, 320});
+    contentSplit->setSizes({850, 340});
     mainLayout->addWidget(contentSplit, 1);
-
-    impl_->toolBox = new ArtifactProjectManagerToolBox(this);
-    mainLayout->addWidget(impl_->toolBox);
 
     auto* statusBar = new QWidget(this);
     statusBar->setObjectName(QStringLiteral("projectManagerStatusBar"));
@@ -6639,13 +6779,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     {
         QPalette pal = statusBar->palette();
         pal.setColor(QPalette::Window,
-                     QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(108));
+                     QColor(ArtifactCore::currentDCCTheme().backgroundColor).lighter(104));
         statusBar->setPalette(pal);
     }
-    statusBar->setMinimumHeight(28);
-    statusBar->setMaximumHeight(28);
+    statusBar->setMinimumHeight(32);
+    statusBar->setMaximumHeight(32);
     auto* statusLayout = new QHBoxLayout(statusBar);
-    statusLayout->setContentsMargins(10, 0, 10, 0);
+    statusLayout->setContentsMargins(14, 0, 14, 0);
     statusLayout->setSpacing(8);
     impl_->projectHealthLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     impl_->syncStateLabel->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
@@ -6728,6 +6868,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         ArtifactCore::ShortcutBindings::instance().shortcut(
             ArtifactCore::ShortcutId::ProjectExpandAll),
         this);
+    impl_->expandAllShortcut_ = expandAllShortcut;
     connect(expandAllShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->projectView_) {
             impl_->projectView_->expandAll();
@@ -6737,6 +6878,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         ArtifactCore::ShortcutBindings::instance().shortcut(
             ArtifactCore::ShortcutId::ProjectCollapseAll),
         this);
+    impl_->collapseAllShortcut_ = collapseAllShortcut;
     connect(collapseAllShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->projectView_) {
             impl_->projectView_->collapseAll();
@@ -6870,6 +7012,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         ArtifactCore::ShortcutBindings::instance().shortcut(
             ArtifactCore::ShortcutId::ProjectFocusSearch),
         this);
+    impl_->focusSearchShortcut_ = focusSearchShortcut;
     connect(focusSearchShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->searchBar) {
             impl_->searchBar->setFocus();
@@ -6877,7 +7020,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         }
     });
 
-    auto* clearSearchShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), impl_->searchBar);
+    auto* clearSearchShortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ProjectClearSearch),
+        impl_->searchBar);
+    clearSearchShortcut->setContext(Qt::WidgetShortcut);
+    impl_->clearSearchShortcut_ = clearSearchShortcut;
     connect(clearSearchShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->searchBar && !impl_->searchBar->text().isEmpty()) {
             impl_->searchBar->clear();
@@ -6888,6 +7036,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         ArtifactCore::ShortcutBindings::instance().shortcut(
             ArtifactCore::ShortcutId::ProjectRenameSelected),
         this);
+    impl_->renameShortcut_ = renameShortcut;
     connect(renameShortcut, &QShortcut::activated, this, [this]() {
         if (!impl_->renameSelectedItem(this)) {
             return;
@@ -6898,6 +7047,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         ArtifactCore::ShortcutBindings::instance().shortcut(
             ArtifactCore::ShortcutId::ProjectDeleteSelected),
         this);
+    impl_->deleteShortcut_ = deleteShortcut;
     connect(deleteShortcut, &QShortcut::activated, this, [this]() {
         if (!impl_->deleteSelectedItem(this)) {
             return;
@@ -6906,9 +7056,45 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->update();
 
+    updateShortcuts();
+    QPointer<ArtifactProjectManagerWidget> guard(this);
+    impl_->shortcutListenerToken_ =
+        ArtifactCore::ShortcutBindings::instance().addChangeListener(
+            [this, guard](ArtifactCore::ShortcutId) {
+                if (!guard || !impl_) {
+                    return;
+                }
+                updateShortcuts();
+            });
+
 }
 
-ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() { delete impl_; }
+void ArtifactProjectManagerWidget::updateShortcuts() {
+    if (!impl_) {
+        return;
+    }
+    auto& bindings = ArtifactCore::ShortcutBindings::instance();
+    auto apply = [&bindings](QShortcut* shortcut, ArtifactCore::ShortcutId id) {
+        if (shortcut) {
+            shortcut->setKey(bindings.shortcut(id));
+        }
+    };
+    apply(impl_->expandAllShortcut_, ArtifactCore::ShortcutId::ProjectExpandAll);
+    apply(impl_->collapseAllShortcut_, ArtifactCore::ShortcutId::ProjectCollapseAll);
+    apply(impl_->focusSearchShortcut_, ArtifactCore::ShortcutId::ProjectFocusSearch);
+    apply(impl_->clearSearchShortcut_, ArtifactCore::ShortcutId::ProjectClearSearch);
+    apply(impl_->renameShortcut_, ArtifactCore::ShortcutId::ProjectRenameSelected);
+    apply(impl_->deleteShortcut_, ArtifactCore::ShortcutId::ProjectDeleteSelected);
+}
+
+ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() {
+    if (impl_ && impl_->shortcutListenerToken_ != 0) {
+        ArtifactCore::ShortcutBindings::instance().removeChangeListener(
+            impl_->shortcutListenerToken_);
+        impl_->shortcutListenerToken_ = 0;
+    }
+    delete impl_;
+}
 
 void ArtifactProjectManagerWidget::itemDoubleClicked(const QModelIndex& index)
 {
@@ -7157,7 +7343,9 @@ ArtifactProjectManagerToolBox::~ArtifactProjectManagerToolBox() {}
 void ArtifactProjectManagerToolBox::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
-    painter.fillRect(event->rect(), QColor(0x14, 0x1E, 0x28));
+    painter.fillRect(event->rect(),
+                     QColor(ArtifactCore::currentDCCTheme().backgroundColor)
+                         .lighter(105));
     QWidget::paintEvent(event);
 }
 void ArtifactProjectManagerToolBox::resizeEvent(QResizeEvent*) {}
