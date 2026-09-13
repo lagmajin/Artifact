@@ -54,7 +54,7 @@ namespace Artifact {
 
 namespace {
 
-ArtifactCore::RationalTime rigTimeForLayer(const ArtifactAbstractLayer* layer)
+ArtifactCore::RationalTime rigTimeForLayer(ArtifactAbstract2DLayer* layer)
 {
  if (!layer) {
   return ArtifactCore::RationalTime(0, 30);
