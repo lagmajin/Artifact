@@ -7645,19 +7645,18 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
           impl_->clips_[hit.clipIndex].trimMaxEndFrame;
       const auto &clip = impl_->clips_[hit.clipIndex];
       if (clip.kind == TrackClipVisual::Kind::Transition) {
-        // Transition editing is composition-owned. Do not route this virtual
-        // bar through layer selection or layer trim/move events.
-        impl_->dragMode_ = DragMode::None;
-        impl_->dragClipIndex_ = -1;
+        // Transition editing is composition-owned. Keep the existing clip
+        // drag state, but skip layer selection; release reuses the existing
+        // timeline move/resize event with the transition ID.
         updateHoverToolTip(this, event->globalPosition().toPoint(),
                            formatClipTooltip(clip), impl_->hoverToolTipText_);
-        setCursor(Qt::PointingHandCursor);
-        event->accept();
-        return;
+        setCursor(hit.mode == DragMode::MoveBody ? Qt::ClosedHandCursor
+                                                  : Qt::SizeHorCursor);
+      } else {
+        clipSelected(clip.clipId, clip.layerId);
+        if (hit.mode == DragMode::MoveBody || hit.mode == DragMode::SlideBody)
+          setCursor(Qt::ClosedHandCursor);
       }
-      clipSelected(clip.clipId, clip.layerId);
-      if (hit.mode == DragMode::MoveBody || hit.mode == DragMode::SlideBody)
-        setCursor(Qt::ClosedHandCursor);
       event->accept();
       return;
     }

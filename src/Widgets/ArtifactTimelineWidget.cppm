@@ -7128,6 +7128,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineClipMoveRequestedEvent>(
       [this](const TimelineClipMoveRequestedEvent &event) {
+        if (auto comp = safeCompositionLookup(impl_->compositionId_)) {
+          if (const auto transition = comp->timelineTransitionById(event.clipId)) {
+            const qint64 start = static_cast<qint64>(std::llround(event.startFrame));
+            const qint64 duration = std::max<qint64>(1, transition->range.duration());
+            comp->setTimelineTransitionRange(
+                transition->id,
+                FrameRange(FramePosition(start), FramePosition(start + duration)));
+            return;
+          }
+        }
         applyTimelineLayerMove(impl_->compositionId_, event.clipId,
                                event.startFrame, 0.0);
       }));
@@ -7136,6 +7146,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       [this](const TimelineClipSlideRequestedEvent &event) {
         auto comp = safeCompositionLookup(impl_->compositionId_);
         if (!comp) return;
+        if (const auto transition = comp->timelineTransitionById(event.clipId)) {
+          const qint64 start = static_cast<qint64>(std::llround(event.startFrame));
+          const qint64 duration = std::max<qint64>(1, transition->range.duration());
+          comp->setTimelineTransitionRange(
+              transition->id,
+              FrameRange(FramePosition(start), FramePosition(start + duration)));
+          return;
+        }
         const auto layer = comp->layerById(LayerID(event.clipId));
         if (!layer || layer->isTimingLocked()) return;
         const QVector<ArtifactAbstractLayerPtr> layers{layer};
@@ -7156,6 +7174,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineClipResizeRequestedEvent>(
       [this](const TimelineClipResizeRequestedEvent &event) {
+        if (auto comp = safeCompositionLookup(impl_->compositionId_)) {
+          if (const auto transition = comp->timelineTransitionById(event.clipId)) {
+            const qint64 start = static_cast<qint64>(std::llround(event.startFrame));
+            const qint64 duration = std::max<qint64>(1, static_cast<qint64>(
+                std::llround(event.durationFrame)));
+            comp->setTimelineTransitionRange(
+                transition->id,
+                FrameRange(FramePosition(start), FramePosition(start + duration)));
+            return;
+          }
+        }
         applyTimelineLayerTrim(impl_->compositionId_, event.clipId,
                                event.startFrame, event.durationFrame);
       }));
