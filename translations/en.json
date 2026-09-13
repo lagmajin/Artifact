@@ -84,6 +84,13 @@
       "new_composition": "New Composition",
       "composition_settings": "Composition Settings"
     },
+    "effect": { "label": "Effect" },
+    "animation": { "label": "Animation" },
+    "script": { "label": "Script" },
+    "render": { "label": "Render" },
+    "time": { "label": "Time" },
+    "options": { "label": "Options" },
+    "test": { "label": "Test" },
     "layer": {
       "label": "Layer",
       "new_solid": "New Solid",

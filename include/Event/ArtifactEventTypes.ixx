@@ -358,6 +358,11 @@ enum class TimelineTimeRemapCommandKind {
     Enable,
     Freeze,
     Reverse,
+    SlowHalf,
+    SlowQuarter,
+    StopMotion12Fps,
+    StopMotion8Fps,
+    StopMotion4Fps,
 };
 
 struct TimelineTimeRemapCommandRequestedEvent {

@@ -132,6 +132,11 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   QLabel* filterQueuedLabel = nullptr;
   QLabel* filterCompletedLabel = nullptr;
   QLabel* filterFailedLabel = nullptr;
+  QLabel* filterAllCountLabel = nullptr;
+  QLabel* filterRunningCountLabel = nullptr;
+  QLabel* filterQueuedCountLabel = nullptr;
+  QLabel* filterCompletedCountLabel = nullptr;
+  QLabel* filterFailedCountLabel = nullptr;
   QLabel* inspectorJobLabel = nullptr;
    QLabel* preflightBadge = nullptr;
    QLabel* previewSummaryLabel = nullptr;
@@ -470,7 +475,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
                        .arg(shortBackendLabel(job.renderBackend)),
                    job.errorMessage,
                    job.progress, data.textColor);
-      item->setSizeHint(QSize(0, 84));
+      // Compact, scanable rows: keep the queue from becoming a card stack.
+      item->setSizeHint(QSize(0, 72));
       jobListWidget->setItemWidget(item, card);
       visibleToSource.push_back(i);
     }
@@ -557,11 +563,11 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
           : (jobs.isEmpty() ? QStringLiteral("Queue is empty")
                             : QStringLiteral("Queue ready")));
     }
-    if (filterAllLabel) filterAllLabel->setText(QStringLiteral("All   %1").arg(jobs.size()));
-    if (filterRunningLabel) filterRunningLabel->setText(QStringLiteral("Running   %1").arg(running));
-    if (filterQueuedLabel) filterQueuedLabel->setText(QStringLiteral("Ready   %1").arg(pending));
-    if (filterCompletedLabel) filterCompletedLabel->setText(QStringLiteral("Completed   %1").arg(done));
-    if (filterFailedLabel) filterFailedLabel->setText(QStringLiteral("Needs attention   %1").arg(failed));
+    if (filterAllCountLabel) filterAllCountLabel->setText(QString::number(jobs.size()));
+    if (filterRunningCountLabel) filterRunningCountLabel->setText(QString::number(running));
+    if (filterQueuedCountLabel) filterQueuedCountLabel->setText(QString::number(pending));
+    if (filterCompletedCountLabel) filterCompletedCountLabel->setText(QString::number(done));
+    if (filterFailedCountLabel) filterFailedCountLabel->setText(QString::number(failed));
     if (totalProgressBar) {
       totalProgressBar->setRange(0, 100);
       totalProgressBar->setValue(jobs.isEmpty() ? 0 : totalProgress / jobs.size());
@@ -600,7 +606,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
         palette.setColor(QPalette::Window,
             row == jobListWidget->currentRow()
                 ? QColor(theme.selectionColor).darker(125)
-                : QColor(theme.secondaryBackgroundColor));
+                : QColor(24, 29, 33));
         card->setPalette(palette);
         card->setFrameStyle(row == jobListWidget->currentRow()
             ? QFrame::StyledPanel | QFrame::Sunken
@@ -991,23 +997,24 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   setAutoFillBackground(true);
   {
     QPalette palette = this->palette();
-    palette.setColor(QPalette::Window, QColor(theme.backgroundColor));
+    palette.setColor(QPalette::Window, QColor(20, 24, 28));
+    palette.setColor(QPalette::Base, QColor(24, 29, 33));
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     setPalette(palette);
   }
   
   // Header
   auto* top = new QHBoxLayout();
-  top->setContentsMargins(16, 8, 16, 8);
+  top->setContentsMargins(18, 6, 18, 6);
   top->setSpacing(12);
   auto* title = new QLabel("Render Manager");
   title->setObjectName("renderQueueTitle");
   QFont titleFont = title->font();
-  titleFont.setPointSize(titleFont.pointSize() + 2);
+  titleFont.setPointSize(titleFont.pointSize() + 3);
   titleFont.setBold(true);
   title->setFont(titleFont);
   impl_->runningCountLabel = new QLabel("0 RUNNING");
-  impl_->runningCountLabel->setMinimumWidth(96);
+  impl_->runningCountLabel->setMinimumWidth(0);
   impl_->runningCountLabel->setAlignment(Qt::AlignCenter);
   impl_->searchEdit = new RenderQueueSearchEdit();
   impl_->searchEdit->setPlaceholderText("Search jobs...");
@@ -1017,7 +1024,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->searchEdit->setAccessibleDescription(
       QStringLiteral("Filter the render queue by job name or composition."));
   impl_->searchEdit->setObjectName("renderQueueSearch");
-  impl_->searchEdit->setMaximumWidth(440);
+  impl_->searchEdit->setMaximumWidth(288);
   impl_->searchEdit->changed = [this](const QString& text) {
     if (!impl_) return;
     impl_->searchQuery = text;
@@ -1060,11 +1067,13 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
       loadIconWithFallback(QStringLiteral("Studio/compositionmenu_presets.svg")));
   presetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   top->addWidget(title);
-  top->addWidget(impl_->runningCountLabel);
-  top->addWidget(impl_->searchEdit, 1);
+  top->addStretch(1);
   top->addWidget(impl_->addButton);
-  top->addWidget(batchAllBtn);
-  top->addWidget(presetButton);
+  // Search belongs with the queue heading and the compact mock exposes only
+  // the primary queue-add action in this top bar.
+  impl_->runningCountLabel->setVisible(false);
+  batchAllBtn->setVisible(false);
+  presetButton->setVisible(false);
   layout->addLayout(top);
 
   // Main Splitter
@@ -1073,60 +1082,83 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
 
   auto* filterSide = new QFrame();
   filterSide->setFrameShape(QFrame::StyledPanel);
-  filterSide->setMinimumWidth(190);
-  filterSide->setMaximumWidth(224);
+  filterSide->setAutoFillBackground(true);
+  {
+    QPalette palette = filterSide->palette();
+    palette.setColor(QPalette::Window, QColor(25, 30, 34));
+    palette.setColor(QPalette::Base, QColor(25, 30, 34));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    filterSide->setPalette(palette);
+  }
+  // The reference keeps Filters as a narrow navigation rail. At desktop
+  // scaling, the old minimum consumed too much of the compact manager layout.
+  filterSide->setMinimumWidth(244);
+  filterSide->setMaximumWidth(272);
   auto* filterLayout = new QVBoxLayout(filterSide);
-  filterLayout->setContentsMargins(12, 12, 12, 12);
-  filterLayout->setSpacing(8);
+  filterLayout->setContentsMargins(12, 10, 12, 12);
+  filterLayout->setSpacing(4);
   auto* filtersTitle = new QLabel(QStringLiteral("FILTERS"));
   QFont filtersTitleFont = filtersTitle->font();
   filtersTitleFont.setBold(true);
   filtersTitle->setFont(filtersTitleFont);
-  filterLayout->addWidget(filtersTitle);
+  filtersTitle->setVisible(false);
   const auto addFilterLabel = [&filterLayout, &theme](
                                   const QString& text,
                                   const QString& iconName,
+                                  QLabel** countLabel = nullptr,
                                   bool active = false) -> QLabel* {
     auto* rowHost = new QWidget();
+    rowHost->setFixedHeight(48);
     auto* rowLayout = new QHBoxLayout(rowHost);
-    rowLayout->setContentsMargins(8, 0, 8, 0);
-    rowLayout->setSpacing(9);
+    rowLayout->setContentsMargins(10, 0, 12, 0);
+    rowLayout->setSpacing(10);
     auto* icon = new QLabel();
-    icon->setFixedSize(18, 18);
-    icon->setPixmap(loadIconWithFallback(iconName).pixmap(QSize(16, 16)));
+    icon->setFixedSize(20, 20);
+    icon->setPixmap(loadIconWithFallback(iconName).pixmap(QSize(18, 18)));
     auto* row = new QLabel(text);
-    row->setMinimumHeight(34);
     row->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    auto* count = countLabel ? new QLabel(QStringLiteral("0")) : nullptr;
+    if (count) {
+      count->setMinimumWidth(26);
+      count->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+      *countLabel = count;
+    }
     if (active) {
       rowHost->setAutoFillBackground(true);
       QPalette rowPalette = rowHost->palette();
-      rowPalette.setColor(QPalette::Window, QColor(theme.selectionColor).darker(130));
+      rowPalette.setColor(QPalette::Window, QColor(40, 45, 50));
       rowPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
       rowHost->setPalette(rowPalette);
     }
     rowLayout->addWidget(icon);
     rowLayout->addWidget(row, 1);
+    if (count) rowLayout->addWidget(count);
     filterLayout->addWidget(rowHost);
     return row;
   };
   impl_->filterAllLabel = addFilterLabel(
-      QStringLiteral("All"), QStringLiteral("Studio/figma_render_queue.svg"), true);
+      QStringLiteral("All"), QStringLiteral("Studio/figma_render_queue.svg"),
+      &impl_->filterAllCountLabel, true);
   impl_->filterRunningLabel = addFilterLabel(
-      QStringLiteral("Running"), QStringLiteral("Studio/render_status_rendering.svg"));
+      QStringLiteral("Rendering"), QStringLiteral("Studio/render_status_rendering.svg"),
+      &impl_->filterRunningCountLabel);
   impl_->filterQueuedLabel = addFilterLabel(
-      QStringLiteral("Ready"), QStringLiteral("Studio/render_status_ready.svg"));
+      QStringLiteral("Ready"), QStringLiteral("Studio/render_status_ready.svg"),
+      &impl_->filterQueuedCountLabel);
   impl_->filterCompletedLabel = addFilterLabel(
-      QStringLiteral("Completed"), QStringLiteral("Studio/render_status_completed.svg"));
+      QStringLiteral("Completed"), QStringLiteral("Studio/render_status_completed.svg"),
+      &impl_->filterCompletedCountLabel);
   impl_->filterFailedLabel = addFilterLabel(
-      QStringLiteral("Needs attention"), QStringLiteral("Studio/render_status_attention.svg"));
+      QStringLiteral("Needs attention"), QStringLiteral("Studio/render_status_attention.svg"),
+      &impl_->filterFailedCountLabel);
   auto* filterDivider = new QFrame();
   filterDivider->setFrameShape(QFrame::HLine);
   filterDivider->setFrameShadow(QFrame::Sunken);
   filterLayout->addWidget(filterDivider);
   addFilterLabel(QStringLiteral("Presets"),
-                 QStringLiteral("Studio/effectmenu_tune.svg"));
+                 QStringLiteral("Studio/effectmenu_tune.svg"), nullptr);
   addFilterLabel(QStringLiteral("History"),
-                 QStringLiteral("Studio/editmenu_history.svg"));
+                 QStringLiteral("Studio/editmenu_history.svg"), nullptr);
   filterLayout->addStretch();
   splitter->addWidget(filterSide);
 
@@ -1151,12 +1183,28 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   };
   impl_->jobListWidget->setAlternatingRowColors(true);
   impl_->jobListWidget->setSpacing(1);
+  {
+    QPalette palette = impl_->jobListWidget->palette();
+    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::AlternateBase, QColor(22, 27, 31));
+    palette.setColor(QPalette::Highlight, QColor(42, 55, 69));
+    palette.setColor(QPalette::HighlightedText, QColor(theme.textColor));
+    impl_->jobListWidget->setPalette(palette);
+  }
   impl_->jobListWidget->setMinimumWidth(500);
   
   auto* leftSide = new QWidget();
-  leftSide->setMinimumWidth(500);
+  leftSide->setMinimumWidth(520);
+  leftSide->setAutoFillBackground(true);
+  {
+    QPalette palette = leftSide->palette();
+    palette.setColor(QPalette::Window, QColor(22, 27, 31));
+    palette.setColor(QPalette::Base, QColor(22, 27, 31));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    leftSide->setPalette(palette);
+  }
   auto* leftLayout = new QVBoxLayout(leftSide);
-  leftLayout->setContentsMargins(12, 12, 8, 0);
+  leftLayout->setContentsMargins(10, 12, 8, 0);
   leftLayout->setSpacing(8);
   auto* queueHeader = new QHBoxLayout();
   auto* queueTitle = new QLabel(QStringLiteral("Render queue"));
@@ -1169,7 +1217,9 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->queueStateLabel->setPalette(queueStatePalette);
   queueHeader->addWidget(queueTitle);
   queueHeader->addStretch();
-  queueHeader->addWidget(impl_->queueStateLabel);
+  top->removeWidget(impl_->searchEdit);
+  queueHeader->addWidget(impl_->searchEdit);
+  impl_->queueStateLabel->setVisible(false);
   leftLayout->addLayout(queueHeader);
 
   // Column captions make the compact rows scan like a render queue rather
@@ -1178,8 +1228,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   auto* columnHeader = new QWidget();
   columnHeader->setObjectName(QStringLiteral("renderQueueColumnHeader"));
   auto* columnHeaderLayout = new QHBoxLayout(columnHeader);
-  columnHeaderLayout->setContentsMargins(158, 0, 14, 0);
-  columnHeaderLayout->setSpacing(16);
+  columnHeaderLayout->setContentsMargins(132, 0, 12, 0);
+  columnHeaderLayout->setSpacing(14);
   const auto makeColumnCaption = [&theme](const QString& text, int minimumWidth) {
     auto* caption = new QLabel(text);
     caption->setMinimumWidth(minimumWidth);
@@ -1192,8 +1242,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     caption->setPalette(palette);
     return caption;
   };
-  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Job"), 150));
-  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Output"), 190));
+  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Job"), 136));
+  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Output"), 172));
   columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Status"), 0), 1);
   leftLayout->addWidget(columnHeader);
   leftLayout->addWidget(impl_->jobListWidget);
@@ -1254,17 +1304,30 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   };
   btnLayout->addWidget(impl_->rerunDoneFailedButton);
   btnLayout->addWidget(impl_->removeButton);
+  // Keep the compact queue action strip focused on the direct job actions.
+  batchTmplBtn->setVisible(false);
+  impl_->duplicateButton->setVisible(false);
+  impl_->applySettingsToSelectionButton->setVisible(false);
+  impl_->clearButton->setVisible(false);
   leftLayout->addLayout(btnLayout);
   
   splitter->addWidget(leftSide);
   
   // Right Pane: Job Details (Scrollable)
   auto* detailScroll = new QScrollArea();
-  detailScroll->setMinimumWidth(320);
+  detailScroll->setMinimumWidth(346);
   detailScroll->setWidgetResizable(true);
   detailScroll->setObjectName("renderQueueDetailScroll");
   auto* detailWidget = new QWidget();
-  detailWidget->setMinimumWidth(320);
+  detailWidget->setMinimumWidth(346);
+  detailWidget->setAutoFillBackground(true);
+  {
+    QPalette palette = detailWidget->palette();
+    palette.setColor(QPalette::Window, QColor(24, 29, 33));
+    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    detailWidget->setPalette(palette);
+  }
   auto* detailLayout = new QVBoxLayout(detailWidget);
   detailLayout->setContentsMargins(12, 12, 12, 12);
   detailLayout->setSpacing(8);
@@ -1979,10 +2042,20 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   splitter->setStretchFactor(0, 0);
   splitter->setStretchFactor(1, 3);
   splitter->setStretchFactor(2, 2);
-  splitter->setSizes({208, 720, 360});
+  // Reference balance: narrow navigation, broad queue, focused inspector.
+  // Values are logical pixels and leave room for DPI scaling.
+  splitter->setSizes({220, 720, 350});
   layout->addWidget(splitter, 1);
 
   auto* historyGroup = new QGroupBox("Activity log");
+  historyGroup->setAutoFillBackground(true);
+  {
+    QPalette palette = historyGroup->palette();
+    palette.setColor(QPalette::Window, QColor(24, 29, 33));
+    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    historyGroup->setPalette(palette);
+  }
   auto* historyLayout = new QVBoxLayout(historyGroup);
   impl_->historyListWidget = new QListWidget();
   impl_->historyListWidget->setObjectName("renderQueueHistory");
@@ -2037,7 +2110,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->historyListWidget->setVisible(false);
   impl_->clearHistoryButton->setVisible(false);
   impl_->exportHistoryButton->setVisible(false);
-  historyGroup->setFixedHeight(30);
+  historyGroup->setFixedHeight(52);
   layout->addWidget(historyGroup);
   impl_->loadHistory();
 
@@ -2046,32 +2119,52 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->summaryLabel = new QLabel("Ready");
   impl_->statusLabel = new QLabel("No active jobs");
   impl_->startButton = new QPushButton("Render ready jobs");
+  auto* renderPrimaryStyle = new RenderQueuePrimaryButtonStyle();
+  renderPrimaryStyle->setParent(impl_->startButton);
+  impl_->startButton->setStyle(renderPrimaryStyle);
   impl_->startButton->setAccessibleName(QStringLiteral("Start render queue"));
   impl_->startButton->setAccessibleDescription(
       QStringLiteral("Start processing the queued render jobs."));
   impl_->startButton->setObjectName("renderStartBtn");
+  impl_->startButton->setFixedSize(236, 52);
   impl_->startButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/figma_media_play.svg")));
   {
     QPalette buttonPalette = impl_->startButton->palette();
-    buttonPalette.setColor(QPalette::Button, QColor(202, 146, 43));
-    buttonPalette.setColor(QPalette::ButtonText, QColor(28, 28, 28));
+    const QColor renderActionColor(226, 166, 47);
+    const QColor renderActionText(25, 22, 17);
+    buttonPalette.setColor(QPalette::Active, QPalette::Button, renderActionColor);
+    buttonPalette.setColor(QPalette::Inactive, QPalette::Button, renderActionColor);
+    buttonPalette.setColor(QPalette::Active, QPalette::ButtonText, renderActionText);
+    buttonPalette.setColor(QPalette::Inactive, QPalette::ButtonText, renderActionText);
+    buttonPalette.setColor(QPalette::Disabled, QPalette::Button, QColor(92, 72, 40));
+    buttonPalette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(156, 139, 106));
     impl_->startButton->setAutoFillBackground(true);
     impl_->startButton->setPalette(buttonPalette);
   }
   
   auto* activityFrame = new QFrame();
   activityFrame->setFrameShape(QFrame::StyledPanel);
+  activityFrame->setAutoFillBackground(true);
+  {
+    QPalette palette = activityFrame->palette();
+    palette.setColor(QPalette::Window, QColor(24, 29, 33));
+    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    activityFrame->setPalette(palette);
+  }
   auto* activityLayout = new QHBoxLayout(activityFrame);
-  activityLayout->setContentsMargins(10, 6, 6, 6);
+  activityLayout->setContentsMargins(18, 10, 18, 10);
   auto* progressLayout = new QVBoxLayout();
   progressLayout->setSpacing(2);
   progressLayout->addWidget(impl_->summaryLabel);
   progressLayout->addWidget(impl_->totalProgressBar);
-  progressLayout->addWidget(impl_->statusLabel);
+  impl_->statusLabel->setVisible(false);
   activityLayout->addLayout(progressLayout, 1);
   impl_->pauseButton = new RenderQueueActionButton(QStringLiteral("Pause"));
   impl_->cancelButton = new RenderQueueActionButton(QStringLiteral("Stop"));
+  impl_->pauseButton->setFixedSize(150, 52);
+  impl_->cancelButton->setFixedSize(92, 52);
   impl_->pauseButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/animationmenu_pause.svg")));
   impl_->cancelButton->setIcon(

@@ -62,8 +62,14 @@ public:
     void setActiveLayerId(const QString& layerId) { activeLayerId_ = layerId; }
     QString activeLayerId() const { return activeLayerId_; }
 
+    /// Bind relative-frame requests to the frame being evaluated.  This is
+    /// required for seeks and non-sequential render-queue evaluation; using
+    /// the newest cached frame is only correct during strictly forward playback.
+    void setCurrentCompositionFrame(std::int64_t frame) { currentCompositionFrame_ = frame; }
+
 private:
     QString activeLayerId_;
+    std::int64_t currentCompositionFrame_ = 0;
 
     struct LayerFrameHistory
     {

@@ -2,7 +2,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <utility>
 #include <QString>
 #include <QVariant>
 
@@ -23,7 +25,7 @@ using namespace ArtifactCore;
 class PosterizeTimeCPUImpl : public ArtifactEffectImplBase {
 public:
     float frameRate_ = 12.0f;
-    std::int64_t lastUpdateFrame_ = -1;
+    std::int64_t heldFrame_ = std::numeric_limits<std::int64_t>::min();
     ImageF32x4RGBAWithCache held_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
@@ -31,16 +33,27 @@ public:
         const double srcFps = context_.frameRate > 0 ? context_.frameRate : 30.0;
         const std::int64_t holdFrames = (std::int64_t)std::max(1.0, srcFps / fps);
 
-        if (lastUpdateFrame_ < 0 ||
-            context_.compositionFrame >= lastUpdateFrame_ + holdFrames) {
-            held_ = src.DeepCopy();
-            lastUpdateFrame_ = context_.compositionFrame;
+        const std::int64_t targetFrame =
+            (context_.compositionFrame / holdFrames) * holdFrames;
+        if (targetFrame != heldFrame_) {
+            ImageF32x4RGBAWithCache sampled;
+            if (context_.sampler &&
+                context_.sampler->sampleCurrentLayerFrame(targetFrame, sampled) &&
+                sampled.width() > 0 && sampled.image().rgba32fData()) {
+                held_ = std::move(sampled);
+            } else {
+                // A sampler may not have an earlier frame during cold preview.
+                // Keep this fallback local to initialization; subsequent held
+                // frames reuse the cached surface without deep-copying it.
+                held_ = src.DeepCopy();
+            }
+            heldFrame_ = targetFrame;
         }
 
         if (held_.width() > 0 && held_.image().rgba32fData()) {
-            dst = held_.DeepCopy();
+            dst = held_;
         } else {
-            dst = src.DeepCopy();
+            dst = src;
         }
     }
 };

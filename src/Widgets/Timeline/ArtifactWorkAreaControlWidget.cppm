@@ -192,9 +192,11 @@ namespace Artifact
 
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
-  const QColor workAreaColor(222, 168, 78);
+  // The work range is intentionally a solid ochre landmark, matching the
+  // ruler bar while keeping the playhead's coral state visually separate.
+  const QColor workAreaColor(194, 143, 45);
   p.fillRect(rangeRect, QColor(workAreaColor.red(), workAreaColor.green(),
-                               workAreaColor.blue(), 112));
+                               workAreaColor.blue(), 232));
 
   // Bottom border for work area
   p.setPen(QPen(workAreaColor.lighter(118), 2));

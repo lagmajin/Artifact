@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -54,6 +55,30 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    static constexpr const char* kGpuGenericKeyString = "reactive_glow";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = threshold_;
+        node.parameters[1] = radius_;
+        node.parameters[2] = intensity_;
+        node.parameters[3] = reaction_;
+        node.parameters[4] = saturationWeight_;
+        node.parameters[5] = tintMix_;
+        // radius is carried for parity but unused by the HLSL body.
+        node.resolutionScaledParameterMask = 0;
+        return stack.append(node);
+    }
 
     bool supportsGPU() const override { return true; }
 };

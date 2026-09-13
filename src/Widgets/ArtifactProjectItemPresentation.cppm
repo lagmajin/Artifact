@@ -8,6 +8,7 @@ module;
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QFrame>
 #include <QFont>
 #include <QHash>
 #include <QImage>
@@ -21,6 +22,7 @@ module;
 #include <QPixmap>
 #include <QRectF>
 #include <QSize>
+#include <QSizePolicy>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
@@ -780,7 +782,8 @@ public:
     ProjectInfoPanel(QWidget* parent = nullptr) : QWidget(parent) {
         setObjectName(QStringLiteral("projectInfoPanel"));
         setAutoFillBackground(true);
-        setFixedHeight(96);
+        setMinimumHeight(250);
+        setMaximumHeight(360);
         const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
         const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
         const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
@@ -790,14 +793,18 @@ public:
         widgetPalette.setColor(QPalette::Window, background);
         widgetPalette.setColor(QPalette::WindowText, text);
         setPalette(widgetPalette);
-        auto layout = new QHBoxLayout(this);
-        layout->setContentsMargins(8, 6, 10, 6);
-        layout->setSpacing(10);
+        auto layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 8);
+        layout->setSpacing(8);
 
         thumbnail = new QLabel();
-        thumbnail->setFixedSize(150, 84);
+        thumbnail->setMinimumHeight(156);
+        thumbnail->setMaximumHeight(210);
+        thumbnail->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         thumbnail->setAlignment(Qt::AlignCenter);
         thumbnail->setText("PREVIEW");
+        thumbnail->setFrameShape(QFrame::StyledPanel);
+        thumbnail->setLineWidth(1);
         thumbnail->setAutoFillBackground(true);
         {
             QPalette pal = thumbnail->palette();
@@ -807,10 +814,6 @@ public:
             pal.setColor(QPalette::Mid, border);
             thumbnail->setPalette(pal);
         }
-
-        auto infoLayout = new QVBoxLayout();
-        infoLayout->setSpacing(1);
-        infoLayout->setContentsMargins(0, 2, 0, 2);
 
         titleLabel = new QLabel("Project");
         {
@@ -824,28 +827,31 @@ public:
         }
 
         detailsLabel = new QLabel("Select an item to inspect details");
-        detailsLabel->setWordWrap(false);
-        detailsLabel->setMinimumHeight(52);
+        detailsLabel->setWordWrap(true);
+        detailsLabel->setMinimumHeight(38);
+        detailsLabel->setMaximumHeight(72);
         {
             QPalette pal = detailsLabel->palette();
             pal.setColor(QPalette::WindowText, muted);
             detailsLabel->setPalette(pal);
         }
 
-        infoLayout->addWidget(titleLabel);
-        infoLayout->addWidget(detailsLabel);
-        infoLayout->addStretch();
-
-        layout->addWidget(thumbnail);
-        layout->addLayout(infoLayout);
-        layout->addStretch();
+        layout->addWidget(titleLabel);
+        layout->addWidget(detailsLabel);
+        layout->addWidget(thumbnail, 1);
     }
 
     void updateInfo(const QModelIndex& index) {
         if (!index.isValid()) {
-            titleLabel->setText("Project");
-            detailsLabel->setText("Open a project or search to inspect details");
-            thumbnail->setText("PREVIEW");
+            const auto* service = ArtifactProjectService::instance();
+            const bool hasProject = service && service->hasProject();
+            titleLabel->setText(hasProject ? QStringLiteral("Project")
+                                           : QStringLiteral("No project open"));
+            detailsLabel->setText(
+                hasProject ? QStringLiteral("Select an item to inspect details")
+                           : QStringLiteral("Open a project to inspect details"));
+            thumbnail->setText(hasProject ? QStringLiteral("PREVIEW")
+                                          : QStringLiteral("NO PROJECT"));
             thumbnail->setPixmap(QPixmap());
             return;
         }

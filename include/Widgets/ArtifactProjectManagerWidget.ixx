@@ -175,11 +175,12 @@ public:
   void generateProxyRequested() W_SIGNAL(generateProxyRequested);
  };
 
- class ArtifactProjectManagerWidget :public QWidget {
-  W_OBJECT(ArtifactProjectManagerWidget)
- private:
-  class Impl;
-  Impl* impl_;
+  class ArtifactProjectManagerWidget :public QWidget {
+   W_OBJECT(ArtifactProjectManagerWidget)
+  private:
+   class Impl;
+   Impl* impl_;
+   void updateShortcuts();
  protected:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);

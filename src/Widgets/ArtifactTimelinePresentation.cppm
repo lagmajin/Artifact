@@ -272,7 +272,9 @@ public:
                            WorkAreaControl *workArea,
                            ArtifactTimelineTrackPainterView *painterTrackView,
                            QWidget *gpuTimelineContainer,
+                           QWidget *gpuCurveContainer,
                            QWidget *curveHeader,
+                           QWidget *curveFooter,
                            ArtifactCurveEditorWidget *curveEditor,
                            QWidget *parent = nullptr)
       : QWidget(parent), navigator_(navigator), scrubBar_(scrubBar),
@@ -311,8 +313,17 @@ public:
     if (curveHeader) {
       curvePanelLayout->addWidget(curveHeader);
     }
+    curveSurfaceStack_ = new QStackedWidget(curveEditorPage_);
     if (curveEditor) {
-      curvePanelLayout->addWidget(curveEditor, 1);
+      curveSurfaceStack_->addWidget(curveEditor);
+    }
+    if (gpuCurveContainer) {
+      curveSurfaceStack_->addWidget(gpuCurveContainer);
+      curveSurfaceStack_->setCurrentWidget(gpuCurveContainer);
+    }
+    curvePanelLayout->addWidget(curveSurfaceStack_, 1);
+    if (curveFooter) {
+      curvePanelLayout->addWidget(curveFooter);
     }
 
     timelineModeStack_ = new QStackedWidget(this);
@@ -321,9 +332,6 @@ public:
     timelineModeStack_->addWidget(curveEditorPage_);
     timelineModeStack_->setCurrentWidget(timelinePainterPage_);
 
-    if (navigator_) {
-      rightPanelLayout->addWidget(navigator_);
-    }
     if (scrubBar_) {
       rightPanelLayout->addWidget(scrubBar_);
     }
@@ -331,6 +339,12 @@ public:
       rightPanelLayout->addWidget(workArea_);
     }
     rightPanelLayout->addWidget(timelineModeStack_, 1);
+    if (navigator_) {
+      // The adopted normal-timeline mock uses the navigator as a quiet footer
+      // below the edit lanes. Cache and work-area status remain beside the
+      // ruler at the top, matching their temporal status role.
+      rightPanelLayout->addWidget(navigator_);
+    }
 
     playheadOverlay_ =
         new TimelinePlayheadOverlayWidget(navigator_, scrubBar_,
@@ -342,6 +356,11 @@ public:
   QWidget *timelineGpuPage() const { return timelineGpuPage_; }
   QWidget *curveEditorPage() const { return curveEditorPage_; }
   QStackedWidget *timelineModeStack() const { return timelineModeStack_; }
+  void setCurveGpuEnabled(const bool enabled) {
+    if (!curveSurfaceStack_) return;
+    const int targetIndex = enabled && curveSurfaceStack_->count() > 1 ? 1 : 0;
+    curveSurfaceStack_->setCurrentIndex(targetIndex);
+  }
   void syncPlayheadOverlay() {
     if (playheadOverlay_) {
       playheadOverlay_->updatePlayhead();
@@ -399,6 +418,7 @@ private:
   QWidget *timelinePainterPage_ = nullptr;
   QWidget *timelineGpuPage_ = nullptr;
   QWidget *curveEditorPage_ = nullptr;
+  QStackedWidget *curveSurfaceStack_ = nullptr;
   QStackedWidget *timelineModeStack_ = nullptr;
   TimelinePlayheadOverlayWidget *playheadOverlay_ = nullptr;
 };
@@ -409,11 +429,13 @@ export QWidget *createTimelineRightPanel(
     ArtifactTimelineNavigatorWidget *navigator,
     ArtifactTimelineScrubBar *scrubBar, WorkAreaControl *workArea,
     ArtifactTimelineTrackPainterView *painterTrackView,
-    QWidget *gpuTimelineContainer, QWidget *curveHeader,
+    QWidget *gpuTimelineContainer, QWidget *gpuCurveContainer,
+    QWidget *curveHeader, QWidget *curveFooter,
     ArtifactCurveEditorWidget *curveEditor, QWidget *parent) {
   return new TimelineRightPanelWidget(navigator, scrubBar, workArea,
                                       painterTrackView, gpuTimelineContainer,
-                                      curveHeader, curveEditor, parent);
+                                      gpuCurveContainer, curveHeader, curveFooter,
+                                      curveEditor, parent);
 }
 
 export QWidget *timelineRightPanelPainterPage(QWidget *panel) {
@@ -429,6 +451,13 @@ export QWidget *timelineRightPanelGpuPage(QWidget *panel) {
 export QWidget *timelineRightPanelCurveEditorPage(QWidget *panel) {
   auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel);
   return rightPanel ? rightPanel->curveEditorPage() : nullptr;
+}
+
+export void setTimelineRightPanelCurveGpuEnabled(QWidget *panel,
+                                                  const bool enabled) {
+  if (auto *rightPanel = dynamic_cast<TimelineRightPanelWidget *>(panel)) {
+    rightPanel->setCurveGpuEnabled(enabled);
+  }
 }
 
 export QStackedWidget *timelineRightPanelModeStack(QWidget *panel) {

@@ -14,6 +14,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Script;
+import Translation.Manager;
 
 import std;
 
@@ -21,7 +22,6 @@ import Artifact.Script.Hooks;
 import Script.CSharp.Engine;
 import Script.Python.Engine;
 import Utils.Path;
-import Translation.Manager;
 
 namespace Artifact {
 
@@ -608,7 +608,7 @@ ArtifactScriptMenu::ArtifactScriptMenu(QWidget* parent)
  : QMenu(parent), impl_(new Impl(this))
 {
  setObjectName(QStringLiteral("ScriptMenu"));
- setTitle(tr("Script(&S)"));
+ setTitle(TranslationManager::instance().tr(QStringLiteral("menu.script.label"), QStringLiteral("スクリプト(&S)")));
  setIcon(QIcon(resolveIconPath("Studio/menubar_script.svg")));
  setTearOffEnabled(true);
 }

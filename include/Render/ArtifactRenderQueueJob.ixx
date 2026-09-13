@@ -110,6 +110,9 @@ public:
     float overlayRotationDeg;
     bool multiChannelExportEnabled = false;
     QStringList multiChannelExportChannels;
+    // Writes a one-sample-per-pixel Deep EXR from Beauty and Depth AOVs.
+    // This is intentionally separate from regular multi-channel EXR output.
+    bool deepExportEnabled = false;
     int framePadding = 4;
 
     ArtifactRenderJob()
@@ -135,6 +138,7 @@ public:
         , overlayScale(1.0f)
         , overlayRotationDeg(0.0f)
         , multiChannelExportEnabled(false)
+        , deepExportEnabled(false)
         , framePadding(4)
     {
     }

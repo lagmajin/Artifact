@@ -37,7 +37,10 @@ module;
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFocusEvent>
+#include <QKeyEvent>
 #include <QFont>
 #include <QColor>
 #include <QClipboard>
@@ -116,6 +119,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Asset;
 import Asset.Database;
+import Asset.Importer;
 import AssetType;
 import Configuration.LayeredConfigStore;
 import Artifact.Project.Manager;
@@ -147,6 +151,88 @@ static QPoint accessibilityMenuPosition(const QMenu &menu,
   Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
   return QPoint(x, y);
 }
+
+class RelinkCandidatePickerDialog final : public QDialog {
+public:
+ explicit RelinkCandidatePickerDialog(const QString& oldPath,
+                                     const QVector<::RelinkCandidate>& candidates,
+                                     QWidget* parent = nullptr)
+     : QDialog(parent), candidates_(candidates) {
+  setWindowTitle(QStringLiteral("Relink Candidates"));
+  setAccessibleName(QStringLiteral("Asset relink candidate picker"));
+  setMinimumSize(760, 440);
+  auto* root = new QVBoxLayout(this);
+  auto* missing = new QLabel(QStringLiteral("Missing source\n%1").arg(QDir::toNativeSeparators(oldPath)), this);
+  missing->setWordWrap(true);
+  QPalette missingPalette = missing->palette();
+  missingPalette.setColor(QPalette::WindowText, QColor(QStringLiteral("#E06C75")));
+  missing->setPalette(missingPalette);
+  root->addWidget(missing);
+  auto* content = new QHBoxLayout();
+  list_ = new QListWidget(this);
+  list_->setObjectName(QStringLiteral("relinkCandidateList"));
+  list_->installEventFilter(this);
+  for (int index = 0; index < candidates_.size(); ++index) {
+   const auto& candidate = candidates_.at(index);
+   auto* item = new QListWidgetItem(QStringLiteral("[%1] %2").arg(candidate.score).arg(QFileInfo(candidate.path).fileName()), list_);
+   item->setData(Qt::UserRole, index);
+   item->setToolTip(QDir::toNativeSeparators(candidate.path));
+  }
+  details_ = new QLabel(QStringLiteral("Select a verified candidate."), this);
+  details_->setObjectName(QStringLiteral("relinkCandidateDetails"));
+  details_->setWordWrap(true);
+  content->addWidget(list_, 3);
+  content->addWidget(details_, 2);
+  root->addLayout(content, 1);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+  auto* apply = buttons->addButton(QStringLiteral("Relink to Selected"), QDialogButtonBox::AcceptRole);
+  apply->setObjectName(QStringLiteral("relinkCandidateApply"));
+  apply->setEnabled(false);
+  apply->installEventFilter(this);
+  auto* cancel = buttons->button(QDialogButtonBox::Cancel);
+  cancel->setObjectName(QStringLiteral("relinkCandidateCancel"));
+  cancel->installEventFilter(this);
+  root->addWidget(buttons);
+ }
+
+ int selectedIndex() const {
+  return list_ && list_->currentItem() ? list_->currentItem()->data(Qt::UserRole).toInt() : -1;
+ }
+
+protected:
+ bool eventFilter(QObject* watched, QEvent* event) override {
+  const bool activate = (event->type() == QEvent::MouseButtonRelease &&
+      static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) ||
+      (event->type() == QEvent::KeyRelease &&
+       (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Return || static_cast<QKeyEvent*>(event)->key() == Qt::Key_Enter));
+  const QString name = watched->objectName();
+  if (name == QStringLiteral("relinkCandidateList")) {
+   if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::KeyRelease) updateDetails();
+   if (event->type() == QEvent::MouseButtonDblClick && selectedIndex() >= 0) { accept(); return true; }
+  } else if (name == QStringLiteral("relinkCandidateApply") && activate && selectedIndex() >= 0) {
+   accept(); return true;
+  } else if (name == QStringLiteral("relinkCandidateCancel") && activate) {
+   reject(); return true;
+  }
+  return QDialog::eventFilter(watched, event);
+ }
+
+private:
+ void updateDetails() {
+  const int index = selectedIndex();
+  auto* apply = findChild<QPushButton*>(QStringLiteral("relinkCandidateApply"));
+  if (index < 0 || index >= candidates_.size()) { details_->setText(QStringLiteral("Select a verified candidate.")); if (apply) apply->setEnabled(false); return; }
+  const auto& candidate = candidates_.at(index);
+  const QString sequence = candidate.sequenceExpectedFrames > 0
+      ? QStringLiteral("\nSequence: %1/%2 frames found").arg(candidate.sequenceFoundFrames).arg(candidate.sequenceExpectedFrames) : QString();
+  details_->setText(QStringLiteral("Candidate\n%1\n\nConfidence: %2\nMatch reasons: %3%4")
+      .arg(QDir::toNativeSeparators(candidate.path)).arg(candidate.score).arg(candidate.reason, sequence));
+  if (apply) apply->setEnabled(true);
+ }
+ QVector<::RelinkCandidate> candidates_;
+ QListWidget* list_ = nullptr;
+ QLabel* details_ = nullptr;
+};
 
 namespace {
 
@@ -4032,27 +4118,9 @@ if (!item.isFolder) {
       return;
     }
 
-    QStringList labels;
-    labels.reserve(candidates.size());
-    for (const auto& candidate : candidates) {
-      QString sequenceSummary;
-      if (candidate.sequenceExpectedFrames > 0) {
-        sequenceSummary = QStringLiteral("\nSequence: %1/%2 frames found")
-                              .arg(candidate.sequenceFoundFrames)
-                              .arg(candidate.sequenceExpectedFrames);
-      }
-      labels.append(QStringLiteral("[%1] %2\n%3%4")
-                        .arg(candidate.score)
-                        .arg(candidate.path)
-                        .arg(candidate.reason)
-                        .arg(sequenceSummary));
-    }
-    bool accepted = false;
-    const QString selected = QInputDialog::getItem(
-        this, QStringLiteral("Select Relink Candidate"),
-        QStringLiteral("Candidate:"), labels, 0, false, &accepted);
-    if (!accepted) return;
-    const int selectedIndex = labels.indexOf(selected);
+    RelinkCandidatePickerDialog picker(filePath, candidates, this);
+    if (picker.exec() != QDialog::Accepted) return;
+    const int selectedIndex = picker.selectedIndex();
     if (selectedIndex < 0 || selectedIndex >= candidates.size()) return;
 
     const QString newPath = candidates.at(selectedIndex).path;

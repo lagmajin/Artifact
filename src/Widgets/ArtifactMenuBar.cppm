@@ -15,6 +15,9 @@ module;
 #include <QStringList>
 #include <QWidget>
 #include <QToolButton>
+#include <QVector>
+#include <cstddef>
+#include <memory>
 #include <wobjectimpl.h>
 module Menu.MenuBar;
 
@@ -45,6 +48,8 @@ import Artifact.Widgets.Timeline;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Math.Interpolate;
 import Event.Bus;
+import Undo.UndoManager;
+import Time.TimeRemap;
 
 namespace Artifact {
 
@@ -61,6 +66,16 @@ QFont scaledMenuFont(const QFont& baseFont)
  const qreal pointSize = font.pointSizeF() > 0 ? font.pointSizeF() : 10.0;
  font.setPointSizeF(pointSize * factor);
  return font;
+}
+
+void setTopLevelMenuMnemonic(QMenu* menu, const QString& title)
+{
+ if (menu) {
+  // Translation labels may omit the Japanese menu's access key.  Keep the
+  // visible VS-style parenthesized key and let QMenu provide its native Alt
+  // navigation, rather than introducing a second shortcut dispatch path.
+  menu->setTitle(title);
+ }
 }
 
 int requiredMenuBarWidth(const QMenuBar* menuBar, const QFont& font)
@@ -134,6 +149,67 @@ ArtifactCompositionPtr currentComposition()
  auto* service = ArtifactProjectService::instance();
  return service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
 }
+
+struct TimeRemapSnapshot {
+ bool enabled = false;
+ ArtifactCore::FrameBlendMode blendMode = ArtifactCore::FrameBlendMode::None;
+ float blendAmount = 0.0f;
+ QVector<ArtifactCore::TimeRemapKeyframe> keys;
+ qint64 outPoint = 0;
+ bool stopMotionEnabled = false;
+ double stopMotionFrameRate = 12.0;
+};
+
+TimeRemapSnapshot captureTimeRemap(const ArtifactAbstractLayerPtr& layer)
+{
+ TimeRemapSnapshot snapshot;
+ if (!layer) return snapshot;
+ snapshot.enabled = layer->isTimeRemapEnabled();
+ snapshot.blendMode = layer->timeRemapFrameBlendMode();
+ snapshot.blendAmount = layer->timeRemapFrameBlendAmount();
+ snapshot.keys = layer->timeRemapKeys();
+ snapshot.outPoint = layer->outPoint().framePosition();
+ snapshot.stopMotionEnabled = layer->isStopMotionSamplingEnabled();
+ snapshot.stopMotionFrameRate = layer->stopMotionSamplingFrameRate();
+ return snapshot;
+}
+
+bool applyTimeRemap(const ArtifactAbstractLayerPtr& layer,
+                    const TimeRemapSnapshot& snapshot)
+{
+ if (!layer) return false;
+ layer->setTimeRemapKeys(snapshot.keys);
+ layer->setTimeRemapFrameBlend(snapshot.blendMode, snapshot.blendAmount);
+ layer->setTimeRemapEnabled(snapshot.enabled);
+ layer->setOutPoint(ArtifactCore::FramePosition(snapshot.outPoint));
+ layer->setStopMotionSamplingFrameRate(snapshot.stopMotionFrameRate);
+ layer->setStopMotionSamplingEnabled(snapshot.stopMotionEnabled);
+ return true;
+}
+
+class TimeRemapSnapshotCommand final : public UndoCommand {
+public:
+ TimeRemapSnapshotCommand(ArtifactAbstractLayerPtr layer, TimeRemapSnapshot before,
+                          TimeRemapSnapshot after, QString label)
+     : layer_(std::move(layer)), before_(std::move(before)),
+       after_(std::move(after)), label_(std::move(label)) {}
+
+ void undo() override { lastOperationSucceeded_ = applyTimeRemap(layer_, before_); }
+ void redo() override { lastOperationSucceeded_ = applyTimeRemap(layer_, after_); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+ QString label() const override { return label_; }
+ size_t estimatedMemoryBytes() const override {
+  return sizeof(*this) + static_cast<size_t>(before_.keys.size() + after_.keys.size()) *
+      sizeof(ArtifactCore::TimeRemapKeyframe);
+ }
+
+private:
+ ArtifactAbstractLayerPtr layer_;
+ TimeRemapSnapshot before_;
+ TimeRemapSnapshot after_;
+ QString label_;
+ bool lastOperationSucceeded_ = false;
+};
 }
 
 W_OBJECT_IMPL(ArtifactMenuBar)
@@ -181,6 +257,24 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  testMenu = new ArtifactTestMenu(menuBar);
 #endif
  helpMenu = new ArtifactHelpMenu(menuBar);
+
+ // Match the conventional desktop menu bar grammar: top-level menus expose
+ // their Alt access keys even when translated labels do not carry mnemonics.
+ setTopLevelMenuMnemonic(fileMenu, QStringLiteral("ファイル(&F)"));
+ setTopLevelMenuMnemonic(editMenu, QStringLiteral("編集(&E)"));
+ setTopLevelMenuMnemonic(compMenu, QStringLiteral("コンポジション(&C)"));
+ setTopLevelMenuMnemonic(layerMenu, QStringLiteral("レイヤー(&L)"));
+ setTopLevelMenuMnemonic(effectMenu, QStringLiteral("エフェクト(&X)"));
+ setTopLevelMenuMnemonic(animationMenu, QStringLiteral("アニメーション(&A)"));
+ setTopLevelMenuMnemonic(scriptMenu, QStringLiteral("スクリプト(&S)"));
+ setTopLevelMenuMnemonic(renderMenu, QStringLiteral("レンダー(&R)"));
+ setTopLevelMenuMnemonic(timeMenu, QStringLiteral("時間(&T)"));
+ setTopLevelMenuMnemonic(viewMenu, QStringLiteral("表示(&V)"));
+ setTopLevelMenuMnemonic(optionMenu, QStringLiteral("オプション(&O)"));
+ if (testMenu) {
+  setTopLevelMenuMnemonic(testMenu, QStringLiteral("テスト(&B)"));
+ }
+ setTopLevelMenuMnemonic(helpMenu, QStringLiteral("ヘルプ(&H)"));
 
  menuBar->addMenu(static_cast<QMenu*>(fileMenu));
  menuBar->addMenu(static_cast<QMenu*>(editMenu));
@@ -318,11 +412,11 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
           if (!layer) {
            return;
           }
+          const TimeRemapSnapshot before = captureTimeRemap(layer);
+          TimeRemapSnapshot after = before;
           switch (event.kind) {
           case TimelineTimeRemapCommandKind::Enable:
-           if (!layer->isTimeRemapEnabled()) {
-            layer->setTimeRemapEnabled(true);
-           }
+           after.enabled = true;
            break;
           case TimelineTimeRemapCommandKind::Freeze: {
            auto comp = currentComposition();
@@ -332,9 +426,28 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
            const int64_t compFrame = comp->framePosition().framePosition();
            const int64_t sourceFrame = static_cast<int64_t>(
                std::llround(layer->getSourceFrameAtCompFrame(compFrame)));
-           layer->clearTimeRemap();
-           layer->setTimeRemapEnabled(true);
-           layer->setTimeRemapKey(compFrame, static_cast<double>(sourceFrame));
+           after.enabled = true;
+           // Non-destructive freeze (AE improvement): keep existing keys,
+           // insert/overwrite a single Hold key at CTI instead of clearing.
+           ArtifactCore::TimeRemapKeyframe key;
+           const double fps = std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+           key.outputTime = static_cast<double>(compFrame) / fps;
+           key.sourceTime = static_cast<double>(sourceFrame) / fps;
+           key.interpolation = ArtifactCore::TimeRemapKeyframe::Interpolation::Hold;
+           QVector<ArtifactCore::TimeRemapKeyframe> merged;
+           merged.reserve(after.keys.size() + 1);
+           for (const auto& existing : after.keys) {
+            if (existing.outputTime != key.outputTime) {
+             merged.append(existing);
+            }
+           }
+           merged.append(key);
+           std::sort(merged.begin(), merged.end(),
+               [](const ArtifactCore::TimeRemapKeyframe& a,
+                  const ArtifactCore::TimeRemapKeyframe& b) {
+                return a.outputTime < b.outputTime;
+               });
+           after.keys = merged;
            break;
           }
           case TimelineTimeRemapCommandKind::Reverse: {
@@ -347,18 +460,71 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
            const int64_t clipFrameCount = std::max<int64_t>(
                1, layer->outPoint().framePosition() - layer->inPoint().framePosition());
            const int64_t clipEndSourceFrame = clipStartSourceFrame + clipFrameCount - 1;
-           layer->clearTimeRemap();
-           layer->setTimeRemapEnabled(true);
+           after.enabled = true;
+           after.keys.clear();
            if (clipFrameCount <= 1) {
-            layer->setTimeRemapKey(compFrame, static_cast<double>(clipStartSourceFrame));
-            return;
+            ArtifactCore::TimeRemapKeyframe key;
+            const double fps = std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+            key.outputTime = static_cast<double>(compFrame) / fps;
+            key.sourceTime = static_cast<double>(clipStartSourceFrame) / fps;
+            key.interpolation = ArtifactCore::TimeRemapKeyframe::Interpolation::Hold;
+            after.keys.append(key);
+            break;
            }
-           layer->setTimeRemapKey(layer->inPoint().framePosition(),
-                                  static_cast<double>(clipEndSourceFrame));
-           layer->setTimeRemapKey(layer->outPoint().framePosition() - 1,
-                                  static_cast<double>(clipStartSourceFrame));
+           const double fps = std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+           ArtifactCore::TimeRemapKeyframe first;
+           first.outputTime = static_cast<double>(layer->inPoint().framePosition()) / fps;
+           first.sourceTime = static_cast<double>(clipEndSourceFrame) / fps;
+           ArtifactCore::TimeRemapKeyframe last;
+           last.outputTime = static_cast<double>(layer->outPoint().framePosition() - 1) / fps;
+           last.sourceTime = static_cast<double>(clipStartSourceFrame) / fps;
+           after.keys.append(first);
+           after.keys.append(last);
            break;
           }
+          case TimelineTimeRemapCommandKind::SlowHalf:
+          case TimelineTimeRemapCommandKind::SlowQuarter: {
+           auto comp = currentComposition();
+           if (!comp) return;
+           const double speed = event.kind == TimelineTimeRemapCommandKind::SlowHalf ? 0.5 : 0.25;
+           const qint64 oldIn = layer->inPoint().framePosition();
+           const qint64 oldOut = layer->outPoint().framePosition();
+           const qint64 sourceDuration = std::max<qint64>(1, oldOut - oldIn);
+           const qint64 stretchedDuration = std::max<qint64>(
+               1, static_cast<qint64>(std::ceil(static_cast<double>(sourceDuration) / speed)));
+           const double fps = std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+           after.enabled = true;
+           after.keys.clear();
+           after.outPoint = oldIn + stretchedDuration;
+           ArtifactCore::TimeRemapKeyframe first;
+           first.outputTime = static_cast<double>(oldIn) / fps;
+           first.sourceTime = static_cast<double>(layer->startTime().framePosition()) / fps;
+           ArtifactCore::TimeRemapKeyframe last;
+           last.outputTime = static_cast<double>(after.outPoint - 1) / fps;
+           last.sourceTime = static_cast<double>(
+               layer->startTime().framePosition() + sourceDuration - 1) / fps;
+           after.keys.append(first);
+           after.keys.append(last);
+           after.blendMode = ArtifactCore::FrameBlendMode::FrameMix;
+           after.blendAmount = speed <= 0.25 ? 0.85f : 0.65f;
+           break;
+          }
+          case TimelineTimeRemapCommandKind::StopMotion12Fps:
+          case TimelineTimeRemapCommandKind::StopMotion8Fps:
+          case TimelineTimeRemapCommandKind::StopMotion4Fps: {
+           after.stopMotionEnabled = true;
+           after.stopMotionFrameRate =
+               event.kind == TimelineTimeRemapCommandKind::StopMotion12Fps
+                   ? 12.0
+                   : event.kind == TimelineTimeRemapCommandKind::StopMotion8Fps ? 8.0 : 4.0;
+           break;
+          }
+          }
+          if (auto* undo = UndoManager::instance()) {
+           undo->push(std::make_unique<TimeRemapSnapshotCommand>(
+               layer, before, std::move(after), QStringLiteral("Edit Time Remap")));
+          } else {
+           applyTimeRemap(layer, after);
           }
          }));
  eventBusSubscriptions_.push_back(

@@ -6,6 +6,7 @@ module;
 #include <QDialog>
 #include <QFormLayout>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QDialogButtonBox>
@@ -19,6 +20,7 @@ module;
 #include <QGroupBox>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QVector>
 #include <QCoreApplication>
@@ -294,6 +296,176 @@ namespace Artifact
   QVector<Variant> variants_;
  };
 
+ class RenderDestinationPickerDialog final : public QDialog
+ {
+ public:
+  explicit RenderDestinationPickerDialog(const QString& initialPath, QWidget* parent = nullptr)
+      : QDialog(parent)
+  {
+   setWindowTitle(QStringLiteral("Render Destination"));
+   setAccessibleName(QStringLiteral("Render destination picker"));
+   setMinimumSize(830, 500);
+   resize(960, 560);
+   const QFileInfo initial(initialPath);
+   const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+   const QString defaultDir = documents.isEmpty() ? QDir::homePath() : documents;
+   const QString initialDirectory = initialPath.trimmed().isEmpty() ? defaultDir : initial.absolutePath();
+   const QString suffix = initial.suffix().isEmpty() ? QStringLiteral("mp4") : initial.suffix();
+   const QString baseName = initial.completeBaseName().isEmpty()
+       ? QStringLiteral("composition") : initial.completeBaseName();
+
+   auto* root = new QVBoxLayout(this);
+   root->setContentsMargins(14, 12, 14, 12);
+   root->setSpacing(8);
+   auto* title = new QLabel(QStringLiteral("Render Destination"), this);
+   QFont titleFont = title->font();
+   titleFont.setBold(true);
+   title->setFont(titleFont);
+   root->addWidget(title);
+   auto* content = new QHBoxLayout();
+   content->setSpacing(8);
+   auto* places = new QGroupBox(QStringLiteral("Places"), this);
+   places->setFixedWidth(170);
+   auto* placesLayout = new QVBoxLayout(places);
+   auto addPlace = [this, placesLayout](const QString& text, const QString& path) {
+    auto* button = new CallbackButton(text, this);
+    button->setClickHandler([this, path]() { folderEdit_->setText(QDir::toNativeSeparators(path)); updatePreview(); });
+    placesLayout->addWidget(button);
+   };
+   addPlace(QStringLiteral("Desktop"), QStandardPaths::writableLocation(QStandardPaths::DesktopLocation));
+   addPlace(QStringLiteral("Documents"), documents);
+   addPlace(QStringLiteral("Home"), QDir::homePath());
+   placesLayout->addStretch();
+   auto* native = new CallbackButton(QStringLiteral("System Picker…"), places);
+   native->setClickHandler([this]() {
+    const QString selected = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Select Output File"), outputPath(),
+        QStringLiteral("Video (*.mp4 *.mov *.avi *.mkv *.webm);;Image Sequence (*.png *.jpg *.tiff *.bmp *.exr);;All Files (*.*)"));
+    if (selected.isEmpty()) return;
+    const QFileInfo info(selected);
+    folderEdit_->setText(QDir::toNativeSeparators(info.absolutePath()));
+    baseEdit_->setText(info.completeBaseName());
+    extensionEdit_->setText(info.suffix());
+    updatePreview();
+   });
+   placesLayout->addWidget(native);
+   content->addWidget(places);
+
+   auto* controls = new QGroupBox(QStringLiteral("Output naming"), this);
+   auto* form = new QFormLayout(controls);
+   folderEdit_ = new QLineEdit(QDir::toNativeSeparators(initialDirectory), controls);
+   folderEdit_->setAccessibleName(QStringLiteral("Output folder"));
+   baseEdit_ = new QLineEdit(baseName, controls);
+   baseEdit_->setAccessibleName(QStringLiteral("Output base name"));
+   versionSpin_ = new QSpinBox(controls);
+   versionSpin_->setRange(1, 9999);
+   versionSpin_->setValue(1);
+   tokenCheck_ = new QCheckBox(QStringLiteral("Append image-sequence frame token [####]"), controls);
+   extensionEdit_ = new QLineEdit(suffix, controls);
+   extensionEdit_->setAccessibleName(QStringLiteral("Output extension"));
+   auto* note = new QLabel(QStringLiteral("The selected Render Output format remains authoritative. Filename extension can be updated when that format changes."), controls);
+   note->setWordWrap(true);
+   QPalette notePalette = note->palette();
+   notePalette.setColor(QPalette::WindowText, palette().color(QPalette::PlaceholderText));
+   note->setPalette(notePalette);
+   form->addRow(QStringLiteral("Folder"), folderEdit_);
+   form->addRow(QStringLiteral("Base name"), baseEdit_);
+   form->addRow(QStringLiteral("Version"), versionSpin_);
+   form->addRow(QString(), tokenCheck_);
+   form->addRow(QStringLiteral("Extension"), extensionEdit_);
+   form->addRow(QString(), note);
+   content->addWidget(controls, 1);
+
+   auto* preview = new QFrame(this);
+   preview->setFrameShape(QFrame::StyledPanel);
+   preview->setFixedWidth(280);
+   auto* previewLayout = new QVBoxLayout(preview);
+   auto* previewTitle = new QLabel(QStringLiteral("Output preview"), preview);
+   QFont previewTitleFont = previewTitle->font();
+   previewTitleFont.setBold(true);
+   previewTitle->setFont(previewTitleFont);
+   previewPath_ = new QLabel(preview);
+   previewPath_->setObjectName(QStringLiteral("renderDestinationPreview"));
+   previewPath_->setWordWrap(true);
+   conflictLabel_ = new QLabel(preview);
+   conflictLabel_->setWordWrap(true);
+   previewLayout->addWidget(previewTitle);
+   previewLayout->addWidget(previewPath_);
+   previewLayout->addStretch();
+   previewLayout->addWidget(conflictLabel_);
+   content->addWidget(preview);
+   root->addLayout(content, 1);
+
+   auto* footer = new QHBoxLayout();
+   auto* policy = new QLabel(QStringLiteral("Conflict policy: Create next version (no overwrite)"), this);
+   QPalette policyPalette = policy->palette();
+   policyPalette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
+   policy->setPalette(policyPalette);
+   auto* cancel = new CallbackButton(QStringLiteral("Cancel"), this);
+   cancel->setClickHandler([this]() { reject(); });
+   auto* use = new CallbackButton(QStringLiteral("Use Destination"), this);
+   use->setDefault(true);
+   use->setClickHandler([this]() { accept(); });
+   footer->addWidget(policy);
+   footer->addStretch();
+   footer->addWidget(cancel);
+   footer->addWidget(use);
+   root->addLayout(footer);
+   for (QLineEdit* edit : {folderEdit_, baseEdit_, extensionEdit_}) edit->installEventFilter(this);
+   versionSpin_->installEventFilter(this);
+   tokenCheck_->installEventFilter(this);
+   updatePreview();
+  }
+
+  QString outputPath() const
+  {
+   int version = versionSpin_->value();
+   QString candidate = pathForVersion(version);
+   while (QFileInfo(candidate).exists() && version < 9999) candidate = pathForVersion(++version);
+   return candidate;
+  }
+
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override
+  {
+   if (event->type() == QEvent::KeyRelease || event->type() == QEvent::MouseButtonRelease)
+    updatePreview();
+   return QDialog::eventFilter(watched, event);
+  }
+
+ private:
+  QString pathForVersion(const int version) const
+  {
+   const QString folder = QDir::fromNativeSeparators(folderEdit_->text().trimmed());
+   const QString base = baseEdit_->text().trimmed().isEmpty() ? QStringLiteral("composition") : baseEdit_->text().trimmed();
+   const QString extension = extensionEdit_->text().trimmed().isEmpty() ? QStringLiteral("mp4") : extensionEdit_->text().trimmed();
+   const QString token = tokenCheck_->isChecked() ? QStringLiteral("_[####]") : QString();
+   return QDir(folder).filePath(QStringLiteral("%1_v%2%3.%4")
+       .arg(base).arg(version, 3, 10, QLatin1Char('0')).arg(token, extension));
+  }
+
+  void updatePreview()
+  {
+   if (!previewPath_ || !conflictLabel_) return;
+   const QString candidate = outputPath();
+   previewPath_->setText(QDir::toNativeSeparators(candidate));
+   const QString requested = pathForVersion(versionSpin_->value());
+   if (candidate == requested) {
+    conflictLabel_->setText(QStringLiteral("Available. The current version does not overwrite an existing file."));
+    return;
+   }
+   conflictLabel_->setText(QStringLiteral("A matching output already exists. Preview advanced to the next available version; existing files are never overwritten."));
+  }
+
+  QLineEdit* folderEdit_ = nullptr;
+  QLineEdit* baseEdit_ = nullptr;
+  QLineEdit* extensionEdit_ = nullptr;
+  QSpinBox* versionSpin_ = nullptr;
+  QCheckBox* tokenCheck_ = nullptr;
+  QLabel* previewPath_ = nullptr;
+  QLabel* conflictLabel_ = nullptr;
+ };
+
  } // namespace
 	
  class ArtifactRenderOutputSettingDialog::Impl
@@ -339,6 +511,7 @@ namespace Artifact
   QSpinBox* bitrateSpin = nullptr;
   QCheckBox* includeAudioCheck = nullptr;
   QCheckBox* multiChannelCheck = nullptr;
+  QCheckBox* deepExportCheck = nullptr;
   QGroupBox* multiChannelGroup = nullptr;
   QCheckBox* beautyChannelCheck = nullptr;
   QCheckBox* alphaChannelCheck = nullptr;
@@ -394,12 +567,9 @@ namespace Artifact
 
  void ArtifactRenderOutputSettingDialog::Impl::handleBrowseClicked(ArtifactRenderOutputSettingDialog* dialog)
  {
-      QString filePath = QFileDialog::getSaveFileName(
-          dialog,
-          "Select Output File",
-          "",
-          "Video (*.mp4 *.mov *.avi *.mkv *.webm);;Image Sequence (*.png *.jpg *.tiff *.bmp *.exr);;All Files (*.*)"
-      );
+      RenderDestinationPickerDialog picker(outputPathEdit ? outputPathEdit->text() : QString(), dialog);
+      if (picker.exec() != QDialog::Accepted) return;
+      const QString filePath = picker.outputPath();
      if (!filePath.isEmpty()) {
          outputPathEdit->setText(filePath);
      }
@@ -914,6 +1084,14 @@ void ArtifactRenderOutputSettingDialog::Impl::updateMultiChannelUi()
   const bool enabled = multiChannelCheck && multiChannelCheck->isChecked();
   if (multiChannelGroup) {
     multiChannelGroup->setEnabled(enabled);
+  }
+  if (deepExportCheck) {
+    deepExportCheck->setEnabled(enabled);
+    if (!enabled && deepExportCheck->isChecked()) {
+      // Deep is encoded from Beauty/Depth AOVs. Do not retain a checked but
+      // disabled Deep option after the user turns the required AOV export off.
+      deepExportCheck->setChecked(false);
+    }
   }
   if (enabled && formatCombo) {
     formatCombo->setCurrentText(QStringLiteral("EXR Sequence"));
@@ -1455,6 +1633,14 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->multiChannelCheck->setToolTip(QStringLiteral("有効にすると Beauty RGBA に加えて Depth / Normal / Velocity / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。"));
     formLayout->addRow("AOV:", impl_->multiChannelCheck);
 
+    impl_->deepExportCheck = new QCheckBox(
+        QStringLiteral("Deep EXR (Beauty + Depth, one sample per pixel)"), this);
+    impl_->deepExportCheck->setChecked(false);
+    impl_->deepExportCheck->setToolTip(QStringLiteral(
+        "Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。"
+        "ネイティブな複数可視サンプル出力ではありません。"));
+    formLayout->addRow("Deep:", impl_->deepExportCheck);
+
     impl_->multiChannelGroup = new QGroupBox(QStringLiteral("AOV Channels"), this);
     auto* multiChannelLayout = new QVBoxLayout(impl_->multiChannelGroup);
     impl_->beautyChannelCheck = new QCheckBox(QStringLiteral("Beauty RGB"), impl_->multiChannelGroup);
@@ -1510,6 +1696,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->audioBitrateSpin->setAccessibleName(QStringLiteral("Audio bitrate"));
     impl_->multiChannelCheck->setAccessibleName(QStringLiteral("Multi-channel AOV export"));
     impl_->multiChannelCheck->setAccessibleDescription(QStringLiteral("Include selected auxiliary channels in the EXR output"));
+    impl_->deepExportCheck->setAccessibleName(QStringLiteral("Deep EXR export"));
+    impl_->deepExportCheck->setAccessibleDescription(
+        QStringLiteral("Write a one-sample-per-pixel Deep EXR from Beauty and Depth AOVs"));
     impl_->framePaddingSpin->setAccessibleName(QStringLiteral("Frame padding"));
     impl_->framePaddingSpin->setAccessibleDescription(QStringLiteral("Set the number of digits for image sequence frame numbers"));
     formLayout->addRow("Frame Padding:", impl_->framePaddingSpin);
@@ -1850,6 +2039,22 @@ void ArtifactRenderOutputSettingDialog::setMultiChannelChannels(const QStringLis
 QStringList ArtifactRenderOutputSettingDialog::multiChannelChannels() const
 {
   return impl_ ? impl_->selectedMultiChannelChannels() : QStringList{};
+}
+
+void ArtifactRenderOutputSettingDialog::setDeepExportEnabled(bool enabled)
+{
+  if (enabled) {
+    setMultiChannelEnabled(true);
+  }
+  if (impl_ && impl_->deepExportCheck) {
+    impl_->deepExportCheck->setChecked(enabled);
+  }
+}
+
+bool ArtifactRenderOutputSettingDialog::deepExportEnabled() const
+{
+  return multiChannelEnabled() && impl_ && impl_->deepExportCheck &&
+         impl_->deepExportCheck->isChecked();
 }
 
 void ArtifactRenderOutputSettingDialog::setFramePadding(int digits)

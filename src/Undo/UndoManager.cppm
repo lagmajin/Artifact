@@ -2991,7 +2991,7 @@ bool decodeKeyframes(const QJsonArray& encoded, std::vector<ArtifactCore::KeyFra
         int interpolation = 0;
         if (!jsonEnumInt(object.value(QStringLiteral("interpolation")), interpolation) ||
             interpolation < 0 ||
-            interpolation > static_cast<int>(ArtifactCore::InterpolationType::Perceptual) ||
+            interpolation > static_cast<int>(ArtifactCore::InterpolationType::ExponentialInOut) ||
             !finiteJsonNumber(object, QStringLiteral("cp1_x"), keyframe.cp1_x) ||
             !finiteJsonNumber(object, QStringLiteral("cp1_y"), keyframe.cp1_y) ||
             !finiteJsonNumber(object, QStringLiteral("cp2_x"), keyframe.cp2_x) ||

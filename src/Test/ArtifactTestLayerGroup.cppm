@@ -100,6 +100,33 @@ export int runLayerGroupTests()
                  QStringLiteral("group container can be read from node store"));
     report.check(storedContainer.containsChild(childResult.layer->id().toString()),
                  QStringLiteral("node store group container exposes children"));
+    report.check(composition->isGroupContainerNode(group->id().toString()),
+                 QStringLiteral("group container kind resolves via node store"));
+    report.check(!composition->isGroupContainerNode(childResult.layer->id().toString()),
+                 QStringLiteral("plain layer is not a group container node"));
+    report.check(!composition->isGroupContainerNode(QStringLiteral("missing-node-id")),
+                 QStringLiteral("missing node id is not a group container"));
+    report.check(composition->isGroupLayerResolved(group),
+                 QStringLiteral("group layer resolves via node store"));
+    report.check(!composition->isGroupLayerResolved(childResult.layer),
+                 QStringLiteral("plain layer does not resolve as group"));
+    report.check(composition->isGroupLayerResolved(group->id()),
+                 QStringLiteral("group layer id resolves via node store"));
+    report.check(!composition->isGroupLayerResolved(childResult.layer->id()),
+                 QStringLiteral("plain layer id does not resolve as group"));
+    {
+        ArtifactLayerInitParams orphanParams(QStringLiteral("Orphan Group"), LayerType::Group);
+        auto orphanResult = factory.createLayer(orphanParams);
+        auto orphanGroup = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(
+            orphanResult.success ? orphanResult.layer : ArtifactAbstractLayerPtr{});
+        report.check(static_cast<bool>(orphanGroup), QStringLiteral("orphan group layer can be created"));
+        if (orphanGroup) {
+            report.check(!composition->isGroupContainerNode(orphanGroup->id().toString()),
+                         QStringLiteral("unregistered group has no container node"));
+            report.check(composition->isGroupLayerResolved(orphanGroup),
+                         QStringLiteral("unregistered group falls back to virtual"));
+        }
+    }
 
     ArtifactLayerInitParams secondChildParams(QStringLiteral("Second Child"), LayerType::Null);
     auto secondChildResult = factory.createLayer(secondChildParams);
@@ -131,6 +158,32 @@ export int runLayerGroupTests()
                      QStringLiteral("group applies container child order"));
         report.check(!group->isVisible() && qFuzzyCompare(group->opacity(), 0.5f),
                      QStringLiteral("group applies container visibility and opacity"));
+        report.check(composition->selectedChildForGroupEvaluation(group->id()) == childResult.layer->id(),
+                     QStringLiteral("container single mode selects active child"));
+        report.check(composition->shouldEvaluateLayer(childResult.layer->id()),
+                     QStringLiteral("active child evaluates in single mode"));
+        report.check(!composition->shouldEvaluateLayer(secondChildResult.layer->id()),
+                     QStringLiteral("inactive child skips in single mode"));
+        group->setOutputMode(GroupOutputMode::All);
+        report.check(composition->shouldEvaluateLayer(childResult.layer->id()) &&
+                     composition->shouldEvaluateLayer(secondChildResult.layer->id()),
+                     QStringLiteral("all mode evaluates every child"));
+        group->setOutputMode(GroupOutputMode::Share);
+        report.check(qFuzzyCompare(composition->groupEvaluationGainForChild(
+                                       group->id(), childResult.layer->id()), 0.5f) &&
+                     qFuzzyCompare(composition->groupEvaluationGainForChild(
+                                       group->id(), secondChildResult.layer->id()), 0.5f),
+                     QStringLiteral("share mode splits gain over visible children"));
+        group->setOutputMode(GroupOutputMode::All);
+        report.check(qFuzzyCompare(composition->groupEvaluationGainForChild(
+                                       group->id(), childResult.layer->id()), 1.0f),
+                     QStringLiteral("all mode keeps unity gain"));
+        report.check(!composition->isGroupExclusive(group->id()),
+                     QStringLiteral("all mode is not exclusive"));
+        group->setOutputMode(GroupOutputMode::Single);
+        report.check(composition->isGroupExclusive(group->id()),
+                     QStringLiteral("single mode is exclusive"));
+        group->setOutputMode(GroupOutputMode::All);
     }
 
     const QJsonDocument json = composition->toJson();

@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <algorithm>
@@ -77,6 +78,33 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    static constexpr const char* kGpuGenericKeyString = "directional_glow";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        // Custom angles cannot travel in the 8-float node payload.
+        if (pattern_ == StreakPattern::Custom) return false;
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = threshold_;
+        node.parameters[1] = intensity_;
+        node.parameters[2] = length1_;
+        node.parameters[3] = length2_;
+        node.parameters[4] = weight1_;
+        node.parameters[5] = weight2_;
+        node.parameters[6] = static_cast<float>(pattern_);
+        node.parameters[7] = angleOffset_;
+        node.resolutionScaledParameterMask = (1u << 2) | (1u << 3);
+        return stack.append(node);
+    }
 
     bool supportsGPU() const override { return true; }
 };

@@ -36,6 +36,7 @@ namespace Artifact
  Impl();
   QLabel* timecodeLabel_ = nullptr;
   QLabel* frameNumberLabel_ = nullptr;
+  QLabel* fpsLabel_ = nullptr;
   int fps_ = 30;
   int currentFrame_ = 0;
  };
@@ -46,19 +47,24 @@ namespace Artifact
   timecodeLabel_->setText("00:00:00:00");
   frameNumberLabel_ = new QLabel();
   frameNumberLabel_->setText("0 f");
+  fpsLabel_ = new QLabel();
+  fpsLabel_->setText("30 fps");
  }
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  // Vertical layout: timecode row on top, frame number row below.
-  auto layout = new QVBoxLayout();
- layout->setSpacing(1);
-  layout->setContentsMargins(12, 6, 10, 6);
+  // Keep the timing readout on one shared toolbar baseline, matching the
+  // approved normal-timeline design instead of presenting a detached box.
+  auto layout = new QHBoxLayout();
+  layout->setSpacing(12);
+  layout->setContentsMargins(14, 0, 12, 0);
 
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
+  impl_->fpsLabel_->setObjectName("fpsLabel");
   impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  impl_->fpsLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
  setAttribute(Qt::WA_StyledBackground, false);
  setAutoFillBackground(false);
@@ -82,27 +88,42 @@ namespace Artifact
    framePal.setColor(QPalette::Text, mutedTextColor);
    impl_->frameNumberLabel_->setPalette(framePal);
    impl_->frameNumberLabel_->setAutoFillBackground(false);
+   impl_->fpsLabel_->setPalette(framePal);
+   impl_->fpsLabel_->setAutoFillBackground(false);
   }
 
+  auto* firstDivider = new QLabel(QStringLiteral("|"));
+  auto* secondDivider = new QLabel(QStringLiteral("|"));
+  QPalette dividerPalette = firstDivider->palette();
+  dividerPalette.setColor(QPalette::WindowText,
+                          QColor(ArtifactCore::currentDCCTheme().borderColor));
+  firstDivider->setPalette(dividerPalette);
+  secondDivider->setPalette(dividerPalette);
   layout->addWidget(impl_->timecodeLabel_);
+  layout->addWidget(firstDivider);
   layout->addWidget(impl_->frameNumberLabel_);
+  layout->addWidget(secondDivider);
+  layout->addWidget(impl_->fpsLabel_);
+  layout->addStretch(1);
 
   setLayout(layout);
   QFont timeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
   timeFont.setBold(true);
-  timeFont.setPixelSize(20);
+  timeFont.setPixelSize(18);
   impl_->timecodeLabel_->setFont(timeFont);
 
   QFont frameFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
   frameFont.setBold(false);
   frameFont.setPixelSize(11);
   impl_->frameNumberLabel_->setFont(frameFont);
+  impl_->fpsLabel_->setFont(frameFont);
 
   const QFontMetrics timeMetrics(timeFont);
   const QFontMetrics frameMetrics(frameFont);
   impl_->timecodeLabel_->setMinimumHeight(timeMetrics.height() + 4);
-  impl_->frameNumberLabel_->setMinimumHeight(frameMetrics.height() + 5);
-  setMinimumHeight(timeMetrics.height() + frameMetrics.height() + 18);
+  impl_->frameNumberLabel_->setMinimumHeight(timeMetrics.height() + 4);
+  impl_->fpsLabel_->setMinimumHeight(timeMetrics.height() + 4);
+  setFixedHeight(50);
 
   // Include the layout's left/right margins. Omitting them let the label paint
   // into the neighbouring mode button when the timeline dock became narrow.
@@ -110,6 +131,8 @@ namespace Artifact
   const int minimumWidth = margins.left() +
                            timeMetrics.horizontalAdvance(
                                QStringLiteral("00:00:00:00")) +
+                           frameMetrics.horizontalAdvance(
+                               QStringLiteral("|  0000 f  |  120 fps")) +
                            margins.right();
   setMinimumWidth(minimumWidth);
   setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -130,6 +153,9 @@ namespace Artifact
       return;
     }
     impl_->fps_ = sanitized;
+    if (impl_->fpsLabel_) {
+      impl_->fpsLabel_->setText(QStringLiteral("%1 fps").arg(sanitized));
+    }
     updateTimeCode(impl_->currentFrame_);
  }
 
@@ -176,14 +202,6 @@ namespace Artifact
 
  void ArtifactTimeCodeWidget::paintEvent(QPaintEvent* event)
  {
- QPainter painter(this);
-  const auto& theme = ArtifactCore::currentDCCTheme();
-  painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor).darker(108));
-  painter.setPen(QPen(QColor(theme.borderColor).darker(115), 1));
-  painter.drawRect(rect().adjusted(0, 0, -1, -1));
-  QColor accent(theme.accentColor);
-  accent.setAlpha(18);
-  painter.fillRect(QRect(rect().left(), rect().top(), rect().width(), 2), accent);
   QWidget::paintEvent(event);
  }
 

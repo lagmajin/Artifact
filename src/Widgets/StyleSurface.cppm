@@ -64,6 +64,10 @@ QStringList artifactPreferredDisplayFontFamilies()
 
 QString artifactPreferredDisplayFontFamily()
 {
+  const QString applicationFamily = QApplication::font().family();
+  if (!applicationFamily.isEmpty()) {
+    return applicationFamily;
+  }
   const QStringList installedFamilies = QFontDatabase::families();
   for (const QString& candidate : artifactPreferredDisplayFontFamilies()) {
     if (installedFamilies.contains(candidate, Qt::CaseInsensitive)) {
@@ -88,6 +92,10 @@ QStringList artifactPreferredJapaneseFontFamilies()
 
 QString artifactPreferredJapaneseFontFamily()
 {
+  const QString applicationFamily = QApplication::font().family();
+  if (!applicationFamily.isEmpty()) {
+    return applicationFamily;
+  }
   const QStringList installedFamilies = QFontDatabase::families();
   for (const QString& candidate : artifactPreferredJapaneseFontFamilies()) {
     if (installedFamilies.contains(candidate, Qt::CaseInsensitive)) {

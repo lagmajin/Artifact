@@ -10,6 +10,8 @@ module;
 #include <QWindow>
 #include <QtGlobal>
 
+#include <functional>
+
 export module Artifact.Widgets.Timeline.DiligentRenderWindow;
 
 import Utils.String.UniString;
@@ -75,6 +77,7 @@ public:
   // remains the authoritative editor for hit testing and Undo-backed edits.
   // Forwarding input keeps the GPU page usable instead of display-only.
   void setInputTarget(QWidget* target);
+  void setInputUpdatedCallback(std::function<void()> callback);
   void requestRender();
 };
 

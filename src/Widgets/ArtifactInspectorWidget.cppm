@@ -151,6 +151,7 @@ import Artifact.Project.PresetManager;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Composition;
 import Artifact.Layer.Component.System;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
@@ -1993,6 +1994,15 @@ void ArtifactInspectorWidget::Impl::syncTemplateParameters() {
     templateParametersWidget->setParameters(QJsonArray{});
     return;
   }
+
+  // Template parameters are exposed by precomposition layers. Serializing an
+  // arbitrary selected layer here is both unnecessary and unsafe: complex
+  // layers such as Particle own mutable runtime state that must not be walked
+  // merely to refresh this inspector tab.
+  if (!ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer)) {
+    templateParametersWidget->setParameters(QJsonArray{});
+    return;
+  }
   const auto document = ArtifactTemplateDocument::fromLayers(
       QVector<ArtifactAbstractLayerPtr>{layer}, layer->layerName());
   templateParametersWidget->setDocument(document);
@@ -2159,9 +2169,22 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
   const bool isEmptyEffectStack =
       text == QStringLiteral(
                   "No effects yet. Add an effect to start building your stack.");
+  bool showEmptyIcon = isEmptyEffectStack;
   if (isEmptyEffectStack) {
     title = QStringLiteral("No effects yet");
     description = QStringLiteral("Add an effect to start building your stack.");
+  } else if (text == QStringLiteral("Open a project to manage effects.")) {
+    title = QStringLiteral("No project loaded");
+    description = QStringLiteral("Open a project to manage its effect stacks.");
+    showEmptyIcon = true;
+  } else if (text == QStringLiteral("Open a composition to manage effects.")) {
+    title = QStringLiteral("No composition selected");
+    description = QStringLiteral("Select a composition to view and edit its effects.");
+    showEmptyIcon = true;
+  } else if (text == QStringLiteral("Select a layer to manage effects.")) {
+    title = QStringLiteral("No layer selected");
+    description = QStringLiteral("Select a layer to view and edit its effects.");
+    showEmptyIcon = true;
   }
   effectsStateLabel->setText(title);
   if (effectsStateDescriptionLabel) {
@@ -2169,7 +2192,7 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
     effectsStateDescriptionLabel->setVisible(visible && !description.isEmpty());
   }
   if (effectsEmptyIconLabel) {
-    effectsEmptyIconLabel->setVisible(visible && isEmptyEffectStack);
+    effectsEmptyIconLabel->setVisible(visible && showEmptyIcon);
   }
   effectsEmptyStateWidget->setVisible(visible);
 }

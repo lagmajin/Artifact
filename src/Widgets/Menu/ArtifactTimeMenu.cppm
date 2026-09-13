@@ -12,6 +12,7 @@ module;
 
 module Menu.Time;
 import std;
+import Translation.Manager;
 
 import Event.Bus;
 import Artifact.Event.Types;
@@ -323,7 +324,7 @@ void ArtifactTimeMenu::Impl::handleProjectClosed()
 ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
-  setTitle("時間(&T)");
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.time.label"), QStringLiteral("時間(&T)")));
   setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/menubar_time.svg")));
   impl_->refreshState();
 }

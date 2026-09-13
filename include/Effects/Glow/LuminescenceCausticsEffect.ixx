@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -27,6 +28,31 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    static constexpr const char* kGpuGenericKeyString = "luminescence_caustics";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = threshold_;
+        node.parameters[1] = edgeWeight_;
+        node.parameters[2] = scale_;
+        node.parameters[3] = intensity_;
+        node.parameters[4] = evolution_;
+        node.parameters[5] = colorShift_;
+        node.resolutionScaledParameterMask = 0;
+        return stack.append(node);
+    }
+
+    bool supportsGPU() const override { return true; }
 };
 
 }

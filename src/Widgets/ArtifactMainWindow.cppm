@@ -647,15 +647,16 @@ bool confirmUnsavedChangesForClose(QWidget *parent)
 
   QMessageBox box(parent);
   box.setWindowTitle(QStringLiteral("ArtifactStudio"));
+  const auto& theme = ArtifactCore::currentDCCTheme();
   QPalette palette = box.palette();
-  palette.setColor(QPalette::Window, QColor(25, 28, 30));
-  palette.setColor(QPalette::Base, QColor(25, 28, 30));
-  palette.setColor(QPalette::Button, QColor(35, 38, 41));
-  palette.setColor(QPalette::WindowText, QColor(242, 244, 246));
-  palette.setColor(QPalette::Text, QColor(214, 218, 222));
-  palette.setColor(QPalette::ButtonText, QColor(242, 244, 246));
-  palette.setColor(QPalette::Highlight, QColor(255, 181, 32));
-  palette.setColor(QPalette::HighlightedText, QColor(20, 22, 24));
+  palette.setColor(QPalette::Window, QColor(theme.backgroundColor));
+  palette.setColor(QPalette::Base, QColor(theme.backgroundColor));
+  palette.setColor(QPalette::Button, QColor(theme.buttonColor));
+  palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+  palette.setColor(QPalette::Text, QColor(theme.textColor));
+  palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+  palette.setColor(QPalette::Highlight, QColor(theme.accentColor));
+  palette.setColor(QPalette::HighlightedText, QColor(theme.backgroundColor));
   box.setPalette(palette);
   box.setMinimumWidth(520);
 
@@ -680,19 +681,20 @@ bool confirmUnsavedChangesForClose(QWidget *parent)
                                   QMessageBox::DestructiveRole);
     saveButton = box.addButton(QStringLiteral("保存して終了"),
                                QMessageBox::AcceptRole);
-    QPalette savePalette = saveButton->palette();
-    savePalette.setColor(QPalette::Button, QColor(255, 181, 32));
-    savePalette.setColor(QPalette::ButtonText, QColor(20, 22, 24));
-    saveButton->setPalette(savePalette);
   } else {
     box.setIcon(QMessageBox::Information);
     box.setText(QStringLiteral("ArtifactStudioを終了しますか？"));
     box.setInformativeText(QStringLiteral("すべての変更は保存されています。"));
     exitButton = box.addButton(QStringLiteral("終了"), QMessageBox::AcceptRole);
-    QPalette exitPalette = exitButton->palette();
-    exitPalette.setColor(QPalette::Button, QColor(255, 181, 32));
-    exitPalette.setColor(QPalette::ButtonText, QColor(20, 22, 24));
-    exitButton->setPalette(exitPalette);
+  }
+
+  // QMessageBox creates its text labels after the dialog palette is applied.
+  // Keep those labels transparent so the dialog reads as one continuous surface
+  // instead of exposing the application's generic label background.
+  for (auto *label : box.findChildren<QLabel *>()) {
+    label->setAutoFillBackground(false);
+    label->setBackgroundRole(QPalette::NoRole);
+    label->setAttribute(Qt::WA_StyledBackground, false);
   }
 
   box.setDefaultButton(hasUnsavedChanges ? saveButton : exitButton);
@@ -1474,12 +1476,17 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolOptionsHost->setFixedHeight(Artifact::Accessibility::scaledSize(60));
   {
     QPalette pal = impl_->toolOptionsHost->palette();
-    pal.setColor(QPalette::Window,
-                 QColor(41, 43, 46));
-    pal.setColor(QPalette::Button,
-                 QColor(41, 43, 46));
+    pal.setColor(QPalette::Window, QColor(31, 34, 37));
+    pal.setColor(QPalette::Button, QColor(37, 40, 44));
+    pal.setColor(QPalette::Base, QColor(21, 23, 26));
+    pal.setColor(QPalette::Light, QColor(73, 78, 84));
+    pal.setColor(QPalette::Mid, QColor(52, 57, 62));
+    pal.setColor(QPalette::Dark, QColor(14, 16, 18));
     pal.setColor(QPalette::WindowText,
                  QColor(ArtifactCore::currentDCCTheme().textColor));
+    pal.setColor(QPalette::ButtonText, QColor(229, 233, 237));
+    pal.setColor(QPalette::Highlight, QColor(22, 63, 77));
+    pal.setColor(QPalette::HighlightedText, QColor(94, 210, 234));
     impl_->toolOptionsHost->setPalette(pal);
   }
   auto *optionsScroll = new QScrollArea(impl_->toolOptionsHost);
@@ -2109,8 +2116,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
             auto* svc = ArtifactProjectService::instance();
             if (!svc || !svc->ensureProject()) return;
             if (svc) {
-                const QStringList files = QFileDialog::getOpenFileNames(
-                    this, QStringLiteral("Import Assets"));
+                ArtifactMediaImportPickerDialog picker(this);
+                if (picker.exec() != QDialog::Accepted) return;
+                const QStringList files = picker.selectedPaths();
                 if (!files.isEmpty()) {
                     ArtifactImportAssetsDialog dialog(files, this);
                     if (dialog.exec() == QDialog::Accepted) {
@@ -2135,8 +2143,11 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<OpenProjectRequestedEvent>(
           [this](const OpenProjectRequestedEvent&) {
-            const QString path = QFileDialog::getOpenFileName(
-                this, QStringLiteral("Open Project"));
+            auto* settings = ArtifactAppSettings::instance();
+            ArtifactProjectOpenPickerDialog picker(
+                settings ? settings->recentProjectPaths() : QStringList{}, this);
+            if (picker.exec() != QDialog::Accepted) return;
+            const QString path = picker.selectedPath();
             if (!path.isEmpty()) {
                 const QPointer<ArtifactMainWindow> windowGuard(this);
                 ArtifactProjectManager::getInstance().loadFromFileAsync(
@@ -2262,13 +2273,6 @@ void ArtifactMainWindow::applyApplicationSettings() {
     impl_->toolBar->setIconSize(QSize(sz, sz));
   }
 
-  // font scale
-  const float fs = Accessibility::fontScale();
-  if (qAbs(fs - 1.0f) > 0.01f) {
-    QFont appFont = QApplication::font();
-    appFont.setPointSizeF(appFont.pointSizeF() * fs);
-    QApplication::setFont(appFont);
-  }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     setStatusPreviewResolution(settings->previewResolutionPercent());
     ArtifactAbstractLayer::setGlobalLayerCacheEnabled(settings->layerCacheEnabled());

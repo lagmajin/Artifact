@@ -139,6 +139,79 @@ public:
 
 } // namespace
 
+// Resident-path HLSL. Mirrors LiquidGlowEffectCPUImpl: threshold mask,
+// separable Gaussian (OpenCV kernel half-width ceil(radius*2)), flow-field
+// remap with bilinear sampling, additive composite clamped at 1.
+// Approximations (tolerance-gated parity required):
+// - Blur loop radius clamped to 16 taps per direction, and the effect only
+//   contributes a resident node for radius <= 8 (see appendGpuSpatialNodes).
+//   Larger radii stay on the CPU reference path.
+// - Remap border uses clamp instead of the CPU reflect101 mirror; only the
+//   outer distortion band (<= distortion px) can differ.
+static constexpr const char* kLiquidGlowResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float3 liquidGlowMasked(int2 p, uint w, uint h)
+{
+    p.x = clamp(p.x, 0, (int)w - 1);
+    p.y = clamp(p.y, 0, (int)h - 1);
+    float4 s = g_InputTexture[uint2(p)];
+    float lum = s.r * 0.114f + s.g * 0.587f + s.b * 0.299f;
+    float bright = max(lum - g_P0, 0.0f);
+    if (g_P0 < 0.999f) bright /= max(0.001f, 1.0f - g_P0);
+    return s.rgb * bright;
+}
+
+float3 liquidGlowHBlur(int x, int y, uint w, uint h, float sigma, int R)
+{
+    float s2 = max(sigma * sigma, 0.01f);
+    float3 acc = 0.0f;
+    float sum = 0.0f;
+    [loop] for (int dx = -16; dx <= 16; ++dx) {
+        if (dx < -R || dx > R) continue;
+        float wgt = exp(-0.5f * (float)(dx * dx) / s2);
+        acc += liquidGlowMasked(int2(x + dx, y), w, h) * wgt;
+        sum += wgt;
+    }
+    return acc / max(sum, 0.0001f);
+}
+
+[numthreads(8,8,1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (dtid.x >= w || dtid.y >= h) return;
+    float sigma = clamp(g_P1, 0.1f, 8.0f);
+    int R = clamp((int)ceil(sigma * 2.0f), 1, 16);
+    float scale = max(g_P3, 4.0f);
+    float nx = (float)dtid.x / scale;
+    float ny = (float)dtid.y / scale;
+    float flowX = sin(ny * 1.73f + g_P5) + sin((nx + ny) * 0.71f - g_P5 * 0.63f) * 0.5f;
+    float flowY = cos(nx * 1.37f - g_P5 * 0.81f) + cos((nx - ny) * 0.83f + g_P5) * 0.5f;
+    float sx = (float)dtid.x + flowX * g_P4;
+    float sy = (float)dtid.y + flowY * g_P4;
+    int x0 = (int)floor(sx);
+    int y0 = (int)floor(sy);
+    float tx = sx - (float)x0;
+    float3 v0 = 0.0f;
+    float3 v1 = 0.0f;
+    float sum = 0.0f;
+    [loop] for (int dy = -16; dy <= 16; ++dy) {
+        if (dy < -R || dy > R) continue;
+        float wgt = exp(-0.5f * (float)(dy * dy) / max(sigma * sigma, 0.01f));
+        v0 += liquidGlowHBlur(x0, y0 + dy, w, h, sigma, R) * wgt;
+        v1 += liquidGlowHBlur(x0 + 1, y0 + dy, w, h, sigma, R) * wgt;
+        sum += wgt;
+    }
+    float3 flowed = (v0 * (1.0f - tx) + v1 * tx) / max(sum, 0.0001f);
+    float4 src = g_InputTexture[dtid.xy];
+    float3 result = min(src.rgb + flowed * g_P2, 1.0f);
+    g_OutputTexture[dtid.xy] = float4(result, src.a);
+}
+)";
+
 LiquidGlowEffect::LiquidGlowEffect()
 {
     setEffectID(UniString("liquid_glow"));
@@ -146,6 +219,10 @@ LiquidGlowEffect::LiquidGlowEffect()
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<LiquidGlowEffectCPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        LiquidGlowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kLiquidGlowResidentHlsl, "main", GpuGenericResourceKind::Filter});
     syncImpls();
 }
 

@@ -45,6 +45,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Animation.Transform2D;
 import ArtifactCore.Rig2D;
+import Frame.Rate;
 import Memory.SharedPtr;
 import Time.Rational;
 import Utils.Id;
@@ -61,13 +62,12 @@ ArtifactCore::RationalTime rigTimeForLayer(ArtifactAbstract2DLayer* layer)
  }
  int64_t fps = 30;
  if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
-  const double compFps = comp->frameRate().framerate();
-  if (compFps > 0.0) {
-   fps = static_cast<int64_t>(std::llround(compFps));
-   if (fps <= 0) {
-    fps = 30;
-   }
-  }
+  // Push the exact composition rate into the rig so bone evaluation uses
+  // FramePosition::fromRationalTime() instead of reading the input scale
+  // as fps (which breaks for non-fps scales like fromSeconds ticks).
+  layer->rig2D().setFrameRate(comp->frameRate());
+  fps = ArtifactCore::FrameRate::storageScaleForFps(
+      comp->frameRate().framerate(), 30);
  }
  return ArtifactCore::RationalTime(layer->currentFrame(), fps);
 }

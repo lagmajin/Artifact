@@ -538,6 +538,7 @@ void pushViewHistory();
   void trackerInitialize();
   void trackerUsePointMode();
   void trackerUsePlanarMode();
+  void trackerReset();
   void trackerTrackForward();
   void trackerTrackBackward();
   void trackerTrackAll();
@@ -549,6 +550,15 @@ void pushViewHistory();
   int trackerResultFrameCount() const;
   bool trackerHasResult() const;
   void trackerNextProblemFrame();
+  // Applies the MotionTracker's bounded five-frame smoothing to the current
+  // result. It does not re-run the solve or manufacture keyframes.
+  void trackerSmooth();
+  // Deactivates velocity outliers using MotionTracker's documented default
+  // threshold; use Review Problem Frames to inspect the affected frames.
+  void trackerRemoveOutliers();
+  // Deactivates points below MotionTracker's documented 0.5 confidence
+  // threshold and marks affected frames for review.
+  void trackerFilterByConfidence();
   void trackerApplyToPosition();
   void trackerApplyToAnchor();
   void trackerApplyAllPoints();

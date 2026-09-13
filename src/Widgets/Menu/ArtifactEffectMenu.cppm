@@ -19,6 +19,7 @@ module;
 
 module Artifact.Menu.Effect;
 import std;
+import Translation.Manager;
 
 import Event.Bus;
 import Artifact.Event.Types;
@@ -419,7 +420,7 @@ void ArtifactEffectMenu::Impl::refreshEnabledState()
 ArtifactEffectMenu::ArtifactEffectMenu(QWidget* parent /*= nullptr*/)
     : QMenu(parent), impl_(new Impl(this))
 {
-  setTitle(QStringLiteral("エフェクト(&T)"));
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.effect.label"), QStringLiteral("エフェクト(&F)")));
   setTearOffEnabled(false);
   impl_->refreshEnabledState();
 }

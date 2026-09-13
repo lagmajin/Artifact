@@ -31,8 +31,7 @@ public:
     float colorShift = 0.35f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,
-                  ImageF32x4RGBAWithCache& dst) override {
-        const auto& image = src.image();
+                  ImageF32x4RGBAWithCache& dst) override {        const auto& image = src.image();
         const float* pixels = image.rgba32fData();
         const int width = image.width();
         const int height = image.height();
@@ -82,10 +81,104 @@ public:
     }
 };
 
+// Resident-path HLSL. Mirrors LuminescenceCausticsCPUImpl: BT.601 gray,
+// 3x3 Sobel magnitude, separable Gaussian (sigma 1.2, 9-tap), interference
+// ridge pattern, masked additive composite with warm shift. Border uses
+// reflect101 to match OpenCV BORDER_DEFAULT. No pixel-unit parameters, so
+// no resolution scaling is needed.
+static constexpr const char* kCausticsResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+int causticsReflect(int v, int limit)
+{
+    if (limit <= 1) return 0;
+    if (v < 0) return -v;
+    if (v >= limit) return 2 * limit - v - 2;
+    return v;
+}
+
+float causticsGray(int2 p, uint w, uint h)
+{
+    p.x = causticsReflect(p.x, (int)w);
+    p.y = causticsReflect(p.y, (int)h);
+    float3 c = g_InputTexture[uint2(p)].rgb;
+    return dot(c, float3(0.299f, 0.587f, 0.114f));
+}
+
+float2 causticsSobel(int x, int y, uint w, uint h)
+{
+    float tl = causticsGray(int2(x - 1, y - 1), w, h);
+    float t = causticsGray(int2(x, y - 1), w, h);
+    float tr = causticsGray(int2(x + 1, y - 1), w, h);
+    float l = causticsGray(int2(x - 1, y), w, h);
+    float r = causticsGray(int2(x + 1, y), w, h);
+    float bl = causticsGray(int2(x - 1, y + 1), w, h);
+    float b = causticsGray(int2(x, y + 1), w, h);
+    float br = causticsGray(int2(x + 1, y + 1), w, h);
+    float gx = (tr + 2.0f * r + br) - (tl + 2.0f * l + bl);
+    float gy = (bl + 2.0f * b + br) - (tl + 2.0f * t + tr);
+    return float2(gx, gy);
+}
+
+float causticsEdgeH(int x, int y, uint w, uint h)
+{
+    float acc = 0.0f;
+    float sum = 0.0f;
+    [loop] for (int dx = -4; dx <= 4; ++dx) {
+        float d = (float)(dx * dx);
+        float wgt = exp(-0.5f * d / 1.44f);
+        acc += length(causticsSobel(x + dx, y, w, h)) * wgt;
+        sum += wgt;
+    }
+    return acc / max(sum, 0.0001f);
+}
+
+[numthreads(8,8,1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (dtid.x >= w || dtid.y >= h) return;
+    int x = (int)dtid.x;
+    int y = (int)dtid.y;
+    float acc = 0.0f;
+    float sum = 0.0f;
+    [loop] for (int dy = -4; dy <= 4; ++dy) {
+        float d = (float)(dy * dy);
+        float wgt = exp(-0.5f * d / 1.44f);
+        acc += causticsEdgeH(x, y + dy, w, h) * wgt;
+        sum += wgt;
+    }
+    float edge = acc / max(sum, 0.0001f);
+    float2 grad = causticsSobel(x, y, w, h);
+    float gray = causticsGray(int2(x, y), w, h);
+    float4 src = g_InputTexture[dtid.xy];
+    float highlight = clamp((gray - g_P0) / max(0.001f, 1.0f - g_P0), 0.0f, 1.0f);
+    float direction = atan2(grad.y, grad.x);
+    float phase = g_P4 * 0.0174532925f;
+    float invScale = 1.0f / max(g_P2, 1.0f);
+    float px = (float)x * invScale;
+    float py = (float)y * invScale;
+    float interference = abs(sin(px * 1.73f + py * 1.17f + phase + direction) +
+                             sin(px * -1.11f + py * 2.03f - phase * 0.73f));
+    float ridge = pow(clamp(interference * 0.5f, 0.0f, 1.0f), 5.0f);
+    float sourceMask = clamp(highlight + edge * g_P1, 0.0f, 1.0f);
+    float caustic = ridge * sourceMask * g_P3 * src.a;
+    float warm = 1.0f - g_P5 * 0.25f;
+    float3 result = src.rgb + float3(caustic * warm, caustic, caustic * (1.0f + g_P5 * 0.65f));
+    g_OutputTexture[dtid.xy] = float4(result, src.a);
+}
+)";
+
 LuminescenceCausticsEffect::LuminescenceCausticsEffect() {
     setDisplayName(UniString("Luminescence Caustics"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<LuminescenceCausticsCPUImpl>());
+    registerGpuGenericShader(
+        LuminescenceCausticsEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kCausticsResidentHlsl, "main", GpuGenericResourceKind::Filter});
     syncImpl();
 }
 

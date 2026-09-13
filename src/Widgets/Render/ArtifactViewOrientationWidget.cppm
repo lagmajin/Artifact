@@ -2,9 +2,11 @@ module;
 
 #include <QColor>
 #include <QApplication>
+#include <QAction>
 #include <QEnterEvent>
 #include <QFont>
 #include <QMouseEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPainterPath>
@@ -30,12 +32,19 @@ export namespace Artifact {
 
 class ViewOrientationWidget final : public QWidget {
 public:
+  enum class Presentation {
+    MayaCube = 0,
+    UnitySimple = 1,
+  };
+
   explicit ViewOrientationWidget(QWidget *parent = nullptr) : QWidget(parent) {
     setAttribute(Qt::WA_NoSystemBackground);
     setAttribute(Qt::WA_TranslucentBackground);
     setAutoFillBackground(false);
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
+    setToolTip(
+        QStringLiteral("Maya Cube navigator. Click Cube to choose a navigator style."));
   }
 
   void setOrientation(ArtifactCore::ViewOrientationHotspot hotspot) {
@@ -62,6 +71,22 @@ public:
     update();
   }
 
+  void setPresentation(const Presentation presentation) {
+    if (presentation_ == presentation) {
+      return;
+    }
+    presentation_ = presentation;
+    setToolTip(presentation_ == Presentation::MayaCube
+                   ? QStringLiteral("Maya Cube navigator. Click Cube to choose a navigator style.")
+                   : QStringLiteral("Unity Simple navigator. Click Simple to choose a navigator style."));
+    update();
+    if (presentationChangedCallback_) {
+      presentationChangedCallback_(presentation_);
+    }
+  }
+
+  Presentation presentation() const { return presentation_; }
+
   void setActivatedCallback(
       std::function<void(ArtifactCore::ViewOrientationHotspot)> callback) {
     activatedCallback_ = std::move(callback);
@@ -72,6 +97,11 @@ public:
     orbitChangedCallback_ = std::move(callback);
   }
 
+  void setPresentationChangedCallback(
+      std::function<void(Presentation)> callback) {
+    presentationChangedCallback_ = std::move(callback);
+  }
+
   QSize sizeHint() const override { return {124, 132}; }
 
 protected:
@@ -80,9 +110,14 @@ protected:
     p.setRenderHint(QPainter::Antialiasing, true);
 
     const QRectF panelRect = rect().adjusted(1, 1, -1, -1);
-    p.setPen(QPen(QColor(255, 255, 255, isEnabled() ? 42 : 24), 1.0));
-    p.setBrush(QColor(14, 18, 26, 156));
-    p.drawRoundedRect(panelRect, 9.0, 9.0);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(14, 18, 24, 92));
+    p.drawRoundedRect(panelRect, 7.0, 7.0);
+    paintPresentationButton(p);
+    if (presentation_ == Presentation::UnitySimple) {
+      paintUnitySimpleNavigator(p);
+      return;
+    }
     const auto faces = projectedFaces();
     for (const auto &face : faces) {
       if (!face.visible) {
@@ -241,13 +276,17 @@ protected:
       event->accept();
       return;
     }
-    hoverHotspot_ = hotspotAt(event->position());
+    hoverPresentationButton_ = presentationButtonRect().contains(event->position());
+    hoverHotspot_ = hoverPresentationButton_
+                        ? ArtifactCore::ViewOrientationHotspot::None
+                        : hotspotAt(event->position());
     update();
     QWidget::mouseMoveEvent(event);
   }
 
   void leaveEvent(QEvent *event) override {
     hoverHotspot_ = ArtifactCore::ViewOrientationHotspot::None;
+    hoverPresentationButton_ = false;
     update();
     QWidget::leaveEvent(event);
   }
@@ -257,8 +296,16 @@ protected:
       QWidget::mousePressEvent(event);
       return;
     }
+    if (presentationButtonRect().contains(event->position())) {
+      choosePresentation(event->globalPosition().toPoint());
+      event->accept();
+      return;
+    }
     pressedHotspot_ = hotspotAt(event->position());
-    if (pressedHotspot_ == ArtifactCore::ViewOrientationHotspot::None) {
+    const bool canOrbit = presentation_ == Presentation::UnitySimple &&
+                          simpleNavigatorRect().contains(event->position());
+    if (pressedHotspot_ == ArtifactCore::ViewOrientationHotspot::None &&
+        !canOrbit) {
       QWidget::mousePressEvent(event);
       return;
     }
@@ -299,6 +346,150 @@ protected:
   }
 
 private:
+  QRectF presentationButtonRect() const {
+    return QRectF(width() - 51.0, 7.0, 43.0, 18.0);
+  }
+
+  QRectF simpleNavigatorRect() const {
+    return QRectF(14.0, 28.0, width() - 28.0, height() - 50.0);
+  }
+
+  void paintPresentationButton(QPainter& painter) const {
+    const QRectF buttonRect = presentationButtonRect();
+    painter.setPen(QPen(QColor(255, 255, 255,
+                               hoverPresentationButton_ ? 92 : 18), 1.0));
+    painter.setBrush(QColor(255, 255, 255,
+                            hoverPresentationButton_ ? 24 : 4));
+    painter.drawRoundedRect(buttonRect, 3.0, 3.0);
+    QFont buttonFont = painter.font();
+    buttonFont.setPointSizeF(std::max(7.0, buttonFont.pointSizeF() - 1.5));
+    buttonFont.setBold(true);
+    painter.setFont(buttonFont);
+    painter.setPen(QColor(232, 239, 245,
+                          isEnabled() ? (hoverPresentationButton_ ? 190 : 62)
+                                      : 42));
+    painter.drawText(buttonRect.adjusted(3.0, 0.0, -3.0, 0.0),
+                     Qt::AlignCenter,
+                     presentation_ == Presentation::MayaCube
+                         ? QStringLiteral("Cube")
+                         : QStringLiteral("Simple"));
+  }
+
+  void paintUnitySimpleNavigator(QPainter& painter) const {
+    const QRectF bounds = simpleNavigatorRect();
+    const QPointF center(bounds.center().x(), bounds.center().y() - 5.0);
+    const qreal armLength = std::max(
+        27.0, std::min(bounds.width(), bounds.height()) * 0.34);
+    const QColor xColor(232, 92, 92, isEnabled() ? 230 : 96);
+    const QColor yColor(96, 205, 132, isEnabled() ? 230 : 96);
+    const QColor zColor(92, 154, 232, isEnabled() ? 230 : 96);
+    QQuaternion displayOrientation = orientation_;
+    if (displayOrientation.lengthSquared() < 1.0e-6f) {
+      displayOrientation = QQuaternion();
+    } else {
+      displayOrientation.normalize();
+    }
+    // Keep the Unity-style triad compact, but derive it from the same
+    // orientation quaternion as the composition view. The previous fixed
+    // deltas made the navigator look frozen while the viewport orbited.
+    const auto projectAxis = [displayOrientation](const QVector3D& axis) {
+      const QVector3D v = displayOrientation.rotatedVector(axis);
+      return QPointF(v.x() - v.z() * 0.62, -v.y() + v.z() * 0.62);
+    };
+    const auto axisDelta = [&projectAxis](const QVector3D& axis,
+                                          const QPointF& fallback,
+                                          const qreal targetLength) {
+      QPointF direction = projectAxis(axis);
+      const qreal length = std::hypot(direction.x(), direction.y());
+      if (length < 1.0e-4) {
+        direction = fallback;
+      } else {
+        direction = direction * (targetLength / length);
+      }
+      return direction;
+    };
+    const QPointF xDelta = axisDelta(QVector3D(1.0f, 0.0f, 0.0f),
+                                     QPointF(armLength, 0.0), armLength);
+    const QPointF yDelta = axisDelta(QVector3D(0.0f, 1.0f, 0.0f),
+                                     QPointF(0.0, -armLength), armLength);
+    const QPointF zDelta = axisDelta(QVector3D(0.0f, 0.0f, 1.0f),
+                                     QPointF(-armLength * 0.62, armLength * 0.62),
+                                     armLength);
+    const auto drawAxis = [&painter, &center](const QPointF& delta,
+                                                const QColor& color,
+                                                const QString& label) {
+      QPen pen(color, 2.2, Qt::SolidLine, Qt::RoundCap);
+      painter.setPen(pen);
+      painter.drawLine(center, center + delta);
+      painter.setBrush(color);
+      painter.setPen(Qt::NoPen);
+      const QPointF direction = delta / std::max<qreal>(1.0, std::hypot(delta.x(), delta.y()));
+      const QPointF normal(-direction.y(), direction.x());
+      const QPointF tip = center + delta;
+      const qreal coneLength = 8.0;
+      const qreal coneRadius = 4.0;
+      painter.drawPolygon(QPolygonF{
+          tip,
+          tip - direction * coneLength + normal * coneRadius,
+          tip - direction * coneLength - normal * coneRadius});
+      painter.setPen(color.lighter(122));
+      painter.drawText(QRectF(tip - QPointF(8.0, 8.0), QSizeF(16.0, 16.0)),
+                       Qt::AlignCenter, label);
+    };
+    drawAxis(xDelta, xColor, QStringLiteral("X"));
+    drawAxis(yDelta, yColor, QStringLiteral("Y"));
+    drawAxis(zDelta, zColor, QStringLiteral("Z"));
+
+    const QPointF faceRight = axisDelta(QVector3D(1.0f, 0.0f, 0.0f),
+                                        QPointF(19.0, 0.0), 19.0);
+    const QPointF faceUp = axisDelta(QVector3D(0.0f, 1.0f, 0.0f),
+                                     QPointF(0.0, -19.0), 19.0);
+    const QPolygonF facePolygon{
+        center - faceRight - faceUp, center + faceRight - faceUp,
+        center + faceRight + faceUp, center - faceRight + faceUp};
+    painter.setPen(QPen(QColor(191, 220, 246, isEnabled() ? 210 : 86), 1.25));
+    painter.setBrush(QColor(74, 118, 164, isEnabled() ? 210 : 74));
+    painter.drawPolygon(facePolygon);
+    const QRectF faceRect(center.x() - 19.0, center.y() - 19.0, 38.0, 38.0);
+    QFont faceFont = painter.font();
+    faceFont.setPointSizeF(std::max(8.0, faceFont.pointSizeF() - 1.0));
+    faceFont.setBold(true);
+    painter.setFont(faceFont);
+    painter.setPen(QColor(237, 245, 251, isEnabled() ? 230 : 100));
+    painter.drawText(faceRect, Qt::AlignCenter,
+                     hotspot_ == ArtifactCore::ViewOrientationHotspot::None
+                         ? QString()
+                         : hotspotLabel(hotspot_, true));
+
+    QFont projectionFont = painter.font();
+    projectionFont.setBold(false);
+    projectionFont.setPointSizeF(std::max(7.0, projectionFont.pointSizeF() - 1.5));
+    painter.setFont(projectionFont);
+    painter.setPen(QColor(224, 230, 236, isEnabled() ? 205 : 88));
+    painter.drawText(QRectF(bounds.left(), bounds.bottom() - 13.0,
+                            bounds.width(), 14.0),
+                     Qt::AlignCenter,
+                     hotspot_ == ArtifactCore::ViewOrientationHotspot::None
+                         ? QStringLiteral("Persp")
+                         : QStringLiteral("Iso"));
+  }
+
+  void choosePresentation(const QPoint& globalPosition) {
+    QMenu menu(this);
+    QAction* mayaAction = menu.addAction(QStringLiteral("Maya Cube"));
+    QAction* unityAction = menu.addAction(QStringLiteral("Unity Simple"));
+    mayaAction->setCheckable(true);
+    unityAction->setCheckable(true);
+    mayaAction->setChecked(presentation_ == Presentation::MayaCube);
+    unityAction->setChecked(presentation_ == Presentation::UnitySimple);
+    QAction* selected = menu.exec(globalPosition);
+    if (selected == mayaAction) {
+      setPresentation(Presentation::MayaCube);
+    } else if (selected == unityAction) {
+      setPresentation(Presentation::UnitySimple);
+    }
+  }
+
   struct CubeFaceProjection {
     ArtifactCore::ViewOrientationHotspot hotspot =
         ArtifactCore::ViewOrientationHotspot::None;
@@ -592,6 +783,53 @@ private:
   }
 
   ArtifactCore::ViewOrientationHotspot hotspotAt(const QPointF &pos) const {
+    if (presentation_ == Presentation::UnitySimple) {
+      const QRectF bounds = simpleNavigatorRect();
+      const QPointF center(bounds.center().x(), bounds.center().y() - 5.0);
+      const qreal armLength = std::max(
+          27.0, std::min(bounds.width(), bounds.height()) * 0.34);
+      QQuaternion displayOrientation = orientation_;
+      if (displayOrientation.lengthSquared() < 1.0e-6f) {
+        displayOrientation = QQuaternion();
+      } else {
+        displayOrientation.normalize();
+      }
+      const auto axisEnd = [displayOrientation, center, armLength](
+                               const QVector3D& axis,
+                               const QPointF& fallback) {
+        const QVector3D v = displayOrientation.rotatedVector(axis);
+        QPointF direction(v.x() - v.z() * 0.62, -v.y() + v.z() * 0.62);
+        const qreal length = std::hypot(direction.x(), direction.y());
+        direction = length < 1.0e-4
+                        ? fallback
+                        : direction * (armLength / length);
+        return center + direction;
+      };
+      const auto nearPoint = [&pos](const QPointF& point, const qreal radius) {
+        const QPointF delta = pos - point;
+        return delta.x() * delta.x() + delta.y() * delta.y() <= radius * radius;
+      };
+      if (nearPoint(axisEnd(QVector3D(1.0f, 0.0f, 0.0f),
+                            QPointF(armLength, 0.0)), 11.0)) {
+        return ArtifactCore::ViewOrientationHotspot::Right;
+      }
+      if (nearPoint(axisEnd(QVector3D(0.0f, 1.0f, 0.0f),
+                            QPointF(0.0, -armLength)), 11.0)) {
+        return ArtifactCore::ViewOrientationHotspot::Top;
+      }
+      if (nearPoint(axisEnd(QVector3D(0.0f, 0.0f, 1.0f),
+                            QPointF(-armLength * 0.62, armLength * 0.62)),
+                    11.0)) {
+        return ArtifactCore::ViewOrientationHotspot::Front;
+      }
+      const QRectF faceRect(center.x() - 20.0, center.y() - 20.0, 40.0, 40.0);
+      if (faceRect.contains(pos)) {
+        return hotspot_ == ArtifactCore::ViewOrientationHotspot::Front
+                   ? ArtifactCore::ViewOrientationHotspot::Back
+                   : ArtifactCore::ViewOrientationHotspot::Front;
+      }
+      return ArtifactCore::ViewOrientationHotspot::None;
+    }
     const auto cornerTargets = projectedCornerTargets();
     for (auto it = cornerTargets.rbegin(); it != cornerTargets.rend(); ++it) {
       if (!it->visible) {
@@ -645,12 +883,15 @@ private:
       ArtifactCore::ViewOrientationHotspot::None;
   std::function<void(ArtifactCore::ViewOrientationHotspot)> activatedCallback_;
   std::function<void(const QQuaternion &)> orbitChangedCallback_;
+  std::function<void(Presentation)> presentationChangedCallback_;
   ArtifactCore::ViewOrientationHotspot pressedHotspot_ =
       ArtifactCore::ViewOrientationHotspot::None;
   QPointF dragStartPos_;
   QQuaternion dragStartOrientation_;
   bool pressArmed_ = false;
   bool dragActive_ = false;
+  Presentation presentation_ = Presentation::MayaCube;
+  bool hoverPresentationButton_ = false;
 };
 
 }

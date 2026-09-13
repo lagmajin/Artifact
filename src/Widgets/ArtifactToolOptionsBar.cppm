@@ -1089,13 +1089,23 @@ ArtifactToolOptionsBar::ArtifactToolOptionsBar(QWidget *parent)
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   setAutoFillBackground(true);
   QPalette surface = palette();
-  surface.setColor(QPalette::Window, QColor(41, 43, 46));
-  surface.setColor(QPalette::Button, QColor(41, 43, 46));
-  surface.setColor(QPalette::Base, QColor(32, 34, 37));
-  surface.setColor(QPalette::WindowText, QColor(232, 235, 238));
-  surface.setColor(QPalette::Text, QColor(232, 235, 238));
-  surface.setColor(QPalette::ButtonText, QColor(232, 235, 238));
-  surface.setColor(QPalette::Highlight, QColor(41, 70, 83));
+  surface.setColor(QPalette::Window, QColor(31, 34, 37));
+  surface.setColor(QPalette::Button, QColor(37, 40, 44));
+  surface.setColor(QPalette::Base, QColor(21, 23, 26));
+  surface.setColor(QPalette::AlternateBase, QColor(39, 42, 46));
+  surface.setColor(QPalette::Light, QColor(73, 78, 84));
+  surface.setColor(QPalette::Mid, QColor(52, 57, 62));
+  surface.setColor(QPalette::Dark, QColor(14, 16, 18));
+  surface.setColor(QPalette::WindowText, QColor(229, 233, 237));
+  surface.setColor(QPalette::Text, QColor(229, 233, 237));
+  surface.setColor(QPalette::ButtonText, QColor(229, 233, 237));
+  surface.setColor(QPalette::Disabled, QPalette::WindowText,
+                   QColor(117, 123, 130));
+  surface.setColor(QPalette::Disabled, QPalette::Text,
+                   QColor(117, 123, 130));
+  surface.setColor(QPalette::Disabled, QPalette::ButtonText,
+                   QColor(117, 123, 130));
+  surface.setColor(QPalette::Highlight, QColor(22, 63, 77));
   surface.setColor(QPalette::HighlightedText, QColor(94, 210, 234));
   setPalette(surface);
 

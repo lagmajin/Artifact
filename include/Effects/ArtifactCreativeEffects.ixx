@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <QVariant>
@@ -15,23 +16,74 @@ export namespace Artifact {
 
 class ArtifactGlitchEffect : public ArtifactAbstractEffect {
 public:
+    static constexpr const char* kGpuGenericKeyString = "builtin.glitch";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
     ArtifactGlitchEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
     bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.resolutionScaledParameterMask = 0;
+        return stack.append(node);
+    }
 };
 
 class ArtifactHalftoneEffect : public ArtifactAbstractEffect {
 public:
+    static constexpr const char* kGpuGenericKeyString = "builtin.halftone";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
     ArtifactHalftoneEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
     bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.resolutionScaledParameterMask = 0;
+        return stack.append(node);
+    }
 };
 
 class ArtifactOldTVEffect : public ArtifactAbstractEffect {
 public:
+    static constexpr const char* kGpuGenericKeyString = "builtin.old_tv";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
     ArtifactOldTVEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
     bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.resolutionScaledParameterMask = 0;
+        return stack.append(node);
+    }
 };
 
 // Adapter for the Core creative-effect implementations.  Keeping this

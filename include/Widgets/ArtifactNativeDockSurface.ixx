@@ -29,6 +29,7 @@ module;
 #include <QVariant>
 #include <QPalette>
 #include <QLabel>
+#include <QSize>
 #include <QSizePolicy>
 #include <QJsonDocument>
 #include <QSplitter>
@@ -653,6 +654,7 @@ public:
       return false;
     }
     pinned_.insert(resolvedId, pinned);
+    syncPinButton(resolvedId, pinned);
     return true;
   }
 
@@ -819,6 +821,20 @@ protected:
           return true;
         }
       }
+      const QString dockPinId = button->property("artifactDockPinId").toString();
+      if (!dockPinId.isEmpty()) {
+        const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
+            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
+            button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
+        const bool keyRelease = event->type() == QEvent::KeyRelease &&
+            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space &&
+            !static_cast<QKeyEvent *>(event)->isAutoRepeat();
+        if (button->isDown() && (mouseRelease || keyRelease)) {
+          button->setDown(false);
+          setDockPinned(dockPinId, !dockPinned(dockPinId));
+          return true;
+        }
+      }
     }
     auto *tabs = qobject_cast<QTabWidget *>(watched);
     auto *tabBar = qobject_cast<QTabBar *>(watched);
@@ -982,14 +998,67 @@ private:
   }
 
   void installCloseButton(QTabWidget *tabs, int index, const QString &id) {
-    auto *button = new QToolButton(tabs->tabBar());
-    button->setAutoRaise(true);
-    button->setIcon(button->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
-    button->setToolTip(tr("Close panel"));
-    button->setAccessibleName(tr("Close panel"));
-    button->setProperty("artifactDockCloseId", id);
-    button->installEventFilter(this);
-    tabs->tabBar()->setTabButton(index, QTabBar::RightSide, button);
+    auto *buttons = new QWidget(tabs->tabBar());
+    auto *buttonLayout = new QHBoxLayout(buttons);
+    buttonLayout->setContentsMargins(0, 0, 0, 0);
+    buttonLayout->setSpacing(1);
+
+    auto *pinButton = new QToolButton(buttons);
+    pinButton->setAutoRaise(true);
+    pinButton->setCheckable(false);
+    pinButton->setIcon(QIcon(QStringLiteral(":/icons/Studio/dock_pin.svg")));
+    pinButton->setIconSize(QSize(16, 16));
+    pinButton->setToolTip(tr("Pin panel"));
+    pinButton->setAccessibleName(tr("Pin panel"));
+    pinButton->setProperty("artifactDockPinId", id);
+    pinButton->setFixedSize(20, 20);
+    pinButton->installEventFilter(this);
+    buttonLayout->addWidget(pinButton);
+
+    auto *closeButton = new QToolButton(buttons);
+    closeButton->setAutoRaise(true);
+    closeButton->setIcon(closeButton->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+    closeButton->setToolTip(tr("Close panel"));
+    closeButton->setAccessibleName(tr("Close panel"));
+    closeButton->setProperty("artifactDockCloseId", id);
+    closeButton->setProperty("artifactDockCloseButton", true);
+    closeButton->setFixedSize(20, 20);
+    closeButton->installEventFilter(this);
+    buttonLayout->addWidget(closeButton);
+
+    buttons->setFixedSize(41, 20);
+    tabs->tabBar()->setTabButton(index, QTabBar::RightSide, buttons);
+    syncPinButton(id, pinned_.value(id, false));
+  }
+
+  void syncPinButton(const QString &dockId, bool pinned) {
+    auto *widget = docks_.value(dockId, nullptr);
+    if (!widget) return;
+    auto *tabs = tabsForWidget(widget);
+    if (!tabs) return;
+    const int index = tabs->indexOf(widget);
+    if (index < 0) return;
+    auto *side = tabs->tabBar()->tabButton(index, QTabBar::RightSide);
+    if (!side) return;
+    const auto pinButtons = side->findChildren<QToolButton *>();
+    for (auto *button : pinButtons) {
+      if (!button) {
+        continue;
+      }
+      if (button->property("artifactDockPinId").toString() == dockId) {
+        button->setIcon(QIcon(pinned
+                                  ? QStringLiteral(":/icons/Studio/dock_pin_active.svg")
+                                  : QStringLiteral(":/icons/Studio/dock_pin.svg")));
+        button->setToolTip(pinned ? tr("Unpin panel") : tr("Pin panel"));
+        button->setAccessibleName(pinned ? tr("Unpin panel") : tr("Pin panel"));
+        button->setProperty("artifactDockPinned", pinned);
+        button->update();
+      } else if (button->property("artifactDockCloseId").toString() == dockId) {
+        button->setEnabled(!pinned);
+        button->setToolTip(pinned ? tr("Unpin panel before closing")
+                                  : tr("Close panel"));
+      }
+    }
   }
 
   void installFloatingHeader(QDialog *dialog, QVBoxLayout *layout,

@@ -33,6 +33,18 @@ QList<ArtifactShortcutHelpEntry> ArtifactContextShortcutProvider::getShortcutsFo
     addEntry(ArtifactCore::ShortcutId::RotateTool, QStringLiteral("Tools"), QStringLiteral("Rotate tool"));
 
     if (mode == WorkspaceMode::Animation || mode == WorkspaceMode::Default) {
+        addEntry(ArtifactCore::ShortcutId::CompositionViewportMoveGizmo,
+                 QStringLiteral("Composition Viewport"),
+                 QStringLiteral("Select move gizmo"));
+        addEntry(ArtifactCore::ShortcutId::CompositionViewportRotateGizmo,
+                 QStringLiteral("Composition Viewport"),
+                 QStringLiteral("Select rotate gizmo"));
+        addEntry(ArtifactCore::ShortcutId::CompositionViewportScaleGizmo,
+                 QStringLiteral("Composition Viewport"),
+                 QStringLiteral("Select scale gizmo"));
+    }
+
+    if (mode == WorkspaceMode::Animation || mode == WorkspaceMode::Default) {
         addEntry(ArtifactCore::ShortcutId::TimelineCopySelectedKeyframes, QStringLiteral("Timeline"), QStringLiteral("Copy selected keyframes"));
         addEntry(ArtifactCore::ShortcutId::TimelinePasteKeyframesAtPlayhead, QStringLiteral("Timeline"), QStringLiteral("Paste keyframes at playhead"));
         addEntry(ArtifactCore::ShortcutId::TimelineSelectAllKeyframes, QStringLiteral("Timeline"), QStringLiteral("Select all keyframes"));

@@ -560,6 +560,14 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   if (hasAnimatedEffectProperty) {
     key += QStringLiteral("|effectFrame=%1").arg(frameNumber);
   }
+  if (layer->hasSourceTimeMapping()) {
+    const double sourceFrame = layer->getSourceFrameAtCompFrame(frameNumber);
+    key += QStringLiteral("|sourceTime=%1:%2:%3:%4")
+               .arg(sourceFrame, 0, 'f', 3)
+               .arg(static_cast<int>(layer->timeRemapFrameBlendMode()))
+               .arg(layer->isStopMotionSamplingEnabled() ? 1 : 0)
+               .arg(layer->stopMotionSamplingFrameRate(), 0, 'f', 3);
+  }
 
   if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
     bool gradientAnimated = false;
@@ -2030,7 +2038,15 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     const FramePosition op = layer->outPoint();
     const int64_t targetFrame =
         cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame();
-    if (!hasRasterizer && !offlineRender) {
+    const double mappedSourceFrame =
+        videoLayer->isTimeRemapEnabled()
+            ? videoLayer->getSourceFrameAtCompFrame(targetFrame)
+            : static_cast<double>(targetFrame);
+    const bool requiresBlendedSourceFrame =
+        videoLayer->isTimeRemapEnabled() &&
+        videoLayer->timeRemapFrameBlendMode() != ArtifactCore::FrameBlendMode::None &&
+        std::abs(mappedSourceFrame - std::round(mappedSourceFrame)) >= 0.001;
+    if (!hasRasterizer && !offlineRender && !requiresBlendedSourceFrame) {
       const ArtifactCore::ImageF32x4_RGBA buffer =
           videoLayer->cachedFrameImageBuffer(targetFrame);
       if (!buffer.isEmpty()) {
@@ -2071,15 +2087,25 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           videoLayer->decodeFrameToGpuFrame(targetFrame);
       if (gpuFrame.isValid()) {
         QString gpuOwnerId = layer->id().toString();
-        QString gpuCacheSignature = QStringLiteral("video-gpu:%1").arg(targetFrame);
+        QString remapSuffix;
+        if (videoLayer->hasSourceTimeMapping()) {
+          const double mappedSource = videoLayer->getSourceFrameAtCompFrame(targetFrame);
+          remapSuffix = QStringLiteral(":r%1:b%2:s%3:%4")
+              .arg(mappedSource, 0, 'f', 3)
+              .arg(static_cast<int>(videoLayer->timeRemapFrameBlendMode()))
+              .arg(videoLayer->isStopMotionSamplingEnabled() ? 1 : 0)
+              .arg(videoLayer->stopMotionSamplingFrameRate(), 0, 'f', 3);
+        }
+        QString gpuCacheSignature = QStringLiteral("video-gpu:%1%2").arg(targetFrame).arg(remapSuffix);
         const QUuid sourceAssetId = videoLayer->sourceAssetId();
         if (!sourceAssetId.isNull()) {
           const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
           gpuOwnerId = QStringLiteral("asset:%1").arg(
               sourceAssetId.toString(QUuid::WithoutBraces));
-          gpuCacheSignature = QStringLiteral("video-gpu:v%1:f%2")
+          gpuCacheSignature = QStringLiteral("video-gpu:v%1:f%2%3")
                                   .arg(sourceVersion)
-                                  .arg(targetFrame);
+                                  .arg(targetFrame)
+                                  .arg(remapSuffix);
         }
         const auto handle = gpuTextureCacheManager->acquireOrCreate(
             gpuOwnerId, gpuCacheSignature, gpuFrame);
@@ -2117,16 +2143,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         }
       }
     }
+    // AE parity: Draft preview forces FrameMix (see TimeRemapEffect::
+    // effectiveBlendModeForQuality). lod!=High means preview downsample/zoom-out.
+    const bool isDraftOrPreview = !offlineRender && (lod != DetailLevel::High);
     if (loaded) {
-      frameBuffer = offlineRender
-          ? videoLayer->decodeFrameToImageBuffer(static_cast<double>(targetFrame))
+      frameBuffer = offlineRender || requiresBlendedSourceFrame
+          ? videoLayer->decodeFrameToImageBuffer(static_cast<double>(targetFrame), isDraftOrPreview)
           : videoLayer->cachedFrameImageBuffer(targetFrame);
       usedBufferFallback = !frameBuffer.isEmpty();
     } else {
       reason = QStringLiteral("notLoaded");
     }
     if (frameBuffer.isEmpty() && loaded) {
-      frameBuffer = videoLayer->decodeFrameToImageBuffer(static_cast<double>(targetFrame));
+      frameBuffer = videoLayer->decodeFrameToImageBuffer(static_cast<double>(targetFrame), isDraftOrPreview);
       usedSyncFallback = !frameBuffer.isEmpty();
     }
     if (!frameBuffer.isEmpty()) {

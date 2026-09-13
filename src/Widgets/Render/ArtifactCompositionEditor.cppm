@@ -368,6 +368,7 @@ public:
   enum class Kind {
     SelectionSync,
     ToolLabelSync,
+    DirtyStateSync,
   };
 
   static QEvent::Type eventType() {
@@ -380,6 +381,42 @@ public:
 
   Kind kind;
 };
+
+class CompositionChromeTabLabel final : public QLabel {
+public:
+  explicit CompositionChromeTabLabel(QWidget *parent = nullptr)
+      : QLabel(parent) {}
+
+  void setContextMenuHandler(std::function<void(const QPoint &)> handler) {
+    contextMenuHandler_ = std::move(handler);
+  }
+
+protected:
+  void contextMenuEvent(QContextMenuEvent *event) override {
+    if (!event || !contextMenuHandler_) {
+      QLabel::contextMenuEvent(event);
+      return;
+    }
+    contextMenuHandler_(event->globalPos());
+    event->accept();
+  }
+
+private:
+  std::function<void(const QPoint &)> contextMenuHandler_;
+};
+
+QAction *findApplicationAction(const QKeySequence &shortcut)
+{
+  for (QWidget *topLevel : QApplication::topLevelWidgets()) {
+    if (!topLevel) continue;
+    for (QAction *action : topLevel->findChildren<QAction *>()) {
+      if (action && action->isEnabled() && action->shortcut() == shortcut) {
+        return action;
+      }
+    }
+  }
+  return nullptr;
+}
 
 QIcon loadIconWithFallback(const QString &fileName) {
   const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
@@ -2907,9 +2944,12 @@ public:
       } else if (targetLayer->isAdjustmentLayer() ||
                  className.contains(QStringLiteral("Adjust"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Adjustment Layer");
-      } else if (targetLayer->isGroupLayer() ||
+      } else if ((comp && targetLayer && comp->isGroupLayerResolved(targetLayer)) ||
+                 targetLayer->isGroupLayer() ||
                  className.contains(QStringLiteral("Group"), Qt::CaseInsensitive)) {
-        typeText = targetLayer->hasExclusiveChildSelection()
+        const bool exclusive = comp ? comp->isGroupExclusive(targetLayer->id())
+                                    : targetLayer->hasExclusiveChildSelection();
+        typeText = exclusive
             ? QStringLiteral("Multiplexer Group")
             : QStringLiteral("Group Layer");
       } else if (targetLayer->isCloneLayer() ||
@@ -3744,7 +3784,7 @@ public:
             QMessageBox::warning(this, QStringLiteral("Ungroup Layers"),
                                  QStringLiteral("Could not ungroup the selected group."));
           }
-        }, layer->isGroupLayer());
+        }, (comp && layer) ? comp->isGroupLayerResolved(layer) : layer->isGroupLayer());
       addSeparator();
       add(QStringLiteral("Duplicate Layer"), [this, layerId]() {
         auto *service = ArtifactProjectService::instance();
@@ -6967,17 +7007,24 @@ protected:
       event->accept();
       return;
     }
-    // Viewport.Composition owns Blender-style transform bindings. Keep these
-    // out of toolbar QAction shortcuts so G/R/S are resolved by the focused
-    // viewport instead of shadowing other panels and modal tools.
-    if (!event->isAutoRepeat() && event->modifiers() == Qt::NoModifier &&
-        (event->key() == Qt::Key_G || event->key() == Qt::Key_R ||
-         event->key() == Qt::Key_S)) {
+    // Viewport.Composition owns these configurable transform bindings. Resolve
+    // them only in the focused viewport instead of registering application-wide
+    // QAction shortcuts that would shadow timeline and editor-panel tools.
+    // In this viewport they select the persistent gizmo; an actual pointer drag
+    // owns the modal transform lifecycle and its X/Y/Z, Esc and Enter grammar.
+    const auto &shortcutBindings = ArtifactCore::ShortcutBindings::instance();
+    const bool selectMoveGizmo = shortcutBindings.matches(
+        event, ArtifactCore::ShortcutId::CompositionViewportMoveGizmo);
+    const bool selectRotateGizmo = shortcutBindings.matches(
+        event, ArtifactCore::ShortcutId::CompositionViewportRotateGizmo);
+    const bool selectScaleGizmo = shortcutBindings.matches(
+        event, ArtifactCore::ShortcutId::CompositionViewportScaleGizmo);
+    if (selectMoveGizmo || selectRotateGizmo || selectScaleGizmo) {
       if (controller_) {
         ToolType transformTool = ToolType::Move;
-        if (event->key() == Qt::Key_G) {
+        if (selectMoveGizmo) {
           controller_->setGizmoMode(TransformGizmo::Mode::Move);
-        } else if (event->key() == Qt::Key_R) {
+        } else if (selectRotateGizmo) {
           transformTool = ToolType::Rotation;
           controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
         } else {
@@ -6990,13 +7037,14 @@ protected:
                                     : nullptr) {
           toolManager->setActiveTool(transformTool);
         }
-        QPointF modalStart = mapFromGlobal(QCursor::pos());
-        if (!rect().contains(modalStart.toPoint())) {
-          modalStart = QPointF(rect().center()) + QPointF(80.0, 0.0);
-        }
-        controller_->beginModalGizmoInteraction(controller_->gizmoMode(),
-                                                modalStart);
         modalTransformNumericInput_.clear();
+        controller_->setInfoOverlayText(
+            QStringLiteral("Transform Gizmo"),
+            selectMoveGizmo
+                ? QStringLiteral("Move gizmo selected")
+                : selectRotateGizmo
+                      ? QStringLiteral("Rotate gizmo selected")
+                      : QStringLiteral("Scale gizmo selected"));
       }
       event->accept();
       return;
@@ -8292,7 +8340,7 @@ public:
   bool viewportToolboxesVisible_ = true;
   QFrame *chromeStrip_ = nullptr;
   QFrame *statusStrip_ = nullptr;
-  QLabel *chromeTitleLabel_ = nullptr;
+  CompositionChromeTabLabel *chromeTitleLabel_ = nullptr;
   QLabel *chromeDetailLabel_ = nullptr;
   QLabel *chromeMetaLabel_ = nullptr;
   QToolButton *breadcrumbButton_ = nullptr;
@@ -8353,6 +8401,13 @@ public:
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
   bool immersiveMode_ = false;
+  QShortcut* immersiveExitShortcut_ = nullptr;
+  QShortcut* placeWorkCursorShortcut_ = nullptr;
+  QShortcut* centerWorkCursorShortcut_ = nullptr;
+  QShortcut* clearWorkCursorShortcut_ = nullptr;
+  QShortcut* viewUndoShortcut_ = nullptr;
+  QShortcut* viewRedoShortcut_ = nullptr;
+  std::size_t shortcutListenerToken_ = 0;
   struct PreviewOrbitSnapshot {
     QQuaternion orientation;
     QPointF pan;
@@ -8706,6 +8761,7 @@ public:
 
   bool selectionSyncQueued_ = false;
   bool toolLabelSyncQueued_ = false;
+  bool dirtyStateSyncQueued_ = false;
   std::chrono::steady_clock::time_point lastMaskShortcutPressTime_{};
   bool lastMaskShortcutPressValid_ = false;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -8736,6 +8792,16 @@ public:
     QCoreApplication::postEvent(
         owner, new CompositionEditorDeferredEvent(
                    CompositionEditorDeferredEvent::Kind::ToolLabelSync));
+  }
+
+  void queueDirtyStateSync(ArtifactCompositionEditor *owner) {
+    if (!owner || dirtyStateSyncQueued_) {
+      return;
+    }
+    dirtyStateSyncQueued_ = true;
+    QCoreApplication::postEvent(
+        owner, new CompositionEditorDeferredEvent(
+                   CompositionEditorDeferredEvent::Kind::DirtyStateSync));
   }
 
   void activateMaskEditingTool() {
@@ -8843,19 +8909,32 @@ public:
       return;
     }
     QStringList labels;
+    QVector<ArtifactCore::CompositionID> displayChain;
     auto *svc = ArtifactProjectService::instance();
     for (const auto &id : chain) {
       const auto item = svc ? svc->findComposition(id).ptr.lock()
                             : ArtifactCompositionPtr{};
-      labels.push_back(item ? item->settings().compositionName().toQString()
-                            : id.toString());
+      if (!item) {
+        continue;
+      }
+      const QString label = item->settings().compositionName().toQString().trimmed();
+      if (label.isEmpty()) {
+        continue;
+      }
+      displayChain.push_back(id);
+      labels.push_back(label);
+    }
+    if (labels.isEmpty()) {
+      breadcrumbButton_->setText(QStringLiteral("Navigate"));
+      breadcrumbButton_->setEnabled(false);
+      return;
     }
     breadcrumbButton_->setText(labels.join(QStringLiteral(" > ")));
-    breadcrumbButton_->setEnabled(chain.size() > 1);
-    for (int i = 0; i < chain.size(); ++i) {
+    breadcrumbButton_->setEnabled(displayChain.size() > 1);
+    for (int i = 0; i < displayChain.size(); ++i) {
       QAction *action = breadcrumbMenu_->addAction(labels.at(i));
-      action->setEnabled(i != chain.size() - 1);
-      const auto id = chain.at(i);
+      action->setEnabled(i != displayChain.size() - 1);
+      const auto id = displayChain.at(i);
       QObject::connect(action, &QAction::triggered, breadcrumbMenu_, [this, id]() {
         if (auto *svc = ArtifactProjectService::instance()) {
           const auto result = svc->changeCurrentComposition(id);
@@ -8887,6 +8966,22 @@ public:
                                          : current->layerName().trimmed())
                                   : QStringLiteral("<none>");
     chromeTitleLabel_->setText(comp ? compName : QStringLiteral("Composition"));
+    bool projectDirty = false;
+    if (auto *service = ArtifactProjectService::instance();
+        service && service->hasProject()) {
+      const auto project = service->getCurrentProjectSharedPtr();
+      projectDirty = project && project->isDirty();
+    }
+    if (!projectDirty) {
+      if (auto *undoManager = UndoManager::instance()) {
+        projectDirty = undoManager->hasUnsavedChanges();
+      }
+    }
+    if (chromeTitleLabel_->property("artifactDocumentDirty").toBool() !=
+        projectDirty) {
+      chromeTitleLabel_->setProperty("artifactDocumentDirty", projectDirty);
+      chromeTitleLabel_->update();
+    }
     chromeDetailLabel_->setText(
         current ? QStringLiteral("Layer Solo  ·  %1").arg(layerName)
                 : QStringLiteral("Layer Solo"));
@@ -8908,6 +9003,38 @@ public:
           comp ? QStringLiteral("%1 fps").arg(fps, 0, 'f',
                                                std::abs(fps - std::round(fps)) < 0.001 ? 0 : 2)
                : QStringLiteral("— fps"));
+    }
+  }
+
+  void showDocumentTabMenu(ArtifactCompositionEditor *owner,
+                           const QPoint &globalPosition) {
+    if (!owner) {
+      return;
+    }
+    QMenu menu(chromeTitleLabel_);
+    polishEditorMenu(&menu, owner);
+    const bool dirty = chromeTitleLabel_ &&
+                       chromeTitleLabel_->property("artifactDocumentDirty").toBool();
+    QAction *saveProject = menu.addAction(QStringLiteral("プロジェクトを保存"));
+    saveProject->setEnabled(dirty);
+    QAction *saveAsProject = menu.addAction(QStringLiteral("名前を付けて保存..."));
+    menu.addSeparator();
+    QAction *closeView = menu.addAction(
+        QStringLiteral("コンポジション表示を閉じる（プロジェクトは保持）"));
+
+    QAction *selected = menu.exec(globalPosition);
+    if (selected == saveProject) {
+      if (QAction *action = findApplicationAction(
+              QKeySequence(Qt::CTRL | Qt::Key_S))) {
+        action->trigger();
+      }
+    } else if (selected == saveAsProject) {
+      if (QAction *action = findApplicationAction(
+              QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S))) {
+        action->trigger();
+      }
+    } else if (selected == closeView) {
+      owner->setComposition(nullptr);
     }
   }
 
@@ -9573,13 +9700,13 @@ public:
       tags << QStringLiteral("RGBA");
       break;
     case ViewportChannelDisplayMode::Red:
-      tags << QStringLiteral("R");
+      tags << QStringLiteral("Red");
       break;
     case ViewportChannelDisplayMode::Green:
-      tags << QStringLiteral("G");
+      tags << QStringLiteral("Green");
       break;
     case ViewportChannelDisplayMode::Blue:
-      tags << QStringLiteral("B");
+      tags << QStringLiteral("Blue");
       break;
     case ViewportChannelDisplayMode::Depth:
       tags << QStringLiteral("Depth+");
@@ -9637,8 +9764,8 @@ public:
       tags << QStringLiteral("No Gizmo");
     }
     return tags.isEmpty()
-               ? QStringLiteral("Shading")
-               : QStringLiteral("Shading: %1").arg(tags.join(QStringLiteral(" + ")));
+               ? QStringLiteral("View")
+               : QStringLiteral("View: %1").arg(tags.join(QStringLiteral(" + ")));
   }
 
   QString gizmoButtonLabel() const {
@@ -9739,9 +9866,7 @@ public:
               .arg(zoomPercent));
     }
     if (shadingButton_) {
-      shadingButton_->setText(compactViewportControls_
-                                  ? QStringLiteral("View")
-                                  : viewportChannelDisplayLabel());
+      shadingButton_->setText(viewportChannelDisplayLabel());
       shadingButton_->setToolTip(shadingButtonTooltip());
     }
     if (gizmoModeButton_) {
@@ -9842,6 +9967,9 @@ public:
   void setViewportChannelDisplayMode(ArtifactCompositionEditor *owner,
                                      ViewportChannelDisplayMode mode) {
     Q_UNUSED(owner);
+    // Channel inspection is independent of viewport navigation. Preserve the
+    // current view-cube orientation, pan, and zoom while changing only the
+    // displayed render component.
     viewportChannelDisplayMode_ = mode;
     forEachRenderController([mode](CompositionRenderController *controller) {
       controller->setViewportChannelDisplayMode(mode);
@@ -10411,6 +10539,21 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->emptyStateOverlays_[i]->hide();
   }
   impl_->viewOrientationWidget_ = new ViewOrientationWidget(this);
+  if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    impl_->viewOrientationWidget_->setPresentation(
+        settings->compositionViewNavigatorPresentation() == 1
+            ? ViewOrientationWidget::Presentation::UnitySimple
+            : ViewOrientationWidget::Presentation::MayaCube);
+  }
+  impl_->viewOrientationWidget_->setPresentationChangedCallback(
+      [](const ViewOrientationWidget::Presentation presentation) {
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+          settings->setCompositionViewNavigatorPresentation(
+              presentation == ViewOrientationWidget::Presentation::UnitySimple
+                  ? 1
+                  : 0);
+        }
+      });
   impl_->viewOrientationWidget_->setActivatedCallback(
       [this](ArtifactCore::ViewOrientationHotspot hotspot) {
         if (impl_) {
@@ -10929,7 +11072,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->zoom100Action_ = impl_->topToolbar_->addAction("100%");
   impl_->editTextAction_ = impl_->topToolbar_->addAction("Edit Text");
   impl_->editTextAction_->setToolTip(QStringLiteral("Edit current text layer"));
-  impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
+  impl_->editTextAction_->setShortcut(ArtifactCore::ShortcutBindings::instance().shortcut(
+      ArtifactCore::ShortcutId::LayerRename));
 
   auto* screenshotMenu = new QMenu(this);
   polishEditorMenu(screenshotMenu, this);
@@ -11254,6 +11398,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                     }
                     impl_->syncToolLabel(this);
                   });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Reset Track"),
+                  QStringLiteral("Clear track points, planar regions, and tracked results before a new solve"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerReset(); });
 
   auto *analyzeLabel = new QLabel(QStringLiteral("Analyze"),
                                   impl_->trackerPanel_);
@@ -11272,6 +11419,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   makePanelButton(trackerPanelLayout, QStringLiteral("Review Problem Frames"),
                   QStringLiteral("Jump to the next problem frame"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerNextProblemFrame(); });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Smooth Track"),
+                  QStringLiteral("Apply a five-frame moving average to active tracking points"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerSmooth(); });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Remove Outliers"),
+                  QStringLiteral("Deactivate velocity outliers and flag their frames for review"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerRemoveOutliers(); });
+  makePanelButton(trackerPanelLayout, QStringLiteral("Filter Confidence"),
+                  QStringLiteral("Deactivate points below the configured tracking-confidence threshold"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerFilterByConfidence(); });
 
   impl_->trackerPanelQualityLabel_ = new QLabel(QStringLiteral("Confidence —"),
                                                 impl_->trackerPanel_);
@@ -11367,7 +11523,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->chromeStrip_ = new QFrame(this);
   impl_->chromeStrip_->setObjectName(QStringLiteral("compositionChromeStrip"));
-  impl_->chromeStrip_->setFrameShape(QFrame::StyledPanel);
+  impl_->chromeStrip_->setFrameShape(QFrame::NoFrame);
   impl_->chromeStrip_->setFrameShadow(QFrame::Plain);
   impl_->chromeStrip_->setAutoFillBackground(true);
   impl_->chromeStrip_->setFixedHeight(34);
@@ -11382,7 +11538,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   chromeLayout->setContentsMargins(6, 0, 6, 0);
   chromeLayout->setSpacing(2);
   impl_->chromeTitleLabel_ =
-      new QLabel(QStringLiteral("Composition"), impl_->chromeStrip_);
+      new CompositionChromeTabLabel(impl_->chromeStrip_);
+  impl_->chromeTitleLabel_->setText(QStringLiteral("Composition"));
   impl_->chromeDetailLabel_ = new QLabel(
       QStringLiteral("Layer Solo"),
       impl_->chromeStrip_);
@@ -11394,14 +11551,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   titleFont.setBold(true);
   titleFont.setPointSize(std::max(8, titleFont.pointSize()));
   impl_->chromeTitleLabel_->setFont(titleFont);
-  for (QLabel *tab : {impl_->chromeTitleLabel_, impl_->chromeDetailLabel_}) {
-    tab->setFrameShape(QFrame::StyledPanel);
+  QLabel *chromeTabs[] = {impl_->chromeTitleLabel_, impl_->chromeDetailLabel_};
+  for (QLabel *tab : chromeTabs) {
+    tab->setFrameShape(QFrame::NoFrame);
     tab->setFrameShadow(QFrame::Plain);
     tab->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    tab->setContentsMargins(12, 0, 12, 0);
+    tab->setContentsMargins(12, 0,
+                            tab == impl_->chromeTitleLabel_ ? 24 : 12, 0);
     tab->setMinimumWidth(132);
     tab->setMaximumHeight(30);
+    tab->setAttribute(Qt::WA_StyledBackground, true);
     tab->setAutoFillBackground(true);
+    tab->setProperty("artifactCompositionChromeTab", true);
+    tab->setProperty("artifactCompositionChromeTabActive",
+                     tab == impl_->chromeTitleLabel_);
     QPalette tabPalette = tab->palette();
     tabPalette.setColor(QPalette::Window,
                         tab == impl_->chromeTitleLabel_
@@ -11410,6 +11573,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     tabPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
     tab->setPalette(tabPalette);
   }
+  impl_->chromeTitleLabel_->setContextMenuHandler(
+      [this](const QPoint &globalPosition) {
+        if (impl_) {
+          impl_->showDocumentTabMenu(this, globalPosition);
+        }
+      });
   impl_->breadcrumbButton_ = new QToolButton(impl_->chromeStrip_);
   impl_->breadcrumbButton_->setAutoRaise(true);
   impl_->breadcrumbButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -11569,8 +11738,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        widget == impl_->viewportRenderOutputButton_;
     if (!keep) {
       impl_->topToolbar_->removeAction(action);
+    } else if (widget) {
+      widget->setProperty("artifactViewportToolbarButton", true);
     }
   }
+
   impl_->viewportRenderOutputButton_->setText(QStringLiteral("Render"));
 
   // Bottom Bar (Viewer Controls)
@@ -12333,8 +12505,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       addChannelAction(QStringLiteral("Emission"), ViewportChannelDisplayMode::Emission, false);
   QAction *channelObjectIdAct =
       addChannelAction(QStringLiteral("Object ID"), ViewportChannelDisplayMode::ObjectId, false);
+  channelObjectIdAct->setToolTip(
+      QStringLiteral("Cryptomatte object IDs. Click a visible object to select its layer."));
   QAction *channelMaterialIdAct =
       addChannelAction(QStringLiteral("Material ID"), ViewportChannelDisplayMode::MaterialId, false);
+  channelMaterialIdAct->setToolTip(
+      QStringLiteral("Cryptomatte material IDs. Click a visible material to select its layer."));
   QAction *channelAlbedoAct =
       addChannelAction(QStringLiteral("Albedo"), ViewportChannelDisplayMode::Albedo, false);
   QAction *channelAlbedoRAct =
@@ -12936,7 +13112,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      setViewportLayout(impl_->nextViewportLayoutMode());
                    });
   auto *immersiveExitShortcut =
-      new QShortcut(QKeySequence(Qt::Key_Escape), this);
+      new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
+                                     .shortcut(ArtifactCore::ShortcutId::CompositionImmersiveExit)),
+                    this);
+  immersiveExitShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  impl_->immersiveExitShortcut_ = immersiveExitShortcut;
   QObject::connect(
       immersiveExitShortcut, &QShortcut::activated, this, [this]() {
         if (impl_ && impl_->immersiveMode_ && impl_->immersiveAction_) {
@@ -13019,6 +13199,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             }
             setComposition(next);
             impl_->queueSelectionSync(this);
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectDirtyChangedEvent>(
+          [this](const ProjectDirtyChangedEvent &) {
+            if (impl_) {
+              impl_->queueDirtyStateSync(this);
+            }
           }));
 
   impl_->eventBusSubscriptions_.push_back(
@@ -13242,6 +13430,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
                                        .shortcut(ArtifactCore::ShortcutId::WorkCursorPlace)),
                       this);
+    placeWorkCursorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    impl_->placeWorkCursorShortcut_ = placeWorkCursorShortcut;
     QObject::connect(placeWorkCursorShortcut, &QShortcut::activated, this,
                      [this]() {
                        if (!impl_ || !impl_->activeRenderController())
@@ -13265,6 +13455,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
                                        .shortcut(ArtifactCore::ShortcutId::WorkCursorCenter)),
                       this);
+    centerWorkCursorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    impl_->centerWorkCursorShortcut_ = centerWorkCursorShortcut;
     QObject::connect(centerWorkCursorShortcut, &QShortcut::activated, this,
                      [this]() {
                        if (!impl_ || !impl_->activeRenderController())
@@ -13290,6 +13482,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
                                        .shortcut(ArtifactCore::ShortcutId::WorkCursorClear)),
                       this);
+    clearWorkCursorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    impl_->clearWorkCursorShortcut_ = clearWorkCursorShortcut;
     QObject::connect(clearWorkCursorShortcut, &QShortcut::activated, this,
                      [this]() {
                        if (!impl_ || !impl_->activeRenderController())
@@ -13303,6 +13497,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
                                        .shortcut(ArtifactCore::ShortcutId::ViewUndo)),
                       this);
+    viewUndoShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    impl_->viewUndoShortcut_ = viewUndoShortcut;
     QObject::connect(viewUndoShortcut, &QShortcut::activated, this, [this]() {
       if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
         controller->undoView();
@@ -13315,6 +13511,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
                                        .shortcut(ArtifactCore::ShortcutId::ViewRedo)),
                       this);
+    viewRedoShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    impl_->viewRedoShortcut_ = viewRedoShortcut;
     QObject::connect(viewRedoShortcut, &QShortcut::activated, this, [this]() {
       if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
         controller->redoView();
@@ -13324,7 +13522,39 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     });
   });
 
+  updateShortcuts();
+  QPointer<ArtifactCompositionEditor> guard(this);
+  impl_->shortcutListenerToken_ =
+      ArtifactCore::ShortcutBindings::instance().addChangeListener(
+          [this, guard](ArtifactCore::ShortcutId) {
+            if (!guard || !impl_) {
+              return;
+            }
+            updateShortcuts();
+          });
+
   qInfo() << "[CompositionEditor][Ctor] total ms=" << ctorTimer.elapsed();
+}
+
+void ArtifactCompositionEditor::updateShortcuts() {
+  if (!impl_) {
+    return;
+  }
+  auto& bindings = ArtifactCore::ShortcutBindings::instance();
+  auto apply = [&bindings](QShortcut* shortcut, ArtifactCore::ShortcutId id) {
+    if (shortcut) {
+      shortcut->setKey(bindings.shortcut(id));
+    }
+  };
+  apply(impl_->immersiveExitShortcut_, ArtifactCore::ShortcutId::CompositionImmersiveExit);
+  apply(impl_->placeWorkCursorShortcut_, ArtifactCore::ShortcutId::WorkCursorPlace);
+  apply(impl_->centerWorkCursorShortcut_, ArtifactCore::ShortcutId::WorkCursorCenter);
+  apply(impl_->clearWorkCursorShortcut_, ArtifactCore::ShortcutId::WorkCursorClear);
+  apply(impl_->viewUndoShortcut_, ArtifactCore::ShortcutId::ViewUndo);
+  apply(impl_->viewRedoShortcut_, ArtifactCore::ShortcutId::ViewRedo);
+  if (impl_->editTextAction_) {
+    impl_->editTextAction_->setShortcut(bindings.shortcut(ArtifactCore::ShortcutId::LayerRename));
+  }
 }
 
 void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {
@@ -13338,6 +13568,11 @@ void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {
 }
 
 ArtifactCompositionEditor::~ArtifactCompositionEditor() {
+  if (impl_ && impl_->shortcutListenerToken_ != 0) {
+    ArtifactCore::ShortcutBindings::instance().removeChangeListener(
+        impl_->shortcutListenerToken_);
+    impl_->shortcutListenerToken_ = 0;
+  }
   // QToolBar::addWidget() creates QWidgetAction wrappers.  Tear those wrappers
   // down while Impl and every toolbar-owned widget are still valid instead of
   // leaving their release order to QWidget's generic child cleanup.
@@ -13402,6 +13637,10 @@ bool ArtifactCompositionEditor::event(QEvent *event) {
     case CompositionEditorDeferredEvent::Kind::ToolLabelSync:
       impl_->toolLabelSyncQueued_ = false;
       impl_->syncToolLabel(this);
+      impl_->syncChromeSummary(this);
+      return true;
+    case CompositionEditorDeferredEvent::Kind::DirtyStateSync:
+      impl_->dirtyStateSyncQueued_ = false;
       impl_->syncChromeSummary(this);
       return true;
     }

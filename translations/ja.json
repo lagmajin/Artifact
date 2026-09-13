@@ -84,6 +84,13 @@
       "new_composition": "新規コンポジション",
       "composition_settings": "コンポジション設定"
     },
+    "effect": { "label": "エフェクト" },
+    "animation": { "label": "アニメーション" },
+    "script": { "label": "スクリプト" },
+    "render": { "label": "レンダー" },
+    "time": { "label": "時間" },
+    "options": { "label": "オプション" },
+    "test": { "label": "テスト" },
     "layer": {
       "label": "レイヤー",
       "new_solid": "新規ソリッド",

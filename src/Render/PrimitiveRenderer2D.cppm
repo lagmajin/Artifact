@@ -874,10 +874,10 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.helper.param0    = spacing;
     pkt.helper.param1    = effectiveThickness;
-    pkt.helper._pad[0]   = w;   // canvasSize.x (composition width)
-    pkt.helper._pad[1]   = h;   // canvasSize.y (composition height)
+    pkt.helper._pad[0]   = w;   // canvasSize.x (grid quad width)
+    pkt.helper._pad[1]   = h;   // canvasSize.y (grid quad height)
     pkt.helper.color1    = { color.r(), color.g(), color.b(), color.a() };
-    pkt.helper.color2    = {};
+    pkt.helper.color2    = { x, y, 0.0f, 0.0f };   // gridOrigin.xy (quad top-left in canvas coords)
     pkt.baseColor        = { color.r(), color.g(), color.b(), color.a() };
     impl_->cmdBuf_->append(pkt);
 }

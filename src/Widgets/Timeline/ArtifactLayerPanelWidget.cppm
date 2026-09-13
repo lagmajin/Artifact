@@ -334,11 +334,22 @@ enum class TimelineLayerIconKind {
   Construction
 };
 
+// NodeStore kindを正とし、未登録時のみvirtualへフォールバックする。
+// composition取得済みの箇所はcomp->isGroupLayerResolved()を直接使うこと。
+bool timelineIsGroupLayerResolved(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) return false;
+  const auto* composition =
+      dynamic_cast<const ArtifactAbstractComposition*>(layer->compositionObject());
+  return composition ? composition->isGroupLayerResolved(layer)
+                     : layer->isGroupLayer();
+}
+
 TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& layer)
 {
   if (!layer) return TimelineLayerIconKind::Generic;
   if (layer->isAdjustmentLayer()) return TimelineLayerIconKind::Adjustment;
-  if (layer->isGroupLayer()) return TimelineLayerIconKind::Group;
+  if (timelineIsGroupLayerResolved(layer)) return TimelineLayerIconKind::Group;
   if (layer->isCloneLayer()) return TimelineLayerIconKind::Clone;
   if (layer->isConstructionLayer()) return TimelineLayerIconKind::Construction;
   if (layer->is3D()) return TimelineLayerIconKind::Model3D;
@@ -640,7 +651,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     editor->setPalette(pal);
   }
 
-  constexpr int kLayerRowHeight = 28;
+  constexpr int kLayerRowHeight = 36;
   constexpr int kLayerHeaderHeight = 26;
   constexpr int kLayerHeaderButtonSize = 24;
   constexpr int kLayerColumnWidth = 24;
@@ -1459,9 +1470,9 @@ struct VisibleRow {
 
 QString groupLayerSummaryText(const ArtifactAbstractLayerPtr& layer)
 {
- if (!layer || !layer->isGroupLayer()) {
-  return {};
- }
+  if (!timelineIsGroupLayerResolved(layer)) {
+   return {};
+  }
  auto* groupLayer = dynamic_cast<ArtifactGroupLayer*>(layer.get());
  if (!groupLayer) {
   return QStringLiteral("Group");
@@ -2688,8 +2699,8 @@ public:
     QString(),
     QString(),
     QString(),
-    node->isGroupLayer() ? groupLayerSummaryText(node)
-                         : presentation.timelineBadgeText,
+     comp->isGroupLayerResolved(node) ? groupLayerSummaryText(node)
+                          : presentation.timelineBadgeText,
     presentation.badgeTone,
     appendMotionDynamicsState(node, summarizeLayerState(node)),
     node->getProperty(QStringLiteral("motion.enabled")) &&
@@ -5495,11 +5506,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         applyAllLock(false);
       });
       batchAllMenu->addSeparator();
-      batchAllMenu->addAction(QStringLiteral("すべてのグループを折りたたみ"), [this]() {
+       batchAllMenu->addAction(QStringLiteral("すべてのグループを折りたたみ"), [this]() {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
         for (const auto& l : comp->allLayer()) {
-          if (l && l->isGroupLayer()) {
+          if (l && comp->isGroupLayerResolved(l)) {
             const QString idStr = l->id().toString();
             impl_->expandedByLayerId[idStr] = false;
           }
@@ -5510,7 +5521,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
         for (const auto& l : comp->allLayer()) {
-          if (l && l->isGroupLayer()) {
+          if (l && comp->isGroupLayerResolved(l)) {
             const QString idStr = l->id().toString();
             impl_->expandedByLayerId[idStr] = true;
           }
@@ -7230,7 +7241,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     const QColor rowBase = background;
     const QColor rowHover = mixColor(background, text, 0.08);
-    const QColor rowSelected = mixColor(background, accent, 0.20);
+    // Keep layer selection a muted blue-grey band.  It distinguishes the
+    // selected layer from the warmer work-area/range colors without turning
+    // the compact property table into a bright accent block.
+    const QColor rowSelected(52, 85, 111);
     if (propertyFocused) {
       p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
     } else if (maskSelected) {
@@ -7362,7 +7376,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     if (isGroupRow) {
       const int toggleX = nameStartX + row.depth * indent + 2;
       const int textX = row.hasChildren ? (toggleX + toggleSize + 6) : (nameStartX + row.depth * indent + 4);
-      if (row.layer && row.layer->isGroupLayer()) {
+      if (timelineIsGroupLayerResolved(row.layer)) {
         p.fillRect(0, y, 4, rowH, mixColor(background, accent, 0.85));
         p.fillRect(4, y + 1, 2, rowH - 2, mixColor(background, accent, 0.45));
       }
@@ -7395,7 +7409,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                    fm.elidedText(groupAux, Qt::ElideRight, badgeRect.width() - 16));
       }
       const QColor groupText = maskSelected ? accent.lighter(135)
-                                            : (row.layer && row.layer->isGroupLayer()
+                                             : (timelineIsGroupLayerResolved(row.layer)
                                                    ? mixColor(text, accent, 0.28)
                                                    : (row.auxiliaryTone == LayerPresentationBadgeTone::Neutral
                                                    ? text

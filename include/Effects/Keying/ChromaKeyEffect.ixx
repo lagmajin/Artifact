@@ -134,6 +134,38 @@ public:
     float matteBlur() const;
     void setViewMode(int mode);
     int viewMode() const;
+
+    bool supportsGPU() const override { return true; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        // Choke and matte blur require a persistent alpha plane between
+        // passes. Keep those settings on the legacy path until the resident
+        // planner can express that extra surface; the basic key/despill pass
+        // remains fully GPU-resident.
+        return std::abs(choke()) <= 1.0e-4f &&
+                       matteBlur() <= 1.0e-4f
+                   ? GpuRasterEffectDomain::Spatial
+                   : GpuRasterEffectDomain::None;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::ChromaKey;
+        const FloatRGBA color = keyColor();
+        node.parameters[0] = color.r();
+        node.parameters[1] = color.g();
+        node.parameters[2] = color.b();
+        node.parameters[3] = hueTolerance();
+        node.parameters[4] = edgeSoftness();
+        node.parameters[5] = clipBlack();
+        node.parameters[6] = clipWhite();
+        node.parameters[7] = despillStrength();
+        node.parameters[8] = static_cast<float>(despillMode());
+        node.parameters[9] = static_cast<float>(viewMode());
+        node.parameters[10] = choke();
+        node.parameters[11] = matteBlur();
+        return stack.append(node);
+    }
 };
 
 }

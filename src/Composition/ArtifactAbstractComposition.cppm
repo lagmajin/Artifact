@@ -3537,7 +3537,13 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
             if (!parent) {
                 break;
             }
-            gain *= parent->childEvaluationGain(current->id());
+            // Share gain: GroupContainer node first, layer virtual fallback.
+            const auto* parentNode = impl_->nodeStore_.node(parent->id().toString());
+            if (parentNode && parentNode->kind == CompositionNodeKind::GroupContainer) {
+                gain *= groupEvaluationGainForChild(parent->id(), current->id());
+            } else {
+                gain *= parent->childEvaluationGain(current->id());
+            }
             current = parent;
         }
         return gain;
@@ -3717,6 +3723,107 @@ CompositionNodeStore& ArtifactAbstractComposition::nodeStore()
   return impl_->nodeStore_;
 }
 
+bool ArtifactAbstractComposition::isGroupContainerNode(const QString& id) const
+{
+  const QString normalized = id.trimmed();
+  if (normalized.isEmpty()) return false;
+  const auto* stored = impl_->nodeStore_.node(normalized);
+  return stored && stored->kind == CompositionNodeKind::GroupContainer;
+}
+
+bool ArtifactAbstractComposition::isGroupLayerResolved(const ArtifactAbstractLayerPtr& layer) const
+{
+  if (!layer) return false;
+  const auto* stored = impl_->nodeStore_.node(layer->id().toString());
+  if (stored) return stored->kind == CompositionNodeKind::GroupContainer;
+  return layer->isGroupLayer();
+}
+
+bool ArtifactAbstractComposition::isGroupLayerResolved(const LayerID& id) const
+{
+  if (id.isNil()) return false;
+  const auto* stored = impl_->nodeStore_.node(id.toString());
+  if (stored) return stored->kind == CompositionNodeKind::GroupContainer;
+  const auto layer = impl_->layerMultiIndex_.findById(id);
+  return layer && layer->isGroupLayer();
+}
+
+LayerID ArtifactAbstractComposition::selectedChildForGroupEvaluation(const LayerID& groupId) const
+{
+  if (groupId.isNil()) return LayerID();
+  const auto* stored = impl_->nodeStore_.node(groupId.toString());
+  if (stored && stored->kind == CompositionNodeKind::GroupContainer) {
+    GroupContainerNode container;
+    if (!impl_->nodeStore_.getGroupContainer(groupId.toString(), container) ||
+        container.outputMode() != GroupContainerOutputMode::Single) {
+      return LayerID();
+    }
+    // Mirrors ArtifactGroupLayer::selectedChildIdForEvaluation: the active
+    // child wins when visible, otherwise the first visible child does.
+    const auto children = childLayersOf(groupId);
+    const QString activeId = container.activeChildId().trimmed();
+    if (!activeId.isEmpty()) {
+      for (const auto& child : children) {
+        if (child && child->id().toString() == activeId && child->isVisible()) {
+          return child->id();
+        }
+      }
+    }
+    for (const auto& child : children) {
+      if (child && child->isVisible()) {
+        return child->id();
+      }
+    }
+    return LayerID();
+  }
+  const auto group = impl_->layerMultiIndex_.findById(groupId);
+  if (!group || !group->hasExclusiveChildSelection()) return LayerID();
+  return group->selectedChildIdForEvaluation();
+}
+
+bool ArtifactAbstractComposition::isGroupExclusive(const LayerID& groupId) const
+{
+  if (groupId.isNil()) return false;
+  const auto* stored = impl_->nodeStore_.node(groupId.toString());
+  if (stored && stored->kind == CompositionNodeKind::GroupContainer) {
+    GroupContainerNode container;
+    return impl_->nodeStore_.getGroupContainer(groupId.toString(), container) &&
+           container.outputMode() == GroupContainerOutputMode::Single;
+  }
+  const auto group = impl_->layerMultiIndex_.findById(groupId);
+  return group && group->hasExclusiveChildSelection();
+}
+
+float ArtifactAbstractComposition::groupEvaluationGainForChild(const LayerID& groupId,
+                                                              const LayerID& childId) const
+{
+  if (groupId.isNil() || childId.isNil()) return 1.0f;
+  const auto* stored = impl_->nodeStore_.node(groupId.toString());
+  if (stored && stored->kind == CompositionNodeKind::GroupContainer) {
+    GroupContainerNode container;
+    if (!impl_->nodeStore_.getGroupContainer(groupId.toString(), container) ||
+        container.outputMode() != GroupContainerOutputMode::Share) {
+      return 1.0f;
+    }
+    // Render set mirrors childrenForRender in Share mode: visible children
+    // in composition-owned order.
+    std::vector<LayerID> renderChildren;
+    for (const auto& child : childLayersOf(groupId)) {
+      if (child && child->isVisible()) {
+        renderChildren.push_back(child->id());
+      }
+    }
+    if (renderChildren.empty()) return 0.0f;
+    const bool rendered = std::any_of(renderChildren.cbegin(), renderChildren.cend(),
+        [&childId](const LayerID& candidate) { return candidate == childId; });
+    if (!rendered) return 0.0f;
+    return 1.0f / static_cast<float>(renderChildren.size());
+  }
+  const auto group = impl_->layerMultiIndex_.findById(groupId);
+  if (!group) return 1.0f;
+  return group->childEvaluationGain(childId);
+}
+
 const QList<Artifact::ArtifactAbstractLayerPtr>&
 ArtifactAbstractComposition::allLayerRef() const
 {
@@ -3763,8 +3870,10 @@ bool ArtifactAbstractComposition::shouldEvaluateLayer(const LayerID& layerId) co
     if (!parent) {
       return true;
     }
-    if (parent->hasExclusiveChildSelection()) {
-      const LayerID selectedChild = parent->selectedChildIdForEvaluation();
+    // Exclusive (Single) selection: GroupContainer node first, layer virtuals
+    // as fallback for nodes not yet registered in the store.
+    if (isGroupExclusive(parent->id())) {
+      const LayerID selectedChild = selectedChildForGroupEvaluation(parent->id());
       if (selectedChild.isNil() || selectedChild != current->id()) {
         return false;
       }

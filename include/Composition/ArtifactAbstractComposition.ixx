@@ -395,6 +395,24 @@ export namespace Artifact {
   const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
   QList<ArtifactAbstractLayerPtr> childLayersOf(const LayerID& parentId) const;
   bool shouldEvaluateLayer(const LayerID& layerId) const;
+  // Phase 2 read-only helper: NodeStore kind check for GroupContainer.
+  // Existing isGroupLayer() branches are untouched; new code should prefer
+  // these resolvers which fall back to the virtual when the node is absent.
+  bool isGroupContainerNode(const QString& id) const;
+  bool isGroupLayerResolved(const ArtifactAbstractLayerPtr& layer) const;
+  bool isGroupLayerResolved(const LayerID& id) const;
+  // Multiplexer (Single) selection resolved from the GroupContainer node first,
+  // falling back to the layer virtuals when the node is absent. Returns nil
+  // unless the group is in exclusive (Single) mode.
+  LayerID selectedChildForGroupEvaluation(const LayerID& groupId) const;
+  // True when the group is in exclusive (Single) multiplexer mode.
+  // GroupContainer node first, layer virtual fallback.
+  bool isGroupExclusive(const LayerID& groupId) const;
+  // Share-mode evaluation gain resolved from the GroupContainer node first,
+  // falling back to the layer virtual when the node is absent. Mirrors
+  // ArtifactGroupLayer::childEvaluationGain: 1.0 outside Share mode,
+  // 1/N over visible children inside it, 0.0 for non-rendered children.
+  float groupEvaluationGainForChild(const LayerID& groupId, const LayerID& childId) const;
 
   // Asset usage tracking for unused asset detection
   QVector<ArtifactCore::AssetID> getUsedAssets() const;

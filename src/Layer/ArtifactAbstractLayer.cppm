@@ -25,6 +25,7 @@ module;
 #include <QMetaObject>
 #include <QPointer>
 #include <QThread>
+#include <QVector>
 #include <QVector3D>
 #include <QVector4D>
 #include <QString>
@@ -37,6 +38,7 @@ module;
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QVariant>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <limits>
@@ -77,6 +79,7 @@ import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.Keying.DifferenceKey;
 import Artifact.Effect.Rasterizer.DifferenceMatte;
+import Artifact.Effect.Rasterizer.PosterizeTime;
 import Artifact.Effect.Keying.IBKKeyer;
 import Artifact.Effect.Generator.Cloner;
 import Artifact.Mask.LayerMask;
@@ -353,12 +356,14 @@ int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
 }
 
 RationalTime currentTimelineTime(const ArtifactAbstractLayer *layer) {
-  return RationalTime(currentTimelineFrame(layer), effectiveLayerFrameRate(layer));
+  return RationalTime(currentTimelineFrame(layer),
+                      ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(layer)));
 }
 
 RationalTime timelineTimeForFramePosition(const ArtifactAbstractLayer *layer,
                                           const FramePosition &position) {
-  return RationalTime(position.framePosition(), effectiveLayerFrameRate(layer));
+  return RationalTime(position.framePosition(),
+                      ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(layer)));
 }
 
 std::vector<QPointF> layerCollisionPolygonLocalPoints(
@@ -1206,6 +1211,8 @@ public:
 
   // Time remap
   std::unique_ptr<ArtifactCore::TimeRemapEffect> timeRemapEffect_;
+  bool stopMotionSamplingEnabled_ = false;
+  double stopMotionSamplingFrameRate_ = 12.0;
 
   // Variants
   std::vector<std::unique_ptr<LayerVariant>> variants_;
@@ -2037,9 +2044,7 @@ void ArtifactAbstractLayer::setComposition(QObject *comp) {
   std::optional<int64_t> transformTimeScale;
   if (auto *composition = dynamic_cast<ArtifactAbstractComposition *>(comp)) {
     const double fps = composition->frameRate().framerate();
-    transformTimeScale = std::isfinite(fps) && fps > 0.0
-        ? std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)))
-        : 24;
+    transformTimeScale = ArtifactCore::FrameRate::storageScaleForFps(fps, 24);
   }
 
   {
@@ -2549,7 +2554,8 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
 
 QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const {
   const auto &t = transform3D();
-  const RationalTime time(frameNumber, effectiveLayerFrameRate(this));
+  const RationalTime time(frameNumber,
+      ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(this)));
   const auto* var = getActiveVariant();
   bool hasTransVar = var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value();
 
@@ -5028,12 +5034,81 @@ void ArtifactAbstractLayer::setTimeRemapKey(
                         LayerDirtyReason::TimelineChanged);
 }
 
+const QVector<ArtifactCore::TimeRemapKeyframe>&
+ArtifactAbstractLayer::timeRemapKeys() const {
+    static const QVector<ArtifactCore::TimeRemapKeyframe> kEmpty;
+    return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().keyframes()
+                                   : kEmpty;
+}
+
+void ArtifactAbstractLayer::setTimeRemapKeys(
+    const QVector<ArtifactCore::TimeRemapKeyframe>& keys) {
+    if (!impl_->timeRemapEffect_) {
+        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+    }
+    impl_->timeRemapEffect_->remap().setKeyframes(keys);
+    impl_->timeRemapEffect_->setEnabled(true);
+    impl_->timeRemapEffect_->setHasAudio(hasAudio());
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
+}
+
+void ArtifactAbstractLayer::setTimeRemapFrameBlend(
+    ArtifactCore::FrameBlendMode mode, float amount) {
+    if (!impl_->timeRemapEffect_) {
+        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+    }
+    impl_->timeRemapEffect_->remap().setFrameBlendMode(mode);
+    impl_->timeRemapEffect_->remap().setFrameBlendAmount(amount);
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
+}
+
+ArtifactCore::FrameBlendMode ArtifactAbstractLayer::timeRemapFrameBlendMode() const {
+    return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().frameBlendMode()
+                                   : ArtifactCore::FrameBlendMode::None;
+}
+
+float ArtifactAbstractLayer::timeRemapFrameBlendAmount() const {
+    return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().frameBlendAmount()
+                                   : 0.0f;
+}
+
+bool ArtifactAbstractLayer::isStopMotionSamplingEnabled() const {
+    return impl_->stopMotionSamplingEnabled_;
+}
+
+void ArtifactAbstractLayer::setStopMotionSamplingEnabled(bool enabled) {
+    if (!assignIfChanged(impl_->stopMotionSamplingEnabled_, enabled)) {
+        return;
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
+}
+
+double ArtifactAbstractLayer::stopMotionSamplingFrameRate() const {
+    return impl_->stopMotionSamplingFrameRate_;
+}
+
+void ArtifactAbstractLayer::setStopMotionSamplingFrameRate(double frameRate) {
+    const double clamped = std::clamp(frameRate, 1.0, 240.0);
+    if (!assignIfChanged(impl_->stopMotionSamplingFrameRate_, clamped)) {
+        return;
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
+}
+
+bool ArtifactAbstractLayer::hasSourceTimeMapping() const {
+    return isTimeRemapEnabled() || isStopMotionSamplingEnabled();
+}
+
 bool ArtifactAbstractLayer::isTimeRemapEnabled() const {
     return impl_->timeRemapEffect_ && impl_->timeRemapEffect_->isEnabled();
 }
 
 double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const {
-    if (!isTimeRemapEnabled()) {
+    if (!hasSourceTimeMapping()) {
         return static_cast<double>(compFrame);
     }
 
@@ -5046,9 +5121,21 @@ double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const
         }
     }
 
-    const double outputTime = static_cast<double>(compFrame) / fps;
-    float blendFwd = 0.0f, blendBwd = 0.0f;
-    return impl_->timeRemapEffect_->processFrame(outputTime, blendFwd, blendBwd);
+    double sourceFrame = static_cast<double>(compFrame - inPoint().framePosition() +
+                                             startTime().framePosition());
+    if (isTimeRemapEnabled()) {
+        const double outputTime = static_cast<double>(compFrame) / fps;
+        float blendFwd = 0.0f, blendBwd = 0.0f;
+        sourceFrame = impl_->timeRemapEffect_->processFrame(outputTime, blendFwd, blendBwd);
+    }
+    if (!isStopMotionSamplingEnabled()) {
+        return sourceFrame;
+    }
+
+    // Quantize source time, rather than the post-effect image. This makes
+    // held frames deterministic and identical for preview, cache, and render.
+    const double heldRate = std::clamp(impl_->stopMotionSamplingFrameRate_, 1.0, 240.0);
+    return std::floor(sourceFrame * heldRate / fps) * fps / heldRate;
 }
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
@@ -5675,6 +5762,34 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["isShy"] = impl_->isShy_;
   obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
+  if (impl_->timeRemapEffect_) {
+    QJsonObject timeRemap;
+    timeRemap["enabled"] = impl_->timeRemapEffect_->isEnabled();
+    timeRemap["frameBlendMode"] = static_cast<int>(
+        impl_->timeRemapEffect_->remap().frameBlendMode());
+    timeRemap["frameBlendAmount"] = static_cast<double>(
+        impl_->timeRemapEffect_->remap().frameBlendAmount());
+    QJsonArray keys;
+    for (const auto& key : impl_->timeRemapEffect_->remap().keyframes()) {
+      QJsonObject entry;
+      entry["outputTime"] = key.outputTime;
+      entry["sourceTime"] = key.sourceTime;
+      entry["interpolation"] = static_cast<int>(key.interpolation);
+      entry["bezierHandleInX"] = key.bezierHandleInX;
+      entry["bezierHandleInY"] = key.bezierHandleInY;
+      entry["bezierHandleOutX"] = key.bezierHandleOutX;
+      entry["bezierHandleOutY"] = key.bezierHandleOutY;
+      keys.append(entry);
+    }
+    timeRemap["keys"] = keys;
+    obj["timeRemap"] = timeRemap;
+  }
+  if (impl_->stopMotionSamplingEnabled_) {
+    QJsonObject stopMotionSampling;
+    stopMotionSampling["enabled"] = true;
+    stopMotionSampling["frameRate"] = impl_->stopMotionSamplingFrameRate_;
+    obj["stopMotionSampling"] = stopMotionSampling;
+  }
   obj["effectEnvelope"] = layerEffectEnvelopeToJson(impl_->effectEnvelope_);
   obj["animationLayers"] = impl_->animationLayers_.toJson();
   QJsonObject animationPropertyLayers;
@@ -6257,6 +6372,9 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
       } else if (effectId == QStringLiteral("difference_matte") ||
                  effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
         eff = makeShared<DifferenceMatteEffect>();
+      } else if (effectId == QStringLiteral("posterize_time") ||
+                 effectId == QStringLiteral("Effect.Rasterizer.PosterizeTime")) {
+        eff = makeShared<PosterizeTimeEffect>();
       } else if (effectId == QStringLiteral("ibk_keyer") ||
                  effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
         eff = makeShared<IBKKeyerEffect>();
@@ -6393,6 +6511,45 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setLabelColorIndex(obj["labelColorIndex"].toInt(0));
   if (obj.contains("opacity"))
     setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
+  if (obj.value(QStringLiteral("timeRemap")).isObject()) {
+    const QJsonObject timeRemap = obj.value(QStringLiteral("timeRemap")).toObject();
+    QVector<ArtifactCore::TimeRemapKeyframe> keys;
+    const auto jsonKeys = timeRemap.value(QStringLiteral("keys")).toArray();
+    keys.reserve(jsonKeys.size());
+    for (const QJsonValue& value : jsonKeys) {
+      if (!value.isObject()) continue;
+      const QJsonObject entry = value.toObject();
+      const double outputTime = entry.value(QStringLiteral("outputTime")).toDouble();
+      const double sourceTime = entry.value(QStringLiteral("sourceTime")).toDouble();
+      if (!std::isfinite(outputTime) || !std::isfinite(sourceTime)) continue;
+      ArtifactCore::TimeRemapKeyframe key;
+      key.outputTime = outputTime;
+      key.sourceTime = sourceTime;
+      key.interpolation = static_cast<ArtifactCore::TimeRemapKeyframe::Interpolation>(
+          std::clamp(entry.value(QStringLiteral("interpolation")).toInt(), 0, 5));
+      key.bezierHandleInX = static_cast<float>(entry.value(QStringLiteral("bezierHandleInX")).toDouble());
+      key.bezierHandleInY = static_cast<float>(entry.value(QStringLiteral("bezierHandleInY")).toDouble());
+      key.bezierHandleOutX = static_cast<float>(entry.value(QStringLiteral("bezierHandleOutX")).toDouble());
+      key.bezierHandleOutY = static_cast<float>(entry.value(QStringLiteral("bezierHandleOutY")).toDouble());
+      keys.append(key);
+    }
+    if (!keys.isEmpty() || timeRemap.value(QStringLiteral("enabled")).toBool(false)) {
+      setTimeRemapKeys(keys);
+      setTimeRemapEnabled(timeRemap.value(QStringLiteral("enabled")).toBool(true));
+      setTimeRemapFrameBlend(
+          static_cast<ArtifactCore::FrameBlendMode>(std::clamp(
+              timeRemap.value(QStringLiteral("frameBlendMode")).toInt(), 0, 3)),
+          static_cast<float>(timeRemap.value(QStringLiteral("frameBlendAmount")).toDouble(0.5)));
+    }
+  }
+  if (obj.value(QStringLiteral("stopMotionSampling")).isObject()) {
+    const QJsonObject stopMotionSampling =
+        obj.value(QStringLiteral("stopMotionSampling")).toObject();
+    setStopMotionSamplingFrameRate(
+        stopMotionSampling.value(QStringLiteral("frameRate")).toDouble(12.0));
+    setStopMotionSamplingEnabled(
+        stopMotionSampling.value(QStringLiteral("enabled")).toBool(false));
+  }
   if (obj.contains("effectEnvelope") && obj["effectEnvelope"].isObject())
     setEffectEnvelope(layerEffectEnvelopeFromJson(obj["effectEnvelope"].toObject()));
   if (obj.contains("blendMode")) {
@@ -6432,7 +6589,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       // Legacy scalar values are defaults, not animation keys. Only the
       // explicit legacy key arrays below may enable a channel's animation.
       t3 = ArtifactCore::AnimatableTransform3D{};
-      t3.setKeyframeTimeScale(effectiveLayerFrameRate(this));
+      t3.setKeyframeTimeScale(
+          ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(this)));
       const auto restoreBase = [&](ArtifactCore::TransformChannel channel,
                                    const char* name, double fallback) {
         t3.channelProperty(channel)->setValue(
@@ -6546,7 +6704,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       // New format is authoritative, including empty key arrays. Never merge
       // legacy keys into a channel that the user explicitly cleared.
       t3 = ArtifactCore::AnimatableTransform3D{};
-      t3.setKeyframeTimeScale(effectiveLayerFrameRate(this));
+      t3.setKeyframeTimeScale(
+          ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(this)));
       t3.setInitialRotation(RationalTime(0, 1),
           finiteTransformValue(trans.value("initialRotation").toDouble(), 0.0));
       const auto channels = trans.value("channels").toObject();
@@ -12191,16 +12350,6 @@ void ArtifactAbstractLayer::addMatteReference(const LayerMatteReference& ref) {
 
 void ArtifactAbstractLayer::clearMatteReferences() {
   impl_->mattes_.clear();
-}
-
-MatteStack ArtifactAbstractLayer::buildMatteStack() const {
-    MatteStack stack;
-    for (const auto& ref : impl_->mattes_) {
-        if (ref.enabled && !ref.sourceLayerId.isNil()) {
-            stack.addNode(ref.toCoreMatteNode());
-        }
-    }
-    return stack;
 }
 
 // Opacity

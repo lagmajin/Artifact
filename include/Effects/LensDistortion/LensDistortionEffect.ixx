@@ -157,6 +157,28 @@ public:
     float zoom() const;
 
     bool supportsGPU() const override { return true; }
+
+    // Lens distortion is a single-frame raster warp. The resident pipeline
+    // owns sampling and output resources; the legacy GPU implementation is
+    // retained only for callers outside the composition resident path.
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::LensDistortion;
+        node.parameters[0] = distortion();
+        node.parameters[1] = radialQuadratic();
+        node.parameters[2] = centerX();
+        node.parameters[3] = centerY();
+        node.parameters[4] = zoom();
+        node.parameters[5] = invertDistortion() ? 1.0f : 0.0f;
+        node.parameters[6] = tangentialX();
+        node.parameters[7] = tangentialY();
+        node.parameters[8] = transparentEdges() ? 1.0f : 0.0f;
+        return stack.append(node);
+    }
 };
 
 };

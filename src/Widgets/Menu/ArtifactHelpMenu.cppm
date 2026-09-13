@@ -86,7 +86,7 @@ namespace Artifact {
  ArtifactHelpMenu::ArtifactHelpMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl())
  {
   setObjectName("HelpMenu");
-  setTitle(tr("Help(&H)"));
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.help.label"), QStringLiteral("ヘルプ(&H)")));
   setIcon(QIcon(resolveIconPath("Studio/menubar_help.svg")));
   setTearOffEnabled(true);
 

@@ -31,6 +31,7 @@ module;
 #include <QTreeView>
 #include <QListView>
 #include <QStyleOptionMenuItem>
+#include <QStyleOptionButton>
 #include <QStyleOptionToolButton>
 #include <QStringList>
 #include <QBitmap>
@@ -317,10 +318,20 @@ bool isMessageBoxTextLabel(const QWidget* widget)
 
 void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, const QWidget* widget)
 {
-  if (!widget || !widget->property("artifactFramedToolButton").toBool()) {
+  if (!widget || !option || !painter) {
     return;
   }
-  if (!option || !painter) {
+
+  const bool isFramed = widget->property("artifactFramedToolButton").toBool();
+  const bool isViewportButton =
+      widget->property("artifactViewportToolbarButton").toBool();
+  const bool isDockCloseButton =
+      widget->property("artifactDockCloseButton").toBool();
+  const bool hasFocus = option->state.testFlag(QStyle::State_HasFocus);
+  const bool isOn = option->state.testFlag(QStyle::State_On);
+  const bool isHovered = option->state.testFlag(QStyle::State_MouseOver);
+  if (!isFramed && !isDockCloseButton &&
+      !(isViewportButton && (isOn || isHovered)) && !hasFocus) {
     return;
   }
 
@@ -365,21 +376,56 @@ void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, 
 
   painter->save();
   painter->setRenderHint(QPainter::Antialiasing, true);
-  if (isPlayButton) {
+  if (isDockCloseButton) {
+    if (isHovered || option->state.testFlag(QStyle::State_Sunken)) {
+      QColor hoverFill(theme.buttonHoverColor);
+      if (option->state.testFlag(QStyle::State_Sunken)) {
+        hoverFill = QColor(theme.buttonPressedColor);
+      }
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(hoverFill);
+      painter->drawRoundedRect(QRectF(drawRect).adjusted(1.0, 1.0, -1.0, -1.0),
+                               3.0, 3.0);
+    }
+  } else if (isViewportButton && !isFramed) {
+    QColor stateFill = isOn ? QColor(theme.accentColor)
+                            : QColor(theme.buttonHoverColor);
+    stateFill.setAlpha(isOn ? 48 : 30);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(fill);
-    painter->drawEllipse(drawRect.adjusted(1, 1, -1, -1));
-    painter->setPen(QPen(border, 1));
+    painter->setBrush(stateFill);
+    painter->drawRoundedRect(QRectF(drawRect).adjusted(1.0, 2.0, -1.0, -2.0),
+                             3.0, 3.0);
+    if (isOn) {
+      painter->setBrush(QColor(theme.accentColor));
+      // Keep the selected-state underline visually separated from the label;
+      // the previous two-pixel strip sat directly against the text baseline
+      // on compact composition toolbars.
+      painter->drawRect(QRectF(drawRect.left() + 3.0, drawRect.bottom() - 1.0,
+                               std::max(0, drawRect.width() - 6), 1.0));
+    }
+  }
+  if (isFramed) {
+    if (isPlayButton) {
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(fill);
+      painter->drawEllipse(drawRect.adjusted(1, 1, -1, -1));
+      painter->setPen(QPen(border, 1));
+      painter->setBrush(Qt::NoBrush);
+      painter->drawEllipse(drawRect.adjusted(1, 1, -1, -1));
+    } else {
+      const qreal radius = isSpeedButton ? 4.0 : 2.0;
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(fill);
+      painter->drawRoundedRect(drawRect.adjusted(1, 1, -1, -1), radius, radius);
+      painter->setPen(QPen(border, 1));
+      painter->setBrush(Qt::NoBrush);
+      painter->drawRoundedRect(drawRect.adjusted(1, 1, -1, -1), radius, radius);
+    }
+  }
+  if (hasFocus) {
+    painter->setPen(QPen(QColor(QStringLiteral("#8FBAFF")), 1.5));
     painter->setBrush(Qt::NoBrush);
-    painter->drawEllipse(drawRect.adjusted(1, 1, -1, -1));
-  } else {
-    const qreal radius = isSpeedButton ? 4.0 : 2.0;
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(fill);
-    painter->drawRoundedRect(drawRect.adjusted(1, 1, -1, -1), radius, radius);
-    painter->setPen(QPen(border, 1));
-    painter->setBrush(Qt::NoBrush);
-    painter->drawRoundedRect(drawRect.adjusted(1, 1, -1, -1), radius, radius);
+    painter->drawRoundedRect(QRectF(option->rect).adjusted(1.25, 1.25, -1.25, -1.25), 3.0, 3.0);
   }
   painter->restore();
 }
@@ -472,6 +518,9 @@ void ArtifactCommonStyle::polish(QWidget* widget)
 
   auto applyWindowPalette = [&](QWidget* w) {
     if (!w) return;
+    // QLabel inherits QFrame, so the generic frame branch below must not
+    // restore an opaque background after the message-label exemption above.
+    if (transparentMessageLabel) return;
     w->setAutoFillBackground(true);
     QPalette pal = w->palette();
     pal.setColor(QPalette::Window, background);
@@ -625,6 +674,108 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
   const QColor menuHover = QColor(theme.accentColor).lighter(108);
   const QColor menuBorder = QColor(theme.borderColor);
 
+  if (element == CE_ToolButtonLabel && widget &&
+      widget->property("artifactDockCloseButton").toBool()) {
+    const auto *button = qstyleoption_cast<const QStyleOptionToolButton *>(option);
+    if (!button) {
+      return QCommonStyle::drawControl(element, option, painter, widget);
+    }
+    QColor xColor(theme.textColor);
+    if (!button->state.testFlag(State_Enabled)) {
+      xColor.setAlphaF(0.35);
+    } else if (!button->state.testFlag(State_MouseOver)) {
+      xColor.setAlphaF(0.68);
+    }
+    const QRectF xRect = QRectF(button->rect).adjusted(5.5, 5.5, -5.5, -5.5);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(QPen(xColor, 1.8, Qt::SolidLine, Qt::RoundCap));
+    painter->drawLine(xRect.topLeft(), xRect.bottomRight());
+    painter->drawLine(xRect.topRight(), xRect.bottomLeft());
+    painter->restore();
+    return;
+  }
+
+  if (element == CE_ToolButtonLabel && widget &&
+      widget->property("artifactViewportToolbarButton").toBool() &&
+      option->state.testFlag(State_On)) {
+    const auto *button = qstyleoption_cast<const QStyleOptionToolButton *>(option);
+    if (!button) {
+      return QCommonStyle::drawControl(element, option, painter, widget);
+    }
+    QStyleOptionToolButton activeOption(*button);
+    const QColor activeText = QColor(theme.accentColor).lighter(125);
+    activeOption.palette.setColor(QPalette::ButtonText, activeText);
+    activeOption.palette.setColor(QPalette::WindowText, activeText);
+    painter->save();
+    QFont activeFont = painter->font();
+    activeFont.setBold(true);
+    painter->setFont(activeFont);
+    QCommonStyle::drawControl(element, &activeOption, painter, widget);
+    painter->restore();
+    return;
+  }
+
+  if (element == CE_PushButton) {
+    const auto *button = qstyleoption_cast<const QStyleOptionButton *>(option);
+    if (!button) {
+      return QCommonStyle::drawControl(element, option, painter, widget);
+    }
+
+    const bool enabled = button->state.testFlag(State_Enabled);
+    const bool hovered = enabled && button->state.testFlag(State_MouseOver);
+    const bool pressed = enabled && (button->state.testFlag(State_Sunken) ||
+                                     button->state.testFlag(State_On));
+    const bool focused = enabled && button->state.testFlag(State_HasFocus);
+    const bool primary = button->features.testFlag(QStyleOptionButton::DefaultButton);
+    const QColor accent(theme.accentColor);
+    QColor fill(theme.buttonColor);
+    QColor border(theme.borderColor);
+    QColor text(theme.textColor);
+    if (!enabled) {
+      fill = fill.darker(112);
+      border = border.darker(112);
+      text.setAlphaF(0.48);
+    } else if (primary) {
+      fill = pressed ? accent.darker(116)
+                     : hovered ? accent.lighter(108) : accent;
+      border = fill.lighter(108);
+      const qreal luminance = 0.2126 * fill.redF() +
+                              0.7152 * fill.greenF() +
+                              0.0722 * fill.blueF();
+      text = luminance > 0.54 ? QColor(20, 22, 24)
+                              : QColor(246, 248, 250);
+    } else if (pressed) {
+      fill = QColor(theme.buttonPressedColor);
+      border = accent.darker(110);
+    } else if (hovered) {
+      fill = QColor(theme.buttonHoverColor);
+      border = accent.lighter(110);
+    }
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    QRectF surfaceRect(button->rect);
+    surfaceRect.adjust(0.5, 0.5, -0.5, -0.5);
+    if (focused) {
+      painter->setPen(QPen(QColor(QStringLiteral("#8FBAFF")), 2.0));
+      painter->setBrush(Qt::NoBrush);
+      painter->drawRoundedRect(surfaceRect.adjusted(1.0, 1.0, -1.0, -1.0),
+                               4.0, 4.0);
+      surfaceRect.adjust(4.0, 4.0, -4.0, -4.0);
+    }
+    painter->setPen(QPen(border, 1.0));
+    painter->setBrush(fill);
+    painter->drawRoundedRect(surfaceRect, 3.0, 3.0);
+    painter->restore();
+
+    QStyleOptionButton labelOption(*button);
+    labelOption.rect = surfaceRect.toAlignedRect();
+    labelOption.palette.setColor(QPalette::ButtonText, text);
+    QCommonStyle::drawControl(CE_PushButtonLabel, &labelOption, painter, widget);
+    return;
+  }
+
   if (element == CE_MenuItem) {
     if (const auto* menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
       painter->save();
@@ -774,6 +925,28 @@ void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOp
     return;
   }
   if (element == PE_Widget) {
+    if (widget && widget->property("artifactCompositionChromeTab").toBool()) {
+      const bool active =
+          widget->property("artifactCompositionChromeTabActive").toBool();
+      painter->save();
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(option->palette.color(QPalette::Window));
+      painter->drawRect(option->rect);
+      if (active) {
+        painter->setBrush(QColor(ArtifactCore::currentDCCTheme().accentColor));
+        painter->drawRect(QRect(option->rect.left() + 4,
+                                option->rect.bottom() - 2,
+                                std::max(0, option->rect.width() - 8), 2));
+      }
+      if (widget->property("artifactDocumentDirty").toBool()) {
+        painter->setBrush(QColor(ArtifactCore::currentDCCTheme().accentColor));
+        painter->drawEllipse(QRectF(option->rect.right() - 15.0,
+                                    option->rect.center().y() - 3.5,
+                                    7.0, 7.0));
+      }
+      painter->restore();
+      return;
+    }
     if (widget && widget->property("artifactDockTab").toBool()) {
       if (!option || !painter) {
         return QCommonStyle::drawPrimitive(element, option, painter, widget);

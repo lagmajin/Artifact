@@ -3194,9 +3194,9 @@ bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
         return false;
     }
 
-    // 現在選択されているのがグループか確認
+    // 現在選択されているのがグループか確認（NodeStore kindを正とする）
     auto selectedLayer = selectionManager->currentLayer();
-    if (!selectedLayer || !selectedLayer->isGroupLayer()) {
+    if (!selectedLayer || !comp->isGroupLayerResolved(selectedLayer)) {
         return false;
     }
 
@@ -3294,7 +3294,7 @@ bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
   addLayerToCurrentComposition(groupParams);
 
   auto newGroup = selectionManager->currentLayer();
-  if (!newGroup || !newGroup->isGroupLayer()) {
+  if (!newGroup || !comp->isGroupLayerResolved(newGroup)) {
     return false;
   }
 
@@ -4748,9 +4748,10 @@ bool ArtifactProjectService::ungroupSelectedGroupWithUndo() {
   auto *sel = ArtifactLayerSelectionManager::instance();
   if (!sel) return false;
   auto current = sel->currentLayer();
-  if (!current || !current->isGroupLayer()) return false;
+  if (!current) return false;
   auto comp = currentComposition().lock();
   if (!comp || current->composition() != comp.get()) return false;
+  if (!comp->isGroupLayerResolved(current)) return false;
   const auto groupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(current);
   if (!groupLayer) return false;
   const auto children = groupLayer->children();

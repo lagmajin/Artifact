@@ -152,6 +152,42 @@ public:
 
     bool supportsGPU() const override { return true; }
 
+    // The resident pipeline owns linear-premultiplied processing. Keep the
+    // CPU half-resolution optimization as a legacy boundary: it deliberately
+    // changes the sampling grid for wide blurs. Below that threshold, each
+    // CPU pass maps one-for-one to the resident separable Gaussian node.
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        const int passesPerIteration =
+            mode_ == BlurMode::EdgePreserving ? 2 : 1;
+        const int requiredPasses = iterations_ * passesPerIteration;
+        return premultiplied_ && strength_ >= 0.999f && sigma() < 3.0f &&
+                       requiredPasses <= static_cast<int>(GpuSpatialEffectStack::kCapacity)
+                   ? GpuRasterEffectDomain::Spatial
+                   : GpuRasterEffectDomain::None;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        if (gpuRasterEffectDomain() != GpuRasterEffectDomain::Spatial) {
+            return false;
+        }
+        const int passesPerIteration =
+            mode_ == BlurMode::EdgePreserving ? 2 : 1;
+        const float primarySigma = sigma();
+        for (int iteration = 0; iteration < iterations_; ++iteration) {
+            GpuSpatialEffectNode node;
+            node.kind = GpuSpatialEffectKind::SeparableGaussianBlur;
+            node.parameters[0] = primarySigma;
+            node.resolutionScaledParameterMask = 1u << 0;
+            if (!stack.append(node)) return false;
+
+            if (passesPerIteration == 2) {
+                node.parameters[0] = std::max(0.1f, primarySigma * 0.6f);
+                if (!stack.append(node)) return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * @brief ROI 拡張ヒント
      *

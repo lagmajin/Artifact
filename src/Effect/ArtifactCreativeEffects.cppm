@@ -3900,6 +3900,10 @@ ArtifactGlitchEffect::ArtifactGlitchEffect() {
     setDisplayName("Glitch");
     setEffectID("builtin.glitch");
     setPipelineStage(EffectPipelineStage::Rasterizer);
+    registerGpuGenericShader(
+        ArtifactGlitchEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kGlitchComputeHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
@@ -3949,6 +3953,10 @@ ArtifactHalftoneEffect::ArtifactHalftoneEffect() {
     setDisplayName("Halftone");
     setEffectID("builtin.halftone");
     setPipelineStage(EffectPipelineStage::Rasterizer);
+    registerGpuGenericShader(
+        ArtifactHalftoneEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kHalftoneComputeHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
@@ -4006,6 +4014,10 @@ ArtifactOldTVEffect::ArtifactOldTVEffect() {
     setDisplayName("Old TV");
     setEffectID("builtin.old_tv");
     setPipelineStage(EffectPipelineStage::Rasterizer);
+    registerGpuGenericShader(
+        ArtifactOldTVEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kOldTVComputeHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {

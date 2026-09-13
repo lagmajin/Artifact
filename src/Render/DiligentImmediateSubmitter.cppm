@@ -1294,9 +1294,9 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
     CBViewerHelper cb;
     cb.spacing   = p.helper.param0;
     cb.thickness = p.helper.param1;
-    cb.padding   = {0.0f, 0.0f};
+    cb.padding   = { p.helper._pad[0], p.helper._pad[1] };
     cb.color1    = p.helper.color1;
-    cb.color2    = {};
+    cb.color2    = p.helper.color2;
     mapWriteDiscard(ctx, m_draw_viewer_helper_cb,       &cb,          sizeof(cb), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,          &p.baseColor, sizeof(p.baseColor), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,  &p.xform,    sizeof(p.xform), m_frameCostStats_);

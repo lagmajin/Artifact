@@ -17,6 +17,7 @@ module;
 #include <QFileInfo>
 #include <QFileInfoList>
 #include <QFont>
+#include <QFontComboBox>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -136,6 +137,9 @@ public:
   QSpinBox *menuBarFontScaleSpinBox_;
   QSpinBox *dockTabFontSizeSpinBox_;
   QComboBox *themeCombo_;
+  QComboBox *accentCombo_;
+  QFontComboBox *uiFontCombo_;
+  QSpinBox *uiFontSizeSpinBox_;
   QComboBox *handednessCombo_;
   QComboBox *dialogButtonAlignmentCombo_;
   QCheckBox *largeTargetsCheckBox_;
@@ -243,6 +247,39 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   themeLayout->addWidget(impl_->themeCombo_);
   themeLayout->addStretch();
   uiLayout->addLayout(themeLayout);
+
+  auto *accentLayout = new QHBoxLayout();
+  accentLayout->addWidget(new QLabel("Accent:", this));
+  impl_->accentCombo_ = new QComboBox(this);
+  impl_->accentCombo_->setAccessibleName(QStringLiteral("Application accent color"));
+  impl_->accentCombo_->setAccessibleDescription(
+      QStringLiteral("Use the theme accent or an Artifact accent preset"));
+  impl_->accentCombo_->addItem(QStringLiteral("Theme default"), QString());
+  impl_->accentCombo_->addItem(QStringLiteral("Steel Blue"), QStringLiteral("#3878b8"));
+  impl_->accentCombo_->addItem(QStringLiteral("Muted Teal"), QStringLiteral("#367f86"));
+  impl_->accentCombo_->addItem(QStringLiteral("Soft Amber"), QStringLiteral("#c99543"));
+  impl_->accentCombo_->addItem(QStringLiteral("Burnt Orange"), QStringLiteral("#ba713b"));
+  impl_->accentCombo_->addItem(QStringLiteral("Neutral Graphite"), QStringLiteral("#555d67"));
+  impl_->accentCombo_->addItem(QStringLiteral("Muted Violet"), QStringLiteral("#7968aa"));
+  impl_->accentCombo_->addItem(QStringLiteral("Slate Cyan"), QStringLiteral("#407f9b"));
+  accentLayout->addWidget(impl_->accentCombo_);
+  accentLayout->addStretch();
+  uiLayout->addLayout(accentLayout);
+
+  auto *uiFontLayout = new QHBoxLayout();
+  uiFontLayout->addWidget(new QLabel("UI font:", this));
+  impl_->uiFontCombo_ = new QFontComboBox(this);
+  impl_->uiFontCombo_->setAccessibleName(QStringLiteral("Application UI font"));
+  impl_->uiFontCombo_->setAccessibleDescription(
+      QStringLiteral("Choose the application font without changing project text"));
+  uiFontLayout->addWidget(impl_->uiFontCombo_);
+  impl_->uiFontSizeSpinBox_ = new QSpinBox(this);
+  impl_->uiFontSizeSpinBox_->setRange(8, 24);
+  impl_->uiFontSizeSpinBox_->setSuffix(QStringLiteral(" pt"));
+  impl_->uiFontSizeSpinBox_->setAccessibleName(QStringLiteral("Application UI font size"));
+  uiFontLayout->addWidget(impl_->uiFontSizeSpinBox_);
+  uiFontLayout->addStretch();
+  uiLayout->addLayout(uiFontLayout);
 
   auto *accessibilityGroup = new QGroupBox("Accessibility", this);
   accessibilityGroup->setAccessibleName(QStringLiteral("Accessibility settings"));
@@ -422,6 +459,16 @@ void GeneralSettingPage::loadSettings() {
       impl_->themeCombo_->setCurrentIndex(0);
     }
   }
+  if (impl_->accentCombo_) {
+    const int accentIndex = impl_->accentCombo_->findData(settings->uiAccentColor());
+    impl_->accentCombo_->setCurrentIndex(accentIndex >= 0 ? accentIndex : 0);
+  }
+  if (impl_->uiFontCombo_) {
+    impl_->uiFontCombo_->setCurrentFont(QFont(settings->defaultFontFamily()));
+  }
+  if (impl_->uiFontSizeSpinBox_) {
+    impl_->uiFontSizeSpinBox_->setValue(settings->uiFontPointSize());
+  }
   impl_->handednessCombo_->setCurrentIndex(
       impl_->handednessCombo_->findData(settings->accessibilityHandedness()));
   impl_->dialogButtonAlignmentCombo_->setCurrentIndex(
@@ -457,11 +504,15 @@ void GeneralSettingPage::saveSettings() {
       impl_->dockTabFontSizeSpinBox_->value());
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentText());
-    if (auto *app = qobject_cast<QApplication *>(QCoreApplication::instance())) {
-      const auto preset = static_cast<ArtifactCore::DccStylePreset>(
-          impl_->themeCombo_->currentData().toInt());
-      ArtifactCore::applyDCCTheme(*app, preset);
-    }
+  }
+  if (impl_->accentCombo_) {
+    settings->setUiAccentColor(impl_->accentCombo_->currentData().toString());
+  }
+  if (impl_->uiFontCombo_) {
+    settings->setDefaultFontFamily(impl_->uiFontCombo_->currentFont().family());
+  }
+  if (impl_->uiFontSizeSpinBox_) {
+    settings->setUiFontPointSize(impl_->uiFontSizeSpinBox_->value());
   }
   settings->setAccessibilityHandedness(
       impl_->handednessCombo_->currentData().toString());
@@ -494,6 +545,20 @@ QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
     items.push_back({"UI Theme",
                      "Built-in application theme preset",
                      "User Interface", impl_->themeCombo_, "UI/ThemeName"});
+  }
+  if (impl_ && impl_->accentCombo_) {
+    items.push_back({"Accent", "Override the current theme accent color",
+                     "User Interface", impl_->accentCombo_, "UI/AccentColor"});
+  }
+  if (impl_ && impl_->uiFontCombo_) {
+    items.push_back({"UI font", "Choose the application interface font",
+                     "User Interface", impl_->uiFontCombo_,
+                     "General/DefaultFontFamily"});
+  }
+  if (impl_ && impl_->uiFontSizeSpinBox_) {
+    items.push_back({"UI font size", "Choose the application interface font size",
+                     "User Interface", impl_->uiFontSizeSpinBox_,
+                     "UI/FontPointSize"});
   }
   if (impl_ && impl_->dialogButtonAlignmentCombo_) {
     items.push_back({"Dialog buttons",
@@ -1620,6 +1685,10 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
   using ArtifactCore::ShortcutId;
   const int value = static_cast<int>(id);
   if (id == ShortcutId::Undo || id == ShortcutId::Redo) return QStringLiteral("Global");
+  if (id == ShortcutId::ProjectClearSearch) return QStringLiteral("Workspace.Project");
+  if (id == ShortcutId::TimelineFocusSearch || id == ShortcutId::TimelineClearSearch)
+    return QStringLiteral("Workspace.Timeline");
+  if (id == ShortcutId::CompositionImmersiveExit) return QStringLiteral("Viewport.Composition");
   if (value >= static_cast<int>(ShortcutId::SelectionTool) &&
       value <= static_cast<int>(ShortcutId::AnchorPointTool))
     return QStringLiteral("Viewport.Composition");
@@ -1653,6 +1722,9 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
     return QStringLiteral("Modal.Import");
   if (value >= static_cast<int>(ShortcutId::ViewUndo) &&
       value <= static_cast<int>(ShortcutId::ViewToggleCameraFrustum))
+    return QStringLiteral("Viewport.Composition");
+  if (value >= static_cast<int>(ShortcutId::CompositionViewportMoveGizmo) &&
+      value <= static_cast<int>(ShortcutId::CompositionViewportScaleGizmo))
     return QStringLiteral("Viewport.Composition");
   return QStringLiteral("Workspace.Timeline");
 }
@@ -1815,7 +1887,7 @@ void ShortcutSettingPage::applyShortcutProfile() {
     set(ArtifactCore::ShortcutId::SelectionTool, QKeySequence(Qt::Key_Q));
     set(ArtifactCore::ShortcutId::HandTool, QKeySequence(Qt::Key_H));
     set(ArtifactCore::ShortcutId::ZoomTool, QKeySequence(Qt::Key_Z));
-    // R is reserved for the viewport's Blender-style transform modal.
+    // R is owned by the configurable Viewport.Composition rotate-gizmo bind.
     set(ArtifactCore::ShortcutId::RotateTool, QKeySequence());
     set(ArtifactCore::ShortcutId::TimelineSelectionTool, QKeySequence(Qt::Key_Q));
     set(ArtifactCore::ShortcutId::TimelineHandTool, QKeySequence(Qt::Key_H));
@@ -2097,11 +2169,11 @@ QList<SettingItemInfo> ShortcutSettingPage::searchableItems() const {
   const auto ids = ArtifactCore::allShortcutIds();
   const auto &bindings = ArtifactCore::ShortcutBindings::instance();
   for (const auto id : ids) {
-    const bool isTimeline = static_cast<int>(id) >= static_cast<int>(ArtifactCore::ShortcutId::TimelineCopySelectedKeyframes);
+    const bool isTimeline = shortcutContext(id).contains(QStringLiteral("Timeline"));
     items.push_back({
         ArtifactCore::shortcutDisplayName(id),
         bindings.shortcutText(id),
-        isTimeline ? QStringLiteral("Timeline") : QStringLiteral("Core"),
+        isTimeline ? QStringLiteral("Timeline") : shortcutCategory(id),
         nullptr,
     });
   }

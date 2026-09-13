@@ -113,19 +113,6 @@ QStringList pruneMissingRecentProjects(const QStringList& paths)
     return pruned;
 }
 
-QString supportedAssetFilter()
-{
-    return QStringLiteral(
-        "対応アセット (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg "
-        "*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a "
-        "*.obj *.fbx *.gltf *.glb *.pmd *.abc *.usd *.usda *.usdc);;"
-        "画像 (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg);;"
-        "動画 (*.mp4 *.mov *.mkv *.avi *.webm);;"
-        "音声 (*.mp3 *.wav *.flac *.ogg *.aac *.m4a);;"
-        "3D (*.obj *.fbx *.gltf *.glb *.pmd *.abc *.usd *.usda *.usdc)"
-    );
-}
-
 bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, const QString& text)
 {
     QMessageBox box(parent);
@@ -439,7 +426,11 @@ void ArtifactFileMenu::Impl::handleOpenProject()
     if (!confirmUnsavedChanges(menu_, QStringLiteral("別のプロジェクトを開く"))) {
         return;
     }
-    const QString filePath = QFileDialog::getOpenFileName(menu_, "プロジェクトを開く", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
+    auto* settings = ArtifactAppSettings::instance();
+    ArtifactProjectOpenPickerDialog picker(
+        settings ? settings->recentProjectPaths() : QStringList{}, menu_);
+    if (picker.exec() != QDialog::Accepted) return;
+    const QString filePath = picker.selectedPath();
     if (filePath.isEmpty()) return;
     openProjectPath(filePath, true);
 }
@@ -606,12 +597,9 @@ void ArtifactFileMenu::Impl::handleImportAssets()
                              QStringLiteral("先にプロジェクトを開いてください。"));
         return;
     }
-    const QStringList files = QFileDialog::getOpenFileNames(
-        menu_,
-        QStringLiteral("アセットを読み込み"),
-        QString(),
-        supportedAssetFilter()
-    );
+    ArtifactMediaImportPickerDialog picker(menu_);
+    if (picker.exec() != QDialog::Accepted) return;
+    const QStringList files = picker.selectedPaths();
     if (files.isEmpty()) return;
     ArtifactImportAssetsDialog dialog(files, menu_);
     if (dialog.exec() != QDialog::Accepted) return;

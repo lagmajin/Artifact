@@ -23,6 +23,8 @@ export namespace Artifact {
   void rebuildMenu();
   W_SLOT(rebuildMenu, ());
 
+  void updateShortcuts();
+
  };
 
 

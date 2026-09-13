@@ -4,10 +4,13 @@ module;
 #include <QColor>
 #include <QFont>
 #include <QFrame>
+#include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMimeData>
 #include <QPalette>
 #include <QPushButton>
+#include <QSize>
 #include <QSizePolicy>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -36,27 +39,57 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
 
   card_ = new QFrame(this);
   card_->setObjectName(QStringLiteral("compositionCardFrame"));
-  card_->setFrameShape(QFrame::StyledPanel);
+  card_->setFrameShape(QFrame::NoFrame);
   card_->setFrameShadow(QFrame::Plain);
-  card_->setAutoFillBackground(true);
+  card_->setAutoFillBackground(false);
   card_->setMinimumWidth(0);
-  card_->setMaximumWidth(640);
+  card_->setMaximumWidth(540);
   card_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
   QPalette cardPalette = card_->palette();
-  cardPalette.setColor(QPalette::Window, QColor(18, 20, 25, 230));
-  cardPalette.setColor(QPalette::WindowText, QColor(248, 248, 248));
-  cardPalette.setColor(QPalette::Base, QColor(18, 20, 25, 230));
-  cardPalette.setColor(QPalette::Text, QColor(248, 248, 248));
+  cardPalette.setColor(QPalette::WindowText, QColor(225, 232, 240));
+  cardPalette.setColor(QPalette::Text, QColor(225, 232, 240));
   card_->setPalette(cardPalette);
 
   cardLayout_ = new QVBoxLayout(card_);
-  cardLayout_->setContentsMargins(32, 28, 32, 28);
-  cardLayout_->setSpacing(14);
+  cardLayout_->setContentsMargins(28, 20, 28, 20);
+  cardLayout_->setSpacing(12);
+
+  layerEmptyRow_ = new QWidget(card_);
+  layerEmptyRow_->setAutoFillBackground(false);
+  auto *layerEmptyLayout = new QHBoxLayout(layerEmptyRow_);
+  layerEmptyLayout->setContentsMargins(0, 0, 0, 0);
+  layerEmptyLayout->setSpacing(12);
+
+  layerIconLabel_ = new QLabel(layerEmptyRow_);
+  layerIconLabel_->setFixedSize(24, 24);
+  layerIconLabel_->setPixmap(
+      QIcon(QStringLiteral(":/icons/Studio/composition_empty_layers.svg"))
+          .pixmap(QSize(20, 20)));
+  layerIconLabel_->setAlignment(Qt::AlignCenter);
+
+  layerEmptyLabel_ = new QLabel(QStringLiteral("レイヤーがありません"),
+                                layerEmptyRow_);
+  QFont layerEmptyFont = layerEmptyLabel_->font();
+  layerEmptyFont.setPointSizeF(std::max(10.5, layerEmptyFont.pointSizeF()));
+  layerEmptyFont.setWeight(QFont::Medium);
+  layerEmptyFont.setStyleStrategy(QFont::PreferAntialias);
+  layerEmptyLabel_->setFont(layerEmptyFont);
+  layerEmptyLabel_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+  layerEmptyLayout->addWidget(layerIconLabel_);
+  layerEmptyLayout->addWidget(layerEmptyLabel_);
+  layerEmptyRow_->hide();
+
+  compositionIconLabel_ = new QLabel(card_);
+  compositionIconLabel_->setFixedSize(64, 64);
+  compositionIconLabel_->setPixmap(
+      QIcon(QStringLiteral(":/icons/Studio/composition_empty_composition.svg"))
+          .pixmap(QSize(52, 52)));
+  compositionIconLabel_->setAlignment(Qt::AlignCenter);
 
   titleLabel_ = new QLabel(QStringLiteral("まだコンポジションがありません"), card_);
   QFont titleFont = titleLabel_->font();
-  titleFont.setPointSizeF(std::max(14.0, titleFont.pointSizeF() + 2.0));
+  titleFont.setPointSizeF(std::max(16.0, titleFont.pointSizeF() + 3.0));
   titleFont.setBold(true);
   titleFont.setStyleStrategy(QFont::PreferAntialias);
   titleLabel_->setFont(titleFont);
@@ -69,6 +102,7 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
       card_);
   bodyLabel_->setAlignment(Qt::AlignCenter);
   QFont bodyFont = bodyLabel_->font();
+  bodyFont.setPointSizeF(std::max(10.0, bodyFont.pointSizeF()));
   bodyFont.setStyleStrategy(QFont::PreferAntialias);
   bodyLabel_->setFont(bodyFont);
   bodyLabel_->setMinimumWidth(0);
@@ -85,21 +119,32 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
   helperLabel_->setWordWrap(true);
 
   createButton_ = new QPushButton(QStringLiteral("新規コンポジション"), card_);
-  createButton_->setMinimumHeight(46);
-  createButton_->setMinimumWidth(0);
-  createButton_->setMaximumWidth(240);
+  createButton_->setMinimumHeight(36);
+  createButton_->setMaximumHeight(36);
+  createButton_->setMinimumWidth(168);
+  createButton_->setMaximumWidth(196);
   QFont buttonFont = createButton_->font();
-  buttonFont.setPointSizeF(std::max(12.0, buttonFont.pointSizeF() + 1.0));
+  buttonFont.setPointSizeF(std::max(10.5, buttonFont.pointSizeF()));
   buttonFont.setBold(true);
   buttonFont.setStyleStrategy(QFont::PreferAntialias);
   createButton_->setFont(buttonFont);
   createButton_->setCursor(Qt::PointingHandCursor);
   createButton_->setDefault(true);
+  {
+    QPalette buttonPalette = createButton_->palette();
+    buttonPalette.setColor(QPalette::Button, QColor(32, 93, 190));
+    buttonPalette.setColor(QPalette::ButtonText, Qt::white);
+    buttonPalette.setColor(QPalette::Highlight, QColor(54, 124, 232));
+    buttonPalette.setColor(QPalette::HighlightedText, Qt::white);
+    createButton_->setPalette(buttonPalette);
+  }
 
+  cardLayout_->addWidget(layerEmptyRow_, 0, Qt::AlignHCenter);
+  cardLayout_->addWidget(compositionIconLabel_, 0, Qt::AlignHCenter);
   cardLayout_->addWidget(titleLabel_);
   cardLayout_->addWidget(bodyLabel_);
-  cardLayout_->addWidget(helperLabel_);
-  cardLayout_->addSpacing(8);
+  helperLabel_->hide();
+  cardLayout_->addSpacing(4);
   cardLayout_->addWidget(createButton_, 0, Qt::AlignHCenter);
 
   updateResponsiveLayout();
@@ -122,11 +167,11 @@ void EmptyCompositionOverlayWidget::setCompositionAvailable(bool hasComposition)
   if (hasComposition) {
     hasComposition_ = true;
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    titleLabel_->setText(QStringLiteral("レイヤーがありません"));
-    bodyLabel_->setText(QStringLiteral(
-        "平面やテキストなどのレイヤーを追加すると、ここに表示されます。"));
-    helperLabel_->setText(QStringLiteral(
-        "Layer メニューからレイヤーを追加してください。"));
+    layerEmptyRow_->show();
+    compositionIconLabel_->hide();
+    titleLabel_->hide();
+    bodyLabel_->hide();
+    helperLabel_->hide();
     createButton_->hide();
     updateResponsiveLayout();
     update();
@@ -134,11 +179,14 @@ void EmptyCompositionOverlayWidget::setCompositionAvailable(bool hasComposition)
   }
   hasComposition_ = false;
   setAttribute(Qt::WA_TransparentForMouseEvents, false);
+  layerEmptyRow_->hide();
+  compositionIconLabel_->show();
+  titleLabel_->show();
   titleLabel_->setText(QStringLiteral("まだコンポジションがありません"));
   bodyLabel_->setText(QStringLiteral(
       "新規コンポジションを作成して、編集を始めましょう。"));
-  helperLabel_->setText(QStringLiteral(
-      "ボタンを押すと、コンポジション設定ダイアログを開きます。"));
+  bodyLabel_->show();
+  helperLabel_->hide();
   createButton_->show();
   updateResponsiveLayout();
   update();
@@ -146,8 +194,8 @@ void EmptyCompositionOverlayWidget::setCompositionAvailable(bool hasComposition)
 
 QSize EmptyCompositionOverlayWidget::preferredOverlaySize(
     const QSize &available) const {
-  const int preferredWidth = hasComposition_ ? 480 : 600;
-  const int preferredHeight = hasComposition_ ? 190 : 250;
+  const int preferredWidth = hasComposition_ ? 340 : 540;
+  const int preferredHeight = hasComposition_ ? 84 : 220;
   return QSize(std::max(1, std::min(preferredWidth, available.width())),
                std::max(1, std::min(preferredHeight, available.height())));
 }
@@ -213,21 +261,24 @@ void EmptyCompositionOverlayWidget::updateResponsiveLayout() {
   const bool compactHeight = height() < 300;
   const bool veryCompactHeight = height() < 210;
   const int outerMargin = compactWidth || compactHeight ? 10 : 24;
-  const int innerHorizontalMargin = compactWidth ? 14 : 32;
-  const int innerVerticalMargin = compactHeight ? 12 : 28;
+  const int innerHorizontalMargin = hasComposition_ ? 16 : (compactWidth ? 14 : 28);
+  const int innerVerticalMargin = hasComposition_ ? 12 : (compactHeight ? 10 : 20);
   rootLayout_->setContentsMargins(0, 0, 0, 0);
   cardLayout_->setContentsMargins(innerHorizontalMargin, innerVerticalMargin,
                                   innerHorizontalMargin, innerVerticalMargin);
-  cardLayout_->setSpacing(compactHeight ? 7 : 14);
-  bodyLabel_->setVisible(!veryCompactHeight);
-  helperLabel_->setVisible(!compactHeight);
-  createButton_->setMinimumHeight(compactHeight ? 34 : 46);
-  const int preferredCardWidth = hasComposition_ ? 420 : 640;
+  cardLayout_->setSpacing(compactHeight ? 7 : 12);
+  bodyLabel_->setVisible(!hasComposition_ && !veryCompactHeight);
+  helperLabel_->hide();
+  compositionIconLabel_->setVisible(!hasComposition_ && !veryCompactHeight);
+  createButton_->setMinimumHeight(compactHeight ? 34 : 36);
+  createButton_->setMaximumHeight(compactHeight ? 34 : 36);
+  const int preferredCardWidth = hasComposition_ ? 320 : 540;
   const int cardWidth = std::max(
       0, std::min(preferredCardWidth, width() - outerMargin * 2));
   card_->setFixedWidth(cardWidth);
   const int buttonWidth = std::max(
-      0, std::min(240, cardWidth - innerHorizontalMargin * 2));
+      0, std::min(196, cardWidth - innerHorizontalMargin * 2));
+  createButton_->setMinimumWidth(std::min(168, buttonWidth));
   createButton_->setMaximumWidth(buttonWidth);
   cardLayout_->invalidate();
   cardLayout_->activate();

@@ -1680,6 +1680,38 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     // conventions and projected the visible frame away from its 2D plane in
     // view-orientation mode.
     const QMatrix4x4 world = layer->getGlobalTransform4x4();
+    // The frame itself follows the layer, but resize/rotate handles are HUD
+    // controls: they must remain camera-facing and visually stable instead of
+    // becoming skewed quads when the layer is rotated or non-uniformly scaled.
+    QVector3D billboardRight;
+    QVector3D billboardUp;
+    QVector3D billboardTowardCamera;
+    bool billboardValid = false;
+    float localToWorldScale = 1.0f;
+    if (cameraView && cameraProj) {
+      bool inverseViewValid = false;
+      const QMatrix4x4 inverseView = cameraView->inverted(&inverseViewValid);
+      if (inverseViewValid) {
+        billboardRight = inverseView.mapVector(QVector3D(1.0f, 0.0f, 0.0f));
+        billboardUp = inverseView.mapVector(QVector3D(0.0f, 1.0f, 0.0f));
+        billboardTowardCamera =
+            inverseView.mapVector(QVector3D(0.0f, 0.0f, 1.0f));
+        if (billboardRight.lengthSquared() > 1.0e-8f &&
+            billboardUp.lengthSquared() > 1.0e-8f &&
+            billboardTowardCamera.lengthSquared() > 1.0e-8f) {
+          billboardRight.normalize();
+          billboardUp.normalize();
+          billboardTowardCamera.normalize();
+          const float worldScaleX =
+              world.mapVector(QVector3D(1.0f, 0.0f, 0.0f)).length();
+          const float worldScaleY =
+              world.mapVector(QVector3D(0.0f, 1.0f, 0.0f)).length();
+          localToWorldScale =
+              std::max(0.001f, 0.5f * (worldScaleX + worldScaleY));
+          billboardValid = true;
+        }
+      }
+    }
     const auto point = [&world](float x, float y) -> Detail::float3 {
       const QVector3D transformed = world.map(QVector3D(x, y, 0.0f));
       return Detail::float3(transformed.x(), transformed.y(), transformed.z());
@@ -1767,26 +1799,51 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     // Add plane-aligned corner handles so the 3D frame remains identifiable and
     // readable at oblique view angles.
     const qreal handleSize = projectedHandleSize > 0.0f
-        ? std::clamp(static_cast<qreal>(projectedHandleSize), 4.0, 96.0)
+        ? static_cast<qreal>(projectedHandleSize)
         : std::clamp(std::min(localBounds.width(), localBounds.height()) *
                          0.035,
                      20.0, 48.0);
     const qreal handleHalf = handleSize * 0.5;
     const qreal shadowHalf = handleHalf + std::max<qreal>(2.0, handleSize * 0.12);
+    const auto worldPoint = [&world](qreal x, qreal y) {
+      return world.map(QVector3D(static_cast<float>(x), static_cast<float>(y),
+                                 0.0f));
+    };
+    const auto drawBillboard = [&](const QVector3D &center, qreal half,
+                                   const FloatColor &fill) {
+      const QVector3D offset = billboardTowardCamera *
+                               std::max(0.001f, localToWorldScale * 0.002f);
+      const QVector3D c = center + offset;
+      const QVector3D right = billboardRight * static_cast<float>(half * localToWorldScale);
+      const QVector3D up = billboardUp * static_cast<float>(half * localToWorldScale);
+      const QVector3D p0 = c - right - up;
+      const QVector3D p1 = c + right - up;
+      const QVector3D p2 = c + right + up;
+      const QVector3D p3 = c - right + up;
+      renderer->draw3DQuad(
+          {p0.x(), p0.y(), p0.z()}, {p1.x(), p1.y(), p1.z()},
+          {p2.x(), p2.y(), p2.z()}, {p3.x(), p3.y(), p3.z()}, fill);
+    };
     const auto handle = [&](qreal x, qreal y) {
       if (!isVisibleInCamera(x, y)) {
         return;
       }
-      const auto quad = [&](qreal half, const FloatColor &fill) {
-        renderer->draw3DQuad(
-            point(static_cast<float>(x - half), static_cast<float>(y - half)),
-            point(static_cast<float>(x + half), static_cast<float>(y - half)),
-            point(static_cast<float>(x + half), static_cast<float>(y + half)),
-            point(static_cast<float>(x - half), static_cast<float>(y + half)),
-            fill);
-      };
-      quad(shadowHalf, shadow);
-      quad(handleHalf, clippedFrameColor);
+      if (billboardValid) {
+        const QVector3D center = worldPoint(x, y);
+        drawBillboard(center, shadowHalf, shadow);
+        drawBillboard(center, handleHalf, clippedFrameColor);
+      } else {
+        const auto quad = [&](qreal half, const FloatColor &fill) {
+          renderer->draw3DQuad(
+              point(static_cast<float>(x - half), static_cast<float>(y - half)),
+              point(static_cast<float>(x + half), static_cast<float>(y - half)),
+              point(static_cast<float>(x + half), static_cast<float>(y + half)),
+              point(static_cast<float>(x - half), static_cast<float>(y + half)),
+              fill);
+        };
+        quad(shadowHalf, shadow);
+        quad(handleHalf, clippedFrameColor);
+      }
     };
     if (showScaleHandles) {
       handle(bounds.left(), bounds.top());
@@ -1799,16 +1856,22 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
       if (!isVisibleInCamera(x, y)) {
         return;
       }
-      const auto quad = [&](qreal half, const FloatColor &fill) {
-        renderer->draw3DQuad(
-            point(static_cast<float>(x - half), static_cast<float>(y - half)),
-            point(static_cast<float>(x + half), static_cast<float>(y - half)),
-            point(static_cast<float>(x + half), static_cast<float>(y + half)),
-            point(static_cast<float>(x - half), static_cast<float>(y + half)),
-            fill);
-      };
-      quad(edgeHandleHalf + 2.0, shadow);
-      quad(edgeHandleHalf, clippedFrameColor);
+      if (billboardValid) {
+        const QVector3D center = worldPoint(x, y);
+        drawBillboard(center, edgeHandleHalf + 2.0, shadow);
+        drawBillboard(center, edgeHandleHalf, clippedFrameColor);
+      } else {
+        const auto quad = [&](qreal half, const FloatColor &fill) {
+          renderer->draw3DQuad(
+              point(static_cast<float>(x - half), static_cast<float>(y - half)),
+              point(static_cast<float>(x + half), static_cast<float>(y - half)),
+              point(static_cast<float>(x + half), static_cast<float>(y + half)),
+              point(static_cast<float>(x - half), static_cast<float>(y + half)),
+              fill);
+        };
+        quad(edgeHandleHalf + 2.0, shadow);
+        quad(edgeHandleHalf, clippedFrameColor);
+      }
     };
     if (showScaleHandles) {
       edgeHandle(bounds.center().x(), bounds.top());
@@ -1828,16 +1891,22 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
         return;
       }
       const qreal rotationHalf = std::max<qreal>(8.0, edgeHandleHalf * 0.9);
-      const auto quad = [&](qreal half, const FloatColor &fill) {
-        renderer->draw3DQuad(
-            point(static_cast<float>(x - half), static_cast<float>(y - half)),
-            point(static_cast<float>(x + half), static_cast<float>(y - half)),
-            point(static_cast<float>(x + half), static_cast<float>(y + half)),
-            point(static_cast<float>(x - half), static_cast<float>(y + half)),
-            fill);
-      };
-      quad(rotationHalf + 2.0, shadow);
-      quad(rotationHalf, color);
+      if (billboardValid) {
+        const QVector3D center = worldPoint(x, y);
+        drawBillboard(center, rotationHalf + 2.0, shadow);
+        drawBillboard(center, rotationHalf, color);
+      } else {
+        const auto quad = [&](qreal half, const FloatColor &fill) {
+          renderer->draw3DQuad(
+              point(static_cast<float>(x - half), static_cast<float>(y - half)),
+              point(static_cast<float>(x + half), static_cast<float>(y - half)),
+              point(static_cast<float>(x + half), static_cast<float>(y + half)),
+              point(static_cast<float>(x - half), static_cast<float>(y + half)),
+              fill);
+        };
+        quad(rotationHalf + 2.0, shadow);
+        quad(rotationHalf, color);
+      }
       renderer->draw3DLine(
           point(static_cast<float>(bounds.center().x()),
                 static_cast<float>(bounds.center().y())),

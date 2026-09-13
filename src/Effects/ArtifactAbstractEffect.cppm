@@ -60,6 +60,43 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+bool GpuSpatialEffectStack::append(const GpuSpatialEffectNode& node) {
+    if (count >= nodes.size()) return false;
+    nodes[count++] = node;
+    return true;
+}
+
+namespace {
+struct GpuGenericShaderRegistry {
+    std::mutex mutex;
+    std::unordered_map<std::uint32_t, GpuGenericShaderRecord> entries;
+};
+
+GpuGenericShaderRegistry& gpuGenericShaderRegistry() {
+    static GpuGenericShaderRegistry registry;
+    return registry;
+}
+} // namespace
+
+void registerGpuGenericShader(
+    std::uint32_t key, const GpuGenericShaderRecord& record) {
+    if (key == 0 || !record.shaderBody || !record.entryPoint) return;
+    auto& registry = gpuGenericShaderRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    registry.entries[key] = record;
+}
+
+bool findGpuGenericShader(
+    std::uint32_t key, GpuGenericShaderRecord* outRecord) {
+    if (key == 0 || !outRecord) return false;
+    auto& registry = gpuGenericShaderRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    const auto it = registry.entries.find(key);
+    if (it == registry.entries.end()) return false;
+    *outRecord = it->second;
+    return outRecord->shaderBody && outRecord->entryPoint;
+}
+
 class ArtifactAbstractEffect::Impl {
 public:
     bool enabled = true;

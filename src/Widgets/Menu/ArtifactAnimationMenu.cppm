@@ -24,6 +24,7 @@ module;
 
 module Menu.Animation;
 
+import Translation.Manager;
 import Event.Bus;
 import Application.AppSettings;
 import Artifact.Event.Types;
@@ -925,6 +926,11 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* enableTimeRemapAction = nullptr;
   QAction* freezeFrameAction = nullptr;
   QAction* timeReverseAction = nullptr;
+  QAction* slowHalfAction = nullptr;
+  QAction* slowQuarterAction = nullptr;
+  QAction* stopMotion12FpsAction = nullptr;
+  QAction* stopMotion8FpsAction = nullptr;
+  QAction* stopMotion4FpsAction = nullptr;
 
   QAction* addExpressionAction = nullptr;
   QAction* editExpressionAction = nullptr;
@@ -1115,7 +1121,7 @@ bool hasActiveExpressionTarget(QWidget* root)
  ArtifactAnimationMenu::ArtifactAnimationMenu(QWidget* parent)
   : QMenu(parent), impl_(new Impl(this))
  {
-  setTitle("アニメーション(&A)");
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.animation.label"), QStringLiteral("アニメーション(&A)")));
   setIcon(menuIcon(QStringLiteral("Studio/menubar_animation.svg")));
   setTearOffEnabled(false);
 
@@ -1276,6 +1282,18 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->freezeFrameAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_J));
   impl_->timeReverseAction = impl_->timeRemapMenu->addAction("時間反転レイヤー");
   impl_->timeReverseAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
+  impl_->timeRemapMenu->addSeparator();
+  impl_->slowHalfAction = impl_->timeRemapMenu->addAction("スローモーション 50%（レイヤー尺を延長）");
+  impl_->slowHalfAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_schedule.svg")));
+  impl_->slowQuarterAction = impl_->timeRemapMenu->addAction("スローモーション 25%（レイヤー尺を延長）");
+  impl_->slowQuarterAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_schedule.svg")));
+  impl_->timeRemapMenu->addSeparator();
+  impl_->stopMotion12FpsAction = impl_->timeRemapMenu->addAction("コマ撮り 12 fps");
+  impl_->stopMotion12FpsAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
+  impl_->stopMotion8FpsAction = impl_->timeRemapMenu->addAction("コマ撮り 8 fps");
+  impl_->stopMotion8FpsAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
+  impl_->stopMotion4FpsAction = impl_->timeRemapMenu->addAction("コマ撮り 4 fps");
+  impl_->stopMotion4FpsAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
 
   impl_->expressionMenu = addMenu("エクスプレッション(&E)");
   impl_->expressionMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_functions.svg")));
@@ -1605,6 +1623,26 @@ bool hasActiveExpressionTarget(QWidget* root)
     ArtifactCore::globalEventBus().publish(
         TimelineTimeRemapCommandRequestedEvent{
             TimelineTimeRemapCommandKind::Reverse});
+    return;
+   }
+   if (action == impl_->slowHalfAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineTimeRemapCommandRequestedEvent{TimelineTimeRemapCommandKind::SlowHalf});
+    return;
+   }
+   if (action == impl_->slowQuarterAction) {
+    ArtifactCore::globalEventBus().publish(
+        TimelineTimeRemapCommandRequestedEvent{TimelineTimeRemapCommandKind::SlowQuarter});
+    return;
+   }
+   if (action == impl_->stopMotion12FpsAction || action == impl_->stopMotion8FpsAction ||
+       action == impl_->stopMotion4FpsAction) {
+    const auto kind = action == impl_->stopMotion12FpsAction
+        ? TimelineTimeRemapCommandKind::StopMotion12Fps
+        : action == impl_->stopMotion8FpsAction
+            ? TimelineTimeRemapCommandKind::StopMotion8Fps
+            : TimelineTimeRemapCommandKind::StopMotion4Fps;
+    ArtifactCore::globalEventBus().publish(TimelineTimeRemapCommandRequestedEvent{kind});
     return;
    }
    if (action == impl_->addExpressionAction) { openNewExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }

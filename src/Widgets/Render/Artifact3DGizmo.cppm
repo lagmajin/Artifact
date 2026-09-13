@@ -42,6 +42,8 @@ constexpr float kUniformScaleRadiusScale = 0.60f;
 // isolating the mode and reducing visual weight, not shrinking the target.
 constexpr float kDedicatedRotateAxisRadiusScale = 0.78f;
 constexpr float kDedicatedRotateScreenRadiusScale = 0.96f;
+constexpr float kRotate2DRadiusPixels = 85.0f;
+constexpr float kRotate2DHitPixels = 10.0f;
 constexpr float kMoveArrowSizeScale = 0.18f;
 constexpr float kMoveCenterHalfSizeScale = 0.065f;
 constexpr float kDedicatedScaleCubeHalfScale = 0.052f;
@@ -970,7 +972,10 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
                          : (dedicatedRotateHit
                                 ? kDedicatedRotateAxisRadiusScale
                                 : kRotateAxisRadiusScale));
-                if (std::abs(distToCenter - ringRadius) < threshold) {
+                const float ringThreshold = !depthEnabled_ && dedicatedRotateHit
+                    ? ringRadius * (kRotate2DHitPixels / kRotate2DRadiusPixels)
+                    : threshold;
+                if (std::abs(distToCenter - ringRadius) < ringThreshold) {
                     if (rayDepth < minDistance) {
                         minDistance = rayDepth;
                         result = axis;
@@ -1679,6 +1684,20 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         ? 72.0f / zoom
         : std::max(distance * 0.14f, 0.1f);
 
+    const bool rotate2D = !depthEnabled_ && mode_ == GizmoMode::Rotate &&
+        !compactFull && !impl_->drawingFullOverlay;
+    if (rotate2D && viewportHeight > 0.0f) {
+        // Projection-derived world units per pixel: independent of layer scale
+        // and of whether zoom lives in the view or projection matrix.
+        const QVector4D clip = proj * viewPos;
+        const float pixelsPerUnit = std::abs(proj(1, 1)) * viewportHeight * 0.5f /
+            std::max(std::abs(clip.w()), 0.0001f);
+        if (pixelsPerUnit > 0.0001f) {
+            impl_->currentScale = kRotate2DRadiusPixels /
+                (kDedicatedRotateAxisRadiusScale * pixelsPerUnit);
+        }
+    }
+
     const float s = impl_->currentScale;
 
     // Gizmos own only the 3D primitive camera, not the canvas input mapping.
@@ -1880,8 +1899,26 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         const auto point = [&](float radians) {
             return origin + radius * (u * std::cos(radians) + v * std::sin(radians));
         };
-        constexpr int segments = 96;
+        const int segments = rotate2D ? 128 : 96;
         constexpr float tau = 6.28318530718f;
+        const float pixel = radius / kRotate2DRadiusPixels;
+        const auto stroke2D = [&](const QVector3D& a, const QVector3D& b,
+                                  const FloatColor& color, float width) {
+            const QVector3D side = QVector3D::crossProduct(n, b - a).normalized()
+                * (width * pixel * 0.5f);
+            renderer->draw3DQuad(toFloat3(a - side), toFloat3(a + side),
+                                toFloat3(b + side), toFloat3(b - side), color);
+        };
+        const auto disc2D = [&](const QVector3D& center, float size,
+                                const FloatColor& color) {
+            for (int j = 0; j < 32; ++j) {
+                const float a = tau * j / 32, b = tau * (j + 1) / 32;
+                const QVector3D p0 = center + size * pixel * (u * std::cos(a) + v * std::sin(a));
+                const QVector3D p1 = center + size * pixel * (u * std::cos(b) + v * std::sin(b));
+                renderer->draw3DQuad(toFloat3(center), toFloat3(p0), toFloat3(p1),
+                                    toFloat3(center), color);
+            }
+        };
         for (int i = 0; i < segments; ++i) {
             const float a = tau * i / segments, b = tau * (i + 1) / segments;
             const QVector3D p0 = point(a), p1 = point(b);
@@ -1889,8 +1926,34 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                             < (view * QVector4D(origin, 1)).z();
             const float alpha = rear ? 0.24f : (activeAxis_ != GizmoAxis::None && !active ? 0.38f : 0.95f);
             const FloatColor color{baseColor.r(), baseColor.g(), baseColor.b(), alpha};
-            renderer->drawGizmoLine(toFloat3(p0), toFloat3(p1), color,
-                                    (active ? 2.2f : hovered ? 1.9f : 1.15f) * contrastScale);
+            if (rotate2D) {
+                // Annular quads share endpoints; no hairline rasterization or
+                // gaps between independent world-width line segments.
+                const QVector3D r0 = (p0 - origin).normalized();
+                const QVector3D r1 = (p1 - origin).normalized();
+                const auto band = [&](float width, const FloatColor& c) {
+                    const float half = width * pixel * 0.5f;
+                    renderer->draw3DQuad(toFloat3(p0 - r0 * half), toFloat3(p0 + r0 * half),
+                                        toFloat3(p1 + r1 * half), toFloat3(p1 - r1 * half), c);
+                };
+                band(5.0f * contrastScale, FloatColor{0.025f, 0.035f, 0.05f, 0.95f});
+                band((active || hovered ? 3.5f : 3.0f) * contrastScale,
+                     FloatColor{0.16f, active || hovered ? 0.66f : 0.52f, 1.0f, 1.0f});
+            } else {
+                renderer->drawGizmoLine(toFloat3(p0), toFloat3(p1), color,
+                                        (active ? 2.2f : hovered ? 1.9f : 1.15f) * contrastScale);
+            }
+        }
+        if (rotate2D) {
+            const FloatColor white{0.94f, 0.96f, 1.0f, 1.0f};
+            stroke2D(origin - u * pixel * 5, origin + u * pixel * 5, white, 1.5f);
+            stroke2D(origin - v * pixel * 5, origin + v * pixel * 5, white, 1.5f);
+            if (!active) {
+                const QVector3D grip = point(-tau * 0.25f);
+                disc2D(grip, hovered ? 7.0f : 6.0f,
+                       hovered ? white : FloatColor{0.025f, 0.035f, 0.05f, 1.0f});
+                disc2D(grip, 4.5f, FloatColor{0.16f, 0.58f, 1.0f, 1.0f});
+            }
         }
         if (!active) return;
         const QVector3D difference = impl_->rotation - impl_->dragStartRotation;
@@ -1909,14 +1972,22 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         const QVector3D begin = point(start);
         const QVector3D end = point(start + displayedAngle * tau / 360.0f);
         const FloatColor guide{0.92f, 0.94f, 0.98f, 0.85f};
-        renderer->drawGizmoLine(toFloat3(origin), toFloat3(begin), guide, 0.8f);
-        renderer->drawGizmoLine(toFloat3(origin), toFloat3(end), guide, 0.8f);
+        const auto guideLine = [&](const QVector3D& a, const QVector3D& b) {
+            if (rotate2D) stroke2D(a, b, guide, 1.2f);
+            else renderer->drawGizmoLine(toFloat3(a), toFloat3(b), guide, 0.8f);
+        };
+        guideLine(origin, begin);
+        guideLine(origin, end);
         for (int i = 0; i < 24; ++i) {
             const QVector3D radial = point(tau * i / 24) - origin;
-            renderer->drawGizmoLine(toFloat3(origin + radial * 0.97f),
-                                    toFloat3(origin + radial * 1.03f), guide, 0.8f);
+            guideLine(origin + radial * 0.97f, origin + radial * 1.03f);
         }
-        renderer->drawGizmoRing(toFloat3(end), toFloat3(cameraForward), radius * 0.045f, guide, 1.4f);
+        if (rotate2D) {
+            disc2D(end, 6.5f, FloatColor{0.025f, 0.035f, 0.05f, 1.0f});
+            disc2D(end, 5.0f, FloatColor{0.97f, 0.98f, 1.0f, 1.0f});
+        } else {
+            renderer->drawGizmoRing(toFloat3(end), toFloat3(cameraForward), radius * 0.045f, guide, 1.4f);
+        }
         badgeWorld = end;
         angleBadge = true;
     };

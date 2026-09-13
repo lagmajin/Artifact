@@ -3889,6 +3889,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   return image;
 #endif
 }
+
  void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
   impl_->readbackToImageAsync(std::move(callback));
  }

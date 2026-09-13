@@ -159,6 +159,18 @@ cbuffer ReactiveGlowParams : register(b0){ float g_Threshold; float g_Radius; fl
 float luma(float3 c){ return dot(c,float3(0.299f,0.587f,0.114f)); }
 [numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=g_InputTexture[dtid.xy]; float3 c=px.rgb; float lum=luma(c); float sat=max(c.r,max(c.g,c.b))-min(c.r,min(c.g,c.b)); float mask=saturate((lum-g_Threshold)/max(0.0001f,1.0f-g_Threshold)); mask = saturate(mask*g_Reaction + sat*g_SaturationWeight); float3 glow = lerp(float3(mask,mask,mask), c*mask, g_TintMix); px.rgb = saturate(c + glow * g_Intensity); g_OutputTexture[dtid.xy]=px; }
 )";
+// Resident-path variant: no own b0 cbuffer (the pipeline prepends
+// ResidentGenericParams). Mapping: P0 threshold, P1 radius (carried but
+// unused, matching the legacy HLSL), P2 intensity, P3 reaction,
+// P4 saturationWeight, P5 tintMix.
+    static constexpr const char* kReactiveGlowResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0); RWTexture2D<float4> g_OutputTexture : register(u0);
+float luma(float3 c){ return dot(c,float3(0.299f,0.587f,0.114f)); }
+[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=g_InputTexture[dtid.xy]; float3 c=px.rgb; float lum=luma(c); float sat=max(c.r,max(c.g,c.b))-min(c.r,min(c.g,c.b)); float mask=saturate((lum-g_P0)/max(0.0001f,1.0f-g_P0)); mask = saturate(mask*g_P3 + sat*g_P4); float3 glow = lerp(float3(mask,mask,mask), c*mask, g_P5); px.rgb = saturate(c + glow * g_P2); g_OutputTexture[dtid.xy]=px; }
+)";
+public:
+    static constexpr const char* residentHlsl() { return kReactiveGlowResidentHlsl; }
+private:
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); const float* data=img.rgba32fData(); if(!device||!outTex||!data||img.width()<=0||img.height()<=0) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=data; sub.Stride=static_cast<Diligent::Uint64>(img.width())*sizeof(float)*4ull; Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
     static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const ArtifactCore::SurfaceColorDescriptor& colorDescriptor, const char* name){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride); dst.image().setFromCVMat(temp, colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return true; }
 };
@@ -170,6 +182,10 @@ ReactiveGlowEffect::ReactiveGlowEffect() {
     setCPUImpl(ArtifactCore::makeShared<ReactiveGlowEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<ReactiveGlowEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        ReactiveGlowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            ReactiveGlowEffectGPUImpl::residentHlsl(), "main", GpuGenericResourceKind::Filter});
 }
 
 ReactiveGlowEffect::~ReactiveGlowEffect() = default;

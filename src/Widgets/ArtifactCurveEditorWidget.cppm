@@ -1287,6 +1287,36 @@ void ArtifactCurveEditorWidget::setCurrentFrame(int64_t frame) {
  update();
 }
 
+int64_t ArtifactCurveEditorWidget::currentFrame() const {
+ return impl_->currentFrame_;
+}
+
+QRectF ArtifactCurveEditorWidget::visualPlotRect() const {
+ return impl_->plotRect();
+}
+
+QRectF ArtifactCurveEditorWidget::visualViewRange() const {
+ return QRectF(impl_->xMin_, impl_->yMin_,
+               impl_->xMax_ - impl_->xMin_, impl_->yMax_ - impl_->yMin_);
+}
+
+QPointF ArtifactCurveEditorWidget::visualPoint(
+    int trackIndex, float frame, float value) const {
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->tracks_.size())) {
+  return impl_->dataToPixel(frame, value);
+ }
+ return impl_->trackToPixel(impl_->tracks_[trackIndex], frame, value);
+}
+
+bool ArtifactCurveEditorWidget::visualKeySelected(
+    int trackIndex, int keyIndex) const {
+ return impl_->isKeySelected(trackIndex, keyIndex);
+}
+
+int ArtifactCurveEditorWidget::visualSelectedTrack() const {
+ return impl_->selectedTrack_;
+}
+
 void ArtifactCurveEditorWidget::setSpeedGraph(
     const QVector<TimeRemapKeyframe>& keyframes,
     int64_t startFrame,

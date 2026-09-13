@@ -177,6 +177,7 @@ export namespace Artifact
   void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
   void setCompositionMarkers(const QVector<CompositionMarkerVisual>& markers);
   QVector<KeyframeMarkerVisual> keyframeMarkers() const;
+  const QVector<KeyframeMarkerVisual>& keyframeMarkersView() const;
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;
   void selectAllKeyframeMarkers();
@@ -202,6 +203,7 @@ export namespace Artifact
                           const QVector<TimelineRowDescriptor>& trackRows,
                           bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
+  const QVector<TrackClipVisual>& clipsView() const;
 
  public:
   void clipSelected(const QString& clipId, const LayerID& layerId);

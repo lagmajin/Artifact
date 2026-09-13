@@ -14,6 +14,7 @@ module;
 
 module Menu.Option;
 import std;
+import Translation.Manager;
 
 import Application.AppSettings;
 import ApplicationSettingDialog;
@@ -137,7 +138,7 @@ void ArtifactOptionMenu::Impl::handleCompositionClosed()
 ArtifactOptionMenu::ArtifactOptionMenu(QWidget* parent/*=nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
-  setTitle("Options");
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.options.label"), QStringLiteral("オプション(&O)")));
   setTearOffEnabled(true);
   setSeparatorsCollapsible(true);
   setMinimumWidth(240);

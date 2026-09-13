@@ -14,6 +14,7 @@ module;
 #include <QMouseEvent>
 #include <QPointer>
 #include <QResizeEvent>
+#include <QSize>
 #include <QString>
 #include <QWheelEvent>
 #include <QWidget>
@@ -21,6 +22,8 @@ module;
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -96,6 +99,8 @@ public:
   bool usingSharedDevice_ = false;
   std::atomic_bool renderEventPending_{false};
   QPointer<QWidget> inputTarget_;
+  std::function<void()> inputUpdatedCallback_;
+  std::chrono::steady_clock::time_point lastMouseMoveSnapshot_{};
 
   static FloatColor toFloatColor(const QColor& color)
   {
@@ -324,6 +329,15 @@ bool ArtifactDiligentTimelineRenderWindow::isGpuReady() const
 void ArtifactDiligentTimelineRenderWindow::setInputTarget(QWidget* target)
 {
   impl_->inputTarget_ = target;
+  if (impl_->inputTarget_ && width() > 0 && height() > 0) {
+    impl_->inputTarget_->resize(width(), height());
+  }
+}
+
+void ArtifactDiligentTimelineRenderWindow::setInputUpdatedCallback(
+    std::function<void()> callback)
+{
+  impl_->inputUpdatedCallback_ = std::move(callback);
 }
 
 void ArtifactDiligentTimelineRenderWindow::requestRender()
@@ -344,7 +358,20 @@ bool ArtifactDiligentTimelineRenderWindow::event(QEvent* event)
     case QEvent::Wheel:
     case QEvent::KeyPress:
     case QEvent::KeyRelease:
+      if (impl_->inputTarget_->size() != QSize(width(), height())) {
+        impl_->inputTarget_->resize(width(), height());
+      }
       QCoreApplication::sendEvent(impl_->inputTarget_, event);
+      const auto now = std::chrono::steady_clock::now();
+      const bool isMouseMove = event->type() == QEvent::MouseMove;
+      const bool snapshotDue = !isMouseMove ||
+          now - impl_->lastMouseMoveSnapshot_ >= std::chrono::milliseconds(16);
+      if (impl_->inputUpdatedCallback_ && snapshotDue) {
+        if (isMouseMove) {
+          impl_->lastMouseMoveSnapshot_ = now;
+        }
+        impl_->inputUpdatedCallback_();
+      }
       return true;
     default:
       break;
@@ -363,6 +390,9 @@ bool ArtifactDiligentTimelineRenderWindow::event(QEvent* event)
 void ArtifactDiligentTimelineRenderWindow::resizeEvent(QResizeEvent* event)
 {
   QWindow::resizeEvent(event);
+  if (impl_->inputTarget_) {
+    impl_->inputTarget_->resize(event->size());
+  }
   if (impl_->swapChain_) {
     impl_->swapChain_->Resize(
         static_cast<Uint32>(std::max(

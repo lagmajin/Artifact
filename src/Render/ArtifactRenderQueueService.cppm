@@ -92,6 +92,9 @@ import Core.Defaults;
 import Core.Parallel;
 import Image.ImageF32x4_RGBA;
 import Image.MultiChannelImage;
+import Image.Cryptomatte.Pixel;
+import Image.DeepImageBuffer;
+import Image.OpenEXR;
 import CvUtils;
 import Audio.Segment;
 import Audio.Effect.Spectrum;
@@ -123,6 +126,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layer.Shape;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
+import Artifact.Layers.Model3D;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Layer.Blend;
@@ -871,6 +875,46 @@ namespace Artifact
             return missing;
         }
 
+        ArtifactCore::DeepImageBuffer deepImageFromResolvedChannels(
+            const ArtifactCore::MultiChannelImage& image)
+        {
+            const int width = image.width();
+            const int height = image.height();
+            if (width <= 0 || height <= 0) return {};
+
+            const size_t pixelCount = static_cast<size_t>(width) *
+                static_cast<size_t>(height);
+            if (pixelCount > std::numeric_limits<size_t>::max() / 4u) {
+                return {};
+            }
+            const auto red = image.getChannel(ArtifactCore::ChannelType::Red);
+            const auto green = image.getChannel(ArtifactCore::ChannelType::Green);
+            const auto blue = image.getChannel(ArtifactCore::ChannelType::Blue);
+            const auto alpha = image.getChannel(ArtifactCore::ChannelType::Alpha);
+            const auto depth = image.getChannel(ArtifactCore::ChannelType::Depth);
+            if (!red || !green || !blue || !alpha || !depth ||
+                !red->data() || !green->data() || !blue->data() ||
+                !alpha->data() || !depth->data() ||
+                red->size() != pixelCount || green->size() != pixelCount ||
+                blue->size() != pixelCount || alpha->size() != pixelCount ||
+                depth->size() != pixelCount) {
+                return {};
+            }
+
+            // Render-queue output is a cold path. The resolved AOV payload is
+            // already on the CPU, so do not issue a second GPU readback merely
+            // to construct the one-sample-per-pixel Deep interchange buffer.
+            std::vector<float> rgba(pixelCount * 4u);
+            for (size_t index = 0; index < pixelCount; ++index) {
+                rgba[index * 4u + 0u] = red->data()[index];
+                rgba[index * 4u + 1u] = green->data()[index];
+                rgba[index * 4u + 2u] = blue->data()[index];
+                rgba[index * 4u + 3u] = alpha->data()[index];
+            }
+            return ArtifactCore::DeepImageBuffer::fromFlatRGBAWithDepth(
+                rgba.data(), depth->data(), width, height);
+        }
+
         QStringList defaultMultiChannelExportChannelKeys()
         {
             QStringList names;
@@ -910,48 +954,21 @@ namespace Artifact
 
         quint32 cryptomatteMurmurHash(const QString& value)
         {
-            const QByteArray bytes = value.toUtf8();
-            const auto* data = reinterpret_cast<const unsigned char*>(bytes.constData());
-            const int length = bytes.size();
-            constexpr quint32 seed = 0u;
-            constexpr quint32 c1 = 0xcc9e2d51u;
-            constexpr quint32 c2 = 0x1b873593u;
-            quint32 hash = seed;
-            const int blockCount = length / 4;
-            for (int block = 0; block < blockCount; ++block) {
-                const int offset = block * 4;
-                quint32 k = static_cast<quint32>(data[offset]) |
-                            (static_cast<quint32>(data[offset + 1]) << 8) |
-                            (static_cast<quint32>(data[offset + 2]) << 16) |
-                            (static_cast<quint32>(data[offset + 3]) << 24);
-                k *= c1;
-                k = (k << 15) | (k >> 17);
-                k *= c2;
-                hash ^= k;
-                hash = (hash << 13) | (hash >> 19);
-                hash = hash * 5u + 0xe6546b64u;
-            }
+            // The render pass and manifest must use precisely the same
+            // 32-bit MurmurHash payload. Keep the conversion owned by the Core
+            // Cryptomatte contract instead of maintaining a local variant.
+            return ArtifactCore::Image::Cryptomatte::CryptoSample::nameToId(value);
+        }
 
-            quint32 tail = 0;
-            const int tailOffset = blockCount * 4;
-            switch (length & 3) {
-            case 3: tail ^= static_cast<quint32>(data[tailOffset + 2]) << 16; [[fallthrough]];
-            case 2: tail ^= static_cast<quint32>(data[tailOffset + 1]) << 8; [[fallthrough]];
-            case 1:
-                tail ^= static_cast<quint32>(data[tailOffset]);
-                tail *= c1;
-                tail = (tail << 15) | (tail >> 17);
-                tail *= c2;
-                hash ^= tail;
-                break;
-            default: break;
-            }
-            hash ^= static_cast<quint32>(length);
-            hash ^= hash >> 16;
-            hash *= 0x85ebca6bu;
-            hash ^= hash >> 13;
-            hash *= 0xc2b2ae35u;
-            return hash ^ (hash >> 16);
+        QString cryptomatteMetadataId(const QString& layerName)
+        {
+            // Cryptomatte's metadata id is the first seven hexadecimal
+            // digits of the adjusted uint32-to-float payload.
+            QString value = QString::number(
+                ArtifactCore::Image::Cryptomatte::CryptoSample::nameToId(layerName),
+                16).rightJustified(8, QLatin1Char('0'));
+            value.chop(1);
+            return value;
         }
 
         QString buildCryptomatteManifestJson(const ArtifactCompositionPtr& composition,
@@ -972,6 +989,10 @@ namespace Artifact
                 quint32 hashedValue = 0;
                 if (materialManifest) {
                     entryName = layer->layerName() + QStringLiteral("|material");
+                    if (auto* modelLayer =
+                            dynamic_cast<Artifact3DLayer*>(layer.get())) {
+                        entryName = modelLayer->materialSignature();
+                    }
                     hashedValue = cryptomatteMurmurHash(entryName);
                 } else {
                     entryName = layer->id().toString();
@@ -981,10 +1002,15 @@ namespace Artifact
                 if (entryName.trimmed().isEmpty()) {
                     continue;
                 }
-                manifest.insert(entryName,
-                                QStringLiteral("0x%1")
-                                    .arg(static_cast<qulonglong>(hashedValue), 8, 16,
-                                         QLatin1Char('0')));
+                // Cryptomatte manifests map the original name to its encoded
+                // uint32 bit payload in hexadecimal. Nuke uses this exact
+                // direction when rebuilding its ID-to-name lookup.
+                const QString hashValue =
+                    QString::number(static_cast<qulonglong>(hashedValue), 16)
+                        .rightJustified(8, QLatin1Char('0'));
+                if (!manifest.contains(entryName)) {
+                    manifest.insert(entryName, hashValue);
+                }
             }
 
             return QString::fromUtf8(
@@ -1031,13 +1057,15 @@ namespace Artifact
             if (requestedMultiChannelContains(job, QStringLiteral("ObjectId"))) {
                 appendCryptomatteMetadata(
                     options, QStringLiteral("artifact.cryptomatte.object"),
-                    QStringLiteral("00000000"), QStringLiteral("CryptoObject"),
+                    cryptomatteMetadataId(QStringLiteral("CryptoObject")),
+                    QStringLiteral("CryptoObject"),
                     buildCryptomatteManifestJson(composition, false));
             }
             if (requestedMultiChannelContains(job, QStringLiteral("MaterialId"))) {
                 appendCryptomatteMetadata(
                     options, QStringLiteral("artifact.cryptomatte.material"),
-                    QStringLiteral("00000001"), QStringLiteral("CryptoMaterial"),
+                    cryptomatteMetadataId(QStringLiteral("CryptoMaterial")),
+                    QStringLiteral("CryptoMaterial"),
                     buildCryptomatteManifestJson(composition, true));
             }
         }
@@ -1045,18 +1073,26 @@ namespace Artifact
         void configureRendererChannelsForRenderQueueJob(
             ArtifactIRenderer& renderer, const ArtifactRenderJob& job)
         {
-            renderer.setMultiChannelEnabled(job.multiChannelExportEnabled);
+            const bool requiresChannels = job.multiChannelExportEnabled ||
+                job.deepExportEnabled;
+            renderer.setMultiChannelEnabled(requiresChannels);
             for (const auto channel : kAllRendererChannels) {
                 renderer.setChannelEnabled(channel, false);
                 renderer.setAuxiliaryChannelSource(channel, nullptr);
             }
 
-            if (!job.multiChannelExportEnabled) {
+            if (!requiresChannels) {
                 return;
             }
 
-            const QStringList requestedChannels =
+            QStringList requestedChannels =
                 sanitizeMultiChannelExportChannelKeys(job.multiChannelExportChannels);
+            if (job.deepExportEnabled) {
+                requestedChannels << QStringLiteral("R") << QStringLiteral("G")
+                                  << QStringLiteral("B") << QStringLiteral("A")
+                                  << QStringLiteral("Depth");
+                requestedChannels.removeDuplicates();
+            }
             for (const auto& channelName : requestedChannels) {
                 const auto channel = rendererChannelFromKey(channelName);
                 if (channel.has_value()) {
@@ -1266,6 +1302,17 @@ namespace Artifact
                 QStringLiteral("Beauty and named AOVs are captured before composition final-image effects. This keeps Depth, Normal, Velocity, and ID channels spatially aligned."),
                 QStringLiteral("Bake final-image effects into layers when they must affect the exported Beauty channel"),
                 compId));
+
+            if (job.deepExportEnabled) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Info,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Deep EXR uses one sample per pixel"),
+                    QStringLiteral("This Deep EXR is constructed from Beauty plus the resolved Depth AOV. "
+                                   "It preserves one visible depth sample per pixel, not native multi-hit visibility."),
+                    QStringLiteral("Use it for depth-aware interchange; native multi-sample Deep requires renderer support"),
+                    compId));
+            }
 
             const QStringList channels =
                 sanitizeMultiChannelExportChannelKeys(job.multiChannelExportChannels);
@@ -1670,6 +1717,9 @@ namespace Artifact
         void setJobMultiChannelEnabled(int index, bool enabled) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].multiChannelExportEnabled = enabled;
+            if (!enabled) {
+                jobs[index].deepExportEnabled = false;
+            }
             if (enabled) {
                 jobs[index].multiChannelExportChannels =
                     sanitizeMultiChannelExportChannelKeys(
@@ -1690,6 +1740,23 @@ namespace Artifact
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].multiChannelExportChannels =
                 sanitizeMultiChannelExportChannelKeys(channels);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        bool jobDeepExportEnabledAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return false;
+            return jobs[index].deepExportEnabled;
+        }
+
+        void setJobDeepExportEnabled(int index, bool enabled) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].deepExportEnabled = enabled;
+            if (enabled) {
+                jobs[index].multiChannelExportEnabled = true;
+                jobs[index].multiChannelExportChannels =
+                    sanitizeMultiChannelExportChannelKeys(
+                        jobs[index].multiChannelExportChannels);
+            }
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -2554,16 +2621,20 @@ namespace Artifact
         struct FrameRenderOutput {
             QImage beauty;
             ArtifactCore::MultiChannelImage channels;
+            ArtifactCore::DeepImageBuffer deep;
 
-            bool isValid(bool requireChannels) const {
+            bool isValid(bool requireChannels, bool requireDeep) const {
+                if (requireDeep) return !deep.isEmpty();
                 return requireChannels ? !channels.isEmpty() : !beauty.isNull();
             }
 
-            int width(bool requireChannels) const {
+            int width(bool requireChannels, bool requireDeep) const {
+                if (requireDeep) return deep.width();
                 return requireChannels ? channels.width() : beauty.width();
             }
 
-            int height(bool requireChannels) const {
+            int height(bool requireChannels, bool requireDeep) const {
+                if (requireDeep) return deep.height();
                 return requireChannels ? channels.height() : beauty.height();
             }
         };
@@ -3731,6 +3802,10 @@ namespace Artifact
             gpuTextureCacheManager.setDevice(
                 gpuRenderer_->device(), gpuRenderer_->immediateContext());
 
+            // AOV render targets must be enabled before layers are drawn.
+            // In particular, ObjectId and MaterialId are populated during
+            // layer rendering and cannot be reconstructed at readback time.
+            configureRendererChannelsForRenderQueueJob(*gpuRenderer_, job);
             gpuRenderer_->setClearColor(comp->backgroundColor());
             gpuRenderer_->clear();
             const auto& layers = comp->allLayerRef();
@@ -3808,10 +3883,8 @@ namespace Artifact
                                             &surfaceCache, &gpuTextureCacheManager,
                                             job.startFrame, true, DetailLevel::High,
                                             nullptr, &matteSourceImages);
-                }
+            }
             gpuRenderer_->flush();
-
-            configureRendererChannelsForRenderQueueJob(*gpuRenderer_, job);
 
             // GPU readback
             ArtifactCore::MultiChannelImage multiFrame;
@@ -4663,6 +4736,17 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    bool ArtifactRenderQueueService::jobDeepExportEnabledAt(int index) const
+    {
+        return impl_->queueManager.jobDeepExportEnabledAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobDeepExportEnabledAt(int index, bool enabled)
+    {
+        impl_->queueManager.setJobDeepExportEnabled(index, enabled);
+        impl_->syncCoreQueueModel();
+    }
+
     int ArtifactRenderQueueService::jobFramePaddingAt(int index) const
     {
         return impl_->queueManager.jobFramePaddingAt(index);
@@ -5200,6 +5284,16 @@ namespace Artifact
                 QStringLiteral("Job '%1' resolves to unsupported output format '%2'.")
                     .arg(jobName, outputFormat),
                 QStringLiteral("Choose a supported image sequence or video format"),
+                compId));
+        }
+        if (job.deepExportEnabled && outputFormat != QStringLiteral("exr")) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Deep export requires EXR"),
+                QStringLiteral("Job '%1' requests Deep EXR but resolves to '%2'.")
+                    .arg(jobName, outputFormat),
+                QStringLiteral("Choose an EXR image-sequence output"),
                 compId));
         }
 
@@ -5857,22 +5951,10 @@ namespace Artifact
             const bool gpuMattePipelineReady = gpuMattePipeline != nullptr;
 
             const auto shaderModeFor = [](const LayerMatteReference& ref) {
-                switch (ref.type) {
-                case MatteType::Alpha: return ref.invert ? 2u : 0u;
-                case MatteType::Luma: return ref.invert ? 3u : 1u;
-                case MatteType::InverseAlpha: return ref.invert ? 0u : 2u;
-                case MatteType::InverseLuma: return ref.invert ? 1u : 3u;
-                }
-                return 0u;
+                return ref.toGpuModeIndex();
             };
             const auto shaderBlendModeFor = [](const LayerMatteReference& ref) {
-                switch (ref.blendMode) {
-                case MatteBlendMode::Add: return 0u;
-                case MatteBlendMode::Intersect: return 1u;
-                case MatteBlendMode::Subtract: return 2u;
-                case MatteBlendMode::Difference: return 3u;
-                }
-                return 0u;
+                return ref.toGpuBlendIndex();
             };
             // MatteTrack inputs must match the active GPU render target. The
             // effective composition size can differ when a render preset or
@@ -6035,7 +6117,9 @@ namespace Artifact
                                             &matteSourceImages);
             }
             renderer->flush();
-            if (snap.job.multiChannelExportEnabled) {
+            const bool requiresChannels = snap.job.multiChannelExportEnabled ||
+                snap.job.deepExportEnabled;
+            if (requiresChannels) {
                 output.channels = renderer->readbackToMultiChannelImage();
                 const QStringList missing = missingRequestedMultiChannelChannels(
                     snap.job, output.channels);
@@ -6043,6 +6127,14 @@ namespace Artifact
                     failureReason = QStringLiteral("Requested AOV channels were not generated: %1")
                         .arg(missing.join(QStringLiteral(", ")));
                     return false;
+                }
+                if (snap.job.deepExportEnabled) {
+                    output.deep = deepImageFromResolvedChannels(output.channels);
+                    if (output.deep.isEmpty()) {
+                        failureReason = QStringLiteral(
+                            "Deep EXR requires populated Beauty RGBA and Depth AOVs");
+                        return false;
+                    }
                 }
             } else {
                 // Preserve the established F32 path whenever the composition
@@ -6095,16 +6187,16 @@ namespace Artifact
                 }
             }
         } else {
-            if (snap.job.multiChannelExportEnabled) {
+            if (snap.job.multiChannelExportEnabled || snap.job.deepExportEnabled) {
                 failureReason = QStringLiteral("Multi-channel output requires the GPU render backend");
                 return false;
             }
             output.beauty = renderSingleFrameComposition(snap.job, snap.composition, snap.frameNumber);
         }
 
-        if (!output.isValid(snap.job.multiChannelExportEnabled)) {
-            failureReason = snap.job.multiChannelExportEnabled
-                ? QStringLiteral("Rendered multi-channel frame is empty")
+        if (!output.isValid(snap.job.multiChannelExportEnabled, snap.job.deepExportEnabled)) {
+            failureReason = (snap.job.multiChannelExportEnabled || snap.job.deepExportEnabled)
+                ? QStringLiteral("Rendered multi-channel or deep frame is empty")
                 : QStringLiteral("Rendered frame is null");
             return false;
         }
@@ -6346,13 +6438,19 @@ namespace Artifact
             {
                 std::lock_guard<std::mutex> lock(outputBufferMutex);
                 if (ok) {
-                    const size_t channelMultiplier = snap.job.multiChannelExportEnabled
+                    const size_t channelMultiplier = (snap.job.multiChannelExportEnabled ||
+                                                      snap.job.deepExportEnabled)
                         ? std::max<size_t>(1, frameOutput.channels.channelCount()) : 1;
                     const size_t frameBytes = static_cast<size_t>(
-                        frameOutput.width(snap.job.multiChannelExportEnabled)) *
-                        static_cast<size_t>(frameOutput.height(snap.job.multiChannelExportEnabled)) *
+                        frameOutput.width(snap.job.multiChannelExportEnabled,
+                                          snap.job.deepExportEnabled)) *
+                        static_cast<size_t>(frameOutput.height(snap.job.multiChannelExportEnabled,
+                                                               snap.job.deepExportEnabled)) *
                         4 * channelMultiplier;
-                    outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
+                    const size_t deepBytes = snap.job.deepExportEnabled
+                        ? frameOutput.deep.approximateMemoryBytes() : 0;
+                    outputBufferMemory.fetch_add(frameBytes + deepBytes,
+                                                 std::memory_order_relaxed);
                 }
                 // Always write to the bounded buffer so the consumer can
                 // proceed. Reuse its reserved storage instead of allocating a
@@ -6636,17 +6734,23 @@ namespace Artifact
                 }
                 frameOutput = std::move(it->second);
                 outputBuffer.erase(it);
-                const size_t channelMultiplier = job.multiChannelExportEnabled
+                const size_t channelMultiplier = (job.multiChannelExportEnabled ||
+                                                  job.deepExportEnabled)
                     ? std::max<size_t>(1, frameOutput.channels.channelCount()) : 1;
                 const size_t frameBytes = static_cast<size_t>(
-                    frameOutput.width(job.multiChannelExportEnabled)) *
-                    static_cast<size_t>(frameOutput.height(job.multiChannelExportEnabled)) *
+                    frameOutput.width(job.multiChannelExportEnabled,
+                                      job.deepExportEnabled)) *
+                    static_cast<size_t>(frameOutput.height(job.multiChannelExportEnabled,
+                                                           job.deepExportEnabled)) *
                     4 * channelMultiplier;
-                outputBufferMemory.fetch_sub(frameBytes, std::memory_order_relaxed);
+                const size_t deepBytes = job.deepExportEnabled
+                    ? frameOutput.deep.approximateMemoryBytes() : 0;
+                outputBufferMemory.fetch_sub(frameBytes + deepBytes,
+                                             std::memory_order_relaxed);
             }
             bufferSpaceCv.notify_all();
 
-            if (!frameOutput.isValid(job.multiChannelExportEnabled)) {
+            if (!frameOutput.isValid(job.multiChannelExportEnabled, job.deepExportEnabled)) {
                 if (useFarm) {
                     // Farm path: retries might be in progress.
                     // Poll for up to ~60s total for the retried frame to arrive.
@@ -6661,7 +6765,8 @@ namespace Artifact
                         if (it != outputBuffer.end()) {
                             frameOutput = std::move(it->second);
                             outputBuffer.erase(it);
-                            if (frameOutput.isValid(job.multiChannelExportEnabled)) {
+                            if (frameOutput.isValid(job.multiChannelExportEnabled,
+                                                    job.deepExportEnabled)) {
                                 resolved = true;
                                 break;
                             }
@@ -6833,12 +6938,28 @@ namespace Artifact
                         QString::number(job.frameRate, 'g', 12));
                     populateCryptomatteDraftAttributes(job, compositionForRender, imgOpts);
                 }
-                const auto result = job.multiChannelExportEnabled
-                    ? exporter.writeMultiChannel(frameOutput.channels, framePath, imgOpts)
-                    : exporter.write(qimg, framePath, imgOpts);
-                if (!result.success) {
+                if (job.deepExportEnabled) {
+                    ArtifactCore::OpenExr deepWriter;
+                    if (!deepWriter.writeDeepRGBA32F(framePath, frameOutput.deep,
+                                                     QStringLiteral("zip"))) {
+                        success.store(false, std::memory_order_relaxed);
+                        failureReason = QStringLiteral(
+                            "Failed to save Deep EXR image sequence frame");
+                        break;
+                    }
+                } else {
+                    const auto result = job.multiChannelExportEnabled
+                        ? exporter.writeMultiChannel(frameOutput.channels, framePath, imgOpts)
+                        : exporter.write(qimg, framePath, imgOpts);
+                    if (!result.success) {
+                        success.store(false, std::memory_order_relaxed);
+                        failureReason = QStringLiteral("Failed to save image sequence frame: %1")
+                            .arg(result.errorMessage);
+                        break;
+                    }
+                }
+                if (!success.load(std::memory_order_relaxed)) {
                     success.store(false, std::memory_order_relaxed);
-                    failureReason = QStringLiteral("Failed to save image sequence frame: %1").arg(result.errorMessage);
                     break;
                 }
             }
@@ -7572,6 +7693,7 @@ namespace Artifact
             obj["renderBackend"] = job.renderBackend;
             obj["integratedRenderEnabled"] = job.integratedRenderEnabled;
             obj["multiChannelExportEnabled"] = job.multiChannelExportEnabled;
+            obj["deepExportEnabled"] = job.deepExportEnabled;
             obj["multiChannelExportChannels"] =
                 QJsonArray::fromStringList(
                     sanitizeMultiChannelExportChannelKeys(
@@ -7785,6 +7907,10 @@ namespace Artifact
                 : normalizeRenderBackend(savedRenderBackend);
             job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
             job.multiChannelExportEnabled = obj["multiChannelExportEnabled"].toBool(false);
+            job.deepExportEnabled = obj["deepExportEnabled"].toBool(false);
+            if (job.deepExportEnabled) {
+                job.multiChannelExportEnabled = true;
+            }
             qsizetype channelCount = 0;
             for (const auto& value : obj["multiChannelExportChannels"].toArray()) {
                 if (channelCount++ >= 128) break;

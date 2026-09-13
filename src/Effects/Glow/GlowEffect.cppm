@@ -222,6 +222,70 @@ struct ParamsCB {
     float pad = 0.0f;
 };
 
+// Resident-path variant of kGlowHlsl. The generic pipeline prepends
+// ResidentGenericParams (g_P0..g_P7 at b0), so this body must not declare
+// its own b0 cbuffer. Mapping: P0 gain, P1 layers, P2 baseSigma,
+// P3 growth, P4 baseAlpha, P5 falloff, P6 contributionOnly.
+static constexpr const char* kGlowResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float luminance(float3 c) {
+    return dot(c, float3(0.299f, 0.587f, 0.114f));
+}
+
+float4 sampleTex(Texture2D<float4> tex, int2 p, uint w, uint h) {
+    p.x = clamp(p.x, 0, (int)w - 1);
+    p.y = clamp(p.y, 0, (int)h - 1);
+    return tex[uint2(p)];
+}
+
+[numthreads(8,8,1)]
+void main(uint3 dtid : SV_DispatchThreadID) {
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (dtid.x >= w || dtid.y >= h) {
+        return;
+    }
+
+    float4 center = g_InputTexture[dtid.xy];
+    float3 accum = 0.0f;
+    float alphaSum = 0.0f;
+    int layers = max(1, (int)g_P1);
+
+    [loop]
+    for (int i = 0; i < layers; ++i) {
+        float sigma = max(0.1f, g_P2 + g_P3 * (float)i);
+        int radius = max(1, (int)ceil(sigma * 2.5f));
+        float weightSum = 0.0f;
+        float3 layerAccum = 0.0f;
+
+        [loop]
+        for (int y = -radius; y <= radius; ++y) {
+            [loop]
+            for (int x = -radius; x <= radius; ++x) {
+                float d = (float)(x * x + y * y);
+                float wgt = exp(-0.5f * d / max(0.0001f, sigma * sigma));
+                float4 samplePx = sampleTex(g_InputTexture, int2(dtid.xy) + int2(x, y), w, h);
+                float lum = luminance(samplePx.rgb);
+                float bright = lum > 0.6f ? saturate(lum * g_P0) : 0.0f;
+                layerAccum += samplePx.rgb * bright * wgt;
+                weightSum += wgt;
+            }
+        }
+
+        layerAccum /= max(weightSum, 0.0001f);
+        float alphaWeight = g_P4 * pow(max(0.0f, g_P5), (float)i);
+        accum += layerAccum * alphaWeight;
+        alphaSum += alphaWeight;
+    }
+
+    float3 contribution = accum / max(alphaSum, 0.0001f);
+    float3 result = g_P6 > 0.5f ? contribution : center.rgb + contribution;
+    g_OutputTexture[dtid.xy] = float4(saturate(result), center.a);
+}
+)";
+
 static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
                                    Diligent::IRenderDevice* device,
                                    Diligent::ITexture** outTex,
@@ -504,6 +568,10 @@ GlowEffect::GlowEffect() : impl_(new Impl()) {
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(impl_->cpuImpl_);
     setGPUImpl(impl_->gpuImpl_);
+    registerGpuGenericShader(
+        GlowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kGlowResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 GlowEffect::~GlowEffect() {
@@ -897,16 +965,87 @@ public:
     float warmth = 0.14f;
 };
 
+// Resident-path HLSL. Mirrors VolumetricShine::process over the threshold
+// selection: radial nearest-sample accumulation toward the source point,
+// then additive composite. The "-selectedHighlights" term in apply() cancels
+// the initial masked content, so the result is src + shine/samples*tint.
+// Mapping: P0 sourceX, P1 sourceY, P2 rayLength, P3 intensity, P4 decay,
+// P5 samples, P6 threshold, P7 warmth. C++ (int) truncation is matched by
+// HLSL int() (both round toward zero).
+static constexpr const char* kVolumetricShineResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float3 shineMasked(int2 p, uint w, uint h, float threshold)
+{
+    p.x = clamp(p.x, 0, (int)w - 1);
+    p.y = clamp(p.y, 0, (int)h - 1);
+    float4 s = g_InputTexture[uint2(p)];
+    float lum = dot(s.rgb, float3(0.299f, 0.587f, 0.114f));
+    float selection = max(0.0f, lum - threshold) / max(lum, 0.0001f);
+    return s.rgb * selection;
+}
+
+[numthreads(8,8,1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (dtid.x >= w || dtid.y >= h) return;
+    float cx = g_P0 * (float)w;
+    float cy = g_P1 * (float)h;
+    int count = clamp((int)(g_P5 + 0.5f), 4, 128);
+    float stepScale = g_P2 / (float)max(count, 1);
+    float2 dir = (float2(dtid.xy) - float2(cx, cy)) * stepScale;
+    float4 src = g_InputTexture[dtid.xy];
+    float3 acc = 0.0f;
+    float falloff = 1.0f;
+    float2 pos = float2(dtid.xy);
+    [loop] for (int i = 0; i < 128; ++i) {
+        if (i >= count) break;
+        pos -= dir;
+        int sx = clamp((int)pos.x, 0, (int)w - 1);
+        int sy = clamp((int)pos.y, 0, (int)h - 1);
+        acc += shineMasked(int2(sx, sy), w, h, g_P6) * (falloff * g_P3);
+        falloff *= g_P4;
+    }
+    float3 tint = float3(1.0f + g_P7 * 0.2f, 1.0f, 1.0f - g_P7 * 0.35f);
+    float3 result = src.rgb + (acc / (float)max(count, 1)) * tint;
+    g_OutputTexture[dtid.xy] = float4(result, src.a);
+}
+)";
+
 VolumetricShineEffect::VolumetricShineEffect() : impl_(new Impl()) {
     setEffectID(ArtifactCore::UniString("builtin.volumetric_shine"));
     setDisplayName(ArtifactCore::UniString("Volumetric Shine"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setAllowOverscan(true);
+    registerGpuGenericShader(
+        VolumetricShineEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kVolumetricShineResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 VolumetricShineEffect::~VolumetricShineEffect() {
     delete impl_;
     impl_ = nullptr;
+}
+
+bool VolumetricShineEffect::appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const {
+    if (!impl_) return false;
+    GpuSpatialEffectNode node;
+    node.kind = GpuSpatialEffectKind::Generic;
+    node.genericKey = kGpuGenericKey;
+    node.parameters[0] = impl_->sourceX;
+    node.parameters[1] = impl_->sourceY;
+    node.parameters[2] = impl_->rayLength;
+    node.parameters[3] = impl_->intensity;
+    node.parameters[4] = impl_->decay;
+    node.parameters[5] = static_cast<float>(impl_->samples);
+    node.parameters[6] = impl_->threshold;
+    node.parameters[7] = impl_->warmth;
+    node.resolutionScaledParameterMask = 0;
+    return stack.append(node);
 }
 
 void VolumetricShineEffect::apply(const ImageF32x4RGBAWithCache& src,

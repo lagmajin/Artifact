@@ -188,6 +188,7 @@ import Core.Light;
 import Artifact.Effect.Abstract;
 
 import Artifact.Effect.Context;
+import Artifact.Effect.FrameSampler;
 
 
 import Artifact.Layer.Image;
@@ -216,6 +217,7 @@ import Artifact.Layers.Model3D;
 import Artifact.Render.Offscreen;
 
 import Image.ImageF32x4_RGBA;
+import Image.Cryptomatte.Pixel;
 
 import FloatRGBA;
 
@@ -884,7 +886,10 @@ EffectContext makeControllerEffectContext(
 
 
 
-  ctx.sampler = nullptr;
+  auto& frameSampler = ArtifactEffectFrameSampler::instance();
+  frameSampler.setActiveLayerId(layer->id().toString());
+  frameSampler.setCurrentCompositionFrame(ctx.compositionFrame);
+  ctx.sampler = &frameSampler;
 
   return ctx;
 
@@ -3004,7 +3009,7 @@ enum class RectangleToolMode { None, Mask, Shape, EllipseMask, EllipseShape, Sta
 
 
 
-enum class MaskHandleType { None, InTangent, OutTangent, FeatherHandle };
+enum class MaskEditHandleType { None, InTangent, OutTangent, FeatherHandle };
 
 QRectF dragRectFromPoints(const QPointF &start, const QPointF &end);
 
@@ -3985,6 +3990,13 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
     }
 
+    // Publish only the completed rasterizer result.  Temporal effects can
+    // sample deterministic, layer-local history without recursively reading
+    // an intermediate effect stage from the frame currently being evaluated.
+    auto& frameSampler = ArtifactEffectFrameSampler::instance();
+    frameSampler.storeLayerFrame(targetLayer->id().toString(),
+        makeControllerEffectContext(targetLayer).compositionFrame, current);
+
     mat = current.image().toCVMat();
 
   }
@@ -3999,7 +4011,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
 
 
-QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType handleType)
+QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskEditHandleType handleType)
 
 {
 
@@ -4007,15 +4019,15 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
 
   switch (handleType) {
 
-  case MaskHandleType::InTangent:
+  case MaskEditHandleType::InTangent:
 
     return vertex.position + vertex.inTangent;
 
-  case MaskHandleType::OutTangent:
+  case MaskEditHandleType::OutTangent:
 
     return vertex.position + vertex.outTangent;
 
-  case MaskHandleType::FeatherHandle: {
+  case MaskEditHandleType::FeatherHandle: {
 
     const int count = path.vertexCount();
 
@@ -4048,7 +4060,7 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
 
   }
 
-  case MaskHandleType::None:
+  case MaskEditHandleType::None:
 
     break;
 
@@ -4068,7 +4080,7 @@ QPointF maskFeatherHandleCanvasPosition(const MaskPath& path, int vertexIndex,
   const QPointF anchorCanvas = globalTransform.map(vertex.position);
   if (!renderer || path.feather() > 0.01f) {
     return globalTransform.map(
-        maskHandlePosition(path, vertexIndex, MaskHandleType::FeatherHandle));
+        maskHandlePosition(path, vertexIndex, MaskEditHandleType::FeatherHandle));
   }
   const int count = path.vertexCount();
   if (count < 2) return anchorCanvas;
@@ -4162,7 +4174,7 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
                        int& outMaskIndex,
                        int& outPathIndex,
                        int& outVertexIndex,
-                       MaskHandleType& outHandleType)
+                       MaskEditHandleType& outHandleType)
 {
   if (!layer || !renderer) return false;
 
@@ -4176,12 +4188,12 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
       const MaskPath path = mask.maskPath(p);
       for (int v = 0; v < path.vertexCount(); ++v) {
         const MaskVertex vertex = path.vertex(v);
-        for (MaskHandleType handleType : {MaskHandleType::InTangent,
-                                          MaskHandleType::OutTangent,
-                                          MaskHandleType::FeatherHandle}) {
-          if ((handleType == MaskHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
-              (handleType == MaskHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) continue;
-          const QPointF handleCanvas = handleType == MaskHandleType::FeatherHandle
+        for (MaskEditHandleType handleType : {MaskEditHandleType::InTangent,
+                                          MaskEditHandleType::OutTangent,
+                                          MaskEditHandleType::FeatherHandle}) {
+          if ((handleType == MaskEditHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
+              (handleType == MaskEditHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) continue;
+          const QPointF handleCanvas = handleType == MaskEditHandleType::FeatherHandle
               ? maskFeatherHandleCanvasPosition(path, v, globalTransform, renderer)
               : globalTransform.map(maskHandlePosition(path, v, handleType));
           const auto handleViewport = renderer->canvasToViewport(
@@ -4200,7 +4212,7 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
       }
     }
   }
-  return outHandleType != MaskHandleType::None;
+  return outHandleType != MaskEditHandleType::None;
 }
 
 
@@ -4517,13 +4529,13 @@ bool layerUsesProjectedFrameGizmo(const ArtifactAbstractLayerPtr &layer) {
   return false;
 }
 
-void setMaskVertexHandle(MaskVertex &vertex, MaskHandleType handleType,
+void setMaskVertexHandle(MaskVertex &vertex, MaskEditHandleType handleType,
 
                          const QPointF &handleDelta, bool breakTangents) {
 
   const QPointF mirroredDelta(-handleDelta.x(), -handleDelta.y());
 
-  if (handleType == MaskHandleType::InTangent) {
+  if (handleType == MaskEditHandleType::InTangent) {
 
     vertex.inTangent = handleDelta;
 
@@ -4533,7 +4545,7 @@ void setMaskVertexHandle(MaskVertex &vertex, MaskHandleType handleType,
 
     }
 
-  } else if (handleType == MaskHandleType::OutTangent) {
+  } else if (handleType == MaskEditHandleType::OutTangent) {
 
     vertex.outTangent = handleDelta;
 
@@ -4683,7 +4695,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
 
 
 
-  if (layer->isTimeRemapEnabled() || layer->hasMasks() ||
+  if (layer->hasSourceTimeMapping() || layer->hasMasks() ||
 
       layer->hasModifiers() ||
 
@@ -4749,7 +4761,7 @@ bool layerHasOnionSkinAnimation(const ArtifactAbstractLayerPtr &layer) {
   const auto &transform = layer->transform3D();
   if (transform.getPositionKeyFrameCount() > 1 ||
       transform.getRotationKeyFrameCount() > 1 ||
-      transform.getScaleKeyFrameCount() > 1 || layer->isTimeRemapEnabled()) {
+      transform.getScaleKeyFrameCount() > 1 || layer->hasSourceTimeMapping()) {
     return true;
   }
 
@@ -5105,6 +5117,25 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
   key += QStringLiteral("|maskRevision=%1").arg(layer->maskRevision());
+  // Source-time-aware cache key: timeline frame alone collides when a remap
+  // or stop-motion sample resolves to a different/held source frame.
+  if (layer->hasSourceTimeMapping()) {
+   if (frameNumber != std::numeric_limits<int64_t>::min()) {
+    const double mappedSource = layer->getSourceFrameAtCompFrame(frameNumber);
+    key += QStringLiteral("|sourceTime=%1:%2:%3:%4:%5")
+               .arg(mappedSource, 0, 'f', 3)
+               .arg(static_cast<int>(layer->timeRemapFrameBlendMode()))
+               .arg(layer->timeRemapFrameBlendAmount(), 0, 'f', 3)
+               .arg(layer->isStopMotionSamplingEnabled() ? 1 : 0)
+               .arg(layer->stopMotionSamplingFrameRate(), 0, 'f', 3);
+   } else {
+    key += QStringLiteral("|sourceTime=noframe:%1:%2:%3:%4")
+               .arg(static_cast<int>(layer->timeRemapFrameBlendMode()))
+               .arg(layer->timeRemapFrameBlendAmount(), 0, 'f', 3)
+               .arg(layer->isStopMotionSamplingEnabled() ? 1 : 0)
+               .arg(layer->stopMotionSamplingFrameRate(), 0, 'f', 3);
+   }
+  }
   // Do not use QImage::cacheKey() as a generic layer identity here. Solid and
   // gradient layers create a fresh temporary QImage on every draw, even when
   // their content is unchanged, which would force a surface/GPU-cache miss on
@@ -6214,13 +6245,37 @@ FloatColor motionPathInterpolationColor(int interpolation, bool isCurrent) {
 
   case ArtifactCore::InterpolationType::Bezier:
 
-  case ArtifactCore::InterpolationType::Sine:
+   case ArtifactCore::InterpolationType::Sine:
 
-  case ArtifactCore::InterpolationType::Cubic:
+   case ArtifactCore::InterpolationType::Cubic:
 
-  case ArtifactCore::InterpolationType::Quintic:
+   case ArtifactCore::InterpolationType::Quintic:
 
-    return isCurrent ? FloatColor{1.0f, 0.58f, 0.30f, 1.0f}
+   case ArtifactCore::InterpolationType::CubicIn:
+
+   case ArtifactCore::InterpolationType::CubicInOut:
+
+   case ArtifactCore::InterpolationType::QuarticIn:
+
+   case ArtifactCore::InterpolationType::QuarticInOut:
+
+   case ArtifactCore::InterpolationType::QuinticIn:
+
+   case ArtifactCore::InterpolationType::QuinticInOut:
+
+   case ArtifactCore::InterpolationType::SineIn:
+
+   case ArtifactCore::InterpolationType::SineInOut:
+
+   case ArtifactCore::InterpolationType::CircularIn:
+
+   case ArtifactCore::InterpolationType::CircularInOut:
+
+   case ArtifactCore::InterpolationType::ExponentialIn:
+
+   case ArtifactCore::InterpolationType::ExponentialInOut:
+
+     return isCurrent ? FloatColor{1.0f, 0.58f, 0.30f, 1.0f}
 
                      : FloatColor{0.97f, 0.48f, 0.24f, 0.95f};
 
@@ -11440,7 +11495,7 @@ public:
 
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
-                    viewportOrientationActive_, surfaceGeneration(layer),
+                    true, surfaceGeneration(layer),
         &precompGpuResolver, deferRasterizerEffectsToGpu,
         &solidPointwiseCache_);
 
@@ -11763,23 +11818,11 @@ public:
     }
 
     const auto shaderModeFor = [](const LayerMatteReference& matteRef) {
-      switch (matteRef.type) {
-      case MatteType::Alpha: return matteRef.invert ? 2u : 0u;
-      case MatteType::Luma: return matteRef.invert ? 3u : 1u;
-      case MatteType::InverseAlpha: return matteRef.invert ? 0u : 2u;
-      case MatteType::InverseLuma: return matteRef.invert ? 1u : 3u;
-      }
-      return 0u;
+      return matteRef.toGpuModeIndex();
     };
 
     const auto shaderBlendModeFor = [](const LayerMatteReference& matteRef) {
-      switch (matteRef.blendMode) {
-      case MatteBlendMode::Add: return 0u;
-      case MatteBlendMode::Intersect: return 1u;
-      case MatteBlendMode::Subtract: return 2u;
-      case MatteBlendMode::Difference: return 3u;
-      }
-      return 0u;
+      return matteRef.toGpuBlendIndex();
     };
 
     const bool batchSizeSupported = !batchRefs.empty() && batchRefs.size() <= 3;
@@ -12127,6 +12170,10 @@ public:
 
     renderer_->setPan(origPanX, origPanY);
 
+    // The ground grid belongs behind the composition surface, not in the
+    // post-composite gizmo overlay pass.
+    drawThreeDimensionalGroundGrid();
+
     drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
 
                                     backgroundMode, checkerboardTileSize_,
@@ -12236,6 +12283,11 @@ public:
     default:
       break;
     }
+    const bool presentComponentAsPrimary =
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
     if (channelComponentSource && blendPipeline_) {
       auto context = renderer_->immediateContext();
       bool displayed = false;
@@ -12253,6 +12305,10 @@ public:
         viewportChannelDisplaySRV_ = renderPipeline.tempSRV();
       }
     }
+    Diligent::ITextureView* presentationSRV =
+        presentComponentAsPrimary && viewportChannelDisplaySRV_
+            ? viewportChannelDisplaySRV_.RawPtr()
+            : finalPresentSRV;
 
     if (presentationLayout_ == CompositionViewportPresentationLayout::Quad) {
       const float leftW = std::floor(origViewW * 0.5f);
@@ -12273,7 +12329,8 @@ public:
         renderer_->setZoom(1.0f);
         renderer_->setPan(0.0f, 0.0f);
         renderer_->drawSprite(0.0f, 0.0f, static_cast<float>(pane.width()),
-                              static_cast<float>(pane.height()), finalPresentSRV,
+                              static_cast<float>(pane.height()),
+                              presentationSRV,
                               1.0f);
         // The hardware viewport/scissor is immediate state, while the sprite
         // commands are buffered. Drain each pane before switching state.
@@ -12284,7 +12341,8 @@ public:
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);
       renderer_->setPan(0.0f, 0.0f);
-      renderer_->drawSprite(0.0f, 0.0f, origViewW, origViewH, finalPresentSRV,
+      renderer_->drawSprite(0.0f, 0.0f, origViewW, origViewH,
+                            presentationSRV,
                             1.0f);
     }
 
@@ -12826,7 +12884,13 @@ public:
 
   ArtifactCore::ViewOrientationNavigator viewportOrientationNavigator_;
 
-  bool viewportOrientationActive_ = true;
+  // Every Composition Viewer state has an orientation. Front is its 2D,
+  // orthographic presentation; all other orientations are spatial views.
+  bool isFrontOrthographicViewport() const {
+    return viewportOrientationNavigator_.activeHotspot() ==
+               ArtifactCore::ViewOrientationHotspot::Front &&
+           !viewportOrientationNavigator_.isAnimating();
+  }
   bool viewportOrientationMatricesValid_ = false;
   QMatrix4x4 viewportOrientationViewForOverlay_;
   QMatrix4x4 viewportOrientationProjectionForOverlay_;
@@ -13537,6 +13601,8 @@ public:
 
             viewportInteracting = 0;
 
+    int32_t channelDisplay = 0;
+
     LayerID selectedLayerId;
 
 
@@ -13594,10 +13660,11 @@ public:
 
              showXRay == o.showXRay &&
 
-             viewportInteracting == o.viewportInteracting &&
+              viewportInteracting == o.viewportInteracting &&
 
-             showIsolation == o.showIsolation &&
-             selectedLayerId == o.selectedLayerId;
+              showIsolation == o.showIsolation &&
+              channelDisplay == o.channelDisplay &&
+              selectedLayerId == o.selectedLayerId;
 
     }
 
@@ -13834,7 +13901,6 @@ public:
     QPointF pan;
     float zoom = 1.0f;
     QQuaternion orientation;
-    bool viewportOrientationActive = false;
   };
 
   std::vector<ViewState> viewUndoStack_;
@@ -13858,7 +13924,6 @@ public:
       state.zoom = renderer_->getZoom();
     }
     state.orientation = viewportOrientationNavigator_.currentOrientation();
-    state.viewportOrientationActive = viewportOrientationActive_;
     return state;
   }
 
@@ -13871,11 +13936,6 @@ public:
                       static_cast<float>(state.pan.y()));
     renderer_->setZoom(state.zoom);
     viewportOrientationNavigator_.setCurrentOrientation(state.orientation);
-    viewportOrientationActive_ = true;
-    if (!state.viewportOrientationActive) {
-      viewportOrientationNavigator_.snapTo(
-          ArtifactCore::ViewOrientationHotspot::Front, true);
-    }
     restoringViewState_ = false;
     invalidateOverlayComposite();
     renderDirty_.store(true, std::memory_order_release);
@@ -15614,6 +15674,7 @@ public:
                                const QMatrix4x4 &cameraProjMatrix);
 
   void drawViewportCanvasOverlay(float cw, float ch);
+  void drawThreeDimensionalGroundGrid();
 
   void drawReferenceOverlayImage(float canvasWidth, float canvasHeight);
   void drawViewportChannelOverlayImage(float canvasWidth, float canvasHeight);
@@ -18725,9 +18786,11 @@ void CompositionRenderController::setShowDensityHeatmapOverlay(bool show) {
 
   }
 
-  impl_->showDensityHeatmapOverlay_ = show;
+impl_->showDensityHeatmapOverlay_ = show;
 
-  markRenderDirty();
+impl_->invalidateOverlayComposite();
+
+markRenderDirty();
 
 }
 
@@ -18804,9 +18867,11 @@ void CompositionRenderController::setShowReferenceOverlay(bool show) {
 
   }
 
-  impl_->showReferenceOverlay_ = nextShow;
+impl_->showReferenceOverlay_ = nextShow;
 
-  markRenderDirty();
+impl_->invalidateOverlayComposite();
+
+markRenderDirty();
 
 }
 
@@ -18827,13 +18892,15 @@ void CompositionRenderController::setShowColorSamplerOverlay(bool show) {
 
   impl_->showColorSamplerOverlay_ = show;
 
-  if (!show) {
+if (!show) {
 
-    impl_->colorSamplerHasSample_ = false;
+impl_->colorSamplerHasSample_ = false;
 
-  }
+}
 
-  markRenderDirty();
+impl_->invalidateOverlayComposite();
+
+markRenderDirty();
 
 }
 
@@ -18859,9 +18926,11 @@ void CompositionRenderController::setShowAutoColorPaletteOverlay(bool show) {
 
   }
 
-  impl_->showAutoColorPaletteOverlay_ = nextShow;
+impl_->showAutoColorPaletteOverlay_ = nextShow;
 
-  markRenderDirty();
+impl_->invalidateOverlayComposite();
+
+markRenderDirty();
 
 }
 
@@ -19533,11 +19602,7 @@ bool CompositionRenderController::placeWorkCursorAtViewportPos(
 
       {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
 
-  if (impl_->viewportOrientationActive_) {
-    setWorkCursorWorldPosition(canvasPos.x, canvasPos.y, 0.0f);
-  } else {
-    setWorkCursorCanvasPosition(QPointF(canvasPos.x, canvasPos.y));
-  }
+  setWorkCursorWorldPosition(canvasPos.x, canvasPos.y, 0.0f);
 
   return true;
 
@@ -22998,9 +23063,7 @@ QRectF arrangeSelectionUnion(
   return hasRect ? out : QRectF();
 }
 
-QRectF arrangeCompRect(CompositionRenderController::Impl *impl) {
-  const auto comp =
-      impl ? impl->previewPipeline_.composition() : ArtifactCompositionPtr{};
+QRectF arrangeCompRect(const ArtifactCompositionPtr &comp) {
   QSize size;
   if (comp) {
     size = comp->settings().compositionSize();
@@ -23030,8 +23093,8 @@ bool CompositionRenderController::fitSelectedToComp(ArrangeFitMode mode) {
   if (!impl_ || !impl_->gizmo_) {
     return false;
   }
-  const auto changed =
-      impl_->gizmo_->fitTargetsToRect(arrangeCompRect(impl_.get()), mode);
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto changed = impl_->gizmo_->fitTargetsToRect(arrangeCompRect(comp), mode);
   if (changed.empty()) {
     return false;
   }
@@ -23039,7 +23102,7 @@ bool CompositionRenderController::fitSelectedToComp(ArrangeFitMode mode) {
     target->changed();
     impl_->publishLayerModified(target);
   }
-  impl_->fitGuideCompRect_ = arrangeCompRect(impl_.get());
+  impl_->fitGuideCompRect_ = arrangeCompRect(comp);
   impl_->fitGuideResultRect_ = arrangeSelectionUnion(changed);
   impl_->fitGuideVisible_ = impl_->fitGuideCompRect_.isValid() &&
                             impl_->fitGuideResultRect_.isValid();
@@ -23060,7 +23123,7 @@ bool CompositionRenderController::alignSelectedLayers(ArrangeAlignMode mode) {
   // Multi-selection aligns within itself; a single layer aligns to the comp.
   const QRectF reference = targets.size() > 1
                                ? arrangeSelectionUnion(targets)
-                               : arrangeCompRect(impl_.get());
+                               : arrangeCompRect(impl_->previewPipeline_.composition());
   const auto changed = impl_->gizmo_->alignTargets(mode, reference);
   if (changed.empty()) {
     return false;
@@ -25061,7 +25124,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       int handleVertexIndex = -1;
 
-      MaskHandleType handleType = MaskHandleType::None;
+      MaskEditHandleType handleType = MaskEditHandleType::None;
 
       if (hitTestMaskHandle(selectedLayer, impl_->renderer_.get(), viewportPos, handleThreshold,
 
@@ -25092,7 +25155,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         impl_->draggingMaskHandleStartLocal_ = localPos;
 
         impl_->draggingMaskHandleStartFeather_ =
-            handleType == MaskHandleType::FeatherHandle
+            handleType == MaskEditHandleType::FeatherHandle
                 ? selectedLayer->mask(handleMaskIndex)
                       .maskPath(handlePathIndex)
                       .feather()
@@ -25196,7 +25259,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
                 impl_->draggingMaskHandleType_ =
 
-                    static_cast<int>(MaskHandleType::OutTangent);
+                    static_cast<int>(MaskEditHandleType::OutTangent);
 
                 impl_->hoveredMaskIndex_ = m;
 
@@ -25206,7 +25269,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
                 impl_->hoveredMaskHandleType_ =
 
-                    static_cast<int>(MaskHandleType::OutTangent);
+                    static_cast<int>(MaskEditHandleType::OutTangent);
 
                 if (resetHoveredMaskVertexTangents()) {
                   event->accept();
@@ -25500,7 +25563,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       impl_->draggingMaskHandleType_ =
 
-          static_cast<int>(MaskHandleType::OutTangent);
+          static_cast<int>(MaskEditHandleType::OutTangent);
 
 
 
@@ -26327,8 +26390,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
   if (selectedLayer && impl_->gizmo3D_ &&
       !layerUsesTextGizmo(selectedLayer) &&
-      !(layerUsesProjectedFrameGizmo(selectedLayer) &&
-        !impl_->viewportOrientationActive_) &&
       activeTool != ToolType::Pen) {
 
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
@@ -26398,6 +26459,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       }
 
     } else if (impl_->textGizmo_ && layerUsesTextGizmo(gizmoLayer)) {
+
+      impl_->textGizmo_->setLayer(gizmoLayer);
 
       impl_->textGizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
 
@@ -26503,6 +26566,116 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (event->button() == Qt::LeftButton) {
 
     if (comp && impl_->renderer_) {
+
+      // Cryptomatte ID picking is deliberately available only while
+      // inspecting an Object or Material ID AOV. The readback is synchronous
+      // and can allocate, so it must stay a click-only, cold interaction
+      // rather than becoming part of the pointer-move or ordinary geometry
+      // hit-test path.
+      const bool objectIdPicking = impl_->viewportChannelDisplayMode_ ==
+          ViewportChannelDisplayMode::ObjectId;
+      const bool materialIdPicking = impl_->viewportChannelDisplayMode_ ==
+          ViewportChannelDisplayMode::MaterialId;
+      if ((objectIdPicking || materialIdPicking) &&
+          event->modifiers() == Qt::NoModifier) {
+        const auto cryptomatteAov =
+            impl_->renderer_->readbackToMultiChannelImage();
+        const auto cryptomatteIds = cryptomatteAov.getChannel(
+            materialIdPicking ? ArtifactCore::ChannelType::MaterialId
+                              : ArtifactCore::ChannelType::ObjectId);
+        if (cryptomatteIds && cryptomatteAov.width() > 0 &&
+            cryptomatteAov.height() > 0 && impl_->hostWidth_ > 0.0f &&
+            impl_->hostHeight_ > 0.0f) {
+          // Object/Material ID use the same aspect-fitted CPU overlay as the
+          // visible channel image. Sampling against the whole host incorrectly
+          // maps clicks whenever the composition is letterboxed.
+          const float displayScale = std::min(
+              impl_->hostWidth_ / static_cast<float>(cryptomatteAov.width()),
+              impl_->hostHeight_ /
+                  static_cast<float>(cryptomatteAov.height()));
+          const float displayWidth =
+              static_cast<float>(cryptomatteAov.width()) * displayScale;
+          const float displayHeight =
+              static_cast<float>(cryptomatteAov.height()) * displayScale;
+          const float displayX = (impl_->hostWidth_ - displayWidth) * 0.5f;
+          const float displayY = (impl_->hostHeight_ - displayHeight) * 0.5f;
+          const bool isInsideDisplay =
+              viewportPos.x() >= displayX && viewportPos.x() < displayX + displayWidth &&
+              viewportPos.y() >= displayY && viewportPos.y() < displayY + displayHeight;
+          if (isInsideDisplay) {
+          const int sampleX = std::clamp(
+              static_cast<int>((viewportPos.x() - displayX) *
+                               cryptomatteAov.width() / displayWidth),
+              0, cryptomatteAov.width() - 1);
+          const int sampleY = std::clamp(
+              static_cast<int>((viewportPos.y() - displayY) *
+                               cryptomatteAov.height() / displayHeight),
+              0, cryptomatteAov.height() - 1);
+          const std::size_t sampleIndex =
+              static_cast<std::size_t>(sampleY) * cryptomatteAov.width() +
+              static_cast<std::size_t>(sampleX);
+          if (sampleIndex < cryptomatteIds->size()) {
+            const std::uint32_t pickedId =
+                ArtifactCore::Image::Cryptomatte::CryptoSample::floatToId(
+                    cryptomatteIds->data()[sampleIndex]);
+            const auto &layers = comp->allLayerRef();
+            ArtifactAbstractLayerPtr pickedLayer;
+            // The ID target stores the front-most visible object. Iterate in
+            // that same top-down order, while still requiring an exact
+            // uint32 payload match rather than a lossy float comparison.
+            for (int index = static_cast<int>(layers.size()) - 1;
+                 index >= 0; --index) {
+              const auto &candidate = layers[index];
+              if (!candidate || !isLayerEffectivelyVisible(candidate) ||
+                  !candidate->isActiveAt(currentFrameForComposition(comp))) {
+                continue;
+              }
+              QString candidateKey = candidate->id().toString();
+              if (materialIdPicking) {
+                candidateKey = candidate->layerName() +
+                    QStringLiteral("|material");
+                if (const auto *modelLayer =
+                        dynamic_cast<const Artifact3DLayer *>(candidate.get())) {
+                  candidateKey = modelLayer->materialSignature();
+                }
+              }
+              if (ArtifactCore::Image::Cryptomatte::CryptoSample::nameToId(
+                      candidateKey) == pickedId) {
+                pickedLayer = candidate;
+                break;
+              }
+            }
+            if (pickedLayer) {
+              if (auto *selection = ArtifactApplicationManager::instance()
+                                        ? ArtifactApplicationManager::instance()
+                                              ->layerSelectionManager()
+                                        : nullptr) {
+                if (auto *svc = ArtifactProjectService::instance()) {
+                  svc->selectLayer(pickedLayer->id());
+                } else {
+                  selection->selectLayer(pickedLayer);
+                }
+                if (!selection->currentLayer()) {
+                  selection->selectLayer(pickedLayer);
+                }
+              }
+              syncPrimarySelectionLayer(pickedLayer);
+              impl_->sync2DGizmosForLayer(pickedLayer);
+              if (impl_->gizmo3D_) {
+                impl_->syncGizmo3DFromLayer(pickedLayer);
+              }
+              setInfoOverlayText(QStringLiteral("Cryptomatte"),
+                                 QStringLiteral("Selected %1")
+                                     .arg(pickedLayer->layerName()));
+              impl_->invalidateOverlayComposite();
+              markRenderDirty();
+              event->accept();
+              return;
+            }
+          }
+          }
+        }
+      }
 
       const auto cPos = impl_->renderer_->viewportToCanvas(
 
@@ -28036,7 +28209,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
           const auto handleType =
 
-              static_cast<MaskHandleType>(impl_->draggingMaskHandleType_);
+              static_cast<MaskEditHandleType>(impl_->draggingMaskHandleType_);
 
           const bool breakTangents =
 
@@ -28090,7 +28263,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
             MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
 
-            if (handleType == MaskHandleType::FeatherHandle) {
+            if (handleType == MaskEditHandleType::FeatherHandle) {
 
               const MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
 
@@ -28250,7 +28423,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
           int handleVertexIndex = -1;
 
-          MaskHandleType handleType = MaskHandleType::None;
+          MaskEditHandleType handleType = MaskEditHandleType::None;
 
           if (hitTestMaskHandle(selectedLayer, impl_->renderer_.get(), viewportPos,
 
@@ -30976,9 +31149,7 @@ bool CompositionRenderController::beginShapePolygonDrag(
       }
     }
     if (bestSeg >= 0) {
-      bool invertible = false;
-      globalTransform.inverted(&invertible);
-      if (!invertible) {
+      if (!globalTransform.isInvertible()) {
         return false;
       }
       const int next = (bestSeg + 1) % static_cast<int>(points.size());
@@ -31245,14 +31416,15 @@ int CompositionRenderController::selectedShapePathVertexCount() const {
 // deleteSelectedShapePathVertices guards and Undo tail; pending-path
 // creation disables every branch here by design.
 namespace {
-ArtifactShapeLayer *hoveredShapePathLayer(CompositionRenderController::Impl *impl,
-                                          ArtifactAbstractLayerPtr &layerOut) {
-  if (!impl || impl->pendingShapePathCreation_) {
+ArtifactShapeLayer *hoveredShapePathLayer(
+    const ArtifactCompositionPtr &comp, const LayerID &selectedLayerId,
+    bool pendingShapePathCreation, int hoveredShapePathVertex,
+    ArtifactAbstractLayerPtr &layerOut) {
+  if (pendingShapePathCreation) {
     return nullptr;
   }
-  auto comp = impl->previewPipeline_.composition();
-  auto selectedLayer = (!impl->selectedLayerId_.isNil() && comp)
-                           ? comp->layerById(impl->selectedLayerId_)
+  auto selectedLayer = (!selectedLayerId.isNil() && comp)
+                           ? comp->layerById(selectedLayerId)
                            : ArtifactAbstractLayerPtr{};
   auto *shape = selectedLayer
                     ? dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())
@@ -31261,9 +31433,9 @@ ArtifactShapeLayer *hoveredShapePathLayer(CompositionRenderController::Impl *imp
       selectedLayer->isSelectionLocked()) {
     return nullptr;
   }
-  const int hovered = impl->hoveredShapePathVertex_;
   const auto vertices = shape->customPathVertices();
-  if (hovered < 0 || hovered >= static_cast<int>(vertices.size())) {
+  if (hoveredShapePathVertex < 0 ||
+      hoveredShapePathVertex >= static_cast<int>(vertices.size())) {
     return nullptr;
   }
   layerOut = selectedLayer;
@@ -31276,7 +31448,10 @@ bool CompositionRenderController::hasHoveredShapePathVertex() const {
     return false;
   }
   ArtifactAbstractLayerPtr layer;
-  return hoveredShapePathLayer(impl_, layer) != nullptr;
+  return hoveredShapePathLayer(impl_->previewPipeline_.composition(),
+                               impl_->selectedLayerId_,
+                               impl_->pendingShapePathCreation_,
+                               impl_->hoveredShapePathVertex_, layer) != nullptr;
 }
 
 bool CompositionRenderController::hoveredShapePathVertexSmooth() const {
@@ -31284,7 +31459,10 @@ bool CompositionRenderController::hoveredShapePathVertexSmooth() const {
     return false;
   }
   ArtifactAbstractLayerPtr layer;
-  auto *shape = hoveredShapePathLayer(impl_, layer);
+  auto *shape = hoveredShapePathLayer(impl_->previewPipeline_.composition(),
+                                       impl_->selectedLayerId_,
+                                       impl_->pendingShapePathCreation_,
+                                       impl_->hoveredShapePathVertex_, layer);
   if (!shape) {
     return false;
   }
@@ -31316,7 +31494,11 @@ bool CompositionRenderController::toggleHoveredShapePathClosed() {
     return false;
   }
   ArtifactAbstractLayerPtr selectedLayer;
-  auto *shape = hoveredShapePathLayer(impl_, selectedLayer);
+  auto *shape = hoveredShapePathLayer(impl_->previewPipeline_.composition(),
+                                       impl_->selectedLayerId_,
+                                       impl_->pendingShapePathCreation_,
+                                       impl_->hoveredShapePathVertex_,
+                                       selectedLayer);
   if (!shape) {
     return false;
   }
@@ -31350,7 +31532,11 @@ bool CompositionRenderController::toggleHoveredShapePathSmooth() {
     return false;
   }
   ArtifactAbstractLayerPtr selectedLayer;
-  auto *shape = hoveredShapePathLayer(impl_, selectedLayer);
+  auto *shape = hoveredShapePathLayer(impl_->previewPipeline_.composition(),
+                                       impl_->selectedLayerId_,
+                                       impl_->pendingShapePathCreation_,
+                                       impl_->hoveredShapePathVertex_,
+                                       selectedLayer);
   if (!shape) {
     return false;
   }
@@ -32113,6 +32299,7 @@ void CompositionRenderController::updateShapePathVertexDrag(
 
   }
   const int tangentKind = impl_->draggingShapePathTangent_;
+  auto verts = currentVerts;
   if (tangentKind == 0) {
     // Tangents are relative to the vertex, so moving the vertex with
     // untouched tangents keeps the handles glued (rigid follow), matching
@@ -32122,7 +32309,7 @@ void CompositionRenderController::updateShapePathVertexDrag(
     const bool moveSelection = selected.size() > 1 &&
         std::find(selected.begin(), selected.end(), index) != selected.end() &&
         index < static_cast<int>(impl_->shapePathEditBefore_.size());
-    auto verts = moveSelection ? impl_->shapePathEditBefore_ : currentVerts;
+    verts = moveSelection ? impl_->shapePathEditBefore_ : currentVerts;
     if (moveSelection) {
       const QPointF delta =
           localPos - impl_->shapePathEditBefore_[static_cast<size_t>(index)].pos;
@@ -32143,7 +32330,6 @@ void CompositionRenderController::updateShapePathVertexDrag(
     markRenderDirty();
     return;
   } else if (tangentKind == 1) {
-    auto verts = currentVerts;
     verts[static_cast<size_t>(index)].inTangent =
         localPos - verts[static_cast<size_t>(index)].pos;
     // Alt breaks the smooth mirror for this drag only (parity with mask and
@@ -32166,7 +32352,6 @@ void CompositionRenderController::updateShapePathVertexDrag(
       }
     }
   } else {
-    auto verts = currentVerts;
     verts[static_cast<size_t>(index)].outTangent =
         localPos - verts[static_cast<size_t>(index)].pos;
     const bool breakMirror = QGuiApplication::keyboardModifiers().testFlag(
@@ -32381,11 +32566,11 @@ bool CompositionRenderController::resetHoveredMaskTangent() {
     return false;
   }
   MaskVertex vertex = path.vertex(impl_->hoveredVertexIndex_);
-  if (static_cast<MaskHandleType>(impl_->hoveredMaskHandleType_) ==
-      MaskHandleType::InTangent) {
+  if (static_cast<MaskEditHandleType>(impl_->hoveredMaskHandleType_) ==
+      MaskEditHandleType::InTangent) {
     vertex.inTangent = QPointF(0.0, 0.0);
-  } else if (static_cast<MaskHandleType>(impl_->hoveredMaskHandleType_) ==
-             MaskHandleType::OutTangent) {
+  } else if (static_cast<MaskEditHandleType>(impl_->hoveredMaskHandleType_) ==
+             MaskEditHandleType::OutTangent) {
     vertex.outTangent = QPointF(0.0, 0.0);
   } else {
     return false;
@@ -34188,6 +34373,22 @@ void CompositionRenderController::trackerUsePlanarMode() {
   markRenderDirty();
 }
 
+static QString trackerModeTitle(const ArtifactCore::MotionTracker *tracker);
+
+void CompositionRenderController::trackerReset() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  impl_->trackerMotionTracker_->stopTracking();
+  impl_->trackerMotionTracker_->clearTrackingData();
+  impl_->trackerMotionTracker_->clearTrackPoints();
+  impl_->trackerMotionTracker_->clearTrackRegions();
+  if (impl_->trackerGizmo_) {
+    impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
+  }
+  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                     QStringLiteral("Track points, regions, and results cleared"));
+  markRenderDirty();
+}
+
 
 
 static void ensureOffscreenRenderer(
@@ -34308,6 +34509,57 @@ void CompositionRenderController::trackerNextProblemFrame() {
   setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                      QStringLiteral("Reviewing problem frame %1")
                          .arg(targetFrame));
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerSmooth() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  if (!impl_->trackerMotionTracker_->hasResult() ||
+      impl_->trackerMotionTracker_->result().frames.size() < 5u) {
+    setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                       QStringLiteral("Track at least five frames before smoothing"));
+    return;
+  }
+
+  // Use the Core default deliberately: it is bounded, leaves inactive points
+  // untouched, and recomputes per-frame confidence after filtering.
+  impl_->trackerMotionTracker_->smoothTrack();
+  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                     QStringLiteral("Applied five-frame track smoothing"));
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerRemoveOutliers() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  if (!impl_->trackerMotionTracker_->hasResult()) {
+    setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                       QStringLiteral("Track a range before removing outliers"));
+    return;
+  }
+
+  // Keep the UI action aligned with MotionTracker's public default (3.0),
+  // rather than inventing a second app-only threshold contract.
+  impl_->trackerMotionTracker_->removeOutliers();
+  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                     QStringLiteral("Removed velocity outliers; review flagged frames"));
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerFilterByConfidence() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  if (!impl_->trackerMotionTracker_->hasResult()) {
+    setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                       QStringLiteral("Run tracking before filtering confidence"));
+    return;
+  }
+  // Keep the repair command aligned with the solve-time quality gate. The
+  // default is 0.50, but the tracker owns the effective setting.
+  const double threshold =
+      impl_->trackerMotionTracker_->settings().confidenceThreshold;
+  impl_->trackerMotionTracker_->filterByConfidence(threshold);
+  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                     QStringLiteral("Deactivated points below %1 confidence")
+                         .arg(threshold, 0, 'f', 2));
   markRenderDirty();
 }
 
@@ -34734,7 +34986,6 @@ void CompositionRenderController::clearViewportOrientation() {
   // "2D" is the front orthographic view of the same spatial viewport.
   impl_->viewportOrientationNavigator_.snapTo(
       ArtifactCore::ViewOrientationHotspot::Front, true);
-  impl_->viewportOrientationActive_ = true;
   impl_->viewportOrientationMatricesValid_ = false;
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -34757,9 +35008,7 @@ void CompositionRenderController::setViewportOrientation(
     return;
   }
 
-  if (impl_->viewportOrientationActive_ &&
-
-      impl_->viewportOrientationNavigator_.activeHotspot() == hotspot) {
+  if (impl_->viewportOrientationNavigator_.activeHotspot() == hotspot) {
 
     return;
 
@@ -34767,8 +35016,6 @@ void CompositionRenderController::setViewportOrientation(
 
   impl_->pushViewHistory();
   impl_->viewportOrientationNavigator_.snapTo(hotspot, true);
-
-  impl_->viewportOrientationActive_ = true;
 
   impl_->invalidateOverlayComposite();
 
@@ -34831,8 +35078,6 @@ void CompositionRenderController::setViewportOrientationQuaternion(
   // mouse move. Discrete hotspot snaps still record history in
   // setViewportOrientation().
   impl_->viewportOrientationNavigator_.setCurrentOrientation(normalized);
-
-  impl_->viewportOrientationActive_ = true;
 
   impl_->invalidateOverlayComposite();
 
@@ -34975,10 +35220,10 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
     if (impl_->hoveredMaskHandleType_ !=
 
-        static_cast<int>(MaskHandleType::None)) {
-      const auto handleType = static_cast<MaskHandleType>(
+        static_cast<int>(MaskEditHandleType::None)) {
+      const auto handleType = static_cast<MaskEditHandleType>(
           impl_->hoveredMaskHandleType_);
-      if (handleType == MaskHandleType::FeatherHandle) {
+      if (handleType == MaskEditHandleType::FeatherHandle) {
         return Qt::SizeVerCursor;
       }
       return Qt::CrossCursor;
@@ -35862,6 +36107,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   renderer_->setSceneLights(std::vector<ArtifactCore::Light>{});
 
+  // Each frame owns its channel display surface.  In particular, component
+  // modes (RGB/Alpha) populate this in finalizeGpuRenderToViewport(); do not
+  // let an older frame survive if this frame falls back before finalization.
+  viewportChannelDisplaySRV_ = nullptr;
+
   renderCrashTrace("render-after-scene-lights", renderFrameCounter_);
 
 
@@ -36540,7 +36790,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   viewportOrientationMatricesValid_ = false;
-  if (viewportOrientationActive_) {
+  {
 
     const float orientationViewportW = std::max(1.0f, hostWidth_);
     const float orientationViewportH = std::max(1.0f, hostHeight_);
@@ -36566,10 +36816,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     cameraViewMatrix = viewportOrientationViewMatrix(
         orientation, orientationTarget, orientationDistance);
 
-    const bool frontOrthographic =
-        viewportOrientationNavigator_.activeHotspot() ==
-            ArtifactCore::ViewOrientationHotspot::Front &&
-        !viewportOrientationNavigator_.isAnimating();
+    const bool frontOrthographic = isFrontOrthographicViewport();
     if (frontOrthographic) {
       const float halfWidth = orientationViewportW / (2.0f * orientationZoom);
       const float halfHeight = orientationViewportH / (2.0f * orientationZoom);
@@ -36903,6 +37150,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       static_cast<uint8_t>(viewportInteracting_ ? 1 : 0),
 
+      static_cast<int32_t>(viewportChannelDisplayMode_),
+
       selectedLayerId_};
 
   const bool forceContinuousRedraw =
@@ -36994,14 +37243,28 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool viewportMultiChannelRequested =
         renderer_->isMultiChannelEnabled();
 
+    // R/G/B/Alpha are presentation modes derived from the resolved beauty
+    // texture. They do not require auxiliary AOV targets, but they do require
+    // the offscreen GPU pipeline so the selected component can replace beauty
+    // before the viewport is presented. Without this condition, an ordinary
+    // Normal-blend 2D composition stays on the direct path and only the UI
+    // label changes.
+    const bool primaryComponentDisplayRequested =
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
+
     if (gpuBlendEnabled_ &&
         (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
-         viewportMultiChannelRequested) &&
+         viewportMultiChannelRequested || primaryComponentDisplayRequested) &&
         !blendPipelineReady_) {
       scheduleBlendPipelineInitialization(
           owner, 0,
-          screenSpaceGlobalIlluminationRequested
+          primaryComponentDisplayRequested
+              ? QStringLiteral("primary-component-display-requested")
+              : screenSpaceGlobalIlluminationRequested
               ? QStringLiteral("screen-space-gi-requested")
               : QStringLiteral("non-normal-layer-visible"));
     }
@@ -37013,7 +37276,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         gpuBlendRequested &&
         (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
-         viewportMultiChannelRequested);
+         viewportMultiChannelRequested || primaryComponentDisplayRequested);
 
 
 
@@ -37198,8 +37461,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // the known-good direct path while allowing focused runtime validation.
     const bool compositionSpaceCacheEligible =
         compositionSpaceGpuCachePresentationReady_ && !pipelineEnabled &&
-        !frameOutOfRange && !has3DCamera &&
-        !viewportOrientationActive_ && !showIsolationOverlay_ &&
+        !frameOutOfRange && !has3DCamera && isFrontOrthographicViewport() &&
+        !showIsolationOverlay_ &&
         !showXRayOverlay_ &&
         std::all_of(layers.cbegin(), layers.cend(),
                     isCompositionSpaceCacheLayer);
@@ -37357,18 +37620,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             : nullptr);
 
-    viewportChannelDisplaySRV_ = nullptr;
-    if (pipelineEnabled) {
+    // Component modes already produced a display-ready surface in
+    // finalizeGpuRenderToViewport().  Resetting it here discarded that result
+    // and forced a readback of the partially presented beauty frame, which
+    // appeared as a recursive/perspective image for Green (and RGB/Alpha).
+    if (!viewportChannelDisplaySRV_ && pipelineEnabled) {
       switch (viewportChannelDisplayMode_) {
       case ViewportChannelDisplayMode::Emission:
         viewportChannelDisplaySRV_ = renderPipeline.emissionSRV();
         break;
-      case ViewportChannelDisplayMode::ObjectId:
-        viewportChannelDisplaySRV_ = renderPipeline.objectIdSRV();
-        break;
-      case ViewportChannelDisplayMode::MaterialId:
-        viewportChannelDisplaySRV_ = renderPipeline.materialIdSRV();
-        break;
+      // Object/Material ID are uint32 payloads in float bits (Cryptomatte).
+      // Drawing the raw float SRV shows black/garbage because the viewport
+      // shader expects display-ready RGBA. Leave these to the CPU
+      // composition fallback (pseudo-color), same as the composite AOVs below.
       // Composite AOV modes need channel remapping (normal [-1,1] -> RGB and
       // velocity X/Y -> RGB).  Leave these to the CPU composition fallback;
       // drawing the raw float SRV makes them appear black or incorrectly
@@ -37814,6 +38078,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             context.renderer->setPan(panX, panY);
 
+            drawThreeDimensionalGroundGrid();
+
             drawCompositionBackgroundDirect(
 
                 context.renderer, cw, ch, layerBgColor, backgroundMode,
@@ -38065,7 +38331,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         renderer_->clearRenderTarget(normalRTV,
 
-                                     FloatColor{0.5f, 0.5f, 1.0f, 1.0f});
+                                     FloatColor{0.5f, 0.5f, 1.0f, 0.0f});
 
       }
 
@@ -38073,7 +38339,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         renderer_->clearRenderTarget(velocityRTV,
 
-                                     FloatColor{0.5f, 0.5f, 0.5f, 1.0f});
+                                     FloatColor{0.5f, 0.5f, 0.5f, 0.0f});
 
       }
 
@@ -38484,9 +38750,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 if ((!draftRendering || objectIdChannelRequested) && objectIdRTV) {
 
-                  const quint32 objectHash =
-
-                      qHash(layer->id().toString(), 0x51a7u) & 0x00ffffffu;
+                  const float objectId =
+                      ArtifactCore::Image::Cryptomatte::CryptoSample::nameToFloat(
+                          layer->id().toString());
 
                   drawGpuLayerIdToTarget(
 
@@ -38497,7 +38763,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                       ArtifactIRenderer::ChannelType::ObjectId,
 
-                      static_cast<float>(objectHash) / 16777215.0f);
+                      objectId);
 
                 }
 
@@ -38515,9 +38781,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                   }
 
-                  const quint32 materialHash =
-
-                      qHash(materialKey, 0x7f31u) & 0x00ffffffu;
+                  const float materialId =
+                      ArtifactCore::Image::Cryptomatte::CryptoSample::nameToFloat(
+                          materialKey);
 
                   drawGpuLayerIdToTarget(
 
@@ -38528,7 +38794,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                       ArtifactIRenderer::ChannelType::MaterialId,
 
-                      static_cast<float>(materialHash) / 16777215.0f);
+                      materialId);
 
                 }
 
@@ -38969,6 +39235,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       // Composition Space で直接 fill する（viewport-space 変換不要）
 
+      drawThreeDimensionalGroundGrid();
+
       drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
 
                                       backgroundMode, checkerboardTileSize_,
@@ -39332,7 +39600,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     has3DCamera ? &cameraProjMatrix : nullptr,
                     has3DCamera ? &previousCameraViewMatrix : nullptr,
                     has3DCamera ? &previousCameraProjMatrix : nullptr, &matteResolver,
-                    &sceneLights, draftRendering, viewportOrientationActive_,
+                    &sceneLights, draftRendering, true,
 
                     surfaceGeneration(layer.get()));
 
@@ -39904,13 +40172,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
 
-                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskEditHandleType::InTangent)) {
 
                       handleColor = handleDragColor;
 
                     } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
 
-                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+                               hoveredMaskHandleType_ == static_cast<int>(MaskEditHandleType::InTangent)) {
 
                       handleColor = handleHoverColor;
 
@@ -39944,13 +40212,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
 
-                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskEditHandleType::OutTangent)) {
 
                       handleColor = handleDragColor;
 
                     } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
 
-                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+                               hoveredMaskHandleType_ == static_cast<int>(MaskEditHandleType::OutTangent)) {
 
                       handleColor = handleHoverColor;
 
@@ -39991,7 +40259,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                         draggingVertexIndex_ == v &&
 
-                        draggingMaskHandleType_ == static_cast<int>(MaskHandleType::FeatherHandle)) {
+                        draggingMaskHandleType_ == static_cast<int>(MaskEditHandleType::FeatherHandle)) {
 
                       featherColor = handleDragColor;
 
@@ -39999,7 +40267,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                                hoveredVertexIndex_ == v &&
 
-                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::FeatherHandle)) {
+                               hoveredMaskHandleType_ == static_cast<int>(MaskEditHandleType::FeatherHandle)) {
 
                       featherColor = handleHoverColor;
 
@@ -40434,7 +40702,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const int hudVertexIndex = isDraggingMaskHandle_
                                          ? draggingVertexIndex_
                                          : hoveredVertexIndex_;
-          const MaskHandleType hudHandleType = static_cast<MaskHandleType>(
+          const MaskEditHandleType hudHandleType = static_cast<MaskEditHandleType>(
               isDraggingMaskHandle_ ? draggingMaskHandleType_
                                     : hoveredMaskHandleType_);
 
@@ -40444,10 +40712,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             if (hudPathIndex < hudMask.maskPathCount()) {
               const MaskPath hudPath = hudMask.maskPath(hudPathIndex);
               if (hudVertexIndex < hudPath.vertexCount() &&
-                  hudHandleType != MaskHandleType::None) {
+                  hudHandleType != MaskEditHandleType::None) {
                 const MaskVertex hudVertex = hudPath.vertex(hudVertexIndex);
                 const QPointF handleCanvas =
-                    hudHandleType == MaskHandleType::FeatherHandle
+                    hudHandleType == MaskEditHandleType::FeatherHandle
                         ? maskFeatherHandleCanvasPosition(
                               hudPath, hudVertexIndex, globalTransform,
                               renderer_.get())
@@ -40460,15 +40728,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                              hudVertex.outTangent.y()) < 0.001;
                 const QString handleName =
 
-                    hudHandleType == MaskHandleType::InTangent
+                    hudHandleType == MaskEditHandleType::InTangent
 
                         ? QStringLiteral("In handle")
 
-                        : hudHandleType == MaskHandleType::OutTangent
+                        : hudHandleType == MaskEditHandleType::OutTangent
 
                               ? QStringLiteral("Out handle")
 
-                              : hudHandleType == MaskHandleType::FeatherHandle
+                              : hudHandleType == MaskEditHandleType::FeatherHandle
 
                                     ? QStringLiteral("Feather")
 
@@ -40490,7 +40758,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 renderer_->drawText(
                     QRectF(hudX + 5.0f / zoom, hudY + 2.0f / zoom,
                            hudWidth - 10.0f / zoom, 13.0f / zoom),
-                    hudHandleType == MaskHandleType::FeatherHandle
+                    hudHandleType == MaskEditHandleType::FeatherHandle
                         ? QStringLiteral("Feather %1").arg(
                               hudPath.feather(), 0, 'f', 1)
                         : QStringLiteral("Bezier %1  •  %2")
@@ -40498,7 +40766,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     hudFont, FloatColor{0.92f, 0.97f, 1.0f, 0.98f},
                     Qt::AlignLeft | Qt::AlignVCenter);
                 const QString hudHint =
-                    hudHandleType == MaskHandleType::FeatherHandle
+                    hudHandleType == MaskEditHandleType::FeatherHandle
                         ? QStringLiteral("Drag: adjust feather")
                         : QStringLiteral("Alt: break  •  Ctrl: reset");
                 renderer_->drawText(
@@ -42568,26 +42836,26 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       // the selection overlay. DTO only; no layer mutation here.
       if (dynamic_cast<ArtifactShapeLayer *>(selectedLayer.get())) {
         ::Artifact::ShapeVertexOverlayState shapeState;
-        shapeState.hoveredVertex = impl_->hoveredShapePathVertex_;
-        shapeState.hoveredTangent = impl_->hoveredShapePathTangent_;
-        shapeState.draggingVertex = impl_->isDraggingShapePathVertex_
-                                        ? impl_->draggingShapePathVertexIndex_
+        shapeState.hoveredVertex = hoveredShapePathVertex_;
+        shapeState.hoveredTangent = hoveredShapePathTangent_;
+        shapeState.draggingVertex = isDraggingShapePathVertex_
+                                        ? draggingShapePathVertexIndex_
                                         : -1;
-        shapeState.draggingTangent = impl_->isDraggingShapePathVertex_
-                                         ? impl_->draggingShapePathTangent_
+        shapeState.draggingTangent = isDraggingShapePathVertex_
+                                         ? draggingShapePathTangent_
                                          : 0;
-        shapeState.hoveredSegment = impl_->hoveredShapePathSegment_;
+        shapeState.hoveredSegment = hoveredShapePathSegment_;
         shapeState.showSegmentInsert =
-            impl_->hoveredShapePathSegment_ >= 0 &&
-            impl_->hoveredShapePathVertex_ < 0 &&
+            hoveredShapePathSegment_ >= 0 &&
+            hoveredShapePathVertex_ < 0 &&
             QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        shapeState.selectedVertices = impl_->selectedShapePathVertices_;
-        shapeState.hoveredParam = impl_->hoveredShapeParam_;
-        shapeState.draggingParam = impl_->shapeParamDragMode_;
-        shapeState.hoveredOp = impl_->hoveredShapeOp_;
-        shapeState.hoveredOpField = impl_->hoveredShapeOpField_;
-        shapeState.draggingOp = impl_->shapeOpDragOp_;
-        shapeState.draggingOpField = impl_->shapeOpDragField_;
+        shapeState.selectedVertices = selectedShapePathVertices_;
+        shapeState.hoveredParam = hoveredShapeParam_;
+        shapeState.draggingParam = shapeParamDragMode_;
+        shapeState.hoveredOp = hoveredShapeOp_;
+        shapeState.hoveredOpField = hoveredShapeOpField_;
+        shapeState.draggingOp = shapeOpDragOp_;
+        shapeState.draggingOpField = shapeOpDragField_;
         ::Artifact::drawShapeVertexOverlay(renderer_.get(), selectedLayer,
                                            shapeState);
       }
@@ -42741,9 +43009,75 @@ void CompositionRenderController::Impl::drawViewportChannelOverlayImage(
 
   }
 
-  if (viewportChannelDisplaySRV_) {
-    renderer_->drawSprite(0.0f, 0.0f, canvasWidth, canvasHeight,
+  // Primary RGBA components are not overlays. finalizeGpuRenderToViewport()
+  // selects their GPU-derived texture instead of the beauty texture, so they
+  // must not be drawn a second time in this post-presentation overlay pass.
+  if (viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha) {
+    return;
+  }
+
+   if (viewportChannelDisplaySRV_) {
+    if (presentationLayout_ == CompositionViewportPresentationLayout::Quad &&
+        hostWidth_ > 0.0f && hostHeight_ > 0.0f) {
+      // Mirror finalizeGpuRenderToViewport's Quad tiling so the isolated
+      // pass stays quad-tiled instead of covering the 4 beauty panes
+      // with a single fullscreen sprite.
+      const float savedZoom = renderer_->getZoom();
+      float savedPanX = 0.0f, savedPanY = 0.0f;
+      renderer_->getPan(savedPanX, savedPanY);
+      renderer_->setViewportRect(hostWidth_, hostHeight_);
+      const float leftW = std::floor(hostWidth_ * 0.5f);
+      const float topH = std::floor(hostHeight_ * 0.5f);
+      const std::array<QRectF, 4> panes{
+          QRectF(0.0, 0.0, leftW, topH),
+          QRectF(leftW, 0.0, hostWidth_ - leftW, topH),
+          QRectF(0.0, topH, leftW, hostHeight_ - topH),
+          QRectF(leftW, topH, hostWidth_ - leftW, hostHeight_ - topH)};
+      for (const QRectF& pane : panes) {
+        if (pane.width() <= 0.0 || pane.height() <= 0.0) continue;
+        renderer_->setViewportRect(
+            static_cast<float>(pane.x()), static_cast<float>(pane.y()),
+            static_cast<float>(pane.width()), static_cast<float>(pane.height()),
+            hostWidth_, hostHeight_);
+        renderer_->setCanvasSize(static_cast<float>(pane.width()),
+                                 static_cast<float>(pane.height()));
+        renderer_->setZoom(1.0f);
+        renderer_->setPan(0.0f, 0.0f);
+        renderer_->drawSprite(0.0f, 0.0f, static_cast<float>(pane.width()),
+                              static_cast<float>(pane.height()),
+                              viewportChannelDisplaySRV_, 1.0f);
+        renderer_->flush();
+      }
+      renderer_->setViewportRect(hostWidth_, hostHeight_);
+      renderer_->setCanvasSize(canvasWidth, canvasHeight);
+      renderer_->setZoom(savedZoom);
+      renderer_->setPan(savedPanX, savedPanY);
+      return;
+    }
+    // The channel surface is derived from the already resolved presentation
+    // texture. Present it in viewport space exactly once, just like the beauty
+    // surface in finalizeGpuRenderToViewport(). Drawing it in composition space
+    // applies the composition pan/zoom a second time and makes the isolated
+    // channel look inset or recursive.
+    const float savedZoom = renderer_->getZoom();
+    float savedPanX = 0.0f;
+    float savedPanY = 0.0f;
+    renderer_->getPan(savedPanX, savedPanY);
+    const float viewportWidth = hostWidth_ > 0.0f ? hostWidth_ : canvasWidth;
+    const float viewportHeight = hostHeight_ > 0.0f ? hostHeight_ : canvasHeight;
+    renderer_->setViewportRect(viewportWidth, viewportHeight);
+    renderer_->setCanvasSize(viewportWidth, viewportHeight);
+    renderer_->setZoom(1.0f);
+    renderer_->setPan(0.0f, 0.0f);
+    renderer_->drawSprite(0.0f, 0.0f, viewportWidth, viewportHeight,
                           viewportChannelDisplaySRV_, 1.0f);
+    renderer_->flush();
+    renderer_->setCanvasSize(canvasWidth, canvasHeight);
+    renderer_->setZoom(savedZoom);
+    renderer_->setPan(savedPanX, savedPanY);
     return;
   }
 
@@ -42754,22 +43088,56 @@ void CompositionRenderController::Impl::drawViewportChannelOverlayImage(
 
   }
 
-  const float imageWidth = static_cast<float>(channelImage.width());
-  const float imageHeight = static_cast<float>(channelImage.height());
-  if (imageWidth <= 0.0f || imageHeight <= 0.0f || canvasWidth <= 0.0f ||
-      canvasHeight <= 0.0f) {
+  if (channelImage.width() <= 0 || channelImage.height() <= 0 ||
+      canvasWidth <= 0.0f || canvasHeight <= 0.0f) {
 
     return;
 
   }
 
-  const float scale = std::min(canvasWidth / imageWidth, canvasHeight / imageHeight);
-  const float drawWidth = std::max(1.0f, imageWidth * scale);
-  const float drawHeight = std::max(1.0f, imageHeight * scale);
-  const float drawX = (canvasWidth - drawWidth) * 0.5f;
-  const float drawY = (canvasHeight - drawHeight) * 0.5f;
+  if (presentationLayout_ == CompositionViewportPresentationLayout::Quad &&
+      hostWidth_ > 0.0f && hostHeight_ > 0.0f) {
+    // Same Quad tiling as the SRV path above: each pane shows the full
+    // channel image, mirroring the beauty tiling in finalize.
+    const float savedZoom = renderer_->getZoom();
+    float savedPanX = 0.0f, savedPanY = 0.0f;
+    renderer_->getPan(savedPanX, savedPanY);
+    renderer_->setViewportRect(hostWidth_, hostHeight_);
+    const float leftW = std::floor(hostWidth_ * 0.5f);
+    const float topH = std::floor(hostHeight_ * 0.5f);
+    const std::array<QRectF, 4> panes{
+        QRectF(0.0, 0.0, leftW, topH),
+        QRectF(leftW, 0.0, hostWidth_ - leftW, topH),
+        QRectF(0.0, topH, leftW, hostHeight_ - topH),
+        QRectF(leftW, topH, hostWidth_ - leftW, hostHeight_ - topH)};
+    for (const QRectF& pane : panes) {
+      if (pane.width() <= 0.0 || pane.height() <= 0.0) continue;
+      renderer_->setViewportRect(
+          static_cast<float>(pane.x()), static_cast<float>(pane.y()),
+          static_cast<float>(pane.width()), static_cast<float>(pane.height()),
+          hostWidth_, hostHeight_);
+      renderer_->setCanvasSize(static_cast<float>(pane.width()),
+                               static_cast<float>(pane.height()));
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
+      renderer_->drawSprite(0.0f, 0.0f, static_cast<float>(pane.width()),
+                            static_cast<float>(pane.height()), channelImage,
+                            1.0f);
+      renderer_->flush();
+    }
+    renderer_->setViewportRect(hostWidth_, hostHeight_);
+    renderer_->setCanvasSize(canvasWidth, canvasHeight);
+    renderer_->setZoom(savedZoom);
+    renderer_->setPan(savedPanX, savedPanY);
+    return;
+  }
 
-  renderer_->drawSprite(drawX, drawY, drawWidth, drawHeight, channelImage, 1.0f);
+  // Auxiliary AOVs that do not yet have a display-ready GPU surface (such as
+  // Depth) are composition-sized images.  Keep them in composition space so
+  // the viewport background and current zoom/pan remain untouched.
+  renderer_->drawSprite(0.0f, 0.0f, canvasWidth, canvasHeight,
+                        channelImage, 1.0f);
+  renderer_->flush();
 
 }
 
@@ -42899,6 +43267,55 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     return out;
   };
 
+  // Cryptomatte IDs are uint32 payloads stored in float bits.  They must not
+  // pass through the ordinary image readback path: that path clamps floats to
+  // [0, 1] and permanently loses the identifier.  This cold display path
+  // preserves the raw payload, then derives a stable, high-contrast swatch
+  // solely for viewport inspection.  The raw float AOV remains untouched for
+  // export and click-to-select.
+  const auto pseudoColorCryptomatte = [this](ArtifactCore::ChannelType channel) {
+    QImage out;
+    const auto aov = renderer_->readbackToMultiChannelImage();
+    const auto samples = aov.getChannel(channel);
+    if (!samples || aov.width() <= 0 || aov.height() <= 0 ||
+        samples->size() != static_cast<std::size_t>(aov.width()) *
+                               static_cast<std::size_t>(aov.height())) {
+      return out;
+    }
+
+    out = QImage(aov.width(), aov.height(), QImage::Format_RGBA8888);
+    for (int y = 0; y < aov.height(); ++y) {
+      auto* dst = out.scanLine(y);
+      for (int x = 0; x < aov.width(); ++x) {
+        const auto sampleIndex = static_cast<std::size_t>(y) *
+                                     static_cast<std::size_t>(aov.width()) +
+                                 static_cast<std::size_t>(x);
+        const std::uint32_t id =
+            ArtifactCore::Image::Cryptomatte::CryptoSample::floatToId(
+                samples->data()[sampleIndex]);
+        if (id == 0u) {
+          dst[x * 4 + 0] = 0;
+          dst[x * 4 + 1] = 0;
+          dst[x * 4 + 2] = 0;
+          dst[x * 4 + 3] = 255;
+          continue;
+        }
+
+        std::uint32_t mixed = id;
+        mixed ^= mixed >> 16;
+        mixed *= 0x7feb352du;
+        mixed ^= mixed >> 15;
+        mixed *= 0x846ca68bu;
+        mixed ^= mixed >> 16;
+        dst[x * 4 + 0] = static_cast<uchar>(72u + (mixed & 0x7fu));
+        dst[x * 4 + 1] = static_cast<uchar>(72u + ((mixed >> 8) & 0x7fu));
+        dst[x * 4 + 2] = static_cast<uchar>(72u + ((mixed >> 16) & 0x7fu));
+        dst[x * 4 + 3] = 255;
+      }
+    }
+    return out;
+  };
+
   auto readChannel = [this](ArtifactIRenderer::ChannelType channel) {
     return renderer_->readbackChannelToImage(channel);
   };
@@ -42922,11 +43339,9 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
   case ViewportChannelDisplayMode::Emission:
     return readChannel(ArtifactIRenderer::ChannelType::Emission);
   case ViewportChannelDisplayMode::ObjectId:
-    return pseudoColorGray(
-        readChannel(ArtifactIRenderer::ChannelType::ObjectId));
+    return pseudoColorCryptomatte(ArtifactCore::ChannelType::ObjectId);
   case ViewportChannelDisplayMode::MaterialId:
-    return pseudoColorGray(
-        readChannel(ArtifactIRenderer::ChannelType::MaterialId), true);
+    return pseudoColorCryptomatte(ArtifactCore::ChannelType::MaterialId);
   case ViewportChannelDisplayMode::Albedo:
     return composeRgb(
         readChannel(ArtifactIRenderer::ChannelType::AlbedoR),
@@ -43112,9 +43527,22 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Green &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Blue;
 
-  if (needsAuxChannel) {
-    renderer_->setMultiChannelEnabled(true);
-  }
+  // Reset stale channel flags first: without this, switching e.g. Normal ->
+  // Depth leaves NormalX/Y/Z enabled, keeping aux pipeline targets allocated
+  // and multi-channel forced on even after returning to Color.
+  renderer_->setMultiChannelEnabled(needsAuxChannel);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::Depth, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::Emission, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::MaterialId, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::AlbedoR, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::AlbedoG, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::AlbedoB, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalX, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalY, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::VelocityX, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::VelocityY, false);
 
   switch (viewportChannelDisplayMode_) {
   case ViewportChannelDisplayMode::Depth:
@@ -43585,6 +44013,87 @@ void drawRigSkinWireframe(Artifact::ArtifactIRenderer* renderer,
 } // namespace
 
 
+void CompositionRenderController::Impl::drawThreeDimensionalGroundGrid() {
+
+  if (!renderer_ || !showGrid_ || !gizmo3DCameraMatricesValid_) {
+    return;
+  }
+
+  const QRect viewport(0, 0,
+                       std::max(1, static_cast<int>(hostWidth_)),
+                       std::max(1, static_cast<int>(hostHeight_)));
+  const QVector3D origin = ViewportMath::projectToTopDown(
+      QVector3D(0.0f, 0.0f, 0.0f), gizmo3DViewMatrix_,
+      gizmo3DProjectionMatrix_, viewport);
+  const QVector3D unitX = ViewportMath::projectToTopDown(
+      QVector3D(1.0f, 0.0f, 0.0f), gizmo3DViewMatrix_,
+      gizmo3DProjectionMatrix_, viewport);
+  const QVector3D unitY = ViewportMath::projectToTopDown(
+      QVector3D(0.0f, 1.0f, 0.0f), gizmo3DViewMatrix_,
+      gizmo3DProjectionMatrix_, viewport);
+  const float pixels = std::max(
+      std::hypot(unitX.x() - origin.x(), unitX.y() - origin.y()),
+      std::hypot(unitY.x() - origin.x(), unitY.y() - origin.y()));
+  const float pixelsPerWorldUnit =
+      std::isfinite(pixels) && pixels > 0.0001f
+          ? std::clamp(pixels, 0.0001f, 10000.0f)
+          : 1.0f;
+  const auto tickStep = ViewportTickCalculator::compute(
+      pixelsPerWorldUnit, gridAutoStepTargetViewportInterval_,
+      QStringLiteral("units"));
+  const float majorSpacing = gridAutoStepEnabled_
+      ? std::max(1.0f, tickStep.interval)
+      : std::max(1.0f, gridSettings_.majorInterval);
+
+  Artifact::Grid::GroundGridSettings groundSettings;
+  groundSettings.plane = Artifact::Grid::GridPlane3D::XY;
+  groundSettings.majorInterval = std::max(0.0001f, majorSpacing);
+  groundSettings.subdivisions = std::max(1, gridSettings_.subdivisions);
+
+  bool invertible = false;
+  const QMatrix4x4 inverseView = gizmo3DViewMatrix_.inverted(&invertible);
+  const QVector3D cameraPosition = invertible
+      ? inverseView.map(QVector3D(0.0f, 0.0f, 0.0f))
+      : QVector3D();
+  const float cameraDistance = std::max(groundSettings.majorInterval,
+                                        cameraPosition.length());
+  groundSettings.extent = std::max(
+      groundSettings.majorInterval * 20.0f,
+      std::min(cameraDistance * 1.5f,
+               groundSettings.majorInterval * 80.0f));
+  groundSettings.fadeStart = groundSettings.extent * 0.60f;
+  groundSettings.fadeEnd = groundSettings.extent;
+  groundSettings.majorColor = gridSettings_.majorColor;
+  groundSettings.minorColor = gridSettings_.minorColor;
+
+  renderer_->setGizmoCameraMatrices(gizmo3DViewMatrix_,
+                                    gizmo3DProjectionMatrix_);
+  const auto groundLines =
+      Artifact::Grid::GridSystem::computeGroundGridLines(groundSettings);
+  for (const auto &line : groundLines) {
+    if (line.color.a() <= 0.0f ||
+        (line.isMajor && !gridSettings_.showMajor) ||
+        (!line.isMajor && !gridSettings_.showMinor)) {
+      continue;
+    }
+    renderer_->draw3DLine(
+        {line.start.x(), line.start.y(), line.start.z()},
+        {line.end.x(), line.end.y(), line.end.z()}, line.color,
+        line.thickness);
+  }
+  if (gridSettings_.showAxis) {
+    const float axisExtent = groundSettings.extent;
+    renderer_->draw3DLine(
+        {-axisExtent, 0.0f, 0.0f}, {axisExtent, 0.0f, 0.0f},
+        gridSettings_.axisColor, gridSettings_.axisStyle.thickness);
+    renderer_->draw3DLine(
+        {0.0f, -axisExtent, 0.0f}, {0.0f, axisExtent, 0.0f},
+        gridSettings_.axisColor, gridSettings_.axisStyle.thickness);
+  }
+  renderer_->flushGizmo3D();
+  renderer_->resetGizmoCameraMatrices();
+}
+
 void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
                                                                   float ch) {
@@ -43595,17 +44104,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
   }
 
-  bool threeDimensionalViewport = viewportOrientationActive_;
-  if (!threeDimensionalViewport) {
-    if (const auto composition = previewPipeline_.composition()) {
-      for (const auto& layer : composition->allLayerRef()) {
-        if (layer && layer->is3D() && isLayerEffectivelyVisible(layer)) {
-          threeDimensionalViewport = true;
-          break;
-        }
-      }
-    }
-  }
+  const bool threeDimensionalViewport = true;
 
   const auto projectedWorldPixelsPerUnit = [&]() {
     if (!gizmo3DCameraMatricesValid_) {
@@ -43620,14 +44119,14 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     const QVector3D unitX = ViewportMath::projectToTopDown(
         QVector3D(1.0f, 0.0f, 0.0f), gizmo3DViewMatrix_,
         gizmo3DProjectionMatrix_, viewport);
-    const QVector3D unitZ = ViewportMath::projectToTopDown(
-        QVector3D(0.0f, 0.0f, 1.0f), gizmo3DViewMatrix_,
+    const QVector3D unitY = ViewportMath::projectToTopDown(
+        QVector3D(0.0f, 1.0f, 0.0f), gizmo3DViewMatrix_,
         gizmo3DProjectionMatrix_, viewport);
     const float xPixels = std::hypot(unitX.x() - origin.x(),
                                      unitX.y() - origin.y());
-    const float zPixels = std::hypot(unitZ.x() - origin.x(),
-                                     unitZ.y() - origin.y());
-    const float pixels = std::max(xPixels, zPixels);
+    const float yPixels = std::hypot(unitY.x() - origin.x(),
+                                     unitY.y() - origin.y());
+    const float pixels = std::max(xPixels, yPixels);
     return std::isfinite(pixels) && pixels > 0.0001f
                ? std::clamp(pixels, 0.0001f, 10000.0f)
                : 1.0f;
@@ -43965,60 +44464,6 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
         FloatColor{0.40f, 0.82f, 1.0f, 0.95f});
   }
 
-  if (showGrid_ && threeDimensionalViewport &&
-      gizmo3DCameraMatricesValid_) {
-    const float pixelsPerWorldUnit = projectedWorldPixelsPerUnit();
-    const auto tickStep = ViewportTickCalculator::compute(
-        pixelsPerWorldUnit, gridAutoStepTargetViewportInterval_,
-        QStringLiteral("units"));
-    Artifact::Grid::GroundGridSettings groundSettings;
-    groundSettings.majorInterval = std::max(0.0001f, tickStep.interval);
-    groundSettings.subdivisions = std::max(1, gridSettings_.subdivisions);
-
-    bool invertible = false;
-    const QMatrix4x4 inverseView = gizmo3DViewMatrix_.inverted(&invertible);
-    const QVector3D cameraPosition = invertible
-        ? inverseView.map(QVector3D(0.0f, 0.0f, 0.0f))
-        : QVector3D();
-    const float cameraDistance = std::max(groundSettings.majorInterval,
-                                          cameraPosition.length());
-    groundSettings.extent = std::max(
-        groundSettings.majorInterval * 20.0f,
-        std::min(cameraDistance * 1.5f,
-                 groundSettings.majorInterval * 80.0f));
-    groundSettings.fadeStart = groundSettings.extent * 0.60f;
-    groundSettings.fadeEnd = groundSettings.extent;
-    groundSettings.majorColor = gridSettings_.majorColor;
-    groundSettings.minorColor = gridSettings_.minorColor;
-
-    renderer_->setGizmoCameraMatrices(gizmo3DViewMatrix_,
-                                      gizmo3DProjectionMatrix_);
-    const auto groundLines =
-        Artifact::Grid::GridSystem::computeGroundGridLines(groundSettings);
-    for (const auto& line : groundLines) {
-      if (line.color.a() <= 0.0f ||
-          (line.isMajor && !gridSettings_.showMajor) ||
-          (!line.isMajor && !gridSettings_.showMinor)) {
-        continue;
-      }
-      renderer_->draw3DLine(
-          {line.start.x(), line.start.y(), line.start.z()},
-          {line.end.x(), line.end.y(), line.end.z()},
-          line.color, line.thickness);
-    }
-    if (gridSettings_.showAxis) {
-      const float axisExtent = groundSettings.extent;
-      renderer_->draw3DLine(
-          {-axisExtent, 0.0f, 0.0f}, {axisExtent, 0.0f, 0.0f},
-          gridSettings_.axisColor, 1.35f);
-      renderer_->draw3DLine(
-          {0.0f, 0.0f, -axisExtent}, {0.0f, 0.0f, axisExtent},
-          gridSettings_.axisColor, 1.35f);
-    }
-    renderer_->flushGizmo3D();
-    renderer_->resetGizmoCameraMatrices();
-  }
-
   if (showGrid_ && !threeDimensionalViewport) {
 
     const auto niceGridInterval = [](float raw) {
@@ -44039,6 +44484,17 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
         ? autoSpacing : std::max(1.0f, gridSettings_.majorInterval);
 
     const int subdivisions = std::max(1, gridSettings_.subdivisions);
+
+    // Visible viewport rectangle in canvas coordinates. The grid spans the
+    // whole viewport (not just the composition frame) while staying anchored
+    // to the composition origin, matching AE's composition-space grid.
+    float gridPanX = 0.0f;
+    float gridPanY = 0.0f;
+    renderer_->getPan(gridPanX, gridPanY);
+    const float gridOriginX = -gridPanX / zoom;
+    const float gridOriginY = -gridPanY / zoom;
+    const float gridExtentW = std::max(1.0f, hostWidth_) / zoom;
+    const float gridExtentH = std::max(1.0f, hostHeight_) / zoom;
 
     const float minorSpacing = majorSpacing / static_cast<float>(subdivisions);
     const float gridFade = std::clamp(0.25f + zoom * 0.75f, 0.25f, 1.0f);
@@ -44179,9 +44635,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
         minorSpacing * zoom >= 4.0f) {
 
-      renderer_->drawGrid(0.0f, 0.0f, cw, ch, minorSpacing,
+      renderer_->drawGrid(gridOriginX, gridOriginY, gridExtentW, gridExtentH,
+                          minorSpacing,
 
-                          gridSettings_.minorStyle.thickness,
+                          gridSettings_.minorStyle.thickness / zoom,
 
                           fadedMinorColor);
 
@@ -44190,9 +44647,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     if (!gridPolarMode_ && !gridIsometricMode_ &&
         gridSettings_.showMajor) {
 
-      renderer_->drawGrid(0.0f, 0.0f, cw, ch, majorSpacing,
+      renderer_->drawGrid(gridOriginX, gridOriginY, gridExtentW, gridExtentH,
+                          majorSpacing,
 
-                          gridSettings_.majorStyle.thickness,
+                          gridSettings_.majorStyle.thickness / zoom,
 
                           fadedMajorColor);
 
@@ -44203,23 +44661,19 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
       const auto origin = renderer_->canvasToViewport({0.0f, 0.0f});
 
-      const auto bottomRight = renderer_->canvasToViewport({cw, ch});
-
       const float axisThickness =
 
           std::max(1.0f, gridSettings_.axisStyle.thickness);
 
       renderer_->drawThickLineLocal(
 
-          {origin.x, origin.y}, {bottomRight.x, origin.y}, axisThickness,
-
-          fadedAxisColor);
+          {origin.x, 0.0f}, {origin.x, std::max(1.0f, hostHeight_)},
+          axisThickness, fadedAxisColor);
 
       renderer_->drawThickLineLocal(
 
-          {origin.x, origin.y}, {origin.x, bottomRight.y}, axisThickness,
-
-          fadedAxisColor);
+          {0.0f, origin.y}, {std::max(1.0f, hostWidth_), origin.y},
+          axisThickness, fadedAxisColor);
 
     }
 
@@ -44230,7 +44684,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
                                          0.82f * gridFade};
       const int maxLabels = 48;
       int labelCount = 0;
-      for (float x = 0.0f; x <= cw && labelCount < maxLabels;
+      const float labelStartX =
+          std::floor(gridOriginX / majorSpacing) * majorSpacing;
+      for (float x = labelStartX;
+           x <= gridOriginX + gridExtentW && labelCount < maxLabels;
            x += majorSpacing, ++labelCount) {
         const auto point = renderer_->canvasToViewport({x, 0.0f});
         renderer_->drawText(
@@ -44240,7 +44697,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
             Qt::AlignLeft | Qt::AlignVCenter);
       }
       labelCount = 0;
-      for (float y = 0.0f; y <= ch && labelCount < maxLabels;
+      const float labelStartY =
+          std::floor(gridOriginY / majorSpacing) * majorSpacing;
+      for (float y = labelStartY;
+           y <= gridOriginY + gridExtentH && labelCount < maxLabels;
            y += majorSpacing, ++labelCount) {
         const auto point = renderer_->canvasToViewport({0.0f, y});
         renderer_->drawText(
@@ -45011,11 +45471,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
         gizmo_->setMode(gizmoMode_);
       }
 
-      // Text remains a screen-space editing surface.  A fixed 3D Plane is
-      // always owned by Artifact3DGizmo so its visible handles, hit test, and
-      // drag use one transform and camera contract.
-      const bool use2DTransformGizmo = !viewportOrientationActive_ &&
-          layerUsesTextGizmo(selectedLayer);
+      // Text remains a screen-space editing surface and is manipulated by the
+      // 2D TextGizmo regardless of viewport orientation. Artifact3DGizmo's
+      // unified frame gizmo is reserved for non-text layers (its hit test
+      // already excludes text layers).
+      const bool use2DTransformGizmo = layerUsesTextGizmo(selectedLayer);
       if (use2DTransformGizmo) {
 
         ArtifactCore::ProfileScope _profG2D(
@@ -45092,9 +45552,10 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
 
 
-      // Planes use the same 3D manipulator in every viewport orientation.
-      // This keeps one owner for drawing, hit testing, and transform writes.
-      const bool showProjected3DGizmo = true;
+      // Non-text layers use the 3D manipulator as their unified frame gizmo.
+      // Text layers are handled by the 2D TextGizmo above, so skip the 3D
+      // gizmo to avoid a second, non-interactive frame overlapping it.
+      const bool showProjected3DGizmo = !layerUsesTextGizmo(selectedLayer);
       if (gizmo3D_ && showProjected3DGizmo) {
 
         ArtifactCore::ProfileScope _profG3D(
@@ -45539,8 +46000,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                 QLineF(QPointF(centerProjected.x(), centerProjected.y()),
                        QPointF(yProjected.x(), yProjected.y())).length());
             if (std::isfinite(pixelsPerUnit) && pixelsPerUnit > 0.0001f) {
-              projectedHandleSize = std::clamp(18.0f / pixelsPerUnit,
-                                                4.0f, 96.0f);
+              // This value is expressed in layer-local units and is transformed
+              // with the frame below. Do not cap it to an arbitrary local size:
+              // that makes the final on-screen handle shrink again once a layer
+              // becomes small enough to hit the cap.
+              projectedHandleSize = 18.0f / pixelsPerUnit;
             }
           }
           ::Artifact::drawSelectionFrameOverlay(

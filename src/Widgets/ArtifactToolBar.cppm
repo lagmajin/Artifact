@@ -61,9 +61,23 @@ public:
     if (element == PE_PanelButtonTool) {
       const bool active = option->state & (State_On | State_Sunken);
       if (active || (option->state & State_MouseOver)) {
-        painter->fillRect(option->rect.adjusted(2, 3, -2, -3),
-                          active ? QColor(41, 70, 83) : QColor(54, 58, 62));
+        const QRect buttonRect = option->rect.adjusted(2, 2, -2, -2);
+        painter->fillRect(buttonRect,
+                          active ? QColor(22, 63, 77) : QColor(42, 46, 51));
+        if (active) {
+          QPen accentPen(QColor(94, 210, 234), 1.0);
+          painter->setPen(accentPen);
+          painter->setBrush(Qt::NoBrush);
+          painter->drawRect(buttonRect.adjusted(0, 0, -1, -1));
+        }
       }
+      return;
+    }
+    if (element == PE_IndicatorToolBarSeparator) {
+      painter->setPen(QPen(QColor(63, 68, 74), 1.0));
+      const int x = option->rect.center().x();
+      painter->drawLine(x, option->rect.top() + 7,
+                        x, option->rect.bottom() - 7);
       return;
     }
     QProxyStyle::drawPrimitive(element, option, painter, widget);
@@ -322,18 +336,26 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   setAccessibleName(QStringLiteral("Main tool bar"));
   setAccessibleDescription(
       QStringLiteral("Choose editing tools and viewport display controls"));
-  setIconSize(QSize(Artifact::Accessibility::scaledSize(22),
-                    Artifact::Accessibility::scaledSize(22)));
+  setIconSize(QSize(Artifact::Accessibility::scaledSize(24),
+                    Artifact::Accessibility::scaledSize(24)));
   setFixedHeight(Artifact::Accessibility::scaledSize(44));
   impl_->surfaceStyle_ = new ToolbarSurfaceStyle;
   impl_->surfaceStyle_->setParent(this);
   setStyle(impl_->surfaceStyle_);
   QPalette surface = palette();
-  surface.setColor(QPalette::Window, QColor(41, 43, 46));
-  surface.setColor(QPalette::Button, QColor(41, 43, 46));
-  surface.setColor(QPalette::WindowText, QColor(232, 235, 238));
-  surface.setColor(QPalette::ButtonText, QColor(232, 235, 238));
-  surface.setColor(QPalette::Highlight, QColor(41, 70, 83));
+  surface.setColor(QPalette::Window, QColor(23, 25, 28));
+  surface.setColor(QPalette::Button, QColor(23, 25, 28));
+  surface.setColor(QPalette::Base, QColor(17, 19, 22));
+  surface.setColor(QPalette::Light, QColor(67, 72, 78));
+  surface.setColor(QPalette::Mid, QColor(49, 53, 58));
+  surface.setColor(QPalette::Dark, QColor(12, 14, 16));
+  surface.setColor(QPalette::WindowText, QColor(235, 238, 242));
+  surface.setColor(QPalette::ButtonText, QColor(235, 238, 242));
+  surface.setColor(QPalette::Disabled, QPalette::WindowText,
+                   QColor(119, 125, 132));
+  surface.setColor(QPalette::Disabled, QPalette::ButtonText,
+                   QColor(119, 125, 132));
+  surface.setColor(QPalette::Highlight, QColor(22, 63, 77));
   surface.setColor(QPalette::HighlightedText, QColor(94, 210, 234));
   setPalette(surface);
   setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -880,7 +902,7 @@ void ArtifactToolBar::Impl::styleButtons() {
     if (auto *button = qobject_cast<QToolButton *>(toolBar->widgetForAction(action))) {
       button->setStyle(surfaceStyle_);
       button->setAutoRaise(true);
-      button->setMinimumSize(Accessibility::scaledSize(36), Accessibility::scaledSize(38));
+      button->setMinimumSize(Accessibility::scaledSize(38), Accessibility::scaledSize(38));
       auto *displayedAction = button->defaultAction() ? button->defaultAction() : action;
       button->setAccessibleName(displayedAction->text());
       button->setAccessibleDescription(displayedAction->statusTip());

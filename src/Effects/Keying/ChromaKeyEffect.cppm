@@ -129,9 +129,20 @@ public:
 
     void applyGPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
+        const auto previousDevice = device_;
+        const auto previousContext = context_;
         if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
             applyCPU(src, dst);
             return;
+        }
+        if (previousDevice != device_ || previousContext != context_) {
+            executor_.reset();
+            gpuContext_.reset();
+            paramsCB_.Release();
+            inputTex_.Release();
+            outputTex_.Release();
+            stagingTex_.Release();
+            pipelineReady_ = false;
         }
         if (!gpuContext_) {
             gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
@@ -175,12 +186,11 @@ public:
             }
             pipelineReady_ = true;
         }
-        Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
-        if (!createTextureFromImage(src, device_, &inputTex, "ChromaKey/InputTexture")) {
+        if (!uploadTextureFromImage(src, device_, context_, inputTex_, "ChromaKey/InputTexture")) {
             applyCPU(src, dst);
             return;
         }
-        Diligent::TextureDesc outDesc = inputTex->GetDesc();
+        Diligent::TextureDesc outDesc = inputTex_->GetDesc();
         outDesc.Usage = Diligent::USAGE_DEFAULT;
         outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
         outDesc.Name = "ChromaKey/OutputTexture";
@@ -203,7 +213,7 @@ public:
         std::memcpy(mapped, &gpuParams, sizeof(gpuParams));
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("ForegroundTexture",
-                inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+                inputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
             !executor_->setTextureView("OutputTexture",
                 outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
             applyCPU(src, dst);
@@ -212,7 +222,7 @@ public:
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
             outDesc.Width, outDesc.Height, 1, 16, 16, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if (!readbackTexture(device_, context_, outputTex_, dst, "ChromaKey/StagingTexture",
+        if (!readbackTexture(device_, context_, outputTex_, stagingTex_, dst, "ChromaKey/StagingTexture",
                              src.image().colorDescriptor())) {
             applyCPU(src, dst);
         }
@@ -222,7 +232,9 @@ private:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     bool pipelineReady_ = false;
@@ -268,8 +280,20 @@ float3 despillColor(float3 rgb, float alpha) {
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
   if (id.x >= w || id.y >= h) return;
-  float4 fg = ForegroundTexture[id.xy];
-  float alpha = baseAlpha(fg.rgb);
+  float4 stored = ForegroundTexture[id.xy];
+  float sourceAlpha = saturate(stored.a);
+  float3 straight = sourceAlpha > 1e-6 ? stored.rgb / sourceAlpha : 0;
+  float alpha = baseAlpha(straight);
+  float3 color = despillColor(straight, alpha);
+  // Diagnostic modes intentionally show the un-finished key, matching the
+  // CPU contract. Matte choke/blur belongs to the final alpha only.
+  if (ViewMode == 1) { OutputTexture[id.xy] = float4(alpha, alpha, alpha, 1.0); return; }
+  if (ViewMode == 2) { OutputTexture[id.xy] = float4(color, 1.0); return; }
+  if (ViewMode == 3) { OutputTexture[id.xy] = float4(1.0 - alpha, alpha, 0.15 * (1.0 - abs(alpha * 2.0 - 1.0)), 1.0); return; }
+  // CPU finishing operates on the premultiplied source alpha. Preserve that
+  // order so a translucent source has identical choke/blur behavior on both
+  // backends.
+  float matte = saturate(alpha * sourceAlpha);
   int radius = (int)(abs(Choke) * 3.0 + 0.5);
   radius = clamp(radius, 0, 3);
   if (radius > 0) {
@@ -278,10 +302,13 @@ float3 despillColor(float3 rgb, float alpha) {
       for (int dx = -3; dx <= 3; ++dx) {
         if (max(abs(dx), abs(dy)) > radius) continue;
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
-        float s = baseAlpha(ForegroundTexture[uint2(q)].rgb);
+        float4 neighbor = ForegroundTexture[uint2(q)];
+        float neighborAlpha = saturate(neighbor.a);
+        float3 neighborStraight = neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0;
+        float s = baseAlpha(neighborStraight) * neighborAlpha;
         v = (Choke > 0) ? min(v, s) : max(v, s);
       }
-    alpha = v;
+    matte = v;
   }
   if (MatteBlur > 1e-4) {
     float sum = 0;
@@ -289,36 +316,40 @@ float3 despillColor(float3 rgb, float alpha) {
     for (int dy = -1; dy <= 1; ++dy)
       for (int dx = -1; dx <= 1; ++dx) {
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
-        float s = baseAlpha(ForegroundTexture[uint2(q)].rgb);
+        float4 neighbor = ForegroundTexture[uint2(q)];
+        float neighborAlpha = saturate(neighbor.a);
+        float3 neighborStraight = neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0;
+        float s = baseAlpha(neighborStraight) * neighborAlpha;
         if (radius > 0) {
           float v = (Choke > 0) ? 1.0 : 0.0;
           for (int ey = -3; ey <= 3; ++ey)
             for (int ex = -3; ex <= 3; ++ex) {
               if (max(abs(ex), abs(ey)) > radius) continue;
               int2 e = clamp(int2(q) + int2(ex, ey), int2(0, 0), int2(w, h) - 1);
-              float t = baseAlpha(ForegroundTexture[uint2(e)].rgb);
+              float4 edgeNeighbor = ForegroundTexture[uint2(e)];
+              float edgeAlpha = saturate(edgeNeighbor.a);
+              float3 edgeStraight = edgeAlpha > 1e-6 ? edgeNeighbor.rgb / edgeAlpha : 0;
+              float t = baseAlpha(edgeStraight) * edgeAlpha;
               v = (Choke > 0) ? min(v, t) : max(v, t);
             }
           s = v;
         }
         sum += s;
       }
-    alpha = lerp(alpha, sum / 9.0, saturate(MatteBlur * 0.5));
+    matte = lerp(matte, sum / 9.0, saturate(MatteBlur * 0.5));
   }
-  float3 color = despillColor(fg.rgb, alpha);
-  float outA = saturate(alpha * fg.a);
-  if (ViewMode == 1) { OutputTexture[id.xy] = float4(alpha, alpha, alpha, 1.0); return; }
-  if (ViewMode == 2) { OutputTexture[id.xy] = float4(color, 1.0); return; }
-  if (ViewMode == 3) { OutputTexture[id.xy] = float4(1.0 - alpha, alpha, 0.15 * (1.0 - abs(alpha * 2.0 - 1.0)), 1.0); return; }
-  OutputTexture[id.xy] = float4(color, outA);
+  matte = saturate(matte);
+  OutputTexture[id.xy] = float4(color * matte, matte);
 })";
 
-    static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
+    static bool uploadTextureFromImage(const ImageF32x4RGBAWithCache& src,
                                        Diligent::IRenderDevice* device,
-                                       Diligent::ITexture** outTex, const char* name) {
+                                       Diligent::IDeviceContext* context,
+                                       Diligent::RefCntAutoPtr<Diligent::ITexture>& texture,
+                                       const char* name) {
         const auto& img = src.image();
         const float* data = img.rgba32fData();
-        if (!device || !outTex || !data || img.width() <= 0 || img.height() <= 0) return false;
+        if (!device || !context || !data || img.width() <= 0 || img.height() <= 0) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = img.width();
@@ -327,7 +358,7 @@ float3 despillColor(float3 rgb, float alpha) {
         desc.ArraySize = 1;
         desc.MipLevels = 1;
         desc.SampleCount = 1;
-        desc.Usage = Diligent::USAGE_IMMUTABLE;
+        desc.Usage = Diligent::USAGE_DEFAULT;
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
@@ -336,12 +367,30 @@ float3 despillColor(float3 rgb, float alpha) {
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
-        device->CreateTexture(desc, &init, outTex);
-        return *outTex != nullptr;
+        if (!texture || texture->GetDesc().Width != desc.Width ||
+            texture->GetDesc().Height != desc.Height ||
+            texture->GetDesc().Format != desc.Format) {
+            texture.Release();
+            device->CreateTexture(desc, &init, &texture);
+            return texture != nullptr;
+        }
+        Diligent::Box fullBox{};
+        fullBox.MinX = 0;
+        fullBox.MaxX = desc.Width;
+        fullBox.MinY = 0;
+        fullBox.MaxY = desc.Height;
+        fullBox.MinZ = 0;
+        fullBox.MaxZ = 1;
+        context->UpdateTexture(texture, 0, 0, fullBox, sub,
+                               Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                               Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        return true;
     }
 
     static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx,
-                                Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst,
+                                Diligent::ITexture* src,
+                                Diligent::RefCntAutoPtr<Diligent::ITexture>& staging,
+                                ImageF32x4RGBAWithCache& dst,
                                 const char* name, const auto& colorDescriptor) {
         if (!device || !ctx || !src) return false;
         const auto desc = src->GetDesc();
@@ -356,8 +405,12 @@ float3 despillColor(float3 rgb, float alpha) {
         stagingDesc.Usage = Diligent::USAGE_STAGING;
         stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
         stagingDesc.Name = name;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
-        device->CreateTexture(stagingDesc, nullptr, &staging);
+        if (!staging || staging->GetDesc().Width != stagingDesc.Width ||
+            staging->GetDesc().Height != stagingDesc.Height ||
+            staging->GetDesc().Format != stagingDesc.Format) {
+            staging.Release();
+            device->CreateTexture(stagingDesc, nullptr, &staging);
+        }
         if (!staging) return false;
         Diligent::CopyTextureAttribs copy(src, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                                           staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -429,7 +482,12 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     despillModeProp.setMaxValue(QVariant(2));
     despillModeProp.setDefaultValue(QVariant(1));
     despillModeProp.setValue(QVariant(despillMode()));
-    despillModeProp.setTooltip(QStringLiteral("0=Off, 1=Channel Suppress, 2=Luminance Preserve."));
+    // Integer properties with this option-list contract are rendered as a
+    // discrete selector by the shared Property Editor.  Keeping the labels
+    // here makes the keying diagnostic modes discoverable without introducing
+    // a separate, competing effect panel.
+    despillModeProp.setTooltip(
+        QStringLiteral("0=Off, 1=Channel Suppress, 2=Luminance Preserve"));
 
     auto& viewProp = props.emplace_back();
     viewProp.setName("viewMode");
@@ -441,7 +499,8 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     viewProp.setMaxValue(QVariant(3));
     viewProp.setDefaultValue(QVariant(0));
     viewProp.setValue(QVariant(viewMode()));
-    viewProp.setTooltip(QStringLiteral("0=Final, 1=Screen Matte, 2=Despill Map, 3=Status."));
+    viewProp.setTooltip(
+        QStringLiteral("0=Final, 1=Screen Matte, 2=Despill Map, 3=Status"));
 
     return props;
 }

@@ -64,6 +64,14 @@ enum class GpuSpatialEffectKind : std::uint8_t {
     HexGrid,
     Vignette,
     ChromaticAberration,
+    Voronoi,
+    Bricks,
+    Kaleidoscope,
+    Halftone,
+    RasterGlow,
+    Generic,
+    LensDistortion,
+    ChromaKey,
 };
 
 enum class GpuRasterEffectDomain : std::uint8_t {
@@ -74,8 +82,14 @@ enum class GpuRasterEffectDomain : std::uint8_t {
 
 struct GpuSpatialEffectNode {
     GpuSpatialEffectKind kind = GpuSpatialEffectKind::SeparableGaussianBlur;
-    std::array<float, 8> parameters{};
+    // Dedicated spatial effects may need more than the eight parameters
+    // exposed by the generic resident shader. Keep this fixed-size and
+    // allocation-free so the stack remains safe in the render hot path.
+    std::array<float, 16> parameters{};
     std::uint8_t resolutionScaledParameterMask = 0;
+    // Key into the shared generic-resident shader registry. Only meaningful
+    // when kind == GpuSpatialEffectKind::Generic; ignored otherwise.
+    std::uint32_t genericKey = 0;
 };
 
 struct GpuSpatialEffectStack {
@@ -83,12 +97,37 @@ struct GpuSpatialEffectStack {
     std::array<GpuSpatialEffectNode, kCapacity> nodes{};
     std::size_t count = 0;
 
-    bool append(const GpuSpatialEffectNode& node) {
-        if (count >= nodes.size()) return false;
-        nodes[count++] = node;
-        return true;
-    }
+    LIBRARY_DLL_API bool append(const GpuSpatialEffectNode& node);
 };
+
+enum class GpuGenericResourceKind : std::uint8_t {
+    Filter,
+    Generator,
+};
+
+struct GpuGenericShaderRecord {
+    const char* shaderBody = nullptr;
+    const char* entryPoint = "main";
+    GpuGenericResourceKind resource = GpuGenericResourceKind::Filter;
+};
+
+constexpr std::uint32_t gpuGenericKeyFromString(const char* text) {
+    std::uint32_t hash = 2166136261u;
+    while (text && *text) {
+        hash ^= static_cast<std::uint32_t>(*text++);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// Shared registry for generic-resident shaders. Effects register once from
+// their constructor (always before any render); the render pipeline looks up
+// by node.genericKey without inspecting concrete effect types. Missing keys
+// fail closed to the CPU path.
+LIBRARY_DLL_API void registerGpuGenericShader(
+    std::uint32_t key, const GpuGenericShaderRecord& record);
+LIBRARY_DLL_API bool findGpuGenericShader(
+    std::uint32_t key, GpuGenericShaderRecord* outRecord);
 
 class LIBRARY_DLL_API EffectID {
 public:
@@ -163,6 +202,11 @@ public:
     ComputeMode computeMode() const;
     void setComputeMode(ComputeMode mode);
     virtual bool supportsGPU() const { return false; }
+
+    // Generic-resident key for GpuSpatialEffectKind::Generic nodes. Effects
+    // that contribute generic nodes return the key they registered their
+    // shader record under; the default 0 never resolves in the registry.
+    virtual std::uint32_t gpuGenericKey() const { return 0; }
 
     // GPU-resident raster paths ask effects to contribute their execution
     // nodes; the renderer deliberately does not inspect concrete effect types.

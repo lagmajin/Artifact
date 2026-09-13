@@ -4,10 +4,12 @@ module;
 #include <QApplication>
 #include <QAbstractButton>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QDebug>
 #include <QEvent>
 #include <QFrame>
 #include <QLabel>
+#include <QMenu>
 #include <QPointer>
 #include <QStyle>
 #include <QTimer>
@@ -182,6 +184,8 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
     // Buttons (close, tabs-menu etc.) — inherit the tab background color.
     for (auto* button : tab->findChildren<QAbstractButton*>()) {
         if (!button) continue;
+        button->setProperty("artifactDockCloseButton", true);
+        button->setFixedSize(20, 20);
         button->ensurePolished();
         button->setAttribute(Qt::WA_StyledBackground, true);
         button->setAutoFillBackground(true);
@@ -306,6 +310,7 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
     case QEvent::Hide:
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonRelease:
+    case QEvent::ContextMenu:
     case QEvent::Show:
     case QEvent::WindowActivate:
     case QEvent::WindowDeactivate:
@@ -316,6 +321,44 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
     }
 
     if (isDockRelatedObject(watched, impl_->dockManager_)) {
+        if (event->type() == QEvent::ContextMenu) {
+            bool dockTabTarget = false;
+            for (QObject* cursor = watched; cursor; cursor = cursor->parent()) {
+                if (qobject_cast<ads::CDockWidgetTab*>(cursor)) {
+                    dockTabTarget = true;
+                    break;
+                }
+            }
+            if (dockTabTarget) {
+                if (auto* dock = dockFromObject(watched)) {
+                    auto* contextEvent = static_cast<QContextMenuEvent*>(event);
+                    QMenu menu;
+                    const auto& theme = ArtifactCore::currentDCCTheme();
+                    QPalette palette = menu.palette();
+                    palette.setColor(QPalette::Window,
+                                     QColor(theme.secondaryBackgroundColor));
+                    palette.setColor(QPalette::WindowText,
+                                     QColor(theme.textColor));
+                    palette.setColor(QPalette::Highlight,
+                                     QColor(theme.accentColor));
+                    palette.setColor(QPalette::HighlightedText,
+                                     QColor(theme.backgroundColor));
+                    menu.setPalette(palette);
+                    QAction* focusPanel = menu.addAction(
+                        QStringLiteral("パネルをフォーカス"));
+                    QAction* closePanel = menu.addAction(
+                        QStringLiteral("パネルを閉じる"));
+                    QAction* selected = menu.exec(contextEvent->globalPos());
+                    if (selected == focusPanel) {
+                        dock->setAsCurrentTab();
+                        dock->raise();
+                    } else if (selected == closePanel) {
+                        dock->closeDockWidget();
+                    }
+                    return true;
+                }
+            }
+        }
         if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) &&
             watched) {
             if (auto* dock = dockFromObject(watched)) {

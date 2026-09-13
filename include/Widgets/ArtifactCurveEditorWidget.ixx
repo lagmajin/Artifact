@@ -4,6 +4,8 @@ module;
 
 #include <QWidget>
 #include <QKeyEvent>
+#include <QPointF>
+#include <QRectF>
 #include <QVector>
 #include <wobjectdefs.h>
 export module Widget.CurveEditor;
@@ -52,6 +54,12 @@ export namespace ArtifactCore {
   const std::vector<CurveTrack>& tracks() const;
   void setViewRange(float xMin, float xMax, float yMin, float yMax);
   void setCurrentFrame(int64_t frame);
+  int64_t currentFrame() const;
+  QRectF visualPlotRect() const;
+  QRectF visualViewRange() const;
+  QPointF visualPoint(int trackIndex, float frame, float value) const;
+  bool visualKeySelected(int trackIndex, int keyIndex) const;
+  int visualSelectedTrack() const;
   void setSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
                      int64_t startFrame,
                      int64_t endFrame,

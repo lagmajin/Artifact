@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -131,6 +132,36 @@ export namespace Artifact {
             node.setMode(toCoreMatteMode());
             node.setEnabled(enabled);
             return node;
+        }
+
+        // Core MatteStackMode への変換 (Intersect は Common と同義)
+        ArtifactCore::MatteStackMode toCoreStackMode() const {
+            switch (blendMode) {
+            case MatteBlendMode::Add: return ArtifactCore::MatteStackMode::Add;
+            case MatteBlendMode::Subtract: return ArtifactCore::MatteStackMode::Subtract;
+            case MatteBlendMode::Intersect: return ArtifactCore::MatteStackMode::Common;
+            case MatteBlendMode::Difference: return ArtifactCore::MatteStackMode::Difference;
+            }
+            return ArtifactCore::MatteStackMode::Add;
+        }
+
+        // GPU MatteTrack シェーダのモード番号
+        // (0=Alpha, 1=Luminance, 2=AlphaInverted, 3=LuminanceInverted)
+        std::uint32_t toGpuModeIndex() const {
+            switch (toCoreMatteMode()) {
+            case ArtifactCore::MatteMode::Alpha: return 0u;
+            case ArtifactCore::MatteMode::Luminance: return 1u;
+            case ArtifactCore::MatteMode::AlphaInverted: return 2u;
+            case ArtifactCore::MatteMode::LuminanceInverted: return 3u;
+            case ArtifactCore::MatteMode::None: return 0u;
+            }
+            return 0u;
+        }
+
+        // GPU MatteTrack シェーダのブレンド番号
+        // (0=Add, 1=Intersect, 2=Subtract, 3=Difference)
+        std::uint32_t toGpuBlendIndex() const {
+            return static_cast<std::uint32_t>(toCoreStackMode());
         }
     };
 }

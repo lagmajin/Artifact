@@ -1712,7 +1712,7 @@ void ArtifactImageLayer::refreshSequenceFrameForCurrentTime() const
     if (!isImageSequence()) {
         return;
     }
-    const qint64 layerFrame = isTimeRemapEnabled()
+    const qint64 layerFrame = hasSourceTimeMapping()
         ? static_cast<qint64>(std::llround(
               getSourceFrameAtCompFrame(currentFrame())))
         : currentFrame() - startTime().framePosition();

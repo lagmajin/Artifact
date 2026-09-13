@@ -35,6 +35,7 @@ module;
 
 module Artifact.Menu.Layer;
 import Memory.SharedPtr;
+import Translation.Manager;
 
 import Event.Bus;
 import Artifact.Event.Types;
@@ -2268,10 +2269,21 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     groupSelectionAction->setEnabled(hasLayer && hasComp);
     
     // Ungroup: 選択中のレイヤーがグループの場合のみ有効
+    // NodeStore kindを正とし、composition不在時のみvirtualへフォールバックする。
     bool isGroupSelected = false;
     if (app && app->layerSelectionManager()) {
         auto current = app->layerSelectionManager()->currentLayer();
-        isGroupSelected = current && current->isGroupLayer();
+        if (current) {
+            if (service) {
+                if (auto comp = service->currentComposition().lock()) {
+                    isGroupSelected = comp->isGroupLayerResolved(current);
+                } else {
+                    isGroupSelected = current->isGroupLayer();
+                }
+            } else {
+                isGroupSelected = current->isGroupLayer();
+            }
+        }
     }
     ungroupAction->setEnabled(isGroupSelected && hasComp);
     
@@ -5851,7 +5863,7 @@ ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)
     : QMenu(parent), impl_(new Impl(this))
 {
     impl_->mainWindow_ = mainWindow ? mainWindow->window() : nullptr;
-    setTitle("レイヤー(&L)");
+    setTitle(TranslationManager::instance().tr(QStringLiteral("menu.layer.label"), QStringLiteral("レイヤー(&L)")));
 }
 
 ArtifactLayerMenu::~ArtifactLayerMenu()

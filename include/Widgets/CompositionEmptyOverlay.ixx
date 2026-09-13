@@ -42,6 +42,10 @@ private:
   QVBoxLayout *rootLayout_ = nullptr;
   QFrame *card_ = nullptr;
   QVBoxLayout *cardLayout_ = nullptr;
+  QWidget *layerEmptyRow_ = nullptr;
+  QLabel *layerIconLabel_ = nullptr;
+  QLabel *layerEmptyLabel_ = nullptr;
+  QLabel *compositionIconLabel_ = nullptr;
   QLabel *titleLabel_ = nullptr;
   QLabel *bodyLabel_ = nullptr;
   QLabel *helperLabel_ = nullptr;

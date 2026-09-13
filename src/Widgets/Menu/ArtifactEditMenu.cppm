@@ -18,6 +18,7 @@ module;
 #include <QVBoxLayout>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QPointer>
 module Artifact.Menu.Edit;
 import std;
 
@@ -72,6 +73,7 @@ private:
   QAction* cutAction_ = nullptr;
   QAction* pasteAction_ = nullptr;
   QAction* deleteAction_ = nullptr;
+  std::size_t shortcutListenerToken_ = 0;
 
   void handleCopyAction();
   void handleCutAction();
@@ -109,7 +111,7 @@ private:
   redoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_redo.svg")));
 
   duplicateAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.duplicate"), QStringLiteral("複製 (&D)")));
-  duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+  duplicateAction->setShortcut(shortcuts.shortcut(ShortcutId::LayerDuplicate));
   duplicateAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_duplicate.svg")));
 
   splitAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.split_layer"), QStringLiteral("レイヤーを分割 (&S)")));
@@ -792,12 +794,9 @@ void ArtifactEditMenu::Impl::handleCutAction()
 void ArtifactEditMenu::Impl::rebuildMenu() { 
   bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
   auto mgr = UndoManager::instance();
-  auto& shortcuts = ShortcutBindings::instance();
   auto& clipboard = ArtifactCore::ClipboardManager::instance();
   clipboard.syncFromSystemClipboard();
-  
-  undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
-  redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
+
   undoAction->setEnabled(hasProject && mgr && mgr->canUndo());
   redoAction->setEnabled(hasProject && mgr && mgr->canRedo());
   
@@ -844,13 +843,45 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
 
  W_OBJECT_IMPL(ArtifactEditMenu)
 
- ArtifactEditMenu::ArtifactEditMenu(QWidget* mainWindow, QWidget* parent) : QMenu(parent), impl_(new Impl(this, mainWindow)) {
-  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.edit.label"), QStringLiteral("編集 (&E)")));
-  setIcon(QIcon(resolveIconPath("Studio/menubar_edit.svg")));
- }
+  ArtifactEditMenu::ArtifactEditMenu(QWidget* mainWindow, QWidget* parent) : QMenu(parent), impl_(new Impl(this, mainWindow)) {
+   setTitle(TranslationManager::instance().tr(QStringLiteral("menu.edit.label"), QStringLiteral("編集 (&E)")));
+   setIcon(QIcon(resolveIconPath("Studio/editmenu_edit.svg")));
+   updateShortcuts();
+   QPointer<ArtifactEditMenu> guard(this);
+   impl_->shortcutListenerToken_ = ShortcutBindings::instance().addChangeListener(
+       [this, guard](ShortcutId) {
+           if (!guard || !impl_) {
+               return;
+           }
+           updateShortcuts();
+       });
+  }
 
- ArtifactEditMenu::~ArtifactEditMenu() { delete impl_; }
+  ArtifactEditMenu::~ArtifactEditMenu() {
+    if (impl_ && impl_->shortcutListenerToken_ != 0) {
+        ShortcutBindings::instance().removeChangeListener(
+            impl_->shortcutListenerToken_);
+        impl_->shortcutListenerToken_ = 0;
+    }
+    delete impl_;
+  }
 
- void ArtifactEditMenu::rebuildMenu() { impl_->rebuildMenu(); }
+  void ArtifactEditMenu::rebuildMenu() { impl_->rebuildMenu(); }
+
+  void ArtifactEditMenu::updateShortcuts() {
+    if (!impl_) {
+        return;
+    }
+    auto& shortcuts = ShortcutBindings::instance();
+    if (impl_->undoAction) {
+        impl_->undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
+    }
+    if (impl_->redoAction) {
+        impl_->redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
+    }
+    if (impl_->duplicateAction) {
+        impl_->duplicateAction->setShortcut(shortcuts.shortcut(ShortcutId::LayerDuplicate));
+    }
+  }
 
 } // namespace Artifact

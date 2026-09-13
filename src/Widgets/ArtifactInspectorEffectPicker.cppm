@@ -42,35 +42,73 @@ import Artifact.Effect.Abstract;
 namespace Artifact {
 namespace {
 QString effectCategoryIconPath(const QString& category) {
-  if (category == QStringLiteral("Blur")) return QStringLiteral(":/icons/Studio/effect_ops_blur_light.svg");
-  if (category == QStringLiteral("Color")) return QStringLiteral(":/icons/Studio/effect_ops_color.svg");
-  if (category == QStringLiteral("Distort") || category == QStringLiteral("Geometry"))
-    return QStringLiteral(":/icons/Studio/effect_ops_distort.svg");
-  if (category == QStringLiteral("Keying")) return QStringLiteral(":/icons/Studio/effect_ops_key.svg");
-  if (category == QStringLiteral("Generate") || category == QStringLiteral("Generator"))
-    return QStringLiteral(":/icons/Studio/effect_ops_generate.svg");
-  if (category == QStringLiteral("Light") || category == QStringLiteral("Glow"))
-    return QStringLiteral(":/icons/Studio/effect_ops_shadow.svg");
   if (category == QStringLiteral("All Effects"))
-    return QStringLiteral(":/icons/Studio/effectmenu_grid_view.svg");
+    return QStringLiteral(":/icons/Studio/effect_category_all.svg");
+  if (category == QStringLiteral("Blur"))
+    return QStringLiteral(":/icons/Studio/effect_category_blur.svg");
+  if (category == QStringLiteral("Color"))
+    return QStringLiteral(":/icons/Studio/effect_category_color.svg");
+  if (category == QStringLiteral("Distort") || category == QStringLiteral("Geometry"))
+    return QStringLiteral(":/icons/Studio/effect_category_distort.svg");
+  if (category == QStringLiteral("Keying"))
+    return QStringLiteral(":/icons/Studio/effect_category_keying.svg");
+  if (category == QStringLiteral("Generate") || category == QStringLiteral("Generator"))
+    return QStringLiteral(":/icons/Studio/effect_category_generate.svg");
+  if (category == QStringLiteral("Glow"))
+    return QStringLiteral(":/icons/Studio/effect_category_glow.svg");
+  if (category == QStringLiteral("Light"))
+    return QStringLiteral(":/icons/Studio/effect_category_light.svg");
+  if (category == QStringLiteral("Stylize"))
+    return QStringLiteral(":/icons/Studio/effect_category_stylize.svg");
+  if (category == QStringLiteral("Time"))
+    return QStringLiteral(":/icons/Studio/effect_category_time.svg");
+  if (category == QStringLiteral("Transform"))
+    return QStringLiteral(":/icons/Studio/effect_category_transform.svg");
+  if (category == QStringLiteral("Film"))
+    return QStringLiteral(":/icons/Studio/effect_category_film.svg");
+  if (category == QStringLiteral("Detail"))
+    return QStringLiteral(":/icons/Studio/effect_category_detail.svg");
   return QStringLiteral(":/icons/Studio/effectrack_effect.svg");
 }
 }
 
 class EffectPickerPanel : public QWidget {
  public:
-  using QWidget::QWidget;
+  enum class Surface {
+    Flat,
+    Inset,
+    Detail,
+    Swatch,
+  };
+
+  explicit EffectPickerPanel(QWidget* parent = nullptr) : QWidget(parent) {}
+
+  void setSurface(const Surface surface) {
+    surface_ = surface;
+    update();
+  }
 
  protected:
   void paintEvent(QPaintEvent*) override {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     const QPalette pal = palette();
+    if (surface_ == Surface::Flat) {
+      painter.fillRect(rect(), pal.color(QPalette::Base));
+      return;
+    }
+
     painter.setPen(pal.color(QPalette::Mid));
-    painter.setBrush(pal.color(QPalette::Base));
+    painter.setBrush(surface_ == Surface::Inset
+                         ? pal.color(QPalette::AlternateBase)
+                         : pal.color(QPalette::Base));
+    const qreal radius = surface_ == Surface::Detail ? 4.0 : 5.0;
     painter.drawRoundedRect(
-        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 5.0, 5.0);
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
   }
+
+ private:
+  Surface surface_ = Surface::Flat;
 };
 
 class EffectPickerLabel final : public QLabel {
@@ -78,7 +116,7 @@ class EffectPickerLabel final : public QLabel {
   EffectPickerLabel(const QString& text, bool heading,
                     QWidget* parent = nullptr)
       : QLabel(text, parent), heading_(heading) {
-    setAttribute(Qt::WA_OpaquePaintEvent, true);
+    setAttribute(Qt::WA_OpaquePaintEvent, false);
     if (heading_) {
       QFont labelFont = font();
       labelFont.setWeight(QFont::DemiBold);
@@ -89,7 +127,6 @@ class EffectPickerLabel final : public QLabel {
  protected:
   void paintEvent(QPaintEvent*) override {
     QPainter painter(this);
-    painter.fillRect(rect(), palette().color(QPalette::Window));
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     painter.setFont(font());
     painter.setPen(palette().color(QPalette::WindowText));
@@ -100,7 +137,7 @@ class EffectPickerLabel final : public QLabel {
       flags |= Qt::AlignVCenter;
     if (wordWrap()) flags |= Qt::TextWordWrap;
     painter.drawText(rect(), flags, text());
-    if (heading_) {
+    if (heading_ && property("artifactEffectPickerHeadingRule").toBool()) {
       painter.setPen(palette().color(QPalette::Mid));
       painter.drawLine(rect().bottomLeft(), rect().bottomRight());
     }
@@ -158,7 +195,7 @@ class EffectCategoryList final : public QListWidget {
       const bool selected = categoryItem->isSelected();
       if (selected) {
         painter.fillRect(area, blendColor(pal.color(QPalette::Base),
-                                          pal.color(QPalette::Highlight), 0.22));
+                                          pal.color(QPalette::Highlight), 0.12));
         painter.fillRect(QRect(area.left(), area.top(), 3, area.height()),
                          pal.color(QPalette::Highlight));
       }
@@ -207,6 +244,7 @@ class EffectDetailsPanel final : public EffectPickerPanel {
  public:
   explicit EffectDetailsPanel(QWidget* parent = nullptr)
       : EffectPickerPanel(parent) {
+    setSurface(Surface::Detail);
     setMinimumWidth(240);
     setMaximumWidth(300);
     auto* layout = new QVBoxLayout(this);
@@ -247,7 +285,8 @@ class EffectDetailsPanel final : public EffectPickerPanel {
     description_->setText(
         available ? description
                   : QStringLiteral("Choose an effect to view its description."));
-    category_->setText(available ? category : QString());
+    category_->setText(available ? QStringLiteral("Category  ·  %1").arg(category)
+                                 : QString());
   }
 
  private:
@@ -283,19 +322,25 @@ class EffectPickerList final : public QListWidget {
       const bool selected = listItem->isSelected();
       const bool hovered = hoveredIndex == index;
       const bool selectable = listItem->flags().testFlag(Qt::ItemIsSelectable);
-      const QRectF cardRect =
-          QRectF(itemRect).adjusted(2.0, 2.0, -2.0, -2.0);
-      painter.setPen(selected ? pal.color(QPalette::Highlight)
-                              : pal.color(QPalette::Mid));
-      painter.setBrush(selected
-                           ? blendColor(pal.color(QPalette::Base),
-                                        pal.color(QPalette::Highlight), 0.36)
-                           : hovered && selectable
-                                 ? blendColor(pal.color(QPalette::Base),
-                                              pal.color(QPalette::Highlight),
-                                              0.12)
-                                 : pal.color(QPalette::AlternateBase));
-      painter.drawRoundedRect(cardRect, 4.0, 4.0);
+      const QRect rowRect = itemRect.adjusted(3, 1, -3, -1);
+      if (selected) {
+        painter.fillRect(rowRect, blendColor(pal.color(QPalette::Base),
+                                             pal.color(QPalette::Highlight),
+                                             0.16));
+        painter.setPen(pal.color(QPalette::Highlight));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(
+            QRectF(rowRect).adjusted(0.5, 0.5, -0.5, -0.5), 3.0, 3.0);
+        painter.fillRect(QRect(rowRect.left(), rowRect.top(), 3,
+                               rowRect.height()),
+                         pal.color(QPalette::Highlight));
+      } else if (hovered && selectable) {
+        painter.fillRect(rowRect, blendColor(pal.color(QPalette::Base),
+                                             pal.color(QPalette::Highlight),
+                                             0.06));
+      }
+      painter.setPen(pal.color(QPalette::Mid));
+      painter.drawLine(rowRect.bottomLeft(), rowRect.bottomRight());
 
       const QString displayName =
           listItem->data(Qt::UserRole + 1).toString().trimmed();
@@ -332,12 +377,6 @@ class EffectPickerList final : public QListWidget {
                        Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("+"));
     }
     painter.setClipping(false);
-    painter.setPen(hasFocus() ? pal.color(QPalette::Highlight)
-                              : pal.color(QPalette::Mid));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(
-        QRectF(viewport()->rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-        4.0, 4.0);
   }
 };
 
@@ -359,9 +398,11 @@ class EffectPickerButton final : public QPushButton {
     const bool active = isDown() || isChecked();
     const QColor accent = pal.color(QPalette::Highlight);
     const QColor base = primary_ ? blendColor(pal.color(QPalette::Button),
-                                                accent, 0.48)
+                                                accent, 0.72)
                                  : pal.color(QPalette::Button);
-    painter.setPen(primary_ ? accent : pal.color(QPalette::Mid));
+    painter.setPen(primary_ ? blendColor(accent, pal.color(QPalette::WindowText),
+                                         0.18)
+                            : pal.color(QPalette::Mid));
     painter.setBrush(active ? blendColor(base, accent, 0.28)
                             : underMouse() ? blendColor(base, accent, 0.14)
                                            : base);
@@ -392,10 +433,12 @@ public:
     layout->setSpacing(14);
 
     auto* contextPanel = new EffectPickerPanel(this);
+    contextPanel->setSurface(EffectPickerPanel::Surface::Flat);
     auto* contextLayout = new QHBoxLayout(contextPanel);
     contextLayout->setContentsMargins(14, 10, 14, 10);
     contextLayout->setSpacing(14);
     auto* targetSwatch = new EffectPickerPanel(contextPanel);
+    targetSwatch->setSurface(EffectPickerPanel::Surface::Swatch);
     targetSwatch->setFixedSize(48, 48);
     QPalette swatchPalette = targetSwatch->palette();
     swatchPalette.setColor(QPalette::Base, QColor(238, 240, 244));
@@ -415,11 +458,25 @@ public:
     targetColumn->addWidget(targetType);
     contextLayout->addLayout(targetColumn);
     contextLayout->addStretch();
+    auto* stageBadge = new EffectPickerPanel(contextPanel);
+    stageBadge->setSurface(EffectPickerPanel::Surface::Inset);
+    stageBadge->setMinimumWidth(142);
+    auto* stageLayout = new QVBoxLayout(stageBadge);
+    stageLayout->setContentsMargins(12, 6, 12, 6);
+    stageLayout->setSpacing(0);
     auto* stageLabel = new EffectPickerLabel(
-        stageDisplayName(stageFilter_), false, contextPanel);
-    stageLabel->setMinimumWidth(110);
-    stageLabel->setAlignment(Qt::AlignCenter);
-    contextLayout->addWidget(stageLabel);
+        stageDisplayName(stageFilter_), false, stageBadge);
+    QFont stageFont = stageLabel->font();
+    stageFont.setWeight(QFont::DemiBold);
+    stageLabel->setFont(stageFont);
+    stageLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    stageLayout->addWidget(stageLabel);
+    auto* stageDetail = new EffectPickerLabel(
+        QStringLiteral("Effect stage"), false, stageBadge);
+    applyInspectorLabelPalette(stageDetail, false);
+    stageDetail->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    stageLayout->addWidget(stageDetail);
+    contextLayout->addWidget(stageBadge);
     layout->addWidget(contextPanel);
 
     searchEdit_ = new QLineEdit(this);
@@ -432,6 +489,7 @@ public:
     searchEdit_->setFrame(false);
     applyInspectorPalette(searchEdit_, true);
     auto* searchPanel = new EffectPickerPanel(this);
+    searchPanel->setSurface(EffectPickerPanel::Surface::Inset);
     auto* searchLayout = new QVBoxLayout(searchPanel);
     searchLayout->setContentsMargins(12, 6, 12, 6);
     searchLayout->setSpacing(0);
@@ -439,6 +497,7 @@ public:
     layout->addWidget(searchPanel);
 
     auto *contentFrame = new EffectPickerPanel(this);
+    contentFrame->setSurface(EffectPickerPanel::Surface::Flat);
     contentFrame->setObjectName(QStringLiteral("inspectorContentFrame"));
     applyInspectorPalette(contentFrame, true);
     auto *contentLayout = new QHBoxLayout(contentFrame);
@@ -456,6 +515,7 @@ public:
     contentLayout->addWidget(categoryList_);
 
     auto* resultsPanel = new EffectPickerPanel(contentFrame);
+    resultsPanel->setSurface(EffectPickerPanel::Surface::Flat);
     auto* resultsLayout = new QVBoxLayout(resultsPanel);
     resultsLayout->setContentsMargins(8, 8, 8, 8);
     resultsLayout->setSpacing(8);

@@ -36,6 +36,9 @@ class ArtifactTimelineWidget :public QWidget {
   void syncWorkAreaFromCurrentComposition();
   void syncPainterSelectionState(bool forceRefresh = false);
   void syncGpuTimelineSnapshot();
+  void buildGpuTimelineSnapshot();
+  void syncGpuCurveSnapshot();
+  void buildGpuCurveSnapshot();
   void refreshCurveEditorTracks();
   void updateCurvePropertyList();
   void updateSearchState();
@@ -44,7 +47,8 @@ class ArtifactTimelineWidget :public QWidget {
   void toggleGraphEditorMode(bool active, Qt::FocusReason reason = Qt::OtherFocusReason);
   void advanceGraphEditorFocus(bool reverse);
   bool isGraphEditorFocusWidget(const QWidget* widget) const;
-  void setCurrentFrameForAll(double frame);
+   void setCurrentFrameForAll(double frame);
+  void updateShortcuts();
  protected:
   void paintEvent(QPaintEvent* event) override;
   void focusInEvent(QFocusEvent* event) override;

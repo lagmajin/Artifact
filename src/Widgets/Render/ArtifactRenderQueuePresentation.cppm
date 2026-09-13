@@ -15,12 +15,15 @@ module;
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QPalette>
+#include <QPainter>
 #include <QPixmap>
 #include <QProgressBar>
+#include <QProxyStyle>
 #include <QPushButton>
 #include <QSize>
 #include <QSpinBox>
 #include <QString>
+#include <QStyleOptionButton>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -185,13 +188,15 @@ class RenderQueueJobCard final : public QFrame
   explicit RenderQueueJobCard(QWidget* parent = nullptr)
       : QFrame(parent)
   {
-    setFrameShape(QFrame::StyledPanel);
+    // Queue rows use the list's one-pixel rhythm rather than an outline
+    // around every job, matching the compact Render Manager reference.
+    setFrameShape(QFrame::NoFrame);
     auto* root = new QHBoxLayout(this);
-    root->setContentsMargins(10, 6, 14, 6);
-    root->setSpacing(16);
+    root->setContentsMargins(10, 4, 12, 4);
+    root->setSpacing(14);
 
     thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
-    thumbnailLabel->setFixedSize(122, 68);
+    thumbnailLabel->setFixedSize(102, 58);
     thumbnailLabel->setAlignment(Qt::AlignCenter);
     thumbnailLabel->setScaledContents(false);
     thumbnailLabel->setAutoFillBackground(true);
@@ -203,19 +208,19 @@ class RenderQueueJobCard final : public QFrame
 
     auto* nameColumn = new QVBoxLayout();
     nameColumn->setContentsMargins(0, 0, 0, 0);
-    nameColumn->setSpacing(2);
+    nameColumn->setSpacing(1);
     nameLabel = new QLabel();
     QFont nameFont = nameLabel->font();
     nameFont.setPointSize(nameFont.pointSize() + 1);
     nameFont.setBold(true);
     nameLabel->setFont(nameFont);
-    nameLabel->setMinimumWidth(150);
+    nameLabel->setMinimumWidth(136);
     nameLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     outputLabel = new QLabel();
     backendLabel = new QLabel();
     outputLabel->setWordWrap(false);
     backendLabel->setWordWrap(false);
-    outputLabel->setMinimumWidth(190);
+    outputLabel->setMinimumWidth(172);
     outputLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     nameColumn->addStretch();
     nameColumn->addWidget(nameLabel);
@@ -241,8 +246,8 @@ class RenderQueueJobCard final : public QFrame
     progressBar = new QProgressBar();
     progressBar->setRange(0, 100);
     progressBar->setTextVisible(true);
-    progressBar->setMinimumWidth(160);
-    progressBar->setMaximumHeight(10);
+    progressBar->setMinimumWidth(142);
+    progressBar->setMaximumHeight(6);
     statusColumn->addWidget(progressBar);
     root->addLayout(statusColumn, 1);
 
@@ -280,6 +285,17 @@ class RenderQueueJobCard final : public QFrame
     }
     statusIconLabel->setPixmap(
         loadIconWithFallback(statusIcon).pixmap(QSize(16, 16)));
+    if (needsAttention) {
+      // Keep the queue scanable: failed jobs use the same compact missing
+      // preview cue as the reference, while the actual failure remains in the
+      // Status column and inspector rather than repeating a long label here.
+      thumbnailLabel->setText({});
+      thumbnailLabel->setPixmap(
+          loadIconWithFallback(QStringLiteral("Studio/asset_missing_small.svg"))
+              .pixmap(QSize(28, 28)));
+    } else if (thumbnailLabel->pixmap().isNull()) {
+      thumbnailLabel->setText(QStringLiteral("PREVIEW"));
+    }
     nameLabel->setText(name);
     outputLabel->setText(output);
     QPalette outputPalette = outputLabel->palette();
@@ -319,6 +335,52 @@ class RenderQueueJobCard final : public QFrame
       selected();
     }
     QFrame::mousePressEvent(event);
+  }
+};
+
+class RenderQueuePrimaryButtonStyle final : public QProxyStyle
+{
+ public:
+  using QProxyStyle::QProxyStyle;
+
+  void drawControl(ControlElement element, const QStyleOption* option,
+                   QPainter* painter,
+                   const QWidget* widget = nullptr) const override
+  {
+    if (element != CE_PushButton) {
+      QProxyStyle::drawControl(element, option, painter, widget);
+      return;
+    }
+
+    const auto* button = qstyleoption_cast<const QStyleOptionButton*>(option);
+    if (!button) {
+      QProxyStyle::drawControl(element, option, painter, widget);
+      return;
+    }
+
+    const bool enabled = button->state.testFlag(State_Enabled);
+    const bool hovered = enabled && button->state.testFlag(State_MouseOver);
+    const bool pressed = enabled && button->state.testFlag(State_Sunken);
+    QColor fill = enabled ? QColor(226, 166, 47) : QColor(69, 64, 55);
+    QColor border = enabled ? QColor(244, 187, 68) : QColor(83, 78, 68);
+    QColor text = enabled ? QColor(25, 22, 17) : QColor(142, 135, 121);
+    if (pressed) {
+      fill = fill.darker(112);
+    } else if (hovered) {
+      fill = fill.lighter(108);
+    }
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    const QRectF surface = QRectF(button->rect).adjusted(0.5, 0.5, -0.5, -0.5);
+    painter->setPen(QPen(border, 1.0));
+    painter->setBrush(fill);
+    painter->drawRoundedRect(surface, 3.0, 3.0);
+    painter->restore();
+
+    QStyleOptionButton labelOption(*button);
+    labelOption.palette.setColor(QPalette::ButtonText, text);
+    QProxyStyle::drawControl(CE_PushButtonLabel, &labelOption, painter, widget);
   }
 };
 

@@ -82,6 +82,30 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
         return QStringLiteral("maps to circular");
     case ArtifactCore::InterpolationType::Bezier:
         return QStringLiteral("maps to bezier");
+    case ArtifactCore::InterpolationType::CubicIn:
+        return QStringLiteral("maps to cubic-in");
+    case ArtifactCore::InterpolationType::CubicInOut:
+        return QStringLiteral("maps to cubic in-out");
+    case ArtifactCore::InterpolationType::QuarticIn:
+        return QStringLiteral("maps to quartic-in");
+    case ArtifactCore::InterpolationType::QuarticInOut:
+        return QStringLiteral("maps to quartic in-out");
+    case ArtifactCore::InterpolationType::QuinticIn:
+        return QStringLiteral("maps to quintic-in");
+    case ArtifactCore::InterpolationType::QuinticInOut:
+        return QStringLiteral("maps to quintic in-out");
+    case ArtifactCore::InterpolationType::SineIn:
+        return QStringLiteral("maps to sine-in");
+    case ArtifactCore::InterpolationType::SineInOut:
+        return QStringLiteral("maps to sine in-out");
+    case ArtifactCore::InterpolationType::CircularIn:
+        return QStringLiteral("maps to circular-in");
+    case ArtifactCore::InterpolationType::CircularInOut:
+        return QStringLiteral("maps to circular in-out");
+    case ArtifactCore::InterpolationType::ExponentialIn:
+        return QStringLiteral("maps to expo-in");
+    case ArtifactCore::InterpolationType::ExponentialInOut:
+        return QStringLiteral("maps to expo in-out");
     default:
         return QStringLiteral("maps to interpolation");
     }

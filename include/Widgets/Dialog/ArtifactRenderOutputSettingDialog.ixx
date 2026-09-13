@@ -35,6 +35,8 @@ export namespace Artifact
   [[nodiscard]] bool multiChannelEnabled() const;
   void setMultiChannelChannels(const QStringList& channels);
   [[nodiscard]] QStringList multiChannelChannels() const;
+  void setDeepExportEnabled(bool enabled);
+  [[nodiscard]] bool deepExportEnabled() const;
   void setFramePadding(int digits);
   [[nodiscard]] int framePadding() const;
   void setResolution(int width, int height);

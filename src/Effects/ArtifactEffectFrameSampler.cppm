@@ -80,16 +80,7 @@ bool ArtifactEffectFrameSampler::sampleCurrentLayerFrameRelative(
     if (frames.empty())
         return false;
 
-    // Find the "current" frame — assume the most recently stored frame
-    // is the current one.
-    std::int64_t currentKey = std::numeric_limits<std::int64_t>::min();
-    for (const auto& [frame, _] : frames)
-    {
-        if (frame > currentKey)
-            currentKey = frame;
-    }
-
-    const std::int64_t targetFrame = currentKey + frameOffset;
+    const std::int64_t targetFrame = currentCompositionFrame_ + frameOffset;
     const auto         frameIt = frames.find(targetFrame);
     if (frameIt == frames.end())
         return false;

@@ -264,7 +264,7 @@ TimelineThemeColors timelineThemeColors() {
   };
 }
 
-constexpr int kDefaultTrackHeight = 28;
+constexpr int kDefaultTrackHeight = 36;
 constexpr int kTrackSpacing = 0;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
@@ -3243,6 +3243,30 @@ QString keyframeInterpolationLabel(const ArtifactCore::InterpolationType type) {
     return tt("timeline.cubic", "Cubic");
   case ArtifactCore::InterpolationType::Exponential:
     return tt("timeline.exponential", "Exponential");
+  case ArtifactCore::InterpolationType::CubicIn:
+    return tt("timeline.cubic_in", "Cubic In");
+  case ArtifactCore::InterpolationType::CubicInOut:
+    return tt("timeline.cubic_in_out", "Cubic In/Out");
+  case ArtifactCore::InterpolationType::QuarticIn:
+    return tt("timeline.quartic_in", "Quartic In");
+  case ArtifactCore::InterpolationType::QuarticInOut:
+    return tt("timeline.quartic_in_out", "Quartic In/Out");
+  case ArtifactCore::InterpolationType::QuinticIn:
+    return tt("timeline.quintic_in", "Quintic In");
+  case ArtifactCore::InterpolationType::QuinticInOut:
+    return tt("timeline.quintic_in_out", "Quintic In/Out");
+  case ArtifactCore::InterpolationType::SineIn:
+    return tt("timeline.sine_in", "Sine In");
+  case ArtifactCore::InterpolationType::SineInOut:
+    return tt("timeline.sine_in_out", "Sine In/Out");
+  case ArtifactCore::InterpolationType::CircularIn:
+    return tt("timeline.circular_in", "Circular In");
+  case ArtifactCore::InterpolationType::CircularInOut:
+    return tt("timeline.circular_in_out", "Circular In/Out");
+  case ArtifactCore::InterpolationType::ExponentialIn:
+    return tt("timeline.exponential_in", "Exponential In");
+  case ArtifactCore::InterpolationType::ExponentialInOut:
+    return tt("timeline.exponential_in_out", "Exponential In/Out");
   case ArtifactCore::InterpolationType::Linear:
   default:
     return tt("timeline.linear", "Linear");
@@ -5022,6 +5046,11 @@ ArtifactTimelineTrackPainterView::keyframeMarkers() const {
   return impl_->keyframeMarkers_;
 }
 
+const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>&
+ArtifactTimelineTrackPainterView::keyframeMarkersView() const {
+  return impl_->keyframeMarkers_;
+}
+
 QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
 ArtifactTimelineTrackPainterView::selectedKeyframeMarkers() const {
   QVector<KeyframeMarkerVisual> selected;
@@ -6323,6 +6352,11 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
 
 QVector<ArtifactTimelineTrackPainterView::TrackClipVisual>
 ArtifactTimelineTrackPainterView::clips() const {
+  return impl_->clips_;
+}
+
+const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual>&
+ArtifactTimelineTrackPainterView::clipsView() const {
   return impl_->clips_;
 }
 
@@ -7694,12 +7728,21 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   }
 
   const double ppf = impl_->pixelsPerFrame_;
-  const auto keyframeAreas = collectKeyframeAreas(
-      impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
-      impl_->horizontalOffset_, impl_->verticalOffset_);
-  const auto markerHit = hitTestMarkers(
-      impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, mouseX,
-      mouseY, ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
+  const bool clipDragActive =
+      impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0;
+  // Clip dragging does not consume keyframe hit geometry. Avoid rebuilding the
+  // area list and scanning every marker for each high-frequency mouse event.
+  const QVector<KeyframeAreaVisual> keyframeAreas = clipDragActive
+      ? QVector<KeyframeAreaVisual>{}
+      : collectKeyframeAreas(
+            impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
+            impl_->horizontalOffset_, impl_->verticalOffset_);
+  const MarkerHitResult markerHit = clipDragActive
+      ? MarkerHitResult{}
+      : hitTestMarkers(
+            impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_,
+            mouseX, mouseY, ppf, impl_->horizontalOffset_,
+            impl_->verticalOffset_);
   const auto areaHit = hitTestKeyframeAreas(keyframeAreas, mouseX, mouseY);
 
   if ((event->buttons() & Qt::LeftButton) && impl_->pendingBackgroundPress_ &&
@@ -8155,17 +8198,6 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     default:
       break;
     }
-
-    // Debug message emission
-    const QString status =
-        QStringLiteral("Layer: %1 | Start: %2 | Dur: %3%4")
-            .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
-            .arg(QString::number(clip.startFrame, 'f', 1))
-            .arg(QString::number(clip.durationFrame, 'f', 1))
-            .arg(clipSnapLabel.isEmpty()
-                     ? QString()
-                     : QStringLiteral(" | Snap: %1").arg(clipSnapLabel));
-    timelineDebugMessage(status);
 
     const QRectF dirtyRect =
         clipRectFor(oldClip, impl_->trackHeights_, impl_->trackTops_, ppf,

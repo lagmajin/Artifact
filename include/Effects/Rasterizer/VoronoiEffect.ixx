@@ -32,7 +32,23 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
-    bool supportsGPU() const override { return false; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Voronoi;
+        node.parameters[0] = scale_;
+        node.parameters[1] = jitter_;
+        node.parameters[2] = static_cast<float>(mode_);
+        node.parameters[3] = static_cast<float>(seed_);
+        node.resolutionScaledParameterMask = (1u << 0);
+        return stack.append(node);
+    }
+
+    bool supportsGPU() const override { return true; }
 
 private:
     float scale_=20.0f,jitter_=1.0f; int mode_=0,seed_=0;

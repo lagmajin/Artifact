@@ -44,6 +44,25 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Kaleidoscope;
+        node.parameters[0] = static_cast<float>(segments_);
+        node.parameters[1] = centerX_;
+        node.parameters[2] = centerY_;
+        node.parameters[3] = rotation_;
+        node.parameters[4] = zoom_;
+        node.parameters[5] = feather_;
+        node.parameters[6] = mirror_ ? 1.0f : 0.0f;
+        node.resolutionScaledParameterMask = 0;
+        return stack.append(node);
+    }
+
     bool supportsGPU() const override { return true; }
 };
 

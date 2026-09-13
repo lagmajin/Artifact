@@ -28,6 +28,7 @@ module;
 
 module Artifact.Menu.View;
 import std;
+import Translation.Manager;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
@@ -2203,7 +2204,7 @@ namespace Artifact {
 
  ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
-  setTitle("表示(&V)");
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.view.label"), QStringLiteral("表示(&V)")));
   setTearOffEnabled(false);
   impl_->refreshEnabledState();
  }

@@ -18,6 +18,7 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QSizeF>
+#include <QVector>
 #include <QString>
 #include <QTransform>
 #include <QMatrix4x4>
@@ -506,8 +507,21 @@ public:
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
   void setTimeRemapKey(int64_t compFrame, double sourceFrame,
                        ArtifactCore::TimeRemapKeyframe::Interpolation interpolation);
+  const QVector<ArtifactCore::TimeRemapKeyframe>& timeRemapKeys() const;
+  void setTimeRemapKeys(const QVector<ArtifactCore::TimeRemapKeyframe>& keys);
+  void setTimeRemapFrameBlend(ArtifactCore::FrameBlendMode mode, float amount);
+  ArtifactCore::FrameBlendMode timeRemapFrameBlendMode() const;
+  float timeRemapFrameBlendAmount() const;
+  // Source-time Posterize (stop motion). This is deliberately independent
+  // from raster effects so every consumer resolves the same held source frame.
+  bool isStopMotionSamplingEnabled() const;
+  void setStopMotionSamplingEnabled(bool);
+  double stopMotionSamplingFrameRate() const;
+  void setStopMotionSamplingFrameRate(double);
+  bool hasSourceTimeMapping() const;
 
-  // Get source frame index for a given composition frame (applies time remap)
+  // Get source frame index for a given composition frame (applies source-time
+  // remap and/or stop-motion sampling).
   double getSourceFrameAtCompFrame(int64_t compFrame) const;
   /*Transform*/
 
@@ -712,9 +726,6 @@ public:
   void setMatteReferences(const std::vector<LayerMatteReference>& refs);
   void addMatteReference(const LayerMatteReference& ref);
   void clearMatteReferences();
-  /// Convert matte references to Core MatteStack for evaluation.
-  /// Also accessible as convenience for the render pipeline.
-  ArtifactCore::MatteStack buildMatteStack() const;
   /*Mattes*/
 
   // LOD (Level of Detail) rendering

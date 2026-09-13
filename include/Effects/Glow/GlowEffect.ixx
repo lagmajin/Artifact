@@ -4,6 +4,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <QVariant>
+#include <cstdint>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -51,6 +52,10 @@ private:
     class Impl;
     Impl* impl_;
 public:
+    static constexpr const char* kGpuGenericKeyString = "glow";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
     GlowEffect();
     ~GlowEffect();
 
@@ -81,6 +86,28 @@ public:
 
     bool supportsGPU() const override {
         return true;
+    }
+
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = glowGain();
+        node.parameters[1] = static_cast<float>(layerCount());
+        node.parameters[2] = baseSigma();
+        node.parameters[3] = sigmaGrowth();
+        node.parameters[4] = baseAlpha();
+        node.parameters[5] = alphaFalloff();
+        node.parameters[6] = contributionPreview() ? 1.0f : 0.0f;
+        // baseSigma is in pixels; scale it with the preview resolution.
+        node.resolutionScaledParameterMask = (1u << 2);
+        return stack.append(node);
     }
 
     /**
@@ -120,6 +147,19 @@ protected:
     void apply(const ImageF32x4RGBAWithCache& src,
                ImageF32x4RGBAWithCache& dst) override;
 public:
+    static constexpr const char* kGpuGenericKeyString = "builtin.volumetric_shine";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override;
+
+    bool supportsGPU() const override { return true; }
+
     VolumetricShineEffect();
     ~VolumetricShineEffect() override;
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;

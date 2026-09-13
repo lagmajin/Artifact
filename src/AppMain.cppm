@@ -2751,6 +2751,21 @@ int main(int argc, char *argv[]) {
                    << themePresetPath << loadError;
       }
     }
+    const QColor accentOverride(settings->uiAccentColor());
+    if (accentOverride.isValid()) {
+      theme.accentColor = accentOverride.name();
+      const QColor background(theme.backgroundColor);
+      theme.selectionColor = QColor::fromRgbF(
+          background.redF() * 0.70 + accentOverride.redF() * 0.30,
+          background.greenF() * 0.70 + accentOverride.greenF() * 0.30,
+          background.blueF() * 0.70 + accentOverride.blueF() * 0.30)
+                                 .name();
+    }
+    QFont applicationFont(settings->defaultFontFamily());
+    applicationFont.setPointSizeF(
+        static_cast<qreal>(settings->uiFontPointSize()) *
+        Artifact::Accessibility::fontScale());
+    a.setFont(applicationFont);
     ArtifactCore::applyDCCTheme(a, theme);
     if (auto *style = a.style()) {
       style->polish(&a);
@@ -4463,6 +4478,11 @@ int main(int argc, char *argv[]) {
     }
     qInfo() << "[AppMain][Startup] ADS dock restore ms="
             << startupLayoutTimer.elapsed();
+    // A persisted dock graph can contain animation/timeline surfaces from a
+    // previous session.  Re-apply the selected workspace after restore so the
+    // workspace visibility contract wins over stale dock visibility (Default
+    // must not reopen the Curve Editor on startup).
+    mw->setWorkspaceMode(workspaceModeFromSettings());
     // The composition editor is the default central work surface.  This must
     // happen after ADS restore; activating a layer test tab here hid it again.
     mw->setDockVisible(QStringLiteral("Composition Viewer"), true);

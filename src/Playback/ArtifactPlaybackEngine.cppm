@@ -788,7 +788,7 @@ public:
             audioLastSentMuted_ = effectiveAudioMuted;
         }
 
-        const double safeFrameRate = static_cast<double>(frameRate_.framerate());
+        const double safeFrameRate = frameRate_.exactFps();
         const double exactSamplesPerFrame =
             static_cast<double>(audioSampleRate_) / safeFrameRate;
         constexpr double maxSamplesPerFrame = static_cast<double>(

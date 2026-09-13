@@ -20,6 +20,7 @@ import Artifact.Layer.Group;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Video;
 import Artifact.Layers.Noise;
+import Artifact.Composition.Abstract;
 
 namespace Artifact {
 
@@ -103,7 +104,12 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
-  if (layer->isGroupLayer()) {
+  // NodeStore kindを正とし、未登録時のみvirtualへフォールバックする。
+  const auto* composition =
+      dynamic_cast<const ArtifactAbstractComposition*>(layer->compositionObject());
+  const bool isGroup = composition ? composition->isGroupLayerResolved(layer)
+                                   : layer->isGroupLayer();
+  if (isGroup) {
     const auto* group = dynamic_cast<const ArtifactGroupLayer*>(layer.get());
     const GroupOutputMode outputMode = group ? group->outputMode() : GroupOutputMode::All;
     if (outputMode == GroupOutputMode::Single) {

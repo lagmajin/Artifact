@@ -15,6 +15,7 @@ module;
 
 module Menu.Render;
 import std;
+import Translation.Manager;
 
 import Event.Bus;
 import Artifact.Event.Types;
@@ -342,7 +343,7 @@ void ArtifactRenderMenu::Impl::clearAll()
 ArtifactRenderMenu::ArtifactRenderMenu(QWidget* mainWindow, QWidget* parent)
  : QMenu(parent), impl_(new Impl(this, mainWindow))
 {
- setTitle("レンダー(&R)");
+ setTitle(TranslationManager::instance().tr(QStringLiteral("menu.render.label"), QStringLiteral("レンダー(&R)")));
  setIcon(QIcon(resolveIconPath("Studio/menubar_render.svg")));
  connect(this, &QMenu::aboutToShow, this, &ArtifactRenderMenu::rebuildMenu);
 }

@@ -104,7 +104,7 @@ int64_t timelineFrameToSourceFrame(const ArtifactVideoLayer* layer, int64_t time
         return timelineFrame;
     }
 
-    if (layer->isTimeRemapEnabled()) {
+    if (layer->hasSourceTimeMapping()) {
         return static_cast<int64_t>(layer->getSourceFrameAtCompFrame(timelineFrame));
     }
 
@@ -117,7 +117,7 @@ double timelineFrameToSourceFrameDouble(const ArtifactVideoLayer* layer, int64_t
         return static_cast<double>(timelineFrame);
     }
 
-    if (layer->isTimeRemapEnabled()) {
+    if (layer->hasSourceTimeMapping()) {
         return layer->getSourceFrameAtCompFrame(timelineFrame);
     }
 
@@ -2131,7 +2131,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
     return decoded;
 }
 
-ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(double frameNumber) const
+ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(double frameNumber, bool isDraftOrPreview) const
 {
     if (!impl_->isLoaded_ || impl_->opening_.load()) {
         impl_->lastDecodeState_ = QStringLiteral("not-loaded");
@@ -2144,10 +2144,19 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(doubl
     const double sourceFrameDouble = timelineFrameToSourceFrameDouble(this, frameNumber);
     const double fractional = sourceFrameDouble - std::floor(sourceFrameDouble);
 
-    if (fractional < 0.001f || !isTimeRemapEnabled()) {
+    // AE parity: FrameBlendMode::None means nearest frame, never blend.
+    if (fractional < 0.001f || !isTimeRemapEnabled() ||
+        timeRemapFrameBlendMode() == ArtifactCore::FrameBlendMode::None) {
         const int64_t sourceFrame = static_cast<int64_t>(std::round(sourceFrameDouble));
         return decodeFrameToImageBuffer(sourceFrame);
     }
+
+    // AE parity: Draft preview forces FrameMix. The linear blend below IS
+    // FrameMix quality, so draft OpticalFlow/MotionBlur intentionally fall
+    // through to it. Best-quality OpticalFlow warp lives in
+    // TimeRemapEffect::processFrameBlending (QImage path); VideoLayer keeps
+    // FrameMix-grade blending here to stay on the ImageF32x4 hot path.
+    (void)isDraftOrPreview;
 
     const int64_t frameA = static_cast<int64_t>(std::floor(sourceFrameDouble));
     const int64_t frameB = static_cast<int64_t>(std::ceil(sourceFrameDouble));
@@ -2170,6 +2179,16 @@ ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(int64_t fr
         return {};
     }
     if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
+        return {};
+    }
+
+    // A direct GPU decode is a single source frame. Let the shared ImageF32
+    // path resolve fractional Time Remap with the selected quality mode,
+    // rather than silently bypassing FrameMix in the viewport.
+    const double mappedSource = timelineFrameToSourceFrameDouble(this, frameNumber);
+    if (isTimeRemapEnabled() &&
+        timeRemapFrameBlendMode() != ArtifactCore::FrameBlendMode::None &&
+        std::abs(mappedSource - std::round(mappedSource)) >= 0.001) {
         return {};
     }
 
@@ -2761,7 +2780,12 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
     if (!hasAudio() || !impl_->isLoaded_ || frameCount <= 0 || sampleRate <= 0) return false;
 
     const int64_t requestedTimelineFrame = start.framePosition();
-    const int64_t requestedSourceFrame = timelineFrameToSourceFrame(this, requestedTimelineFrame);
+    // Stop motion is visual source sampling. It must not turn a continuous
+    // soundtrack into repeated audio blocks; explicit Time Remap retains its
+    // existing audio-retiming behavior.
+    const int64_t requestedSourceFrame = isTimeRemapEnabled()
+        ? static_cast<int64_t>(getSourceFrameAtCompFrame(requestedTimelineFrame))
+        : requestedTimelineFrame - inPoint() + startTime().framePosition();
     if (requestedSourceFrame < 0) {
         return false;
     }

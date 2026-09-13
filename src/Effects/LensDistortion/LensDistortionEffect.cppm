@@ -140,7 +140,9 @@ public:
 
 LensDistortionEffect::LensDistortionEffect() : impl_(new Impl()) {
     setDisplayName(ArtifactCore::UniString("Lens Distortion"));
-    setPipelineStage(EffectPipelineStage::GeometryTransform);
+    // This effect resamples raster pixels; keep it in the rasterizer stage so
+    // the composition GPU-resident plan can execute it without readback.
+    setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(impl_->cpuImpl_);
     setGPUImpl(impl_->gpuImpl_);
 }

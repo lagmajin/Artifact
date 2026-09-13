@@ -40,6 +40,7 @@ module;
 
 module Menu.Composition;
 
+import Translation.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Render.Queue.Service;
@@ -1714,7 +1715,7 @@ void ArtifactCompositionMenu::Impl::addSelectedLayersToRenderQueue(
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)
  : QMenu(parent), impl_(new Impl(this, mainWindow))
 {
- setTitle("コンポジション(&C)");
+ setTitle(TranslationManager::instance().tr(QStringLiteral("menu.composition.label"), QStringLiteral("コンポジション(&C)")));
  setIcon(QIcon(resolveIconPath("Studio/menubar_composition.svg")));
  connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
 }
@@ -1722,7 +1723,7 @@ ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* p
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent)
  : QMenu(parent), impl_(new Impl(this, nullptr))
 {
- setTitle("コンポジション(&C)");
+ setTitle(TranslationManager::instance().tr(QStringLiteral("menu.composition.label"), QStringLiteral("コンポジション(&C)")));
  setIcon(QIcon(resolveIconPath("Studio/menubar_composition.svg")));
  connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
 }

@@ -34,16 +34,16 @@ export namespace Artifact
 
     // Grid Pixel Shader
     // PSInput receives TEXCOORD0 from drawSolidRectVSSource (unit UV, 0..1).
-    // canvas_pos = uv * canvasSize gives composition-space coordinates,
-    // ensuring grid lines stay fixed regardless of pan/zoom.
+    // canvas_pos = gridOrigin + uv * canvasSize reconstructs absolute canvas
+    // coordinates, keeping grid lines anchored to the composition origin.
     inline const QByteArray g_gridPS = R"HLSL(
     cbuffer ViewerHelperCB : register(b1)
     {
         float spacing;
         float thickness;
-        float2 canvasSize;   // composition dimensions in canvas pixels
+        float2 canvasSize;   // grid quad size in canvas pixels
         float4 gridColor;
-        float4 unused;
+        float4 gridOrigin;   // xy = grid quad top-left in canvas coordinates
     };
 
     struct PSInput
@@ -54,8 +54,13 @@ export namespace Artifact
 
     float4 main(PSInput input) : SV_TARGET
     {
-        float2 canvas_pos = input.uv * canvasSize;
-        float2 grid = fmod(canvas_pos, spacing);
+        // Reconstruct the absolute canvas position so grid lines stay locked
+        // to the composition origin (0,0) regardless of the quad's placement.
+        float2 canvas_pos = gridOrigin.xy + input.uv * canvasSize;
+        // Symmetric distance to the nearest grid line, correct for negative
+        // canvas coordinates (viewport extends into the pasteboard).
+        float2 grid = abs(fmod(canvas_pos, spacing));
+        grid = min(grid, spacing - grid);
         if (grid.x < thickness || grid.y < thickness)
             return gridColor;
         discard;

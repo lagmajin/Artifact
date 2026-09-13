@@ -47,6 +47,7 @@ public /*slots*/:
 
 private:
   void refreshEnabledState();
+  void updateShortcuts();
  };
 
 export void openContentsViewerCompareSurface();

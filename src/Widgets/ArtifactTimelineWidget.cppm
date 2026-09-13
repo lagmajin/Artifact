@@ -8,6 +8,7 @@ module;
 #include <QFocusEvent>
 #include <QFileInfo>
 #include <QEvent>
+#include <QFrame>
 #include <QHash>
 #include <QIcon>
 #include <QLabel>
@@ -4607,6 +4608,10 @@ public:
   bool gpuTimelineSnapshotPending_ = false;
   quint64 gpuTimelineSnapshotGeneration_ = 0;
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
+  ArtifactDiligentTimelineRenderWindow *gpuCurveWindow_ = nullptr;
+  QWidget *gpuCurveContainer_ = nullptr;
+  bool gpuCurveSnapshotPending_ = false;
+  quint64 gpuCurveSnapshotGeneration_ = 0;
   QWidget *curveEditorPage_ = nullptr;
   QStackedWidget *timelineModeStack_ = nullptr;
   TimelineToolCallbackButton *timelineModeButton_ = nullptr;
@@ -4990,6 +4995,9 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     impl_->curveEditorPinButton_->setAutoFillBackground(true);
   }
   updateCurvePropertyList();
+  if (impl_->graphEditorVisible_) {
+    syncGpuCurveSnapshot();
+  }
 }
 
 void ArtifactTimelineWidget::showValueGraph()
@@ -5390,10 +5398,13 @@ bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) con
 
   const QWidget *cursor = widget;
   while (cursor) {
-    if (cursor == impl_->curveEditor_ || cursor == impl_->curveEditorPage_ ||
+    if (cursor == impl_->curveEditor_ || cursor == impl_->gpuCurveContainer_ ||
+        cursor == impl_->curveEditorPage_ ||
         cursor == impl_->curvePropertyList_ ||
         cursor == impl_->curveEditorModeButton_ ||
         cursor == impl_->curveEditorFitButton_ ||
+        cursor == impl_->curveEditorValueButton_ ||
+        cursor == impl_->curveEditorFrameButton_ ||
         cursor == impl_->curveEditorHandleButton_ ||
         cursor == impl_->curveEditorAutoTangentButton_ ||
         cursor == impl_->curveEditorFlatTangentButton_ ||
@@ -5416,7 +5427,10 @@ void ArtifactTimelineWidget::advanceGraphEditorFocus(const bool reverse)
   if (impl_->curvePropertyList_) {
     focusOrder.push_back(impl_->curvePropertyList_);
   }
-  if (impl_->curveEditor_) {
+  if (impl_->gpuCurveContainer_ && impl_->gpuCurveWindow_ &&
+      impl_->gpuCurveWindow_->isGpuReady()) {
+    focusOrder.push_back(impl_->gpuCurveContainer_);
+  } else if (impl_->curveEditor_) {
     focusOrder.push_back(impl_->curveEditor_);
   }
   if (impl_->curveEditorFitButton_) {
@@ -5424,6 +5438,14 @@ void ArtifactTimelineWidget::advanceGraphEditorFocus(const bool reverse)
   }
   if (impl_->curveEditorHandleButton_) {
     focusOrder.push_back(impl_->curveEditorHandleButton_);
+  }
+  if (impl_->curveEditorFrameButton_ &&
+      impl_->curveEditorFrameButton_->isVisible()) {
+    focusOrder.push_back(impl_->curveEditorFrameButton_);
+  }
+  if (impl_->curveEditorValueButton_ &&
+      impl_->curveEditorValueButton_->isVisible()) {
+    focusOrder.push_back(impl_->curveEditorValueButton_);
   }
   if (impl_->curveEditorAutoTangentButton_) {
     focusOrder.push_back(impl_->curveEditorAutoTangentButton_);
@@ -5476,7 +5498,10 @@ void ArtifactTimelineWidget::toggleGraphEditorMode(const bool active,
     return;
   }
 
-  if (impl_->curveEditor_) {
+  if (impl_->gpuCurveContainer_ && impl_->gpuCurveWindow_ &&
+      impl_->gpuCurveWindow_->isGpuReady()) {
+    impl_->gpuCurveContainer_->setFocus(reason);
+  } else if (impl_->curveEditor_) {
     impl_->curveEditor_->setFocus(reason);
   } else if (impl_->curvePropertyList_) {
     impl_->curvePropertyList_->setFocus(reason);
@@ -5505,6 +5530,8 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     auto *item = new QListWidgetItem(label);
     item->setData(Qt::UserRole, i);
     item->setToolTip(track.name);
+    item->setSizeHint(QSize(0, Accessibility::scaledSize(28)));
+    item->setTextAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     item->setForeground(track.color);
     impl_->curvePropertyList_->addItem(item);
     // Keep the channel inventory visible even while the graph is focused on
@@ -5910,12 +5937,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   displayModeCombo->addItem(QStringLiteral("Keyframes Only"), static_cast<int>(TimelineLayerDisplayMode::KeyframesOnly));
   displayModeCombo->addItem(QStringLiteral("Audio"), static_cast<int>(TimelineLayerDisplayMode::AudioOnly));
   displayModeCombo->addItem(QStringLiteral("Video"), static_cast<int>(TimelineLayerDisplayMode::VideoOnly));
+  displayModeCombo->setItemIcon(
+      0, QIcon(ArtifactCore::resolveIconPath(
+             QStringLiteral("Studio/photo_filter.svg"))));
   displayModeCombo->setCurrentIndex(0);
   displayModeCombo->setToolTip(QStringLiteral("Choose which layer properties are shown in the timeline"));
   densityCombo->addItem(QStringLiteral("Compact"), 24);
   densityCombo->addItem(QStringLiteral("Normal"), 28);
   densityCombo->addItem(QStringLiteral("Comfortable"), 36);
-  densityCombo->setCurrentIndex(1);
+  densityCombo->setCurrentIndex(2);
   densityCombo->setVisible(false);
   densityCombo->setMaximumWidth(0);
   densityCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -6135,6 +6165,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                : (impl_->gpuTimelinePreviewEnabled_
                                       ? impl_->timelineGpuPage_
                                       : impl_->timelinePainterPage_));
+                  }
+                  if (active && impl_->gpuCurveWindow_) {
+                    const bool gpuReady = impl_->gpuCurveWindow_->isGpuReady() ||
+                                          impl_->gpuCurveWindow_->initialize();
+                    setTimelineRightPanelCurveGpuEnabled(impl_->rightPanel_,
+                                                         gpuReady);
+                    if (gpuReady) {
+                      syncGpuCurveSnapshot();
+                    }
                   }
                   if (impl_->rightPanel_) {
                     setTimelineRightPanelPlayheadOverlayEnabled(
@@ -6538,7 +6577,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto leftTopSpacer = new QWidget();
   leftTopSpacer->setObjectName(QStringLiteral("timelineLeftTopSpacer"));
-  leftTopSpacer->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
+  // The left toolbar and right ruler are peers. The former 16px spacer pushed
+  // only the left side down and produced the visibly staggered top corner.
+  leftTopSpacer->setFixedHeight(0);
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   leftTopSpacer->setAutoFillBackground(true);
   auto *timelineModeButton = impl_->timelineModeButton_ =
@@ -6560,6 +6601,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   timelineModeButton->setAccessibleDescription(
       QStringLiteral("Switch from the curve editor to the standard timeline"));
   timelineModeButton->setChecked(true);
+  timelineModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/animationmenu_timeline.svg"))));
+  timelineModeButton->setIconSize(QSize(16, 16));
+  timelineModeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   timelineModeButton->setCallback(
       [this]() { toggleGraphEditorMode(false, Qt::MouseFocusReason); });
   curveModeButton->setText(QStringLiteral("Curve Editor"));
@@ -6569,6 +6614,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveModeButton->setAccessibleDescription(
       QStringLiteral("Switch from the standard timeline to the curve editor"));
   curveModeButton->setChecked(false);
+  curveModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/figma_timeline_curve.svg"))));
+  curveModeButton->setIconSize(QSize(16, 16));
+  curveModeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   curveModeButton->setCallback(
       [this]() { toggleGraphEditorMode(true, Qt::MouseFocusReason); });
   searchBarLayout->insertWidget(1, timelineModeButton);
@@ -6576,10 +6625,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
-  // Match the right pane's work-area strip (26px) after the shared 16px
-  // top row; without this 10px compensation, layer rows and clip bars drift.
   leftSubHeaderSpacer->setFixedHeight(
-      Accessibility::scaledSize(kTimelineWorkAreaRowHeight - kTimelineTopRowHeight));
+      Accessibility::scaledSize(kTimelineWorkAreaRowHeight));
   leftSubHeaderSpacer->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
   leftSubHeaderSpacer->setAutoFillBackground(true);
@@ -6609,6 +6656,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curvePropertyPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   curvePropertyList->setAlternatingRowColors(false);
   curvePropertyList->setUniformItemSizes(true);
+  curvePropertyList->setFrameShape(QFrame::NoFrame);
+  curvePropertyList->setSpacing(0);
+  {
+    QPalette pal = curvePropertyList->palette();
+    pal.setColor(QPalette::Base, QColor(25, 28, 31));
+    pal.setColor(QPalette::AlternateBase, QColor(25, 28, 31));
+    pal.setColor(QPalette::Highlight, QColor(29, 67, 103));
+    pal.setColor(QPalette::HighlightedText, QColor(242, 246, 250));
+    curvePropertyList->setPalette(pal);
+  }
   curvePropertyLayout->addWidget(curvePropertySummary);
   curvePropertyLayout->addWidget(curvePropertyList, 1);
   curvePropertyPanel->setVisible(false);
@@ -6692,6 +6749,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto *curveHeader = new QWidget();
   curveHeader->setObjectName(QStringLiteral("timelineCurveHeader"));
+  curveHeader->setFixedHeight(Accessibility::scaledSize(42));
   curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   for (auto *button : {keyframeAddButton, keyframeRemoveButton,
                        keyframeCopyButton, keyframePasteButton,
@@ -6709,8 +6767,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     curveHeader->setAutoFillBackground(true);
   }
   auto *curveHeaderLayout = new QHBoxLayout(curveHeader);
-  curveHeaderLayout->setContentsMargins(8, 5, 8, 5);
-  curveHeaderLayout->setSpacing(4);
+  curveHeaderLayout->setContentsMargins(10, 6, 10, 6);
+  curveHeaderLayout->setSpacing(6);
   impl_->curveEditorSummaryLabel_ = new QLabel(QStringLiteral("カーブエディタ"));
   impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
   impl_->curveEditorSummaryLabel_->setMaximumWidth(260);
@@ -6979,13 +7037,20 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           });
       });
 
+  const auto addCurveHeaderSeparator = [curveHeader, curveHeaderLayout]() {
+    auto *separator = new QFrame(curveHeader);
+    separator->setFrameShape(QFrame::VLine);
+    separator->setFrameShadow(QFrame::Plain);
+    separator->setFixedSize(1, Accessibility::scaledSize(24));
+    QPalette palette = separator->palette();
+    palette.setColor(QPalette::WindowText, QColor(72, 77, 82));
+    separator->setPalette(palette);
+    curveHeaderLayout->addWidget(separator);
+  };
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
-  curveHeaderLayout->addSpacing(8);
-  curveHeaderLayout->addWidget(impl_->curveEditorValueButton_);
-  curveHeaderLayout->addWidget(impl_->curveEditorFrameButton_);
-  curveHeaderLayout->addSpacing(8);
+  addCurveHeaderSeparator();
   curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorAutoTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorLinearTangentButton_);
@@ -6993,8 +7058,41 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->addWidget(impl_->curveEditorUnifiedTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorConstantButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorBezierButton_);
+  addCurveHeaderSeparator();
   curveHeaderLayout->addWidget(curveEditorMoreButton);
   curveHeaderLayout->addStretch(1);
+
+  auto *curveFooter = new QWidget();
+  curveFooter->setObjectName(QStringLiteral("timelineCurveKeyEditorFooter"));
+  curveFooter->setFixedHeight(Accessibility::scaledSize(48));
+  curveFooter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  {
+    QPalette palette = curveFooter->palette();
+    palette.setColor(QPalette::Window, QColor(24, 27, 30));
+    palette.setColor(QPalette::WindowText, QColor(207, 213, 219));
+    curveFooter->setPalette(palette);
+    curveFooter->setAutoFillBackground(true);
+  }
+  auto *curveFooterLayout = new QHBoxLayout(curveFooter);
+  curveFooterLayout->setContentsMargins(14, 7, 14, 7);
+  curveFooterLayout->setSpacing(8);
+  auto *curveKeyLabel = new QLabel(QStringLiteral("Key"), curveFooter);
+  QFont curveKeyFont = curveKeyLabel->font();
+  curveKeyFont.setWeight(QFont::DemiBold);
+  curveKeyLabel->setFont(curveKeyFont);
+  curveFooterLayout->addWidget(curveKeyLabel);
+  curveFooterLayout->addSpacing(8);
+  curveFooterLayout->addWidget(impl_->curveEditorFrameButton_);
+  curveFooterLayout->addWidget(impl_->curveEditorValueButton_);
+  curveFooterLayout->addSpacing(12);
+  auto *curveEditHint = new QLabel(
+      QStringLiteral("Select a key to edit frame and value"), curveFooter);
+  QPalette hintPalette = curveEditHint->palette();
+  hintPalette.setColor(QPalette::WindowText, QColor(132, 142, 151));
+  curveEditHint->setPalette(hintPalette);
+  curveFooterLayout->addWidget(curveEditHint);
+  curveFooterLayout->addStretch(1);
+
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding,
@@ -7698,13 +7796,30 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // undo-backed mutations until the curve and timeline interaction models are
   // fully moved behind the shared Diligent surface.
   impl_->gpuTimelineWindow_->setInputTarget(painterTrackView);
+  impl_->gpuTimelineWindow_->setInputUpdatedCallback([this]() {
+    if (impl_ && impl_->gpuTimelinePreviewEnabled_) {
+      syncGpuTimelineSnapshot();
+    }
+  });
   impl_->gpuTimelineContainer_ = QWidget::createWindowContainer(
       impl_->gpuTimelineWindow_, this);
   impl_->gpuTimelineContainer_->setFocusPolicy(Qt::NoFocus);
 
+  impl_->gpuCurveWindow_ = new ArtifactDiligentTimelineRenderWindow();
+  impl_->gpuCurveWindow_->setInputTarget(curveEditor);
+  impl_->gpuCurveWindow_->setInputUpdatedCallback([this]() {
+    if (impl_ && impl_->graphEditorVisible_) {
+      syncGpuCurveSnapshot();
+    }
+  });
+  impl_->gpuCurveContainer_ = QWidget::createWindowContainer(
+      impl_->gpuCurveWindow_, this);
+  impl_->gpuCurveContainer_->setFocusPolicy(Qt::StrongFocus);
+
   auto *rightPanel = createTimelineRightPanel(
       timeNavigatorWidget, scrubBar, workAreaWidget, painterTrackView,
-      impl_->gpuTimelineContainer_, curveHeader, curveEditor, this);
+      impl_->gpuTimelineContainer_, impl_->gpuCurveContainer_, curveHeader,
+      curveFooter, curveEditor, this);
   impl_->rightPanel_ = rightPanel;
   impl_->timelinePainterPage_ = timelineRightPanelPainterPage(rightPanel);
   impl_->timelineGpuPage_ = timelineRightPanelGpuPage(rightPanel);
@@ -7981,9 +8096,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   rightPanel->setMinimumWidth(480);
   // mainSplitter->addWidget(leftSplitter);
 
-  mainSplitter->setStretchFactor(0, 3);
-  mainSplitter->setStretchFactor(1, 5);
-  mainSplitter->setSizes({520, 700});
+  // The adopted layout gives the property table enough room for Layer,
+  // Value, Parent and Blend without compressing the editing surface.
+  mainSplitter->setStretchFactor(0, 44);
+  mainSplitter->setStretchFactor(1, 56);
+  mainSplitter->setSizes({800, 1020});
 
   auto label = new ArtifactTimelineBottomLabel();
 
@@ -10098,6 +10215,231 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
       Qt::QueuedConnection);
 }
 
+void ArtifactTimelineWidget::syncGpuCurveSnapshot()
+{
+  if (!impl_ || !impl_->gpuCurveWindow_ || !impl_->curveEditor_ ||
+      !impl_->graphEditorVisible_ || impl_->gpuCurveSnapshotPending_) {
+    return;
+  }
+  impl_->gpuCurveSnapshotPending_ = true;
+  QMetaObject::invokeMethod(
+      this,
+      [this]() {
+        if (!impl_) return;
+        impl_->gpuCurveSnapshotPending_ = false;
+        buildGpuCurveSnapshot();
+      },
+      Qt::QueuedConnection);
+}
+
+void ArtifactTimelineWidget::buildGpuCurveSnapshot()
+{
+  if (!impl_ || !impl_->gpuCurveWindow_ || !impl_->curveEditor_ ||
+      !impl_->graphEditorVisible_) {
+    return;
+  }
+
+  const auto* editor = impl_->curveEditor_;
+  const QRectF plot = editor->visualPlotRect();
+  const QRectF view = editor->visualViewRange();
+  if (plot.width() <= 1.0 || plot.height() <= 1.0 ||
+      view.width() <= 0.0001 || view.height() <= 0.0001) {
+    return;
+  }
+
+  DiligentTimelineVisualSnapshot snapshot;
+  snapshot.generation = ++impl_->gpuCurveSnapshotGeneration_;
+  snapshot.background = QColor(21, 25, 29);
+  snapshot.rects.push_back({plot, QColor(24, 29, 33)});
+
+  const auto& tracks = editor->tracks();
+  std::size_t keyCount = 0;
+  for (const auto& track : tracks) keyCount += track.keys.size();
+  snapshot.lines.reserve(static_cast<int>(keyCount * 30 + 48));
+  snapshot.triangles.reserve(static_cast<int>(keyCount * 56 + 4));
+  snapshot.texts.reserve(static_cast<int>(tracks.size() + 24));
+
+  const auto niceStep = [](const double range, const int targetLines) {
+    const double rough = std::max(1.0e-6, range / targetLines);
+    const double magnitude = std::pow(10.0, std::floor(std::log10(rough)));
+    const double normalized = rough / magnitude;
+    return (normalized < 1.5 ? 1.0 : normalized < 3.5 ? 2.0
+                             : normalized < 7.5 ? 5.0 : 10.0) * magnitude;
+  };
+  const double xMin = view.left();
+  const double xMax = view.left() + view.width();
+  const double yMin = view.top();
+  const double yMax = view.top() + view.height();
+  const double xStep = niceStep(view.width(), 10);
+  const double yStep = niceStep(view.height(), 8);
+  const auto clampToPlot = [&plot](const QPointF& point) {
+    return QPointF(std::clamp(point.x(), plot.left(), plot.right()),
+                   std::clamp(point.y(), plot.top(), plot.bottom()));
+  };
+  const QColor grid(76, 87, 96, 92);
+  const QColor gridText(143, 155, 165, 190);
+  for (double frame = std::ceil(xMin / xStep) * xStep;
+       frame <= xMax + xStep * 0.25; frame += xStep) {
+    const QPointF point = editor->visualPoint(-1, static_cast<float>(frame), 0.0f);
+    snapshot.lines.push_back({QPointF(point.x(), plot.top()),
+                              QPointF(point.x(), plot.bottom()), grid, 1.0f});
+    snapshot.texts.push_back(
+        {QPointF(point.x() + 3.0, plot.top() - 8.0),
+         ArtifactCore::UniString(QString::number(frame, 'f', 0)), gridText, 10.0f});
+  }
+  for (double value = std::ceil(yMin / yStep) * yStep;
+       value <= yMax + yStep * 0.25; value += yStep) {
+    const QPointF point = editor->visualPoint(-1, 0.0f, static_cast<float>(value));
+    const QColor lineColor = std::abs(value) < yStep * 0.05
+                                 ? QColor(105, 119, 139, 150) : grid;
+    snapshot.lines.push_back({QPointF(plot.left(), point.y()),
+                              QPointF(plot.right(), point.y()), lineColor, 1.0f});
+    snapshot.texts.push_back(
+        {QPointF(5.0, point.y() + 4.0),
+         ArtifactCore::UniString(QStringLiteral("%1 px").arg(value, 0, 'f', 0)),
+         gridText, 10.0f});
+  }
+
+  const auto cubic = [](const double t, const double p0, const double p1,
+                        const double p2, const double p3) {
+    const double u = 1.0 - t;
+    return u * u * u * p0 + 3.0 * u * u * t * p1 +
+           3.0 * u * t * t * p2 + t * t * t * p3;
+  };
+  const int selectedTrack = editor->visualSelectedTrack();
+  for (int trackIndex = 0; trackIndex < static_cast<int>(tracks.size());
+       ++trackIndex) {
+    const auto& track = tracks[trackIndex];
+    if (!track.visible || track.keys.empty()) continue;
+    QColor curveColor = track.color;
+    const bool focused = trackIndex == selectedTrack;
+    if (focused) curveColor = curveColor.lighter(125);
+    QColor areaColor = curveColor;
+    areaColor.setAlpha(focused ? 34 : 16);
+    const float thickness = focused ? 2.5f : 1.75f;
+
+    QPointF previous = clampToPlot(editor->visualPoint(
+        trackIndex, static_cast<float>(track.keys.front().frame),
+        track.keys.front().value));
+    for (int keyIndex = 0;
+         keyIndex + 1 < static_cast<int>(track.keys.size()); ++keyIndex) {
+      const auto& left = track.keys[keyIndex];
+      const auto& right = track.keys[keyIndex + 1];
+      const QPointF rightPoint = editor->visualPoint(
+          trackIndex, static_cast<float>(right.frame), right.value);
+      const int curveSamples = left.constant
+          ? 2
+          : std::clamp(static_cast<int>(
+                           std::abs(rightPoint.x() - previous.x()) / 18.0),
+                       4, 24);
+      for (int sample = 1; sample <= curveSamples; ++sample) {
+        const double t = static_cast<double>(sample) / curveSamples;
+        double frame = 0.0;
+        double value = 0.0;
+        if (left.constant) {
+          frame = left.frame + (right.frame - left.frame) * t;
+          value = sample == curveSamples ? right.value : left.value;
+        } else {
+          frame = cubic(t, static_cast<double>(left.frame),
+                        static_cast<double>(left.frame + left.outHandleFrame),
+                        static_cast<double>(right.frame + right.inHandleFrame),
+                        static_cast<double>(right.frame));
+          value = cubic(t, left.value,
+                        left.value + left.outHandleValue,
+                        right.value + right.inHandleValue, right.value);
+        }
+        const QPointF current = clampToPlot(editor->visualPoint(
+            trackIndex, static_cast<float>(frame), static_cast<float>(value)));
+        snapshot.lines.push_back({previous, current, curveColor, thickness});
+        snapshot.triangles.push_back(
+            {previous, current, QPointF(current.x(), plot.bottom()), areaColor});
+        snapshot.triangles.push_back(
+            {previous, QPointF(current.x(), plot.bottom()),
+             QPointF(previous.x(), plot.bottom()), areaColor});
+        previous = current;
+      }
+    }
+
+    int keyIndex = 0;
+    for (const auto& key : track.keys) {
+      const QPointF keyPoint = editor->visualPoint(
+          trackIndex, static_cast<float>(key.frame), key.value);
+      if (!plot.contains(keyPoint)) {
+        ++keyIndex;
+        continue;
+      }
+      const bool selected = editor->visualKeySelected(trackIndex, keyIndex);
+      const QColor keyColor = selected ? QColor(236, 177, 71) : curveColor;
+      const double radius = selected ? 5.5 : 4.0;
+      if (selected) {
+        constexpr double kSelectionRadius = 7.5;
+        const QColor selectionOutline(242, 244, 240);
+        snapshot.triangles.push_back(
+            {QPointF(keyPoint.x(), keyPoint.y() - kSelectionRadius),
+             QPointF(keyPoint.x() + kSelectionRadius, keyPoint.y()),
+             QPointF(keyPoint.x(), keyPoint.y() + kSelectionRadius),
+             selectionOutline});
+        snapshot.triangles.push_back(
+            {QPointF(keyPoint.x(), keyPoint.y() - kSelectionRadius),
+             QPointF(keyPoint.x(), keyPoint.y() + kSelectionRadius),
+             QPointF(keyPoint.x() - kSelectionRadius, keyPoint.y()),
+             selectionOutline});
+      }
+      snapshot.triangles.push_back(
+          {QPointF(keyPoint.x(), keyPoint.y() - radius),
+           QPointF(keyPoint.x() + radius, keyPoint.y()),
+           QPointF(keyPoint.x(), keyPoint.y() + radius), keyColor});
+      snapshot.triangles.push_back(
+          {QPointF(keyPoint.x(), keyPoint.y() - radius),
+           QPointF(keyPoint.x(), keyPoint.y() + radius),
+           QPointF(keyPoint.x() - radius, keyPoint.y()), keyColor});
+      if (selected) {
+        const QColor handleColor(245, 245, 240, 220);
+        if (keyIndex > 0) {
+          const QPointF handle = clampToPlot(editor->visualPoint(
+              trackIndex, static_cast<float>(key.frame + key.inHandleFrame),
+              key.value + key.inHandleValue));
+          snapshot.lines.push_back({keyPoint, handle, handleColor, 1.5f});
+          snapshot.rects.push_back(
+              {QRectF(handle.x() - 3.0, handle.y() - 3.0, 6.0, 6.0),
+               QColor(236, 177, 71)});
+        }
+        if (keyIndex + 1 < static_cast<int>(track.keys.size())) {
+          const QPointF handle = clampToPlot(editor->visualPoint(
+              trackIndex, static_cast<float>(key.frame + key.outHandleFrame),
+              key.value + key.outHandleValue));
+          snapshot.lines.push_back({keyPoint, handle, handleColor, 1.5f});
+          snapshot.rects.push_back(
+              {QRectF(handle.x() - 3.0, handle.y() - 3.0, 6.0, 6.0),
+               QColor(236, 177, 71)});
+        }
+      }
+      ++keyIndex;
+    }
+    const double legendY = plot.top() + 18.0 + trackIndex * 18.0;
+    const double legendX = std::max(plot.left() + 8.0, plot.right() - 132.0);
+    snapshot.rects.push_back(
+        {QRectF(legendX, legendY - 8.0, 20.0, 3.0), curveColor});
+    snapshot.texts.push_back(
+        {QPointF(legendX + 28.0, legendY),
+         ArtifactCore::UniString(track.name), curveColor, 10.5f});
+  }
+
+  const QPointF playhead = editor->visualPoint(
+      -1, static_cast<float>(editor->currentFrame()), 0.0f);
+  if (playhead.x() >= plot.left() && playhead.x() <= plot.right()) {
+    const QColor playheadColor(239, 86, 78);
+    snapshot.lines.push_back({QPointF(playhead.x(), plot.top()),
+                              QPointF(playhead.x(), plot.bottom()),
+                              playheadColor, 2.0f});
+    snapshot.triangles.push_back({QPointF(playhead.x() - 5.0, plot.top()),
+                                  QPointF(playhead.x() + 5.0, plot.top()),
+                                  QPointF(playhead.x(), plot.top() + 8.0),
+                                  playheadColor});
+  }
+  impl_->gpuCurveWindow_->setSnapshot(std::move(snapshot));
+}
+
 void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 {
   if (!impl_ || !impl_->gpuTimelineWindow_ ||
@@ -10107,10 +10449,10 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
-  // The generic application background is also used by the composition
-  // canvas and can be intentionally mid-grey. The timeline editing surface
-  // needs the denser charcoal hierarchy of the adopted DCC mock instead.
-  snapshot.background = QColor(29, 32, 36);
+  // Keep the timeline's editing field distinct from the surrounding charcoal
+  // chrome.  The reference uses a cool, mid-slate grid field so timing marks
+  // remain readable even when a composition has only one short layer span.
+  snapshot.background = QColor(25, 30, 34);
 
   const auto *view = impl_->painterTrackView_;
   const double ppf = std::max(0.001, view->pixelsPerFrame());
@@ -10135,15 +10477,15 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   snapshot.triangles.reserve(keyframeMarkers.size() * 2);
   snapshot.texts.reserve(clips.size());
 
-  // Keep the editing surface deliberately quiet.  The adopted timeline mock
-  // uses the clip itself (and not alternating high-contrast rows) as the
-  // primary landmark, so rows only establish a subtle reading rhythm.
-  const QColor rowBase(32, 35, 39);
-  const QColor rowAlternate(29, 32, 36);
-  const QColor selectedRow(35, 51, 65);
-  const QColor separator(66, 72, 79, 132);
-  const QColor selectedClip(50, 118, 192);
-  const QColor selectionEdge(176, 221, 255);
+  // The reference keeps the editing field visibly lighter than the layer
+  // table.  Row alternation remains restrained; the blue-grey selected span
+  // is the primary state landmark.
+  const QColor rowBase(27, 32, 36);
+  const QColor rowAlternate(30, 35, 39);
+  const QColor selectedRow(31, 50, 66);
+  const QColor separator(76, 86, 94, 126);
+  const QColor selectedClip(42, 122, 205);
+  const QColor selectionEdge(190, 220, 242);
   const QColor selectedKey(228, 173, 83);
   const QColor playheadColor(239, 91, 82);
 
@@ -10185,7 +10527,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
                            : normalized <= 2.0 ? 2.0
                            : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
   const double firstGridFrame = std::floor(firstFrame / gridStep) * gridStep;
-  QColor gridColor(102, 110, 119, 66);
+  QColor gridColor(93, 105, 114, 104);
   for (double frame = firstGridFrame; frame <= lastFrame + gridStep;
        frame += gridStep) {
     const double x = frame * ppf - horizontalOffset;
@@ -10196,7 +10538,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   // Keep the secondary divisions deliberately quiet: they provide the dense
   // DCC timing rhythm without competing with keyframes or layer spans.
   const double minorStep = gridStep / 4.0;
-  QColor minorGridColor(104, 111, 118, 20);
+  QColor minorGridColor(82, 93, 101, 48);
   const double firstMinorFrame =
       std::floor(firstFrame / minorStep) * minorStep;
   for (double frame = firstMinorFrame; frame <= lastFrame + minorStep;
@@ -10437,6 +10779,13 @@ void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
     impl_->workArea_->setCurrentFrame(static_cast<float>(clamped));
   }
   syncGpuTimelineSnapshot();
+  if (impl_->curveEditor_) {
+    impl_->curveEditor_->setCurrentFrame(
+        static_cast<int64_t>(std::llround(clamped)));
+  }
+  if (impl_->graphEditorVisible_) {
+    syncGpuCurveSnapshot();
+  }
 }
 
 void ArtifactTimelineWidget::syncPlayheadOverlay()

@@ -26,6 +26,7 @@ module;
 #include <wobjectimpl.h>
 
 module Menu.Test;
+import Translation.Manager;
 
 import Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Widgets.SoftwareRenderInspectors;
@@ -386,7 +387,7 @@ ArtifactMediaTestMenu::~ArtifactMediaTestMenu()
 ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
  : QMenu(parent)
 {
- setTitle("Test");
+ setTitle(TranslationManager::instance().tr(QStringLiteral("menu.test.label"), QStringLiteral("テスト(&X)")));
  setIcon(QIcon(resolveIconPath("Studio/menubar_test.svg")));
 
  auto* renderMenu = new ArtifactRenderTestMenu(this);

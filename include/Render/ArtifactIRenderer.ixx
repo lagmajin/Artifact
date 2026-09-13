@@ -192,7 +192,6 @@ public:
   QImage readbackDepthToImage() const;
   Diligent::ITextureView *liveDepthShaderResourceView() const;
   ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
-
   // Async readback: returns immediately, calls callback when ready
   using ReadbackCallback = std::function<void(const QImage &)>;
   void readbackToImageAsync(ReadbackCallback callback) const;

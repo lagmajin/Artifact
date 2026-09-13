@@ -174,7 +174,17 @@ Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTextur
 float4 sample(float2 p,uint w,uint h){p=clamp(p,float2(0,0),float2(w-1,h-1));int2 a=int2(floor(p)),b=min(a+1,int2(w-1,h-1));float2 t=p-a;return lerp(lerp(g_InputTexture[a],g_InputTexture[int2(b.x,a.y)],t.x),lerp(g_InputTexture[int2(a.x,b.y)],g_InputTexture[b],t.x),t.y);}
 [numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 base=g_InputTexture[id.xy],acc=0;float2 dir=float2(cos(g_Angle*0.0174532925),sin(g_Angle*0.0174532925));int n=5;for(int i=-n;i<=n;++i){float2 q=float2(id.xy)+dir*(float)i*(g_Radius*0.25);float4 s=sample(q,w,h);float b=dot(s.rgb,float3(0.114,0.587,0.299));acc+=max(0,b-g_Threshold)*s/(max(0.001,1-g_Threshold));}acc/=(2*n+1);float shift=max(0,g_Dispersion)*max(1,g_Radius*0.25);float4 rr=sample(float2(id.xy)+dir*shift,w,h),bb=sample(float2(id.xy)-dir*shift,w,h);float3 spectral=float3(bb.b*(1-g_TintMix)+acc.b*g_TintMix,acc.g,rr.r*(1-g_TintMix)+acc.r*g_TintMix);g_OutputTexture[id.xy]=float4(saturate(base.rgb+spectral*g_Intensity),base.a);}
 )";
+// Resident-path variant: no own b0 cbuffer (the pipeline prepends
+// ResidentGenericParams). Mapping: P0 threshold, P1 radius, P2 intensity,
+// P3 dispersion, P4 angle, P5 tintMix.
+    static constexpr const char* kChromaticGlowResidentHlsl=R"(
+Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);
+float4 sample(float2 p,uint w,uint h){p=clamp(p,float2(0,0),float2(w-1,h-1));int2 a=int2(floor(p)),b=min(a+1,int2(w-1,h-1));float2 t=p-a;return lerp(lerp(g_InputTexture[a],g_InputTexture[int2(b.x,a.y)],t.x),lerp(g_InputTexture[int2(a.x,b.y)],g_InputTexture[b],t.x),t.y);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 base=g_InputTexture[id.xy],acc=0;float2 dir=float2(cos(g_P4*0.0174532925),sin(g_P4*0.0174532925));int n=5;for(int i=-n;i<=n;++i){float2 q=float2(id.xy)+dir*(float)i*(g_P1*0.25);float4 s=sample(q,w,h);float b=dot(s.rgb,float3(0.114,0.587,0.299));acc+=max(0,b-g_P0)*s/(max(0.001,1-g_P0));}acc/=(2*n+1);float shift=max(0,g_P3)*max(1,g_P1*0.25);float4 rr=sample(float2(id.xy)+dir*shift,w,h),bb=sample(float2(id.xy)-dir*shift,w,h);float3 spectral=float3(bb.b*(1-g_P5)+acc.b*g_P5,acc.g,rr.r*(1-g_P5)+acc.r*g_P5);g_OutputTexture[id.xy]=float4(saturate(base.rgb+spectral*g_P2),base.a);}
+)";
 
+public:
+    static constexpr const char* residentHlsl() { return kChromaticGlowResidentHlsl; }
 private:
     ChromaticGlowEffectCPUImpl cpuImpl_;
 };
@@ -186,6 +196,10 @@ ChromaticGlowEffect::ChromaticGlowEffect() {
     setCPUImpl(ArtifactCore::makeShared<ChromaticGlowEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<ChromaticGlowEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        ChromaticGlowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            ChromaticGlowEffectGPUImpl::residentHlsl(), "main", GpuGenericResourceKind::Filter});
 }
 
 ChromaticGlowEffect::~ChromaticGlowEffect() = default;

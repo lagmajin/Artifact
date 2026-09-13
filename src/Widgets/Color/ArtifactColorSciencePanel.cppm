@@ -4,6 +4,7 @@ module;
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -19,8 +20,11 @@ module;
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QListView>
+#include <QMouseEvent>
 #include <QMenu>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
@@ -58,6 +62,264 @@ import VectorScopeWidget;
 import WaveformScopeWidget;
 import ParadeScopeWidget;
 namespace Artifact {
+
+namespace {
+
+struct LutPickerEntry {
+  QString displayName;
+  QString source;
+  bool builtin = false;
+};
+
+QString lutPickerFormatLabel(const ArtifactCore::ColorLUT& lut)
+{
+  switch (lut.format()) {
+    case ArtifactCore::LUTFormat::Cube: return QStringLiteral("3D LUT · .cube");
+    case ArtifactCore::LUTFormat::_3dl: return QStringLiteral("3D LUT · .3dl");
+    case ArtifactCore::LUTFormat::Csp: return QStringLiteral("CSP LUT");
+    case ArtifactCore::LUTFormat::Mga: return QStringLiteral("MGA LUT");
+    case ArtifactCore::LUTFormat::Look: return QStringLiteral("LOOK LUT");
+    case ArtifactCore::LUTFormat::PNG: return QStringLiteral("HaldCLUT");
+    default: return QStringLiteral("Unknown LUT");
+  }
+}
+
+ArtifactCore::ColorLUT lutPickerLoad(const QString& source)
+{
+  if (source.startsWith(QStringLiteral("builtin:"))) {
+    return ArtifactCore::LUTManager::instance().getLUT(source.mid(8));
+  }
+  return ArtifactCore::ColorLUT(source);
+}
+
+QListWidget* lutPickerGrid(const QDialog* dialog)
+{
+  return dialog->findChild<QListWidget*>(QStringLiteral("lutPickerGrid"));
+}
+
+QLabel* lutPickerDetails(const QDialog* dialog)
+{
+  return dialog->findChild<QLabel*>(QStringLiteral("lutPickerDetails"));
+}
+
+void updateLutPickerDetails(QDialog* dialog)
+{
+  auto* grid = lutPickerGrid(dialog);
+  auto* details = lutPickerDetails(dialog);
+  auto* useButton = dialog->findChild<QPushButton*>(QStringLiteral("lutPickerUse"));
+  auto* count = dialog->findChild<QLabel*>(QStringLiteral("lutPickerCount"));
+  if (!grid || !details || !useButton || !count) return;
+  count->setText(QStringLiteral("%1 LUTs · %2 selected")
+      .arg(grid->count()).arg(grid->currentItem() ? 1 : 0));
+  auto* item = grid->currentItem();
+  if (!item) {
+    details->setText(QStringLiteral("Select a LUT to inspect its format and compatibility."));
+    useButton->setEnabled(false);
+    return;
+  }
+  const QString source = item->data(Qt::UserRole).toString();
+  const ArtifactCore::ColorLUT lut = lutPickerLoad(source);
+  if (!lut.isValid()) {
+    details->setText(QStringLiteral("%1\n\nStatus: Incompatible\n%2")
+        .arg(item->text(), lut.errorMessage()));
+    useButton->setEnabled(false);
+    return;
+  }
+  const auto size = lut.size();
+  const QFileInfo info(source);
+  details->setText(QStringLiteral("%1\n\nType        %2\nSize        %3³\nInput       Unspecified\nOutput      Working color space\nDomain      Parser-defined\nStatus      Compatible\n\nSource\n%4")
+      .arg(item->text(), lutPickerFormatLabel(lut), QString::number(size.dimX),
+           source.startsWith(QStringLiteral("builtin:"))
+               ? QStringLiteral("Built-in library") : QDir::toNativeSeparators(info.absoluteFilePath())));
+  useButton->setEnabled(true);
+}
+
+} // namespace
+
+ArtifactLutColorReferencePickerDialog::ArtifactLutColorReferencePickerDialog(
+    ArtifactColorScienceManager* manager, QWidget* parent)
+    : QDialog(parent)
+{
+  setWindowTitle(QStringLiteral("LUT & Color Reference Picker"));
+  setAccessibleName(QStringLiteral("LUT and Color Reference Picker"));
+  setAccessibleDescription(QStringLiteral("Browse, inspect, and select a color LUT"));
+  setMinimumSize(940, 620);
+  resize(1120, 700);
+
+  auto* root = new QVBoxLayout(this);
+  root->setContentsMargins(16, 14, 16, 14);
+  root->setSpacing(8);
+
+  auto* header = new QHBoxLayout();
+  auto* title = new QLabel(QStringLiteral("LUT & Color Reference Picker"), this);
+  QFont titleFont = title->font();
+  titleFont.setBold(true);
+  titleFont.setPointSize(13);
+  title->setFont(titleFont);
+  auto* search = new QLineEdit(this);
+  search->setObjectName(QStringLiteral("lutPickerSearch"));
+  search->setPlaceholderText(QStringLiteral("Search LUTs…"));
+  search->setClearButtonEnabled(true);
+  search->setFixedWidth(290);
+  search->installEventFilter(this);
+  header->addWidget(title);
+  header->addStretch();
+  header->addWidget(search);
+  root->addLayout(header);
+
+  auto* body = new QHBoxLayout();
+  body->setSpacing(8);
+  auto* library = new QListWidget(this);
+  library->setObjectName(QStringLiteral("lutPickerLibrary"));
+  library->setFixedWidth(160);
+  for (const QString& section : {QStringLiteral("All LUTs"), QStringLiteral("Built-in"),
+                                 QStringLiteral("Files")}) {
+    auto* item = new QListWidgetItem(section, library);
+    item->setData(Qt::UserRole, section);
+  }
+  library->setCurrentRow(0);
+  library->installEventFilter(this);
+  body->addWidget(library);
+
+  auto* grid = new QListWidget(this);
+  grid->setObjectName(QStringLiteral("lutPickerGrid"));
+  grid->setViewMode(QListView::IconMode);
+  grid->setResizeMode(QListView::Adjust);
+  grid->setMovement(QListView::Static);
+  grid->setIconSize(QSize(92, 64));
+  grid->setGridSize(QSize(150, 108));
+  grid->setWordWrap(true);
+  grid->setSelectionMode(QAbstractItemView::SingleSelection);
+  grid->installEventFilter(this);
+  body->addWidget(grid, 1);
+
+  auto* inspector = new QFrame(this);
+  inspector->setFrameShape(QFrame::StyledPanel);
+  inspector->setFixedWidth(276);
+  auto* inspectorLayout = new QVBoxLayout(inspector);
+  inspectorLayout->setContentsMargins(16, 16, 16, 16);
+  auto* inspectorTitle = new QLabel(QStringLiteral("LUT details"), inspector);
+  QFont inspectorFont = inspectorTitle->font();
+  inspectorFont.setBold(true);
+  inspectorTitle->setFont(inspectorFont);
+  auto* preview = new QFrame(inspector);
+  preview->setFrameShape(QFrame::StyledPanel);
+  preview->setMinimumHeight(132);
+  auto* previewLayout = new QVBoxLayout(preview);
+  auto* previewTitle = new QLabel(QStringLiteral("Preview uses the active Color Science panel"), preview);
+  previewTitle->setWordWrap(true);
+  previewTitle->setAlignment(Qt::AlignCenter);
+  previewLayout->addWidget(previewTitle);
+  auto* details = new QLabel(QStringLiteral("Select a LUT to inspect its format and compatibility."), inspector);
+  details->setObjectName(QStringLiteral("lutPickerDetails"));
+  details->setWordWrap(true);
+  auto* workingOnly = new QCheckBox(QStringLiteral("Use as working preview only"), inspector);
+  workingOnly->setEnabled(false);
+  workingOnly->setToolTip(QStringLiteral("Working-preview routing is not yet exposed by the color manager."));
+  inspectorLayout->addWidget(inspectorTitle);
+  inspectorLayout->addWidget(preview);
+  inspectorLayout->addWidget(details);
+  inspectorLayout->addStretch();
+  inspectorLayout->addWidget(workingOnly);
+  body->addWidget(inspector);
+  root->addLayout(body, 1);
+
+  std::vector<LutPickerEntry> entries;
+  if (manager) {
+    const auto available = manager->getAvailableLUTs();
+    entries.reserve(available.size());
+    for (const auto& path : available) {
+      const QString source = QString::fromStdString(path);
+      const bool builtin = source.startsWith(QStringLiteral("builtin:"));
+      entries.push_back({builtin ? source.mid(8) : QFileInfo(source).baseName(), source, builtin});
+    }
+  }
+  for (const auto& entry : entries) {
+    auto* item = new QListWidgetItem(entry.displayName, grid);
+    item->setData(Qt::UserRole, entry.source);
+    item->setData(Qt::UserRole + 1, entry.builtin ? QStringLiteral("Built-in") : QStringLiteral("Files"));
+    item->setToolTip(entry.source);
+  }
+  auto* footer = new QHBoxLayout();
+  auto* importButton = new QPushButton(QStringLiteral("Import LUT…"), this);
+  importButton->setObjectName(QStringLiteral("lutPickerImport"));
+  importButton->installEventFilter(this);
+  auto* count = new QLabel(QStringLiteral("%1 LUTs · 0 selected").arg(grid->count()), this);
+  count->setObjectName(QStringLiteral("lutPickerCount"));
+  auto* cancel = new QPushButton(QStringLiteral("Cancel"), this);
+  cancel->setObjectName(QStringLiteral("lutPickerCancel"));
+  cancel->installEventFilter(this);
+  auto* use = new QPushButton(QStringLiteral("Use LUT"), this);
+  use->setObjectName(QStringLiteral("lutPickerUse"));
+  use->setDefault(true);
+  use->setEnabled(false);
+  use->installEventFilter(this);
+  footer->addWidget(importButton);
+  footer->addWidget(count);
+  footer->addStretch();
+  footer->addWidget(cancel);
+  footer->addWidget(use);
+  root->addLayout(footer);
+}
+
+QString ArtifactLutColorReferencePickerDialog::selectedSource() const
+{
+  if (const QString imported = property("lutPickerImportedSource").toString(); !imported.isEmpty()) return imported;
+  auto* grid = lutPickerGrid(this);
+  return grid && grid->currentItem() ? grid->currentItem()->data(Qt::UserRole).toString() : QString();
+}
+
+bool ArtifactLutColorReferencePickerDialog::eventFilter(QObject* watched, QEvent* event)
+{
+  const bool keyActivate = event->type() == QEvent::KeyRelease &&
+      (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Return ||
+       static_cast<QKeyEvent*>(event)->key() == Qt::Key_Enter ||
+       static_cast<QKeyEvent*>(event)->key() == Qt::Key_Space);
+  const bool mouseActivate = event->type() == QEvent::MouseButtonRelease &&
+      static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton;
+  const bool activate = keyActivate || mouseActivate;
+  auto* grid = lutPickerGrid(this);
+  const QString name = watched->objectName();
+  if (name == QStringLiteral("lutPickerGrid")) {
+    if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::KeyRelease) {
+      QTimer::singleShot(0, this, [this]() { updateLutPickerDetails(this); });
+    }
+    if (event->type() == QEvent::MouseButtonDblClick && grid) {
+      const QModelIndex index = grid->indexAt(static_cast<QMouseEvent*>(event)->position().toPoint());
+      if (index.isValid()) { grid->setCurrentIndex(index); updateLutPickerDetails(this); accept(); return true; }
+    }
+  } else if (name == QStringLiteral("lutPickerLibrary") && mouseActivate && grid) {
+    auto* list = static_cast<QListWidget*>(watched);
+    auto* item = list->itemAt(static_cast<QMouseEvent*>(event)->position().toPoint());
+    if (!item) return QDialog::eventFilter(watched, event);
+    const QString category = item->data(Qt::UserRole).toString();
+    for (int row = 0; row < grid->count(); ++row) {
+      auto* lut = grid->item(row);
+      const QString type = lut->data(Qt::UserRole + 1).toString();
+      lut->setHidden(category == QStringLiteral("Built-in") ? type != category :
+                     category == QStringLiteral("Files") ? type != category : false);
+    }
+    updateLutPickerDetails(this);
+  } else if (name == QStringLiteral("lutPickerSearch") && event->type() == QEvent::KeyRelease && grid) {
+    const QString query = static_cast<QLineEdit*>(watched)->text().trimmed();
+    for (int row = 0; row < grid->count(); ++row) {
+      auto* item = grid->item(row);
+      item->setHidden(!query.isEmpty() && !item->text().contains(query, Qt::CaseInsensitive));
+    }
+    updateLutPickerDetails(this);
+  } else if (name == QStringLiteral("lutPickerImport") && activate) {
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import LUT"), QString(),
+        QStringLiteral("LUT files (*.cube *.3dl *.lut);;All files (*.*)"));
+    if (!path.isEmpty()) { setProperty("lutPickerImportedSource", path); accept(); }
+    return true;
+  } else if (name == QStringLiteral("lutPickerCancel") && activate) {
+    reject(); return true;
+  } else if (name == QStringLiteral("lutPickerUse") && activate) {
+    if (!selectedSource().isEmpty()) accept();
+    return true;
+  }
+  return QDialog::eventFilter(watched, event);
+}
 
 namespace {
 
@@ -853,14 +1115,13 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
   });
 
   connect(loadLUTButton_, &QPushButton::clicked, [this]() {
-    QString fileName = QFileDialog::getOpenFileName(
-        nullptr, "Load LUT", QString(),
-        "LUT files (*.cube *.3dl *.lut);;All files (*.*)");
-    if (!fileName.isEmpty()) {
-      if (manager_->loadLUT(fileName.toStdString())) {
-        updateUI();
-      }
-    }
+    ArtifactLutColorReferencePickerDialog picker(manager_, owner_);
+    if (picker.exec() != QDialog::Accepted) return;
+    const QString source = picker.selectedSource();
+    const bool loaded = source.startsWith(QStringLiteral("builtin:"))
+        ? manager_->loadBuiltinLUT(source.mid(8).toStdString())
+        : manager_->loadLUT(source.toStdString());
+    if (loaded) updateUI();
   });
 
   connect(applySelectedButton_, &QPushButton::clicked, [this]() {

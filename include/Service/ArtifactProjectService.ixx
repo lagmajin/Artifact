@@ -61,7 +61,7 @@ struct PrecomposeOutcome {
   ArtifactCore::CompositionID childCompId;
 };
 
-struct RelinkCandidate {
+export struct RelinkCandidate {
   QString path;
   int score = 0;
   QString reason;
