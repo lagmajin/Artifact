@@ -10102,6 +10102,11 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
   }
 
   const double playheadX = view->currentFrame() * ppf - horizontalOffset;
+  // A compact cap keeps the current-time marker identifiable even when the
+  // vertical line crosses densely populated keyframe rows.
+  snapshot.triangles.push_back({QPointF(playheadX - 6.0, 0.0),
+                                QPointF(playheadX + 6.0, 0.0),
+                                QPointF(playheadX, 7.0), playheadColor});
   snapshot.lines.push_back({QPointF(playheadX, 0.0),
                             QPointF(playheadX, viewportHeight),
                             playheadColor, 2.0f});
