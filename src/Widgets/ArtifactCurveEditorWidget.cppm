@@ -502,6 +502,19 @@ public:
   // Clip to plot rect
   p.save();
   p.setClipRect(pr);
+  // The subtle area fill is intentionally below the stroke.  It gives flat
+  // or shallow curves a readable presence without turning the graph into a
+  // chart, matching the approved FabFilter-inspired reference.
+  QPainterPath areaPath(path);
+  areaPath.lineTo(QPointF(path.currentPosition().x(), pr.bottom()));
+  areaPath.lineTo(QPointF(startPos.x(), pr.bottom()));
+  areaPath.closeSubpath();
+  QColor areaColor = curveColor;
+  areaColor.setAlpha(focusedTrack ? 34 : 16);
+  p.setPen(Qt::NoPen);
+  p.setBrush(areaColor);
+  p.drawPath(areaPath);
+  p.setBrush(Qt::NoBrush);
   // CE-11: non-destructive linear Infinity preview outside the keyed range.
   // The key data remains unchanged; the dashed extensions only communicate
   // the extrapolation direction while the curve editor is in view.

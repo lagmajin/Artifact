@@ -5505,11 +5505,16 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     item->setToolTip(track.name);
     item->setForeground(track.color);
     impl_->curvePropertyList_->addItem(item);
+    // Keep the channel inventory visible even while the graph is focused on
+    // one curve.  Hiding the remaining tracks produced the large empty left
+    // pane seen in the curve editor and removed the user's route back to a
+    // sibling channel.
     const bool visible = impl_->focusedCurveTrackIndex_ < 0 ||
                          impl_->focusedCurveTrackIndex_ == i;
-    item->setHidden(!visible);
-    if (visible) {
-      ++visibleCount;
+    item->setHidden(false);
+    ++visibleCount;
+    if (!visible) {
+      item->setForeground(track.color.darker(145));
     }
     ++propertyCount;
   }
@@ -5532,7 +5537,7 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     impl_->curvePropertyList_->setCurrentRow(-1);
   }
   impl_->curvePropertySummaryLabel_->setText(
-      QStringLiteral("Curve Targets: %1 shown / %2 total")
+      QStringLiteral("Curve Channels: %1 shown / %2 total")
           .arg(visibleCount)
           .arg(propertyCount));
 }
