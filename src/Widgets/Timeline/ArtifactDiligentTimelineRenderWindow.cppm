@@ -358,6 +358,7 @@ bool ArtifactDiligentTimelineRenderWindow::event(QEvent* event)
     case QEvent::Wheel:
     case QEvent::KeyPress:
     case QEvent::KeyRelease:
+    {
       if (impl_->inputTarget_->size() != QSize(width(), height())) {
         impl_->inputTarget_->resize(width(), height());
       }
@@ -373,6 +374,7 @@ bool ArtifactDiligentTimelineRenderWindow::event(QEvent* event)
         impl_->inputUpdatedCallback_();
       }
       return true;
+    }
     default:
       break;
     }

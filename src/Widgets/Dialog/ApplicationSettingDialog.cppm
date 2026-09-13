@@ -1723,8 +1723,9 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
   if (value >= static_cast<int>(ShortcutId::ViewUndo) &&
       value <= static_cast<int>(ShortcutId::ViewToggleCameraFrustum))
     return QStringLiteral("Viewport.Composition");
-  if (value >= static_cast<int>(ShortcutId::CompositionViewportMoveGizmo) &&
-      value <= static_cast<int>(ShortcutId::CompositionViewportScaleGizmo))
+  if (id == ShortcutId::CompositionViewportMoveGizmo ||
+      id == ShortcutId::CompositionViewportRotateGizmo ||
+      id == ShortcutId::CompositionViewportScaleGizmo)
     return QStringLiteral("Viewport.Composition");
   return QStringLiteral("Workspace.Timeline");
 }
