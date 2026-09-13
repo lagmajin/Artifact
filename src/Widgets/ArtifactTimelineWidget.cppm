@@ -10083,6 +10083,24 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
           {QRectF(x + std::max(0.0, width - 3.0), top, 3.0, height),
            selectionEdge});
     }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio &&
+        !clip.waveformPeaks.isEmpty()) {
+      constexpr int kMaxWaveformBars = 64;
+      const int barCount = std::min(kMaxWaveformBars, clip.waveformPeaks.size());
+      const double centerY = top + height * 0.5;
+      QColor waveformColor(235, 242, 248, 116);
+      for (int bar = 0; bar < barCount; ++bar) {
+        const int sampleIndex = (bar * clip.waveformPeaks.size()) / barCount;
+        const double amplitude = std::clamp(
+            static_cast<double>(clip.waveformPeaks[sampleIndex]), 0.0, 1.0);
+        const double barX = x + (static_cast<double>(bar) + 0.5) *
+                                    width / static_cast<double>(barCount);
+        const double halfHeight = amplitude * height * 0.34;
+        snapshot.lines.push_back({QPointF(barX, centerY - halfHeight),
+                                  QPointF(barX, centerY + halfHeight),
+                                  waveformColor, 1.0f});
+      }
+    }
   }
 
   for (const auto& marker : keyframeMarkers) {
