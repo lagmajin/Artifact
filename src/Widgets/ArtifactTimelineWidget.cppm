@@ -15,6 +15,7 @@ module;
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QMenu>
 #include <QInputDialog>
 #include <QJsonDocument>
@@ -46,6 +47,7 @@ module;
 #include <atomic>
 #include <limits>
 #include <cmath>
+#include <utility>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
@@ -4570,7 +4572,15 @@ public:
   Impl();
   ~Impl();
   ArtifactTimelineBottomLabel *timelineLabel_ = nullptr;
-  ArtifactTimelineSearchBarWidget *searchBar_ = nullptr;
+   ArtifactTimelineSearchBarWidget *searchBar_ = nullptr;
+  QShortcut* focusSearchShortcut_ = nullptr;
+  QShortcut* clearSearchShortcut_ = nullptr;
+  QShortcut* selectionToolShortcut_ = nullptr;
+  QShortcut* handToolShortcut_ = nullptr;
+  QShortcut* zoomToolShortcut_ = nullptr;
+  QShortcut* rotateToolShortcut_ = nullptr;
+  QShortcut* slideToolShortcut_ = nullptr;
+  std::size_t shortcutListenerToken_ = 0;
   QLabel *searchStatusLabel_ = nullptr;
   QLabel *keyframeStatusLabel_ = nullptr;
   QLabel *inputSurfaceStatusLabel_ = nullptr;
@@ -4594,6 +4604,7 @@ public:
   QWidget *gpuTimelineContainer_ = nullptr;
   QWidget *timelineGpuPage_ = nullptr;
   bool gpuTimelinePreviewEnabled_ = false;
+  bool gpuTimelineSnapshotPending_ = false;
   quint64 gpuTimelineSnapshotGeneration_ = 0;
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
   QWidget *curveEditorPage_ = nullptr;
@@ -5716,18 +5727,28 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                    this, [this]() { jumpToSearchHit(-1); });
   QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchCleared,
                    this, [this]() { onSearchTextChanged(QString()); });
-  auto *focusSearchShortcut = new QShortcut(QKeySequence::Find, this);
+  auto *focusSearchShortcut = new QShortcut(
+      ArtifactCore::ShortcutBindings::instance().shortcut(
+          ArtifactCore::ShortcutId::TimelineFocusSearch),
+      this);
+  focusSearchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(focusSearchShortcut, &QShortcut::activated, this, [searchBar]() {
     if (searchBar) {
       searchBar->focusSearch();
     }
   });
-  auto *clearSearchShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+  impl_->focusSearchShortcut_ = focusSearchShortcut;
+  auto *clearSearchShortcut = new QShortcut(
+      ArtifactCore::ShortcutBindings::instance().shortcut(
+          ArtifactCore::ShortcutId::TimelineClearSearch),
+      this);
+  clearSearchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(clearSearchShortcut, &QShortcut::activated, this, [searchBar]() {
     if (searchBar && searchBar->hasSearchText()) {
       searchBar->clearSearch();
     }
   });
+  impl_->clearSearchShortcut_ = clearSearchShortcut;
   auto *findNextShortcut = new QShortcut(QKeySequence(Qt::Key_F3), this);
   findNextShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(findNextShortcut, &QShortcut::activated, this, [this, searchBar]() {
@@ -5847,20 +5868,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   applyInterpolationShortcut(
       shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseInOut),
       ArtifactCore::InterpolationType::EaseInOut);
-  auto setToolShortcut = [this](QKeySequence seq, ToolType type) {
-    auto *shortcut = new QShortcut(seq, this);
+  auto setToolShortcut = [this](ArtifactCore::ShortcutId id, ToolType type) {
+    auto *shortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(id), this);
     shortcut->setContext(Qt::WidgetWithChildrenShortcut);
     QObject::connect(shortcut, &QShortcut::activated, this, [this, type]() {
       if (auto *app = ArtifactApplicationManager::instance()) {
         app->toolManager()->setActiveTool(type);
       }
     });
+    return shortcut;
   };
-  setToolShortcut(QKeySequence(Qt::Key_V), ToolType::Selection);
-  setToolShortcut(QKeySequence(Qt::Key_H), ToolType::Hand);
-  setToolShortcut(QKeySequence(Qt::Key_Z), ToolType::Zoom);
-  setToolShortcut(QKeySequence(Qt::Key_R), ToolType::Rotation);
-  setToolShortcut(QKeySequence(Qt::Key_S), ToolType::Slide);
+  impl_->selectionToolShortcut_ = setToolShortcut(
+      ArtifactCore::ShortcutId::TimelineSelectionTool, ToolType::Selection);
+  impl_->handToolShortcut_ = setToolShortcut(
+      ArtifactCore::ShortcutId::TimelineHandTool, ToolType::Hand);
+  impl_->zoomToolShortcut_ = setToolShortcut(
+      ArtifactCore::ShortcutId::TimelineZoomTool, ToolType::Zoom);
+  impl_->rotateToolShortcut_ = setToolShortcut(
+      ArtifactCore::ShortcutId::TimelineRotateTool, ToolType::Rotation);
+  impl_->slideToolShortcut_ = setToolShortcut(
+      ArtifactCore::ShortcutId::TimelineSlideTool, ToolType::Slide);
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
@@ -8119,13 +8147,51 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               updateKeyframeState();
             }
           }));
-  if (qEnvironmentVariableIntValue("ARTIFACT_GPU_TIMELINE_PREVIEW") > 0) {
+  // The Diligent surface is the default display path so the adopted timeline
+  // design can be iterated against the real GPU surface. Set the environment
+  // variable to 0 to force the established QWidget/QPainter fallback.
+  if (!qEnvironmentVariableIsSet("ARTIFACT_GPU_TIMELINE_PREVIEW") ||
+      qEnvironmentVariableIntValue("ARTIFACT_GPU_TIMELINE_PREVIEW") > 0) {
     setGpuTimelinePreviewEnabled(true);
   }
+  updateShortcuts();
+  QPointer<ArtifactTimelineWidget> guard(this);
+  impl_->shortcutListenerToken_ =
+      ArtifactCore::ShortcutBindings::instance().addChangeListener(
+          [this, guard](ArtifactCore::ShortcutId) {
+            if (!guard || !impl_) {
+              return;
+            }
+            updateShortcuts();
+          });
   qInfo() << "[TimelineWidget][Ctor] total ms=" << ctorTimer.elapsed();
 }
 
+void ArtifactTimelineWidget::updateShortcuts() {
+  if (!impl_) {
+    return;
+  }
+  auto& bindings = ArtifactCore::ShortcutBindings::instance();
+  auto apply = [&bindings](QShortcut* shortcut, ArtifactCore::ShortcutId id) {
+    if (shortcut) {
+      shortcut->setKey(bindings.shortcut(id));
+    }
+  };
+  apply(impl_->focusSearchShortcut_, ArtifactCore::ShortcutId::TimelineFocusSearch);
+  apply(impl_->clearSearchShortcut_, ArtifactCore::ShortcutId::TimelineClearSearch);
+  apply(impl_->selectionToolShortcut_, ArtifactCore::ShortcutId::TimelineSelectionTool);
+  apply(impl_->handToolShortcut_, ArtifactCore::ShortcutId::TimelineHandTool);
+  apply(impl_->zoomToolShortcut_, ArtifactCore::ShortcutId::TimelineZoomTool);
+  apply(impl_->rotateToolShortcut_, ArtifactCore::ShortcutId::TimelineRotateTool);
+  apply(impl_->slideToolShortcut_, ArtifactCore::ShortcutId::TimelineSlideTool);
+}
+
 ArtifactTimelineWidget::~ArtifactTimelineWidget() {
+  if (impl_ && impl_->shortcutListenerToken_ != 0) {
+    ArtifactCore::ShortcutBindings::instance().removeChangeListener(
+        impl_->shortcutListenerToken_);
+    impl_->shortcutListenerToken_ = 0;
+  }
   delete impl_;
 }
 
@@ -9067,6 +9133,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     for (const auto &layerId : layerIds) {
       removed = service->removeLayerFromComposition(comp->id(), layerId) || removed;
     }
+    if (removed) {
+      // Keep keyboard focus on the timeline after the selected rows are
+      // destroyed; otherwise Backspace leaves focus on a deleted row/editor.
+      setFocus(Qt::OtherFocusReason);
+    }
     return removed;
   };
 
@@ -9996,6 +10067,26 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
 void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
 {
   if (!impl_ || !impl_->gpuTimelineWindow_ ||
+      !impl_->painterTrackView_ || !impl_->gpuTimelinePreviewEnabled_ ||
+      impl_->gpuTimelineSnapshotPending_) {
+    return;
+  }
+  impl_->gpuTimelineSnapshotPending_ = true;
+  QMetaObject::invokeMethod(
+      this,
+      [this]() {
+        if (!impl_) {
+          return;
+        }
+        impl_->gpuTimelineSnapshotPending_ = false;
+        buildGpuTimelineSnapshot();
+      },
+      Qt::QueuedConnection);
+}
+
+void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
+{
+  if (!impl_ || !impl_->gpuTimelineWindow_ ||
       !impl_->painterTrackView_ || !impl_->gpuTimelinePreviewEnabled_) {
     return;
   }
@@ -10019,8 +10110,8 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
       1, impl_->gpuTimelineContainer_
              ? impl_->gpuTimelineContainer_->height()
              : view->height());
-  const auto clips = view->clips();
-  const auto keyframeMarkers = view->keyframeMarkers();
+  const auto& clips = view->clipsView();
+  const auto& keyframeMarkers = view->keyframeMarkersView();
 
   // Reserve once for the visible timeline primitives. Snapshot construction is
   // coalesced, but it can still run during a scroll or playback update.
@@ -10083,7 +10174,6 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
                               gridColor, 1.0f});
   }
 
-  for (const auto& clip : clips) {
   // Keep the secondary divisions deliberately quiet: they provide the dense
   // DCC timing rhythm without competing with keyframes or layer spans.
   const double minorStep = gridStep / 5.0;
@@ -10100,6 +10190,8 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
     snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
                               minorGridColor, 1.0f});
   }
+
+  for (const auto& clip : clips) {
     if (clip.trackIndex < 0 || clip.trackIndex >= view->trackCount()) {
       continue;
     }
