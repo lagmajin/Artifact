@@ -1165,6 +1165,31 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   queueHeader->addStretch();
   queueHeader->addWidget(impl_->queueStateLabel);
   leftLayout->addLayout(queueHeader);
+
+  // Column captions make the compact rows scan like a render queue rather
+  // than a stack of independent cards.  Their offsets match the preview and
+  // fixed Job/Output columns in RenderQueueJobCard.
+  auto* columnHeader = new QWidget();
+  columnHeader->setObjectName(QStringLiteral("renderQueueColumnHeader"));
+  auto* columnHeaderLayout = new QHBoxLayout(columnHeader);
+  columnHeaderLayout->setContentsMargins(158, 0, 14, 0);
+  columnHeaderLayout->setSpacing(16);
+  const auto makeColumnCaption = [&theme](const QString& text, int minimumWidth) {
+    auto* caption = new QLabel(text);
+    caption->setMinimumWidth(minimumWidth);
+    QFont font = caption->font();
+    font.setPointSize(std::max(7, font.pointSize() - 1));
+    font.setCapitalization(QFont::AllUppercase);
+    caption->setFont(font);
+    QPalette palette = caption->palette();
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor).darker(135));
+    caption->setPalette(palette);
+    return caption;
+  };
+  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Job"), 150));
+  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Output"), 190));
+  columnHeaderLayout->addWidget(makeColumnCaption(QStringLiteral("Status"), 0), 1);
+  leftLayout->addWidget(columnHeader);
   leftLayout->addWidget(impl_->jobListWidget);
   
   auto* btnLayout = new QHBoxLayout();
