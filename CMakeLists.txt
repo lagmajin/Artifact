@@ -902,6 +902,19 @@ target_sources(ArtifactRender
     PRIVATE ${ARTIFACT_RENDER_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_MODULES}
 )
+
+# MSVC does not always discover the dotted import for the OpenEXR interface
+# partition through the cross-target module scan.  Keep the queue service's
+# dependency explicit so the Artifact compile receives the Core BMI that is
+# already produced by the ArtifactCore target.
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderQueueService.cppm"
+    PROPERTIES
+        COMPILE_OPTIONS
+            "/reference;Image.OpenEXR=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Image.OpenEXR.ifc"
+        OBJECT_DEPENDS
+            "${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Image.OpenEXR.ifc"
+)
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD ON)
 else()
