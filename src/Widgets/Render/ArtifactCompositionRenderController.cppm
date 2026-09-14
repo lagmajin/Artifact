@@ -44046,7 +44046,6 @@ void CompositionRenderController::Impl::drawThreeDimensionalGroundGrid() {
       : std::max(1.0f, gridSettings_.majorInterval);
 
   Artifact::Grid::GroundGridSettings groundSettings;
-  groundSettings.plane = Artifact::Grid::GridPlane3D::XY;
   groundSettings.majorInterval = std::max(0.0001f, majorSpacing);
   groundSettings.subdivisions = std::max(1, gridSettings_.subdivisions);
 
