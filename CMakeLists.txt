@@ -911,9 +911,9 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderQueueService.cppm"
     PROPERTIES
         COMPILE_OPTIONS
-            "/reference;Image.OpenEXR=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Image.OpenEXR.ifc"
+            "/reference;Image:OpenEXR=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Image-OpenEXR.ifc"
         OBJECT_DEPENDS
-            "${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Image.OpenEXR.ifc"
+            "${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Image-OpenEXR.ifc"
 )
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD ON)
