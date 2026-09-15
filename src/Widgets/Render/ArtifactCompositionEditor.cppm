@@ -7077,11 +7077,14 @@ protected:
       event->accept();
       return;
     }
-    if (!event->isAutoRepeat() &&
-        (ArtifactCore::ShortcutBindings::instance().matches(
-             event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
-         event->key() == Qt::Key_Delete ||
-         event->key() == Qt::Key_Backspace)) {
+    const auto *activeToolManager = ArtifactApplicationManager::instance()
+        ? ArtifactApplicationManager::instance()->toolManager()
+        : nullptr;
+    const bool maskToolActive = activeToolManager &&
+        activeToolManager->activeTool() == ToolType::Pen;
+    if (!event->isAutoRepeat() && !maskToolActive &&
+        ArtifactCore::ShortcutBindings::instance().matches(
+            event, ArtifactCore::ShortcutId::LayerDeleteSelected)) {
       auto *svc = ArtifactProjectService::instance();
       auto *active = ArtifactActiveContextService::instance();
       auto *selection = ArtifactLayerSelectionManager::instance();

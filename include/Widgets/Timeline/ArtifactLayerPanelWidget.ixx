@@ -185,6 +185,7 @@ export namespace Artifact
   void scrollToLayer(const LayerID& id);
   LayerID selectedLayerId() const;
   QString currentPropertyPath() const;
+  bool deleteSelectedMask();
   void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath);
 
  private:
@@ -228,6 +229,7 @@ export namespace Artifact
   void scrollToLayer(const LayerID& id);
   LayerID selectedLayerId() const;
   QString currentPropertyPath() const;
+  bool deleteSelectedMask();
 
   };
 

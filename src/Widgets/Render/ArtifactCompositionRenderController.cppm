@@ -11058,15 +11058,15 @@ public:
                                     backgroundMode, checkerboardTileSize_,
 
                                     cachedMayaGradientSprite_,
-                                    viewportOrientationMatricesValid_
+                                    usesSpatialViewportOrientation()
                                         ? &viewportOrientationViewForOverlay_
                                         : nullptr,
-                                    viewportOrientationMatricesValid_
+                                    usesSpatialViewportOrientation()
                                         ? &viewportOrientationProjectionForOverlay_
                                         : nullptr);
 
     if (showCompositionRegionOverlay_ && composition &&
-        !viewportOrientationMatricesValid_) {
+        !usesSpatialViewportOrientation()) {
       ::Artifact::drawCompositionRegionOverlay(renderer_.get(), composition);
     }
     if (previewOrbitActive_ && composition) {
@@ -11495,7 +11495,7 @@ public:
 
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
-                    true, surfaceGeneration(layer),
+                    usesSpatialViewportOrientation(), surfaceGeneration(layer),
         &precompGpuResolver, deferRasterizerEffectsToGpu,
         &solidPointwiseCache_);
 
@@ -12179,10 +12179,10 @@ public:
                                     backgroundMode, checkerboardTileSize_,
 
                                     cachedMayaGradientSprite_,
-                                    viewportOrientationMatricesValid_
+                                    usesSpatialViewportOrientation()
                                         ? &viewportOrientationViewForOverlay_
                                         : nullptr,
-                                    viewportOrientationMatricesValid_
+                                    usesSpatialViewportOrientation()
                                         ? &viewportOrientationProjectionForOverlay_
                                         : nullptr);
     }
@@ -12890,6 +12890,10 @@ public:
     return viewportOrientationNavigator_.activeHotspot() ==
                ArtifactCore::ViewOrientationHotspot::Front &&
            !viewportOrientationNavigator_.isAnimating();
+  }
+  bool usesSpatialViewportOrientation() const {
+    return viewportOrientationMatricesValid_ &&
+           !isFrontOrthographicViewport();
   }
   bool viewportOrientationMatricesValid_ = false;
   QMatrix4x4 viewportOrientationViewForOverlay_;
@@ -27924,7 +27928,11 @@ if (activeTool == ToolType::Pen && impl_->maskRubberBandCandidate_ &&
     impl_->maskRubberBandCurrentCanvas_ = QPointF(current.x, current.y);
     const QPointF delta = impl_->maskRubberBandCurrentCanvas_ -
                           impl_->maskRubberBandStartCanvas_;
-    if (delta.manhattanLength() >= 6.0) {
+    // delta is in canvas coordinates. Keep the physical drag threshold stable,
+    // otherwise a small click jitter cancels a point while zoomed out.
+    const float rubberBandThreshold = 6.0f /
+        std::max(0.001f, impl_->renderer_->getZoom());
+    if (delta.manhattanLength() >= rubberBandThreshold) {
       impl_->clearPendingMaskCreation();
       impl_->isDraggingMaskHandle_ = false;
       impl_->maskRubberBandCandidate_ = false;
@@ -37243,28 +37251,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool viewportMultiChannelRequested =
         renderer_->isMultiChannelEnabled();
 
-    // R/G/B/Alpha are presentation modes derived from the resolved beauty
-    // texture. They do not require auxiliary AOV targets, but they do require
-    // the offscreen GPU pipeline so the selected component can replace beauty
-    // before the viewport is presented. Without this condition, an ordinary
-    // Normal-blend 2D composition stays on the direct path and only the UI
-    // label changes.
-    const bool primaryComponentDisplayRequested =
-        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
-        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
-        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
-        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
-
     if (gpuBlendEnabled_ &&
         (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
-         viewportMultiChannelRequested || primaryComponentDisplayRequested) &&
+         viewportMultiChannelRequested) &&
         !blendPipelineReady_) {
       scheduleBlendPipelineInitialization(
           owner, 0,
-          primaryComponentDisplayRequested
-              ? QStringLiteral("primary-component-display-requested")
-              : screenSpaceGlobalIlluminationRequested
+          screenSpaceGlobalIlluminationRequested
               ? QStringLiteral("screen-space-gi-requested")
               : QStringLiteral("non-normal-layer-visible"));
     }
@@ -37276,7 +37270,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         gpuBlendRequested &&
         (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
-         viewportMultiChannelRequested || primaryComponentDisplayRequested);
+         viewportMultiChannelRequested);
 
 
 
@@ -38085,15 +38079,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 context.renderer, cw, ch, layerBgColor, backgroundMode,
 
                 checkerboardTileSize_, cachedMayaGradientSprite_,
-                viewportOrientationMatricesValid_
+                usesSpatialViewportOrientation()
                     ? &viewportOrientationViewForOverlay_
                     : nullptr,
-                viewportOrientationMatricesValid_
+                usesSpatialViewportOrientation()
                     ? &viewportOrientationProjectionForOverlay_
                     : nullptr);
 
             if (showCompositionRegionOverlay_ && comp &&
-                !viewportOrientationMatricesValid_) {
+                !usesSpatialViewportOrientation()) {
               ::Artifact::drawCompositionRegionOverlay(context.renderer, comp);
             }
             if (previewOrbitActive_ && comp) {
@@ -39242,15 +39236,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                       backgroundMode, checkerboardTileSize_,
 
                                       cachedMayaGradientSprite_,
-                                      viewportOrientationMatricesValid_
+                                      usesSpatialViewportOrientation()
                                           ? &viewportOrientationViewForOverlay_
                                           : nullptr,
-                                      viewportOrientationMatricesValid_
+                                      usesSpatialViewportOrientation()
                                           ? &viewportOrientationProjectionForOverlay_
                                           : nullptr);
 
       if (showCompositionRegionOverlay_ && comp &&
-          !viewportOrientationMatricesValid_) {
+          !usesSpatialViewportOrientation()) {
         ::Artifact::drawCompositionRegionOverlay(renderer_.get(), comp);
       }
       if (previewOrbitActive_ && comp) {
@@ -39600,7 +39594,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     has3DCamera ? &cameraProjMatrix : nullptr,
                     has3DCamera ? &previousCameraViewMatrix : nullptr,
                     has3DCamera ? &previousCameraProjMatrix : nullptr, &matteResolver,
-                    &sceneLights, draftRendering, true,
+                    &sceneLights, draftRendering,
+                    usesSpatialViewportOrientation(),
 
                     surfaceGeneration(layer.get()));
 
@@ -43009,16 +43004,6 @@ void CompositionRenderController::Impl::drawViewportChannelOverlayImage(
 
   }
 
-  // Primary RGBA components are not overlays. finalizeGpuRenderToViewport()
-  // selects their GPU-derived texture instead of the beauty texture, so they
-  // must not be drawn a second time in this post-presentation overlay pass.
-  if (viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
-      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
-      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
-      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha) {
-    return;
-  }
-
    if (viewportChannelDisplaySRV_) {
     if (presentationLayout_ == CompositionViewportPresentationLayout::Quad &&
         hostWidth_ > 0.0f && hostHeight_ > 0.0f) {
@@ -44015,7 +44000,10 @@ void drawRigSkinWireframe(Artifact::ArtifactIRenderer* renderer,
 
 void CompositionRenderController::Impl::drawThreeDimensionalGroundGrid() {
 
-  if (!renderer_ || !showGrid_ || !gizmo3DCameraMatricesValid_) {
+  // The composition grid is a 2D, composition-space aid in the Front view.
+  // Only spatial viewport orientations use the projected ground grid.
+  if (!renderer_ || !showGrid_ || !gizmo3DCameraMatricesValid_ ||
+      isFrontOrthographicViewport()) {
     return;
   }
 
@@ -44103,7 +44091,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
   }
 
-  const bool threeDimensionalViewport = true;
+  const bool threeDimensionalViewport = !isFrontOrthographicViewport();
 
   const auto projectedWorldPixelsPerUnit = [&]() {
     if (!gizmo3DCameraMatricesValid_) {

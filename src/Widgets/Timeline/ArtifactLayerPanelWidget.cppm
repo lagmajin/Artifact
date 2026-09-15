@@ -6349,6 +6349,44 @@ void ArtifactLayerPanelWidget::focusOutEvent(QFocusEvent* event)
   QWidget::focusOutEvent(event);
 }
 
+bool ArtifactLayerPanelWidget::deleteSelectedMask()
+{
+  if (impl_->selectedMaskLayerId.isNil() ||
+      impl_->selectedMaskIndex < 0 ||
+      impl_->selectedMaskLayerId != impl_->selectedLayerId) return false;
+  auto comp = safeCompositionLookup(impl_->compositionId);
+  auto layer = comp ? comp->layerById(impl_->selectedLayerId)
+                    : ArtifactAbstractLayerPtr{};
+  if (!layer || impl_->selectedMaskIndex >= layer->maskCount()) return false;
+  std::vector<LayerMask> beforeMasks;
+  beforeMasks.reserve(static_cast<size_t>(layer->maskCount()));
+  for (int i = 0; i < layer->maskCount(); ++i) beforeMasks.push_back(layer->mask(i));
+  layer->removeMask(impl_->selectedMaskIndex);
+  std::vector<LayerMask> afterMasks;
+  afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
+  for (int i = 0; i < layer->maskCount(); ++i) afterMasks.push_back(layer->mask(i));
+  const auto restoreMasks = beforeMasks;
+  if (auto *undo = UndoManager::instance();
+      undo && !undo->push(std::make_unique<MaskEditCommand>(
+          layer, std::move(beforeMasks), std::move(afterMasks)))) {
+    layer->clearMasks();
+    for (const auto &mask : restoreMasks) layer->addMask(mask);
+    // The mask row owned this key even when its undo transaction failed.
+    // Do not let the same key delete its parent layer as a fallback.
+    return true;
+  }
+  const int nextMaskCount = layer->maskCount();
+  if (nextMaskCount > 0) {
+    impl_->focusMaskSelection(layer, std::min(impl_->selectedMaskIndex, nextMaskCount - 1));
+  } else {
+    impl_->clearMaskSelection();
+    impl_->currentPropertyPath.clear();
+  }
+  propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+  updateLayout();
+  return true;
+}
+
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
   if (auto* input = InputOperator::instance()) {
@@ -6614,54 +6652,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   if (ArtifactCore::ShortcutBindings::instance().matches(
           event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
       event->key() == Qt::Key_Backspace) {
-    if (!impl_->selectedMaskLayerId.isNil() &&
-        impl_->selectedMaskIndex >= 0 &&
-        impl_->selectedMaskLayerId == impl_->selectedLayerId) {
-      auto comp = safeCompositionLookup(impl_->compositionId);
-      const CompositionID compId = comp ? comp->id() : impl_->compositionId;
-      auto layer = comp ? comp->layerById(impl_->selectedLayerId) : ArtifactAbstractLayerPtr{};
-      if (!compId.isNil() && layer &&
-          impl_->selectedMaskIndex < layer->maskCount()) {
-        std::vector<LayerMask> beforeMasks;
-        beforeMasks.reserve(static_cast<size_t>(layer->maskCount()));
-        for (int i = 0; i < layer->maskCount(); ++i) {
-          beforeMasks.push_back(layer->mask(i));
-        }
-
-        layer->removeMask(impl_->selectedMaskIndex);
-
-        std::vector<LayerMask> afterMasks;
-        afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
-        for (int i = 0; i < layer->maskCount(); ++i) {
-          afterMasks.push_back(layer->mask(i));
-        }
-        const auto restoreMasks = beforeMasks;
-
-        if (auto *undo = UndoManager::instance()) {
-          if (!undo->push(std::make_unique<MaskEditCommand>(
-                  layer, std::move(beforeMasks), std::move(afterMasks)))) {
-            layer->clearMasks();
-            for (const auto &mask : restoreMasks) {
-              layer->addMask(mask);
-            }
-            return;
-          }
-        }
-        const int nextMaskCount = layer->maskCount();
-        if (nextMaskCount > 0) {
-          const int nextMaskIndex =
-              std::min(impl_->selectedMaskIndex, nextMaskCount - 1);
-          impl_->focusMaskSelection(layer, nextMaskIndex);
-          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
-        } else {
-          impl_->clearMaskSelection();
-          impl_->currentPropertyPath.clear();
-          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
-        }
-        updateLayout();
-        event->accept();
-        return;
-      }
+    if (deleteSelectedMask()) {
+      event->accept();
+      return;
     }
     QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
     if (selectedIds.isEmpty() && !impl_->selectedLayerId.isNil()) {
@@ -8325,6 +8318,11 @@ void ArtifactLayerTimelinePanelWrapper::setPropertyChannelFilter(
   QString ArtifactLayerTimelinePanelWrapper::currentPropertyPath() const
   {
    return impl_ && impl_->panel ? impl_->panel->currentPropertyPath() : QString{};
+  }
+
+  bool ArtifactLayerTimelinePanelWrapper::deleteSelectedMask()
+  {
+   return impl_ && impl_->panel && impl_->panel->deleteSelectedMask();
   }
 
 } // namespace Artifact

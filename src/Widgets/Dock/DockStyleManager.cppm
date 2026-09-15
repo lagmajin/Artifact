@@ -51,6 +51,13 @@ public:
 
 namespace {
 
+QColor visualStudioDockFrameColor()
+{
+    // This is a dock-focus cue, kept separate from the document/content
+    // selection color so it can frame the complete active panel.
+    return QColor(QStringLiteral("#A371F7"));
+}
+
 void repolishWidget(QWidget* widget) {
     if (!widget) return;
     widget->setAttribute(Qt::WA_StyledBackground, true);
@@ -205,7 +212,7 @@ DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     auto* dockManager = qobject_cast<ads::CDockManager*>(dockSurface);
     impl_->dockManager_ = dockManager;
-    impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().borderColor);
+    impl_->glowColor_ = visualStudioDockFrameColor();
 
     if (!impl_->dockManager_) {
         // NativeDockSurface intentionally does not expose a QADS manager.
@@ -216,6 +223,9 @@ DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
     }
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
+    impl_->glowStyle_->setGlowColor(impl_->glowColor_);
+    impl_->glowStyle_->setGlowWidth(2);
+    impl_->glowStyle_->setGlowIntensity(0.92f);
     impl_->dockManager_->setStyle(impl_->glowStyle_);
     impl_->dockManager_->setFrameShape(QFrame::NoFrame);
     // Clear QADS's built-in light-theme stylesheet so QPalette-based styling wins.
@@ -295,7 +305,7 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
 
     if (event->type() == QEvent::ApplicationPaletteChange ||
         event->type() == QEvent::PaletteChange) {
-        setGlowColor(QColor(ArtifactCore::currentDCCTheme().borderColor));
+        setGlowColor(visualStudioDockFrameColor());
         scheduleRefresh();
         return QObject::eventFilter(watched, event);
     }

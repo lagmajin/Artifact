@@ -3,16 +3,21 @@ module;
 #include <QAction>
 #include <QDebug>
 #include <QDialog>
+#include <QFont>
+#include <QFrame>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QMetaObject>
 #include <QMenu>
+#include <QPalette>
 #include <QKeySequence>
 #include <QThread>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSize>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -210,10 +215,79 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
       QDialog dialog(menu_);
       dialog.setWindowTitle(QStringLiteral("OFX Plugin Manager"));
       dialog.setModal(true);
-      dialog.resize(560, 360);
+      dialog.resize(700, 490);
+      dialog.setMinimumSize(620, 420);
+      dialog.setAccessibleName(QStringLiteral("OFX Plugin Manager"));
+
       auto* layout = new QVBoxLayout(&dialog);
-      layout->addWidget(new QLabel(QStringLiteral("Loaded OFX plug-ins"), &dialog));
-      auto* list = new QListWidget(&dialog);
+      layout->setContentsMargins(18, 16, 18, 16);
+      layout->setSpacing(12);
+
+      auto* header = new QHBoxLayout();
+      header->setSpacing(10);
+      auto* title = new QLabel(QStringLiteral("OFX Plug-ins"), &dialog);
+      QFont titleFont = title->font();
+      titleFont.setPointSizeF(titleFont.pointSizeF() + 2.0);
+      titleFont.setWeight(QFont::DemiBold);
+      title->setFont(titleFont);
+      auto* loadedCount = new QLabel(&dialog);
+      loadedCount->setForegroundRole(QPalette::PlaceholderText);
+      loadedCount->setAccessibleName(QStringLiteral("Loaded OFX plug-in count"));
+      header->addWidget(title);
+      header->addWidget(loadedCount);
+      header->addStretch(1);
+      layout->addLayout(header);
+
+      auto* contentFrame = new QFrame(&dialog);
+      contentFrame->setFrameShape(QFrame::StyledPanel);
+      contentFrame->setFrameShadow(QFrame::Plain);
+      contentFrame->setAccessibleName(QStringLiteral("OFX plug-in list"));
+      auto* contentLayout = new QVBoxLayout(contentFrame);
+      contentLayout->setContentsMargins(0, 0, 0, 0);
+      contentLayout->setSpacing(0);
+
+      auto* pages = new QStackedWidget(contentFrame);
+      auto* list = new QListWidget(pages);
+      list->setFrameShape(QFrame::NoFrame);
+      list->setSpacing(4);
+      list->setUniformItemSizes(true);
+      list->setAccessibleName(QStringLiteral("Loaded OFX plug-ins"));
+      pages->addWidget(list);
+
+      auto* emptyPage = new QWidget(pages);
+      auto* emptyLayout = new QVBoxLayout(emptyPage);
+      emptyLayout->setContentsMargins(32, 32, 32, 32);
+      emptyLayout->setSpacing(8);
+      emptyLayout->addStretch(1);
+
+      auto* emptyIcon = new QLabel(emptyPage);
+      emptyIcon->setAlignment(Qt::AlignCenter);
+      emptyIcon->setPixmap(menuIcon(QStringLiteral("Studio/effect_ops_ofx.svg"))
+                               .pixmap(52, 52));
+      emptyIcon->setAccessibleName(QStringLiteral("OFX plug-in"));
+      emptyLayout->addWidget(emptyIcon, 0, Qt::AlignHCenter);
+
+      auto* emptyTitle = new QLabel(QStringLiteral("No OFX plug-ins found"), emptyPage);
+      QFont emptyTitleFont = emptyTitle->font();
+      emptyTitleFont.setPointSizeF(emptyTitleFont.pointSizeF() + 1.0);
+      emptyTitleFont.setWeight(QFont::DemiBold);
+      emptyTitle->setFont(emptyTitleFont);
+      emptyTitle->setAlignment(Qt::AlignCenter);
+      emptyLayout->addWidget(emptyTitle);
+
+      auto* emptyHint = new QLabel(
+          QStringLiteral("Install an OFX plug-in, then rescan to detect it."),
+          emptyPage);
+      emptyHint->setAlignment(Qt::AlignCenter);
+      emptyHint->setForegroundRole(QPalette::PlaceholderText);
+      emptyHint->setWordWrap(true);
+      emptyLayout->addWidget(emptyHint);
+      emptyLayout->addStretch(1);
+      pages->addWidget(emptyPage);
+
+      contentLayout->addWidget(pages);
+      layout->addWidget(contentFrame, 1);
+
       const auto populate = [&]() {
           list->clear();
           for (const auto& plugin : host.getLoadedPlugins()) {
@@ -221,19 +295,32 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
               if (id.isEmpty()) continue;
               const QString version = plugin.version.toQString().trimmed();
               const QString path = plugin.pluginPath.toQString().trimmed();
-              list->addItem(version.isEmpty()
-                  ? QStringLiteral("%1\n%2").arg(id, path)
-                  : QStringLiteral("%1  (%2)\n%3").arg(id, version, path));
+              auto* item = new QListWidgetItem(
+                  version.isEmpty()
+                      ? QStringLiteral("%1\n%2").arg(id, path)
+                      : QStringLiteral("%1  (%2)\n%3").arg(id, version, path),
+                  list);
+              item->setSizeHint(QSize(item->sizeHint().width(), 52));
           }
-          if (list->count() == 0) {
-              list->addItem(QStringLiteral("No OFX plug-ins found."));
-          }
+          loadedCount->setText(QStringLiteral("%1 loaded").arg(list->count()));
+          pages->setCurrentWidget(list->count() == 0 ? emptyPage : list);
       };
       populate();
-      layout->addWidget(list, 1);
+
+      auto* footerRule = new QFrame(&dialog);
+      footerRule->setFrameShape(QFrame::HLine);
+      footerRule->setFrameShadow(QFrame::Plain);
+      layout->addWidget(footerRule);
+
       auto* buttons = new QHBoxLayout();
+      buttons->setSpacing(10);
       auto* rescan = new QPushButton(QStringLiteral("Rescan"), &dialog);
       auto* close = new QPushButton(QStringLiteral("Close"), &dialog);
+      rescan->setMinimumSize(116, 36);
+      rescan->setDefault(true);
+      rescan->setAccessibleName(QStringLiteral("Rescan for OFX plug-ins"));
+      close->setMinimumSize(110, 36);
+      close->setAccessibleName(QStringLiteral("Close OFX Plugin Manager"));
       buttons->addWidget(rescan);
       buttons->addStretch(1);
       buttons->addWidget(close);

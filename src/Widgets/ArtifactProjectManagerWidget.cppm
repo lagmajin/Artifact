@@ -417,11 +417,13 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
         return;
     }
 
-    const int imageSide = std::clamp(
-        std::min(contentRect.width(), contentRect.height()) / 4, 96, 168);
-    const QPixmap illustration = projectViewIllustration(
-        QStringLiteral("Studio/project_view_empty.png"),
-        QSize(imageSide, imageSide));
+    // Project View uses the compact document mark rather than an illustrative
+    // artwork so the empty state stays visually quiet and consistent with the
+    // surrounding Project chrome.
+    constexpr int imageSide = 104;
+    const QPixmap illustration = QIcon(
+        QStringLiteral(":/icons/Studio/composition_empty_composition.svg"))
+        .pixmap(QSize(imageSide, imageSide));
 
     const QPoint center = contentRect.center();
     int y = center.y() - imageSide / 2 - 22;
@@ -443,7 +445,9 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setFont(titleFont);
     const auto *service = ArtifactProjectService::instance();
     const bool hasProject = service && service->hasProject();
-    painter.setPen(QColor(218, 224, 232, 210));
+    QColor titleColor(ArtifactCore::currentDCCTheme().textColor);
+    titleColor.setAlpha(210);
+    painter.setPen(titleColor);
     const QRect titleRect(contentRect.left() + 28, y, contentRect.width() - 56, 24);
     painter.drawText(titleRect, Qt::AlignCenter,
                      hasProject ? QStringLiteral("No project items to show")
@@ -453,7 +457,9 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     bodyFont.setBold(false);
     bodyFont.setPointSize(std::max(8, bodyFont.pointSize() - 1));
     painter.setFont(bodyFont);
-    painter.setPen(QColor(160, 170, 182, 185));
+    QColor bodyColor(ArtifactCore::currentDCCTheme().textColor);
+    bodyColor.setAlpha(165);
+    painter.setPen(bodyColor);
     const QRect bodyRect(contentRect.left() + 28, titleRect.bottom() + 4, contentRect.width() - 56, 22);
     painter.drawText(bodyRect, Qt::AlignCenter,
                      hasProject
@@ -548,18 +554,26 @@ public:
 
     struct Colors {
         static QColor background() { return QColor(ArtifactCore::currentDCCTheme().backgroundColor); }
-        static QColor headerBackground() { return background().lighter(106); }
-        static QColor headerText() { return QColor(ArtifactCore::currentDCCTheme().textColor).darker(125); }
-        static QColor headerSeparator() { return background().lighter(122); }
-        static QColor headerHover() { return background().lighter(114); }
-        static QColor rowHover() { return background().lighter(110); }
-        static QColor rowSelected() { return QColor(ArtifactCore::currentDCCTheme().accentColor).darker(125); }
+        static QColor headerBackground() { return QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor); }
+        static QColor headerText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
+        static QColor headerSeparator() { return QColor(ArtifactCore::currentDCCTheme().borderColor); }
+        static QColor headerHover() { return QColor(ArtifactCore::currentDCCTheme().buttonHoverColor); }
+        static QColor rowHover() { return QColor(ArtifactCore::currentDCCTheme().buttonHoverColor); }
+        static QColor rowSelected() { return QColor(ArtifactCore::currentDCCTheme().selectionColor); }
         static QColor rowSelectedText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
         static QColor rowText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
-        static QColor rowBorder() { return background().lighter(116); }
-        static QColor branchNormal() { return QColor(ArtifactCore::currentDCCTheme().textColor).darker(150); }
+        static QColor rowBorder() { return QColor(ArtifactCore::currentDCCTheme().borderColor); }
+        static QColor branchNormal() {
+            QColor color(ArtifactCore::currentDCCTheme().textColor);
+            color.setAlpha(150);
+            return color;
+        }
         static QColor selectionAccent() { return QColor(ArtifactCore::currentDCCTheme().accentColor); }
-        static QColor hierarchyGuide() { return background().lighter(128); }
+        static QColor hierarchyGuide() {
+            QColor color(ArtifactCore::currentDCCTheme().borderColor);
+            color.setAlpha(180);
+            return color;
+        }
     };
 
     QAbstractItemModel* model = nullptr;
@@ -573,7 +587,7 @@ public:
     QString lastContextCommandLabel;
     QString lastNewCommandId;
     QString lastNewCommandLabel;
-    QVector<int> columnWidths = {300, 120, 120, 110, 150, 180};
+    QVector<int> columnWidths = {320, 150, 260, 190, 220, 180};
     QVector<VisibleRow> visibleRows;
     QSet<QString> expandedKeys;
     QVector<QMetaObject::Connection> modelConnections;
@@ -586,8 +600,8 @@ public:
     QModelIndex hoverBranchIndex;
     QLineEdit* nameEditor = nullptr;
     QModelIndex editingIndex;
-    int headerHeight = 36;
-    int rowHeight = 38;
+    int headerHeight = 40;
+    int rowHeight = 44;
     int indentWidth = 18;
     ArtifactProjectView::PresentationMode presentationMode = ArtifactProjectView::PresentationMode::List;
     QHash<QString, QPixmap> tilePreviewCache;
@@ -5998,19 +6012,31 @@ public:
                 : Qt::DescendingOrder;
             projectView_->sortByColumn(savedSortColumn, savedSortOrder);
             if (!headerLayoutInitialized_) {
-                projectView_->setColumnWidth(0, 260);
-                projectView_->setColumnWidth(1, 120);
-                projectView_->setColumnWidth(2, 120);
-                projectView_->setColumnWidth(3, 100);
-                projectView_->setColumnWidth(4, 140);
+                projectView_->setColumnWidth(0, 320);
+                projectView_->setColumnWidth(1, 150);
+                projectView_->setColumnWidth(2, 260);
+                projectView_->setColumnWidth(3, 190);
+                projectView_->setColumnWidth(4, 220);
                 projectView_->setColumnWidth(5, 180);
                 QSettings columnSettings;
-                for (int column = 0; column < 6; ++column) {
-                    const QString key = QStringLiteral("ProjectView/ColumnWidth/%1").arg(column);
-                    if (columnSettings.contains(key)) {
-                        projectView_->setColumnWidth(column, std::clamp(
-                            columnSettings.value(key).toInt(), 40, 420));
+                const int columnLayoutVersion = columnSettings.value(
+                    QStringLiteral("ProjectView/ColumnLayoutVersion"), 0).toInt();
+                if (columnLayoutVersion >= 2) {
+                    for (int column = 0; column < 6; ++column) {
+                        const QString key = QStringLiteral("ProjectView/ColumnWidth/%1").arg(column);
+                        if (columnSettings.contains(key)) {
+                            projectView_->setColumnWidth(column, std::clamp(
+                                columnSettings.value(key).toInt(), 40, 420));
+                        }
                     }
+                } else {
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnWidth/0"), 320);
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnWidth/1"), 150);
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnWidth/2"), 260);
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnWidth/3"), 190);
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnWidth/4"), 220);
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnWidth/5"), 180);
+                    columnSettings.setValue(QStringLiteral("ProjectView/ColumnLayoutVersion"), 2);
                 }
                 headerLayoutInitialized_ = true;
             }
@@ -6553,8 +6579,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->searchBar->addAction(
         loadProjectViewIcon(QStringLiteral("Studio/search.svg")),
         QLineEdit::LeadingPosition);
-    impl_->searchBar->setMinimumHeight(32);
-    impl_->searchBar->setMaximumHeight(32);
+    impl_->searchBar->setMinimumHeight(36);
+    impl_->searchBar->setMaximumHeight(36);
     {
         QFont f = impl_->searchBar->font();
         f.setPointSize(11);
@@ -6583,8 +6609,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage"
                                                   << "Input Source" << "Folder" << "Solid");
     impl_->typeFilterBox->setMinimumWidth(132);
-    impl_->typeFilterBox->setMinimumHeight(32);
-    impl_->typeFilterBox->setMaximumHeight(32);
+    impl_->typeFilterBox->setMinimumHeight(36);
+    impl_->typeFilterBox->setMaximumHeight(36);
     impl_->viewModeBox = new QComboBox(filterBarHost);
     impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
     impl_->viewModeBox->setAccessibleName(QStringLiteral("Project view mode"));
@@ -6597,15 +6623,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         loadProjectViewIcon(QStringLiteral("Studio/grid_view.svg")),
         QStringLiteral("Tile"));
     impl_->viewModeBox->setMinimumWidth(104);
-    impl_->viewModeBox->setMinimumHeight(32);
-    impl_->viewModeBox->setMaximumHeight(32);
+    impl_->viewModeBox->setMinimumHeight(36);
+    impl_->viewModeBox->setMaximumHeight(36);
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
     impl_->unusedOnlyCheck->setAccessibleName(QStringLiteral("Unused items only"));
     impl_->unusedOnlyCheck->setAccessibleDescription(
         QStringLiteral("Show only project items not referenced by the current composition."));
-    impl_->unusedOnlyCheck->setMinimumHeight(32);
+    impl_->unusedOnlyCheck->setMinimumHeight(36);
     QSettings projectViewSettings;
     impl_->typeFilterBox->setCurrentText(projectViewSettings.value(
         QStringLiteral("ProjectView/TypeFilter"), QStringLiteral("All")).toString());
@@ -6681,6 +6707,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* contentSplit = new QSplitter(Qt::Horizontal, this);
     contentSplit->setObjectName(QStringLiteral("projectManagerContentSplit"));
     contentSplit->setChildrenCollapsible(false);
+    // Keep the separator easy to acquire while the visual treatment remains
+    // owned by the active Qt style.  The application style defaults to
+    // deferred splitter resizing, so opt in to live feedback explicitly.
+    contentSplit->setHandleWidth(6);
+    contentSplit->setOpaqueResize(true);
 
     auto* projectPane = new QWidget(contentSplit);
     projectPane->setObjectName(QStringLiteral("projectManagerBrowsePane"));
@@ -6697,8 +6728,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         browseContextBar->setPalette(pal);
     }
     auto* browseContextLayout = new QHBoxLayout(browseContextBar);
-    browseContextBar->setMinimumHeight(32);
-    browseContextBar->setMaximumHeight(32);
+    browseContextBar->setMinimumHeight(34);
+    browseContextBar->setMaximumHeight(34);
     browseContextLayout->setContentsMargins(14, 4, 14, 4);
     browseContextLayout->setSpacing(8);
     // The list and tile content needs its own compact context row.  These
@@ -6723,8 +6754,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
                      QColor(ArtifactCore::currentDCCTheme().backgroundColor).darker(106));
         detailPanel->setPalette(pal);
     }
-    detailPanel->setMinimumWidth(320);
-    detailPanel->setMaximumWidth(380);
+    // The detail surface needs a readable lower bound, but it must not be
+    // capped: Project View is commonly docked wide enough to inspect metadata
+    // beside the hierarchy.
+    detailPanel->setMinimumWidth(260);
     auto* detailLayout = new QVBoxLayout(detailPanel);
     detailLayout->setContentsMargins(16, 14, 16, 14);
     detailLayout->setSpacing(10);
@@ -7211,7 +7244,7 @@ bool ArtifactProjectManagerWidget::clearProxyForFilePath(const QString& sourceFi
 void ArtifactProjectManagerWidget::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
-    painter.fillRect(event->rect(), QColor(0x0F, 0x17, 0x1F));
+    painter.fillRect(event->rect(), QColor(ArtifactCore::currentDCCTheme().backgroundColor));
     QWidget::paintEvent(event);
 }
 

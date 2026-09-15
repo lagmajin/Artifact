@@ -105,10 +105,11 @@ void DockGlowStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* 
         QProxyStyle::drawPrimitive(element, option, painter, widget);
     }
 
-    // The current-tab underline is a selection indicator, not a dock-focus
-    // glow. Keep it available while the outer dock glow is disabled.
+    // The focused, visible tab retains its own compact underline cue while
+    // the dock surface carries the broader focus frame. Background tabs keep
+    // their normal appearance.
     if (element == PE_Widget && qobject_cast<const ads::CDockWidgetTab*>(widget) &&
-        isDockTabActive(widget)) {
+        widget->property("artifactActiveTab").toBool()) {
         drawDockTabGlow(option, painter, widget);
     }
 
@@ -173,6 +174,8 @@ void DockGlowStyle::drawDockTabGlow(const QStyleOption* option, QPainter* painte
     underlineColor.setAlphaF(0.88f);
 
     painter->save();
+    // Keep the focused widget title legible without competing with the
+    // full-surface focus frame.
     painter->fillRect(underline, underlineColor);
     painter->restore();
 }

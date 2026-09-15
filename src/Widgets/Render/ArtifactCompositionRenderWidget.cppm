@@ -1946,12 +1946,12 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       return;
     }
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-      const bool deleted = renderController->deleteSelectedMaskVertices() ||
-                           renderController->deleteHoveredMaskVertex();
-      if (deleted) {
-        event->accept();
-        return;
-      }
+      static_cast<void>(renderController->deleteSelectedMaskVertices() ||
+                        renderController->deleteHoveredMaskVertex());
+      // A mask-editing key must never fall through to the editor's layer
+      // delete command. No selected vertex is a legitimate no-op here.
+      event->accept();
+      return;
     }
     if (event->key() == Qt::Key_A &&
         event->modifiers().testFlag(Qt::ControlModifier)) {

@@ -5627,6 +5627,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       "Show a lightweight curve for the current property. Press Tab for the full Curve Editor."));
   miniKeyEditorButton->setCheckable(true);
   miniKeyEditorButton->setChecked(false);
+  miniKeyEditorButton->setVisible(false);
   styleTimelineToolButton(miniKeyEditorButton);
   auto searchStatusLabel = new QLabel();
   auto keyframeStatusLabel = new QLabel();
@@ -6022,6 +6023,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       QStringLiteral("Shows real-time, step, armed, and pending input state."));
   inputSurfaceStatusLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   inputSurfaceStatusLabel->setMinimumWidth(132);
+  inputSurfaceStatusLabel->setVisible(false);
   inputSurfaceStatusLabel->setMaximumHeight(24);
   inputSurfaceStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   inputSurfaceStatusLabel->setPalette([&]() {
@@ -6114,8 +6116,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   globalSwitches->setFixedWidth(globalSwitches->sizeHint().width());
 
   auto searchBarLayout = new QHBoxLayout();
-  searchBarLayout->setSpacing(10);
-  searchBarLayout->setContentsMargins(0, 0, 8, 0);
+  searchBarLayout->setSpacing(8);
+  searchBarLayout->setContentsMargins(12, 0, 12, 0);
   searchBarLayout->addWidget(leftHeader);
   searchBarLayout->addWidget(searchBar);
   searchBarLayout->addWidget(displayModeCombo);
@@ -6601,10 +6603,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   timelineModeButton->setAccessibleDescription(
       QStringLiteral("Switch from the curve editor to the standard timeline"));
   timelineModeButton->setChecked(true);
-  timelineModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
-      QStringLiteral("Studio/animationmenu_timeline.svg"))));
-  timelineModeButton->setIconSize(QSize(16, 16));
-  timelineModeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  timelineModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  timelineModeButton->setFixedWidth(Accessibility::scaledSize(108));
   timelineModeButton->setCallback(
       [this]() { toggleGraphEditorMode(false, Qt::MouseFocusReason); });
   curveModeButton->setText(QStringLiteral("Curve Editor"));
@@ -6614,19 +6614,76 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveModeButton->setAccessibleDescription(
       QStringLiteral("Switch from the standard timeline to the curve editor"));
   curveModeButton->setChecked(false);
-  curveModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
-      QStringLiteral("Studio/figma_timeline_curve.svg"))));
-  curveModeButton->setIconSize(QSize(16, 16));
-  curveModeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  curveModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  curveModeButton->setFixedWidth(Accessibility::scaledSize(128));
   curveModeButton->setCallback(
       [this]() { toggleGraphEditorMode(true, Qt::MouseFocusReason); });
-  searchBarLayout->insertWidget(1, timelineModeButton);
-  searchBarLayout->insertWidget(2, curveModeButton);
+  searchBarLayout->insertWidget(3, timelineModeButton);
+  searchBarLayout->insertWidget(4, curveModeButton);
+
+  auto addTransportButton = [headerWidget, searchBarLayout](
+                                const QString &iconName,
+                                const QString &toolTip,
+                                std::function<void()> callback) {
+    auto *button = new TimelineToolCallbackButton(headerWidget);
+    styleTimelineToolButton(button);
+    button->setIcon(QIcon(ArtifactCore::resolveIconPath(
+        QStringLiteral("Studio/%1.svg").arg(iconName))));
+    button->setIconSize(QSize(17, 17));
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    button->setFixedSize(Accessibility::scaledSize(32),
+                         Accessibility::scaledSize(28));
+    button->setToolTip(toolTip);
+    button->setCallback(std::move(callback));
+    searchBarLayout->addWidget(button);
+  };
+  addTransportButton(QStringLiteral("playback_start"),
+                     QStringLiteral("Go to composition start"), []() {
+                       auto *service = ArtifactProjectService::instance();
+                       if (auto composition = service
+                               ? service->currentComposition().lock()
+                               : ArtifactCompositionPtr{}) {
+                         composition->goToStartFrame();
+                       }
+                     });
+  addTransportButton(QStringLiteral("playback_previous"),
+                     QStringLiteral("Previous frame"), []() {
+                       if (auto *playback = ArtifactPlaybackService::instance()) {
+                         playback->goToPreviousFrame();
+                       }
+                     });
+  addTransportButton(QStringLiteral("playback_play"),
+                     QStringLiteral("Play or pause"), []() {
+                       if (auto *active = ArtifactActiveContextService::instance()) {
+                         active->togglePlayPause();
+                       } else if (auto *playback =
+                                      ArtifactPlaybackService::instance()) {
+                         playback->togglePlayPause();
+                       }
+                     });
+  addTransportButton(QStringLiteral("playback_next"),
+                     QStringLiteral("Next frame"), []() {
+                       if (auto *playback = ArtifactPlaybackService::instance()) {
+                         playback->goToNextFrame();
+                       }
+                     });
+  addTransportButton(QStringLiteral("playback_end"),
+                     QStringLiteral("Go to composition end"), []() {
+                       auto *service = ArtifactProjectService::instance();
+                       if (auto composition = service
+                               ? service->currentComposition().lock()
+                               : ArtifactCompositionPtr{}) {
+                         composition->goToEndFrame();
+                       }
+                     });
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
+  // The global toolbar now spans both panes. The left column header consumes
+  // 26 px itself, so this spacer matches the remaining 50 px occupied by the
+  // cache/ruler and work-area header on the right.
   leftSubHeaderSpacer->setFixedHeight(
-      Accessibility::scaledSize(kTimelineWorkAreaRowHeight));
+      Accessibility::scaledSize(kTimelineHeaderRowHeight));
   leftSubHeaderSpacer->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
   leftSubHeaderSpacer->setAutoFillBackground(true);
@@ -6707,7 +6764,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->addWidget(leftTopSpacer);
-  leftLayout->addWidget(headerWidget);
   leftLayout->addWidget(leftSubHeaderSpacer);
   leftLayout->addWidget(leftSplitter, 1);
   leftLayout->addWidget(curvePropertyPanel, 1);
@@ -8105,6 +8161,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto label = new ArtifactTimelineBottomLabel();
 
   auto layout = new QVBoxLayout();
+  layout->addWidget(headerWidget);
   layout->addWidget(mainSplitter);
   layout->addWidget(label);
   layout->setSpacing(0);
@@ -9286,6 +9343,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
       ((event->key() == Qt::Key_Delete ||
         event->key() == Qt::Key_Backspace) &&
        event->modifiers() == Qt::NoModifier)) {
+    if (impl_ && impl_->layerTimelinePanel_ &&
+        impl_->layerTimelinePanel_->deleteSelectedMask()) {
+      event->accept();
+      return;
+    }
     auto *selection = ArtifactApplicationManager::instance()
                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
                           : nullptr;

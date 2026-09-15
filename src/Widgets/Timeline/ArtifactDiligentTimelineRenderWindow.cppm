@@ -23,6 +23,7 @@ module;
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -104,10 +105,16 @@ public:
 
   static FloatColor toFloatColor(const QColor& color)
   {
+    const auto srgbToLinear = [](const float channel) {
+      return channel <= 0.04045f
+                 ? channel / 12.92f
+                 : static_cast<float>(
+                       std::pow((channel + 0.055f) / 1.055f, 2.4f));
+    };
     return FloatColor{
-        static_cast<float>(color.redF()),
-        static_cast<float>(color.greenF()),
-        static_cast<float>(color.blueF()),
+        srgbToLinear(static_cast<float>(color.redF())),
+        srgbToLinear(static_cast<float>(color.greenF())),
+        srgbToLinear(static_cast<float>(color.blueF())),
         static_cast<float>(color.alphaF())};
   }
 
@@ -152,6 +159,8 @@ public:
     Win32NativeWindow nativeWindow;
     nativeWindow.hWnd = reinterpret_cast<HWND>(window->winId());
     SwapChainDesc swapChainDesc;
+    // ShaderManager and its shared PSOs require this exact back-buffer format.
+    // QColor values are converted to linear above before reaching the sRGB RTV.
     swapChainDesc.ColorBufferFormat =
         RenderConfig::hdrDisplayEnabled()
             ? TEX_FORMAT_RGBA16_FLOAT
@@ -402,12 +411,25 @@ void ArtifactDiligentTimelineRenderWindow::resizeEvent(QResizeEvent* event)
         static_cast<Uint32>(std::max(
             1, qRound(height() * devicePixelRatio()))));
   }
+  // A window-container page can receive its final size after the Timeline has
+  // already queued its first visual snapshot. Rebuild it after the Qt input
+  // surface has the native window's settled geometry; otherwise a Curve Editor
+  // snapshot can be skipped for its temporary zero-sized plot.
+  if (impl_->inputUpdatedCallback_) {
+    impl_->inputUpdatedCallback_();
+  }
   requestRender();
 }
 
 void ArtifactDiligentTimelineRenderWindow::exposeEvent(QExposeEvent* event)
 {
   QWindow::exposeEvent(event);
+  // A stacked-page switch can expose an already-sized native window without a
+  // subsequent resize. Use the same coalesced callback to populate its first
+  // visible frame from the settled layout.
+  if (isExposed() && impl_->inputUpdatedCallback_) {
+    impl_->inputUpdatedCallback_();
+  }
   requestRender();
 }
 

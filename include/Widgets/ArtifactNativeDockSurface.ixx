@@ -23,6 +23,7 @@ module;
 #include <QProxyStyle>
 #include <QStyleOptionTab>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPaintEvent>
 #include <QPen>
 #include <QPointer>
@@ -33,6 +34,7 @@ module;
 #include <QSizePolicy>
 #include <QJsonDocument>
 #include <QSplitter>
+#include <QSplitterHandle>
 #include <QTabWidget>
 #include <QTabBar>
 #include <QHBoxLayout>
@@ -52,24 +54,200 @@ export namespace Artifact {
 // boundary used by both embedded and floating surfaces.
 class NativeDockSurface final : public QWidget {
   class DockTabSurface final : public QTabWidget {
+    class TabAccentStyle final : public QProxyStyle {
+    public:
+      explicit TabAccentStyle(DockTabSurface *tabs)
+          : QProxyStyle(tabs ? tabs->tabBar()->style() : nullptr), tabs_(tabs) {
+      }
+
+      void drawControl(ControlElement element, const QStyleOption *option,
+                       QPainter *painter,
+                       const QWidget *widget = nullptr) const override {
+        QProxyStyle::drawControl(element, option, painter, widget);
+        if (element != CE_TabBarTabLabel || !tabs_ || !painter ||
+            !tabs_->property("artifactNativeActivePanel").toBool()) {
+          return;
+        }
+        const auto *tab = qstyleoption_cast<const QStyleOptionTab *>(option);
+        if (!tab || !(tab->state & State_Selected)) {
+          return;
+        }
+
+        const QRectF rect(tab->rect.adjusted(0, 0, -1, 1));
+        constexpr qreal radius = 5.0;
+        QPainterPath contour;
+        contour.moveTo(rect.left(), rect.bottom());
+        contour.lineTo(rect.left(), rect.top() + radius);
+        contour.quadTo(rect.left(), rect.top(), rect.left() + radius,
+                       rect.top());
+        contour.lineTo(rect.right() - radius, rect.top());
+        contour.quadTo(rect.right(), rect.top(), rect.right(),
+                       rect.top() + radius);
+        contour.lineTo(rect.right(), rect.bottom());
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        QPen pen(QColor(145, 132, 238), 1.0);
+        pen.setJoinStyle(Qt::RoundJoin);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        painter->setBrush(Qt::NoBrush);
+        painter->drawPath(contour);
+
+        const QRect titleRect = subElementRect(SE_TabBarTabText, tab, widget)
+                                    .intersected(tab->rect);
+        if (titleRect.width() > 0) {
+          painter->fillRect(
+              QRect(titleRect.left(), tab->rect.bottom() - 1,
+                    titleRect.width(), 2),
+              QColor(145, 132, 238, 224));
+        }
+        painter->restore();
+      }
+
+    private:
+      DockTabSurface *tabs_ = nullptr;
+    };
+
   public:
-    explicit DockTabSurface(QWidget *parent) : QTabWidget(parent) {}
+    explicit DockTabSurface(QWidget *parent) : QTabWidget(parent) {
+      auto *accentStyle = new TabAccentStyle(this);
+      accentStyle->setParent(tabBar());
+      tabBar()->setStyle(accentStyle);
+    }
+
+    void refreshFocusChrome() {
+      update();
+      tabBar()->update();
+    }
 
   protected:
     void paintEvent(QPaintEvent *event) override {
       QTabWidget::paintEvent(event);
-      if (!property("artifactNativeActivePanel").toBool()) {
+      if (!property("artifactNativeActivePanel").toBool() ||
+          currentIndex() < 0) {
         return;
       }
 
-      // The focus marker belongs to the complete dock surface, including its
-      // tab strip, rather than only the current tab.
+      const QRectF surface(rect().adjusted(1, 1, -2, -2));
+      const QRect selectedRect =
+          tabBar()->tabRect(currentIndex()).translated(tabBar()->pos())
+              .intersected(surface.toAlignedRect());
+      if (selectedRect.isEmpty() || surface.width() <= 8.0 ||
+          surface.height() <= 8.0) {
+        return;
+      }
+
+      const QRectF tab(selectedRect.adjusted(0, 0, -1, 0));
+      constexpr qreal outerRadius = 3.0;
+      const qreal contentTop = std::clamp(
+          static_cast<qreal>(tabBar()->geometry().bottom() + 1),
+          tab.bottom(), surface.bottom() - outerRadius);
+
+      // Draw only the dock chrome owned by QTabWidget. The selected tab's
+      // upper contour is painted by TabAccentStyle after the tab itself, so no
+      // additional QWidget needs to overlap a native viewport child.
+      QPainterPath outline;
+      outline.moveTo(tab.right(), contentTop);
+      outline.lineTo(surface.right() - outerRadius, contentTop);
+      outline.quadTo(surface.right(), contentTop, surface.right(),
+                     contentTop + outerRadius);
+      outline.lineTo(surface.right(), surface.bottom() - outerRadius);
+      outline.quadTo(surface.right(), surface.bottom(),
+                     surface.right() - outerRadius, surface.bottom());
+      outline.lineTo(surface.left() + outerRadius, surface.bottom());
+      outline.quadTo(surface.left(), surface.bottom(), surface.left(),
+                     surface.bottom() - outerRadius);
+      outline.lineTo(surface.left(), contentTop + outerRadius);
+      outline.quadTo(surface.left(), contentTop,
+                     surface.left() + outerRadius, contentTop);
+      outline.lineTo(tab.left(), contentTop);
+
       QPainter painter(this);
-      QColor frame(86, 156, 214, 150);
-      QPen pen(frame, 3.0);
+      painter.setRenderHint(QPainter::Antialiasing, true);
+      QPen pen(QColor(145, 132, 238), 1.0);
+      pen.setJoinStyle(Qt::RoundJoin);
+      pen.setCapStyle(Qt::RoundCap);
       painter.setPen(pen);
       painter.setBrush(Qt::NoBrush);
-      painter.drawRect(rect().adjusted(1, 1, -2, -2));
+      painter.drawPath(outline);
+    }
+  };
+
+  class DockSplitter final : public QSplitter {
+    class Handle final : public QSplitterHandle {
+    public:
+      Handle(Qt::Orientation orientation, DockSplitter *owner)
+          : QSplitterHandle(orientation, owner), owner_(owner) {
+        setCursor(orientation == Qt::Horizontal ? Qt::SplitHCursor
+                                                : Qt::SplitVCursor);
+      }
+
+    protected:
+      void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() != Qt::LeftButton) {
+          QSplitterHandle::mousePressEvent(event);
+          return;
+        }
+        dragging_ = true;
+        pressOffset_ = orientation() == Qt::Horizontal
+                           ? event->position().toPoint().x()
+                           : event->position().toPoint().y();
+        grabMouse();
+        event->accept();
+      }
+
+      void mouseMoveEvent(QMouseEvent *event) override {
+        if (!dragging_ || !(event->buttons() & Qt::LeftButton) || !owner_) {
+          QSplitterHandle::mouseMoveEvent(event);
+          return;
+        }
+        int handleIndex = -1;
+        for (int index = 1; index < owner_->count(); ++index) {
+          if (owner_->handle(index) == this) {
+            handleIndex = index;
+            break;
+          }
+        }
+        if (handleIndex < 1) {
+          return;
+        }
+        const QPoint local = owner_->mapFromGlobal(
+            event->globalPosition().toPoint());
+        const int position = orientation() == Qt::Horizontal
+                                 ? local.x() - pressOffset_
+                                 : local.y() - pressOffset_;
+        owner_->moveSplitter(position, handleIndex);
+        event->accept();
+      }
+
+      void mouseReleaseEvent(QMouseEvent *event) override {
+        if (dragging_ && event->button() == Qt::LeftButton) {
+          dragging_ = false;
+          releaseMouse();
+          event->accept();
+          return;
+        }
+        QSplitterHandle::mouseReleaseEvent(event);
+      }
+
+    private:
+      DockSplitter *owner_ = nullptr;
+      int pressOffset_ = 0;
+      bool dragging_ = false;
+    };
+
+  public:
+    explicit DockSplitter(Qt::Orientation orientation, QWidget *parent)
+        : QSplitter(orientation, parent) {
+      setChildrenCollapsible(false);
+      setHandleWidth(8);
+      setOpaqueResize(true);
+    }
+
+  protected:
+    QSplitterHandle *createHandle() override {
+      return new Handle(orientation(), this);
     }
   };
 
@@ -91,26 +269,6 @@ class NativeDockSurface final : public QWidget {
       painter.drawRect(rect().adjusted(1, 1, -2, -2));
     }
   };
-  class TabAccentStyle final : public QProxyStyle {
-  public:
-    void drawControl(ControlElement element, const QStyleOption *option,
-                     QPainter *painter, const QWidget *widget = nullptr) const override {
-      QProxyStyle::drawControl(element, option, painter, widget);
-      if (element != CE_TabBarTabLabel || !painter) return;
-      const auto *tab = qstyleoption_cast<const QStyleOptionTab *>(option);
-      if (!tab || !(tab->state & State_Selected)) return;
-      // The style's text sub-element excludes the tab's close button.
-      const QRect titleRect = subElementRect(SE_TabBarTabText, tab, widget)
-                                  .intersected(tab->rect);
-      if (titleRect.width() <= 0) return;
-      painter->save();
-      painter->setClipRect(tab->rect, Qt::IntersectClip);
-      painter->fillRect(QRect(titleRect.left(), tab->rect.bottom() - 2,
-                              titleRect.width(), 2),
-                        tab->palette.color(QPalette::Highlight));
-      painter->restore();
-    }
-  };
 public:
   explicit NativeDockSurface(QWidget *parent = nullptr) : QWidget(parent) {
     setAcceptDrops(true);
@@ -119,22 +277,16 @@ public:
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
-    verticalSplitter_ = new QSplitter(Qt::Vertical, this);
-    verticalSplitter_->setChildrenCollapsible(false);
+    verticalSplitter_ = new DockSplitter(Qt::Vertical, this);
     // Keep the docking splitters visibly draggable and update the panel sizes
     // while dragging.  The application-wide style uses deferred resizing for
     // heavyweight editor splitters, which is inappropriate for dock layout.
-    verticalSplitter_->setHandleWidth(6);
-    verticalSplitter_->setOpaqueResize(true);
     rootLayout->addWidget(verticalSplitter_);
     topTabs_ = createTabSurface(verticalSplitter_);
     topTabs_->hide();
     verticalSplitter_->addWidget(topTabs_);
 
-    auto *splitter = new QSplitter(Qt::Horizontal, verticalSplitter_);
-    splitter->setChildrenCollapsible(false);
-    splitter->setHandleWidth(6);
-    splitter->setOpaqueResize(true);
+    auto *splitter = new DockSplitter(Qt::Horizontal, verticalSplitter_);
     splitter_ = splitter;
     leftTabs_ = createTabSurface(splitter);
     centerTabs_ = createTabSurface(splitter);
@@ -1088,9 +1240,6 @@ private:
     tabs->tabBar()->setExpanding(false);
     tabs->tabBar()->setUsesScrollButtons(true);
     tabs->tabBar()->setElideMode(Qt::ElideRight);
-    auto *accentStyle = new TabAccentStyle;
-    accentStyle->setParent(tabs->tabBar());
-    tabs->tabBar()->setStyle(accentStyle);
     const auto &theme = ArtifactCore::currentDCCTheme();
     QPalette palette = tabs->palette();
     palette.setColor(QPalette::Window,
@@ -1155,16 +1304,20 @@ private:
   }
 
   void setActiveTabSurface(QTabWidget *tabs) {
-    if (!tabs || activeTabs_ == tabs) {
+    if (!tabs) {
+      return;
+    }
+    if (activeTabs_ == tabs) {
+      static_cast<DockTabSurface *>(tabs)->refreshFocusChrome();
       return;
     }
     if (activeTabs_) {
       activeTabs_->setProperty("artifactNativeActivePanel", false);
-      activeTabs_->update();
+      static_cast<DockTabSurface *>(activeTabs_.data())->refreshFocusChrome();
     }
     activeTabs_ = tabs;
     activeTabs_->setProperty("artifactNativeActivePanel", true);
-    activeTabs_->update();
+    static_cast<DockTabSurface *>(activeTabs_.data())->refreshFocusChrome();
   }
 
   QTabWidget *topTabs_ = nullptr;

@@ -614,7 +614,7 @@ QString ShaderManager::Impl::psoCacheFilePath() const
 
     // Bump the schema whenever shader interfaces or input-layout contracts
     // change so an old backend PSO blob cannot mask the new contract.
-    constexpr int kPsoCacheSchema = 4;
+    constexpr int kPsoCacheSchema = 5;
     const QString signature = QStringLiteral("schema=%1|backend=%2|rtv=%3|vendorId=%4|deviceId=%5|api=%6.%7")
                                   .arg(kPsoCacheSchema)
                                   .arg(static_cast<int>(deviceInfo.Type))
