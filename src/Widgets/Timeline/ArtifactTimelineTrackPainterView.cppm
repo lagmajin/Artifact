@@ -4586,6 +4586,26 @@ public:
   void rebuildClipCaches();
   void rebuildMarkerCaches();
   int nearestMarkerIndexForFrame(const double frame) const;
+  // paint と mouse 系で共有する validated area cache。
+  // 入力は pixelsPerFrame_/horizontalOffset_/verticalOffset_ のみで、
+  // marker 変更時は rebuildMarkerCaches()/rebuildTrackTopCache() が
+  // keyframeAreaCacheValid_ を落とす。結果は collect 直呼びと同一。
+  const QVector<KeyframeAreaVisual> &ensureKeyframeAreaCache() {
+    const double ppf = pixelsPerFrame_;
+    const double xOffset = horizontalOffset_;
+    const double yOffset = verticalOffset_;
+    if (!keyframeAreaCacheValid_ || keyframeAreaCachePpf_ != ppf ||
+        keyframeAreaCacheXOffset_ != xOffset ||
+        keyframeAreaCacheYOffset_ != yOffset) {
+      keyframeAreaCache_ = collectKeyframeAreas(keyframeMarkers_, trackHeights_,
+                                                trackTops_, ppf, xOffset, yOffset);
+      keyframeAreaCachePpf_ = ppf;
+      keyframeAreaCacheXOffset_ = xOffset;
+      keyframeAreaCacheYOffset_ = yOffset;
+      keyframeAreaCacheValid_ = true;
+    }
+    return keyframeAreaCache_;
+  }
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl() {
@@ -7001,19 +7021,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         impl_->proportionalEditRadius_);
   }
 
-  if (!impl_->keyframeAreaCacheValid_ ||
-      impl_->keyframeAreaCachePpf_ != ppf ||
-      impl_->keyframeAreaCacheXOffset_ != xOffset ||
-      impl_->keyframeAreaCacheYOffset_ != yOffset) {
-    impl_->keyframeAreaCache_ = collectKeyframeAreas(
-        impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
-        xOffset, yOffset);
-    impl_->keyframeAreaCachePpf_ = ppf;
-    impl_->keyframeAreaCacheXOffset_ = xOffset;
-    impl_->keyframeAreaCacheYOffset_ = yOffset;
-    impl_->keyframeAreaCacheValid_ = true;
-  }
-  const auto &keyframeAreas = impl_->keyframeAreaCache_;
+  const auto &keyframeAreas = impl_->ensureKeyframeAreaCache();
   for (int i = 0; i < keyframeAreas.size(); ++i) {
     const auto &area = keyframeAreas[i];
     if (!dirtyRect.intersects(area.bodyRect.toAlignedRect().adjusted(-2, -2, 2, 2))) {
@@ -7348,9 +7356,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
                        impl_->trackTops_, mouseX, mouseY,
                        impl_->pixelsPerFrame_, impl_->horizontalOffset_,
                        impl_->verticalOffset_);
-    const auto keyframeAreas = collectKeyframeAreas(
-        impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_,
-        impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
+    const auto keyframeAreas = impl_->ensureKeyframeAreaCache();
     const auto areaHit = hitTestKeyframeAreas(keyframeAreas, mouseX, mouseY);
     if (markerHit.markerIndex >= 0) {
       const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
@@ -7732,11 +7738,10 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0;
   // Clip dragging does not consume keyframe hit geometry. Avoid rebuilding the
   // area list and scanning every marker for each high-frequency mouse event.
-  const QVector<KeyframeAreaVisual> keyframeAreas = clipDragActive
-      ? QVector<KeyframeAreaVisual>{}
-      : collectKeyframeAreas(
-            impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
-            impl_->horizontalOffset_, impl_->verticalOffset_);
+  // 非 drag 時は paint と共有の validated cache を使い、marker 走査を繰返さない
+  // (QVector の暗黙共有のためコピーは軽量。hitTest は mouse 依存で毎回実行)。
+  const QVector<KeyframeAreaVisual> keyframeAreas =
+      clipDragActive ? QVector<KeyframeAreaVisual>{} : impl_->ensureKeyframeAreaCache();
   const MarkerHitResult markerHit = clipDragActive
       ? MarkerHitResult{}
       : hitTestMarkers(
@@ -8971,9 +8976,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   const bool markerUnderCursor =
       markerHit.markerIndex >= 0 &&
       markerHit.markerIndex < impl_->keyframeMarkers_.size();
-  const auto keyframeAreas = collectKeyframeAreas(
-      impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_,
-      impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
+  const auto keyframeAreas = impl_->ensureKeyframeAreaCache();
   const auto areaHit = hitTestKeyframeAreas(keyframeAreas, mouseX, mouseY);
   const bool areaUnderCursor =
       areaHit.areaIndex >= 0 && areaHit.areaIndex < keyframeAreas.size();

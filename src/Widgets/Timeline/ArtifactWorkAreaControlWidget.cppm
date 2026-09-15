@@ -264,17 +264,14 @@ namespace Artifact
 
   const float safeLastFrame = std::max(1.0f, totalFrames - 1.0f);
   const float clampedFrame = std::clamp(currentFrame, 0.0f, safeLastFrame);
-  double playheadX = 0.0;
-  if (impl_->rulerPixelsPerFrame > 0.001) {
-    playheadX = static_cast<double>(clampedFrame) *
-                    impl_->rulerPixelsPerFrame -
-                impl_->rulerHorizontalOffset;
-  } else {
-   const float playheadNorm =
-       std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
-    playheadX = static_cast<double>(handleHalfW) +
-                static_cast<double>(playheadNorm) * usableWidth;
-  }
+  // Playhead は range bar と同一の正規化座標で描く。ruler スクロール座標
+  // (frame*ppf-offset) で描くと zoom/scroll 時に bar とずれ、範囲内外の
+  // 見た目が一致しなくなる。bar・handle・drag はすべて正規化座標のため、
+  // playhead もそれに合わせる。
+  const float playheadNorm =
+      std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
+  double playheadX = static_cast<double>(handleHalfW) +
+                     static_cast<double>(playheadNorm) * usableWidth;
   playheadX = std::clamp(playheadX, 0.0, static_cast<double>(std::max(0, width() - 1)));
   const auto drawPlayheadProperty = property("timelineDrawPlayhead");
   if (!drawPlayheadProperty.isValid() || drawPlayheadProperty.toBool()) {
