@@ -54,26 +54,27 @@ export namespace Artifact {
 // boundary used by both embedded and floating surfaces.
 class NativeDockSurface final : public QWidget {
   class DockTabSurface final : public QTabWidget {
-    class TabAccentStyle final : public QProxyStyle {
+    class DockTabBar final : public QTabBar {
     public:
-      explicit TabAccentStyle(DockTabSurface *tabs)
-          : QProxyStyle(tabs ? tabs->tabBar()->style() : nullptr), tabs_(tabs) {
+      explicit DockTabBar(DockTabSurface *tabs)
+          : QTabBar(tabs), tabs_(tabs) {
       }
 
-      void drawControl(ControlElement element, const QStyleOption *option,
-                       QPainter *painter,
-                       const QWidget *widget = nullptr) const override {
-        QProxyStyle::drawControl(element, option, painter, widget);
-        if (element != CE_TabBarTabLabel || !tabs_ || !painter ||
+    protected:
+      void paintEvent(QPaintEvent *event) override {
+        QTabBar::paintEvent(event);
+        if (!tabs_ ||
             !tabs_->property("artifactNativeActivePanel").toBool()) {
           return;
         }
-        const auto *tab = qstyleoption_cast<const QStyleOptionTab *>(option);
-        if (!tab || !(tab->state & State_Selected)) {
+        const int selectedIndex = currentIndex();
+        if (selectedIndex < 0) {
           return;
         }
 
-        const QRectF rect(tab->rect.adjusted(0, 0, -1, 1));
+        QStyleOptionTab option;
+        initStyleOption(&option, selectedIndex);
+        const QRectF rect(option.rect.adjusted(0, 0, -1, 1));
         constexpr qreal radius = 5.0;
         QPainterPath contour;
         contour.moveTo(rect.left(), rect.bottom());
@@ -85,24 +86,47 @@ class NativeDockSurface final : public QWidget {
                        rect.top() + radius);
         contour.lineTo(rect.right(), rect.bottom());
 
-        painter->save();
-        painter->setRenderHint(QPainter::Antialiasing, true);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
         QPen pen(QColor(145, 132, 238), 1.0);
         pen.setJoinStyle(Qt::RoundJoin);
         pen.setCapStyle(Qt::RoundCap);
-        painter->setPen(pen);
-        painter->setBrush(Qt::NoBrush);
-        painter->drawPath(contour);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(contour);
 
-        const QRect titleRect = subElementRect(SE_TabBarTabText, tab, widget)
-                                    .intersected(tab->rect);
+        const QRect titleRect =
+            style()->subElementRect(QStyle::SE_TabBarTabText, &option, this)
+                .intersected(option.rect);
         if (titleRect.width() > 0) {
-          painter->fillRect(
-              QRect(titleRect.left(), tab->rect.bottom() - 1,
+          painter.fillRect(
+              QRect(titleRect.left(), option.rect.bottom() - 1,
                     titleRect.width(), 2),
               QColor(145, 132, 238, 224));
         }
-        painter->restore();
+      }
+
+    private:
+      DockTabSurface *tabs_ = nullptr;
+    };
+
+    class DockSurfaceStyle final : public QProxyStyle {
+    public:
+      explicit DockSurfaceStyle(DockTabSurface *tabs)
+          : QProxyStyle(tabs ? tabs->style() : nullptr), tabs_(tabs) {
+      }
+
+      QRect subElementRect(SubElement element, const QStyleOption *option,
+                           const QWidget *widget = nullptr) const override {
+        QRect result = QProxyStyle::subElementRect(element, option, widget);
+        if (element == SE_TabWidgetTabContents && widget == tabs_ &&
+            result.width() > 4 && result.height() > 4) {
+          // Reserve real layout space for the owner-drawn frame. A native
+          // viewport child can cover parent paint, but it cannot occupy this
+          // two-pixel dock-chrome gutter.
+          result.adjust(2, 2, -2, -2);
+        }
+        return result;
       }
 
     private:
@@ -111,9 +135,10 @@ class NativeDockSurface final : public QWidget {
 
   public:
     explicit DockTabSurface(QWidget *parent) : QTabWidget(parent) {
-      auto *accentStyle = new TabAccentStyle(this);
-      accentStyle->setParent(tabBar());
-      tabBar()->setStyle(accentStyle);
+      setTabBar(new DockTabBar(this));
+      auto *surfaceStyle = new DockSurfaceStyle(this);
+      surfaceStyle->setParent(this);
+      setStyle(surfaceStyle);
     }
 
     void refreshFocusChrome() {
@@ -145,7 +170,7 @@ class NativeDockSurface final : public QWidget {
           tab.bottom(), surface.bottom() - outerRadius);
 
       // Draw only the dock chrome owned by QTabWidget. The selected tab's
-      // upper contour is painted by TabAccentStyle after the tab itself, so no
+      // upper contour is painted by DockTabBar after the tab itself, so no
       // additional QWidget needs to overlap a native viewport child.
       QPainterPath outline;
       outline.moveTo(tab.right(), contentTop);
