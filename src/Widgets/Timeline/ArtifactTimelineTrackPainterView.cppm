@@ -2930,9 +2930,9 @@ QString formatMarkerTooltip(
                                                 : tt("timeline.lane_single", "Lane: 1/1");
   const QString easingText = tt("timeline.incoming_outgoing", "Incoming: %1 | Outgoing: %2")
                                  .arg(marker.incomingEased ? tt("timeline.eased", "eased")
-                                                           : tt("timeline.linear", "linear"))
+                                                           : tt("timeline.linear_word", "linear"))
                                  .arg(marker.outgoingEased ? tt("timeline.eased", "eased")
-                                                           : tt("timeline.linear", "linear"));
+                                                           : tt("timeline.linear_word", "linear"));
   const QString interpolationText =
       tt("timeline.interpolation_value", "Interpolation: %1")
           .arg(keyframeInterpolationLabel(marker.interpolation));
@@ -5943,7 +5943,7 @@ bool ArtifactTimelineTrackPainterView::promptSetSelectedKeyframeValue() {
 
   bool accepted = false;
   const double nextValue = QInputDialog::getDouble(
-      this, tt("timeline.set_keyframe_value", "Set Keyframe Value"),
+      this, tt("timeline.set_keyframe_value_title", "Set Keyframe Value"),
       tt("timeline.keyframe_value_prompt", "Value"), 0.0, -1000000.0,
       1000000.0, 3, &accepted);
   if (!accepted) {
@@ -9575,7 +9575,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       if (numericArea && composition) {
         bool accepted = false;
         const double nextValue = QInputDialog::getDouble(
-            this, tt("timeline.set_area_value", "Set Area Value"),
+            this, tt("timeline.set_area_value_title", "Set Area Value"),
             scalePercent ? tt("timeline.area_value_prompt_percent", "Value (%)")
                          : tt("timeline.area_value_prompt", "Value"),
             currentValue, -1000000.0,
@@ -10341,7 +10341,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     if (chosen == renameClipAct && layer) {
       bool accepted = false;
       const QString name = QInputDialog::getText(
-          this, tt("timeline.rename_layer", "Rename Layer"),
+          this, tt("layer_panel.rename_layer_title", "Rename Layer"),
           tt("timeline.layer_name", "Layer name"), QLineEdit::Normal,
           layer->layerName(), &accepted).trimmed();
       if (accepted && !name.isEmpty() && name != layer->layerName()) {
@@ -10839,7 +10839,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       }
       bool accepted = false;
       const double fadeInSeconds = QInputDialog::getDouble(
-          this, tt("timeline.edit_audio_fades", "Set Audio Fades"),
+          this, tt("timeline.edit_audio_fades_title", "Set Audio Fades"),
           tt("timeline.fade_in_seconds", "Fade in (seconds)"),
           std::max(0.0, static_cast<double>(audioLayer->fadeInSeconds())),
           0.0, 3600.0, 2, &accepted);
@@ -10848,7 +10848,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         return;
       }
       const double fadeOutSeconds = QInputDialog::getDouble(
-          this, tt("timeline.edit_audio_fades", "Set Audio Fades"),
+          this, tt("timeline.edit_audio_fades_title", "Set Audio Fades"),
           tt("timeline.fade_out_seconds", "Fade out (seconds)"),
           std::max(0.0, static_cast<double>(audioLayer->fadeOutSeconds())),
           0.0, 3600.0, 2, &accepted);

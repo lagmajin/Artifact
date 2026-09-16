@@ -1427,6 +1427,34 @@ bool continuousRenderDiagnosticsEnabled()
 
 
 
+// Normal-blend compositions stay on the direct 2D path by default.  The blend
+
+// path adds a full-screen layer-to-float plus a full-screen blend pass per
+
+// layer, so it is only a win when the direct path would rasterize or
+
+// post-process that layer on the CPU.  This switch exists so both paths can be
+
+// measured with the CompositionView perf log before any default changes.
+
+bool gpuBlendForNormalCompositionEnabled()
+
+{
+
+  static const bool enabled =
+
+      qEnvironmentVariableIsSet("ARTIFACT_COMPOSITION_GPU_BLEND_NORMAL") &&
+
+      qEnvironmentVariable("ARTIFACT_COMPOSITION_GPU_BLEND_NORMAL") !=
+
+          QStringLiteral("0");
+
+  return enabled;
+
+}
+
+
+
 void renderCrashTrace(const char* phase, quint64 frame, const QString& detail = {})
 
 {
@@ -37220,7 +37248,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
+    // Opt-in (default off) blanket enable of the blend path for Normal-only
+
+    // compositions.  The direct path already reuses cached layer surfaces, so
+
+    // flipping this without measuring trades cached sprite draws for two
+
+    // full-screen compute passes per layer.  See
+
+    // docs/analysis/COMPOSITION_VIEWPORT_PERFORMANCE_AUDIT_2026-09-09.md.
+
+    const bool gpuBlendForNormalComposition =
+
+        gpuBlendEnabled_ && gpuBlendForNormalCompositionEnabled() &&
+
+        !layers.empty();
+
     const bool hasGpuBlendJustification =
+
+        gpuBlendForNormalComposition ||
 
         std::any_of(layers.begin(), layers.end(),
 
@@ -37275,7 +37321,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           owner, 0,
           screenSpaceGlobalIlluminationRequested
               ? QStringLiteral("screen-space-gi-requested")
-              : QStringLiteral("non-normal-layer-visible"));
+              : (gpuBlendForNormalComposition
+                     ? QStringLiteral("normal-layer-gpu-blend-opt-in")
+                     : QStringLiteral("non-normal-layer-visible")));
     }
 
     const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;

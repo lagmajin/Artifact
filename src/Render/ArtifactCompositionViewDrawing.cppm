@@ -1521,10 +1521,17 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           videoDebugOut);
     }
 
+    // The deterministic non-3D scene-light lift is baked into the cached
+    // surface instead of being re-applied on every frame.  That keeps the GPU
+    // texture cache usable for lit layers and removes an O(W*H) CPU pass from
+    // each frame that reuses a cached surface.
+    const float sceneLightLift =
+        (sceneLights && !sceneLights->empty() && !layer->is3D())
+            ? std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()))
+            : 0.0f;
     const bool usesGpuTextureCache =
         !hasResolvedMattes && layerCacheEnabled && gpuTextureCacheManager &&
-        layerUsesGpuTextureCacheForCompositionView(layer) &&
-        !(sceneLights && !sceneLights->empty() && !layer->is3D());
+        layerUsesGpuTextureCacheForCompositionView(layer);
     const bool usesStaticGpuCache = !hasResolvedMattes &&
         layerUsesStaticLayerGpuCacheForCompositionView(layer);
     const bool usesSurfaceCache = !hasResolvedMattes &&
@@ -1537,18 +1544,17 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  ? buildLayerSurfaceCacheKey(
                                        layer, surface, cacheFrameNumber)
                                  : QString{};
-    // Lighting is applied after the rasterized-surface cache is resolved.
-    // Include its deterministic lift in the surface/GPU cache identity so a
-    // cached pre-light texture cannot be reused for a lit frame.
-    if (!cacheSignature.isEmpty() && sceneLights && !sceneLights->empty() &&
-        !layer->is3D()) {
-      const float lightLift =
-          std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()));
-      cacheSignature += QStringLiteral("|scene-light-lift=%1").arg(lightLift, 0, 'f', 6);
+    // The lift is baked into the cached surface, so it stays part of the
+    // surface/GPU cache identity.
+    if (!cacheSignature.isEmpty() && sceneLightLift > 0.0f) {
+      cacheSignature +=
+          QStringLiteral("|scene-light-lift=%1").arg(sceneLightLift, 0, 'f', 6);
     }
     QString gpuOwnerId = ownerId;
     QString gpuCacheSignature = cacheSignature;
-    if (!allowSurfaceCache) {
+    // A lit layer carries a layer-specific lift, so it must not alias the
+    // shared source asset texture.
+    if (!allowSurfaceCache && sceneLightLift <= 0.0f) {
       if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer);
           imageLayer && imageLayer->canShareSourceGpuTexture()) {
         const auto version = imageLayer->sourceVersion();
@@ -1567,6 +1573,56 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     StaticLayerGpuCacheEntry* staticCacheEntry = nullptr;
     ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
 
+    // Bake the scene-light lift into the content that is stored in the caches.
+    // Cache hits then reuse the lifted surface/buffer, so the lift is no longer
+    // recomputed for every frame.
+    bool sceneLightLiftBaked = false;
+    const auto bakeSceneLightLift = [&]() {
+      if (sceneLightLiftBaked || sceneLightLift <= 0.0f) {
+        return;
+      }
+      sceneLightLiftBaked = true;
+      if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
+        // Mutate in place so the cache entries written below keep pointing at
+        // the lifted buffer.
+        cv::Mat lit = directProcessedBuffer->toCanonicalRGBA32FC4();
+        for (int y = 0; y < lit.rows; ++y) {
+          auto* row = lit.ptr<cv::Vec4f>(y);
+          for (int x = 0; x < lit.cols; ++x) {
+            row[x][0] = std::clamp(
+                row[x][0] + (1.0f - row[x][0]) * sceneLightLift, 0.0f, 1.0f);
+            row[x][1] = std::clamp(
+                row[x][1] + (1.0f - row[x][1]) * sceneLightLift, 0.0f, 1.0f);
+            row[x][2] = std::clamp(
+                row[x][2] + (1.0f - row[x][2]) * sceneLightLift, 0.0f, 1.0f);
+          }
+        }
+        directProcessedBuffer->setFromCVMat(lit);
+        return;
+      }
+      if (surface.isNull()) {
+        return;
+      }
+      QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+      auto* litBits = lit.bits();
+      const int litStride = lit.bytesPerLine();
+      for (int y = 0; y < lit.height(); ++y) {
+        auto* row = reinterpret_cast<QRgb*>(litBits + y * litStride);
+        for (int x = 0; x < lit.width(); ++x) {
+          const int r = qRed(row[x]);
+          const int g = qGreen(row[x]);
+          const int b = qBlue(row[x]);
+          const int a = qAlpha(row[x]);
+          row[x] = qRgba(
+              std::clamp(static_cast<int>(r + (255 - r) * sceneLightLift), 0, 255),
+              std::clamp(static_cast<int>(g + (255 - g) * sceneLightLift), 0, 255),
+              std::clamp(static_cast<int>(b + (255 - b) * sceneLightLift), 0, 255),
+              a);
+        }
+      }
+      surface = std::move(lit);
+    };
+
     if (layerUsesStaticLayerGpuCacheForCompositionView(layer) &&
         !cacheSignature.isEmpty()) {
       auto &staticCache = staticLayerGpuCache();
@@ -1577,6 +1633,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         staticCacheEntry = &(*it);
         staticCacheEntry->lastFrameNumber = cacheFrameNumber;
         directProcessedBuffer = staticCacheEntry->processedBuffer;
+        // Cached content already carries the lift for this cache identity.
+        sceneLightLiftBaked = true;
         if (!staticCacheEntry->processedSurface.isNull()) {
           surface = staticCacheEntry->processedSurface;
         }
@@ -1596,6 +1654,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             gpuTextureCacheManager->isValid(cacheIt->gpuTextureHandle)))) {
         cacheEntry = &(*cacheIt);
         directProcessedBuffer = cacheEntry->processedBuffer;
+        // Cached content already carries the lift for this cache identity.
+        sceneLightLiftBaked = true;
         if (!cacheEntry->processedSurface.isNull()) {
           surface = cacheEntry->processedSurface;
         }
@@ -1608,6 +1668,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           }
         }
         directProcessedBuffer = processedBuffer;
+        // The content was rebuilt for this frame, so it still needs the lift.
+        sceneLightLiftBaked = false;
+        bakeSceneLightLift();
 
         LayerSurfaceCacheEntry entry;
         entry.ownerId = ownerId;
@@ -1636,6 +1699,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         surface = processedSurface;
       }
     }
+
+    // No cache supplied this frame's content, so apply the lift once here.
+    bakeSceneLightLift();
 
     if (layerUsesStaticLayerGpuCacheForCompositionView(layer) &&
         !cacheSignature.isEmpty()) {
@@ -1674,46 +1740,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
     }
 
-    if (sceneLights && !sceneLights->empty() && !layer->is3D()) {
-      const float lift = std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()));
-      if (lift > 0.0f) {
-        if (directProcessedBuffer && !directProcessedBuffer->isEmpty() &&
-            !usesGpuTextureCache) {
-          // Keep non-GPU-cached typed surfaces in the float path. The previous
-          // implementation converted every available buffer to QImage before
-          // applying this small lighting lift.
-          cv::Mat lit = directProcessedBuffer->toCanonicalRGBA32FC4();
-          for (int y = 0; y < lit.rows; ++y) {
-            auto* row = lit.ptr<cv::Vec4f>(y);
-            for (int x = 0; x < lit.cols; ++x) {
-              row[x][0] = std::clamp(row[x][0] + (1.0f - row[x][0]) * lift, 0.0f, 1.0f);
-              row[x][1] = std::clamp(row[x][1] + (1.0f - row[x][1]) * lift, 0.0f, 1.0f);
-              row[x][2] = std::clamp(row[x][2] + (1.0f - row[x][2]) * lift, 0.0f, 1.0f);
-            }
-          }
-          directProcessedBuffer = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
-          directProcessedBuffer->setFromCVMat(lit);
-        } else {
-          QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-          auto* litBits = lit.bits();
-          const int litStride = lit.bytesPerLine();
-          for (int y = 0; y < lit.height(); ++y) {
-            auto* row = reinterpret_cast<QRgb*>(litBits + y * litStride);
-            for (int x = 0; x < lit.width(); ++x) {
-              const int r = qRed(row[x]);
-              const int g = qGreen(row[x]);
-              const int b = qBlue(row[x]);
-              const int a = qAlpha(row[x]);
-              row[x] = qRgba(std::clamp(static_cast<int>(r + (255 - r) * lift), 0, 255),
-                             std::clamp(static_cast<int>(g + (255 - g) * lift), 0, 255),
-                             std::clamp(static_cast<int>(b + (255 - b) * lift), 0, 255),
-                             a);
-            }
-          }
-          surface = std::move(lit);
-        }
-      }
-    }
+    // The scene-light lift is baked where this frame's content is
+    // materialized above, so the previous per-frame full-image pass is gone.
 
     const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
     drawWithClonerEffect(layer, globalTransform4x4,

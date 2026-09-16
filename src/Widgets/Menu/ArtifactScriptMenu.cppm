@@ -27,6 +27,11 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
+
 W_OBJECT_IMPL(ArtifactScriptMenu)
 
 class ArtifactScriptMenu::Impl {
@@ -350,9 +355,9 @@ void ArtifactScriptMenu::Impl::refreshCsxActions()
  const QFileInfoList files =
      dir.entryInfoList(QStringList() << "*.csx", QDir::Files, QDir::Name);
  if (files.isEmpty()) {
-  QAction* emptyAction = csxMenu->addAction(tr("No C# Scripts Yet"));
+  QAction* emptyAction = csxMenu->addAction(tt("script.no_csx_yet", "No C# Scripts Yet"));
   emptyAction->setEnabled(false);
-  emptyAction->setToolTip(tr("Put .csx files in %1").arg(scriptsRootPath()));
+  emptyAction->setToolTip(tt("script.csx_hint", "Put .csx files in %1").arg(scriptsRootPath()));
   csxActions.push_back(emptyAction);
   return;
  }

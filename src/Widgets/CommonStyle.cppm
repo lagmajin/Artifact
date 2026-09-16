@@ -636,12 +636,16 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int labelWidth = fm.horizontalAdvance(label);
       const int shortcutWidth = shortcut.isEmpty() ? 0 : fm.horizontalAdvance(shortcut) + 24;
-      const int checkAndIconWidth = 34;
-      const int submenuWidth =
-          menuItem->menuItemType == QStyleOptionMenuItem::SubMenu ? 18 : 8;
+      // CE_MenuItem の描画と一致させる: 左マージン(8) + チェック列(24) +
+      // アイコン枠(最大18、アイコン無しでも常に確保) + 間隔(8)。
+      const int leftReserve = 8 + 24 + 18 + 8;
+      // 右側: サブメニュー矢印(18)または通常(6) + マージン(8)。
+      const bool isSubMenu =
+          menuItem->menuItemType == QStyleOptionMenuItem::SubMenu;
+      const int rightReserve = (isSubMenu ? 18 : 6) + 8;
       return QSize(std::max(contentsSize.width(),
-                            labelWidth + shortcutWidth + checkAndIconWidth +
-                                submenuWidth + 16),
+                            labelWidth + shortcutWidth + leftReserve +
+                                rightReserve),
                    std::max(contentsSize.height(), fm.height() + 10));
     }
   }
