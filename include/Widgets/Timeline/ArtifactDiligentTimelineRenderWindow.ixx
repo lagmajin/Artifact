@@ -46,12 +46,19 @@ struct DiligentTimelineTextVisual {
   float pixelSize = 11.0f;
 };
 
+struct DiligentTimelineWaveformVisual {
+  QRectF rect;
+  QVector<float> peaks;
+  QColor color;
+};
+
 struct DiligentTimelineVisualSnapshot {
   QColor background{38, 40, 46};
   QVector<DiligentTimelineRectVisual> rects;
   QVector<DiligentTimelineLineVisual> lines;
   QVector<DiligentTimelineTriangleVisual> triangles;
   QVector<DiligentTimelineTextVisual> texts;
+  QVector<DiligentTimelineWaveformVisual> waveforms;
   quint64 generation = 0;
 };
 

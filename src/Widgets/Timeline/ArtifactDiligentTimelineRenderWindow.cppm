@@ -331,6 +331,31 @@ public:
            static_cast<float>(visual.to.y())},
           visual.thickness, cachedColor(visual.color));
     }
+    for (const auto& visual : source.waveforms) {
+      constexpr int kMaxWaveformBars = 64;
+      const int barCount = std::min(
+          kMaxWaveformBars, static_cast<int>(visual.peaks.size()));
+      if (barCount <= 0 || visual.rect.width() <= 0.0 ||
+          visual.rect.height() <= 0.0) {
+        continue;
+      }
+      const double centerY = visual.rect.center().y();
+      for (int bar = 0; bar < barCount; ++bar) {
+        const int sampleIndex = (bar * visual.peaks.size()) / barCount;
+        const double amplitude = std::clamp(
+            static_cast<double>(visual.peaks[sampleIndex]), 0.0, 1.0);
+        const double barX = visual.rect.left() +
+            (static_cast<double>(bar) + 0.5) * visual.rect.width() /
+                static_cast<double>(barCount);
+        const double halfHeight = amplitude * visual.rect.height() * 0.34;
+        primitiveRenderer_.drawThickLineLocal(
+            {static_cast<float>(barX),
+             static_cast<float>(centerY - halfHeight)},
+            {static_cast<float>(barX),
+             static_cast<float>(centerY + halfHeight)},
+            1.0f, cachedColor(visual.color));
+      }
+    }
     for (const auto& visual : source.triangles) {
       primitiveRenderer_.drawSolidTriangleLocal(
           {static_cast<float>(visual.p0.x()),
