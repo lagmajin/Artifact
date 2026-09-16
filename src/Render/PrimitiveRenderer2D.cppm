@@ -212,6 +212,10 @@ public:
     // re-query the font database or rebuild the UTF-8 family key every frame.
     std::optional<TextStyle> glyphFontCacheStyle_;
     std::vector<ResolvedGlyphFont> glyphFontCache_;
+    // Reused by drawGlyphText().  Timeline labels are submitted every
+    // present even when their static snapshot is unchanged; keep the
+    // per-call code-point lookup outside the allocator hot path.
+    std::vector<char32_t> glyphCodePointScratch_;
 
     const ResolvedGlyphFont& resolvedGlyphFont(const TextStyle& style,
                                                 char32_t codePoint) {
@@ -1555,43 +1559,28 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
     if (!impl_->pGlyphAtlas_ || text.length() == 0 || !impl_->cmdBuf_) return;
 
     const auto codePoints = text.toStdU32String();
-    // PERF: resolve once per unique code point. Repeated characters otherwise
-    // pay fromUcs4 + makeFont + family().toStdString() on every occurrence,
-    // twice (acquire + submit passes below). Atlas insertion order for unique
-    // keys is unchanged (first-occurrence order), so behavior is identical.
-    struct UniqueGlyph {
-        char32_t codePoint = 0;
-        QFont font;
-        GlyphKey key;
-    };
-    std::vector<UniqueGlyph> uniqueGlyphs;
-    uniqueGlyphs.reserve(codePoints.size());
-    std::vector<size_t> glyphIndexOf;
-    glyphIndexOf.reserve(codePoints.size());
+    // Resolve each unique code point once.  The renderer-lifetime cache keeps
+    // font fallback and GlyphKey construction out of the per-present path.
+    auto& glyphCodePointScratch = impl_->glyphCodePointScratch_;
+    glyphCodePointScratch.clear();
+    glyphCodePointScratch.reserve(codePoints.size());
     for (const char32_t codePoint : codePoints) {
-        size_t found = uniqueGlyphs.size();
-        for (size_t i = 0; i < uniqueGlyphs.size(); ++i) {
-            if (uniqueGlyphs[i].codePoint == codePoint) {
-                found = i;
+        bool found = false;
+        for (const char32_t cachedCodePoint : glyphCodePointScratch) {
+            if (cachedCodePoint == codePoint) {
+                found = true;
                 break;
             }
         }
-        if (found == uniqueGlyphs.size()) {
-            const QString glyphText = QString::fromUcs4(&codePoint, 1);
-            const QFont resolvedFont = FontManager::makeFont(style, glyphText);
-            GlyphKey key;
-            key.codePoint = codePoint;
-            key.fontSize = style.fontSize;
-            key.fontFamily = resolvedFont.family().toStdString();
-            key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
-                             static_cast<uint32_t>(style.fontStyle);
-            key.renderMode = renderModeForCodePoint(codePoint);
-            found = uniqueGlyphs.size();
-            uniqueGlyphs.push_back({codePoint, resolvedFont, std::move(key)});
+        if (!found) {
+            // Populate the renderer-lifetime font cache before retaining any
+            // references into it; cache growth may reallocate its storage.
+            impl_->resolvedGlyphFont(style, codePoint);
+            glyphCodePointScratch.push_back(codePoint);
         }
-        glyphIndexOf.push_back(found);
     }
-    for (const UniqueGlyph& entry : uniqueGlyphs) {
+    for (const char32_t codePoint : glyphCodePointScratch) {
+        const auto& entry = impl_->resolvedGlyphFont(style, codePoint);
         impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
     }
     
@@ -1609,8 +1598,8 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
     
     float currentX = x;
-    for (const size_t glyphIdx : glyphIndexOf) {
-        const UniqueGlyph& entry = uniqueGlyphs[glyphIdx];
+    for (const char32_t codePoint : codePoints) {
+        const auto& entry = impl_->resolvedGlyphFont(style, codePoint);
         GlyphRect rect = impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
         if (!rect.valid) continue;
         
