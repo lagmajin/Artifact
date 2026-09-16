@@ -294,14 +294,34 @@ public:
         static_cast<float>(window->devicePixelRatio()));
     primitiveRenderer_.resetView();
 
-    const auto drawSnapshot = [this](const DiligentTimelineVisualSnapshot& source) {
+    struct ColorCacheEntry {
+      QRgb key = 0;
+      FloatColor value{};
+      bool valid = false;
+    };
+    ColorCacheEntry colorCache[32]{};
+    size_t nextColorSlot = 0;
+    const auto cachedColor = [&](const QColor& color) -> const FloatColor& {
+      const QRgb key = color.rgba();
+      for (auto& entry : colorCache) {
+        if (entry.valid && entry.key == key) {
+          return entry.value;
+        }
+      }
+      auto& entry = colorCache[nextColorSlot++ % 32];
+      entry.key = key;
+      entry.value = toFloatColor(color);
+      entry.valid = true;
+      return entry.value;
+    };
+    const auto drawSnapshot = [this, &cachedColor](const DiligentTimelineVisualSnapshot& source) {
     for (const auto& visual : source.rects) {
       primitiveRenderer_.drawSolidRect(
           static_cast<float>(visual.rect.x()),
           static_cast<float>(visual.rect.y()),
           static_cast<float>(visual.rect.width()),
           static_cast<float>(visual.rect.height()),
-          toFloatColor(visual.color));
+          cachedColor(visual.color));
     }
     for (const auto& visual : source.lines) {
       primitiveRenderer_.drawThickLineLocal(
@@ -309,7 +329,7 @@ public:
            static_cast<float>(visual.from.y())},
           {static_cast<float>(visual.to.x()),
            static_cast<float>(visual.to.y())},
-          visual.thickness, toFloatColor(visual.color));
+          visual.thickness, cachedColor(visual.color));
     }
     for (const auto& visual : source.triangles) {
       primitiveRenderer_.drawSolidTriangleLocal(
@@ -319,7 +339,7 @@ public:
            static_cast<float>(visual.p1.y())},
           {static_cast<float>(visual.p2.x()),
            static_cast<float>(visual.p2.y())},
-          toFloatColor(visual.color));
+          cachedColor(visual.color));
     }
     for (const auto& visual : source.texts) {
       ArtifactCore::TextStyle textStyle;
@@ -329,7 +349,7 @@ public:
           static_cast<float>(visual.baseline.x()),
           static_cast<float>(visual.baseline.y()),
           visual.text, textStyle,
-          toFloatColor(visual.color));
+          cachedColor(visual.color));
     }
     };
     if (layeredSnapshots) {
@@ -409,6 +429,23 @@ void ArtifactDiligentTimelineRenderWindow::setStaticSnapshot(
     }
     impl_->staticSnapshot_ =
         std::make_shared<const DiligentTimelineVisualSnapshot>(snapshot);
+    impl_->layeredSnapshots_ = true;
+  }
+  requestRender();
+}
+
+void ArtifactDiligentTimelineRenderWindow::setStaticSnapshot(
+    DiligentTimelineVisualSnapshot&& snapshot)
+{
+  {
+    std::scoped_lock lock(impl_->snapshotMutex_);
+    if (impl_->staticSnapshot_ &&
+        snapshot.generation < impl_->staticSnapshot_->generation) {
+      return;
+    }
+    impl_->staticSnapshot_ =
+        std::make_shared<const DiligentTimelineVisualSnapshot>(
+            std::move(snapshot));
     impl_->layeredSnapshots_ = true;
   }
   requestRender();

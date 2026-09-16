@@ -76,6 +76,7 @@ public:
   // Keeping it as a separate immutable lane avoids copying all rows, clips,
   // and grid primitives whenever only the playhead or an edit preview moves.
   void setStaticSnapshot(const DiligentTimelineVisualSnapshot& snapshot);
+  void setStaticSnapshot(DiligentTimelineVisualSnapshot&& snapshot);
   void setDynamicSnapshot(DiligentTimelineVisualSnapshot&& snapshot);
   quint64 snapshotGeneration() const;
   bool initialize();

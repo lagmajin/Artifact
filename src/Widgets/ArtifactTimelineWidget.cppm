@@ -4626,9 +4626,22 @@ public:
     quint64 revision = 0;
     QString excludedDragClipId;
     bool keyframePreview = false;
-    DiligentTimelineVisualSnapshot snapshot;
   };
   GpuTimelineStaticCache gpuTimelineStatic_;
+  QVector<double> gpuTimelineTrackTops_;
+  bool gpuTimelineDynamicValid_ = false;
+  double gpuTimelineDynamicFrame_ = 0.0;
+  double gpuTimelineDynamicPpf_ = 0.0;
+  double gpuTimelineDynamicHOff_ = 0.0;
+  double gpuTimelineDynamicVOff_ = 0.0;
+  int gpuTimelineDynamicVpW_ = 0;
+  int gpuTimelineDynamicVpH_ = 0;
+  quint64 gpuTimelineDynamicRevision_ = 0;
+  QString gpuTimelineDynamicDragClipId_;
+  double gpuTimelineDynamicDragStart_ = 0.0;
+  double gpuTimelineDynamicDragDuration_ = 0.0;
+  int gpuTimelineDynamicDragTrack_ = -1;
+  bool gpuTimelineDynamicKeyframePreview_ = false;
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
   ArtifactDiligentTimelineRenderWindow *gpuCurveWindow_ = nullptr;
   QWidget *gpuCurveContainer_ = nullptr;
@@ -10670,11 +10683,6 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const QString dragClipId = hasDragClip ? dragClip.clipId : QString{};
   const bool keyframePreview = view->isKeyframeEditing();
 
-  QVector<double> trackTops(view->trackCount() + 1, -verticalOffset);
-  for (int track = 0; track < view->trackCount(); ++track) {
-    trackTops[track + 1] =
-        trackTops[track] + std::max(1, view->trackHeight(track));
-  }
   const QColor playheadColor = TimelinePlayheadDraw::playheadColor();
   const QColor playheadCapColor(174, 184, 196);
 
@@ -10690,6 +10698,17 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
       staticCache.revision == visualRevision &&
       staticCache.excludedDragClipId == dragClipId &&
       staticCache.keyframePreview == keyframePreview;
+  if (!staticHit ||
+      impl_->gpuTimelineTrackTops_.size() != view->trackCount() + 1) {
+    auto& trackTops = impl_->gpuTimelineTrackTops_;
+    trackTops.resize(view->trackCount() + 1);
+    trackTops[0] = -verticalOffset;
+    for (int track = 0; track < view->trackCount(); ++track) {
+      trackTops[track + 1] =
+          trackTops[track] + std::max(1, view->trackHeight(track));
+    }
+  }
+  const auto& trackTops = impl_->gpuTimelineTrackTops_;
   if (!staticHit) {
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineStaticSnapshotGeneration_;
@@ -10713,19 +10732,24 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const QColor selectionEdge(171, 211, 238);
   const QColor selectedKey(228, 173, 83);
 
+  // Build the selected-row mask once.  The previous per-row scan made static
+  // snapshot construction O(trackCount * clipCount), which becomes visible
+  // while scrubbing or editing projects with many clips.
+  QVector<quint8> selectedRows(view->trackCount(), 0);
+  for (const auto& clip : clips) {
+    if (clip.selected && clip.trackIndex >= 0 &&
+        clip.trackIndex < selectedRows.size()) {
+      selectedRows[clip.trackIndex] = 1;
+    }
+  }
+
   for (int track = 0; track < view->trackCount(); ++track) {
     const double top = trackTops[track];
     const double height = std::max(1, view->trackHeight(track));
     if (top + height < 0.0 || top > viewportHeight) {
       continue;
     }
-    bool rowSelected = false;
-    for (const auto& clip : clips) {
-      if (clip.trackIndex == track && clip.selected) {
-        rowSelected = true;
-        break;
-      }
-    }
+    const bool rowSelected = selectedRows[track] != 0;
     const QColor rowColor = rowSelected
                                 ? selectedRow
                                 : ((track & 1) != 0 ? rowAlternate : rowBase);
@@ -10935,16 +10959,40 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     staticCache.revision = visualRevision;
     staticCache.excludedDragClipId = dragClipId;
     staticCache.keyframePreview = keyframePreview;
-    staticCache.snapshot = std::move(snapshot);
-    impl_->gpuTimelineWindow_->setStaticSnapshot(staticCache.snapshot);
+    impl_->gpuTimelineWindow_->setStaticSnapshot(std::move(snapshot));
   }
 
   // Dynamic tail: current-frame keyframe emphasis plus playhead. Runs on
   // every tick and is transferred independently from static geometry.
+  const double currentFrame = view->currentFrame();
+  const bool dynamicUnchanged =
+      impl_->gpuTimelineDynamicValid_ &&
+      impl_->gpuTimelineDynamicFrame_ == currentFrame &&
+      impl_->gpuTimelineDynamicPpf_ == ppf &&
+      impl_->gpuTimelineDynamicHOff_ == horizontalOffset &&
+      impl_->gpuTimelineDynamicVOff_ == verticalOffset &&
+      impl_->gpuTimelineDynamicVpW_ == viewportWidth &&
+      impl_->gpuTimelineDynamicVpH_ == viewportHeight &&
+      impl_->gpuTimelineDynamicRevision_ == visualRevision &&
+      impl_->gpuTimelineDynamicDragClipId_ == dragClipId &&
+      impl_->gpuTimelineDynamicDragStart_ ==
+          (hasDragClip ? dragClip.startFrame : 0.0) &&
+      impl_->gpuTimelineDynamicDragDuration_ ==
+          (hasDragClip ? dragClip.durationFrame : 0.0) &&
+      impl_->gpuTimelineDynamicDragTrack_ ==
+          (hasDragClip ? dragClip.trackIndex : -1) &&
+      impl_->gpuTimelineDynamicKeyframePreview_ == keyframePreview;
+  if (dynamicUnchanged) {
+    return;
+  }
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
   snapshot.background = QColor(25, 30, 34);
-  const double currentFrame = view->currentFrame();
+  // Keep the per-tick dynamic buffers bounded in the common case.
+  snapshot.rects.reserve(hasDragClip ? 1 : 0);
+  snapshot.lines.reserve(hasDragClip ? 8 : 4);
+  snapshot.triangles.reserve(10);
+  snapshot.texts.reserve(hasDragClip ? 1 : 0);
   const QColor selectedKeyDynamic(228, 173, 83);
   if (hasDragClip && dragClip.trackIndex >= 0 &&
       dragClip.trackIndex < view->trackCount()) {
@@ -11027,6 +11075,20 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   snapshot.lines.push_back({QPointF(playheadX, 0.0),
                             QPointF(playheadX, viewportHeight),
                             playheadColor, 2.0f});
+  impl_->gpuTimelineDynamicValid_ = true;
+  impl_->gpuTimelineDynamicFrame_ = currentFrame;
+  impl_->gpuTimelineDynamicPpf_ = ppf;
+  impl_->gpuTimelineDynamicHOff_ = horizontalOffset;
+  impl_->gpuTimelineDynamicVOff_ = verticalOffset;
+  impl_->gpuTimelineDynamicVpW_ = viewportWidth;
+  impl_->gpuTimelineDynamicVpH_ = viewportHeight;
+  impl_->gpuTimelineDynamicRevision_ = visualRevision;
+  impl_->gpuTimelineDynamicDragClipId_ = dragClipId;
+  impl_->gpuTimelineDynamicDragStart_ = hasDragClip ? dragClip.startFrame : 0.0;
+  impl_->gpuTimelineDynamicDragDuration_ =
+      hasDragClip ? dragClip.durationFrame : 0.0;
+  impl_->gpuTimelineDynamicDragTrack_ = hasDragClip ? dragClip.trackIndex : -1;
+  impl_->gpuTimelineDynamicKeyframePreview_ = keyframePreview;
   impl_->gpuTimelineWindow_->setDynamicSnapshot(std::move(snapshot));
 }
 
@@ -11038,6 +11100,9 @@ void ArtifactTimelineWidget::setGpuTimelinePreviewEnabled(const bool enabled)
   }
   if (!enabled) {
     impl_->gpuTimelinePreviewEnabled_ = false;
+    // Force a fresh dynamic lane when the GPU page is enabled again.  The
+    // render window may have recreated its device or swap chain meanwhile.
+    impl_->gpuTimelineDynamicValid_ = false;
     if (!impl_->graphEditorVisible_) {
       impl_->timelineModeStack_->setCurrentWidget(impl_->timelinePainterPage_);
     }
