@@ -1,5 +1,6 @@
 module;
 #include <iostream>
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <map>
@@ -194,6 +195,9 @@ public:
      int applyColorToSelectorRange(int charStart, int charEnd, const ArtifactCore::FloatRGBA& color);
 
     QImage toQImage() const;
+    // Monotonic content identity for render-surface caches. This advances for
+    // every text/style/animator mutation that invalidates the text raster.
+    std::uint64_t contentRevision() const;
     QImage getThumbnail(int width = 128, int height = 128) const override;
     const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
     bool hasCurrentFrameBuffer() const;

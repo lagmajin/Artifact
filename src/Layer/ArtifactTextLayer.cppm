@@ -124,6 +124,7 @@ public:
   QImage renderedImage_;
   mutable SharedPtr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
   bool isDirty_ = true;
+  std::uint64_t contentRevision_ = 1;
   std::optional<int64_t> lastAnimatedTextPropertyFrame_;
   bool applyingAnimatedTextProperties_ = false;
 
@@ -1789,6 +1790,7 @@ ArtifactTextLayer::~ArtifactTextLayer() { delete impl_; }
 void ArtifactTextLayer::markDirty() {
   if (impl_) {
     impl_->isDirty_ = true;
+    ++impl_->contentRevision_;
   }
 }
 
@@ -2727,6 +2729,10 @@ QImage ArtifactTextLayer::toQImage() const {
     const_cast<ArtifactTextLayer *>(this)->updateImage();
   }
   return impl_->renderedImage_;
+}
+
+std::uint64_t ArtifactTextLayer::contentRevision() const {
+  return impl_ ? impl_->contentRevision_ : 0;
 }
 
 QImage ArtifactTextLayer::getThumbnail(int width, int height) const

@@ -5339,94 +5339,13 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
 
   if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
-
-    const bool animated = textLayer->animatorCount() > 0;
-
-    key += QStringLiteral("|text|value=%1|family=%2|size=%3|color=%4|stroke=%5|strokeEnabled=%6|strokeWidth=%7|shadow=%8|shadowEnabled=%9|shadowOffset=%10,%11|shadowBlur=%12|tracking=%13|leading=%14|bold=%15|italic=%16|underline=%17|strike=%18|hAlign=%19|vAlign=%20|wrap=%21|layout=%22|maxWidth=%23|boxHeight=%24|paragraphSpacing=%25|animators=%26%27|surface=%28x%29")
-
-               .arg(textLayer->text().toQString())
-
-               .arg(textLayer->fontFamily().toQString())
-
-               .arg(textLayer->fontSize(), 0, 'f', 3)
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(textLayer->textColor().r(), 0, 'f', 4)
-
-                        .arg(textLayer->textColor().g(), 0, 'f', 4)
-
-                        .arg(textLayer->textColor().b(), 0, 'f', 4)
-
-                        .arg(textLayer->textColor().a(), 0, 'f', 4))
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(textLayer->strokeColor().r(), 0, 'f', 4)
-
-                        .arg(textLayer->strokeColor().g(), 0, 'f', 4)
-
-                        .arg(textLayer->strokeColor().b(), 0, 'f', 4)
-
-                        .arg(textLayer->strokeColor().a(), 0, 'f', 4))
-
-               .arg(textLayer->isStrokeEnabled() ? 1 : 0)
-
-               .arg(textLayer->strokeWidth(), 0, 'f', 3)
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(textLayer->shadowColor().r(), 0, 'f', 4)
-
-                        .arg(textLayer->shadowColor().g(), 0, 'f', 4)
-
-                        .arg(textLayer->shadowColor().b(), 0, 'f', 4)
-
-                        .arg(textLayer->shadowColor().a(), 0, 'f', 4))
-
-               .arg(textLayer->isShadowEnabled() ? 1 : 0)
-
-               .arg(textLayer->shadowOffsetX(), 0, 'f', 3)
-
-               .arg(textLayer->shadowOffsetY(), 0, 'f', 3)
-
-               .arg(textLayer->shadowBlur(), 0, 'f', 3)
-
-               .arg(textLayer->tracking(), 0, 'f', 3)
-
-               .arg(textLayer->leading(), 0, 'f', 3)
-
-               .arg(textLayer->isBold() ? 1 : 0)
-
-               .arg(textLayer->isItalic() ? 1 : 0)
-
-               .arg(textLayer->isUnderline() ? 1 : 0)
-
-               .arg(textLayer->isStrikethrough() ? 1 : 0)
-
-               .arg(static_cast<int>(textLayer->horizontalAlignment()))
-
-               .arg(static_cast<int>(textLayer->verticalAlignment()))
-
-               .arg(static_cast<int>(textLayer->wrapMode()))
-
-               .arg(static_cast<int>(textLayer->layoutMode()))
-
-               .arg(textLayer->maxWidth(), 0, 'f', 3)
-
-               .arg(textLayer->boxHeight(), 0, 'f', 3)
-
-               .arg(textLayer->paragraphSpacing(), 0, 'f', 3)
-
-               .arg(textLayer->animatorCount())
-
-               .arg(animated ? QStringLiteral("|frame=%1").arg(frameNumber)
-
-                             : QString())
-
-               .arg(surface.width())
-
-               .arg(surface.height());
+    key += QStringLiteral("|text|rev=%1")
+               .arg(textLayer->contentRevision());
+    // Source-text keyframes and animator stacks can alter the resolved glyph
+    // surface without an authoring mutation. Keep those entries frame-scoped.
+    if (textLayer->hasSourceTextKeyframes() || textLayer->animatorCount() > 0) {
+      key += QStringLiteral("|textFrame=%1").arg(frameNumber);
+    }
 
     return key;
 
@@ -6716,6 +6635,22 @@ void drawPastFixedPlaneMotionFrames(
                         static_cast<float>(center.y()), 3.5f, color);
     ++drawnFrames;
   }
+}
+
+bool gpuFrameProfilingEnabled()
+
+{
+
+  static const bool enabled =
+
+      qEnvironmentVariableIsSet("ARTIFACT_ENABLE_GPU_FRAME_QUERY") &&
+
+      qEnvironmentVariable("ARTIFACT_ENABLE_GPU_FRAME_QUERY") !=
+
+          QStringLiteral("0");
+
+  return enabled;
+
 }
 
 bool projectedFrameHandleEnabled(TransformGizmo::Mode mode,
@@ -11561,7 +11496,9 @@ public:
 
     layer->draw(renderer_.get());
 
-    renderer_->flush();
+    // setOverrideDSV/RTV submits queued draws before changing the target.
+    // Keep this AOV in the immediate-context command stream; the frame-level
+    // flush submits it together with the remaining AOVs and presentation.
 
     renderer_->setMeshEmissionOnlyPass(false);
 
@@ -11590,7 +11527,7 @@ public:
 
     layer->draw(renderer_.get());
 
-    renderer_->flush();
+    // Target reset submits the queued draw; do not force a per-AOV flush.
 
     renderer_->setMeshNormalOnlyPass(false);
 
@@ -11619,7 +11556,7 @@ public:
 
     layer->draw(renderer_.get());
 
-    renderer_->flush();
+    // Target reset submits the queued draw; do not force a per-AOV flush.
 
     renderer_->setMeshVelocityOnlyPass(false);
 
@@ -11653,7 +11590,7 @@ public:
 
     layer->draw(renderer_.get());
 
-    renderer_->flush();
+    // Target reset submits the queued draw; do not force a per-AOV flush.
 
     renderer_->setMeshIdPass(ArtifactIRenderer::ChannelType::Custom, 0.0f);
 
@@ -11682,7 +11619,7 @@ public:
 
     layer->draw(renderer_.get());
 
-    renderer_->flush();
+    // Target reset submits the queued draw; do not force a per-AOV flush.
 
     renderer_->setMeshAlbedoOnlyPass(false);
 
@@ -35983,15 +35920,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     quint64 frame = 0;
 
-    bool enabled = false;
+    bool captureCost = false;
 
-    RenderCostCaptureGuard(ArtifactIRenderer* r, quint64 f, bool capture)
+    bool profileGpu = false;
 
-        : renderer(r), frame(f), enabled(capture) {
+    RenderCostCaptureGuard(ArtifactIRenderer* r, quint64 f,
+                           bool captureCostDiagnostics,
+                           bool profileGpuFrame)
 
-      if (renderer && enabled) {
+        : renderer(r), frame(f), captureCost(captureCostDiagnostics),
+          profileGpu(profileGpuFrame) {
+
+      if (renderer && captureCost) {
 
         renderer->beginFrameCostCapture();
+
+      }
+
+      if (renderer && profileGpu) {
 
         renderer->beginFrameGpuProfiling(frame);
 
@@ -36001,25 +35947,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     void finish() {
 
-      if (!renderer || !enabled) {
+      if (!renderer || (!captureCost && !profileGpu)) {
 
         return;
 
       }
 
-      renderCrashTrace("render-cost-guard-gpu-end-begin", frame);
+      if (profileGpu) {
+        renderCrashTrace("render-cost-guard-gpu-end-begin", frame);
 
-      renderer->endFrameGpuProfiling();
+        renderer->endFrameGpuProfiling();
 
-      renderCrashTrace("render-cost-guard-gpu-end-end", frame);
+        renderCrashTrace("render-cost-guard-gpu-end-end", frame);
+      }
 
-      renderCrashTrace("render-cost-guard-cost-end-begin", frame);
+      if (captureCost) {
+        renderCrashTrace("render-cost-guard-cost-end-begin", frame);
 
-      renderer->endFrameCostCapture();
+        renderer->endFrameCostCapture();
 
-      renderCrashTrace("render-cost-guard-cost-end-end", frame);
+        renderCrashTrace("render-cost-guard-cost-end-end", frame);
+      }
 
-      enabled = false;
+      captureCost = false;
+
+      profileGpu = false;
 
     }
 
@@ -36090,11 +36042,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   frameTimer.start();
   recordInteractionPerfEvent(7);
 
-  const bool captureRenderDiagnostics =
-
-      continuousRenderDiagnosticsEnabled() ||
-
-      (renderFrameCounter_ % 30u) == 0u;
+  // Cost/trace/RenderGraph diagnostics are opt-in.  Sampling them every 30
+  // frames creates a visible CPU spike during otherwise steady interaction.
+  const bool captureRenderDiagnostics = continuousRenderDiagnosticsEnabled();
+  const bool profileGpuFrame = gpuFrameProfilingEnabled();
 
   qint64 phaseNs = 0;
 
@@ -36267,7 +36218,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   RenderCostCaptureGuard renderCostGuard(
 
-      renderer_.get(), renderFrameCounter_, captureRenderDiagnostics);
+      renderer_.get(), renderFrameCounter_, captureRenderDiagnostics,
+      profileGpuFrame);
 
   renderCrashTrace("render-cost-begin", renderFrameCounter_);
 
@@ -38733,33 +38685,29 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layerFloatUAV, accumSRV, tempUAV};
           GpuRasterEffectPlan layerRasterEffectPlan;
 
-          FunctionalRenderPass layerRasterPass(
+          // The layer pipeline is a strict raster -> mask -> blend chain.
+          // It does not use RenderGraph resource scheduling: creating three
+          // FunctionalRenderPass objects here allocates std::function state for
+          // every layer/frame without changing the execution order.
+          if (!passContext.renderer || !passResources.pipeline ||
+              !passResources.layerRTV || !passResources.layerSRV) {
+            shared3DSceneDepthOpen = false;
+            continue;
+          }
 
-              FrameRenderPassKind::Surface, QStringLiteral("Layer Raster"),
+          drawGpuLayerToIntermediate(
 
-              [](RenderPassResources& resources) {
-
-                return resources.pipeline && resources.layerRTV &&
-
-                       resources.layerSRV;
-
-              },
-
-              [&](RenderPassContext&, RenderPassResources& resources) {
-
-                drawGpuLayerToIntermediate(
-
-                    layer.get(), resources.layerRTV,
+                    layer.get(), passResources.layerRTV,
 
                     static_cast<Diligent::ITextureView*>(
                         previewRenderSlot.depthTargetView),
-                    resources.accumSRV, rcw,
+                    passResources.accumSRV, rcw,
 
                     rch, cw, ch, lod, currentFrame, matteResolver, sceneLights,
 
                     has3DCamera, cameraViewMatrix, cameraProjMatrix,
 
-                    preserveSceneDepth, resources.pipeline,
+                    preserveSceneDepth, passResources.pipeline,
                     useLayerMsaa
                         ? static_cast<Diligent::ITextureView*>(
                               previewRenderSlot.msaaColorTargetView)
@@ -38772,10 +38720,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 // applyPointwise() may swap the accumulation ping-pong
                 // textures. Keep the following mask/blend passes on the
                 // resulting resource rather than the pre-effect SRV.
-                resources.accumSRV = resources.pipeline->accumSRV();
-                resources.tempUAV = resources.pipeline->tempUAV();
-                accumSRV = resources.accumSRV;
-                tempUAV = resources.tempUAV;
+                passResources.accumSRV = passResources.pipeline->accumSRV();
+                passResources.tempUAV = passResources.pipeline->tempUAV();
+                accumSRV = passResources.accumSRV;
+                tempUAV = passResources.tempUAV;
 
                 if ((!draftRendering || emissionChannelRequested) && emissionRTV) {
 
@@ -38865,70 +38813,50 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 }
 
-                surfacePassMs = markPhaseMs();
-
-                return true;
-
-              });
+          surfacePassMs = markPhaseMs();
 
           Diligent::ITextureView* preparedBlendSRV = layerSRV;
 
           bool convertedLayerToFloat = false;
 
-          FunctionalRenderPass maskPass(
+          if (!passResources.pipeline || !passResources.layerSRV ||
+              !passResources.layerFloatSRV || !passResources.layerFloatUAV ||
+              !passResources.tempUAV) {
+            shared3DSceneDepthOpen = false;
+            continue;
+          }
 
-              FrameRenderPassKind::Mask, QStringLiteral("Mask / Track Matte"),
+          preparedBlendSRV = prepareGpuLayerForBlend(
 
-              [](RenderPassResources& resources) {
+                    layer.get(), *passResources.pipeline, passResources.layerSRV,
 
-                return resources.pipeline && resources.layerSRV &&
+                    passResources.layerFloatSRV, passResources.layerFloatUAV,
 
-                       resources.layerFloatSRV && resources.layerFloatUAV &&
-
-                       resources.tempUAV;
-
-              },
-
-              [&](RenderPassContext&, RenderPassResources& resources) {
-
-                preparedBlendSRV = prepareGpuLayerForBlend(
-
-                    layer.get(), *resources.pipeline, resources.layerSRV,
-
-                    resources.layerFloatSRV, resources.layerFloatUAV,
-
-                    resources.tempUAV, &layerRasterEffectPlan,
+                    passResources.tempUAV, &layerRasterEffectPlan,
                     matteSourceImages,
                     matteSourceGpuViews, layerToFloatConvertCount,
                     convertedLayerToFloat);
 
-                maskPassMs = markPhaseMs();
+          maskPassMs = markPhaseMs();
 
-                return preparedBlendSRV != nullptr;
-
-              });
+          if (!preparedBlendSRV) {
+            shared3DSceneDepthOpen = false;
+            continue;
+          }
 
           GpuLayerBlendResult blendResult;
 
-          FunctionalRenderPass blendPass(
+          if (!passResources.pipeline || !passResources.layerSRV ||
+              !passResources.accumSRV || !passResources.tempUAV) {
+            shared3DSceneDepthOpen = false;
+            continue;
+          }
 
-              FrameRenderPassKind::Composite, QStringLiteral("Blend"),
+          blendResult = blendGpuLayerIntoAccum(
 
-              [](RenderPassResources& resources) {
+                    layer.get(), *passResources.pipeline, passResources.layerSRV,
 
-                return resources.pipeline && resources.layerSRV &&
-
-                       resources.accumSRV && resources.tempUAV;
-
-              },
-
-              [&](RenderPassContext&, RenderPassResources& resources) {
-
-                blendResult = blendGpuLayerIntoAccum(
-
-                    layer.get(), *resources.pipeline, resources.layerSRV,
-
-                    preparedBlendSRV, resources.accumSRV, resources.tempUAV,
+                    preparedBlendSRV, passResources.accumSRV, passResources.tempUAV,
 
                     blendMode, opacity, cw, ch, blendDispatchCount,
 
@@ -38936,28 +38864,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     directBlendFallbackCount, convertedLayerToFloat);
 
-                accumSRV = resources.accumSRV;
+                accumSRV = passResources.accumSRV;
 
-                tempUAV = resources.tempUAV;
+                tempUAV = passResources.tempUAV;
 
-                compositePassMs = markPhaseMs();
+          compositePassMs = markPhaseMs();
 
-                return blendResult.blended || blendResult.directFallbackUsed;
-
-              });
-
-          const std::array<RenderPass*, 3> layerPasses{
-
-              &layerRasterPass, &maskPass, &blendPass};
-
-          if (!RenderPassExecutor::runAllWithRenderGraph(layerPasses, passContext,
-
-                                          passResources)) {
-
+          if (!blendResult.blended && !blendResult.directFallbackUsed) {
             shared3DSceneDepthOpen = false;
-
             continue;
-
           }
 
           if (!blendResult.blended) {

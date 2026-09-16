@@ -732,34 +732,13 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer)) {
-    key += QStringLiteral("|text|value=%1|font=%2|size=%3|bold=%4|italic=%5|allCaps=%6|underline=%7|strike=%8|fill=%9|strokeEnabled=%10|strokeColor=%11|strokeWidth=%12|shadowEnabled=%13|shadowColor=%14|shadowOffset=%15,%16|shadowBlur=%17|tracking=%18|leading=%19|wrap=%20|mw=%21|bh=%22|va=%23|ha=%24|ps=%25|surface=%26x%27")
-               .arg(textLayer->text().toQString())
-               .arg(textLayer->fontFamily().toQString())
-               .arg(textLayer->fontSize(), 0, 'f', 2)
-               .arg(textLayer->isBold() ? 1 : 0)
-               .arg(textLayer->isItalic() ? 1 : 0)
-               .arg(textLayer->isAllCaps() ? 1 : 0)
-               .arg(textLayer->isUnderline() ? 1 : 0)
-               .arg(textLayer->isStrikethrough() ? 1 : 0)
-               .arg(rgbaKey(textLayer->textColor().r(), textLayer->textColor().g(), textLayer->textColor().b(), textLayer->textColor().a()))
-               .arg(textLayer->isStrokeEnabled() ? 1 : 0)
-               .arg(rgbaKey(textLayer->strokeColor().r(), textLayer->strokeColor().g(), textLayer->strokeColor().b(), textLayer->strokeColor().a()))
-               .arg(textLayer->strokeWidth(), 0, 'f', 2)
-               .arg(textLayer->isShadowEnabled() ? 1 : 0)
-               .arg(rgbaKey(textLayer->shadowColor().r(), textLayer->shadowColor().g(), textLayer->shadowColor().b(), textLayer->shadowColor().a()))
-               .arg(textLayer->shadowOffsetX(), 0, 'f', 2)
-               .arg(textLayer->shadowOffsetY(), 0, 'f', 2)
-               .arg(textLayer->shadowBlur(), 0, 'f', 2)
-               .arg(textLayer->tracking(), 0, 'f', 2)
-               .arg(textLayer->leading(), 0, 'f', 2)
-               .arg(static_cast<int>(textLayer->wrapMode()))
-               .arg(textLayer->maxWidth(), 0, 'f', 2)
-               .arg(textLayer->boxHeight(), 0, 'f', 2)
-               .arg(static_cast<int>(textLayer->verticalAlignment()))
-               .arg(static_cast<int>(textLayer->horizontalAlignment()))
-               .arg(textLayer->paragraphSpacing(), 0, 'f', 2)
-               .arg(surface.width())
-               .arg(surface.height());
+    key += QStringLiteral("|text|rev=%1")
+               .arg(textLayer->contentRevision());
+    // Source-text keyframes and animator stacks can alter the resolved glyph
+    // surface without an authoring mutation. Keep those entries frame-scoped.
+    if (textLayer->hasSourceTextKeyframes() || textLayer->animatorCount() > 0) {
+      key += QStringLiteral("|textFrame=%1").arg(frameNumber);
+    }
     return key;
   }
 
