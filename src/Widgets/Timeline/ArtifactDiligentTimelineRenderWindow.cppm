@@ -315,6 +315,10 @@ public:
       return entry.value;
     };
     const auto drawSnapshot = [this, &cachedColor](const DiligentTimelineVisualSnapshot& source) {
+    // TextStyle carries several value fields (including UniString). Reuse one
+    // across the snapshot's labels so a static lane does not construct a new
+    // style object for every clip and marker on each present.
+    ArtifactCore::TextStyle textStyle;
     for (const auto& visual : source.rects) {
       primitiveRenderer_.drawSolidRect(
           static_cast<float>(visual.rect.x()),
@@ -372,7 +376,6 @@ public:
           cachedColor(visual.color));
     }
     for (const auto& visual : source.texts) {
-      ArtifactCore::TextStyle textStyle;
       textStyle.fontSize = visual.pixelSize;
       textStyle.pixelSize = visual.pixelSize;
       primitiveRenderer_.drawGlyphText(
