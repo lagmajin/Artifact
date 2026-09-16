@@ -4671,8 +4671,11 @@ public:
   LayerID lastAutoScrolledLayerId_;
   QVector<LayerID> searchResultLayerIds_;
   int searchResultIndex_ = -1;
-  QVector<TimelineRowDescriptor> trackRows_;
-  std::vector<CurveTrack> curveTracks_;
+   QVector<TimelineRowDescriptor> trackRows_;
+   std::vector<CurveTrack> curveTracks_;
+   // updateCurvePropertyList() runs per seek; rebuild the QListWidget only
+   // when the channel inventory actually changed.
+   QString curvePropertyListSignature_;
   QVector<CurveTrackBinding> curveBindings_;
   QString curveEditorSignature_;
   CurveEditorGraphMode curveEditorGraphMode_ = CurveEditorGraphMode::Value;
@@ -5067,7 +5070,7 @@ void ArtifactTimelineWidget::showKeyPatternDialog()
       impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
   const QString propertyPath = selectedPropertyPathForKeyPattern(
-      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkers(),
+      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkersView(),
       selectedMarkers);
   const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
   if (targets.isEmpty()) {
@@ -5158,7 +5161,7 @@ void ArtifactTimelineWidget::applyAnimationPreset(
       impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
   const QString propertyPath = selectedPropertyPathForKeyPattern(
-      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkers(),
+      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkersView(),
       selectedMarkers);
   const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
   if (targets.isEmpty()) {
@@ -5309,7 +5312,7 @@ void ArtifactTimelineWidget::applyKeyPattern(
       impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
   const QString propertyPath = selectedPropertyPathForKeyPattern(
-      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkers(),
+      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkersView(),
       selectedMarkers);
   const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
   QString message;
@@ -5529,11 +5532,25 @@ void ArtifactTimelineWidget::toggleGraphEditorMode(const bool active,
 
 void ArtifactTimelineWidget::updateCurvePropertyList()
 {
-  if (!impl_ || !impl_->curvePropertyList_ || !impl_->curvePropertySummaryLabel_) {
+   if (!impl_ || !impl_->curvePropertyList_ || !impl_->curvePropertySummaryLabel_) {
     return;
-  }
+   }
 
-  const QSignalBlocker blocker(impl_->curvePropertyList_);
+   QString signature = QString::number(impl_->focusedCurveTrackIndex_) + QChar('|');
+   for (const auto &track : impl_->curveTracks_) {
+     signature += track.name;
+     signature += QChar('|');
+     signature += QString::number(static_cast<qulonglong>(track.keys.size()));
+     signature += QChar('|');
+     signature += QString::number(static_cast<uint>(track.color.rgb()));
+     signature += QChar(';');
+   }
+   if (signature == impl_->curvePropertyListSignature_) {
+     return;
+   }
+   impl_->curvePropertyListSignature_ = signature;
+
+   const QSignalBlocker blocker(impl_->curvePropertyList_);
   impl_->curvePropertyList_->clear();
   int visibleCount = 0;
   int propertyCount = 0;
@@ -6310,7 +6327,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (impl_ && impl_->painterTrackView_) {
           const auto selectedMarkers = impl_->painterTrackView_->selectedKeyframeMarkers();
           if (const auto areaContext = selectedAreaContext(
-                  impl_->painterTrackView_->keyframeMarkers(), selectedMarkers)) {
+                  impl_->painterTrackView_->keyframeMarkersView(), selectedMarkers)) {
             targetLayerId = areaContext->first;
             targetPropertyPath = areaContext->second;
           }
@@ -9937,7 +9954,7 @@ void ArtifactTimelineWidget::updateKeyframeState()
           : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
   const bool selectedArea =
       impl_->painterTrackView_ &&
-      selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkers(),
+      selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkersView(),
                                   selectedMarkers);
   const auto hoveredMarker =
       impl_->painterTrackView_ ? impl_->painterTrackView_->hoveredKeyframeMarker()
@@ -10103,7 +10120,7 @@ void ArtifactTimelineWidget::updateSelectionState()
     }
     const bool selectedArea =
         impl_->painterTrackView_ &&
-        selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkers(),
+        selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkersView(),
                                     selectedMarkers);
     const auto hoveredMarker =
         impl_->painterTrackView_ ? impl_->painterTrackView_->hoveredKeyframeMarker()
@@ -11204,15 +11221,16 @@ void ArtifactTimelineWidget::addKeyframeAtPlayhead()
       impl_->painterTrackView_
           ? impl_->painterTrackView_->selectedKeyframeMarkers()
           : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
-  const auto allMarkers =
-      impl_->painterTrackView_
-          ? impl_->painterTrackView_->keyframeMarkers()
-          : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
-  const QString focusedPropertyPath = selectedPropertyPathForKeyPattern(
-      impl_->layerTimelinePanel_, allMarkers, selectedMarkers);
-  const auto refs =
-      collectContextualKeyframePropertyRefs(layers, focusedPropertyPath);
-  const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
+   const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> noMarkers;
+   const auto& allMarkers =
+       impl_->painterTrackView_
+           ? impl_->painterTrackView_->keyframeMarkersView()
+           : noMarkers;
+   const QString focusedPropertyPath = selectedPropertyPathForKeyPattern(
+       impl_->layerTimelinePanel_, allMarkers, selectedMarkers);
+   const auto refs =
+       collectContextualKeyframePropertyRefs(layers, focusedPropertyPath);
+   const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
   bool changed = false;
   if (!focusedPropertyPath.trimmed().isEmpty()) {
     for (const auto& ref : refs) {
@@ -11308,15 +11326,16 @@ void ArtifactTimelineWidget::removeKeyframeAtPlayhead()
       impl_->painterTrackView_
           ? impl_->painterTrackView_->selectedKeyframeMarkers()
           : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
-  const auto allMarkers =
-      impl_->painterTrackView_
-          ? impl_->painterTrackView_->keyframeMarkers()
-          : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
-  const QString focusedPropertyPath = selectedPropertyPathForKeyPattern(
-      impl_->layerTimelinePanel_, allMarkers, selectedMarkers);
-  const auto refs =
-      collectContextualKeyframePropertyRefs(layers, focusedPropertyPath);
-  const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
+   const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> noMarkers;
+   const auto& allMarkers =
+       impl_->painterTrackView_
+           ? impl_->painterTrackView_->keyframeMarkersView()
+           : noMarkers;
+   const QString focusedPropertyPath = selectedPropertyPathForKeyPattern(
+       impl_->layerTimelinePanel_, allMarkers, selectedMarkers);
+   const auto refs =
+       collectContextualKeyframePropertyRefs(layers, focusedPropertyPath);
+   const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
   bool changed = false;
   if (!focusedPropertyPath.trimmed().isEmpty()) {
     for (const auto& ref : refs) {
@@ -11858,7 +11877,7 @@ bool ArtifactTimelineWidget::hasSelectedKeyframeArea() const
     return false;
   }
   const auto selectedMarkers = impl_->painterTrackView_->selectedKeyframeMarkers();
-  return selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkers(),
+  return selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkersView(),
                                      selectedMarkers);
 }
 
@@ -11868,7 +11887,7 @@ QString ArtifactTimelineWidget::selectedKeyframeAreaSummary() const
     return {};
   }
   const auto selectedMarkers = impl_->painterTrackView_->selectedKeyframeMarkers();
-  if (!selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkers(),
+  if (!selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkersView(),
                                    selectedMarkers)) {
     return {};
   }
@@ -11901,7 +11920,7 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
   }
 }
 
-  if (!selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkers(),
+  if (!selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkersView(),
                                    selectedMarkers)) {
     return false;
   }
