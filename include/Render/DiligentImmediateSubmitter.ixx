@@ -119,6 +119,19 @@ private:
     RefCntAutoPtr<IBuffer> m_batch_tri_vb_;
     RefCntAutoPtr<IBuffer> m_batch_quad_vb_;
 
+    // AtlasSprite runs (glyph quads share one atlas texture): positions are
+    // baked to pixels on CPU (bit-exact: unit * scale is exact for 0/1, then
+    // the same NDC math runs on identical inputs) and drawn with the
+    // EXISTING sprite PSO through a degenerate-linked static index buffer.
+    // Run key is (texture, screenSize); per-sprite xform is baked away.
+    static constexpr Uint32 k_batch_sprite_quads = 1024;
+    std::vector<SpriteVertex> m_batchSpriteVerts_;
+    ITextureView* m_batchSpriteSRV_ = nullptr;
+    RenderSolidTransform2D m_batchSpriteXform_{};
+    bool m_batchSpriteActive_ = false;
+    RefCntAutoPtr<IBuffer> m_batch_sprite_vb_;
+    RefCntAutoPtr<IBuffer> m_batch_sprite_ib_;
+
     // Phase 3: CPU staging + GPU buffers for solid-rect batching
     struct BatchRectVertexAA { float2 pos; float4 color; float2 uv; }; // 32 bytes
     static constexpr Uint32 k_batch_solid_rect_max = 512;
