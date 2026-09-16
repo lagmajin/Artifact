@@ -10622,40 +10622,38 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 
   const double firstFrame = horizontalOffset / ppf;
   const double lastFrame = (horizontalOffset + viewportWidth) / ppf;
-  // A major division about every 120 px matches the mock's sparse timing
-  // rhythm and leaves clip labels readable at ordinary zoom levels.
-  const double targetGridPixels = 120.0;
-  const double rawStep = targetGridPixels / ppf;
-  const double magnitude = std::pow(10.0, std::floor(std::log10(
-      std::max(1.0, rawStep))));
-  const double normalized = rawStep / magnitude;
-  const double gridStep = (normalized <= 1.0 ? 1.0
-                           : normalized <= 2.0 ? 2.0
-                           : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
-  const double firstGridFrame = std::floor(firstFrame / gridStep) * gridStep;
-  QColor gridColor(93, 105, 114, 104);
-  for (double frame = firstGridFrame; frame <= lastFrame + gridStep;
-       frame += gridStep) {
-    const double x = frame * ppf - horizontalOffset;
-    snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
-                              gridColor, 1.0f});
+  // Grid rhythm mirrors the Qt painter (ArtifactTimelineTrackPainterView):
+  // major marks ~45px apart with a 1/2/5 frame progression plus medium and
+  // minor subdivisions, so both surfaces place ticks on identical frames.
+  // Palette stays snapshot-side; only the step rhythm is unified.
+  int majorStep = 1;
+  while (static_cast<double>(majorStep) * ppf < 45.0) {
+    if (majorStep == 1) {
+      majorStep = 2;
+    } else if (majorStep == 2) {
+      majorStep = 5;
+    } else {
+      majorStep *= 2;
+    }
   }
-
-  // Keep the secondary divisions deliberately quiet: they provide the dense
-  // DCC timing rhythm without competing with keyframes or layer spans.
-  const double minorStep = gridStep / 4.0;
+  const int mediumStep = std::max(1, majorStep / 2);
+  const int minorStep = std::max(1, majorStep / 5);
+  QColor gridColor(93, 105, 114, 104);
   QColor minorGridColor(82, 93, 101, 48);
-  const double firstMinorFrame =
-      std::floor(firstFrame / minorStep) * minorStep;
-  for (double frame = firstMinorFrame; frame <= lastFrame + minorStep;
-       frame += minorStep) {
-    const double remainder = std::fmod(std::abs(frame), gridStep);
-    if (remainder < 0.001 || gridStep - remainder < 0.001) {
+  const int firstGridFrame =
+      std::max(0, static_cast<int>(std::floor(firstFrame)));
+  const int lastGridFrame = static_cast<int>(std::ceil(lastFrame));
+  for (int frame = firstGridFrame; frame <= lastGridFrame; ++frame) {
+    const bool major = (frame % majorStep) == 0;
+    const bool medium = !major && (frame % mediumStep) == 0;
+    const bool minor = !major && !medium && (frame % minorStep) == 0;
+    if (!major && !medium && !minor) {
       continue;
     }
-    const double x = frame * ppf - horizontalOffset;
+    const double x = static_cast<double>(frame) * ppf - horizontalOffset;
+    const QColor& color = major ? gridColor : minorGridColor;
     snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
-                              minorGridColor, 1.0f});
+                              color, 1.0f});
   }
 
   for (const auto& clip : clips) {
