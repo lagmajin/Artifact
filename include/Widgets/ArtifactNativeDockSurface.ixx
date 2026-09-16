@@ -88,7 +88,7 @@ class NativeDockSurface final : public QWidget {
 
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        QPen pen(QColor(145, 132, 238), 1.0);
+        QPen pen(QColor(145, 132, 238), 2.0);
         pen.setJoinStyle(Qt::RoundJoin);
         pen.setCapStyle(Qt::RoundCap);
         painter.setPen(pen);
@@ -121,9 +121,8 @@ class NativeDockSurface final : public QWidget {
         QRect result = QProxyStyle::subElementRect(element, option, widget);
         if (element == SE_TabWidgetTabContents && widget == tabs_ &&
             result.width() > 4 && result.height() > 4) {
-          // Reserve real layout space for the owner-drawn frame. A native
-          // viewport child can cover parent paint, but it cannot occupy this
-          // two-pixel dock-chrome gutter.
+          // Reserve a stable owner-drawn gutter before native render children
+          // initialize. Never resize the live page stack on focus/show events.
           result.adjust(2, 2, -2, -2);
         }
         return result;
@@ -190,13 +189,14 @@ class NativeDockSurface final : public QWidget {
 
       QPainter painter(this);
       painter.setRenderHint(QPainter::Antialiasing, true);
-      QPen pen(QColor(145, 132, 238), 1.0);
+      QPen pen(QColor(145, 132, 238), 2.0);
       pen.setJoinStyle(Qt::RoundJoin);
       pen.setCapStyle(Qt::RoundCap);
       painter.setPen(pen);
       painter.setBrush(Qt::NoBrush);
       painter.drawPath(outline);
     }
+
   };
 
   class DockSplitter final : public QSplitter {

@@ -2853,6 +2853,8 @@ QString formatClipTooltip(
   const QString title = clip.title.isEmpty() ? clip.clipId : clip.title;
   const QString kindText = [&]() {
     switch (clip.kind) {
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::GroupContainer:
+      return tt("timeline.kind_group_container", "Kind: Group Container");
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition:
       return tt("timeline.kind_transition", "Kind: Transition");
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio:
@@ -4588,6 +4590,26 @@ public:
   void rebuildClipCaches();
   void rebuildMarkerCaches();
   int nearestMarkerIndexForFrame(const double frame) const;
+  // paint と mouse 系で共有する validated area cache。
+  // 入力は pixelsPerFrame_/horizontalOffset_/verticalOffset_ のみで、
+  // marker 変更時は rebuildMarkerCaches()/rebuildTrackTopCache() が
+  // keyframeAreaCacheValid_ を落とす。結果は collect 直呼びと同一。
+  const QVector<KeyframeAreaVisual> &ensureKeyframeAreaCache() {
+    const double ppf = pixelsPerFrame_;
+    const double xOffset = horizontalOffset_;
+    const double yOffset = verticalOffset_;
+    if (!keyframeAreaCacheValid_ || keyframeAreaCachePpf_ != ppf ||
+        keyframeAreaCacheXOffset_ != xOffset ||
+        keyframeAreaCacheYOffset_ != yOffset) {
+      keyframeAreaCache_ = collectKeyframeAreas(keyframeMarkers_, trackHeights_,
+                                                trackTops_, ppf, xOffset, yOffset);
+      keyframeAreaCachePpf_ = ppf;
+      keyframeAreaCacheXOffset_ = xOffset;
+      keyframeAreaCacheYOffset_ = yOffset;
+      keyframeAreaCacheValid_ = true;
+    }
+    return keyframeAreaCache_;
+  }
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl() {
@@ -5079,6 +5101,21 @@ bool ArtifactTimelineTrackPainterView::isInteracting() const {
   return impl_->dragMode_ != DragMode::None || impl_->panning_ ||
          impl_->scrubDragging_ || impl_->draggingHandle_ ||
          impl_->draggingMarker_ || impl_->marqueeSelecting_;
+}
+
+bool ArtifactTimelineTrackPainterView::activeDragClip(
+    TrackClipVisual& visual) const {
+  if (!impl_ || impl_->dragMode_ == DragMode::None ||
+      impl_->dragClipIndex_ < 0 || impl_->dragClipIndex_ >= impl_->clips_.size()) {
+    return false;
+  }
+  visual = impl_->clips_[impl_->dragClipIndex_];
+  return true;
+}
+
+bool ArtifactTimelineTrackPainterView::isKeyframeEditing() const {
+  return impl_ && (impl_->draggingMarker_ || impl_->dragAreaIndex_ >= 0 ||
+                   impl_->dragHandleMarkerIndex_ >= 0);
 }
 
 void ArtifactTimelineTrackPainterView::touchTimelineVisuals() {
@@ -6595,9 +6632,12 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const int trackH = impl_->trackHeights_[clip.trackIndex];
     const double x = clip.startFrame * ppf - xOffset;
     const double w = std::max(2.0, clip.durationFrame * ppf);
-    const bool isTransition = clip.kind == TrackClipVisual::Kind::Transition;
-    const double barHeight = isTransition ? std::min(16.0, std::max(10.0, trackH - 8.0))
-                                          : std::max(8, trackH - 4);
+    const bool isRelationship =
+        clip.kind == TrackClipVisual::Kind::Transition ||
+        clip.kind == TrackClipVisual::Kind::GroupContainer;
+    const double barHeight = isRelationship
+        ? std::min(16.0, std::max(10.0, trackH - 8.0))
+        : std::max(8, trackH - 4);
     QRectF clipRect(x, trackTop + (trackH - barHeight) * 0.5 - yOffset, w,
                     barHeight);
     if (!clipRect.intersects(QRectF(fullRect))) {
@@ -7038,19 +7078,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         impl_->proportionalEditRadius_);
   }
 
-  if (!impl_->keyframeAreaCacheValid_ ||
-      impl_->keyframeAreaCachePpf_ != ppf ||
-      impl_->keyframeAreaCacheXOffset_ != xOffset ||
-      impl_->keyframeAreaCacheYOffset_ != yOffset) {
-    impl_->keyframeAreaCache_ = collectKeyframeAreas(
-        impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
-        xOffset, yOffset);
-    impl_->keyframeAreaCachePpf_ = ppf;
-    impl_->keyframeAreaCacheXOffset_ = xOffset;
-    impl_->keyframeAreaCacheYOffset_ = yOffset;
-    impl_->keyframeAreaCacheValid_ = true;
-  }
-  const auto &keyframeAreas = impl_->keyframeAreaCache_;
+  const auto &keyframeAreas = impl_->ensureKeyframeAreaCache();
   for (int i = 0; i < keyframeAreas.size(); ++i) {
     const auto &area = keyframeAreas[i];
     if (!dirtyRect.intersects(area.bodyRect.toAlignedRect().adjusted(-2, -2, 2, 2))) {
@@ -7345,10 +7373,8 @@ void ArtifactTimelineTrackPainterView::drawPlayhead(QPainter& p) const {
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
   if (event->button() == Qt::MiddleButton) {
-    impl_->panning_ = true;
-    impl_->lastPanPoint_ = event->position().toPoint();
-    impl_->panModifiers_ = event->modifiers();
-    setCursor(Qt::ClosedHandCursor);
+    handleNavigationPan(event->button(), event->position(), event->buttons(),
+                        event->modifiers());
     event->accept();
     return;
   }
@@ -7385,9 +7411,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
                        impl_->trackTops_, mouseX, mouseY,
                        impl_->pixelsPerFrame_, impl_->horizontalOffset_,
                        impl_->verticalOffset_);
-    const auto keyframeAreas = collectKeyframeAreas(
-        impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_,
-        impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
+    const auto keyframeAreas = impl_->ensureKeyframeAreaCache();
     const auto areaHit = hitTestKeyframeAreas(keyframeAreas, mouseX, mouseY);
     if (markerHit.markerIndex >= 0) {
       const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
@@ -7715,6 +7739,14 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       impl_->dragOrigTrimMaxEndFrame_ =
           impl_->clips_[hit.clipIndex].trimMaxEndFrame;
       const auto &clip = impl_->clips_[hit.clipIndex];
+      if (clip.kind == TrackClipVisual::Kind::GroupContainer) {
+        impl_->dragMode_ = DragMode::None;
+        impl_->dragClipIndex_ = -1;
+        updateHoverToolTip(this, event->globalPosition().toPoint(),
+                           formatClipTooltip(clip), impl_->hoverToolTipText_);
+        event->accept();
+        return;
+      }
       if (clip.kind == TrackClipVisual::Kind::Transition) {
         // Transition editing is composition-owned. Keep the existing clip
         // drag state, but skip layer selection; release reuses the existing
@@ -7769,11 +7801,10 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0;
   // Clip dragging does not consume keyframe hit geometry. Avoid rebuilding the
   // area list and scanning every marker for each high-frequency mouse event.
-  const QVector<KeyframeAreaVisual> keyframeAreas = clipDragActive
-      ? QVector<KeyframeAreaVisual>{}
-      : collectKeyframeAreas(
-            impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
-            impl_->horizontalOffset_, impl_->verticalOffset_);
+  // 非 drag 時は paint と共有の validated cache を使い、marker 走査を繰返さない
+  // (QVector の暗黙共有のためコピーは軽量。hitTest は mouse 依存で毎回実行)。
+  const QVector<KeyframeAreaVisual> keyframeAreas =
+      clipDragActive ? QVector<KeyframeAreaVisual>{} : impl_->ensureKeyframeAreaCache();
   const MarkerHitResult markerHit = clipDragActive
       ? MarkerHitResult{}
       : hitTestMarkers(
@@ -8408,9 +8439,8 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
   touchTimelineVisuals();
   bool undoAccepted = true;
   if (event->button() == Qt::MiddleButton && impl_->panning_) {
-    impl_->panning_ = false;
-    impl_->panModifiers_ = Qt::NoModifier;
-    setCursor(Qt::ArrowCursor);
+    handleNavigationPan(event->button(), event->position(), event->buttons(),
+                        event->modifiers());
     event->accept();
     return;
   }
@@ -9011,9 +9041,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   const bool markerUnderCursor =
       markerHit.markerIndex >= 0 &&
       markerHit.markerIndex < impl_->keyframeMarkers_.size();
-  const auto keyframeAreas = collectKeyframeAreas(
-      impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_,
-      impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
+  const auto keyframeAreas = impl_->ensureKeyframeAreaCache();
   const auto areaHit = hitTestKeyframeAreas(keyframeAreas, mouseX, mouseY);
   const bool areaUnderCursor =
       areaHit.areaIndex >= 0 && areaHit.areaIndex < keyframeAreas.size();
@@ -11133,25 +11161,18 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   event->accept();
 }
 
-void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
-  if (!event) {
-    return;
-  }
+bool ArtifactTimelineTrackPainterView::handleNavigationWheel(
+    const QPointF& position, const QPoint& angle,
+    const Qt::KeyboardModifiers modifiers) {
+  if (angle.isNull()) return false;
 
-  const QPoint angle = event->angleDelta();
-  if (angle.isNull()) {
-    event->ignore();
-    return;
-  }
-
-  if (event->modifiers() & Qt::ControlModifier) {
+  if (modifiers & Qt::ControlModifier) {
     const double steps = static_cast<double>(angle.y()) / 120.0;
     if (steps == 0.0) {
-      event->ignore();
-      return;
+      return false;
     }
 
-    if (event->modifiers() & Qt::AltModifier) {
+    if (modifiers & Qt::AltModifier) {
       const double scale = std::pow(1.12, steps);
       QVector<int> resizedHeights = impl_->trackHeights_;
       const int oldHeight = resizedHeights.isEmpty() ? kDefaultTrackHeight
@@ -11160,8 +11181,7 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
           static_cast<int>(std::lround(static_cast<double>(oldHeight) * scale));
       newHeight = std::clamp(newHeight, 16, 160);
       if (newHeight == oldHeight) {
-        event->ignore();
-        return;
+        return false;
       }
       for (auto &height : resizedHeights) {
         height = std::clamp(
@@ -11171,11 +11191,10 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
       setTrackHeights(resizedHeights);
       ArtifactCore::globalEventBus().publish<TimelineTrackRowHeightChangedEvent>(
           TimelineTrackRowHeightChangedEvent{newHeight});
-      event->accept();
-      return;
+      return true;
     }
 
-    const double mouseX = event->position().x();
+    const double mouseX = position.x();
     const double oldPpf = std::max<double>(0.001, static_cast<double>(impl_->pixelsPerFrame_));
     const double anchorFrame = (mouseX + impl_->horizontalOffset_) / oldPpf;
     const double scale = std::pow(1.12, steps);
@@ -11186,17 +11205,57 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
     setHorizontalOffset(newOffset);
     ArtifactCore::globalEventBus().publish<TimelineZoomLevelChangedEvent>(
         TimelineZoomLevelChangedEvent{newPpf * 100.0});
-    event->accept();
-    return;
+    return true;
   }
 
   const double delta = static_cast<double>(angle.y()) / 120.0 * 40.0;
-  if (event->modifiers() & Qt::ShiftModifier) {
+  if (modifiers & Qt::ShiftModifier) {
     setHorizontalOffset(impl_->horizontalOffset_ - delta);
   } else {
     setVerticalOffset(std::max(0.0, impl_->verticalOffset_ - delta));
   }
-  event->accept();
+  return true;
+}
+
+void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
+  if (!event) return;
+  if (handleNavigationWheel(event->position(), event->angleDelta(),
+                            event->modifiers())) {
+    event->accept();
+  } else {
+    event->ignore();
+  }
+}
+
+bool ArtifactTimelineTrackPainterView::handleNavigationPan(
+    const Qt::MouseButton changedButton, const QPointF& position,
+    const Qt::MouseButtons buttons, const Qt::KeyboardModifiers modifiers) {
+  if (!impl_) return false;
+  if (changedButton == Qt::MiddleButton && !impl_->panning_ &&
+      (buttons & Qt::MiddleButton)) {
+    impl_->panning_ = true;
+    impl_->lastPanPoint_ = position.toPoint();
+    impl_->panModifiers_ = modifiers;
+    setCursor(Qt::ClosedHandCursor);
+    return true;
+  }
+  if (impl_->panning_ && (buttons & Qt::MiddleButton)) {
+    const QPoint current = position.toPoint();
+    const QPoint delta = current - impl_->lastPanPoint_;
+    impl_->lastPanPoint_ = current;
+    if (!(impl_->panModifiers_ & Qt::AltModifier) && delta.x() != 0)
+      setHorizontalOffset(impl_->horizontalOffset_ - delta.x());
+    if (!(impl_->panModifiers_ & Qt::ShiftModifier) && delta.y() != 0)
+      setVerticalOffset(std::max(0.0, impl_->verticalOffset_ - delta.y()));
+    return true;
+  }
+  if (changedButton == Qt::MiddleButton && impl_->panning_) {
+    impl_->panning_ = false;
+    impl_->panModifiers_ = Qt::NoModifier;
+    setCursor(Qt::ArrowCursor);
+    return true;
+  }
+  return false;
 }
 
 void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {

@@ -9,6 +9,8 @@ module;
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QPoint>
+#include <QPointF>
 #include <QDropEvent>
 #include <QFocusEvent>
 #include <QMenu>
@@ -86,6 +88,7 @@ export namespace Artifact
    Generic,
    Audio,
    Video,
+   GroupContainer,
    // A composition transition is a compact relationship bar, never a layer
    // clip. Its LayerID remains nil so layer selection/move paths cannot own it.
    Transition
@@ -183,6 +186,17 @@ export namespace Artifact
   quint64 timelineVisualRevision() const;
   // True while a pointer gesture may be mutating visuals live.
   bool isInteracting() const;
+  // Read-only live-edit previews consumed by the Diligent surface. They keep
+  // the compatibility QWidget as the undo authority while avoiding a full
+  // static-snapshot rebuild for every pointer move.
+  bool activeDragClip(TrackClipVisual& visual) const;
+  bool isKeyframeEditing() const;
+  // Backend-neutral navigation entry point used by the Diligent surface.
+  bool handleNavigationWheel(const QPointF& position, const QPoint& angleDelta,
+                             Qt::KeyboardModifiers modifiers);
+  bool handleNavigationPan(Qt::MouseButton changedButton, const QPointF& position,
+                           Qt::MouseButtons buttons,
+                           Qt::KeyboardModifiers modifiers);
   void touchTimelineVisuals();
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;

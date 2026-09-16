@@ -392,6 +392,13 @@ export namespace Artifact {
   QList<ArtifactAbstractLayerPtr> allLayer() const;
   const CompositionNodeStore& nodeStore() const;
   CompositionNodeStore& nodeStore();
+  QString createGroupContainer(const QString& displayName,
+                               const QVector<LayerID>& childLayerIds,
+                               const QString& preferredId = {});
+  bool removeGroupContainer(const QString& containerId);
+  bool setGroupContainerDisplayName(const QString& containerId,
+                                    const QString& displayName);
+  QVector<LayerID> groupContainerChildLayerIds(const QString& containerId) const;
   const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
   QList<ArtifactAbstractLayerPtr> childLayersOf(const LayerID& parentId) const;
   bool shouldEvaluateLayer(const LayerID& layerId) const;
@@ -433,5 +440,4 @@ export namespace Artifact {
  typedef MultiIndexContainer<ArtifactCompositionPtr, CompositionID> ArtifactCompositionMultiIndexContainer;
  using MultiIndexLayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
 };
-
 

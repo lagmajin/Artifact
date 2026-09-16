@@ -59,6 +59,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 #include "TimelinePlayheadDraw.hpp"
 module Artifact.Widgets.LayerPanelWidget;
 
@@ -73,6 +74,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.Nodes;
 import Translation.Manager;
 import Artifact.Layer.Abstract;
 import UI.ShortcutBindings;
@@ -1466,6 +1468,71 @@ struct VisibleRow {
  QString stateText;
  LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
  QString transitionId;
+ QString nodeId;
+};
+
+class RenameGroupContainerCommand final : public UndoCommand {
+public:
+ RenameGroupContainerCommand(ArtifactCompositionPtr composition, QString containerId,
+                             QString beforeName, QString afterName)
+     : composition_(std::move(composition)), containerId_(std::move(containerId)),
+       beforeName_(std::move(beforeName)), afterName_(std::move(afterName)) {}
+
+ void redo() override { lastOperationSucceeded_ = apply(afterName_); }
+ void undo() override { lastOperationSucceeded_ = apply(beforeName_); }
+ QString label() const override { return QStringLiteral("Rename Group Container"); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+ bool apply(const QString& name) {
+  if (!composition_) return false;
+  const bool changed = composition_->setGroupContainerDisplayName(containerId_, name);
+  if (changed) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+  return changed;
+ }
+
+ ArtifactCompositionPtr composition_;
+ QString containerId_;
+ QString beforeName_;
+ QString afterName_;
+ bool lastOperationSucceeded_ = true;
+};
+
+class RemoveGroupContainerCommand final : public UndoCommand {
+public:
+ RemoveGroupContainerCommand(ArtifactCompositionPtr composition, QString containerId,
+                             QString displayName, QVector<LayerID> childIds)
+     : composition_(std::move(composition)), containerId_(std::move(containerId)),
+       displayName_(std::move(displayName)), childIds_(std::move(childIds)) {}
+
+ void redo() override {
+  lastOperationSucceeded_ = composition_ && composition_->removeGroupContainer(containerId_);
+  if (lastOperationSucceeded_) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+ }
+ void undo() override {
+  if (!composition_) {
+   lastOperationSucceeded_ = false;
+   return;
+  }
+  lastOperationSucceeded_ = !composition_->createGroupContainer(
+      displayName_, childIds_, containerId_).isEmpty();
+  if (lastOperationSucceeded_) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+ }
+ QString label() const override { return QStringLiteral("Ungroup Container"); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+ ArtifactCompositionPtr composition_;
+ QString containerId_;
+ QString displayName_;
+ QVector<LayerID> childIds_;
+ bool lastOperationSucceeded_ = true;
 };
 
 QString groupLayerSummaryText(const ArtifactAbstractLayerPtr& layer)
@@ -2350,6 +2417,7 @@ public:
   int contentHeight = kLayerRowHeight;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
+  QString selectedContainerId;
   LayerID selectionAnchorLayerId;
   LayerID selectedMaskLayerId;
   int selectedMaskIndex = -1;
@@ -2867,9 +2935,60 @@ public:
 
    };
 
-   // The composition vector renders bottom-to-top. `layers` is its reverse,
-   // so preserve this exact top-to-bottom order in the timeline. Parenting is
-   // transform metadata and must not regroup the compositing stack.
+   QSet<QString> visibleLayerIds;
+   for (const auto& layer : layers) {
+    if (layer) visibleLayerIds.insert(layer->id().toString());
+   }
+
+   std::vector<CompositionNode> roots;
+   for (const auto& node : comp->nodeStore().nodes()) {
+    if (node.parentId.trimmed().isEmpty()) roots.push_back(node);
+   }
+   std::sort(roots.begin(), roots.end(),
+             [](const CompositionNode& left, const CompositionNode& right) {
+               return left.order > right.order;
+             });
+   for (const auto& root : roots) {
+    const bool standaloneContainer =
+        root.kind == CompositionNodeKind::GroupContainer &&
+        !comp->layerById(LayerID(root.id));
+    if (standaloneContainer) {
+      const QString groupKey = QStringLiteral("container::") + root.id;
+      const bool expanded = expandedByGroupKey.value(groupKey, true);
+      const auto childIds = comp->nodeStore().childrenOf(root.id);
+      const QString label = root.properties.value(QStringLiteral("displayName"))
+                                .toString(QStringLiteral("Group"));
+      VisibleRow containerRow;
+      containerRow.nodeId = root.id;
+      containerRow.hasChildren = !childIds.empty();
+      containerRow.expanded = expanded;
+      containerRow.kind = RowKind::Container;
+      containerRow.label = label;
+      containerRow.groupKey = groupKey;
+      containerRow.auxiliaryText = childIds.empty()
+          ? QStringLiteral("Empty Group")
+          : QStringLiteral("%1 items").arg(childIds.size());
+      containerRow.auxiliaryTone = LayerPresentationBadgeTone::Container;
+      visibleRows.push_back(std::move(containerRow));
+      if (expanded) {
+        for (const auto& childId : childIds) {
+          if (!visibleLayerIds.contains(childId)) continue;
+          QSet<QString> stack;
+          appendNode(comp->layerById(LayerID(childId)), 1, stack);
+        }
+      } else {
+        for (const auto& childId : childIds) emitted.insert(childId);
+      }
+      continue;
+    }
+    if (root.kind == CompositionNodeKind::Layer &&
+        visibleLayerIds.contains(root.id)) {
+      QSet<QString> stack;
+      appendNode(comp->layerById(LayerID(root.id)), 0, stack);
+    }
+   }
+
+   // Compatibility fallback for legacy or partially repaired node stores.
    for (const auto& layer : layers) {
     QSet<QString> stack;
     appendNode(layer, 0, stack);
@@ -3177,6 +3296,7 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
       const QString aId = a.layer ? a.layer->id().toString() : QString();
       const QString bId = b.layer ? b.layer->id().toString() : QString();
       if (aId != bId ||
+          a.nodeId != b.nodeId ||
           a.depth != b.depth ||
           a.hasChildren != b.hasChildren ||
           a.expanded != b.expanded ||
@@ -3258,6 +3378,7 @@ ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
   for (const auto& row : impl_->visibleRows) {
    TimelineRowDescriptor descriptor;
    descriptor.layerId = row.layer ? row.layer->id() : LayerID::Nil();
+   descriptor.nodeId = row.nodeId;
    descriptor.kind = row.kind;
    descriptor.label = row.label;
    descriptor.propertyPath = row.propertyPath;
@@ -3419,6 +3540,82 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
   const auto row = impl_->visibleRows[idx];
   auto layer = row.layer;
+  if (row.kind == RowKind::Container) {
+    impl_->clearMaskSelection();
+    impl_->selectedContainerId = row.nodeId;
+    if (event->button() == Qt::LeftButton) {
+      if (!row.groupKey.trimmed().isEmpty()) {
+        impl_->expandedByGroupKey[row.groupKey] = !row.expanded;
+        updateLayout();
+      }
+    } else if (event->button() == Qt::RightButton) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      const auto* node = comp ? comp->nodeStore().node(row.nodeId) : nullptr;
+      if (!comp || !node || node->kind != CompositionNodeKind::GroupContainer) {
+        event->ignore();
+        return;
+      }
+      const QString displayName = node->properties
+          .value(QStringLiteral("displayName")).toString(QStringLiteral("Group"));
+      QMenu menu(this);
+      QAction* renameAction = menu.addAction(QStringLiteral("グループ名を変更..."));
+      QAction* selectChildrenAction = menu.addAction(QStringLiteral("子レイヤーを選択"));
+      QAction* ungroupAction = menu.addAction(QStringLiteral("グループを解除"));
+      QAction* chosen = menu.exec(event->globalPos());
+      if (chosen == renameAction) {
+        bool accepted = false;
+        const QString nextName = QInputDialog::getText(
+            this, QStringLiteral("グループ名を変更"), QStringLiteral("名前"),
+            QLineEdit::Normal, displayName, &accepted).trimmed();
+        if (accepted && !nextName.isEmpty() && nextName != displayName) {
+          auto command = std::make_unique<RenameGroupContainerCommand>(
+              comp, row.nodeId, displayName, nextName);
+          bool applied = false;
+          if (auto* undo = UndoManager::instance()) {
+            applied = undo->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) updateLayout();
+        }
+      } else if (chosen == selectChildrenAction) {
+        if (auto* service = ArtifactProjectService::instance()) {
+          bool first = true;
+          for (const auto& childId : comp->groupContainerChildLayerIds(row.nodeId)) {
+            if (first) {
+              service->selectLayer(childId);
+              first = false;
+            } else if (auto* selection = ArtifactLayerSelectionManager::instance()) {
+              if (const auto child = comp->layerById(childId)) {
+                selection->addToSelection(child);
+              }
+            }
+          }
+        }
+      } else if (chosen == ungroupAction) {
+        const auto childIds = comp->groupContainerChildLayerIds(row.nodeId);
+        auto command = std::make_unique<RemoveGroupContainerCommand>(
+            comp, row.nodeId, displayName, childIds);
+        bool applied = false;
+        if (auto* undo = UndoManager::instance()) {
+          applied = undo->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied) {
+          impl_->selectedContainerId.clear();
+          updateLayout();
+        }
+      }
+    }
+    event->accept();
+    return;
+  }
+  if (event->button() == Qt::LeftButton) {
+    impl_->selectedContainerId.clear();
+  }
   if (!layer) {
     impl_->clearDragState();
     return;
@@ -7188,6 +7385,45 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     int y = i * rowH;
     const auto& row = impl_->visibleRows[i];
     auto l = row.layer;
+    if (row.kind == RowKind::Container) {
+      const QFont previousFont = p.font();
+      const int toggleX = nameStartX + row.depth * indent + 2;
+      const int toggleY = y + (rowH - toggleSize) / 2;
+      const bool selectedContainer = row.nodeId == impl_->selectedContainerId;
+      p.fillRect(0, y, width(), rowH, selectedContainer
+          ? mixColor(background, selection, 0.44)
+          : mixColor(background, surface, 0.55));
+      p.fillRect(0, y, 4, rowH, mixColor(background, accent, 0.85));
+      if (row.hasChildren) {
+        QPolygonF tri;
+        if (row.expanded) {
+          tri << QPointF(toggleX + 0.5, toggleY + 2.0)
+              << QPointF(toggleX + toggleSize - 0.5, toggleY + 2.0)
+              << QPointF(toggleX + toggleSize / 2.0, toggleY + toggleSize - 1.0);
+        } else {
+          tri << QPointF(toggleX + 2.0, toggleY + 0.5)
+              << QPointF(toggleX + 2.0, toggleY + toggleSize - 0.5)
+              << QPointF(toggleX + toggleSize - 1.0, toggleY + toggleSize / 2.0);
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(text.darker(25));
+        p.drawPolygon(tri);
+      }
+      QFont containerFont = p.font();
+      containerFont.setBold(true);
+      p.setFont(containerFont);
+      p.setPen(mixColor(text, accent, 0.28));
+      const int textX = toggleX + toggleSize + 6;
+      p.drawText(textX, y, std::max(20, width() - textX - 92), rowH,
+                 Qt::AlignVCenter | Qt::AlignLeft, row.label);
+      p.setPen(mixColor(text, surface, 0.38));
+      p.drawText(width() - 86, y, 78, rowH,
+                 Qt::AlignVCenter | Qt::AlignRight, row.auxiliaryText);
+      p.setFont(previousFont);
+      p.setPen(border.darker(120));
+      p.drawLine(0, y + rowH, width(), y + rowH);
+      continue;
+    }
     if (row.kind == RowKind::Transition) {
       const bool hovered = i == impl_->hoveredLayerIndex;
       const QColor barFill = hovered ? mixColor(surface, accent, 0.30)

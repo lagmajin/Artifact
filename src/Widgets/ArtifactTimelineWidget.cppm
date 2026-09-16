@@ -46,6 +46,7 @@ module;
 #include <QStackedWidget>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <limits>
 #include <cmath>
 #include <utility>
@@ -4609,6 +4610,9 @@ public:
   bool gpuTimelinePreviewEnabled_ = false;
   bool gpuTimelineSnapshotPending_ = false;
   quint64 gpuTimelineSnapshotGeneration_ = 0;
+  quint64 gpuTimelineStaticSnapshotGeneration_ = 0;
+  std::chrono::steady_clock::time_point lastGpuTimelineSnapshot_{};
+  QTimer *gpuTimelineSnapshotTimer_ = nullptr;
   // GPU static cache: rows, grid, clips and markers. Reused while geometry
   // and timelineVisualRevision() are unchanged; the dynamic tail (passing-
   // frame emphasis plus playhead) is rebuilt every tick.
@@ -4620,10 +4624,9 @@ public:
     int vpW = 0;
     int vpH = 0;
     quint64 revision = 0;
-    QVector<DiligentTimelineRectVisual> rects;
-    QVector<DiligentTimelineLineVisual> lines;
-    QVector<DiligentTimelineTriangleVisual> triangles;
-    QVector<DiligentTimelineTextVisual> texts;
+    QString excludedDragClipId;
+    bool keyframePreview = false;
+    DiligentTimelineVisualSnapshot snapshot;
   };
   GpuTimelineStaticCache gpuTimelineStatic_;
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
@@ -4790,36 +4793,20 @@ void ArtifactTimelineWidget::updateCacheVisuals()
         static_cast<int>(svc->ramPreviewRange().end()),
         svc->isRamPreviewEnabled());
     const auto summary = svc->ramPreviewSummary();
-    const auto currentFrame = svc->currentFrame().framePosition();
-    const auto currentState = svc->ramPreviewFrameState(currentFrame);
-    const auto currentPriority = svc->ramPreviewPriorityState(currentFrame);
-    const auto summaryPriorityBand = summary.currentPriorityBand;
-    const bool currentPending =
-        svc->isRamPreviewFramePendingBuild(currentFrame);
-    const QString currentNote = ramPreviewStatusNote(currentState);
-    const QString currentPriorityNote = summaryPriorityBand.trimmed().isEmpty()
-                                            ? ramPreviewPriorityNote(currentPriority)
-                                            : summaryPriorityBand.trimmed();
-    impl_->scrubBar_->setToolTip(
-        QStringLiteral("RAM preview cache | playable %1/%2 | requested %3 | pending %4 | next %5 | rangeReady %6 | progress %7 | playFallback %8 | failed %9 | inRam %10 | onDisk %11 | readyMissingImage %12 | current %13 | currentPending %14 | currentReady %15 | currentPlayable %16 | note %17 | priority %18")
+    QString cacheToolTip =
+        QStringLiteral("RAM Preview\n%1 of %2 frames playable · %3% ready")
             .arg(summary.playableFrames)
             .arg(summary.rangeFrames)
-            .arg(summary.requestedFrames)
-            .arg(summary.buildQueuePendingFrames)
-            .arg(summary.buildQueueNextFrame)
-            .arg(summary.buildRangeReady ? 1 : 0)
-            .arg(QString::number(summary.buildRangeProgress * 100.0f, 'f', 0) + QStringLiteral("%"))
-            .arg(summary.playbackFallbackWhilePlaying ? 1 : 0)
-            .arg(summary.failedFrames)
-            .arg(summary.inRamFrames)
-            .arg(summary.onDiskFrames)
-            .arg(summary.readyMissingImageFrames)
-            .arg(currentFrame)
-            .arg(currentPending ? 1 : 0)
-            .arg(currentState.ready ? 1 : 0)
-            .arg(currentState.playable ? 1 : 0)
-            .arg(currentNote)
-            .arg(currentPriorityNote));
+            .arg(QString::number(summary.buildRangeProgress * 100.0f, 'f', 0));
+    if (summary.buildQueuePendingFrames > 0) {
+      cacheToolTip += QStringLiteral("\n%1 frames building")
+                          .arg(summary.buildQueuePendingFrames);
+    }
+    if (summary.failedFrames > 0) {
+      cacheToolTip += QStringLiteral("\n%1 frames failed")
+                          .arg(summary.failedFrames);
+    }
+    impl_->scrubBar_->setToolTip(cacheToolTip);
   }
 }
 
@@ -7318,6 +7305,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           return;
         }
         ArtifactAudioScrubController::instance().stopScrub();
+        if (impl_->gpuTimelinePreviewEnabled_) {
+          // Immediately flush the final settle frame so the playhead is exact
+          buildGpuTimelineSnapshot();
+        }
         auto *playback = ArtifactPlaybackService::instance();
         if (!playback || playback->isPlaying()) {
           return;
@@ -7365,9 +7356,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                 FrameRange(FramePosition(start), FramePosition(start + duration)));
             return;
           }
+          const auto layer = comp->layerById(LayerID(event.clipId));
+          if (!layer || layer->isTimingLocked()) return;
+          const QVector<ArtifactAbstractLayerPtr> layers{layer};
+          const auto beforeSnapshots =
+              captureTimelineLayerStateSnapshots(comp, layers);
+          auto cmd = std::make_unique<MoveLayerToFrameCommand>(
+              impl_->compositionId_, layer->id(),
+              static_cast<qint64>(std::llround(event.startFrame)),
+              std::move(beforeSnapshots));
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::move(cmd));
+          } else {
+            cmd->redo();
+          }
         }
-        applyTimelineLayerMove(impl_->compositionId_, event.clipId,
-                               event.startFrame, 0.0);
       }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineClipSlideRequestedEvent>(
@@ -7412,9 +7415,23 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                 FrameRange(FramePosition(start), FramePosition(start + duration)));
             return;
           }
+          const auto layer = comp->layerById(LayerID(event.clipId));
+          if (!layer || layer->isTimingLocked()) return;
+          const QVector<ArtifactAbstractLayerPtr> layers{layer};
+          const auto beforeSnapshots =
+              captureTimelineLayerStateSnapshots(comp, layers);
+          auto cmd = std::make_unique<TrimLayerToFrameCommand>(
+              impl_->compositionId_, layer->id(),
+              static_cast<qint64>(std::llround(event.startFrame)),
+              std::max<qint64>(1, static_cast<qint64>(
+                  std::llround(event.durationFrame))),
+              std::move(beforeSnapshots));
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::move(cmd));
+          } else {
+            cmd->redo();
+          }
         }
-        applyTimelineLayerTrim(impl_->compositionId_, event.clipId,
-                               event.startFrame, event.durationFrame);
       }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineKeyframeMoveRequestedEvent>(
@@ -7888,6 +7905,25 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // undo-backed mutations until the curve and timeline interaction models are
   // fully moved behind the shared Diligent surface.
   impl_->gpuTimelineWindow_->setInputTarget(painterTrackView);
+  const QPointer<ArtifactTimelineTrackPainterView> wheelTarget(painterTrackView);
+  impl_->gpuTimelineWindow_->setWheelInputHandler(
+      [wheelTarget](const QPointF& position, const QPoint& angleDelta,
+                    const Qt::KeyboardModifiers modifiers) {
+        return wheelTarget && wheelTarget->handleNavigationWheel(
+            position, angleDelta, modifiers);
+      });
+  const QPointer<ArtifactTimelineTrackPainterView> panTarget(painterTrackView);
+  impl_->gpuTimelineWindow_->setPanInputHandler(
+      [panTarget](const Qt::MouseButton button, const QPointF& position,
+                  const Qt::MouseButtons buttons,
+                  const Qt::KeyboardModifiers modifiers) {
+        return panTarget && panTarget->handleNavigationPan(
+            button, position, buttons, modifiers);
+      });
+  const QPointer<ArtifactTimelineTrackPainterView> interactionTarget(painterTrackView);
+  impl_->gpuTimelineWindow_->setInteractionStateProvider([interactionTarget]() {
+    return interactionTarget && interactionTarget->isInteracting();
+  });
   impl_->gpuTimelineWindow_->setInputUpdatedCallback([this]() {
     if (impl_ && impl_->gpuTimelinePreviewEnabled_) {
       syncGpuTimelineSnapshot();
@@ -7895,7 +7931,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   });
   impl_->gpuTimelineContainer_ = QWidget::createWindowContainer(
       impl_->gpuTimelineWindow_, this);
-  impl_->gpuTimelineContainer_->setFocusPolicy(Qt::NoFocus);
+  impl_->gpuTimelineContainer_->setFocusPolicy(Qt::StrongFocus);
 
   impl_->gpuCurveWindow_ = new ArtifactDiligentTimelineRenderWindow();
   impl_->gpuCurveWindow_->setInputTarget(curveEditor);
@@ -8026,7 +8062,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                            kFollowMargin);
     if (playheadX < kFollowMargin || playheadX > rightMargin) {
       const double targetX = playheadX < kFollowMargin ? kFollowMargin : rightMargin;
-      impl_->painterTrackView_->setHorizontalOffset(
+      syncTimelineHorizontalOffset(
           std::max(0.0, visualFrame * ppf - targetX));
     }
     if (impl_->navigator_) {
@@ -8736,6 +8772,32 @@ void ArtifactTimelineWidget::refreshTracks() {
   }
   for (int rowIndex = 0; rowIndex < visibleRows.size(); ++rowIndex) {
     const auto &row = visibleRows[rowIndex];
+    if (row.kind == TimelineRowKind::Container && composition &&
+        !row.nodeId.trimmed().isEmpty()) {
+      const auto childIds = composition->groupContainerChildLayerIds(row.nodeId);
+      qint64 start = std::numeric_limits<qint64>::max();
+      qint64 end = std::numeric_limits<qint64>::min();
+      for (const auto& childId : childIds) {
+        const auto child = composition->layerById(childId);
+        if (!child) continue;
+        start = std::min(start, child->inPoint().framePosition());
+        end = std::max(end, child->outPoint().framePosition());
+      }
+      if (start != std::numeric_limits<qint64>::max() && end > start) {
+        ArtifactTimelineTrackPainterView::TrackClipVisual visual;
+        visual.clipId = row.nodeId;
+        visual.trackIndex = rowIndex;
+        visual.startFrame = static_cast<double>(start);
+        visual.durationFrame = static_cast<double>(end - start);
+        visual.trimMinStartFrame = visual.startFrame;
+        visual.trimMaxEndFrame = visual.startFrame + visual.durationFrame;
+        visual.title = row.label;
+        visual.fillColor = QColor(74, 85, 96);
+        visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::GroupContainer;
+        painterClips.push_back(std::move(visual));
+      }
+      continue;
+    }
     if (row.kind == TimelineRowKind::Transition &&
         !row.transitionId.trimmed().isEmpty()) {
       const auto transition = composition
@@ -9161,7 +9223,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     const double anchorFrame =
         (anchorX + impl_->painterTrackView_->horizontalOffset()) / oldPpf;
     impl_->painterTrackView_->setPixelsPerFrame(newPpf);
-    impl_->painterTrackView_->setHorizontalOffset(anchorFrame * newPpf - anchorX);
+    syncTimelineHorizontalOffset(anchorFrame * newPpf - anchorX);
     zoomLevelChanged(newPpf * 100.0);
     return true;
   };
@@ -10296,11 +10358,43 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
 void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
 {
   if (!impl_ || !impl_->gpuTimelineWindow_ ||
-      !impl_->painterTrackView_ || !impl_->gpuTimelinePreviewEnabled_ ||
-      impl_->gpuTimelineSnapshotPending_) {
+      !impl_->painterTrackView_ || !impl_->gpuTimelinePreviewEnabled_) {
+    return;
+  }
+
+  // Throttle continuous snapshot requests (e.g. during mouse scrubbing/dragging)
+  // to avoid flooding the GUI thread with snapshot rebuilds (~60 FPS / 16ms cadence).
+  constexpr auto kMinSnapshotInterval = std::chrono::milliseconds(16);
+  const auto now = std::chrono::steady_clock::now();
+  const auto elapsed = now - impl_->lastGpuTimelineSnapshot_;
+
+  if (elapsed < kMinSnapshotInterval) {
+    if (!impl_->gpuTimelineSnapshotTimer_) {
+      impl_->gpuTimelineSnapshotTimer_ = new QTimer(this);
+      impl_->gpuTimelineSnapshotTimer_->setSingleShot(true);
+      QObject::connect(impl_->gpuTimelineSnapshotTimer_, &QTimer::timeout, this,
+                       [this]() {
+                         if (impl_ && impl_->gpuTimelinePreviewEnabled_) {
+                           syncGpuTimelineSnapshot();
+                         }
+                       });
+    }
+    if (!impl_->gpuTimelineSnapshotTimer_->isActive()) {
+      const auto remainingMs = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              kMinSnapshotInterval - elapsed).count());
+      impl_->gpuTimelineSnapshotTimer_->start(std::max(1, remainingMs));
+    }
+    return;
+  }
+
+  if (impl_->gpuTimelineSnapshotPending_) {
     return;
   }
   impl_->gpuTimelineSnapshotPending_ = true;
+  if (impl_->gpuTimelineSnapshotTimer_ && impl_->gpuTimelineSnapshotTimer_->isActive()) {
+    impl_->gpuTimelineSnapshotTimer_->stop();
+  }
   QMetaObject::invokeMethod(
       this,
       [this]() {
@@ -10308,6 +10402,7 @@ void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
           return;
         }
         impl_->gpuTimelineSnapshotPending_ = false;
+        impl_->lastGpuTimelineSnapshot_ = std::chrono::steady_clock::now();
         buildGpuTimelineSnapshot();
       },
       Qt::QueuedConnection);
@@ -10526,13 +10621,18 @@ void ArtifactTimelineWidget::buildGpuCurveSnapshot()
   const QPointF playhead = editor->visualPoint(
       -1, static_cast<float>(editor->currentFrame()), 0.0f);
   if (playhead.x() >= plot.left() && playhead.x() <= plot.right()) {
-    const QColor playheadColor(239, 86, 78);
+    const QColor playheadColor = TimelinePlayheadDraw::playheadColor();
+    const QColor playheadCapColor(174, 184, 196);
     snapshot.lines.push_back({QPointF(playhead.x(), plot.top()),
                               QPointF(playhead.x(), plot.bottom()),
                               playheadColor, 2.0f});
     snapshot.triangles.push_back({QPointF(playhead.x() - 5.0, plot.top()),
                                   QPointF(playhead.x() + 5.0, plot.top()),
                                   QPointF(playhead.x(), plot.top() + 8.0),
+                                  playheadCapColor});
+    snapshot.triangles.push_back({QPointF(playhead.x() - 1.35, plot.top() + 1.0),
+                                  QPointF(playhead.x() + 1.35, plot.top() + 1.0),
+                                  QPointF(playhead.x(), plot.top() + 7.5),
                                   playheadColor});
   }
   impl_->gpuCurveWindow_->setSnapshot(std::move(snapshot));
@@ -10545,12 +10645,9 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     return;
   }
 
-  DiligentTimelineVisualSnapshot snapshot;
-  snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
   // Keep the timeline's editing field distinct from the surrounding charcoal
   // chrome.  The reference uses a cool, mid-slate grid field so timing marks
   // remain readable even when a composition has only one short layer span.
-  snapshot.background = QColor(25, 30, 34);
 
   const auto *view = impl_->painterTrackView_;
   const double ppf = std::max(0.001, view->pixelsPerFrame());
@@ -10568,6 +10665,10 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const auto& keyframeMarkers = view->keyframeMarkersView();
   const auto& compositionMarkers = view->compositionMarkersView();
   const quint64 visualRevision = view->timelineVisualRevision();
+  ArtifactTimelineTrackPainterView::TrackClipVisual dragClip;
+  const bool hasDragClip = view->activeDragClip(dragClip);
+  const QString dragClipId = hasDragClip ? dragClip.clipId : QString{};
+  const bool keyframePreview = view->isKeyframeEditing();
 
   QVector<double> trackTops(view->trackCount() + 1, -verticalOffset);
   for (int track = 0; track < view->trackCount(); ++track) {
@@ -10578,23 +10679,21 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const QColor playheadCapColor(174, 184, 196);
 
   // Static ABC (rows, grid, clips, markers) is reused while geometry and
-  // visual data are unchanged, so playback ticks only pay for the dynamic
-  // tail below. The QVector copies stay shared until the tail appends.
+  // visual data are unchanged, so playback ticks and playhead seeking only pay
+  // for the dynamic tail below.
   auto& staticCache = impl_->gpuTimelineStatic_;
   const bool staticHit =
-      !view->isInteracting() && staticCache.valid &&
+      staticCache.valid &&
       staticCache.ppf == ppf && staticCache.hOff == horizontalOffset &&
       staticCache.vOff == verticalOffset && staticCache.vpW == viewportWidth &&
       staticCache.vpH == viewportHeight &&
-      staticCache.revision == visualRevision;
-  if (staticHit) {
-    snapshot.rects = staticCache.rects;
-    snapshot.lines = staticCache.lines;
-    snapshot.triangles = staticCache.triangles;
-    snapshot.texts = staticCache.texts;
-    snapshot.lines.reserve(snapshot.lines.size() + 32);
-    snapshot.triangles.reserve(snapshot.triangles.size() + 16);
-  } else {
+      staticCache.revision == visualRevision &&
+      staticCache.excludedDragClipId == dragClipId &&
+      staticCache.keyframePreview == keyframePreview;
+  if (!staticHit) {
+  DiligentTimelineVisualSnapshot snapshot;
+  snapshot.generation = ++impl_->gpuTimelineStaticSnapshotGeneration_;
+  snapshot.background = QColor(25, 30, 34);
   // Reserve once for the visible timeline primitives. Snapshot construction is
   // coalesced, but it can still run during a scroll or playback update.
   snapshot.rects.reserve(view->trackCount() + clips.size() * 7);
@@ -10606,12 +10705,12 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   // The reference keeps the editing field visibly lighter than the layer
   // table.  Row alternation remains restrained; the blue-grey selected span
   // is the primary state landmark.
-  const QColor rowBase(27, 32, 36);
-  const QColor rowAlternate(30, 35, 39);
-  const QColor selectedRow(31, 50, 66);
-  const QColor separator(76, 86, 94, 126);
-  const QColor selectedClip(42, 122, 205);
-  const QColor selectionEdge(190, 220, 242);
+  const QColor rowBase(25, 30, 34);
+  const QColor rowAlternate(28, 33, 37);
+  const QColor selectedRow(29, 42, 52);
+  const QColor separator(70, 80, 87, 72);
+  const QColor selectedClip(39, 104, 169);
+  const QColor selectionEdge(171, 211, 238);
   const QColor selectedKey(228, 173, 83);
 
   for (int track = 0; track < view->trackCount(); ++track) {
@@ -10655,8 +10754,8 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   }
   const int mediumStep = std::max(1, majorStep / 2);
   const int minorStep = std::max(1, majorStep / 5);
-  QColor gridColor(93, 105, 114, 104);
-  QColor minorGridColor(82, 93, 101, 48);
+  QColor gridColor(91, 103, 111, 66);
+  QColor minorGridColor(80, 91, 99, 28);
   const int firstGridFrame =
       std::max(0, static_cast<int>(std::floor(firstFrame)));
   const int lastGridFrame = static_cast<int>(std::ceil(lastFrame));
@@ -10674,20 +10773,23 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   }
 
   for (const auto& clip : clips) {
+    if (hasDragClip && clip.clipId == dragClipId) {
+      continue;
+    }
     if (clip.trackIndex < 0 || clip.trackIndex >= view->trackCount()) {
       continue;
     }
     const double x = clip.startFrame * ppf - horizontalOffset;
     const double width = std::max(1.0, clip.durationFrame * ppf);
-    const bool isTransition = clip.kind ==
-        ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition;
+    const bool isRelationship =
+        clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition ||
+        clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::GroupContainer;
     const double trackHeight =
         static_cast<double>(view->trackHeight(clip.trackIndex));
-    const double height = isTransition
+    const double height = isRelationship
         ? std::min(16.0, std::max(10.0, trackHeight - 8.0))
-        // Leave a consistent four-pixel air gap above and below each clip.
-        // This stops a single-layer comp from reading as one giant blue row.
-        : std::max(12.0, trackHeight - 8.0);
+        // The approved mock uses substantial layer bars with a narrow gutter.
+        : std::max(14.0, trackHeight - 6.0);
     const double top = trackTops[clip.trackIndex] +
         (static_cast<double>(view->trackHeight(clip.trackIndex)) - height) * 0.5;
     if (x + width < 0.0 || x > viewportWidth ||
@@ -10696,11 +10798,11 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     }
     const QColor fill = clip.selected ? selectedClip : clip.fillColor;
     snapshot.rects.push_back({QRectF(x, top, width, height), fill});
-    if (!clip.title.isEmpty() && width >= 42.0 && height >= 14.0) {
+    if (!clip.title.isEmpty() && width >= 30.0 && height >= 14.0) {
       QColor labelColor(242, 246, 250, clip.selected ? 242 : 205);
       snapshot.texts.push_back(
-          {QPointF(x + 7.0, top + height * 0.68),
-           ArtifactCore::UniString(clip.title), labelColor, 11.0f});
+          {QPointF(x + 9.0, top + height * 0.69),
+           ArtifactCore::UniString(clip.title), labelColor, 10.5f});
     }
     QColor edge = clip.selected ? selectionEdge : fill.lighter(132);
     edge.setAlpha(clip.selected ? 235 : 180);
@@ -10710,15 +10812,15 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     highlight.setAlpha(clip.selected ? 245 : 178);
     snapshot.lines.push_back({QPointF(x, top + 0.5),
                               QPointF(x + width, top + 0.5), highlight,
-                              clip.selected ? 1.5f : 1.0f});
+                              1.0f});
     snapshot.lines.push_back({QPointF(x, top + height - 0.5),
                               QPointF(x + width, top + height - 0.5),
-                              highlight, clip.selected ? 1.5f : 1.0f});
+                              highlight, 1.0f});
     snapshot.lines.push_back({QPointF(x, top), QPointF(x, top + height),
-                              edge, clip.selected ? 2.0f : 1.0f});
+                              edge, clip.selected ? 1.5f : 1.0f});
     snapshot.lines.push_back({QPointF(x + width, top),
                               QPointF(x + width, top + height), edge,
-                              clip.selected ? 2.0f : 1.0f});
+                              clip.selected ? 1.5f : 1.0f});
     // Muted end caps make the in/out boundary visible at a glance without
     // relying on an always-on selection outline.  The brighter caps remain
     // reserved for an actively selected clip.
@@ -10758,6 +10860,9 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   }
 
   for (const auto& marker : keyframeMarkers) {
+    if (keyframePreview && marker.selected) {
+      continue;
+    }
     if (marker.trackIndex < 0 || marker.trackIndex >= view->trackCount()) {
       continue;
     }
@@ -10828,21 +10933,58 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     staticCache.vpW = viewportWidth;
     staticCache.vpH = viewportHeight;
     staticCache.revision = visualRevision;
-    staticCache.rects = snapshot.rects;
-    staticCache.lines = snapshot.lines;
-    staticCache.triangles = snapshot.triangles;
-    staticCache.texts = snapshot.texts;
+    staticCache.excludedDragClipId = dragClipId;
+    staticCache.keyframePreview = keyframePreview;
+    staticCache.snapshot = std::move(snapshot);
+    impl_->gpuTimelineWindow_->setStaticSnapshot(staticCache.snapshot);
   }
 
   // Dynamic tail: current-frame keyframe emphasis plus playhead. Runs on
-  // every tick; static vectors above stay shared until these appends detach.
+  // every tick and is transferred independently from static geometry.
+  DiligentTimelineVisualSnapshot snapshot;
+  snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
+  snapshot.background = QColor(25, 30, 34);
   const double currentFrame = view->currentFrame();
   const QColor selectedKeyDynamic(228, 173, 83);
+  if (hasDragClip && dragClip.trackIndex >= 0 &&
+      dragClip.trackIndex < view->trackCount()) {
+    const double x = dragClip.startFrame * ppf - horizontalOffset;
+    const double width = std::max(1.0, dragClip.durationFrame * ppf);
+    const bool relationship =
+        dragClip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition ||
+        dragClip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::GroupContainer;
+    const double trackHeight =
+        static_cast<double>(view->trackHeight(dragClip.trackIndex));
+    const double height = relationship
+        ? std::min(16.0, std::max(10.0, trackHeight - 8.0))
+        : std::max(14.0, trackHeight - 6.0);
+    const double top = trackTops[dragClip.trackIndex] + (trackHeight - height) * 0.5;
+    if (x + width >= 0.0 && x <= viewportWidth &&
+        top + height >= 0.0 && top <= viewportHeight) {
+      const QColor fill = dragClip.selected ? QColor(39, 104, 169)
+                                            : dragClip.fillColor;
+      QColor edge(171, 211, 238, 235);
+      snapshot.rects.push_back({QRectF(x, top, width, height), fill});
+      snapshot.lines.push_back({QPointF(x, top + 0.5),
+                                QPointF(x + width, top + 0.5), edge, 1.5f});
+      snapshot.lines.push_back({QPointF(x, top + height - 0.5),
+                                QPointF(x + width, top + height - 0.5), edge, 1.5f});
+      snapshot.lines.push_back({QPointF(x, top), QPointF(x, top + height), edge, 1.5f});
+      snapshot.lines.push_back({QPointF(x + width, top),
+                                QPointF(x + width, top + height), edge, 1.5f});
+      if (!dragClip.title.isEmpty() && width >= 30.0 && height >= 14.0) {
+        snapshot.texts.push_back({QPointF(x + 9.0, top + height * 0.69),
+                                  ArtifactCore::UniString(dragClip.title),
+                                  QColor(242, 246, 250), 10.5f});
+      }
+    }
+  }
   for (const auto& marker : keyframeMarkers) {
-    if (marker.selected) {
+    const bool dynamicSelected = keyframePreview && marker.selected;
+    if (!dynamicSelected && marker.selected) {
       continue;
     }
-    if (std::abs(marker.frame - currentFrame) >= 0.05) {
+    if (!dynamicSelected && std::abs(marker.frame - currentFrame) >= 0.05) {
       continue;
     }
     if (marker.trackIndex < 0 || marker.trackIndex >= view->trackCount()) {
@@ -10878,11 +11020,14 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   // vertical line crosses densely populated keyframe rows.
   snapshot.triangles.push_back({QPointF(playheadX - 6.0, 0.0),
                                 QPointF(playheadX + 6.0, 0.0),
+                                QPointF(playheadX, 7.0), playheadCapColor});
+  snapshot.triangles.push_back({QPointF(playheadX - 1.5, 1.0),
+                                QPointF(playheadX + 1.5, 1.0),
                                 QPointF(playheadX, 7.0), playheadColor});
   snapshot.lines.push_back({QPointF(playheadX, 0.0),
                             QPointF(playheadX, viewportHeight),
                             playheadColor, 2.0f});
-  impl_->gpuTimelineWindow_->setSnapshot(std::move(snapshot));
+  impl_->gpuTimelineWindow_->setDynamicSnapshot(std::move(snapshot));
 }
 
 void ArtifactTimelineWidget::setGpuTimelinePreviewEnabled(const bool enabled)
@@ -10966,7 +11111,7 @@ void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
                                        static_cast<double>(impl_->painterTrackView_->width()) -
                                            kFollowMargin);
       const double targetOffset = clamped * ppf - targetX;
-      impl_->painterTrackView_->setHorizontalOffset(std::max(0.0, targetOffset));
+      syncTimelineHorizontalOffset(std::max(0.0, targetOffset));
     }
   }
   if (impl_->scrubBar_) {
@@ -11007,9 +11152,12 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   }
 
   if (impl_->rightPanel_) {
-    setTimelineRightPanelPlayheadOverlayEnabled(
-        impl_->rightPanel_, !impl_->graphEditorVisible_);
-    syncTimelineRightPanelPlayheadOverlay(impl_->rightPanel_);
+    const bool overlayEnabled =
+        !impl_->graphEditorVisible_ && !impl_->gpuTimelinePreviewEnabled_;
+    setTimelineRightPanelPlayheadOverlayEnabled(impl_->rightPanel_, overlayEnabled);
+    if (overlayEnabled) {
+      syncTimelineRightPanelPlayheadOverlay(impl_->rightPanel_);
+    }
   }
 }
 

@@ -9378,10 +9378,11 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
     weight->setSoftRange(0.0, 1.0);
     weight->setStep(0.01);
     animationGroup.addProperty(weight);
+    // Do not instantiate generic interpolation merely to label an inspector
+    // field. Frame evaluation stays in the renderer and animation editor.
     auto value = makeProp(prefix + QStringLiteral(".value"), PropertyType::Float,
-                          static_cast<double>(animationLayer.values.at(
-                              FramePosition(currentFrame()))), -131);
-    value->setDisplayLabel(QStringLiteral("Value (Current Frame)"));
+                          static_cast<double>(animationLayer.values.current()), -131);
+    value->setDisplayLabel(QStringLiteral("Value"));
     value->setSoftRange(0.0, 1.0);
     value->setStep(0.01);
     animationGroup.addProperty(value);
@@ -9433,9 +9434,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       weight->setStep(0.01);
       animationGroup.addProperty(weight);
       auto value = makeProp(prefix + QStringLiteral(".value"), PropertyType::Float,
-                            static_cast<double>(animationLayer.values.at(
-                                FramePosition(currentFrame()))), -121);
-      value->setDisplayLabel(QStringLiteral("Value (Current Frame)"));
+                            static_cast<double>(animationLayer.values.current()), -121);
+      value->setDisplayLabel(QStringLiteral("Value"));
       value->setStep(0.01);
       animationGroup.addProperty(value);
       auto interpolation = makeProp(

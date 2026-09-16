@@ -3723,6 +3723,121 @@ CompositionNodeStore& ArtifactAbstractComposition::nodeStore()
   return impl_->nodeStore_;
 }
 
+QString ArtifactAbstractComposition::createGroupContainer(
+    const QString& displayName, const QVector<LayerID>& childLayerIds,
+    const QString& preferredId)
+{
+  if (childLayerIds.isEmpty()) return {};
+  QSet<QString> uniqueChildren;
+  for (const auto& childId : childLayerIds) {
+    const QString childKey = childId.toString().trimmed();
+    const auto* childNode = impl_->nodeStore_.node(childKey);
+    if (childKey.isEmpty() || !childNode ||
+        childNode->kind != CompositionNodeKind::Layer ||
+        !childNode->parentId.trimmed().isEmpty() ||
+        uniqueChildren.contains(childKey)) {
+      return {};
+    }
+    uniqueChildren.insert(childKey);
+  }
+
+  QString containerId = preferredId.trimmed();
+  if (containerId.isEmpty()) {
+    containerId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  }
+  if (impl_->nodeStore_.contains(containerId)) return {};
+
+  int nextOrder = 0;
+  for (const auto& existing : impl_->nodeStore_.nodes()) {
+    nextOrder = std::max(nextOrder, existing.order + 1);
+  }
+  CompositionNode node;
+  node.id = containerId;
+  node.kind = CompositionNodeKind::GroupContainer;
+  node.order = nextOrder;
+  node.properties[QStringLiteral("displayName")] =
+      displayName.trimmed().isEmpty() ? QStringLiteral("Group")
+                                      : displayName.trimmed();
+  node.properties[QStringLiteral("expanded")] = true;
+  node.properties[QStringLiteral("outputMode")] = 0;
+  node.properties[QStringLiteral("activeChildId")] = QString{};
+  node.properties[QStringLiteral("enabled")] = true;
+  node.properties[QStringLiteral("opacity")] = 1.0;
+  node.properties[QStringLiteral("blendMode")] = QStringLiteral("normal");
+  if (!impl_->nodeStore_.addNode(node)) return {};
+
+  QVector<QString> attached;
+  attached.reserve(childLayerIds.size());
+  for (const auto& childId : childLayerIds) {
+    const QString childKey = childId.toString();
+    if (!impl_->nodeStore_.setParent(childKey, containerId)) {
+      for (const auto& attachedId : attached) {
+        impl_->nodeStore_.setParent(attachedId, QString{});
+      }
+      impl_->nodeStore_.removeNode(containerId);
+      return {};
+    }
+    attached.push_back(childKey);
+  }
+
+  impl_->invalidateThumbnailCache();
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), containerId, LayerChangedEvent::ChangeType::Modified});
+  return containerId;
+}
+
+bool ArtifactAbstractComposition::removeGroupContainer(const QString& containerId)
+{
+  const QString normalized = containerId.trimmed();
+  const auto* node = impl_->nodeStore_.node(normalized);
+  if (!node || node->kind != CompositionNodeKind::GroupContainer ||
+      impl_->layerMultiIndex_.findById(LayerID(normalized))) {
+    return false;
+  }
+  if (!impl_->nodeStore_.removeNode(normalized)) return false;
+  impl_->invalidateThumbnailCache();
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), normalized, LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+bool ArtifactAbstractComposition::setGroupContainerDisplayName(
+    const QString& containerId, const QString& displayName)
+{
+  const QString normalizedId = containerId.trimmed();
+  const QString normalizedName = displayName.trimmed();
+  const auto* node = impl_->nodeStore_.node(normalizedId);
+  if (!node || node->kind != CompositionNodeKind::GroupContainer ||
+      impl_->layerMultiIndex_.findById(LayerID(normalizedId)) ||
+      normalizedName.isEmpty() ||
+      node->properties.value(QStringLiteral("displayName")).toString() == normalizedName) {
+    return false;
+  }
+  if (!impl_->nodeStore_.setProperties(
+          normalizedId,
+          QJsonObject{{QStringLiteral("displayName"), normalizedName}})) {
+    return false;
+  }
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), normalizedId, LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+QVector<LayerID> ArtifactAbstractComposition::groupContainerChildLayerIds(
+    const QString& containerId) const
+{
+  QVector<LayerID> result;
+  if (!isGroupContainerNode(containerId)) return result;
+  for (const auto& childKey : impl_->nodeStore_.childrenOf(containerId.trimmed())) {
+    const LayerID childId(childKey);
+    if (impl_->layerMultiIndex_.findById(childId)) result.push_back(childId);
+  }
+  return result;
+}
+
 bool ArtifactAbstractComposition::isGroupContainerNode(const QString& id) const
 {
   const QString normalized = id.trimmed();
@@ -5830,4 +5945,3 @@ QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
 }
 
 };
-

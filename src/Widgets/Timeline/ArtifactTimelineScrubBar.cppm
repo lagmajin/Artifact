@@ -456,7 +456,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
           ? impl_->visualFrame_
           : static_cast<double>(impl_->currentFrame_.framePosition());
   const int currentX = impl_->resolveFrameToX(std::max(0.0, visualFrame), w);
-  const int railHalfH = std::max(3, h / 7);
+  const int railHalfH = std::max(2, h / 10);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
   const int trackLeft = impl_->trackLeft(w);
@@ -466,9 +466,9 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 
   const QColor bgTop = theme.background.darker(112);
   const QColor bgBottom = theme.background.darker(124);
-  const QColor railColor = theme.surface.darker(112);
+  const QColor railColor = theme.surface.darker(124);
   const QColor railBorder = theme.border;
-  const QColor cacheBaseColor(84, 198, 120);
+  const QColor cacheBaseColor(75, 190, 112);
   
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
@@ -543,29 +543,20 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
    if (cacheRect.width() > 1) {
     QColor requestedColor(218, 166, 76);
-    requestedColor.setAlpha(68);
+    requestedColor.setAlpha(42);
     p.setPen(Qt::NoPen);
     p.setBrush(requestedColor);
     p.drawRoundedRect(cacheRect.adjusted(0, 1, -1, -1), railHalfH, railHalfH);
    }
   }
 
-  const auto drawFrameRuns = [&](const std::vector<bool>& bitmap,
-                                 QColor color,
-                                 const int topInset,
-                                 const int bottomInset) {
-   const int frameLimit = std::min(static_cast<int>(bitmap.size()),
-                                   std::max(0, impl_->totalFrames_));
-   bool hasAnyFrame = false;
-   for (int f = 0; f < frameLimit; ++f) {
-    if (bitmap[f]) {
-     hasAnyFrame = true;
-     break;
-    }
-   }
-   if (!hasAnyFrame) {
-    return;
-   }
+   const auto drawFrameRuns = [&](const std::vector<bool>& bitmap,
+                                  QColor color,
+                                  const int topInset,
+                                  const int bottomInset) {
+    // Emptiness is pre-checked by callers via the cached has*Bitmap_ flags.
+    const int frameLimit = std::min(static_cast<int>(bitmap.size()),
+                                    std::max(0, impl_->totalFrames_));
 
    p.setPen(Qt::NoPen);
    p.setBrush(color);

@@ -47,6 +47,7 @@ export namespace Artifact
   enum class TimelineRowKind
   {
    Layer,
+   Container,
    Group,
    Property,
    // A timeline-owned relationship row. It intentionally has no layer
@@ -70,6 +71,7 @@ export namespace Artifact
   struct TimelineRowDescriptor
   {
    LayerID layerId;
+   QString nodeId;
    TimelineRowKind kind = TimelineRowKind::Layer;
    QString label;
    QString propertyPath;

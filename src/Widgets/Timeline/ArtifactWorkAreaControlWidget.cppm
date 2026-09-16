@@ -192,14 +192,18 @@ namespace Artifact
 
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
-  // The work range is intentionally a solid ochre landmark, matching the
-  // ruler bar while keeping the playhead's coral state visually separate.
-  const QColor workAreaColor(194, 143, 45);
+  // Keep the range subordinate to clips and keyframes. Warm ochre is reserved
+  // for direct manipulation so the idle bar matches the approved slate mock.
+  const bool rangeActive = impl_->draggingLeft || impl_->draggingRight ||
+                           impl_->draggingRange || impl_->hoveringLeft ||
+                           impl_->hoveringRight || impl_->hoveringRange;
+  const QColor workAreaColor = rangeActive ? QColor(190, 143, 54)
+                                           : QColor(94, 108, 120);
   p.fillRect(rangeRect, QColor(workAreaColor.red(), workAreaColor.green(),
                                workAreaColor.blue(), 232));
 
   // Bottom border for work area
-  p.setPen(QPen(workAreaColor.lighter(118), 2));
+  p.setPen(QPen(workAreaColor.lighter(rangeActive ? 118 : 132), 1));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   const double durationFrames =
@@ -229,7 +233,8 @@ namespace Artifact
     p.setPen(QColor(0, 0, 0, 150));
     p.drawText(labelRect.translated(0, 1), Qt::AlignCenter,
                fm.elidedText(durationText, Qt::ElideRight, labelRect.width()));
-    p.setPen(QColor(255, 242, 210, 235));
+    p.setPen(rangeActive ? QColor(255, 242, 210, 235)
+                         : QColor(232, 238, 243, 226));
     p.drawText(labelRect, Qt::AlignCenter,
                fm.elidedText(durationText, Qt::ElideRight, labelRect.width()));
   }
@@ -240,11 +245,12 @@ namespace Artifact
   const int handleHeight = std::max(1, height() - 2);
   const auto drawHandle = [&p, &theme, &workAreaColor](
                               const QRectF& handleRect, bool highlighted) {
-   p.setBrush(highlighted ? workAreaColor.lighter(128)
-                          : workAreaColor.lighter(112));
+   p.setBrush(highlighted ? QColor(210, 165, 76)
+                          : workAreaColor.lighter(126));
    p.setPen(QPen(theme.border.darker(145), 1));
    p.drawRoundedRect(handleRect, 2, 2);
-   p.setPen(QPen(QColor(63, 49, 28), 2));
+   p.setPen(QPen(highlighted ? QColor(70, 52, 24)
+                             : QColor(45, 54, 61), 2));
    const qreal centerX = handleRect.center().x();
    const qreal gripTop = handleRect.top() + 6.0;
    const qreal gripBottom = handleRect.bottom() - 6.0;
@@ -264,14 +270,17 @@ namespace Artifact
 
   const float safeLastFrame = std::max(1.0f, totalFrames - 1.0f);
   const float clampedFrame = std::clamp(currentFrame, 0.0f, safeLastFrame);
+  // The playhead is viewport chrome, not a work-range handle. Keep it on the
+  // same zoomed/scrolled ruler mapping as the scrub bar and track surface.
+  // Only use full-duration normalization before the ruler mapping is ready.
   double playheadX = 0.0;
   if (impl_->rulerPixelsPerFrame > 0.001) {
     playheadX = static_cast<double>(clampedFrame) *
                     impl_->rulerPixelsPerFrame -
                 impl_->rulerHorizontalOffset;
   } else {
-   const float playheadNorm =
-       std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
+    const float playheadNorm =
+        std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
     playheadX = static_cast<double>(handleHalfW) +
                 static_cast<double>(playheadNorm) * usableWidth;
   }
