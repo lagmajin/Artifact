@@ -4628,7 +4628,6 @@ public:
     bool keyframePreview = false;
   };
   GpuTimelineStaticCache gpuTimelineStatic_;
-  QVector<double> gpuTimelineTrackTops_;
   bool gpuTimelineDynamicValid_ = false;
   double gpuTimelineDynamicFrame_ = 0.0;
   double gpuTimelineDynamicPpf_ = 0.0;
@@ -10698,17 +10697,13 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
       staticCache.revision == visualRevision &&
       staticCache.excludedDragClipId == dragClipId &&
       staticCache.keyframePreview == keyframePreview;
-  if (!staticHit ||
-      impl_->gpuTimelineTrackTops_.size() != view->trackCount() + 1) {
-    auto& trackTops = impl_->gpuTimelineTrackTops_;
-    trackTops.resize(view->trackCount() + 1);
-    trackTops[0] = -verticalOffset;
-    for (int track = 0; track < view->trackCount(); ++track) {
-      trackTops[track + 1] =
-          trackTops[track] + std::max(1, view->trackHeight(track));
-    }
+  const auto& trackTops = view->trackTopsView();
+  if (trackTops.size() != view->trackCount()) {
+    return;
   }
-  const auto& trackTops = impl_->gpuTimelineTrackTops_;
+  const auto trackTop = [&](const int track) {
+    return static_cast<double>(trackTops[track]) - verticalOffset;
+  };
   if (!staticHit) {
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineStaticSnapshotGeneration_;
@@ -10744,7 +10739,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   }
 
   for (int track = 0; track < view->trackCount(); ++track) {
-    const double top = trackTops[track];
+    const double top = trackTop(track);
     const double height = std::max(1, view->trackHeight(track));
     if (top + height < 0.0 || top > viewportHeight) {
       continue;
@@ -10814,7 +10809,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
         ? std::min(16.0, std::max(10.0, trackHeight - 8.0))
         // The approved mock uses substantial layer bars with a narrow gutter.
         : std::max(14.0, trackHeight - 6.0);
-    const double top = trackTops[clip.trackIndex] +
+    const double top = trackTop(clip.trackIndex) +
         (static_cast<double>(view->trackHeight(clip.trackIndex)) - height) * 0.5;
     if (x + width < 0.0 || x > viewportWidth ||
         top + height < 0.0 || top > viewportHeight) {
@@ -10891,7 +10886,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
       continue;
     }
     const double x = marker.frame * ppf - horizontalOffset;
-    const double y = trackTops[marker.trackIndex] +
+    const double y = trackTop(marker.trackIndex) +
                      view->trackHeight(marker.trackIndex) * 0.5;
     constexpr double radius = 4.0;
     if (x < -radius || x > viewportWidth + radius ||
@@ -11006,7 +11001,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     const double height = relationship
         ? std::min(16.0, std::max(10.0, trackHeight - 8.0))
         : std::max(14.0, trackHeight - 6.0);
-    const double top = trackTops[dragClip.trackIndex] + (trackHeight - height) * 0.5;
+    const double top = trackTop(dragClip.trackIndex) + (trackHeight - height) * 0.5;
     if (x + width >= 0.0 && x <= viewportWidth &&
         top + height >= 0.0 && top <= viewportHeight) {
       const QColor fill = dragClip.selected ? QColor(39, 104, 169)
@@ -11039,7 +11034,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
       continue;
     }
     const double x = marker.frame * ppf - horizontalOffset;
-    const double y = trackTops[marker.trackIndex] +
+    const double y = trackTop(marker.trackIndex) +
                      view->trackHeight(marker.trackIndex) * 0.5;
     constexpr double radius = 4.0;
     if (x < -radius || x > viewportWidth + radius ||

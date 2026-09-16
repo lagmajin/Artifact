@@ -6434,6 +6434,10 @@ ArtifactTimelineTrackPainterView::clipsView() const {
   return impl_->clips_;
 }
 
+const QVector<int>& ArtifactTimelineTrackPainterView::trackTopsView() const {
+  return impl_->trackTops_;
+}
+
 QSize ArtifactTimelineTrackPainterView::minimumSizeHint() const {
   int h = 0;
   for (int i = 0; i < impl_->trackHeights_.size(); ++i) {

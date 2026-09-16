@@ -224,6 +224,7 @@ export namespace Artifact
                           bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
   const QVector<TrackClipVisual>& clipsView() const;
+  const QVector<int>& trackTopsView() const;
 
  public:
   void clipSelected(const QString& clipId, const LayerID& layerId);
