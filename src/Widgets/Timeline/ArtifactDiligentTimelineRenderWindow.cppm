@@ -180,12 +180,16 @@ public:
         RenderConfig::hdrDisplayEnabled()
             ? TEX_FORMAT_RGBA16_FLOAT
             : TEX_FORMAT_RGBA8_UNORM_SRGB;
+    // 2D-only surface: no depth buffer (render uses a null DSV throughout).
+    // IsPrimary stays true so this device's stale resources are released on
+    // its own Present; see SwapChainDesc docs before touching it.
+    swapChainDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
     swapChainDesc.Width = static_cast<Uint32>(
         std::max(1, qRound(window->width() * window->devicePixelRatio())));
     swapChainDesc.Height = static_cast<Uint32>(
         std::max(1, qRound(window->height() * window->devicePixelRatio())));
 
-    if (sharedRenderDeviceType() == RENDER_DEVICE_TYPE_VULKAN) {
+    if (device_->GetDeviceInfo().Type == RENDER_DEVICE_TYPE_VULKAN) {
       if (auto* factory = resolveTimelineVkFactory()) {
         factory->CreateSwapChainVk(device_, immediateContext_, swapChainDesc,
                                    nativeWindow, &swapChain_);
