@@ -178,6 +178,12 @@ export namespace Artifact
   void setCompositionMarkers(const QVector<CompositionMarkerVisual>& markers);
   QVector<KeyframeMarkerVisual> keyframeMarkers() const;
   const QVector<KeyframeMarkerVisual>& keyframeMarkersView() const;
+  const QVector<CompositionMarkerVisual>& compositionMarkersView() const;
+  // Bumped on every visual-data mutation the GPU snapshot consumes.
+  quint64 timelineVisualRevision() const;
+  // True while a pointer gesture may be mutating visuals live.
+  bool isInteracting() const;
+  void touchTimelineVisuals();
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;
   void selectAllKeyframeMarkers();

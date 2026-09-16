@@ -4489,6 +4489,8 @@ public:
   QVector<QVector<int>> clipIndicesByTrack_;
   QVector<CompositionMarkerVisual> compositionMarkers_;
   QVector<TimelineRowDescriptor> trackRows_;
+  // GPU snapshot cache key: bumped on every visual-data mutation below.
+  quint64 visualRevision_ = 0;
 
   // ドラッグ / ホバー状態
   DragMode dragMode_ = DragMode::None;
@@ -4891,6 +4893,7 @@ void ArtifactTimelineTrackPainterView::setPropertyChannelFilter(
   if (impl_->propertyChannelFilter_ == filter) return;
   impl_->propertyChannelFilter_ = filter;
   impl_->lastSyncedComposition_ = nullptr;
+  touchTimelineVisuals();
   update();
 }
 
@@ -4904,6 +4907,7 @@ void ArtifactTimelineTrackPainterView::setSelectedPropertyPaths(
   if (impl_->selectedPropertyPaths_ == propertyPaths) return;
   impl_->selectedPropertyPaths_ = propertyPaths;
   impl_->lastSyncedComposition_ = nullptr;
+  touchTimelineVisuals();
   update();
 }
 
@@ -4918,6 +4922,7 @@ void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
     return;
   }
   impl_->selectionSyncDirty_ = true;
+  touchTimelineVisuals();
   const int oldSize = impl_->trackHeights_.size();
   impl_->trackHeights_.resize(sanitized);
   for (int i = oldSize; i < sanitized; ++i) {
@@ -4954,6 +4959,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeights(
   }
 
   impl_->selectionSyncDirty_ = true;
+  touchTimelineVisuals();
   impl_->trackHeights_.resize(sanitizedCount);
   for (int i = 0; i < sanitizedCount; ++i) {
     impl_->trackHeights_[i] =
@@ -4976,6 +4982,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeight(const int trackIndex,
     return;
   }
   impl_->selectionSyncDirty_ = true;
+  touchTimelineVisuals();
   impl_->trackHeights_[trackIndex] = sanitized;
   impl_->rebuildTrackTopCache();
   impl_->rebuildMarkerCaches();
@@ -4997,6 +5004,7 @@ void ArtifactTimelineTrackPainterView::clearClips() {
   impl_->clips_.clear();
   impl_->rebuildClipCaches();
   impl_->selectionSyncDirty_ = true;
+  touchTimelineVisuals();
   update();
 }
 
@@ -5008,6 +5016,7 @@ void ArtifactTimelineTrackPainterView::setClips(
   impl_->clips_ = clips;
   impl_->rebuildClipCaches();
   impl_->selectionSyncDirty_ = true;
+  touchTimelineVisuals();
   update();
 }
 
@@ -5019,6 +5028,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
     if (reconcileMarkerSelection(impl_->keyframeMarkers_,
                                  impl_->selectedMarkerKeys_)) {
       impl_->rebuildMarkerCaches();
+      touchTimelineVisuals();
       keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       update();
     }
@@ -5026,6 +5036,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
   }
   impl_->keyframeMarkers_ = markers;
   impl_->rebuildMarkerCaches();
+  touchTimelineVisuals();
   const bool selectionChanged =
       reconcileMarkerSelection(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
   impl_->selectionSyncDirty_ = false;
@@ -5038,6 +5049,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
 void ArtifactTimelineTrackPainterView::setCompositionMarkers(
     const QVector<CompositionMarkerVisual>& markers) {
   impl_->compositionMarkers_ = markers;
+  touchTimelineVisuals();
   update();
 }
 
@@ -5049,6 +5061,30 @@ ArtifactTimelineTrackPainterView::keyframeMarkers() const {
 const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>&
 ArtifactTimelineTrackPainterView::keyframeMarkersView() const {
   return impl_->keyframeMarkers_;
+}
+
+const QVector<ArtifactTimelineTrackPainterView::CompositionMarkerVisual>&
+ArtifactTimelineTrackPainterView::compositionMarkersView() const {
+  return impl_->compositionMarkers_;
+}
+
+quint64 ArtifactTimelineTrackPainterView::timelineVisualRevision() const {
+  return impl_ ? impl_->visualRevision_ : 0;
+}
+
+bool ArtifactTimelineTrackPainterView::isInteracting() const {
+  if (!impl_) {
+    return false;
+  }
+  return impl_->dragMode_ != DragMode::None || impl_->panning_ ||
+         impl_->scrubDragging_ || impl_->draggingHandle_ ||
+         impl_->draggingMarker_ || impl_->marqueeSelecting_;
+}
+
+void ArtifactTimelineTrackPainterView::touchTimelineVisuals() {
+  if (impl_) {
+    ++impl_->visualRevision_;
+  }
 }
 
 QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
@@ -6330,6 +6366,7 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
   }
   if (changed || selectionChanged) {
     impl_->rebuildMarkerCaches();
+    touchTimelineVisuals();
   }
 
   if (changed) {
@@ -8366,6 +8403,9 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
+  // Any release may have committed visual data (drags, menus, toggles);
+  // invalidate the GPU static cache once instead of auditing every path.
+  touchTimelineVisuals();
   bool undoAccepted = true;
   if (event->button() == Qt::MiddleButton && impl_->panning_) {
     impl_->panning_ = false;
@@ -10751,6 +10791,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         if (applied && clipHit.clipIndex >= 0 &&
             clipHit.clipIndex < impl_->clips_.size()) {
           impl_->clips_[clipHit.clipIndex].audioMuted = afterMuted;
+          touchTimelineVisuals();
           update();
         }
       }

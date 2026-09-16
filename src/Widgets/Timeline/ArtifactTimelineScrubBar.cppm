@@ -71,9 +71,14 @@ namespace Artifact
   bool cacheRangeVisible_ = false;
   int cacheRangeStart_ = 0;
   int cacheRangeEnd_ = 0;
-  std::vector<bool> cacheBitmap_;
-  std::vector<bool> failedBitmap_;
-  std::vector<bool> onDiskBitmap_;
+   std::vector<bool> cacheBitmap_;
+   std::vector<bool> failedBitmap_;
+   std::vector<bool> onDiskBitmap_;
+   // Paint fast path: bitmap emptiness cached in setters so paintEvent never
+   // scans full-frame bitmaps per tick. Mutated only in the setters below.
+   bool hasCacheBitmap_ = false;
+   bool hasFailedBitmap_ = false;
+   bool hasOnDiskBitmap_ = false;
   int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
@@ -303,10 +308,11 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 
  void ArtifactTimelineScrubBar::setCacheBitmap(const std::vector<bool>& bitmap)
  {
-  if (impl_->cacheBitmap_ != bitmap) {
-   impl_->cacheBitmap_ = bitmap;
-   const bool hasCache = std::any_of(bitmap.begin(), bitmap.end(),
-                                     [](const bool cached) { return cached; });
+   if (impl_->cacheBitmap_ != bitmap) {
+    impl_->cacheBitmap_ = bitmap;
+    const bool hasCache = std::any_of(bitmap.begin(), bitmap.end(),
+                                      [](const bool cached) { return cached; });
+    impl_->hasCacheBitmap_ = hasCache;
    setAccessibleDescription(hasCache
        ? QStringLiteral("Scrub the timeline and review cached frame ranges.")
        : QStringLiteral("Scrub the timeline. No cached frames are available."));
@@ -325,15 +331,17 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   if (!changed) {
    return;
   }
-  impl_->cacheBitmap_ = readyBitmap;
-  impl_->failedBitmap_ = failedBitmap;
-  impl_->onDiskBitmap_ = onDiskBitmap;
-  const bool hasCache = std::any_of(readyBitmap.begin(), readyBitmap.end(),
-                                    [](const bool cached) { return cached; }) ||
-                        std::any_of(onDiskBitmap.begin(), onDiskBitmap.end(),
-                                    [](const bool cached) { return cached; });
-  const bool hasFailures = std::any_of(failedBitmap.begin(), failedBitmap.end(),
-                                       [](const bool failed) { return failed; });
+   impl_->cacheBitmap_ = readyBitmap;
+   impl_->failedBitmap_ = failedBitmap;
+   impl_->onDiskBitmap_ = onDiskBitmap;
+   impl_->hasCacheBitmap_ = std::any_of(readyBitmap.begin(), readyBitmap.end(),
+                                        [](const bool cached) { return cached; });
+   impl_->hasOnDiskBitmap_ = std::any_of(onDiskBitmap.begin(), onDiskBitmap.end(),
+                                         [](const bool cached) { return cached; });
+   impl_->hasFailedBitmap_ = std::any_of(failedBitmap.begin(), failedBitmap.end(),
+                                         [](const bool failed) { return failed; });
+   const bool hasCache = impl_->hasCacheBitmap_ || impl_->hasOnDiskBitmap_;
+   const bool hasFailures = impl_->hasFailedBitmap_;
   setAccessibleDescription(
       hasCache ? QStringLiteral("Scrub the timeline and review cached frame ranges.")
                : hasFailures
@@ -499,6 +507,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    QFont rulerFont;
    rulerFont.setPixelSize(8);
    p.setFont(rulerFont);
+   const QFontMetrics rulerMetrics(p.font());
 
    double lastLabelRight = -1.0;
    for (int f = fStart; f <= fEnd; f += minorStep) {
@@ -510,7 +519,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
     p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
     if (isMajor) {
      const QString label = QString::number(f);
-     const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
+     const double labelW = static_cast<double>(rulerMetrics.horizontalAdvance(label));
      const double labelX = rx + 3.0;
      if (labelX <= lastLabelRight + 6.0) continue;
      p.setPen(theme.text.darker(150));
@@ -585,17 +594,23 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    }
   };
 
-  QColor onDiskColor(88, 148, 255);
-  onDiskColor.setAlpha(118);
-  drawFrameRuns(impl_->onDiskBitmap_, onDiskColor, 1, 1);
+   if (impl_->hasOnDiskBitmap_) {
+    QColor onDiskColor(88, 148, 255);
+    onDiskColor.setAlpha(118);
+    drawFrameRuns(impl_->onDiskBitmap_, onDiskColor, 1, 1);
+   }
 
-  QColor cachedColor = cacheBaseColor.lighter(112);
-  cachedColor.setAlpha(184);
-  drawFrameRuns(impl_->cacheBitmap_, cachedColor, 2, 2);
+   if (impl_->hasCacheBitmap_) {
+    QColor cachedColor = cacheBaseColor.lighter(112);
+    cachedColor.setAlpha(184);
+    drawFrameRuns(impl_->cacheBitmap_, cachedColor, 2, 2);
+   }
 
-  QColor failedColor(232, 92, 92);
-  failedColor.setAlpha(200);
-  drawFrameRuns(impl_->failedBitmap_, failedColor, 4, 4);
+   if (impl_->hasFailedBitmap_) {
+    QColor failedColor(232, 92, 92);
+    failedColor.setAlpha(200);
+    drawFrameRuns(impl_->failedBitmap_, failedColor, 4, 4);
+   }
 
   // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
@@ -629,15 +644,9 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   const int ss = totalSeconds % 60;
   const int mm = (totalSeconds / 60) % 60;
   const int hh = totalSeconds / 3600;
-  const bool hasReadyCache = std::any_of(
-      impl_->cacheBitmap_.begin(), impl_->cacheBitmap_.end(),
-      [](const bool cached) { return cached; });
-  const bool hasOnDiskCache = std::any_of(
-      impl_->onDiskBitmap_.begin(), impl_->onDiskBitmap_.end(),
-      [](const bool cached) { return cached; });
-  const bool hasFailedCache = std::any_of(
-      impl_->failedBitmap_.begin(), impl_->failedBitmap_.end(),
-      [](const bool failed) { return failed; });
+   const bool hasReadyCache = impl_->hasCacheBitmap_;
+   const bool hasOnDiskCache = impl_->hasOnDiskBitmap_;
+   const bool hasFailedCache = impl_->hasFailedBitmap_;
   const QString leftLabel = impl_->cacheRangeVisible_ || hasReadyCache || hasOnDiskCache
       ? QStringLiteral("RAM Cache")
       : hasFailedCache

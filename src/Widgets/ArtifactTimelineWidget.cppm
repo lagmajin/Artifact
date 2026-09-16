@@ -53,6 +53,8 @@ module;
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 
+#include "Timeline/TimelinePlayheadDraw.hpp"
+
 module Artifact.Widgets.Timeline;
 
 
@@ -4607,6 +4609,23 @@ public:
   bool gpuTimelinePreviewEnabled_ = false;
   bool gpuTimelineSnapshotPending_ = false;
   quint64 gpuTimelineSnapshotGeneration_ = 0;
+  // GPU static cache: rows, grid, clips and markers. Reused while geometry
+  // and timelineVisualRevision() are unchanged; the dynamic tail (passing-
+  // frame emphasis plus playhead) is rebuilt every tick.
+  struct GpuTimelineStaticCache {
+    bool valid = false;
+    double ppf = 0.0;
+    double hOff = 0.0;
+    double vOff = 0.0;
+    int vpW = 0;
+    int vpH = 0;
+    quint64 revision = 0;
+    QVector<DiligentTimelineRectVisual> rects;
+    QVector<DiligentTimelineLineVisual> lines;
+    QVector<DiligentTimelineTriangleVisual> triangles;
+    QVector<DiligentTimelineTextVisual> texts;
+  };
+  GpuTimelineStaticCache gpuTimelineStatic_;
   ArtifactCurveEditorWidget *curveEditor_ = nullptr;
   ArtifactDiligentTimelineRenderWindow *gpuCurveWindow_ = nullptr;
   QWidget *gpuCurveContainer_ = nullptr;
@@ -10530,14 +10549,42 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
              : view->height());
   const auto& clips = view->clipsView();
   const auto& keyframeMarkers = view->keyframeMarkersView();
+  const auto& compositionMarkers = view->compositionMarkersView();
+  const quint64 visualRevision = view->timelineVisualRevision();
 
+  QVector<double> trackTops(view->trackCount() + 1, -verticalOffset);
+  for (int track = 0; track < view->trackCount(); ++track) {
+    trackTops[track + 1] =
+        trackTops[track] + std::max(1, view->trackHeight(track));
+  }
+  const QColor playheadColor = TimelinePlayheadDraw::playheadColor();
+  const QColor playheadCapColor(174, 184, 196);
+
+  // Static ABC (rows, grid, clips, markers) is reused while geometry and
+  // visual data are unchanged, so playback ticks only pay for the dynamic
+  // tail below. The QVector copies stay shared until the tail appends.
+  auto& staticCache = impl_->gpuTimelineStatic_;
+  const bool staticHit =
+      !view->isInteracting() && staticCache.valid &&
+      staticCache.ppf == ppf && staticCache.hOff == horizontalOffset &&
+      staticCache.vOff == verticalOffset && staticCache.vpW == viewportWidth &&
+      staticCache.vpH == viewportHeight &&
+      staticCache.revision == visualRevision;
+  if (staticHit) {
+    snapshot.rects = staticCache.rects;
+    snapshot.lines = staticCache.lines;
+    snapshot.triangles = staticCache.triangles;
+    snapshot.texts = staticCache.texts;
+    snapshot.lines.reserve(snapshot.lines.size() + 32);
+    snapshot.triangles.reserve(snapshot.triangles.size() + 16);
+  } else {
   // Reserve once for the visible timeline primitives. Snapshot construction is
   // coalesced, but it can still run during a scroll or playback update.
   snapshot.rects.reserve(view->trackCount() + clips.size() * 7);
   snapshot.lines.reserve(view->trackCount() * 2 + clips.size() * 4 +
-                         keyframeMarkers.size() * 4 + 32);
-  snapshot.triangles.reserve(keyframeMarkers.size() * 2);
-  snapshot.texts.reserve(clips.size());
+                         keyframeMarkers.size() * 4 + compositionMarkers.size() + 32);
+  snapshot.triangles.reserve(keyframeMarkers.size() * 2 + compositionMarkers.size() * 2 + 2);
+  snapshot.texts.reserve(clips.size() + compositionMarkers.size());
 
   // The reference keeps the editing field visibly lighter than the layer
   // table.  Row alternation remains restrained; the blue-grey selected span
@@ -10549,13 +10596,10 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const QColor selectedClip(42, 122, 205);
   const QColor selectionEdge(190, 220, 242);
   const QColor selectedKey(228, 173, 83);
-  const QColor playheadColor(239, 91, 82);
 
-  QVector<double> trackTops(view->trackCount() + 1, -verticalOffset);
   for (int track = 0; track < view->trackCount(); ++track) {
     const double top = trackTops[track];
     const double height = std::max(1, view->trackHeight(track));
-    trackTops[track + 1] = top + height;
     if (top + height < 0.0 || top > viewportHeight) {
       continue;
     }
@@ -10710,17 +10754,16 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
         y < -radius || y > viewportHeight + radius) {
       continue;
     }
-    const bool atCurrentFrame =
-        std::abs(marker.frame - view->currentFrame()) < 0.05;
-    QColor color = (marker.selected || atCurrentFrame) ? selectedKey
-                                                        : marker.color;
+    // Selection-only here; the passing-playhead emphasis is overlaid by the
+    // dynamic tail so this section stays frame-independent (cacheable).
+    QColor color = marker.selected ? selectedKey : marker.color;
     snapshot.triangles.push_back({QPointF(x, y - radius),
                                   QPointF(x + radius, y),
                                   QPointF(x, y + radius), color});
     snapshot.triangles.push_back({QPointF(x, y - radius),
                                   QPointF(x, y + radius),
                                   QPointF(x - radius, y), color});
-    if (marker.selected || atCurrentFrame) {
+    if (marker.selected) {
       QColor outline(245, 245, 245, 230);
       snapshot.lines.push_back({QPointF(x, y - radius),
                                 QPointF(x + radius, y), outline, 1.0f});
@@ -10733,7 +10776,89 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     }
   }
 
-  const double playheadX = view->currentFrame() * ppf - horizontalOffset;
+  // Composition markers are read-only guides, mirroring the Qt painter path:
+  // full-height line plus a chapter diamond or plain triangle at the top.
+  for (const auto& marker : compositionMarkers) {
+    const double x = marker.frame * ppf - horizontalOffset;
+    if (x < -8.0 || x > viewportWidth + 8.0) {
+      continue;
+    }
+    QColor color = marker.color.isValid() ? marker.color : QColor(198, 163, 75);
+    color.setAlpha(210);
+    snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
+                              color, 1.0f});
+    if (marker.chapter) {
+      snapshot.triangles.push_back({QPointF(x, 0.0), QPointF(x - 4.0, 4.0),
+                                    QPointF(x, 8.0), color});
+      snapshot.triangles.push_back({QPointF(x, 0.0), QPointF(x, 8.0),
+                                    QPointF(x + 4.0, 4.0), color});
+    } else {
+      snapshot.triangles.push_back({QPointF(x, 0.0), QPointF(x - 4.0, 7.0),
+                                    QPointF(x + 4.0, 7.0), color});
+    }
+    if (ppf >= 4.0 && !marker.comment.trimmed().isEmpty()) {
+      QColor labelColor = color;
+      labelColor.setAlpha(235);
+      snapshot.texts.push_back(
+          {QPointF(x + 5.0, 18.0),
+           ArtifactCore::UniString(marker.comment.trimmed().left(48)),
+           labelColor, 10.0f});
+    }
+  }
+
+    staticCache.valid = true;
+    staticCache.ppf = ppf;
+    staticCache.hOff = horizontalOffset;
+    staticCache.vOff = verticalOffset;
+    staticCache.vpW = viewportWidth;
+    staticCache.vpH = viewportHeight;
+    staticCache.revision = visualRevision;
+    staticCache.rects = snapshot.rects;
+    staticCache.lines = snapshot.lines;
+    staticCache.triangles = snapshot.triangles;
+    staticCache.texts = snapshot.texts;
+  }
+
+  // Dynamic tail: current-frame keyframe emphasis plus playhead. Runs on
+  // every tick; static vectors above stay shared until these appends detach.
+  const double currentFrame = view->currentFrame();
+  const QColor selectedKeyDynamic(228, 173, 83);
+  for (const auto& marker : keyframeMarkers) {
+    if (marker.selected) {
+      continue;
+    }
+    if (std::abs(marker.frame - currentFrame) >= 0.05) {
+      continue;
+    }
+    if (marker.trackIndex < 0 || marker.trackIndex >= view->trackCount()) {
+      continue;
+    }
+    const double x = marker.frame * ppf - horizontalOffset;
+    const double y = trackTops[marker.trackIndex] +
+                     view->trackHeight(marker.trackIndex) * 0.5;
+    constexpr double radius = 4.0;
+    if (x < -radius || x > viewportWidth + radius ||
+        y < -radius || y > viewportHeight + radius) {
+      continue;
+    }
+    snapshot.triangles.push_back({QPointF(x, y - radius),
+                                  QPointF(x + radius, y),
+                                  QPointF(x, y + radius), selectedKeyDynamic});
+    snapshot.triangles.push_back({QPointF(x, y - radius),
+                                  QPointF(x, y + radius),
+                                  QPointF(x - radius, y), selectedKeyDynamic});
+    QColor outline(245, 245, 245, 230);
+    snapshot.lines.push_back({QPointF(x, y - radius),
+                              QPointF(x + radius, y), outline, 1.0f});
+    snapshot.lines.push_back({QPointF(x + radius, y),
+                              QPointF(x, y + radius), outline, 1.0f});
+    snapshot.lines.push_back({QPointF(x, y + radius),
+                              QPointF(x - radius, y), outline, 1.0f});
+    snapshot.lines.push_back({QPointF(x - radius, y),
+                              QPointF(x, y - radius), outline, 1.0f});
+  }
+
+  const double playheadX = currentFrame * ppf - horizontalOffset;
   // A compact cap keeps the current-time marker identifiable even when the
   // vertical line crosses densely populated keyframe rows.
   snapshot.triangles.push_back({QPointF(playheadX - 6.0, 0.0),

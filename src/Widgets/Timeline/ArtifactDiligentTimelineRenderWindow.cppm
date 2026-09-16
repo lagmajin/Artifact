@@ -16,6 +16,7 @@ module;
 #include <QResizeEvent>
 #include <QSize>
 #include <QString>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
 #include <QtMath>
@@ -97,8 +98,15 @@ public:
   DiligentImmediateSubmitter submitter_;
   bool initialized_ = false;
   bool gpuReady_ = false;
-  bool usingSharedDevice_ = false;
+  bool ownsIndependentDevice_ = false;
   std::atomic_bool renderEventPending_{false};
+  // Present pacer: continuous playback/scrub posts renders up to 60Hz, but
+  // the timeline surface stays legible at half that. Cap submit+Present here;
+  // skipped frames keep only the newest snapshot and wake up for it below.
+  // GUI thread only.
+  static constexpr std::chrono::milliseconds kMinPresentInterval{33};
+  std::chrono::steady_clock::time_point lastPresent_{};
+  bool throttleWakeupPending_ = false;
   QPointer<QWidget> inputTarget_;
   std::function<void()> inputUpdatedCallback_;
   std::chrono::steady_clock::time_point lastMouseMoveSnapshot_{};
@@ -130,10 +138,7 @@ public:
     swapChain_.Release();
     immediateContext_.Release();
     device_.Release();
-    if (usingSharedDevice_) {
-      releaseSharedRenderDevice();
-      usingSharedDevice_ = false;
-    }
+    ownsIndependentDevice_ = false;
     gpuReady_ = false;
   }
 
@@ -150,11 +155,21 @@ public:
         backend == QStringLiteral("sw")) {
       return false;
     }
-    if (!acquireSharedRenderDeviceForCurrentBackend(device_, immediateContext_)) {
+    // Timeline owns a fully independent device: the VP worker thread keeps
+    // the shared immediate context to itself, so the two surfaces never
+    // submit through the same context. Failure means no GPU (the caller
+    // falls back to the QWidget painter); there is no shared fallback.
+    IndependentRenderDevice independent;
+    if (!createIndependentRenderDevice(QStringLiteral("timeline"), -1,
+                                       independent)) {
       initialized_ = false;
       return false;
     }
-    usingSharedDevice_ = true;
+    device_ = independent.device;
+    immediateContext_ = independent.immediateContext;
+    independent.device.Release();
+    independent.immediateContext.Release();
+    ownsIndependentDevice_ = true;
 
     Win32NativeWindow nativeWindow;
     nativeWindow.hWnd = reinterpret_cast<HWND>(window->winId());
@@ -206,6 +221,25 @@ public:
         !window->isExposed()) {
       return;
     }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastPresent_ < kMinPresentInterval) {
+      if (!throttleWakeupPending_) {
+        throttleWakeupPending_ = true;
+        const auto wait = kMinPresentInterval - (now - lastPresent_);
+        QTimer::singleShot(
+            static_cast<int>(wait.count()), window, [this, window]() {
+              throttleWakeupPending_ = false;
+              if (!renderEventPending_.exchange(
+                      true, std::memory_order_acq_rel)) {
+                QCoreApplication::postEvent(
+                    window, new QEvent(timelineGpuRenderEventType()));
+              }
+            });
+      }
+      return;
+    }
+    lastPresent_ = now;
 
     std::shared_ptr<const DiligentTimelineVisualSnapshot> snapshot;
     {
@@ -272,7 +306,9 @@ public:
           toFloatColor(visual.color));
     }
     submitter_.submit(commandBuffer_, immediateContext_);
-    swapChain_->Present();
+    // SyncInterval 0: the timeline surface must never stall the GUI thread
+    // on vsync. Tearing on tracks/playhead is acceptable here; VP keeps vsync.
+    swapChain_->Present(0);
   }
 };
 

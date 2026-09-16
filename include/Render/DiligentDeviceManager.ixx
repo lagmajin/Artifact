@@ -41,6 +41,28 @@ private:
 bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice);
 RENDER_DEVICE_TYPE sharedRenderDeviceType();
 
+// Fully independent device + immediate context. No sharing and no fallback:
+// creation failure means the caller runs without GPU.
+// adapterId < 0 selects automatically with the same policy as the shared
+// device (ARTIFACT_GPU_ADAPTER is honored); explicit ids are D3D12-only.
+// Contract: one immediate context is driven from exactly one thread;
+// extra threads must use device->CreateDeferredContext().
+// Resources must never cross device boundaries. D3D12 trim notification
+// stays shared-device-only for now.
+struct IndependentRenderDevice {
+    RefCntAutoPtr<IRenderDevice> device;
+    RefCntAutoPtr<IDeviceContext> immediateContext;
+    RENDER_DEVICE_TYPE type = RENDER_DEVICE_TYPE_UNDEFINED;
+    int requestedAdapterId = -1;
+    QString owner;
+};
+bool createIndependentRenderDevice(const QString& owner, int adapterId,
+                                   IndependentRenderDevice& out);
+bool createSwapChainForIndependentDevice(const IndependentRenderDevice& dev,
+                                         HWND hwnd, const SwapChainDesc& desc,
+                                         RefCntAutoPtr<ISwapChain>& outSwapChain);
+void releaseIndependentRenderDevice(IndependentRenderDevice& handle);
+
 struct SelectedGpuAdapterInfo {
     bool available = false;
     QString name;

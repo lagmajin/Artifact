@@ -16512,7 +16512,22 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           }));
 
-  // PlaybackEngine is the authoritative frame clock. While it is running,
+   // Timeline scrub (any gesture: scrub bar, playhead overlay, track view)
+   // publishes seeks. Route them into the existing interacting/draft path
+   // so scrub renders use reduced effect resolution and skip the CPU
+   // readback shape. Quiet-timeout restore is automatic: the render tick
+   // finishes the interaction after viewportInteractionIdleMs_ without seeks.
+   impl_->eventBusSubscriptions_.push_back(
+
+       impl_->eventBus_.subscribe<TimelineSeekRequestedEvent>(
+
+           [this](const TimelineSeekRequestedEvent &) {
+
+             notifyViewportInteractionActivity();
+
+           }));
+
+   // PlaybackEngine is the authoritative frame clock. While it is running,
   // use the render ticker only as a short UI-thread dispatch/coalescing step
   // instead of introducing a second composition-FPS clock with an arbitrary
   // phase offset. When playback stops, restore the composition-rate interval

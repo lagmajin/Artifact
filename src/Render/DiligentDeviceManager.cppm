@@ -1009,6 +1009,88 @@ RENDER_DEVICE_TYPE sharedRenderDeviceType()
     return shared.type;
 }
 
+bool createIndependentRenderDevice(const QString& owner, int adapterId,
+                                   IndependentRenderDevice& out)
+{
+    out = IndependentRenderDevice{};
+    out.owner = owner;
+    out.requestedAdapterId = adapterId;
+    const int explicitAdapter = adapterId >= 0 ? adapterId : -1;
+    const auto backendPreference = getBackendPreferenceFromEnv();
+    bool created = false;
+    switch (backendPreference) {
+        case RenderBackendPreference::Vulkan:
+            created = tryCreateVulkanDevice(out.device, out.immediateContext);
+            break;
+        case RenderBackendPreference::D3D12:
+            created = tryCreateD3D12Device(out.device, out.immediateContext,
+                                           explicitAdapter);
+            break;
+        case RenderBackendPreference::Auto:
+        default:
+            created = tryCreateD3D12Device(out.device, out.immediateContext,
+                                           explicitAdapter);
+            if (!created) {
+                created = tryCreateVulkanDevice(out.device, out.immediateContext);
+            }
+            break;
+    }
+    if (!created || !out.device || !out.immediateContext) {
+        out.device.Release();
+        out.immediateContext.Release();
+        out.type = RENDER_DEVICE_TYPE_UNDEFINED;
+        qWarning() << "[DiligentDeviceManager] independent device creation failed"
+                   << "owner=" << owner << "adapterId=" << adapterId
+                   << ". No shared fallback; caller runs without GPU.";
+        return false;
+    }
+    out.type = out.device->GetDeviceInfo().Type;
+    qDebug() << "[DiligentDeviceManager] independent device acquired"
+             << "owner=" << owner << "type=" << deviceTypeName(out.type);
+    return true;
+}
+
+bool createSwapChainForIndependentDevice(const IndependentRenderDevice& dev,
+                                         HWND hwnd, const SwapChainDesc& desc,
+                                         RefCntAutoPtr<ISwapChain>& outSwapChain)
+{
+    outSwapChain.Release();
+    if (!dev.device || !dev.immediateContext || !hwnd) {
+        return false;
+    }
+    Win32NativeWindow nativeWindow;
+    nativeWindow.hWnd = hwnd;
+    if (dev.type == RENDER_DEVICE_TYPE_VULKAN) {
+        auto* factory = resolveVkFactory();
+        if (!factory) {
+            return false;
+        }
+        factory->CreateSwapChainVk(dev.device, dev.immediateContext, desc,
+                                   nativeWindow, &outSwapChain);
+    } else {
+        auto* factory = resolveD3D12Factory();
+        if (!factory) {
+            return false;
+        }
+        FullScreenModeDesc fullScreenDesc;
+        fullScreenDesc.Fullscreen = false;
+        factory->CreateSwapChainD3D12(dev.device, dev.immediateContext, desc,
+                                      fullScreenDesc, nativeWindow, &outSwapChain);
+    }
+    return outSwapChain != nullptr;
+}
+
+void releaseIndependentRenderDevice(IndependentRenderDevice& handle)
+{
+    if (handle.immediateContext) {
+        handle.immediateContext->Flush();
+        handle.immediateContext->WaitForIdle();
+    }
+    handle.immediateContext.Release();
+    handle.device.Release();
+    handle.type = RENDER_DEVICE_TYPE_UNDEFINED;
+}
+
 D3D12AgilityCapabilitySnapshot sharedD3D12AgilityCapabilities()
 {
     auto& shared = sharedRenderDeviceState();
