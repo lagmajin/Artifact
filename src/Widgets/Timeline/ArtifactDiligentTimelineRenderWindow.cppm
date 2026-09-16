@@ -333,13 +333,18 @@ public:
     }
     for (const auto& visual : source.waveforms) {
       constexpr int kMaxWaveformBars = 64;
-      const int barCount = std::min(
-          kMaxWaveformBars, static_cast<int>(visual.peaks.size()));
+      // A bar narrower than one device-independent pixel cannot add visible
+      // information. Bound the fallback command count by the actual clip
+      // width as well as the normalized payload size.
+      const int pixelBars = std::max(1, qRound(visual.rect.width()));
+      const int barCount = std::min({kMaxWaveformBars, pixelBars,
+                                     static_cast<int>(visual.peaks.size())});
       if (barCount <= 0 || visual.rect.width() <= 0.0 ||
           visual.rect.height() <= 0.0) {
         continue;
       }
       const double centerY = visual.rect.center().y();
+      const FloatColor& waveformColor = cachedColor(visual.color);
       for (int bar = 0; bar < barCount; ++bar) {
         const int sampleIndex = (bar * visual.peaks.size()) / barCount;
         const double amplitude = std::clamp(
@@ -353,7 +358,7 @@ public:
              static_cast<float>(centerY - halfHeight)},
             {static_cast<float>(barX),
              static_cast<float>(centerY + halfHeight)},
-            1.0f, cachedColor(visual.color));
+            1.0f, waveformColor);
       }
     }
     for (const auto& visual : source.triangles) {
