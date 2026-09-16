@@ -20,6 +20,7 @@ import Text.GlyphLayout;
 import Font.FreeFont;
 import Graphics;
 import Graphics.ParticleRenderer;
+import VertexBuffer;
 
 export namespace Artifact {
 
@@ -96,6 +97,27 @@ private:
 
     // Phase 7a: deferred context for recording; nullptr = immediate fallback
     RefCntAutoPtr<IDeviceContext> m_deferredCtx_;
+
+    // Phase 8: run-batching for line/tri/quad micro-prims. Consecutive
+    // packets sharing a bitwise-identical xform accumulate into fixed CPU
+    // staging and flush as one Map + one Draw. Staging capacity is reserved
+    // in createBuffers; no hot-path allocation afterwards. Quads ride the
+    // existing triangle-strip PSO via degenerate verts (no new shaders).
+    static constexpr Uint32 k_batch_prim_verts = 4096;
+    std::vector<RectVertex> m_batchLineVerts_;
+    std::vector<RectVertex> m_batchTriVerts_;
+    std::vector<RectVertex> m_batchQuadVerts_;
+    RenderSolidTransform2D m_batchLineXform_{};
+    RenderSolidTransform2D m_batchTriXform_{};
+    RenderSolidTransform2D m_batchQuadXform_{};
+    bool m_batchLineActive_ = false;
+    bool m_batchTriActive_ = false;
+    bool m_batchQuadActive_ = false;
+    RectVertex m_batchQuadLast_{};
+    bool m_batchQuadHasLast_ = false;
+    RefCntAutoPtr<IBuffer> m_batch_line_vb_;
+    RefCntAutoPtr<IBuffer> m_batch_tri_vb_;
+    RefCntAutoPtr<IBuffer> m_batch_quad_vb_;
 
     // Phase 3: CPU staging + GPU buffers for solid-rect batching
     struct BatchRectVertexAA { float2 pos; float4 color; float2 uv; }; // 32 bytes

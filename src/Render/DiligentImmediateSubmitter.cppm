@@ -427,6 +427,26 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         device->CreateBuffer(desc, nullptr, &m_draw_thick_line_vertex_buffer);
     }
 
+    // Phase 8: run-batch VBs (line/tri/quad) + fixed CPU staging. One Map +
+    // one Draw per type-run replaces hundreds of micro-draws. Capacity is
+    // fixed here; overflow flushes mid-run, so the hot path never allocates.
+    {
+        BufferDesc batchDesc;
+        batchDesc.BindFlags = BIND_VERTEX_BUFFER;
+        batchDesc.Usage = USAGE_DYNAMIC;
+        batchDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        batchDesc.Name = "DIS BatchLine VB";
+        batchDesc.Size = sizeof(RectVertex) * k_batch_prim_verts;
+        device->CreateBuffer(batchDesc, nullptr, &m_batch_line_vb_);
+        batchDesc.Name = "DIS BatchTri VB";
+        device->CreateBuffer(batchDesc, nullptr, &m_batch_tri_vb_);
+        batchDesc.Name = "DIS BatchQuad VB";
+        device->CreateBuffer(batchDesc, nullptr, &m_batch_quad_vb_);
+    }
+    m_batchLineVerts_.reserve(k_batch_prim_verts);
+    m_batchTriVerts_.reserve(k_batch_prim_verts);
+    m_batchQuadVerts_.reserve(k_batch_prim_verts);
+
     {
         BufferDesc desc;
         desc.Name           = "DIS DotLine VB";
@@ -604,7 +624,15 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_solid_triangle_vertex_buffer     = nullptr;
     m_draw_solid_circle_vertex_buffer       = nullptr;
     m_draw_thick_line_vertex_buffer         = nullptr;
-    m_draw_dot_line_vertex_buffer           = nullptr;
+    m_draw_dot_line_vertex_buffer         = nullptr;
+    m_batch_line_vb_                        = nullptr;
+    m_batch_tri_vb_                         = nullptr;
+    m_batch_quad_vb_                        = nullptr;
+    m_batchLineVerts_.clear();
+    m_batchTriVerts_.clear();
+    m_batchQuadVerts_.clear();
+    m_batchLineActive_ = m_batchTriActive_ = m_batchQuadActive_ = false;
+    m_batchQuadHasLast_ = false;
     m_draw_solid_rect_index_buffer          = nullptr;
     m_draw_sprite_cb                        = nullptr;
     m_draw_sprite_transform_matrix_cb       = nullptr;
@@ -780,9 +808,114 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         recordCtx->EndDebugGroup();
     };
 
+    auto flushLineBatch = [&]() {
+        if (m_batchLineVerts_.empty()) return;
+        if (!pRTV || !m_draw_line_pso_and_srb.pPSO || !m_batch_line_vb_) {
+            m_batchLineVerts_.clear();
+            m_batchLineActive_ = false;
+            return;
+        }
+        mapWriteDiscard(recordCtx, m_batch_line_vb_, m_batchLineVerts_.data(),
+                        sizeof(RectVertex) * m_batchLineVerts_.size(), m_frameCostStats_);
+        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchLineXform_,
+                        sizeof(m_batchLineXform_), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_line_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_line_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_line_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_line_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = static_cast<Uint32>(m_batchLineVerts_.size());
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        recordDrawCall(m_frameCostStats_);
+        recordCtx->Draw(drawAttrs);
+        m_batchLineVerts_.clear();
+        m_batchLineActive_ = false;
+    };
+    auto flushTriBatch = [&]() {
+        if (m_batchTriVerts_.empty()) return;
+        if (!pRTV || !m_draw_solid_triangle_pso_and_srb.pPSO || !m_batch_tri_vb_) {
+            m_batchTriVerts_.clear();
+            m_batchTriActive_ = false;
+            return;
+        }
+        mapWriteDiscard(recordCtx, m_batch_tri_vb_, m_batchTriVerts_.data(),
+                        sizeof(RectVertex) * m_batchTriVerts_.size(), m_frameCostStats_);
+        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchTriXform_,
+                        sizeof(m_batchTriXform_), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_solid_triangle_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_tri_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = static_cast<Uint32>(m_batchTriVerts_.size());
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        recordDrawCall(m_frameCostStats_);
+        recordCtx->Draw(drawAttrs);
+        m_batchTriVerts_.clear();
+        m_batchTriActive_ = false;
+    };
+    auto flushQuadBatch = [&]() {
+        if (m_batchQuadVerts_.empty()) return;
+        if (!pRTV || !m_draw_thick_line_pso_and_srb.pPSO || !m_batch_quad_vb_) {
+            m_batchQuadVerts_.clear();
+            m_batchQuadActive_ = false;
+            m_batchQuadHasLast_ = false;
+            return;
+        }
+        mapWriteDiscard(recordCtx, m_batch_quad_vb_, m_batchQuadVerts_.data(),
+                        sizeof(RectVertex) * m_batchQuadVerts_.size(), m_frameCostStats_);
+        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchQuadXform_,
+                        sizeof(m_batchQuadXform_), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_thick_line_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_thick_line_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_thick_line_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_quad_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_thick_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = static_cast<Uint32>(m_batchQuadVerts_.size());
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        recordDrawCall(m_frameCostStats_);
+        recordCtx->Draw(drawAttrs);
+        m_batchQuadVerts_.clear();
+        m_batchQuadActive_ = false;
+        m_batchQuadHasLast_ = false;
+    };
+    auto flushPrimBatches = [&]() {
+        flushLineBatch();
+        flushTriBatch();
+        flushQuadBatch();
+    };
+    auto xformsEqual = [](const RenderSolidTransform2D& a,
+                          const RenderSolidTransform2D& b) {
+        return a.offset.x == b.offset.x && a.offset.y == b.offset.y &&
+               a.scale.x == b.scale.x && a.scale.y == b.scale.y &&
+               a.screenSize.x == b.screenSize.x && a.screenSize.y == b.screenSize.y;
+    };
+
     for (auto& pkt : buf.packets()) {
         std::visit([&](auto& p) {
             using T = std::decay_t<decltype(p)>;
+            if constexpr (!std::is_same_v<T, LinePkt> && !std::is_same_v<T, QuadPkt> &&
+                          !std::is_same_v<T, SolidTriPkt>) {
+                flushPrimBatches();
+            }
             if constexpr (std::is_same_v<T, SolidRectPkt>) {
                 if (batchReady) {
                     // Overflow: flush before adding a new rect
@@ -843,10 +976,46 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             } else {
                 flushSolidRectBatch(); // flush before switching to a different draw type
                 if constexpr      (std::is_same_v<T, GradientRectPkt>)    submitGradientRect(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, LinePkt>) {
+                    if (!m_batchLineActive_ || !xformsEqual(m_batchLineXform_, p.xform) ||
+                        m_batchLineVerts_.size() + 2 > k_batch_prim_verts) {
+                        flushLineBatch();
+                        m_batchLineXform_ = p.xform;
+                        m_batchLineActive_ = true;
+                    }
+                    m_batchLineVerts_.push_back(RectVertex{p.p1, p.c1});
+                    m_batchLineVerts_.push_back(RectVertex{p.p2, p.c2});
+                }
+                else if constexpr (std::is_same_v<T, QuadPkt>) {
+                    if (!m_batchQuadActive_ || !xformsEqual(m_batchQuadXform_, p.xform) ||
+                        m_batchQuadVerts_.size() + 6 > k_batch_prim_verts) {
+                        flushQuadBatch();
+                        m_batchQuadXform_ = p.xform;
+                        m_batchQuadActive_ = true;
+                        m_batchQuadHasLast_ = false;
+                    }
+                    const RectVertex q[4] = {{p.p0, p.color}, {p.p1, p.color},
+                                             {p.p2, p.color}, {p.p3, p.color}};
+                    if (m_batchQuadHasLast_) {
+                        m_batchQuadVerts_.push_back(m_batchQuadLast_);
+                        m_batchQuadVerts_.push_back(q[0]);
+                    }
+                    for (int i = 0; i < 4; ++i) m_batchQuadVerts_.push_back(q[i]);
+                    m_batchQuadLast_ = q[3];
+                    m_batchQuadHasLast_ = true;
+                }
                 else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, SolidTriPkt>)        submitSolidTri(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SolidTriPkt>) {
+                    if (!m_batchTriActive_ || !xformsEqual(m_batchTriXform_, p.xform) ||
+                        m_batchTriVerts_.size() + 3 > k_batch_prim_verts) {
+                        flushTriBatch();
+                        m_batchTriXform_ = p.xform;
+                        m_batchTriActive_ = true;
+                    }
+                    m_batchTriVerts_.push_back(RectVertex{p.p0, p.color});
+                    m_batchTriVerts_.push_back(RectVertex{p.p1, p.color});
+                    m_batchTriVerts_.push_back(RectVertex{p.p2, p.color});
+                }
                 else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, recordCtx, pRTV);
@@ -865,6 +1034,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             }
         }, pkt);
     }
+    flushPrimBatches();
     flushSolidRectBatch(); // flush any remaining
     recordCtx->EndDebugGroup();
     if (useDeferredCtx) {
