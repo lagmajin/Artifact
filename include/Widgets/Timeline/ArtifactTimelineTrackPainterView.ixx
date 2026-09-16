@@ -224,6 +224,8 @@ export namespace Artifact
                           bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
   const QVector<TrackClipVisual>& clipsView() const;
+  // Borrowed UI-thread geometry for display snapshot construction. The view
+  // owns the storage; callers must not retain the reference across mutations.
   const QVector<int>& trackTopsView() const;
 
  public:
