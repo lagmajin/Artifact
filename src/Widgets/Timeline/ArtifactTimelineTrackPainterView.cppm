@@ -224,6 +224,11 @@ int timelineFrameRateScale(const ArtifactCompositionPtr &composition)
   return static_cast<int>(std::llround(safeTimelineFrameRate(composition)));
 }
 
+int timelineFrameRateScale(const ArtifactAbstractComposition *composition)
+{
+  return static_cast<int>(std::llround(safeTimelineFrameRate(composition)));
+}
+
 QMessageBox::StandardButton centeredQuestion(QWidget* parent,
                                              const QString& title,
                                              const QString& text)
@@ -822,8 +827,7 @@ bool applyValueToKeyframeArea(
     return false;
   }
   auto afterSnapshots = beforeSnapshots;
-  const double fps = safeTimelineFrameRate(composition);
-  const int64_t scale = static_cast<int64_t>(std::llround(fps));
+  const int64_t scale = timelineFrameRateScale(composition);
   const RationalTime startTime(
       static_cast<qint64>(std::llround(area.startFrame)), scale);
   const RationalTime endTime(
@@ -1168,8 +1172,7 @@ bool applyKeyframePropertySnapshots(
 
   QSet<QString> changedLayerKeys;
   QVector<LayerID> changedLayers;
-  const double fps = safeTimelineFrameRate(composition);
-  const int64_t scale = static_cast<int64_t>(std::llround(fps));
+  const int64_t scale = timelineFrameRateScale(composition);
 
   for (const auto &snapshot : snapshots) {
     const auto layer = composition->layerById(snapshot.layerId);
@@ -1213,8 +1216,7 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
     return;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
-  const int64_t scale = static_cast<int64_t>(std::llround(fps));
+  const int64_t scale = timelineFrameRateScale(composition);
 
   for (const auto &group : layer->getLayerPropertyGroups()) {
     if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
@@ -1952,7 +1954,6 @@ QVector<SelectedKeyframeRecord> collectSelectedKeyframeRecords(
     return records;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
   QSet<QString> seen;
   for (const auto &marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
@@ -1974,7 +1975,7 @@ QVector<SelectedKeyframeRecord> collectSelectedKeyframeRecords(
       continue;
     }
 
-    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const RationalTime time(frame, timelineFrameRateScale(composition));
     const auto keyframes = property->getKeyFrames();
     const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
                                  [&time](const ArtifactCore::KeyFrame &keyframe) {
@@ -2672,7 +2673,6 @@ int applyInterpolationToSelectedKeyframesImpl(
     return 0;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
   QSet<QString> seen;
   QVector<InterpolationChangeRecord> records;
 
@@ -2695,7 +2695,7 @@ int applyInterpolationToSelectedKeyframesImpl(
       continue;
     }
 
-    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const RationalTime time(frame, timelineFrameRateScale(composition));
     const auto keyframes = property->getKeyFrames();
     const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
                                  [&time](const ArtifactCore::KeyFrame &keyframe) {
@@ -2766,7 +2766,6 @@ int applyRovingToSelectedKeyframesImpl(
     return 0;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
   QSet<QString> seen;
   QVector<RovingChangeRecord> records;
 
@@ -2789,7 +2788,7 @@ int applyRovingToSelectedKeyframesImpl(
       continue;
     }
 
-    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const RationalTime time(frame, timelineFrameRateScale(composition));
     const auto keyframes = property->getKeyFrames();
     const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
                                  [&time](const ArtifactCore::KeyFrame &keyframe) {
@@ -4090,8 +4089,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
     return false;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
-  const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
+  const RationalTime nowTime(frame, timelineFrameRateScale(composition));
 
   ArtifactCore::AbstractPropertyPtr property;
   for (const auto &group : layer->getLayerPropertyGroups()) {
@@ -4152,7 +4150,6 @@ bool removeSelectedKeyframeMarkers(
     return false;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
   const double lastFrame = std::max(
       0.0, static_cast<double>(composition->frameRange().duration() - 1));
   QSet<QString> uniqueKeys;
@@ -4175,7 +4172,7 @@ bool removeSelectedKeyframeMarkers(
     if (!property || !property->isAnimatable()) {
       continue;
     }
-    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const RationalTime time(frame, timelineFrameRateScale(composition));
     if (!property->hasKeyFrameAt(time)) {
       continue;
     }
@@ -4199,7 +4196,6 @@ QJsonArray serializeSelectedKeyframeMarkers(
     return keyframes;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
   QSet<QString> seen;
   for (const auto &marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
@@ -4220,7 +4216,7 @@ QJsonArray serializeSelectedKeyframeMarkers(
       continue;
     }
 
-    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const RationalTime time(frame, timelineFrameRateScale(composition));
     const auto keyframesAtProperty = property->getKeyFrames();
     const auto it = std::find_if(keyframesAtProperty.cbegin(),
                                  keyframesAtProperty.cend(),
@@ -4282,7 +4278,6 @@ bool pasteKeyframesToLayers(
     return false;
   }
 
-  const double fps = safeTimelineFrameRate(composition);
   if (outSelectionKeys) {
     outSelectionKeys->clear();
   }
@@ -4309,7 +4304,7 @@ bool pasteKeyframesToLayers(
           record.value(QStringLiteral("frame")).toVariant().toLongLong();
       const qint64 offset = sourceFrame - minFrame;
       const qint64 newFrame = std::max<qint64>(0, targetFrame + offset);
-      const RationalTime time(newFrame, static_cast<int64_t>(std::llround(fps)));
+      const RationalTime time(newFrame, timelineFrameRateScale(composition));
       const QVariant value = record.value(QStringLiteral("value")).toVariant();
       const auto interpolationValue =
           static_cast<ArtifactCore::InterpolationType>(
@@ -4434,8 +4429,7 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
   if (preserveExistingDuration && inPointDelta != 0) {
     auto *composition =
         static_cast<ArtifactAbstractComposition *>(layer->composition());
-    const double fps = safeTimelineFrameRate(composition);
-    const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
+    const int64_t frameScale = timelineFrameRateScale(composition);
     for (const auto &group : layer->getLayerPropertyGroups()) {
       if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
               group.name())) {
@@ -5722,8 +5716,7 @@ bool ArtifactTimelineTrackPainterView::setSelectedKeyframeAnchor(
       continue;
     }
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
-    const double fps = safeTimelineFrameRate(composition);
-    const RationalTime time(frame, std::max<qint64>(1, static_cast<qint64>(std::llround(fps))));
+    const RationalTime time(frame, std::max<qint64>(1, static_cast<qint64>(timelineFrameRateScale(composition))));
     if (!property->hasKeyFrameAt(time)) {
       continue;
     }
@@ -5821,8 +5814,7 @@ bool ArtifactTimelineTrackPainterView::setSelectedKeyframeColorLabel(
       continue;
     }
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
-    const double fps = safeTimelineFrameRate(composition);
-    const RationalTime time(frame, std::max<qint64>(1, static_cast<qint64>(std::llround(fps))));
+    const RationalTime time(frame, std::max<qint64>(1, static_cast<qint64>(timelineFrameRateScale(composition))));
     if (!property->hasKeyFrameAt(time)) {
       continue;
     }
@@ -8591,8 +8583,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
       }
       const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
       auto afterSnapshots = beforeSnapshots;
-      const double fps = safeTimelineFrameRate(composition);
-      const int64_t scale = static_cast<int64_t>(std::llround(fps));
+      const int64_t scale = timelineFrameRateScale(composition);
       for (auto &snapshot : afterSnapshots) {
         for (const auto &request : requests) {
           if (snapshot.layerId != request.layerId ||
@@ -8795,9 +8786,8 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
     if (hasFrameChanges || hasValueChanges) {
       if (composition && !impl_->dragMarkerBeforeSnapshots_.isEmpty()) {
         const auto beforeSnapshots = impl_->dragMarkerBeforeSnapshots_;
-        auto afterSnapshots = beforeSnapshots;
-        const double fps = safeTimelineFrameRate(composition);
-        const int64_t scale = static_cast<int64_t>(std::llround(fps));
+      auto afterSnapshots = beforeSnapshots;
+      const int64_t scale = timelineFrameRateScale(composition);
         const bool smoothDraggedKeyframes =
             (event->modifiers() & Qt::AltModifier) &&
             !(event->modifiers() & Qt::ControlModifier);
@@ -9740,8 +9730,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       const auto refs = collectPropertyRefsFromMarkers(interpolationTargets);
       const auto beforeSnapshots = captureKeyframePropertySnapshots(currentComposition, refs);
       QVector<KeyframePropertySnapshot> afterSnapshots = beforeSnapshots;
-      const double fps = safeTimelineFrameRate(currentComposition);
-      const int64_t scale = static_cast<int64_t>(std::llround(fps));
+      const int64_t scale = timelineFrameRateScale(currentComposition);
       for (auto &snapshot : afterSnapshots) {
         const auto layer = currentComposition->layerById(snapshot.layerId);
         if (!layer) continue;
