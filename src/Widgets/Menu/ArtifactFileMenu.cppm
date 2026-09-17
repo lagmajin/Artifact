@@ -122,8 +122,8 @@ bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, 
     box.setMinimumWidth(760);
     box.setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    auto* yesButton = box.addButton(QStringLiteral("はい"), QMessageBox::AcceptRole);
-    auto* noButton = box.addButton(QStringLiteral("いいえ"), QMessageBox::RejectRole);
+    auto* yesButton = box.addButton(menuText(QStringLiteral("dialog.button.yes"), QStringLiteral("はい")), QMessageBox::AcceptRole);
+    auto* noButton = box.addButton(menuText(QStringLiteral("dialog.button.no"), QStringLiteral("いいえ")), QMessageBox::RejectRole);
     box.setDefaultButton(noButton);
     box.exec();
     return box.clickedButton() == yesButton;
@@ -149,14 +149,14 @@ bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
     if (!hasUnsaved) return true;
 
     QMessageBox box(parent);
-    box.setWindowTitle(QStringLiteral("保存の確認"));
+    box.setWindowTitle(menuText(QStringLiteral("dialog.save.confirm_title"), QStringLiteral("保存の確認")));
     box.setIcon(QMessageBox::Warning);
-    box.setText(QStringLiteral("プロジェクトに変更があります。%1 前に保存しますか？").arg(actionName));
-    box.setInformativeText(QStringLiteral("未保存の変更は失われる可能性があります。"));
+    box.setText(menuText(QStringLiteral("dialog.save.changes"), QStringLiteral("プロジェクトに変更があります。%1 前に保存しますか？")).arg(actionName));
+    box.setInformativeText(menuText(QStringLiteral("dialog.save.unsaved_warning"), QStringLiteral("未保存の変更は失われる可能性があります。")));
 
-    auto* saveButton = box.addButton(QStringLiteral("保存"), QMessageBox::AcceptRole);
-    auto* discardButton = box.addButton(QStringLiteral("破棄"), QMessageBox::DestructiveRole);
-    auto* cancelButton = box.addButton(QStringLiteral("キャンセル"), QMessageBox::RejectRole);
+    auto* saveButton = box.addButton(menuText(QStringLiteral("dialog.button.save"), QStringLiteral("保存")), QMessageBox::AcceptRole);
+    auto* discardButton = box.addButton(menuText(QStringLiteral("dialog.button.discard"), QStringLiteral("破棄")), QMessageBox::DestructiveRole);
+    auto* cancelButton = box.addButton(menuText(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")), QMessageBox::RejectRole);
     box.setDefaultButton(saveButton);
 
     box.exec();
@@ -168,7 +168,7 @@ bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
     auto& manager = ArtifactProjectManager::getInstance();
     QString path = manager.currentProjectPath();
     if (path.isEmpty()) {
-        path = QFileDialog::getSaveFileName(parent, "プロジェクトを保存", QString(),
+        path = QFileDialog::getSaveFileName(parent, menuText(QStringLiteral("dialog.save.project_title"), QStringLiteral("プロジェクトを保存")), QString(),
             "Artifact Project (*.artifact *.json);;All Files (*.*)");
         if (path.isEmpty()) return false;
     }
@@ -179,10 +179,10 @@ bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
 
     const QString error = result.errorMessage.trimmed();
     QMessageBox::warning(
-        parent, QStringLiteral("保存できませんでした"),
+        parent, menuText(QStringLiteral("dialog.save.error"), QStringLiteral("保存できませんでした")),
         error.isEmpty()
-            ? QStringLiteral("変更を保存できませんでした。保存先とプロジェクトの状態を確認してください。")
-            : QStringLiteral("変更を保存できませんでした。\n%1").arg(error));
+            ? menuText(QStringLiteral("dialog.save.error_detail"), QStringLiteral("変更を保存できませんでした。保存先とプロジェクトの状態を確認してください。"))
+            : menuText(QStringLiteral("dialog.save.error_with_detail"), QStringLiteral("変更を保存できませんでした。\n%1")).arg(error));
     return false;
 }
 }
@@ -257,9 +257,9 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     saveProjectAsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_save_project_as.svg")));
 
-    saveNumberedCopyAction = new QAction(QStringLiteral("番号をつけて保存(&V)"), menu_);
-    saveNumberedCopyAction->setToolTip(QStringLiteral("現在のプロジェクトを番号付きコピーとして保存します。現在のプロジェクトは切り替わりません。"));
-    restoreLatestBackupAction = new QAction(QStringLiteral("最新バックアップから復元"), menu_);
+    saveNumberedCopyAction = new QAction(menuText(QStringLiteral("menu.file.save_numbered_accel"), QStringLiteral("番号をつけて保存(&V)")), menu_);
+    saveNumberedCopyAction->setToolTip(menuText(QStringLiteral("menu.file.save_numbered.tooltip"), QStringLiteral("現在のプロジェクトを番号付きコピーとして保存します。現在のプロジェクトは切り替わりません。")));
+    restoreLatestBackupAction = new QAction(menuText(QStringLiteral("menu.file.restore_backup"), QStringLiteral("最新バックアップから復元")), menu_);
 
     closeProjectAction = new QAction(menuText(QStringLiteral("menu.file.close_project"), QStringLiteral("プロジェクトを閉じる")));
     closeProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_close_project.svg")));
@@ -271,19 +271,19 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     importAssetsAction = new QAction(menuText(QStringLiteral("menu.file.import"), QStringLiteral("アセットを読み込み(&I)...")));
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_import_assets.svg")));
-    importOtioAction = new QAction(QStringLiteral("OpenTimelineIOを読み込む..."), menu);
+    importOtioAction = new QAction(menuText(QStringLiteral("menu.file.import_otio"), QStringLiteral("OpenTimelineIOを読み込む...")), menu);
 
     revealProjectFolderAction = new QAction(menuText(QStringLiteral("menu.file.reveal_folder"), QStringLiteral("プロジェクトフォルダを開く")));
     revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_reveal_folder.svg")));
 
     exportFontUsageAction = new QAction(menuText(QStringLiteral("menu.file.export_fonts"), QStringLiteral("使用フォントレポートを書き出す...")));
 
-    exportCompositionAction = new QAction(QStringLiteral("CompositionをゲームUI形式で書き出す..."), menu);
-    exportOtioAction = new QAction(QStringLiteral("OpenTimelineIOを書き出す..."), menu);
-    exportCurrentFrameAction = new QAction(QStringLiteral("現在のフレームを書き出す..."), menu);
-    exportWorkAreaAction = new QAction(QStringLiteral("ワークエリアを書き出す..."), menu);
-    exportProjectPackageAction = new QAction(QStringLiteral("プロジェクトをパッケージ化..."), menu);
-    exportExternalManifestAction = new QAction(QStringLiteral("外部ファイル依存マニフェストを書き出す..."), menu);
+    exportCompositionAction = new QAction(menuText(QStringLiteral("menu.file.export_game_ui"), QStringLiteral("CompositionをゲームUI形式で書き出す...")), menu);
+    exportOtioAction = new QAction(menuText(QStringLiteral("menu.file.export_otio"), QStringLiteral("OpenTimelineIOを書き出す...")), menu);
+    exportCurrentFrameAction = new QAction(menuText(QStringLiteral("menu.file.export_current_frame"), QStringLiteral("現在のフレームを書き出す...")), menu);
+    exportWorkAreaAction = new QAction(menuText(QStringLiteral("menu.file.export_work_area"), QStringLiteral("ワークエリアを書き出す...")), menu);
+    exportProjectPackageAction = new QAction(menuText(QStringLiteral("menu.file.export_package"), QStringLiteral("プロジェクトをパッケージ化...")), menu);
+    exportExternalManifestAction = new QAction(menuText(QStringLiteral("menu.file.export_manifest"), QStringLiteral("外部ファイル依存マニフェストを書き出す...")), menu);
 
     restartAction = new QAction(menuText(QStringLiteral("menu.file.restart"), QStringLiteral("再起動")));
     restartAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_restart.svg")));
@@ -307,7 +307,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
     menu->addAction(exportFontUsageAction);
-    exportMenu = menu->addMenu(QStringLiteral("エクスポート"));
+    exportMenu = menu->addMenu(menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")));
     exportMenu->addAction(exportCompositionAction);
     exportMenu->addAction(exportOtioAction);
     exportMenu->addSeparator();
@@ -354,29 +354,29 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 void ArtifactFileMenu::Impl::handleCreateProject()
 {
     if (!menu_) return;
-    if (!confirmUnsavedChanges(menu_, QStringLiteral("新規プロジェクトを作成"))) {
+    if (!confirmUnsavedChanges(menu_, menuText(QStringLiteral("dialog.new_project.title"), QStringLiteral("新規プロジェクトを作成")))) {
         return;
     }
 
     const QStringList starterChoices = {
         QStringLiteral("Blank Project"),
-        QStringLiteral("標準テンプレート（プロジェクト設定）"),
+        menuText(QStringLiteral("dialog.new_project.standard_template"), QStringLiteral("標準テンプレート（プロジェクト設定）")),
         QStringLiteral("Starter: Full HD Composition"),
         QStringLiteral("Starter: Vertical Ad Composition"),
         QStringLiteral("Starter: Square Social Composition")
     };
     bool starterOk = false;
     const QString starterChoice = QInputDialog::getItem(
-        menu_, QStringLiteral("新規プロジェクト"),
-        QStringLiteral("スターター:"), starterChoices, 0, false, &starterOk);
+        menu_, menuText(QStringLiteral("dialog.new_project.simple"), QStringLiteral("新規プロジェクト")),
+        menuText(QStringLiteral("dialog.new_project.starter"), QStringLiteral("スターター:")), starterChoices, 0, false, &starterOk);
     if (!starterOk || starterChoice.trimmed().isEmpty()) {
         return;
     }
 
     bool ok = false;
     const QString name = QInputDialog::getText(
-        menu_, QStringLiteral("新規プロジェクト"),
-        QStringLiteral("プロジェクト名:"),
+        menu_, menuText(QStringLiteral("dialog.new_project.simple"), QStringLiteral("新規プロジェクト")),
+        menuText(QStringLiteral("dialog.new_project.name"), QStringLiteral("プロジェクト名:")),
         QLineEdit::Normal, QStringLiteral("UntitledProject"), &ok);
     if (!ok || name.trimmed().isEmpty()) {
         return;
@@ -384,8 +384,8 @@ void ArtifactFileMenu::Impl::handleCreateProject()
     auto& manager = ArtifactProjectManager::getInstance();
     auto result = manager.createProject(UniString(name.trimmed()), true);
     if (!result.isSuccess) {
-        QMessageBox::warning(menu_, QStringLiteral("新規プロジェクト"),
-                             QStringLiteral("プロジェクトを作成できませんでした。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("dialog.new_project.simple"), QStringLiteral("新規プロジェクト")),
+                             menuText(QStringLiteral("dialog.new_project.failed"), QStringLiteral("プロジェクトを作成できませんでした。")));
         return;
     }
     const QString projectPath = manager.currentProjectPath();
@@ -423,7 +423,7 @@ void ArtifactFileMenu::Impl::handleCreateProject()
 void ArtifactFileMenu::Impl::handleOpenProject()
 {
     if (!menu_) return;
-    if (!confirmUnsavedChanges(menu_, QStringLiteral("別のプロジェクトを開く"))) {
+    if (!confirmUnsavedChanges(menu_, menuText(QStringLiteral("dialog.open.confirm"), QStringLiteral("別のプロジェクトを開く")))) {
         return;
     }
     auto* settings = ArtifactAppSettings::instance();
@@ -441,7 +441,7 @@ void ArtifactFileMenu::Impl::handleSaveProject()
     auto& manager = ArtifactProjectManager::getInstance();
     QString path = manager.currentProjectPath();
     if (path.isEmpty()) {
-        path = QFileDialog::getSaveFileName(menu_, "プロジェクトを保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
+        path = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("dialog.save.project_title"), QStringLiteral("プロジェクトを保存")), QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
         if (path.isEmpty()) return;
     }
     const QPointer<ArtifactFileMenu> menuGuard(menu_);
@@ -454,8 +454,8 @@ void ArtifactFileMenu::Impl::handleSaveProject()
             }
             qWarning() << "Save project failed" << result.errorMessage;
             if (menuGuard) {
-                QMessageBox::warning(menuGuard, QStringLiteral("プロジェクトを保存"),
-                                     QStringLiteral("プロジェクトを保存できませんでした。\n%1")
+                QMessageBox::warning(menuGuard, menuText(QStringLiteral("dialog.save.project_title"), QStringLiteral("プロジェクトを保存")),
+                                     menuText(QStringLiteral("dialog.save.failed"), QStringLiteral("プロジェクトを保存できませんでした。\n%1"))
                                          .arg(result.errorMessage));
             }
         });
@@ -464,7 +464,7 @@ void ArtifactFileMenu::Impl::handleSaveProject()
 void ArtifactFileMenu::Impl::handleSaveProjectAs()
 {
     if (!menu_) return;
-    const QString path = QFileDialog::getSaveFileName(menu_, "名前を付けて保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
+    const QString path = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("dialog.save_as.title"), QStringLiteral("名前を付けて保存")), QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (path.isEmpty()) return;
     const QPointer<ArtifactFileMenu> menuGuard(menu_);
     ArtifactProjectManager::getInstance().saveToFileAsync(
@@ -476,8 +476,8 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
             }
             qWarning() << "Save project as failed" << result.errorMessage;
             if (menuGuard) {
-                QMessageBox::warning(menuGuard, QStringLiteral("プロジェクトを保存"),
-                                     QStringLiteral("プロジェクトを保存できませんでした。\n%1")
+                QMessageBox::warning(menuGuard, menuText(QStringLiteral("dialog.save.project_title"), QStringLiteral("プロジェクトを保存")),
+                                     menuText(QStringLiteral("dialog.save.failed"), QStringLiteral("プロジェクトを保存できませんでした。\n%1"))
                                          .arg(result.errorMessage));
             }
         });
@@ -489,15 +489,15 @@ void ArtifactFileMenu::Impl::handleSaveNumberedCopy()
     const auto result = ArtifactProjectManager::getInstance().saveNumberedCopy();
     if (!result.success) {
         QMessageBox::warning(
-            menu_, QStringLiteral("番号をつけて保存"),
+            menu_, menuText(QStringLiteral("dialog.save_numbered.simple"), QStringLiteral("番号をつけて保存")),
             result.errorMessage.isEmpty()
-                ? QStringLiteral("番号付きコピーを保存できませんでした。")
+                ? menuText(QStringLiteral("dialog.save_numbered.failed"), QStringLiteral("番号付きコピーを保存できませんでした。"))
                 : result.errorMessage);
         return;
     }
     QMessageBox::information(
-        menu_, QStringLiteral("番号をつけて保存"),
-        QStringLiteral("番号付きコピーを保存しました。現在のプロジェクトは変更されていません。"));
+        menu_, menuText(QStringLiteral("dialog.save_numbered.simple"), QStringLiteral("番号をつけて保存")),
+        menuText(QStringLiteral("dialog.save_numbered.success"), QStringLiteral("番号付きコピーを保存しました。現在のプロジェクトは変更されていません。")));
 }
 
 void ArtifactFileMenu::Impl::handleRestoreLatestBackup()
@@ -506,31 +506,31 @@ void ArtifactFileMenu::Impl::handleRestoreLatestBackup()
     auto& manager = ArtifactProjectManager::getInstance();
     const QStringList backupPaths = manager.backupProjectPaths();
     if (backupPaths.isEmpty()) {
-        QMessageBox::information(menu_, QStringLiteral("バックアップ復元"),
-                                 QStringLiteral("利用可能なバックアップがありません。"));
+        QMessageBox::information(menu_, menuText(QStringLiteral("dialog.backup_restore.title"), QStringLiteral("バックアップ復元")),
+                                 menuText(QStringLiteral("dialog.backup_restore.no_backup"), QStringLiteral("利用可能なバックアップがありません。")));
         return;
     }
-    if (!confirmUnsavedChanges(menu_, QStringLiteral("バックアップを復元する"))) return;
+    if (!confirmUnsavedChanges(menu_, menuText(QStringLiteral("dialog.backup_restore.confirm"), QStringLiteral("バックアップを復元する")))) return;
     QStringList choices;
     for (int index = 0; index < backupPaths.size(); ++index) {
-        choices.append(QStringLiteral("世代 %1 — %2")
+        choices.append(menuText(QStringLiteral("dialog.backup_restore.generation"), QStringLiteral("世代 %1 — %2"))
                           .arg(index + 1)
                           .arg(QFileInfo(backupPaths.at(index)).lastModified().toString(
                               QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
     }
     bool accepted = false;
     const QString choice = QInputDialog::getItem(
-        menu_, QStringLiteral("バックアップ復元"), QStringLiteral("復元する世代:"),
+        menu_, menuText(QStringLiteral("dialog.backup_restore.title"), QStringLiteral("バックアップ復元")), menuText(QStringLiteral("dialog.backup_restore.select"), QStringLiteral("復元する世代:")),
         choices, 0, false, &accepted);
     if (!accepted || choice.isEmpty()) return;
     const int selectedIndex = choices.indexOf(choice);
     if (selectedIndex < 0 || !manager.restoreBackup(selectedIndex + 1)) {
-        QMessageBox::warning(menu_, QStringLiteral("バックアップ復元"),
-                             QStringLiteral("選択したバックアップを復元できませんでした。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("dialog.backup_restore.title"), QStringLiteral("バックアップ復元")),
+                             menuText(QStringLiteral("dialog.backup_restore.failed"), QStringLiteral("選択したバックアップを復元できませんでした。")));
         return;
     }
-    QMessageBox::information(menu_, QStringLiteral("バックアップ復元"),
-                             QStringLiteral("選択したバックアップを復元しました。"));
+    QMessageBox::information(menu_, menuText(QStringLiteral("dialog.backup_restore.title"), QStringLiteral("バックアップ復元")),
+                             menuText(QStringLiteral("dialog.backup_restore.success"), QStringLiteral("選択したバックアップを復元しました。")));
 }
 
 void ArtifactFileMenu::Impl::handleNewComposition()
@@ -569,7 +569,7 @@ void ArtifactFileMenu::Impl::handleNewComposition()
     }
     if (recentIndex >= 0) presetLabels.push_back(QStringLiteral("★ %1").arg(recentPreset));
     for (const auto& preset : presets) presetLabels.push_back(preset.label);
-    const QString selected = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presetLabels, 0, false, &ok);
+    const QString selected = QInputDialog::getItem(menu_, menuText(QStringLiteral("dialog.new_composition.title"), QStringLiteral("新規コンポジション")), menuText(QStringLiteral("dialog.export.preset"), QStringLiteral("プリセット:")), presetLabels, 0, false, &ok);
     if (!ok) return;
     const QString preset = selected.startsWith(QStringLiteral("★ ")) ? selected.mid(2) : selected;
 
@@ -578,7 +578,7 @@ void ArtifactFileMenu::Impl::handleNewComposition()
         if (entry.label == preset) { params = entry.params; break; }
     }
 
-    const QString name = QInputDialog::getText(menu_, "コンポジション名", "名前:", QLineEdit::Normal, "Composition", &ok);
+    const QString name = QInputDialog::getText(menu_, menuText(QStringLiteral("dialog.export.composition_name"), QStringLiteral("コンポジション名")), "名前:", QLineEdit::Normal, "Composition", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
 
     settings.setValue(QStringLiteral("recentCompositionPresetLabel"), preset);
@@ -593,8 +593,8 @@ void ArtifactFileMenu::Impl::handleImportAssets()
     if (!menu_) return;
     auto* svc = ArtifactProjectService::instance();
     if (!svc || !svc->hasProject()) {
-        QMessageBox::warning(menu_, QStringLiteral("アセットを読み込み"),
-                             QStringLiteral("先にプロジェクトを開いてください。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.import_title"), QStringLiteral("アセットを読み込み")),
+                             menuText(QStringLiteral("dialog.import.no_project"), QStringLiteral("先にプロジェクトを開いてください。")));
         return;
     }
     ArtifactMediaImportPickerDialog picker(menu_);
@@ -614,8 +614,8 @@ void ArtifactFileMenu::Impl::handleImportAssets()
             if (!menuGuard || !imported.isEmpty()) {
                 return;
             }
-            QMessageBox::warning(menuGuard, QStringLiteral("アセットを読み込み"),
-                                 QStringLiteral("読み込めるアセットがありませんでした。"));
+            QMessageBox::warning(menuGuard, menuText(QStringLiteral("menu.file.import_title"), QStringLiteral("アセットを読み込み")),
+                                 menuText(QStringLiteral("dialog.import.no_assets"), QStringLiteral("読み込めるアセットがありませんでした。")));
         });
 }
 
@@ -630,7 +630,7 @@ void ArtifactFileMenu::Impl::handleImportOtio()
 {
     if (!menu_) return;
     const QString filePath = QFileDialog::getOpenFileName(
-        menu_, QStringLiteral("OpenTimelineIOを読み込む"), QString(),
+        menu_, menuText(QStringLiteral("menu.file.import_otio_title"), QStringLiteral("OpenTimelineIOを読み込む")), QString(),
         QStringLiteral("OpenTimelineIO (*.otio);;All Files (*.*)"));
     if (filePath.isEmpty()) return;
 
@@ -640,7 +640,7 @@ void ArtifactFileMenu::Impl::handleImportOtio()
     if (!ArtifactCore::NLE::OtioAdapter::importTimelineFile(
             store, filePath, &sequenceId, &warnings)) {
         QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"),
-                             QStringLiteral("OTIOを読み込めませんでした。\n%1")
+                             menuText(QStringLiteral("dialog.import_otio.failed"), QStringLiteral("OTIOを読み込めませんでした。\n%1"))
                                  .arg(warnings.join(QStringLiteral("\n"))));
         return;
     }
@@ -677,16 +677,16 @@ void ArtifactFileMenu::Impl::handleImportOtio()
                                .arg(transitionCount)
                                .arg(unsupportedTransitionCount));
     }
-    QString message = QStringLiteral("OTIOを読み込みました。\n\nシーケンス: %1\nトラック: %2\nクリップ: %3")
+    QString message = menuText(QStringLiteral("dialog.import_otio.success"), QStringLiteral("OTIOを読み込みました。\n\nシーケンス: %1\nトラック: %2\nクリップ: %3"))
         .arg(sequence ? sequence->name : QStringLiteral("(unknown)"))
         .arg(trackCount)
         .arg(clipCount);
     if (!warnings.isEmpty()) {
-        message += QStringLiteral("\n\n警告:\n") + warnings.join(QStringLiteral("\n"));
+        message += menuText(QStringLiteral("dialog.warning.prefix"), QStringLiteral("\n\n警告:\n")) + warnings.join(QStringLiteral("\n"));
     }
     const auto choice = QMessageBox::question(
         menu_, QStringLiteral("OpenTimelineIO"),
-        message + QStringLiteral("\n\n新しいCompositionを作成しますか？\n既存Compositionは変更されません。"),
+        message + menuText(QStringLiteral("dialog.new_composition.confirm"), QStringLiteral("\n\n新しいCompositionを作成しますか？\n既存Compositionは変更されません。")),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (choice != QMessageBox::Yes || !sequence) return;
 
@@ -701,7 +701,7 @@ void ArtifactFileMenu::Impl::handleImportOtio()
     const auto composition = service->currentComposition().lock();
     if (!composition) {
         QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"),
-                             QStringLiteral("Import用Compositionを作成できませんでした。"));
+                             menuText(QStringLiteral("dialog.export.no_composition"), QStringLiteral("Import用Compositionを作成できませんでした。")));
         return;
     }
 
@@ -791,8 +791,8 @@ void ArtifactFileMenu::Impl::handleImportOtio()
             composition->addTimelineTransition(importedTransition);
         }
     }
-    message += QStringLiteral("\n\n新規Compositionを作成しました。レイヤー: %1").arg(importedCount);
-    if (!warnings.isEmpty()) message += QStringLiteral("\n\n警告:\n") + warnings.join(QStringLiteral("\n"));
+    message += menuText(QStringLiteral("dialog.new_composition.success"), QStringLiteral("\n\n新規Compositionを作成しました。レイヤー: %1")).arg(importedCount);
+    if (!warnings.isEmpty()) message += menuText(QStringLiteral("dialog.warning.prefix"), QStringLiteral("\n\n警告:\n")) + warnings.join(QStringLiteral("\n"));
     QMessageBox::information(menu_, QStringLiteral("OpenTimelineIO"), message);
 }
 
@@ -802,8 +802,8 @@ void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRece
         return;
     }
     if (!QFileInfo(path).exists()) {
-        QMessageBox::warning(menu_, QStringLiteral("プロジェクトを開く"),
-                             QStringLiteral("ファイルが見つかりません。\n%1").arg(path));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("dialog.open.simple"), QStringLiteral("プロジェクトを開く")),
+                             menuText(QStringLiteral("dialog.open.not_found"), QStringLiteral("ファイルが見つかりません。\n%1")).arg(path));
         auto* settings = ArtifactAppSettings::instance();
         if (!settings) {
             return;
@@ -825,10 +825,10 @@ void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRece
             if (!result.success) {
                 const QString error = result.errorMessage.toQString();
                 QMessageBox::warning(
-                    menuGuard, QStringLiteral("プロジェクトを開く"),
+                    menuGuard, menuText(QStringLiteral("dialog.open.simple"), QStringLiteral("プロジェクトを開く")),
                     error.isEmpty()
-                        ? QStringLiteral("プロジェクトを開けませんでした。\n%1").arg(path)
-                        : QStringLiteral("プロジェクトを開けませんでした。\n%1").arg(error));
+                        ? menuText(QStringLiteral("dialog.open.failed"), QStringLiteral("プロジェクトを開けませんでした。\n%1")).arg(path)
+                        : menuText(QStringLiteral("dialog.open.failed"), QStringLiteral("プロジェクトを開けませんでした。\n%1")).arg(error));
                 return;
             }
             if (addToRecent) {
@@ -842,17 +842,17 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
     if (!menu_) return;
     auto* svc = ArtifactProjectService::instance();
     if (!svc || !svc->hasProject()) {
-        QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), menuText(QStringLiteral("dialog.export.no_project_open"), QStringLiteral("プロジェクトが開かれていません。")));
         return;
     }
     
     auto comp = svc->currentComposition().lock();
     if (!comp) {
-        QMessageBox::warning(menu_, "エクスポート", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), menuText(QStringLiteral("dialog.export.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
-    const QString filePath = QFileDialog::getSaveFileName(menu_, "現在のフレームを書き出し",
+    const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("menu.file.export_current_frame_title"), QStringLiteral("現在のフレームを書き出し")),
         QString(), "PNG Image (*.png);;JPEG Image (*.jpg);;All Files (*.*)");
     if (filePath.isEmpty()) return;
 
@@ -904,8 +904,8 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         canvas.save(filePath, "PNG");
     }
     
-    QMessageBox::information(menu_, "エクスポート", 
-        QString("現在のフレームを保存しました:\n%1").arg(filePath));
+    QMessageBox::information(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), 
+        QString(menuText(QStringLiteral("dialog.export_frame.success"), QStringLiteral("現在のフレームを保存しました:\n%1"))).arg(filePath));
 }
 
 void ArtifactFileMenu::Impl::handleExportWorkArea()
@@ -913,17 +913,17 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     if (!menu_) return;
     auto* svc = ArtifactProjectService::instance();
     if (!svc || !svc->hasProject()) {
-        QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), menuText(QStringLiteral("dialog.export.no_project_open"), QStringLiteral("プロジェクトが開かれていません。")));
         return;
     }
 
     auto comp = svc->currentComposition().lock();
     if (!comp) {
-        QMessageBox::warning(menu_, "エクスポート", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), menuText(QStringLiteral("dialog.export.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
-    const QString filePath = QFileDialog::getSaveFileName(menu_, "ワークエリアをレンダリング",
+    const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("dialog.render.work_area"), QStringLiteral("ワークエリアをレンダリング")),
         QString(), "PNG Sequence (*.png);;MP4 Video (*.mp4);;All Files (*.*)");
     if (filePath.isEmpty()) return;
 
@@ -937,10 +937,10 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
 
     // 進捗ダイアログを表示
     QProgressDialog* progress = new QProgressDialog(menu_);
-    progress->setWindowTitle("レンダリング中");
-    progress->setLabelText("フレームをレンダリング中...");
+    progress->setWindowTitle(menuText(QStringLiteral("dialog.render.title"), QStringLiteral("レンダリング中")));
+    progress->setLabelText(menuText(QStringLiteral("dialog.render.frame"), QStringLiteral("フレームをレンダリング中...")));
     progress->setRange(0, static_cast<int>(totalFrames));
-    progress->setCancelButtonText("キャンセル");
+    progress->setCancelButtonText(menuText(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")));
     progress->setWindowModality(Qt::WindowModal);
     progress->setAttribute(Qt::WA_DeleteOnClose, false);
     progress->show();
@@ -961,8 +961,8 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
         watcher->deleteLater();
 
         if (renderedCount > 0) {
-            QMessageBox::information(menu_, "エクスポート完了",
-                QString("%1 フレームを保存しました:\n%2").arg(renderedCount).arg(filePath));
+            QMessageBox::information(menu_, menuText(QStringLiteral("dialog.export.done"), QStringLiteral("エクスポート完了")),
+                QString(menuText(QStringLiteral("dialog.export_frames.success"), QStringLiteral("%1 フレームを保存しました:\n%2"))).arg(renderedCount).arg(filePath));
         }
     });
 
@@ -1033,29 +1033,29 @@ void ArtifactFileMenu::Impl::handleExportProjectPackage()
     if (!menu_) return;
     auto* svc = ArtifactProjectService::instance();
     if (!svc || !svc->hasProject()) {
-        QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), menuText(QStringLiteral("dialog.export.no_project_open"), QStringLiteral("プロジェクトが開かれていません。")));
         return;
     }
     
-    const QString dirPath = QFileDialog::getExistingDirectory(menu_, "プロジェクトをパッケージ化", 
+    const QString dirPath = QFileDialog::getExistingDirectory(menu_, menuText(QStringLiteral("dialog.export_package.title"), QStringLiteral("プロジェクトをパッケージ化")), 
         QString(), QFileDialog::ShowDirsOnly);
     if (dirPath.isEmpty()) return;
 
     auto project = svc->getCurrentProjectSharedPtr();
     if (!project) {
-        QMessageBox::warning(menu_, QStringLiteral("エクスポート"),
-                             QStringLiteral("プロジェクトデータを取得できませんでした。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+                             menuText(QStringLiteral("dialog.export.no_project"), QStringLiteral("プロジェクトデータを取得できませんでした。")));
         return;
     }
 
     const PackageSettings settings{dirPath, false, false};
     if (!ArtifactProjectPackager::collectAndPackage(project.get(), settings)) {
-        QMessageBox::warning(menu_, QStringLiteral("エクスポート"),
-                             QStringLiteral("プロジェクトのパッケージ化に失敗しました。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+                             menuText(QStringLiteral("dialog.export_package.failed"), QStringLiteral("プロジェクトのパッケージ化に失敗しました。")));
         return;
     }
-    QMessageBox::information(menu_, QStringLiteral("エクスポート"),
-                             QStringLiteral("プロジェクトをパッケージ化しました。\n%1").arg(dirPath));
+    QMessageBox::information(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+                             menuText(QStringLiteral("dialog.export_package.success"), QStringLiteral("プロジェクトをパッケージ化しました。\n%1")).arg(dirPath));
 }
 
 void ArtifactFileMenu::Impl::handleExportExternalManifest()
@@ -1064,17 +1064,17 @@ void ArtifactFileMenu::Impl::handleExportExternalManifest()
     auto* service = ArtifactProjectService::instance();
     if (!service || !service->hasProject()) return;
     const QString path = QFileDialog::getSaveFileName(
-        menu_, QStringLiteral("外部ファイル依存マニフェスト"),
+        menu_, menuText(QStringLiteral("dialog.export_manifest.title"), QStringLiteral("外部ファイル依存マニフェスト")),
         QStringLiteral("external-files.json"), QStringLiteral("JSON (*.json)"));
     if (path.isEmpty()) return;
     const auto project = service->getCurrentProjectSharedPtr();
     if (!project || !ArtifactProjectStatistics::writeExternalFileManifest(project.get(), path)) {
-        QMessageBox::warning(menu_, QStringLiteral("依存マニフェスト"),
-                             QStringLiteral("外部ファイル依存マニフェストの出力に失敗しました。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("dialog.export_manifest.title_short"), QStringLiteral("依存マニフェスト")),
+                             menuText(QStringLiteral("dialog.export_manifest.failed"), QStringLiteral("外部ファイル依存マニフェストの出力に失敗しました。")));
         return;
     }
-    QMessageBox::information(menu_, QStringLiteral("依存マニフェスト"),
-                             QStringLiteral("外部ファイル依存マニフェストを書き出しました。\n%1").arg(path));
+    QMessageBox::information(menu_, menuText(QStringLiteral("dialog.export_manifest.title_short"), QStringLiteral("依存マニフェスト")),
+                             menuText(QStringLiteral("dialog.export_manifest.success"), QStringLiteral("外部ファイル依存マニフェストを書き出しました。\n%1")).arg(path));
 }
 
 void ArtifactFileMenu::Impl::handleExportComposition()
@@ -1083,19 +1083,19 @@ void ArtifactFileMenu::Impl::handleExportComposition()
     auto* service = ArtifactProjectService::instance();
     if (!service || !service->hasProject()) {
         QMessageBox::warning(menu_, QStringLiteral("Composition Export"),
-                             QStringLiteral("プロジェクトが開かれていません。"));
+                             menuText(QStringLiteral("dialog.export.no_project_open"), QStringLiteral("プロジェクトが開かれていません。")));
         return;
     }
     const auto composition = service->currentComposition().lock();
     if (!composition) {
         QMessageBox::warning(menu_, QStringLiteral("Composition Export"),
-                             QStringLiteral("コンポジションが選択されていません。"));
+                             menuText(QStringLiteral("dialog.export.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     QString errorMessage;
     if (ArtifactExportDialog::run(menu_, composition, &errorMessage)) {
         QMessageBox::information(menu_, QStringLiteral("Composition Export"),
-                                 QStringLiteral("コンポジションを書き出しました。"));
+                                 menuText(QStringLiteral("dialog.export.composition_success"), QStringLiteral("コンポジションを書き出しました。")));
     }
 }
 
@@ -1104,26 +1104,26 @@ void ArtifactFileMenu::Impl::handleExportOtio()
     if (!menu_) return;
     auto* service = ArtifactProjectService::instance();
     if (!service || !service->hasProject()) {
-        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"), QStringLiteral("プロジェクトが開かれていません。"));
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"), menuText(QStringLiteral("dialog.export.no_project_open"), QStringLiteral("プロジェクトが開かれていません。")));
         return;
     }
     const auto composition = service->currentComposition().lock();
     if (!composition) {
-        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"), QStringLiteral("コンポジションが選択されていません。"));
+        QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"), menuText(QStringLiteral("dialog.export.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     const QString filePath = QFileDialog::getSaveFileName(
-        menu_, QStringLiteral("OpenTimelineIOを書き出す"), QStringLiteral("composition.otio"),
+        menu_, menuText(QStringLiteral("menu.file.export_otio_title"), QStringLiteral("OpenTimelineIOを書き出す")), QStringLiteral("composition.otio"),
         QStringLiteral("OpenTimelineIO (*.otio);;All Files (*.*)"));
     if (filePath.isEmpty()) return;
     QVector<QString> warnings;
     if (!exportCompositionToOtioFile(*composition, filePath, &warnings)) {
         QMessageBox::warning(menu_, QStringLiteral("OpenTimelineIO"),
-                             QStringLiteral("OTIOを書き出せませんでした。\n%1").arg(warnings.join(QStringLiteral("\n"))));
+                             menuText(QStringLiteral("dialog.export_otio.failed"), QStringLiteral("OTIOを書き出せませんでした。\n%1")).arg(warnings.join(QStringLiteral("\n"))));
         return;
     }
-    QString message = QStringLiteral("OTIOを書き出しました。\n%1").arg(filePath);
-    if (!warnings.isEmpty()) message += QStringLiteral("\n\n警告:\n") + warnings.join(QStringLiteral("\n"));
+    QString message = menuText(QStringLiteral("dialog.export_otio.success"), QStringLiteral("OTIOを書き出しました。\n%1")).arg(filePath);
+    if (!warnings.isEmpty()) message += menuText(QStringLiteral("dialog.warning.prefix"), QStringLiteral("\n\n警告:\n")) + warnings.join(QStringLiteral("\n"));
     QMessageBox::information(menu_, QStringLiteral("OpenTimelineIO"), message);
 }
 
@@ -1132,24 +1132,24 @@ void ArtifactFileMenu::Impl::handleExportFontUsage()
     if (!menu_) return;
     auto* service = ArtifactProjectService::instance();
     if (!service || !service->hasProject()) {
-        QMessageBox::warning(menu_, QStringLiteral("フォントレポート"),
-                             QStringLiteral("プロジェクトが開かれていません。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("dialog.export_fonts.title"), QStringLiteral("フォントレポート")),
+                             menuText(QStringLiteral("dialog.export.no_project_open"), QStringLiteral("プロジェクトが開かれていません。")));
         return;
     }
     const QString directory = QFileDialog::getExistingDirectory(
-        menu_, QStringLiteral("使用フォントレポートの出力先"),
+        menu_, menuText(QStringLiteral("dialog.export_fonts.output"), QStringLiteral("使用フォントレポートの出力先")),
         QString(), QFileDialog::ShowDirsOnly);
     if (directory.isEmpty()) return;
     auto project = service->getCurrentProjectSharedPtr();
     if (!project || !ArtifactProjectStatistics::exportFontUsagePackage(
                         project.get(), directory)) {
-        QMessageBox::warning(menu_, QStringLiteral("フォントレポート"),
-                             QStringLiteral("フォントレポートの出力に失敗しました。"));
+        QMessageBox::warning(menu_, menuText(QStringLiteral("dialog.export_fonts.title"), QStringLiteral("フォントレポート")),
+                             menuText(QStringLiteral("dialog.export_fonts.failed"), QStringLiteral("フォントレポートの出力に失敗しました。")));
         return;
     }
     QMessageBox::information(
-        menu_, QStringLiteral("フォントレポート"),
-        QStringLiteral("font-usage.json / font-usage.csv とフォント実体を出力しました。\n%1")
+        menu_, menuText(QStringLiteral("dialog.export_fonts.title"), QStringLiteral("フォントレポート")),
+        menuText(QStringLiteral("dialog.export_fonts.success"), QStringLiteral("font-usage.json / font-usage.csv とフォント実体を出力しました。\n%1"))
             .arg(directory));
 }
 
@@ -1194,7 +1194,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
             cachedRecentProjects_ = recent;
             recentProjectsMenu->clear();
             if (recent.isEmpty()) {
-                auto* noRecent = recentProjectsMenu->addAction("なし");
+                auto* noRecent = recentProjectsMenu->addAction(menuText(QStringLiteral("dialog.recent_projects.empty"), QStringLiteral("なし")));
                 noRecent->setIcon(QIcon(resolveIconPath("Studio/filemenu_empty_recent.svg")));
                 noRecent->setEnabled(false);
             } else {
@@ -1209,7 +1209,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
                     fileAction->setToolTip(path);
 
                     QObject::connect(fileAction, &QAction::triggered, menu_, [this, path]() {
-                        if (!confirmUnsavedChanges(menu_, QStringLiteral("最近使ったプロジェクトを開く"))) {
+                        if (!confirmUnsavedChanges(menu_, menuText(QStringLiteral("dialog.recent_projects.open"), QStringLiteral("最近使ったプロジェクトを開く")))) {
                             return;
                         }
                         openProjectPath(path, true);
@@ -1248,7 +1248,7 @@ void ArtifactFileMenu::projectCreateRequested()
 void ArtifactFileMenu::projectClosed()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (!confirmUnsavedChanges(this, QStringLiteral("プロジェクトを閉じる"))) {
+        if (!confirmUnsavedChanges(this, menuText(QStringLiteral("menu.file.close_project_title"), QStringLiteral("プロジェクトを閉じる")))) {
             return;
         }
     }
@@ -1262,7 +1262,7 @@ void ArtifactFileMenu::projectClosed()
 void ArtifactFileMenu::quitApplication()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (!confirmUnsavedChanges(this, QStringLiteral("終了"))) {
+        if (!confirmUnsavedChanges(this, menuText(QStringLiteral("dialog.quit.title"), QStringLiteral("終了")))) {
             return;
         }
     }
@@ -1275,7 +1275,7 @@ void ArtifactFileMenu::quitApplication()
 void ArtifactFileMenu::restartApplication()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (!confirmUnsavedChanges(this, QStringLiteral("再起動"))) {
+        if (!confirmUnsavedChanges(this, menuText(QStringLiteral("menu.file.restart_title"), QStringLiteral("再起動")))) {
             return;
         }
     }

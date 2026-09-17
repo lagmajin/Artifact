@@ -51,7 +51,35 @@
       "restart": "再起動",
       "recent_projects": "最近使ったプロジェクト",
       "export": "エクスポート...",
-      "quit": "終了"
+      "quit": "終了",
+      "open_project_accel": "プロジェクトを開く(&O)...",
+      "save_numbered_accel": "番号をつけて保存(&V)",
+      "save_numbered": {
+        "tooltip": "現在のプロジェクトを番号付きコピーとして保存します。現在のプロジェクトは切り替わりません。"
+      },
+      "restore_backup": "最新バックアップから復元",
+      "new_project_accel": "新規プロジェクト(&N)...",
+      "import_accel": "アセットを読み込み(&I)...",
+      "import_title": "アセットを読み込み",
+      "import_otio": "OpenTimelineIOを読み込む...",
+      "import_otio_title": "OpenTimelineIOを読み込む",
+      "export_title": "エクスポート",
+      "export_game_ui": "CompositionをゲームUI形式で書き出す...",
+      "export_otio": "OpenTimelineIOを書き出す...",
+      "export_otio_title": "OpenTimelineIOを書き出す",
+      "export_manifest": "外部ファイル依存マニフェストを書き出す...",
+      "export_current_frame": "現在のフレームを書き出す...",
+      "export_current_frame_title": "現在のフレームを書き出し",
+      "export_work_area": "ワークエリアを書き出す...",
+      "export_package": "プロジェクトをパッケージ化...",
+      "export_fonts_accel": "使用フォントレポートを書き出す...",
+      "reveal_folder_title": "プロジェクトフォルダを開く",
+      "label_accel": "ファイル(&F)",
+      "recent_projects_title": "最近使ったプロジェクト",
+      "quit_accel": "終了(&Q)",
+      "restart_title": "再起動",
+      "close_project_title": "プロジェクトを閉じる",
+      "save_project_accel": "保存(&S)"
     },
     "edit": {
       "label": "編集",
@@ -79,20 +107,168 @@
       "zoom_in": "拡大",
       "zoom_out": "縮小",
       "fit_to_view": "ビューに合わせる",
-      "reset_layout": "レイアウトをリセット"
+      "reset_layout": "レイアウトをリセット",
+      "window_panel": "ウィンドウパネル(&W)",
+      "add_panel": "パネルを追加／再表示",
+      "project_panel": "Project パネル(&P)",
+      "project_panel_title": "Project パネル",
+      "project_panel_not_found": "Project パネルが見つかりません。",
+      "recent_panels": "最近使ったパネル",
+      "navigation": "ナビゲーション(&N)",
+      "preview": "プレビュー(&P)",
+      "zoom_100": "100% ズーム",
+      "resolution": {
+        "full": "フル画質",
+        "half": "1/2画質",
+        "third": "1/3画質",
+        "quarter": "1/4画質"
+      },
+      "second_monitor_preview": "セカンドモニタープレビュー(&S)",
+      "second_monitor_preview_title": "セカンドモニタープレビュー",
+      "second_monitor_not_found": "2つ目のモニターが検出されていません。\\nマルチディスプレイ環境でご利用ください。",
+      "grid_snap": "グリッドとスナップ(&G)",
+      "show_grid": "グリッドを表示(&G)",
+      "snap_to_grid": "グリッドにスナップ(&S)",
+      "show_guides": "ガイドを表示",
+      "snap_to_composition": "コンポジション／ガイドにスナップ",
+      "snap_tooltip": "正面ビューでコンポジションとレイヤーの端・中心に吸着。Altで一時解除",
+      "show_rulers": "定規を表示(&R)",
+      "show_composition_bounds": "コンポジション境界を表示",
+      "show_safe_margins": "セーフマージンを表示",
+      "show_pixel_grid": "ピクセルグリッドを表示",
+      "overlay": "オーバーレイ(&O)",
+      "onion_skin": "オニオンスキンを表示",
+      "show_weight_map": "ウェイトマップを表示",
+      "show_rig_overlay": "リグオーバーレイを表示",
+      "effect_palette": "エフェクトパレット",
+      "xray": "X-Ray (透過)",
+      "isolation": "Isolation (選択のみ)",
+      "quality": {
+        "draft": "Draft (編集優先)",
+        "preview": "Preview (標準)",
+        "final": "Final (品質優先)"
+      },
+      "quality_preset": "品質プリセット(&Q)",
+      "ram_cache": "RAM キャッシュを有効化",
+      "disk_cache": "ディスクキャッシュを有効化",
+      "color_management": "ディスプレイのカラーマネジメントを使用",
+      "grid_settings": "グリッド設定",
+      "grid_major_interval": "主間隔を変更…",
+      "grid_major_interval_value": "主間隔を変更… (%1)",
+      "grid_major_divisions": "主グリッドの分割数:",
+      "grid_major_spacing": "主グリッド間隔:",
+      "grid_subdivisions": "分割数を変更…",
+      "grid_subdivisions_value": "分割数を変更… (%1)",
+      "zoom_dependent_step": "ズーム連動ステップ",
+      "zoom_dependent_grid": "ズーム連動グリッド間隔",
+      "zoom_dependent_interval": "ズーム連動間隔を変更…",
+      "zoom_dependent_interval_value": "ズーム連動間隔を変更… (%1 px)",
+      "pin": "ピン留め",
+      "polar_grid": "極座標グリッド",
+      "isometric_grid": "アイソメトリックグリッド",
+      "show_origin_axis": "原点軸を表示",
+      "reset_layout_failed": "デフォルトレイアウトを復元できません。",
+      "workspace": "ワークスペース",
+      "workspace_accel": "ワークスペース(&K)",
+      "save_workspace": "ワークスペースを保存",
+      "restore_workspace": "ワークスペースを復元",
+      "save_workspace_failed": "ワークスペースの保存に失敗しました。",
+      "recent_panels_list": "最近使ったパネル",
+      "utility_panel": "ユーティリティパネル",
+      "reactive_event_editor": "リアクティブイベントエディタ(&E)...",
+      "save_view_settings": "現在のビュー設定を保存...",
+      "save_layout": "現在のレイアウトを保存...",
+      "save_selection": "現在の選択を保存...",
+      "save_camera": "現在のカメラを保存...",
+      "delete_view_settings": "ビュー設定を削除...",
+      "save_view_template": "View Template を保存",
+      "delete_view_template": "View Template を削除",
+      "save_camera_bookmark": "Camera ブックマークを保存",
+      "delete_camera_bookmark": "Camera ブックマークを削除...",
+      "camera_bookmark": "Camera ブックマーク",
+      "camera_bookmark_accel": "Camera ブックマーク(&B)",
+      "selection_set": "Selection セット(&S)",
+      "selection_set_title": "Selection セット",
+      "save_selection_set": "Selection セットを保存",
+      "selection_set_empty": "(なし)",
+      "presets": "プリセット",
+      "delete_presets": "プリセットを削除",
+      "delete_presets_dialog": "プリセットを削除...",
+      "capture_rig_pose": "現在のRigポーズをCapture",
+      "save_rig_pose_slot1": "現在のRigポーズをSlot 1へ保存",
+      "clear_rig_pose_slot": "Rig Pose Slotを消去",
+      "apply_rig_pose_slot1": "Rig Pose Slot 1を適用 (50%)",
+      "enter_set_name": "セット名を入力してください",
+      "enter_template_name": "テンプレート名を入力してください",
+      "select_template_to_delete": "削除するテンプレートを選択してください",
+      "select_bookmark_to_delete": "削除するブックマークを選択してください",
+      "select_preset_to_delete": "削除するプリセットを選択してください",
+      "no_deletable_view_settings": "削除できるビュー設定がありません。",
+      "no_deletable_bookmarks": "削除できるブックマークがありません。",
+      "no_deletable_presets": "削除できるプリセットがありません。",
+      "save_view_settings_failed": "ビュー設定の保存に失敗しました。",
+      "delete_view_settings_failed": "ビュー設定の削除に失敗しました。",
+      "load_view_settings_failed": "ビュー設定を読み込めませんでした。",
+      "restore_view_settings_failed": "ビュー設定の復元に失敗しました。",
+      "delete_view_settings_confirm": "ビュー設定「%1」を削除しますか？",
+      "save_bookmark_failed": "ブックマークの保存に失敗しました。",
+      "delete_bookmark_failed": "ブックマークの削除に失敗しました。",
+      "load_bookmark_failed": "ブックマークを読み込めませんでした。",
+      "restore_bookmark_failed": "ブックマークの復元に失敗しました。",
+      "delete_bookmark_confirm": "ブックマーク「%1」を削除しますか？",
+      "enter_bookmark_name": "ブックマーク名を入力してください",
+      "save_preset_failed": "プリセットの保存に失敗しました。",
+      "delete_preset_failed": "プリセットの削除に失敗しました。",
+      "restore_preset_failed": "プリセットの復元に失敗しました。",
+      "delete_preset_confirm": "プリセット「%1」を削除しますか？",
+      "enter_preset_name": "プリセット名を入力してください",
+      "save_selection_set_failed": "Selection set の保存に失敗しました。",
+      "load_selection_set_failed": "Selection set「%1」を読み込めませんでした。",
+      "viewport_not_found": "保存先のコンポジションまたは viewport が見つかりません。",
+      "destination_not_found": "保存先のコンポジションまたは選択が見つかりません。",
+      "composition_not_found": "削除対象のコンポジションが見つかりません。",
+      "viewport_state_not_found": "現在の viewport 状態を取得できませんでした。",
+      "viewport_settings_not_found": "現在の viewport 設定を取得できませんでした。",
+      "selection_not_found": "現在の選択を取得できませんでした。",
+      "no_session_to_restore": "復元できるセッションがありません。",
+      "restore_viewport_not_found": "復元先の viewport が見つかりません。",
+      "restore_last_session": "最後のセッションを復元",
+      "new_asset_browser": "新規アセットブラウザ(&A)",
+      "favorite": "お気に入り",
+      "grid_show_major": "Major グリッドを表示",
+      "grid_show_minor": "Minor グリッドを表示",
+      "grid_show_numbers": "グリッド数値を表示",
+      "color_palette": "カラーパレット(&P)",
+      "camera_bookmark_delete": "Camera ブックマークを削除",
+      "delete_camera_bookmark_dots": "カメラブックマークを削除..."
     },
     "composition": {
       "label": "コンポジション",
       "new_composition": "新規コンポジション",
-      "composition_settings": "コンポジション設定"
+      "composition_settings": "コンポジション設定",
+      "new_composition_accel": "新規コンポジション(&C)..."
     },
-    "effect": { "label": "エフェクト" },
-    "animation": { "label": "アニメーション" },
-    "script": { "label": "スクリプト" },
-    "render": { "label": "レンダー" },
-    "time": { "label": "時間" },
-    "options": { "label": "オプション" },
-    "test": { "label": "テスト" },
+    "effect": {
+      "label": "エフェクト"
+    },
+    "animation": {
+      "label": "アニメーション"
+    },
+    "script": {
+      "label": "スクリプト"
+    },
+    "render": {
+      "label": "レンダー"
+    },
+    "time": {
+      "label": "時間"
+    },
+    "options": {
+      "label": "オプション"
+    },
+    "test": {
+      "label": "テスト"
+    },
     "layer": {
       "label": "レイヤー",
       "new_solid": "新規ソリッド",
@@ -190,20 +366,12 @@
     "reverse_order_stagger": "順序を逆にしてずらす",
     "random_stagger": "ランダムにずらす",
     "interpolation": "補間",
-    "linear": "リニア",
-    "ease_in": "イーズイン",
-    "ease_out": "イーズアウト",
-    "ease_in_out": "イーズイン/アウト",
-    "hold": "ホールド",
-    "bezier": "ベジェ",
     "roving": "ロービング",
     "mark_as_roving": "ロービングとしてマーク",
     "clear_roving": "ロービングを解除",
     "keyframe_anchor": "キーフレームアンカー",
-    "absolute": "絶対",
     "lock_to_in_point": "イン点に固定",
     "lock_to_out_point": "アウト点に固定",
-    "stretch_with_layer": "レイヤーに合わせて伸縮",
     "keyframe_color_label": "キーフレーム色ラベル",
     "none": "なし",
     "red": "赤",
@@ -657,7 +825,128 @@
     "recovery_found_message": "クラッシュ復旧スナップショットが見つかりました。",
     "recover_prompt": "最新のスナップショットを復元しますか？",
     "recover_button": "復元",
-    "ignore_button": "無視"
+    "ignore_button": "無視",
+    "button": {
+      "yes": "はい",
+      "no": "いいえ",
+      "cancel": "キャンセル",
+      "save": "保存",
+      "discard": "破棄"
+    },
+    "recent_projects": {
+      "empty": "なし",
+      "open": "最近使ったプロジェクトを開く"
+    },
+    "save": {
+      "confirm_title": "保存の確認",
+      "changes": "プロジェクトに変更があります。%1 前に保存しますか？",
+      "unsaved_warning": "未保存の変更は失われる可能性があります。",
+      "error": "保存できませんでした",
+      "error_detail": "変更を保存できませんでした。保存先とプロジェクトの状態を確認してください。",
+      "error_with_detail": "変更を保存できませんでした。\\n%1",
+      "project_title": "プロジェクトを保存",
+      "failed": "プロジェクトを保存できませんでした。\\n%1"
+    },
+    "open": {
+      "failed": "プロジェクトを開けませんでした。\\n%1",
+      "not_found": "ファイルが見つかりません。\\n%1",
+      "title": "プロジェクトを開く",
+      "confirm": "別のプロジェクトを開く",
+      "simple": "プロジェクトを開く"
+    },
+    "save_numbered": {
+      "title": "番号をつけて保存",
+      "failed": "番号付きコピーを保存できませんでした。",
+      "success": "番号付きコピーを保存しました。現在のプロジェクトは変更されていません。",
+      "simple": "番号をつけて保存"
+    },
+    "backup_restore": {
+      "title": "バックアップ復元",
+      "confirm": "バックアップを復元する",
+      "no_backup": "利用可能なバックアップがありません。",
+      "generation": "世代 %1 — %2",
+      "select": "復元する世代:",
+      "failed": "選択したバックアップを復元できませんでした。",
+      "success": "選択したバックアップを復元しました。"
+    },
+    "new_project": {
+      "title": "新規プロジェクトを作成",
+      "failed": "プロジェクトを作成できませんでした。",
+      "name": "プロジェクト名:",
+      "starter": "スターター:",
+      "standard_template": "標準テンプレート（プロジェクト設定）",
+      "simple": "新規プロジェクト"
+    },
+    "new_composition": {
+      "title": "新規コンポジション",
+      "confirm": "\\n\\n新しいCompositionを作成しますか？\\n既存Compositionは変更されません。",
+      "success": "\\n\\n新規Compositionを作成しました。レイヤー: %1"
+    },
+    "warning": {
+      "prefix": "\\n\\n警告:\\n"
+    },
+    "import": {
+      "no_project": "先にプロジェクトを開いてください。",
+      "no_assets": "読み込めるアセットがありませんでした。"
+    },
+    "import_otio": {
+      "success": "OTIOを読み込みました。\\n\\nシーケンス: %1\\nトラック: %2\\nクリップ: %3",
+      "failed": "OTIOを読み込めませんでした。\\n%1"
+    },
+    "export": {
+      "done": "エクスポート完了",
+      "no_composition": "Import用Compositionを作成できませんでした。",
+      "no_project": "プロジェクトデータを取得できませんでした。",
+      "no_composition_selected": "コンポジションが選択されていません。",
+      "composition_success": "コンポジションを書き出しました。",
+      "composition_name": "コンポジション名",
+      "preset": "プリセット:",
+      "no_project_open": "プロジェクトが開かれていません。"
+    },
+    "export_otio": {
+      "success": "OTIOを書き出しました。\\n%1",
+      "failed": "OTIOを書き出せませんでした。\\n%1"
+    },
+    "export_manifest": {
+      "title": "外部ファイル依存マニフェスト",
+      "failed": "外部ファイル依存マニフェストの出力に失敗しました。",
+      "success": "外部ファイル依存マニフェストを書き出しました。\\n%1",
+      "output": "外部ファイル依存マニフェストの出力先",
+      "title_short": "依存マニフェスト"
+    },
+    "render": {
+      "work_area": "ワークエリアをレンダリング",
+      "frame": "フレームをレンダリング中...",
+      "title": "レンダリング中"
+    },
+    "export_package": {
+      "title": "プロジェクトをパッケージ化",
+      "failed": "プロジェクトのパッケージ化に失敗しました。",
+      "success": "プロジェクトをパッケージ化しました。\\n%1"
+    },
+    "export_fonts": {
+      "output": "使用フォントレポートの出力先",
+      "title": "フォントレポート",
+      "failed": "フォントレポートの出力に失敗しました。",
+      "success": "font-usage.json / font-usage.csv とフォント実体を出力しました。\\n%1"
+    },
+    "quit": {
+      "title": "終了"
+    },
+    "export_frame": {
+      "success": "現在のフレームを保存しました:\\n%1"
+    },
+    "export_frames": {
+      "success": "%1 フレームを保存しました:\\n%2"
+    },
+    "save_as": {
+      "title": "名前を付けて保存"
+    },
+    "grid": {
+      "major_interval": "グリッド主間隔",
+      "subdivisions": "グリッド分割数",
+      "target_spacing": "ビューポート上の目標間隔 (px):"
+    }
   },
   "render": {
     "render_output_settings": "レンダー出力設定",

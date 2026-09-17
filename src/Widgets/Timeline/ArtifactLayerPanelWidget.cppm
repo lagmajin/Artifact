@@ -105,6 +105,7 @@ import Artifact.Service.Playback;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
+import Frame.Rate;
 import Event.Bus;
 import Artifact.Event.Types;
 import Input.Operator;
@@ -3050,8 +3051,9 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
       return;
     }
     if (auto* playback = ArtifactPlaybackService::instance()) {
-      const auto fps = safeLayerPanelFrameRate(playback->frameRate().framerate());
-      impl_->currentTime = RationalTime(event.frame, fps);
+      const auto scale = FrameRate::storageScaleForFps(
+          safeLayerPanelFrameRate(playback->frameRate().framerate()));
+      impl_->currentTime = RationalTime(event.frame, scale);
       update();
     }
   }));
@@ -3638,8 +3640,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    if (event->button() == Qt::LeftButton) {
     RationalTime currentTime = impl_->currentTime;
     if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-     const auto fps = safeLayerPanelFrameRate(comp->frameRate().framerate());
-     currentTime = RationalTime(comp->framePosition().framePosition(), fps);
+     const auto scale = FrameRate::storageScaleForFps(
+         safeLayerPanelFrameRate(comp->frameRate().framerate()));
+     currentTime = RationalTime(comp->framePosition().framePosition(), scale);
     }
     const QRect keyframeRect =
         propertyKeyframeMarkerRect(width(), impl_->rowViewportY(idx), rowH);
@@ -6129,8 +6132,9 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     const auto property = layer->getProperty(editPath);
     const auto comp = safeCompositionLookup(impl_->compositionId);
     if (!property || !comp) return;
-    const RationalTime time(comp->framePosition().framePosition(),
-                            safeLayerPanelFrameRate(comp->frameRate().framerate()));
+    const auto scale = FrameRate::storageScaleForFps(
+        safeLayerPanelFrameRate(comp->frameRate().framerate()));
+    const RationalTime time(comp->framePosition().framePosition(), scale);
     QVariant value = property->interpolateValue(time);
     if (!value.isValid()) value = property->getValue();
     QVariant next;
@@ -7346,8 +7350,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   RationalTime currentTime = impl_->currentTime;
   if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-    const auto fps = safeLayerPanelFrameRate(comp->frameRate().framerate());
-    currentTime = RationalTime(comp->framePosition().framePosition(), fps);
+    const auto scale = FrameRate::storageScaleForFps(
+        safeLayerPanelFrameRate(comp->frameRate().framerate()));
+    currentTime = RationalTime(comp->framePosition().framePosition(), scale);
   }
 
   if (impl_->visibleRows.isEmpty()) {

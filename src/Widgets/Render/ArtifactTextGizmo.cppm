@@ -23,6 +23,7 @@ import Text.LayoutContract;
 import Color.Float;
 import Script.Expression.Evaluator;
 import Undo.UndoManager;
+import Frame.Rate;
 
 namespace Artifact {
 
@@ -44,21 +45,31 @@ ArtifactCore::AbstractPropertyPtr animatorProperty(
     return property;
 }
 
-ArtifactCore::RationalTime currentAnimatorTime(
-    const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer) {
-    int64_t frame = layer ? layer->currentFrame() : 0;
-    int64_t fps = 30;
+int64_t textAuthoringFrame(const ArtifactAbstractLayer* layer) {
+    if (!layer) return 0;
+    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+        return composition->framePosition().framePosition();
+    }
+    return layer->currentFrame() + layer->inPoint().framePosition() -
+           layer->startTime().framePosition();
+}
+
+int64_t textAuthoringTimeScale(const ArtifactAbstractLayer* layer) {
     if (layer) {
         if (auto *composition = static_cast<ArtifactAbstractComposition *>(
                 layer->composition())) {
-            frame = composition->framePosition().framePosition();
-            const double rate = composition->frameRate().framerate();
-            fps = std::max<int64_t>(
-                1, static_cast<int64_t>(std::llround(
-                       std::isfinite(rate) && rate > 0.0 ? rate : 30.0)));
+            return ArtifactCore::FrameRate::storageScaleForFps(
+                composition->frameRate().framerate());
         }
     }
-    return ArtifactCore::RationalTime(frame, fps);
+    return 30;
+}
+
+ArtifactCore::RationalTime currentAnimatorTime(
+    const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer) {
+    return ArtifactCore::RationalTime(textAuthoringFrame(layer.get()),
+                                      textAuthoringTimeScale(layer.get()));
 }
 
 float animatorPropertyValue(const ArtifactCore::SharedPtr<ArtifactTextLayer>& layer,
@@ -781,6 +792,8 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
     activeHandle_ = hitTest(viewportPos, renderer);
     if (activeHandle_ != HandleType::None) {
         isDragging_ = true;
+        dragStartFrame_ = textAuthoringFrame(layer_.get());
+        dragStartTimeScale_ = textAuthoringTimeScale(layer_.get());
         auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
         dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
         dragStartLayerPosition_ = QPointF(layer_->transform3D().positionX(),
@@ -927,7 +940,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             const auto property = animatorProperty(
                 textLayer, dragAnimatorIndex_, suffix);
             if (!property) return false;
-            const RationalTime editTime = currentAnimatorTime(textLayer);
+            const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
             const auto existing = std::find_if(
                 dragBeforeKeyframes_.cbegin(), dragBeforeKeyframes_.cend(),
                 [&editTime](const KeyFrame &keyframe) {
@@ -993,7 +1006,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                 dragAccumulatedRotationDelta_ =
                     newRotation - dragStartRotation_;
             }
-            const RationalTime editTime = currentAnimatorTime(textLayer);
+            const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
             if (dragTransform.hasRotationKeyFrameAt(editTime) ||
                 dragTransform.getRotationKeyFrameCount() > 0) {
                 dragTransform.setRotation(editTime, newRotation);
@@ -1088,7 +1101,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             const QPointF compensation = textApplyScaleRotateToVector(
                 deltaAnchor, dragStartScaleX_, dragStartScaleY_,
                 dragStartRotation_);
-            const RationalTime editTime = currentAnimatorTime(textLayer);
+            const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
             auto &anchorTransform = textLayer->transform3D();
             anchorTransform.setAnchor(
                 editTime, static_cast<float>(targetLocalAnchor.x()),
@@ -1123,9 +1136,6 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             return true;
         }
         case HandleType::Offset: {
-            // Write the edit at the layer's current frame.  Using frame 0
-            // here made viewport drags silently alter a different time than
-            // the one currently being edited.
             // Ctrl = fine adjustment (x0.1). Shift constrains to the
             // dominant axis (same convention as anchor drag and the
             // line shape tool). Both combine.
@@ -1144,15 +1154,8 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                     moveX = 0.0f;
                 }
             }
-            auto* composition = static_cast<ArtifactAbstractComposition*>(
-                textLayer->composition());
-            const double fps = composition
-                ? composition->frameRate().framerate() : 30.0;
-            const int64_t timeScale = std::max<int64_t>(
-                1, static_cast<int64_t>(std::llround(
-                    std::isfinite(fps) && fps > 0.0 ? fps : 30.0)));
             const auto frame = ArtifactCore::RationalTime(
-                static_cast<int64_t>(textLayer->currentFrame()), timeScale);
+                dragStartFrame_, dragStartTimeScale_);
             auto &start = textLayer->transform3D();
             const QPointF startWorldAnchor = dragStartGlobalTransform_.map(
                 QPointF(start.anchorX(), start.anchorY()));

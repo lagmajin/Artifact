@@ -26,6 +26,7 @@ import Event.Bus;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Time.Rational;
+import Frame.Rate;
 import Undo.UndoManager;
 
 export namespace Artifact {
@@ -137,7 +138,7 @@ ArtifactCore::RationalTime transformTime(
     }
   }
   return ArtifactCore::RationalTime(
-      frame, std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps))));
+      frame, ArtifactCore::FrameRate::storageScaleForFps(fps, 24));
 }
 
 void restorePropertyKeyState(const ArtifactAbstractLayerPtr &layer,

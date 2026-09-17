@@ -954,23 +954,23 @@ namespace Artifact {
   {
    menu_ = menu;
    auto& shortcuts = ShortcutBindings::instance();
-   zoomInAction = new QAction("ズームイン(&I)");
+   zoomInAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_in"), QStringLiteral("ズームイン(&I)")));
    zoomInAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewZoomIn));
    zoomInAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_zoom_in.svg")));
    
-   zoomOutAction = new QAction("ズームアウト(&O)");
+   zoomOutAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_out"), QStringLiteral("ズームアウト(&O)")));
    zoomOutAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewZoomOut));
    zoomOutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_zoom_out.svg")));
 
-   defaultZoomAction = new QAction("100% ズーム");
+   defaultZoomAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_100"), QStringLiteral("100% ズーム")));
    defaultZoomAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewDefaultZoom));
    defaultZoomAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_aspect_ratio.svg")));
 
-   fitToScreenAction = new QAction("画面に合わせる(&F)");
+   fitToScreenAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.fit_to_view"), QStringLiteral("画面に合わせる(&F)")));
    fitToScreenAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewFitToScreen));
    fitToScreenAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_fit_screen.svg")));
 
-   viewportBookmarkMenu = new QMenu("Camera ブックマーク(&B)");
+   viewportBookmarkMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark_accel"), QStringLiteral("Camera ブックマーク(&B)")));
    viewportBookmarkMenu->setObjectName(QStringLiteral("viewportBookmarkMenu"));
    viewportBookmarkMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    viewportBookmarkMenu->setToolTip("Save and restore named camera / viewport states");
@@ -980,20 +980,20 @@ namespace Artifact {
    compareMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
    compareGroup = new QActionGroup(menu);
    compareGroup->setExclusive(true);
-   selectionSetMenu = new QMenu("Selection セット(&S)");
+   selectionSetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set"), QStringLiteral("Selection セット(&S)")));
    selectionSetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
 
-   resolutionMenu = new QMenu("解像度(&R)");
+   resolutionMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution"), QStringLiteral("解像度(&R)")));
    resolutionMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_full.svg")));
    resolutionGroup = new QActionGroup(menu);
    resolutionGroup->setExclusive(true);
-   resFullAction = resolutionMenu->addAction("フル画質");
+   resFullAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.full"), QStringLiteral("フル画質")));
    resFullAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_full.svg")));
-   resHalfAction = resolutionMenu->addAction("1/2画質");
+   resHalfAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.half"), QStringLiteral("1/2画質")));
    resHalfAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_half.svg")));
-   resThirdAction = resolutionMenu->addAction("1/3画質");
+   resThirdAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.third"), QStringLiteral("1/3画質")));
    resThirdAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_third.svg")));
-   resQuarterAction = resolutionMenu->addAction("1/4画質");
+   resQuarterAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.quarter"), QStringLiteral("1/4画質")));
    resQuarterAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_quarter.svg")));
    resFullAction->setCheckable(true);
    resFullAction->setChecked(true);
@@ -1005,29 +1005,28 @@ namespace Artifact {
    resolutionGroup->addAction(resThirdAction);
    resolutionGroup->addAction(resQuarterAction);
 
-   showGridAction = new QAction("グリッドを表示(&G)");
+   showGridAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_grid"), QStringLiteral("グリッドを表示(&G)")));
    showGridAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowGrid));
    showGridAction->setCheckable(true);
    showGridAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
 
-   snapToGridAction = new QAction("グリッドにスナップ(&S)");
+   snapToGridAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.snap_to_grid"), QStringLiteral("グリッドにスナップ(&S)")));
    snapToGridAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGrid));
    snapToGridAction->setCheckable(true);
    snapToGridAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
 
-   showGuidesAction = new QAction("ガイドを表示");
+   showGuidesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_guides"), QStringLiteral("ガイドを表示")));
    showGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowGuides));
    showGuidesAction->setCheckable(true);
    showGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
 
-   snapToGuidesAction = new QAction("コンポジション／ガイドにスナップ");
-   snapToGuidesAction->setToolTip(QStringLiteral(
-       "正面ビューでコンポジションとレイヤーの端・中心に吸着。Altで一時解除"));
+   snapToGuidesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.snap_to_composition"), QStringLiteral("コンポジション／ガイドにスナップ")));
+   snapToGuidesAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.view.snap_tooltip"), QStringLiteral("正面ビューでコンポジションとレイヤーの端・中心に吸着。Altで一時解除")));
    snapToGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGuides));
    snapToGuidesAction->setCheckable(true);
    snapToGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_linear_scale.svg")));
 
-   showRulersAction = new QAction("定規を表示(&R)");
+   showRulersAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_rulers"), QStringLiteral("定規を表示(&R)")));
    showRulersAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowRulers));
    showRulersAction->setCheckable(true);
    showRulersAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
@@ -1043,7 +1042,7 @@ namespace Artifact {
                       settings.setValue(QStringLiteral("viewport/showRuler"), checked);
                     });
 
-   showPixelGridAction = new QAction(QStringLiteral("ピクセルグリッドを表示"));
+   showPixelGridAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_pixel_grid"), QStringLiteral("ピクセルグリッドを表示")));
    showPixelGridAction->setCheckable(true);
    QObject::connect(showPixelGridAction, &QAction::toggled, menu,
                     [this](bool checked) {
@@ -1053,7 +1052,7 @@ namespace Artifact {
                         editor->renderController()->setShowPixelGrid(checked);
                     });
 
-   showOutsideCompositionAction = new QAction(QStringLiteral("コンポジション境界を表示"));
+   showOutsideCompositionAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_composition_bounds"), QStringLiteral("コンポジション境界を表示")));
    showOutsideCompositionAction->setCheckable(true);
    QObject::connect(showOutsideCompositionAction, &QAction::toggled, menu,
                     [this](bool checked) {
@@ -1063,7 +1062,7 @@ namespace Artifact {
                         editor->renderController()->setShowOutsideComposition(checked);
                     });
 
-   showRigOverlayAction = new QAction(QStringLiteral("リグオーバーレイを表示"));
+   showRigOverlayAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_rig_overlay"), QStringLiteral("リグオーバーレイを表示")));
    showRigOverlayAction->setStatusTip(
        QStringLiteral("Show or hide rig bones, controls and skin overlays"));
    showRigOverlayAction->setCheckable(true);
@@ -1078,7 +1077,7 @@ namespace Artifact {
                       editor->renderController()->setShowRigOverlay(checked);
                     });
 
-   showRigWeightMapAction = new QAction(QStringLiteral("ウェイトマップを表示"));
+   showRigWeightMapAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_weight_map"), QStringLiteral("ウェイトマップを表示")));
    showRigWeightMapAction->setStatusTip(
        QStringLiteral("Show or hide the selected bone weight map"));
    showRigWeightMapAction->setCheckable(true);
@@ -1094,7 +1093,7 @@ namespace Artifact {
                           LineDebugKind::RigSkin, checked);
                     });
 
-   showOnionSkinAction = new QAction(QStringLiteral("オニオンスキンを表示"));
+   showOnionSkinAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.onion_skin"), QStringLiteral("オニオンスキンを表示")));
    showOnionSkinAction->setStatusTip(
        QStringLiteral("Show or hide previous-frame onion skin previews"));
    showOnionSkinAction->setCheckable(true);
@@ -1109,7 +1108,7 @@ namespace Artifact {
                       editor->renderController()->setShowOnionSkin(checked);
                     });
 
-   showSafeMarginsAction = new QAction(QStringLiteral("セーフマージンを表示"));
+   showSafeMarginsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_safe_margins"), QStringLiteral("セーフマージンを表示")));
    showSafeMarginsAction->setStatusTip(
        QStringLiteral("Show or hide title and action safe margins"));
    showSafeMarginsAction->setCheckable(true);
@@ -1124,7 +1123,7 @@ namespace Artifact {
                       editor->renderController()->setShowSafeMargins(checked);
                     });
 
-   captureRigPoseAction = new QAction(QStringLiteral("現在のRigポーズをCapture"));
+   captureRigPoseAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.capture_rig_pose"), QStringLiteral("現在のRigポーズをCapture")));
    captureRigPoseAction->setStatusTip(
        QStringLiteral("Capture the current rig pose for later reuse"));
    captureRigPoseAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
@@ -1142,7 +1141,7 @@ namespace Artifact {
                       }
                     });
 
-   saveRigPoseSlotAction = new QAction(QStringLiteral("現在のRigポーズをSlot 1へ保存"));
+   saveRigPoseSlotAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_rig_pose_slot1"), QStringLiteral("現在のRigポーズをSlot 1へ保存")));
    saveRigPoseSlotAction->setStatusTip(
        QStringLiteral("Save the current rig pose in pose slot 1"));
    saveRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
@@ -1160,7 +1159,7 @@ namespace Artifact {
                       }
                     });
 
-   applyRigPoseSlotAction = new QAction(QStringLiteral("Rig Pose Slot 1を適用 (50%)"));
+   applyRigPoseSlotAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.apply_rig_pose_slot1"), QStringLiteral("Rig Pose Slot 1を適用 (50%)")));
    applyRigPoseSlotAction->setStatusTip(
        QStringLiteral("Blend pose slot 1 into the current rig at 50 percent"));
    applyRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
@@ -1178,7 +1177,7 @@ namespace Artifact {
                       }
                     });
 
-   clearRigPoseSlotsAction = new QAction(QStringLiteral("Rig Pose Slotを消去"));
+   clearRigPoseSlotsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.clear_rig_pose_slot"), QStringLiteral("Rig Pose Slotを消去")));
    clearRigPoseSlotsAction->setStatusTip(
        QStringLiteral("Clear all saved rig pose slots and the pose clipboard"));
    clearRigPoseSlotsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
@@ -1195,26 +1194,26 @@ namespace Artifact {
                           QStringLiteral("Pose slots cleared"));
                     });
 
-   gridSettingsMenu = new QMenu(QStringLiteral("グリッド設定"));
+   gridSettingsMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_settings"), QStringLiteral("グリッド設定")));
    gridSettingsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
-   gridMajorIntervalAction = gridSettingsMenu->addAction(QStringLiteral("主間隔を変更…"));
-   gridSubdivisionsAction = gridSettingsMenu->addAction(QStringLiteral("分割数を変更…"));
+   gridMajorIntervalAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_major_interval"), QStringLiteral("主間隔を変更…")));
+   gridSubdivisionsAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_subdivisions"), QStringLiteral("分割数を変更…")));
    gridSettingsMenu->addSeparator();
-   gridShowMajorAction = gridSettingsMenu->addAction(QStringLiteral("Major グリッドを表示"));
+   gridShowMajorAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_show_major"), QStringLiteral("Major グリッドを表示")));
    gridShowMajorAction->setCheckable(true);
-   gridShowMinorAction = gridSettingsMenu->addAction(QStringLiteral("Minor グリッドを表示"));
+   gridShowMinorAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_show_minor"), QStringLiteral("Minor グリッドを表示")));
    gridShowMinorAction->setCheckable(true);
-   gridShowAxisAction = gridSettingsMenu->addAction(QStringLiteral("原点軸を表示"));
+   gridShowAxisAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_origin_axis"), QStringLiteral("原点軸を表示")));
    gridShowAxisAction->setCheckable(true);
-   gridShowNumbersAction = gridSettingsMenu->addAction(QStringLiteral("グリッド数値を表示"));
+   gridShowNumbersAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_show_numbers"), QStringLiteral("グリッド数値を表示")));
    gridShowNumbersAction->setCheckable(true);
    gridSettingsMenu->addSeparator();
-   gridAutoStepAction = gridSettingsMenu->addAction(QStringLiteral("ズーム連動ステップ"));
+   gridAutoStepAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_dependent_step"), QStringLiteral("ズーム連動ステップ")));
    gridAutoStepAction->setCheckable(true);
-   gridAutoTargetAction = gridSettingsMenu->addAction(QStringLiteral("ズーム連動間隔を変更…"));
-   gridPolarAction = gridSettingsMenu->addAction(QStringLiteral("極座標グリッド"));
+   gridAutoTargetAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_dependent_interval"), QStringLiteral("ズーム連動間隔を変更…")));
+   gridPolarAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.polar_grid"), QStringLiteral("極座標グリッド")));
    gridPolarAction->setCheckable(true);
-   gridIsometricAction = gridSettingsMenu->addAction(QStringLiteral("アイソメトリックグリッド"));
+   gridIsometricAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.isometric_grid"), QStringLiteral("アイソメトリックグリッド")));
    gridIsometricAction->setCheckable(true);
 
    QObject::connect(gridMajorIntervalAction, &QAction::triggered, menu, [this]() {
@@ -1223,8 +1222,8 @@ namespace Artifact {
     const auto current = settings->compositionGridSettings();
     bool ok = false;
     const double interval = QInputDialog::getDouble(
-        mainWindow ? mainWindow : menu_, QStringLiteral("グリッド主間隔"),
-        QStringLiteral("主グリッド間隔:"), current.majorInterval, 0.01,
+        mainWindow ? mainWindow : menu_, TranslationManager::instance().tr(QStringLiteral("dialog.grid.major_interval"), QStringLiteral("グリッド主間隔")),
+        TranslationManager::instance().tr(QStringLiteral("menu.view.grid_major_spacing"), QStringLiteral("主グリッド間隔:")), current.majorInterval, 0.01,
         100000.0, 2, &ok);
     if (ok) {
       auto next = current;
@@ -1238,8 +1237,8 @@ namespace Artifact {
     const auto current = settings->compositionGridSettings();
     bool ok = false;
     const int subdivisions = QInputDialog::getInt(
-        mainWindow ? mainWindow : menu_, QStringLiteral("グリッド分割数"),
-        QStringLiteral("主グリッドの分割数:"), current.subdivisions, 1,
+        mainWindow ? mainWindow : menu_, TranslationManager::instance().tr(QStringLiteral("dialog.grid.subdivisions"), QStringLiteral("グリッド分割数")),
+        TranslationManager::instance().tr(QStringLiteral("menu.view.grid_major_divisions"), QStringLiteral("主グリッドの分割数:")), current.subdivisions, 1,
         32, 1, &ok);
     if (ok) {
       auto next = current;
@@ -1329,8 +1328,8 @@ namespace Artifact {
                       bool ok = false;
                       const double value = QInputDialog::getDouble(
                           mainWindow ? mainWindow : menu_,
-                          QStringLiteral("ズーム連動グリッド間隔"),
-                          QStringLiteral("ビューポート上の目標間隔 (px):"),
+                          TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_dependent_grid"), QStringLiteral("ズーム連動グリッド間隔")),
+                          TranslationManager::instance().tr(QStringLiteral("dialog.grid.target_spacing"), QStringLiteral("ビューポート上の目標間隔 (px):")),
                           current, 24.0, 512.0, 1, &ok);
                       if (!ok) {
                         return;
@@ -1365,20 +1364,20 @@ namespace Artifact {
                       }
                     });
 
-   useDisplayColorManagementAction = new QAction("ディスプレイのカラーマネジメントを使用");
+   useDisplayColorManagementAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.color_management"), QStringLiteral("ディスプレイのカラーマネジメントを使用")));
    useDisplayColorManagementAction->setCheckable(true);
    useDisplayColorManagementAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
 
-   qualityPresetMenu = new QMenu("品質プリセット(&Q)");
+   qualityPresetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.quality_preset"), QStringLiteral("品質プリセット(&Q)")));
    qualityPresetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_preview.svg")));
    qualityGroup = new QActionGroup(menu);
    qualityGroup->setExclusive(true);
 
-   qualityDraftAction = qualityPresetMenu->addAction("Draft (編集優先)");
+   qualityDraftAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.quality.draft"), QStringLiteral("Draft (編集優先)")));
    qualityDraftAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_draft.svg")));
-   qualityPreviewAction = qualityPresetMenu->addAction("Preview (標準)");
+   qualityPreviewAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.quality.preview"), QStringLiteral("Preview (標準)")));
    qualityPreviewAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_preview.svg")));
-   qualityFinalAction = qualityPresetMenu->addAction("Final (品質優先)");
+   qualityFinalAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.quality.final"), QStringLiteral("Final (品質優先)")));
    qualityFinalAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_final.svg")));
 
    qualityDraftAction->setCheckable(true);
@@ -1390,9 +1389,9 @@ namespace Artifact {
    qualityGroup->addAction(qualityPreviewAction);
    qualityGroup->addAction(qualityFinalAction);
    qualityPresetMenu->addSeparator();
-   ramCacheAction = qualityPresetMenu->addAction(QStringLiteral("RAM キャッシュを有効化"));
+   ramCacheAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.ram_cache"), QStringLiteral("RAM キャッシュを有効化")));
    ramCacheAction->setCheckable(true);
-   diskCacheAction = qualityPresetMenu->addAction(QStringLiteral("ディスクキャッシュを有効化"));
+   diskCacheAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.disk_cache"), QStringLiteral("ディスクキャッシュを有効化")));
    diskCacheAction->setCheckable(true);
 
    QObject::connect(resFullAction, &QAction::triggered, menu, []() {
@@ -1484,7 +1483,7 @@ namespace Artifact {
         }));
    }
 
-   workspaceMenu = new QMenu("ワークスペース(&K)");
+   workspaceMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.workspace_accel"), QStringLiteral("ワークスペース(&K)")));
    workspaceMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace.svg")));
    workspaceGroup = new QActionGroup(menu);
    workspaceGroup->setExclusive(true);
@@ -1514,23 +1513,23 @@ namespace Artifact {
     }
    }
 
-   workspacePresetMenu = new QMenu("プリセット");
+   workspacePresetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.presets"), QStringLiteral("プリセット")));
    workspacePresetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
-   saveWorkspacePresetAction = workspacePresetMenu->addAction("現在のレイアウトを保存...");
+   saveWorkspacePresetAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_layout"), QStringLiteral("現在のレイアウトを保存...")));
    saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save_layout.svg")));
-   deleteWorkspacePresetAction = workspacePresetMenu->addAction("プリセットを削除...");
+   deleteWorkspacePresetAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets_dialog"), QStringLiteral("プリセットを削除...")));
    deleteWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
-   restoreWorkspaceSessionAction = workspacePresetMenu->addAction("最後のセッションを復元");
+   restoreWorkspaceSessionAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.restore_last_session"), QStringLiteral("最後のセッションを復元")));
    restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
-   resetWorkspaceLayoutAction = workspacePresetMenu->addAction("デフォルトレイアウトにリセット");
+   resetWorkspaceLayoutAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.reset_layout"), QStringLiteral("デフォルトレイアウトにリセット")));
    resetWorkspaceLayoutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
    QObject::connect(saveWorkspacePresetAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString defaultName = QStringLiteral("Custom");
     bool ok = false;
     const QString presetName = QInputDialog::getText(
-        mainWindow, QStringLiteral("ワークスペースを保存"),
-        QStringLiteral("プリセット名を入力してください"), QLineEdit::Normal,
+        mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.save_workspace"), QStringLiteral("ワークスペースを保存")),
+        TranslationManager::instance().tr(QStringLiteral("menu.view.enter_preset_name"), QStringLiteral("プリセット名を入力してください")), QLineEdit::Normal,
         defaultName, &ok)
                                     .trimmed();
     if (!ok || presetName.isEmpty()) {
@@ -1553,13 +1552,13 @@ namespace Artifact {
     }
     bool ok = false;
     const QString presetName = QInputDialog::getItem(
-        mainWindow, QStringLiteral("プリセットを削除"),
-        QStringLiteral("削除するプリセットを選択してください"),
+        mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets"), QStringLiteral("プリセットを削除")),
+        TranslationManager::instance().tr(QStringLiteral("menu.view.select_preset_to_delete"), QStringLiteral("削除するプリセットを選択してください")),
         presets, 0, false, &ok);
     if (!ok || presetName.trimmed().isEmpty()) {
      return;
     }
-    const QString confirmMessage = QStringLiteral("プリセット「%1」を削除しますか？").arg(presetName);
+    const QString confirmMessage = TranslationManager::instance().tr(QStringLiteral("menu.view.delete_preset_confirm"), QStringLiteral("プリセット「%1」を削除しますか？")).arg(presetName);
     if (QMessageBox::question(mainWindow, QStringLiteral("プリセットを削除"),
                               confirmMessage,
                               QMessageBox::Yes | QMessageBox::No,
@@ -1608,7 +1607,7 @@ namespace Artifact {
     refreshSelectionSetMenu();
    });
 
-   auto *navigationMenu = menu->addMenu(QStringLiteral("ナビゲーション(&N)"));
+   auto *navigationMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.navigation"), QStringLiteral("ナビゲーション(&N)")));
    navigationMenu->addAction(zoomInAction);
    navigationMenu->addAction(zoomOutAction);
    navigationMenu->addAction(defaultZoomAction);
@@ -1619,14 +1618,14 @@ namespace Artifact {
    navigationMenu->addMenu(compareMenu);
    navigationMenu->addMenu(selectionSetMenu);
 
-   auto *previewMenu = menu->addMenu(QStringLiteral("プレビュー(&P)"));
+   auto *previewMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.preview"), QStringLiteral("プレビュー(&P)")));
    previewMenu->addMenu(resolutionMenu);
    previewMenu->addMenu(qualityPresetMenu);
    previewMenu->addSeparator();
    previewMenu->addAction(useDisplayColorManagementAction);
 
-   auto *overlaysMenu = menu->addMenu(QStringLiteral("オーバーレイ(&O)"));
-   auto *gridAndSnapMenu = overlaysMenu->addMenu(QStringLiteral("グリッドとスナップ(&G)"));
+   auto *overlaysMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.overlay"), QStringLiteral("オーバーレイ(&O)")));
+   auto *gridAndSnapMenu = overlaysMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_snap"), QStringLiteral("グリッドとスナップ(&G)")));
    gridAndSnapMenu->addAction(showGridAction);
    gridAndSnapMenu->addMenu(gridSettingsMenu);
    gridAndSnapMenu->addAction(snapToGridAction);
@@ -1648,7 +1647,7 @@ namespace Artifact {
    rigMenu->addAction(applyRigPoseSlotAction);
    rigMenu->addAction(clearRigPoseSlotsAction);
 
-   auto *workspaceLayoutMenu = menu->addMenu(QStringLiteral("ワークスペース(&K)"));
+   auto *workspaceLayoutMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.workspace_accel"), QStringLiteral("ワークスペース(&K)")));
    workspaceLayoutMenu->addMenu(workspaceMenu);
    workspaceLayoutMenu->addMenu(workspacePresetMenu);
 
@@ -1660,13 +1659,13 @@ namespace Artifact {
     activateDock(mainWindow, QStringLiteral("Contents Viewer"));
    });
 
-   openProjectPanelAction = new QAction(QStringLiteral("Project パネル(&P)"), menu);
+   openProjectPanelAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.project_panel"), QStringLiteral("Project パネル(&P)")), menu);
    openProjectPanelAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    QObject::connect(openProjectPanelAction, &QAction::triggered, menu, [this]() {
     showProjectPanel();
    });
 
-   openColorPaletteAction = new QAction(QStringLiteral("カラーパレット(&P)"), menu);
+   openColorPaletteAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.color_palette"), QStringLiteral("カラーパレット(&P)")), menu);
    openColorPaletteAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
    QObject::connect(openColorPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1681,7 +1680,7 @@ namespace Artifact {
                     paletteWidget, QRect(120, 120, 560, 640));
    });
 
-   openEffectPaletteAction = new QAction(QStringLiteral("エフェクトパレット"), menu);
+   openEffectPaletteAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.effect_palette"), QStringLiteral("エフェクトパレット")), menu);
    openEffectPaletteAction->setIcon(QIcon(resolveIconPath("Studio/effect_ops_generate.svg")));
    QObject::connect(openEffectPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1711,7 +1710,7 @@ namespace Artifact {
                     colorScienceWidget, QRect(140, 140, 720, 720));
    });
 
-    windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
+    windowPanelsMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.window_panel"), QStringLiteral("ウィンドウパネル(&W)")));
     windowPanelsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
 
     // Dynamically rebuild the panels menu each time it opens
@@ -1720,7 +1719,7 @@ namespace Artifact {
     });
 
     menu->addSeparator();
-    openReactiveEventEditorAction = menu->addAction("リアクティブイベントエディタ(&E)...");
+    openReactiveEventEditorAction = menu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.reactive_event_editor"), QStringLiteral("リアクティブイベントエディタ(&E)...")));
     openReactiveEventEditorAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_reactive_events.svg")));
     QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
@@ -1731,7 +1730,7 @@ namespace Artifact {
      reactiveEventEditorWindow->present();
     });
 
-     newBrowserAction = new QAction(QStringLiteral("新規アセットブラウザ(&A)"), menu);
+     newBrowserAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.new_asset_browser"), QStringLiteral("新規アセットブラウザ(&A)")), menu);
      newBrowserAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_asset_browser.svg")));
      QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
       if (!mainWindow) return;
@@ -1743,7 +1742,7 @@ namespace Artifact {
                       browser, QRect(100, 100, 800, 600));
      });
 
-     secondaryPreviewAction = new QAction(QStringLiteral("セカンドモニタープレビュー(&S)"), menu);
+     secondaryPreviewAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.second_monitor_preview"), QStringLiteral("セカンドモニタープレビュー(&S)")), menu);
      secondaryPreviewAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSecondaryPreview));
      secondaryPreviewAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_secondary_preview.svg")));
      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this]() {
@@ -1961,11 +1960,11 @@ namespace Artifact {
       const auto grid = settings->compositionGridSettings();
       if (gridMajorIntervalAction) {
         gridMajorIntervalAction->setText(
-            QStringLiteral("主間隔を変更… (%1)").arg(grid.majorInterval, 0, 'f', 2));
+            TranslationManager::instance().tr(QStringLiteral("menu.view.grid_major_interval_value"), QStringLiteral("主間隔を変更… (%1)")).arg(grid.majorInterval, 0, 'f', 2));
       }
       if (gridSubdivisionsAction) {
         gridSubdivisionsAction->setText(
-            QStringLiteral("分割数を変更… (%1)").arg(grid.subdivisions));
+            TranslationManager::instance().tr(QStringLiteral("menu.view.grid_subdivisions_value"), QStringLiteral("分割数を変更… (%1)")).arg(grid.subdivisions));
       }
       if (gridShowMajorAction) {
         const QSignalBlocker blocker(gridShowMajorAction);
@@ -1995,7 +1994,7 @@ namespace Artifact {
             editor->renderController()->gridAutoStepTargetViewportInterval()).toFloat();
         editor->renderController()->setGridAutoStepTargetViewportInterval(target);
         if (gridAutoTargetAction) {
-          gridAutoTargetAction->setText(QStringLiteral("ズーム連動間隔を変更… (%1 px)")
+          gridAutoTargetAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_dependent_interval_value"), QStringLiteral("ズーム連動間隔を変更… (%1 px)"))
                                             .arg(QString::number(target, 'f', 0)));
         }
       }
@@ -2077,16 +2076,16 @@ namespace Artifact {
   cachedWorkspacePresetNames_ = presets;
   workspacePresetMenu->clear();
   saveWorkspacePresetAction =
-      workspacePresetMenu->addAction("現在のレイアウトを保存...");
+      workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_layout"), QStringLiteral("現在のレイアウトを保存...")));
   saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save_layout.svg")));
   deleteWorkspacePresetAction =
-      workspacePresetMenu->addAction("プリセットを削除...");
+      workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets_dialog"), QStringLiteral("プリセットを削除...")));
   deleteWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
   restoreWorkspaceSessionAction =
-      workspacePresetMenu->addAction("最後のセッションを復元");
+      workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.restore_last_session"), QStringLiteral("最後のセッションを復元")));
   restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
   resetWorkspaceLayoutAction =
-      workspacePresetMenu->addAction("デフォルトレイアウトにリセット");
+      workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.reset_layout"), QStringLiteral("デフォルトレイアウトにリセット")));
   resetWorkspaceLayoutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
 
   QObject::connect(saveWorkspacePresetAction, &QAction::triggered, mainWindow,
@@ -2098,8 +2097,8 @@ namespace Artifact {
                      bool ok = false;
                      const QString presetName = QInputDialog::getText(
                                                     mw,
-                                                    QStringLiteral("ワークスペースを保存"),
-                                                    QStringLiteral("プリセット名を入力してください"),
+                                                    TranslationManager::instance().tr(QStringLiteral("menu.view.save_workspace"), QStringLiteral("ワークスペースを保存")),
+                                                    TranslationManager::instance().tr(QStringLiteral("menu.view.enter_preset_name"), QStringLiteral("プリセット名を入力してください")),
                                                     QLineEdit::Normal, defaultName,
                                                     &ok)
                                                     .trimmed();
@@ -2129,14 +2128,14 @@ namespace Artifact {
                      }
                      bool ok = false;
                      const QString presetName = QInputDialog::getItem(
-                         mw, QStringLiteral("プリセットを削除"),
-                         QStringLiteral("削除するプリセットを選択してください"),
+                         mw, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets"), QStringLiteral("プリセットを削除")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.select_preset_to_delete"), QStringLiteral("削除するプリセットを選択してください")),
                          presets, 0, false, &ok);
                      if (!ok || presetName.trimmed().isEmpty()) {
                        return;
                      }
                      const QString confirmMessage =
-                         QStringLiteral("プリセット「%1」を削除しますか？").arg(presetName);
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.delete_preset_confirm"), QStringLiteral("プリセット「%1」を削除しますか？")).arg(presetName);
                      if (QMessageBox::question(
                              mw, QStringLiteral("プリセットを削除"),
                              confirmMessage, QMessageBox::Yes | QMessageBox::No,
@@ -2302,7 +2301,7 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
   // Commands that can create a utility surface on demand live beside the
   // registry-backed panel controls, rather than crowding View's top level.
   auto *utilityPanelsMenu = windowPanelsMenu->addMenu(
-      QStringLiteral("ユーティリティパネル"));
+      TranslationManager::instance().tr(QStringLiteral("menu.view.utility_panel"), QStringLiteral("ユーティリティパネル")));
   if (openContentsViewerAction) utilityPanelsMenu->addAction(openContentsViewerAction);
   if (openProjectPanelAction) utilityPanelsMenu->addAction(openProjectPanelAction);
   if (openColorPaletteAction) utilityPanelsMenu->addAction(openColorPaletteAction);
@@ -2328,8 +2327,8 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
     dockSettings.setValue(recentKey, recent);
   }
 
-  auto *recentMenu = windowPanelsMenu->addMenu(QStringLiteral("最近使ったパネル"));
-  auto *favoriteMenu = windowPanelsMenu->addMenu(QStringLiteral("お気に入り"));
+  auto *recentMenu = windowPanelsMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.recent_panels_list"), QStringLiteral("最近使ったパネル")));
+  auto *favoriteMenu = windowPanelsMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.favorite"), QStringLiteral("お気に入り")));
   recentMenu->setAccessibleName(QStringLiteral("Recently used panels"));
   recentMenu->setAccessibleDescription(QStringLiteral("Activate a recently used registered dock panel"));
   favoriteMenu->setAccessibleName(QStringLiteral("Favorite panels"));
@@ -2358,7 +2357,7 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
     }
   }
   if (recentMenu->actions().isEmpty()) {
-    recentMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
+    recentMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set_empty"), QStringLiteral("(なし)")))->setEnabled(false);
   }
   for (const auto& dockId : dockIds) {
     const QString title = displayTitle(dockId);
@@ -2376,11 +2375,11 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
                      });
   }
   if (favoriteMenu->actions().isEmpty()) {
-    favoriteMenu->addAction(QStringLiteral("(なし)"))->setEnabled(false);
+    favoriteMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set_empty"), QStringLiteral("(なし)")))->setEnabled(false);
   }
   windowPanelsMenu->addSeparator();
 
-  auto *addPanelMenu = windowPanelsMenu->addMenu(QStringLiteral("パネルを追加／再表示"));
+  auto *addPanelMenu = windowPanelsMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.add_panel"), QStringLiteral("パネルを追加／再表示")));
   addPanelMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
   addPanelMenu->setAccessibleName(QStringLiteral("Add or restore panel"));
   addPanelMenu->setAccessibleDescription(QStringLiteral("Show and activate a registered dock panel"));
@@ -2431,7 +2430,7 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
    });
   }
 
-  auto *pinMenu = windowPanelsMenu->addMenu(QStringLiteral("ピン留め"));
+  auto *pinMenu = windowPanelsMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.pin"), QStringLiteral("ピン留め")));
   pinMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
   for (const QString &dockId : dockIds) {
    const QString title = displayTitle(dockId);
@@ -2459,11 +2458,11 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
 
  viewportBookmarkMenu->clear();
  saveViewportBookmarkAction =
-     viewportBookmarkMenu->addAction("現在のカメラを保存...");
+     viewportBookmarkMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_camera"), QStringLiteral("現在のカメラを保存...")));
  saveViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
  saveViewportBookmarkAction->setToolTip("Store the current camera / viewport state under a name");
  deleteViewportBookmarkAction =
-     viewportBookmarkMenu->addAction("カメラブックマークを削除...");
+     viewportBookmarkMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_camera_bookmark_dots"), QStringLiteral("カメラブックマークを削除...")));
  deleteViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
  deleteViewportBookmarkAction->setToolTip("Remove a saved camera / viewport bookmark");
 
@@ -2495,8 +2494,8 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    bool ok = false;
                    const QString defaultName = QStringLiteral("Bookmark");
                    const QString bookmarkName = QInputDialog::getText(
-                       dialogParent, QStringLiteral("Camera ブックマークを保存"),
-                       QStringLiteral("ブックマーク名を入力してください"), QLineEdit::Normal,
+                       dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.save_camera_bookmark"), QStringLiteral("Camera ブックマークを保存")),
+                       TranslationManager::instance().tr(QStringLiteral("menu.view.enter_bookmark_name"), QStringLiteral("ブックマーク名を入力してください")), QLineEdit::Normal,
                        defaultName, &ok)
                                                     .trimmed();
                    if (!ok || bookmarkName.isEmpty()) {
@@ -2541,15 +2540,15 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
 
                    bool ok = false;
                    const QString bookmarkName = QInputDialog::getItem(
-                       dialogParent, QStringLiteral("Camera ブックマークを削除"),
-                       QStringLiteral("削除するブックマークを選択してください"), names, 0, false,
+                       dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark_delete"), QStringLiteral("Camera ブックマークを削除")),
+                       TranslationManager::instance().tr(QStringLiteral("menu.view.select_bookmark_to_delete"), QStringLiteral("削除するブックマークを選択してください")), names, 0, false,
                        &ok);
                    if (!ok || bookmarkName.trimmed().isEmpty()) {
                     return;
                    }
 
                    const QString confirmMessage =
-                       QStringLiteral("ブックマーク「%1」を削除しますか？").arg(bookmarkName);
+                       TranslationManager::instance().tr(QStringLiteral("menu.view.delete_bookmark_confirm"), QStringLiteral("ブックマーク「%1」を削除しますか？")).arg(bookmarkName);
                    if (QMessageBox::question(
                            dialogParent, QStringLiteral("Camera ブックマークを削除"),
                            confirmMessage, QMessageBox::Yes | QMessageBox::No,
@@ -2626,10 +2625,10 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
 
  viewportTemplateMenu->clear();
  saveViewportTemplateAction =
-     viewportTemplateMenu->addAction("現在のビュー設定を保存...");
+     viewportTemplateMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_view_settings"), QStringLiteral("現在のビュー設定を保存...")));
  saveViewportTemplateAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
  deleteViewportTemplateAction =
-     viewportTemplateMenu->addAction("ビュー設定を削除...");
+     viewportTemplateMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_settings"), QStringLiteral("ビュー設定を削除...")));
  deleteViewportTemplateAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
 
  QObject::connect(saveViewportTemplateAction, &QAction::triggered, menu_,
@@ -2660,8 +2659,8 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     bool ok = false;
                     const QString defaultName = QStringLiteral("Template");
                     const QString templateName = QInputDialog::getText(
-                        dialogParent, QStringLiteral("View Template を保存"),
-                        QStringLiteral("テンプレート名を入力してください"), QLineEdit::Normal,
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.save_view_template"), QStringLiteral("View Template を保存")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.enter_template_name"), QStringLiteral("テンプレート名を入力してください")), QLineEdit::Normal,
                         defaultName, &ok)
                                                     .trimmed();
                     if (!ok || templateName.isEmpty()) {
@@ -2706,15 +2705,15 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
 
                     bool ok = false;
                     const QString templateName = QInputDialog::getItem(
-                        dialogParent, QStringLiteral("View Template を削除"),
-                        QStringLiteral("削除するテンプレートを選択してください"), names, 0,
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_template"), QStringLiteral("View Template を削除")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.select_template_to_delete"), QStringLiteral("削除するテンプレートを選択してください")), names, 0,
                         false, &ok);
                     if (!ok || templateName.trimmed().isEmpty()) {
                      return;
                     }
 
                     const QString confirmMessage =
-                        QStringLiteral("ビュー設定「%1」を削除しますか？").arg(templateName);
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_settings_confirm"), QStringLiteral("ビュー設定「%1」を削除しますか？")).arg(templateName);
                     if (QMessageBox::question(
                             dialogParent, QStringLiteral("View Template を削除"),
                             confirmMessage, QMessageBox::Yes | QMessageBox::No,
@@ -2824,14 +2823,14 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
  compareReferenceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    compareMenu->addSeparator();
    auto& shortcuts = ShortcutBindings::instance();
-   xRayAction = compareMenu->addAction("X-Ray (透過)");
+   xRayAction = compareMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.xray"), QStringLiteral("X-Ray (透過)")));
    xRayAction->setCheckable(true);
    xRayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
    xRayAction->setToolTip(
        QStringLiteral("Show selected layer through occlusion (%1)")
            .arg(shortcuts.shortcutText(ShortcutId::ViewToggleXRay)));
    xRayAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewToggleXRay));
-   isolationAction = compareMenu->addAction("Isolation (選択のみ)");
+   isolationAction = compareMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.isolation"), QStringLiteral("Isolation (選択のみ)")));
    isolationAction->setCheckable(true);
    isolationAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    isolationAction->setToolTip(
@@ -2946,7 +2945,7 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
 
  selectionSetMenu->clear();
  saveSelectionSetAction =
-     selectionSetMenu->addAction("現在の選択を保存...");
+     selectionSetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_selection"), QStringLiteral("現在の選択を保存...")));
  saveSelectionSetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
 
  QObject::connect(saveSelectionSetAction, &QAction::triggered, menu_,
@@ -2976,8 +2975,8 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
 
                     bool ok = false;
                     const QString name = QInputDialog::getText(
-                        dialogParent, QStringLiteral("Selection セットを保存"),
-                        QStringLiteral("セット名を入力してください"), QLineEdit::Normal,
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.save_selection_set"), QStringLiteral("Selection セットを保存")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.enter_set_name"), QStringLiteral("セット名を入力してください")), QLineEdit::Normal,
                         QStringLiteral("Selection Set"), &ok).trimmed();
                     if (!ok || name.isEmpty()) {
                      return;

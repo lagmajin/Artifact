@@ -51,7 +51,35 @@
       "restart": "Restart",
       "recent_projects": "Recent Projects",
       "export": "Export...",
-      "quit": "Quit"
+      "quit": "Quit",
+      "open_project_accel": "Open Project(&O)...",
+      "save_numbered_accel": "Save Numbered Copy(&V)",
+      "save_numbered": {
+        "tooltip": "Save the current project as a numbered copy. The current project will not change."
+      },
+      "restore_backup": "Restore Latest Backup",
+      "new_project_accel": "New Project(&N)...",
+      "import_accel": "Import(&I)...",
+      "import_title": "Import",
+      "import_otio": "Import OpenTimelineIO...",
+      "import_otio_title": "Import OpenTimelineIO",
+      "export_title": "Export",
+      "export_game_ui": "Export Composition as Game UI...",
+      "export_otio": "Export OpenTimelineIO...",
+      "export_otio_title": "Export OpenTimelineIO",
+      "export_manifest": "Export External File Manifest...",
+      "export_current_frame": "Export Current Frame...",
+      "export_current_frame_title": "Export Current Frame",
+      "export_work_area": "Export Work Area...",
+      "export_package": "Package Project...",
+      "export_fonts_accel": "Export Font Usage Report...",
+      "reveal_folder_title": "Open Project Folder",
+      "label_accel": "File(&F)",
+      "recent_projects_title": "Recent Projects",
+      "quit_accel": "Quit(&Q)",
+      "restart_title": "Restart",
+      "close_project_title": "Close Project",
+      "save_project_accel": "Save(&S)"
     },
     "edit": {
       "label": "Edit",
@@ -79,20 +107,168 @@
       "zoom_in": "Zoom In",
       "zoom_out": "Zoom Out",
       "fit_to_view": "Fit to View",
-      "reset_layout": "Reset Layout"
+      "reset_layout": "Reset Layout",
+      "window_panel": "Window Panels(&W)",
+      "add_panel": "Add / Reopen Panel",
+      "project_panel": "Project Panel(&P)",
+      "project_panel_title": "Project Panel",
+      "project_panel_not_found": "Project panel not found.",
+      "recent_panels": "Recent Panels",
+      "navigation": "Navigation(&N)",
+      "preview": "Preview(&P)",
+      "zoom_100": "100% Zoom",
+      "resolution": {
+        "full": "Full Quality",
+        "half": "1/2 Quality",
+        "third": "1/3 Quality",
+        "quarter": "1/4 Quality"
+      },
+      "second_monitor_preview": "Second Monitor Preview(&S)",
+      "second_monitor_preview_title": "Second Monitor Preview",
+      "second_monitor_not_found": "Second monitor not detected.\\nPlease use in a multi-display environment.",
+      "grid_snap": "Grid & Snap(&G)",
+      "show_grid": "Show Grid(&G)",
+      "snap_to_grid": "Snap to Grid(&S)",
+      "show_guides": "Show Guides",
+      "snap_to_composition": "Snap to Composition / Guides",
+      "snap_tooltip": "Snap to composition and layer edges/center in front view. Release with Alt.",
+      "show_rulers": "Show Rulers(&R)",
+      "show_composition_bounds": "Show Composition Bounds",
+      "show_safe_margins": "Show Safe Margins",
+      "show_pixel_grid": "Show Pixel Grid",
+      "overlay": "Overlay(&O)",
+      "onion_skin": "Show Onion Skin",
+      "show_weight_map": "Show Weight Map",
+      "show_rig_overlay": "Show Rig Overlay",
+      "effect_palette": "Effect Palette",
+      "xray": "X-Ray (Transparency)",
+      "isolation": "Isolation (Selection Only)",
+      "quality": {
+        "draft": "Draft (Editing Priority)",
+        "preview": "Preview (Standard)",
+        "final": "Final (Quality Priority)"
+      },
+      "quality_preset": "Quality Preset(&Q)",
+      "ram_cache": "Enable RAM Cache",
+      "disk_cache": "Enable Disk Cache",
+      "color_management": "Use Display Color Management",
+      "grid_settings": "Grid Settings",
+      "grid_major_interval": "Change Major Interval…",
+      "grid_major_interval_value": "Change Major Interval… (%1)",
+      "grid_major_divisions": "Major grid divisions:",
+      "grid_major_spacing": "Major grid spacing:",
+      "grid_subdivisions": "Change Subdivisions…",
+      "grid_subdivisions_value": "Change Subdivisions… (%1)",
+      "zoom_dependent_step": "Zoom-Dependent Step",
+      "zoom_dependent_grid": "Zoom-Dependent Grid Interval",
+      "zoom_dependent_interval": "Change Zoom-Dependent Interval…",
+      "zoom_dependent_interval_value": "Change Zoom-Dependent Interval… (%1 px)",
+      "pin": "Pin",
+      "polar_grid": "Polar Grid",
+      "isometric_grid": "Isometric Grid",
+      "show_origin_axis": "Show Origin Axis",
+      "reset_layout_failed": "Could not reset layout.",
+      "workspace": "Workspace",
+      "workspace_accel": "Workspace(&K)",
+      "save_workspace": "Save Workspace",
+      "restore_workspace": "Restore Workspace",
+      "save_workspace_failed": "Failed to save workspace.",
+      "recent_panels_list": "Recent Panels",
+      "utility_panel": "Utility Panel",
+      "reactive_event_editor": "Reactive Event Editor(&E)…",
+      "save_view_settings": "Save View Settings…",
+      "save_layout": "Save Layout…",
+      "save_selection": "Save Selection…",
+      "save_camera": "Save Camera…",
+      "delete_view_settings": "Delete View Settings…",
+      "save_view_template": "Save View Template",
+      "delete_view_template": "Delete View Template",
+      "save_camera_bookmark": "Save Camera Bookmark",
+      "delete_camera_bookmark": "Delete Camera Bookmark…",
+      "camera_bookmark": "Camera Bookmark",
+      "camera_bookmark_accel": "Camera Bookmark(&B)",
+      "selection_set": "Selection Set(&S)",
+      "selection_set_title": "Selection Set",
+      "save_selection_set": "Save Selection Set",
+      "selection_set_empty": "(None)",
+      "presets": "Presets",
+      "delete_presets": "Delete Presets",
+      "delete_presets_dialog": "Delete Presets…",
+      "capture_rig_pose": "Capture Current Rig Pose",
+      "save_rig_pose_slot1": "Save Current Rig Pose to Slot 1",
+      "clear_rig_pose_slot": "Clear Rig Pose Slot",
+      "apply_rig_pose_slot1": "Apply Rig Pose Slot 1 (50%)",
+      "enter_set_name": "Please enter a set name.",
+      "enter_template_name": "Please enter a template name.",
+      "select_template_to_delete": "Select a template to delete.",
+      "select_bookmark_to_delete": "Select a bookmark to delete.",
+      "select_preset_to_delete": "Select a preset to delete.",
+      "no_deletable_view_settings": "No deletable view settings.",
+      "no_deletable_bookmarks": "No deletable bookmarks.",
+      "no_deletable_presets": "No deletable presets.",
+      "save_view_settings_failed": "Failed to save view settings.",
+      "delete_view_settings_failed": "Failed to delete view settings.",
+      "load_view_settings_failed": "Failed to load view settings.",
+      "restore_view_settings_failed": "Failed to restore view settings.",
+      "delete_view_settings_confirm": "Delete view settings '%1'?",
+      "save_bookmark_failed": "Failed to save bookmark.",
+      "delete_bookmark_failed": "Failed to delete bookmark.",
+      "load_bookmark_failed": "Failed to load bookmark.",
+      "restore_bookmark_failed": "Failed to restore bookmark.",
+      "delete_bookmark_confirm": "Delete bookmark '%1'?",
+      "enter_bookmark_name": "Please enter a bookmark name.",
+      "save_preset_failed": "Failed to save preset.",
+      "delete_preset_failed": "Failed to delete preset.",
+      "restore_preset_failed": "Failed to restore preset.",
+      "delete_preset_confirm": "Delete preset '%1'?",
+      "enter_preset_name": "Please enter a preset name.",
+      "save_selection_set_failed": "Failed to save selection set.",
+      "load_selection_set_failed": "Failed to load selection set '%1'.",
+      "viewport_not_found": "Viewport or composition not found for destination.",
+      "destination_not_found": "Destination composition or selection not found.",
+      "composition_not_found": "Composition to delete not found.",
+      "viewport_state_not_found": "Could not get current viewport state.",
+      "viewport_settings_not_found": "Could not get current viewport settings.",
+      "selection_not_found": "Could not get current selection.",
+      "no_session_to_restore": "No session to restore.",
+      "restore_viewport_not_found": "Viewport to restore not found.",
+      "restore_last_session": "Restore Last Session",
+      "new_asset_browser": "New Asset Browser(&A)",
+      "favorite": "Favorite",
+      "grid_show_major": "Show Major Grid",
+      "grid_show_minor": "Show Minor Grid",
+      "grid_show_numbers": "Show Grid Numbers",
+      "color_palette": "Color Palette(&P)",
+      "camera_bookmark_delete": "Delete Camera Bookmark",
+      "delete_camera_bookmark_dots": "Delete Camera Bookmark..."
     },
     "composition": {
       "label": "Composition",
       "new_composition": "New Composition",
-      "composition_settings": "Composition Settings"
+      "composition_settings": "Composition Settings",
+      "new_composition_accel": "New Composition(&C)..."
     },
-    "effect": { "label": "Effect" },
-    "animation": { "label": "Animation" },
-    "script": { "label": "Script" },
-    "render": { "label": "Render" },
-    "time": { "label": "Time" },
-    "options": { "label": "Options" },
-    "test": { "label": "Test" },
+    "effect": {
+      "label": "Effect"
+    },
+    "animation": {
+      "label": "Animation"
+    },
+    "script": {
+      "label": "Script"
+    },
+    "render": {
+      "label": "Render"
+    },
+    "time": {
+      "label": "Time"
+    },
+    "options": {
+      "label": "Options"
+    },
+    "test": {
+      "label": "Test"
+    },
     "layer": {
       "label": "Layer",
       "new_solid": "New Solid",
@@ -117,7 +293,7 @@
     "lane_single": "Lane: 1/1",
     "incoming_outgoing": "Incoming: %1 | Outgoing: %2",
     "eased": "eased",
-    "linear": "linear",
+    "linear": "Linear",
     "interpolation_value": "Interpolation: %1",
     "anchor_value": "Anchor: %1",
     "roving_on": "Roving: On",
@@ -190,20 +366,12 @@
     "reverse_order_stagger": "Reverse Order Stagger",
     "random_stagger": "Random Stagger",
     "interpolation": "Interpolation",
-    "linear": "Linear",
-    "ease_in": "Ease In",
-    "ease_out": "Ease Out",
-    "ease_in_out": "Ease In/Out",
-    "hold": "Hold",
-    "bezier": "Bezier",
     "roving": "Roving",
     "mark_as_roving": "Mark as Roving",
     "clear_roving": "Clear Roving",
     "keyframe_anchor": "Keyframe Anchor",
-    "absolute": "Absolute",
     "lock_to_in_point": "Lock to In Point",
     "lock_to_out_point": "Lock to Out Point",
-    "stretch_with_layer": "Stretch with Layer",
     "keyframe_color_label": "Keyframe Color Label",
     "none": "None",
     "red": "Red",
@@ -657,7 +825,128 @@
     "recovery_found_message": "A crash recovery snapshot was found.",
     "recover_prompt": "Recover the latest snapshot now?",
     "recover_button": "Recover",
-    "ignore_button": "Ignore"
+    "ignore_button": "Ignore",
+    "button": {
+      "yes": "Yes",
+      "no": "No",
+      "cancel": "Cancel",
+      "save": "Save",
+      "discard": "Discard"
+    },
+    "recent_projects": {
+      "empty": "None",
+      "open": "Open Recent Project"
+    },
+    "save": {
+      "confirm_title": "Save Changes",
+      "changes": "Save changes to %1?",
+      "unsaved_warning": "Unsaved changes may be lost.",
+      "error": "Failed to save",
+      "error_detail": "Could not save changes. Please check the destination and project state.",
+      "error_with_detail": "Could not save changes: %1",
+      "project_title": "Save Project",
+      "failed": "Failed to save project: %1"
+    },
+    "open": {
+      "failed": "Failed to open project: %1",
+      "not_found": "File not found: %1",
+      "title": "Open Project",
+      "confirm": "Open a Different Project",
+      "simple": "Open Project"
+    },
+    "save_numbered": {
+      "title": "Save Numbered Copy",
+      "failed": "Failed to save numbered copy.",
+      "success": "Saved numbered copy. The current project was not changed.",
+      "simple": "Save Numbered Copy"
+    },
+    "backup_restore": {
+      "title": "Backup Restore",
+      "confirm": "Restore Backup",
+      "no_backup": "No backup available.",
+      "generation": "Generation %1 — %2",
+      "select": "Select generation to restore:",
+      "failed": "Failed to restore the selected backup.",
+      "success": "Restored the selected backup."
+    },
+    "new_project": {
+      "title": "Create New Project",
+      "failed": "Failed to create project.",
+      "name": "Project name:",
+      "starter": "Starter:",
+      "standard_template": "Standard template (project settings)",
+      "simple": "New Project"
+    },
+    "new_composition": {
+      "title": "New Composition",
+      "confirm": "Create a new composition?\nExisting compositions will not be changed.",
+      "success": "Created new composition.\nLayers: %1"
+    },
+    "warning": {
+      "prefix": "\n\nWarning:\\n"
+    },
+    "import": {
+      "no_project": "Please open a project first.",
+      "no_assets": "No importable assets found."
+    },
+    "import_otio": {
+      "success": "Imported OTIO:\\n\\nSequences: %1\\nTracks: %2\\nClips: %3",
+      "failed": "Failed to import OTIO: %1"
+    },
+    "export": {
+      "done": "Export Complete",
+      "no_composition": "Failed to create composition for import.",
+      "no_project": "Could not get project data.",
+      "no_composition_selected": "No composition selected.",
+      "composition_success": "Exported composition.",
+      "composition_name": "Composition name",
+      "preset": "Preset:",
+      "no_project_open": "No project is open."
+    },
+    "export_otio": {
+      "success": "Exported OTIO: %1",
+      "failed": "Failed to export OTIO: %1"
+    },
+    "export_manifest": {
+      "title": "External File Manifest",
+      "failed": "Failed to export external file manifest.",
+      "success": "Exported external file manifest: %1",
+      "output": "External file manifest output:",
+      "title_short": "File Manifest"
+    },
+    "render": {
+      "work_area": "Render Work Area",
+      "frame": "Rendering frame...",
+      "title": "Rendering"
+    },
+    "export_package": {
+      "title": "Package Project",
+      "failed": "Failed to package project.",
+      "success": "Packaged project: %1"
+    },
+    "export_fonts": {
+      "output": "Font usage report output:",
+      "title": "Font Report",
+      "failed": "Failed to export font report.",
+      "success": "Exported font-usage.json / font-usage.csv and font assets: %1"
+    },
+    "quit": {
+      "title": "Quit"
+    },
+    "export_frame": {
+      "success": "Saved current frame: %1"
+    },
+    "export_frames": {
+      "success": "Saved %1 frames: %2"
+    },
+    "save_as": {
+      "title": "Save As"
+    },
+    "grid": {
+      "major_interval": "Major Grid Interval",
+      "subdivisions": "Grid Subdivisions",
+      "target_spacing": "Target grid spacing (px):"
+    }
   },
   "render": {
     "render_output_settings": "Render Output Settings",

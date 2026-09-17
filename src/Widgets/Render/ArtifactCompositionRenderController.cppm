@@ -330,6 +330,7 @@ import Configuration.LayeredConfigStore;
 import Configuration.ConfigLayer;
 
 import Frame.Position;
+import Frame.Rate;
 
 import Color.Float;
 
@@ -429,12 +430,8 @@ ArtifactCore::RationalTime gizmoTransformTime(
       if (candidate > 0.0) fps = candidate;
     }
   }
-  // Curve editor側(timelineFrameRateFallback + llround)と時刻スケールを一致させる。
-  // doubleのまま渡すとint64_tへの暗黙変換で切り捨てられ(29.97→29)、
-  // カーブ側(RationalTime(frame, 30))と別時刻として扱われる。
-  const int64_t fpsInt =
-      std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
-  return ArtifactCore::RationalTime(frame, fpsInt);
+  return ArtifactCore::RationalTime(
+      frame, ArtifactCore::FrameRate::storageScaleForFps(fps, 24));
 }
 
 void captureGizmoKeyState(const ArtifactAbstractLayerPtr &layer, int64_t frame,
@@ -23432,7 +23429,7 @@ bool CompositionRenderController::beginModalGizmoInteraction(
   impl_->gizmoUndoBefore_.is3D = selectedLayer->is3D();
   const auto &layerTransform = selectedLayer->transform3D();
   const auto layerTime =
-      gizmoTransformTime(selectedLayer, selectedLayer->currentFrame());
+      gizmoTransformTime(selectedLayer, impl_->gizmoUndoFrame_);
   impl_->gizmoLayerTransformBefore_.position = QVector3D(
       layerTransform.snapshotAt(layerTime).positionX,
       layerTransform.snapshotAt(layerTime).positionY,
@@ -23445,7 +23442,7 @@ bool CompositionRenderController::beginModalGizmoInteraction(
       selectedLayer->is3D() ? layerTransform.snapshotAt(layerTime).scaleZ
                             : 1.0f);
   impl_->gizmoLayerTransformBefore_.is3D = selectedLayer->is3D();
-  captureGizmoKeyState(selectedLayer, selectedLayer->currentFrame(),
+  captureGizmoKeyState(selectedLayer, impl_->gizmoUndoFrame_,
                        impl_->gizmoLayerTransformBefore_);
   const QMatrix4x4 startWorld = selectedLayer->getGlobalTransform4x4();
   const QVector3D startOrigin = startWorld.map(QVector3D());
@@ -23502,7 +23499,7 @@ bool CompositionRenderController::beginModalGizmoInteraction(
         if (!rootSelection) continue;
         GizmoGroupLayerState state;
         state.layer = candidate;
-        state.frame = candidate->currentFrame();
+        state.frame = impl_->gizmoUndoFrame_;
         state.before.is3D = candidate->is3D();
         const auto &candidateTransform = candidate->transform3D();
         const auto candidateTime = gizmoTransformTime(candidate, state.frame);
@@ -24461,7 +24458,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         impl_->gizmoUndoBefore_.is3D = selectedLayer->is3D();
         const auto &layerTransform = selectedLayer->transform3D();
         const auto layerTime =
-            gizmoTransformTime(selectedLayer, selectedLayer->currentFrame());
+            gizmoTransformTime(selectedLayer, impl_->gizmoUndoFrame_);
         impl_->gizmoLayerTransformBefore_.position = QVector3D(
             layerTransform.snapshotAt(layerTime).positionX,
             layerTransform.snapshotAt(layerTime).positionY,
@@ -24477,7 +24474,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
             layerTransform.scaleXAt(layerTime),
             layerTransform.scaleYAt(layerTime), layerScaleZ);
         impl_->gizmoLayerTransformBefore_.is3D = selectedLayer->is3D();
-        captureGizmoKeyState(selectedLayer, selectedLayer->currentFrame(),
+        captureGizmoKeyState(selectedLayer, impl_->gizmoUndoFrame_,
                              impl_->gizmoLayerTransformBefore_);
         const QMatrix4x4 startWorld = selectedLayer->getGlobalTransform4x4();
         const QVector3D startOrigin =
@@ -24535,7 +24532,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
               GizmoGroupLayerState state;
               state.layer = candidate;
-              state.frame = candidate->currentFrame();
+              state.frame = impl_->gizmoUndoFrame_;
               state.before.is3D = candidate->is3D();
               const auto &candidateTransform = candidate->transform3D();
               const auto candidateTime =
@@ -28916,7 +28913,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                   layerBefore.y() * gizmoScale.y() /
                   (std::abs(visualBefore.y()) > 0.001f
                        ? visualBefore.y() : 0.001f)));
-              applyLiveGizmoTransform(layer, layer->currentFrame(),
+              applyLiveGizmoTransform(layer, impl_->gizmoUndoFrame_,
                                       impl_->gizmoLayerTransformBefore_,
                                       current);
             } else if (impl_->gizmo3D_->mode() == GizmoMode::Scale) {
@@ -28942,7 +28939,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                                : impl_->gizmo3D_->position());
                 current.position = localPosition;
               }
-              applyLiveGizmoTransform(layer, layer->currentFrame(),
+              applyLiveGizmoTransform(layer, impl_->gizmoUndoFrame_,
                                       impl_->gizmoLayerTransformBefore_,
                                       current);
             } else {
@@ -28978,7 +28975,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                   TransformGizmo::HandleType::Rotate) {
                 current.rotation = impl_->gizmo3D_->rotation();
               }
-              applyLiveGizmoTransform(layer, layer->currentFrame(),
+              applyLiveGizmoTransform(layer, impl_->gizmoUndoFrame_,
                                       impl_->gizmoLayerTransformBefore_,
                                       current);
             }
@@ -30621,7 +30618,7 @@ void CompositionRenderController::handleMouseRelease() {
       GizmoTransformSnapshot before = impl_->gizmoLayerTransformBefore_;
       if (const auto layer = impl_->gizmoUndoLayer_.lock()) {
         const auto &transform = layer->transform3D();
-        const auto time = gizmoTransformTime(layer, layer->currentFrame());
+        const auto time = gizmoTransformTime(layer, impl_->gizmoUndoFrame_);
         const auto evaluated = transform.snapshotAt(time);
         after.position = QVector3D(evaluated.positionX, evaluated.positionY,
                                    evaluated.positionZ);
@@ -30631,7 +30628,7 @@ void CompositionRenderController::handleMouseRelease() {
         after.scale = QVector3D(
             transform.scaleXAt(time), transform.scaleYAt(time),
             layer->is3D() ? transform.snapshotAt(time).scaleZ : 1.0f);
-        captureGizmoKeyState(layer, layer->currentFrame(), after);
+        captureGizmoKeyState(layer, impl_->gizmoUndoFrame_, after);
       }
       const auto changed = [](const GizmoTransformSnapshot& lhs,
                               const GizmoTransformSnapshot& rhs) {

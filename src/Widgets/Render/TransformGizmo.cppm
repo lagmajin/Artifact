@@ -31,6 +31,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Color.Float;
 import Time.Rational;
+import Frame.Rate;
 import Animation.Transform3D;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
@@ -1273,6 +1274,8 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
 }
 
 struct TransformSnapshot {
+ int64_t frame = 0;
+ int64_t timeScale = 24;
  bool hasPositionKey = false;
  bool hasRotationKey = false;
  bool hasScaleKey = false;
@@ -1296,6 +1299,8 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
                                             const ArtifactCore::RationalTime& time)
 {
  TransformSnapshot snapshot;
+ snapshot.frame = time.value();
+ snapshot.timeScale = time.scale();
  if (!layer) {
   return snapshot;
  }
@@ -1307,14 +1312,15 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
  snapshot.positionAnimated = t3d.getPositionKeyFrameCount() > 0;
  snapshot.rotationAnimated = t3d.getRotationKeyFrameCount() > 0;
  snapshot.scaleAnimated = t3d.getScaleKeyFrameCount() > 0;
- snapshot.positionX = t3d.positionX();
- snapshot.positionY = t3d.positionY();
- snapshot.rotation = t3d.rotation();
- snapshot.scaleX = t3d.scaleX();
- snapshot.scaleY = t3d.scaleY();
- snapshot.anchorX = t3d.anchorX();
- snapshot.anchorY = t3d.anchorY();
- snapshot.anchorZ = t3d.anchorZ();
+ const auto evaluated = t3d.snapshotAt(time);
+ snapshot.positionX = evaluated.positionX;
+ snapshot.positionY = evaluated.positionY;
+ snapshot.rotation = evaluated.rotation;
+ snapshot.scaleX = evaluated.scaleX;
+ snapshot.scaleY = evaluated.scaleY;
+ snapshot.anchorX = evaluated.anchorX;
+ snapshot.anchorY = evaluated.anchorY;
+ snapshot.anchorZ = evaluated.anchorZ;
 
  if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
   snapshot.hasTextBoxState = true;
@@ -1375,7 +1381,7 @@ void applyRotationSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
                            const TransformSnapshot& snapshot)
 {
  if (snapshot.hasRotationKey) {
-  t3d.setRotation(time, snapshot.rotation);
+  t3d.setRotation(time, snapshot.rotation - t3d.initialRotation());
  } else {
   t3d.removeRotationKeyFrameAt(time);
   if (!snapshot.rotationAnimated) {
@@ -1418,10 +1424,9 @@ ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLa
 ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLayer* layer,
                                                         const int64_t frame)
 {
- if (!layer) {
-  return ArtifactCore::RationalTime(0, effectiveTransformKeyframeRate(nullptr));
- }
- return ArtifactCore::RationalTime(frame, effectiveTransformKeyframeRate(layer));
+ return ArtifactCore::RationalTime(
+     frame, ArtifactCore::FrameRate::storageScaleForFps(
+                effectiveTransformKeyframeRate(layer), 24));
 }
 
 class TransformUndoCommand final : public UndoCommand {
@@ -1441,8 +1446,7 @@ public:
     return false;
   }
 
-  const ArtifactCore::RationalTime time =
-      transformKeyframeTimeAtFrame(layer.get(), frame_);
+  const ArtifactCore::RationalTime time(snapshot.frame, snapshot.timeScale);
   auto& t3d = layer->transform3D();
   const TransformSnapshot current = captureTransformSnapshot(layer, time);
   const bool alreadyMatches =
@@ -1523,9 +1527,8 @@ public:
      succeeded = false;
      continue;
    }
-   const ArtifactCore::RationalTime time =
-       transformKeyframeTimeAtFrame(layer.get(), frame_);
    const TransformSnapshot &snapshot = useBefore ? entry.before : entry.after;
+   const ArtifactCore::RationalTime time(snapshot.frame, snapshot.timeScale);
    auto &t3d = layer->transform3D();
    applyPositionSnapshot(t3d, time, snapshot);
    applyRotationSnapshot(t3d, time, snapshot);
@@ -1598,6 +1601,7 @@ void drawEmphasizedRect(ArtifactIRenderer* renderer,
 } // namespace
 
 struct TransformGizmo::MultiDragState {
+ int64_t timeScale = 24;
  std::vector<TransformSnapshot> before;
  std::vector<QPointF> worldAnchors;
  std::vector<QTransform> parentWorldInverses;
@@ -1723,13 +1727,16 @@ static constexpr double HANDLE_SIZE = 8.0;
 static constexpr double ROTATE_HANDLE_DISTANCE = 28.0;
 static constexpr double GIZMO_OFFSET = 0.0;  // was 15.0; handles use offsetPointAwayFromCenter so no border expansion needed
 
-ArtifactCore::RationalTime currentTransformKeyframeTime(const ArtifactAbstractLayer* layer)
+int64_t currentTransformAuthoringFrame(const ArtifactAbstractLayer* layer)
 {
  if (!layer) {
-  return ArtifactCore::RationalTime(0, effectiveTransformKeyframeRate(nullptr));
+  return 0;
  }
- return ArtifactCore::RationalTime(layer->currentFrame(),
-                                   effectiveTransformKeyframeRate(layer));
+ if (auto* composition = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+  return composition->framePosition().framePosition();
+ }
+ return layer->currentFrame() + layer->inPoint().framePosition() -
+        layer->startTime().framePosition();
 }
 
 void TransformGizmo::draw(ArtifactIRenderer* renderer) {
@@ -2672,11 +2679,16 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
   lastCanvasMousePos_ = dragStartCanvasPos_;
   lastDragMutationNotify_ = {};
   const auto &t3d = layer_->transform3D();
-  dragStartFrame_ = layer_->currentFrame();
-  dragStartLayerPos_ = QPointF(t3d.positionX(), t3d.positionY());
-  dragStartScaleX_ = t3d.scaleX();
-  dragStartScaleY_ = t3d.scaleY();
-  dragStartRotation_ = t3d.rotation();
+  dragStartFrame_ = currentTransformAuthoringFrame(layer_.get());
+  multiDragState_->timeScale = ArtifactCore::FrameRate::storageScaleForFps(
+      effectiveTransformKeyframeRate(layer_.get()), 24);
+  const ArtifactCore::RationalTime dragStartTime(
+      dragStartFrame_, multiDragState_->timeScale);
+  const auto dragStartSnapshot = t3d.snapshotAt(dragStartTime);
+  dragStartLayerPos_ = QPointF(dragStartSnapshot.positionX, dragStartSnapshot.positionY);
+  dragStartScaleX_ = dragStartSnapshot.scaleX;
+  dragStartScaleY_ = dragStartSnapshot.scaleY;
+  dragStartRotation_ = dragStartSnapshot.rotation;
   dragStartTargetLayerPositions_.clear();
   dragStartTargetLayerPositions_.reserve(targets.size());
   multiDragState_->before.clear();
@@ -2704,15 +2716,12 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
     multiDragState_->transformRoot.push_back(false);
     continue;
    }
-   const auto& targetT3d = target->transform3D();
+   const auto before = captureTransformSnapshot(target, dragStartTime);
    dragStartTargetLayerPositions_.push_back(
-       QPointF(targetT3d.positionX(), targetT3d.positionY()));
-   const ArtifactCore::RationalTime targetTime =
-       currentTransformKeyframeTime(target.get());
-   multiDragState_->before.push_back(
-       captureTransformSnapshot(target, targetTime));
+       QPointF(before.positionX, before.positionY));
+   multiDragState_->before.push_back(before);
    multiDragState_->worldAnchors.push_back(target->getGlobalTransform().map(
-       QPointF(targetT3d.anchorX(), targetT3d.anchorY())));
+       QPointF(before.anchorX, before.anchorY)));
    bool parentInvertible = true;
    QTransform parentInverse;
    if (const auto parent = target->parentLayer()) {
@@ -2729,8 +2738,6 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
    }
    multiDragState_->transformRoot.push_back(transformRoot);
   }
-  const ArtifactCore::RationalTime dragStartTime =
-      transformKeyframeTimeAtFrame(layer_.get(), dragStartFrame_);
   dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(dragStartTime);
   dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(dragStartTime);
   dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(dragStartTime);
@@ -2748,8 +2755,8 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
   bool invertible = false;
   const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
   dragStartLocalMousePos_ = invertible ? inv.map(dragStartCanvasPos_) : QPointF();
-  dragStartAnchor_ = QPointF(t3d.anchorX(), t3d.anchorY());
-  dragStartAnchorZ_ = t3d.anchorZ();
+  dragStartAnchor_ = QPointF(dragStartSnapshot.anchorX, dragStartSnapshot.anchorY);
+  dragStartAnchorZ_ = dragStartSnapshot.anchorZ;
   dragStartTextBoxWidth_ = 0.0f;
   dragStartTextBoxHeight_ = 0.0f;
   if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
@@ -2850,7 +2857,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
  QPointF currentCanvasPos(canvasMouse.x, canvasMouse.y);
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
- ArtifactCore::RationalTime time = currentTransformKeyframeTime(layer_.get());
+ ArtifactCore::RationalTime time(dragStartFrame_, multiDragState_->timeScale);
   auto &t3d = layer_->transform3D();
   const auto setDragPosition = [&t3d, &time, this](float x, float y) {
    if (dragStartHasPositionKey_ || dragStartPositionAnimated_) {
@@ -2862,7 +2869,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  };
  const auto setDragRotation = [&t3d, &time, this](float degrees) {
   if (dragStartHasRotationKey_ || dragStartRotationAnimated_) {
-   t3d.setRotation(time, degrees);
+   t3d.setRotation(time, degrees - t3d.initialRotation());
   } else {
    t3d.removeRotationKeyFrameAt(time);
    t3d.setInitialRotation(time, degrees);
@@ -2948,7 +2955,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
        const float newY = static_cast<float>(newLocal.y());
        auto& targetT3d = target->transform3D();
         const ArtifactCore::RationalTime targetTime =
-            currentTransformKeyframeTime(target.get());
+            ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
         const TransformSnapshot &before = multiDragState_->before[i];
         if (before.hasPositionKey || before.positionAnimated) {
          setAbsolutePosition(targetT3d, targetTime, newX, newY);
@@ -3042,11 +3049,11 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      if (!target) continue;
      auto& targetT3d = target->transform3D();
       const ArtifactCore::RationalTime targetTime =
-          currentTransformKeyframeTime(target.get());
+          ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
       targetT3d.setAnchor(targetTime,
                           static_cast<float>(targetLocalAnchor.x()),
                           static_cast<float>(targetLocalAnchor.y()),
-                          targetT3d.anchorZ());
+                          targetT3d.anchorZAt(targetTime));
       syncAnimatedProperty(target, QStringLiteral("transform.anchor.x"),
                            targetTime,
                            static_cast<float>(targetLocalAnchor.x()));
@@ -3113,9 +3120,9 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                                   dragAccumulatedRotationDelta_;
      auto &targetT3d = target->transform3D();
      const ArtifactCore::RationalTime targetTime =
-         currentTransformKeyframeTime(target.get());
+         ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
      if (before.hasRotationKey || before.rotationAnimated) {
-      targetT3d.setRotation(targetTime, targetRotation);
+      targetT3d.setRotation(targetTime, targetRotation - targetT3d.initialRotation());
      } else {
       targetT3d.removeRotationKeyFrameAt(targetTime);
       targetT3d.setInitialRotation(targetTime, targetRotation);
@@ -3140,7 +3147,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    } else {
     auto& targetT3d = layer_->transform3D();
     if (targetT3d.hasRotationKeyFrameAt(time) || targetT3d.getRotationKeyFrameCount() > 0) {
-     targetT3d.setRotation(time, newRotation);
+     targetT3d.setRotation(time, newRotation - targetT3d.initialRotation());
     } else {
      targetT3d.removeRotationKeyFrameAt(time);
      targetT3d.setInitialRotation(time, newRotation);
@@ -3208,7 +3215,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      const float targetScaleY = before.scaleY * factor;
      auto &targetT3d = target->transform3D();
      const ArtifactCore::RationalTime targetTime =
-         currentTransformKeyframeTime(target.get());
+         ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
      if (before.hasScaleKey || before.scaleAnimated) {
       targetT3d.setScale(targetTime, targetScaleX, targetScaleY);
      } else {
@@ -3338,7 +3345,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
             before.scaleY * static_cast<float>(factorY);
         auto &targetT3d = target->transform3D();
         const ArtifactCore::RationalTime targetTime =
-            currentTransformKeyframeTime(target.get());
+            ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
         if (before.hasScaleKey || before.scaleAnimated) {
          targetT3d.setScale(targetTime, targetScaleX, targetScaleY);
         } else {
@@ -3468,7 +3475,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       if (!target) continue;
       auto& targetT3d = target->transform3D();
        const ArtifactCore::RationalTime targetTime =
-           currentTransformKeyframeTime(target.get());
+           ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
        if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
         setAbsolutePosition(targetT3d, targetTime, static_cast<float>(newPos.x()),
                             static_cast<float>(newPos.y()));
@@ -3506,7 +3513,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       if (!target) continue;
       auto& targetT3d = target->transform3D();
       const ArtifactCore::RationalTime targetTime =
-          currentTransformKeyframeTime(target.get());
+          ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
       if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
        targetT3d.setScale(targetTime, newScaleX, newScaleY);
        } else {
@@ -3539,7 +3546,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
 void TransformGizmo::handleMouseRelease() {
  if (isDragging_ && layer_) {
   const ArtifactCore::RationalTime time =
-      transformKeyframeTimeAtFrame(layer_.get(), dragStartFrame_);
+      ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
   std::vector<MultiTransformEntry> undoEntries;
   const auto targets = !targetLayers_.empty() ? targetLayers_ : std::vector<ArtifactAbstractLayerPtr>{layer_};
   undoEntries.reserve(targets.size());
@@ -3553,7 +3560,7 @@ void TransformGizmo::handleMouseRelease() {
        ? multiDragState_->before[i]
        : captureTransformSnapshot(target, time);
    const ArtifactCore::RationalTime targetTime =
-       transformKeyframeTimeAtFrame(target.get(), dragStartFrame_);
+       ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
    const TransformSnapshot after =
        captureTransformSnapshot(target, targetTime);
    const bool changed = before.hasPositionKey != after.hasPositionKey ||
@@ -3614,7 +3621,7 @@ bool TransformGizmo::cancelInteraction() {
   }
   const TransformSnapshot &before = multiDragState_->before[i];
   const ArtifactCore::RationalTime time =
-      transformKeyframeTimeAtFrame(target.get(), dragStartFrame_);
+      ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
   auto &transform = target->transform3D();
   applyPositionSnapshot(transform, time, before);
   applyRotationSnapshot(transform, time, before);
@@ -3741,7 +3748,7 @@ std::vector<ArtifactAbstractLayerPtr> TransformGizmo::fitTargetsToRect(
  if (targets.empty()) {
   return changed;
  }
- const int64_t frame = layer_ ? layer_->currentFrame() : 0;
+ const int64_t frame = currentTransformAuthoringFrame(layer_.get());
  std::vector<MultiTransformEntry> entries;
  entries.reserve(targets.size());
  for (const auto& target : targets) {
@@ -3751,7 +3758,7 @@ std::vector<ArtifactAbstractLayerPtr> TransformGizmo::fitTargetsToRect(
   }
   auto& t3d = target->transform3D();
   const ArtifactCore::RationalTime time =
-      currentTransformKeyframeTime(target.get());
+      transformKeyframeTimeAtFrame(target.get(), frame);
   const TransformSnapshot before = captureTransformSnapshot(target, time);
   const double kx = canvasRect.width() / bounds.width();
   const double ky = canvasRect.height() / bounds.height();
@@ -3812,7 +3819,7 @@ std::vector<ArtifactAbstractLayerPtr> TransformGizmo::alignTargets(
  if (targets.empty()) {
   return changed;
  }
- const int64_t frame = layer_ ? layer_->currentFrame() : 0;
+ const int64_t frame = currentTransformAuthoringFrame(layer_.get());
  std::vector<MultiTransformEntry> entries;
  entries.reserve(targets.size());
  for (const auto& target : targets) {
@@ -3842,7 +3849,7 @@ std::vector<ArtifactAbstractLayerPtr> TransformGizmo::alignTargets(
    continue;
   }
   const ArtifactCore::RationalTime time =
-      currentTransformKeyframeTime(target.get());
+      transformKeyframeTimeAtFrame(target.get(), frame);
   const TransformSnapshot before = captureTransformSnapshot(target, time);
   const QPointF parentDelta = arrangeParentSpaceDelta(target, QPointF(dx, dy));
   arrangeSetPosition(target, time,
@@ -3911,7 +3918,7 @@ std::vector<ArtifactAbstractLayerPtr> TransformGizmo::distributeTargets(
  if (gap < 0.0) {
   gap = 0.0;
  }
- const int64_t frame = layer_ ? layer_->currentFrame() : 0;
+ const int64_t frame = currentTransformAuthoringFrame(layer_.get());
  std::vector<MultiTransformEntry> entries;
  entries.reserve(items.size());
  double cursor = edgeMin(items.front().bounds);
@@ -3923,7 +3930,7 @@ std::vector<ArtifactAbstractLayerPtr> TransformGizmo::distributeTargets(
   }
   const QPointF canvasDelta = horizontal ? QPointF(wanted, 0.0) : QPointF(0.0, wanted);
   const ArtifactCore::RationalTime time =
-      currentTransformKeyframeTime(item.target.get());
+      transformKeyframeTimeAtFrame(item.target.get(), frame);
   const TransformSnapshot before = captureTransformSnapshot(item.target, time);
   const QPointF parentDelta = arrangeParentSpaceDelta(item.target, canvasDelta);
   arrangeSetPosition(item.target, time,
