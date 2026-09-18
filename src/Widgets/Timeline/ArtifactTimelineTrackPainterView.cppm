@@ -4231,6 +4231,12 @@ QJsonArray serializeSelectedKeyframeMarkers(
     record.insert(QStringLiteral("layerId"), marker.layerId.toString());
     record.insert(QStringLiteral("propertyPath"), marker.propertyPath);
     record.insert(QStringLiteral("frame"), static_cast<qint64>(frame));
+    // Source time base: paste reinterprets frames in the target comp scale,
+    // so carry the rational instant for cross-fps paste.
+    record.insert(QStringLiteral("timeValue"),
+                  static_cast<qint64>(it->time.value()));
+    record.insert(QStringLiteral("timeScale"),
+                  static_cast<qint64>(it->time.scale()));
     record.insert(QStringLiteral("value"), QJsonValue::fromVariant(it->value));
     record.insert(QStringLiteral("interpolation"),
                   static_cast<int>(it->interpolation));
@@ -4247,6 +4253,28 @@ QJsonArray serializeSelectedKeyframeMarkers(
   return keyframes;
 }
 
+// Copy records carry their source time base so cross-fps paste keeps the
+// rational instant instead of reinterpreting frame numbers. Records written
+// before timeValue/timeScale fall back to frame numbers in the target scale,
+// which reproduces the old behaviour exactly.
+RationalTime pasteRecordSourceTime(const QJsonObject& record,
+                                   int64_t fallbackScale) {
+  if (record.contains(QStringLiteral("timeValue")) &&
+      record.contains(QStringLiteral("timeScale"))) {
+    int64_t scale =
+        record.value(QStringLiteral("timeScale")).toVariant().toLongLong();
+    if (scale <= 0) {
+      scale = fallbackScale;
+    }
+    return RationalTime(
+        record.value(QStringLiteral("timeValue")).toVariant().toLongLong(),
+        scale);
+  }
+  return RationalTime(
+      record.value(QStringLiteral("frame")).toVariant().toLongLong(),
+      fallbackScale);
+}
+
 bool pasteKeyframesToLayers(
     const ArtifactCompositionPtr &composition,
     const QVector<ArtifactAbstractLayerPtr> &targetLayers,
@@ -4260,21 +4288,27 @@ bool pasteKeyframesToLayers(
 
   QVector<QJsonObject> sourceRecords;
   sourceRecords.reserve(records.size());
-  qint64 minFrame = std::numeric_limits<qint64>::max();
+  const int64_t targetScale = timelineFrameRateScale(composition);
+  RationalTime minSourceTime(0, targetScale);
+  bool hasMinSourceTime = false;
   for (const auto &value : records) {
     if (!value.isObject()) {
       continue;
     }
     const QJsonObject record = value.toObject();
-    const qint64 frame = record.value(QStringLiteral("frame")).toVariant().toLongLong();
     if (record.value(QStringLiteral("propertyPath")).toString().trimmed().isEmpty()) {
       continue;
     }
-    minFrame = std::min(minFrame, frame);
+    const RationalTime sourceTime =
+        pasteRecordSourceTime(record, targetScale);
+    if (!hasMinSourceTime || sourceTime < minSourceTime) {
+      minSourceTime = sourceTime;
+      hasMinSourceTime = true;
+    }
     sourceRecords.push_back(record);
   }
 
-  if (sourceRecords.isEmpty() || minFrame == std::numeric_limits<qint64>::max()) {
+  if (sourceRecords.isEmpty() || !hasMinSourceTime) {
     return false;
   }
 
@@ -4300,11 +4334,13 @@ bool pasteKeyframesToLayers(
         continue;
       }
 
-      const qint64 sourceFrame =
-          record.value(QStringLiteral("frame")).toVariant().toLongLong();
-      const qint64 offset = sourceFrame - minFrame;
-      const qint64 newFrame = std::max<qint64>(0, targetFrame + offset);
-      const RationalTime time(newFrame, timelineFrameRateScale(composition));
+      const RationalTime sourceTime =
+          pasteRecordSourceTime(record, targetScale);
+      const RationalTime shifted =
+          RationalTime(targetFrame, targetScale) + (sourceTime - minSourceTime);
+      const qint64 newFrame =
+          std::max<qint64>(0, shifted.rescaledTo(targetScale));
+      const RationalTime time(newFrame, targetScale);
       const QVariant value = record.value(QStringLiteral("value")).toVariant();
       const auto interpolationValue =
           static_cast<ArtifactCore::InterpolationType>(
