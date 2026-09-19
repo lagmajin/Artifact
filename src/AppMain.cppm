@@ -2588,54 +2588,64 @@ int main(int argc, char *argv[]) {
   }
 
   // ============================================================
-  // 起動言語オプションの処理
-  // --lang ja/en/zh
+  // 起動言語の決定（--lang → システムロケール → en）
+  // ここで一度だけ確定し、以降で再判定しない。
   // ============================================================
   {
+    QString localeCode;
+    QString decidedBy;
+
+    QString persistedLanguage;
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      persistedLanguage = settings->appLanguageCode().trimmed();
+    }
+
     if (!commandLine.global.languageCode.isEmpty()) {
-      const QString langCode = commandLine.global.languageCode;
-      ArtifactCore::LocaleLanguage targetLang = ArtifactCore::LocaleLanguage::Auto;
-      
-      if (langCode == QStringLiteral("ja") || langCode == QStringLiteral("japanese")) {
-        targetLang = ArtifactCore::LocaleLanguage::Japanese;
-        qInfo() << "[AppMain] Language set to Japanese via --lang";
-      } else if (langCode == QStringLiteral("en") || langCode == QStringLiteral("english")) {
-        targetLang = ArtifactCore::LocaleLanguage::English;
-        qInfo() << "[AppMain] Language set to English via --lang";
-      } else if (langCode.startsWith("zh-tw") || langCode == QStringLiteral("chinese-traditional")) {
-        targetLang = ArtifactCore::LocaleLanguage::ChineseTraditional;
-        qInfo() << "[AppMain] Language set to Traditional Chinese via --lang";
-      } else if (langCode.startsWith("zh") || langCode == QStringLiteral("chinese-simplified")) {
-        targetLang = ArtifactCore::LocaleLanguage::ChineseSimplified;
-        qInfo() << "[AppMain] Language set to Simplified Chinese via --lang";
+      localeCode = commandLine.global.languageCode.trimmed();
+      decidedBy = QStringLiteral("--lang");
+      if (localeCode.compare(QStringLiteral("japanese"), Qt::CaseInsensitive) == 0) {
+        localeCode = QStringLiteral("ja");
+      } else if (localeCode.compare(QStringLiteral("english"), Qt::CaseInsensitive) == 0) {
+        localeCode = QStringLiteral("en");
+      } else if (localeCode.compare(QStringLiteral("chinese-traditional"), Qt::CaseInsensitive) == 0) {
+        localeCode = QStringLiteral("zh-TW");
+      } else if (localeCode.compare(QStringLiteral("chinese-simplified"), Qt::CaseInsensitive) == 0) {
+        localeCode = QStringLiteral("zh");
+      }
+    } else if (!persistedLanguage.isEmpty()) {
+      localeCode = persistedLanguage;
+      decidedBy = QStringLiteral("saved setting");
+    } else {
+      const QString sysName = QLocale::system().name().toLower();
+      if (sysName.startsWith(QStringLiteral("ja"))) {
+        localeCode = QStringLiteral("ja");
+      } else if (sysName.startsWith(QStringLiteral("zh_tw")) ||
+                 sysName.startsWith(QStringLiteral("zh-hant"))) {
+        localeCode = QStringLiteral("zh-TW");
+      } else if (sysName.startsWith(QStringLiteral("zh"))) {
+        localeCode = QStringLiteral("zh");
+      } else if (sysName.startsWith(QStringLiteral("ko"))) {
+        localeCode = QStringLiteral("ko");
+      } else if (sysName.startsWith(QStringLiteral("fr"))) {
+        localeCode = QStringLiteral("fr");
+      } else if (sysName.startsWith(QStringLiteral("de"))) {
+        localeCode = QStringLiteral("de");
+      } else if (sysName.startsWith(QStringLiteral("es"))) {
+        localeCode = QStringLiteral("es");
+      } else if (sysName.startsWith(QStringLiteral("pt"))) {
+        localeCode = QStringLiteral("pt");
+      } else if (sysName.startsWith(QStringLiteral("ru"))) {
+        localeCode = QStringLiteral("ru");
+      } else if (sysName.startsWith(QStringLiteral("ar"))) {
+        localeCode = QStringLiteral("ar");
       } else {
-        qWarning() << "[AppMain] Unknown language code:" << langCode;
+        localeCode = QStringLiteral("en");
       }
-      
-      if (targetLang != ArtifactCore::LocaleLanguage::Auto) {
-        ArtifactCore::LocalizationManager::instance().setLanguage(targetLang);
-      }
+      decidedBy = QStringLiteral("system locale");
     }
-    if (ArtifactCore::LocalizationManager::instance().language() == ArtifactCore::LocaleLanguage::Auto) {
-      const QLocale sysLocale = QLocale::system();
-      ArtifactCore::LocaleLanguage targetLang = ArtifactCore::LocaleLanguage::English;
-      switch (sysLocale.language()) {
-        case QLocale::Japanese:
-          targetLang = ArtifactCore::LocaleLanguage::Japanese;
-          break;
-        case QLocale::Chinese:
-          targetLang = sysLocale.name().startsWith(QStringLiteral("zh_TW"))
-              ? ArtifactCore::LocaleLanguage::ChineseTraditional
-              : ArtifactCore::LocaleLanguage::ChineseSimplified;
-          break;
-        default:
-          targetLang = ArtifactCore::LocaleLanguage::English;
-          break;
-      }
-      ArtifactCore::LocalizationManager::instance().setLanguage(targetLang);
-      qInfo() << "[AppMain] Language inferred from system locale:" << sysLocale.name()
-              << "->" << ArtifactCore::LocalizationManager::instance().languageCode();
-    }
+
+    ArtifactCore::LocalizationManager::instance().setLanguageCode(localeCode);
+    qInfo() << "[AppMain] Language decided:" << localeCode << "by" << decidedBy;
   }
 
   if (appArgs.contains(QStringLiteral("--renderer"))) {
@@ -2666,44 +2676,20 @@ int main(int argc, char *argv[]) {
   a.installEventFilter(accessibilityInputFilter);
 
   // ============================================================
-  // 翻訳システムの初期化 (LocalizationManager へ統合)
+  // 翻訳カタログのロード（言語は起動時に確定済み）
   // ============================================================
   {
     auto &loc = ArtifactCore::LocalizationManager::instance();
-    const QLocale sysLocale = QLocale::system();
-    const QString sysName = sysLocale.name().toLower();
-    QString initialLocale = QStringLiteral("en");
-    if (sysName.startsWith(QStringLiteral("ja"))) {
-      initialLocale = QStringLiteral("ja");
-    } else if (sysName.startsWith(QStringLiteral("zh_tw")) || sysName.startsWith(QStringLiteral("zh-hant"))) {
-      initialLocale = QStringLiteral("zh-TW");
-    } else if (sysName.startsWith(QStringLiteral("zh"))) {
-      initialLocale = QStringLiteral("zh");
-    } else if (sysName.startsWith(QStringLiteral("ko"))) {
-      initialLocale = QStringLiteral("ko");
-    } else if (sysName.startsWith(QStringLiteral("fr"))) {
-      initialLocale = QStringLiteral("fr");
-    } else if (sysName.startsWith(QStringLiteral("de"))) {
-      initialLocale = QStringLiteral("de");
-    } else if (sysName.startsWith(QStringLiteral("es"))) {
-      initialLocale = QStringLiteral("es");
-    } else if (sysName.startsWith(QStringLiteral("pt_br")) || sysName.startsWith(QStringLiteral("pt-pt")) || sysName.startsWith(QStringLiteral("pt"))) {
-      initialLocale = QStringLiteral("pt");
-    } else if (sysName.startsWith(QStringLiteral("ru"))) {
-      initialLocale = QStringLiteral("ru");
-    } else if (sysName.startsWith(QStringLiteral("ar"))) {
-      initialLocale = QStringLiteral("ar");
-    }
-    Artifact::TranslationManager::instance().setLocale(initialLocale);
     const QString translationsDir =
         QDir(QCoreApplication::applicationDirPath())
             .filePath(QStringLiteral("translations"));
     if (QDir(translationsDir).exists()) {
-      Artifact::TranslationManager::instance().loadFromDirectory(translationsDir);
-      loc.loadFromDirectory(translationsDir);
-      qDebug() << "[AppMain] Localization loaded, locale:" << loc.languageCode();
+      if (!loc.loadFromDirectory(translationsDir)) {
+        qWarning() << "[AppMain] Failed to load translations from" << translationsDir;
+      }
+      qInfo() << "[AppMain] Translations loaded, locale:" << loc.languageCode();
     } else {
-      qDebug() << "[AppMain] Translations directory not found:" << translationsDir;
+      qWarning() << "[AppMain] Translations directory not found:" << translationsDir;
     }
   }
 

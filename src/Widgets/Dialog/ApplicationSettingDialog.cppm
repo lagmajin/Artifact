@@ -71,6 +71,7 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
+import Core.Localization;
 import Configuration.ConfigLayer;
 import Configuration.ConfigSchema;
 import Configuration.LayeredConfigStore;
@@ -138,6 +139,7 @@ public:
   QSpinBox *dockTabFontSizeSpinBox_;
   QComboBox *themeCombo_;
   QComboBox *accentCombo_;
+  QComboBox *languageCombo_;
   QFontComboBox *uiFontCombo_;
   QSpinBox *uiFontSizeSpinBox_;
   QComboBox *handednessCombo_;
@@ -197,6 +199,49 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   startupLayout->addWidget(impl_->showStartupDialogCheckBox_);
 
   mainLayout->addWidget(startupGroup);
+
+  // Language Group
+  auto *languageGroup = new QGroupBox("Language", this);
+  auto *languageLayout = new QVBoxLayout(languageGroup);
+
+  auto *languageRow = new QHBoxLayout();
+  languageRow->addWidget(new QLabel("Interface language:", this));
+  impl_->languageCombo_ = new QComboBox(this);
+  impl_->languageCombo_->setAccessibleName(QStringLiteral("Interface language"));
+  impl_->languageCombo_->setAccessibleDescription(
+      QStringLiteral("Choose the application interface language. Changes apply after restart."));
+  impl_->languageCombo_->addItem(QStringLiteral("Auto (System)"), QString());
+  {
+    struct LanguageOption {
+      const char *code;
+      const char *label;
+    };
+    static const LanguageOption kLanguageOptions[] = {
+        {"en", "English"},     {"ja", "日本語"},    {"zh", "简体中文"},
+        {"zh-TW", "繁體中文"}, {"ko", "한국어"},    {"fr", "Français"},
+        {"de", "Deutsch"},     {"es", "Español"},   {"pt", "Português"},
+        {"ru", "Русский"},     {"ar", "العربية"},
+    };
+    const QStringList loaded =
+        ArtifactCore::LocalizationManager::instance().availableLocales();
+    for (const auto &option : kLanguageOptions) {
+      const QString code = QString::fromLatin1(option.code);
+      if (loaded.contains(code)) {
+        impl_->languageCombo_->addItem(QString::fromUtf8(option.label), code);
+      }
+    }
+  }
+  impl_->languageCombo_->setMinimumWidth(220);
+  languageRow->addWidget(impl_->languageCombo_);
+  languageRow->addStretch();
+  languageLayout->addLayout(languageRow);
+
+  auto *languageNote = new QLabel(
+      "The interface language is applied the next time Artifact starts.", this);
+  languageNote->setWordWrap(true);
+  languageLayout->addWidget(languageNote);
+
+  mainLayout->addWidget(languageGroup);
 
   // UI Group
   auto *uiGroup = new QGroupBox("User Interface", this);
@@ -450,6 +495,16 @@ void GeneralSettingPage::loadSettings() {
   impl_->menuBarFontScaleSpinBox_->setValue(
       settings->menuBarFontScalePercent());
   impl_->dockTabFontSizeSpinBox_->setValue(settings->dockTabFontPointSize());
+  if (impl_->languageCombo_) {
+    const QString savedLanguage = settings->appLanguageCode();
+    int languageIndex = impl_->languageCombo_->findData(savedLanguage);
+    if (languageIndex < 0 && !savedLanguage.isEmpty()) {
+      // カタログが未ロードでも保存値を失わないよう、候補に追加して選択する
+      impl_->languageCombo_->addItem(savedLanguage, savedLanguage);
+      languageIndex = impl_->languageCombo_->count() - 1;
+    }
+    impl_->languageCombo_->setCurrentIndex(languageIndex >= 0 ? languageIndex : 0);
+  }
   if (impl_->themeCombo_) {
     const QString themeLabel = canonicalThemeLabel(settings->themeName());
     const int themeIndex = impl_->themeCombo_->findText(themeLabel);
@@ -502,6 +557,9 @@ void GeneralSettingPage::saveSettings() {
       impl_->menuBarFontScaleSpinBox_->value());
   settings->setDockTabFontPointSize(
       impl_->dockTabFontSizeSpinBox_->value());
+  if (impl_->languageCombo_) {
+    settings->setAppLanguageCode(impl_->languageCombo_->currentData().toString());
+  }
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentText());
   }
@@ -541,6 +599,11 @@ void GeneralSettingPage::saveSettings() {
 
 QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
   QList<SettingItemInfo> items;
+  if (impl_ && impl_->languageCombo_) {
+    items.push_back({"Interface language",
+                     "Choose the application interface language (applied after restart)",
+                     "Language", impl_->languageCombo_, "General/LanguageCode"});
+  }
   if (impl_ && impl_->themeCombo_) {
     items.push_back({"UI Theme",
                      "Built-in application theme preset",

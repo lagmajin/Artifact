@@ -42,6 +42,7 @@ import Artifact.Render.Queue.Presets;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Widgets.RelativeSpinBox;
+import Translation.Manager;
 
 
 namespace Artifact
@@ -97,7 +98,7 @@ namespace Artifact
   explicit RenderMatrixDialog(QWidget* parent = nullptr)
       : QDialog(parent)
   {
-   setWindowTitle(QStringLiteral("レンダーマトリックス"));
+   setWindowTitle(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_matrix"), QStringLiteral("レンダーマトリックス")));
    setAccessibleName(QStringLiteral("Render matrix"));
    setAccessibleDescription(QStringLiteral(
        "Create several output jobs for the current composition from purpose-based presets"));
@@ -116,58 +117,56 @@ namespace Artifact
    header->setAutoFillBackground(true);
    auto* headerLayout = new QVBoxLayout(header);
    headerLayout->setContentsMargins(14, 12, 14, 12);
-   auto* title = new QLabel(QStringLiteral("同じコンポジションから、用途別の出力をまとめて作成"), header);
+   auto* title = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.matrix_subtitle"), QStringLiteral("同じコンポジションから、用途別の出力をまとめて作成")), header);
    QFont titleFont = title->font();
    titleFont.setBold(true);
    titleFont.setPointSize(titleFont.pointSize() + 2);
    title->setFont(titleFont);
    auto* subtitle = new QLabel(
-       QStringLiteral("選択したバリエーションはレンダーキューへ個別ジョブとして追加されます。"), header);
+       TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variations_note"), QStringLiteral("選択したバリエーションはレンダーキューへ個別ジョブとして追加されます。")), header);
    subtitle->setWordWrap(true);
    headerLayout->addWidget(title);
    headerLayout->addWidget(subtitle);
 
    auto* contentLayout = new QHBoxLayout();
    contentLayout->setSpacing(12);
-   auto* variantsGroup = new QGroupBox(QStringLiteral("出力バリエーション"), this);
+   auto* variantsGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.output_variations"), QStringLiteral("出力バリエーション")), this);
    auto* variantsLayout = new QVBoxLayout(variantsGroup);
    variantsLayout->setSpacing(8);
-   addVariant(variantsLayout, QStringLiteral("PC 配布版"),
-              QStringLiteral("高画質配布(H.264 MP4)"),
-              QStringLiteral("16:9  •  MP4 / H.264  •  透過なし"),
+   addVariant(variantsLayout, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_pc"), QStringLiteral("PC 配布版")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_high_quality"), QStringLiteral("高画質配布(H.264 MP4)")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.recommended_summary"), QStringLiteral("16:9  •  MP4 / H.264  •  透過なし")),
               QStringLiteral("h264_mp4_high"), 1920, 1080, true);
-   addVariant(variantsLayout, QStringLiteral("スマホ版"),
-              QStringLiteral("標準配布(H.264 MP4)"),
+   addVariant(variantsLayout, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_mobile"), QStringLiteral("スマホ版")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_standard"), QStringLiteral("標準配布(H.264 MP4)")),
               QStringLiteral("9:16  •  1080 × 1920  •  MP4 / H.264"),
               QStringLiteral("h264_mp4_standard"), 1080, 1920, true);
-   addVariant(variantsLayout, QStringLiteral("編集用中間素材"),
-              QStringLiteral("編集ソフト用(ProRes 4444 MOV)"),
-              QStringLiteral("高品質  •  Alpha / Straight を想定"),
+   addVariant(variantsLayout, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.intermediate_short"), QStringLiteral("編集用中間素材")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_editing"), QStringLiteral("編集ソフト用(ProRes 4444 MOV)")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.high_quality_alpha"), QStringLiteral("高品質  •  Alpha / Straight を想定")),
               QStringLiteral("prores_4444_mov"), 1920, 1080, true);
-   addVariant(variantsLayout, QStringLiteral("レビュー版"),
-              QStringLiteral("背景透過動画(WebM/VP9)"),
-              QStringLiteral("Web 確認・透過素材の共有向け"),
+   addVariant(variantsLayout, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_review"), QStringLiteral("レビュー版")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.variant_webm"), QStringLiteral("背景透過動画(WebM/VP9)")),
+              TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_web"), QStringLiteral("Web 確認・透過素材の共有向け")),
               QStringLiteral("webm_vp9"), 1920, 1080, false);
    variantsLayout->addStretch(1);
 
-   auto* detailGroup = new QGroupBox(QStringLiteral("マトリックスの使い方"), this);
+   auto* detailGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.matrix_usage"), QStringLiteral("マトリックスの使い方")), this);
    auto* detailLayout = new QVBoxLayout(detailGroup);
-   auto* detailTitle = new QLabel(QStringLiteral("用途を並べて、同時にキューへ追加"), detailGroup);
+   auto* detailTitle = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.matrix_add_note"), QStringLiteral("用途を並べて、同時にキューへ追加")), detailGroup);
    QFont detailTitleFont = detailTitle->font();
    detailTitleFont.setBold(true);
    detailTitle->setFont(detailTitleFont);
-   auto* detailText = new QLabel(QStringLiteral(
-       "各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\n"
-       "解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\n\n"
-       "透過素材は ProRes 4444 または WebM/VP9 を選択してください。\n"
-       "一般配布用は MP4/H.264 が基本です。"), detailGroup);
+   auto* detailText = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.detail_text"),
+       QStringLiteral("各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\n解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\n\n透過素材は ProRes 4444 または WebM/VP9 を選択してください。\n一般配布用は MP4/H.264 が基本です。")),
+       detailGroup);
    detailText->setWordWrap(true);
    detailLayout->addWidget(detailTitle);
    detailLayout->addWidget(detailText);
    detailLayout->addStretch(1);
 
    auto* queueHint = new QLabel(
-       QStringLiteral("選択した出力: 既存の Render Queue プリセットとして追加"), detailGroup);
+       TranslationManager::instance().tr(QStringLiteral("dialog.render_output.selected_as_preset"), QStringLiteral("選択した出力: 既存の Render Queue プリセットとして追加")), detailGroup);
    queueHint->setWordWrap(true);
    QPalette hintPalette = queueHint->palette();
    hintPalette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
@@ -178,8 +177,8 @@ namespace Artifact
    contentLayout->addWidget(detailGroup, 2);
 
    const DialogButtonRow buttons = createDialogButtonRow(
-       this, QStringLiteral("選択した出力をキューに追加"), QStringLiteral("キャンセル"));
-   auto* queueButton = new CallbackButton(QStringLiteral("選択した出力をキューに追加"), buttons.widget);
+       this, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.add_selected_to_queue"), QStringLiteral("選択した出力をキューに追加")), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.cancel"), QStringLiteral("キャンセル")));
+   auto* queueButton = new CallbackButton(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.add_selected_to_queue"), QStringLiteral("選択した出力をキューに追加")), buttons.widget);
    queueButton->setDefault(true);
    queueButton->setAccessibleName(QStringLiteral("Add selected render matrix outputs to queue"));
    queueButton->setClickHandler([this]() { queueSelected(); });
@@ -190,7 +189,7 @@ namespace Artifact
     buttonLayout->insertWidget(std::max(0, buttonLayout->count() - 1), queueButton);
    }
    if (buttonLayout && buttons.cancelButton) {
-    auto* cancelButton = new CallbackButton(QStringLiteral("キャンセル"), buttons.widget);
+    auto* cancelButton = new CallbackButton(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.cancel"), QStringLiteral("キャンセル")), buttons.widget);
     cancelButton->setClickHandler([this]() { reject(); });
     buttonLayout->replaceWidget(buttons.cancelButton, cancelButton);
     buttons.cancelButton->deleteLater();
@@ -247,26 +246,26 @@ namespace Artifact
     }
    }
    if (presetIds.isEmpty()) {
-    QMessageBox::information(this, QStringLiteral("レンダーマトリックス"),
-                             QStringLiteral("少なくとも1つの出力を選択してください。"));
+    QMessageBox::information(this, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_matrix"), QStringLiteral("レンダーマトリックス")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.render_output.select_at_least_one"), QStringLiteral("少なくとも1つの出力を選択してください。")));
     return;
    }
    auto* projectService = ArtifactProjectService::instance();
    if (!projectService) {
-    QMessageBox::warning(this, QStringLiteral("レンダーマトリックス"),
-                         QStringLiteral("Project Service を利用できません。"));
+    QMessageBox::warning(this, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_matrix"), QStringLiteral("レンダーマトリックス")),
+                         TranslationManager::instance().tr(QStringLiteral("dialog.render_output.project_service_unavailable"), QStringLiteral("Project Service を利用できません。")));
     return;
    }
    const auto composition = projectService->currentComposition().lock();
    if (!composition) {
-    QMessageBox::information(this, QStringLiteral("レンダーマトリックス"),
-                             QStringLiteral("アクティブなコンポジションがありません。"));
+    QMessageBox::information(this, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_matrix"), QStringLiteral("レンダーマトリックス")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.render_output.no_active_composition"), QStringLiteral("アクティブなコンポジションがありません。")));
     return;
    }
    auto* queueService = ArtifactRenderQueueService::instance();
    if (!queueService) {
-    QMessageBox::warning(this, QStringLiteral("レンダーマトリックス"),
-                         QStringLiteral("Render Queue を利用できません。"));
+    QMessageBox::warning(this, TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_matrix"), QStringLiteral("レンダーマトリックス")),
+                         TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_queue_unavailable"), QStringLiteral("Render Queue を利用できません。")));
     return;
    }
    const int firstAddedJobIndex = queueService->jobCount();
@@ -736,11 +735,11 @@ namespace Artifact
    if (!presetCombo) return;
    
    presetCombo->clear();
-   presetCombo->addItem(QStringLiteral("─ プリセットを選択 ─"), QString());
-   presetCombo->addItem(QStringLiteral("再生・配布用 — MP4 / H.264"), QStringLiteral("guide.playback"));
-   presetCombo->addItem(QStringLiteral("編集用中間素材 — ProRes 422"), QStringLiteral("guide.intermediate"));
-   presetCombo->addItem(QStringLiteral("透過つき編集素材 — ProRes 4444"), QStringLiteral("guide.alpha"));
-   presetCombo->addItem(QStringLiteral("連番素材 — PNG Sequence"), QStringLiteral("guide.sequence"));
+   presetCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.select_preset"), QStringLiteral("─ プリセットを選択 ─")), QString());
+   presetCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_playback_detail"), QStringLiteral("再生・配布用 — MP4 / H.264")), QStringLiteral("guide.playback"));
+   presetCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_intermediate_422"), QStringLiteral("編集用中間素材 — ProRes 422")), QStringLiteral("guide.intermediate"));
+   presetCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_intermediate_4444"), QStringLiteral("透過つき編集素材 — ProRes 4444")), QStringLiteral("guide.alpha"));
+   presetCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_png_sequence"), QStringLiteral("連番素材 — PNG Sequence")), QStringLiteral("guide.sequence"));
    presetCombo->insertSeparator(presetCombo->count());
    
    const auto presets = ArtifactRenderFormatPresetManager::instance().allPresets();
@@ -757,14 +756,14 @@ namespace Artifact
      return;
    }
 
-  const QString presetName = presetCombo ? presetCombo->currentText() : QStringLiteral("未選択");
+  const QString presetName = presetCombo ? presetCombo->currentText() : TranslationManager::instance().tr(QStringLiteral("dialog.render_output.unselected"), QStringLiteral("未選択"));
   const QString container = formatCombo ? formatCombo->currentText() : QStringLiteral("MP4");
   const QString codec = codecCombo ? codecCombo->currentText() : QStringLiteral("H.264");
   const bool audioEnabled = includeAudioCheck ? includeAudioCheck->isChecked() : false;
    const bool alphaEnabled = alphaEnabledCheck ? alphaEnabledCheck->isChecked()
        : (container != QStringLiteral("MP4") || codec == QStringLiteral("ProRes") || codec == QStringLiteral("VP9"));
 
-  const QString alphaText = alphaEnabled ? QStringLiteral("Alphaあり") : QStringLiteral("Alphaなし");
+  const QString alphaText = alphaEnabled ? TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_yes_short"), QStringLiteral("Alphaあり")) : TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_no_short"), QStringLiteral("Alphaなし"));
   const bool isWebPlayer = container == QStringLiteral("HTML") || codec == QStringLiteral("CSS");
   const QString usageText = isWebPlayer
       ? QStringLiteral("Web player")
@@ -774,12 +773,12 @@ namespace Artifact
                     ? QStringLiteral("Image sequence")
                     : QStringLiteral("Standard export")));
    QStringList lines;
-   lines << QStringLiteral("<span style='font-size:14px;font-weight:600;'>%1</span>").arg(presetName.isEmpty() ? QStringLiteral("未選択") : presetName);
+   lines << QStringLiteral("<span style='font-size:14px;font-weight:600;'>%1</span>").arg(presetName.isEmpty() ? TranslationManager::instance().tr(QStringLiteral("dialog.render_output.unselected"), QStringLiteral("未選択")) : presetName);
    lines << QStringLiteral("<span>Usage: %1</span>").arg(usageText);
    lines << QStringLiteral("<span>Container: %1</span>").arg(container);
    lines << QStringLiteral("<span>Codec: %1</span>").arg(codec);
    lines << QStringLiteral("<span>%1</span>").arg(alphaText);
-   lines << QStringLiteral("<span>Audio: %1</span>").arg(audioEnabled ? QStringLiteral("あり") : QStringLiteral("なし"));
+   lines << QStringLiteral("<span>Audio: %1</span>").arg(audioEnabled ? TranslationManager::instance().tr(QStringLiteral("dialog.render_output.yes"), QStringLiteral("あり")) : TranslationManager::instance().tr(QStringLiteral("dialog.render_output.no"), QStringLiteral("なし")));
    presetSummaryLabel->setText(QStringLiteral("<div style='line-height:1.5;'>%1</div>").arg(lines.join(QStringLiteral("<br/>"))));
  }
 
@@ -795,20 +794,20 @@ namespace Artifact
 
   QString guide;
   if (format == QStringLiteral("HTML") || codec == QStringLiteral("CSS")) {
-    guide = QStringLiteral("Web向け。ブラウザで直接開ける self-contained player。");
+    guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_web_player"), QStringLiteral("Web向け。ブラウザで直接開ける self-contained player。"));
   } else if (format == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
-    guide = QStringLiteral("Web向け。透過を扱いやすい。");
+    guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_web_alpha"), QStringLiteral("Web向け。透過を扱いやすい。"));
    } else if (format == QStringLiteral("MOV") && codec == QStringLiteral("ProRes")) {
-     guide = QStringLiteral("編集向け。ProRes 4444 なら透過を残しやすい。");
+     guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_editing"), QStringLiteral("編集向け。ProRes 4444 なら透過を残しやすい。"));
    } else if (format == QStringLiteral("PNG Sequence")) {
-     guide = QStringLiteral("静止画連番。1枚ずつ透明を保てる。");
+     guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.png_sequence_note"), QStringLiteral("静止画連番。1枚ずつ透明を保てる。"));
    } else if (format == QStringLiteral("MP4")) {
-     guide = QStringLiteral("配布向け。迷ったら H.264 + AAC が無難。");
+     guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.h264_safe"), QStringLiteral("配布向け。迷ったら H.264 + AAC が無難。"));
   } else {
-    guide = QStringLiteral("用途に応じてコンテナとコーデックを選ぶ。");
+    guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_note"), QStringLiteral("用途に応じてコンテナとコーデックを選ぶ。"));
   }
   if (!alphaEnabled) {
-    guide = QStringLiteral("Alphaなし。透過は書き出されません。");
+    guide = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_no_message"), QStringLiteral("Alphaなし。透過は書き出されません。"));
   }
   formatGuideLabel->setText(guide);
   updateBeginnerGuide();
@@ -849,13 +848,13 @@ namespace Artifact
    if (recommendationLabel) {
      if (!intermediate) {
        recommendationLabel->setText(
-           QStringLiteral("おすすめ: 再生・配布用 / MP4 / H.264 / 透過なし"));
+           TranslationManager::instance().tr(QStringLiteral("dialog.render_output.recommend_playback"), QStringLiteral("おすすめ: 再生・配布用 / MP4 / H.264 / 透過なし")));
      } else if (alphaEnabled) {
        recommendationLabel->setText(
-           QStringLiteral("おすすめ: 編集用中間素材 / ProRes 4444 / Straight"));
+           TranslationManager::instance().tr(QStringLiteral("dialog.render_output.recommend_intermediate_4444"), QStringLiteral("おすすめ: 編集用中間素材 / ProRes 4444 / Straight")));
      } else {
        recommendationLabel->setText(
-           QStringLiteral("おすすめ: 編集用中間素材 / ProRes 422 / 透過なし"));
+           TranslationManager::instance().tr(QStringLiteral("dialog.render_output.recommend_intermediate_422"), QStringLiteral("おすすめ: 編集用中間素材 / ProRes 422 / 透過なし")));
      }
    }
  }
@@ -880,21 +879,17 @@ namespace Artifact
 
    QPalette palette = outputPackageLabel->palette();
    if (imageSequence) {
-     outputPackageLabel->setText(QStringLiteral(
-         "出力パッケージ: 画像連番のみ。連番には音声を格納できません。"
-         "音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。"));
+     outputPackageLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.package_image_sequence_full"),
+         QStringLiteral("出力パッケージ: 画像連番のみ。連番には音声を格納できません。音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。")));
      palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#F09A3E")));
    } else if (!supportsIntegratedAudio) {
-     outputPackageLabel->setText(QStringLiteral(
-         "出力パッケージ: この形式では音声同梱を利用できません。"));
+     outputPackageLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.package_audio_unavailable"), QStringLiteral("出力パッケージ: この形式では音声同梱を利用できません。")));
      palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#F09A3E")));
    } else if (includeAudioCheck->isChecked()) {
-     outputPackageLabel->setText(QStringLiteral(
-         "出力パッケージ: 動画1ファイル（映像＋音声を同梱）"));
+     outputPackageLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.package_video_audio"), QStringLiteral("出力パッケージ: 動画1ファイル（映像＋音声を同梱）")));
      palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
    } else {
-     outputPackageLabel->setText(QStringLiteral(
-         "出力パッケージ: 動画1ファイル（映像のみ）"));
+     outputPackageLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.package_video_only"), QStringLiteral("出力パッケージ: 動画1ファイル（映像のみ）")));
      palette.setColor(QPalette::WindowText, palette.color(QPalette::Text));
    }
    outputPackageLabel->setPalette(palette);
@@ -908,7 +903,7 @@ namespace Artifact
      audioBitrateSpin->setEnabled(
          supportsIntegratedAudio && includeAudioCheck->isChecked() && !losslessPcm);
      audioBitrateSpin->setToolTip(losslessPcm
-         ? QStringLiteral("PCMは非圧縮のためビットレート指定を使用しません。")
+         ? TranslationManager::instance().tr(QStringLiteral("dialog.render_output.pcm_note"), QStringLiteral("PCMは非圧縮のためビットレート指定を使用しません。"))
          : QString());
    }
  }
@@ -1015,16 +1010,16 @@ namespace Artifact
    const QString bitrateText = bitrateSpin ? QString::number(bitrateSpin->value()) + QStringLiteral(" kbps") : QStringLiteral("8000 kbps");
 
    if (advancedAlphaLabel) {
-     advancedAlphaLabel->setText(alphaEnabled ? QStringLiteral("Alpha: あり") : QStringLiteral("Alpha: なし"));
+     advancedAlphaLabel->setText(alphaEnabled ? TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_yes"), QStringLiteral("Alpha: あり")) : TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_no"), QStringLiteral("Alpha: なし")));
    }
    if (advancedFilenameLabel) {
      advancedFilenameLabel->setText(QStringLiteral("ProjectName_[Preset]_[Date] / %1").arg(container));
    }
    if (advancedTimecodeLabel) {
-     advancedTimecodeLabel->setText(QStringLiteral("ソース準拠 / %1 fps").arg(fpsText));
+     advancedTimecodeLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.source_compliant_fps"), QStringLiteral("ソース準拠 / %1 fps")).arg(fpsText));
    }
   if (advancedColorLabel) {
-    advancedColorLabel->setText(QStringLiteral("%1 / Rec.709").arg(backend == QStringLiteral("gpu") ? QStringLiteral("GPU") : QStringLiteral("自動")));
+    advancedColorLabel->setText(QStringLiteral("%1 / Rec.709").arg(backend == QStringLiteral("gpu") ? QStringLiteral("GPU") : TranslationManager::instance().tr(QStringLiteral("dialog.render_output.auto"), QStringLiteral("自動"))));
   }
   if (advancedFilenameLabel) {
     const QString backendText = backend == QStringLiteral("auto")
@@ -1034,18 +1029,18 @@ namespace Artifact
                                       .arg(container, backendText));
   }
   if (advancedEncodeLabel) {
-    QString text = QStringLiteral("2-pass / HW 支援 / 連続書き出し");
+    QString text = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.encode_help"), QStringLiteral("2-pass / HW 支援 / 連続書き出し"));
      if (container == QStringLiteral("MOV") && codec == QStringLiteral("ProRes")) {
-       text = QStringLiteral("ProRes 4444 推奨 / 透過対応");
+       text = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.prores4444_recommended"), QStringLiteral("ProRes 4444 推奨 / 透過対応"));
      } else if (container == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
-       text = QStringLiteral("WebM / VP9 / 透過向け");
+       text = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.container_webm"), QStringLiteral("WebM / VP9 / 透過向け"));
      } else if (container == QStringLiteral("MP4")) {
-       text = QStringLiteral("H.264 + AAC / 配布向け / %1").arg(bitrateText);
+       text = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.h264_distribution"), QStringLiteral("H.264 + AAC / 配布向け / %1")).arg(bitrateText);
      }
      advancedEncodeLabel->setText(text);
    }
    if (!audioEnabled && advancedEncodeLabel) {
-     advancedEncodeLabel->setText(advancedEncodeLabel->text() + QStringLiteral(" / 音声なし"));
+     advancedEncodeLabel->setText(advancedEncodeLabel->text() + TranslationManager::instance().tr(QStringLiteral("dialog.render_output.audio_none_suffix"), QStringLiteral(" / 音声なし")));
    }
  }
 
@@ -1054,9 +1049,9 @@ void ArtifactRenderOutputSettingDialog::Impl::updateActionLabels()
    if (!okButton) {
      return;
    }
-   okButton->setText(QStringLiteral("この設定でレンダー"));
+   okButton->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_with_settings"), QStringLiteral("この設定でレンダー")));
   if (cancelButton) {
-    cancelButton->setText(QStringLiteral("キャンセル"));
+    cancelButton->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.cancel"), QStringLiteral("キャンセル")));
   }
 }
 
@@ -1183,13 +1178,13 @@ void ArtifactRenderOutputSettingDialog::Impl::setSelectedMultiChannelChannels(co
    const bool alphaEnabled = alphaEnabledCheck->isChecked();
    QString alphaText;
    if (!alphaEnabled) {
-     alphaText = QStringLiteral("この設定では透過は書き出されません");
+     alphaText = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.no_alpha_exported"), QStringLiteral("この設定では透過は書き出されません"));
    } else if (container == QStringLiteral("MOV") && codec == QStringLiteral("ProRes")) {
-     alphaText = QStringLiteral("透過を保持します");
+     alphaText = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.keep_transparency"), QStringLiteral("透過を保持します"));
    } else if (container == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
-     alphaText = QStringLiteral("透過を保持します");
+     alphaText = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.keep_transparency"), QStringLiteral("透過を保持します"));
    } else {
-     alphaText = QStringLiteral("透過設定を確認してください");
+     alphaText = TranslationManager::instance().tr(QStringLiteral("dialog.render_output.check_transparency_settings"), QStringLiteral("透過設定を確認してください"));
    }
    formatGuideLabel->setText(alphaText);
  }
@@ -1202,20 +1197,20 @@ void ArtifactRenderOutputSettingDialog::Impl::setSelectedMultiChannelChannels(co
 
    const bool alphaEnabled = alphaEnabledCheck->isChecked();
    if (!alphaEnabled) {
-     preflightSummaryLabel->setText(QStringLiteral("Preflight: Alpha は無効です"));
-     preflightDetailsLabel->setText(QStringLiteral("この設定では透過は書き出されません。"));
+     preflightSummaryLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preflight_alpha_disabled"), QStringLiteral("Preflight: Alpha は無効です")));
+     preflightDetailsLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.no_alpha_exported_period"), QStringLiteral("この設定では透過は書き出されません。")));
      return;
    }
 
    if (container == QStringLiteral("MOV") && codec == QStringLiteral("ProRes")) {
-     preflightSummaryLabel->setText(QStringLiteral("Preflight: 透過対応"));
-     preflightDetailsLabel->setText(QStringLiteral("ProRes 4444 系の透過設定を確認できます。"));
+     preflightSummaryLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preflight_alpha_ok"), QStringLiteral("Preflight: 透過対応")));
+     preflightDetailsLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.prores4444_note"), QStringLiteral("ProRes 4444 系の透過設定を確認できます。")));
    } else if (container == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
-     preflightSummaryLabel->setText(QStringLiteral("Preflight: 透過対応"));
-     preflightDetailsLabel->setText(QStringLiteral("WebM / VP9 は透過向けの候補です。"));
+     preflightSummaryLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preflight_alpha_ok"), QStringLiteral("Preflight: 透過対応")));
+     preflightDetailsLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.webm_note"), QStringLiteral("WebM / VP9 は透過向けの候補です。")));
    } else {
-     preflightSummaryLabel->setText(QStringLiteral("Preflight: 設定確認"));
-     preflightDetailsLabel->setText(QStringLiteral("Alpha が必要なら、コンテナとコーデックを確認してください。"));
+     preflightSummaryLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preflight_settings"), QStringLiteral("Preflight: 設定確認")));
+     preflightDetailsLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_hint"), QStringLiteral("Alpha が必要なら、コンテナとコーデックを確認してください。")));
    }
  }
 
@@ -1367,7 +1362,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
  {
     setAccessibleName(QStringLiteral("Render output settings"));
     setAccessibleDescription(QStringLiteral("Configure render format, resolution, audio, channels, and sequence output"));
-    setWindowTitle(QStringLiteral("レンダー出力の設定"));
+    setWindowTitle(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.title"), QStringLiteral("レンダー出力の設定")));
     setMinimumSize(1040, 720);
 
     auto mainLayout = new QVBoxLayout(this);
@@ -1383,17 +1378,17 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     auto* headerLayout = new QHBoxLayout(headerFrame);
     headerLayout->setContentsMargins(14, 10, 14, 10);
     auto* headerTextLayout = new QVBoxLayout();
-    auto* headerTitle = new QLabel(QStringLiteral("レンダー出力の設定"), headerFrame);
+    auto* headerTitle = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.title"), QStringLiteral("レンダー出力の設定")), headerFrame);
     QFont headerTitleFont = headerTitle->font();
     headerTitleFont.setBold(true);
     headerTitleFont.setPointSize(headerTitleFont.pointSize() + 2);
     headerTitle->setFont(headerTitleFont);
     auto* headerSubtitle = new QLabel(
-        QStringLiteral("まず用途と透過を決め、必要なときだけ詳細設定を開きます。"), headerFrame);
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.intro"), QStringLiteral("まず用途と透過を決め、必要なときだけ詳細設定を開きます。")), headerFrame);
     headerTextLayout->addWidget(headerTitle);
     headerTextLayout->addWidget(headerSubtitle);
-    auto* matrixButton = new CallbackButton(QStringLiteral("レンダーマトリックス…"), headerFrame);
-    matrixButton->setToolTip(QStringLiteral("用途別の複数出力をまとめて Render Queue に追加します"));
+    auto* matrixButton = new CallbackButton(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.render_matrix_dots"), QStringLiteral("レンダーマトリックス…")), headerFrame);
+    matrixButton->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.matrix_tooltip"), QStringLiteral("用途別の複数出力をまとめて Render Queue に追加します")));
     matrixButton->setAccessibleName(QStringLiteral("Open render matrix"));
     matrixButton->setClickHandler([this]() {
       RenderMatrixDialog matrix(this);
@@ -1402,7 +1397,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     headerLayout->addLayout(headerTextLayout, 1);
     headerLayout->addWidget(matrixButton, 0, Qt::AlignVCenter);
 
-    auto* outputSettingsGroup = new QGroupBox(QStringLiteral("出力の詳細"), this);
+    auto* outputSettingsGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.output_details"), QStringLiteral("出力の詳細")), this);
     auto* formLayout = new QFormLayout(outputSettingsGroup);
     formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
@@ -1431,30 +1426,30 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     beginnerLayout->setContentsMargins(10, 10, 10, 10);
     beginnerLayout->setSpacing(10);
 
-    auto* purposeGroup = new QGroupBox(QStringLiteral("1  何に使いますか？"), beginnerGuide);
+    auto* purposeGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.step1_title"), QStringLiteral("1  何に使いますか？")), beginnerGuide);
     auto* purposeLayout = new QHBoxLayout(purposeGroup);
     impl_->playbackGuideFrame = createGuideFrame(
-        QStringLiteral("再生・配布用"), QStringLiteral("MP4 / H.264\n軽い・すぐ見られる"));
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_playback"), QStringLiteral("再生・配布用")), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preset_mp4"), QStringLiteral("MP4 / H.264\n軽い・すぐ見られる")));
     impl_->intermediateGuideFrame = createGuideFrame(
-        QStringLiteral("編集用の中間素材"), QStringLiteral("ProRes / DNxHD\n高品質・再編集向け"));
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_intermediate"), QStringLiteral("編集用の中間素材")), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preset_prores"), QStringLiteral("ProRes / DNxHD\n高品質・再編集向け")));
     purposeLayout->addWidget(impl_->playbackGuideFrame);
     purposeLayout->addWidget(impl_->intermediateGuideFrame);
 
-    auto* alphaGroup = new QGroupBox(QStringLiteral("2  透明を残しますか？"), beginnerGuide);
+    auto* alphaGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.step2_title"), QStringLiteral("2  透明を残しますか？")), beginnerGuide);
     auto* guideAlphaLayout = new QHBoxLayout(alphaGroup);
     impl_->noAlphaGuideFrame = createGuideFrame(
-        QStringLiteral("不要"), QStringLiteral("通常の動画・配布向け"));
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.not_needed"), QStringLiteral("不要")), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_general"), QStringLiteral("通常の動画・配布向け")));
     impl_->alphaGuideFrame = createGuideFrame(
-        QStringLiteral("必要"), QStringLiteral("ProRes 4444 / PNG連番"));
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.needed"), QStringLiteral("必要")), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.container_prores4444_png"), QStringLiteral("ProRes 4444 / PNG連番")));
     guideAlphaLayout->addWidget(impl_->noAlphaGuideFrame);
     guideAlphaLayout->addWidget(impl_->alphaGuideFrame);
 
-    auto* alphaModeGroup = new QGroupBox(QStringLiteral("3  透明の計算方法"), beginnerGuide);
+    auto* alphaModeGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.step3_title"), QStringLiteral("3  透明の計算方法")), beginnerGuide);
     auto* alphaModeLayout = new QHBoxLayout(alphaModeGroup);
     impl_->straightGuideFrame = createGuideFrame(
-        QStringLiteral("Straight"), QStringLiteral("通常はこちら\n色と透明度を別に保持"));
+        QStringLiteral("Straight"), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.straight_note"), QStringLiteral("通常はこちら\n色と透明度を別に保持")));
     impl_->premultipliedGuideFrame = createGuideFrame(
-        QStringLiteral("Premultiplied"), QStringLiteral("受け渡し先の指定時のみ\n誤ると輪郭にフチ"));
+        QStringLiteral("Premultiplied"), TranslationManager::instance().tr(QStringLiteral("dialog.render_output.matte_note"), QStringLiteral("受け渡し先の指定時のみ\n誤ると輪郭にフチ")));
     alphaModeLayout->addWidget(impl_->straightGuideFrame);
     alphaModeLayout->addWidget(impl_->premultipliedGuideFrame);
 
@@ -1463,7 +1458,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     beginnerLayout->addWidget(alphaModeGroup, 2);
 
     impl_->recommendationLabel = new QLabel(
-        QStringLiteral("おすすめ: 再生・配布用 / MP4 / H.264 / 透過なし"), this);
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.recommend_playback"), QStringLiteral("おすすめ: 再生・配布用 / MP4 / H.264 / 透過なし")), this);
     QFont recommendationFont = impl_->recommendationLabel->font();
     recommendationFont.setBold(true);
     impl_->recommendationLabel->setFont(recommendationFont);
@@ -1475,10 +1470,10 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     summaryFrame->setFrameShape(QFrame::StyledPanel);
     summaryFrame->setFrameShadow(QFrame::Raised);
     auto* summaryLayout = new QHBoxLayout(summaryFrame);
-    auto* summaryTitle = new QLabel(QStringLiteral("用途サマリ"), summaryFrame);
-    impl_->presetSummaryLabel = new QLabel(QStringLiteral("未選択"), summaryFrame);
+    auto* summaryTitle = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_summary"), QStringLiteral("用途サマリ")), summaryFrame);
+    impl_->presetSummaryLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.unselected"), QStringLiteral("未選択")), summaryFrame);
     impl_->presetSummaryLabel->setWordWrap(true);
-    impl_->formatGuideLabel = new QLabel(QStringLiteral("用途を選ぶと、コンテナとコーデックの意味がここに表示されます。"), summaryFrame);
+    impl_->formatGuideLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_detail_placeholder"), QStringLiteral("用途を選ぶと、コンテナとコーデックの意味がここに表示されます。")), summaryFrame);
     impl_->formatGuideLabel->setWordWrap(true);
     impl_->presetSummaryLabel->setFrameShape(QFrame::NoFrame);
     impl_->formatGuideLabel->setFrameShape(QFrame::NoFrame);
@@ -1486,9 +1481,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     summaryLayout->addWidget(impl_->presetSummaryLabel, 1);
     summaryLayout->addWidget(impl_->formatGuideLabel, 2);
 
-    impl_->alphaEnabledCheck = new QCheckBox(QStringLiteral("Alphaあり"), this);
+    impl_->alphaEnabledCheck = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_yes_short"), QStringLiteral("Alphaあり")), this);
     impl_->alphaEnabledCheck->setChecked(false);
-    auto* alphaDisabledLabel = new QLabel(QStringLiteral("Alphaなし"), this);
+    auto* alphaDisabledLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_no_short"), QStringLiteral("Alphaなし")), this);
 
     auto* alphaRow = new QHBoxLayout();
     alphaRow->addWidget(impl_->alphaEnabledCheck);
@@ -1508,7 +1503,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     // Format preset selection (After Effects style)
     impl_->presetCombo = new QComboBox();
     impl_->loadFormatPresets();
-    formLayout->addRow(QStringLiteral("用途プリセット:"), impl_->presetCombo);
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.purpose_preset"), QStringLiteral("用途プリセット:")), impl_->presetCombo);
 
     // Format selection
     impl_->formatCombo = new QComboBox();
@@ -1591,54 +1586,52 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     formLayout->addRow("Bitrate:", impl_->bitrateSpin);
 
     // Audio settings
-    impl_->includeAudioCheck = new QCheckBox(QStringLiteral("動画ファイルに音声を含める"));
-    formLayout->addRow(QStringLiteral("音声の扱い:"), impl_->includeAudioCheck);
+    impl_->includeAudioCheck = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.include_audio"), QStringLiteral("動画ファイルに音声を含める")));
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.audio_handling"), QStringLiteral("音声の扱い:")), impl_->includeAudioCheck);
 
     impl_->outputPackageLabel = new QLabel(this);
     impl_->outputPackageLabel->setWordWrap(true);
-    formLayout->addRow(QStringLiteral("出力内容:"), impl_->outputPackageLabel);
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.output_content"), QStringLiteral("出力内容:")), impl_->outputPackageLabel);
 
     impl_->audioCodecCombo = new QComboBox();
     impl_->audioCodecCombo->addItem(QStringLiteral("AAC"));
-    formLayout->addRow(QStringLiteral("音声コーデック:"), impl_->audioCodecCombo);
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.audio_codec"), QStringLiteral("音声コーデック:")), impl_->audioCodecCombo);
 
     impl_->audioChannelCombo = new QComboBox(this);
-    impl_->audioChannelCombo->addItem(QStringLiteral("ソース準拠"), QStringLiteral("source"));
+    impl_->audioChannelCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.source_compliant"), QStringLiteral("ソース準拠")), QStringLiteral("source"));
     impl_->audioChannelCombo->addItem(QStringLiteral("Mono"), QStringLiteral("mono"));
-    impl_->audioChannelCombo->addItem(QStringLiteral("Stereo（配布向け推奨）"), QStringLiteral("stereo"));
+    impl_->audioChannelCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.channels_stereo"), QStringLiteral("Stereo（配布向け推奨）")), QStringLiteral("stereo"));
     impl_->audioChannelCombo->addItem(QStringLiteral("5.1"), QStringLiteral("5.1"));
     impl_->audioChannelCombo->addItem(QStringLiteral("7.1"), QStringLiteral("7.1"));
-    impl_->audioChannelCombo->addItem(QStringLiteral("7.1.4 (立体音響)"), QStringLiteral("7.1.4"));
-    impl_->audioChannelCombo->setToolTip(QStringLiteral(
-        "ソース準拠ではチャンネル数を引き継ぎます。Mono・Stereo・5.1・7.1・7.1.4を選ぶとFFmpegで変換します。"));
-    formLayout->addRow(QStringLiteral("音声チャンネル:"), impl_->audioChannelCombo);
+    impl_->audioChannelCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.channels_714"), QStringLiteral("7.1.4 (立体音響)")), QStringLiteral("7.1.4"));
+    impl_->audioChannelCombo->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.channels_note"), QStringLiteral("ソース準拠ではチャンネル数を引き継ぎます。Mono・Stereo・5.1・7.1・7.1.4を選ぶとFFmpegで変換します。")));
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.audio_channels"), QStringLiteral("音声チャンネル:")), impl_->audioChannelCombo);
 
     impl_->audioSampleRateCombo = new QComboBox(this);
-    impl_->audioSampleRateCombo->addItem(QStringLiteral("ソース準拠"), 0);
-    impl_->audioSampleRateCombo->addItem(QStringLiteral("48 kHz（映像向け推奨）"), 48000);
+    impl_->audioSampleRateCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.source_compliant"), QStringLiteral("ソース準拠")), 0);
+    impl_->audioSampleRateCombo->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.sample_rate_48k"), QStringLiteral("48 kHz（映像向け推奨）")), 48000);
     impl_->audioSampleRateCombo->addItem(QStringLiteral("96 kHz"), 96000);
     impl_->audioSampleRateCombo->setCurrentIndex(1);
-    formLayout->addRow(QStringLiteral("サンプルレート:"), impl_->audioSampleRateCombo);
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.sample_rate"), QStringLiteral("サンプルレート:")), impl_->audioSampleRateCombo);
 
     impl_->audioBitrateSpin = new ArtifactRelativeSpinBox();
     impl_->audioBitrateSpin->setRange(32, 512);
     impl_->audioBitrateSpin->setSingleStep(32);
     impl_->audioBitrateSpin->setValue(128);
     impl_->audioBitrateSpin->setSuffix(" kbps");
-    formLayout->addRow(QStringLiteral("音声ビットレート:"), impl_->audioBitrateSpin);
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.audio_bitrate"), QStringLiteral("音声ビットレート:")), impl_->audioBitrateSpin);
 
     // Multi-channel (AOV) export toggle
     impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/Normal/Velocity/ObjectID/MaterialID/Albedo/Emission)"), this);
     impl_->multiChannelCheck->setChecked(false);
-    impl_->multiChannelCheck->setToolTip(QStringLiteral("有効にすると Beauty RGBA に加えて Depth / Normal / Velocity / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。"));
+    impl_->multiChannelCheck->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.multi_channel_note"), QStringLiteral("有効にすると Beauty RGBA に加えて Depth / Normal / Velocity / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。")));
     formLayout->addRow("AOV:", impl_->multiChannelCheck);
 
     impl_->deepExportCheck = new QCheckBox(
         QStringLiteral("Deep EXR (Beauty + Depth, one sample per pixel)"), this);
     impl_->deepExportCheck->setChecked(false);
-    impl_->deepExportCheck->setToolTip(QStringLiteral(
-        "Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。"
-        "ネイティブな複数可視サンプル出力ではありません。"));
+    impl_->deepExportCheck->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.deep_exr_tooltip"),
+        QStringLiteral("Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。ネイティブな複数可視サンプル出力ではありません。")));
     formLayout->addRow("Deep:", impl_->deepExportCheck);
 
     impl_->multiChannelGroup = new QGroupBox(QStringLiteral("AOV Channels"), this);
@@ -1667,7 +1660,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->framePaddingSpin = new QSpinBox();
     impl_->framePaddingSpin->setRange(1, 10);
     impl_->framePaddingSpin->setValue(4);
-    impl_->framePaddingSpin->setToolTip(QStringLiteral("画像シーケンスのフレーム番号の桁数（例: 4 → frame_0001.png）"));
+    impl_->framePaddingSpin->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.frame_digits"), QStringLiteral("画像シーケンスのフレーム番号の桁数（例: 4 → frame_0001.png）")));
     impl_->outputPathEdit->setAccessibleName(QStringLiteral("Output path"));
     impl_->outputPathEdit->setAccessibleDescription(QStringLiteral("Enter the output file or image sequence path"));
     impl_->browseButton->setAccessibleName(QStringLiteral("Browse output path"));
@@ -1703,21 +1696,21 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->framePaddingSpin->setAccessibleDescription(QStringLiteral("Set the number of digits for image sequence frame numbers"));
     formLayout->addRow("Frame Padding:", impl_->framePaddingSpin);
 
-    impl_->advancedGroup = new QGroupBox(QStringLiteral("その他の設定"), this);
+    impl_->advancedGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.other_settings"), QStringLiteral("その他の設定")), this);
     impl_->advancedGroup->setCheckable(true);
     impl_->advancedGroup->setChecked(false);
     auto* advancedLayout = new QFormLayout(impl_->advancedGroup);
-    impl_->advancedAlphaLabel = new QLabel(QStringLiteral("Alpha: あり"), impl_->advancedGroup);
+    impl_->advancedAlphaLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_yes"), QStringLiteral("Alpha: あり")), impl_->advancedGroup);
     impl_->advancedFilenameLabel = new QLabel(QStringLiteral("ProjectName_[Preset]_[Date]"), impl_->advancedGroup);
-    impl_->advancedTimecodeLabel = new QLabel(QStringLiteral("ソース準拠"), impl_->advancedGroup);
-    impl_->advancedColorLabel = new QLabel(QStringLiteral("自動 / Rec.709"), impl_->advancedGroup);
-    impl_->advancedEncodeLabel = new QLabel(QStringLiteral("2-pass / HW 支援 / 連続書き出し"), impl_->advancedGroup);
-    advancedLayout->addRow(QStringLiteral("Alpha モード:"), alphaRow);
-    advancedLayout->addRow(QStringLiteral("Alpha 状態:"), impl_->advancedAlphaLabel);
-    advancedLayout->addRow(QStringLiteral("ファイル名規則:"), impl_->advancedFilenameLabel);
-    advancedLayout->addRow(QStringLiteral("タイムコード:"), impl_->advancedTimecodeLabel);
-    advancedLayout->addRow(QStringLiteral("カラーメタデータ:"), impl_->advancedColorLabel);
-    advancedLayout->addRow(QStringLiteral("エンコード補助:"), impl_->advancedEncodeLabel);
+    impl_->advancedTimecodeLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.source_compliant"), QStringLiteral("ソース準拠")), impl_->advancedGroup);
+    impl_->advancedColorLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.auto_rec709"), QStringLiteral("自動 / Rec.709")), impl_->advancedGroup);
+    impl_->advancedEncodeLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.encode_help"), QStringLiteral("2-pass / HW 支援 / 連続書き出し")), impl_->advancedGroup);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_mode"), QStringLiteral("Alpha モード:")), alphaRow);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_state"), QStringLiteral("Alpha 状態:")), impl_->advancedAlphaLabel);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.filename_pattern"), QStringLiteral("ファイル名規則:")), impl_->advancedFilenameLabel);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.timecode"), QStringLiteral("タイムコード:")), impl_->advancedTimecodeLabel);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.color_metadata"), QStringLiteral("カラーメタデータ:")), impl_->advancedColorLabel);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.encode_assist"), QStringLiteral("エンコード補助:")), impl_->advancedEncodeLabel);
 
     // Enable/disable audio codec and bitrate based on checkbox
     const auto updateAudioEnabled = [this]() {
@@ -1742,12 +1735,12 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->okButton = buttons.okButton;
     impl_->cancelButton = buttons.cancelButton;
     if (impl_->okButton) {
-        impl_->okButton->setText(QStringLiteral("書き出し"));
+        impl_->okButton->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.export"), QStringLiteral("書き出し")));
         impl_->okButton->setAccessibleName(QStringLiteral("Export render output"));
         impl_->okButton->setAccessibleDescription(QStringLiteral("Apply these render output settings and export"));
     }
     if (impl_->cancelButton) {
-        impl_->cancelButton->setText(QStringLiteral("キャンセル"));
+        impl_->cancelButton->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.cancel"), QStringLiteral("キャンセル")));
         impl_->cancelButton->setAccessibleName(QStringLiteral("Cancel render output settings"));
         impl_->cancelButton->setAccessibleDescription(QStringLiteral("Close without applying output settings"));
     }

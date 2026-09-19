@@ -983,7 +983,7 @@ namespace Artifact {
    selectionSetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set"), QStringLiteral("Selection セット(&S)")));
    selectionSetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
 
-   resolutionMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution"), QStringLiteral("解像度(&R)")));
+   resolutionMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution_label"), QStringLiteral("解像度(&R)")));
    resolutionMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_full.svg")));
    resolutionGroup = new QActionGroup(menu);
    resolutionGroup->setExclusive(true);
@@ -1537,8 +1537,8 @@ namespace Artifact {
     }
     ArtifactWorkspaceManager manager;
     if (!manager.savePreset(presetName, mainWindow)) {
-     QMessageBox::warning(mainWindow, QStringLiteral("ワークスペースを保存"),
-                          QStringLiteral("ワークスペースの保存に失敗しました。"));
+     QMessageBox::warning(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.save_workspace"), QStringLiteral("ワークスペースを保存")),
+                          TranslationManager::instance().tr(QStringLiteral("menu.view.save_workspace_failed"), QStringLiteral("ワークスペースの保存に失敗しました。")));
     }
                    });
    QObject::connect(deleteWorkspacePresetAction, &QAction::triggered, menu, [this]() {
@@ -1546,8 +1546,8 @@ namespace Artifact {
     ArtifactWorkspaceManager manager;
     const QStringList presets = manager.presetNames();
     if (presets.isEmpty()) {
-     QMessageBox::information(mainWindow, QStringLiteral("ワークスペース"),
-                              QStringLiteral("削除できるプリセットがありません。"));
+     QMessageBox::information(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.workspace"), QStringLiteral("ワークスペース")),
+                              TranslationManager::instance().tr(QStringLiteral("menu.view.no_deletable_presets"), QStringLiteral("削除できるプリセットがありません。")));
      return;
     }
     bool ok = false;
@@ -1559,23 +1559,23 @@ namespace Artifact {
      return;
     }
     const QString confirmMessage = TranslationManager::instance().tr(QStringLiteral("menu.view.delete_preset_confirm"), QStringLiteral("プリセット「%1」を削除しますか？")).arg(presetName);
-    if (QMessageBox::question(mainWindow, QStringLiteral("プリセットを削除"),
+    if (QMessageBox::question(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets"), QStringLiteral("プリセットを削除")),
                               confirmMessage,
                               QMessageBox::Yes | QMessageBox::No,
                               QMessageBox::No) != QMessageBox::Yes) {
      return;
     }
     if (!manager.deletePreset(presetName)) {
-     QMessageBox::warning(mainWindow, QStringLiteral("プリセットを削除"),
-                          QStringLiteral("プリセットの削除に失敗しました。"));
+     QMessageBox::warning(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets"), QStringLiteral("プリセットを削除")),
+                          TranslationManager::instance().tr(QStringLiteral("menu.view.delete_preset_failed"), QStringLiteral("プリセットの削除に失敗しました。")));
     }
    });
    QObject::connect(restoreWorkspaceSessionAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     ArtifactWorkspaceManager manager;
     if (!manager.restoreSession(mainWindow)) {
-     QMessageBox::information(mainWindow, QStringLiteral("ワークスペースを復元"),
-                              QStringLiteral("復元できるセッションがありません。"));
+     QMessageBox::information(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.restore_workspace"), QStringLiteral("ワークスペースを復元")),
+                              TranslationManager::instance().tr(QStringLiteral("menu.view.no_session_to_restore"), QStringLiteral("復元できるセッションがありません。")));
     }
    });
    QObject::connect(ramCacheAction, &QAction::toggled, menu, [](bool enabled) {
@@ -1592,8 +1592,8 @@ namespace Artifact {
     auto *mw = qobject_cast<ArtifactMainWindow*>(mainWindow);
     if (!mw) return;
     if (!mw->resetDockManagerStateToDefault()) {
-     QMessageBox::information(mw, QStringLiteral("ワークスペース"),
-                              QStringLiteral("デフォルトレイアウトを復元できません。"));
+     QMessageBox::information(mw, TranslationManager::instance().tr(QStringLiteral("menu.view.workspace"), QStringLiteral("ワークスペース")),
+                              TranslationManager::instance().tr(QStringLiteral("menu.view.reset_layout_failed"), QStringLiteral("デフォルトレイアウトを復元できません。")));
     }
    });
    
@@ -2108,8 +2108,8 @@ namespace Artifact {
                      ArtifactWorkspaceManager manager;
                      if (!manager.savePreset(presetName, mw)) {
                        QMessageBox::warning(
-                           mw, QStringLiteral("ワークスペースを保存"),
-                           QStringLiteral("ワークスペースの保存に失敗しました。"));
+                           mw, TranslationManager::instance().tr(QStringLiteral("menu.view.save_workspace"), QStringLiteral("ワークスペースを保存")),
+                           TranslationManager::instance().tr(QStringLiteral("menu.view.save_workspace_failed"), QStringLiteral("ワークスペースの保存に失敗しました。")));
                      }
                    });
 
@@ -2122,8 +2122,8 @@ namespace Artifact {
                      const QStringList presets = manager.presetNames();
                      if (presets.isEmpty()) {
                        QMessageBox::information(
-                           mw, QStringLiteral("ワークスペース"),
-                           QStringLiteral("削除できるプリセットがありません。"));
+                           mw, TranslationManager::instance().tr(QStringLiteral("menu.view.workspace"), QStringLiteral("ワークスペース")),
+                           TranslationManager::instance().tr(QStringLiteral("menu.view.no_deletable_presets"), QStringLiteral("削除できるプリセットがありません。")));
                        return;
                      }
                      bool ok = false;
@@ -2137,15 +2137,15 @@ namespace Artifact {
                      const QString confirmMessage =
                          TranslationManager::instance().tr(QStringLiteral("menu.view.delete_preset_confirm"), QStringLiteral("プリセット「%1」を削除しますか？")).arg(presetName);
                      if (QMessageBox::question(
-                             mw, QStringLiteral("プリセットを削除"),
+                             mw, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets"), QStringLiteral("プリセットを削除")),
                              confirmMessage, QMessageBox::Yes | QMessageBox::No,
                              QMessageBox::No) != QMessageBox::Yes) {
                        return;
                      }
                      if (!manager.deletePreset(presetName)) {
                        QMessageBox::warning(
-                           mw, QStringLiteral("プリセットを削除"),
-                           QStringLiteral("プリセットの削除に失敗しました。"));
+                           mw, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets"), QStringLiteral("プリセットを削除")),
+                           TranslationManager::instance().tr(QStringLiteral("menu.view.delete_preset_failed"), QStringLiteral("プリセットの削除に失敗しました。")));
                      }
                    });
 
@@ -2157,8 +2157,8 @@ namespace Artifact {
                      ArtifactWorkspaceManager manager;
                      if (!manager.restoreSession(mw)) {
                        QMessageBox::information(
-                           mw, QStringLiteral("ワークスペースを復元"),
-                           QStringLiteral("復元できるセッションがありません。"));
+                           mw, TranslationManager::instance().tr(QStringLiteral("menu.view.restore_workspace"), QStringLiteral("ワークスペースを復元")),
+                           TranslationManager::instance().tr(QStringLiteral("menu.view.no_session_to_restore"), QStringLiteral("復元できるセッションがありません。")));
                      }
                    });
 
@@ -2170,8 +2170,8 @@ namespace Artifact {
                      }
                      if (!typedMw->resetDockManagerStateToDefault()) {
                        QMessageBox::information(
-                           typedMw, QStringLiteral("ワークスペース"),
-                           QStringLiteral("デフォルトレイアウトを復元できません。"));
+                           typedMw, TranslationManager::instance().tr(QStringLiteral("menu.view.workspace"), QStringLiteral("ワークスペース")),
+                           TranslationManager::instance().tr(QStringLiteral("menu.view.reset_layout_failed"), QStringLiteral("デフォルトレイアウトを復元できません。")));
                      }
                    });
 
@@ -2192,8 +2192,8 @@ namespace Artifact {
                      ArtifactWorkspaceManager manager;
                      if (!manager.restorePreset(preset, mw)) {
                       QMessageBox::warning(mw,
-                                           QStringLiteral("ワークスペース"),
-                                           QStringLiteral("プリセットの復元に失敗しました。"));
+                                           TranslationManager::instance().tr(QStringLiteral("menu.view.workspace"), QStringLiteral("ワークスペース")),
+                                           TranslationManager::instance().tr(QStringLiteral("menu.view.restore_preset_failed"), QStringLiteral("プリセットの復元に失敗しました。")));
                      }
                     });
   }
@@ -2478,16 +2478,16 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const auto comp = currentViewportComposition(editor);
                    if (!editor || !comp) {
                     QMessageBox::information(
-                        dialogParent, QStringLiteral("Camera ブックマーク"),
-                        QStringLiteral("保存先のコンポジションまたは viewport が見つかりません。"));
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.viewport_not_found"), QStringLiteral("保存先のコンポジションまたは viewport が見つかりません。")));
                     return;
                    }
 
                    const auto state = currentViewportBookmarkState(editor);
                    if (!state) {
                     QMessageBox::warning(
-                        dialogParent, QStringLiteral("Camera ブックマーク"),
-                        QStringLiteral("現在の viewport 状態を取得できませんでした。"));
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.viewport_state_not_found"), QStringLiteral("現在の viewport 状態を取得できませんでした。")));
                     return;
                    }
 
@@ -2507,8 +2507,8 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    ViewportBookmarkStore store;
                    if (!store.saveBookmark(comp->id().toString(), entry)) {
                     QMessageBox::warning(
-                        dialogParent, QStringLiteral("Camera ブックマーク"),
-                        QStringLiteral("ブックマークの保存に失敗しました。"));
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.save_bookmark_failed"), QStringLiteral("ブックマークの保存に失敗しました。")));
                    }
                   });
 
@@ -2524,8 +2524,8 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                        activeCompositionEditor(dialogParent));
                    if (!comp) {
                     QMessageBox::information(
-                        dialogParent, QStringLiteral("Camera ブックマーク"),
-                        QStringLiteral("削除対象のコンポジションが見つかりません。"));
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.composition_not_found"), QStringLiteral("削除対象のコンポジションが見つかりません。")));
                     return;
                    }
 
@@ -2533,8 +2533,8 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const QStringList names = store.bookmarkNames(comp->id().toString());
                    if (names.isEmpty()) {
                     QMessageBox::information(
-                        dialogParent, QStringLiteral("Camera ブックマーク"),
-                        QStringLiteral("削除できるブックマークがありません。"));
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.no_deletable_bookmarks"), QStringLiteral("削除できるブックマークがありません。")));
                     return;
                    }
 
@@ -2550,7 +2550,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const QString confirmMessage =
                        TranslationManager::instance().tr(QStringLiteral("menu.view.delete_bookmark_confirm"), QStringLiteral("ブックマーク「%1」を削除しますか？")).arg(bookmarkName);
                    if (QMessageBox::question(
-                           dialogParent, QStringLiteral("Camera ブックマークを削除"),
+                           dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark_delete"), QStringLiteral("Camera ブックマークを削除")),
                            confirmMessage, QMessageBox::Yes | QMessageBox::No,
                            QMessageBox::No) != QMessageBox::Yes) {
                     return;
@@ -2558,8 +2558,8 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
 
                    if (!store.deleteBookmark(comp->id().toString(), bookmarkName)) {
                     QMessageBox::warning(
-                        dialogParent, QStringLiteral("Camera ブックマーク"),
-                        QStringLiteral("ブックマークの削除に失敗しました。"));
+                        dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                        TranslationManager::instance().tr(QStringLiteral("menu.view.delete_bookmark_failed"), QStringLiteral("ブックマークの削除に失敗しました。")));
                    }
                   });
 
@@ -2594,23 +2594,23 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                     auto* editor = activeCompositionEditor(dialogParent);
                     if (!editor) {
                      QMessageBox::information(
-                         dialogParent, QStringLiteral("Camera ブックマーク"),
-                         QStringLiteral("復元先の viewport が見つかりません。"));
+                         dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.restore_viewport_not_found"), QStringLiteral("復元先の viewport が見つかりません。")));
                      return;
                     }
                     ViewportBookmarkStore store;
                     const auto entry = store.bookmark(compositionId, bookmarkName);
                     if (!entry) {
                      QMessageBox::warning(
-                         dialogParent, QStringLiteral("Camera ブックマーク"),
-                         QStringLiteral("ブックマーク「%1」を読み込めませんでした。")
+                         dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.load_bookmark_failed"), QStringLiteral("ブックマーク「%1」を読み込めませんでした。"))
                              .arg(bookmarkName));
                      return;
                     }
                    if (!applyViewportBookmarkState(editor, *entry)) {
                      QMessageBox::warning(
-                         dialogParent, QStringLiteral("Camera ブックマーク"),
-                         QStringLiteral("ブックマーク「%1」の復元に失敗しました。")
+                         dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark"), QStringLiteral("Camera ブックマーク")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.restore_bookmark_failed"), QStringLiteral("ブックマーク「%1」の復元に失敗しました。"))
                              .arg(bookmarkName));
                     }
                    });
@@ -2644,7 +2644,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!editor || !comp) {
                      QMessageBox::information(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("保存先のコンポジションまたは viewport が見つかりません。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.viewport_not_found"), QStringLiteral("保存先のコンポジションまたは viewport が見つかりません。")));
                      return;
                     }
 
@@ -2652,7 +2652,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!state) {
                      QMessageBox::warning(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("現在の viewport 設定を取得できませんでした。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.viewport_settings_not_found"), QStringLiteral("現在の viewport 設定を取得できませんでした。")));
                      return;
                     }
 
@@ -2673,7 +2673,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!store.saveTemplate(comp->id().toString(), entry)) {
                      QMessageBox::warning(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("ビュー設定の保存に失敗しました。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.save_view_settings_failed"), QStringLiteral("ビュー設定の保存に失敗しました。")));
                     }
                    });
 
@@ -2690,7 +2690,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!comp) {
                      QMessageBox::information(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("削除対象のコンポジションが見つかりません。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.composition_not_found"), QStringLiteral("削除対象のコンポジションが見つかりません。")));
                      return;
                     }
 
@@ -2699,7 +2699,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (names.isEmpty()) {
                      QMessageBox::information(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("削除できるビュー設定がありません。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.no_deletable_view_settings"), QStringLiteral("削除できるビュー設定がありません。")));
                      return;
                     }
 
@@ -2715,7 +2715,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     const QString confirmMessage =
                         TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_settings_confirm"), QStringLiteral("ビュー設定「%1」を削除しますか？")).arg(templateName);
                     if (QMessageBox::question(
-                            dialogParent, QStringLiteral("View Template を削除"),
+                            dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_template"), QStringLiteral("View Template を削除")),
                             confirmMessage, QMessageBox::Yes | QMessageBox::No,
                             QMessageBox::No) != QMessageBox::Yes) {
                      return;
@@ -2724,7 +2724,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!store.deleteTemplate(comp->id().toString(), templateName)) {
                      QMessageBox::warning(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("ビュー設定の削除に失敗しました。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_settings_failed"), QStringLiteral("ビュー設定の削除に失敗しました。")));
                     }
                    });
 
@@ -2760,7 +2760,7 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!editor) {
                      QMessageBox::information(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("復元先の viewport が見つかりません。"));
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.restore_viewport_not_found"), QStringLiteral("復元先の viewport が見つかりません。")));
                      return;
                     }
                     ViewportTemplateStore store;
@@ -2768,14 +2768,14 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
                     if (!entry) {
                      QMessageBox::warning(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("ビュー設定「%1」を読み込めませんでした。")
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.load_view_settings_failed"), QStringLiteral("ビュー設定「%1」を読み込めませんでした。"))
                              .arg(templateName));
                      return;
                     }
                    if (!applyViewportTemplateState(editor, *entry)) {
                      QMessageBox::warning(
                          dialogParent, QStringLiteral("View Template"),
-                         QStringLiteral("ビュー設定「%1」の復元に失敗しました。")
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.restore_view_settings_failed"), QStringLiteral("ビュー設定「%1」の復元に失敗しました。"))
                              .arg(templateName));
                     }
                    });
@@ -2961,15 +2961,15 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
                     auto comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
                     if (!selection || !comp) {
                      QMessageBox::information(
-                         dialogParent, QStringLiteral("Selection セット"),
-                         QStringLiteral("保存先のコンポジションまたは選択が見つかりません。"));
+                         dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set_title"), QStringLiteral("Selection セット")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.destination_not_found"), QStringLiteral("保存先のコンポジションまたは選択が見つかりません。")));
                      return;
                     }
                     auto state = currentSelectionSetState();
                     if (!state) {
                      QMessageBox::warning(
-                         dialogParent, QStringLiteral("Selection セット"),
-                         QStringLiteral("現在の選択を取得できませんでした。"));
+                         dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set_title"), QStringLiteral("Selection セット")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.selection_not_found"), QStringLiteral("現在の選択を取得できませんでした。")));
                      return;
                     }
 
@@ -2986,8 +2986,8 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
                     SelectionSetStore store;
                     if (!store.saveSelectionSet(comp->id().toString(), *state)) {
                      QMessageBox::warning(
-                         dialogParent, QStringLiteral("Selection セット"),
-                         QStringLiteral("Selection set の保存に失敗しました。"));
+                         dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set_title"), QStringLiteral("Selection セット")),
+                         TranslationManager::instance().tr(QStringLiteral("menu.view.save_selection_set_failed"), QStringLiteral("Selection set の保存に失敗しました。")));
                     }
                    });
 
@@ -3027,8 +3027,8 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
                      const auto entry = store.selectionSet(compositionId, name);
                      if (!entry) {
                       QMessageBox::warning(
-                          dialogParent, QStringLiteral("Selection セット"),
-                          QStringLiteral("Selection set「%1」を読み込めませんでした。").arg(name));
+                          dialogParent, TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set_title"), QStringLiteral("Selection セット")),
+                          TranslationManager::instance().tr(QStringLiteral("menu.view.load_selection_set_failed"), QStringLiteral("Selection set「%1」を読み込めませんでした。")).arg(name));
                       return;
                      }
                      selection->clearSelection();
@@ -3064,8 +3064,8 @@ void ArtifactViewMenu::Impl::showProjectPanel()
   return;
  }
 
- QMessageBox::information(mainWindow, QStringLiteral("Project パネル"),
-                          QStringLiteral("Project パネルが見つかりません。"));
+ QMessageBox::information(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.project_panel_title"), QStringLiteral("Project パネル")),
+                          TranslationManager::instance().tr(QStringLiteral("menu.view.project_panel_not_found"), QStringLiteral("Project パネルが見つかりません。")));
 }
 
 void ArtifactViewMenu::Impl::refreshSecondaryPreview()
@@ -3121,8 +3121,8 @@ void ArtifactViewMenu::Impl::showSecondaryPreview()
 
  const auto screens = QGuiApplication::screens();
  if (screens.size() < 2) {
-  QMessageBox::information(mainWindow, QStringLiteral("セカンドモニタープレビュー"),
-                           QStringLiteral("2つ目のモニターが検出されていません。\nマルチディスプレイ環境でご利用ください。"));
+  QMessageBox::information(mainWindow, TranslationManager::instance().tr(QStringLiteral("menu.view.second_monitor_preview_title"), QStringLiteral("セカンドモニタープレビュー")),
+                           TranslationManager::instance().tr(QStringLiteral("menu.view.second_monitor_not_found"), QStringLiteral("2つ目のモニターが検出されていません。\nマルチディスプレイ環境でご利用ください。")));
   return;
  }
 
