@@ -47,9 +47,22 @@ export namespace Artifact
   RenderPipeline();
   ~RenderPipeline();
 
+  // Per-target auxiliary (AOV) request. Targets are allocated on demand;
+  // each has*Target() is request && texture, and every draw gate already
+  // null-checks its RTV, so unrequested targets are simply skipped.
+  struct AuxiliaryTargetRequest {
+    bool emission = false;
+    bool normal = false;
+    bool velocity = false;
+    bool objectId = false;
+    bool materialId = false;
+    bool albedo = false;
+    bool operator==(const AuxiliaryTargetRequest&) const = default;
+  };
+
   bool initialize(IRenderDevice* device, Uint32 width, Uint32 height,
                   TEXTURE_FORMAT format,
-                  bool enableEmission = false);
+                  AuxiliaryTargetRequest auxiliaryTargets = {});
   void resize(Uint32 width, Uint32 height);
   void destroy();
 
@@ -153,7 +166,7 @@ export namespace Artifact
 
  private:
   bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height,
-                      TEXTURE_FORMAT format, bool enableEmission);
+                      TEXTURE_FORMAT format, AuxiliaryTargetRequest request);
 
   struct Impl;
   Impl* impl_ = nullptr;
