@@ -1195,8 +1195,64 @@ QPointF offsetPointAwayFromCenter(const QPointF& center, const Detail::float2& p
 
 QPointF resizeBadgeAnchorForHandle(const QRectF& box, const TransformGizmo::HandleType handle)
 {
- Q_UNUSED(handle);
- return box.topLeft();
+ switch (handle) {
+ case TransformGizmo::HandleType::Scale_TL:
+  return box.topLeft();
+ case TransformGizmo::HandleType::Scale_TR:
+  return box.topRight();
+ case TransformGizmo::HandleType::Scale_BL:
+  return box.bottomLeft();
+ case TransformGizmo::HandleType::Scale_BR:
+  return box.bottomRight();
+ case TransformGizmo::HandleType::Scale_T:
+  return QPointF(box.center().x(), box.top());
+ case TransformGizmo::HandleType::Scale_B:
+  return QPointF(box.center().x(), box.bottom());
+ case TransformGizmo::HandleType::Scale_L:
+  return QPointF(box.left(), box.center().y());
+ case TransformGizmo::HandleType::Scale_R:
+  return QPointF(box.right(), box.center().y());
+ case TransformGizmo::HandleType::Scale_Center:
+  return box.bottomRight();
+ default:
+  return box.topLeft();
+ }
+}
+
+void updateResizeBadgeLines(std::vector<QString>& lines,
+                            const QRectF& startBox,
+                            const QRectF& currentBox,
+                            const bool anchorCenter)
+{
+ if (!startBox.isValid() || !currentBox.isValid() ||
+     startBox.width() <= 0.0 || startBox.height() <= 0.0) {
+  lines.clear();
+  return;
+ }
+
+ const int width = std::max(1, static_cast<int>(std::lround(currentBox.width())));
+ const int height = std::max(1, static_cast<int>(std::lround(currentBox.height())));
+ const int deltaWidth = static_cast<int>(
+     std::lround(currentBox.width() - startBox.width()));
+ const int deltaHeight = static_cast<int>(
+     std::lround(currentBox.height() - startBox.height()));
+ const double scaleX = currentBox.width() / startBox.width() * 100.0;
+ const double scaleY = currentBox.height() / startBox.height() * 100.0;
+
+ lines.clear();
+ lines.reserve(anchorCenter ? 4 : 3);
+ lines.push_back(QStringLiteral("%1 × %2 px").arg(width).arg(height));
+ lines.push_back(QStringLiteral("Scale X %1%  Y %2%")
+                     .arg(QString::number(scaleX, 'f', 1))
+                     .arg(QString::number(scaleY, 'f', 1)));
+ lines.push_back(QStringLiteral("ΔW %1%2 px  ΔH %3%4 px")
+                     .arg(deltaWidth >= 0 ? QStringLiteral("+") : QString())
+                     .arg(deltaWidth)
+                     .arg(deltaHeight >= 0 ? QStringLiteral("+") : QString())
+                     .arg(deltaHeight));
+ if (anchorCenter) {
+  lines.push_back(QStringLiteral("Anchor Center"));
+ }
 }
 
 void drawResizeBadge(ArtifactIRenderer* renderer,
@@ -1211,26 +1267,25 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
  }
 
  QFont badgeFont = QApplication::font();
- badgeFont.setPointSizeF(std::max(15.0, static_cast<double>(badgeFont.pointSizeF()) + 5.0));
+ badgeFont.setPointSizeF(std::max(10.0, static_cast<double>(badgeFont.pointSizeF()) + 1.0));
  badgeFont.setBold(true);
  const QFontMetrics fm(badgeFont);
  float textW = 0.0f;
  for (const auto& line : lines) {
   textW = std::max(textW, static_cast<float>(fm.horizontalAdvance(line.trimmed())));
  }
- textW += 34.0f;
+ textW += 28.0f;
  const float lineH = static_cast<float>(fm.height());
- const float lineGap = 6.0f;
+ const float lineGap = 3.0f;
  const float textH = static_cast<float>(lines.size()) * lineH +
                      std::max(0.0f, static_cast<float>(lines.size() - 1) * lineGap) +
-                     22.0f;
- const float pad = std::max(14.0f, 14.0f * invZoom);
- const float margin = std::max(12.0f, 14.0f * invZoom);
+                     16.0f;
+ const float gap = std::max(12.0f, 14.0f * invZoom);
+ const float margin = std::max(8.0f, 10.0f * invZoom);
 
- QPointF pos(box.left() + pad, box.top() + pad);
- if (box.height() < textH + pad * 2.0f) {
-  pos = QPointF(box.left() + pad, box.top() - textH - pad);
- }
+ const QPointF outward = anchor - box.center();
+ QPointF pos(anchor.x() + (outward.x() >= 0.0 ? gap : -gap - textW),
+             anchor.y() + (outward.y() >= 0.0 ? gap : -gap - textH));
 
  auto clampToBounds = [&](const float minX, const float minY, const float maxX, const float maxY) {
   pos.setX(std::clamp(static_cast<float>(pos.x()), minX, maxX));
@@ -1256,16 +1311,13 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
                             FloatColor{0.96f, 0.54f, 0.18f, 0.92f});
 
  for (size_t i = 0; i < lines.size(); ++i) {
-  QString line = lines[i].trimmed();
-  if (i == 0 && !line.isEmpty()) {
-   line = QStringLiteral("OVR:RSZ %1").arg(line);
-  }
+  const QString line = lines[i].trimmed();
   if (line.isEmpty()) {
    continue;
   }
-  const QRectF lineRect(textRect.left() + 14.0f,
-                        textRect.top() + 10.0f + static_cast<float>(i) * (lineH + lineGap),
-                        textRect.width() - 28.0f,
+  const QRectF lineRect(textRect.left() + 12.0f,
+                        textRect.top() + 8.0f + static_cast<float>(i) * (lineH + lineGap),
+                        textRect.width() - 24.0f,
                         lineH);
   renderer->drawText(lineRect, line, badgeFont,
                      FloatColor{0.97f, 0.98f, 1.0f, 1.0f},
@@ -2270,14 +2322,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
         "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
     if (dragStartLocalBounds_.isValid() && dragStartLocalBounds_.width() > 0.0 &&
         dragStartLocalBounds_.height() > 0.0) {
-     const double pulseSeconds =
-         std::chrono::duration<double>(
-             std::chrono::steady_clock::now().time_since_epoch())
-             .count();
-     const float pulse =
-         0.5f + 0.5f * static_cast<float>(std::sin(pulseSeconds * 8.0));
-     const FloatColor startRectColor{
-         0.42f, 0.86f, 1.0f, 0.24f + pulse * 0.64f};
+     const FloatColor startRectColor{0.52f, 0.78f, 0.88f, 0.52f};
      const float startDash = std::max(5.0f, 7.0f * invZoom);
      const float startGap = std::max(3.0f, 5.0f * invZoom);
      drawTransformedDashedRect(renderer,
@@ -3190,14 +3235,17 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const float factor = std::clamp(currentLen / startLen, 0.05f, 100.0f);
    const float newScaleX = dragStartScaleX_ * factor;
    const float newScaleY = dragStartScaleY_ * factor;
+   const QRectF centerScaleBox(
+       pivotWorldStart.x() - dragStartBoundingBox_.width() * factor * 0.5,
+       pivotWorldStart.y() - dragStartBoundingBox_.height() * factor * 0.5,
+       dragStartBoundingBox_.width() * factor,
+       dragStartBoundingBox_.height() * factor);
 
    resizeBadgeVisible_ = true;
-   resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(dragStartBoundingBox_, activeHandle_);
-   resizeBadgeBox_ = dragStartBoundingBox_;
-   resizeBadgeLines_.clear();
-   resizeBadgeLines_.push_back(
-       QStringLiteral("%1%")
-           .arg(QString::number(static_cast<double>(factor * 100.0f), 'f', 1)));
+   resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(centerScaleBox, activeHandle_);
+   resizeBadgeBox_ = centerScaleBox;
+   updateResizeBadgeLines(resizeBadgeLines_, dragStartBoundingBox_,
+                          centerScaleBox, true);
 
    if (targets.size() > 1) {
     for (std::size_t i = 0; i < targets.size(); ++i) {
@@ -3267,10 +3315,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    resizeBadgeVisible_ = true;
    resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(dragStartBoundingBox_, activeHandle_);
    resizeBadgeBox_ = dragStartBoundingBox_;
-   resizeBadgeLines_.clear();
-   resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
-                                  .arg(QString::number(static_cast<int>(std::lround(dragStartBoundingBox_.width()))))
-                                  .arg(QString::number(static_cast<int>(std::lround(dragStartBoundingBox_.height())))));
+   updateResizeBadgeLines(resizeBadgeLines_, dragStartBoundingBox_,
+                          dragStartBoundingBox_, false);
    return true;
   }
   QPointF snappedCanvasPos = currentCanvasPos;
@@ -3374,12 +3420,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
        resizeBadgeVisible_ = true;
        resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(targetBox, activeHandle_);
        resizeBadgeBox_ = targetBox;
-       resizeBadgeLines_.clear();
-       resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
-                                      .arg(QString::number(static_cast<int>(
-                                          std::lround(targetBox.width()))))
-                                      .arg(QString::number(static_cast<int>(
-                                          std::lround(targetBox.height())))));
+       updateResizeBadgeLines(resizeBadgeLines_, startBox, targetBox,
+                              scaleFromCenter);
        publishDragMutation();
        lastCanvasMousePos_ = currentCanvasPos;
        return true;
@@ -3405,10 +3447,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      resizeBadgeVisible_ = true;
      resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(targetBox, activeHandle_);
      resizeBadgeBox_ = targetBox;
-     resizeBadgeLines_.clear();
-     resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
-                                    .arg(QString::number(static_cast<int>(std::lround(targetBox.width()))))
-                                    .arg(QString::number(static_cast<int>(std::lround(targetBox.height())))));
+     updateResizeBadgeLines(resizeBadgeLines_, startBox, targetBox, false);
      const bool editInitialSize = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
      if (editInitialSize) {
       const int newWidth = std::max(1, static_cast<int>(std::lround(targetBox.width())));
