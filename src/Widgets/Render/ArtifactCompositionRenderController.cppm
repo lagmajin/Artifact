@@ -10246,6 +10246,7 @@ public:
               ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
           layerHasRasterizerEffectsOrMasks(layer.get()) ||
           dynamic_cast<ArtifactCompositionLayer*>(layer.get()) != nullptr) {
+        ++precompFastPathSkipCount_;
         return nullptr;
       }
     }
@@ -10723,6 +10724,19 @@ public:
   std::size_t pointwiseAppliedCount_ = 0;
 
   std::size_t giDispatchedCount_ = 0;
+
+  // Fallback observability for multipass planning: per-frame counts of
+  // precomp fast-path skips and adjustment full-quality fallbacks. Render
+  // output is unchanged; the diagnostic graph reports them.
+  std::size_t precompFastPathSkipCount_ = 0;
+  std::size_t adjustmentFallbackCount_ = 0;
+
+  // Overlay/composite separation phase flag. Set once the clean composite
+  // is finalized (GPU path) or the backbuffer is re-armed after the direct
+  // composite (fallback path); overlay entries warn in debug builds when it
+  // is not set, so a future reorder that bakes gizmos into accum/readback
+  // becomes visible instead of silent contamination.
+  bool compositeFinalizedThisFrame_ = false;
 
   QString lastCompositionVisibilitySummary_;
 
@@ -11351,6 +11365,9 @@ public:
         }
       }
       if (!pointwiseApplied) {
+        if (!pointwiseStack.nodes().empty()) {
+          ++adjustmentFallbackCount_;
+        }
         renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
       }
 
@@ -12178,6 +12195,7 @@ public:
 
 
     lastPresentedReadbackSRV_ = finalPresentSRV;
+    compositeFinalizedThisFrame_ = true;
 
     Diligent::ITextureView* channelComponentSource = nullptr;
     Diligent::Uint32 channelComponent = 0;
@@ -21101,6 +21119,16 @@ CompositionRenderController::frameDebugSnapshot() const {
           "Composition.ScreenSpaceGI", ArtifactCore::RenderPassQueue::Compute,
           {effectsInput}, {giResource}, true});
       effectsInput = giResource;
+    }
+    if (impl_->precompFastPathSkipCount_ > 0) {
+      diagnosticGraph.addPass({
+          "Composition.PrecompFallback", ArtifactCore::RenderPassQueue::Graphics,
+          {effectsInput}, {accumulationResource}, true});
+    }
+    if (impl_->adjustmentFallbackCount_ > 0) {
+      diagnosticGraph.addPass({
+          "Composition.AdjustmentFallback", ArtifactCore::RenderPassQueue::Compute,
+          {effectsInput}, {accumulationResource}, true});
     }
     diagnosticGraph.addPass({
         "Composition.FinalPostProcess", ArtifactCore::RenderPassQueue::Graphics,
@@ -35882,6 +35910,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   pointwiseAppliedCount_ = 0;
   giDispatchedCount_ = 0;
+  precompFastPathSkipCount_ = 0;
+  adjustmentFallbackCount_ = 0;
+  compositeFinalizedThisFrame_ = false;
 
 
 
@@ -36360,6 +36391,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const float viewportH = hostHeight_ > 0.0f ? hostHeight_ : ch;
 
+  // Pass resolution in one place: render size drives pipeline targets and
+  // pass dispatches, view size (float, like cw/ch) drives presentation.
+  // Downsampled passes derive from halfWidth()/halfHeight().
+  struct CompositionPassResolution {
+    int renderWidth = 1;
+    int renderHeight = 1;
+    float viewWidth = 1.0f;
+    float viewHeight = 1.0f;
+    float renderWidthF() const { return static_cast<float>(renderWidth); }
+    float renderHeightF() const { return static_cast<float>(renderHeight); }
+    unsigned renderWidthU() const { return static_cast<unsigned>(renderWidth); }
+    unsigned renderHeightU() const {
+      return static_cast<unsigned>(renderHeight);
+    }
+    int halfWidth() const { return std::max(1, (renderWidth + 1) / 2); }
+    int halfHeight() const { return std::max(1, (renderHeight + 1) / 2); }
+  };
+
   const int effectivePreviewDownsample =
 
       viewportInteracting_
@@ -36386,17 +36435,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
              viewportH / static_cast<float>(effectivePreviewDownsample))));
 
+  const CompositionPassResolution passResolution{
+      previewRenderWidth, previewRenderHeight, cw, ch};
+
   // Keep the settled GPU blend path at the same physical resolution as the
 
   // direct Normal path. Downsampling is an interaction-only optimization;
 
   // otherwise Add/Multiply look permanently softer than Normal.
-
-  const float rcw = static_cast<float>(previewRenderWidth);
-
-  const float rch = static_cast<float>(previewRenderHeight);
-
-
 
   if (compositionRenderer_) {
 
@@ -37352,15 +37398,51 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
       return false;
     }();
+    struct CompositionPostPassMask {
+      bool screenSpaceGi = false;
+      bool auxiliaryTargets = false;
+      bool motionBlurVelocity = false;
+      bool cameraMotionBlur = false;
+      bool timelineMotionBlur = false;
+      bool depthOfField = false;
+      int antiAliasingMode = 1;
+    };
+    // Post-pass on/off for this frame in one place. Values mirror the
+    // pipeline-setup consts above (still used by target allocation); the
+    // layer loop and the Resolve/Post passes below read the mask.
+    CompositionPostPassMask postPassMask;
+    postPassMask.screenSpaceGi = screenSpaceGlobalIlluminationRequested;
+    postPassMask.auxiliaryTargets = auxiliary3DChannelRequested;
+    postPassMask.motionBlurVelocity = motionBlurVelocityRequested;
+    postPassMask.cameraMotionBlur = cameraMotionBlurRequested;
+    // Same single-threaded read as motionBlurVelocityRequested above; kept
+    // separate because velocity-target need != effect enable.
+    postPassMask.timelineMotionBlur = []() {
+      const auto appSettings = ArtifactCore::ArtifactAppSettings::instance();
+      return appSettings && appSettings->timelineMotionBlurActive();
+    }();
     // Depth of field consumes the active camera lens parameters.
-    const bool dofPassRequested =
-        activeCamera &&
-        activeCamera->depthOfFieldParameters().cocScale > 0.0f;
+    postPassMask.depthOfField =
+        activeCamera && activeCamera->depthOfFieldParameters().cocScale > 0.0f;
     // Anti-aliasing quality mode: 0=Off, 1=FXAA, 2=MSAA 4x.
-    const int antiAliasingMode = []() {
+    postPassMask.antiAliasingMode = []() {
       const auto appSettings = ArtifactCore::ArtifactAppSettings::instance();
       return appSettings ? appSettings->compositionAntiAliasingMode() : 1;
     }();
+
+    // Auxiliary (AOV) targets, allocated on demand. Each entry mirrors its
+    // draw gate below (plus SSGI inputs), so e.g. motion-blur-only frames
+    // allocate velocity without the full debug bundle.
+    RenderPipeline::AuxiliaryTargetRequest auxiliaryRequest;
+    auxiliaryRequest.emission = emissionChannelRequested;
+    auxiliaryRequest.normal =
+        normalChannelRequested || postPassMask.screenSpaceGi;
+    auxiliaryRequest.velocity = postPassMask.motionBlurVelocity ||
+        postPassMask.cameraMotionBlur || velocityChannelRequested;
+    auxiliaryRequest.objectId = objectIdChannelRequested;
+    auxiliaryRequest.materialId = materialIdChannelRequested;
+    auxiliaryRequest.albedo =
+        albedoChannelRequested || postPassMask.screenSpaceGi;
 
     // Avoid paying render-pipeline setup cost when GPU blending is disabled.
 
@@ -37370,16 +37452,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         const bool initializedWithF16 = renderPipeline.initialize(
 
-            device,
+              device,
 
-            static_cast<Uint32>(previewRenderWidth),
+              static_cast<Uint32>(passResolution.renderWidth),
 
-            static_cast<Uint32>(previewRenderHeight),
+              static_cast<Uint32>(passResolution.renderHeight),
 
             RenderConfig::PipelineFormatF16,
 
-            auxiliary3DChannelRequested || motionBlurVelocityRequested ||
-            cameraMotionBlurRequested);
+            auxiliaryRequest);
 
         if (!initializedWithF16) {
           qWarning() << "[CompositionView] RGBA16_FLOAT pipeline unavailable;"
@@ -37388,23 +37469,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               device,
 
-              static_cast<Uint32>(previewRenderWidth),
+              static_cast<Uint32>(passResolution.renderWidth),
 
-              static_cast<Uint32>(previewRenderHeight),
+              static_cast<Uint32>(passResolution.renderHeight),
 
               RenderConfig::PipelineFormatF32,
 
-              auxiliary3DChannelRequested || motionBlurVelocityRequested ||
-              cameraMotionBlurRequested);
+              auxiliaryRequest);
         }
 
         if (!ensurePreviewRenderPipelineDepthSlot(
 
                 previewRenderSlot,
 
-                previewRenderWidth,
+                passResolution.renderWidth,
 
-                previewRenderHeight)) {
+                passResolution.renderHeight)) {
 
           qWarning() << "[CompositionView] failed to allocate preview depth slot"
 
@@ -37412,7 +37492,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                      << "size="
 
-                     << QSize(previewRenderWidth, previewRenderHeight);
+                     << QSize(passResolution.renderWidth,
+                             passResolution.renderHeight);
 
         }
 
@@ -38228,8 +38309,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   sourceLayer->isActiveAt(currentFrame)) {
                 if (auto* gpuSource = renderMatteGpuOutput(
                         sourceLayer.get(), currentFrame.framePosition(),
-                        QSize(previewRenderWidth, previewRenderHeight), rcw, rch,
-                        cw, ch, accumSRV, matteResolver, sceneLights,
+                        QSize(passResolution.renderWidth,
+                              passResolution.renderHeight),
+                        passResolution.renderWidthF(),
+                        passResolution.renderHeightF(), cw, ch, accumSRV, matteResolver, sceneLights,
                         has3DCamera, cameraViewMatrix, cameraProjMatrix,
                         &renderPipeline)) {
                   matteSourceGpuViews.insert(matteRef.sourceLayerId, gpuSource);
@@ -38284,7 +38367,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             gpuBasePassState = beginGpuBasePass(
 
-                *resources.pipeline, previewRenderSlot, rcw, rch, cw, ch,
+                *resources.pipeline, previewRenderSlot,
+                passResolution.renderWidthF(), passResolution.renderHeightF(),
+                cw, ch,
 
                 layerBgColor, backgroundMode);
 
@@ -38666,10 +38751,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // MSAA is isolated per 3D layer.  A shared-depth scene and AOV
           // capture stay on the established single-sample path because their
           // depth/color attachments must remain mutually compatible.
-          const bool useLayerMsaa = antiAliasingMode == 2 && layer->is3D() && !preserveSceneDepth &&
-              !auxiliary3DChannelRequested && !motionBlurVelocityRequested &&
-              ensurePreviewRenderPipelineMsaaSlot(
-                  previewRenderSlot, previewRenderWidth, previewRenderHeight);
+          const bool useLayerMsaa = postPassMask.antiAliasingMode == 2 && layer->is3D() && !preserveSceneDepth &&
+              !postPassMask.auxiliaryTargets && !postPassMask.motionBlurVelocity &&
+                  ensurePreviewRenderPipelineMsaaSlot(
+                      previewRenderSlot, passResolution.renderWidth,
+                      passResolution.renderHeight);
 
 
 
@@ -38698,9 +38784,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     static_cast<Diligent::ITextureView*>(
                         previewRenderSlot.depthTargetView),
-                    passResources.accumSRV, rcw,
+                    passResources.accumSRV,
+                    passResolution.renderWidthF(),
 
-                    rch, cw, ch, lod, currentFrame, matteResolver, sceneLights,
+                    passResolution.renderHeightF(), cw, ch, lod, currentFrame,
+                    matteResolver, sceneLights,
 
                     has3DCamera, cameraViewMatrix, cameraProjMatrix,
 
@@ -38732,7 +38820,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 }
 
                 if ((!draftRendering || normalChannelRequested ||
-                     screenSpaceGlobalIlluminationRequested) && normalRTV) {
+                     postPassMask.screenSpaceGi) && normalRTV) {
 
                   drawGpuLayerNormalToTarget(
                       layer.get(), normalRTV,
@@ -38801,7 +38889,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 }
 
                 if ((!draftRendering || albedoChannelRequested ||
-                     screenSpaceGlobalIlluminationRequested) && albedoRTV) {
+                     postPassMask.screenSpaceGi) && albedoRTV) {
 
                   drawGpuLayerAlbedoToTarget(
                       layer.get(), albedoRTV,
@@ -38906,7 +38994,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       }
 
-      if (screenSpaceGlobalIlluminationRequested) {
+      if (postPassMask.screenSpaceGi) {
         renderer_->unbindColorTargetsForCompute();
         auto* depthSRV = renderer_->offscreenTextureShaderResourceView(
             previewRenderSlot.depthTargetView);
@@ -38977,8 +39065,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               MotionBlurSettings motionBlurSettings;
               const auto appSettings =
                   ArtifactCore::ArtifactAppSettings::instance();
-              motionBlurSettings.enabled =
-                  appSettings && appSettings->timelineMotionBlurActive();
+              motionBlurSettings.enabled = postPassMask.timelineMotionBlur;
               motionBlurSettings.shutterAngle = appSettings
                   ? static_cast<float>(appSettings->timelineMotionBlurShutterAngle())
                   : 180.0f;
@@ -38991,8 +39078,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                          resources.pipeline->velocitySRV(),
                                          depthSRV,
                                          resources.pipeline->tempUAV(),
-                                         static_cast<unsigned>(rcw),
-                                         static_cast<unsigned>(rch),
+                                         passResolution.renderWidthU(),
+                                         passResolution.renderHeightU(),
                                          motionBlurSettings)) {
                 resources.pipeline->swapAccumAndTemp();
                 resources.accumSRV = resources.pipeline->accumSRV();
@@ -39028,7 +39115,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                       renderer_->immediateContext(), resources.accumSRV,
                       resources.pipeline->velocitySRV(), cameraPostDepthSRV,
                       resources.pipeline->tempUAV(),
-                      static_cast<unsigned>(rcw), static_cast<unsigned>(rch),
+                      passResolution.renderWidthU(),
+                      passResolution.renderHeightU(),
                       cameraMotionBlurSettings)) {
                 resources.pipeline->swapAccumAndTemp();
                 resources.accumSRV = resources.pipeline->accumSRV();
@@ -39039,7 +39127,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             }
 
             // Depth of field from the active camera lens parameters.
-            if (dofPassRequested && has3DCamera && cameraPostDepthSRV &&
+            if (postPassMask.depthOfField && has3DCamera && cameraPostDepthSRV &&
                 resources.pipeline && renderer_ && renderer_->device() &&
                 renderer_->immediateContext()) {
               if (!depthOfFieldPass_) {
@@ -39071,7 +39159,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               if (depthOfFieldPass_->apply(
                       renderer_->immediateContext(), resources.accumSRV,
                       cameraPostDepthSRV, resources.pipeline->tempUAV(),
-                      static_cast<unsigned>(rcw), static_cast<unsigned>(rch),
+                      passResolution.renderWidthU(),
+                      passResolution.renderHeightU(),
                       dofSettings)) {
                 resources.pipeline->swapAccumAndTemp();
                 resources.accumSRV = resources.pipeline->accumSRV();
@@ -39084,7 +39173,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             // Geometry resolves into a single-sample composition target.
             // Apply FXAA only when the frame contains visible 3D, after AO and
             // motion blur, so 2D/text content keeps its exact pixels.
-            if (antiAliasingMode == 1 && hasVisible3DLayer && resources.pipeline &&
+            if (postPassMask.antiAliasingMode == 1 && hasVisible3DLayer && resources.pipeline &&
                 renderer_ &&
                 renderer_->immediateContext() &&
                 resources.pipeline->applyFastApproximateAntiAliasing(
@@ -39101,7 +39190,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 *resources.pipeline, resources.accumSRV,
 
-                resources.layerFloatSRV, resources.layerFloatUAV, rcw, rch,
+                resources.layerFloatSRV, resources.layerFloatUAV,
+                passResolution.renderWidthF(), passResolution.renderHeightF(),
 
                 cw, ch, origViewW, origViewH, origZoom, origPanX, origPanY,
 
@@ -39654,10 +39744,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->renderShadowMapFrame();
       renderer_->flush();
       renderer_->setOverrideRTV(nullptr);
+      compositeFinalizedThisFrame_ = true;
 
       postPassMs = markPhaseMs();
 
 
+
+    if (!compositeFinalizedThisFrame_ &&
+        compositionViewLog().isDebugEnabled()) {
+      qCDebug(compositionViewLog)
+          << "[CompositionView] overlay ran before composite finalize";
+    }
 
     drawSelectionEditingOverlay(owner, comp, layers, selectedIds,
 
@@ -41294,6 +41391,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         [](RenderPassResources&) { return true; },
 
         [&](RenderPassContext&, RenderPassResources&) {
+
+          if (!compositeFinalizedThisFrame_ &&
+              compositionViewLog().isDebugEnabled()) {
+            qCDebug(compositionViewLog)
+                << "[CompositionView] overlay ran before composite finalize";
+          }
 
           drawViewportCanvasOverlay(cw, ch);
 
