@@ -20,6 +20,7 @@ module;
 module Artifact.Widgets.QuickLayerCreationDialog;
 
 import Artifact.Layer.InitParams;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -44,7 +45,7 @@ public:
 
 QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl()) {
-  setWindowTitle(QStringLiteral("クイックレイヤー作成"));
+  setWindowTitle(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.title"), QStringLiteral("クイックレイヤー作成")));
   setMinimumSize(790, 560);
 
   auto* root = new QVBoxLayout(this);
@@ -68,10 +69,10 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   auto* form = new QFormLayout(basic);
   impl_->name = new QLineEdit(QStringLiteral("平面 1"), basic);
   impl_->source = new QComboBox(basic);
-  impl_->source->addItem(QStringLiteral("平面"), false);
-  impl_->source->addItem(QStringLiteral("画像"), true);
+  impl_->source->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.source_solid"), QStringLiteral("平面")), false);
+  impl_->source->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.source_image"), QStringLiteral("画像")), true);
   impl_->imagePath = new QLineEdit(basic);
-  auto* browse = new QPushButton(QStringLiteral("参照…"), basic);
+  auto* browse = new QPushButton(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.browse"), QStringLiteral("参照…")), basic);
   auto* imageRow = new QWidget(basic);
   auto* imageLayout = new QHBoxLayout(imageRow);
   imageLayout->setContentsMargins(0, 0, 0, 0);
@@ -101,36 +102,36 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
                      browse->setEnabled(image);
                    });
   QObject::connect(browse, &QPushButton::clicked, this, [this] {
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("画像を選択"));
+    const QString path = QFileDialog::getOpenFileName(this, TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.select_image"), QStringLiteral("画像を選択")));
     if (!path.isEmpty()) impl_->imagePath->setText(path);
   });
 
-  auto* maskBox = new QGroupBox(QStringLiteral("マスク"), this);
+  auto* maskBox = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.mask_group"), QStringLiteral("マスク")), this);
   auto* maskForm = new QFormLayout(maskBox);
   impl_->mask = new QComboBox(maskBox);
-  impl_->mask->addItem(QStringLiteral("なし"), static_cast<int>(QuickLayerMaskShape::None));
-  impl_->mask->addItem(QStringLiteral("長方形"), static_cast<int>(QuickLayerMaskShape::Rectangle));
-  impl_->mask->addItem(QStringLiteral("楕円"), static_cast<int>(QuickLayerMaskShape::Ellipse));
+  impl_->mask->addItem(TranslationManager::instance().tr(QStringLiteral("common.none"), QStringLiteral("なし")), static_cast<int>(QuickLayerMaskShape::None));
+  impl_->mask->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.mask_rectangle"), QStringLiteral("長方形")), static_cast<int>(QuickLayerMaskShape::Rectangle));
+  impl_->mask->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.mask_ellipse"), QStringLiteral("楕円")), static_cast<int>(QuickLayerMaskShape::Ellipse));
   impl_->feather = new QDoubleSpinBox(maskBox);
   impl_->feather->setRange(0.0, 2048.0);
   impl_->feather->setSuffix(QStringLiteral(" px"));
-  maskForm->addRow(QStringLiteral("形状"), impl_->mask);
+  maskForm->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.mask_shape"), QStringLiteral("形状")), impl_->mask);
   maskForm->addRow(QStringLiteral("Feather"), impl_->feather);
   rightColumn->addWidget(maskBox, 1);
 
-  auto* envelopeBox = new QGroupBox(QStringLiteral("入場 / 退場 Envelope"), this);
+  auto* envelopeBox = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.envelope_group"), QStringLiteral("入場 / 退場 Envelope")), this);
   auto* envelopeForm = new QFormLayout(envelopeBox);
-  impl_->entry = new QCheckBox(QStringLiteral("入場"), envelopeBox);
-  impl_->exit = new QCheckBox(QStringLiteral("退場"), envelopeBox);
+  impl_->entry = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.entry"), QStringLiteral("入場")), envelopeBox);
+  impl_->exit = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.exit"), QStringLiteral("退場")), envelopeBox);
   auto* directions = new QWidget(envelopeBox);
   auto* directionLayout = new QHBoxLayout(directions);
   directionLayout->setContentsMargins(0, 0, 0, 0);
   directionLayout->addWidget(impl_->entry);
   directionLayout->addWidget(impl_->exit);
   impl_->timing = new QComboBox(envelopeBox);
-  impl_->timing->addItem(QStringLiteral("同時"), static_cast<int>(QuickLayerEnvelopeTiming::Simultaneous));
-  impl_->timing->addItem(QStringLiteral("透明度先行"), static_cast<int>(QuickLayerEnvelopeTiming::OpacityLead));
-  impl_->timing->addItem(QStringLiteral("エフェクト先行"), static_cast<int>(QuickLayerEnvelopeTiming::EffectLead));
+  impl_->timing->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.timing_simultaneous"), QStringLiteral("同時")), static_cast<int>(QuickLayerEnvelopeTiming::Simultaneous));
+  impl_->timing->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.timing_opacity_lead"), QStringLiteral("透明度先行")), static_cast<int>(QuickLayerEnvelopeTiming::OpacityLead));
+  impl_->timing->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.timing_effect_lead"), QStringLiteral("エフェクト先行")), static_cast<int>(QuickLayerEnvelopeTiming::EffectLead));
   impl_->curve = new QComboBox(envelopeBox);
   impl_->curve->addItem(QStringLiteral("Linear"), static_cast<int>(LayerEnvelopeCurve::Linear));
   impl_->curve->addItem(QStringLiteral("Ease In"), static_cast<int>(LayerEnvelopeCurve::EaseIn));
@@ -141,23 +142,23 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   impl_->frames->setRange(1, 240);
   impl_->frames->setValue(8);
   impl_->frames->setSuffix(QStringLiteral(" frames"));
-  envelopeForm->addRow(QStringLiteral("方向"), directions);
-  envelopeForm->addRow(QStringLiteral("追従"), impl_->timing);
-  envelopeForm->addRow(QStringLiteral("カーブ"), impl_->curve);
-  envelopeForm->addRow(QStringLiteral("長さ"), impl_->frames);
+  envelopeForm->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.direction"), QStringLiteral("方向")), directions);
+  envelopeForm->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.follow"), QStringLiteral("追従")), impl_->timing);
+  envelopeForm->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.curve"), QStringLiteral("カーブ")), impl_->curve);
+  envelopeForm->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.length"), QStringLiteral("長さ")), impl_->frames);
 
-  auto* placementBox = new QGroupBox(QStringLiteral("配置"), this);
+  auto* placementBox = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.placement_group"), QStringLiteral("配置")), this);
   auto* placementForm = new QFormLayout(placementBox);
   impl_->placement = new QComboBox(placementBox);
-  impl_->placement->addItem(QStringLiteral("選択レイヤーの後"),
+  impl_->placement->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.after_selected"), QStringLiteral("選択レイヤーの後")),
                             static_cast<int>(LayerCreationPlacementMode::AfterSelected));
-  impl_->placement->addItem(QStringLiteral("選択レイヤーの前"),
+  impl_->placement->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.before_selected"), QStringLiteral("選択レイヤーの前")),
                             static_cast<int>(LayerCreationPlacementMode::BeforeSelected));
-  impl_->placement->addItem(QStringLiteral("コンポジション開始"),
+  impl_->placement->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.composition_start"), QStringLiteral("コンポジション開始")),
                             static_cast<int>(LayerCreationPlacementMode::CompositionStart));
-  impl_->placement->addItem(QStringLiteral("現在フレーム"),
+  impl_->placement->addItem(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.current_frame"), QStringLiteral("現在フレーム")),
                             static_cast<int>(LayerCreationPlacementMode::Playhead));
-  placementForm->addRow(QStringLiteral("追加位置"), impl_->placement);
+  placementForm->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.placement"), QStringLiteral("追加位置")), impl_->placement);
   rightColumn->addWidget(placementBox);
   columns->addLayout(leftColumn, 1);
   columns->addLayout(rightColumn, 1);
@@ -189,8 +190,8 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   root->addStretch();
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok, this);
-  buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("作成"));
-  buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("キャンセル"));
+  buttons->button(QDialogButtonBox::Ok)->setText(TranslationManager::instance().tr(QStringLiteral("dialog.quick_layer.create"), QStringLiteral("作成")));
+  buttons->button(QDialogButtonBox::Cancel)->setText(TranslationManager::instance().tr(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")));
   QPalette createPalette = buttons->button(QDialogButtonBox::Ok)->palette();
   createPalette.setColor(QPalette::Button, QColor(43, 111, 232));
   createPalette.setColor(QPalette::ButtonText, Qt::white);
