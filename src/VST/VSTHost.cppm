@@ -143,17 +143,14 @@ VSTPluginInfo makePluginInfoFromPath(const std::string& path, bool isVST3)
 
 VSTPluginInfo makeVST3PluginInfo(const std::string& path) {
     VSTPluginInfo info = makePluginInfoFromPath(path, true);
-    Steinberg::VST3Module module;
+    Steinberg::Vst::VST3Module module;
     if (!module.load(ArtifactCore::String(path))) return info;
     auto *factory = module.getFactory();
-    if (!factory || factory->countPlugins() <= 0) return info;
+    if (!factory || factory->countClasses() <= 0) return info;
     Steinberg::PClassInfo classInfo;
-    if (factory->getPluginInfo(0, classInfo) == Steinberg::kResultOk) {
+    if (factory->getClassInfo(0, &classInfo) == Steinberg::kResultOk) {
         if (classInfo.name && *classInfo.name) {
             info.name = std::string(classInfo.name) + " (VST3)";
-        }
-        if (classInfo.vendor && *classInfo.vendor) {
-            info.vendor = classInfo.vendor;
         }
     }
     return info;
@@ -183,7 +180,7 @@ struct VSTHost::Impl {
         std::string path;
         bool isVST3 = false;
         void* handle = nullptr;
-        std::unique_ptr<Steinberg::VST3Module> vst3Module;
+        std::unique_ptr<Steinberg::Vst::VST3Module> vst3Module;
         std::vector<float> parameters;
         bool isProcessing = false;
 
@@ -342,20 +339,17 @@ bool VSTHost::loadPlugin(const std::string& path) {
     plugin.info = makePluginInfoFromPath(path, plugin.isVST3);
 
     if (plugin.isVST3) {
-        plugin.vst3Module = std::make_unique<Steinberg::VST3Module>();
+        plugin.vst3Module = std::make_unique<Steinberg::Vst::VST3Module>();
         if (!plugin.vst3Module->load(path)) {
             std::cerr << "Failed to load VST3 plugin: " << path << std::endl;
             return false;
         }
         if (auto *factory = plugin.vst3Module->getFactory(); factory &&
-            factory->countPlugins() > 0) {
+            factory->countClasses() > 0) {
             Steinberg::PClassInfo classInfo;
-            if (factory->getPluginInfo(0, classInfo) == Steinberg::kResultOk) {
+            if (factory->getClassInfo(0, &classInfo) == Steinberg::kResultOk) {
                 if (classInfo.name && *classInfo.name) {
                     plugin.info.name = std::string(classInfo.name) + " (VST3)";
-                }
-                if (classInfo.vendor && *classInfo.vendor) {
-                    plugin.info.vendor = classInfo.vendor;
                 }
             }
         }
