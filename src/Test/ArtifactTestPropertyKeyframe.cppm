@@ -303,6 +303,62 @@ export int runPropertyKeyframeTests()
                          layer->currentFrame() == 87,
                      prefix + QStringLiteral("gizmo undo and redo leave both current frames unchanged"));
     }
+    // Regression (VP drag on a keyed frame): the gizmo authors keys in the
+    // composition frame domain, so the transform must advertise exactly that
+    // storage scale. When the two roundings disagreed (29.97fps -> 29 vs 30),
+    // a drag on a frame that already had a key could not find the key and
+    // rewrote the initial value instead of recording the transform.
+    {
+        ArtifactCompositionInitParams params;
+        params.setResolution(100, 100);
+        params.setFrameRate(29.97);
+        params.setDurationFrames(240);
+        auto composition = ArtifactCore::makeShared<ArtifactAbstractComposition>(
+            ArtifactCore::CompositionID(), params);
+        ArtifactAbstractLayerPtr layer =
+            ArtifactCore::makeShared<ArtifactNullLayer>();
+        layer->setComposition(composition.get());
+        const auto scale = ArtifactCore::FrameRate::storageScaleForFps(29.97);
+        auto& t3d = layer->transform3D();
+        report.check(t3d.keyframeTimeScale() == scale,
+                     QStringLiteral("29.97fps layer transform advertises the rounded storage scale"));
+        t3d.setInitialPosition(RationalTime(0, scale), 10.0f, 20.0f);
+        const RationalTime keyedTime(15, scale);
+        t3d.channelProperty(TransformChannel::PositionX)
+            ->addKeyFrame(keyedTime, 110.0f);
+        report.check(t3d.hasPositionKeyFrameAt(keyedTime) &&
+                         t3d.snapshotAt(keyedTime).positionX == 110.0f,
+                     QStringLiteral("keyed frame resolves in the composition frame domain"));
+        const float initialX =
+            t3d.snapshotAt(keyedTime).positionX - t3d.positionXAt(keyedTime);
+        const float dragX = 175.0f;
+        t3d.setPosition(keyedTime, dragX - initialX, 0.0f);
+        report.check(t3d.channelProperty(TransformChannel::PositionX)
+                             ->getKeyFrames()
+                             .size() == 1 &&
+                         t3d.hasPositionKeyFrameAt(keyedTime) &&
+                         t3d.snapshotAt(keyedTime).positionX == dragX,
+                     QStringLiteral("gizmo-style drag on a keyed frame records into the existing key"));
+        report.check(layer->keyframeTimeScale() == scale &&
+                         layer->keyframeTimeAtFrame(84) == RationalTime(84, scale),
+                     QStringLiteral("layer keyframe time accessors agree with the storage domain"));
+        // Re-pinning the composition rate must carry every layer's transform
+        // domain with it, so later drags keep addressing the stored keys.
+        composition->appendLayerTop(layer);
+        composition->setFrameRate(ArtifactCore::FrameRate(30.0f));
+        report.check(layer->keyframeTimeScale() == 30 &&
+                         layer->keyframeTimeAtFrame(15) == RationalTime(15, 30) &&
+                         t3d.hasPositionKeyFrameAt(RationalTime(15, 30)),
+                     QStringLiteral("composition rate change re-pins the layer keyframe domain"));
+        // Keys keep their authored instant across a rate change: the domain
+        // moves, the stored key does not.
+        composition->setFrameRate(ArtifactCore::FrameRate(24.0f));
+        report.check(layer->keyframeTimeScale() == 24 &&
+                         layer->keyframeTimeAtFrame(15) == RationalTime(15, 24) &&
+                         t3d.hasPositionKeyFrameAt(RationalTime(15, 30)) &&
+                         !t3d.hasPositionKeyFrameAt(RationalTime(15, 24)),
+                     QStringLiteral("rate change moves the domain without moving stored keys"));
+    }
 
     // Value-only edits preserve authored interpolation and every metadata field.
     using ArtifactCore::InterpolationType;
