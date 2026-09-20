@@ -66,6 +66,33 @@ struct CompositionThumbnailUpdatedEvent {
     QString compositionId;
 };
 
+// Detached Task notifications.  The authoritative task state lives in
+// ArtifactDetachedTaskService; these events carry only what a non-modal
+// surface needs to render.  kind/state are stable strings so this module does
+// not depend on the service.
+struct DetachedTaskAddedEvent {
+    QString taskId;
+    QString label;
+    QString kind;
+    QString state;
+};
+
+struct DetachedTaskChangedEvent {
+    QString taskId;
+    QString state;
+    int progressPercent = 0;
+    QString statusText;
+};
+
+struct DetachedTaskFinishedEvent {
+    QString taskId;
+    QString state;
+    QString summary;
+    QString errorCode;
+    QString undoLabel;
+    QString producedCompositionId;
+};
+
 struct SelectionChangedEvent {
     QStringList selectedItemIds;
     QString currentItemId;
