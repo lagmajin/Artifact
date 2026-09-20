@@ -98,10 +98,15 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
+#include <atomic>
+#include <cstddef>
+#include <functional>
+#include <ios>
+#include <ostream>
+#include <utility>
 
 module Artifact.AppMain;
 
-import std;
 import Memory.SharedPtr;
 import Core.AI.Context;
 import Core.AI.McpBridge;
@@ -178,6 +183,7 @@ import Artifact.Widgets.ShaderGraphWidget;
 import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.DopeSheetWidget;
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.PerformanceProfilerWidget;
 import Artifact.Widgets.AnimationTimelineWidget;
 import Artifact.Widgets.AudioMiniWidget;
 import Artifact.Widgets.HistoryTimelineWidget;
@@ -2746,6 +2752,25 @@ int main(int argc, char *argv[]) {
           background.greenF() * 0.70 + accentOverride.greenF() * 0.30,
           background.blueF() * 0.70 + accentOverride.blueF() * 0.30)
                                  .name();
+      // 昇格 token 派生: focus ring は accent 追従 (dcc-comparison方針:
+      // focus/selection のみ accent 派生、Warning/Danger/Success・XYZ軸・
+      // チャンネル色には波及させない)。buttonInfo/Success・sliderHandle・
+      // disabled・muted系は派生対象外で、外部JSON/プリセット値を維持。
+      // QColor 無効時は getDCCTheme() の fallback が効くためここでは上書きしない。
+      const QColor curFocus(theme.focusRingColor);
+      if (!curFocus.isValid() || curFocus.name().compare(
+              QStringLiteral("#8FBAFF"), Qt::CaseInsensitive) == 0 ||
+          curFocus.name().compare(
+              QStringLiteral("#0078D7"), Qt::CaseInsensitive) == 0) {
+        // 既定値のまま = ユーザー未指定 → accent から淡色派生
+        QColor ring = accentOverride;
+        // dark/light 両対応: 白方向へ寄せて視認性確保
+        const qreal lum = 0.2126 * accentOverride.redF() +
+                          0.7152 * accentOverride.greenF() +
+                          0.0722 * accentOverride.blueF();
+        ring = lum > 0.5 ? accentOverride.lighter(130) : accentOverride.lighter(150);
+        theme.focusRingColor = ring.name();
+      }
     }
     QFont applicationFont(settings->defaultFontFamily());
     applicationFont.setPointSizeF(
@@ -3281,6 +3306,15 @@ int main(int argc, char *argv[]) {
           return panel;
         },
         QStringLiteral("timeline::"));
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("Cache / Memory Map"), QStringLiteral("Cache / Memory Map"),
+        DockArea::Bottom,
+        [mw]() -> QWidget* {
+          auto* panel = new ArtifactCacheMemoryMapWidget(mw);
+          panel->setMinimumHeight(420);
+          return panel;
+        },
+        QStringLiteral("cache-memory-map::"));
     static ArtifactCore::EventBus appEventBus = ArtifactCore::globalEventBus();
     static std::vector<ArtifactCore::EventBus::Subscription>
         appEventSubscriptions;
