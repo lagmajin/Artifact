@@ -6,10 +6,11 @@ module;
 #include <QObject>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <memory>
+#include <vector>
 
 module Artifact.Layer.MaterialContainer;
 
-import std;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;

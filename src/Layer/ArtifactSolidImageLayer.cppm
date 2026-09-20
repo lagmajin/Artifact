@@ -17,13 +17,13 @@ module;
 #include <QSize>
 #include <QVariant>
 #include <opencv2/core.hpp>
+#include <vector>
 
 
 module Artifact.Layers.SolidImage;
 
 import Artifact.Layer.CloneEffectSupport;
 
-import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;

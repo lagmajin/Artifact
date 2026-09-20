@@ -11,12 +11,15 @@ module;
 #include <QFuture>
 #include <QtConcurrent>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <vector>
 
 module Artifact.Layer.Svg;
 
 import Artifact.Layer.CloneEffectSupport;
 
-import std;
 import Core.Parallel;
 import Artifact.Layers.Abstract._2D;
 import Thread.Helper;

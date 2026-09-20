@@ -8,10 +8,11 @@ module;
 #include <QJsonObject>
 #include <QVariant>
 #include <QUuid>
+#include <cstdint>
+#include <vector>
 
 module Artifact.Layer.Audio;
 
-import std;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Audio.Panner;
 import Memory.SharedPtr;

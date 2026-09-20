@@ -40,6 +40,10 @@ module;
 #include <OpenImageIO/imageio.h>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <vector>
 
 module Artifact.Layer.Image;
 
@@ -52,7 +56,6 @@ import Media.ImageSequenceSource;
 import Artifact.Color.OCIOManager;
 import Artifact.IO.AsyncAssetReadScheduler;
 
-import std;
 import Artifact.Layers.Abstract._2D;
 import Thread.Helper;
 import CvUtils;

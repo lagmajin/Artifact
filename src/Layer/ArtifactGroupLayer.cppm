@@ -13,10 +13,13 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
 #include <opencv2/core.hpp>
+#include <cmath>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 module Artifact.Layer.Group;
 
-import std;
 
 import Artifact.Layer.Abstract;
 import Utils.Id;

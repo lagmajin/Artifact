@@ -2,10 +2,11 @@ module;
 #include <utility>
 #include <algorithm>
 #include <QVariant>
+#include <cmath>
+#include <vector>
 
 module Artifact.Layer.CompositionBackground;
 
-import std;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
