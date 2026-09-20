@@ -26,7 +26,6 @@ import Event.Bus;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Time.Rational;
-import Frame.Rate;
 import Undo.UndoManager;
 
 export namespace Artifact {
@@ -129,16 +128,11 @@ namespace {
 
 ArtifactCore::RationalTime transformTime(
     const ArtifactAbstractLayerPtr &layer, int64_t frame) {
-  double fps = 24.0;
-  if (layer) {
-    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
-            layer->composition())) {
-      const double candidate = composition->frameRate().framerate();
-      if (candidate > 0.0) fps = candidate;
-    }
-  }
-  return ArtifactCore::RationalTime(
-      frame, ArtifactCore::FrameRate::storageScaleForFps(fps, 24));
+  // Undo/redo must address the same frame domain the live gizmo drag wrote
+  // into. The layer owns that domain, so ask it instead of re-deriving the
+  // scale from the current composition frame rate.
+  return layer ? layer->keyframeTimeAtFrame(frame)
+               : ArtifactCore::RationalTime(frame, 24);
 }
 
 void restorePropertyKeyState(const ArtifactAbstractLayerPtr &layer,
