@@ -1,4 +1,13 @@
 {
+  "_meta": {
+    "version": 1,
+    "language": "Japanese",
+    "locale": "ja",
+    "translators": [
+      "Artifact Team"
+    ],
+    "lastUpdated": "2026-09-18"
+  },
   "app": {
     "name": "Artifact",
     "ready": "待機中",
@@ -99,7 +108,14 @@
       "select_same_type": "同じ種類を選択",
       "find": "検索...",
       "undo_history": "Undo 履歴...",
-      "preferences": "環境設定"
+      "preferences": "環境設定",
+      "select_group": "選択",
+      "undo_label": "元に戻す: %1 (&U)",
+      "undo_accel": "元に戻す (&U)",
+      "redo_label": "やり直し: %1 (&R)",
+      "redo_accel": "やり直し (&R)",
+      "paste_label": "貼り付け (&P): %1",
+      "paste_accel": "貼り付け (&P)"
     },
     "view": {
       "label": "表示(&V)",
@@ -247,28 +263,130 @@
       "label": "コンポジション",
       "new_composition": "新規コンポジション",
       "composition_settings": "コンポジション設定",
-      "new_composition_accel": "新規コンポジション(&C)..."
+      "new_composition_accel": "新規コンポジション(&C)...",
+      "new_composition_n": "新規コンポジション(&N)...",
+      "create_from_preset": "プリセットから作成(&P)",
+      "duplicate": "コンポジションを複製(&D)",
+      "rename": "名前を変更(&R)...",
+      "delete": "コンポジションを削除(&X)...",
+      "settings": "設定 (&S)...",
+      "background_color": "背景色(&B)...",
+      "send_to_main": "メインプロジェクトへ送信(&T)...",
+      "add_to_render_queue": "レンダーキューに追加(&Q)",
+      "add_current_frame": "現在フレームをレンダーキューに追加",
+      "add_work_area": "ワークエリアをレンダーキューに追加",
+      "add_selected_layers": "選択レイヤーのみをレンダーキューに追加",
+      "render_selected_current_frame": "選択レイヤーを現在フレームだけレンダー",
+      "render_selected_work_area": "選択レイヤーをワークエリアだけレンダー",
+      "open_advanced_render_settings": "高度なレンダー設定を開く…",
+      "render_queue_add": "レンダーキューに追加"
     },
     "effect": {
-      "label": "エフェクト"
+      "label": "エフェクト",
+      "controls": "エフェクトコントロール",
+      "remove_all": "選択レイヤーのエフェクトをすべて削除"
     },
     "animation": {
-      "label": "アニメーション"
+      "label": "アニメーション",
+      "add_keyframe": "キーフレームを追加",
+      "transform_keyframes": "トランスフォームキーを設定",
+      "nudge_keyframes": "キーフレームをナッジ",
+      "layer_timing": "レイヤー時間操作",
+      "delete_animation": "アニメーションを削除",
+      "distribute_selected": "選択キーフレームを均等配置",
+      "remove_keyframe": "キーフレームを削除",
+      "select_all": "すべてのキーフレームを選択",
+      "reverse_menu": "キーフレーム反転(&R)",
+      "reverse_selected": "選択キーフレームを反転",
+      "reverse_layer": "現在のレイヤーのキーフレームをすべて反転",
+      "reverse_selected_layers": "選択レイヤーのキーフレームをすべて反転",
+      "reverse_composition": "コンポ全体のキーフレームをすべて反転",
+      "copy_keyframes": "キーフレームをコピー",
+      "paste_keyframes": "キーフレームをペースト",
+      "interpolation_menu": "キーフレーム補間(&I)",
+      "interp_linear": "リニア",
+      "interp_ease_in": "イージーイーズイン",
+      "interp_ease_out": "イージーイーズアウト",
+      "interp_ease_in_out": "イージーイーズ",
+      "interp_hold": "停止",
+      "interp_bezier": "ベジェ",
+      "graph_editor_menu": "カーブエディタ(&G)",
+      "show_graph_editor": "カーブエディタを表示",
+      "show_value_graph": "値グラフを表示",
+      "show_velocity_graph": "速度グラフを表示",
+      "open_easing_lab": "EasingLab を開く",
+      "open_key_pattern": "Key Pattern Dialog を開く",
+      "navigation_menu": "ナビゲーション(&N)",
+      "next_keyframe": "次のキーフレームに移動",
+      "prev_keyframe": "前のキーフレームに移動",
+      "first_keyframe": "最初のキーフレームに移動",
+      "last_keyframe": "最後のキーフレームに移動",
+      "time_remap_menu": "タイムリマップ(&T)",
+      "enable_time_remap": "タイムリマップ可能にする",
+      "freeze_frame": "フレームをフリーズ",
+      "reverse_time": "時間反転レイヤー",
+      "slow_50": "スローモーション 50%（レイヤー尺を延長）",
+      "slow_25": "スローモーション 25%（レイヤー尺を延長）",
+      "stop_motion_12": "コマ撮り 12 fps",
+      "stop_motion_8": "コマ撮り 8 fps",
+      "stop_motion_4": "コマ撮り 4 fps",
+      "expression_menu": "エクスプレッション(&E)",
+      "expr_add": "エクスプレッションを追加...",
+      "expr_edit": "エクスプレッションを編集...",
+      "expr_remove": "エクスプレッションを削除",
+      "expr_to_keyframes": "エクスプレッションをキーフレームに変換...",
+      "bake_live": "現在PropertyをキーフレームにBake...",
+      "preset_menu": "アニメーションプリセット(&P)",
+      "preset_library": "プリセットライブラリ",
+      "preset_save": "アニメーションプリセットを保存...",
+      "preset_apply": "アニメーションプリセットを適用..."
     },
     "script": {
       "label": "スクリプト"
     },
     "render": {
-      "label": "レンダー"
+      "label": "レンダー",
+      "add_to_queue": "現在のコンポジションをレンダーキューに追加(&A)",
+      "show_queue": "レンダーキューを表示(&Q)...",
+      "show_manager": "レンダーマネージャーを表示(&M)...",
+      "output_settings": "レンダー出力設定(&S)...",
+      "start": "レンダリングを開始／再開(&S)",
+      "pause": "レンダリングを一時停止",
+      "clear_all": "すべてのジョブをクリア(&C)",
+      "cancel_all": "全ジョブをキャンセル",
+      "add_all_compositions": "全コンポジションをキューに追加(&A)"
     },
     "time": {
-      "label": "時間"
+      "label": "時間",
+      "play": "再生",
+      "stop": "停止",
+      "pause": "一時停止",
+      "step_backward": "1 フレーム戻る",
+      "step_forward": "1 フレーム進む",
+      "seek_start": "先頭へ移動",
+      "seek_end": "末尾へ移動",
+      "prev_marker": "前のマーカーへ",
+      "next_marker": "次のマーカーへ",
+      "set_in_point": "In Point を現在位置に設定",
+      "set_out_point": "Out Point を現在位置に設定",
+      "clear_in_out": "In/Out をクリア",
+      "loop": "ループ再生"
     },
     "options": {
       "label": "オプション"
     },
     "test": {
-      "label": "テスト"
+      "label": "テスト",
+      "project_service_unavailable": "ProjectService が利用できません。",
+      "no_composition": "先にコンポジションを開いてください。",
+      "debug_base_failed": "デバッグ用ベースレイヤーの追加に失敗しました。",
+      "multiply_failed": "Multiply テストレイヤーの追加に失敗しました。",
+      "screen_failed": "Screen テストレイヤーの追加に失敗しました。",
+      "start_pipeline": "Software Test Pipeline を開始",
+      "composition_create_failed": "コンポジション作成に失敗しました。",
+      "plane_layer_failed": "平面レイヤー追加に失敗しました。",
+      "debug_blend_added": "Debug blend test layers を追加しました。\\n\\n- Debug Base Plate\\n- Debug Multiply Plate\\n- Debug Screen Plate\\n\\nタイムライン上で並び替えたり、不透明度を変えて合成検証できます。",
+      "pipeline_initialized": "Software Test Pipeline を初期化しました。\\n\\n1) コンポジション作成\\n2) 平面レイヤー追加\\n3) Software Composition Test 起動\\n\\nこのメニューからいつでも再起動できます。"
     },
     "layer": {
       "label": "レイヤー(&L)",
@@ -455,11 +573,22 @@
       "radial_warp_apply_tooltip": "選択中心からの距離に応じて、複数レイヤーの位置とスケールを一度だけ変更します",
       "arrange": "配置(&A)",
       "hide": "非表示にする",
-      "add_hidden": "非表示のまま追加"
+      "add_hidden": "非表示のまま追加",
+      "debug_blend_added": "Debug blend test layers を追加しました。\n\n- Debug Base Plate\n- Debug Multiply Plate\n- Debug Screen Plate\n\nタイムライン上で並び替えたり、不透明度を変えて合成検証できます。",
+      "debug_bindless_added": "Debug Bindless Sprite Planes を追加しました。\n\ngradient solid planes だけで構成されるため、composition 描画では SpriteXform packet の bindless batch を検証できます。",
+      "debug_billboard_added": "Debug Billboard Particle を追加しました。\n\nsparkles プリセットを使うので、ビルボード描画の見え方を確認しやすいはずです。",
+      "debug_particle_added": "Debug Particle Layer を追加しました。\n\n通常の ParticleLayer とは独立したデバッグ用レイヤーです。"
     },
     "help": {
       "label": "ヘルプ",
       "about": "このソフトウェアについて"
+    },
+    "option": {
+      "preferences": "環境設定 (&P)...",
+      "safe_mode": "セーフモード",
+      "reset_menu_font": "メニューフォントを既定に戻す",
+      "reset_dock_font": "ドックフォントを既定に戻す",
+      "open_app_data": "アプリデータフォルダを開く"
     }
   },
   "timeline": {
@@ -1011,7 +1140,8 @@
       "no": "いいえ",
       "cancel": "キャンセル",
       "save": "保存",
-      "discard": "破棄"
+      "discard": "破棄",
+      "close": "閉じる"
     },
     "recent_projects": {
       "empty": "なし",
@@ -1097,7 +1227,10 @@
     "render": {
       "work_area": "ワークエリアをレンダリング",
       "frame": "フレームをレンダリング中...",
-      "title": "レンダリング中"
+      "title": "レンダリング中",
+      "no_active_composition": "アクティブなコンポジションがありません。",
+      "added_to_queue": "%1 個のコンポジションをキューに追加しました。",
+      "no_composition_to_add": "追加できるコンポジションがありません。"
     },
     "export_package": {
       "title": "プロジェクトをパッケージ化",
@@ -1229,7 +1362,7 @@
       "new_name": "新しい名前:",
       "direction": "方向 (degrees)",
       "already_live_linked": "既にliveリンク中です。",
-      "outer_scale": "最外周のスケール (%)",
+      "outer_scale": "最外周のスケール (%)\n中心は元のスケールを維持します。",
       "outer_scale_nl": "最外周のスケール (%)\n",
       "no_controller_input": "最後に観測した controller input がありません。address を入力してください。",
       "direction_note": "正数で外側へ、負数で中心へ移動します。",
@@ -1254,7 +1387,8 @@
       "debug_billboard_message": "Debug Billboard Particle を追加しました。\\n\\nsparkles プリセットを使うので、ビルボード描画の見え方を確認しやすいはずです。",
       "debug_particle_message": "Debug Particle Layer を追加しました。\\n\\n通常の ParticleLayer とは独立したデバッグ用レイヤーです。",
       "outer_layer_amount_label": "外側レイヤーの移動量 (%)\\n正数で外側へ、負数で中心へ移動します。",
-      "outer_scale_label": "最外周のスケール (%)\\n中心は元のスケールを維持します。"
+      "outer_scale_label": "最外周のスケール (%)\\n中心は元のスケールを維持します。",
+      "outer_offset": "外側レイヤーの移動量 (%)\n正数で外側へ、負数で中心へ移動します。"
     },
     "render_output": {
       "audio_none_suffix": " / 音声なし",
@@ -1379,7 +1513,158 @@
       "variant_high_quality": "高画質配布(H.264 MP4)",
       "package_image_sequence_full": "出力パッケージ: 画像連番のみ。連番には音声を格納できません。音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。",
       "deep_exr_tooltip": "Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。ネイティブな複数可視サンプル出力ではありません。",
-      "detail_text": "各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\\n解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\\n\\n透過素材は ProRes 4444 または WebM/VP9 を選択してください。\\n一般配布用は MP4/H.264 が基本です。"
+      "detail_text": "各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\\n解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\\n\\n透過素材は ProRes 4444 または WebM/VP9 を選択してください。\\n一般配布用は MP4/H.264 が基本です。",
+      "preset_intent_detail": "各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\n解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\n\n透過素材は ProRes 4444 または WebM/VP9 を選択してください。\n一般配布用は MP4/H.264 が基本です。",
+      "image_seq_no_audio": "出力パッケージ: 画像連番のみ。連番には音声を格納できません。音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。",
+      "deep_exr_single_sample": "Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。ネイティブな複数可視サンプル出力ではありません。"
+    },
+    "app_data": {
+      "title": "アプリデータ",
+      "open_failed": "アプリデータフォルダを開けませんでした。"
+    },
+    "find": {
+      "title": "検索",
+      "layer_name_prompt": "レイヤー名の一部を入力:"
+    },
+    "color_picker": {
+      "reference_cielab": "CIELAB · D65 · sRGB 基準",
+      "reference_ciexyz": "CIE XYZ · D65 · Y = 1 · sRGB 基準",
+      "out_of_range_hint": "RGB範囲外の入力は 0–1 にクリップされます",
+      "clipped_notice": "入力をsRGB範囲へクリップしました。表示は変換後の値です。"
+    },
+    "import_assets": {
+      "copy_notice": "選択したアセットは現在のプロジェクトの Assets フォルダへコピーしてから取り込みます。",
+      "duplicate_warning": "⚠ %1 件の同名ファイルは確認が必要です",
+      "candidate_summary": "取り込み候補: %1 ファイル / %2",
+      "copy_and_import": "Project/Assets にコピーして取り込む"
+    },
+    "composition": {
+      "project_service_unavailable": "プロジェクトサービスが利用できません。",
+      "duplicate_failed": "コンポジションの複製に失敗しました。",
+      "rename_title": "コンポジション名の変更",
+      "new_name": "新しい名前:",
+      "rename_failed": "コンポジション名の変更に失敗しました。",
+      "delete_title": "コンポジション削除",
+      "delete_failed": "コンポジションの削除に失敗しました。",
+      "none_to_configure": "設定するコンポジションがありません。",
+      "none_to_send": "送信するコンポジションがありません。",
+      "no_active": "アクティブなコンポジションがありません。"
+    },
+    "quick_layer": {
+      "title": "クイックレイヤー作成",
+      "source_solid": "平面",
+      "source_image": "画像",
+      "browse": "参照…",
+      "select_image": "画像を選択",
+      "mask_group": "マスク",
+      "mask_rectangle": "長方形",
+      "mask_ellipse": "楕円",
+      "mask_shape": "形状",
+      "envelope_group": "入場 / 退場 Envelope",
+      "entry": "入場",
+      "exit": "退場",
+      "timing_simultaneous": "同時",
+      "timing_opacity_lead": "透明度先行",
+      "timing_effect_lead": "エフェクト先行",
+      "direction": "方向",
+      "follow": "追従",
+      "curve": "カーブ",
+      "length": "長さ",
+      "placement_group": "配置",
+      "after_selected": "選択レイヤーの後",
+      "before_selected": "選択レイヤーの前",
+      "composition_start": "コンポジション開始",
+      "current_frame": "現在フレーム",
+      "placement": "追加位置",
+      "create": "作成"
+    },
+    "color_swatch": {
+      "category_basic": "基本カラー",
+      "category_video": "映像制作",
+      "category_transparent_glow": "透明・グロー",
+      "add_color": "カラーを追加",
+      "title": "カラースウォッチ",
+      "apply": "適用 ↗",
+      "add_color_to": "%1 にカラーを追加"
+    },
+    "precompose": {
+      "preview_a11y": "プリコンポーズ予定プレビュー",
+      "preview_a11y_desc": "選択レイヤーの構成を簡略表示",
+      "no_selection": "選択レイヤーなし",
+      "selection_summary": "%1 レイヤーを選択中 / 全 %2 レイヤー",
+      "title": "プリコンポーズ",
+      "dialog_a11y": "プリコンポーズダイアログ",
+      "dialog_a11y_desc": "選択したレイヤーを新規コンポジションへまとめる設定",
+      "close_a11y_desc": "プリコンポーズダイアログを閉じる",
+      "preview_title": "プリコンポーズ予定",
+      "preview_output": "出力設定: 現在のコンポジション",
+      "preview_duration": "期間: ワークエリア",
+      "zero_layers": "0 レイヤー",
+      "preview_update_hint": "選択変更時に更新",
+      "name_label": "新規コンポジション名",
+      "name_a11y_desc": "作成する新規コンポジションの名前",
+      "selected_layers": "選択中のレイヤー",
+      "selected_layers_desc": "新規コンポジションへ移動するレイヤーの一覧",
+      "placement_options": "配置オプション",
+      "move_selected_radio": "選択したレイヤーのみを新規コンポジションに移動する",
+      "move_selected_a11y": "選択したレイヤーのみを移動",
+      "move_selected_a11y_desc": "選択したレイヤーだけを新規コンポジションへ移動",
+      "move_selected_hint": "選択レイヤーをプリコンプに移動。他のレイヤーはそのまま残ります。",
+      "move_all_radio": "すべての属性を新規コンポジションに移動する",
+      "move_all_a11y": "すべての属性を移動",
+      "move_all_a11y_desc": "すべての属性を新規コンポジションへ移動",
+      "move_all_hint": "トランスフォームなどの属性もプリコンプに引き継がれます。",
+      "open_new_comp": "新規コンポジションを開く",
+      "open_new_comp_desc": "作成後に新規コンポジションを開く",
+      "add_adjustment": "調整レイヤーとして追加",
+      "add_adjustment_desc": "新規コンポジションを調整レイヤーとして追加",
+      "match_duration": "コンポジションのデュレーションをワークエリアに合わせる",
+      "match_duration_a11y": "ワークエリアにデュレーションを合わせる",
+      "match_duration_desc": "新規コンポジションのデュレーションをワークエリアに合わせる",
+      "create": "作成",
+      "create_a11y_desc": "設定した内容でプリコンポーズを作成",
+      "cancel_a11y_desc": "プリコンポーズをキャンセル",
+      "layer_count": "%1 レイヤー"
+    },
+    "create_camera": {
+      "preset_custom": "カスタム",
+      "title": "カメラ設定",
+      "dialog_a11y": "カメラレイヤー作成ダイアログ",
+      "dialog_a11y_desc": "新しいカメラレイヤーの名前とレンズ設定を作成",
+      "close_a11y_desc": "カメラ設定ダイアログを閉じる",
+      "name": "名前",
+      "name_a11y": "カメラレイヤー名",
+      "name_a11y_desc": "作成するカメラレイヤーの名前",
+      "preset_section": "プリセット / レンズ",
+      "preset": "プリセット",
+      "preset_a11y": "レンズプリセット",
+      "preset_a11y_desc": "カメラの焦点距離プリセット",
+      "focal_length": "焦点距離",
+      "focal_length_a11y_desc": "カメラレンズの焦点距離",
+      "fov": "視野角",
+      "fov_a11y_desc": "カメラの視野角",
+      "diagram_a11y": "レンズプレビュー",
+      "diagram_a11y_desc": "焦点距離と視野角のプレビュー",
+      "dof_section": "被写界深度",
+      "aperture": "絞り（F値）",
+      "aperture_a11y": "絞り値",
+      "aperture_a11y_desc": "被写界深度の絞り値",
+      "blur_amount": "ブラー量",
+      "focus_distance_a11y": "フォーカス距離",
+      "focus_distance_a11y_desc": "焦点を合わせる距離",
+      "blur_amount_a11y_desc": "被写界深度のぼかし量（パーセント）",
+      "enable_dof": "被写界深度を有効にする",
+      "enable_dof_a11y_desc": "カメラの被写界深度効果を有効化",
+      "other_options": "その他のオプション",
+      "motion_blur": "モーションブラー",
+      "lock_camera": "カメラをロック",
+      "motion_blur_a11y_desc": "カメラのモーションブラーを有効化",
+      "lock_camera_a11y_desc": "カメラ操作をロック",
+      "zoom": "ズーム",
+      "zoom_a11y_desc": "カメラのズーム距離（ピクセル）",
+      "create": "作成",
+      "create_a11y_desc": "設定したカメラレイヤーを作成",
+      "cancel_a11y_desc": "カメラレイヤーの作成をキャンセル"
     }
   },
   "render": {
@@ -1398,6 +1683,15 @@
       "gaussian": {
         "strength": "強度"
       }
+    },
+    "category": {
+      "color": "カラー",
+      "blur_light": "ブラー / ライト",
+      "distort": "ディストート",
+      "keying_matte": "キーイング / マット",
+      "noise": "ノイズ",
+      "transition": "トランジション",
+      "stylize_generate": "スタイライズ / 生成"
     }
   },
   "viewer": {
@@ -1453,5 +1747,42 @@
   "file_dialog": {
     "image_filter": "画像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;すべてのファイル (*.*)",
     "media_filter": "メディアファイル (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;すべてのファイル (*.*)"
+  },
+  "import": {
+    "group": {
+      "sequence": "連番",
+      "still_images": "静止画（連番以外）",
+      "video": "動画系",
+      "audio": "音声",
+      "other": "その他"
+    },
+    "other_files_suffix": "%1 ほか"
+  },
+  "common": {
+    "none": "なし"
+  },
+  "color": {
+    "white": "ホワイト",
+    "light_gray_1": "ライトグレー1",
+    "light_gray_2": "ライトグレー2",
+    "gray": "グレー",
+    "dark_gray": "ダークグレー",
+    "black": "ブラック",
+    "red": "レッド",
+    "green": "グリーン",
+    "blue": "ブルー",
+    "cyan": "シアン",
+    "magenta": "マゼンタ",
+    "yellow": "イエロー",
+    "skin": "スキン",
+    "brown": "ブラウン",
+    "light_blue": "ライトブルー",
+    "orange": "オレンジ",
+    "transparent_1": "透明1",
+    "transparent_2": "透明2",
+    "transparent_3": "透明3",
+    "transparent_4": "透明4",
+    "transparent_5": "透明5",
+    "transparent_6": "透明6"
   }
 }

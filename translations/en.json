@@ -1,4 +1,13 @@
 {
+  "_meta": {
+    "version": 1,
+    "language": "English",
+    "locale": "en",
+    "translators": [
+      "Artifact Team"
+    ],
+    "lastUpdated": "2026-09-18"
+  },
   "app": {
     "name": "Artifact",
     "ready": "Ready",
@@ -99,7 +108,14 @@
       "select_same_type": "Select Same Type",
       "find": "Find...",
       "undo_history": "Undo History...",
-      "preferences": "Preferences"
+      "preferences": "Preferences",
+      "select_group": "Select",
+      "undo_label": "Undo: %1 (&U)",
+      "undo_accel": "Undo (&U)",
+      "redo_label": "Redo: %1 (&R)",
+      "redo_accel": "Redo (&R)",
+      "paste_label": "Paste (&P): %1",
+      "paste_accel": "Paste (&P)"
     },
     "view": {
       "label": "View(&V)",
@@ -247,28 +263,130 @@
       "label": "Composition",
       "new_composition": "New Composition",
       "composition_settings": "Composition Settings",
-      "new_composition_accel": "New Composition(&C)..."
+      "new_composition_accel": "New Composition(&C)...",
+      "new_composition_n": "New Composition(&N)...",
+      "create_from_preset": "Create from Preset(&P)",
+      "duplicate": "Duplicate Composition(&D)",
+      "rename": "Rename(&R)...",
+      "delete": "Delete Composition(&X)...",
+      "settings": "Settings (&S)...",
+      "background_color": "Background Color(&B)...",
+      "send_to_main": "Send to Main Project(&T)...",
+      "add_to_render_queue": "Add to Render Queue(&Q)",
+      "add_current_frame": "Add Current Frame to Render Queue",
+      "add_work_area": "Add Work Area to Render Queue",
+      "add_selected_layers": "Add Only Selected Layers to Render Queue",
+      "render_selected_current_frame": "Render Selected Layers for Current Frame Only",
+      "render_selected_work_area": "Render Selected Layers for Work Area Only",
+      "open_advanced_render_settings": "Open Advanced Render Settings…",
+      "render_queue_add": "Add to Render Queue"
     },
     "effect": {
-      "label": "Effect"
+      "label": "Effect",
+      "controls": "Effect Controls",
+      "remove_all": "Remove All Effects from Selected Layer"
     },
     "animation": {
-      "label": "Animation"
+      "label": "Animation",
+      "add_keyframe": "Add Keyframe",
+      "transform_keyframes": "Set Transform Keyframes",
+      "nudge_keyframes": "Nudge Keyframes",
+      "layer_timing": "Layer Timing",
+      "delete_animation": "Delete Animation",
+      "distribute_selected": "Distribute Selected Keyframes Evenly",
+      "remove_keyframe": "Remove Keyframe",
+      "select_all": "Select All Keyframes",
+      "reverse_menu": "Reverse Keyframes(&R)",
+      "reverse_selected": "Reverse Selected Keyframes",
+      "reverse_layer": "Reverse All Keyframes in Current Layer",
+      "reverse_selected_layers": "Reverse All Keyframes in Selected Layers",
+      "reverse_composition": "Reverse All Keyframes in the Composition",
+      "copy_keyframes": "Copy Keyframes",
+      "paste_keyframes": "Paste Keyframes",
+      "interpolation_menu": "Keyframe Interpolation(&I)",
+      "interp_linear": "Linear",
+      "interp_ease_in": "Easy Ease In",
+      "interp_ease_out": "Easy Ease Out",
+      "interp_ease_in_out": "Easy Ease",
+      "interp_hold": "Hold",
+      "interp_bezier": "Bezier",
+      "graph_editor_menu": "Graph Editor(&G)",
+      "show_graph_editor": "Show Graph Editor",
+      "show_value_graph": "Show Value Graph",
+      "show_velocity_graph": "Show Speed Graph",
+      "open_easing_lab": "Open EasingLab",
+      "open_key_pattern": "Open Key Pattern Dialog",
+      "navigation_menu": "Navigation(&N)",
+      "next_keyframe": "Go to Next Keyframe",
+      "prev_keyframe": "Go to Previous Keyframe",
+      "first_keyframe": "Go to First Keyframe",
+      "last_keyframe": "Go to Last Keyframe",
+      "time_remap_menu": "Time Remap(&T)",
+      "enable_time_remap": "Enable Time Remapping",
+      "freeze_frame": "Freeze Frame",
+      "reverse_time": "Reverse Time Layer",
+      "slow_50": "Slow Motion 50% (Extend Layer Duration)",
+      "slow_25": "Slow Motion 25% (Extend Layer Duration)",
+      "stop_motion_12": "Stop Motion 12 fps",
+      "stop_motion_8": "Stop Motion 8 fps",
+      "stop_motion_4": "Stop Motion 4 fps",
+      "expression_menu": "Expression(&E)",
+      "expr_add": "Add Expression...",
+      "expr_edit": "Edit Expression...",
+      "expr_remove": "Remove Expression",
+      "expr_to_keyframes": "Convert Expression to Keyframes...",
+      "bake_live": "Bake Current Property to Keyframes...",
+      "preset_menu": "Animation Preset(&P)",
+      "preset_library": "Preset Library",
+      "preset_save": "Save Animation Preset...",
+      "preset_apply": "Apply Animation Preset..."
     },
     "script": {
       "label": "Script"
     },
     "render": {
-      "label": "Render"
+      "label": "Render",
+      "add_to_queue": "Add to Render Queue (&A)",
+      "show_queue": "Show Render Queue (&Q)...",
+      "show_manager": "Show Render Manager (&M)...",
+      "output_settings": "Render Output Settings (&S)...",
+      "start": "Start / Resume Rendering (&S)",
+      "pause": "Pause Rendering",
+      "clear_all": "Clear All Jobs (&C)",
+      "cancel_all": "Cancel All Jobs",
+      "add_all_compositions": "Add All Compositions to Queue (&A)"
     },
     "time": {
-      "label": "Time"
+      "label": "Time",
+      "play": "Play",
+      "stop": "Stop",
+      "pause": "Pause",
+      "step_backward": "Step Backward One Frame",
+      "step_forward": "Step Forward One Frame",
+      "seek_start": "Go to Start",
+      "seek_end": "Go to End",
+      "prev_marker": "Go to Previous Marker",
+      "next_marker": "Go to Next Marker",
+      "set_in_point": "Set In Point at Current Position",
+      "set_out_point": "Set Out Point at Current Position",
+      "clear_in_out": "Clear In/Out",
+      "loop": "Loop Playback"
     },
     "options": {
       "label": "Options"
     },
     "test": {
-      "label": "Test"
+      "label": "Test",
+      "project_service_unavailable": "ProjectService is unavailable.",
+      "no_composition": "Please open a composition first.",
+      "debug_base_failed": "Failed to add the debug base layer.",
+      "multiply_failed": "Failed to add the Multiply test layer.",
+      "screen_failed": "Failed to add the Screen test layer.",
+      "start_pipeline": "Start Software Test Pipeline",
+      "composition_create_failed": "Failed to create the composition.",
+      "plane_layer_failed": "Failed to add the plane layer.",
+      "debug_blend_added": "Added debug blend test layers:\\n\\n- Debug Base Plate\\n- Debug Multiply Plate\\n- Debug Screen Plate\\n\\nYou can reorder them on the timeline and verify compositing by adjusting opacity.",
+      "pipeline_initialized": "Software Test Pipeline initialized.\\n\\n1) Create composition\\n2) Add plane layer\\n3) Launch Software Composition Test\\n\\nYou can restart it anytime from this menu."
     },
     "layer": {
       "label": "Layer(&L)",
@@ -455,11 +573,22 @@
       "radial_warp_apply_tooltip": "Change the position and scale of multiple layers once, based on distance from the selection center.",
       "arrange": "Arrange(&A)",
       "hide": "Hide",
-      "add_hidden": "Add Hidden"
+      "add_hidden": "Add Hidden",
+      "debug_blend_added": "Added debug blend test layers:\n\n- Debug Base Plate\n- Debug Multiply Plate\n- Debug Screen Plate\n\nReorder on the timeline and verify compositing by adjusting opacity.",
+      "debug_bindless_added": "Added debug bindless sprite planes.\n\nComposed of gradient solid planes only, so the bindless batch of the SpriteXform packet can be verified in composition rendering.",
+      "debug_billboard_added": "Added debug billboard particle layer.\n\nUses the sparkles preset, so the billboard rendering should be easy to verify.",
+      "debug_particle_added": "Added debug particle layer.\n\nA debug layer independent of the normal ParticleLayer."
     },
     "help": {
       "label": "Help",
       "about": "About"
+    },
+    "option": {
+      "preferences": "Preferences (&P)...",
+      "safe_mode": "Safe Mode",
+      "reset_menu_font": "Reset Menu Font to Default",
+      "reset_dock_font": "Reset Dock Font to Default",
+      "open_app_data": "Open App Data Folder"
     }
   },
   "timeline": {
@@ -1011,7 +1140,8 @@
       "no": "No",
       "cancel": "Cancel",
       "save": "Save",
-      "discard": "Discard"
+      "discard": "Discard",
+      "close": "Close"
     },
     "recent_projects": {
       "empty": "None",
@@ -1097,7 +1227,10 @@
     "render": {
       "work_area": "Render Work Area",
       "frame": "Rendering frame...",
-      "title": "Rendering"
+      "title": "Rendering",
+      "no_active_composition": "No active composition.",
+      "added_to_queue": "%1 composition(s) added to the render queue.",
+      "no_composition_to_add": "There are no compositions that can be added."
     },
     "export_package": {
       "title": "Package Project",
@@ -1229,7 +1362,7 @@
       "new_name": "New name:",
       "direction": "Direction (degrees)",
       "already_live_linked": "Already live-linked.",
-      "outer_scale": "Outermost scale (%)",
+      "outer_scale": "Outer perimeter scale (%)\nThe center retains its original scale.",
       "outer_scale_nl": "Outermost scale (%)\n",
       "no_controller_input": "There is no last observed controller input. Enter an address.",
       "direction_note": "Positive values move outward, negative values move toward the center.",
@@ -1254,7 +1387,8 @@
       "debug_billboard_message": "Added Debug Billboard Particle.\\n\\nIt uses the sparkles preset, so it should be easier to check how billboard rendering looks.",
       "debug_particle_message": "Added Debug Particle Layer.\\n\\nThis debug layer is independent of the normal ParticleLayer.",
       "outer_layer_amount_label": "Outer layer amount (%)\\nPositive values move outward, negative values move toward the center.",
-      "outer_scale_label": "Outermost scale (%)\\nThe center keeps its original scale."
+      "outer_scale_label": "Outermost scale (%)\\nThe center keeps its original scale.",
+      "outer_offset": "Outer layer offset (%)\nPositive values move outward; negative values move toward center."
     },
     "render_output": {
       "audio_none_suffix": " / No audio",
@@ -1379,7 +1513,158 @@
       "variant_high_quality": "High Quality Distribution (H.264 MP4)",
       "package_image_sequence_full": "Output package: Image sequence only. Audio cannot be stored in a sequence. If you need audio, add the audio format (WAV PCM) as a separate job in the render queue.",
       "deep_exr_tooltip": "Exports a 1-sample-per-pixel Deep EXR from the Beauty and Depth AOVs. This is not native multi-visible-sample output.",
-      "detail_text": "Each row corresponds to an existing output preset. Here you choose the output intent, and\\nfinal adjustments to resolution, frame range, and destination are made in the Render Queue.\\n\\nFor transparent material, select ProRes 4444 or WebM/VP9.\\nMP4/H.264 is the standard for general distribution."
+      "detail_text": "Each row corresponds to an existing output preset. Here you choose the output intent, and\\nfinal adjustments to resolution, frame range, and destination are made in the Render Queue.\\n\\nFor transparent material, select ProRes 4444 or WebM/VP9.\\nMP4/H.264 is the standard for general distribution.",
+      "preset_intent_detail": "Each row corresponds to an existing output preset. Here, choose the intent of the output; final adjustments to resolution, frame range, and destination are made in the Render Queue.\n\nFor transparent assets, choose ProRes 4444 or WebM/VP9. MP4/H.264 is standard for general distribution.",
+      "image_seq_no_audio": "Output package: image sequence only. Image sequences cannot contain audio. If you need audio, add an audio format (WAV PCM) as a separate job in the Render Queue.",
+      "deep_exr_single_sample": "Writes a Deep EXR with 1 sample per pixel from Beauty and Depth AOV. This is not native multi-sample output."
+    },
+    "app_data": {
+      "title": "App Data",
+      "open_failed": "Could not open the app data folder."
+    },
+    "find": {
+      "title": "Find",
+      "layer_name_prompt": "Enter part of a layer name:"
+    },
+    "color_picker": {
+      "reference_cielab": "CIELAB · D65 · sRGB reference",
+      "reference_ciexyz": "CIE XYZ · D65 · Y = 1 · sRGB reference",
+      "out_of_range_hint": "Input outside the RGB range is clipped to 0–1",
+      "clipped_notice": "Input was clipped to the sRGB range. Values shown are post-conversion."
+    },
+    "import_assets": {
+      "copy_notice": "Selected assets are copied into the current project's Assets folder and then imported.",
+      "duplicate_warning": "⚠ %1 file(s) with the same name need review",
+      "candidate_summary": "Import candidates: %1 file(s) / %2",
+      "copy_and_import": "Copy to Project/Assets and Import"
+    },
+    "composition": {
+      "project_service_unavailable": "Project service is unavailable.",
+      "duplicate_failed": "Failed to duplicate the composition.",
+      "rename_title": "Rename Composition",
+      "new_name": "New name:",
+      "rename_failed": "Failed to rename the composition.",
+      "delete_title": "Delete Composition",
+      "delete_failed": "Failed to delete the composition.",
+      "none_to_configure": "There is no composition to configure.",
+      "none_to_send": "There is no composition to send.",
+      "no_active": "There is no active composition."
+    },
+    "quick_layer": {
+      "title": "Quick Layer Creation",
+      "source_solid": "Solid",
+      "source_image": "Image",
+      "browse": "Browse…",
+      "select_image": "Select Image",
+      "mask_group": "Mask",
+      "mask_rectangle": "Rectangle",
+      "mask_ellipse": "Ellipse",
+      "mask_shape": "Shape",
+      "envelope_group": "Entry / Exit Envelope",
+      "entry": "Entry",
+      "exit": "Exit",
+      "timing_simultaneous": "Simultaneous",
+      "timing_opacity_lead": "Opacity First",
+      "timing_effect_lead": "Effect First",
+      "direction": "Direction",
+      "follow": "Timing",
+      "curve": "Curve",
+      "length": "Length",
+      "placement_group": "Placement",
+      "after_selected": "After Selected Layers",
+      "before_selected": "Before Selected Layers",
+      "composition_start": "Composition Start",
+      "current_frame": "Current Frame",
+      "placement": "Insert Position",
+      "create": "Create"
+    },
+    "color_swatch": {
+      "category_basic": "Basic Colors",
+      "category_video": "Video Production",
+      "category_transparent_glow": "Transparency / Glow",
+      "add_color": "Add Color",
+      "title": "Color Swatch",
+      "apply": "Apply ↗",
+      "add_color_to": "Add a color to %1"
+    },
+    "precompose": {
+      "preview_a11y": "Pre-compose preview",
+      "preview_a11y_desc": "Show a simplified view of the selected layer structure",
+      "no_selection": "No layer selected",
+      "selection_summary": "%1 selected / %2 total layers",
+      "title": "Pre-compose",
+      "dialog_a11y": "Pre-compose dialog",
+      "dialog_a11y_desc": "Settings for grouping the selected layers into a new composition",
+      "close_a11y_desc": "Close the pre-compose dialog",
+      "preview_title": "Pre-compose Preview",
+      "preview_output": "Output: current composition",
+      "preview_duration": "Duration: work area",
+      "zero_layers": "0 layers",
+      "preview_update_hint": "Updates when the selection changes",
+      "name_label": "New composition name",
+      "name_a11y_desc": "Name of the new composition to create",
+      "selected_layers": "Selected layers",
+      "selected_layers_desc": "List of layers that will move into the new composition",
+      "placement_options": "Placement Options",
+      "move_selected_radio": "Move only the selected layers into the new composition",
+      "move_selected_a11y": "Move only the selected layers",
+      "move_selected_a11y_desc": "Move only the selected layers into the new composition",
+      "move_selected_hint": "Moves the selected layers into the pre-compose. Other layers stay as they are.",
+      "move_all_radio": "Move all attributes into the new composition",
+      "move_all_a11y": "Move all attributes",
+      "move_all_a11y_desc": "Move all attributes into the new composition",
+      "move_all_hint": "Attributes such as transform are also carried into the pre-compose.",
+      "open_new_comp": "Open the new composition",
+      "open_new_comp_desc": "Open the new composition after creating it",
+      "add_adjustment": "Add as adjustment layer",
+      "add_adjustment_desc": "Add the new composition as an adjustment layer",
+      "match_duration": "Match the composition duration to the work area",
+      "match_duration_a11y": "Match duration to the work area",
+      "match_duration_desc": "Match the new composition duration to the work area",
+      "create": "Create",
+      "create_a11y_desc": "Create the pre-compose with the configured settings",
+      "cancel_a11y_desc": "Cancel the pre-compose",
+      "layer_count": "%1 layers"
+    },
+    "create_camera": {
+      "preset_custom": "Custom",
+      "title": "Camera Settings",
+      "dialog_a11y": "Camera layer creation dialog",
+      "dialog_a11y_desc": "Set the name and lens options for a new camera layer",
+      "close_a11y_desc": "Close the camera settings dialog",
+      "name": "Name",
+      "name_a11y": "Camera layer name",
+      "name_a11y_desc": "Name of the camera layer to create",
+      "preset_section": "Preset / Lens",
+      "preset": "Preset",
+      "preset_a11y": "Lens preset",
+      "preset_a11y_desc": "Camera focal length preset",
+      "focal_length": "Focal Length",
+      "focal_length_a11y_desc": "Focal length of the camera lens",
+      "fov": "Field of View",
+      "fov_a11y_desc": "Field of view of the camera",
+      "diagram_a11y": "Lens preview",
+      "diagram_a11y_desc": "Preview of focal length and field of view",
+      "dof_section": "Depth of Field",
+      "aperture": "Aperture (f-stop)",
+      "aperture_a11y": "Aperture value",
+      "aperture_a11y_desc": "Aperture value for depth of field",
+      "blur_amount": "Blur Amount",
+      "focus_distance_a11y": "Focus distance",
+      "focus_distance_a11y_desc": "Distance at which to focus",
+      "blur_amount_a11y_desc": "Blur amount for depth of field (percent)",
+      "enable_dof": "Enable depth of field",
+      "enable_dof_a11y_desc": "Enable the camera depth of field effect",
+      "other_options": "Other Options",
+      "motion_blur": "Motion Blur",
+      "lock_camera": "Lock Camera",
+      "motion_blur_a11y_desc": "Enable camera motion blur",
+      "lock_camera_a11y_desc": "Lock camera manipulation",
+      "zoom": "Zoom",
+      "zoom_a11y_desc": "Camera zoom distance (pixels)",
+      "create": "Create",
+      "create_a11y_desc": "Create the camera layer with the configured settings",
+      "cancel_a11y_desc": "Cancel creating the camera layer"
     }
   },
   "render": {
@@ -1398,6 +1683,15 @@
       "gaussian": {
         "strength": "Strength"
       }
+    },
+    "category": {
+      "color": "Color",
+      "blur_light": "Blur / Light",
+      "distort": "Distort",
+      "keying_matte": "Keying / Matte",
+      "noise": "Noise",
+      "transition": "Transition",
+      "stylize_generate": "Stylize / Generate"
     }
   },
   "viewer": {
@@ -1453,5 +1747,42 @@
   "file_dialog": {
     "image_filter": "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*.*)",
     "media_filter": "Media Files (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;All Files (*.*)"
+  },
+  "import": {
+    "group": {
+      "sequence": "Sequence",
+      "still_images": "Still Images (non-sequence)",
+      "video": "Video",
+      "audio": "Audio",
+      "other": "Other"
+    },
+    "other_files_suffix": "%1 and others"
+  },
+  "common": {
+    "none": "None"
+  },
+  "color": {
+    "white": "White",
+    "light_gray_1": "Light Gray 1",
+    "light_gray_2": "Light Gray 2",
+    "gray": "Gray",
+    "dark_gray": "Dark Gray",
+    "black": "Black",
+    "red": "Red",
+    "green": "Green",
+    "blue": "Blue",
+    "cyan": "Cyan",
+    "magenta": "Magenta",
+    "yellow": "Yellow",
+    "skin": "Skin",
+    "brown": "Brown",
+    "light_blue": "Light Blue",
+    "orange": "Orange",
+    "transparent_1": "Transparent 1",
+    "transparent_2": "Transparent 2",
+    "transparent_3": "Transparent 3",
+    "transparent_4": "Transparent 4",
+    "transparent_5": "Transparent 5",
+    "transparent_6": "Transparent 6"
   }
 }
