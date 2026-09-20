@@ -391,6 +391,10 @@ void handleMouseMove(const QPointF& viewportPos);
   void clearModalGizmoNumericInput();
   bool commitModalGizmoInteraction();
   bool isModalGizmoInteractionActive() const;
+  // True while the user is actively interacting with the viewport (dragging a
+  // layer, gizmo, rubber band, drop ghost, ...). Detached Task execution waits
+  // for this to clear before mutating the project.
+  bool isInteractionBusy() const;
   bool cancelGizmoInteraction();
   void setPointerPressure(float pressure);
   void setPointerTilt(float tiltX, float tiltY);
