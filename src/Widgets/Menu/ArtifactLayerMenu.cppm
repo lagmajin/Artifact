@@ -1760,7 +1760,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_blend_message"),
-                    QStringLiteral("Debug blend test layers を追加しました。\n\n- Debug Base Plate\n- Debug Multiply Plate\n- Debug Screen Plate\n\nタイムライン上で並び替えたり、不透明度を変えて合成検証できます。")));
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_blend_added"), QStringLiteral("Debug blend test layers を追加しました。\n\n- Debug Base Plate\n- Debug Multiply Plate\n- Debug Screen Plate\n\nタイムライン上で並び替えたり、不透明度を変えて合成検証できます。"))));
             return;
         }
         if (action == addDebugBindlessPlanesAction) {
@@ -1819,7 +1819,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_bindless_message"),
-                    QStringLiteral("Debug Bindless Sprite Planes を追加しました。\n\ngradient solid planes だけで構成されるため、composition 描画では SpriteXform packet の bindless batch を検証できます。")));
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_bindless_added"), QStringLiteral("Debug Bindless Sprite Planes を追加しました。\n\ngradient solid planes だけで構成されるため、composition 描画では SpriteXform packet の bindless batch を検証できます。"))));
             return;
         }
         if (action == addDebugBillboardLayerAction) {
@@ -1859,7 +1859,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_billboard_message"),
-                    QStringLiteral("Debug Billboard Particle を追加しました。\n\nsparkles プリセットを使うので、ビルボード描画の見え方を確認しやすいはずです。")));
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_billboard_added"), QStringLiteral("Debug Billboard Particle を追加しました。\n\nsparkles プリセットを使うので、ビルボード描画の見え方を確認しやすいはずです。"))));
             return;
         }
         if (action == addDebugParticleLayerAction) {
@@ -1913,7 +1913,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_particle_message"),
-                    QStringLiteral("Debug Particle Layer を追加しました。\n\n通常の ParticleLayer とは独立したデバッグ用レイヤーです。")));
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_particle_added"), QStringLiteral("Debug Particle Layer を追加しました。\n\n通常の ParticleLayer とは独立したデバッグ用レイヤーです。"))));
             return;
         }
         if (action == precomposeAction) { handlePrecompose(); return; }
@@ -4953,7 +4953,7 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     const double expansionPercent = QInputDialog::getDouble(
         menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
         TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_layer_amount_label"),
-            QStringLiteral("外側レイヤーの移動量 (%)\n正数で外側へ、負数で中心へ移動します。")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_offset"), QStringLiteral("外側レイヤーの移動量 (%)\n正数で外側へ、負数で中心へ移動します。"))),
         25.0, -90.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
@@ -4962,7 +4962,7 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     const double edgeScalePercent = QInputDialog::getDouble(
         menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
         TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_scale_label"),
-            QStringLiteral("最外周のスケール (%)\n中心は元のスケールを維持します。")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_scale"), QStringLiteral("最外周のスケール (%)\n中心は元のスケールを維持します。"))),
         70.0, 1.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
