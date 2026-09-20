@@ -11,7 +11,6 @@ module;
 
 module Artifact.Widgets.LayerLockIndicator;
 
-import std;
 
 namespace Artifact {
 

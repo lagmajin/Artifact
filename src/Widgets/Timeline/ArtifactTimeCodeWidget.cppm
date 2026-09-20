@@ -1,5 +1,4 @@
 ﻿module;
-#include <algorithm>
 #include <utility>
 #include <QLabel>
 #include <QBoxLayout>
@@ -25,6 +24,7 @@
 
 module Artifact.Timeline.TimeCodeWidget;
 
+import Core.ArtifactMath;
 import Time.Rational;
 import Widgets.Utils.CSS;
 
@@ -148,7 +148,7 @@ namespace Artifact
     if (!impl_) {
       return;
     }
-    const int sanitized = std::max(1, fps);
+    const int sanitized = ArtifactCore::artifactMax(1, fps);
     if (impl_->fps_ == sanitized) {
       return;
     }
@@ -161,7 +161,7 @@ namespace Artifact
 
  void ArtifactTimeCodeWidget::updateTimeCode(int frame)
  {
-    const int fps = std::max(1, impl_->fps_);
+    const int fps = ArtifactCore::artifactMax(1, impl_->fps_);
     impl_->currentFrame_ = frame;
 
     // Use RationalTime to represent the frame/time (value = frame count, scale = fps)

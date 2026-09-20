@@ -14,7 +14,7 @@ module;
 
 module Artifact.Timeline.NavigatorWidget;
 
-import std;
+import Core.ArtifactMath;
 import Event.Bus;
 import Artifact.Event.Types;
 import Widgets.Utils.CSS;
@@ -116,11 +116,11 @@ namespace Artifact
 
  void ArtifactTimelineNavigatorWidget::setCurrentFrame(double frame)
  {
-  const double finiteFrame = std::isfinite(frame) ? frame : 0.0;
-  const double sanitized = std::clamp(
+  const double finiteFrame = ArtifactCore::artifactIsFinite(frame) ? frame : 0.0;
+  const double sanitized = ArtifactCore::artifactClamp(
       finiteFrame, 0.0,
-      static_cast<double>(std::max(0, impl_->totalFrames_ - 1)));
-  if (std::abs(currentFrame_ - sanitized) > 0.0001) {
+      static_cast<double>(ArtifactCore::artifactMax(0, impl_->totalFrames_ - 1)));
+  if (ArtifactCore::artifactAbs(currentFrame_ - sanitized) > 0.0001) {
    currentFrame_ = sanitized;
    update();
   }
@@ -128,16 +128,16 @@ namespace Artifact
 
  void ArtifactTimelineNavigatorWidget::setTotalFrames(const int totalFrames)
  {
-  const int sanitized = std::max(1, totalFrames);
+  const int sanitized = ArtifactCore::artifactMax(1, totalFrames);
   if (!impl_) {
    return;
   }
-  const double maxFrame = static_cast<double>(std::max(0, sanitized - 1));
+  const double maxFrame = static_cast<double>(ArtifactCore::artifactMax(0, sanitized - 1));
   const double clampedCurrentFrame =
-      std::clamp(currentFrame_, 0.0, maxFrame);
+      ArtifactCore::artifactClamp(currentFrame_, 0.0, maxFrame);
   const bool totalChanged = impl_->totalFrames_ != sanitized;
   const bool frameChanged =
-      std::abs(currentFrame_ - clampedCurrentFrame) > 0.0001;
+      ArtifactCore::artifactAbs(currentFrame_ - clampedCurrentFrame) > 0.0001;
   if (totalChanged || frameChanged) {
    impl_->totalFrames_ = sanitized;
    currentFrame_ = clampedCurrentFrame;
@@ -169,33 +169,33 @@ namespace Artifact
   p.setBrush(theme.surface);
   p.drawRoundedRect(trackRect, 3, 3);
 
-  const int usableWidth = std::max(1, width() - kHandleW);
+  const int usableWidth = ArtifactCore::artifactMax(1, width() - kHandleW);
   const int x1 = kHandleHalfW + static_cast<int>(start * usableWidth);
   const int x2 = kHandleHalfW + static_cast<int>(end * usableWidth);
-  const int clampedX1 = std::clamp(x1, trackRect.left(), trackRect.right());
-  const int clampedX2 = std::clamp(x2, trackRect.left(), trackRect.right());
+  const int clampedX1 = ArtifactCore::artifactClamp(x1, trackRect.left(), trackRect.right());
+  const int clampedX2 = ArtifactCore::artifactClamp(x2, trackRect.left(), trackRect.right());
 
-  p.fillRect(QRect(trackRect.left(), trackRect.top(), std::max(0, clampedX1 - trackRect.left()), trackRect.height()),
+  p.fillRect(QRect(trackRect.left(), trackRect.top(), ArtifactCore::artifactMax(0, clampedX1 - trackRect.left()), trackRect.height()),
              QColor(0, 0, 0, 70));
-  p.fillRect(QRect(clampedX2, trackRect.top(), std::max(0, trackRect.right() - clampedX2), trackRect.height()),
+  p.fillRect(QRect(clampedX2, trackRect.top(), ArtifactCore::artifactMax(0, trackRect.right() - clampedX2), trackRect.height()),
              QColor(0, 0, 0, 70));
 
   p.setPen(QPen(theme.border.lighter(105), 1));
-  const int segmentCount = std::clamp(trackRect.width() / 72, 4, 12);
+  const int segmentCount = ArtifactCore::artifactClamp(trackRect.width() / 72, 4, 12);
   for (int i = 1; i < segmentCount; ++i) {
-   const int x = trackRect.left() + static_cast<int>(std::lround((static_cast<double>(i) / segmentCount) * trackRect.width()));
+   const int x = trackRect.left() + static_cast<int>(ArtifactCore::artifactLround((static_cast<double>(i) / segmentCount) * trackRect.width()));
    p.drawLine(x, trackRect.top() + 2, x, trackRect.bottom() - 2);
   }
 
   if (impl_->totalFrames_ > 1 && trackRect.width() > 24) {
-   const int approxMajorCount = std::clamp(trackRect.width() / 96, 4, 10);
-   const int majorStepFrames = std::max(1, (impl_->totalFrames_ - 1) / approxMajorCount);
-   const int minorStepFrames = std::max(1, majorStepFrames / 4);
+   const int approxMajorCount = ArtifactCore::artifactClamp(trackRect.width() / 96, 4, 10);
+   const int majorStepFrames = ArtifactCore::artifactMax(1, (impl_->totalFrames_ - 1) / approxMajorCount);
+   const int minorStepFrames = ArtifactCore::artifactMax(1, majorStepFrames / 4);
 
    p.setPen(QPen(theme.border.lighter(140), 1));
    for (int f = 0; f < impl_->totalFrames_; f += minorStepFrames) {
-    const double ratio = static_cast<double>(f) / std::max(1, impl_->totalFrames_ - 1);
-    const int x = trackRect.left() + static_cast<int>(std::lround(ratio * trackRect.width()));
+    const double ratio = static_cast<double>(f) / ArtifactCore::artifactMax(1, impl_->totalFrames_ - 1);
+    const int x = trackRect.left() + static_cast<int>(ArtifactCore::artifactLround(ratio * trackRect.width()));
     if (x < trackRect.left() || x > trackRect.right()) {
      continue;
     }
@@ -207,7 +207,7 @@ namespace Artifact
   }
 
   const QRect rangeRect(clampedX1, trackRect.top(),
-                        std::max(1, clampedX2 - clampedX1),
+                        ArtifactCore::artifactMax(1, clampedX2 - clampedX1),
                         trackRect.height());
   p.setPen(QPen(kNavigatorRangeEdge, 1));
   p.setBrush(kNavigatorRangeFill);
@@ -237,20 +237,20 @@ namespace Artifact
    // makes the two indicators diverge as soon as the navigator is zoomed.
    const double totalFrames = static_cast<double>(impl_->totalFrames_);
    const double visibleStart = static_cast<double>(start) * totalFrames;
-   const double visibleDuration = std::max(
+   const double visibleDuration = ArtifactCore::artifactMax(
        0.01, static_cast<double>(end - start) * totalFrames);
    const double visibleRatio = (currentFrame_ - visibleStart) / visibleDuration;
    if (visibleRatio < 0.0 || visibleRatio > 1.0) {
     return;
    }
    const int currentX = static_cast<int>(
-       std::lround(visibleRatio * static_cast<double>(width())));
+       ArtifactCore::artifactLround(visibleRatio * static_cast<double>(width())));
    const int clampedCurrentX =
-       std::clamp(currentX, 0, std::max(0, width() - 1));
+       ArtifactCore::artifactClamp(currentX, 0, ArtifactCore::artifactMax(0, width() - 1));
    const qreal stemBottom = static_cast<qreal>(outer.bottom()) - 1.0;
    TimelinePlayheadDraw::drawPlayhead(
        p, static_cast<qreal>(clampedCurrentX), 0.0, stemBottom, false, 1.0,
-       std::min<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3)), 12.0);
+       ArtifactCore::artifactMin<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3)), 12.0);
   }
  }
 
@@ -260,7 +260,7 @@ namespace Artifact
    return;
   }
 
-  const int usableWidth = std::max(1, width() - kHandleW);
+  const int usableWidth = ArtifactCore::artifactMax(1, width() - kHandleW);
   const int x1 = kHandleHalfW + static_cast<int>(start * usableWidth);
   const int x2 = kHandleHalfW + static_cast<int>(end * usableWidth);
 
@@ -268,7 +268,7 @@ namespace Artifact
    impl_->draggingLeft = true;
   } else if (QRect(x2 - kHandleHalfW, 0, kHandleW, height()).contains(ev->pos())) {
    impl_->draggingRight = true;
-  } else if (QRect(x1 + kHandleHalfW, 0, std::max(0, x2 - x1 - kHandleW), height()).contains(ev->pos())) {
+  } else if (QRect(x1 + kHandleHalfW, 0, ArtifactCore::artifactMax(0, x2 - x1 - kHandleW), height()).contains(ev->pos())) {
    impl_->draggingRange = true;
    const float normalizedX = (float(ev->pos().x()) - kHandleHalfW) / float(usableWidth);
    impl_->dragGrabRatio = normalizedX - start;
@@ -277,7 +277,7 @@ namespace Artifact
 
  void ArtifactTimelineNavigatorWidget::mouseMoveEvent(QMouseEvent* ev)
  {
-  const int usableWidth = std::max(1, width() - kHandleW);
+  const int usableWidth = ArtifactCore::artifactMax(1, width() - kHandleW);
 
   if (!(ev->buttons() & Qt::LeftButton)) {
    impl_->draggingLeft = impl_->draggingRight = impl_->draggingRange = false;
@@ -294,7 +294,7 @@ namespace Artifact
    float newEnd = (float(ev->pos().x()) - kHandleHalfW) / float(usableWidth);
    setEnd(qBound(start + 0.01f, newEnd, 1.0f));
   } else if (impl_->draggingRange) {
-   const float range = std::max(0.01f, end - start);
+   const float range = ArtifactCore::artifactMax(0.01f, end - start);
    float left = (float(ev->pos().x()) - kHandleHalfW) / float(usableWidth) - impl_->dragGrabRatio;
    left = qBound(0.0f, left, 1.0f - range);
    setStart(left);
