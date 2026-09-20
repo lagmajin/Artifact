@@ -7,10 +7,10 @@ module;
 #include <QStandardItem>
 #include <QLabel>
 #include <wobjectimpl.h>
+#include <algorithm>
 
 module Artifact.Widgets.ClipBufferWidget;
 
-import std;
 import Event.Bus;
 import Artifact.Event.Types;
 import Translation.Manager;

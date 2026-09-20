@@ -11,6 +11,8 @@ module;
 #include <QString>
 #include <QVector>
 #include <wobjectimpl.h>
+#include <memory>
+#include <utility>
 
 module Artifact.Widgets.AudioMiniWidget;
 
@@ -23,7 +25,6 @@ import Artifact.Service.Project;
 import Event.Bus;
 import Undo.UndoManager;
 import Widgets.Utils.CSS;
-import std;
 
 namespace Artifact {
 

@@ -8,10 +8,10 @@ module;
 #include <QInputDialog>
 #include <QLabel>
 #include <wobjectimpl.h>
+#include <algorithm>
 
 module Artifact.Widgets.ProjectMemoWidget;
 
-import std;
 import Artifact.Widgets.ProjectMemoModel;
 import Localization.Localization;
 import Translation.Manager;
