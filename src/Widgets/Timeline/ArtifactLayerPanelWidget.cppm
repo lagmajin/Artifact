@@ -123,6 +123,11 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
 
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
+
 enum class MultiEditCycleMode {
   None,
   Align,
@@ -1146,11 +1151,6 @@ namespace {
 }
 
 namespace Artifact {
-
-QString tt(const char* key, const char* fallback)
-{
-  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
-}
 
  // ============================================================================
  // ArtifactLayerPanelHeaderWidget Implementation
