@@ -5,11 +5,10 @@ module;
 #include <QPainterPath>
 #include <QMouseEvent>
 #include <QIcon>
-#include <cmath>
-#include <algorithm>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.PieMenu;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -33,14 +32,14 @@ public:
     
     void updateSelection() {
         QPoint delta = mousePos - center;
-        float dist = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+        float dist = ArtifactCore::artifactSqrt(delta.x() * delta.x() + delta.y() * delta.y());
         
         if (dist < deadZoneRadius || model.items.empty()) {
             selectedIndex = -1;
             return;
         }
         
-        float angle = std::atan2(-delta.y(), delta.x()) * 180.0f / M_PI;
+        float angle = ArtifactCore::artifactAtan2(-delta.y(), delta.x()) * 180.0f / M_PI;
         if (angle < 0) angle += 360.0f;
         
         int count = static_cast<int>(model.items.size());
@@ -146,8 +145,8 @@ void ArtifactPieMenuWidget::paintEvent(QPaintEvent* event) {
         // Draw Icon and Text
         float midAngle = (startAngle + sectorSize / 2.0f) * M_PI / 180.0f;
         float textRadius = (impl_->innerRadius + impl_->outerRadius) / 2.0f;
-        QPointF itemCenter(center.x() + std::cos(midAngle) * textRadius,
-                           center.y() - std::sin(midAngle) * textRadius);
+        QPointF itemCenter(center.x() + ArtifactCore::artifactCos(midAngle) * textRadius,
+                           center.y() - ArtifactCore::artifactSin(midAngle) * textRadius);
         
         if (!item.icon.isNull()) {
             QPixmap pixmap = item.icon.pixmap(24, 24, item.enabled ? QIcon::Normal : QIcon::Disabled);
