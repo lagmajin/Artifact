@@ -4,6 +4,8 @@
 
 #include <wobjectdefs.h>
 #include <QWidget>
+#include <QObject>
+#include <QEvent>
 export module Artifact.Widgets.ColorSwatchWidget;
 
 
@@ -36,6 +38,9 @@ public:
 
     // UI操作
     void updateListView();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 public Q_SLOTS:
     void onLoadGPL();
