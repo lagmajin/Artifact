@@ -1,7 +1,5 @@
 module;
 
-#include <algorithm>
-#include <cmath>
 #include <QAction>
 #include <QColor>
 #include <QFont>
@@ -15,6 +13,7 @@ module;
 
 module ArtifactStatusBar;
 
+import Core.ArtifactMath;
 import Widgets.Utils.CSS;
 import Settings.Accessibility;
 import Artifact.Event.Types;
@@ -219,8 +218,8 @@ namespace Artifact
 
  void ArtifactStatusBar::setZoomPercent(const float zoomPercent)
  {
-  const float normalized = std::isfinite(zoomPercent)
-      ? std::clamp(zoomPercent, 0.0f, 100000.0f)
+  const float normalized = ArtifactCore::artifactIsFinite(zoomPercent)
+      ? ArtifactCore::artifactClamp(zoomPercent, 0.0f, 100000.0f)
       : 100.0f;
   if (auto* label = itemLabel(Item::Zoom))
   {
@@ -246,7 +245,7 @@ namespace Artifact
 
  void ArtifactStatusBar::setFPS(const double fps)
  {
-  const double normalized = std::isfinite(fps) ? std::max(0.0, fps) : 0.0;
+  const double normalized = ArtifactCore::artifactIsFinite(fps) ? ArtifactCore::artifactMax(0.0, fps) : 0.0;
   if (auto* label = itemLabel(Item::FPS))
   {
    label->setText(QStringLiteral("FPS: %1").arg(QString::number(normalized, 'f', 1)));
@@ -281,7 +280,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Selection))
   {
-   label->setText(QStringLiteral("SEL: %1").arg(std::max(0, count)));
+   label->setText(QStringLiteral("SEL: %1").arg(ArtifactCore::artifactMax(0, count)));
   }
  }
 
