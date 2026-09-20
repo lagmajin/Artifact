@@ -411,14 +411,14 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
   auto *projectService = ArtifactProjectService::instance();
   if (!projectService) {
    QMessageBox::warning(nullptr, "Debug Layers",
-                        "ProjectService が利用できません。");
+                        TranslationManager::instance().tr(QStringLiteral("menu.test.project_service_unavailable"), QStringLiteral("ProjectService が利用できません。")));
    return;
   }
 
   auto comp = projectService->currentComposition().lock();
   if (!comp) {
    QMessageBox::warning(nullptr, "Debug Layers",
-                        "先にコンポジションを開いてください。");
+                        TranslationManager::instance().tr(QStringLiteral("menu.test.no_composition"), QStringLiteral("先にコンポジションを開いてください。")));
    return;
   }
 
@@ -434,7 +434,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
       1.0f);
   if (!lastCreatedLayer) {
    QMessageBox::warning(nullptr, "Debug Layers",
-                        "デバッグ用ベースレイヤーの追加に失敗しました。");
+                        TranslationManager::instance().tr(QStringLiteral("menu.test.debug_base_failed"), QStringLiteral("デバッグ用ベースレイヤーの追加に失敗しました。")));
    return;
   }
 
@@ -444,7 +444,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
       0.58f);
   if (!lastCreatedLayer) {
    QMessageBox::warning(nullptr, "Debug Layers",
-                        "Multiply テストレイヤーの追加に失敗しました。");
+                        TranslationManager::instance().tr(QStringLiteral("menu.test.multiply_failed"), QStringLiteral("Multiply テストレイヤーの追加に失敗しました。")));
    return;
   }
 
@@ -454,29 +454,26 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
       0.52f);
   if (!lastCreatedLayer) {
    QMessageBox::warning(nullptr, "Debug Layers",
-                        "Screen テストレイヤーの追加に失敗しました。");
+                        TranslationManager::instance().tr(QStringLiteral("menu.test.screen_failed"), QStringLiteral("Screen テストレイヤーの追加に失敗しました。")));
    return;
   }
 
   projectService->selectLayer(lastCreatedLayer->id());
   QMessageBox::information(
       nullptr, "Debug Layers",
-      QStringLiteral("Debug blend test layers を追加しました。\n\n"
-                     "- Debug Base Plate\n"
-                     "- Debug Multiply Plate\n"
-                     "- Debug Screen Plate\n\n"
-                     "タイムライン上で並び替えたり、不透明度を変えて合成検証できます。"));
+      TranslationManager::instance().tr(QStringLiteral("menu.test.debug_blend_added"),
+          QStringLiteral("Debug blend test layers を追加しました。\n\n- Debug Base Plate\n- Debug Multiply Plate\n- Debug Screen Plate\n\nタイムライン上で並び替えたり、不透明度を変えて合成検証できます。")));
  });
 
  addSeparator();
 
- auto* startSoftwareTestPipelineAction = new QAction("Software Test Pipeline を開始", this);
+ auto* startSoftwareTestPipelineAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.test.start_pipeline"), QStringLiteral("Software Test Pipeline を開始")), this);
  startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_pipeline.svg")));
  addAction(startSoftwareTestPipelineAction);
  QObject::connect(startSoftwareTestPipelineAction, &QAction::triggered, this, []() {
   auto* projectService = ArtifactProjectService::instance();
   if (!projectService) {
-   QMessageBox::warning(nullptr, "Software Test", "ProjectService が利用できません。");
+   QMessageBox::warning(nullptr, "Software Test", TranslationManager::instance().tr(QStringLiteral("menu.test.project_service_unavailable"), QStringLiteral("ProjectService が利用できません。")));
    return;
   }
 
@@ -485,7 +482,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
   projectService->createComposition(params);
   auto currentComp = projectService->currentComposition().lock();
   if (!currentComp) {
-   QMessageBox::warning(nullptr, "Software Test", "コンポジション作成に失敗しました。");
+   QMessageBox::warning(nullptr, "Software Test", TranslationManager::instance().tr(QStringLiteral("menu.test.composition_create_failed"), QStringLiteral("コンポジション作成に失敗しました。")));
    return;
   }
   const int beforeLayerCount = currentComp->allLayer().size();
@@ -497,7 +494,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
   projectService->addLayerToCurrentComposition(solidParams);
   currentComp = projectService->currentComposition().lock();
   if (!currentComp || currentComp->allLayer().size() <= beforeLayerCount) {
-   QMessageBox::warning(nullptr, "Software Test", "平面レイヤー追加に失敗しました。");
+   QMessageBox::warning(nullptr, "Software Test", TranslationManager::instance().tr(QStringLiteral("menu.test.plane_layer_failed"), QStringLiteral("平面レイヤー追加に失敗しました。")));
    return;
   }
 
@@ -506,12 +503,8 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
   QMessageBox::information(
       nullptr,
       "Software Test",
-      QStringLiteral(
-          "Software Test Pipeline を初期化しました。\n\n"
-          "1) コンポジション作成\n"
-          "2) 平面レイヤー追加\n"
-          "3) Software Composition Test 起動\n\n"
-          "このメニューからいつでも再起動できます。"));
+      TranslationManager::instance().tr(QStringLiteral("menu.test.pipeline_initialized"),
+          QStringLiteral("Software Test Pipeline を初期化しました。\n\n1) コンポジション作成\n2) 平面レイヤー追加\n3) Software Composition Test 起動\n\nこのメニューからいつでも再起動できます。")));
  });
 }
 
