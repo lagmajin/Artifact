@@ -1,6 +1,4 @@
 module;
-#include <algorithm>
-#include <cmath>
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -11,6 +9,7 @@ module;
 
 module Artifact.Layer.SourceCrop;
 
+import Core.ArtifactMath;
 import Serialization.Registry;
 import Serialization.SchemaMigration;
 
@@ -35,7 +34,7 @@ QPointF pointFromJson(const QJsonArray &array, const QPointF &fallback) {
     if (array.at(0).isDouble() && array.at(1).isDouble()) {
       const double x = array.at(0).toDouble(fallback.x());
       const double y = array.at(1).toDouble(fallback.y());
-      return std::isfinite(x) && std::isfinite(y) ? QPointF(x, y) : fallback;
+      return ArtifactCore::artifactIsFinite(x) && ArtifactCore::artifactIsFinite(y) ? QPointF(x, y) : fallback;
     }
   }
   return fallback;
@@ -52,7 +51,7 @@ QRectF rectFromJson(const QJsonArray &array, const QRectF &fallback) {
       const double y = array.at(1).toDouble(fallback.y());
       const double w = array.at(2).toDouble(fallback.width());
       const double h = array.at(3).toDouble(fallback.height());
-      if (std::isfinite(x) && std::isfinite(y) && std::isfinite(w) && std::isfinite(h)) {
+      if (ArtifactCore::artifactIsFinite(x) && ArtifactCore::artifactIsFinite(y) && ArtifactCore::artifactIsFinite(w) && ArtifactCore::artifactIsFinite(h)) {
         return QRectF(x, y, w, h).normalized();
       }
     }
@@ -61,7 +60,7 @@ QRectF rectFromJson(const QJsonArray &array, const QRectF &fallback) {
 }
 
 bool hasSourceSize(const QSizeF &size) {
-  return std::isfinite(size.width()) && std::isfinite(size.height()) &&
+  return ArtifactCore::artifactIsFinite(size.width()) && ArtifactCore::artifactIsFinite(size.height()) &&
          size.width() > 0.0 && size.height() > 0.0;
 }
 
@@ -74,7 +73,7 @@ QRectF fullSourceRect(const QSizeF &size) {
 
 QPointF clampAnchor(const QPointF &anchor) {
   const auto safe = [](double value, double fallback) {
-    return std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : fallback;
+    return ArtifactCore::artifactIsFinite(value) ? ArtifactCore::artifactClamp(value, 0.0, 1.0) : fallback;
   };
   return QPointF(safe(anchor.x(), 0.5), safe(anchor.y(), 0.5));
 }
@@ -132,8 +131,8 @@ QRectF SourceCrop::cropRect() const {
 }
 
 void SourceCrop::setCropRect(const QRectF &rect) {
-  if (!std::isfinite(rect.x()) || !std::isfinite(rect.y()) ||
-      !std::isfinite(rect.width()) || !std::isfinite(rect.height())) {
+  if (!ArtifactCore::artifactIsFinite(rect.x()) || !ArtifactCore::artifactIsFinite(rect.y()) ||
+      !ArtifactCore::artifactIsFinite(rect.width()) || !ArtifactCore::artifactIsFinite(rect.height())) {
     cropRect_ = QRectF();
     return;
   }
@@ -146,7 +145,7 @@ QPointF SourceCrop::pan() const {
 
 void SourceCrop::setPan(const QPointF &pan) {
   const auto safe = [](double value) {
-    return std::isfinite(value) ? std::clamp(value, -1000000.0, 1000000.0) : 0.0;
+    return ArtifactCore::artifactIsFinite(value) ? ArtifactCore::artifactClamp(value, -1000000.0, 1000000.0) : 0.0;
   };
   pan_ = QPointF(safe(pan.x()), safe(pan.y()));
 }
@@ -156,11 +155,11 @@ double SourceCrop::zoom() const {
 }
 
 void SourceCrop::setZoom(double zoom) {
-  if (!std::isfinite(zoom) || zoom <= 0.0) {
+  if (!ArtifactCore::artifactIsFinite(zoom) || zoom <= 0.0) {
     zoom_ = 1.0;
     return;
   }
-  zoom_ = std::clamp(zoom, 0.001, 1000.0);
+  zoom_ = ArtifactCore::artifactClamp(zoom, 0.001, 1000.0);
 }
 
 double SourceCrop::rotation() const {
@@ -168,8 +167,8 @@ double SourceCrop::rotation() const {
 }
 
 void SourceCrop::setRotation(double rotation) {
-  rotation_ = std::isfinite(rotation)
-      ? std::clamp(rotation, -360000.0, 360000.0)
+  rotation_ = ArtifactCore::artifactIsFinite(rotation)
+      ? ArtifactCore::artifactClamp(rotation, -360000.0, 360000.0)
       : 0.0;
 }
 
@@ -228,7 +227,7 @@ QRectF SourceCrop::effectiveCropRect(const QSizeF &sourceSize) const {
   }
 
   const QPointF normalizedAnchor = clampAnchor(anchor_);
-  const double safeZoom = std::max(zoom_, 1e-6);
+  const double safeZoom = ArtifactCore::artifactMax(zoom_, 1e-6);
   const QPointF baseAnchor = baseRect.topLeft() +
                              QPointF(baseRect.width() * normalizedAnchor.x(),
                                      baseRect.height() * normalizedAnchor.y());
@@ -262,14 +261,14 @@ QTransform SourceCrop::sourceToOutputTransform(const QSizeF &sourceSize,
   double scaleX = outputSize.width() / crop.width();
   double scaleY = outputSize.height() / crop.height();
   if (preserveAspect_) {
-    const double uniformScale = std::min(scaleX, scaleY);
+    const double uniformScale = ArtifactCore::artifactMin(scaleX, scaleY);
     scaleX = uniformScale;
     scaleY = uniformScale;
   }
 
-  const double radians = rotation_ * (std::acos(-1.0) / 180.0);
-  const double c = std::cos(radians);
-  const double s = std::sin(radians);
+  const double radians = rotation_ * (ArtifactCore::artifactAcos(-1.0) / 180.0);
+  const double c = ArtifactCore::artifactCos(radians);
+  const double s = ArtifactCore::artifactSin(radians);
 
   const double m11 = c * scaleX;
   const double m12 = -s * scaleY;
