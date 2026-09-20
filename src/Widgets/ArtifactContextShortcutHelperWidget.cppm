@@ -5,10 +5,11 @@ module;
 #include <QTreeWidgetItem>
 #include <QLabel>
 #include <wobjectimpl.h>
+#include <string>
+#include <unordered_map>
 
 module Artifact.Widgets.ContextShortcutHelperWidget;
 
-import std;
 import Artifact.Widgets.ContextShortcutProvider;
 import Translation.Manager;
 

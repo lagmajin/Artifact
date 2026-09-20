@@ -9,10 +9,12 @@ module;
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <iterator>
+#include <vector>
 
 module Artifact.Widgets.DopeSheetWidget;
 
-import std;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
