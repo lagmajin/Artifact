@@ -10,8 +10,6 @@
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -40,6 +38,7 @@ module Artifact.Color.Settings;
 
 
 
+import Core.ArtifactMath;
 import Color.LUT;
 
 namespace Artifact
@@ -193,7 +192,7 @@ void LUTColorEffect::setLUTByName(const QString& name)
 
 void LUTColorEffect::setIntensity(float value)
 {
-    impl_->intensity_ = std::max(0.0f, std::min(1.0f, value));
+    impl_->intensity_ = ArtifactCore::artifactMax(0.0f, ArtifactCore::artifactMin(1.0f, value));
 }
 
 float LUTColorEffect::intensity() const

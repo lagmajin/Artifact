@@ -8,10 +8,10 @@ module;
 #include <QStandardPaths>
 #include <QUuid>
 
-#include <algorithm>
 
 module Artifact.Color.Palette;
 
+import Core.ArtifactMath;
 import Serialization.JsonAdapter;
 import Serialization.SchemaMigration;
 
@@ -41,10 +41,10 @@ constexpr qsizetype kMaxPaletteEntries = 100000;
 
 FloatColor clampColor(const FloatColor& color)
 {
-    return FloatColor(std::clamp(color.r(), 0.0f, 1.0f),
-                      std::clamp(color.g(), 0.0f, 1.0f),
-                      std::clamp(color.b(), 0.0f, 1.0f),
-                      std::clamp(color.a(), 0.0f, 1.0f));
+    return FloatColor(ArtifactCore::artifactClamp(color.r(), 0.0f, 1.0f),
+                      ArtifactCore::artifactClamp(color.g(), 0.0f, 1.0f),
+                      ArtifactCore::artifactClamp(color.b(), 0.0f, 1.0f),
+                      ArtifactCore::artifactClamp(color.a(), 0.0f, 1.0f));
 }
 
 FloatColor colorFromJsonObject(const QJsonObject& obj, bool* ok = nullptr)
