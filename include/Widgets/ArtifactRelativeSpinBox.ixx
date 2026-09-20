@@ -7,9 +7,8 @@ module;
 #include <QFocusEvent>
 #include <QString>
 #include <QChar>
-#include <algorithm>
-#include <cmath>
 export module Artifact.Widgets.RelativeSpinBox;
+import Core.ArtifactMath;
 
 export namespace Artifact {
 
@@ -93,7 +92,7 @@ protected:
       if (first == '*')
         return value() * delta;
       if (first == '/')
-        return (std::abs(delta) > 1e-9) ? value() / delta : value();
+        return (ArtifactCore::artifactAbs(delta) > 1e-9) ? value() / delta : value();
     }
     return QDoubleSpinBox::valueFromText(text);
   }
@@ -121,7 +120,7 @@ protected:
     if (modifiers & Qt::ControlModifier) scale *= 10.0;
     if (modifiers & Qt::AltModifier) scale *= 0.01;
     const double direction = event->angleDelta().y() > 0 ? 1.0 : -1.0;
-    const int delta = std::max(1, static_cast<int>(std::llround(singleStep() * scale)));
+    const int delta = ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactLlround(singleStep() * scale)));
     setValue(value() + (direction > 0.0 ? delta : -delta));
     event->accept();
   }
