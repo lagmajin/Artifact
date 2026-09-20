@@ -1275,8 +1275,8 @@ namespace {
   QString shadowMapDebugState() const;
   std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
    bool isInitialized() const { return m_initialized; }
-  void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
-  void readbackTextureViewToImageAsync(
+  bool readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
+  bool readbackTextureViewToImageAsync(
       ITextureView* textureView,
       ArtifactIRenderer::ReadbackCallback callback) const;
 
@@ -2508,18 +2508,18 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   return extractRgbaChannelToGray(color, offset);
 }
 
- void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
+ bool ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
-  readbackTextureViewToImageAsync(activeColorView(), std::move(callback));
+  return readbackTextureViewToImageAsync(activeColorView(), std::move(callback));
  }
 
- void ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
+ bool ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
      ITextureView* textureView,
      ReadbackCallback callback) const
  {
   if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
     if (callback) callback(QImage());
-    return;
+    return true;
   }
 
   auto ctx = deviceManager_.immediateContext();
@@ -2532,7 +2532,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
                                     deviceManager_.swapChain(),
                                     srcTexPtr, srcWidth, srcHeight)) {
     if (callback) callback(QImage());
-    return;
+    return true;
   }
 
   const TEXTURE_FORMAT srcFormat = srcTexPtr->GetDesc().Format;
@@ -2645,10 +2645,10 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   }
 
   if (!stagingTex || !fence) {
-    if (!createAsyncResources(stagingTex, fence, "AsyncReadbackOneShot")) {
-      if (callback) callback(QImage());
-      return;
-    }
+    // Keep steady-state playback bounded. When all ring slots are in flight,
+    // let the caller defer this frame instead of allocating another staging
+    // texture and fence on the hot path.
+    return false;
   }
 
   // Unbind render target, then copy
@@ -2765,8 +2765,9 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     releaseSlot();
 
     // Invoke callback on the caller's thread (or thread pool)
-    if (cb) cb(result);
-  });
+      if (cb) cb(result);
+    });
+  return true;
  }
 
  // ---------------------------------------------------------------------------
@@ -3440,11 +3441,11 @@ QImage ArtifactIRenderer::readbackTextureViewToImage(
   }
   return texture->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
  }
- void ArtifactIRenderer::readbackTextureViewToImageAsync(
+ bool ArtifactIRenderer::readbackTextureViewToImageAsync(
      Diligent::ITextureView* textureView,
      ReadbackCallback callback) const
  {
-  impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
+  return impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
  }
  QImage ArtifactIRenderer::readbackChannelToImage(ChannelType channel) const
  {
@@ -3890,8 +3891,8 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
 #endif
 }
 
- void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
-  impl_->readbackToImageAsync(std::move(callback));
+ bool ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
+  return impl_->readbackToImageAsync(std::move(callback));
  }
 
  void ArtifactIRenderer::present()

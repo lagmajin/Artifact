@@ -192,10 +192,11 @@ public:
   QImage readbackDepthToImage() const;
   Diligent::ITextureView *liveDepthShaderResourceView() const;
   ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
-  // Async readback: returns immediately, calls callback when ready
+  // Async readback: returns whether a bounded readback slot was acquired.
+  // A false result is transient backpressure; no callback is issued.
   using ReadbackCallback = std::function<void(const QImage &)>;
-  void readbackToImageAsync(ReadbackCallback callback) const;
-  void readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
+  bool readbackToImageAsync(ReadbackCallback callback) const;
+  bool readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
                                        ReadbackCallback callback) const;
 
   void setClearColor(const FloatColor &color);
