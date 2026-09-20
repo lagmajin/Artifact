@@ -10,11 +10,11 @@
 #include <SwapChain.h>
 #include <Texture.h>
 #include <utility>
+#include <vector>
 
 
 export module Artifact.Render.PrimitiveRenderer3D;
 
-import std;
 import Graphics;
 import FloatRGBA;
 import Color.Float;
