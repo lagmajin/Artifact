@@ -1,6 +1,8 @@
 module;
 
 #include <QString>
+#include <QColor>
+#include <QLineF>
 #include <vector>
 
 export module Artifact.Widgets.LayerEditor.ShapeOverlay;
@@ -28,6 +30,9 @@ struct LayerEditorShapeOverlayState {
 void drawLayerEditorShapeOverlay(
     ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer,
     const LayerEditorShapeOverlayState& state);
+
+void drawLayerEditorColliderOverlay(
+    ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer);
 
 void drawLayerEditorCustomPathOverlay(
     ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer,

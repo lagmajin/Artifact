@@ -46,6 +46,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Component.System;
 import Geometry.Fracture;
+import Physics.Collider2DEdit;
 import Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
@@ -353,6 +354,14 @@ private:
       double positionRange, double anchorRange) const;
   void appendMaskPropertyGroups(
       std::vector<ArtifactCore::PropertyGroup> &groups) const;
+  bool setComponentDescriptorPropertyValue(const QString &propertyPath,
+                                           const QVariant &value);
+  bool setComponentPhysicsPropertyValue(const QString &propertyPath,
+                                        const QVariant &value);
+  bool setComponentLayoutPropertyValue(const QString &propertyPath,
+                                       const QVariant &value);
+  bool setTransformTimeSourcePropertyValue(const QString &propertyPath,
+                                           const QVariant &value);
 
 protected:
   void setSourceSize(const Size_2D &size);
@@ -424,6 +433,13 @@ public:
   const AnimatableTransform2D &transform2D() const;
   AnimatableTransform3D &transform3D();
   const AnimatableTransform3D &transform3D() const;
+  // Frame domain transform keys are stored in (pinned to the composition
+  // frame rate on setComposition/setFrameRate). Author and look up transform
+  // keys only through these accessors; re-deriving the scale from the
+  // composition elsewhere addresses keyed frames at the wrong instant.
+  int64_t keyframeTimeScale() const;
+  ArtifactCore::RationalTime keyframeTimeAtFrame(int64_t frame) const;
+  ArtifactCore::RationalTime currentKeyframeTime() const;
   ArtifactCore::AnimationLayerStackT<float> &animationLayers();
   const ArtifactCore::AnimationLayerStackT<float> &animationLayers() const;
   ArtifactCore::AnimationLayerStackT<float> &animationLayerStack(
@@ -471,6 +487,8 @@ public:
   // Layer-local outline used by the Polygon collision shape (3). Empty means
   // the layer has no outline and collision falls back to auto bounds.
   virtual std::vector<QPointF> collisionOutlineLocalPoints() const;
+  ArtifactCore::Collider2DEditState collision2DEditState() const;
+  bool setCollision2DEditState(const ArtifactCore::Collider2DEditState& state);
   void enableMaterialPhysics(int preset = 0);
   void disableMaterialPhysics();
   void enableRigidBodyPhysics();

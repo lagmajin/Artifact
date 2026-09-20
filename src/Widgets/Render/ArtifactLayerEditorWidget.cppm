@@ -18,7 +18,6 @@ module;
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <tuple>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -39,6 +38,7 @@ import Artifact.Service.Playback;
 import Artifact.Service.ActiveContext;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
+import Core.ArtifactTuple;
 import Undo.UndoManager;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -1010,6 +1010,7 @@ void ArtifactLayerEditorWidget::Impl::renderOneFrame()
        } else if (surfaceMode_ != LayerSurfaceMode::Edit) {
         drawSurfaceOverlay(layer);
        } else if (!layer->isLocked()) {
+        drawLayerEditorColliderOverlay(renderer_.get(), layer);
         if (displayMode_ == DisplayMode::Mask || editMode_ == EditMode::Mask) {
          drawMaskOverlay(layer);
         } else if (isShapeEditingMode(editMode_)) {
@@ -1336,11 +1337,20 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
     bool handled = false;
     if (editable && !impl_->selectedMaskVertices_.empty()) {
       auto selected = impl_->selectedMaskVertices_;
-      std::sort(selected.begin(), selected.end(), std::greater<>());
+      std::sort(selected.begin(), selected.end(),
+                [](const MaskVertexAddress& lhs, const MaskVertexAddress& rhs) {
+                  if (ArtifactCore::artifactGet<0>(lhs) != ArtifactCore::artifactGet<0>(rhs)) {
+                    return ArtifactCore::artifactGet<0>(lhs) > ArtifactCore::artifactGet<0>(rhs);
+                  }
+                  if (ArtifactCore::artifactGet<1>(lhs) != ArtifactCore::artifactGet<1>(rhs)) {
+                    return ArtifactCore::artifactGet<1>(lhs) > ArtifactCore::artifactGet<1>(rhs);
+                  }
+                  return ArtifactCore::artifactGet<2>(lhs) > ArtifactCore::artifactGet<2>(rhs);
+                });
       for (const auto& address : selected) {
-        const int maskIndex = std::get<0>(address);
-        const int pathIndex = std::get<1>(address);
-        const int vertexIndex = std::get<2>(address);
+        const int maskIndex = ArtifactCore::artifactGet<0>(address);
+        const int pathIndex = ArtifactCore::artifactGet<1>(address);
+        const int vertexIndex = ArtifactCore::artifactGet<2>(address);
         if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
         LayerMask mask = layer->mask(maskIndex);
         if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
@@ -1497,9 +1507,9 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
     if (impl_->isDraggingMaskVertex_ && !impl_->proportionalEditingEnabled_ && layer) {
      impl_->selectedMaskVerticesBefore_.clear();
      for (const auto& address : impl_->selectedMaskVertices_) {
-      const int maskIndex = std::get<0>(address);
-      const int pathIndex = std::get<1>(address);
-      const int vertexIndex = std::get<2>(address);
+      const int maskIndex = ArtifactCore::artifactGet<0>(address);
+      const int pathIndex = ArtifactCore::artifactGet<1>(address);
+      const int vertexIndex = ArtifactCore::artifactGet<2>(address);
       if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
       const LayerMask mask = layer->mask(maskIndex);
       if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
@@ -1535,7 +1545,7 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
     const LayerMask mask = layer->mask(segmentMask);
     const MaskPath path = mask.maskPath(segmentPath);
     for (int vertexIndex = 0; vertexIndex < path.vertexCount(); ++vertexIndex) {
-     const auto address = std::make_tuple(segmentMask, segmentPath, vertexIndex);
+     const auto address = ArtifactCore::artifactMakeTuple(segmentMask, segmentPath, vertexIndex);
      if (std::find(impl_->selectedMaskVertices_.begin(),
                    impl_->selectedMaskVertices_.end(), address) ==
          impl_->selectedMaskVertices_.end()) {
@@ -1594,7 +1604,7 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
       const MaskPath path = mask.maskPath(pathIndex);
       for (int vertexIndex = 0; vertexIndex < path.vertexCount(); ++vertexIndex) {
        if (!normalized.contains(transform.map(path.vertex(vertexIndex).position))) continue;
-       const auto address = std::make_tuple(maskIndex, pathIndex, vertexIndex);
+       const auto address = ArtifactCore::artifactMakeTuple(maskIndex, pathIndex, vertexIndex);
        if (std::find(impl_->selectedMaskVertices_.begin(),
                      impl_->selectedMaskVertices_.end(), address) ==
            impl_->selectedMaskVertices_.end()) {
@@ -1731,9 +1741,9 @@ void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
      const QPointF delta = target - impl_->selectedMaskDragOrigin_;
      for (const auto& entry : impl_->selectedMaskVerticesBefore_) {
       const auto& address = entry.first;
-      const int maskIndex = std::get<0>(address);
-      const int pathIndex = std::get<1>(address);
-      const int vertexIndex = std::get<2>(address);
+      const int maskIndex = ArtifactCore::artifactGet<0>(address);
+      const int pathIndex = ArtifactCore::artifactGet<1>(address);
+      const int vertexIndex = ArtifactCore::artifactGet<2>(address);
       if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
       LayerMask mask = layer->mask(maskIndex);
       if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;

@@ -26,10 +26,12 @@ module;
 #include <QDebug>
 #include <cmath>
 #include <QPen>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 module Artifact.Layer.Shape;
 
-import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Mask.LayerMask;
