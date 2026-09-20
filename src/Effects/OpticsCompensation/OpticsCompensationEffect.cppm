@@ -1,3 +1,9 @@
+module;
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 module Artifact.Effect.Rasterizer.OpticsCompensation;
 
 import Artifact.Effect.Abstract;
@@ -5,7 +11,6 @@ import Property.Abstract;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
 import ImageProcessing.Distortion;
-import std;
 
 namespace Artifact {
 
