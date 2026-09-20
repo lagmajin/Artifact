@@ -1125,84 +1125,84 @@ bool hasActiveExpressionTarget(QWidget* root)
   setIcon(menuIcon(QStringLiteral("Studio/menubar_animation.svg")));
   setTearOffEnabled(false);
 
-  impl_->addKeyframeAction = addAction("キーフレームを追加");
+  impl_->addKeyframeAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.add_keyframe"), QStringLiteral("キーフレームを追加")));
   impl_->addKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_add_circle.svg")));
   impl_->addKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationAddKeyframe));
-  auto* transformKeyframesMenu = addMenu("トランスフォームキーを設定");
+  auto* transformKeyframesMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.transform_keyframes"), QStringLiteral("トランスフォームキーを設定")));
   transformKeyframesMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
   impl_->setPositionKeyframesAction = transformKeyframesMenu->addAction("Position");
   impl_->setRotationKeyframesAction = transformKeyframesMenu->addAction("Rotation");
   impl_->setScaleKeyframesAction = transformKeyframesMenu->addAction("Scale");
   transformKeyframesMenu->addSeparator();
   impl_->setAllTransformKeyframesAction = transformKeyframesMenu->addAction("All");
-  auto* nudgeMenu = addMenu("キーフレームをナッジ");
+  auto* nudgeMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.nudge_keyframes"), QStringLiteral("キーフレームをナッジ")));
   impl_->nudgeBackwardAction = nudgeMenu->addAction("Backward");
   impl_->nudgeForwardAction = nudgeMenu->addAction("Forward");
-  auto* layerTimingMenu = addMenu("レイヤー時間操作");
+  auto* layerTimingMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.layer_timing"), QStringLiteral("レイヤー時間操作")));
   impl_->moveLayerStartAction = layerTimingMenu->addAction("Move Layer Start to Current Frame");
   impl_->moveLayerEndAction = layerTimingMenu->addAction("Move Layer End to Current Frame");
   impl_->trimLayerInAction = layerTimingMenu->addAction("Set Layer In Point to Current Frame");
   impl_->trimLayerOutAction = layerTimingMenu->addAction("Set Layer Out Point to Current Frame");
-  impl_->deleteLayerAnimationAction = addAction("アニメーションを削除");
-  impl_->distributeKeyframesAction = addAction("選択キーフレームを均等配置");
-  impl_->removeKeyframeAction = addAction("キーフレームを削除");
+  impl_->deleteLayerAnimationAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.delete_animation"), QStringLiteral("アニメーションを削除")));
+  impl_->distributeKeyframesAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.distribute_selected"), QStringLiteral("選択キーフレームを均等配置")));
+  impl_->removeKeyframeAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.remove_keyframe"), QStringLiteral("キーフレームを削除")));
   impl_->removeKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_remove_circle.svg")));
   impl_->removeKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationRemoveKeyframe));
 
-  impl_->selectAllKeyframesAction = addAction("すべてのキーフレームを選択");
+  impl_->selectAllKeyframesAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.select_all"), QStringLiteral("すべてのキーフレームを選択")));
   impl_->selectAllKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_select_all.svg")));
   impl_->selectAllKeyframesAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationSelectAllKeyframes));
 
-  auto* reverseMenu = addMenu("キーフレーム反転(&R)");
+  auto* reverseMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.reverse_menu"), QStringLiteral("キーフレーム反転(&R)")));
   reverseMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
-  impl_->reverseSelectedKeyframesAction = reverseMenu->addAction("選択キーフレームを反転");
+  impl_->reverseSelectedKeyframesAction = reverseMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.reverse_selected"), QStringLiteral("選択キーフレームを反転")));
   impl_->reverseSelectedKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
-  impl_->reverseAllKeyframesInLayerAction = reverseMenu->addAction("現在のレイヤーのキーフレームをすべて反転");
+  impl_->reverseAllKeyframesInLayerAction = reverseMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.reverse_layer"), QStringLiteral("現在のレイヤーのキーフレームをすべて反転")));
   impl_->reverseAllKeyframesInLayerAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
-  impl_->reverseAllKeyframesInSelectedLayersAction = reverseMenu->addAction("選択レイヤーのキーフレームをすべて反転");
+  impl_->reverseAllKeyframesInSelectedLayersAction = reverseMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.reverse_selected_layers"), QStringLiteral("選択レイヤーのキーフレームをすべて反転")));
   impl_->reverseAllKeyframesInSelectedLayersAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
-  impl_->reverseAllKeyframesInCompositionAction = reverseMenu->addAction("コンポ全体のキーフレームをすべて反転");
+  impl_->reverseAllKeyframesInCompositionAction = reverseMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.reverse_composition"), QStringLiteral("コンポ全体のキーフレームをすべて反転")));
   impl_->reverseAllKeyframesInCompositionAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
 
-  impl_->copyKeyframesAction = addAction("キーフレームをコピー");
+  impl_->copyKeyframesAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.copy_keyframes"), QStringLiteral("キーフレームをコピー")));
   impl_->copyKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_content_copy.svg")));
   impl_->copyKeyframesAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationCopyKeyframes));
 
-  impl_->pasteKeyframesAction = addAction("キーフレームをペースト");
+  impl_->pasteKeyframesAction = addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.paste_keyframes"), QStringLiteral("キーフレームをペースト")));
   impl_->pasteKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_content_paste.svg")));
   impl_->pasteKeyframesAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationPasteKeyframes));
 
   addSeparator();
 
-  impl_->interpolationMenu = addMenu("キーフレーム補間(&I)");
+  impl_->interpolationMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.interpolation_menu"), QStringLiteral("キーフレーム補間(&I)")));
   impl_->interpolationMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_timeline.svg")));
 
-  impl_->linearInterpolationAction = impl_->interpolationMenu->addAction("リニア");
+  impl_->linearInterpolationAction = impl_->interpolationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.interp_linear"), QStringLiteral("リニア")));
   impl_->linearInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_straighten.svg")));
   impl_->linearInterpolationAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationLinearInterpolation));
-  impl_->easeInAction = impl_->interpolationMenu->addAction("イージーイーズイン");
+  impl_->easeInAction = impl_->interpolationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.interp_ease_in"), QStringLiteral("イージーイーズイン")));
   impl_->easeInAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_trending_up.svg")));
   impl_->easeInAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationEaseIn));
-  impl_->easeOutAction = impl_->interpolationMenu->addAction("イージーイーズアウト");
+  impl_->easeOutAction = impl_->interpolationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.interp_ease_out"), QStringLiteral("イージーイーズアウト")));
   impl_->easeOutAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_trending_down.svg")));
   impl_->easeOutAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationEaseOut));
-  impl_->easeInOutAction = impl_->interpolationMenu->addAction("イージーイーズ");
+  impl_->easeInOutAction = impl_->interpolationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.interp_ease_in_out"), QStringLiteral("イージーイーズ")));
   impl_->easeInOutAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
   impl_->easeInOutAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationEaseInOut));
-  impl_->holdInterpolationAction = impl_->interpolationMenu->addAction("停止");
+  impl_->holdInterpolationAction = impl_->interpolationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.interp_hold"), QStringLiteral("停止")));
   impl_->holdInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause.svg")));
   impl_->holdInterpolationAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationHoldInterpolation));
-  impl_->bezierInterpolationAction = impl_->interpolationMenu->addAction("ベジェ");
+  impl_->bezierInterpolationAction = impl_->interpolationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.interp_bezier"), QStringLiteral("ベジェ")));
   impl_->bezierInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_edit.svg")));
   impl_->bezierInterpolationAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationBezierInterpolation));
@@ -1219,99 +1219,99 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   addSeparator();
 
-  impl_->graphEditorMenu = addMenu("カーブエディタ(&G)");
+  impl_->graphEditorMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.graph_editor_menu"), QStringLiteral("カーブエディタ(&G)")));
   impl_->graphEditorMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
 
-  impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("カーブエディタを表示");
+  impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.show_graph_editor"), QStringLiteral("カーブエディタを表示")));
   impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_query_stats.svg")));
   impl_->showGraphEditorAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationShowGraphEditor));
   impl_->graphEditorMenu->addSeparator();
   impl_->graphModeGroup = new QActionGroup(impl_->menu_);
   impl_->graphModeGroup->setExclusive(true);
-  impl_->toggleValueGraphAction = impl_->graphEditorMenu->addAction("値グラフを表示");
+  impl_->toggleValueGraphAction = impl_->graphEditorMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.show_value_graph"), QStringLiteral("値グラフを表示")));
   impl_->toggleValueGraphAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
   impl_->toggleValueGraphAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationToggleValueGraph));
   impl_->toggleValueGraphAction->setCheckable(true);
   impl_->graphModeGroup->addAction(impl_->toggleValueGraphAction);
-  impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction("速度グラフを表示");
+  impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.show_velocity_graph"), QStringLiteral("速度グラフを表示")));
   impl_->toggleVelocityGraphAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_speed.svg")));
   impl_->toggleVelocityGraphAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationToggleVelocityGraph));
   impl_->toggleVelocityGraphAction->setCheckable(true);
   impl_->graphModeGroup->addAction(impl_->toggleVelocityGraphAction);
-  impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
+  impl_->easingLabAction = impl_->graphEditorMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.open_easing_lab"), QStringLiteral("EasingLab を開く")));
   impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_tune.svg")));
-  impl_->keyPatternAction = impl_->graphEditorMenu->addAction("Key Pattern Dialog を開く");
+  impl_->keyPatternAction = impl_->graphEditorMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.open_key_pattern"), QStringLiteral("Key Pattern Dialog を開く")));
   impl_->keyPatternAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
 
-  impl_->navigationMenu = addMenu("ナビゲーション(&N)");
+  impl_->navigationMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.navigation_menu"), QStringLiteral("ナビゲーション(&N)")));
   impl_->navigationMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_skip_next.svg")));
 
-  impl_->goToNextKeyframeAction = impl_->navigationMenu->addAction("次のキーフレームに移動");
+  impl_->goToNextKeyframeAction = impl_->navigationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.next_keyframe"), QStringLiteral("次のキーフレームに移動")));
   impl_->goToNextKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_skip_next.svg")));
   impl_->goToNextKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToNextKeyframe));
-  impl_->goToPreviousKeyframeAction = impl_->navigationMenu->addAction("前のキーフレームに移動");
+  impl_->goToPreviousKeyframeAction = impl_->navigationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.prev_keyframe"), QStringLiteral("前のキーフレームに移動")));
   impl_->goToPreviousKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_skip_previous.svg")));
   impl_->goToPreviousKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToPreviousKeyframe));
 
   impl_->navigationMenu->addSeparator();
 
-  impl_->goToFirstKeyframeAction = impl_->navigationMenu->addAction("最初のキーフレームに移動");
+  impl_->goToFirstKeyframeAction = impl_->navigationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.first_keyframe"), QStringLiteral("最初のキーフレームに移動")));
   impl_->goToFirstKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_fast_rewind.svg")));
   impl_->goToFirstKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToFirstKeyframe));
-  impl_->goToLastKeyframeAction = impl_->navigationMenu->addAction("最後のキーフレームに移動");
+  impl_->goToLastKeyframeAction = impl_->navigationMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.last_keyframe"), QStringLiteral("最後のキーフレームに移動")));
   impl_->goToLastKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_fast_forward.svg")));
   impl_->goToLastKeyframeAction->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToLastKeyframe));
 
   addSeparator();
 
-  impl_->timeRemapMenu = addMenu("タイムリマップ(&T)");
+  impl_->timeRemapMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.time_remap_menu"), QStringLiteral("タイムリマップ(&T)")));
   impl_->timeRemapMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_schedule.svg")));
 
-  impl_->enableTimeRemapAction = impl_->timeRemapMenu->addAction("タイムリマップ可能にする");
+  impl_->enableTimeRemapAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.enable_time_remap"), QStringLiteral("タイムリマップ可能にする")));
   impl_->enableTimeRemapAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_schedule.svg")));
   impl_->enableTimeRemapAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
-  impl_->freezeFrameAction = impl_->timeRemapMenu->addAction("フレームをフリーズ");
+  impl_->freezeFrameAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.freeze_frame"), QStringLiteral("フレームをフリーズ")));
   impl_->freezeFrameAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
   impl_->freezeFrameAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_J));
-  impl_->timeReverseAction = impl_->timeRemapMenu->addAction("時間反転レイヤー");
+  impl_->timeReverseAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.reverse_time"), QStringLiteral("時間反転レイヤー")));
   impl_->timeReverseAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
   impl_->timeRemapMenu->addSeparator();
-  impl_->slowHalfAction = impl_->timeRemapMenu->addAction("スローモーション 50%（レイヤー尺を延長）");
+  impl_->slowHalfAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.slow_50"), QStringLiteral("スローモーション 50%（レイヤー尺を延長）")));
   impl_->slowHalfAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_schedule.svg")));
-  impl_->slowQuarterAction = impl_->timeRemapMenu->addAction("スローモーション 25%（レイヤー尺を延長）");
+  impl_->slowQuarterAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.slow_25"), QStringLiteral("スローモーション 25%（レイヤー尺を延長）")));
   impl_->slowQuarterAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_schedule.svg")));
   impl_->timeRemapMenu->addSeparator();
-  impl_->stopMotion12FpsAction = impl_->timeRemapMenu->addAction("コマ撮り 12 fps");
+  impl_->stopMotion12FpsAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.stop_motion_12"), QStringLiteral("コマ撮り 12 fps")));
   impl_->stopMotion12FpsAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
-  impl_->stopMotion8FpsAction = impl_->timeRemapMenu->addAction("コマ撮り 8 fps");
+  impl_->stopMotion8FpsAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.stop_motion_8"), QStringLiteral("コマ撮り 8 fps")));
   impl_->stopMotion8FpsAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
-  impl_->stopMotion4FpsAction = impl_->timeRemapMenu->addAction("コマ撮り 4 fps");
+  impl_->stopMotion4FpsAction = impl_->timeRemapMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.stop_motion_4"), QStringLiteral("コマ撮り 4 fps")));
   impl_->stopMotion4FpsAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause_circle.svg")));
 
-  impl_->expressionMenu = addMenu("エクスプレッション(&E)");
+  impl_->expressionMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.expression_menu"), QStringLiteral("エクスプレッション(&E)")));
   impl_->expressionMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_functions.svg")));
 
-  impl_->addExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを追加...");
+  impl_->addExpressionAction = impl_->expressionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.expr_add"), QStringLiteral("エクスプレッションを追加...")));
   impl_->addExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_add.svg")));
   impl_->addExpressionAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Equal));
-  impl_->editExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを編集...");
+  impl_->editExpressionAction = impl_->expressionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.expr_edit"), QStringLiteral("エクスプレッションを編集...")));
   impl_->editExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_edit.svg")));
   impl_->editExpressionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal));
-  impl_->removeExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを削除");
+  impl_->removeExpressionAction = impl_->expressionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.expr_remove"), QStringLiteral("エクスプレッションを削除")));
   impl_->removeExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_delete.svg")));
 
   impl_->expressionMenu->addSeparator();
 
-  impl_->convertToKeyframesAction = impl_->expressionMenu->addAction("エクスプレッションをキーフレームに変換...");
+  impl_->convertToKeyframesAction = impl_->expressionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.expr_to_keyframes"), QStringLiteral("エクスプレッションをキーフレームに変換...")));
   impl_->convertToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
-  impl_->bakeLiveToKeyframesAction = impl_->expressionMenu->addAction("現在PropertyをキーフレームにBake...");
+  impl_->bakeLiveToKeyframesAction = impl_->expressionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.bake_live"), QStringLiteral("現在PropertyをキーフレームにBake...")));
   impl_->bakeLiveToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
   impl_->audioReactiveMenu = impl_->expressionMenu->addMenu(
       QStringLiteral("Audio Reactive"));
@@ -1341,10 +1341,10 @@ bool hasActiveExpressionTarget(QWidget* root)
           QStringLiteral("Cancel Audio Reactive recording"));
   addSeparator();
 
-  impl_->presetMenu = addMenu("アニメーションプリセット(&P)");
+  impl_->presetMenu = addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.preset_menu"), QStringLiteral("アニメーションプリセット(&P)")));
   impl_->presetMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_bookmarks.svg")));
 
-  impl_->presetLibraryMenu = impl_->presetMenu->addMenu("プリセットライブラリ");
+  impl_->presetLibraryMenu = impl_->presetMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.preset_library"), QStringLiteral("プリセットライブラリ")));
   impl_->presetLibraryMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_bookmarks.svg")));
   const auto addPresetLibraryAction = [this](const QString& label,
                                              const ArtifactCore::KeyframePatternPreset preset) {
@@ -1365,9 +1365,9 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->presetMenu->addSeparator();
 
-  impl_->saveAnimationPresetAction = impl_->presetMenu->addAction("アニメーションプリセットを保存...");
+  impl_->saveAnimationPresetAction = impl_->presetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.preset_save"), QStringLiteral("アニメーションプリセットを保存...")));
   impl_->saveAnimationPresetAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_save.svg")));
-  impl_->loadAnimationPresetAction = impl_->presetMenu->addAction("アニメーションプリセットを適用...");
+  impl_->loadAnimationPresetAction = impl_->presetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.preset_apply"), QStringLiteral("アニメーションプリセットを適用...")));
   impl_->loadAnimationPresetAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_folder_open.svg")));
   impl_->presetMenu->addSeparator();
 
