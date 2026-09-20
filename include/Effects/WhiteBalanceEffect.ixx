@@ -3,10 +3,13 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QVector>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <vector>
 
 export module Artifact.Effect.WhiteBalance;
 
-import std;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;

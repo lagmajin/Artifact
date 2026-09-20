@@ -5,11 +5,11 @@
 #include <QVector3D>
 #include <QMatrix4x4>
 #include <wobjectdefs.h>
+#include <memory>
 
 export module Artifact.Effect.MotionBlur;
 
 
-import std;
 
 
 
