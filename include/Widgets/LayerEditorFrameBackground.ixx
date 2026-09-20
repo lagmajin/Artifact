@@ -1,5 +1,6 @@
 module;
 
+#include <compare>
 #include <QImage>
 #include <QSize>
 
