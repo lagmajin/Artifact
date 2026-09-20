@@ -129,6 +129,7 @@ module Artifact.Widgets.CompositionRenderController;
 
 import Memory.SharedPtr;
 import Core.ArtifactArray;
+import Core.ArtifactTuple;
 import Artifact.Layer.Construction;
 
 import Artifact.Render.IRenderer;
@@ -431,8 +432,15 @@ ArtifactCore::RationalTime gizmoTransformTime(
       if (candidate > 0.0) fps = candidate;
     }
   }
-  return ArtifactCore::RationalTime(
-      frame, ArtifactCore::FrameRate::storageScaleForFps(fps, 24));
+  // Transform keys live in the layer's own frame domain (pinned to the
+  // composition frame rate when the layer joins the composition). Deriving
+  // the scale from the composition fps again would let a key that exists on
+  // the current frame fall outside the lookup whenever the two roundings
+  // differ, so a drag on a keyed frame would silently rewrite the initial
+  // value instead of the key.
+  return layer ? layer->keyframeTimeAtFrame(frame)
+               : ArtifactCore::RationalTime(
+                     frame, ArtifactCore::FrameRate::storageScaleForFps(fps, 24));
 }
 
 void captureGizmoKeyState(const ArtifactAbstractLayerPtr &layer, int64_t frame,
@@ -14030,6 +14038,17 @@ public:
 
   QPointer<QWidget> hostWidget_;
 
+  /// True while the user is actively interacting with the viewport.
+  ///
+  /// Drives continuous redraw and gates Detached Task execution.  Keep the
+  /// single definition so both callers cannot drift apart.
+  bool interactionBusy() const {
+    return viewportInteracting_ || isRubberBandSelecting_ ||
+           isShapeVertexMarqueeSelecting_ || dropGhostVisible_ ||
+           (gizmo_ && gizmo_->isDragging()) ||
+           (textGizmo_ && textGizmo_->isDragging());
+  }
+
   bool viewportInteracting_ = false;
 
   // POD samples only on the input/render thread. No formatting or file I/O.
@@ -24272,6 +24291,10 @@ bool CompositionRenderController::isModalGizmoInteractionActive() const {
   return impl_ && impl_->gizmoModalTransformActive_;
 }
 
+bool CompositionRenderController::isInteractionBusy() const {
+  return impl_ && impl_->interactionBusy();
+}
+
 
 
 namespace {
@@ -25311,7 +25334,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
               impl_->dragStartVertexLocal_ = vertex.position;
 
-              const auto selectedVertex = std::make_tuple(m, p, v);
+              const auto selectedVertex = ArtifactCore::artifactMakeTuple(m, p, v);
               if (!event->modifiers().testFlag(Qt::ShiftModifier)) {
                 impl_->selectedMaskVertices_.clear();
               }
@@ -28057,7 +28080,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                     vertexIndex == impl_->draggingVertexIndex_) {
                   continue;
                 }
-                const auto selected = std::make_tuple(maskIndex, pathIndex,
+                const auto selected = ArtifactCore::artifactMakeTuple(maskIndex, pathIndex,
                                                        vertexIndex);
                 if (std::find(impl_->selectedMaskVertices_.begin(),
                               impl_->selectedMaskVertices_.end(),
@@ -28133,8 +28156,11 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
           impl_->penMaskPreviewValid_ = true;
 
           const QPointF delta = constrainedLocalPos - previousPosition;
-          for (const auto &[maskIndex, pathIndex, vertexIndex] :
+          for (const auto &selectedAddress :
                impl_->selectedMaskVertices_) {
+            const int maskIndex = ArtifactCore::artifactGet<0>(selectedAddress);
+            const int pathIndex = ArtifactCore::artifactGet<1>(selectedAddress);
+            const int vertexIndex = ArtifactCore::artifactGet<2>(selectedAddress);
             if (maskIndex == impl_->draggingMaskIndex_ &&
                 pathIndex == impl_->draggingPathIndex_ &&
                 vertexIndex == impl_->draggingVertexIndex_) {
@@ -28170,7 +28196,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                   if (maskIndex == impl_->draggingMaskIndex_ &&
                       pathIndex == impl_->draggingPathIndex_ &&
                       vertexIndex == impl_->draggingVertexIndex_) continue;
-                  const auto selected = std::make_tuple(maskIndex, pathIndex, vertexIndex);
+                  const auto selected = ArtifactCore::artifactMakeTuple(maskIndex, pathIndex, vertexIndex);
                   if (std::find(impl_->selectedMaskVertices_.begin(),
                                 impl_->selectedMaskVertices_.end(), selected) !=
                       impl_->selectedMaskVertices_.end()) continue;
@@ -32745,18 +32771,21 @@ bool CompositionRenderController::deleteSelectedMaskVertices() {
   auto selected = impl_->selectedMaskVertices_;
   std::sort(selected.begin(), selected.end(),
             [](const auto &lhs, const auto &rhs) {
-              if (std::get<0>(lhs) != std::get<0>(rhs)) {
-                return std::get<0>(lhs) > std::get<0>(rhs);
+              if (ArtifactCore::artifactGet<0>(lhs) != ArtifactCore::artifactGet<0>(rhs)) {
+                return ArtifactCore::artifactGet<0>(lhs) > ArtifactCore::artifactGet<0>(rhs);
               }
-              if (std::get<1>(lhs) != std::get<1>(rhs)) {
-                return std::get<1>(lhs) > std::get<1>(rhs);
+              if (ArtifactCore::artifactGet<1>(lhs) != ArtifactCore::artifactGet<1>(rhs)) {
+                return ArtifactCore::artifactGet<1>(lhs) > ArtifactCore::artifactGet<1>(rhs);
               }
-              return std::get<2>(lhs) > std::get<2>(rhs);
+              return ArtifactCore::artifactGet<2>(lhs) > ArtifactCore::artifactGet<2>(rhs);
             });
 
   bool changed = false;
   impl_->beginMaskEditTransaction(layer);
-  for (const auto &[maskIndex, pathIndex, vertexIndex] : selected) {
+  for (const auto &selectedAddress : selected) {
+    const int maskIndex = ArtifactCore::artifactGet<0>(selectedAddress);
+    const int pathIndex = ArtifactCore::artifactGet<1>(selectedAddress);
+    const int vertexIndex = ArtifactCore::artifactGet<2>(selectedAddress);
     if (maskIndex < 0 || maskIndex >= layer->maskCount()) {
       continue;
     }
@@ -32812,8 +32841,10 @@ bool CompositionRenderController::rotateSelectedMaskVertices(
 
   impl_->beginMaskEditTransaction(layer);
 
-  for (const auto& [maskIndex, pathIndex, vertexIndex] :
-       impl_->selectedMaskVertices_) {
+  for (const auto& selectedVertex : impl_->selectedMaskVertices_) {
+    const auto maskIndex = ArtifactCore::artifactGet<0>(selectedVertex);
+    const auto pathIndex = ArtifactCore::artifactGet<1>(selectedVertex);
+    const auto vertexIndex = ArtifactCore::artifactGet<2>(selectedVertex);
     if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
     LayerMask mask = layer->mask(maskIndex);
     if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
@@ -32875,8 +32906,10 @@ bool CompositionRenderController::scaleSelectedMaskVertices(
 
   impl_->beginMaskEditTransaction(layer);
 
-  for (const auto& [maskIndex, pathIndex, vertexIndex] :
-       impl_->selectedMaskVertices_) {
+  for (const auto& selectedVertex : impl_->selectedMaskVertices_) {
+    const auto maskIndex = ArtifactCore::artifactGet<0>(selectedVertex);
+    const auto pathIndex = ArtifactCore::artifactGet<1>(selectedVertex);
+    const auto vertexIndex = ArtifactCore::artifactGet<2>(selectedVertex);
     if (maskIndex < 0 || maskIndex >= layer->maskCount()) continue;
     LayerMask mask = layer->mask(maskIndex);
     if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) continue;
@@ -37212,14 +37245,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       selectedLayerId_};
 
-  const bool forceContinuousRedraw =
-
-      viewportInteracting_ || isRubberBandSelecting_ ||
-      isShapeVertexMarqueeSelecting_ || dropGhostVisible_ ||
-
-      (gizmo_ && gizmo_->isDragging()) ||
-
-      (textGizmo_ && textGizmo_->isDragging());
+  const bool forceContinuousRedraw = interactionBusy();
 
   if (!forceContinuousRedraw && currentKey == lastRenderKeyState_) {
 
@@ -40130,7 +40156,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                                 int vertexIndex) {
             return std::find(selectedMaskVertices_.begin(),
                              selectedMaskVertices_.end(),
-                             std::make_tuple(maskIndex, pathIndex, vertexIndex)) !=
+                             ArtifactCore::artifactMakeTuple(maskIndex, pathIndex, vertexIndex)) !=
                    selectedMaskVertices_.end();
           };
 
@@ -40138,7 +40164,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             return std::any_of(selectedMaskVertices_.begin(),
                                selectedMaskVertices_.end(),
                                [maskIndex](const auto& selection) {
-                                 return std::get<0>(selection) == maskIndex;
+                                 return ArtifactCore::artifactGet<0>(selection) == maskIndex;
                                });
           };
 
@@ -41587,7 +41613,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         } else if (previewRequest.pipelineEnabled && ramPreviewReadbackSRV) {
 
-          renderer_->readbackTextureViewToImageAsync(
+          const bool accepted = renderer_->readbackTextureViewToImageAsync(
 
               ramPreviewReadbackSRV,
 
@@ -41599,9 +41625,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               });
 
+          if (!accepted) {
+            playback->deferRamPreviewBuildFrame(
+                previewRequest.framePos,
+                QStringLiteral("readback-ring-busy"));
+          }
+
         } else {
 
-          renderer_->readbackToImageAsync(
+          const bool accepted = renderer_->readbackToImageAsync(
 
               [weakPlayback, previewRequest](const QImage& capturedFrame) {
 
@@ -41610,6 +41642,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                                  capturedFrame);
 
               });
+
+          if (!accepted) {
+            playback->deferRamPreviewBuildFrame(
+                previewRequest.framePos,
+                QStringLiteral("readback-ring-busy"));
+          }
 
         }
 
@@ -43598,7 +43636,7 @@ void CompositionRenderController::Impl::queueOnionSkinCapture(
   }
 
   QPointer<CompositionRenderController> ownerGuard(owner);
-  renderer_->readbackToImageAsync(
+  const bool accepted = renderer_->readbackToImageAsync(
       [this, ownerGuard, compositionId, frameNumber,
        captureGeneration](const QImage &capturedFrame) {
         if (!ownerGuard) {
@@ -43625,6 +43663,12 @@ void CompositionRenderController::Impl::queueOnionSkinCapture(
             },
             Qt::QueuedConnection);
       });
+  if (!accepted) {
+    QMutexLocker locker(&onionSkinMutex_);
+    if (captureGeneration == onionSkinGeneration_) {
+      onionSkinCapturePending_ = false;
+    }
+  }
 }
 
 void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration() {
