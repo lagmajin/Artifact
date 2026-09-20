@@ -15,6 +15,18 @@ module;
 #include <QRect>
 #include <QMouseEvent>
 #include <QSettings>
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
+#include <QStandardPaths>
+#include <QStorageInfo>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 
@@ -464,6 +476,169 @@ private:
     QTimer* timer_ = nullptr;
     QString titleText_ = QStringLiteral("Performance Profiler");
     QString namePrefixFilter_;
+};
+
+/**
+ * @brief Read-only cache and memory overview for the Render workspace.
+ *
+ * This panel deliberately reports only measurements available at this
+ * boundary. Backend-specific VRAM and decoder counters remain marked as
+ * unavailable until their owners expose a common snapshot API.
+ */
+export class ArtifactCacheMemoryMapWidget : public QWidget {
+public:
+    explicit ArtifactCacheMemoryMapWidget(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumSize(720, 520);
+        timer_ = new QTimer(this);
+        connect(timer_, &QTimer::timeout, this, [this]() {
+            sampleDiskCache();
+            update();
+        });
+        sampleDiskCache();
+        timer_->start(1000);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        const ThemeColors colors = makeThemeColors();
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.fillRect(rect(), colors.bg0);
+
+        const QRect panel = rect().adjusted(14, 14, -14, -14);
+        p.setPen(colors.border);
+        p.setBrush(colors.bg1);
+        p.drawRoundedRect(panel, 14, 14);
+
+        QFont title = font();
+        title.setPointSize(16);
+        title.setWeight(QFont::DemiBold);
+        QFont body = font();
+        body.setPointSize(10);
+        QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        mono.setPointSize(9);
+
+        p.setFont(title);
+        p.setPen(colors.text);
+        p.drawText(panel.left() + 22, panel.top() + 34,
+                   QStringLiteral("Cache / Memory Map"));
+        p.setFont(body);
+        p.setPen(colors.textMuted);
+        p.drawText(panel.left() + 22, panel.top() + 56,
+                   QStringLiteral("Render workspace telemetry"));
+
+        const int left = panel.left() + 22;
+        const int labelW = 148;
+        const int chartLeft = left + labelW;
+        const int chartRight = panel.right() - 22;
+        const int rowTop = panel.top() + 86;
+        const int rowH = 58;
+        const int rowGap = 8;
+
+        struct Row { QString name; QString value; QColor color; double fraction; };
+        const double diskFraction = diskCapacityBytes_ > 0
+            ? std::clamp(static_cast<double>(diskCacheBytes_) /
+                         static_cast<double>(diskCapacityBytes_), 0.0, 1.0)
+            : 0.0;
+        const auto rows = std::array<Row, 5>{
+            Row{QStringLiteral("Process RAM"), formatBytes(processMemoryBytes()), QColor(58, 160, 255), 0.0},
+            Row{QStringLiteral("VRAM"), QStringLiteral("未接続"), QColor(40, 210, 210), 0.0,},
+            Row{QStringLiteral("Decode Cache"), QStringLiteral("未接続"), QColor(255, 150, 55), 0.0},
+            Row{QStringLiteral("Disk Cache"), formatBytes(diskCacheBytes_), QColor(115, 105, 255), diskFraction},
+            Row{QStringLiteral("Generated Frames"), QStringLiteral("未接続"), QColor(245, 85, 95), 0.0},
+        };
+
+        for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+            const int y = rowTop + i * (rowH + rowGap);
+            const QRect labelRect(left, y, labelW - 12, rowH);
+            const QRect chartRect(chartLeft, y, chartRight - chartLeft, rowH);
+            p.setPen(colors.border);
+            p.setBrush(colors.bg2);
+            p.drawRoundedRect(labelRect, 8, 8);
+            p.setPen(rows[i].color);
+            p.setBrush(rows[i].color);
+            p.drawRoundedRect(QRect(labelRect.left(), labelRect.top(), 5, labelRect.height()), 3, 3);
+            p.setPen(colors.text);
+            p.setFont(body);
+            p.drawText(labelRect.adjusted(16, 9, -6, -22), Qt::AlignLeft | Qt::AlignVCenter, rows[i].name);
+            p.setPen(colors.textMuted);
+            p.setFont(mono);
+            p.drawText(labelRect.adjusted(16, 25, -6, -6), Qt::AlignLeft | Qt::AlignVCenter, rows[i].value);
+
+            p.setPen(colors.border);
+            p.setBrush(QColor(9, 21, 34));
+            p.drawRoundedRect(chartRect, 4, 4);
+            if (rows[i].fraction > 0.0) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(rows[i].color);
+                p.drawRoundedRect(QRect(chartRect.left(), chartRect.top(),
+                                        std::max(2, static_cast<int>(chartRect.width() * rows[i].fraction)),
+                                        chartRect.height()), 4, 4);
+            } else {
+                p.setPen(colors.textMuted);
+                p.setFont(body);
+                p.drawText(chartRect, Qt::AlignCenter, QStringLiteral("Telemetry not connected"));
+            }
+        }
+
+        const int summaryY = rowTop + static_cast<int>(rows.size()) * (rowH + rowGap) + 18;
+        const QRect summary(left, summaryY, chartRight - left, panel.bottom() - summaryY - 18);
+        p.setPen(colors.border);
+        p.setBrush(colors.bg2);
+        p.drawRoundedRect(summary, 10, 10);
+        p.setFont(body);
+        p.setPen(colors.textMuted);
+        p.drawText(summary.adjusted(16, 12, -16, -12),
+                   Qt::AlignLeft | Qt::AlignTop,
+                   QStringLiteral("Disk cache path: %1\nUpdated every second. Backend VRAM, decoder and frame counters require owner APIs.")
+                       .arg(diskCachePath_));
+    }
+
+private:
+    static QString formatBytes(quint64 bytes)
+    {
+        if (bytes == 0) return QStringLiteral("0 B");
+        const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+        double value = static_cast<double>(bytes);
+        int unit = 0;
+        while (value >= 1024.0 && unit < 4) {
+            value /= 1024.0;
+            ++unit;
+        }
+        return QStringLiteral("%1 %2").arg(value, 0, 'f', unit == 0 ? 0 : 1).arg(units[unit]);
+    }
+
+    quint64 processMemoryBytes() const
+    {
+#ifdef Q_OS_WIN
+        PROCESS_MEMORY_COUNTERS counters{};
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+            return static_cast<quint64>(counters.WorkingSetSize);
+#endif
+        return 0;
+    }
+
+    void sampleDiskCache()
+    {
+        diskCachePath_ = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                         + QStringLiteral("/PreviewDiskCache");
+        diskCacheBytes_ = 0;
+        QDirIterator iterator(diskCachePath_, QDir::Files, QDirIterator::Subdirectories);
+        while (iterator.hasNext()) {
+            iterator.next();
+            diskCacheBytes_ += static_cast<quint64>(iterator.fileInfo().size());
+        }
+        const QStorageInfo storage(diskCachePath_);
+        diskCapacityBytes_ = storage.isValid() ? static_cast<quint64>(storage.bytesTotal()) : 0;
+    }
+
+    QTimer* timer_ = nullptr;
+    QString diskCachePath_;
+    quint64 diskCacheBytes_ = 0;
+    quint64 diskCapacityBytes_ = 0;
 };
 
 W_OBJECT_IMPL(ArtifactPerformanceProfilerWidget)
