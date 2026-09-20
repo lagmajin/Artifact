@@ -12,6 +12,7 @@ module;
 
 
 #include <QApplication>
+#include <QCoreApplication>
 
 #include <QByteArray>
 
@@ -12109,6 +12110,12 @@ public:
 
       int& layerToFloatConvertCount) {
 
+    // The preview pass may leave its offscreen depth view active. The final
+    // viewport (including the 3D ground grid) renders to the swap-chain RTV,
+    // whose dimensions can differ by one pixel after resize/DPI rounding.
+    // Restore the matching swap-chain DSV before any viewport draw is queued.
+    renderer_->setOverrideDSV(nullptr);
+
     renderer_->setViewportRect(origViewW, origViewH);
 
     renderer_->setUseExternalMatrices(false);
@@ -12345,8 +12352,6 @@ public:
     renderer_->setPan(origPanX, origPanY);
 
     renderer_->setClearColor(origClearColor);
-
-    renderer_->setOverrideDSV(nullptr);
 
     return finalPresentSRV;
 
@@ -14043,7 +14048,14 @@ public:
     std::size_t eventCount = 0;
     quint64 eventsDropped = 0;
   };
-  const bool interactionPerfEnabled_ = qEnvironmentVariableIntValue("ARTIFACT_VIEWPORT_PERF") == 1;
+  // Opt in by placing this empty marker next to Artifact.exe. Keeping the
+  // switch beside the executable makes diagnostics available from Explorer,
+  // IDE, and packaged launches without changing their environment.
+  const bool interactionPerfEnabled_ = []() {
+    const QString markerPath = QDir(QCoreApplication::applicationDirPath())
+                                   .filePath(QStringLiteral("ArtifactViewportPerf.enable"));
+    return QFileInfo::exists(markerPath);
+  }();
   InteractionPerfBatch interactionPerf_;
   QElapsedTimer interactionPerfTimer_;
   QFuture<void> interactionPerfWrite_;
@@ -43083,6 +43095,18 @@ void CompositionRenderController::Impl::drawViewportChannelOverlayImage(
   }
 
    if (viewportChannelDisplaySRV_) {
+    // RGB/Alpha component modes are already presented by
+    // finalizeGpuRenderToViewport(). Re-drawing the same display-ready
+    // surface here applies the viewport presentation path twice, making the
+    // composition appear inset or recursively nested.
+    const bool componentAlreadyPresented =
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
+    if (componentAlreadyPresented) {
+      return;
+    }
     if (presentationLayout_ == CompositionViewportPresentationLayout::Quad &&
         hostWidth_ > 0.0f && hostHeight_ > 0.0f) {
       // Mirror finalizeGpuRenderToViewport's Quad tiling so the isolated
@@ -43195,9 +43219,36 @@ void CompositionRenderController::Impl::drawViewportChannelOverlayImage(
     return;
   }
 
+  // R/G/B/Alpha read back the presented swap-chain image, which is already
+  // viewport-sized. Drawing that image in composition space applies the
+  // current zoom/pan again and produces a nested copy of the viewport.
+  const bool viewportSizedChannel =
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
+  if (viewportSizedChannel) {
+    const float savedZoom = renderer_->getZoom();
+    float savedPanX = 0.0f;
+    float savedPanY = 0.0f;
+    renderer_->getPan(savedPanX, savedPanY);
+    const float viewportWidth = hostWidth_ > 0.0f ? hostWidth_ : canvasWidth;
+    const float viewportHeight = hostHeight_ > 0.0f ? hostHeight_ : canvasHeight;
+    renderer_->setViewportRect(viewportWidth, viewportHeight);
+    renderer_->setCanvasSize(viewportWidth, viewportHeight);
+    renderer_->setZoom(1.0f);
+    renderer_->setPan(0.0f, 0.0f);
+    renderer_->drawSprite(0.0f, 0.0f, viewportWidth, viewportHeight,
+                          channelImage, 1.0f);
+    renderer_->flush();
+    renderer_->setCanvasSize(canvasWidth, canvasHeight);
+    renderer_->setZoom(savedZoom);
+    renderer_->setPan(savedPanX, savedPanY);
+    return;
+  }
+
   // Auxiliary AOVs that do not yet have a display-ready GPU surface (such as
-  // Depth) are composition-sized images.  Keep them in composition space so
-  // the viewport background and current zoom/pan remain untouched.
+  // Depth) are composition-sized images. Keep those in composition space.
   renderer_->drawSprite(0.0f, 0.0f, canvasWidth, canvasHeight,
                         channelImage, 1.0f);
   renderer_->flush();

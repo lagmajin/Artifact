@@ -2,6 +2,7 @@ module;
 
 #include <QBoxLayout>
 #include <QApplication>
+#include <QCoreApplication>
 #include <QBrush>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -168,7 +169,7 @@ void styleTimelineToolButton(QToolButton* button)
   button->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
   button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   QFont font = button->font();
-  font.setPixelSize(11);
+  font.setPixelSize(12);
   if (Artifact::Accessibility::preferHighContrastHints()) {
     font.setBold(true);
   }
@@ -6151,8 +6152,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   globalSwitches->setFixedWidth(globalSwitches->sizeHint().width());
 
   auto searchBarLayout = new QHBoxLayout();
-  searchBarLayout->setSpacing(8);
-  searchBarLayout->setContentsMargins(12, 0, 12, 0);
+  searchBarLayout->setSpacing(6);
+  searchBarLayout->setContentsMargins(16, 0, 16, 0);
   searchBarLayout->addWidget(leftHeader);
   searchBarLayout->addWidget(searchBar);
   searchBarLayout->addWidget(displayModeCombo);
@@ -6262,6 +6263,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   headerWidget->setObjectName(QStringLiteral("timelineHeaderWidget"));
   headerWidget->setLayout(searchBarLayout);
   headerWidget->setFixedHeight(Accessibility::scaledSize(kTimelineHeaderRowHeight));
+  {
+    QPalette pal = headerWidget->palette();
+    pal.setColor(QPalette::Window, QColor(35, 39, 43));
+    headerWidget->setPalette(pal);
+    headerWidget->setAutoFillBackground(true);
+  }
 
   auto *leftHeaderPriorityFilter = new LeftHeaderPriorityFilter(
       headerWidget, leftHeader, searchBar, globalSwitches, headerWidget);
@@ -6669,16 +6676,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     button->setFixedSize(Accessibility::scaledSize(32),
                          Accessibility::scaledSize(28));
     button->setToolTip(toolTip);
+    button->setAccessibleName(toolTip);
+    button->setAccessibleDescription(
+        QStringLiteral("Timeline playback control: %1").arg(toolTip));
     button->setCallback(std::move(callback));
     searchBarLayout->addWidget(button);
   };
   addTransportButton(QStringLiteral("playback_start"),
                      QStringLiteral("Go to composition start"), []() {
-                       auto *service = ArtifactProjectService::instance();
-                       if (auto composition = service
-                               ? service->currentComposition().lock()
-                               : ArtifactCompositionPtr{}) {
-                         composition->goToStartFrame();
+                       if (auto *playback = ArtifactPlaybackService::instance()) {
+                         playback->goToStartFrame();
                        }
                      });
   addTransportButton(QStringLiteral("playback_previous"),
@@ -6689,10 +6696,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      });
   addTransportButton(QStringLiteral("playback_play"),
                      QStringLiteral("Play or pause"), []() {
-                       if (auto *active = ArtifactActiveContextService::instance()) {
-                         active->togglePlayPause();
-                       } else if (auto *playback =
-                                      ArtifactPlaybackService::instance()) {
+                       if (auto *playback = ArtifactPlaybackService::instance()) {
                          playback->togglePlayPause();
                        }
                      });
@@ -6704,11 +6708,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      });
   addTransportButton(QStringLiteral("playback_end"),
                      QStringLiteral("Go to composition end"), []() {
-                       auto *service = ArtifactProjectService::instance();
-                       if (auto composition = service
-                               ? service->currentComposition().lock()
-                               : ArtifactCompositionPtr{}) {
-                         composition->goToEndFrame();
+                       if (auto *playback = ArtifactPlaybackService::instance()) {
+                         playback->goToEndFrame();
                        }
                      });
 
@@ -8069,11 +8070,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     const double playheadX = visualFrame * ppf -
                             impl_->painterTrackView_->horizontalOffset();
     constexpr double kFollowMargin = 24.0;
-    const double rightMargin = std::max(
-        kFollowMargin, static_cast<double>(impl_->painterTrackView_->width()) -
-                           kFollowMargin);
-    if (playheadX < kFollowMargin || playheadX > rightMargin) {
-      const double targetX = playheadX < kFollowMargin ? kFollowMargin : rightMargin;
+    const double followX = std::max(
+        kFollowMargin, static_cast<double>(impl_->painterTrackView_->width()) * 0.7);
+    if (playheadX < kFollowMargin || playheadX > followX) {
+      const double targetX = playheadX < kFollowMargin ? kFollowMargin : followX;
       syncTimelineHorizontalOffset(
           std::max(0.0, visualFrame * ppf - targetX));
     }
@@ -8463,6 +8463,35 @@ ArtifactTimelineWidget::~ArtifactTimelineWidget() {
     ArtifactCore::ShortcutBindings::instance().removeChangeListener(
         impl_->shortcutListenerToken_);
     impl_->shortcutListenerToken_ = 0;
+  }
+  if (impl_) {
+    if (impl_->gpuTimelineSnapshotTimer_) {
+      impl_->gpuTimelineSnapshotTimer_->stop();
+    }
+
+    // Window containers own native QWindows.  Tear them down while this
+    // QWidget and its callbacks are still valid; otherwise QWindow teardown
+    // can dispatch a native parent-change event after Impl has gone away.
+    const auto detachGpuWindow = [](ArtifactDiligentTimelineRenderWindow* window) {
+      if (!window) {
+        return;
+      }
+      window->setInputTarget(nullptr);
+      window->setWheelInputHandler({});
+      window->setPanInputHandler({});
+      window->setInputUpdatedCallback({});
+      window->setInteractionStateProvider({});
+      QCoreApplication::removePostedEvents(window);
+    };
+    detachGpuWindow(impl_->gpuTimelineWindow_);
+    detachGpuWindow(impl_->gpuCurveWindow_);
+
+    delete impl_->gpuTimelineContainer_;
+    impl_->gpuTimelineContainer_ = nullptr;
+    impl_->gpuTimelineWindow_ = nullptr;
+    delete impl_->gpuCurveContainer_;
+    impl_->gpuCurveContainer_ = nullptr;
+    impl_->gpuCurveWindow_ = nullptr;
   }
   delete impl_;
 }
@@ -10758,12 +10787,10 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
 
   const double firstFrame = horizontalOffset / ppf;
   const double lastFrame = (horizontalOffset + viewportWidth) / ppf;
-  // Grid rhythm mirrors the Qt painter (ArtifactTimelineTrackPainterView):
-  // major marks ~45px apart with a 1/2/5 frame progression plus medium and
-  // minor subdivisions, so both surfaces place ticks on identical frames.
-  // Palette stays snapshot-side; only the step rhythm is unified.
+  // Match the painter surface: sparse major lines and only readable medium
+  // divisions. Fine subdivisions belong on the ruler, not across every row.
   int majorStep = 1;
-  while (static_cast<double>(majorStep) * ppf < 45.0) {
+  while (static_cast<double>(majorStep) * ppf < 72.0) {
     if (majorStep == 1) {
       majorStep = 2;
     } else if (majorStep == 2) {
@@ -10773,21 +10800,20 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     }
   }
   const int mediumStep = std::max(1, majorStep / 2);
-  const int minorStep = std::max(1, majorStep / 5);
-  QColor gridColor(91, 103, 111, 66);
-  QColor minorGridColor(80, 91, 99, 28);
+  const QColor majorGridColor(91, 103, 111, 64);
+  const QColor mediumGridColor(80, 91, 99, 28);
   const int firstGridFrame =
       std::max(0, static_cast<int>(std::floor(firstFrame)));
   const int lastGridFrame = static_cast<int>(std::ceil(lastFrame));
   for (int frame = firstGridFrame; frame <= lastGridFrame; ++frame) {
     const bool major = (frame % majorStep) == 0;
-    const bool medium = !major && (frame % mediumStep) == 0;
-    const bool minor = !major && !medium && (frame % minorStep) == 0;
-    if (!major && !medium && !minor) {
+    const bool medium = !major && (frame % mediumStep) == 0 &&
+                        mediumStep * ppf >= 32.0;
+    if (!major && !medium) {
       continue;
     }
     const double x = static_cast<double>(frame) * ppf - horizontalOffset;
-    const QColor& color = major ? gridColor : minorGridColor;
+    const QColor& color = major ? majorGridColor : mediumGridColor;
     snapshot.lines.push_back({QPointF(x, 0.0), QPointF(x, viewportHeight),
                               color, 1.0f});
   }
@@ -11047,14 +11073,13 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   }
 
   const double playheadX = currentFrame * ppf - horizontalOffset;
-  // A compact cap keeps the current-time marker identifiable even when the
-  // vertical line crosses densely populated keyframe rows.
-  snapshot.triangles.push_back({QPointF(playheadX - 6.0, 0.0),
-                                QPointF(playheadX + 6.0, 0.0),
-                                QPointF(playheadX, 7.0), playheadCapColor});
+  // Keep the GPU marker close to the adopted low silver Precision Blade.
+  snapshot.triangles.push_back({QPointF(playheadX - 7.0, 0.0),
+                                QPointF(playheadX + 7.0, 0.0),
+                                QPointF(playheadX, 10.0), playheadCapColor});
   snapshot.triangles.push_back({QPointF(playheadX - 1.5, 1.0),
                                 QPointF(playheadX + 1.5, 1.0),
-                                QPointF(playheadX, 7.0), playheadColor});
+                                QPointF(playheadX, 10.0), playheadColor});
   snapshot.lines.push_back({QPointF(playheadX, 0.0),
                             QPointF(playheadX, viewportHeight),
                             playheadColor, 2.0f});

@@ -6552,7 +6552,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   // enough apart to remain useful while reducing visual noise when zoomed
   // out. The 1/2/5 progression avoids the uneven density of repeated x2
   // steps and mirrors the spacing convention used by DCC rulers.
-  const double minMajorLabelPx = 45.0;
+  const double minMajorLabelPx = 72.0;
   int majorStep = 1;
   while (static_cast<double>(majorStep) * ppf < minMajorLabelPx) {
     if (majorStep == 1) {
@@ -6564,7 +6564,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
   }
   const int mediumStep = std::max(1, majorStep / 2);
-  const int minorStep = std::max(1, majorStep / 5);
   const int startFrame = std::max(
       0, static_cast<int>(std::floor((xOffset + dirtyRect.left()) / ppf)));
   const int endFrame =
@@ -6572,21 +6571,17 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   for (int f = startFrame; f <= endFrame; ++f) {
     const double x = f * ppf - xOffset;
     const bool major = (f % majorStep) == 0;
-    const bool medium = !major && (f % mediumStep) == 0;
-    const bool minor = !major && !medium && (f % minorStep) == 0;
-    if (!major && !medium && !minor) {
+    const bool medium = !major && (f % mediumStep) == 0 &&
+                        mediumStep * ppf >= 32.0;
+    if (!major && !medium) {
       continue;
     }
     QColor gridColor = theme.border;
     const float contrastScale = Accessibility::contrastScale();
-    const int baseAlpha = major ? 76 : medium ? 50 : 30;
-    gridColor.setAlpha(
-        std::max(40, static_cast<int>(baseAlpha * contrastScale)));
-    const qreal lineWidth = major
-                                ? contrastScale
-                                : medium
-                                      ? std::max(1.0f, contrastScale * 0.9f)
-                                      : std::max(1.0f, contrastScale * 0.8f);
+    const int baseAlpha = major ? 64 : 28;
+    gridColor.setAlpha(std::clamp(
+        static_cast<int>(baseAlpha * contrastScale), 12, 120));
+    const qreal lineWidth = std::max(1.0f, contrastScale);
     p.setPen(QPen(gridColor, lineWidth));
     p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
   }

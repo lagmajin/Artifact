@@ -7339,8 +7339,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   
   const QRect dirtyRect = event->rect();
   const auto& theme = ArtifactCore::currentDCCTheme();
-  const QColor background = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2A2A2A")));
   const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#25272D")));
+  const QColor background = mixColor(
+      themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2A2A2A"))),
+      surface, 0.65);
   const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#DADADA")));
   const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#E4B76C")));
   const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#4A515C")));
@@ -7357,13 +7359,16 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   if (impl_->visibleRows.isEmpty()) {
     auto comp = safeCompositionLookup(impl_->compositionId);
+    const QRect messageRect = rect().adjusted(0, rowH * 2, 0, 0);
     if (!comp) {
       p.setPen(text.darker(120));
-      p.drawText(rect(), Qt::AlignCenter, "Open a composition to view layers");
+      p.drawText(messageRect, Qt::AlignHCenter | Qt::AlignTop,
+                 "Open a composition to view layers");
       return;
     }
     p.setPen(text.darker(120));
-    p.drawText(rect(), Qt::AlignCenter, "Add a layer to begin");
+    p.drawText(messageRect, Qt::AlignHCenter | Qt::AlignTop,
+               "Add a layer to begin");
     return;
   }
 
