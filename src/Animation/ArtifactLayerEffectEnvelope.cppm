@@ -1,7 +1,8 @@
 module;
-#include <algorithm>
-#include <cmath>
+#include <cstdint>
+
 module Artifact.Animation.LayerEffectEnvelope;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -15,7 +16,7 @@ LayerEnvelopeSample LayerEffectEnvelope::sample(const std::int64_t relativeFrame
     return {1.0f, effectEnd};
   }
 
-  float t = std::clamp(static_cast<float>(relativeFrame) /
+  float t = ArtifactCore::artifactClamp(static_cast<float>(relativeFrame) /
                            static_cast<float>(durationFrames),
                        0.0f, 1.0f);
   if (reverse) {
@@ -26,7 +27,7 @@ LayerEnvelopeSample LayerEffectEnvelope::sample(const std::int64_t relativeFrame
   case LayerEnvelopeCurve::EaseOut: t = 1.0f - (1.0f - t) * (1.0f - t); break;
   case LayerEnvelopeCurve::EaseInOut:
     t = t < 0.5f ? 2.0f * t * t
-                 : 1.0f - std::pow(-2.0f * t + 2.0f, 2.0f) * 0.5f;
+                 : 1.0f - ArtifactCore::artifactPow(-2.0f * t + 2.0f, 2.0f) * 0.5f;
     break;
   case LayerEnvelopeCurve::Step: t = t >= 1.0f ? 1.0f : 0.0f; break;
   case LayerEnvelopeCurve::Linear: break;
@@ -35,17 +36,17 @@ LayerEnvelopeSample LayerEffectEnvelope::sample(const std::int64_t relativeFrame
   float effectT = t;
   switch (timing) {
   case LayerEnvelopeTiming::OpacityLead:
-    effectT = std::clamp(t - 0.2f, 0.0f, 1.0f);
+    effectT = ArtifactCore::artifactClamp(t - 0.2f, 0.0f, 1.0f);
     break;
   case LayerEnvelopeTiming::EffectLead:
-    opacityT = std::clamp(t - 0.2f, 0.0f, 1.0f);
+    opacityT = ArtifactCore::artifactClamp(t - 0.2f, 0.0f, 1.0f);
     break;
   case LayerEnvelopeTiming::Simultaneous:
     break;
   }
 
-  const float safeStart = std::isfinite(effectStart) ? effectStart : 0.0f;
-  const float safeEnd = std::isfinite(effectEnd) ? effectEnd : 1.0f;
+  const float safeStart = ArtifactCore::artifactIsFinite(effectStart) ? effectStart : 0.0f;
+  const float safeEnd = ArtifactCore::artifactIsFinite(effectEnd) ? effectEnd : 1.0f;
   return {opacityT, safeStart + (safeEnd - safeStart) * effectT};
 }
 
