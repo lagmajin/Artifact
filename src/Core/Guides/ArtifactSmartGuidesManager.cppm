@@ -5,8 +5,8 @@ module;
 #include <QMatrix4x4>
 #include <QVector3D>
 #include <cmath>
+#include <vector>
 module Artifact.Core.SmartGuidesManager;
-import std;
 import Memory.SharedPtr;
 import Utils.Path;
 import Artifact.Layer.Construction;
