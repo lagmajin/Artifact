@@ -1,10 +1,11 @@
 ﻿module;
 //#include <utility>
 #include <QString>
+#include <string>
+#include <unordered_map>
 
 module Localization.Localization;
 
-import std;
 import Utils.String.UniString;
 
 namespace ArtifactCore {

@@ -2,10 +2,11 @@ module;
 #include <utility>
 #include <QMutex>
 #include <QString>
+#include <algorithm>
+#include <chrono>
 
 module Artifact.AVSyncBridge;
 
-import std;
 import Audio.AudioClockProvider;
 
 namespace Artifact {
