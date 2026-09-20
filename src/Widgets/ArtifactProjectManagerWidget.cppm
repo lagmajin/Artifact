@@ -2707,13 +2707,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                             if (!settingsMacro->lastOperationSucceeded()) return;
                         }
                     }
-                    if (auto current = svc->currentComposition().lock()) {
-                        if (current->id() == compositionId) {
-                            if (auto* playback = ArtifactPlaybackService::instance()) {
-                                playback->setFrameRange(composition->frameRange());
-                                playback->setFrameRate(composition->frameRate());
-                            }
-                        }
+                    if (!svc->finalizeCompositionSettingsChange(compositionId)) {
+                        return;
                     }
 
                     dialog->accept();
@@ -3593,7 +3588,16 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                      loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
     addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); },
                      loadProjectViewIcon(QStringLiteral("Studio/visibility_off.svg")));
-    addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { update(); },
+    const QString refreshShortcutText =
+        ArtifactCore::ShortcutBindings::instance().shortcutText(
+            ArtifactCore::ShortcutId::ProjectRefresh);
+    const QString refreshLabel = refreshShortcutText.isEmpty()
+        ? QStringLiteral("Refresh View")
+        : QStringLiteral("Refresh View (%1)").arg(refreshShortcutText);
+    addTrackedAction(QStringLiteral("refresh_view"), refreshLabel, []() {
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+            ProjectChangedEvent{QString(), QString()});
+    },
                      loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
     addTrackedAction(QStringLiteral("show_dependency_graph"), QStringLiteral("Show Dependency Graph..."), [this, svc]() {
         Impl::showDependencyGraphDialog(this, svc);
@@ -3945,6 +3949,13 @@ void ArtifactProjectView::focusOutEvent(QFocusEvent* event)
 
  void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
  {
+     if (event && ArtifactCore::ShortcutBindings::instance().matches(
+                      event, ArtifactCore::ShortcutId::ProjectRefresh)) {
+         ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+             ProjectChangedEvent{QString(), QString()});
+         event->accept();
+         return;
+     }
      if (!impl_ || impl_->visibleRows.isEmpty()) { QWidget::keyPressEvent(event); return; }
      if (auto* input = InputOperator::instance()) {
          input->setActiveContext(QString::fromLatin1(kProjectContext));
@@ -4244,6 +4255,7 @@ public:
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     bool projectRefreshQueued_ = false;
+    bool projectModelRefreshPending_ = false;
     bool unusedAssetSnapshotQueued_ = false;
     bool unusedAssetRefreshInFlight_ = false;
     bool unusedAssetRefreshPending_ = false;
@@ -4514,15 +4526,8 @@ public:
         }
         for (auto* compItem : items) {
             if (!compItem) continue;
-            const auto found = svc->findComposition(compItem->compositionId);
-            auto comp = found.ptr.lock();
-            if (!found.success || !comp) continue;
-            if (auto current = svc->currentComposition().lock();
-                current && current->id() == comp->id()) {
-                if (auto* playback = ArtifactPlaybackService::instance()) {
-                    playback->setFrameRange(comp->frameRange());
-                    playback->setFrameRate(comp->frameRate());
-                }
+            if (!svc->finalizeCompositionSettingsChange(compItem->compositionId)) {
+                return false;
             }
         }
         return true;
@@ -6995,8 +7000,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
 
     QPointer<ArtifactProjectManagerWidget> widgetPtr(this);
-    const auto queueProjectPresentationRefresh = [widgetPtr]() {
-        if (!widgetPtr || !widgetPtr->impl_ || widgetPtr->impl_->projectRefreshQueued_) {
+    const auto queueProjectPresentationRefresh = [widgetPtr](const bool reloadModel) {
+        if (!widgetPtr || !widgetPtr->impl_) {
+            return;
+        }
+        widgetPtr->impl_->projectModelRefreshPending_ =
+            widgetPtr->impl_->projectModelRefreshPending_ || reloadModel;
+        if (widgetPtr->impl_->projectRefreshQueued_) {
             return;
         }
         widgetPtr->impl_->projectRefreshQueued_ = true;
@@ -7006,6 +7016,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
             }
             auto* impl = widgetPtr->impl_;
             impl->projectRefreshQueued_ = false;
+            const bool reloadModel = impl->projectModelRefreshPending_;
+            impl->projectModelRefreshPending_ = false;
+            if (reloadModel) {
+                // Structural project and layer mutations can replace the
+                // project-item tree. Repainting/filter invalidation alone
+                // cannot expose newly created items.
+                impl->update();
+                return;
+            }
             impl->refreshUnusedAssetCache();
             if (impl->proxyModel_) {
                 impl->proxyModel_->setAdvancedFilter(
@@ -7019,12 +7038,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     };
 
     impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectPresentationRefresh](const LayerChangedEvent&) {
-        queueProjectPresentationRefresh();
+        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectPresentationRefresh](const LayerChangedEvent& event) {
+        queueProjectPresentationRefresh(
+            event.changeType == LayerChangedEvent::ChangeType::Created ||
+            event.changeType == LayerChangedEvent::ChangeType::Removed);
     }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ProjectChangedEvent>([queueProjectPresentationRefresh](const ProjectChangedEvent&) {
-        queueProjectPresentationRefresh();
+        queueProjectPresentationRefresh(true);
     }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
@@ -7253,6 +7274,7 @@ void ArtifactProjectManagerWidget::updateRequested() {
         return;
     }
     impl_->projectRefreshQueued_ = false;
+    impl_->projectModelRefreshPending_ = false;
     impl_->update();
     if (impl_) {
         impl_->refreshSelectionChrome();
