@@ -11,6 +11,7 @@ module;
 #include <QFont>
 #include <QSize>
 #include <QSizeF>
+#include <QMatrix4x4>
 #include <QFile>
 #include <QDataStream>
 #include <QTextOption>
@@ -82,6 +83,7 @@ import Artifact.Render.Queue.Encoder;
 import Artifact.Render.Queue.Job;
 import Frame.Range;
 import Frame.Debug;
+import Time.Rational;
 import Core.Diagnostics.Trace;
 import Core.Diagnostics.Recorder;
 import Core.Diagnostics.ProjectDiagnostic;
@@ -3454,7 +3456,10 @@ namespace Artifact
             return placeholder;
         }
 
-        QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer) const
+        QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer,
+                                  const QMatrix4x4* cameraView = nullptr,
+                                  const QMatrix4x4* cameraProjection = nullptr,
+                                  const QSize& compositionSize = {}) const
         {
             if (!layer) {
                 return {};
@@ -3499,6 +3504,38 @@ namespace Artifact
                 const QImage image = shapeLayer->toQImage();
                 if (!image.isNull()) {
                     return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                }
+            }
+
+            // The CPU render queue keeps a deliberately small 3D fallback: fixed or
+            // imported meshes are rasterized flat-shaded with the active camera.
+            // Material graphs, textures, lighting, and skinning remain GPU-only.
+            if (const auto modelLayer = ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer)) {
+                if (cameraView && cameraProjection &&
+                    modelLayer->renderMode() == ModelRenderMode::Solid &&
+                    !modelLayer->hasTransparentMaterial()) {
+                    const auto snapshot = modelLayer->transform3D().snapshotAt(
+                        ArtifactCore::RationalTime(modelLayer->currentFrame(), 30.0));
+                    QMatrix4x4 modelMatrix;
+                    modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+                    modelMatrix.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+                    modelMatrix.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+                    modelMatrix.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+                    modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+                    modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+
+                    SoftwareRender::FlatMeshRasterRequest request;
+                    request.mesh = &modelLayer->mesh();
+                    request.modelMatrix = modelMatrix;
+                    request.viewMatrix = *cameraView;
+                    request.projectionMatrix = *cameraProjection;
+                    request.outputSize = compositionSize.isValid() ? compositionSize : layerSize;
+                    request.baseColor = modelLayer->material().baseColor();
+                    request.opacity = 1.0f;
+                    const QImage raster = SoftwareRender::rasterizeFlatMesh(request);
+                    if (!raster.isNull()) {
+                        return raster;
+                    }
                 }
             }
 
@@ -3567,6 +3604,21 @@ namespace Artifact
 
             const ArtifactCore::FramePosition currentPos(frameNumber);
             const auto& layers = composition->allLayerRef();
+            const ArtifactCameraLayer* activeCamera = nullptr;
+            for (const auto& layer : layers) {
+                const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
+                if (camera && camera->isActiveCamera() &&
+                    (!activeCamera || camera->cameraPriority() > activeCamera->cameraPriority())) {
+                    activeCamera = camera.get();
+                }
+            }
+            QMatrix4x4 cameraView;
+            QMatrix4x4 cameraProjection;
+            if (activeCamera) {
+                cameraView = activeCamera->viewMatrix();
+                cameraProjection = activeCamera->projectionMatrix(
+                    static_cast<float>(compW) / static_cast<float>(compH));
+            }
             const bool hasSoloLayer = std::any_of(
                 layers.begin(), layers.end(), [](const auto& layer) {
                     return layer && layer->isSolo();
@@ -3616,7 +3668,9 @@ namespace Artifact
                             continue;
                         }
                         sourceLayer->goToFrame(frameNumber);
-                        const QImage source = renderLayerSurface(sourceLayer);
+                        const QImage source = renderLayerSurface(
+                            sourceLayer, activeCamera ? &cameraView : nullptr,
+                            activeCamera ? &cameraProjection : nullptr, QSize(compW, compH));
                         if (!source.isNull()) {
                             softwareMatteSources.insert(matteRef.sourceLayerId, source);
                         }
@@ -3636,7 +3690,9 @@ namespace Artifact
                     continue;
                 }
 
-                QImage surface = renderLayerSurface(layer);
+                QImage surface = renderLayerSurface(
+                    layer, activeCamera ? &cameraView : nullptr,
+                    activeCamera ? &cameraProjection : nullptr, QSize(compW, compH));
                 if (surface.isNull()) {
                     continue;
                 }
