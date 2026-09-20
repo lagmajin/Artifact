@@ -649,7 +649,6 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/WebUI/ArtifactReportDashboard.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/WebUI/ArtifactWebBridge.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/WebUI/ArtifactWebUIHost.ixx"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/ActiveQt/qax_instantiate.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/AI/CommandIRExecutor.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Application/ArtifactProjectBundleIpc.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Ofx/ArtifactOfxEffectImpl.cppm"
@@ -698,6 +697,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
 )
 
   set(ARTIFACT_APP_IMPL_SOURCES
+      "${CMAKE_CURRENT_LIST_DIR}/../src/ActiveQt/qax_instantiate.cpp"
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorStyle.cppm"
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorSurfaces.cppm"
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorEffectPicker.cppm"
