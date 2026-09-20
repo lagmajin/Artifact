@@ -8,6 +8,7 @@ module;
 #include <QDebug>
 #include <QFileInfo>
 #include <cstdint>
+#include <memory>
 
 export module Artifact.Render.OffscreenComposition;
 
@@ -19,7 +20,6 @@ import Core.Point2D;
 import Image.ImageF32x4_RGBA;
 import Core.Parallel;
 import Frame.Position;
-import std;
 import IO.ImageExporter;
 import Image.ExportOptions;
 

@@ -21,10 +21,17 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <numbers>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 module Artifact.Render.PrimitiveRenderer3D;
 
-import std;
 import FloatRGBA;
 import Color.Float;
 import Artifact.Render.RenderCommandBuffer;

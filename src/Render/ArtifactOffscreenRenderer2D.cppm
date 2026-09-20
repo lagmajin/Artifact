@@ -31,8 +31,6 @@ module;
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -60,6 +58,7 @@ module Artifact.Render.Offscreen;
 
 
 
+import Core.ArtifactMath;
 import Core.Point2D;
 import Image.Raw;
 import Color.Float;
@@ -226,8 +225,8 @@ namespace Artifact
 
  void OffscreenRenderer2D::Impl::ensureCanvas(int width, int height)
  {
-  const int safeWidth = std::max(0, width);
-  const int safeHeight = std::max(0, height);
+  const int safeWidth = ArtifactCore::artifactMax(0, width);
+  const int safeHeight = ArtifactCore::artifactMax(0, height);
   if (safeWidth <= 0 || safeHeight <= 0) {
    canvas_ = QImage();
    canvasSize_ = QSize();

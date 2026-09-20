@@ -16,10 +16,14 @@
 #include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
 
 #include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 module Artifact.Render.Pipeline;
 
-import std;
 import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;

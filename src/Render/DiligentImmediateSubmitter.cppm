@@ -18,12 +18,13 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <utility>
+#include <variant>
 module Artifact.Render.DiligentImmediateSubmitter;
 
 import Graphics;
 import FloatRGBA;
 import Color.Float;
-import std;
 import VertexBuffer;
 import Text.Style;
 import Utils.String.UniString;
