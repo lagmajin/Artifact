@@ -47,10 +47,13 @@ module;
 #include <QLabel>
 #include <QSlider>
 #include <QStyleOptionSlider>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <numbers>
 
 module Artifact.Widgets.PropertyEditor;
 
-import std;
 import Utils.Path;
 import Color.Float;
 import Font.FreeFont;

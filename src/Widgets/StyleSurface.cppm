@@ -7,10 +7,10 @@ module;
 #include <QRadialGradient>
 #include <QString>
 #include <QStringList>
-#include <algorithm>
 
 module Widgets.StyleSurface;
 
+import Core.ArtifactMath;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -42,7 +42,7 @@ QColor resolveToneColor(ArtifactTextTone tone)
 
 QColor mixColor(const QColor& a, const QColor& b, const qreal t)
 {
-  const qreal clamped = std::clamp(t, 0.0, 1.0);
+  const qreal clamped = ArtifactCore::artifactClamp(t, 0.0, 1.0);
   return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * clamped,
                           a.greenF() + (b.greenF() - a.greenF()) * clamped,
                           a.blueF() + (b.blueF() - a.blueF()) * clamped,
@@ -167,7 +167,7 @@ void drawArtifactSoftGradientBackground(QPainter& painter, const QRectF& rect,
   base.setColorAt(1.0, background.bottomRight);
   painter.fillRect(rect, base);
 
-  const qreal longestEdge = std::max(rect.width(), rect.height());
+  const qreal longestEdge = ArtifactCore::artifactMax(rect.width(), rect.height());
   QRadialGradient highlight(
       QPointF(rect.left() + rect.width() * background.highlightX,
               rect.top() + rect.height() * background.highlightY),

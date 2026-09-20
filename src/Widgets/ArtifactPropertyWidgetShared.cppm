@@ -16,10 +16,14 @@ module;
 #include <cmath>
 #include <memory>
 #include <utility>
+#include <cstddef>
+#include <functional>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 module Artifact.Widgets.ArtifactPropertyWidget;
 
-import std;
 import Property;
 import Property.Abstract;
 import Property.Group;
