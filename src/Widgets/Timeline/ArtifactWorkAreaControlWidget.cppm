@@ -12,13 +12,12 @@ module;
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
-#include <algorithm>
-#include <cmath>
 #include "TimelinePlayheadDraw.hpp"
 
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
 
+import Core.ArtifactMath;
 import Event.Bus;
 import Artifact.Event.Types;
 import Widgets.Utils.CSS;
@@ -123,9 +122,9 @@ namespace Artifact
  }
 
  void WorkAreaControl::setCurrentFrame(float frame) {
-  const float maxFrame = std::max(0.0f, totalFrames - 1.0f);
-  const float finiteFrame = std::isfinite(frame) ? frame : 0.0f;
-  const float clamped = std::clamp(finiteFrame, 0.0f, maxFrame);
+  const float maxFrame = ArtifactCore::artifactMax(0.0f, totalFrames - 1.0f);
+  const float finiteFrame = ArtifactCore::artifactIsFinite(frame) ? frame : 0.0f;
+  const float clamped = ArtifactCore::artifactClamp(finiteFrame, 0.0f, maxFrame);
   if (currentFrame != clamped) {
     currentFrame = clamped;
     update();
@@ -133,19 +132,19 @@ namespace Artifact
  }
 
  void WorkAreaControl::setTotalFrames(float frames) {
-  const float finiteFrames = std::isfinite(frames) ? frames : 1.0f;
-  const float clamped = std::max(1.0f, finiteFrames);
+  const float finiteFrames = ArtifactCore::artifactIsFinite(frames) ? frames : 1.0f;
+  const float clamped = ArtifactCore::artifactMax(1.0f, finiteFrames);
   if (totalFrames != clamped) {
     totalFrames = clamped;
-    currentFrame = std::clamp(currentFrame, 0.0f, std::max(0.0f, totalFrames - 1.0f));
+    currentFrame = ArtifactCore::artifactClamp(currentFrame, 0.0f, ArtifactCore::artifactMax(0.0f, totalFrames - 1.0f));
     update();
   }
  }
 
  void WorkAreaControl::setFrameRate(double fps) {
   const double sanitized =
-      std::isfinite(fps) ? std::max(1.0, fps) : 1.0;
-  if (std::abs(impl_->frameRate - sanitized) > 0.0001) {
+      ArtifactCore::artifactIsFinite(fps) ? ArtifactCore::artifactMax(1.0, fps) : 1.0;
+  if (ArtifactCore::artifactAbs(impl_->frameRate - sanitized) > 0.0001) {
     impl_->frameRate = sanitized;
     update();
   }
@@ -153,8 +152,8 @@ namespace Artifact
 
  void WorkAreaControl::setRulerPixelsPerFrame(double ppf) {
   const double sanitized =
-      std::isfinite(ppf) ? std::max(0.0, ppf) : 0.0;
-  if (std::abs(impl_->rulerPixelsPerFrame - sanitized) > 0.0001) {
+      ArtifactCore::artifactIsFinite(ppf) ? ArtifactCore::artifactMax(0.0, ppf) : 0.0;
+  if (ArtifactCore::artifactAbs(impl_->rulerPixelsPerFrame - sanitized) > 0.0001) {
     impl_->rulerPixelsPerFrame = sanitized;
     update();
   }
@@ -162,8 +161,8 @@ namespace Artifact
 
  void WorkAreaControl::setRulerHorizontalOffset(double offset) {
   const double sanitized =
-      std::isfinite(offset) ? std::max(0.0, offset) : 0.0;
-  if (std::abs(impl_->rulerHorizontalOffset - sanitized) > 0.0001) {
+      ArtifactCore::artifactIsFinite(offset) ? ArtifactCore::artifactMax(0.0, offset) : 0.0;
+  if (ArtifactCore::artifactAbs(impl_->rulerHorizontalOffset - sanitized) > 0.0001) {
     impl_->rulerHorizontalOffset = sanitized;
     update();
   }
@@ -207,10 +206,10 @@ namespace Artifact
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   const double durationFrames =
-      std::max(0.0, static_cast<double>(end - start) *
-                        static_cast<double>(std::max(1.0f, totalFrames)));
+      ArtifactCore::artifactMax(0.0, static_cast<double>(end - start) *
+                        static_cast<double>(ArtifactCore::artifactMax(1.0f, totalFrames)));
   const int durationSeconds =
-      static_cast<int>(std::llround(durationFrames / impl_->frameRate));
+      static_cast<int>(ArtifactCore::artifactLlround(durationFrames / impl_->frameRate));
   const int hours = durationSeconds / 3600;
   const int minutes = (durationSeconds / 60) % 60;
   const int seconds = durationSeconds % 60;
@@ -226,7 +225,7 @@ namespace Artifact
   if (rangeRect.width() > 28) {
     QFont labelFont = p.font();
     labelFont.setBold(true);
-    labelFont.setPointSize(std::max(8, labelFont.pointSize() - 1));
+    labelFont.setPointSize(ArtifactCore::artifactMax(8, labelFont.pointSize() - 1));
     p.setFont(labelFont);
     const QFontMetrics fm(labelFont);
     const QRect labelRect = rangeRect.adjusted(8, 1, -8, -2);
@@ -242,7 +241,7 @@ namespace Artifact
   // High-contrast range handles use the same two-line grip language as the
   // navigator, while retaining the work area's warm color role.
   const int handleTopInset = 1;
-  const int handleHeight = std::max(1, height() - 2);
+  const int handleHeight = ArtifactCore::artifactMax(1, height() - 2);
   const auto drawHandle = [&p, &theme, &workAreaColor](
                               const QRectF& handleRect, bool highlighted) {
    p.setBrush(highlighted ? QColor(210, 165, 76)
@@ -268,8 +267,8 @@ namespace Artifact
   drawHandle(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight),
              impl_->hoveringRight || impl_->draggingRight);
 
-  const float safeLastFrame = std::max(1.0f, totalFrames - 1.0f);
-  const float clampedFrame = std::clamp(currentFrame, 0.0f, safeLastFrame);
+  const float safeLastFrame = ArtifactCore::artifactMax(1.0f, totalFrames - 1.0f);
+  const float clampedFrame = ArtifactCore::artifactClamp(currentFrame, 0.0f, safeLastFrame);
   // The playhead is viewport chrome, not a work-range handle. Keep it on the
   // same zoomed/scrolled ruler mapping as the scrub bar and track surface.
   // Only use full-duration normalization before the ruler mapping is ready.
@@ -280,11 +279,11 @@ namespace Artifact
                 impl_->rulerHorizontalOffset;
   } else {
     const float playheadNorm =
-        std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
+        ArtifactCore::artifactClamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
     playheadX = static_cast<double>(handleHalfW) +
                 static_cast<double>(playheadNorm) * usableWidth;
   }
-  playheadX = std::clamp(playheadX, 0.0, static_cast<double>(std::max(0, width() - 1)));
+  playheadX = ArtifactCore::artifactClamp(playheadX, 0.0, static_cast<double>(ArtifactCore::artifactMax(0, width() - 1)));
   const auto drawPlayheadProperty = property("timelineDrawPlayhead");
   if (!drawPlayheadProperty.isValid() || drawPlayheadProperty.toBool()) {
     TimelinePlayheadDraw::drawPlayhead(
@@ -298,7 +297,7 @@ namespace Artifact
   const bool ctrlDown = (ev->modifiers() & Qt::ControlModifier) != 0;
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
-  const int usableWidth = std::max(1, width() - handleW);
+  const int usableWidth = ArtifactCore::artifactMax(1, width() - handleW);
 
   // Update hover state
   int x1 = handleHalfW + static_cast<int>(start * usableWidth);
@@ -306,7 +305,7 @@ namespace Artifact
   
   bool newHoverLeft = QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos());
   bool newHoverRight = QRect(x2 - handleHalfW, 0, handleW, height()).contains(ev->pos());
-  bool newHoverRange = QRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW), height()).contains(ev->pos());
+  bool newHoverRange = QRect(x1 + handleHalfW, 0, ArtifactCore::artifactMax(0, x2 - x1 - handleW), height()).contains(ev->pos());
   
   bool hoverChanged = (impl_->hoveringLeft != newHoverLeft) || 
                       (impl_->hoveringRight != newHoverRight) || 
@@ -347,17 +346,17 @@ namespace Artifact
   } else if (impl_->dragMode == Impl::DragMode::BodyScale) {
    const float pointerNorm = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    const float delta = pointerNorm - impl_->dragStartPointerNorm;
-   const float newLength = std::clamp(impl_->dragStartLength * (1.0f + delta), 0.01f, 1.0f);
+   const float newLength = ArtifactCore::artifactClamp(impl_->dragStartLength * (1.0f + delta), 0.01f, 1.0f);
    const float center = impl_->dragStartCenter;
    float newStart = center - newLength * 0.5f;
    float newEnd = center + newLength * 0.5f;
    if (newStart < 0.0f) {
-    newEnd = std::min(1.0f, newEnd - newStart);
+    newEnd = ArtifactCore::artifactMin(1.0f, newEnd - newStart);
     newStart = 0.0f;
    }
    if (newEnd > 1.0f) {
     const float overflow = newEnd - 1.0f;
-    newStart = std::max(0.0f, newStart - overflow);
+    newStart = ArtifactCore::artifactMax(0.0f, newStart - overflow);
     newEnd = 1.0f;
    }
    if (newEnd - newStart >= 0.01f) {
@@ -365,7 +364,7 @@ namespace Artifact
     setEnd(newEnd);
    }
   } else if (impl_->dragMode == Impl::DragMode::BodyMove || impl_->draggingRange) {
-   const float range = std::max(0.01f, end - start);
+   const float range = ArtifactCore::artifactMax(0.01f, end - start);
    float left = (float(ev->pos().x()) - handleHalfW) / float(usableWidth) - impl_->dragGrabRatio;
    left = qBound(0.0f, left, 1.0f - range);
    setStart(left);
@@ -392,7 +391,7 @@ namespace Artifact
   const bool ctrlDown = (ev->modifiers() & Qt::ControlModifier) != 0;
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
-  const int usableWidth = std::max(1, width() - handleW);
+  const int usableWidth = ArtifactCore::artifactMax(1, width() - handleW);
 
   int x1 = handleHalfW + static_cast<int>(start * usableWidth);
   int x2 = handleHalfW + static_cast<int>(end * usableWidth);
@@ -405,12 +404,12 @@ namespace Artifact
    impl_->draggingRight = true;
    impl_->dragMode = Impl::DragMode::RightHandle;
   }
-  else if (QRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW), height()).contains(ev->pos())) {
+  else if (QRect(x1 + handleHalfW, 0, ArtifactCore::artifactMax(0, x2 - x1 - handleW), height()).contains(ev->pos())) {
    impl_->draggingRange = true;
    const float normalizedX = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    impl_->dragGrabRatio = normalizedX - start;
    impl_->dragStartCenter = (start + end) * 0.5f;
-   impl_->dragStartLength = std::max(0.01f, end - start);
+   impl_->dragStartLength = ArtifactCore::artifactMax(0.01f, end - start);
    impl_->dragStartPointerNorm = normalizedX;
    impl_->dragMode = ctrlDown ? Impl::DragMode::BodyScale : Impl::DragMode::BodyMove;
   }

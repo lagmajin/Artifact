@@ -11,10 +11,12 @@ module;
 #include <QWidget>
 #include <wobjectimpl.h>
 #include "TimelinePlayheadDraw.hpp"
+#include <algorithm>
+#include <cmath>
+#include <vector>
 
 module Artifact.Timeline.ScrubBar;
 
-import std;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Event.Bus;
 import Artifact.Event.Types;

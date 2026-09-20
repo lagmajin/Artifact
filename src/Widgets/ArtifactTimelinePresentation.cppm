@@ -16,13 +16,12 @@ module;
 #include <QWheelEvent>
 #include <QWidget>
 
-#include <algorithm>
-#include <cmath>
 
 #include "Timeline/TimelinePlayheadDraw.hpp"
 
 export module Artifact.Widgets.TimelinePresentation;
 
+import Core.ArtifactMath;
 import Widgets.Utils.CSS;
 import Artifact.Widget.WorkAreaControlWidget;
 import Widget.CurveEditor;
@@ -69,10 +68,10 @@ public:
 
     QWidget *topAnchor = static_cast<QWidget *>(scrubBar_);
     const int top = topAnchor->mapTo(panel, QPoint(0, 0)).y();
-    const int panelHeight = std::max(0, panel->height());
-    const QRect nextGeometry(0, std::clamp(top, 0, panelHeight),
-                             std::max(0, panel->width()),
-                             std::max(0, panelHeight - top));
+    const int panelHeight = ArtifactCore::artifactMax(0, panel->height());
+    const QRect nextGeometry(0, ArtifactCore::artifactClamp(top, 0, panelHeight),
+                             ArtifactCore::artifactMax(0, panel->width()),
+                             ArtifactCore::artifactMax(0, panelHeight - top));
     if (geometry() != nextGeometry) {
       setGeometry(nextGeometry);
       lastX_ = -9999;
@@ -93,8 +92,8 @@ public:
     if (lastX_ == -9999) {
       update();
     } else {
-      const int left = std::min(lastX_, newX) - kMargin;
-      const int right = std::max(lastX_, newX) + kMargin + 1;
+      const int left = ArtifactCore::artifactMin(lastX_, newX) - kMargin;
+      const int right = ArtifactCore::artifactMax(lastX_, newX) + kMargin + 1;
       update(QRect(left, 0, right - left, height()));
     }
     lastX_ = newX;
@@ -132,7 +131,7 @@ protected:
     switch (event->type()) {
     case QEvent::MouseButtonPress:
       if (mouseEvent->button() == Qt::LeftButton &&
-          std::abs(localPoint.x() - static_cast<double>(playheadX)) <=
+          ArtifactCore::artifactAbs(localPoint.x() - static_cast<double>(playheadX)) <=
               kPlayheadHitRadius) {
         dragging_ = true;
         trackView_->setCursor(Qt::SizeHorCursor);
@@ -141,10 +140,10 @@ protected:
       break;
     case QEvent::MouseMove:
       if (dragging_ && (mouseEvent->buttons() & Qt::LeftButton)) {
-        const double ppf = std::max(0.001, trackView_->pixelsPerFrame());
-        const double frame = std::clamp(
+        const double ppf = ArtifactCore::artifactMax(0.001, trackView_->pixelsPerFrame());
+        const double frame = ArtifactCore::artifactClamp(
             (mouseEvent->position().x() + trackView_->horizontalOffset()) / ppf,
-            0.0, std::max(0.0, trackView_->durationFrames() - 1.0));
+            0.0, ArtifactCore::artifactMax(0.0, trackView_->durationFrames() - 1.0));
         trackView_->setCurrentFrame(frame);
         ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
             TimelineSeekRequestedEvent{frame});
@@ -172,7 +171,7 @@ protected:
     }
 
     const int playheadX = currentPlayheadX();
-    if (std::abs(event->position().x() - static_cast<double>(playheadX)) >
+    if (ArtifactCore::artifactAbs(event->position().x() - static_cast<double>(playheadX)) >
         kPlayheadHitRadius) {
       event->ignore();
       return;
@@ -192,7 +191,7 @@ protected:
     const QPoint scrubPoint = mapTo(scrubBar_, event->position().toPoint());
     const double frame = frameAtScrubX(scrubPoint.x());
     trackView_->setCurrentFrame(frame);
-    scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(std::llround(frame))));
+    scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(ArtifactCore::artifactLlround(frame))));
     scrubBar_->setVisualFrame(frame);
     ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
         TimelineSeekRequestedEvent{frame});
@@ -229,7 +228,7 @@ protected:
 
 private:
   double frameAtScrubX(const int x) const {
-    const double lastFrame = std::max(0.0, trackView_->durationFrames() - 1.0);
+    const double lastFrame = ArtifactCore::artifactMax(0.0, trackView_->durationFrames() - 1.0);
     if (lastFrame <= 0.0) {
       return 0.0;
     }
@@ -244,7 +243,7 @@ private:
         high = mid;
       }
     }
-    return std::clamp((low + high) * 0.5, 0.0, lastFrame);
+    return ArtifactCore::artifactClamp((low + high) * 0.5, 0.0, lastFrame);
   }
 
   int currentPlayheadX() const {
@@ -252,7 +251,7 @@ private:
       return 0;
     }
 
-    const double frame = std::max(0.0, trackView_ ? trackView_->currentFrame() : 0.0);
+    const double frame = ArtifactCore::artifactMax(0.0, trackView_ ? trackView_->currentFrame() : 0.0);
     const QPoint panelPoint = scrubBar_->mapTo(
         parentWidget(), QPoint(scrubBar_->rulerFrameToX(frame), 0));
     return panelPoint.x() - x();
