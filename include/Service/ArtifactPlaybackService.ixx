@@ -259,6 +259,8 @@ public:
   QString ramPreviewPriorityReason(int64_t frame) const;
   ArtifactRamPreviewSummary ramPreviewSummary() const;
   bool isRamPreviewFramePendingBuild(int64_t frame) const;
+  void deferRamPreviewBuildFrame(int64_t frame,
+                                 const QString &reason = {});
   int64_t nextRamPreviewBuildFrame() const;
   bool tryGetRamPreviewFrameImage(int64_t frame,
                                   ArtifactCore::ImageF32x4_RGBA &outImage) const;
