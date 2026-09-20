@@ -9,6 +9,7 @@ module;
 
 module Artifact.Composition.ParametricCompositionResolver;
 
+import Core.ArtifactMath;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -97,8 +98,8 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
                 const QRectF layerBounds = layer->localBounds();
                 const QSize targetSize = context.outputSize.isValid() && context.outputSize.width() > 0
                     ? context.outputSize
-                    : QSize(static_cast<int>(std::ceil(layerBounds.width())),
-                            static_cast<int>(std::ceil(layerBounds.height())));
+                    : QSize(static_cast<int>(ArtifactCore::artifactCeil(layerBounds.width())),
+                            static_cast<int>(ArtifactCore::artifactCeil(layerBounds.height())));
 
                 const auto resolveBuffer = [&targetSize](const ImageF32x4_RGBA& source)
                     -> ArtifactCore::Optional<ImageF32x4_RGBA> {
