@@ -26,15 +26,10 @@ namespace {
 
 ArtifactCore::RationalTime transformTime(
     const ArtifactAbstractLayerPtr &layer, int64_t frame) {
-  double fps = 24.0;
-  if (layer) {
-    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
-            layer->composition())) {
-      const double candidate = composition->frameRate().framerate();
-      if (candidate > 0.0) fps = candidate;
-    }
-  }
-  return ArtifactCore::RationalTime(frame, fps);
+  // The layer owns the frame domain its transform keys are stored in; asking
+  // the layer keeps undo in sync with the live drag and the timeline.
+  return layer ? layer->keyframeTimeAtFrame(frame)
+               : ArtifactCore::RationalTime(frame, 24);
 }
 
 } // namespace
