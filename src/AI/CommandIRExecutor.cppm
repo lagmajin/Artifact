@@ -5,10 +5,11 @@ module;
 #include <QVariantMap>
 #include <QVariantList>
 #include <memory>
+#include <algorithm>
+#include <cmath>
 
 export module Artifact.AI.CommandIRExecutor;
 
-import std;
 import Core.AI.CommandIR;
 import Artifact.AI.WorkspaceAutomation;
 
