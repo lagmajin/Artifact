@@ -1,7 +1,6 @@
 module;
 #include <utility>
 
-#include <algorithm>
 
 #include <QCheckBox>
 #include <QColor>
@@ -29,6 +28,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Widget.Dialog.ScreenshotExport;
+import Core.ArtifactMath;
 
 namespace Artifact
 {
@@ -498,7 +498,7 @@ QString ArtifactScreenshotExportDialog::format() const
 void ArtifactScreenshotExportDialog::setJpegQuality(int quality)
 {
  if (impl_ && impl_->jpegQualitySpin) {
-  impl_->jpegQualitySpin->setValue(std::clamp(quality, 1, 100));
+  impl_->jpegQualitySpin->setValue(ArtifactCore::artifactClamp(quality, 1, 100));
   if (impl_->summary) {
    impl_->summary->update();
   }

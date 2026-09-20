@@ -1,5 +1,4 @@
 module;
-#include <algorithm>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -19,6 +18,7 @@ module;
 #include <QWidget>
 
 module Artifact.Widgets.Dialog.CompositionShell;
+import Core.ArtifactMath;
 
 namespace Artifact {
 namespace {
@@ -69,7 +69,7 @@ class CompositionSettingsHeader final : public QWidget {
     painter.fillRect(rect(), shade);
 
     QFont titleFont = font();
-    titleFont.setPointSize(std::max(12, titleFont.pointSize() + 2));
+    titleFont.setPointSize(ArtifactCore::artifactMax(12, titleFont.pointSize() + 2));
     titleFont.setBold(true);
     painter.setFont(titleFont);
     painter.setPen(QColor(238, 242, 248));
@@ -78,7 +78,7 @@ class CompositionSettingsHeader final : public QWidget {
                      QStringLiteral("Composition Settings"));
 
     QFont subFont = font();
-    subFont.setPointSize(std::max(8, subFont.pointSize() - 1));
+    subFont.setPointSize(ArtifactCore::artifactMax(8, subFont.pointSize() - 1));
     painter.setFont(subFont);
     painter.setPen(QColor(166, 176, 188, 210));
     painter.drawText(rect().adjusted(22, 44, -22, -12),

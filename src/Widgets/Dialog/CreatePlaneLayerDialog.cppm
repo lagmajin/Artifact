@@ -36,9 +36,12 @@ module;
 #include <QStyleFactory>
 #include <QStyleOption>
 #include <Layer/ArtifactSolidGradientUtil.hpp>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
-import std;
 import Memory.SharedPtr;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.Abstract;

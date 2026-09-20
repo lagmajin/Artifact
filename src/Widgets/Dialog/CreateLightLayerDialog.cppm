@@ -1,6 +1,5 @@
 module;
 
-#include <algorithm>
 
 #include <QCheckBox>
 #include <QColor>
@@ -25,6 +24,7 @@ module;
 
 module Artifact.Widgets.CreateLightLayerDialog;
 
+import Core.ArtifactMath;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
@@ -461,7 +461,7 @@ bool CreateLightLayerDialog::castsShadows() const
 
 void CreateLightLayerDialog::selectLightType(LightType type)
 {
-  const int index = std::clamp(static_cast<int>(type), 0, 4);
+  const int index = ArtifactCore::artifactClamp(static_cast<int>(type), 0, 4);
   impl_->selectedType = static_cast<LightType>(index);
   impl_->typePages->setCurrentIndex(index);
   for (int buttonIndex = 0; buttonIndex < 5; ++buttonIndex) {
@@ -493,7 +493,7 @@ void CreateLightLayerDialog::refreshPresentation()
       QStringLiteral("Emits parallel rays across the scene from one direction."),
       QStringLiteral("Adds uniform light to every affected object in the scene."),
       QStringLiteral("Emits soft light from a rectangular or disk-shaped surface.")};
-  const int index = std::clamp(static_cast<int>(impl_->selectedType), 0, 4);
+  const int index = ArtifactCore::artifactClamp(static_cast<int>(impl_->selectedType), 0, 4);
   impl_->typeTitle->setText(titles[index]);
   impl_->typeDescription->setText(descriptions[index]);
 
@@ -517,7 +517,7 @@ void CreateLightLayerDialog::applyTo(ArtifactLightLayer& layer) const
   }
   if (lightType() == LightType::Spot) {
     layer.setConeAngle(coneAngle());
-    layer.setConeFeather(std::min(coneFeather(), coneAngle()));
+    layer.setConeFeather(ArtifactCore::artifactMin(coneFeather(), coneAngle()));
   }
   if (lightType() == LightType::Area) {
     layer.setAreaShape(areaShape());

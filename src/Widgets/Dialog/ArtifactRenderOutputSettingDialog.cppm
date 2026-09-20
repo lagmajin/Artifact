@@ -158,7 +158,7 @@ namespace Artifact
    detailTitleFont.setBold(true);
    detailTitle->setFont(detailTitleFont);
    auto* detailText = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.detail_text"),
-       QStringLiteral("各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\n解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\n\n透過素材は ProRes 4444 または WebM/VP9 を選択してください。\n一般配布用は MP4/H.264 が基本です。")),
+       TranslationManager::instance().tr(QStringLiteral("dialog.render_output.preset_intent_detail"), QStringLiteral("各行は既存の出力プリセットに対応します。ここでは出力の意図を選び、\n解像度・フレーム範囲・保存先の最終調整は Render Queue で行います。\n\n透過素材は ProRes 4444 または WebM/VP9 を選択してください。\n一般配布用は MP4/H.264 が基本です。"))),
        detailGroup);
    detailText->setWordWrap(true);
    detailLayout->addWidget(detailTitle);
@@ -880,7 +880,7 @@ namespace Artifact
    QPalette palette = outputPackageLabel->palette();
    if (imageSequence) {
      outputPackageLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.package_image_sequence_full"),
-         QStringLiteral("出力パッケージ: 画像連番のみ。連番には音声を格納できません。音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。")));
+         TranslationManager::instance().tr(QStringLiteral("dialog.render_output.image_seq_no_audio"), QStringLiteral("出力パッケージ: 画像連番のみ。連番には音声を格納できません。音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。"))));
      palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#F09A3E")));
    } else if (!supportsIntegratedAudio) {
      outputPackageLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.package_audio_unavailable"), QStringLiteral("出力パッケージ: この形式では音声同梱を利用できません。")));
@@ -1631,7 +1631,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         QStringLiteral("Deep EXR (Beauty + Depth, one sample per pixel)"), this);
     impl_->deepExportCheck->setChecked(false);
     impl_->deepExportCheck->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.deep_exr_tooltip"),
-        QStringLiteral("Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。ネイティブな複数可視サンプル出力ではありません。")));
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.deep_exr_single_sample"), QStringLiteral("Beauty と Depth AOV から1ピクセルあたり1サンプルの Deep EXR を書き出します。ネイティブな複数可視サンプル出力ではありません。"))));
     formLayout->addRow("Deep:", impl_->deepExportCheck);
 
     impl_->multiChannelGroup = new QGroupBox(QStringLiteral("AOV Channels"), this);

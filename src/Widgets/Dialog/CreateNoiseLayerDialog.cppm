@@ -1,6 +1,5 @@
 module;
 #include <cstdint>
-#include <algorithm>
 #include <cstdlib>
 #include <utility>
 #include <QDialog>
@@ -33,6 +32,7 @@ module;
 
 module Artifact.Widgets.CreateNoiseLayerDialog;
 
+import Core.ArtifactMath;
 import ImageProcessing.ProceduralTexture;
 
 namespace Artifact {
@@ -161,7 +161,7 @@ private:
         } else if (kind == static_cast<int>(ArtifactCore::ProceduralTextureGeneratorKind::Gradient)) {
           value = (x * 255) / (kSide - 1);
         } else if (kind == static_cast<int>(ArtifactCore::ProceduralTextureGeneratorKind::Voronoi)) {
-          value = 255 - std::min(255, std::abs((x % 12) - 6) * 28 + std::abs((y % 12) - 6) * 28);
+          value = 255 - ArtifactCore::artifactMin(255, ArtifactCore::artifactAbs((x % 12) - 6) * 28 + ArtifactCore::artifactAbs((y % 12) - 6) * 28);
         } else {
           const int nextX = sample(coarseX + 1, coarseY);
           const int nextY = sample(coarseX, coarseY + 1);
