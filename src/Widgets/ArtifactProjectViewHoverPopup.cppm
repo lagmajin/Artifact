@@ -15,10 +15,10 @@ module;
 #include <QVector>
 #include <QWidget>
 
-#include <algorithm>
 
 export module Artifact.Widgets.ProjectViewHoverPopup;
 
+import Core.ArtifactMath;
 import Artifact.Widgets.ProjectManagerWidget;
 import Widgets.Utils.CSS;
 
@@ -95,8 +95,8 @@ void HoverThumbnailPopupWidget::showAt(const QPoint& p) {
     if (pos.y() + popupSize.height() > avail.bottom() - 8) {
       pos.setY(avail.bottom() - popupSize.height() - 8);
     }
-    pos.setX(std::max(avail.left() + 8, pos.x()));
-    pos.setY(std::max(avail.top() + 8, pos.y()));
+    pos.setX(ArtifactCore::artifactMax(avail.left() + 8, pos.x()));
+    pos.setY(ArtifactCore::artifactMax(avail.top() + 8, pos.y()));
   }
   move(pos);
   show();
