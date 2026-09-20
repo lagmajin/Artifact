@@ -1,5 +1,4 @@
 module;
-#include <algorithm>
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QColor>
@@ -36,9 +35,11 @@ module;
 
 module Artifact.Widgets.ImportAssetsDialog;
 
+import Core.ArtifactMath;
 import File.TypeDetector;
 import Artifact.Widgets.AssetThumbnailPipeline;
 import Widgets.Utils.CSS;
+import Translation.Manager;
 
 namespace Artifact {
 namespace {
@@ -68,14 +69,14 @@ QString formatByteSize(const quint64 bytes)
 QString groupDetails(const ImportGroup& group)
 {
   if (group.paths.isEmpty()) return QStringLiteral("-");
-  if (group.title == QStringLiteral("連番") && group.paths.size() > 1) {
+  if (group.title == TranslationManager::instance().tr(QStringLiteral("import.group.sequence"), QStringLiteral("連番")) && group.paths.size() > 1) {
     return QStringLiteral("%1 – %2")
         .arg(QFileInfo(group.paths.first()).fileName(),
              QFileInfo(group.paths.last()).fileName());
   }
   const QString firstName = QFileInfo(group.paths.first()).fileName();
   return group.paths.size() > 1
-      ? QStringLiteral("%1 ほか").arg(firstName)
+      ? TranslationManager::instance().tr(QStringLiteral("import.other_files_suffix"), QStringLiteral("%1 ほか")).arg(firstName)
       : firstName;
 }
 
@@ -196,7 +197,7 @@ void refreshMediaPickerDetails(QDialog* dialog)
   auto* proceed = dialog->findChild<QPushButton*>(QStringLiteral("mediaPickerContinue"));
   if (!name || !details || !status || !proceed) return;
   quint64 bytes = 0;
-  for (const QString& path : paths) bytes += static_cast<quint64>(std::max<qint64>(0, QFileInfo(path).size()));
+  for (const QString& path : paths) bytes += static_cast<quint64>(ArtifactCore::artifactMax<qint64>(0, QFileInfo(path).size()));
   if (paths.isEmpty()) {
     name->setText(QStringLiteral("No media selected"));
     details->setText(QStringLiteral("Select one or more supported files.\n\nFolders open with double-click."));
@@ -211,7 +212,7 @@ void refreshMediaPickerDetails(QDialog* dialog)
   details->setText(QStringLiteral("Type        %1%2\nSize        %3\nModified    %4\n\n%5")
       .arg(pickerTypeLabel(detector.detectByExtension(first.absoluteFilePath())),
            isSequenceName(first.absoluteFilePath()) ? QStringLiteral(" · Sequence candidate") : QString(),
-           formatPickerSize(static_cast<quint64>(std::max<qint64>(0, first.size()))),
+           formatPickerSize(static_cast<quint64>(ArtifactCore::artifactMax<qint64>(0, first.size()))),
            first.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
            paths.size() > 1 ? QStringLiteral("%1 files selected").arg(paths.size())
                             : QStringLiteral("Ready to continue")));
@@ -252,7 +253,7 @@ void refreshProjectPickerDetails(QDialog* dialog)
   details->setText(QStringLiteral("Path        %1\nModified    %2\nSize        %3\nStatus      Not checked until opening")
       .arg(QDir::toNativeSeparators(info.absoluteFilePath()),
            info.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
-           formatPickerSize(static_cast<quint64>(std::max<qint64>(0, info.size())))));
+           formatPickerSize(static_cast<quint64>(ArtifactCore::artifactMax<qint64>(0, info.size())))));
   status->setText(QStringLiteral("Ready to open · %1").arg(info.fileName()));
   open->setEnabled(true);
 }
@@ -682,11 +683,11 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   setMinimumSize(820, 540);
 
   ArtifactCore::FileTypeDetector detector;
-  ImportGroup stillImages{QStringLiteral("静止画（連番以外）")};
-  ImportGroup videoFiles{QStringLiteral("動画系")};
-  ImportGroup audioFiles{QStringLiteral("音声")};
-  ImportGroup sequences{QStringLiteral("連番")};
-  ImportGroup otherFiles{QStringLiteral("その他")};
+  ImportGroup stillImages{TranslationManager::instance().tr(QStringLiteral("import.group.still_images"), QStringLiteral("静止画（連番以外）"))};
+  ImportGroup videoFiles{TranslationManager::instance().tr(QStringLiteral("import.group.video"), QStringLiteral("動画系"))};
+  ImportGroup audioFiles{TranslationManager::instance().tr(QStringLiteral("import.group.audio"), QStringLiteral("音声"))};
+  ImportGroup sequences{TranslationManager::instance().tr(QStringLiteral("import.group.sequence"), QStringLiteral("連番"))};
+  ImportGroup otherFiles{TranslationManager::instance().tr(QStringLiteral("import.group.other"), QStringLiteral("その他"))};
 
   auto targetGroup = [&](const QString& path) -> ImportGroup* {
     switch (detector.detectByExtension(path)) {
@@ -710,7 +711,7 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   QHash<QString, int> fileNameCounts;
   for (const QString& path : files) {
     const QFileInfo info(path);
-    totalBytes += static_cast<quint64>(std::max<qint64>(0, info.size()));
+    totalBytes += static_cast<quint64>(ArtifactCore::artifactMax<qint64>(0, info.size()));
     const QString key = info.fileName().toCaseFolded();
     fileNameCounts.insert(key, fileNameCounts.value(key) + 1);
   }
@@ -729,7 +730,7 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   title->setFont(titleFont);
   layout->addWidget(title);
   auto* description = new QLabel(
-      QStringLiteral("選択したアセットは現在のプロジェクトの Assets フォルダへコピーしてから取り込みます。"),
+      TranslationManager::instance().tr(QStringLiteral("dialog.import_assets.copy_notice"), QStringLiteral("選択したアセットは現在のプロジェクトの Assets フォルダへコピーしてから取り込みます。")),
       this);
   description->setWordWrap(true);
   description->setAccessibleName(QStringLiteral("Import destination description"));
@@ -796,7 +797,7 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   resultLayout->setContentsMargins(12, 8, 12, 8);
   auto* warningLabel = new QLabel(resultRow);
   if (duplicateFileCount > 0) {
-    warningLabel->setText(QStringLiteral("⚠ %1 件の同名ファイルは確認が必要です")
+    warningLabel->setText(TranslationManager::instance().tr(QStringLiteral("dialog.import_assets.duplicate_warning"), QStringLiteral("⚠ %1 件の同名ファイルは確認が必要です"))
                               .arg(duplicateFileCount));
     QPalette warningPalette = warningLabel->palette();
     warningPalette.setColor(QPalette::WindowText,
@@ -806,13 +807,13 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   resultLayout->addWidget(warningLabel);
   resultLayout->addStretch();
   resultLayout->addWidget(new QLabel(
-      QStringLiteral("取り込み候補: %1 ファイル / %2")
+      TranslationManager::instance().tr(QStringLiteral("dialog.import_assets.candidate_summary"), QStringLiteral("取り込み候補: %1 ファイル / %2"))
           .arg(files.size()).arg(formatByteSize(totalBytes)), resultRow));
   layout->addWidget(resultRow);
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-  buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Project/Assets にコピーして取り込む"));
-  buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("キャンセル"));
+  buttons->button(QDialogButtonBox::Ok)->setText(TranslationManager::instance().tr(QStringLiteral("dialog.import_assets.copy_and_import"), QStringLiteral("Project/Assets にコピーして取り込む")));
+  buttons->button(QDialogButtonBox::Cancel)->setText(TranslationManager::instance().tr(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")));
   buttons->setAccessibleName(QStringLiteral("Asset import actions"));
   buttons->button(QDialogButtonBox::Ok)->setAccessibleName(QStringLiteral("Import selected assets"));
   buttons->button(QDialogButtonBox::Ok)->setAccessibleDescription(QStringLiteral("Copy checked asset groups into the project Assets folder"));
