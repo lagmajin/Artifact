@@ -31,7 +31,6 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Color.Float;
 import Time.Rational;
-import Frame.Rate;
 import Animation.Transform3D;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
@@ -1351,13 +1350,19 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
                                             const ArtifactCore::RationalTime& time)
 {
  TransformSnapshot snapshot;
- snapshot.frame = time.value();
- snapshot.timeScale = time.scale();
  if (!layer) {
+  snapshot.frame = time.value();
+  snapshot.timeScale = time.scale();
   return snapshot;
  }
 
  const auto& t3d = layer->transform3D();
+ // Persist the time in the transform's own keyframe storage domain. Callers
+ // build times with the composition-level scale, so keeping the caller's
+ // scale here would let undo/redo and cancel address a different frame than
+ // the one AnimatableTransform3D actually wrote to.
+ snapshot.timeScale = layer->keyframeTimeScale();
+ snapshot.frame = time.toFrameCount(snapshot.timeScale);
  snapshot.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
  snapshot.hasRotationKey = t3d.hasRotationKeyFrameAt(time);
  snapshot.hasScaleKey = t3d.hasScaleKeyFrameAt(time);
@@ -1433,6 +1438,8 @@ void applyRotationSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
                            const TransformSnapshot& snapshot)
 {
  if (snapshot.hasRotationKey) {
+  // setRotation stores the initial-rotation-relative key value, so the
+  // absolute evaluated angle has to be converted here.
   t3d.setRotation(time, snapshot.rotation - t3d.initialRotation());
  } else {
   t3d.removeRotationKeyFrameAt(time);
@@ -1456,29 +1463,15 @@ void applyScaleSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
  }
 }
 
-double effectiveTransformKeyframeRate(const ArtifactAbstractLayer* layer)
-{
- if (!layer) {
-  return 24.0;
- }
- if (auto* composition = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
-  const double fps = composition->frameRate().framerate();
-  if (std::isfinite(fps) && fps > 0.0) {
-   return std::clamp(fps, 1.0, 10000.0);
-  }
- }
- return 24.0;
-}
-
-ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLayer* layer,
-                                                        const int64_t frame);
-
+// Authoring times must address the same frame domain that
+// AnimatableTransform3D writes into. The layer owns that domain, so ask it
+// instead of re-deriving the scale and risking a 24/30fps split between the
+// key the drag writes and the key the timeline shows.
 ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLayer* layer,
                                                         const int64_t frame)
 {
- return ArtifactCore::RationalTime(
-     frame, ArtifactCore::FrameRate::storageScaleForFps(
-                effectiveTransformKeyframeRate(layer), 24));
+ return layer ? layer->keyframeTimeAtFrame(frame)
+              : ArtifactCore::RationalTime(frame, 24);
 }
 
 class TransformUndoCommand final : public UndoCommand {
@@ -2725,8 +2718,12 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
   lastDragMutationNotify_ = {};
   const auto &t3d = layer_->transform3D();
   dragStartFrame_ = currentTransformAuthoringFrame(layer_.get());
-  multiDragState_->timeScale = ArtifactCore::FrameRate::storageScaleForFps(
-      effectiveTransformKeyframeRate(layer_.get()), 24);
+  // Keys live in the transform's own frame domain, which the layer pins to
+  // the composition frame rate when it joins the composition. Deriving the
+  // scale again from the composition fps would reopen the 24/30fps mismatch
+  // where a drag on a keyed frame silently rewrote the initial value instead
+  // of the key.
+  multiDragState_->timeScale = layer_->keyframeTimeScale();
   const ArtifactCore::RationalTime dragStartTime(
       dragStartFrame_, multiDragState_->timeScale);
   const auto dragStartSnapshot = t3d.snapshotAt(dragStartTime);
@@ -3622,6 +3619,28 @@ void TransformGizmo::handleMouseRelease() {
    anyChanged = true;
    undoEntries.push_back(MultiTransformEntry{target, before, after});
   }
+
+   if (anyChanged) {
+    // Deliver the final recorded state to observers before the undo entry is
+    // handed over. Live drag notifications are throttled (~33ms), so the last
+    // keyframe/value write may otherwise never reach the timeline, inspector,
+    // or renderer listeners.
+    for (const auto &entry : undoEntries) {
+     const auto target = entry.layer.lock();
+     if (!target) {
+      continue;
+     }
+     target->setDirty(LayerDirtyFlag::Transform);
+     target->changed();
+     if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+             target->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{composition->id().toString(),
+                            target->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+     }
+    }
+   }
 
    if (anyChanged && !undoEntries.empty()) {
     auto *mgr = UndoManager::instance();
