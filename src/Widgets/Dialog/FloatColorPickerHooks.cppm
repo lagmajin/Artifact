@@ -44,6 +44,7 @@ import FloatColorPickerDialog;
 import Color.Float;
 import Color.Lab;
 import Color.XYZ;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -319,10 +320,10 @@ public:
             layout->addLayout(row);
             inputs_[i]->edited = [this]() { commit(); };
         }
-        auto* reference = new QLabel(lab ? QStringLiteral("CIELAB · D65 · sRGB 基準")
-                                         : QStringLiteral("CIE XYZ · D65 · Y = 1 · sRGB 基準"), this);
+        auto* reference = new QLabel(lab ? TranslationManager::instance().tr(QStringLiteral("dialog.color_picker.reference_cielab"), QStringLiteral("CIELAB · D65 · sRGB 基準"))
+                                         : TranslationManager::instance().tr(QStringLiteral("dialog.color_picker.reference_ciexyz"), QStringLiteral("CIE XYZ · D65 · Y = 1 · sRGB 基準")), this);
         layout->addWidget(reference);
-        status_ = new QLabel(QStringLiteral("RGB範囲外の入力は 0–1 にクリップされます"), this);
+        status_ = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.color_picker.out_of_range_hint"), QStringLiteral("RGB範囲外の入力は 0–1 にクリップされます")), this);
         status_->setWordWrap(true);
         layout->addWidget(status_);
         layout->addStretch();
@@ -369,8 +370,8 @@ private:
         const bool clipped = std::abs(shown_[0] - x) > (lab_ ? 0.05 : 0.0005)
                           || std::abs(shown_[1] - y) > (lab_ ? 0.05 : 0.0005)
                           || std::abs(shown_[2] - z) > (lab_ ? 0.05 : 0.0005);
-        status_->setText(clipped ? QStringLiteral("入力をsRGB範囲へクリップしました。表示は変換後の値です。")
-                                : QStringLiteral("RGB範囲外の入力は 0–1 にクリップされます"));
+        status_->setText(clipped ? TranslationManager::instance().tr(QStringLiteral("dialog.color_picker.clipped_notice"), QStringLiteral("入力をsRGB範囲へクリップしました。表示は変換後の値です。"))
+                                : TranslationManager::instance().tr(QStringLiteral("dialog.color_picker.out_of_range_hint"), QStringLiteral("RGB範囲外の入力は 0–1 にクリップされます")));
     }
 };
 
