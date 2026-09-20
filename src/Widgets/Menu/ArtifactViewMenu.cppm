@@ -25,9 +25,11 @@ module;
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QSettings>
+#include <algorithm>
+#include <optional>
+#include <vector>
 
 module Artifact.Menu.View;
-import std;
 import Translation.Manager;
 
 import Artifact.Service.Project;
@@ -44,6 +46,7 @@ import Artifact.Widgets.ColorPaletteWidget;
 import Artifact.Widgets.ColorSciencePanel;
 import Artifact.Widgets.EffectPalette;
 import Artifact.Widgets.SecondaryPreviewWindow;
+import Artifact.Widgets.DetachedTaskTray;
 import Widgets.AssetBrowser;
 import Widgets.ToolBar;
 import Artifact.Widgets.ReactiveEventEditorWindow;
@@ -934,6 +937,8 @@ namespace Artifact {
      QAction* openReactiveEventEditorAction = nullptr;
    QAction* secondaryPreviewAction = nullptr;
    QPointer<ArtifactSecondaryPreviewWindow> secondaryPreviewWindow;
+   QAction* detachedTaskTrayAction = nullptr;
+   QPointer<ArtifactDetachedTaskTray> detachedTaskTray;
    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
@@ -947,6 +952,7 @@ namespace Artifact {
    void rebuildWindowPanelsMenu();
    void showProjectPanel();
    void showSecondaryPreview();
+   void showDetachedTaskTray();
    void refreshSecondaryPreview();
    };
 
@@ -1719,6 +1725,11 @@ namespace Artifact {
     });
 
     menu->addSeparator();
+    detachedTaskTrayAction = menu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.detached_tasks"), QStringLiteral("Detached タスク(&D)")));
+    detachedTaskTrayAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewDetachedTasks));
+    QObject::connect(detachedTaskTrayAction, &QAction::triggered, menu, [this]() {
+      showDetachedTaskTray();
+    });
     openReactiveEventEditorAction = menu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.reactive_event_editor"), QStringLiteral("リアクティブイベントエディタ(&E)...")));
     openReactiveEventEditorAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_reactive_events.svg")));
     QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
@@ -3133,6 +3144,17 @@ void ArtifactViewMenu::Impl::showSecondaryPreview()
 
  secondaryPreviewWindow->showOnScreen(1);
  refreshSecondaryPreview();
-}
+ }
 
-};
+void ArtifactViewMenu::Impl::showDetachedTaskTray()
+ {
+  if (!mainWindow) return;
+  if (!detachedTaskTray) {
+   detachedTaskTray = new ArtifactDetachedTaskTray(mainWindow);
+   detachedTaskTray->setAttribute(Qt::WA_DeleteOnClose, false);
+  }
+  detachedTaskTray->showTray();
+ }
+
+} // namespace Artifact
+
