@@ -5,11 +5,10 @@ module;
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
-#include <cmath>
 
 module Artifact.Audio.MidiProposal;
+import Core.ArtifactMath;
 
-import std;
 
 namespace Artifact {
 namespace {
@@ -19,7 +18,7 @@ constexpr int kMaxNotesPerTrack = 10000;
 constexpr double kMaxLengthBeats = 4096.0;
 
 bool finite(double value) {
-    return std::isfinite(value);
+    return ArtifactCore::artifactIsFinite(value);
 }
 
 bool hasNumber(const QJsonObject& object, const QString& key) {
@@ -124,7 +123,7 @@ MidiProposalParseResult parseMidiProposalJson(const QByteArray& json) {
     if (tracks.size() > kMaxTracks) {
         result.errors << QStringLiteral("Too many tracks");
     }
-    const int trackCount = std::min(static_cast<int>(tracks.size()), kMaxTracks);
+    const int trackCount = ArtifactCore::artifactMin(static_cast<int>(tracks.size()), kMaxTracks);
     for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
         const QJsonValue& trackValue = tracks.at(trackIndex);
         if (!trackValue.isObject()) {
@@ -144,7 +143,7 @@ MidiProposalParseResult parseMidiProposalJson(const QByteArray& json) {
         if (notes.size() > kMaxNotesPerTrack) {
             result.errors << QStringLiteral("Track has too many notes");
         }
-        const int noteCount = std::min(static_cast<int>(notes.size()), kMaxNotesPerTrack);
+        const int noteCount = ArtifactCore::artifactMin(static_cast<int>(notes.size()), kMaxNotesPerTrack);
         for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex) {
             const QJsonValue& noteValue = notes.at(noteIndex);
             if (!noteValue.isObject()) {
