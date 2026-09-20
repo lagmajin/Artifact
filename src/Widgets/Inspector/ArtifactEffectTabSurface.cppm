@@ -5,10 +5,10 @@ module;
 #include <QPen>
 #include <QVBoxLayout>
 #include <QToolTip>
-#include <cmath>
 
 module Artifact.Widgets.Inspector.EffectTabSurface;
 
+import Core.ArtifactMath;
 import Artifact.Effect.Ofx.Host;
 
 namespace {
@@ -72,10 +72,10 @@ class OfxHostStatusWidget final : public QWidget {
     painter.drawEllipse(QPoint(centerX, centerY), 2, 2);
     for (int i = 0; i < 8; ++i) {
       const double angle = i * 3.14159265358979323846 / 4.0;
-      painter.drawLine(QPointF(centerX + std::cos(angle) * 8.0,
-                               centerY + std::sin(angle) * 8.0),
-                       QPointF(centerX + std::cos(angle) * 11.0,
-                               centerY + std::sin(angle) * 11.0));
+      painter.drawLine(QPointF(centerX + ArtifactCore::artifactCos(angle) * 8.0,
+                               centerY + ArtifactCore::artifactSin(angle) * 8.0),
+                       QPointF(centerX + ArtifactCore::artifactCos(angle) * 11.0,
+                               centerY + ArtifactCore::artifactSin(angle) * 11.0));
     }
   }
 
