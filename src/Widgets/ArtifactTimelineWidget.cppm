@@ -491,13 +491,11 @@ public:
   void setCallback(Callback callback) { callback_ = std::move(callback); }
 
 protected:
-  void mouseReleaseEvent(QMouseEvent *event) override {
-    QToolButton::mouseReleaseEvent(event);
-    if (!isEnabled() || !callback_ || !event ||
-        event->button() != Qt::LeftButton || !rect().contains(event->pos())) {
-      return;
+  void nextCheckState() override {
+    QToolButton::nextCheckState();
+    if (isEnabled() && callback_) {
+      callback_();
     }
-    callback_();
   }
 
 private:
@@ -3307,7 +3305,9 @@ CurveEditorPayload collectCurveEditorPayload(
             !selectedPropertyPaths.contains(property->getName())) continue;
 
         const auto keyframes = property->getKeyFrames();
-        const bool hasKeyframes = !keyframes.empty();
+        if (keyframes.empty()) {
+          continue;
+        }
 
         CurveTrack track;
         track.name = QStringLiteral("%1 / %2")
@@ -3327,18 +3327,6 @@ CurveEditorPayload collectCurveEditorPayload(
         interpolations.reserve(static_cast<int>(keyframes.size()));
 
         bool anyNumeric = false;
-        if (!hasKeyframes) {
-          // Show flat line at current value
-          const QVariant curVal = property->getValue();
-          if (curVal.canConvert<double>()) {
-            const qint64 startFrame = composition->frameRange().start();
-            const qint64 endFrame = composition->frameRange().end();
-            const double val = curVal.toDouble();
-            frames.push_back(startFrame); values.push_back(val); interpolations.push_back(ArtifactCore::InterpolationType::Linear);
-            frames.push_back(endFrame); values.push_back(val); interpolations.push_back(ArtifactCore::InterpolationType::Linear);
-            anyNumeric = true;
-          }
-        }
         for (const auto& keyframe : keyframes) {
           const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
           const QVariant value = keyframe.value;
@@ -3362,9 +3350,9 @@ CurveEditorPayload collectCurveEditorPayload(
           curveKey.value = static_cast<float>(values[i]);
           curveKey.smooth = interpolations[i] == ArtifactCore::InterpolationType::Bezier;
           curveKey.constant = interpolations[i] == ArtifactCore::InterpolationType::Constant;
-          const auto& sourceKeyframe = hasKeyframes ? keyframes[static_cast<size_t>(i)] : ArtifactCore::KeyFrame();
+          const auto& sourceKeyframe = keyframes[static_cast<size_t>(i)];
 
-          if (hasKeyframes && i > 0 && keyframes[static_cast<size_t>(i - 1)].interpolation ==
+          if (i > 0 && keyframes[static_cast<size_t>(i - 1)].interpolation ==
                            ArtifactCore::InterpolationType::Bezier) {
             const auto& prevKeyframe = keyframes[static_cast<size_t>(i - 1)];
             const double dt = std::max(
