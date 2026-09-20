@@ -46,10 +46,12 @@ module;
 #include <QVBoxLayout>
 #include <QtSVG/QSvgRenderer>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <cmath>
+#include <functional>
 
 module Artifact.Widgets.PropertyEditor;
 
-import std;
 import Utils.Path;
 import Color.Float;
 import Font.FreeFont;
@@ -1236,6 +1238,11 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   const QString glyphs[6] = {QStringLiteral("‹"), QStringLiteral("◆"),
                              QStringLiteral("›"), QStringLiteral("↶"),
                              QStringLiteral("ƒx"), QStringLiteral("★")};
+  // keyframe (i==1) / expression (i==4) の選択時は accent ではなく
+  // テーマ由来色で区別: keyframe=amber系、expression=accent系。
+  // いずれも currentDCCTheme 由来で、直書き色は fallback のみ。
+  const QColor keySelected =
+      themeColor(theme.accentColor, QColor(QStringLiteral("#C6A34B")));
   const int step = kPropertyKeyButtonSize + kPropertyActionSpacing;
   for (int i = 0; i < static_cast<int>(actions.visible.size()); ++i) {
     if (!actions.visible[i]) {
@@ -1246,10 +1253,24 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
                            kPropertyKeyButtonSize, kPropertyKeyButtonSize);
     const bool selected = (i == 1 && currentFrameKeyframed_) ||
                           (i == 4 && property("expressionActive").toBool());
+    QColor chipFill = blendColor(background, accent, hovered ? 0.10 : 0.04);
+    QColor chipText = text;
+    if (selected) {
+      if (i == 1) {
+        // keyframe diamond: updateKeyframeButtonIcon() と同系の amber
+        chipFill = keySelected;
+        const qreal lum = 0.2126 * chipFill.redF() + 0.7152 * chipFill.greenF() +
+                          0.0722 * chipFill.blueF();
+        chipText = lum > 0.54 ? QColor(20, 22, 24) : QColor(246, 248, 250);
+      } else {
+        chipFill = accent;
+        chipText = background;
+      }
+    }
     painter.setPen(Qt::NoPen);
-    painter.setBrush(selected ? accent : blendColor(background, accent, hovered ? 0.10 : 0.04));
+    painter.setBrush(chipFill);
     painter.drawRoundedRect(actionRect, 4, 4);
-    painter.setPen(selected ? background : text);
+    painter.setPen(chipText);
     painter.drawText(actionRect, Qt::AlignCenter, glyphs[i]);
   }
 }
