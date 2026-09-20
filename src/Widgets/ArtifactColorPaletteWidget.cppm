@@ -22,8 +22,6 @@ module;
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -52,6 +50,7 @@ module Artifact.Widgets.ColorPaletteWidget;
 
 
 
+import Core.ArtifactMath;
 import Artifact.Color.Palette;
 import Color.Harmonizer;
 import Artifact.Project.PresetManager;
@@ -67,10 +66,10 @@ W_OBJECT_IMPL(ArtifactColorPaletteWidget)
 
 static QColor toQColor(const ArtifactCore::FloatColor& color)
 {
-    return QColor::fromRgbF(std::clamp(color.r(), 0.0f, 1.0f),
-                            std::clamp(color.g(), 0.0f, 1.0f),
-                            std::clamp(color.b(), 0.0f, 1.0f),
-                            std::clamp(color.a(), 0.0f, 1.0f));
+    return QColor::fromRgbF(ArtifactCore::artifactClamp(color.r(), 0.0f, 1.0f),
+                            ArtifactCore::artifactClamp(color.g(), 0.0f, 1.0f),
+                            ArtifactCore::artifactClamp(color.b(), 0.0f, 1.0f),
+                            ArtifactCore::artifactClamp(color.a(), 0.0f, 1.0f));
 }
 
 // Custom delegate to draw colored palettes in the list

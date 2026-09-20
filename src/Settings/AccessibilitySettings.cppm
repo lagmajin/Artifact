@@ -5,7 +5,7 @@ module;
 
 module Settings.Accessibility;
 
-import std;
+import Core.ArtifactMath;
 import Application.AppSettings;
 
 namespace Artifact::Accessibility {
@@ -81,7 +81,7 @@ float fontScale() {
 
 void adjustContextMenuPosition(int& x, int& y, int menuWidth) {
     if (isLeftHanded()) {
-        x = std::max(0, x - menuWidth);
+        x = ArtifactCore::artifactMax(0, x - menuWidth);
     }
     Q_UNUSED(y);
 }
@@ -132,9 +132,9 @@ QColor adjustColorForDeficiency(const QColor& color) {
     default: break;
     }
 
-    r = std::clamp(r, 0.0f, 1.0f);
-    g = std::clamp(g, 0.0f, 1.0f);
-    b = std::clamp(b, 0.0f, 1.0f);
+    r = ArtifactCore::artifactClamp(r, 0.0f, 1.0f);
+    g = ArtifactCore::artifactClamp(g, 0.0f, 1.0f);
+    b = ArtifactCore::artifactClamp(b, 0.0f, 1.0f);
 
     return QColor::fromRgbF(r, g, b);
 }
