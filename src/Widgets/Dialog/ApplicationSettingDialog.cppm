@@ -72,6 +72,7 @@ import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
 import Core.Localization;
+import Localization.LocaleFormatting;
 import Configuration.ConfigLayer;
 import Configuration.ConfigSchema;
 import Configuration.LayeredConfigStore;
@@ -222,13 +223,20 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
         {"de", "Deutsch"},     {"es", "Español"},   {"pt", "Português"},
         {"ru", "Русский"},     {"ar", "العربية"},
     };
-    const QStringList loaded =
-        ArtifactCore::LocalizationManager::instance().availableLocales();
+    auto &loc = ArtifactCore::LocalizationManager::instance();
+    const QStringList loaded = loc.availableLocales();
+    // 低カバレッジのスタブ言語（11キー等）は選択肢から除外する。
+    // 基準: 英語のキー数の 1/10（最低50キー）。zh / zh-TW は現状 165 キーなので残る。
+    const int minKeys = qMax(50, loc.translationCount(QStringLiteral("en")) / 10);
     for (const auto &option : kLanguageOptions) {
       const QString code = QString::fromLatin1(option.code);
-      if (loaded.contains(code)) {
-        impl_->languageCombo_->addItem(QString::fromUtf8(option.label), code);
+      if (!loaded.contains(code)) {
+        continue;
       }
+      if (code != QStringLiteral("en") && loc.translationCount(code) < minKeys) {
+        continue;
+      }
+      impl_->languageCombo_->addItem(QString::fromUtf8(option.label), code);
     }
   }
   impl_->languageCombo_->setMinimumWidth(220);
@@ -558,7 +566,16 @@ void GeneralSettingPage::saveSettings() {
   settings->setDockTabFontPointSize(
       impl_->dockTabFontSizeSpinBox_->value());
   if (impl_->languageCombo_) {
-    settings->setAppLanguageCode(impl_->languageCombo_->currentData().toString());
+    const QString selectedLanguage =
+        impl_->languageCombo_->currentData().toString();
+    settings->setAppLanguageCode(selectedLanguage);
+    // 永続化に加えて即時反映も行う。空文字 (Auto) は次回起動時にシステムロケールで
+    // 再解決するため、ここでは何もしない。開いているメニューは aboutToShow で
+    // rebuildMenu() され、次に開いた時点で新言語のラベルになる。
+    if (!selectedLanguage.isEmpty()) {
+      ArtifactCore::LocalizationManager::instance().setLanguageCode(
+          selectedLanguage);
+    }
   }
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentText());
