@@ -26,7 +26,6 @@
 #include <queue>
 #include <deque>
 #include <list>
-#include <tuple>
 #include <numeric>
 #include <regex>
 #include <random>
@@ -37,6 +36,7 @@ export module Artifact.Mask.Path;
 
 
 
+import Core.ArtifactTuple;
 import Utils.String.UniString;
 import Shape.Path;
 
@@ -52,7 +52,8 @@ struct MaskVertex {
 };
 
 /// VP と Layer Solo View が共有する mask 頂点の選択アドレス。
-using MaskVertexAddress = std::tuple<int, int, int>;
+/// std::tuple 由来。要素アクセスは ArtifactCore::artifactGet<I>、生成は artifactMakeTuple。
+using MaskVertexAddress = Tuple<int, int, int>;
 
 struct MaskConversionParams {
     float simplificationTolerance = 1.5f;

@@ -3,10 +3,12 @@ module;
 #include <QObject>
 #include <QPointF>
 #include <QString>
+#include <algorithm>
+#include <cmath>
+#include <vector>
 
 export module Artifact.Tool.Brush;
 
-import std;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Paint;
 import FloatRGBA;

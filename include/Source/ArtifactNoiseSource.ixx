@@ -1,12 +1,11 @@
 module;
-#include <algorithm>
-#include <cmath>
 #include <QImage>
 #include <QSize>
 #include <QString>
 
 export module Artifact.Source.Noise;
 
+import Core.ArtifactMath;
 import Color.Float;
 import ImageProcessing.ProceduralTexture;
 import Image.ImageF32x4_RGBA;
@@ -42,8 +41,8 @@ protected:
 private:
   static ArtifactCore::FloatColor normalized(const ArtifactCore::FloatColor& value,
                                               const ArtifactCore::FloatColor& fallback) {
-    if (!std::isfinite(value.r()) || !std::isfinite(value.g()) || !std::isfinite(value.b()) || !std::isfinite(value.a())) return fallback;
-    return ArtifactCore::FloatColor(std::clamp(value.r(), 0.0f, 1.0f), std::clamp(value.g(), 0.0f, 1.0f), std::clamp(value.b(), 0.0f, 1.0f), std::clamp(value.a(), 0.0f, 1.0f));
+    if (!ArtifactCore::artifactIsFinite(value.r()) || !ArtifactCore::artifactIsFinite(value.g()) || !ArtifactCore::artifactIsFinite(value.b()) || !ArtifactCore::artifactIsFinite(value.a())) return fallback;
+    return ArtifactCore::FloatColor(ArtifactCore::artifactClamp(value.r(), 0.0f, 1.0f), ArtifactCore::artifactClamp(value.g(), 0.0f, 1.0f), ArtifactCore::artifactClamp(value.b(), 0.0f, 1.0f), ArtifactCore::artifactClamp(value.a(), 0.0f, 1.0f));
   }
 };
 
