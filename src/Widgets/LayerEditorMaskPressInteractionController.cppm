@@ -1,11 +1,11 @@
 module;
 
 #include <algorithm>
-#include <tuple>
 #include <utility>
 
 module Artifact.Widgets.LayerEditor.MaskPressInteractionController;
 
+import Core.ArtifactTuple;
 import Artifact.Layer.Abstract;
 import Artifact.Widgets.LayerEditor.MaskEditSession;
 import Artifact.Widgets.LayerEditor.MaskHoverController;
@@ -28,7 +28,7 @@ LayerEditorMaskPressInteractionController::handle(
  if (result.kind == LayerEditorMaskPressKind::Empty) return {};
 
  if (state.selectedVertices && result.vertexIndex >= 0) {
-  const auto address = std::make_tuple(
+  const auto address = ArtifactCore::artifactMakeTuple(
       result.maskIndex, result.pathIndex, result.vertexIndex);
   const auto found = std::find(state.selectedVertices->begin(),
                                state.selectedVertices->end(), address);

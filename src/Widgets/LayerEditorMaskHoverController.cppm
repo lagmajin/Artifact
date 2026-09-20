@@ -2,10 +2,10 @@ module;
 
 #include <QPointF>
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.MaskHoverController;
 
+import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -30,7 +30,7 @@ bool LayerEditorMaskHoverController::update(
     const QPointF& canvasPosition, float zoom)
 {
  LayerEditorMaskHoverState next;
- const float safeZoom = std::max(0.1f, zoom);
+ const float safeZoom = ArtifactCore::artifactMax(0.1f, zoom);
  if (!hitTestMaskHandle(
          layer, canvasPosition, 10.0f / safeZoom,
          next.maskIndex, next.pathIndex, next.vertexIndex, next.handleType)) {
@@ -49,7 +49,7 @@ bool LayerEditorMaskHoverController::hitVertex(
     int& maskIndex, int& pathIndex, int& vertexIndex) const
 {
  return hitTestMaskVertexGeometry(
-     layer, canvasPosition, 8.0f / std::max(0.1f, zoom),
+     layer, canvasPosition, 8.0f / ArtifactCore::artifactMax(0.1f, zoom),
      maskIndex, pathIndex, vertexIndex);
 }
 

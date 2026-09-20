@@ -2,11 +2,11 @@ module;
 
 #include <Qt>
 
-#include <algorithm>
 #include <utility>
 
 module Artifact.Widgets.LayerEditor.KeyInputController;
 
+import Core.ArtifactMath;
 import Artifact.Widgets.LayerEditor.ModalTransformController;
 import Artifact.Widgets.LayerEditor.ShapeEditSession;
 import Artifact.Widgets.LayerEditor.ShapeInputController;
@@ -67,7 +67,7 @@ LayerEditorKeyInputResult LayerEditorKeyInputController::handle(
      (state.key == Qt::Key_BracketLeft || state.key == Qt::Key_BracketRight) &&
      state.proportionalEditRadius) {
   const float scale = state.key == Qt::Key_BracketLeft ? 0.85f : 1.15f;
-  *state.proportionalEditRadius = std::clamp(
+  *state.proportionalEditRadius = ArtifactCore::artifactClamp(
       *state.proportionalEditRadius * scale,
       kMinProportionalRadius, kMaxProportionalRadius);
   return {true, true, LayerEditorKeyCursor::Unchanged};

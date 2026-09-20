@@ -1,12 +1,11 @@
 module;
 
-#include <algorithm>
-#include <cmath>
 
 #include <QWidget>
 
 module Artifact.Widgets.LayerEditor.FrameViewState;
 
+import Core.ArtifactMath;
 import Artifact.Render.IRenderer;
 
 namespace Artifact {
@@ -16,8 +15,8 @@ QSize layerEditorPhysicalViewportSize(const QWidget* widget)
  if (!widget) return {};
  const qreal dpr = widget->devicePixelRatio();
  return QSize(
-     std::max(1, static_cast<int>(std::lround(widget->width() * dpr))),
-     std::max(1, static_cast<int>(std::lround(widget->height() * dpr))));
+     ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactLround(widget->width() * dpr))),
+     ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactLround(widget->height() * dpr))));
 }
 
 LayerEditorFrameViewState beginLayerEditorFrameView(
@@ -28,9 +27,9 @@ LayerEditorFrameViewState beginLayerEditorFrameView(
  state.zoom = renderer.getZoom();
  renderer.getPan(state.panX, state.panY);
  const float viewportWidth = static_cast<float>(
-     std::max(1, viewportSize.width()));
+     ArtifactCore::artifactMax(1, viewportSize.width()));
  const float viewportHeight = static_cast<float>(
-     std::max(1, viewportSize.height()));
+     ArtifactCore::artifactMax(1, viewportSize.height()));
  renderer.setViewportSize(viewportWidth, viewportHeight);
  renderer.setCanvasSize(viewportWidth, viewportHeight);
  renderer.setZoom(1.0f);

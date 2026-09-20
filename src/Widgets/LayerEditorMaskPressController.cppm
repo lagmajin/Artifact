@@ -2,11 +2,11 @@ module;
 
 #include <QPointF>
 
-#include <algorithm>
 #include <vector>
 
 module Artifact.Widgets.LayerEditor.MaskPressController;
 
+import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -23,7 +23,7 @@ LayerEditorMaskPressResult LayerEditorMaskPressController::handle(
 {
  LayerEditorMaskPressResult result;
  if (!layer) return result;
- const float safeZoom = std::max(0.1f, zoom);
+ const float safeZoom = ArtifactCore::artifactMax(0.1f, zoom);
  if (hitTestMaskHandle(
          layer, canvasPosition, 10.0f / safeZoom,
          result.maskIndex, result.pathIndex, result.vertexIndex,
@@ -74,7 +74,7 @@ bool LayerEditorMaskPressController::closeOpenPathOnDoubleClick(
  int pathIndex = -1;
  int vertexIndex = -1;
  if (!hitTestMaskVertexGeometry(
-         layer, canvasPosition, 8.0f / std::max(0.1f, zoom),
+         layer, canvasPosition, 8.0f / ArtifactCore::artifactMax(0.1f, zoom),
          maskIndex, pathIndex, vertexIndex)) return false;
  LayerMask mask = layer->mask(maskIndex);
  MaskPath path = mask.maskPath(pathIndex);

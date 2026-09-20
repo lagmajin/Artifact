@@ -3,10 +3,10 @@ module;
 #include <Qt>
 #include <QString>
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.ViewportChromeInteractionController;
 
+import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
@@ -55,11 +55,11 @@ LayerEditorViewportChromeInteractionController::press(
  if (control < 20 || control > 23 || !state.zoomLevel) return {};
 
  if (control == 20)
-  *state.zoomLevel = std::clamp(renderer.getZoom() / 1.1f, 0.05f, 32.0f);
+  *state.zoomLevel = ArtifactCore::artifactClamp(renderer.getZoom() / 1.1f, 0.05f, 32.0f);
  else if (control == 21)
   *state.zoomLevel = 1.0f;
  else if (control == 22)
-  *state.zoomLevel = std::clamp(renderer.getZoom() * 1.1f, 0.05f, 32.0f);
+  *state.zoomLevel = ArtifactCore::artifactClamp(renderer.getZoom() * 1.1f, 0.05f, 32.0f);
  if (control <= 22) {
   renderer.zoomAroundViewportPoint(
       {static_cast<float>(state.physicalViewportCenter.x()),
