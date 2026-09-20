@@ -19,8 +19,11 @@ module;
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QPointer>
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <memory>
 module Artifact.Menu.Edit;
-import std;
 
 import Event.Bus;
 import Artifact.Event.Types;
@@ -179,7 +182,7 @@ private:
   menu->addSeparator();
   
   // Select submenu
-  QMenu* selectMenu = menu->addMenu("選択");
+  QMenu* selectMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_group"), QStringLiteral("選択")));
   selectMenu->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_all.svg")));
   selectMenu->addAction(selectAllAction);
   selectMenu->addAction(selectNoneAction);
@@ -736,8 +739,8 @@ void ArtifactEditMenu::Impl::handleCutAction()
   if (!parentWidget_) return;
 
   bool ok = false;
-  const QString searchText = QInputDialog::getText(parentWidget_, "検索",
-   "レイヤー名の一部を入力:", QLineEdit::Normal, QString(), &ok);
+  const QString searchText = QInputDialog::getText(parentWidget_, TranslationManager::instance().tr(QStringLiteral("dialog.find.title"), QStringLiteral("検索")),
+   TranslationManager::instance().tr(QStringLiteral("dialog.find.layer_name_prompt"), QStringLiteral("レイヤー名の一部を入力:")), QLineEdit::Normal, QString(), &ok);
   if (!ok || searchText.trimmed().isEmpty()) return;
 
   auto* svc = ArtifactProjectService::instance();
@@ -801,15 +804,15 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
   redoAction->setEnabled(hasProject && mgr && mgr->canRedo());
   
   if (mgr && mgr->canUndo()) {
-   undoAction->setText(QString("元に戻す: %1 (&U)").arg(mgr->undoDescription()));
+   undoAction->setText(QString(TranslationManager::instance().tr(QStringLiteral("menu.edit.undo_label"), QStringLiteral("元に戻す: %1 (&U)"))).arg(mgr->undoDescription()));
   } else {
-   undoAction->setText("元に戻す (&U)");
+   undoAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.edit.undo_accel"), QStringLiteral("元に戻す (&U)")));
   }
 
   if (mgr && mgr->canRedo()) {
-   redoAction->setText(QString("やり直し: %1 (&R)").arg(mgr->redoDescription()));
+   redoAction->setText(QString(TranslationManager::instance().tr(QStringLiteral("menu.edit.redo_label"), QStringLiteral("やり直し: %1 (&R)"))).arg(mgr->redoDescription()));
   } else {
-   redoAction->setText("やり直し (&R)");
+   redoAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.edit.redo_accel"), QStringLiteral("やり直し (&R)")));
   }
 
   bool hasSelection = false;
@@ -822,9 +825,9 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
 
   const bool layerClipboardReady = clipboard.hasLayerData();
   if (layerClipboardReady) {
-   pasteAction_->setText(QString("貼り付け (&P): %1").arg(clipboard.description()));
+   pasteAction_->setText(QString(TranslationManager::instance().tr(QStringLiteral("menu.edit.paste_label"), QStringLiteral("貼り付け (&P): %1"))).arg(clipboard.description()));
   } else {
-   pasteAction_->setText("貼り付け (&P)");
+   pasteAction_->setText(TranslationManager::instance().tr(QStringLiteral("menu.edit.paste_accel"), QStringLiteral("貼り付け (&P)")));
   }
   copyAction_->setEnabled(hasProject && hasSelection);
   cutAction_->setEnabled(hasProject && hasSelection);
