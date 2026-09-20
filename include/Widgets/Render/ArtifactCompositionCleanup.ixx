@@ -1,6 +1,5 @@
 module;
 
-#include <QMouseEvent>
 #include <QString>
 #include <QToolButton>
 #include <QWidget>
@@ -22,12 +21,10 @@ public:
   void setActivatedCallback(std::function<void()> callback);
 
 protected:
-  void mousePressEvent(QMouseEvent* event) override;
-  void mouseReleaseEvent(QMouseEvent* event) override;
+  void nextCheckState() override;
 
 private:
   std::function<void()> activatedCallback_;
-  bool pressedInside_ = false;
 };
 
 struct CompositionCleanupMove {
