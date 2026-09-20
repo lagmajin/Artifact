@@ -1,6 +1,7 @@
 module;
 #include <QAction>
 #include <QActionGroup>
+#include <QAccessible>
 #include <QClipboard>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -169,6 +170,7 @@ import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
 import Application.AppSettings;
+import Settings.Accessibility;
 import Widgets.Utils.CSS;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -198,6 +200,17 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+void updateAccessibleState(QWidget* widget, const QString& description) {
+  if (!widget || widget->accessibleDescription() == description) {
+    return;
+  }
+  widget->setAccessibleDescription(description);
+  if (QAccessible::isActive()) {
+    QAccessibleEvent event(widget, QAccessible::DescriptionChanged);
+    QAccessible::updateAccessibility(&event);
+  }
+}
+
 double safeCompositionFrameRate(const ArtifactAbstractComposition *composition)
 {
   if (!composition) {
@@ -8710,6 +8723,9 @@ public:
     activePaneId_ = std::clamp(activePaneId_, 0, std::max(0, paneCount - 1));
     if (viewportLayoutButton_) {
       viewportLayoutButton_->setText(viewportLayoutLabel());
+      updateAccessibleState(
+          viewportLayoutButton_, QStringLiteral("Current layout: %1. Cycle between one, two, and four views.")
+                                     .arg(viewportLayoutLabel()));
     }
     if (viewportTopSplitter_) {
       if (paneCount <= 1) {
@@ -9000,12 +9016,20 @@ public:
       statusResolutionLabel_->setText(
           size.isValid() ? QStringLiteral("%1 × %2").arg(size.width()).arg(size.height())
                          : QStringLiteral("— × —"));
+      updateAccessibleState(
+          statusResolutionLabel_,
+          QStringLiteral("Composition resolution: %1")
+              .arg(statusResolutionLabel_->text()));
     }
     if (statusFrameRateLabel_) {
       statusFrameRateLabel_->setText(
           comp ? QStringLiteral("%1 fps").arg(fps, 0, 'f',
                                                std::abs(fps - std::round(fps)) < 0.001 ? 0 : 2)
                : QStringLiteral("— fps"));
+      updateAccessibleState(
+          statusFrameRateLabel_,
+          QStringLiteral("Composition frame rate: %1")
+              .arg(statusFrameRateLabel_->text()));
     }
   }
 
@@ -9063,11 +9087,17 @@ public:
     if (!playPauseButton_) return;
     const bool playing = ArtifactPlaybackService::instance() &&
                          ArtifactPlaybackService::instance()->isPlaying();
+    const QString accessibleAction = playing ? QStringLiteral("Pause")
+                                             : QStringLiteral("Play");
     playPauseButton_->setIcon(loadIconWithFallback(
         playing ? QStringLiteral("Studio/playback_pause.svg")
                 : QStringLiteral("Studio/playback_play.svg")));
-    playPauseButton_->setToolTip(playing ? QStringLiteral("Pause")
-                                        : QStringLiteral("Play"));
+    playPauseButton_->setToolTip(accessibleAction);
+    playPauseButton_->setAccessibleName(accessibleAction);
+    updateAccessibleState(
+        playPauseButton_, playing
+                              ? QStringLiteral("Playback is running. Activate to pause.")
+                              : QStringLiteral("Playback is stopped. Activate to play."));
   }
 
   void openCreateCompositionDialog(ArtifactCompositionEditor *owner) {
@@ -9519,6 +9549,9 @@ public:
       toolModeButton_->setText(QStringLiteral("Tool"));
       break;
     }
+    updateAccessibleState(
+        toolModeButton_, QStringLiteral("Current editing tool: %1. Open this menu to choose another tool.")
+                             .arg(toolModeButton_->text()));
   }
 
   bool syncPreferredComposition(ArtifactCompositionEditor *owner) {
@@ -9871,10 +9904,16 @@ public:
     if (shadingButton_) {
       shadingButton_->setText(viewportChannelDisplayLabel());
       shadingButton_->setToolTip(shadingButtonTooltip());
+      updateAccessibleState(
+          shadingButton_, QStringLiteral("Current viewport display: %1. Open this menu to choose a display channel.")
+                              .arg(viewportChannelDisplayLabel()));
     }
     if (gizmoModeButton_) {
       gizmoModeButton_->setText(gizmoButtonLabel());
       gizmoModeButton_->setToolTip(gizmoButtonTooltip());
+      updateAccessibleState(
+          gizmoModeButton_, QStringLiteral("Current transform gizmo: %1. Open this menu to change mode or visibility.")
+                                .arg(gizmoButtonLabel()));
     }
     if (previewOrbitAction_) {
       previewOrbitAction_->setText(previewOrbitButtonLabel());
@@ -10619,8 +10658,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->setObjectName(QStringLiteral("compositionTopToolbar"));
   impl_->topToolbar_->setMovable(false);
   impl_->topToolbar_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  impl_->topToolbar_->setIconSize(QSize(18, 18));
-  impl_->topToolbar_->setFixedHeight(38);
+  impl_->topToolbar_->setIconSize(
+      QSize(Accessibility::scaledSize(18), Accessibility::scaledSize(18)));
+  impl_->topToolbar_->setFixedHeight(Accessibility::scaledSize(38));
   {
     QPalette pal = impl_->topToolbar_->palette();
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -10631,14 +10671,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->viewportLayoutButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->viewportLayoutButton_->setText(impl_->viewportLayoutLabel());
-  impl_->viewportLayoutButton_->setFixedWidth(72);
+  impl_->viewportLayoutButton_->setFixedWidth(Accessibility::scaledSize(72));
   impl_->viewportLayoutButton_->setAutoRaise(true);
-  impl_->viewportLayoutButton_->setFocusPolicy(Qt::NoFocus);
+  impl_->viewportLayoutButton_->setFocusPolicy(Qt::StrongFocus);
   impl_->viewportLayoutButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->viewportLayoutButton_->setSizePolicy(QSizePolicy::Fixed,
                                                QSizePolicy::Preferred);
   impl_->viewportLayoutButton_->setToolTip(
       QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
+  impl_->viewportLayoutButton_->setAccessibleName(
+      QStringLiteral("Viewport layout"));
+  impl_->viewportLayoutButton_->setAccessibleDescription(
+      QStringLiteral("Cycle the viewport layout between one, two, and four views"));
   impl_->topToolbar_->addWidget(impl_->viewportLayoutButton_);
   impl_->topToolbar_->addSeparator();
   auto setViewportLayout = [this](ArtifactCompositionEditor::Impl::ViewportLayoutMode mode) {
@@ -10700,9 +10744,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->compositionCleanupButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->compositionCleanupButton_->setText(QStringLiteral("Cleanup"));
   impl_->compositionCleanupButton_->setAutoRaise(true);
-  impl_->compositionCleanupButton_->setFocusPolicy(Qt::NoFocus);
+  impl_->compositionCleanupButton_->setFocusPolicy(Qt::StrongFocus);
   impl_->compositionCleanupButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->compositionCleanupButton_->setToolTip(
+      QStringLiteral("Analyze composition spacing, edge margins, and near-center placement"));
+  impl_->compositionCleanupButton_->setAccessibleName(
+      QStringLiteral("Composition cleanup"));
+  impl_->compositionCleanupButton_->setAccessibleDescription(
       QStringLiteral("Analyze composition spacing, edge margins, and near-center placement"));
   impl_->compositionCleanupButton_->setActivatedCallback([this]() {
     if (!impl_) {
@@ -11191,9 +11239,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->workspaceModeButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->workspaceModeButton_->setObjectName(QStringLiteral("compositionWorkspaceModeButton"));
   impl_->workspaceModeButton_->setText(QStringLiteral("Animate"));
+  impl_->workspaceModeButton_->setFocusPolicy(Qt::StrongFocus);
   impl_->workspaceModeButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->workspaceModeButton_->setToolTip(
       QStringLiteral("Animate: AE-style transform and timeline editing. Click to switch to Design."));
+  impl_->workspaceModeButton_->setAccessibleName(
+      QStringLiteral("Viewport workspace mode"));
+  impl_->workspaceModeButton_->setAccessibleDescription(
+      QStringLiteral("Switch between Animate and Design editing modes"));
   impl_->workspaceModeButton_->setActivatedCallback([this]() {
     if (!impl_ || !impl_->workspaceModeButton_) {
       return;
@@ -11210,6 +11263,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         enterDesign
             ? QStringLiteral("Design: Figma-style structure and layout editing. Click to switch to Animate.")
             : QStringLiteral("Animate: AE-style transform and timeline editing. Click to switch to Design."));
+    updateAccessibleState(
+        impl_->workspaceModeButton_,
+        QStringLiteral("Current workspace mode: %1. Activate to switch modes.")
+            .arg(modeName));
     setProperty("artifactWorkspaceMode", modeName);
     for (auto &pane : impl_->panes_) {
       if (pane.view) {
@@ -11751,7 +11808,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   // Bottom Bar (Viewer Controls)
   impl_->bottomBar_ = new QWidget(this);
   impl_->bottomBar_->setObjectName(QStringLiteral("compositionBottomBar"));
-  impl_->bottomBar_->setMinimumHeight(28);
+  impl_->bottomBar_->setMinimumHeight(Accessibility::scaledSize(28));
   impl_->bottomBar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   impl_->bottomBar_->setAutoFillBackground(true);
   {
@@ -11770,7 +11827,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     button->setDefaultAction(action);
     button->setAutoRaise(true);
     button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    button->setMinimumHeight(24);
+    button->setMinimumHeight(Accessibility::scaledSize(24));
     return button;
   };
   impl_->zoom100Action_->setText(QStringLiteral("100%"));
@@ -12778,14 +12835,21 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->cameraControlButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   impl_->cameraControlButton_->setToolTip(
       QStringLiteral("Viewport orientation and camera view"));
+  impl_->cameraControlButton_->setAccessibleName(
+      QStringLiteral("Viewport camera"));
+  impl_->cameraControlButton_->setAccessibleDescription(
+      QStringLiteral("Choose viewport orientation and camera view"));
 
   auto *bottomLayoutButton = new ViewportLayoutButton(impl_->bottomBar_);
   bottomLayoutButton->setText(impl_->viewportLayoutLabel());
   bottomLayoutButton->setAutoRaise(true);
-  bottomLayoutButton->setFocusPolicy(Qt::NoFocus);
+  bottomLayoutButton->setFocusPolicy(Qt::StrongFocus);
   bottomLayoutButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
   bottomLayoutButton->setToolTip(
       QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
+  bottomLayoutButton->setAccessibleName(QStringLiteral("Viewport layout"));
+  bottomLayoutButton->setAccessibleDescription(
+      QStringLiteral("Cycle the viewport layout between one, two, and four views"));
   bottomLayoutButton->setActivatedCallback([this, setViewportLayout]() {
     if (impl_) setViewportLayout(impl_->nextViewportLayoutMode());
   });
@@ -12794,7 +12858,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewerTimecodeLabel_ = new QLabel(
       QStringLiteral("00:00:00:00"), impl_->bottomBar_);
   impl_->viewerTimecodeLabel_->setAlignment(Qt::AlignCenter);
-  impl_->viewerTimecodeLabel_->setMinimumWidth(112);
+  impl_->viewerTimecodeLabel_->setMinimumWidth(Accessibility::scaledSize(112));
+  impl_->viewerTimecodeLabel_->setAccessibleDescription(
+      QStringLiteral("Current composition timecode"));
   impl_->viewerTimecodeLabel_->setFrameShape(QFrame::StyledPanel);
   QFont timecodeFont = impl_->viewerTimecodeLabel_->font();
   timecodeFont.setStyleHint(QFont::Monospace);
@@ -12811,8 +12877,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     auto *button = new ViewportLayoutButton(impl_->bottomBar_);
     button->setIcon(loadIconWithFallback(icon));
     button->setToolTip(tooltip);
+    button->setAccessibleName(tooltip);
     button->setAutoRaise(true);
-    button->setFixedSize(28, 24);
+    button->setFocusPolicy(Qt::StrongFocus);
+    button->setFixedSize(Accessibility::scaledSize(28),
+                         Accessibility::scaledSize(24));
     return button;
   };
   impl_->previousFrameButton_ = makeTransportButton(
@@ -12866,7 +12935,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->statusStrip_ = new QFrame(this);
   impl_->statusStrip_->setObjectName(QStringLiteral("compositionStatusStrip"));
-  impl_->statusStrip_->setFixedHeight(22);
+  impl_->statusStrip_->setFixedHeight(Accessibility::scaledSize(22));
   impl_->statusStrip_->setFrameShape(QFrame::StyledPanel);
   impl_->statusStrip_->setFrameShadow(QFrame::Plain);
   impl_->statusStrip_->setAutoFillBackground(true);
