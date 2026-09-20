@@ -5,8 +5,6 @@
 #include <QObject>
 export module Artifact.LOD.Manager;
 
-import std;
-
 export namespace Artifact {
 
 /**

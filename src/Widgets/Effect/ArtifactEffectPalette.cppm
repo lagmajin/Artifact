@@ -13,7 +13,6 @@ module Artifact.Widgets.EffectPalette;
 
 import Artifact.Service.Effect;
 import Utils.Path;
-import std;
 
 namespace Artifact {
 namespace {

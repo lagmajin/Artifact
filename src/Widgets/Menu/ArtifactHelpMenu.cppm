@@ -21,7 +21,6 @@ module;
 #include <QWidget>
 #include <QMenuBar>
 module Menu.Help;
-import std;
 
 import Core.FastSettingsStore;
 import Utils.Path;

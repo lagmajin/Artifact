@@ -11,7 +11,6 @@ module;
 
 export module Artifact.AI.Cloud.AICloudWorkerProtocol;
 
-import std;
 import Core.AI.Context;
 
 export namespace Artifact {

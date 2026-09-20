@@ -12,7 +12,6 @@ module;
 
 module Audio.WASAPIDevice;
 
-import std;
 import Audio.IAudioDevice;
 
 namespace Artifact {

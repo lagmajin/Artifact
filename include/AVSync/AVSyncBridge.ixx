@@ -6,7 +6,6 @@ module;
 
 export module Artifact.AVSyncBridge;
 
-import std;
 import Audio.AudioClockProvider;
 
 export namespace Artifact {

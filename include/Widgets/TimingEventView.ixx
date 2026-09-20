@@ -11,7 +11,6 @@ module;
 
 export module Artifact.Widgets.TimingEventView;
 
-import std;
 import Utils.Id;
 
 export namespace Artifact {

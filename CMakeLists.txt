@@ -3456,6 +3456,8 @@ endif()
 
 # Keep all local Artifact C++23 targets attached to the explicit MSVC std.ifc
 # producer, falling back to CMake's native provider on other configurations.
+# The std.ifc reference itself is attached per source by the top-level project;
+# applying it to the whole target breaks modules that use textual STL headers.
 if(TARGET ArtifactStdModule OR TARGET __CMAKE::CXX23)
     get_property(_artifact_local_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_artifact_target IN LISTS _artifact_local_targets)
@@ -3465,10 +3467,6 @@ if(TARGET ArtifactStdModule OR TARGET __CMAKE::CXX23)
                "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
                 if(TARGET ArtifactStdModule)
                     add_dependencies(${_artifact_target} ArtifactStdModule)
-                    if(MSVC AND _artifact_std_ifc)
-                        target_compile_options(${_artifact_target} PRIVATE
-                            "/reference;std=${_artifact_std_ifc}")
-                    endif()
                 else()
                     set_property(TARGET ${_artifact_target} PROPERTY CXX_MODULE_STD ON)
                 endif()

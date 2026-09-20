@@ -16,7 +16,6 @@
 
 module Artifact.Tool.PuppetTool;
 
-import std;
 import Utils.Id;
 import Color.Float;
 import Artifact.Layer.Abstract;

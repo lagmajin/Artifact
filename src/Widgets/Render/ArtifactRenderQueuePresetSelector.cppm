@@ -17,7 +17,6 @@ module;
 module Artifact.Widgets.RenderQueuePresetSelector;
 
 import Artifact.Widgets.DialogButtons;
-import std;
 
 import Artifact.Render.Queue.Presets;
 

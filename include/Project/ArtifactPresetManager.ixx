@@ -40,7 +40,6 @@ export module Artifact.Project.PresetManager;
 
 
 
-import std;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Property.Abstract;
