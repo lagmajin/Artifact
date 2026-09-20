@@ -29,9 +29,10 @@ module;
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <atomic>
 
 module Artifact.Menu.File;
-import std;
 
 import Artifact.Project.Manager;
 import Event.Bus;

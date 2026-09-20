@@ -12,11 +12,11 @@ module;
 #include <QTextStream>
 #include <QUrl>
 #include <wobjectimpl.h>
+#include <vector>
 
 module Artifact.Menu.Script;
 import Translation.Manager;
 
-import std;
 
 import Artifact.Script.Hooks;
 import Script.CSharp.Engine;
