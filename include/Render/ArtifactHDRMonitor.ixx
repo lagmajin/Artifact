@@ -1,14 +1,10 @@
 ﻿module;
-#include <utility>
-
-#include <memory>
-#include <vector>
 #include <QObject>
 #include <QRect>
 #include <wobjectdefs.h>
 export module Render.HDRMonitor;
 
-import std;
+export import Core.ArtifactArray;
 import Color.Float;
 import Color.Luminance;
 
@@ -37,7 +33,7 @@ struct HDRAnalysisResult {
   float minLuminance = 0.0f;
   float maxLuminance = 1.0f;
   float avgLuminance = 0.5f;
-  std::vector<FloatColor> outOfGamutPixels;
+  ArtifactArray<FloatColor> outOfGamutPixels;
   bool hasClipping = false;
   int clippedHighlights = 0;
   int clippedShadows = 0;
@@ -67,17 +63,17 @@ public:
   HDRMonitorSettings getSettings() const;
 
   // Analysis
-  HDRAnalysisResult analyzeFrame(const std::vector<FloatColor> &frameData,
+  HDRAnalysisResult analyzeFrame(const ArtifactArray<FloatColor> &frameData,
                                  int width, int height);
 
   // Visualization
-  std::vector<FloatColor>
+  ArtifactArray<FloatColor>
   generateFalseColorOverlay(const HDRAnalysisResult &result, int width,
                             int height);
-  std::vector<FloatColor> generateWaveformData(const HDRAnalysisResult &result,
-                                               int waveformWidth,
-                                               int waveformHeight);
-  std::vector<FloatColor>
+  ArtifactArray<FloatColor> generateWaveformData(const HDRAnalysisResult &result,
+                                                  int waveformWidth,
+                                                  int waveformHeight);
+  ArtifactArray<FloatColor>
   generateVectorscopeData(const HDRAnalysisResult &result, int scopeSize);
 
   // Utility
