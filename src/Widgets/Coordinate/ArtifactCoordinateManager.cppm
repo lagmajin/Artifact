@@ -17,10 +17,10 @@
 #include <QDebug>
 #include <cmath>
 #include <memory>
+#include <vector>
 
 module Artifact.Widgets.CoordinateManager;
 
-import std;
 import Artifact.Widgets.RelativeSpinBox;
 import Event.Bus;
 import Artifact.Event.Types;
