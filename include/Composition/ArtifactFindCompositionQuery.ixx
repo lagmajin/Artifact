@@ -11,8 +11,6 @@ module;
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -35,6 +33,7 @@ module;
 #include <random>
 export module Artifact.Composition.FindQuery;
 
+import Core.ArtifactMath;
 import Memory.SharedPtr;
 
 
@@ -329,7 +328,7 @@ export namespace Artifact {
 
    // Sv`FbN
    if (data_->exactFrameRate > 0.0) {
-    return std::abs(fps - data_->exactFrameRate) < 0.001;
+    return ArtifactCore::artifactAbs(fps - data_->exactFrameRate) < 0.001;
    }
 
    // ͈̓`FbN

@@ -4,12 +4,11 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QColor>
-#include <cmath>
 
 
 export module Artifact.AI.RenderAutomation;
 
-import std;
+import Core.ArtifactMath;
 import Core.AI.Describable;
 import Artifact.Service.Project;
 
@@ -134,7 +133,7 @@ private:
     double y = args[1].toDouble();
     double z = args[2].toDouble();
 
-    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+    if (!ArtifactCore::artifactIsFinite(x) || !ArtifactCore::artifactIsFinite(y) || !ArtifactCore::artifactIsFinite(z))
       return false;
     cameraX_ = x;
     cameraY_ = y;
@@ -149,7 +148,7 @@ private:
     double ry = args[1].toDouble();
     double rz = args[2].toDouble();
 
-    if (!std::isfinite(rx) || !std::isfinite(ry) || !std::isfinite(rz))
+    if (!ArtifactCore::artifactIsFinite(rx) || !ArtifactCore::artifactIsFinite(ry) || !ArtifactCore::artifactIsFinite(rz))
       return false;
     rotationX_ = rx;
     rotationY_ = ry;
