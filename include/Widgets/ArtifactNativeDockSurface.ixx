@@ -99,10 +99,16 @@ class NativeDockSurface final : public QWidget {
             style()->subElementRect(QStyle::SE_TabBarTabText, &option, this)
                 .intersected(option.rect);
         if (titleRect.width() > 0) {
+          // The underline belongs to the title, not to the tab/pane seam.
+          // Keep it close to the text and use the configurable theme accent;
+          // the fixed violet contour remains the panel-focus cue.
+          const int underlineY = std::min(titleRect.bottom() + 2,
+                                          option.rect.bottom() - 2);
+          QColor titleAccent = palette().color(QPalette::Highlight);
+          titleAccent.setAlpha(224);
           painter.fillRect(
-              QRect(titleRect.left(), option.rect.bottom() - 1,
-                    titleRect.width(), 2),
-              QColor(145, 132, 238, 224));
+              QRect(titleRect.left(), underlineY, titleRect.width(), 2),
+              titleAccent);
         }
       }
 
@@ -114,6 +120,18 @@ class NativeDockSurface final : public QWidget {
     public:
       explicit DockSurfaceStyle(DockTabSurface *tabs)
           : QProxyStyle(tabs ? tabs->style() : nullptr), tabs_(tabs) {
+      }
+
+      void drawPrimitive(QStyle::PrimitiveElement element, const QStyleOption *option,
+                         QPainter *painter,
+                         const QWidget *widget = nullptr) const override {
+        // DockTabSurface paints the active-panel frame itself.  Leaving the
+        // base QTabWidget pane frame enabled draws a second horizontal rule
+        // immediately beside the violet focus rule.
+        if (element == QStyle::PE_FrameTabWidget && widget == tabs_) {
+          return;
+        }
+        QProxyStyle::drawPrimitive(element, option, painter, widget);
       }
 
       QRect subElementRect(SubElement element, const QStyleOption *option,
