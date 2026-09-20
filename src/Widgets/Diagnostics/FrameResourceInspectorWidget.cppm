@@ -1,5 +1,4 @@
 module;
-#include <algorithm>
 #include <cstddef>
 #include <QAbstractItemView>
 #include <QObject>
@@ -18,6 +17,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.FrameResourceInspectorWidget;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -520,8 +520,8 @@ void Artifact::FrameResourceInspectorWidget::Impl::updatePreviewForRow(int row)
     }
 
     const QSize targetSize(
-        std::max(160, previewImage_->width() - 8),
-        std::max(160, previewImage_->height() - 8));
+        ArtifactCore::artifactMax(160, previewImage_->width() - 8),
+        ArtifactCore::artifactMax(160, previewImage_->height() - 8));
     previewImage_->setText(QString());
     previewImage_->setPixmap(QPixmap::fromImage(image).scaled(
         targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
