@@ -1398,10 +1398,14 @@ public:
     if (memoryUsageBar_)
       memoryUsageBar_->setValue(memPercent);
     if (memoryLabel_)
-      memoryLabel_->setText(QString("%1 / %2 (%3%)")
-                                .arg(QString::number(usedPhys / (1024 * 1024)))
-                                .arg(QString::number(totalPhys / (1024 * 1024)))
-                                .arg(memPercent));
+      memoryLabel_->setText(
+          QStringLiteral("%1 / %2 (%3)")
+              .arg(ArtifactCore::LocaleFormatting::formatFileSize(
+                  static_cast<qint64>(usedPhys)))
+              .arg(ArtifactCore::LocaleFormatting::formatFileSize(
+                  static_cast<qint64>(totalPhys)))
+              .arg(ArtifactCore::LocaleFormatting::formatPercentage(
+                  memPercent / 100.0, 0)));
 
     // CPU (process percentage)
     FILETIME ftCreation, ftExit, ftKernel, ftUser;
@@ -1434,7 +1438,9 @@ public:
         cpuUsageBar_->setValue(qBound(0, cpuInt, 100));
       if (cpuLabel_)
         cpuLabel_->setText(
-            QString("%1% (process)").arg(QString::number(cpuPercent, 'f', 1)));
+            QStringLiteral("%1 (process)")
+                .arg(ArtifactCore::LocaleFormatting::formatPercentage(
+                    cpuPercent / 100.0, 1)));
 
       prevProcessTimeMs_ = procMs;
       prevTickMs_ = curTick;
@@ -1765,7 +1771,8 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
   using ArtifactCore::ShortcutId;
   const int value = static_cast<int>(id);
   if (id == ShortcutId::Undo || id == ShortcutId::Redo) return QStringLiteral("Global");
-  if (id == ShortcutId::ProjectClearSearch) return QStringLiteral("Workspace.Project");
+  if (id == ShortcutId::ProjectClearSearch || id == ShortcutId::ProjectRefresh)
+    return QStringLiteral("Workspace.Project");
   if (id == ShortcutId::TimelineFocusSearch || id == ShortcutId::TimelineClearSearch)
     return QStringLiteral("Workspace.Timeline");
   if (id == ShortcutId::CompositionImmersiveExit) return QStringLiteral("Viewport.Composition");
@@ -1807,6 +1814,8 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
       id == ShortcutId::CompositionViewportRotateGizmo ||
       id == ShortcutId::CompositionViewportScaleGizmo)
     return QStringLiteral("Viewport.Composition");
+  if (id == ShortcutId::ViewDetachedTasks)
+    return QStringLiteral("Panel.DetachedTasks");
   return QStringLiteral("Workspace.Timeline");
 }
 
@@ -2341,12 +2350,14 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   const auto& theme = ArtifactCore::currentDCCTheme();
   const QColor background(theme.backgroundColor);
   const QColor surface(theme.secondaryBackgroundColor);
+  const QColor inputBg(theme.inputBackgroundColor.isEmpty()
+      ? theme.secondaryBackgroundColor : theme.inputBackgroundColor);
   const QColor text(theme.textColor);
   const QColor accent(theme.accentColor);
   QPalette dialogPalette = dialog->palette();
   dialogPalette.setColor(QPalette::Window, background);
   dialogPalette.setColor(QPalette::WindowText, text);
-  dialogPalette.setColor(QPalette::Base, surface);
+  dialogPalette.setColor(QPalette::Base, inputBg.isValid() ? inputBg : surface);
   dialogPalette.setColor(QPalette::AlternateBase, background.darker(108));
   dialogPalette.setColor(QPalette::Button, surface);
   dialogPalette.setColor(QPalette::ButtonText, text);
