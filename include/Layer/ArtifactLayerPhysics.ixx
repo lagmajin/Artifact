@@ -1,11 +1,10 @@
 module;
 #include <cstdint>
-#include <cmath>
-#include <algorithm>
 #include <utility>
 #include <QJsonObject>
 export module Artifact.Layer.Physics;
 
+import Core.ArtifactMath;
 import Animation.Value;
 
 export namespace Artifact {
@@ -43,19 +42,19 @@ export namespace Artifact {
         }
 
         void fromJson(const QJsonObject& obj) {
-            solverKind = static_cast<PhysicsSolverKind>(std::clamp(
+            solverKind = static_cast<PhysicsSolverKind>(ArtifactCore::artifactClamp(
                 obj.value("solverKind").toInt(static_cast<int>(solverKind)),
                 static_cast<int>(PhysicsSolverKind::Disabled),
                 static_cast<int>(PhysicsSolverKind::Cloth3D)));
             startFrame = obj.value("startFrame").toInteger(startFrame);
-            fixedTimeStep = static_cast<float>(std::clamp(
+            fixedTimeStep = static_cast<float>(ArtifactCore::artifactClamp(
                 obj.value("fixedTimeStep").toDouble(fixedTimeStep),
                 1.0 / 1000.0, 1.0 / 15.0));
-            maxSubsteps = std::clamp(obj.value("maxSubsteps").toInt(maxSubsteps), 1, 64);
+            maxSubsteps = ArtifactCore::artifactClamp(obj.value("maxSubsteps").toInt(maxSubsteps), 1, 64);
             cacheEnabled = obj.value("cacheEnabled").toBool(cacheEnabled);
-            maxCachedFrames = std::clamp(
+            maxCachedFrames = ArtifactCore::artifactClamp(
                 obj.value("maxCachedFrames").toInt(maxCachedFrames), 1, 100000);
-            worldScale = static_cast<float>(std::clamp(
+            worldScale = static_cast<float>(ArtifactCore::artifactClamp(
                 obj.value("worldScale").toDouble(worldScale), 0.0001, 1000000.0));
         }
     };
@@ -129,7 +128,7 @@ export namespace Artifact {
             windY = static_cast<float>(obj["windY"].toDouble(0.0));
             windStrength = static_cast<float>(obj["windStrength"].toDouble(0.0));
             windTorque = static_cast<float>(obj["windTorque"].toDouble(0.0));
-            fallProfile = std::clamp(obj["fallProfile"].toInt(0), 0, 4);
+            fallProfile = ArtifactCore::artifactClamp(obj["fallProfile"].toInt(0), 0, 4);
             collisionEnabled = obj["collisionEnabled"].toBool(false);
             floorY = static_cast<float>(obj["floorY"].toDouble(1080.0));
             restitution = static_cast<float>(
@@ -245,7 +244,7 @@ export namespace Artifact {
         }
 
         void updateGravity(float dt) const {
-            if (std::abs(settings_.gravityY) <= 0.01f) {
+            if (ArtifactCore::artifactAbs(settings_.gravityY) <= 0.01f) {
                 return;
             }
             dynamicVelocityY_ += settings_.gravityY * settings_.gravityScale * dt;
@@ -264,13 +263,13 @@ export namespace Artifact {
             }
             output.positionY = settings_.floorY;
             output.collided = true;
-            output.collisionSpeed = std::abs(dynamicVelocityY_);
+            output.collisionSpeed = ArtifactCore::artifactAbs(dynamicVelocityY_);
             dynamicOffsetY_ = static_cast<float>(
                 settings_.floorY - input.positionY -
                 springY_.currentValue);
             dynamicVelocityY_ =
                 -dynamicVelocityY_ *
-                std::clamp(settings_.restitution, 0.0f, 1.0f);
+                ArtifactCore::artifactClamp(settings_.restitution, 0.0f, 1.0f);
         }
 
         void updateChannel(ArtifactCore::SpringState& state,
@@ -286,8 +285,8 @@ export namespace Artifact {
             if (settings_.wiggleFreq > 0.01f && settings_.wiggleAmp > 0.01f) {
                 const float phase = channelIndex * 1.57f;
                 const float noise =
-                    std::sin(stepTime * settings_.wiggleFreq * 6.28f + phase) +
-                    std::sin(stepTime * settings_.wiggleFreq * 1.33f * 6.28f + phase * 0.5f) * 0.5f;
+                    ArtifactCore::artifactSin(stepTime * settings_.wiggleFreq * 6.28f + phase) +
+                    ArtifactCore::artifactSin(stepTime * settings_.wiggleFreq * 1.33f * 6.28f + phase * 0.5f) * 0.5f;
                 wiggleForce = noise * settings_.wiggleAmp * state.stiffness * 0.1f;
             }
 
