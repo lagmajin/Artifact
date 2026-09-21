@@ -885,6 +885,8 @@ namespace Artifact {
    QAction* showRigWeightMapAction = nullptr;
    QAction* showOnionSkinAction = nullptr;
    QAction* showSafeMarginsAction = nullptr;
+   QAction* viewportMagnifierAction = nullptr;
+   QAction* viewportMagnifierFollowAction = nullptr;
    QAction* captureRigPoseAction = nullptr;
    QAction* saveRigPoseSlotAction = nullptr;
    QAction* applyRigPoseSlotAction = nullptr;
@@ -963,44 +965,70 @@ namespace Artifact {
    zoomInAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_in"), QStringLiteral("ズームイン(&I)")));
    zoomInAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewZoomIn));
    zoomInAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_zoom_in.svg")));
+   zoomInAction->setToolTip(QStringLiteral("Zoom In"));
+   zoomInAction->setStatusTip(QStringLiteral("Zoom the viewport in"));
    
    zoomOutAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_out"), QStringLiteral("ズームアウト(&O)")));
    zoomOutAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewZoomOut));
    zoomOutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_zoom_out.svg")));
+   zoomOutAction->setToolTip(QStringLiteral("Zoom Out"));
+   zoomOutAction->setStatusTip(QStringLiteral("Zoom the viewport out"));
 
    defaultZoomAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_100"), QStringLiteral("100% ズーム")));
    defaultZoomAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewDefaultZoom));
    defaultZoomAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_aspect_ratio.svg")));
+   defaultZoomAction->setToolTip(QStringLiteral("Zoom to 100 Percent"));
+   defaultZoomAction->setStatusTip(QStringLiteral("Reset the viewport zoom to full size"));
 
    fitToScreenAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.fit_to_view"), QStringLiteral("画面に合わせる(&F)")));
    fitToScreenAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewFitToScreen));
    fitToScreenAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_fit_screen.svg")));
+   fitToScreenAction->setToolTip(QStringLiteral("Fit to Screen"));
+   fitToScreenAction->setStatusTip(QStringLiteral("Fit the composition to the viewport"));
 
    viewportBookmarkMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark_accel"), QStringLiteral("Camera ブックマーク(&B)")));
    viewportBookmarkMenu->setObjectName(QStringLiteral("viewportBookmarkMenu"));
    viewportBookmarkMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    viewportBookmarkMenu->setToolTip("Save and restore named camera / viewport states");
+   viewportBookmarkMenu->setAccessibleName(QStringLiteral("Camera Bookmarks"));
+   viewportBookmarkMenu->setAccessibleDescription(QStringLiteral("Save and restore named camera and viewport states"));
    viewportTemplateMenu = new QMenu("View Template(&T)");
    viewportTemplateMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
+   viewportTemplateMenu->setAccessibleName(QStringLiteral("View Templates"));
+   viewportTemplateMenu->setAccessibleDescription(QStringLiteral("Save and apply named view settings"));
    compareMenu = new QMenu("Compare(&C)");
    compareMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
+   compareMenu->setAccessibleName(QStringLiteral("Compare Views"));
+   compareMenu->setAccessibleDescription(QStringLiteral("Compare two render surfaces side by side"));
    compareGroup = new QActionGroup(menu);
    compareGroup->setExclusive(true);
    selectionSetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.selection_set"), QStringLiteral("Selection セット(&S)")));
    selectionSetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   selectionSetMenu->setAccessibleName(QStringLiteral("Selection Sets"));
+   selectionSetMenu->setAccessibleDescription(QStringLiteral("Save and restore named layer selections"));
 
    resolutionMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution_label"), QStringLiteral("解像度(&R)")));
    resolutionMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_full.svg")));
+   resolutionMenu->setAccessibleName(QStringLiteral("Preview Resolution"));
+   resolutionMenu->setAccessibleDescription(QStringLiteral("Choose the viewport preview resolution"));
    resolutionGroup = new QActionGroup(menu);
    resolutionGroup->setExclusive(true);
    resFullAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.full"), QStringLiteral("フル画質")));
    resFullAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_full.svg")));
+   resFullAction->setToolTip(QStringLiteral("Full Preview Quality"));
+   resFullAction->setStatusTip(QStringLiteral("Render the preview at full resolution"));
    resHalfAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.half"), QStringLiteral("1/2画質")));
    resHalfAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_half.svg")));
+   resHalfAction->setToolTip(QStringLiteral("Half Preview Quality"));
+   resHalfAction->setStatusTip(QStringLiteral("Render the preview at half resolution"));
    resThirdAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.third"), QStringLiteral("1/3画質")));
    resThirdAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_third.svg")));
+   resThirdAction->setToolTip(QStringLiteral("Third Preview Quality"));
+   resThirdAction->setStatusTip(QStringLiteral("Render the preview at third resolution"));
    resQuarterAction = resolutionMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.resolution.quarter"), QStringLiteral("1/4画質")));
    resQuarterAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_quarter.svg")));
+   resQuarterAction->setToolTip(QStringLiteral("Quarter Preview Quality"));
+   resQuarterAction->setStatusTip(QStringLiteral("Render the preview at quarter resolution"));
    resFullAction->setCheckable(true);
    resFullAction->setChecked(true);
    resHalfAction->setCheckable(true);
@@ -1015,27 +1043,37 @@ namespace Artifact {
    showGridAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowGrid));
    showGridAction->setCheckable(true);
    showGridAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
+   showGridAction->setToolTip(QStringLiteral("Show Grid"));
+   showGridAction->setStatusTip(QStringLiteral("Toggle the viewport grid overlay"));
 
    snapToGridAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.snap_to_grid"), QStringLiteral("グリッドにスナップ(&S)")));
    snapToGridAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGrid));
    snapToGridAction->setCheckable(true);
    snapToGridAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
+   snapToGridAction->setToolTip(QStringLiteral("Snap to Grid"));
+   snapToGridAction->setStatusTip(QStringLiteral("Snap dragged items to the grid"));
 
    showGuidesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_guides"), QStringLiteral("ガイドを表示")));
    showGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowGuides));
    showGuidesAction->setCheckable(true);
    showGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
+   showGuidesAction->setToolTip(QStringLiteral("Show Guides"));
+   showGuidesAction->setStatusTip(QStringLiteral("Toggle the guide overlays"));
 
    snapToGuidesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.snap_to_composition"), QStringLiteral("コンポジション／ガイドにスナップ")));
    snapToGuidesAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.view.snap_tooltip"), QStringLiteral("正面ビューでコンポジションとレイヤーの端・中心に吸着。Altで一時解除")));
    snapToGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGuides));
    snapToGuidesAction->setCheckable(true);
    snapToGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_linear_scale.svg")));
+   snapToGuidesAction->setToolTip(QStringLiteral("Snap to Composition and Guides"));
+   snapToGuidesAction->setStatusTip(QStringLiteral("Snap to composition and layer edges and centers"));
 
    showRulersAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_rulers"), QStringLiteral("定規を表示(&R)")));
    showRulersAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowRulers));
    showRulersAction->setCheckable(true);
    showRulersAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
+   showRulersAction->setToolTip(QStringLiteral("Show Rulers"));
+   showRulersAction->setStatusTip(QStringLiteral("Toggle the viewport rulers"));
    QObject::connect(showRulersAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1048,8 +1086,32 @@ namespace Artifact {
                       settings.setValue(QStringLiteral("viewport/showRuler"), checked);
                     });
 
+   viewportMagnifierAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.viewport_magnifier"), QStringLiteral("拡大鏡を表示(&M)")));
+   viewportMagnifierAction->setCheckable(true);
+   viewportMagnifierAction->setToolTip(QStringLiteral("Viewport Magnifier"));
+   viewportMagnifierAction->setStatusTip(QStringLiteral("Show an accessibility magnifier loupe in the viewport"));
+   QObject::connect(viewportMagnifierAction, &QAction::toggled, menu,
+                    [](bool checked) {
+                      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                        settings->setAccessibilityViewportMagnifierEnabled(checked);
+                      }
+                    });
+
+   viewportMagnifierFollowAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.viewport_magnifier_follow"), QStringLiteral("拡大鏡をカーソルに追従")));
+   viewportMagnifierFollowAction->setCheckable(true);
+   viewportMagnifierFollowAction->setToolTip(QStringLiteral("Magnifier Follows Cursor"));
+   viewportMagnifierFollowAction->setStatusTip(QStringLiteral("Keep the accessibility magnifier next to the pointer"));
+   QObject::connect(viewportMagnifierFollowAction, &QAction::toggled, menu,
+                    [](bool checked) {
+                      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                        settings->setAccessibilityViewportMagnifierFollowCursor(checked);
+                      }
+                    });
+
    showPixelGridAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_pixel_grid"), QStringLiteral("ピクセルグリッドを表示")));
    showPixelGridAction->setCheckable(true);
+   showPixelGridAction->setToolTip(QStringLiteral("Show Pixel Grid"));
+   showPixelGridAction->setStatusTip(QStringLiteral("Toggle the pixel grid at high zoom"));
    QObject::connect(showPixelGridAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1060,6 +1122,8 @@ namespace Artifact {
 
    showOutsideCompositionAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_composition_bounds"), QStringLiteral("コンポジション境界を表示")));
    showOutsideCompositionAction->setCheckable(true);
+   showOutsideCompositionAction->setToolTip(QStringLiteral("Show Composition Bounds"));
+   showOutsideCompositionAction->setStatusTip(QStringLiteral("Toggle the composition boundary frame"));
    QObject::connect(showOutsideCompositionAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1073,6 +1137,8 @@ namespace Artifact {
        QStringLiteral("Show or hide rig bones, controls and skin overlays"));
    showRigOverlayAction->setCheckable(true);
    showRigOverlayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   showRigOverlayAction->setToolTip(QStringLiteral("Show Rig Overlay"));
+   showRigOverlayAction->setStatusTip(QStringLiteral("Show or hide rig bones, controls and skin overlays"));
    QObject::connect(showRigOverlayAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1088,6 +1154,8 @@ namespace Artifact {
        QStringLiteral("Show or hide the selected bone weight map"));
    showRigWeightMapAction->setCheckable(true);
    showRigWeightMapAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
+   showRigWeightMapAction->setToolTip(QStringLiteral("Show Weight Map"));
+   showRigWeightMapAction->setStatusTip(QStringLiteral("Show or hide the selected bone weight map"));
    QObject::connect(showRigWeightMapAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1104,6 +1172,8 @@ namespace Artifact {
        QStringLiteral("Show or hide previous-frame onion skin previews"));
    showOnionSkinAction->setCheckable(true);
    showOnionSkinAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   showOnionSkinAction->setToolTip(QStringLiteral("Show Onion Skin"));
+   showOnionSkinAction->setStatusTip(QStringLiteral("Show or hide previous-frame onion skin previews"));
    QObject::connect(showOnionSkinAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1119,6 +1189,8 @@ namespace Artifact {
        QStringLiteral("Show or hide title and action safe margins"));
    showSafeMarginsAction->setCheckable(true);
    showSafeMarginsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
+   showSafeMarginsAction->setToolTip(QStringLiteral("Show Safe Margins"));
+   showSafeMarginsAction->setStatusTip(QStringLiteral("Show or hide title and action safe margins"));
    QObject::connect(showSafeMarginsAction, &QAction::toggled, menu,
                     [this](bool checked) {
                       auto *editor = activeCompositionEditor(
@@ -1133,6 +1205,8 @@ namespace Artifact {
    captureRigPoseAction->setStatusTip(
        QStringLiteral("Capture the current rig pose for later reuse"));
    captureRigPoseAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   captureRigPoseAction->setToolTip(QStringLiteral("Capture Rig Pose"));
+   captureRigPoseAction->setStatusTip(QStringLiteral("Capture the current rig pose for later reuse"));
    QObject::connect(captureRigPoseAction, &QAction::triggered, menu,
                     [this]() {
                       auto *editor = activeCompositionEditor(
@@ -1151,6 +1225,8 @@ namespace Artifact {
    saveRigPoseSlotAction->setStatusTip(
        QStringLiteral("Save the current rig pose in pose slot 1"));
    saveRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   saveRigPoseSlotAction->setToolTip(QStringLiteral("Save Rig Pose to Slot 1"));
+   saveRigPoseSlotAction->setStatusTip(QStringLiteral("Save the current rig pose in pose slot 1"));
    QObject::connect(saveRigPoseSlotAction, &QAction::triggered, menu,
                     [this]() {
                       auto *editor = activeCompositionEditor(
@@ -1169,6 +1245,8 @@ namespace Artifact {
    applyRigPoseSlotAction->setStatusTip(
        QStringLiteral("Blend pose slot 1 into the current rig at 50 percent"));
    applyRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   applyRigPoseSlotAction->setToolTip(QStringLiteral("Apply Rig Pose Slot 1"));
+   applyRigPoseSlotAction->setStatusTip(QStringLiteral("Blend pose slot 1 into the current rig at 50 percent"));
    QObject::connect(applyRigPoseSlotAction, &QAction::triggered, menu,
                     [this]() {
                       auto *editor = activeCompositionEditor(
@@ -1187,6 +1265,8 @@ namespace Artifact {
    clearRigPoseSlotsAction->setStatusTip(
        QStringLiteral("Clear all saved rig pose slots and the pose clipboard"));
    clearRigPoseSlotsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
+   clearRigPoseSlotsAction->setToolTip(QStringLiteral("Clear Rig Pose Slots"));
+   clearRigPoseSlotsAction->setStatusTip(QStringLiteral("Clear all saved rig pose slots and the pose clipboard"));
    QObject::connect(clearRigPoseSlotsAction, &QAction::triggered, menu,
                     [this]() {
                       auto *editor = activeCompositionEditor(
@@ -1202,25 +1282,47 @@ namespace Artifact {
 
    gridSettingsMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_settings"), QStringLiteral("グリッド設定")));
    gridSettingsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
+   gridSettingsMenu->setAccessibleName(QStringLiteral("Grid Settings"));
+   gridSettingsMenu->setAccessibleDescription(QStringLiteral("Configure grid spacing and display"));
    gridMajorIntervalAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_major_interval"), QStringLiteral("主間隔を変更…")));
+   gridMajorIntervalAction->setToolTip(QStringLiteral("Change Major Grid Interval"));
+   gridMajorIntervalAction->setStatusTip(QStringLiteral("Change the major grid spacing"));
    gridSubdivisionsAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_subdivisions"), QStringLiteral("分割数を変更…")));
+   gridSubdivisionsAction->setToolTip(QStringLiteral("Change Grid Subdivisions"));
+   gridSubdivisionsAction->setStatusTip(QStringLiteral("Change how many parts each major cell splits into"));
    gridSettingsMenu->addSeparator();
    gridShowMajorAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_show_major"), QStringLiteral("Major グリッドを表示")));
    gridShowMajorAction->setCheckable(true);
+   gridShowMajorAction->setToolTip(QStringLiteral("Show Major Grid"));
+   gridShowMajorAction->setStatusTip(QStringLiteral("Toggle the major grid lines"));
    gridShowMinorAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_show_minor"), QStringLiteral("Minor グリッドを表示")));
    gridShowMinorAction->setCheckable(true);
+   gridShowMinorAction->setToolTip(QStringLiteral("Show Minor Grid"));
+   gridShowMinorAction->setStatusTip(QStringLiteral("Toggle the minor grid lines"));
    gridShowAxisAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.show_origin_axis"), QStringLiteral("原点軸を表示")));
    gridShowAxisAction->setCheckable(true);
+   gridShowAxisAction->setToolTip(QStringLiteral("Show Origin Axis"));
+   gridShowAxisAction->setStatusTip(QStringLiteral("Toggle the origin axis lines"));
    gridShowNumbersAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_show_numbers"), QStringLiteral("グリッド数値を表示")));
    gridShowNumbersAction->setCheckable(true);
+   gridShowNumbersAction->setToolTip(QStringLiteral("Show Grid Numbers"));
+   gridShowNumbersAction->setStatusTip(QStringLiteral("Toggle grid coordinate labels"));
    gridSettingsMenu->addSeparator();
    gridAutoStepAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_dependent_step"), QStringLiteral("ズーム連動ステップ")));
    gridAutoStepAction->setCheckable(true);
+   gridAutoStepAction->setToolTip(QStringLiteral("Zoom-linked Grid Step"));
+   gridAutoStepAction->setStatusTip(QStringLiteral("Scale the grid step with the zoom level"));
    gridAutoTargetAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.zoom_dependent_interval"), QStringLiteral("ズーム連動間隔を変更…")));
+   gridAutoTargetAction->setToolTip(QStringLiteral("Change Zoom-linked Interval"));
+   gridAutoTargetAction->setStatusTip(QStringLiteral("Change the zoom-linked grid interval"));
    gridPolarAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.polar_grid"), QStringLiteral("極座標グリッド")));
    gridPolarAction->setCheckable(true);
+   gridPolarAction->setToolTip(QStringLiteral("Polar Grid"));
+   gridPolarAction->setStatusTip(QStringLiteral("Use a polar coordinate grid"));
    gridIsometricAction = gridSettingsMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.isometric_grid"), QStringLiteral("アイソメトリックグリッド")));
    gridIsometricAction->setCheckable(true);
+   gridIsometricAction->setToolTip(QStringLiteral("Isometric Grid"));
+   gridIsometricAction->setStatusTip(QStringLiteral("Use an isometric grid"));
 
    QObject::connect(gridMajorIntervalAction, &QAction::triggered, menu, [this]() {
     auto *settings = ArtifactCore::ArtifactAppSettings::instance();
@@ -1373,18 +1475,28 @@ namespace Artifact {
    useDisplayColorManagementAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.color_management"), QStringLiteral("ディスプレイのカラーマネジメントを使用")));
    useDisplayColorManagementAction->setCheckable(true);
    useDisplayColorManagementAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
+   useDisplayColorManagementAction->setToolTip(QStringLiteral("Use Display Color Management"));
+   useDisplayColorManagementAction->setStatusTip(QStringLiteral("Apply display color management to the preview"));
 
    qualityPresetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.quality_preset"), QStringLiteral("品質プリセット(&Q)")));
    qualityPresetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_preview.svg")));
+   qualityPresetMenu->setAccessibleName(QStringLiteral("Preview Quality"));
+   qualityPresetMenu->setAccessibleDescription(QStringLiteral("Choose preview quality and caching"));
    qualityGroup = new QActionGroup(menu);
    qualityGroup->setExclusive(true);
 
    qualityDraftAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.quality.draft"), QStringLiteral("Draft (編集優先)")));
    qualityDraftAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_draft.svg")));
+   qualityDraftAction->setToolTip(QStringLiteral("Draft Quality"));
+   qualityDraftAction->setStatusTip(QStringLiteral("Fast preview optimized for editing"));
    qualityPreviewAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.quality.preview"), QStringLiteral("Preview (標準)")));
    qualityPreviewAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_preview.svg")));
+   qualityPreviewAction->setToolTip(QStringLiteral("Preview Quality"));
+   qualityPreviewAction->setStatusTip(QStringLiteral("Balanced standard preview quality"));
    qualityFinalAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.quality.final"), QStringLiteral("Final (品質優先)")));
    qualityFinalAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_quality_final.svg")));
+   qualityFinalAction->setToolTip(QStringLiteral("Final Quality"));
+   qualityFinalAction->setStatusTip(QStringLiteral("High quality preview for final checks"));
 
    qualityDraftAction->setCheckable(true);
    qualityPreviewAction->setCheckable(true);
@@ -1397,8 +1509,12 @@ namespace Artifact {
    qualityPresetMenu->addSeparator();
    ramCacheAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.ram_cache"), QStringLiteral("RAM キャッシュを有効化")));
    ramCacheAction->setCheckable(true);
+   ramCacheAction->setToolTip(QStringLiteral("Enable RAM Cache"));
+   ramCacheAction->setStatusTip(QStringLiteral("Cache preview frames in memory"));
    diskCacheAction = qualityPresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.disk_cache"), QStringLiteral("ディスクキャッシュを有効化")));
    diskCacheAction->setCheckable(true);
+   diskCacheAction->setToolTip(QStringLiteral("Enable Disk Cache"));
+   diskCacheAction->setStatusTip(QStringLiteral("Cache preview frames on disk"));
 
    QObject::connect(resFullAction, &QAction::triggered, menu, []() {
     if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
@@ -1491,6 +1607,8 @@ namespace Artifact {
 
    workspaceMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.workspace_accel"), QStringLiteral("ワークスペース(&K)")));
    workspaceMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace.svg")));
+   workspaceMenu->setAccessibleName(QStringLiteral("Workspace"));
+   workspaceMenu->setAccessibleDescription(QStringLiteral("Switch the workspace layout mode"));
    workspaceGroup = new QActionGroup(menu);
    workspaceGroup->setExclusive(true);
 
@@ -1498,6 +1616,8 @@ namespace Artifact {
     QAction *action = workspaceMenu->addAction(info.label);
     action->setIcon(QIcon(resolveIconPath(info.iconPath)));
     action->setCheckable(true);
+    action->setToolTip(QStringLiteral("Workspace: %1").arg(info.label));
+    action->setStatusTip(QStringLiteral("Switch to the %1 workspace layout").arg(info.label));
     action->setData(static_cast<int>(info.mode));
     workspaceGroup->addAction(action);
     workspaceModeActions_.push_back(action);
@@ -1521,14 +1641,24 @@ namespace Artifact {
 
    workspacePresetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.presets"), QStringLiteral("プリセット")));
    workspacePresetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
+   workspacePresetMenu->setAccessibleName(QStringLiteral("Workspace Presets"));
+   workspacePresetMenu->setAccessibleDescription(QStringLiteral("Save and restore workspace layouts"));
    saveWorkspacePresetAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_layout"), QStringLiteral("現在のレイアウトを保存...")));
    saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save_layout.svg")));
+   saveWorkspacePresetAction->setToolTip(QStringLiteral("Save Current Layout"));
+   saveWorkspacePresetAction->setStatusTip(QStringLiteral("Save the current panel layout as a preset"));
    deleteWorkspacePresetAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_presets_dialog"), QStringLiteral("プリセットを削除...")));
    deleteWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
+   deleteWorkspacePresetAction->setToolTip(QStringLiteral("Delete Workspace Presets"));
+   deleteWorkspacePresetAction->setStatusTip(QStringLiteral("Delete saved workspace layout presets"));
    restoreWorkspaceSessionAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.restore_last_session"), QStringLiteral("最後のセッションを復元")));
    restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
+   restoreWorkspaceSessionAction->setToolTip(QStringLiteral("Restore Last Session"));
+   restoreWorkspaceSessionAction->setStatusTip(QStringLiteral("Restore the previous session layout"));
    resetWorkspaceLayoutAction = workspacePresetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.reset_layout"), QStringLiteral("デフォルトレイアウトにリセット")));
    resetWorkspaceLayoutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
+   resetWorkspaceLayoutAction->setToolTip(QStringLiteral("Reset to Default Layout"));
+   resetWorkspaceLayoutAction->setStatusTip(QStringLiteral("Restore the default panel layout"));
    QObject::connect(saveWorkspacePresetAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString defaultName = QStringLiteral("Custom");
@@ -1614,6 +1744,8 @@ namespace Artifact {
    });
 
    auto *navigationMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.navigation"), QStringLiteral("ナビゲーション(&N)")));
+   navigationMenu->setAccessibleName(QStringLiteral("Viewport Navigation"));
+   navigationMenu->setAccessibleDescription(QStringLiteral("Zoom and camera navigation tools"));
    navigationMenu->addAction(zoomInAction);
    navigationMenu->addAction(zoomOutAction);
    navigationMenu->addAction(defaultZoomAction);
@@ -1625,13 +1757,19 @@ namespace Artifact {
    navigationMenu->addMenu(selectionSetMenu);
 
    auto *previewMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.preview"), QStringLiteral("プレビュー(&P)")));
+   previewMenu->setAccessibleName(QStringLiteral("Preview"));
+   previewMenu->setAccessibleDescription(QStringLiteral("Preview resolution, quality, and color settings"));
    previewMenu->addMenu(resolutionMenu);
    previewMenu->addMenu(qualityPresetMenu);
    previewMenu->addSeparator();
    previewMenu->addAction(useDisplayColorManagementAction);
 
    auto *overlaysMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.overlay"), QStringLiteral("オーバーレイ(&O)")));
+   overlaysMenu->setAccessibleName(QStringLiteral("Viewport Overlays"));
+   overlaysMenu->setAccessibleDescription(QStringLiteral("Grid, guides, rulers, and display overlays"));
    auto *gridAndSnapMenu = overlaysMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.grid_snap"), QStringLiteral("グリッドとスナップ(&G)")));
+   gridAndSnapMenu->setAccessibleName(QStringLiteral("Grid and Snap"));
+   gridAndSnapMenu->setAccessibleDescription(QStringLiteral("Grid display, snapping, and grid settings"));
    gridAndSnapMenu->addAction(showGridAction);
    gridAndSnapMenu->addMenu(gridSettingsMenu);
    gridAndSnapMenu->addAction(snapToGridAction);
@@ -1643,8 +1781,12 @@ namespace Artifact {
    overlaysMenu->addAction(showOutsideCompositionAction);
    overlaysMenu->addAction(showOnionSkinAction);
    overlaysMenu->addAction(showSafeMarginsAction);
+   overlaysMenu->addAction(viewportMagnifierAction);
+   overlaysMenu->addAction(viewportMagnifierFollowAction);
 
    auto *rigMenu = menu->addMenu(QStringLiteral("Rig(&R)"));
+   rigMenu->setAccessibleName(QStringLiteral("Rig"));
+   rigMenu->setAccessibleDescription(QStringLiteral("Rig overlay display and pose tools"));
    rigMenu->addAction(showRigOverlayAction);
    rigMenu->addAction(showRigWeightMapAction);
    rigMenu->addSeparator();
@@ -1654,11 +1796,15 @@ namespace Artifact {
    rigMenu->addAction(clearRigPoseSlotsAction);
 
    auto *workspaceLayoutMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.workspace_accel"), QStringLiteral("ワークスペース(&K)")));
+   workspaceLayoutMenu->setAccessibleName(QStringLiteral("Workspace"));
+   workspaceLayoutMenu->setAccessibleDescription(QStringLiteral("Workspace modes and layout presets"));
    workspaceLayoutMenu->addMenu(workspaceMenu);
    workspaceLayoutMenu->addMenu(workspacePresetMenu);
 
    openContentsViewerAction = new QAction(QStringLiteral("Contents Viewer"), menu);
    openContentsViewerAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
+   openContentsViewerAction->setToolTip(QStringLiteral("Open Contents Viewer"));
+   openContentsViewerAction->setStatusTip(QStringLiteral("Show the Contents Viewer panel"));
    QObject::connect(openContentsViewerAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     setDockVisible(mainWindow, QStringLiteral("Contents Viewer"), true);
@@ -1667,12 +1813,16 @@ namespace Artifact {
 
    openProjectPanelAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.project_panel"), QStringLiteral("Project パネル(&P)")), menu);
    openProjectPanelAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   openProjectPanelAction->setToolTip(QStringLiteral("Open Project Panel"));
+   openProjectPanelAction->setStatusTip(QStringLiteral("Show the Project panel"));
    QObject::connect(openProjectPanelAction, &QAction::triggered, menu, [this]() {
     showProjectPanel();
    });
 
    openColorPaletteAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.color_palette"), QStringLiteral("カラーパレット(&P)")), menu);
    openColorPaletteAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
+   openColorPaletteAction->setToolTip(QStringLiteral("Open Color Palette"));
+   openColorPaletteAction->setStatusTip(QStringLiteral("Show the color palette panel"));
    QObject::connect(openColorPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString dockTitle = QStringLiteral("Color Palette");
@@ -1688,6 +1838,8 @@ namespace Artifact {
 
    openEffectPaletteAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.effect_palette"), QStringLiteral("エフェクトパレット")), menu);
    openEffectPaletteAction->setIcon(QIcon(resolveIconPath("Studio/effect_ops_generate.svg")));
+   openEffectPaletteAction->setToolTip(QStringLiteral("Open Effect Palette"));
+   openEffectPaletteAction->setStatusTip(QStringLiteral("Show the effect palette panel"));
    QObject::connect(openEffectPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString dockTitle = QStringLiteral("Effect Palette");
@@ -1718,6 +1870,8 @@ namespace Artifact {
 
     windowPanelsMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.window_panel"), QStringLiteral("ウィンドウパネル(&W)")));
     windowPanelsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+    windowPanelsMenu->setAccessibleName(QStringLiteral("Window Panels"));
+    windowPanelsMenu->setAccessibleDescription(QStringLiteral("Show or hide dock panels"));
 
     // Dynamically rebuild the panels menu each time it opens
    QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
@@ -1727,11 +1881,15 @@ namespace Artifact {
     menu->addSeparator();
     detachedTaskTrayAction = menu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.detached_tasks"), QStringLiteral("Detached タスク(&D)")));
     detachedTaskTrayAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewDetachedTasks));
+    detachedTaskTrayAction->setToolTip(QStringLiteral("Detached Tasks"));
+    detachedTaskTrayAction->setStatusTip(QStringLiteral("Show background tasks in a separate window"));
     QObject::connect(detachedTaskTrayAction, &QAction::triggered, menu, [this]() {
       showDetachedTaskTray();
     });
     openReactiveEventEditorAction = menu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.reactive_event_editor"), QStringLiteral("リアクティブイベントエディタ(&E)...")));
     openReactiveEventEditorAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_reactive_events.svg")));
+    openReactiveEventEditorAction->setToolTip(QStringLiteral("Open Reactive Event Editor"));
+    openReactiveEventEditorAction->setStatusTip(QStringLiteral("Open the reactive event editor window"));
     QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
      if (!reactiveEventEditorWindow) {
@@ -1743,6 +1901,8 @@ namespace Artifact {
 
      newBrowserAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.new_asset_browser"), QStringLiteral("新規アセットブラウザ(&A)")), menu);
      newBrowserAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_asset_browser.svg")));
+     newBrowserAction->setToolTip(QStringLiteral("New Asset Browser"));
+     newBrowserAction->setStatusTip(QStringLiteral("Open a new asset browser window"));
      QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
       if (!mainWindow) return;
       newBrowserCount_++;
@@ -1756,6 +1916,8 @@ namespace Artifact {
      secondaryPreviewAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.view.second_monitor_preview"), QStringLiteral("セカンドモニタープレビュー(&S)")), menu);
      secondaryPreviewAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSecondaryPreview));
      secondaryPreviewAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_secondary_preview.svg")));
+     secondaryPreviewAction->setToolTip(QStringLiteral("Second Monitor Preview"));
+     secondaryPreviewAction->setStatusTip(QStringLiteral("Show the preview on a second monitor"));
      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this]() {
       showSecondaryPreview();
      });
@@ -1914,6 +2076,19 @@ namespace Artifact {
     editor->renderController()->setShowViewportRuler(showRuler);
     const QSignalBlocker blocker(showRulersAction);
     showRulersAction->setChecked(showRuler);
+  }
+  if (viewportMagnifierAction) {
+    const auto *appSettings = ArtifactCore::ArtifactAppSettings::instance();
+    const QSignalBlocker blocker(viewportMagnifierAction);
+    viewportMagnifierAction->setChecked(
+        appSettings && appSettings->accessibilityViewportMagnifierEnabled());
+  }
+  if (viewportMagnifierFollowAction) {
+    const auto *appSettings = ArtifactCore::ArtifactAppSettings::instance();
+    const QSignalBlocker blocker(viewportMagnifierFollowAction);
+    viewportMagnifierFollowAction->setChecked(
+        appSettings &&
+        appSettings->accessibilityViewportMagnifierFollowCursor());
   }
   if (hasViewport) {
     {
@@ -2198,6 +2373,8 @@ namespace Artifact {
   for (const QString& preset : presets) {
    QAction* action = workspacePresetMenu->addAction(preset);
    action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
+   action->setToolTip(QStringLiteral("Apply workspace preset: %1").arg(preset));
+   action->setStatusTip(QStringLiteral("Restore the saved workspace layout"));
    QObject::connect(action, &QAction::triggered, mainWindow,
                     [mw = mainWindow, preset]() {
                      ArtifactWorkspaceManager manager;
@@ -2232,6 +2409,8 @@ namespace Artifact {
   action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
   action->setCheckable(true);
   action->setChecked(view->isVisible());
+  action->setToolTip(QStringLiteral("Toggle panel: %1").arg(name));
+  action->setStatusTip(QStringLiteral("Show or hide the panel window"));
 
   QPointer<QWidget> guardedView(view);
   QObject::connect(action, &QAction::toggled, this, [guardedView](bool checked) {
@@ -2348,6 +2527,8 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
                                                           const QString& dockId) {
     const QString title = displayTitle(dockId);
     QAction* action = target->addAction(title);
+    action->setToolTip(QStringLiteral("Show panel: %1").arg(title));
+    action->setStatusTip(QStringLiteral("Show and activate the dock panel"));
     QObject::connect(action, &QAction::triggered, mainWindow,
                      [mw = mainWindow, dockId]() {
                        setDockVisible(mw, dockId, true);
@@ -2375,6 +2556,8 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
     QAction* action = favoriteMenu->addAction(title);
     action->setCheckable(true);
     action->setChecked(favorites.contains(dockId));
+    action->setToolTip(QStringLiteral("Favorite panel: %1").arg(title));
+    action->setStatusTip(QStringLiteral("Toggle whether the panel is a favorite"));
     QObject::connect(action, &QAction::triggered, mainWindow,
                      [dockId](bool checked) {
                        QSettings settings;
@@ -2409,11 +2592,15 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
    QMenu* categoryMenu = categoryMenus.value(category, nullptr);
    if (!categoryMenu) {
     categoryMenu = addPanelMenu->addMenu(category);
+    categoryMenu->setAccessibleName(QStringLiteral("Panels: %1").arg(category));
+    categoryMenu->setAccessibleDescription(QStringLiteral("Show panels in this category"));
     categoryMenus.insert(category, categoryMenu);
    }
    QAction* addAction = categoryMenu->addAction(title);
    addAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    addAction->setToolTip(QStringLiteral("Show and activate %1").arg(title));
+   addAction->setToolTip(QStringLiteral("Add panel: %1").arg(title));
+   addAction->setStatusTip(QStringLiteral("Show and activate the dock panel"));
    QObject::connect(addAction, &QAction::triggered, mainWindow,
                     [mw = mainWindow, dockId]() {
                       setDockVisible(mw, dockId, true);
@@ -2432,6 +2619,8 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
    action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
    action->setCheckable(true);
    action->setChecked(isDockVisible(mainWindow, dockId));
+   action->setToolTip(QStringLiteral("Toggle panel: %1").arg(title));
+   action->setStatusTip(QStringLiteral("Show or hide the dock panel"));
 
    QObject::connect(action, &QAction::triggered, mainWindow, [mw = mainWindow, dockId](bool checked) {
     setDockVisible(mw, dockId, checked);
@@ -2443,11 +2632,15 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
 
   auto *pinMenu = windowPanelsMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.pin"), QStringLiteral("ピン留め")));
   pinMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+  pinMenu->setAccessibleName(QStringLiteral("Pin Panels"));
+  pinMenu->setAccessibleDescription(QStringLiteral("Pin or unpin dock panels"));
   for (const QString &dockId : dockIds) {
    const QString title = displayTitle(dockId);
    QAction *pinAction = pinMenu->addAction(title);
    pinAction->setCheckable(true);
    pinAction->setChecked(isDockPinned(mainWindow, dockId));
+   pinAction->setToolTip(QStringLiteral("Pin panel: %1").arg(title));
+   pinAction->setStatusTip(QStringLiteral("Pin or unpin the dock panel"));
    QObject::connect(pinAction, &QAction::toggled, mainWindow,
                     [mw = mainWindow, dockId](bool pinned) {
                       setDockPinned(mw, dockId, pinned);
@@ -2472,10 +2665,14 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
      viewportBookmarkMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_camera"), QStringLiteral("現在のカメラを保存...")));
  saveViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
  saveViewportBookmarkAction->setToolTip("Store the current camera / viewport state under a name");
+ saveViewportBookmarkAction->setToolTip(QStringLiteral("Save Current Camera as Bookmark"));
+ saveViewportBookmarkAction->setStatusTip(QStringLiteral("Store the current camera and viewport state under a name"));
  deleteViewportBookmarkAction =
      viewportBookmarkMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_camera_bookmark_dots"), QStringLiteral("カメラブックマークを削除...")));
  deleteViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
  deleteViewportBookmarkAction->setToolTip("Remove a saved camera / viewport bookmark");
+ deleteViewportBookmarkAction->setToolTip(QStringLiteral("Delete Camera Bookmark"));
+ deleteViewportBookmarkAction->setStatusTip(QStringLiteral("Remove a saved camera and viewport bookmark"));
 
  QObject::connect(saveViewportBookmarkAction, &QAction::triggered, menu_,
                    [this]() {
@@ -2594,6 +2791,8 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
  for (const QString& bookmarkName : names) {
   QAction* action = viewportBookmarkMenu->addAction(bookmarkName);
   action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+  action->setToolTip(QStringLiteral("Restore camera bookmark: %1").arg(bookmarkName));
+  action->setStatusTip(QStringLiteral("Restore the saved camera and viewport state"));
   QObject::connect(action, &QAction::triggered, menu_,
                     [this, bookmarkName, compositionId]() {
                      QWidget* dialogParent = mainWindow
@@ -2638,9 +2837,13 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
  saveViewportTemplateAction =
      viewportTemplateMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_view_settings"), QStringLiteral("現在のビュー設定を保存...")));
  saveViewportTemplateAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
+ saveViewportTemplateAction->setToolTip(QStringLiteral("Save Current View Settings"));
+ saveViewportTemplateAction->setStatusTip(QStringLiteral("Store the current view settings under a name"));
  deleteViewportTemplateAction =
      viewportTemplateMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.delete_view_settings"), QStringLiteral("ビュー設定を削除...")));
  deleteViewportTemplateAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
+ deleteViewportTemplateAction->setToolTip(QStringLiteral("Delete View Settings Template"));
+ deleteViewportTemplateAction->setStatusTip(QStringLiteral("Remove a saved view settings template"));
 
  QObject::connect(saveViewportTemplateAction, &QAction::triggered, menu_,
                    [this]() {
@@ -2759,6 +2962,8 @@ void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
  for (const QString& templateName : names) {
   QAction* action = viewportTemplateMenu->addAction(templateName);
   action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
+  action->setToolTip(QStringLiteral("Apply view template: %1").arg(templateName));
+  action->setStatusTip(QStringLiteral("Apply the saved view settings"));
   QObject::connect(action, &QAction::triggered, menu_,
                     [this, templateName, compositionId]() {
                      QWidget* dialogParent = mainWindow
@@ -2804,6 +3009,8 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
 
  compareSurfaceAction = compareMenu->addAction("A/B Surface in Contents Viewer");
  compareSurfaceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
+ compareSurfaceAction->setToolTip(QStringLiteral("Show A/B Surface"));
+ compareSurfaceAction->setStatusTip(QStringLiteral("Open the A/B comparison surface in the Contents Viewer"));
  QObject::connect(compareSurfaceAction, &QAction::triggered, menu_,
                    []() { openContentsViewerCompareSurface(); });
 
@@ -2826,12 +3033,22 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
  };
 
  compareOffAction = compareMenu->addAction("Compare: Off");
+ compareOffAction->setToolTip(QStringLiteral("Compare Off"));
+ compareOffAction->setStatusTip(QStringLiteral("Turn off A/B comparison"));
  compareAAction = compareMenu->addAction("Compare: A");
+ compareAAction->setToolTip(QStringLiteral("Show Comparison A"));
+ compareAAction->setStatusTip(QStringLiteral("Show comparison side A"));
  compareBAction = compareMenu->addAction("Compare: B");
+ compareBAction->setToolTip(QStringLiteral("Show Comparison B"));
+ compareBAction->setStatusTip(QStringLiteral("Show comparison side B"));
  compareDiffAction = compareMenu->addAction("Compare: Diff");
+ compareDiffAction->setToolTip(QStringLiteral("Show Comparison Difference"));
+ compareDiffAction->setStatusTip(QStringLiteral("Show the difference between A and B"));
    compareReferenceAction = compareMenu->addAction("Reference Pin");
    compareReferenceAction->setCheckable(true);
  compareReferenceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+ compareReferenceAction->setToolTip(QStringLiteral("Reference Pin"));
+ compareReferenceAction->setStatusTip(QStringLiteral("Pin the current frame as the comparison reference"));
    compareMenu->addSeparator();
    auto& shortcuts = ShortcutBindings::instance();
    xRayAction = compareMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.xray"), QStringLiteral("X-Ray (透過)")));
@@ -2841,6 +3058,8 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
        QStringLiteral("Show selected layer through occlusion (%1)")
            .arg(shortcuts.shortcutText(ShortcutId::ViewToggleXRay)));
    xRayAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewToggleXRay));
+   xRayAction->setToolTip(QStringLiteral("X-Ray View"));
+   xRayAction->setStatusTip(QStringLiteral("Show the selected layer through occlusion"));
    isolationAction = compareMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.isolation"), QStringLiteral("Isolation (選択のみ)")));
    isolationAction->setCheckable(true);
    isolationAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
@@ -2848,6 +3067,8 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
        QStringLiteral("Show only the selected layer (%1)")
            .arg(shortcuts.shortcutText(ShortcutId::ViewToggleIsolation)));
    isolationAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewToggleIsolation));
+   isolationAction->setToolTip(QStringLiteral("Isolate Selected Layer"));
+   isolationAction->setStatusTip(QStringLiteral("Show only the selected layer"));
 
  bindCompareAction(compareOffAction, CompositionCompareMode::Off);
  bindCompareAction(compareAAction, CompositionCompareMode::A);
@@ -2958,6 +3179,8 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
  saveSelectionSetAction =
      selectionSetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.view.save_selection"), QStringLiteral("現在の選択を保存...")));
  saveSelectionSetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
+ saveSelectionSetAction->setToolTip(QStringLiteral("Save Current Selection as Set"));
+ saveSelectionSetAction->setStatusTip(QStringLiteral("Store the current layer selection under a name"));
 
  QObject::connect(saveSelectionSetAction, &QAction::triggered, menu_,
                    [this]() {
@@ -3020,6 +3243,8 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
  for (const QString& name : names) {
   QAction* action = selectionSetMenu->addAction(name);
   action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+  action->setToolTip(QStringLiteral("Restore selection set: %1").arg(name));
+  action->setStatusTip(QStringLiteral("Restore the saved layer selection"));
   QObject::connect(action, &QAction::triggered, menu_,
                     [this, name, compositionId]() {
                      QWidget* dialogParent = mainWindow

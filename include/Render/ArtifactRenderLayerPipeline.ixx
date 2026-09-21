@@ -57,6 +57,8 @@ export namespace Artifact
     bool objectId = false;
     bool materialId = false;
     bool albedo = false;
+    bool position = false;
+    bool uv = false;
     bool operator==(const AuxiliaryTargetRequest&) const = default;
   };
 
@@ -123,6 +125,12 @@ export namespace Artifact
   ITextureView* albedoSRV() const;
   ITextureView* albedoRTV() const;
   bool hasAlbedoTarget() const;
+  ITextureView* positionSRV() const;
+  ITextureView* positionRTV() const;
+  bool hasPositionTarget() const;
+  ITextureView* uvSRV() const;
+  ITextureView* uvRTV() const;
+  bool hasUvTarget() const;
   GlobalIlluminationInputs globalIlluminationInputs(
       ITextureView* depthSRV) const;
   bool dispatchScreenSpaceGlobalIllumination(

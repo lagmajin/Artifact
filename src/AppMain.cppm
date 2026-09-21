@@ -3686,6 +3686,10 @@ int main(int argc, char *argv[]) {
     inspectorWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Inspector"), DockArea::Right,
                         inspectorWidget);
+    if (auto *trackerPanel = compositionEditor->trackerPanelWidget()) {
+      mw->addDockedWidgetTabbed(QStringLiteral("Tracker"), DockArea::Right,
+                                trackerPanel, QStringLiteral("Inspector"));
+    }
     const auto detachInspectorTab = [](QWidget *panel) {
       if (!panel) return;
       for (QWidget *ancestor = panel->parentWidget(); ancestor;

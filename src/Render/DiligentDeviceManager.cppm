@@ -522,13 +522,22 @@ namespace {
         if (!factory) {
             return;
         }
+        // D3D adapter enumeration requires a real D3D feature level.  A
+        // default Version is 0.0, which Diligent's D3D factory deliberately
+        // rejects in debug builds. Vulkan keeps 0.0 as its "use default API
+        // version" contract. Keep this backend distinction at the factory
+        // boundary and use the same D3D minimum as device selection above.
+        const Version minVersion =
+            backend.compare(QStringLiteral("d3d12"), Qt::CaseInsensitive) == 0
+                ? Version{11, 0}
+                : Version{};
         Uint32 adapterCount = 0;
-        factory->EnumerateAdapters(Version{}, adapterCount, nullptr);
+        factory->EnumerateAdapters(minVersion, adapterCount, nullptr);
         if (adapterCount == 0) {
             return;
         }
         std::vector<GraphicsAdapterInfo> adapters(adapterCount);
-        factory->EnumerateAdapters(Version{}, adapterCount, adapters.data());
+        factory->EnumerateAdapters(minVersion, adapterCount, adapters.data());
         adapters.resize(adapterCount);
         for (Uint32 index = 0; index < adapterCount; ++index) {
             const auto& adapter = adapters[index];

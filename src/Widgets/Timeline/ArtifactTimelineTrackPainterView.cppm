@@ -263,7 +263,7 @@ struct TimelineThemeColors {
 TimelineThemeColors timelineThemeColors() {
   const auto &theme = ArtifactCore::currentDCCTheme();
   return {
-      QColor(theme.backgroundColor), QColor(theme.secondaryBackgroundColor),
+      QColor(35, 39, 43), QColor(38, 42, 46),
       QColor(theme.borderColor),     QColor(theme.accentColor),
       QColor(theme.textColor),
   };
@@ -6552,7 +6552,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   // enough apart to remain useful while reducing visual noise when zoomed
   // out. The 1/2/5 progression avoids the uneven density of repeated x2
   // steps and mirrors the spacing convention used by DCC rulers.
-  const double minMajorLabelPx = 72.0;
+  const double minMajorLabelPx = 120.0;
   int majorStep = 1;
   while (static_cast<double>(majorStep) * ppf < minMajorLabelPx) {
     if (majorStep == 1) {
@@ -6578,7 +6578,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
     QColor gridColor = theme.border;
     const float contrastScale = Accessibility::contrastScale();
-    const int baseAlpha = major ? 64 : 28;
+    const int baseAlpha = major ? 44 : 18;
     gridColor.setAlpha(std::clamp(
         static_cast<int>(baseAlpha * contrastScale), 12, 120));
     const qreal lineWidth = std::max(1.0f, contrastScale);

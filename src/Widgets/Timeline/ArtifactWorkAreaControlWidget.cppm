@@ -197,12 +197,12 @@ namespace Artifact
                            impl_->draggingRange || impl_->hoveringLeft ||
                            impl_->hoveringRight || impl_->hoveringRange;
   const QColor workAreaColor = rangeActive ? QColor(190, 143, 54)
-                                           : QColor(94, 108, 120);
+                                           : QColor(55, 63, 71);
   p.fillRect(rangeRect, QColor(workAreaColor.red(), workAreaColor.green(),
                                workAreaColor.blue(), 232));
 
   // Bottom border for work area
-  p.setPen(QPen(workAreaColor.lighter(rangeActive ? 118 : 132), 1));
+  p.setPen(QPen(workAreaColor.lighter(rangeActive ? 118 : 115), 1));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   const double durationFrames =

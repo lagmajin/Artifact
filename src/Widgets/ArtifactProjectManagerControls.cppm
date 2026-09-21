@@ -16,6 +16,7 @@ module;
 #include <QWidget>
 
 #include <functional>
+#include <utility>
 
 export module Artifact.Widgets.ProjectManagerControls;
 
@@ -42,6 +43,25 @@ protected:
         }
         QLabel::mouseReleaseEvent(event);
     }
+};
+
+class ProjectCallbackButton final : public QPushButton
+{
+public:
+    using Callback = std::function<void()>;
+    using QPushButton::QPushButton;
+
+    void setCallback(Callback callback) { callback_ = std::move(callback); }
+
+protected:
+    void nextCheckState() override
+    {
+        QPushButton::nextCheckState();
+        if (callback_) callback_();
+    }
+
+private:
+    Callback callback_;
 };
 
 void updateCompositionColorButtonPreview(QPushButton* button, const QColor& color)

@@ -1099,6 +1099,8 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle objectId_;
   TextureBundle materialId_;
   TextureBundle albedo_;
+  TextureBundle position_;
+  TextureBundle uv_;
   TextureBundle screenSpaceGI_;
   ArtifactCore::SharedPtr<GpuContext> screenSpaceGIContext_;
   ArtifactCore::SharedPtr<GpuContext> blendContext_;
@@ -1228,6 +1230,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->objectId_ = {};
   impl_->materialId_ = {};
   impl_->albedo_ = {};
+  impl_->position_ = {};
+  impl_->uv_ = {};
   impl_->screenSpaceGI_ = {};
   impl_->blendPipeline_.reset();
   impl_->blendContext_.reset();
@@ -2173,7 +2177,13 @@ bool RenderPipeline::initialize(IRenderDevice* device,
           impl_->materialId_.rtv)) &&
         (!impl_->auxiliaryRequest_.albedo ||
          (impl_->albedo_.texture && impl_->albedo_.srv &&
-          impl_->albedo_.rtv));
+          impl_->albedo_.rtv)) &&
+        (!impl_->auxiliaryRequest_.position ||
+         (impl_->position_.texture && impl_->position_.srv &&
+          impl_->position_.rtv)) &&
+        (!impl_->auxiliaryRequest_.uv ||
+         (impl_->uv_.texture && impl_->uv_.srv &&
+          impl_->uv_.rtv));
  }
 
  bool RenderPipeline::renderComposition(
@@ -2232,9 +2242,15 @@ bool RenderPipeline::hasObjectIdTarget() const { return impl_->auxiliaryRequest_
 ITextureView* RenderPipeline::materialIdSRV() const { return impl_->materialId_.srv; }
 ITextureView* RenderPipeline::materialIdRTV() const { return impl_->materialId_.rtv; }
 bool RenderPipeline::hasMaterialIdTarget() const { return impl_->auxiliaryRequest_.materialId && impl_->materialId_.texture; }
-ITextureView* RenderPipeline::albedoSRV() const { return impl_->albedo_.srv; }
-ITextureView* RenderPipeline::albedoRTV() const { return impl_->albedo_.rtv; }
-bool RenderPipeline::hasAlbedoTarget() const { return impl_->auxiliaryRequest_.albedo && impl_->albedo_.texture; }
+ ITextureView* RenderPipeline::albedoSRV() const { return impl_->albedo_.srv; }
+ ITextureView* RenderPipeline::albedoRTV() const { return impl_->albedo_.rtv; }
+ bool RenderPipeline::hasAlbedoTarget() const { return impl_->auxiliaryRequest_.albedo && impl_->albedo_.texture; }
+ ITextureView* RenderPipeline::positionSRV() const { return impl_->position_.srv; }
+ ITextureView* RenderPipeline::positionRTV() const { return impl_->position_.rtv; }
+ bool RenderPipeline::hasPositionTarget() const { return impl_->auxiliaryRequest_.position && impl_->position_.texture; }
+ ITextureView* RenderPipeline::uvSRV() const { return impl_->uv_.srv; }
+ ITextureView* RenderPipeline::uvRTV() const { return impl_->uv_.rtv; }
+ bool RenderPipeline::hasUvTarget() const { return impl_->auxiliaryRequest_.uv && impl_->uv_.texture; }
 GlobalIlluminationInputs RenderPipeline::globalIlluminationInputs(
     ITextureView* depthSRV) const
 {
@@ -2708,6 +2724,22 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
       !createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.Albedo", impl_->albedo_))
+  {
+   return false;
+  }
+  // Position/UV hold raw (unencoded) values; keep the same float format as
+  // the other color-like AOV targets.
+  if (request.position &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Position", impl_->position_))
+  {
+   return false;
+  }
+  if (request.uv &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.UV", impl_->uv_))
   {
    return false;
   }

@@ -183,13 +183,21 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   inspectorAction_->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::EffectShowInspector));
   inspectorAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_control.svg")));
+  inspectorAction_->setToolTip(QStringLiteral("Effect Controls"));
+  inspectorAction_->setStatusTip(QStringLiteral("Show the effect controls inspector"));
   fxStudioAction_ = new QAction(QStringLiteral("FX Studio…"), menu);
+  fxStudioAction_->setToolTip(QStringLiteral("FX Studio"));
+  fxStudioAction_->setStatusTip(QStringLiteral("Open the FX Studio browser"));
 
   removeAllAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.effect.remove_all"), QStringLiteral("選択レイヤーのエフェクトをすべて削除")), menu);
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
   removeAllAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_remove_all.svg")));
+  removeAllAction_->setToolTip(QStringLiteral("Remove All Effects"));
+  removeAllAction_->setStatusTip(QStringLiteral("Remove all effects from the selected layers"));
   ofxManagerAction_ = new QAction(QStringLiteral("OFX Plugin Manager"), menu);
   ofxManagerAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_ofx.svg")));
+  ofxManagerAction_->setToolTip(QStringLiteral("OFX Plugin Manager"));
+  ofxManagerAction_->setStatusTip(QStringLiteral("Manage installed OFX plug-ins"));
 
   menu->addAction(inspectorAction_);
   menu->addAction(fxStudioAction_);

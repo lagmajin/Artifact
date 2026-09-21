@@ -498,10 +498,10 @@ namespace Artifact {
                         return;
                     }
                     bool accepted = false;
-                    const QString name = QInputDialog::getText(
-                        parent, QStringLiteral("Rename Layer"),
-                        QStringLiteral("Layer name:"), QLineEdit::Normal,
-                        layer->layerName(), &accepted);
+                    const QString name = ArtifactRenameDialog::getName(
+                        parent, ArtifactRenameTarget::Layer, layer->layerName(),
+                        QStringLiteral("Composition Graph / Selected Layer"), {}, {},
+                        &accepted);
                     if (accepted && !name.trimmed().isEmpty()) {
                         service->renameLayerInCurrentComposition(node->layerId,
                                                                  name.trimmed());

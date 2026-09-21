@@ -67,6 +67,10 @@ int viewportMagnifierScale() {
     return s()->accessibilityViewportMagnifierScale();
 }
 
+bool viewportMagnifierFollowCursor() {
+    return s()->accessibilityViewportMagnifierFollowCursor();
+}
+
 float targetScale() {
     return preferLargeTargets() ? 1.35f : 1.0f;
 }

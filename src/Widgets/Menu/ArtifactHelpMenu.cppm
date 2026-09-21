@@ -50,25 +50,39 @@ namespace Artifact {
  {
   versionInfoAction_ = new QAction(u8"Version Info");
   versionInfoAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_version.svg")));
+  versionInfoAction_->setToolTip(QStringLiteral("Version Info"));
+  versionInfoAction_->setStatusTip(QStringLiteral("Show detailed version and build information"));
 
   aboutAction_ = new QAction(u8"About Artifact");
   aboutAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_about.svg")));
+  aboutAction_->setToolTip(QStringLiteral("About Artifact"));
+  aboutAction_->setStatusTip(QStringLiteral("Show information about the application"));
 
   docsAction_ = new QAction(u8"Documentation");
   docsAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_docs.svg")));
+  docsAction_->setToolTip(QStringLiteral("Documentation"));
+  docsAction_->setStatusTip(QStringLiteral("Open the user documentation"));
 
   checkUpdatesAction_ = new QAction(u8"Check for Updates");
   checkUpdatesAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_updates.svg")));
+  checkUpdatesAction_->setToolTip(QStringLiteral("Check for Updates"));
+  checkUpdatesAction_->setStatusTip(QStringLiteral("Check whether a newer version is available"));
 
   exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
   exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_diagnostics.svg")));
+  exportDiagnosticsAction_->setToolTip(QStringLiteral("Export Diagnostics"));
+  exportDiagnosticsAction_->setStatusTip(QStringLiteral("Write out a diagnostics bundle for support"));
 
   openAppDataAction_ = new QAction(u8"Open App Data Folder");
   openAppDataAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_app_data.svg")));
+  openAppDataAction_->setToolTip(QStringLiteral("Open App Data Folder"));
+  openAppDataAction_->setStatusTip(QStringLiteral("Open the application data folder"));
 
   keyboardOverlayAction_ = new QAction(u8"Keyboard Shortcuts Overlay");
   keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_keyboard.svg")));
   keyboardOverlayAction_->setShortcuts({QKeySequence(QStringLiteral("Ctrl+/")), QKeySequence::HelpContents});
+  keyboardOverlayAction_->setToolTip(QStringLiteral("Keyboard Shortcuts Overlay"));
+  keyboardOverlayAction_->setStatusTip(QStringLiteral("Show the keyboard shortcut reference overlay"));
  }
 
  ArtifactHelpMenu::Impl::~Impl()
@@ -87,7 +101,10 @@ namespace Artifact {
   setObjectName("HelpMenu");
   setTitle(TranslationManager::instance().tr(QStringLiteral("menu.help.label"), QStringLiteral("ヘルプ(&H)")));
   setIcon(QIcon(resolveIconPath("Studio/menubar_help.svg")));
-  setTearOffEnabled(true);
+  // Tear-off QMenus create an additional native top-level surface.  During
+  // main-window shutdown that surface can outlive its menu bar briefly and
+  // make Qt dispatch destruction events through a stale menu-bar filter.
+  setTearOffEnabled(false);
 
   // add actions
   addAction(impl_->versionInfoAction_);

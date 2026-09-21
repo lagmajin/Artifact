@@ -782,8 +782,8 @@ public:
     ProjectInfoPanel(QWidget* parent = nullptr) : QWidget(parent) {
         setObjectName(QStringLiteral("projectInfoPanel"));
         setAutoFillBackground(true);
-        setMinimumHeight(250);
-        setMaximumHeight(360);
+        setMinimumHeight(300);
+        setMaximumHeight(420);
         const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
         const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
         const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
@@ -794,12 +794,12 @@ public:
         widgetPalette.setColor(QPalette::WindowText, text);
         setPalette(widgetPalette);
         auto layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 8);
-        layout->setSpacing(8);
+        layout->setContentsMargins(0, 0, 0, 10);
+        layout->setSpacing(10);
 
         thumbnail = new QLabel();
-        thumbnail->setMinimumHeight(156);
-        thumbnail->setMaximumHeight(210);
+        thumbnail->setMinimumHeight(176);
+        thumbnail->setMaximumHeight(224);
         thumbnail->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         thumbnail->setAlignment(Qt::AlignCenter);
         thumbnail->setText("PREVIEW");
@@ -828,8 +828,8 @@ public:
 
         detailsLabel = new QLabel("Select an item to inspect details");
         detailsLabel->setWordWrap(true);
-        detailsLabel->setMinimumHeight(38);
-        detailsLabel->setMaximumHeight(72);
+        detailsLabel->setMinimumHeight(58);
+        detailsLabel->setMaximumHeight(112);
         {
             QPalette pal = detailsLabel->palette();
             pal.setColor(QPalette::WindowText, muted);

@@ -108,63 +108,97 @@ private:
   undoAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.undo"), QStringLiteral("元に戻す (&U)")));
   undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
   undoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_undo.svg")));
+  undoAction->setToolTip(QStringLiteral("Undo"));
+  undoAction->setStatusTip(QStringLiteral("Undo the last operation"));
 
   redoAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.redo"), QStringLiteral("やり直し (&R)")));
   redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
   redoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_redo.svg")));
+  redoAction->setToolTip(QStringLiteral("Redo"));
+  redoAction->setStatusTip(QStringLiteral("Redo the undone operation"));
 
   duplicateAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.duplicate"), QStringLiteral("複製 (&D)")));
   duplicateAction->setShortcut(shortcuts.shortcut(ShortcutId::LayerDuplicate));
   duplicateAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_duplicate.svg")));
+  duplicateAction->setToolTip(QStringLiteral("Duplicate"));
+  duplicateAction->setStatusTip(QStringLiteral("Duplicate the selected layers"));
 
   splitAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.split_layer"), QStringLiteral("レイヤーを分割 (&S)")));
   splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
   splitAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_split.svg")));
+  splitAction->setToolTip(QStringLiteral("Split Layer"));
+  splitAction->setStatusTip(QStringLiteral("Split the selected layer at the current time"));
 
   trimInAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.trim_in"), QStringLiteral("インポイントを現在の時間にトリム")));
   trimInAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_trim_in.svg")));
+  trimInAction->setToolTip(QStringLiteral("Trim In Point to Current Time"));
+  trimInAction->setStatusTip(QStringLiteral("Move the in point of the selected layer to the current time"));
   trimOutAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.trim_out"), QStringLiteral("アウトポイントを現在の時間にトリム")));
   trimOutAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_trim_out.svg")));
+  trimOutAction->setToolTip(QStringLiteral("Trim Out Point to Current Time"));
+  trimOutAction->setStatusTip(QStringLiteral("Move the out point of the selected layer to the current time"));
 
   selectAllAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_all"), QStringLiteral("すべて選択 (&A)")));
   selectAllAction->setShortcut(QKeySequence::SelectAll);
   selectAllAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_all.svg")));
+  selectAllAction->setToolTip(QStringLiteral("Select All"));
+  selectAllAction->setStatusTip(QStringLiteral("Select all layers"));
 
   selectNoneAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_none"), QStringLiteral("選択解除")));
   selectNoneAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
   selectNoneAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_none.svg")));
+  selectNoneAction->setToolTip(QStringLiteral("Deselect All"));
+  selectNoneAction->setStatusTip(QStringLiteral("Clear the current selection"));
 
   invertSelectionAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.invert_selection"), QStringLiteral("選択を反転")));
   invertSelectionAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_invert.svg")));
+  invertSelectionAction->setToolTip(QStringLiteral("Invert Selection"));
+  invertSelectionAction->setStatusTip(QStringLiteral("Invert the current layer selection"));
 
   selectSameTypeAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_same_type"), QStringLiteral("同じ種類を選択")));
   selectSameTypeAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_same_type.svg")));
+  selectSameTypeAction->setToolTip(QStringLiteral("Select Same Type"));
+  selectSameTypeAction->setStatusTip(QStringLiteral("Select layers of the same type as the current selection"));
 
   findAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.find"), QStringLiteral("検索 (&F)...")));
   findAction->setShortcut(QKeySequence::Find);
   findAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_find.svg")));
+  findAction->setToolTip(QStringLiteral("Find"));
+  findAction->setStatusTip(QStringLiteral("Search within the project or timeline"));
 
   preferencesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.preferences"), QStringLiteral("環境設定 (&P)...")));
   preferencesAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_preferences.svg")));
+  preferencesAction->setToolTip(QStringLiteral("Preferences"));
+  preferencesAction->setStatusTip(QStringLiteral("Open the application settings dialog"));
 
   undoHistoryAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.undo_history"), QStringLiteral("Undo 履歴 (&H)...")));
   undoHistoryAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_history.svg")));
+  undoHistoryAction->setToolTip(QStringLiteral("Undo History"));
+  undoHistoryAction->setStatusTip(QStringLiteral("Show the undo history panel"));
 
   copyAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.copy"), QStringLiteral("コピー (&C)")));
   copyAction_->setShortcut(QKeySequence::Copy);
   copyAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_copy.svg")));
+  copyAction_->setToolTip(QStringLiteral("Copy"));
+  copyAction_->setStatusTip(QStringLiteral("Copy the selection to the clipboard"));
 
   cutAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.cut"), QStringLiteral("切り取り (&T)")));
   cutAction_->setShortcut(QKeySequence::Cut);
   cutAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_cut.svg")));
+  cutAction_->setToolTip(QStringLiteral("Cut"));
+  cutAction_->setStatusTip(QStringLiteral("Cut the selection to the clipboard"));
 
   pasteAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.paste"), QStringLiteral("貼り付け (&P)")));
   pasteAction_->setShortcut(QKeySequence::Paste);
   pasteAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_paste.svg")));
+  pasteAction_->setToolTip(QStringLiteral("Paste"));
+  pasteAction_->setStatusTip(QStringLiteral("Paste the clipboard contents"));
 
   deleteAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.delete"), QStringLiteral("削除 (&D)")));
   deleteAction_->setShortcut(QKeySequence::Delete);
   deleteAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_delete.svg")));
+  deleteAction_->setToolTip(QStringLiteral("Delete"));
+  deleteAction_->setStatusTip(QStringLiteral("Delete the current selection"));
 
   // Build menu
   menu->addAction(undoAction);

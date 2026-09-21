@@ -26,6 +26,7 @@ public:
  void setComposition(ArtifactCompositionPtr composition);
  void setClearColor(const FloatColor& color);
  CompositionRenderController* renderController() const;
+ QWidget* trackerPanelWidget() const;
 
  QSize sizeHint() const override;
   void resizeEvent(QResizeEvent* event) override;

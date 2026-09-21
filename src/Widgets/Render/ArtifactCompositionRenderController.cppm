@@ -11653,6 +11653,64 @@ public:
 
 
 
+  void drawGpuLayerPositionToTarget(ArtifactAbstractLayer* layer,
+
+                                    Diligent::ITextureView* positionRTV,
+                                    Diligent::ITextureView* depthDSV) {
+
+    if (!layer || !positionRTV || !layer->is3D()) {
+
+      return;
+
+    }
+
+    renderer_->setOverrideRTV(positionRTV);
+    renderer_->setOverrideDSV(depthDSV);
+
+    renderer_->setMeshPositionOnlyPass(true);
+
+    layer->draw(renderer_.get());
+
+    // Target reset submits the queued draw; do not force a per-AOV flush.
+
+    renderer_->setMeshPositionOnlyPass(false);
+
+    renderer_->setOverrideDSV(nullptr);
+    renderer_->setOverrideRTV(nullptr);
+
+  }
+
+
+
+  void drawGpuLayerUvToTarget(ArtifactAbstractLayer* layer,
+
+                              Diligent::ITextureView* uvRTV,
+                              Diligent::ITextureView* depthDSV) {
+
+    if (!layer || !uvRTV || !layer->is3D()) {
+
+      return;
+
+    }
+
+    renderer_->setOverrideRTV(uvRTV);
+    renderer_->setOverrideDSV(depthDSV);
+
+    renderer_->setMeshUvOnlyPass(true);
+
+    layer->draw(renderer_.get());
+
+    // Target reset submits the queued draw; do not force a per-AOV flush.
+
+    renderer_->setMeshUvOnlyPass(false);
+
+    renderer_->setOverrideDSV(nullptr);
+    renderer_->setOverrideRTV(nullptr);
+
+  }
+
+
+
   bool applyGpuPointwiseToLayer(
       RenderPipeline& renderPipeline, Diligent::ITextureView* inputSRV,
       Diligent::ITextureView* outputUAV, Diligent::ITextureView* scratchUAV,
@@ -12263,6 +12321,26 @@ public:
       channelComponentSource = renderPipeline.velocitySRV();
       channelComponent = 1;
       break;
+    case ViewportChannelDisplayMode::PositionX:
+      channelComponentSource = renderPipeline.positionSRV();
+      channelComponent = 0;
+      break;
+    case ViewportChannelDisplayMode::PositionY:
+      channelComponentSource = renderPipeline.positionSRV();
+      channelComponent = 1;
+      break;
+    case ViewportChannelDisplayMode::PositionZ:
+      channelComponentSource = renderPipeline.positionSRV();
+      channelComponent = 2;
+      break;
+    case ViewportChannelDisplayMode::U:
+      channelComponentSource = renderPipeline.uvSRV();
+      channelComponent = 0;
+      break;
+    case ViewportChannelDisplayMode::V:
+      channelComponentSource = renderPipeline.uvSRV();
+      channelComponent = 1;
+      break;
     case ViewportChannelDisplayMode::Albedo:
       channelComponentSource = renderPipeline.albedoSRV();
       channelComponent = 4;
@@ -12274,6 +12352,15 @@ public:
     case ViewportChannelDisplayMode::Velocity:
       channelComponentSource = renderPipeline.velocitySRV();
       channelComponent = 6;
+      break;
+    case ViewportChannelDisplayMode::Position:
+      // Raw world coordinates; shown unencoded like Albedo.
+      channelComponentSource = renderPipeline.positionSRV();
+      channelComponent = 4;
+      break;
+    case ViewportChannelDisplayMode::UV:
+      channelComponentSource = renderPipeline.uvSRV();
+      channelComponent = 4;
       break;
     default:
       break;
@@ -13968,6 +14055,18 @@ public:
   // refer to a ping-pong texture owned by RenderPipeline; retaining it avoids
   // a stale raw pointer when a screenshot is requested between render passes.
   Diligent::RefCntAutoPtr<Diligent::ITextureView> lastPresentedReadbackSRV_;
+
+  // Accessibility viewport magnifier (loupe).  Draws the composited frame
+  // texture scaled into a scissored inset; no GPU readback is performed.
+  bool magnifierEnabled_ = false;
+  int magnifierScale_ = 2;
+  bool magnifierFollowCursor_ = false;
+  QPointF magnifierCursorViewportPos_{};
+  QFont magnifierLabelFont_;
+  QString magnifierLabelText_;
+  int magnifierLabelScale_ = -1;
+  int magnifierLabelWidth_ = 0;
+  int magnifierLabelHeight_ = 0;
 
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
 
@@ -15711,6 +15810,10 @@ public:
   void rebuildReferencePaletteOverlay();
 
   void drawColorSamplerOverlay(int overlayW, int overlayH);
+
+  bool magnifierLoupeRect(QRectF &outRect) const;
+
+  void drawViewportMagnifierOverlay(float cw, float ch);
 
   void drawAutoColorPaletteOverlay(int overlayW, int overlayH);
 
@@ -18145,6 +18248,55 @@ void CompositionRenderController::setShowOriginOverlay(bool show) {
 
 bool CompositionRenderController::isShowOriginOverlay() const {
   return impl_ ? impl_->showOriginOverlay_ : false;
+}
+
+void CompositionRenderController::setMagnifierEnabled(bool enable) {
+  if (impl_->magnifierEnabled_ == enable) return;
+  impl_->magnifierEnabled_ = enable;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isMagnifierEnabled() const {
+  return impl_ ? impl_->magnifierEnabled_ : false;
+}
+
+void CompositionRenderController::setMagnifierScale(int scale) {
+  const int clamped = std::clamp(scale, 2, 8);
+  if (impl_->magnifierScale_ == clamped) return;
+  impl_->magnifierScale_ = clamped;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+int CompositionRenderController::magnifierScale() const {
+  return impl_ ? impl_->magnifierScale_ : 2;
+}
+
+void CompositionRenderController::setMagnifierFollowCursor(bool follow) {
+  if (impl_->magnifierFollowCursor_ == follow) return;
+  impl_->magnifierFollowCursor_ = follow;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isMagnifierFollowCursor() const {
+  return impl_ ? impl_->magnifierFollowCursor_ : false;
+}
+
+bool CompositionRenderController::adjustMagnifierScaleAt(
+    const QPointF &viewportPosLogical, float delta) {
+  if (!impl_ || !impl_->magnifierEnabled_ || delta == 0.0f) return false;
+  QRectF loupe;
+  if (!impl_->magnifierLoupeRect(loupe)) return false;
+  const QPointF physical = viewportPosLogical * impl_->devicePixelRatio_;
+  if (!loupe.contains(physical)) return false;
+  const int next =
+      std::clamp(impl_->magnifierScale_ + (delta > 0.0f ? 1 : -1), 2, 8);
+  // Consume the wheel over the loupe even at the clamp limits so the viewport
+  // does not zoom while the pointer is over the magnifier.
+  setMagnifierScale(next);
+  return true;
 }
 
 
@@ -27142,6 +27294,11 @@ void CompositionRenderController::handleMouseMove(
   // pipeline
 
   const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
+  impl_->magnifierCursorViewportPos_ = viewportPos;
+  if (impl_->magnifierEnabled_) {
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
   if (const auto layer = impl_->physicsDragLayer_.lock()) {
     const auto* playback = ArtifactPlaybackService::instance();
     if (!impl_->renderer_ || !playback || !playback->isPlaying() ||
@@ -34514,6 +34671,13 @@ bool CompositionRenderController::trackerJobRunning() const {
          impl_->trackerJobDirection_ != Impl::TrackerJobDirection::None;
 }
 
+double CompositionRenderController::trackerSolveProgress() const {
+  return impl_ ? std::clamp(
+                     impl_->trackerSolveProgress_.load(std::memory_order_acquire),
+                     0.0, 1.0)
+               : 0.0;
+}
+
 QString CompositionRenderController::trackerModeLabel() const {
   return trackerModeTitle(impl_ ? impl_->trackerMotionTracker_ : nullptr);
 }
@@ -37408,6 +37572,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::VelocityY);
 
+    const bool positionChannelRequested =
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::PositionX) ||
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::PositionY) ||
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::PositionZ);
+
+    const bool uvChannelRequested =
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::U) ||
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::V);
+
     const bool auxiliary3DChannelRequested =
 
         emissionChannelRequested || objectIdChannelRequested ||
@@ -37415,6 +37593,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         materialIdChannelRequested || albedoChannelRequested ||
 
         normalChannelRequested || velocityChannelRequested ||
+
+        positionChannelRequested || uvChannelRequested ||
 
         screenSpaceGlobalIlluminationRequested;
 
@@ -37481,6 +37661,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     auxiliaryRequest.materialId = materialIdChannelRequested;
     auxiliaryRequest.albedo =
         albedoChannelRequested || postPassMask.screenSpaceGi;
+    auxiliaryRequest.position = positionChannelRequested;
+    auxiliaryRequest.uv = uvChannelRequested;
 
     // Avoid paying render-pipeline setup cost when GPU blending is disabled.
 
@@ -37742,6 +37924,56 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         (gpuBlendPathRequested && renderPipeline.hasAlbedoTarget())
 
             ? renderPipeline.albedoSRV()
+
+            : nullptr);
+
+    renderer_->setAuxiliaryChannelSource(
+
+        ArtifactIRenderer::ChannelType::PositionX,
+
+        (gpuBlendPathRequested && renderPipeline.hasPositionTarget())
+
+            ? renderPipeline.positionSRV()
+
+            : nullptr);
+
+    renderer_->setAuxiliaryChannelSource(
+
+        ArtifactIRenderer::ChannelType::PositionY,
+
+        (gpuBlendPathRequested && renderPipeline.hasPositionTarget())
+
+            ? renderPipeline.positionSRV()
+
+            : nullptr);
+
+    renderer_->setAuxiliaryChannelSource(
+
+        ArtifactIRenderer::ChannelType::PositionZ,
+
+        (gpuBlendPathRequested && renderPipeline.hasPositionTarget())
+
+            ? renderPipeline.positionSRV()
+
+            : nullptr);
+
+    renderer_->setAuxiliaryChannelSource(
+
+        ArtifactIRenderer::ChannelType::U,
+
+        (gpuBlendPathRequested && renderPipeline.hasUvTarget())
+
+            ? renderPipeline.uvSRV()
+
+            : nullptr);
+
+    renderer_->setAuxiliaryChannelSource(
+
+        ArtifactIRenderer::ChannelType::V,
+
+        (gpuBlendPathRequested && renderPipeline.hasUvTarget())
+
+            ? renderPipeline.uvSRV()
 
             : nullptr);
 
@@ -38304,6 +38536,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       auto albedoRTV = renderPipeline.albedoRTV();
 
+      auto positionRTV = renderPipeline.positionRTV();
+
+      auto uvRTV = renderPipeline.uvRTV();
+
 
 
       // Pre-render matte source layers for GPU track matte
@@ -38491,6 +38727,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (albedoRTV) {
 
         renderer_->clearRenderTarget(albedoRTV,
+
+                                     FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+
+      }
+
+      if (positionRTV) {
+
+        renderer_->clearRenderTarget(positionRTV,
+
+                                     FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+
+      }
+
+      if (uvRTV) {
+
+        renderer_->clearRenderTarget(uvRTV,
 
                                      FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
 
@@ -38931,6 +39183,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                   drawGpuLayerAlbedoToTarget(
                       layer.get(), albedoRTV,
+                      static_cast<Diligent::ITextureView*>(
+                          previewRenderSlot.depthTargetView));
+
+                }
+
+                if ((!draftRendering || positionChannelRequested) && positionRTV) {
+
+                  drawGpuLayerPositionToTarget(
+                      layer.get(), positionRTV,
+                      static_cast<Diligent::ITextureView*>(
+                          previewRenderSlot.depthTargetView));
+
+                }
+
+                if ((!draftRendering || uvChannelRequested) && uvRTV) {
+
+                  drawGpuLayerUvToTarget(
+                      layer.get(), uvRTV,
                       static_cast<Diligent::ITextureView*>(
                           previewRenderSlot.depthTargetView));
 
@@ -43084,6 +43354,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   drawViewportUiOverlay();
 
+  drawViewportMagnifierOverlay(cw, ch);
+
 }
 
 void CompositionRenderController::Impl::drawReferenceOverlayImage(
@@ -43390,6 +43662,30 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     return out;
   };
 
+  // UV composite diagnostic: R=U, G=V, B=0. Inputs are grayscale U/V images.
+  const auto composeUv = [](const QImage &uImage, const QImage &vImage) {
+    if (uImage.isNull() || vImage.isNull() || uImage.size() != vImage.size()) {
+      return QImage{};
+    }
+    QImage out(uImage.size(), QImage::Format_RGBA8888);
+    const int height = out.height();
+    const auto composeRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
+        const auto *uSrc = uImage.constScanLine(y);
+        const auto *vSrc = vImage.constScanLine(y);
+        auto *dst = out.scanLine(y);
+        for (int x = 0; x < out.width(); ++x) {
+          dst[x * 4 + 0] = uSrc[x];
+          dst[x * 4 + 1] = vSrc[x];
+          dst[x * 4 + 2] = 0;
+          dst[x * 4 + 3] = 255;
+        }
+      }
+    };
+    composeRows(0, height);
+    return out;
+  };
+
   const auto pseudoColorGray = [](const QImage &grayImage, bool invert = false) {
     if (grayImage.isNull()) {
       return QImage{};
@@ -43524,6 +43820,25 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     return readChannel(ArtifactIRenderer::ChannelType::VelocityX);
   case ViewportChannelDisplayMode::VelocityY:
     return readChannel(ArtifactIRenderer::ChannelType::VelocityY);
+  case ViewportChannelDisplayMode::Position:
+    return composeRgb(
+        readChannel(ArtifactIRenderer::ChannelType::PositionX),
+        readChannel(ArtifactIRenderer::ChannelType::PositionY),
+        readChannel(ArtifactIRenderer::ChannelType::PositionZ));
+  case ViewportChannelDisplayMode::PositionX:
+    return readChannel(ArtifactIRenderer::ChannelType::PositionX);
+  case ViewportChannelDisplayMode::PositionY:
+    return readChannel(ArtifactIRenderer::ChannelType::PositionY);
+  case ViewportChannelDisplayMode::PositionZ:
+    return readChannel(ArtifactIRenderer::ChannelType::PositionZ);
+  case ViewportChannelDisplayMode::UV:
+    return composeUv(
+        readChannel(ArtifactIRenderer::ChannelType::U),
+        readChannel(ArtifactIRenderer::ChannelType::V));
+  case ViewportChannelDisplayMode::U:
+    return readChannel(ArtifactIRenderer::ChannelType::U);
+  case ViewportChannelDisplayMode::V:
+    return readChannel(ArtifactIRenderer::ChannelType::V);
   case ViewportChannelDisplayMode::Color:
     return {};
   }
@@ -43701,6 +44016,11 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
   renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, false);
   renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::VelocityX, false);
   renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::VelocityY, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionX, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionY, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionZ, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::U, false);
+  renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::V, false);
 
   switch (viewportChannelDisplayMode_) {
   case ViewportChannelDisplayMode::Depth:
@@ -43752,6 +44072,30 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
     break;
   case ViewportChannelDisplayMode::VelocityY:
     renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::VelocityY, true);
+    break;
+  case ViewportChannelDisplayMode::Position:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionX, true);
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionY, true);
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionZ, true);
+    break;
+  case ViewportChannelDisplayMode::PositionX:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionX, true);
+    break;
+  case ViewportChannelDisplayMode::PositionY:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionY, true);
+    break;
+  case ViewportChannelDisplayMode::PositionZ:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::PositionZ, true);
+    break;
+  case ViewportChannelDisplayMode::UV:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::U, true);
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::V, true);
+    break;
+  case ViewportChannelDisplayMode::U:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::U, true);
+    break;
+  case ViewportChannelDisplayMode::V:
+    renderer_->setChannelEnabled(ArtifactIRenderer::ChannelType::V, true);
     break;
   case ViewportChannelDisplayMode::Color:
   case ViewportChannelDisplayMode::Alpha:
@@ -43910,6 +44254,125 @@ void CompositionRenderController::Impl::drawColorSamplerOverlay(int overlayW,
                       font, FloatColor{0.72f, 0.77f, 0.82f, 1.0f},
                       Qt::AlignLeft | Qt::AlignTop);
 
+}
+
+bool CompositionRenderController::Impl::magnifierLoupeRect(QRectF &outRect) const {
+  if (hostWidth_ <= 0.0f || hostHeight_ <= 0.0f) return false;
+  const float dpr = devicePixelRatio_ > 0.0f ? devicePixelRatio_ : 1.0f;
+  const float side = 180.0f * dpr;
+  const float margin = 16.0f * dpr;
+  const float maxX = std::max(0.0f, hostWidth_ - side);
+  const float maxY = std::max(0.0f, hostHeight_ - side);
+  float lx = std::max(0.0f, maxX - margin);
+  float ly = std::max(0.0f, maxY - margin);
+  if (magnifierFollowCursor_) {
+    lx = std::clamp(static_cast<float>(magnifierCursorViewportPos_.x()) + margin,
+                    0.0f, maxX);
+    ly = std::clamp(static_cast<float>(magnifierCursorViewportPos_.y()) + margin,
+                    0.0f, maxY);
+  }
+  outRect = QRectF(static_cast<double>(lx), static_cast<double>(ly),
+                   static_cast<double>(side), static_cast<double>(side));
+  return true;
+}
+
+void CompositionRenderController::Impl::drawViewportMagnifierOverlay(float cw,
+                                                                     float ch) {
+  if (!renderer_ || !magnifierEnabled_ || !lastPresentedReadbackSRV_ ||
+      hostWidth_ <= 0.0f || hostHeight_ <= 0.0f) {
+    return;
+  }
+
+  QRectF loupe;
+  if (!magnifierLoupeRect(loupe)) return;
+
+  const float side = static_cast<float>(loupe.width());
+  const float lx = static_cast<float>(loupe.x());
+  const float ly = static_cast<float>(loupe.y());
+  const float dpr = devicePixelRatio_ > 0.0f ? devicePixelRatio_ : 1.0f;
+  const float scale = static_cast<float>(std::clamp(magnifierScale_, 2, 8));
+
+  float cursorX = static_cast<float>(magnifierCursorViewportPos_.x());
+  float cursorY = static_cast<float>(magnifierCursorViewportPos_.y());
+  if (cursorX <= 0.0f && cursorY <= 0.0f) {
+    cursorX = hostWidth_ * 0.5f;
+    cursorY = hostHeight_ * 0.5f;
+  }
+
+  // Canvas coordinates inside the scissored viewport are loupe-relative, so
+  // scale the whole composited texture and shift the sampled cursor point to
+  // the loupe centre (mirrors the quad-pane blit in finalizeGpuRenderToViewport).
+  const float offsetX = side * 0.5f - cursorX * scale;
+  const float offsetY = side * 0.5f - cursorY * scale;
+
+  const auto theme = ArtifactCore::currentDCCTheme();
+  const QColor borderQc(theme.focusRingColor);
+  const QColor accentQc(theme.accentColor);
+  const QColor textQc(theme.textColor);
+  const QColor panelQc(theme.backgroundColor);
+  auto toFloat = [](const QColor &c, float alpha) {
+    return FloatColor{static_cast<float>(c.redF()),
+                      static_cast<float>(c.greenF()),
+                      static_cast<float>(c.blueF()), alpha};
+  };
+  const FloatColor borderColor = toFloat(borderQc, 1.0f);
+  const FloatColor crosshairColor = toFloat(accentQc, 0.95f);
+  const FloatColor textColor = toFloat(textQc, 1.0f);
+  const FloatColor panelColor = toFloat(panelQc, 0.72f);
+
+  const float savedZoom = renderer_->getZoom();
+  float savedPanX = 0.0f;
+  float savedPanY = 0.0f;
+  renderer_->getPan(savedPanX, savedPanY);
+
+  // Hardware viewport/scissor is immediate state while sprite commands are
+  // buffered; drain before switching so the loupe is not clipped unexpectedly.
+  renderer_->flush();
+
+  renderer_->setViewportRect(lx, ly, side, side, hostWidth_, hostHeight_);
+  renderer_->setCanvasSize(side, side);
+  renderer_->setPan(0.0f, 0.0f);
+  renderer_->setZoom(1.0f);
+
+  renderer_->drawSprite(offsetX, offsetY, hostWidth_ * scale, hostHeight_ * scale,
+                        lastPresentedReadbackSRV_.RawPtr(), 1.0f);
+
+  const float bw = std::max(1.0f, 1.5f * dpr);
+  renderer_->drawSolidRect(0.0f, 0.0f, side, bw, borderColor, 1.0f);
+  renderer_->drawSolidRect(0.0f, side - bw, side, bw, borderColor, 1.0f);
+  renderer_->drawSolidRect(0.0f, 0.0f, bw, side, borderColor, 1.0f);
+  renderer_->drawSolidRect(side - bw, 0.0f, bw, side, borderColor, 1.0f);
+
+  const float cross = 6.0f * dpr;
+  const float center = side * 0.5f;
+  renderer_->drawSolidRect(center - cross, center - 0.5f, cross * 2.0f, 1.0f,
+                           crosshairColor, 0.95f);
+  renderer_->drawSolidRect(center - 0.5f, center - cross, 1.0f, cross * 2.0f,
+                           crosshairColor, 0.95f);
+
+  if (magnifierLabelScale_ != magnifierScale_) {
+    magnifierLabelScale_ = magnifierScale_;
+    magnifierLabelFont_ = QApplication::font();
+    magnifierLabelFont_.setPointSizeF(
+        std::max(9.0, static_cast<double>(magnifierLabelFont_.pointSizeF())));
+    magnifierLabelText_ = QStringLiteral("%1x").arg(magnifierScale_);
+    const QFontMetrics fm(magnifierLabelFont_);
+    magnifierLabelWidth_ = fm.horizontalAdvance(magnifierLabelText_);
+    magnifierLabelHeight_ = fm.height();
+  }
+  const float labelH = static_cast<float>(magnifierLabelHeight_) + 6.0f;
+  const float labelW = static_cast<float>(magnifierLabelWidth_) + 12.0f;
+  renderer_->drawSolidRect(0.0f, side - labelH, labelW, labelH, panelColor, 1.0f);
+  renderer_->drawText(QRectF(6.0f, side - labelH, side - 12.0f, labelH),
+                      magnifierLabelText_, magnifierLabelFont_, textColor,
+                      Qt::AlignLeft | Qt::AlignVCenter);
+
+  renderer_->flush();
+
+  renderer_->setViewportRect(hostWidth_, hostHeight_);
+  renderer_->setCanvasSize(cw, ch);
+  renderer_->setPan(savedPanX, savedPanY);
+  renderer_->setZoom(savedZoom);
 }
 
 void CompositionRenderController::Impl::drawAutoColorPaletteOverlay(int overlayW,

@@ -521,6 +521,8 @@ namespace Artifact
   QCheckBox* materialIdChannelCheck = nullptr;
   QCheckBox* albedoChannelCheck = nullptr;
   QCheckBox* emissionChannelCheck = nullptr;
+  QCheckBox* positionChannelCheck = nullptr;
+  QCheckBox* uvChannelCheck = nullptr;
   QSpinBox* framePaddingSpin = nullptr;
   QComboBox* audioCodecCombo = nullptr;
   QComboBox* audioChannelCombo = nullptr;
@@ -1128,6 +1130,13 @@ QStringList ArtifactRenderOutputSettingDialog::Impl::selectedMultiChannelChannel
   if (emissionChannelCheck && emissionChannelCheck->isChecked()) {
     channels << QStringLiteral("Emission");
   }
+  if (positionChannelCheck && positionChannelCheck->isChecked()) {
+    channels << QStringLiteral("Position.X") << QStringLiteral("Position.Y")
+             << QStringLiteral("Position.Z");
+  }
+  if (uvChannelCheck && uvChannelCheck->isChecked()) {
+    channels << QStringLiteral("UV.U") << QStringLiteral("UV.V");
+  }
   return channels;
 }
 
@@ -1167,6 +1176,12 @@ void ArtifactRenderOutputSettingDialog::Impl::setSelectedMultiChannelChannels(co
   }
   if (emissionChannelCheck) {
     emissionChannelCheck->setChecked(hasAny({QStringLiteral("Emission")}));
+  }
+  if (positionChannelCheck) {
+    positionChannelCheck->setChecked(hasAny({QStringLiteral("Position.X"), QStringLiteral("Position.Y"), QStringLiteral("Position.Z")}));
+  }
+  if (uvChannelCheck) {
+    uvChannelCheck->setChecked(hasAny({QStringLiteral("UV.U"), QStringLiteral("UV.V")}));
   }
 }
 
@@ -1622,9 +1637,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.audio_bitrate"), QStringLiteral("音声ビットレート:")), impl_->audioBitrateSpin);
 
     // Multi-channel (AOV) export toggle
-    impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/Normal/Velocity/ObjectID/MaterialID/Albedo/Emission)"), this);
+    impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/Normal/Velocity/ObjectID/MaterialID/Albedo/Emission/Position/UV)"), this);
     impl_->multiChannelCheck->setChecked(false);
-    impl_->multiChannelCheck->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.multi_channel_note"), QStringLiteral("有効にすると Beauty RGBA に加えて Depth / Normal / Velocity / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。")));
+    impl_->multiChannelCheck->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.multi_channel_note"), QStringLiteral("有効にすると Beauty RGBA に加えて Depth / Normal / Velocity / ObjectID / MaterialID / Albedo / Emission / Position / UV チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。")));
     formLayout->addRow("AOV:", impl_->multiChannelCheck);
 
     impl_->deepExportCheck = new QCheckBox(
@@ -1645,6 +1660,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->materialIdChannelCheck = new QCheckBox(QStringLiteral("Material ID"), impl_->multiChannelGroup);
     impl_->albedoChannelCheck = new QCheckBox(QStringLiteral("Albedo RGB"), impl_->multiChannelGroup);
     impl_->emissionChannelCheck = new QCheckBox(QStringLiteral("Emission"), impl_->multiChannelGroup);
+    impl_->positionChannelCheck = new QCheckBox(QStringLiteral("Position XYZ"), impl_->multiChannelGroup);
+    impl_->uvChannelCheck = new QCheckBox(QStringLiteral("UV"), impl_->multiChannelGroup);
     multiChannelLayout->addWidget(impl_->beautyChannelCheck);
     multiChannelLayout->addWidget(impl_->alphaChannelCheck);
     multiChannelLayout->addWidget(impl_->depthChannelCheck);
@@ -1654,6 +1671,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     multiChannelLayout->addWidget(impl_->materialIdChannelCheck);
     multiChannelLayout->addWidget(impl_->albedoChannelCheck);
     multiChannelLayout->addWidget(impl_->emissionChannelCheck);
+    multiChannelLayout->addWidget(impl_->positionChannelCheck);
+    multiChannelLayout->addWidget(impl_->uvChannelCheck);
     formLayout->addRow(QString(), impl_->multiChannelGroup);
 
     // Frame padding digits
@@ -1886,7 +1905,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         QStringLiteral("ObjectId"),
         QStringLiteral("MaterialId"), QStringLiteral("Albedo.R"),
         QStringLiteral("Albedo.G"), QStringLiteral("Albedo.B"),
-        QStringLiteral("Emission")
+        QStringLiteral("Emission"), QStringLiteral("Position.X"),
+        QStringLiteral("Position.Y"), QStringLiteral("Position.Z"),
+        QStringLiteral("UV.U"), QStringLiteral("UV.V")
     });
     impl_->updateMultiChannelUi();
     impl_->updateActionLabels();

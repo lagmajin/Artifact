@@ -463,11 +463,11 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   const int centerY = h - railBottomInset - railHalfH;
   const int trackLeft = impl_->trackLeft(w);
   const int trackRight = impl_->trackRight(w);
-  const int topBandHeight = std::max(12, h / 3);
+  const int topBandHeight = std::max(24, h * 3 / 5);
   const QRect railRect(trackLeft, centerY - railHalfH + 2, std::max(1, trackRight - trackLeft + 1), railHalfH * 2);
 
-  const QColor bgTop = theme.background.darker(112);
-  const QColor bgBottom = theme.background.darker(124);
+  const QColor bgTop(35, 39, 43);
+  const QColor bgBottom(35, 39, 43);
   const QColor railColor = theme.surface.darker(124);
   const QColor railBorder = theme.border;
   const QColor cacheBaseColor(75, 190, 112);
@@ -480,8 +480,8 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   QRect topBand = r;
   topBand.setHeight(topBandHeight);
   QLinearGradient topBandGrad(topBand.topLeft(), topBand.bottomLeft());
-  topBandGrad.setColorAt(0.0, theme.surface.lighter(112));
-  topBandGrad.setColorAt(1.0, theme.surface.darker(118));
+  topBandGrad.setColorAt(0.0, bgTop);
+  topBandGrad.setColorAt(1.0, bgBottom);
   p.fillRect(topBand, topBandGrad);
 
   p.setPen(theme.background.darker(160));
@@ -498,21 +498,25 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    constexpr int kMajorStepCandidates[] = {1,2,5,10,15,20,30,50,100,150,200,300,600};
    int majorStep = 10;
    for (int c : kMajorStepCandidates) {
-    if (c * ppf >= 60.0) { majorStep = c; break; }
+    if (c * ppf >= 100.0) { majorStep = c; break; }
    }
-   const int minorStep = std::max(1, majorStep / 5);
+   const int fps = std::max(1, impl_->fps_);
+   if (fps * ppf >= 100.0 && ppf < 30.0) majorStep = fps;
+   else if (majorStep >= fps) majorStep = ((majorStep + fps - 1) / fps) * fps;
+   const int minorStep = majorStep % 5 == 0 ? majorStep / 5
+       : majorStep % 2 == 0 ? majorStep / 2 : 1;
 
    const int fStart = std::max(0, static_cast<int>(std::floor(xOff / ppf)));
    const int fEnd   = std::min(impl_->totalFrames_,
                                static_cast<int>(std::ceil((xOff + w) / ppf)) + 1);
 
    QFont rulerFont;
-   rulerFont.setPixelSize(8);
+   rulerFont.setPixelSize(12);
    p.setFont(rulerFont);
    const QFontMetrics rulerMetrics(p.font());
 
    double lastLabelRight = -1.0;
-   for (int f = fStart; f <= fEnd; f += minorStep) {
+   for (int f = (fStart / minorStep) * minorStep; f <= fEnd; f += minorStep) {
     const double rx = f * ppf - xOff;
     if (rx < 0.0 || rx > w) continue;
     const bool isMajor = (f % majorStep) == 0;
@@ -520,11 +524,16 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
      p.setPen(QPen(isMajor ? theme.border.lighter(138) : theme.border.darker(124), 1));
     p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
     if (isMajor) {
-     const QString label = QString::number(f);
+     const int seconds = f / fps;
+     QString label = QStringLiteral("%1:%2")
+         .arg(seconds / 60, 2, 10, QLatin1Char('0'))
+         .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+     if (majorStep < fps)
+       label += QStringLiteral(":%1").arg(f % fps, 2, 10, QLatin1Char('0'));
      const double labelW = static_cast<double>(rulerMetrics.horizontalAdvance(label));
      const double labelX = rx + 3.0;
      if (labelX <= lastLabelRight + 6.0) continue;
-     p.setPen(theme.text.darker(150));
+     p.setPen(QColor(190, 198, 205));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }

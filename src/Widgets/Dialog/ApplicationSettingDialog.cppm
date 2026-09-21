@@ -1816,6 +1816,8 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
     return QStringLiteral("Viewport.Composition");
   if (id == ShortcutId::ViewDetachedTasks)
     return QStringLiteral("Panel.DetachedTasks");
+  if (id == ShortcutId::ViewToggleMagnifier)
+    return QStringLiteral("Viewport.Composition");
   return QStringLiteral("Workspace.Timeline");
 }
 

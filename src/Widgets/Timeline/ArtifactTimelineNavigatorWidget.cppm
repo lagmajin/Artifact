@@ -27,8 +27,8 @@ namespace Artifact
  {
   constexpr int kHandleHalfW = 7;
   constexpr int kHandleW = kHandleHalfW * 2;
-  const QColor kNavigatorRangeFill(110, 140, 166);
-  const QColor kNavigatorRangeEdge(170, 197, 218);
+  const QColor kNavigatorRangeFill(48, 62, 74);
+  const QColor kNavigatorRangeEdge(82, 105, 123);
   const QColor kNavigatorHandleFill(184, 204, 218);
   const QColor kNavigatorHandleBorder(62, 80, 96);
   const QColor kNavigatorHandleGrip(42, 56, 68);

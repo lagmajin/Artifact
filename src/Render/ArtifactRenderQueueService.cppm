@@ -738,7 +738,7 @@ namespace Artifact
     namespace {
         using RendererChannel = ArtifactIRenderer::ChannelType;
 
-        constexpr std::array<RendererChannel, 16> kAllRendererChannels = {
+        constexpr std::array<RendererChannel, 21> kAllRendererChannels = {
             RendererChannel::Red,
             RendererChannel::Green,
             RendererChannel::Blue,
@@ -755,9 +755,14 @@ namespace Artifact
             RendererChannel::AlbedoG,
             RendererChannel::AlbedoB,
             RendererChannel::Emission,
+            RendererChannel::PositionX,
+            RendererChannel::PositionY,
+            RendererChannel::PositionZ,
+            RendererChannel::U,
+            RendererChannel::V,
         };
 
-        constexpr std::array<RendererChannel, 16> kDefaultMultiChannelExportChannels = {
+        constexpr std::array<RendererChannel, 21> kDefaultMultiChannelExportChannels = {
             RendererChannel::Red,
             RendererChannel::Green,
             RendererChannel::Blue,
@@ -774,6 +779,11 @@ namespace Artifact
             RendererChannel::AlbedoG,
             RendererChannel::AlbedoB,
             RendererChannel::Emission,
+            RendererChannel::PositionX,
+            RendererChannel::PositionY,
+            RendererChannel::PositionZ,
+            RendererChannel::U,
+            RendererChannel::V,
         };
 
         QString rendererChannelKey(RendererChannel channel)
@@ -811,6 +821,16 @@ namespace Artifact
                 return QStringLiteral("Albedo.B");
             case RendererChannel::Emission:
                 return QStringLiteral("Emission");
+            case RendererChannel::PositionX:
+                return QStringLiteral("Position.X");
+            case RendererChannel::PositionY:
+                return QStringLiteral("Position.Y");
+            case RendererChannel::PositionZ:
+                return QStringLiteral("Position.Z");
+            case RendererChannel::U:
+                return QStringLiteral("UV.U");
+            case RendererChannel::V:
+                return QStringLiteral("UV.V");
             case RendererChannel::Custom:
                 return QStringLiteral("Custom");
             }
@@ -850,6 +870,11 @@ namespace Artifact
             case RendererChannel::AlbedoG: return ArtifactCore::ChannelType::AlbedoG;
             case RendererChannel::AlbedoB: return ArtifactCore::ChannelType::AlbedoB;
             case RendererChannel::Emission: return ArtifactCore::ChannelType::Emission;
+            case RendererChannel::PositionX: return ArtifactCore::ChannelType::PositionX;
+            case RendererChannel::PositionY: return ArtifactCore::ChannelType::PositionY;
+            case RendererChannel::PositionZ: return ArtifactCore::ChannelType::PositionZ;
+            case RendererChannel::U: return ArtifactCore::ChannelType::U;
+            case RendererChannel::V: return ArtifactCore::ChannelType::V;
             case RendererChannel::Custom: return ArtifactCore::ChannelType::Custom;
             }
             return ArtifactCore::ChannelType::Custom;
@@ -1301,7 +1326,7 @@ namespace Artifact
                 ArtifactCore::DiagnosticSeverity::Info,
                 ArtifactCore::DiagnosticCategory::Configuration,
                 QStringLiteral("AOV export uses the scene render boundary"),
-                QStringLiteral("Beauty and named AOVs are captured before composition final-image effects. This keeps Depth, Normal, Velocity, and ID channels spatially aligned."),
+                QStringLiteral("Beauty and named AOVs are captured before composition final-image effects. This keeps Depth, Normal, Velocity, Position, UV, and ID channels spatially aligned."),
                 QStringLiteral("Bake final-image effects into layers when they must affect the exported Beauty channel"),
                 compId));
 
@@ -3228,16 +3253,33 @@ namespace Artifact
             return true;
         }
 
-        std::vector<int> resolveDiscreteD3D12AdapterIds()
+        bool shouldIncludeIntegratedGpuWorkers() const
+        {
+            const QString requested = qEnvironmentVariable(
+                "ARTIFACT_MULTI_GPU_INCLUDE_INTEGRATED").trimmed().toLower();
+            return requested != QLatin1String("0") &&
+                   requested != QLatin1String("false") &&
+                   requested != QLatin1String("off") &&
+                   requested != QLatin1String("no");
+        }
+
+        std::vector<int> resolveFrameParallelD3D12AdapterIds()
         {
             std::vector<int> adapterIds;
             DiligentDeviceManager probe;
             const auto candidates = probe.availableAdapters();
+            const bool includeIntegrated = shouldIncludeIntegratedGpuWorkers();
             for (const auto& candidate : candidates) {
                 if (candidate.backend.compare(
-                        QStringLiteral("d3d12"), Qt::CaseInsensitive) != 0 ||
-                    candidate.type.compare(
-                        QStringLiteral("Discrete"), Qt::CaseInsensitive) != 0) {
+                        QStringLiteral("d3d12"), Qt::CaseInsensitive) != 0) {
+                    continue;
+                }
+
+                const bool isDiscrete = candidate.type.compare(
+                    QStringLiteral("Discrete"), Qt::CaseInsensitive) == 0;
+                const bool isIntegrated = candidate.type.compare(
+                    QStringLiteral("Integrated"), Qt::CaseInsensitive) == 0;
+                if (!isDiscrete && !(includeIntegrated && isIntegrated)) {
                     continue;
                 }
                 adapterIds.push_back(static_cast<int>(candidate.adapterId));
@@ -6379,7 +6421,7 @@ namespace Artifact
                 Diligent::RENDER_DEVICE_TYPE_D3D12;
         if (mainRendererUsesD3D12 && !usesComponentSimulation &&
             totalFrames > 1) {
-            const auto adapterIds = resolveDiscreteD3D12AdapterIds();
+            const auto adapterIds = resolveFrameParallelD3D12AdapterIds();
             if (adapterIds.size() >= 2) {
                 const int requestedWorkers = std::min(
                     {static_cast<int>(adapterIds.size()), totalFrames,
@@ -6414,7 +6456,9 @@ namespace Artifact
                     useMultiGpu = true;
                     numWorkers = static_cast<int>(multiGpuWorkers.size());
                     qInfo() << "[RenderQueue] Multi-GPU final render active"
-                            << "workers=" << numWorkers;
+                            << "workers=" << numWorkers
+                            << "includeIntegrated="
+                            << shouldIncludeIntegratedGpuWorkers();
                 } else {
                     multiGpuWorkers.clear();
                 }

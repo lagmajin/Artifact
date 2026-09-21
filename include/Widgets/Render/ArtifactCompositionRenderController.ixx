@@ -88,7 +88,14 @@ enum class CompositionViewportPresentationLayout {
   NormalZ,
   Velocity,
   VelocityX,
-  VelocityY
+  VelocityY,
+  Position,
+  PositionX,
+  PositionY,
+  PositionZ,
+  UV,
+  U,
+  V
  };
 
  enum class LineDebugKind : uint8_t {
@@ -247,6 +254,17 @@ void setShowAudioWaveformOverlay(bool show);
 bool isShowAudioWaveformOverlay() const;
 void setShowAudioSpectrumOverlay(bool show);
 bool isShowAudioSpectrumOverlay() const;
+
+// Accessibility viewport magnifier (loupe) toggles.
+void setMagnifierEnabled(bool enable);
+bool isMagnifierEnabled() const;
+void setMagnifierScale(int scale);
+int magnifierScale() const;
+void setMagnifierFollowCursor(bool follow);
+bool isMagnifierFollowCursor() const;
+// Adjust the magnifier scale from a mouse wheel over the loupe. Returns true
+// only when the position is inside the loupe and the wheel was consumed.
+bool adjustMagnifierScaleAt(const QPointF& viewportPosLogical, float delta);
 void setOnionSkinFrameCount(int count);
 int onionSkinFrameCount() const;
 void setOnionSkinOpacity(int percent);
@@ -548,6 +566,7 @@ void pushViewHistory();
   void trackerTrackAll();
   void trackerStop();
   bool trackerJobRunning() const;
+  double trackerSolveProgress() const;
   QString trackerModeLabel() const;
   double trackerAverageConfidence() const;
   int trackerProblemFrameCount() const;

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <QLabel>
 #include <QBoxLayout>
@@ -123,7 +123,7 @@ namespace Artifact
   impl_->timecodeLabel_->setMinimumHeight(timeMetrics.height() + 4);
   impl_->frameNumberLabel_->setMinimumHeight(timeMetrics.height() + 4);
   impl_->fpsLabel_->setMinimumHeight(timeMetrics.height() + 4);
-  setFixedHeight(50);
+  setFixedHeight(56);
 
   // Include the layout's left/right margins. Omitting them let the label paint
   // into the neighbouring mode button when the timeline dock became narrow.
@@ -217,7 +217,7 @@ namespace Artifact
 ArtifactTimelineSearchBarWidget::Impl::Impl()
 {
  searchLineEdit_ = new QLineEdit();
- searchLineEdit_->setPlaceholderText("検索 (type:text fx:blur tag:bg parent:none visible:false)");
+ searchLineEdit_->setPlaceholderText("Search layers...");
  searchLineEdit_->setAccessibleName(QStringLiteral("Timeline search"));
  searchLineEdit_->setAccessibleDescription(
      QStringLiteral("Search timeline layers and properties; Enter finds next and Shift-Enter finds previous"));

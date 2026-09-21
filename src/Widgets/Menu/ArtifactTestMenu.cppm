@@ -230,6 +230,8 @@ QAction* addOpenWidgetAction(QMenu* menu, const QString& text, const QString& ic
  if (!iconPath.isEmpty()) {
   action->setIcon(QIcon(resolveIconPath(iconPath)));
  }
+ action->setToolTip(text);
+ action->setStatusTip(QStringLiteral("Open the %1 test panel").arg(text));
  menu->addAction(action);
  QObject::connect(action, &QAction::triggered, menu, [openFn]() { openFn(); });
  return action;
@@ -295,9 +297,13 @@ ArtifactWidgetTestMenu::ArtifactWidgetTestMenu(QWidget* parent /*= nullptr*/)
 
  auto *widgetInspector = addAction(QStringLiteral("Inspect Widget on Next Click"));
  widgetInspector->setObjectName(QStringLiteral("WidgetInspectorAction"));
+  widgetInspector->setToolTip(QStringLiteral("Inspect Widget on Next Click"));
+  widgetInspector->setStatusTip(QStringLiteral("Inspect the widget under the next mouse click"));
 
  auto *lazyDockDiagnostics = addMenu(QStringLiteral("Lazy Dock Initialization"));
  lazyDockDiagnostics->setObjectName(QStringLiteral("LazyDockDiagnostics"));
+ lazyDockDiagnostics->setAccessibleName(QStringLiteral("Lazy Dock Initialization"));
+ lazyDockDiagnostics->setAccessibleDescription(QStringLiteral("Show lazy dock initialization diagnostics"));
 
 }
 
@@ -406,6 +412,8 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
      new QAction("Add Debug Blend Test Layers", this);
  addDebugBlendLayersAction->setIcon(
      QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
+ addDebugBlendLayersAction->setToolTip(QStringLiteral("Add Debug Blend Test Layers"));
+ addDebugBlendLayersAction->setStatusTip(QStringLiteral("Add compositing test layers for debugging"));
  addAction(addDebugBlendLayersAction);
  QObject::connect(addDebugBlendLayersAction, &QAction::triggered, this, []() {
   auto *projectService = ArtifactProjectService::instance();
@@ -469,6 +477,8 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
 
  auto* startSoftwareTestPipelineAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.test.start_pipeline"), QStringLiteral("Software Test Pipeline を開始")), this);
  startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_pipeline.svg")));
+ startSoftwareTestPipelineAction->setToolTip(QStringLiteral("Start Software Test Pipeline"));
+ startSoftwareTestPipelineAction->setStatusTip(QStringLiteral("Run the software render test pipeline"));
  addAction(startSoftwareTestPipelineAction);
  QObject::connect(startSoftwareTestPipelineAction, &QAction::triggered, this, []() {
   auto* projectService = ArtifactProjectService::instance();

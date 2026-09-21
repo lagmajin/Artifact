@@ -7,6 +7,7 @@ module;
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFocusEvent>
+#include <QFont>
 #include <QFileInfo>
 #include <QEvent>
 #include <QFrame>
@@ -24,6 +25,7 @@ module;
 #include <QSettings>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPen>
 #include <QPalette>
 #include <QResizeEvent>
 #include <QSignalBlocker>
@@ -169,7 +171,7 @@ void styleTimelineToolButton(QToolButton* button)
   button->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
   button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   QFont font = button->font();
-  font.setPixelSize(12);
+  font.setPixelSize(Artifact::Accessibility::scaledSize(13));
   if (Artifact::Accessibility::preferHighContrastHints()) {
     font.setBold(true);
   }
@@ -190,7 +192,8 @@ void setTimelineStudioToolIcon(QToolButton* button, const QString& iconName)
   }
   button->setIcon(QIcon(ArtifactCore::resolveIconPath(
       QStringLiteral("Studio/%1.svg").arg(iconName))));
-  button->setIconSize(QSize(18, 18));
+  const int iconSize = Accessibility::scaledSize(18);
+  button->setIconSize(QSize(iconSize, iconSize));
   button->setToolButtonStyle(Qt::ToolButtonIconOnly);
   button->setText(QString{});
 }
@@ -204,7 +207,7 @@ static double timelineRowHeight() {
 }
 constexpr int kTimelineTopRowHeight = 16; // aligns with right ruler row
 constexpr int kTimelineHeaderRowHeight =
-    50; // keeps the two-line timecode readout from being compressed
+    56; // adopted normal-timeline toolbar height
 constexpr int kTimelineWorkAreaRowHeight = 26;
 constexpr int kDefaultTimelineFrames = 300;
 inline double timelineFrameMax(const double duration) {
@@ -491,6 +494,24 @@ public:
   void setCallback(Callback callback) { callback_ = std::move(callback); }
 
 protected:
+  void paintEvent(QPaintEvent *event) override {
+    if (!property("timelineModeSegment").toBool()) {
+      QToolButton::paintEvent(event);
+      return;
+    }
+    QPainter painter(this);
+    const bool active = isChecked();
+    painter.fillRect(rect(), active ? QColor(35, 62, 85) : QColor(35, 39, 43));
+    painter.setPen(active ? QColor(61, 184, 234) : QColor(62, 67, 72));
+    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+    painter.setPen(isEnabled() ? QColor(221, 227, 232) : QColor(126, 136, 144));
+    painter.drawText(rect(), Qt::AlignCenter, text());
+    if (hasFocus()) {
+      painter.setPen(QPen(QColor(168, 218, 241), 1, Qt::DotLine));
+      painter.drawRect(rect().adjusted(3, 3, -4, -4));
+    }
+  }
+
   void nextCheckState() override {
     QToolButton::nextCheckState();
     if (isEnabled() && callback_) {
@@ -6007,7 +6028,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftHeader->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   searchBar->setMinimumWidth(220);
-  searchBar->setFixedWidth(260);
+  searchBar->setFixedWidth(280);
   searchModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchModeCombo->setMinimumWidth(120);
   displayModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -6251,6 +6272,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   headerWidget->setObjectName(QStringLiteral("timelineHeaderWidget"));
   headerWidget->setLayout(searchBarLayout);
   headerWidget->setFixedHeight(Accessibility::scaledSize(kTimelineHeaderRowHeight));
+  QFont headerFont = headerWidget->font();
+  headerFont.setPointSizeF(std::max(10.0, headerFont.pointSizeF()));
+  headerWidget->setFont(headerFont);
   {
     QPalette pal = headerWidget->palette();
     pal.setColor(QPalette::Window, QColor(35, 39, 43));
@@ -6621,10 +6645,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   timelineModeButton->setObjectName(QStringLiteral("timelineModeTimelineButton"));
   curveModeButton->setObjectName(QStringLiteral("timelineModeCurveEditorButton"));
   for (auto *button : {timelineModeButton, curveModeButton}) {
+    button->setProperty("timelineModeSegment", true);
     styleTimelineToolButton(button);
     button->setCheckable(true);
     button->setAutoExclusive(true);
+    button->setAutoRaise(false);
     button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    button->setFixedHeight(Accessibility::scaledSize(34));
+    QPalette palette = button->palette();
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    palette.setColor(QPalette::Button,
+                     QColor(theme.secondaryBackgroundColor).lighter(108));
+    palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    palette.setColor(QPalette::Highlight, QColor(theme.accentColor));
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    button->setPalette(palette);
   }
   timelineModeButton->setText(QStringLiteral("Timeline"));
   timelineModeButton->setToolTip(
@@ -6659,7 +6694,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     styleTimelineToolButton(button);
     button->setIcon(QIcon(ArtifactCore::resolveIconPath(
         QStringLiteral("Studio/%1.svg").arg(iconName))));
-    button->setIconSize(QSize(17, 17));
+    const int iconSize = Accessibility::scaledSize(18);
+    button->setIconSize(QSize(iconSize, iconSize));
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setFixedSize(Accessibility::scaledSize(32),
                          Accessibility::scaledSize(28));
@@ -6703,14 +6739,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
-  // The global toolbar now spans both panes. The left column header consumes
-  // 26 px itself, so this spacer matches the remaining 50 px occupied by the
-  // cache/ruler and work-area header on the right.
+  // Column header + spacer must equal ruler/cache + work area on the right.
+  // Keep this independent of the full-width toolbar height.
   leftSubHeaderSpacer->setFixedHeight(
-      Accessibility::scaledSize(kTimelineHeaderRowHeight));
+      Accessibility::scaledSize(44 + kTimelineWorkAreaRowHeight) -
+      26); // ArtifactLayerPanelHeaderWidget's fixed logical height.
   leftSubHeaderSpacer->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
   leftSubHeaderSpacer->setAutoFillBackground(true);
+  QPalette subHeaderPalette = leftSubHeaderSpacer->palette();
+  subHeaderPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+  leftSubHeaderSpacer->setPalette(subHeaderPalette);
 
   auto *curvePropertyPanel = impl_->curvePropertyPanel_ = new QWidget();
   curvePropertyPanel->setObjectName(QStringLiteral("timelineCurvePropertyPanel"));
@@ -6795,6 +6834,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto leftPanel = new QWidget();
   leftPanel->setObjectName(QStringLiteral("timelineLeftPanel"));
   leftPanel->setLayout(leftLayout);
+  {
+    QPalette panelPalette = leftPanel->palette();
+    panelPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+    leftPanel->setPalette(panelPalette);
+    leftPanel->setAutoFillBackground(true);
+  }
 
   auto timeNavigatorWidget = impl_->navigator_ =
       new ArtifactTimelineNavigatorWidget();
@@ -7177,7 +7222,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   timeNavigatorWidget->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
-  scrubBar->setFixedHeight(Accessibility::scaledSize(kTimelineHeaderRowHeight));
+  scrubBar->setFixedHeight(Accessibility::scaledSize(44));
   scrubBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   workAreaWidget->setFixedHeight(Accessibility::scaledSize(kTimelineWorkAreaRowHeight));
   workAreaWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -7612,6 +7657,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           impl_->zoomSummaryLabel_->setText(
               QStringLiteral("Zoom: %1%")
                   .arg(QString::number(std::clamp(event.zoomPercent, 1.0, 6400.0), 'f', 0)));
+        }
+        if (impl_->timelineLabel_) {
+          const double visibleRange = impl_->navigator_
+              ? std::max(0.01, static_cast<double>(
+                    impl_->navigator_->endValue() - impl_->navigator_->startValue()))
+              : 1.0;
+          impl_->timelineLabel_->setZoomPercent(100.0 / visibleRange);
         }
 
         syncPlayheadOverlay();
@@ -8231,6 +8283,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   mainSplitter->setSizes({800, 1020});
 
   auto label = new ArtifactTimelineBottomLabel();
+  impl_->timelineLabel_ = label;
 
   auto layout = new QVBoxLayout();
   layout->addWidget(headerWidget);
@@ -8496,6 +8549,11 @@ void ArtifactTimelineWidget::timelineDebugMessage(const QString& message) {
 
 void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   impl_->compositionId_ = id;
+  if (impl_->timelineLabel_) {
+    impl_->timelineLabel_->setCompositionSummary(QStringLiteral("Composition"), 24.0);
+    impl_->timelineLabel_->setCurrentFrame(0);
+    impl_->timelineLabel_->setZoomPercent(100.0);
+  }
   impl_->audioWaveformCache_.clear();
   impl_->pendingAudioWaveformBuilds_.clear();
   impl_->lastAutoScrolledLayerId_ = LayerID();
@@ -8525,6 +8583,11 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
       auto res = svc->findComposition(id);
       if (res.success && !res.ptr.expired()) {
         auto comp = res.ptr.lock();
+        if (impl_->timelineLabel_) {
+          impl_->timelineLabel_->setCompositionSummary(
+              comp->settings().compositionName().toQString(),
+              comp->frameRate().framerate());
+        }
         
         // Listen to composition-level changes via the shared internal event bus.
         const QString compositionId = comp->id().toString();
@@ -10724,7 +10787,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   if (!staticHit) {
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineStaticSnapshotGeneration_;
-  snapshot.background = QColor(25, 30, 34);
+  snapshot.background = QColor(35, 39, 43);
   // Reserve once for the visible timeline primitives. Snapshot construction is
   // coalesced, but it can still run during a scroll or playback update.
   snapshot.rects.reserve(view->trackCount() + clips.size() * 7);
@@ -10734,12 +10797,10 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   snapshot.texts.reserve(clips.size() + compositionMarkers.size());
   snapshot.waveforms.reserve(clips.size());
 
-  // The reference keeps the editing field visibly lighter than the layer
-  // table.  Row alternation remains restrained; the blue-grey selected span
-  // is the primary state landmark.
-  const QColor rowBase(25, 30, 34);
-  const QColor rowAlternate(28, 33, 37);
-  const QColor selectedRow(29, 42, 52);
+  // Match the charcoal layer table across the split.
+  const QColor rowBase(35, 39, 43);
+  const QColor rowAlternate(38, 42, 46);
+  const QColor selectedRow(35, 62, 85);
   const QColor separator(70, 80, 87, 72);
   const QColor selectedClip(39, 104, 169);
   const QColor selectionEdge(171, 211, 238);
@@ -10778,7 +10839,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   // Match the painter surface: sparse major lines and only readable medium
   // divisions. Fine subdivisions belong on the ruler, not across every row.
   int majorStep = 1;
-  while (static_cast<double>(majorStep) * ppf < 72.0) {
+  while (static_cast<double>(majorStep) * ppf < 120.0) {
     if (majorStep == 1) {
       majorStep = 2;
     } else if (majorStep == 2) {
@@ -10788,8 +10849,8 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     }
   }
   const int mediumStep = std::max(1, majorStep / 2);
-  const QColor majorGridColor(91, 103, 111, 64);
-  const QColor mediumGridColor(80, 91, 99, 28);
+  const QColor majorGridColor(91, 103, 111, 44);
+  const QColor mediumGridColor(80, 91, 99, 18);
   const int firstGridFrame =
       std::max(0, static_cast<int>(std::floor(firstFrame)));
   const int lastGridFrame = static_cast<int>(std::ceil(lastFrame));
@@ -10984,7 +11045,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   }
   DiligentTimelineVisualSnapshot snapshot;
   snapshot.generation = ++impl_->gpuTimelineSnapshotGeneration_;
-  snapshot.background = QColor(25, 30, 34);
+  snapshot.background = QColor(35, 39, 43);
   // Keep the per-tick dynamic buffers bounded in the common case.
   snapshot.rects.reserve(hasDragClip ? 1 : 0);
   snapshot.lines.reserve(hasDragClip ? 8 : 4);
@@ -11146,6 +11207,10 @@ void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
   const double clamped = std::clamp(
       finiteFrame, 0.0, static_cast<double>(std::numeric_limits<int>::max()));
   impl_->currentFrame_ = clamped;
+  if (impl_->timelineLabel_) {
+    impl_->timelineLabel_->setCurrentFrame(
+        static_cast<int>(std::llround(clamped)));
+  }
   if (impl_->timeCodeWidget_) {
     const qint64 roundedFrame = static_cast<qint64>(std::llround(clamped));
     const qint64 safeFrame = std::clamp<qint64>(

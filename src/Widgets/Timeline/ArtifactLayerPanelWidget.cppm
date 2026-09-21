@@ -6,6 +6,7 @@ module;
 #include <QActionGroup>
 #include <QPainter>
 #include <QFontMetrics>
+#include <QFont>
 #include <QPalette>
 #include <QWidget>
 #include <QString>
@@ -72,6 +73,7 @@ import Artifact.Project.Manager;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.Nodes;
@@ -689,6 +691,10 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     return QRect(std::max(100, right - 144), y + 2, 100, height - 4);
   }
 
+  int layerSwitchStart(int width, int switchWidth) {
+    return std::max(0, propertyValueRect(width, 0, kLayerRowHeight).left() - switchWidth);
+  }
+
   // Header controls share the same column geometry as the owner-drawn rows.
   class LayerHeaderGeometry final : public QObject {
    public:
@@ -711,7 +717,11 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     void sync() {
       const int w = host_->width();
       const QVariantList widths = host_->property("timelineStatusWidths").toList();
-      int start = 0;
+      int switchWidth = 0;
+      for (int i = 0; i < kLayerPropertyColumnCount; ++i)
+        switchWidth += i < widths.size() ? widths[i].toInt() : kLayerColumnWidth;
+      int start = layerSwitchStart(w, switchWidth);
+      const int nameWidth = start;
       for (int i = 0; i < kLayerPropertyColumnCount; ++i) {
         const int columnWidth = i < widths.size() ? widths[i].toInt() : kLayerColumnWidth;
         if (i < states_.size()) {
@@ -722,9 +732,9 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
         start += columnWidth;
       }
       const QRect value = propertyValueRect(w, 0, 24);
-      name_->setGeometry(start, 0, qMax(0, value.left() - start), 24);
+      name_->setGeometry(0, 0, nameWidth, 24);
       value_->setGeometry(value);
-      value_->setVisible(value.left() - start >= 50);
+      value_->setVisible(value.width() >= 50);
       actions_->setGeometry(layerContentRight(w) - 28, 0, 28, 24);
       const bool metadata = showLayerMetadata(w);
       parent_->setVisible(metadata);
@@ -1245,7 +1255,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
-  applyLayerPanelButtonPalette(shyButton, true);
+  applyLayerPanelButtonPalette(shyButton);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer / Property");
   layerNameButton->setFocusPolicy(Qt::NoFocus);
@@ -1279,7 +1289,11 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   applyLayerPanelButtonPalette(valueHeader);
   valueHeader->setFlat(true);
   const QVector<QWidget*> states{visButton, lockButton, soloButton, audioButton, shyButton};
-  for (auto* control : states) { control->setParent(this); control->show(); }
+  for (auto* control : states) {
+    control->setParent(this);
+    if (auto* button = qobject_cast<QPushButton*>(control)) button->setFlat(true);
+    control->show();
+  }
   for (auto* control : {layerNameButton, selectionMenuButton, parentHeader, blendHeader}) {
     control->setParent(this);
     control->setFlat(true);
@@ -1287,6 +1301,27 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   }
   new LayerHeaderGeometry(this, states, layerNameButton, valueHeader,
                           selectionMenuButton, parentHeader, blendHeader);
+
+  // A continuous column surface, with interactive feedback supplied by the
+  // existing button style. Do not fill every flat button as a separate tile.
+  QPalette headerPalette = palette();
+  headerPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+  setPalette(headerPalette);
+  setAutoFillBackground(true);
+  for (auto* control : {visButton, lockButton, soloButton, audioButton, shyButton,
+                        layerNameButton, valueHeader, selectionMenuButton,
+                        parentHeader, blendHeader}) {
+    control->setAutoFillBackground(false);
+    control->setAttribute(Qt::WA_StyledBackground, false);
+    QPalette palette = control->palette();
+    palette.setColor(QPalette::Button, headerPalette.color(QPalette::Window));
+    palette.setColor(QPalette::Window, headerPalette.color(QPalette::Window));
+    control->setPalette(palette);
+    QFont labelFont = control->font();
+    labelFont.setPointSizeF(std::max(10.0, labelFont.pointSizeF()));
+    control->setFont(labelFont);
+    control->setIconSize(QSize(18, 18));
+  }
 
   QObject::connect(shyButton, &QPushButton::toggled, this, [this](bool checked) {
     Q_EMIT shyToggled(checked);
@@ -1376,7 +1411,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   {
     const auto& theme = ArtifactCore::currentDCCTheme();
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2D2D30"))));
+    pal.setColor(QPalette::Window, QColor(35, 39, 43));
     pal.setColor(QPalette::WindowText, themeColor(theme.textColor, QColor(QStringLiteral("#CCC"))));
     setPalette(pal);
   }
@@ -1389,7 +1424,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
  }
 
 int ArtifactLayerPanelHeaderWidget::buttonSize() const { return kLayerHeaderButtonSize; }
-int ArtifactLayerPanelHeaderWidget::iconSize() const { return 14; }
+int ArtifactLayerPanelHeaderWidget::iconSize() const { return 18; }
 QPushButton* ArtifactLayerPanelHeaderWidget::selectionMenuButton() const { return impl_ ? impl_->selectionMenuButton : nullptr; }
 int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 {
@@ -2433,6 +2468,12 @@ public:
   QHash<int, LayerID> layerBookmarks;
   int columnWidths_[kLayerPropertyColumnCount];
   bool columnVisible_[kLayerPropertyColumnCount] = {true, true, true, true, true, true};
+  int switchStart(int width) const {
+    int switchWidth = 0;
+    for (int i = 0; i < kLayerPropertyColumnCount; ++i)
+      if (columnVisible_[i]) switchWidth += columnWidths_[i];
+    return layerSwitchStart(width, switchWidth);
+  }
   int dragCol_ = -1;
   int dragStartX_ = 0;
   QVector<int> dragStartWidths_;
@@ -3450,16 +3491,12 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
 
     // Position it
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
-    const int editNameStartX = [this]() {
-      int x = 0;
-      for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-      return x;
-    }();
+    const int editNameStartX = 0;
     const int layerIconAdvance = kLayerTypeIconSize + kLayerTypeIconGap;
     const int textX = editNameStartX + rowIndent +
                       (impl_->visibleRows[idx].hasChildren ? 16 : 4) +
                       layerIconAdvance;
-    const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
+    const int editorWidth = std::max(20, impl_->switchStart(width()) - textX - 8);
     impl_->inlineNameEditor->setGeometry(textX, impl_->rowViewportY(idx) + 2, editorWidth, impl_->rowHeight - 4);
 
     QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, l, id]() {
@@ -3877,11 +3914,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
 
   const int y = impl_->rowViewportY(idx);
-  const int mouseNameStartX = [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  const int mouseNameStartX = 0;
   const int nameX = mouseNameStartX + row.depth * 14;
   // Disclosure owns its hit area before selection, parent-link and dividers.
   if (event->button() == Qt::LeftButton && row.kind == RowKind::Layer && row.hasChildren) {
@@ -4072,7 +4105,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     // Pick Whip: 親レイヤードラッグ
     if (showInlineCombos && row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
-      int whipCumX = 0;
+      int whipCumX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
         if (!impl_->columnVisible_[ci]) continue;
         if (ci == 5) {
@@ -4097,7 +4130,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     // M: 列の区切り線ドラッグ開始チェック（非表示列をスキップ）
     if (row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
-      int cumX = 0;
+      int cumX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount - 1; ++ci) {
         if (!impl_->columnVisible_[ci]) continue;
         cumX += impl_->columnWidths_[ci];
@@ -4115,14 +4148,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     bool handledLayerSwitch = false;
     {
-      int cumX = 0;
+      int cumX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
         if (!impl_->columnVisible_[ci]) {
-          cumX += impl_->columnWidths_[ci];
           continue;
         }
         const int nextCumX = cumX + impl_->columnWidths_[ci];
-        if (clickX < nextCumX) {
+        if (clickX >= cumX && clickX < nextCumX) {
           // E: Lock feedback - block toggles on locked layers (except lock column)
           if (layer && layer->isLocked() && ci != 1) {
             impl_->lockFlashTimer_.start();
@@ -4587,10 +4619,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                       ? comp->settings().compositionName().toQString()
                                       : layer->layerName();
       bool ok = false;
-      const QString newName = QInputDialog::getText(
-          this, tt("layer_panel.rename_composition_title", "Rename Composition"),
-          tt("layer_panel.new_composition_name", "New composition name:"),
-          QLineEdit::Normal, currentName, &ok);
+      const QString newName = ArtifactRenameDialog::getName(
+          this, ArtifactRenameTarget::Composition, currentName,
+          QStringLiteral("Timeline / Nested Composition"), {}, {}, &ok);
       if (!ok || newName.trimmed().isEmpty()) {
         return;
       }
@@ -4626,10 +4657,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       if (auto* svc = ArtifactProjectService::instance()) {
         bool ok = false;
-        const QString newName = QInputDialog::getText(
-            this, tt("layer_panel.rename_layer_title", "Rename Layer"),
-            tt("layer_panel.new_layer_name", "New layer name:"),
-            QLineEdit::Normal, layer->layerName(), &ok);
+        const QString newName = ArtifactRenameDialog::getName(
+            this, ArtifactRenameTarget::Layer, layer->layerName(),
+            QStringLiteral("Timeline / Selected Layer"), {}, {}, &ok);
         if (!ok || newName.trimmed().isEmpty()) {
           return;
         }
@@ -4809,11 +4839,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
-    const int ctxNameStartX = [this]() {
-      int x = 0;
-      for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-      return x;
-    }();
+    const int ctxNameStartX = 0;
     const int nameX = ctxNameStartX + row.depth * 14;
     const bool showInlineCombos = showLayerMetadata(width());
     const auto variants = layer->getVariants();
@@ -6107,11 +6133,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     return;
   }
   const int rowH = impl_->rowHeight;
-  const int nameStartX = [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  const int nameStartX = 0;
   const int idx = impl_->rowIndexFromViewportY(event->pos().y());
   if (idx < 0 || idx >= impl_->visibleRows.size()) {
    QWidget::mouseDoubleClickEvent(event);
@@ -6183,7 +6205,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
   if (row.hasChildren) {
     const int nameX = nameStartX + row.depth * 14;
-    const QRect treeHitRect(nameX, impl_->rowViewportY(idx), std::max(40, width() - nameX), rowH);
+    const QRect treeHitRect(nameX, impl_->rowViewportY(idx), std::max(0, impl_->switchStart(width()) - nameX), rowH);
     if (treeHitRect.contains(event->pos())) {
     const QString idStr = layer->id().toString();
     impl_->expandedByLayerId[idStr] = !impl_->expandedByLayerId.value(idStr, true);
@@ -6196,7 +6218,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   const bool showInlineCombos = showLayerMetadata(width());
   const int parentRectX = width() - kInlineComboReserve;
   const int nameX = nameStartX + row.depth * 14 + (row.hasChildren ? 16 : 4);
-  const int nameWidth = showInlineCombos ? std::max(20, parentRectX - nameX - 8) : std::max(20, width() - nameX - 8);
+  const int nameWidth = std::max(20, impl_->switchStart(width()) - nameX - 8);
   const QRect editRect(nameX + 2, impl_->rowViewportY(idx) + 2, nameWidth, rowH - 4);
 
   if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
@@ -6313,10 +6335,10 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
   if (impl_->dragCol_ < 0 && idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& hoverRow = impl_->visibleRows[idx];
     if (hoverRow.kind == RowKind::Layer) {
-      int cumCX = 0;
+      int cumCX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount - 1; ++ci) {
-        cumCX += impl_->columnWidths_[ci];
         if (!impl_->columnVisible_[ci]) continue;
+        cumCX += impl_->columnWidths_[ci];
         if (std::abs(event->pos().x() - cumCX) <= kColumnDividerDragMargin) {
           setCursor(Qt::SplitHCursor);
           event->accept();
@@ -6326,16 +6348,9 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
     }
   }
 
-  bool pointer = event->pos().x() < [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
-  const int colNameStartX = [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  bool pointer = event->pos().x() >= impl_->switchStart(width()) &&
+      event->pos().x() < propertyValueRect(width(), 0, impl_->rowHeight).left();
+  const int colNameStartX = 0;
   if (!pointer && idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& row = impl_->visibleRows[idx];
     if (row.hasChildren) {
@@ -7190,11 +7205,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    }
    if (selectedIdx >= 0) {
       const int y = impl_->rowViewportY(selectedIdx) + impl_->rowHeight / 2;
-      const int x = [this]() {
-        int x = 0;
-        for (int i = 0; i < kLayerPropertyColumnCount; ++i) x += impl_->columnWidths_[i];
-        return x;
-      }() + 20;
+      const int x = 20;
     QMouseEvent fakeEvent(QEvent::MouseButtonDblClick, QPointF(x, y), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     mouseDoubleClickEvent(&fakeEvent);
     event->accept();
@@ -7340,11 +7351,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   const QRect dirtyRect = event->rect();
   const auto& theme = ArtifactCore::currentDCCTheme();
   const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#25272D")));
-  const QColor background = mixColor(
-      themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2A2A2A"))),
-      surface, 0.65);
+  const QColor background(35, 39, 43);
   const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#DADADA")));
-  const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#E4B76C")));
+  const QColor accent(61, 184, 234);
   const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#4A515C")));
   const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#1A1A1A")));
 
@@ -7386,11 +7395,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
   }
 
-  const int nameStartX = [&]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  const int nameStartX = 0;
 
   p.save();
   p.translate(0.0, -impl_->verticalOffset);
@@ -7492,15 +7497,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     // Keep layer selection a muted blue-grey band.  It distinguishes the
     // selected layer from the warmer work-area/range colors without turning
     // the compact property table into a bright accent block.
-    const QColor rowSelected(52, 85, 111);
+    const QColor rowSelected(35, 62, 85);
     if (propertyFocused) {
       p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
     } else if (maskSelected) {
       p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.30));
     } else if (layerSelected) {
-      QColor selectedEdge = mixColor(accent, text, 0.15);
+      QColor selectedEdge(61, 184, 234);
       selectedEdge.setAlpha(220);
-      p.fillRect(0, y, width(), rowH, rowSelected); // Stronger amber selection
+      p.fillRect(0, y, width(), rowH, rowSelected);
       p.fillRect(0, y, 4, rowH, selectedEdge);
 
     }
@@ -7668,7 +7673,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       continue;
     }
 
-    int curX = 0;
+    int curX = impl_->switchStart(width());
     if (!isPropertyRow && !isDisplayLeafRow) {
       const int colCount = kLayerPropertyColumnCount;
       const QPixmap* colIcons[colCount] = {&impl_->visibilityIcon, &impl_->lockIcon, &impl_->soloIcon, &impl_->audioIcon, &impl_->shyIcon, &impl_->parentWhipIcon};
@@ -7726,6 +7731,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       curX = nameStartX;
     }
 
+    curX = nameStartX;
     // カラーラベルインジケータ
     if (!isPropertyRow && !isDisplayLeafRow) {
       const int colorIdx = l->labelColorIndex();
@@ -7948,7 +7954,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                  fm.elidedText(matteBadgeText, Qt::ElideRight, matteBadgeRect.width() - 16));
      }
      p.setPen(layerSelected ? text.lighter(110) : text);
-     const int nameWidth = std::max(0, layerContentRight(width()) - layerTextX - variantChipW - 10);
+     const int nameWidth = std::max(0, impl_->switchStart(width()) - layerTextX - variantChipW - 10);
      p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft,
                 fm.elidedText(layerName, Qt::ElideRight, nameWidth));
 

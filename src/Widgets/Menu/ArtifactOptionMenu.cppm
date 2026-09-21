@@ -57,20 +57,30 @@ ArtifactOptionMenu::Impl::Impl(ArtifactOptionMenu* menu)
 {
   preferencesAction = menu_->addAction(menuText(QStringLiteral("menu.option.preferences"), QStringLiteral("環境設定 (&P)...")));
   preferencesAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_settings.svg")));
+  preferencesAction->setToolTip(QStringLiteral("Preferences"));
+  preferencesAction->setStatusTip(QStringLiteral("Open the application settings dialog"));
 
   safeModeAction = menu_->addAction(menuText(QStringLiteral("menu.option.safe_mode"), QStringLiteral("セーフモード")));
   safeModeAction->setCheckable(true);
   safeModeAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_security.svg")));
+  safeModeAction->setToolTip(QStringLiteral("Safe Mode"));
+  safeModeAction->setStatusTip(QStringLiteral("Restart with third-party plug-ins disabled"));
 
   menu_->addSeparator();
   resetMenuFontAction = menu_->addAction(menuText(QStringLiteral("menu.option.reset_menu_font"), QStringLiteral("メニューフォントを既定に戻す")));
   resetMenuFontAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_text_fields.svg")));
+  resetMenuFontAction->setToolTip(QStringLiteral("Reset Menu Font"));
+  resetMenuFontAction->setStatusTip(QStringLiteral("Restore the default menu font"));
   resetDockFontAction = menu_->addAction(menuText(QStringLiteral("menu.option.reset_dock_font"), QStringLiteral("ドックフォントを既定に戻す")));
   resetDockFontAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_view_sidebar.svg")));
+  resetDockFontAction->setToolTip(QStringLiteral("Reset Dock Font"));
+  resetDockFontAction->setStatusTip(QStringLiteral("Restore the default dock panel font"));
 
   menu_->addSeparator();
   openAppDataAction = menu_->addAction(menuText(QStringLiteral("menu.option.open_app_data"), QStringLiteral("アプリデータフォルダを開く")));
   openAppDataAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_folder_open.svg")));
+  openAppDataAction->setToolTip(QStringLiteral("Open App Data Folder"));
+  openAppDataAction->setStatusTip(QStringLiteral("Open the application data folder"));
 
   QObject::connect(preferencesAction, &QAction::triggered, menu_, [this]() {
     auto* dialog = new ArtifactCore::ApplicationSettingDialog(menu_->window());
@@ -145,7 +155,9 @@ ArtifactOptionMenu::ArtifactOptionMenu(QWidget* parent/*=nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
   setTitle(TranslationManager::instance().tr(QStringLiteral("menu.options.label"), QStringLiteral("オプション(&O)")));
-  setTearOffEnabled(true);
+  // Do not create a separate native tear-off window; it is unsafe while the
+  // parent menu bar is being destroyed during application shutdown.
+  setTearOffEnabled(false);
   setSeparatorsCollapsible(true);
   setMinimumWidth(240);
   setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/menubar_options.svg")));

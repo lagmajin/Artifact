@@ -113,6 +113,32 @@ bool applyLayerMenuUndoCommand(std::unique_ptr<UndoCommand> command)
     return command->lastOperationSucceeded();
 }
 
+// QAction does not expose QWidget accessibility properties. Keep its visible
+// label as the accessible action name and provide a standard Qt status hint
+// for the longer operation description. This is intentionally applied when
+// the menu opens so dynamically populated submenus follow the same contract.
+void synchronizeLayerMenuActionHints(QMenu* menu)
+{
+    if (!menu) {
+        return;
+    }
+
+    for (QAction* action : menu->actions()) {
+        if (!action || action->isSeparator()) {
+            continue;
+        }
+
+        if (action->statusTip().isEmpty()) {
+            const QString hint = action->toolTip().isEmpty()
+                                     ? action->text().remove(QLatin1Char('&'))
+                                     : action->toolTip();
+            action->setStatusTip(hint);
+        }
+
+        synchronizeLayerMenuActionHints(action->menu());
+    }
+}
+
 class SetLayerEffectEnvelopeCommand final : public UndoCommand {
 public:
     SetLayerEffectEnvelopeCommand(ArtifactAbstractLayerPtr layer,
@@ -800,6 +826,7 @@ public:
     QAction* createFormParticleAction = nullptr;
     QAction* createTerrainAction = nullptr;
     QAction* createPathTubeAction = nullptr;
+    QAction* createTextExtrudeAction = nullptr;
     QAction* createCameraAction = nullptr;
     QAction* createLightAction = nullptr;
     QAction* createAudioAction = nullptr;
@@ -1041,6 +1068,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 {
     createMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new"), QStringLiteral("新規(&N)")), menu);
     createMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
+    createMenu->setAccessibleName(QStringLiteral("New Layer"));
+    createMenu->setAccessibleDescription(QStringLiteral("Create a new layer of the chosen type"));
     createSolidAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_solid"), QStringLiteral("平面(&Y)...")), createMenu);
     createSolidAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
@@ -1089,6 +1118,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createPathTubeAction = new QAction("Path Tube (Tao)", createMenu);
     createPathTubeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createPathTubeAction->setToolTip(QStringLiteral("Procedural tube or ribbon along an animated path"));
+    createTextExtrudeAction = new QAction("Text 3D (Extrude)", createMenu);
+    createTextExtrudeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createTextExtrudeAction->setToolTip(QStringLiteral("Extruded 3D text with bevel (Fusion Text3D equivalent)"));
 
     createCameraAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_camera"), QStringLiteral("カメラ(&C)")), createMenu);
     createCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
@@ -1132,6 +1164,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createPyramid3DAction->setToolTip(QStringLiteral("Create a fixed pyramid as a 3D layer"));
     createPlacementMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_position"), QStringLiteral("作成位置(&O)")), createMenu);
     createPlacementMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    createPlacementMenu->setAccessibleName(QStringLiteral("New Layer Placement"));
+    createPlacementMenu->setAccessibleDescription(QStringLiteral("Choose where new layers are placed in time"));
     auto* placementGroup = new QActionGroup(createPlacementMenu);
     placementGroup->setExclusive(true);
     placementAtCompStartAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.at_composition_start"), QStringLiteral("コンポジション開始")), createPlacementMenu);
@@ -1161,6 +1195,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createShapeMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_shape"), QStringLiteral("シェイプ(&S)")), createMenu);
     createShapeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
+    createShapeMenu->setAccessibleName(QStringLiteral("New Shape Layer"));
+    createShapeMenu->setAccessibleDescription(QStringLiteral("Create a shape layer of the chosen type"));
     cycleShapeForwardAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_shapes_sequentially"), QStringLiteral("シェイプを次々作成")), createShapeMenu);
     cycleShapeForwardAction->setToolTip(QStringLiteral("Cycle shape presets"));
     cycleShapeForwardAction->setShortcut(
@@ -1195,6 +1231,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeDoubleArrowAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     createLineMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.line"), QStringLiteral("ライン")), createShapeMenu);
     createLineMenu->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createLineMenu->setAccessibleName(QStringLiteral("Line Shapes"));
+    createLineMenu->setAccessibleDescription(QStringLiteral("Create a line-based shape layer"));
     createLineMenu->addAction(createShapeLineAction);
     createLineMenu->addAction(createShapeDashedLineAction);
     createLineMenu->addSeparator();
@@ -1216,6 +1254,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     create2DMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_2d"), QStringLiteral("2Dレイヤー(&2)")), createMenu);
     create2DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
+    create2DMenu->setAccessibleName(QStringLiteral("New 2D Layer"));
+    create2DMenu->setAccessibleDescription(QStringLiteral("Create a 2D shape, text, adjustment, paint, or SVG layer"));
     create2DMenu->addMenu(createShapeMenu);
     create2DMenu->addAction(createTextAction);
     create2DMenu->addAction(createAdjustAction);
@@ -1224,6 +1264,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createUtilityMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.utility_layers"), QStringLiteral("補助レイヤー(&U)")), createMenu);
     createUtilityMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    createUtilityMenu->setAccessibleName(QStringLiteral("Utility Layers"));
+    createUtilityMenu->setAccessibleDescription(QStringLiteral("Create null, rig, construction, or quick-setup layers"));
     createUtilityMenu->addAction(createNullAction);
     createUtilityMenu->addAction(createRigAction);
     createUtilityMenu->addAction(createConstructionAction);
@@ -1232,12 +1274,16 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createParticleMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle"), QStringLiteral("パーティクル(&P)")), createMenu);
     createParticleMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createParticleMenu->setAccessibleName(QStringLiteral("New Particle Layer"));
+    createParticleMenu->setAccessibleDescription(QStringLiteral("Create a 2D, form, or 3D particle layer"));
     createParticleMenu->addAction(createParticleAction);
     createParticleMenu->addAction(createFormParticleAction);
     createParticleMenu->addAction(createParticle3DAction);
 
     createAudioMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_audio"), QStringLiteral("オーディオ(&A)")), createMenu);
     createAudioMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
+    createAudioMenu->setAccessibleName(QStringLiteral("New Audio Layer"));
+    createAudioMenu->setAccessibleDescription(QStringLiteral("Create an audio or 3D audio layer"));
     createAudioMenu->addAction(createAudioAction);
     createAudioMenu->addAction(createSpatialAudioAction);
 
@@ -1253,6 +1299,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addMenu(createAudioMenu);
     create3DMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d"), QStringLiteral("3Dレイヤー(&3)")), createMenu);
     create3DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    create3DMenu->setAccessibleName(QStringLiteral("New 3D Layer"));
+    create3DMenu->setAccessibleDescription(QStringLiteral("Create a 3D model or primitive layer"));
     create3DMenu->addAction(createModel3DAction);
     create3DMenu->addSeparator();
     create3DMenu->addAction(createPlane3DAction);
@@ -1266,6 +1314,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     create3DMenu->addSeparator();
     create3DMenu->addAction(createTerrainAction);
     create3DMenu->addAction(createPathTubeAction);
+    create3DMenu->addAction(createTextExtrudeAction);
     createMenu->addMenu(create3DMenu);
     createMenu->addSeparator();
     createMenu->addMenu(createPlacementMenu);
@@ -1287,6 +1336,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     switchMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_switch"), QStringLiteral("スイッチ(&S)")), menu);
     switchMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    switchMenu->setAccessibleName(QStringLiteral("Layer Switches"));
+    switchMenu->setAccessibleDescription(QStringLiteral("Toggle layer visibility, lock, solo, shy, and cache states"));
     toggleVisibleAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_visibility"), QStringLiteral("表示/非表示を切替")), switchMenu);
     toggleVisibleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_visibility.svg")));
     toggleLockAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_lock"), QStringLiteral("ロックを切替")), switchMenu);
@@ -1300,6 +1351,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     soloOnlyAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.solo_with_dependencies_tooltip"), QStringLiteral("選択レイヤーと必要な Parent / Matte をまとめてソロ表示します")));
     cacheMenu = new QMenu("Cache Policy", switchMenu);
     cacheMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    cacheMenu->setAccessibleName(QStringLiteral("Layer Cache Policy"));
+    cacheMenu->setAccessibleDescription(QStringLiteral("Choose the frame cache policy for the selected layer"));
     cacheDefaultAction = new QAction("Default", cacheMenu);
     cacheEnabledAction = new QAction("Enabled", cacheMenu);
     cacheDisabledAction = new QAction("Disabled", cacheMenu);
@@ -1318,6 +1371,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     selectMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.select"), QStringLiteral("選択(&E)")), menu);
     selectMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
+    selectMenu->setAccessibleName(QStringLiteral("Layer Selection"));
+    selectMenu->setAccessibleDescription(QStringLiteral("Select the parent layer or clear parenting"));
     selectParentAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.select_parent"), QStringLiteral("親を選択")), selectMenu);
     selectParentAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_parent_select.svg")));
     clearParentAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.unparent"), QStringLiteral("親を解除")), selectMenu);
@@ -1327,6 +1382,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     proxyMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_quality"), QStringLiteral("Proxy 画質(&Q)")), menu);
     proxyMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
+    proxyMenu->setAccessibleName(QStringLiteral("Proxy Quality"));
+    proxyMenu->setAccessibleDescription(QStringLiteral("Manage proxy resolution and proxy files for layers"));
     debugMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_layers"), QStringLiteral("デバッグレイヤー(&D)")), menu);
     debugMenu->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
     proxyQualityGroup = new QActionGroup(menu);
@@ -1355,6 +1412,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     maskMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_and_shape"), QStringLiteral("マスクとシェイプ")), menu);
     maskMenu->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    maskMenu->setAccessibleName(QStringLiteral("Mask and Shape"));
+    maskMenu->setAccessibleDescription(QStringLiteral("Convert between masks, shapes, and vector paths"));
     saveMaskPresetAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.save_mask_preset"), QStringLiteral("マスクをプリセットとして保存...")));
     saveMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_save.svg")));
     loadMaskPresetAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_preset_apply_dots"), QStringLiteral("マスクプリセットを適用...")));
@@ -1384,6 +1443,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     arrangeMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.arrange"), QStringLiteral("配置(&A)")), menu);
     arrangeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
+    arrangeMenu->setAccessibleName(QStringLiteral("Arrange Layers"));
+    arrangeMenu->setAccessibleDescription(QStringLiteral("Change layer stacking order and apply warp fields"));
     bringToFrontAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.bring_to_front"), QStringLiteral("最前面へ(&F)")), arrangeMenu);
     bringToFrontAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerBringToFront));
@@ -1436,13 +1497,13 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     arrangeMenu->addAction(createLiveSolidFieldAction);
     liveFieldMenu = new QMenu("Live Fields", arrangeMenu);
     liveFieldMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    liveFieldMenu->setAccessibleName(QStringLiteral("Live Fields"));
+    liveFieldMenu->setAccessibleDescription(QStringLiteral("Manage live warp fields on the selected layers"));
     arrangeMenu->addMenu(liveFieldMenu);
     selectLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_select_dots"), QStringLiteral("ライブFieldを選択...")), arrangeMenu);
     arrangeMenu->addAction(selectLiveRadialFieldAction);
     activatePreviousLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.activate_previous_field"), QStringLiteral("前のFieldをアクティブ")), arrangeMenu);
     activateNextLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.activate_next_field"), QStringLiteral("次のFieldをアクティブ")), arrangeMenu);
-    arrangeMenu->addAction(activatePreviousLiveRadialFieldAction);
-    arrangeMenu->addAction(activateNextLiveRadialFieldAction);
     editLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit_dots"), QStringLiteral("ライブFieldを編集...")), arrangeMenu);
     toggleLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_toggle_dots"), QStringLiteral("ライブFieldを有効/無効...")), arrangeMenu);
     moveActiveLiveRadialFieldUpAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.field_move_up"), QStringLiteral("アクティブFieldを上へ")), arrangeMenu);
@@ -1480,6 +1541,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     alignMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.align"), QStringLiteral("整列(&L)")), menu);
     alignMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_align.svg")));
+    alignMenu->setAccessibleName(QStringLiteral("Align Layers"));
+    alignMenu->setAccessibleDescription(QStringLiteral("Align the selected layers to an edge or center"));
     alignLeftAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_left"), QStringLiteral("左端を揃える")), alignMenu);
     alignLeftAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignLeft));
@@ -1514,6 +1577,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     distributeMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute"), QStringLiteral("分布(&D)")), menu);
     distributeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_distribute.svg")));
+    distributeMenu->setAccessibleName(QStringLiteral("Distribute Layers"));
+    distributeMenu->setAccessibleDescription(QStringLiteral("Evenly distribute the selected layers"));
     distributeHCenterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute_horizontal_center"), QStringLiteral("水平中央を分布")), distributeMenu);
     distributeHCenterAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeHCenter));
@@ -1523,9 +1588,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     distributeSpacingAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute_evenly"), QStringLiteral("等間隔に配置")), distributeMenu);
     distributeSpacingAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeSpacing));
-    distributeMenu->addAction(distributeHCenterAction);
-    distributeMenu->addAction(distributeVCenterAction);
-    distributeMenu->addAction(distributeSpacingAction);
     resolveLayoutCollisionsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.auto_avoid_collisions"), QStringLiteral("衝突を自動回避")), menu);
 
     openInspectorAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.open_inspector"), QStringLiteral("Inspector を開く")), menu);
@@ -1534,6 +1596,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     applyLipSyncAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.apply_lipsync"), QStringLiteral("Lip Sync を Switch Layer に適用")), menu);
 
+    debugMenu->setAccessibleName(QStringLiteral("Debug Layers"));
+    debugMenu->setAccessibleDescription(QStringLiteral("Add diagnostic test layers for developers"));
     addDebugBlendLayersAction = new QAction("Debug Blend Test Layers...", debugMenu);
     addDebugBlendLayersAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
     addDebugBlendLayersAction->setToolTip(
@@ -1622,6 +1686,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createFormParticleAction) { handleCreateFormParticle(); return; }
         if (action == createTerrainAction) { handleCreateProcedural3D(Procedural3DLayerKind::Terrain); return; }
         if (action == createPathTubeAction) { handleCreateProcedural3D(Procedural3DLayerKind::PathTube); return; }
+        if (action == createTextExtrudeAction) { handleCreateProcedural3D(Procedural3DLayerKind::TextExtrude); return; }
         if (action == createCameraAction) { handleCreateCamera(); return; }
         if (action == createLightAction) { handleCreateLight(); return; }
         if (action == createSpatialAudioAction) { handleCreateAudio(true); return; }
@@ -2012,6 +2077,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             }));
     QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
         refreshEnabledState();
+        synchronizeLayerMenuActionHints(menu_);
     });
 }
 
@@ -2757,7 +2823,9 @@ void ArtifactLayerMenu::Impl::handleCreateProcedural3D(Procedural3DLayerKind kin
 
     const QString baseName = kind == Procedural3DLayerKind::Terrain
         ? QStringLiteral("Terrain 1")
-        : QStringLiteral("Path Tube 1");
+        : (kind == Procedural3DLayerKind::TextExtrude
+            ? QStringLiteral("Text 3D 1")
+            : QStringLiteral("Path Tube 1"));
     ArtifactLayerInitParams params(uniqueLayerName(baseName), LayerType::Procedural3D);
     auto* service = ArtifactProjectService::instance();
     if (!service) {
@@ -2771,7 +2839,9 @@ void ArtifactLayerMenu::Impl::handleCreateProcedural3D(Procedural3DLayerKind kin
     if (const auto layer = ArtifactCore::dynamicPointerCast<ArtifactProcedural3DLayer>(created)) {
         layer->loadPreset(kind == Procedural3DLayerKind::Terrain
                               ? QStringLiteral("lowPolyTerrain")
-                              : QStringLiteral("neonPathTube"));
+                              : (kind == Procedural3DLayerKind::TextExtrude
+                                     ? QStringLiteral("beveledText3D")
+                                     : QStringLiteral("neonPathTube")));
     }
 }
 
@@ -3224,13 +3294,9 @@ void ArtifactLayerMenu::Impl::handleRenameLayer()
     const QString layerName = service->layerNameInCurrentComposition(selectedLayerId_);
 
     bool ok = false;
-    const QString newName = QInputDialog::getText(
-        menu_->window(),
-        TranslationManager::instance().tr(QStringLiteral("menu.layer.rename"), QStringLiteral("レイヤー名の変更")),
-        TranslationManager::instance().tr(QStringLiteral("dialog.layer.new_name"), QStringLiteral("新しい名前:")),
-        QLineEdit::Normal,
-        layerName,
-        &ok);
+    const QString newName = ArtifactRenameDialog::getName(
+        menu_->window(), ArtifactRenameTarget::Layer, layerName,
+        QStringLiteral("Layer Menu / Selected Layer"), {}, {}, &ok);
     if (!ok) return;
     if (!service->renameLayerInCurrentComposition(selectedLayerId_, newName)) {
         QMessageBox::warning(menu_->window(), "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.rename_failed"), QStringLiteral("レイヤー名の変更に失敗しました。")));

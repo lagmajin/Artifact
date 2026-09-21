@@ -232,6 +232,11 @@ public:
     AlbedoG,
     AlbedoB,
     Emission,
+    PositionX,
+    PositionY,
+    PositionZ,
+    U,
+    V,
     Custom
   };
 
@@ -249,6 +254,10 @@ public:
   bool isMeshVelocityOnlyPass() const;
   void setMeshAlbedoOnlyPass(bool enabled);
   bool isMeshAlbedoOnlyPass() const;
+  void setMeshPositionOnlyPass(bool enabled);
+  bool isMeshPositionOnlyPass() const;
+  void setMeshUvOnlyPass(bool enabled);
+  bool isMeshUvOnlyPass() const;
   void setCanvasSize(float w, float h);
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;

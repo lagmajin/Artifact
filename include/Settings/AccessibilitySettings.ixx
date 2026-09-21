@@ -21,6 +21,7 @@ QString     stickyKeysMode();
 bool        singleHandModeEnabled();
 bool        viewportMagnifierEnabled();
 int         viewportMagnifierScale();
+bool        viewportMagnifierFollowCursor();
 
 // scaling helpers — multiply base pixel sizes by these factors
 float targetScale();   // ≥1.0 when preferLargeTargets
