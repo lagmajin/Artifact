@@ -1,10 +1,7 @@
 module;
 #include <algorithm>
-#include <array>
-#include <compare>
 #include <cmath>
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -15,8 +12,6 @@ module;
 #include <vector>
 #include <QDebug>
 #include <QImage>
-#include <QPainter>
-#include <QFont>
 #include <QPointF>
 #include <QSet>
 #include <QRectF>
@@ -64,12 +59,13 @@ import Artifact.Layer.Physics;
 import Artifact.Layer.Component.System;
 import Artifact.Layer.Modifier;
 import Artifact.Layer.Matte;
+import Artifact.Layer.MaskMatteState;
+import Artifact.Layer.ThumbnailSupport;
+import Color.Float;
 import Geometry.Fracture;
 import Physics.Fluid;
 import Physics.SoftBody;
-import Physics.System;
 import Physics2D;
-import Physics.Mpm2D;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
@@ -91,18 +87,22 @@ import Graphics.ParticleData;
 import Property.Abstract;
 import Property.Group;
 import Property.SerializationBridge;
+import Script.Expression.Evaluator;
 import Audio.Modulation.Router;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Layer.RuntimeSupport;
 import Artifact.Layer.RuntimeRenderSupport;
+import Artifact.Layer.FluidRuntimeState;
 import Artifact.Layer.Abstract.Utilities;
+import Artifact.Layer.PhysicsBridge;
 
 namespace Artifact {
 
 using namespace ArtifactCore;
 using LayerAbstractUtilities::finiteClampedValue;
 using namespace LayerAbstractUtilities;
+namespace LayerPhysics = LayerPhysicsBridge;
 
 namespace {
 ArtifactLayerJsonFactory g_layerJsonFactory = nullptr;
@@ -116,124 +116,26 @@ void setArtifactLayerJsonFactory(ArtifactLayerJsonFactory factory) {
 }
 
 QJsonObject serializeLayerModulationRouter(
-    const Audio::Modulation::ModulationRouter& router) {
-  QJsonObject result;
-  QJsonArray sources;
-  for (const auto& source : router.sourceDefinitions()) {
-    QJsonObject item;
-    item[QStringLiteral("id")] = static_cast<double>(source.id);
-    item[QStringLiteral("type")] = static_cast<int>(source.type);
-    item[QStringLiteral("waveform")] = static_cast<int>(source.waveform);
-    item[QStringLiteral("frequency")] = source.frequency;
-    item[QStringLiteral("phaseOffset")] = source.phaseOffset;
-    item[QStringLiteral("pulseWidth")] = source.pulseWidth;
-    item[QStringLiteral("attack")] = source.attack;
-    item[QStringLiteral("decay")] = source.decay;
-    item[QStringLiteral("sustain")] = source.sustain;
-    item[QStringLiteral("release")] = source.release;
-    item[QStringLiteral("rate")] = source.rate;
-    item[QStringLiteral("smoothing")] = source.smoothing;
-    item[QStringLiteral("seed")] = static_cast<double>(source.seed);
-    item[QStringLiteral("macroValue")] = source.macroValue;
-    item[QStringLiteral("unipolar")] = source.unipolar;
-    sources.append(item);
-  }
-  QJsonArray assignments;
-  for (const auto& assignment : router.assignments()) {
-    if (assignment.sourceId == 0 || assignment.targetPath.empty()) continue;
-    QJsonObject item;
-    item[QStringLiteral("sourceId")] = static_cast<double>(assignment.sourceId);
-    item[QStringLiteral("targetPath")] = QString::fromStdString(assignment.targetPath);
-    item[QStringLiteral("depth")] = assignment.depth;
-    item[QStringLiteral("enabled")] = assignment.enabled;
-    item[QStringLiteral("mode")] = static_cast<int>(assignment.mode);
-    assignments.append(item);
-  }
-  if (!sources.isEmpty()) result[QStringLiteral("sources")] = sources;
-  if (!assignments.isEmpty()) result[QStringLiteral("assignments")] = assignments;
-  return result;
-}
-
-void restoreLayerModulationRouter(const QJsonObject& object,
-                                  Audio::Modulation::ModulationRouter& router) {
-  std::vector<Audio::Modulation::ModulationSourceDefinition> sources;
-  for (const auto& value : object.value(QStringLiteral("sources")).toArray()) {
-    if (!value.isObject()) continue;
-    const QJsonObject item = value.toObject();
-    const int type = item.value(QStringLiteral("type")).toInt(-1);
-    if (type < 0 || type > 3) continue;
-    Audio::Modulation::ModulationSourceDefinition source;
-    source.id = static_cast<std::uint32_t>(item.value(QStringLiteral("id")).toVariant().toUInt());
-    source.type = static_cast<Audio::Modulation::ModulatorSourceType>(type);
-    source.waveform = static_cast<Audio::Modulation::LfoWaveform>(
-        std::clamp(item.value(QStringLiteral("waveform")).toInt(0), 0, 4));
-    source.frequency = static_cast<float>(item.value(QStringLiteral("frequency")).toDouble(1.0));
-    source.phaseOffset = static_cast<float>(item.value(QStringLiteral("phaseOffset")).toDouble(0.0));
-    source.pulseWidth = static_cast<float>(item.value(QStringLiteral("pulseWidth")).toDouble(0.5));
-    source.attack = static_cast<float>(item.value(QStringLiteral("attack")).toDouble(0.01));
-    source.decay = static_cast<float>(item.value(QStringLiteral("decay")).toDouble(0.1));
-    source.sustain = static_cast<float>(item.value(QStringLiteral("sustain")).toDouble(0.7));
-    source.release = static_cast<float>(item.value(QStringLiteral("release")).toDouble(0.2));
-    source.rate = static_cast<float>(item.value(QStringLiteral("rate")).toDouble(1.0));
-    source.smoothing = static_cast<float>(item.value(QStringLiteral("smoothing")).toDouble(0.005));
-    source.seed = static_cast<std::uint32_t>(item.value(QStringLiteral("seed")).toVariant().toUInt());
-    source.macroValue = static_cast<float>(item.value(QStringLiteral("macroValue")).toDouble(0.0));
-    source.unipolar = item.value(QStringLiteral("unipolar")).toBool(false);
-    sources.push_back(source);
-  }
-  router.clearAssignments();
-  router.restoreSources(sources);
-  for (const auto& value : object.value(QStringLiteral("assignments")).toArray()) {
-    if (!value.isObject()) continue;
-    const QJsonObject item = value.toObject();
-    const auto sourceId = static_cast<std::uint32_t>(item.value(QStringLiteral("sourceId")).toVariant().toUInt());
-    const QString targetPath = item.value(QStringLiteral("targetPath")).toString().trimmed();
-    const int mode = item.value(QStringLiteral("mode")).toInt(0);
-    if (sourceId == 0 || targetPath.isEmpty() || mode < 0 || mode > 1) continue;
-    auto assignment = Audio::Modulation::ModulationAssignment::forPropertyPath(
-        sourceId, targetPath.toStdString(),
-        static_cast<float>(item.value(QStringLiteral("depth")).toDouble(1.0)),
-        static_cast<Audio::Modulation::ModulationMixMode>(mode));
-    assignment.enabled = item.value(QStringLiteral("enabled")).toBool(true);
-    router.addAssignment(assignment);
-  }
-}
+    const Audio::Modulation::ModulationRouter& router);
+void restoreLayerModulationRouter(
+    const QJsonObject& object, Audio::Modulation::ModulationRouter& router);
+QJsonObject serializeLayerTransform(
+    const ArtifactCore::AnimatableTransform3D& transform);
+void restoreLayerTransform(const QJsonObject& object,
+                           ArtifactCore::AnimatableTransform3D& transform,
+                           double frameRate);
 
 using float4x4 = Diligent::float4x4;
 
 W_OBJECT_IMPL(ArtifactAbstractLayer)
 
-bool isTimelineHiddenLayerPropertyGroup(const QString& groupName) {
-  return LayerAbstractUtilities::computeTimelineHiddenLayerPropertyGroup(groupName);
-}
-
-bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString& groupName) {
-  return LayerAbstractUtilities::computeTimelineExpandedByDefaultLayerPropertyGroup(groupName);
-}
-
-bool isInspectorHiddenLayerPropertyGroup(const QString& groupName) {
-  return LayerAbstractUtilities::computeInspectorHiddenLayerPropertyGroup(groupName);
-}
-
-bool isInspectorExpandedByDefaultLayerPropertyGroup(const QString& groupName) {
-  return LayerAbstractUtilities::computeInspectorExpandedByDefaultLayerPropertyGroup(groupName);
-}
-
-bool isClonerLayerPropertyGroup(const QString& groupName) {
-  return LayerAbstractUtilities::computeClonerLayerPropertyGroup(groupName);
-}
-
-bool isSourceReframeLayerPropertyGroup(const QString& groupName) {
-  return LayerAbstractUtilities::computeSourceReframeLayerPropertyGroup(groupName);
-}
-
 // Implemented in ArtifactAbstractLayerCollision.cppm (same module).
-std::vector<QPointF> layerCollisionPolygonLocalPoints(
+NamedVector<QPointF> layerCollisionPolygonLocalPoints(
     const ArtifactAbstractLayer* layer);
 bool configureLiquidContainerPolygon(
     const ArtifactAbstractLayer* layer, ArtifactCore::LiquidSolver2D& liquid,
     int requestedOpeningEdge = -1,
-    std::vector<QPointF>* configuredPoints = nullptr,
+    NamedVector<QPointF>* configuredPoints = nullptr,
     std::size_t* configuredOpeningEdge = nullptr);
 QRectF layerCollisionLocalBounds(const ArtifactAbstractLayer* layer);
 bool resolveLiquidPointAgainstCollisionLayer(
@@ -241,6 +143,28 @@ bool resolveLiquidPointAgainstCollisionLayer(
     float particleRadius, float previousWorldX, float previousWorldY,
     float& worldX, float& worldY,
     float& worldVx, float& worldVy, float& collisionImpact);
+
+// Implemented in ArtifactLayerTimelineSupport.cppm. These helpers use only
+// the exported layer/composition APIs, so they do not require Impl visibility.
+void applyCompositionTransformFields(
+    const ArtifactAbstractLayer* layer, double& positionX, double& positionY,
+    double& scaleX, double& scaleY);
+double effectiveLayerFrameRate(const ArtifactAbstractLayer* layer);
+int64_t currentTimelineFrame(const ArtifactAbstractLayer* layer);
+RationalTime currentTimelineTime(const ArtifactAbstractLayer* layer);
+RationalTime timelineTimeForFramePosition(const ArtifactAbstractLayer* layer,
+                                          const FramePosition& position);
+void applyMaskPropertyState(const ArtifactAbstractLayer* layer, int maskIndex,
+                            LayerMask& mask);
+NamedVector<TwoPointFiveDRenderPass> buildTwoPointFiveDRenderPasses(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
+    bool enabled, float configuredDepth, float configuredCameraDistance,
+    bool depthOfFieldEnabled, float focusDepth, float focusRange, float maxBlur,
+    bool motionBlurEnabled, float shutterAngle, int configuredMotionSamples);
+QTransform composeLayerGlobalTransformAt(const ArtifactAbstractLayer* layer,
+                                         int64_t frameNumber,
+                                         bool layoutComponentEnabled,
+                                         bool layoutResponsiveEnabled);
 
 namespace {
 template <typename T> bool assignIfChanged(T &current, const T &next) {
@@ -261,228 +185,15 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   layer->changed();
 }
 
-void applyCompositionTransformFields(
-    const ArtifactAbstractLayer* layer, double& positionX, double& positionY,
-    double& scaleX, double& scaleY) {
-  if (!layer) {
-    return;
-  }
-  const auto* composition =
-      dynamic_cast<const ArtifactAbstractComposition*>(layer->compositionObject());
-  if (!composition) {
-    return;
-  }
-  const auto adjustment = composition->evaluateTransformFields(
-      layer->id(), QPointF(positionX, positionY));
-  if (!adjustment.affected) {
-    return;
-  }
-  positionX += adjustment.positionOffset.x();
-  positionY += adjustment.positionOffset.y();
-  scaleX *= adjustment.scaleMultiplier;
-  scaleY *= adjustment.scaleMultiplier;
-}
-
-QString uniqueEffectIdForLayer(
-    const std::vector<SharedPtr<ArtifactAbstractEffect>> &effects,
-    const QString &displayName, const QString &preferredId) {
-  QString baseId = preferredId.trimmed();
-  if (baseId.isEmpty()) {
-    baseId = slugifyEffectId(displayName);
-  }
-  if (baseId.isEmpty()) {
-    baseId = QStringLiteral("effect");
-  }
-
-  auto idExists = [&effects](const QString &candidate) {
-    return std::any_of(
-        effects.begin(), effects.end(),
-        [&candidate](const SharedPtr<ArtifactAbstractEffect> &effect) {
-          return effect && effect->effectID().toQString() == candidate;
-        });
-  };
-
-  if (!idExists(baseId)) {
-    return baseId;
-  }
-
-  QString uniqueId = baseId;
-  int suffix = 2;
-  while (idExists(uniqueId)) {
-    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
-  }
-  return uniqueId;
-}
-
-QString uniqueModifierIdForLayer(
-    const std::vector<SharedPtr<ArtifactLayerModifier>> &modifiers,
-    const QString &displayName, const QString &preferredId) {
-  QString baseId = preferredId.trimmed();
-  if (baseId.isEmpty()) {
-    baseId = slugifyEffectId(displayName);
-  }
-  if (baseId.isEmpty()) {
-    baseId = QStringLiteral("modifier");
-  }
-
-  auto idExists = [&modifiers](const QString &candidate) {
-    return std::any_of(
-        modifiers.begin(), modifiers.end(),
-        [&candidate](const SharedPtr<ArtifactLayerModifier> &modifier) {
-          return modifier && modifier->modifierId() == candidate;
-        });
-  };
-
-  if (!idExists(baseId)) {
-    return baseId;
-  }
-
-  QString uniqueId = baseId;
-  int suffix = 2;
-  while (idExists(uniqueId)) {
-    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
-  }
-  return uniqueId;
-}
-
-double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
-  if (!layer) {
-    return 30.0;
-  }
-  auto *composition =
-      dynamic_cast<ArtifactAbstractComposition *>(layer->compositionObject());
-  if (!composition) {
-    return 30.0;
-  }
-  const double fps = composition->frameRate().framerate();
-  return fps > 0.0 ? fps : 30.0;
-}
-
-int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
-  if (!layer) {
-    return 0;
-  }
-  auto *composition =
-      dynamic_cast<ArtifactAbstractComposition *>(layer->compositionObject());
-  if (!composition) {
-    return layer->currentFrame();
-  }
-  return composition->framePosition().framePosition();
-}
-
-RationalTime currentTimelineTime(const ArtifactAbstractLayer *layer) {
-  return RationalTime(currentTimelineFrame(layer),
-                      ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(layer)));
-}
-
-RationalTime timelineTimeForFramePosition(const ArtifactAbstractLayer *layer,
-                                          const FramePosition &position) {
-  return RationalTime(position.framePosition(),
-                      ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(layer)));
-}
-
-void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
-                            const int maskIndex, LayerMask &mask) {
-  if (!layer) {
-    return;
-  }
-
-  const RationalTime time = currentTimelineTime(layer);
-  const auto resolveBool = [layer, time](const QString &propertyPath,
-                                         const bool fallback) {
-    const auto property = layer->getProperty(propertyPath);
-    if (!property) {
-      return fallback;
-    }
-    const QVariant value = property->evaluateValue(time);
-    return value.isValid() ? value.toBool() : fallback;
-  };
-  const auto resolveInt = [layer, time](const QString &propertyPath,
-                                        const int fallback) {
-    const auto property = layer->getProperty(propertyPath);
-    if (!property) {
-      return fallback;
-    }
-    const QVariant value = property->evaluateValue(time);
-    return value.isValid() ? value.toInt() : fallback;
-  };
-  const auto resolveDouble = [layer, time](const QString &propertyPath,
-                                           const double fallback) {
-    const auto property = layer->getProperty(propertyPath);
-    if (!property) {
-      return fallback;
-    }
-    const QVariant value = property->evaluateValue(time);
-    return value.isValid() ? value.toDouble() : fallback;
-  };
-  const auto resolveString = [layer, time](const QString &propertyPath,
-                                           const QString &fallback) {
-    const auto property = layer->getProperty(propertyPath);
-    if (!property) {
-      return fallback;
-    }
-    const QVariant value = property->evaluateValue(time);
-    return value.isValid() ? value.toString() : fallback;
-  };
-
-  const QString maskPrefix = maskPropertyPrefix(maskIndex);
-  mask.setEnabled(resolveBool(maskPrefix + QStringLiteral(".enabled"),
-                              mask.isEnabled()));
-
-  for (int pathIndex = 0; pathIndex < mask.maskPathCount(); ++pathIndex) {
-    MaskPath path = mask.maskPath(pathIndex);
-    const QString pathPrefix = maskPathPropertyPrefix(maskIndex, pathIndex);
-    path.setClosed(resolveBool(pathPrefix + QStringLiteral(".closed"),
-                               path.isClosed()));
-    path.setOpacity(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".opacity"),
-                      static_cast<double>(path.opacity()))));
-    path.setFeather(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".feather"),
-                      static_cast<double>(path.feather()))));
-    path.setFeatherHorizontal(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".featherHorizontal"),
-                      static_cast<double>(path.featherHorizontal()))));
-    path.setFeatherVertical(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".featherVertical"),
-                      static_cast<double>(path.featherVertical()))));
-    path.setFeatherInner(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".featherInner"),
-                      static_cast<double>(path.featherInner()))));
-    path.setFeatherOuter(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".featherOuter"),
-                      static_cast<double>(path.featherOuter()))));
-    path.setFalloff(static_cast<MaskFeatherFalloff>(
-        resolveInt(pathPrefix + QStringLiteral(".falloff"),
-                   static_cast<int>(path.falloff()))));
-    path.setExpansion(static_cast<float>(
-        resolveDouble(pathPrefix + QStringLiteral(".expansion"),
-                      static_cast<double>(path.expansion()))));
-    path.setInverted(resolveBool(pathPrefix + QStringLiteral(".inverted"),
-                                 path.isInverted()));
-    path.setMode(static_cast<MaskMode>(
-        resolveInt(pathPrefix + QStringLiteral(".mode"),
-                   static_cast<int>(path.mode()))));
-    path.setName(UniString(resolveString(pathPrefix + QStringLiteral(".name"),
-                                         path.name().toQString())
-                               .toStdString()));
-    mask.setMaskPath(pathIndex, path);
-  }
-}
-
 } // namespace
 
 
 class ArtifactAbstractLayer::Impl {
 public:
-  using LiquidSpillParticle = ArtifactCore::LiquidSpillParticle2D;
-  struct LiquidLayerCheckpoint {
-    ArtifactCore::LiquidSnapshot2D container;
-    std::vector<LiquidSpillParticle> spillParticles;
-    double inflowCarry = 0.0;
-  };
    bool is3D_ = false;
-  bool twoPointFiveDEnabled_ = false;
+   bool projectionEnabled_ = false;
+   QString projectionSourceLayerId_;
+   bool twoPointFiveDEnabled_ = false;
   float twoPointFiveDDepth_ = 0.0f;
   float twoPointFiveDCameraDistance_ = 1000.0f;
   bool twoPointFiveDDepthOfFieldEnabled_ = false;
@@ -655,33 +366,9 @@ public:
     float liquidContainerWidth_ = 2.5f;
     FloatColor liquidColor_ = FloatColor(0.10f, 0.50f, 0.98f, 1.0f);
     FloatColor liquidFoamColor_ = FloatColor(0.78f, 0.93f, 1.0f, 1.0f);
-    std::unique_ptr<ArtifactCore::FluidSolver2D> fluidSolver_;
-    std::unique_ptr<ArtifactCore::LiquidSolver2D> liquidSolver_;
-    std::map<int64_t, LiquidLayerCheckpoint> liquidCheckpoints_;
-    std::vector<LiquidSpillParticle> liquidSpillParticles_;
-    double liquidInflowCarry_ = 0.0;
-    ArtifactCore::LiquidSurfaceSnapshot2D liquidSurfaceSnapshot_;
-    int64_t liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
-    double liquidCheckpointFps_ = 0.0;
-    uint64_t liquidCheckpointCompositionRevision_ = 0;
-    std::vector<ArtifactCore::ParticleVertex> fluidPreviewParticles_;
-    mutable int64_t fluidLastFrame_ = std::numeric_limits<int64_t>::min();
-    void invalidateLiquidSurface() {
-      liquidSurfaceSnapshot_ = {};
-      liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
-    }
-    void invalidateLiquidSimulation() {
-      liquidSolver_.reset();
-      liquidCheckpoints_.clear();
-      liquidSpillParticles_.clear();
-      liquidInflowCarry_ = 0.0;
-      invalidateLiquidSurface();
-      liquidCheckpointFps_ = 0.0;
-      liquidCheckpointCompositionRevision_ = 0;
-      fluidPreviewParticles_.clear();
-      fluidLastFrame_ = std::numeric_limits<int64_t>::min();
-    }
-    std::vector<ArtifactCore::ParticleVertex> componentParticles_;
+    LayerFluidRuntimeState fluidRuntime_;
+    NamedVector<ArtifactCore::ParticleVertex> componentParticles_{
+        ContainerName{"Layer.ComponentParticles"}};
     mutable int64_t componentParticlesLastFrame_ =
         std::numeric_limits<int64_t>::min();
     mutable int64_t lastCollisionImpactFrame_ =
@@ -735,7 +422,8 @@ public:
     float clonerEndAngle_ = 360.0f;
     float clonerRotationStep_ = 0.0f;
     float clonerOpacityDecay_ = 0.0f;
-    std::vector<ClonerTransformOperation> clonerTransforms_;
+    NamedVector<ClonerTransformOperation> clonerTransforms_{
+        ContainerName{"Layer.ClonerTransforms"}};
     NamedVector<LayerGeneratorDescriptor> extraGeneratorDescriptors_{
         ContainerName{"Layer.ExtraGenerators"}};
     NamedVector<LayerFieldDescriptor> extraFieldDescriptors_{
@@ -744,8 +432,9 @@ public:
         ContainerName{"Layer.ExtraCloneModifiers"}};
     QJsonObject scriptBinding_;
 
-  // Matte components (Asset-based track mattes)
-  std::vector<LayerMatteReference> mattes_;
+  // Mask and matte ownership is isolated to keep container instantiations out
+  // of this already large implementation unit.
+  LayerMaskMatteState maskMatteState_;
 
   uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
   uint64_t dirtyReasonMask_ =
@@ -764,14 +453,12 @@ public:
   mutable QRectF cachedBoundingBox_;
 
   // エフェクトコンテナ
-  std::vector<SharedPtr<ArtifactAbstractEffect>> effects_;
+  NamedVector<SharedPtr<ArtifactAbstractEffect>> effects_{
+      ContainerName{"Layer.Effects"}};
 
   // レイヤーモディファイアコンテナ
   LayerModifierStack modifiers_;
 
-  // マスクコンテナ
-  std::vector<LayerMask> masks_;
-  std::uint64_t maskRevision_ = 0;
   mutable QHash<QString, SharedPtr<AbstractProperty>> propertyCache_;
   mutable std::mutex propertyCacheMutex_;
 
@@ -781,7 +468,8 @@ public:
   double stopMotionSamplingFrameRate_ = 12.0;
 
   // Variants
-  std::vector<std::unique_ptr<LayerVariant>> variants_;
+  NamedVector<std::unique_ptr<LayerVariant>> variants_{
+      ContainerName{"Layer.Variants"}};
   size_t activeVariantIndex_ = 0;
 
 public:
@@ -820,14 +508,6 @@ public:
   int modifierCount() const;
   bool hasModifiers() const;
 
-  // マスク管理
-  void addMask(const LayerMask &mask);
-  void removeMask(int index);
-  bool moveMask(int fromIndex, int toIndex);
-  void setMask(int index, const LayerMask &mask);
-  LayerMask getMask(int index) const;
-  int maskCount() const;
-  void clearMasks();
 };
 
 namespace {
@@ -1182,11 +862,6 @@ void ArtifactAbstractLayer::Show() { setVisible(true); }
 
 void ArtifactAbstractLayer::Hide() { setVisible(false); }
 
-void ArtifactAbstractLayer::drawLOD(ArtifactIRenderer *renderer, DetailLevel)
-{
-  draw(renderer);
-}
-
 LAYER_BLEND_TYPE ArtifactAbstractLayer::layerBlendType() const {
   const auto* var = getActiveVariant();
   if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::BlendMode) && var->blendModeOverride.has_value()) {
@@ -1232,13 +907,6 @@ void ArtifactAbstractLayer::setId(const LayerID& id) {
 }
 
 QString ArtifactAbstractLayer::layerName() const { return impl_->name_; }
-
-UniString ArtifactAbstractLayer::className() const { return QString(""); }
-
-const ArtifactCore::ImageF32x4_RGBA*
-ArtifactAbstractLayer::resolveLayerSourceOverride() const {
-  return nullptr;
-}
 
 void ArtifactAbstractLayer::setBuiltinLayerSourceComponentType(
     const QString &componentType) {
@@ -1541,7 +1209,7 @@ LayerVariant* ArtifactAbstractLayer::createVariantFromCurrent(const ArtifactCore
     
     impl_->variants_.push_back(std::move(newVariant));
     notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
-    return impl_->variants_.back().get();
+    return impl_->variants_.last()->get();
 }
 
 void ArtifactAbstractLayer::resetVariantOverride(VariantOverrideFlags specificFlag) {
@@ -1574,8 +1242,8 @@ void ArtifactAbstractLayer::resetVariantOverride(VariantOverrideFlags specificFl
     notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
 }
 
-std::vector<LayerVariant*> ArtifactAbstractLayer::getVariants() const {
-    std::vector<LayerVariant*> result;
+NamedVector<LayerVariant*> ArtifactAbstractLayer::getVariants() const {
+    NamedVector<LayerVariant*> result{ContainerName{"Layer.VariantViews"}};
     result.reserve(impl_->variants_.size());
     for(auto& v : impl_->variants_) {
         result.push_back(v.get());
@@ -1586,7 +1254,7 @@ std::vector<LayerVariant*> ArtifactAbstractLayer::getVariants() const {
 std::unique_ptr<LayerVariant> ArtifactAbstractLayer::extractVariant(size_t index) {
     if (index < impl_->variants_.size()) {
        auto var = std::move(impl_->variants_[index]);
-       impl_->variants_.erase(impl_->variants_.begin() + index);
+       impl_->variants_.removeAt(index);
        if (impl_->activeVariantIndex_ >= impl_->variants_.size()) {
            impl_->activeVariantIndex_ = impl_->variants_.empty() ? 0 : impl_->variants_.size() - 1;
        } else if (impl_->activeVariantIndex_ >= index && impl_->activeVariantIndex_ > 0) {
@@ -1601,7 +1269,7 @@ std::unique_ptr<LayerVariant> ArtifactAbstractLayer::extractVariant(size_t index
 void ArtifactAbstractLayer::insertVariant(size_t index, std::unique_ptr<LayerVariant> variant) {
     if (!variant) return;
     if (index > impl_->variants_.size()) index = impl_->variants_.size();
-    impl_->variants_.insert(impl_->variants_.begin() + index, std::move(variant));
+    impl_->variants_.insert(index, std::move(variant));
     if (impl_->activeVariantIndex_ >= index) {
         impl_->activeVariantIndex_++;
     }
@@ -1659,96 +1327,15 @@ float ArtifactAbstractLayer::compositionFieldInfluenceAtCanvasPoint(
   return channels.weight;
 }
 
-LayerFieldChannelSample
-ArtifactAbstractLayer::compositionFieldChannelsAtCanvasPoint(
-    const QPointF& canvasPosition) const {
-  const auto* composition =
-      dynamic_cast<const ArtifactAbstractComposition*>(compositionObject());
-  if (!composition) {
-    return {};
-  }
-  const auto sample =
-      composition->evaluateFieldChannelsAtCanvasPoint(id(), canvasPosition);
-  return LayerFieldChannelSample{
-      std::clamp(static_cast<float>(sample.weight), 0.0f, 1.0f),
-      static_cast<float>(sample.scaleMultiplier),
-      static_cast<float>(sample.timeOffsetSeconds),
-      sample.affected};
-}
-
-QSizeF ArtifactAbstractLayer::compositionSizeHint() const {
-  auto* composition =
-      dynamic_cast<ArtifactAbstractComposition*>(compositionObject());
-  if (!composition) {
-    return {};
-  }
-  const auto size = composition->settings().compositionSize();
-  return QSizeF(size.width(), size.height());
-}
-
-bool applyResponsiveLayoutConstraints(const ArtifactAbstractLayer* layer,
-                                      double& positionX, double& positionY,
-                                      double& scaleX, double& scaleY,
-                                      const double anchorX,
-                                      const double anchorY,
-                                      const bool componentEnabled,
-                                      const bool responsiveEnabled,
-                                      const int horizontalPinValue,
-                                      const int verticalPinValue,
-                                      const int scaleModeValue,
-                                      const bool safeAreaEnabled,
-                                      const double safeAreaPaddingX,
-                                      const double safeAreaPaddingY,
-                                      const double offsetX,
-                                      const double offsetY) {
-  if (!layer || layer->is3D()) return false;
-  if (!componentEnabled || !responsiveEnabled) return false;
-  const QSizeF compositionSize = layer->compositionSizeHint();
-  const QRectF localBounds = layer->localBounds();
-  if (!compositionSize.isValid() || compositionSize.width() <= 0.0 ||
-      compositionSize.height() <= 0.0 || !localBounds.isValid() ||
-      localBounds.width() <= 0.0 || localBounds.height() <= 0.0) return false;
-  const qreal paddingX = safeAreaEnabled
-      ? std::max<qreal>(0.0, safeAreaPaddingX) : 0.0;
-  const qreal paddingY = safeAreaEnabled
-      ? std::max<qreal>(0.0, safeAreaPaddingY) : 0.0;
-  const QRectF container(paddingX, paddingY,
-      std::max<qreal>(0.0, compositionSize.width() - paddingX * 2.0),
-      std::max<qreal>(0.0, compositionSize.height() - paddingY * 2.0));
-  if (container.width() <= 0.0 || container.height() <= 0.0) return false;
-  const int horizontalPin = std::clamp(horizontalPinValue, 0, 3);
-  const int verticalPin = std::clamp(verticalPinValue, 0, 3);
-  const int scaleMode = std::clamp(scaleModeValue, 0, 3);
-  const qreal fitScaleX = container.width() / localBounds.width();
-  const qreal fitScaleY = container.height() / localBounds.height();
-  if (scaleMode == 1) {
-    const qreal scale = std::min(fitScaleX, fitScaleY);
-    scaleX = scale;
-    scaleY = scale;
-  } else if (scaleMode == 2) {
-    const qreal scale = std::max(fitScaleX, fitScaleY);
-    scaleX = scale;
-    scaleY = scale;
-  } else if (scaleMode == 3) {
-    scaleX = fitScaleX;
-    scaleY = fitScaleY;
-  }
-  if (horizontalPin == 3) scaleX = fitScaleX;
-  if (verticalPin == 3) scaleY = fitScaleY;
-  const qreal width = localBounds.width() * scaleX;
-  const qreal height = localBounds.height() * scaleY;
-  const auto positionForAxis = [](const qreal start, const qreal extent,
-                                  const qreal itemExtent, const int pin) {
-    if (pin == 1) return start + (extent - itemExtent) * 0.5;
-    if (pin == 2) return start + extent - itemExtent;
-    return start;
-  };
-  const qreal left = positionForAxis(container.left(), container.width(), width, horizontalPin);
-  const qreal top = positionForAxis(container.top(), container.height(), height, verticalPin);
-  positionX = left - scaleX * (localBounds.left() - anchorX) + offsetX;
-  positionY = top - scaleY * (localBounds.top() - anchorY) + offsetY;
-  return true;
-}
+bool applyResponsiveLayoutConstraints(
+    const ArtifactAbstractLayer* layer, double& positionX, double& positionY,
+    double& scaleX, double& scaleY, double anchorX, double anchorY,
+    bool componentEnabled, bool responsiveEnabled, int horizontalPinValue,
+    int verticalPinValue, int scaleModeValue, bool safeAreaEnabled,
+    double safeAreaPaddingX, double safeAreaPaddingY, double offsetX,
+    double offsetY);
+QPointF parentAutoLayoutOffset(const ArtifactAbstractLayer* layer,
+                               const ArtifactAbstractLayerPtr& parent);
 
 double ArtifactAbstractLayer::compositionFrameRate() const {
   return effectiveLayerFrameRate(this);
@@ -1760,6 +1347,25 @@ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
   return nullptr;
   return composition->layerById(impl_->parentLayerId_);
 }
+
+namespace {
+// Transform / opacity read path: keyframes and static values go through the
+// cheap interpolateValue, but a property carrying an expression, envelope or
+// external override must be evaluated so AE-style expressions actually drive
+// the rendered transform. Building the evaluator is deferred to that case so
+// the every-frame hot path stays allocation free for plain keyed properties.
+QVariant evaluateAnimatedPropertyValue(const ArtifactCore::AbstractProperty& property,
+                                       const ArtifactCore::RationalTime& time) {
+  if (property.hasExpression()) {
+    ArtifactCore::ExpressionEvaluator evaluator;
+    return property.evaluateValue(time, &evaluator);
+  }
+  if (property.hasEnvelopes() || property.hasExternalOverride()) {
+    return property.evaluateValue(time);
+  }
+  return property.interpolateValue(time);
+}
+} // namespace
 
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const auto &t = transform3D();
@@ -1775,7 +1381,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     const auto handle = getProperty(propertyPath);
     if (!handle) return fallback;
     const auto &property = *handle;
-    const QVariant animatedValue = property.interpolateValue(time);
+    const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
 
@@ -1796,6 +1402,38 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
       evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
   double anchorY =
       evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
+
+  // Phase 1 motion modulation (2026-09-22): shared control-rate router output
+  // applied non-destructively before dynamics/physics/layout, mirroring the
+  // opacity() order (base -> keyframe -> mod Add -> mod Multiply). Skipped
+  // entirely when no assignments exist (hot-path guard) or a variant
+  // overrides the transform. processAtFrame is idempotent for the frame that
+  // goToFrame() already advanced, so preview and render queue stay in sync.
+  if (!hasTransVar && !impl_->modulationRouter_.empty()) {
+    const int64_t timelineFrame = currentTimelineFrame(this);
+    impl_->modulationRouter_.processAtFrame(
+        timelineFrame, static_cast<float>(fps > 0.0 ? fps : 30.0));
+    auto applyTransformModulation = [this](const char* channel, double& value) {
+      const QString path = modulationPropertyPath(QString::fromLatin1(channel));
+      if (path.isEmpty()) {
+        return;
+      }
+      const auto target = Audio::Modulation::modulationTargetId(
+          path.toStdString());
+      if (impl_->modulationRouter_.hasTarget(target)) {
+        const float modulated = impl_->modulationRouter_.targetValue(
+            target, static_cast<float>(value));
+        if (std::isfinite(modulated)) {
+          value = static_cast<double>(modulated);
+        }
+      }
+    };
+    applyTransformModulation("transform.position.x", positionX);
+    applyTransformModulation("transform.position.y", positionY);
+    applyTransformModulation("transform.rotation", rotation);
+    applyTransformModulation("transform.scale.x", scaleX);
+    applyTransformModulation("transform.scale.y", scaleY);
+  }
 
   if (impl_->motionDynamicsEnabled_) {
     const bool needsReset = impl_->motionLastFrame_ == std::numeric_limits<int64_t>::min() ||
@@ -1907,12 +1545,11 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   }
 
   if (hasRigidBodyPhysics()) {
-    auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+    auto world = LayerPhysics::rigidWorld(id());
     if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
             impl_->composition_.data());
         composition) {
-      world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-          composition->id());
+      world = LayerPhysics::compositionRigidWorld(composition->id());
     }
     if (world) {
       for (const auto& candidate : world->getBodies()) {
@@ -1960,101 +1597,6 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
                                               anchorX, anchorY);
   transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
   return transform;
-}
-
-QPointF parentAutoLayoutOffset(const ArtifactAbstractLayer *layer,
-                               const ArtifactAbstractLayerPtr &parent) {
-  if (!layer || !parent) {
-    return QPointF();
-  }
-  const auto enabled = parent->getProperty(
-      QStringLiteral("component.layout.enabled"));
-  if (!enabled || !enabled->getValue().toBool()) {
-    return QPointF();
-  }
-  const auto participation = layer->getProperty(
-      QStringLiteral("component.layout.mode"));
-  if (participation && participation->getValue().toInt() == 2) {
-    return QPointF();
-  }
-  auto *composition = static_cast<ArtifactAbstractComposition *>(
-      parent->composition());
-  if (!composition) {
-    return QPointF();
-  }
-  const auto direction = parent->getProperty(
-      QStringLiteral("component.layout.stackDirection"));
-  const auto alignmentProperty = parent->getProperty(
-      QStringLiteral("component.layout.anchorMode"));
-  const auto gapProperty = parent->getProperty(
-      QStringLiteral("component.layout.gap"));
-  const auto paddingXProperty = parent->getProperty(
-      QStringLiteral("component.layout.safeAreaPaddingX"));
-  const auto paddingYProperty = parent->getProperty(
-      QStringLiteral("component.layout.safeAreaPaddingY"));
-  const auto safeAreaEnabledProperty = parent->getProperty(
-      QStringLiteral("component.layout.safeAreaEnabled"));
-  const bool vertical = direction && direction->getValue().toInt() != 0;
-  const int alignment = alignmentProperty
-                            ? std::clamp(alignmentProperty->getValue().toInt(), 0, 2)
-                            : 0;
-  const qreal gap = gapProperty ? gapProperty->getValue().toDouble() : 0.0;
-  const bool usePadding = safeAreaEnabledProperty &&
-                          safeAreaEnabledProperty->getValue().toBool();
-  const QRectF parentBounds = parent->localBounds();
-  const qreal paddingX = usePadding && paddingXProperty
-                             ? paddingXProperty->getValue().toDouble()
-                             : 0.0;
-  const qreal paddingY = usePadding && paddingYProperty
-                             ? paddingYProperty->getValue().toDouble()
-                             : 0.0;
-  qreal cursorX = parentBounds.left() + paddingX;
-  qreal cursorY = parentBounds.top() + paddingY;
-  const auto siblings = composition->childLayersOf(parent->id());
-  for (const auto &sibling : siblings) {
-    if (!sibling) {
-      continue;
-    }
-    const auto siblingParticipation = sibling->getProperty(
-        QStringLiteral("component.layout.mode"));
-    if (siblingParticipation &&
-        siblingParticipation->getValue().toInt() == 2) {
-      continue;
-    }
-    const QRectF bounds = sibling->visualLocalBounds();
-    if (sibling.get() == layer) {
-      qreal targetX = cursorX - bounds.left();
-      qreal targetY = cursorY - bounds.top();
-      if (vertical) {
-        const qreal availableWidth = std::max<qreal>(
-            0.0, parentBounds.width() - paddingX * 2.0);
-        if (alignment == 1) {
-          targetX = parentBounds.left() + paddingX +
-                    (availableWidth - bounds.width()) * 0.5 - bounds.left();
-        } else if (alignment == 2) {
-          targetX = parentBounds.right() - paddingX - bounds.width() -
-                    bounds.left();
-        }
-      } else {
-        const qreal availableHeight = std::max<qreal>(
-            0.0, parentBounds.height() - paddingY * 2.0);
-        if (alignment == 1) {
-          targetY = parentBounds.top() + paddingY +
-                    (availableHeight - bounds.height()) * 0.5 - bounds.top();
-        } else if (alignment == 2) {
-          targetY = parentBounds.bottom() - paddingY - bounds.height() -
-                    bounds.top();
-        }
-      }
-      return QPointF(targetX, targetY);
-    }
-    if (vertical) {
-      cursorY += std::max<qreal>(0.0, bounds.height()) + gap;
-    } else {
-      cursorX += std::max<qreal>(0.0, bounds.width()) + gap;
-    }
-  }
-  return QPointF();
 }
 
 QTransform ArtifactAbstractLayer::Impl::rigidBodyLocalTransform(
@@ -2133,8 +1675,9 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
     double evaluated = fallback;
     if (const auto handle = getProperty(propertyPath)) {
       const auto &property = *handle;
-      if (property.isAnimatable()) {
-        const QVariant animatedValue = property.interpolateValue(time);
+      if (property.isAnimatable() || property.hasExpression() ||
+          property.hasEnvelopes() || property.hasExternalOverride()) {
+        const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
         if (animatedValue.isValid()) {
           evaluated = animatedValue.toDouble();
         }
@@ -2239,17 +1782,9 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
 }
 
 QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) const {
-  QTransform local = getLocalTransformAt(frameNumber);
-  auto parent = parentLayer();
-  if (parent) {
-    const QPointF layoutOffset = impl_->layoutComponentEnabled_ && impl_->layoutResponsiveEnabled_
-        ? QPointF() : parentAutoLayoutOffset(this, parent);
-    if (!layoutOffset.isNull()) {
-      local = QTransform::fromTranslate(layoutOffset.x(), layoutOffset.y()) * local;
-    }
-    return combineLayerTransform2D(local, parent->getGlobalTransformAt(frameNumber)); // Time remapping on parent not considered here yet
-  }
-  return local;
+  return composeLayerGlobalTransformAt(
+      this, frameNumber, impl_->layoutComponentEnabled_,
+      impl_->layoutResponsiveEnabled_);
 }
 
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
@@ -2274,7 +1809,7 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     const auto handle = getProperty(propertyPath);
     if (!handle) return fallback;
     const auto &property = *handle;
-    const QVariant animatedValue = property.interpolateValue(time);
+    const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
   const bool useSpatialPosition = t.hasPositionSpatialTangents();
@@ -2405,12 +1940,11 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   }
 
   if (hasRigidBodyPhysics()) {
-    auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+    auto world = LayerPhysics::rigidWorld(id());
     if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
             impl_->composition_.data());
         composition) {
-      world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-          composition->id());
+      world = LayerPhysics::compositionRigidWorld(composition->id());
     }
     if (world) {
       // cloneIndex == -2 marks joint static proxies; the layer's own dynamic
@@ -2450,50 +1984,12 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   return result;
 }
 
-bool ArtifactAbstractLayer::hasSoftBodyPhysics() const {
-  return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getSoftBody(id()));
-}
-
-SoftBodyDeformationMesh ArtifactAbstractLayer::softBodyDeformationMesh() const {
-  SoftBodyDeformationMesh mesh;
-  const auto solver = ArtifactCore::PhysicsSystem::instance().getSoftBody(id());
-  if (!solver) {
-    return mesh;
-  }
-  const auto vertices = solver->getUVVertices();
-  const auto indices = solver->getGridTriangleIndices();
-  mesh.vertices.reserve(vertices.size() * 4);
-  for (const auto& vertex : vertices) {
-    mesh.vertices.insert(mesh.vertices.end(),
-                         {vertex.x, vertex.y, vertex.u, vertex.v});
-  }
-  mesh.indices = indices;
-  return mesh;
-}
-
-bool ArtifactAbstractLayer::hasCloth3DPhysics() const {
-  return ArtifactCore::PhysicsSystem::instance().hasCloth3D(id());
-}
-
-ClothDeformationMesh3D ArtifactAbstractLayer::cloth3DDeformationMesh() const {
-  ClothDeformationMesh3D mesh;
-  auto source = ArtifactCore::PhysicsSystem::instance().cloth3DDeformationMesh(id());
-  if (!source.isValid()) {
-    return mesh;
-  }
-  mesh.positions = std::move(source.positions);
-  mesh.uvs = std::move(source.uvs);
-  mesh.indices = std::move(source.indices);
-  return mesh;
-}
-
 bool ArtifactAbstractLayer::hasRigidBodyPhysics() const {
-  auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+  auto world = LayerPhysics::rigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
       composition) {
-    world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-        composition->id());
+    world = LayerPhysics::compositionRigidWorld(composition->id());
   }
   if (!world) return false;
   for (const auto& body : world->getBodies()) {
@@ -2506,243 +2002,17 @@ const FractureState& ArtifactAbstractLayer::fractureState() const {
   return impl_->fractureState_;
 }
 
-const std::vector<FractureShardMotion>& ArtifactAbstractLayer::fractureShardMotions() const {
+const NamedVector<FractureShardMotion>& ArtifactAbstractLayer::fractureShardMotions() const {
   return impl_->fractureState_.shards;
 }
 
 void applyFragmentFieldsAndFloorCollision(
     const ArtifactAbstractLayer* layer, FractureShardMotion& shard,
-    const QMatrix4x4& baseTransform, const float deltaSeconds) {
-  if (!layer || !shard.active || deltaSeconds <= 0.0f) {
-    return;
-  }
-
-  for (const auto& field : layer->layerFields()) {
-    if (!field.enabled || field.strength == 0.0f) {
-      continue;
-    }
-    const float sign = field.invert ? -1.0f : 1.0f;
-    const float strength = field.strength * sign;
-    const float centerX = static_cast<float>(
-        field.settings.value(QStringLiteral("centerX")).toDouble(0.0));
-    const float centerY = static_cast<float>(
-        field.settings.value(QStringLiteral("centerY")).toDouble(0.0));
-    QVector3D fromCenter(shard.position.x() - centerX,
-                         shard.position.y() - centerY, 0.0f);
-    QVector3D acceleration(0.0f, 0.0f, 0.0f);
-
-    if (field.typeId == QStringLiteral("artifact.field.radial") ||
-        field.typeId == QStringLiteral("artifact.field.sphere")) {
-      const float radius = std::max(
-          1.0f, static_cast<float>(field.settings
-              .value(QStringLiteral("outerRadius"))
-              .toDouble(field.settings.value(QStringLiteral("radius"))
-                            .toDouble(160.0))));
-      const float distance = fromCenter.length();
-      if (distance <= radius && distance > 0.0001f) {
-        fromCenter.normalize();
-        acceleration = fromCenter * strength *
-                       (1.0f - distance / radius) * 600.0f;
-      }
-    } else if (field.typeId == QStringLiteral("artifact.field.linear")) {
-      const float angle = static_cast<float>(
-          field.settings.value(QStringLiteral("angle")).toDouble(0.0)) *
-          3.1415926535f / 180.0f;
-      acceleration = QVector3D(std::cos(angle), std::sin(angle), 0.0f) *
-                     strength * 600.0f;
-    } else if (field.typeId == QStringLiteral("artifact.field.box")) {
-      const float halfX = std::max(1.0f, static_cast<float>(
-          field.settings.value(QStringLiteral("halfX")).toDouble(120.0)));
-      const float halfY = std::max(1.0f, static_cast<float>(
-          field.settings.value(QStringLiteral("halfY")).toDouble(120.0)));
-      if (std::abs(fromCenter.x()) <= halfX &&
-          std::abs(fromCenter.y()) <= halfY) {
-        acceleration.setY(strength * 600.0f);
-      }
-    } else if (field.typeId == QStringLiteral("artifact.field.noise")) {
-      const float phase = shard.position.x() * 0.013f +
-                          shard.position.y() * 0.017f;
-      acceleration = QVector3D(std::sin(phase), std::cos(phase), 0.0f) *
-                     strength * 300.0f;
-    }
-    shard.velocity += acceleration * deltaSeconds;
-  }
-
-  const auto windEnabled = layer->getProperty(
-      QStringLiteral("physics.wind.enabled"));
-  if (windEnabled && windEnabled->getValue().toBool()) {
-    const auto windX = layer->getProperty(QStringLiteral("physics.wind.x"));
-    const auto windY = layer->getProperty(QStringLiteral("physics.wind.y"));
-    const auto windStrength = layer->getProperty(
-        QStringLiteral("physics.wind.strength"));
-    const auto windTorque = layer->getProperty(
-        QStringLiteral("physics.wind.torque"));
-    QVector2D direction(windX ? windX->getValue().toFloat() : 1.0f,
-                        windY ? windY->getValue().toFloat() : 0.0f);
-    if (direction.lengthSquared() > 0.000001f) {
-      direction.normalize();
-      float fieldWeight = 1.0f;
-      const QVector3D canvasPosition = baseTransform.map(shard.position);
-      const auto channels = layer->compositionFieldChannelsAtCanvasPoint(
-          QPointF(canvasPosition.x(), canvasPosition.y()));
-      if (channels.affected) {
-        fieldWeight = channels.weight;
-      }
-      const float strength = (windStrength
-          ? windStrength->getValue().toFloat() : 0.0f) * fieldWeight;
-      shard.velocity += QVector3D(direction.x(), direction.y(), 0.0f) *
-                        strength * deltaSeconds;
-      shard.angularVelocity.setZ(shard.angularVelocity.z() +
-          (windTorque ? windTorque->getValue().toFloat() : 0.0f) *
-          strength * deltaSeconds);
-    }
-  }
-
-  const auto collisionEnabled =
-      layer->getProperty(QStringLiteral("component.collision.enabled"));
-  if (!collisionEnabled || !collisionEnabled->getValue().toBool()) {
-    return;
-  }
-  const QSizeF compositionSize = layer->compositionSizeHint();
-  if (!compositionSize.isValid()) {
-    return;
-  }
-  const auto floorProperty =
-      layer->getProperty(QStringLiteral("component.collision.floorY"));
-  const float configuredFloor =
-      floorProperty ? floorProperty->getValue().toFloat() : 0.0f;
-  const float floorY = configuredFloor > 0.0f
-                           ? configuredFloor
-                           : static_cast<float>(compositionSize.height());
-  const float shardRadius = std::max(2.0f, 5.0f * shard.scale);
-  const auto restitutionProperty =
-      layer->getProperty(QStringLiteral("physics.restitution"));
-  const float restitution = std::clamp(
-      restitutionProperty ? restitutionProperty->getValue().toFloat() : 0.25f,
-      0.0f, 1.0f);
-  QVector3D worldPosition = baseTransform.map(shard.position);
-  if (worldPosition.y() + shardRadius > floorY) {
-    shard.position.setY(shard.position.y() + floorY - shardRadius -
-                        worldPosition.y());
-    if (shard.velocity.y() > 0.0f) {
-      shard.velocity.setY(-shard.velocity.y() * restitution);
-      shard.velocity.setX(shard.velocity.x() * 0.92f);
-    }
-  }
-  const auto boundsProperty =
-      layer->getProperty(QStringLiteral("component.collision.compositionBounds"));
-  if (!boundsProperty || !boundsProperty->getValue().toBool()) {
-    return;
-  }
-  worldPosition = baseTransform.map(shard.position);
-  const float compositionWidth = static_cast<float>(compositionSize.width());
-  const float compositionHeight = static_cast<float>(compositionSize.height());
-  if (worldPosition.x() - shardRadius < 0.0f ||
-      worldPosition.x() + shardRadius > compositionWidth) {
-    const float targetX = std::clamp(worldPosition.x(), shardRadius,
-                                     compositionWidth - shardRadius);
-    shard.position.setX(shard.position.x() + targetX - worldPosition.x());
-    shard.velocity.setX(-shard.velocity.x() * restitution);
-  }
-  worldPosition = baseTransform.map(shard.position);
-  if (worldPosition.y() - shardRadius < 0.0f ||
-      worldPosition.y() + shardRadius > compositionHeight) {
-    const float targetY = std::clamp(worldPosition.y(), shardRadius,
-                                     compositionHeight - shardRadius);
-    shard.position.setY(shard.position.y() + targetY - worldPosition.y());
-    shard.velocity.setY(-shard.velocity.y() * restitution);
-  }
-}
-
+    const QMatrix4x4& baseTransform, float deltaSeconds);
 void syncFragmentDataset(const ArtifactAbstractLayer* layer,
                          const FractureState& fractureState,
                          const FractureResult* prefractureResult,
-                         LayerEvaluationState& evaluationState) {
-  auto& fragments = evaluationState.fragments;
-  auto& fragmentGeometry = evaluationState.fragmentGeometry;
-  fragments.clear();
-  fragmentGeometry.clear();
-  if (!layer) {
-    return;
-  }
-  fragments.reserve(fractureState.shards.size());
-  fragmentGeometry.reserve(fractureState.shards.size());
-  const QString ownerLayerId = layer->id().toString();
-  for (std::size_t index = 0; index < fractureState.shards.size(); ++index) {
-    const auto& shard = fractureState.shards[index];
-    QMatrix4x4 fragmentTransform;
-    fragmentTransform.setToIdentity();
-    fragmentTransform.translate(shard.position);
-    fragmentTransform.rotate(shard.rotation, 0.0f, 0.0f, 1.0f);
-    fragmentTransform.scale(shard.scale);
-    LayerFragmentState fragment;
-    fragment.entityId = SimulationEntityId{
-        ownerLayerId, QStringLiteral("component.fracture"),
-        static_cast<std::uint64_t>(index), 0};
-    fragment.sourceEntityId = SimulationEntityId{
-        ownerLayerId, QStringLiteral("layer.source"), 0, 0};
-    fragment.geometryHandle =
-        QStringLiteral("fracture.shard.%1").arg(index);
-    fragment.transform = fragmentTransform;
-    fragment.linearVelocity = shard.velocity;
-    fragment.angularVelocity = shard.angularVelocity;
-    const FractureShard* sourceShard = nullptr;
-    if (prefractureResult && prefractureResult->valid &&
-        index < prefractureResult->shards.size()) {
-      sourceShard = &prefractureResult->shards[index];
-      fragment.mass = sourceShard->mass;
-    }
-    fragment.opacity = shard.opacity;
-    fragment.age = shard.age;
-    fragment.lifetime = shard.lifetime;
-    fragment.active = shard.active;
-    fragment.debris = shard.debris;
-    LayerFragmentGeometry geometry;
-    geometry.geometryHandle = fragment.geometryHandle;
-    geometry.materialHandle = QStringLiteral("layer.source:%1").arg(ownerLayerId);
-    if (sourceShard && sourceShard->polygon.size() >= 3) {
-      const QVector3D centroid = sourceShard->sourceCentroid;
-      const QRectF bounds = layer->localBounds();
-      const float width = std::max(1.0f, static_cast<float>(bounds.width()));
-      const float height = std::max(1.0f, static_cast<float>(bounds.height()));
-      geometry.localPolygon.reserve(
-          static_cast<std::size_t>(sourceShard->polygon.size()));
-      geometry.localUV.reserve(
-          static_cast<std::size_t>(sourceShard->polygon.size()));
-      for (const QPointF& point : sourceShard->polygon) {
-        geometry.localPolygon.emplace_back(
-            static_cast<float>(point.x()) - centroid.x(),
-            static_cast<float>(point.y()) - centroid.y());
-        geometry.localUV.emplace_back(
-            (static_cast<float>(point.x()) - static_cast<float>(bounds.left())) / width,
-            (static_cast<float>(point.y()) - static_cast<float>(bounds.top())) / height);
-      }
-    } else {
-      const float seed = static_cast<float>(index) * 1.61803398875f;
-      const float skew = std::sin(seed) * 0.22f;
-      const float pinch = 0.16f + std::cos(seed * 0.73f) * 0.07f;
-      geometry.localPolygon = {
-          QVector2D(-4.5f - skew * 10.0f, -10.0f - pinch * 2.5f),
-          QVector2D(3.5f - skew * 8.0f, -9.2f - pinch * 1.5f),
-          QVector2D(0.5f + skew * 1.5f, 0.8f + pinch * 0.8f),
-          QVector2D(5.8f + skew * 11.0f, 9.5f - pinch * 0.5f),
-          QVector2D(-6.2f + skew * 9.0f, 8.2f + pinch * 2.0f)};
-      geometry.localUV.reserve(geometry.localPolygon.size());
-      const QRectF bounds = layer->localBounds();
-      const float width = std::max(1.0f, static_cast<float>(bounds.width()));
-      const float height = std::max(1.0f, static_cast<float>(bounds.height()));
-      for (const QVector2D& point : geometry.localPolygon) {
-        geometry.localUV.emplace_back(
-            std::clamp((shard.position.x() + point.x() -
-                        static_cast<float>(bounds.left())) / width, 0.0f, 1.0f),
-            std::clamp((shard.position.y() + point.y() -
-                        static_cast<float>(bounds.top())) / height, 0.0f, 1.0f));
-      }
-    }
-    fragments.push_back(std::move(fragment));
-    fragmentGeometry.push_back(std::move(geometry));
-  }
-}
+                         LayerEvaluationState& evaluationState);
 
 const LayerEvaluationState& ArtifactAbstractLayer::layerEvaluationState() const {
   return impl_->componentEvaluationState_;
@@ -2833,40 +2103,41 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   if (impl_->fluidComponentEnabled_) {
     const double fps = std::max(1.0, effectiveLayerFrameRate(this));
     if (impl_->fluidMode_ == 1) {
-      impl_->fluidSolver_.reset();
+      impl_->fluidRuntime_.fluidSolver_.reset();
       const auto* liquidComposition =
           dynamic_cast<const ArtifactAbstractComposition*>(compositionObject());
       const uint64_t compositionRevision =
           liquidComposition ? liquidComposition->revision() : 0;
-      if (!impl_->liquidSolver_) {
-        impl_->liquidSolver_ =
+      if (!impl_->fluidRuntime_.liquidSolver_) {
+        impl_->fluidRuntime_.liquidSolver_ =
             std::make_unique<ArtifactCore::LiquidSolver2D>();
-        impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
-        impl_->liquidCheckpoints_.clear();
-        impl_->liquidSpillParticles_.clear();
-        impl_->liquidInflowCarry_ = 0.0;
-        impl_->liquidSurfaceSnapshot_ = {};
-        impl_->liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
-        impl_->liquidCheckpointFps_ = fps;
-        impl_->liquidCheckpointCompositionRevision_ = compositionRevision;
-        impl_->fluidPreviewParticles_.clear();
+        impl_->fluidRuntime_.fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->fluidRuntime_.liquidCheckpoints_.clear();
+        impl_->fluidRuntime_.liquidSpillParticles_.clear();
+        impl_->fluidRuntime_.liquidInflowCarry_ = 0.0;
+        impl_->fluidRuntime_.liquidSurfaceSnapshot_ = {};
+        impl_->fluidRuntime_.liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->fluidRuntime_.liquidCheckpointFps_ = fps;
+        impl_->fluidRuntime_.liquidCheckpointCompositionRevision_ = compositionRevision;
+        impl_->fluidRuntime_.fluidPreviewParticles_.clear();
       }
-      auto& liquid = *impl_->liquidSolver_;
-      std::vector<QPointF> liquidContainerPoints;
+      auto& liquid = *impl_->fluidRuntime_.liquidSolver_;
+      NamedVector<QPointF> liquidContainerPoints{
+          ContainerName{"Layer.LiquidContainerPoints"}};
       std::size_t liquidContainerOpeningEdge = 0;
       const bool hasPolygonLiquidContainer = configureLiquidContainerPolygon(
           this, liquid, impl_->liquidOpeningEdge_, &liquidContainerPoints,
           &liquidContainerOpeningEdge);
-      if (std::abs(impl_->liquidCheckpointFps_ - fps) > 1.0e-6 ||
-          impl_->liquidCheckpointCompositionRevision_ != compositionRevision) {
-        impl_->liquidCheckpoints_.clear();
-        impl_->liquidSpillParticles_.clear();
-        impl_->liquidInflowCarry_ = 0.0;
-        impl_->liquidSurfaceSnapshot_ = {};
-        impl_->liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
-        impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
-        impl_->liquidCheckpointFps_ = fps;
-        impl_->liquidCheckpointCompositionRevision_ = compositionRevision;
+      if (std::abs(impl_->fluidRuntime_.liquidCheckpointFps_ - fps) > 1.0e-6 ||
+          impl_->fluidRuntime_.liquidCheckpointCompositionRevision_ != compositionRevision) {
+        impl_->fluidRuntime_.liquidCheckpoints_.clear();
+        impl_->fluidRuntime_.liquidSpillParticles_.clear();
+        impl_->fluidRuntime_.liquidInflowCarry_ = 0.0;
+        impl_->fluidRuntime_.liquidSurfaceSnapshot_ = {};
+        impl_->fluidRuntime_.liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->fluidRuntime_.fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+        impl_->fluidRuntime_.liquidCheckpointFps_ = fps;
+        impl_->fluidRuntime_.liquidCheckpointCompositionRevision_ = compositionRevision;
       }
       liquid.setViscosity(impl_->fluidViscosity_);
       liquid.setSurfaceTension(impl_->liquidSurfaceTension_);
@@ -2902,24 +2173,47 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         if (checkpointFrame < 0 || checkpointFrame % checkpointInterval != 0) {
           return;
         }
-        impl_->liquidCheckpoints_[checkpointFrame] =
-            {liquid.snapshot(), impl_->liquidSpillParticles_,
-             impl_->liquidInflowCarry_};
-        while (impl_->liquidCheckpoints_.size() > maxCheckpoints) {
-          auto oldest = impl_->liquidCheckpoints_.begin();
-          if (oldest != impl_->liquidCheckpoints_.end() && oldest->first == 0) {
-            ++oldest;
+        LayerFluidRuntimeState::LiquidLayerCheckpoint snapshot{
+            liquid.snapshot(), impl_->fluidRuntime_.liquidSpillParticles_,
+            impl_->fluidRuntime_.liquidInflowCarry_};
+        std::size_t insertionIndex = impl_->fluidRuntime_.liquidCheckpoints_.size();
+        bool replaced = false;
+        for (std::size_t i = 0; i < impl_->fluidRuntime_.liquidCheckpoints_.size(); ++i) {
+          auto& entry = impl_->fluidRuntime_.liquidCheckpoints_[i];
+          if (entry.frame == checkpointFrame) {
+            entry.checkpoint = std::move(snapshot);
+            replaced = true;
+            break;
           }
-          if (oldest == impl_->liquidCheckpoints_.end()) break;
-          impl_->liquidCheckpoints_.erase(oldest);
+          if (entry.frame > checkpointFrame) {
+            insertionIndex = i;
+            break;
+          }
+        }
+        if (replaced) {
+          // The existing checkpoint retains its sorted position.
+        } else if (insertionIndex < impl_->fluidRuntime_.liquidCheckpoints_.size()) {
+          impl_->fluidRuntime_.liquidCheckpoints_.insert(
+              insertionIndex,
+              LayerFluidRuntimeState::LiquidLayerCheckpointEntry{checkpointFrame,
+                                                std::move(snapshot)});
+        } else {
+          impl_->fluidRuntime_.liquidCheckpoints_.add(
+              LayerFluidRuntimeState::LiquidLayerCheckpointEntry{checkpointFrame,
+                                                std::move(snapshot)});
+        }
+        while (impl_->fluidRuntime_.liquidCheckpoints_.size() > maxCheckpoints) {
+          const std::size_t removeIndex =
+              impl_->fluidRuntime_.liquidCheckpoints_[0].frame == 0 ? 1U : 0U;
+          if (!impl_->fluidRuntime_.liquidCheckpoints_.removeAt(removeIndex)) break;
         }
       };
 
       const int64_t targetFrame = std::max<int64_t>(0, frame);
       const bool randomAccess =
-          impl_->fluidLastFrame_ == std::numeric_limits<int64_t>::min() ||
-          targetFrame < impl_->fluidLastFrame_ ||
-          targetFrame - impl_->fluidLastFrame_ > 10;
+          impl_->fluidRuntime_.fluidLastFrame_ == std::numeric_limits<int64_t>::min() ||
+          targetFrame < impl_->fluidRuntime_.fluidLastFrame_ ||
+          targetFrame - impl_->fluidRuntime_.fluidLastFrame_ > 10;
       const float dt = 1.0f / static_cast<float>(fps);
       QRectF liquidSpillCullBounds;
       const QSizeF liquidCompositionSize = compositionSizeHint();
@@ -2933,19 +2227,19 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                 .adjusted(-margin, -margin, margin, margin);
       }
       const auto advanceLiquidFrame = [&](int64_t simulationFrame) {
-        impl_->liquidInflowCarry_ +=
+        impl_->fluidRuntime_.liquidInflowCarry_ +=
             static_cast<double>(impl_->liquidInflowRate_) * dt;
-        const double wholeInflow = std::floor(impl_->liquidInflowCarry_);
+        const double wholeInflow = std::floor(impl_->fluidRuntime_.liquidInflowCarry_);
         const auto requestedInflow = static_cast<std::size_t>(
             std::min(wholeInflow, 4096.0));
-        impl_->liquidInflowCarry_ -= wholeInflow;
+        impl_->fluidRuntime_.liquidInflowCarry_ -= wholeInflow;
         if (requestedInflow > 0) {
           liquid.emitFromOpening(
               requestedInflow, impl_->liquidInflowWidth_,
               impl_->liquidInflowSpeed_, impl_->liquidInflowPosition_);
         }
         const float impactRetention = std::exp(-6.0f * dt);
-        for (auto& spill : impl_->liquidSpillParticles_) {
+        for (auto& spill : impl_->fluidRuntime_.liquidSpillParticles_) {
           spill.collisionImpact *= impactRetention;
           if (!std::isfinite(spill.collisionImpact) ||
               spill.collisionImpact < 0.0f) {
@@ -2953,21 +2247,18 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
           }
         }
         ArtifactCore::LiquidSolver2D::applySpillInteractions(
-            impl_->liquidSpillParticles_, dt,
+            impl_->fluidRuntime_.liquidSpillParticles_, dt,
             impl_->liquidSurfaceTension_, impl_->fluidViscosity_);
-        for (auto& spill : impl_->liquidSpillParticles_) {
+        for (auto& spill : impl_->fluidRuntime_.liquidSpillParticles_) {
           spill.previousX = spill.x;
           spill.previousY = spill.y;
           spill.vy += spill.gravityY * dt;
           spill.x += spill.vx * dt;
           spill.y += spill.vy * dt;
         }
-        impl_->liquidSpillParticles_.erase(
-            std::remove_if(
-                impl_->liquidSpillParticles_.begin(),
-                impl_->liquidSpillParticles_.end(),
-                [&liquidSpillCullBounds](
-                    const Impl::LiquidSpillParticle& spill) {
+        impl_->fluidRuntime_.liquidSpillParticles_.removeIf(
+            [&liquidSpillCullBounds](
+                const LayerFluidRuntimeState::LiquidSpillParticle& spill) {
                   constexpr float worldLimit = 10000000.0f;
                   const bool outsideCullBounds =
                       liquidSpillCullBounds.isValid() &&
@@ -2978,11 +2269,10 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                          std::abs(spill.x) > worldLimit ||
                          std::abs(spill.y) > worldLimit ||
                          outsideCullBounds;
-                }),
-            impl_->liquidSpillParticles_.end());
+                });
         if (liquidComposition) {
           const auto& collisionLayers = liquidComposition->allLayerRef();
-          for (auto& spill : impl_->liquidSpillParticles_) {
+          for (auto& spill : impl_->fluidRuntime_.liquidSpillParticles_) {
             for (const auto& collisionLayer : collisionLayers) {
               if (!collisionLayer || collisionLayer.get() == this) continue;
               if (resolveLiquidPointAgainstCollisionLayer(
@@ -3022,7 +2312,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
             2.0f, velocityScale * impl_->liquidParticleSpacing_ * 1.35f);
         constexpr std::size_t maxSpillParticles = 100000;
         for (const auto& source : escaped) {
-          if (impl_->liquidSpillParticles_.size() >= maxSpillParticles) break;
+          if (impl_->fluidRuntime_.liquidSpillParticles_.size() >= maxSpillParticles) break;
           const QPointF localPosition(
               bounds.left() + source.x * bounds.width(),
               bounds.top() + source.y * bounds.height());
@@ -3031,7 +2321,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
           const QPointF worldPosition = frameTransform.map(localPosition);
           const QPointF worldVelocityPoint = frameTransform.map(localVelocity);
           const QPointF worldVelocity = worldVelocityPoint - mappedOrigin;
-          impl_->liquidSpillParticles_.push_back({
+          impl_->fluidRuntime_.liquidSpillParticles_.push_back({
               static_cast<float>(worldPosition.x()),
               static_cast<float>(worldPosition.y()),
               static_cast<float>(worldPosition.x()),
@@ -3045,39 +2335,45 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       };
       if (randomAccess) {
         int64_t replayFrame = 0;
-        auto checkpoint = impl_->liquidCheckpoints_.upper_bound(targetFrame);
-        if (checkpoint != impl_->liquidCheckpoints_.begin()) {
-          --checkpoint;
-          if (liquid.restore(checkpoint->second.container)) {
-            replayFrame = checkpoint->first;
-            impl_->liquidSpillParticles_ = checkpoint->second.spillParticles;
-            impl_->liquidInflowCarry_ = checkpoint->second.inflowCarry;
+        const LayerFluidRuntimeState::LiquidLayerCheckpointEntry* checkpoint = nullptr;
+        for (const auto& candidate : impl_->fluidRuntime_.liquidCheckpoints_) {
+          if (candidate.frame > targetFrame) break;
+          checkpoint = &candidate;
+        }
+        if (checkpoint) {
+          if (liquid.restore(checkpoint->checkpoint.container)) {
+            replayFrame = checkpoint->frame;
+            impl_->fluidRuntime_.liquidSpillParticles_ =
+                checkpoint->checkpoint.spillParticles;
+            impl_->fluidRuntime_.liquidInflowCarry_ = checkpoint->checkpoint.inflowCarry;
           } else {
-            impl_->liquidCheckpoints_.clear();
-            impl_->liquidSpillParticles_.clear();
-            impl_->liquidInflowCarry_ = 0.0;
+            impl_->fluidRuntime_.liquidCheckpoints_.clear();
+            impl_->fluidRuntime_.liquidSpillParticles_.clear();
+            impl_->fluidRuntime_.liquidInflowCarry_ = 0.0;
           }
         }
-        if (impl_->liquidCheckpoints_.empty()) {
+        if (impl_->fluidRuntime_.liquidCheckpoints_.empty()) {
           liquid.reset(impl_->liquidFillAmount_,
                        impl_->liquidParticleSpacing_);
-          impl_->liquidSpillParticles_.clear();
-          impl_->liquidInflowCarry_ = 0.0;
-          impl_->liquidCheckpoints_[0] = {liquid.snapshot(), {}, 0.0};
+          impl_->fluidRuntime_.liquidSpillParticles_.clear();
+          impl_->fluidRuntime_.liquidInflowCarry_ = 0.0;
+          impl_->fluidRuntime_.liquidCheckpoints_.add(
+              LayerFluidRuntimeState::LiquidLayerCheckpointEntry{
+                  0, {liquid.snapshot(), {}, 0.0}});
           replayFrame = 0;
         }
         for (; replayFrame < targetFrame; ++replayFrame) {
           advanceLiquidFrame(replayFrame + 1);
           storeCheckpoint(replayFrame + 1);
         }
-        impl_->fluidLastFrame_ = targetFrame;
-      } else if (targetFrame > impl_->fluidLastFrame_) {
-        for (int64_t stepFrame = impl_->fluidLastFrame_ + 1;
+        impl_->fluidRuntime_.fluidLastFrame_ = targetFrame;
+      } else if (targetFrame > impl_->fluidRuntime_.fluidLastFrame_) {
+        for (int64_t stepFrame = impl_->fluidRuntime_.fluidLastFrame_ + 1;
              stepFrame <= targetFrame; ++stepFrame) {
           advanceLiquidFrame(stepFrame);
           storeCheckpoint(stepFrame);
         }
-        impl_->fluidLastFrame_ = targetFrame;
+        impl_->fluidRuntime_.fluidLastFrame_ = targetFrame;
       }
 
       auto renderData = makeLiquid2DRenderData(
@@ -3115,8 +2411,8 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       }
       const std::size_t containerParticleCount = renderData.particles.size();
       renderData.particles.reserve(renderData.particles.size() +
-                                   impl_->liquidSpillParticles_.size());
-      for (const auto& spill : impl_->liquidSpillParticles_) {
+                                   impl_->fluidRuntime_.liquidSpillParticles_.size());
+      for (const auto& spill : impl_->fluidRuntime_.liquidSpillParticles_) {
         ArtifactCore::ParticleVertex particle{};
         particle.px = spill.x;
         particle.py = spill.y;
@@ -3140,7 +2436,8 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       if (renderData.particles.size() > maximumLiquidDetailParticles) {
         renderData.particles.resize(maximumLiquidDetailParticles);
       }
-      std::vector<ArtifactCore::LiquidSurfaceSample2D> surfaceSamples;
+      NamedVector<ArtifactCore::LiquidSurfaceSample2D> surfaceSamples{
+          ContainerName{"Layer.LiquidSurfaceSamples"}};
       surfaceSamples.reserve(renderData.particles.size());
       for (std::size_t particleIndex = 0;
            particleIndex < renderData.particles.size(); ++particleIndex) {
@@ -3160,21 +2457,21 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         } else {
           const std::size_t spillIndex =
               particleIndex - containerParticleCount;
-          if (spillIndex < impl_->liquidSpillParticles_.size()) {
+          if (spillIndex < impl_->fluidRuntime_.liquidSpillParticles_.size()) {
             collisionImpact =
-                impl_->liquidSpillParticles_[spillIndex].collisionImpact;
+                impl_->fluidRuntime_.liquidSpillParticles_[spillIndex].collisionImpact;
           }
         }
         surfaceSamples.push_back({particle.px, particle.py, particle.size,
                                   particle.vx, particle.vy, foamBias,
                                   collisionImpact});
       }
-      if (impl_->liquidSurfaceFrame_ != frame) {
-        impl_->liquidSurfaceSnapshot_ =
+      if (impl_->fluidRuntime_.liquidSurfaceFrame_ != frame) {
+        impl_->fluidRuntime_.liquidSurfaceSnapshot_ =
             ArtifactCore::LiquidSolver2D::buildSurfaceSnapshot(surfaceSamples);
-        impl_->liquidSurfaceFrame_ = frame;
+        impl_->fluidRuntime_.liquidSurfaceFrame_ = frame;
       }
-      const auto& surface = impl_->liquidSurfaceSnapshot_;
+      const auto& surface = impl_->fluidRuntime_.liquidSurfaceSnapshot_;
       if (!surface.triangles.empty()) {
         const float layerAlpha = std::clamp(opacityScale, 0.0f, 1.0f);
         const bool drawSurface = impl_->liquidSurfaceOpacity_ > 0.0f;
@@ -3251,9 +2548,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
           const QRectF bounds = localBounds();
           if (bounds.isValid() && bounds.width() > 0.0 &&
               bounds.height() > 0.0) {
-            liquidContainerPoints = {
+            liquidContainerPoints.assign({
                 bounds.topLeft(), bounds.topRight(),
-                bounds.bottomRight(), bounds.bottomLeft()};
+                bounds.bottomRight(), bounds.bottomLeft()});
             liquidContainerOpeningEdge = 0;
           }
         }
@@ -3288,118 +2585,22 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         renderer->drawParticles(renderData);
       }
     } else {
-      if (impl_->liquidSolver_ || !impl_->liquidCheckpoints_.empty()) {
-        impl_->invalidateLiquidSimulation();
+      if (impl_->fluidRuntime_.liquidSolver_ || !impl_->fluidRuntime_.liquidCheckpoints_.empty()) {
+        impl_->fluidRuntime_.invalidateLiquidSimulation();
       }
-      const bool solverMismatch =
-        !impl_->fluidSolver_ ||
-        impl_->fluidSolver_->width() != impl_->fluidGridWidth_ ||
-        impl_->fluidSolver_->height() != impl_->fluidGridHeight_;
-    if (solverMismatch) {
-      impl_->fluidSolver_ = std::make_unique<ArtifactCore::FluidSolver2D>(
-          impl_->fluidGridWidth_, impl_->fluidGridHeight_);
-      impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
-      impl_->fluidPreviewParticles_.clear();
-    }
-    if (impl_->fluidSolver_) {
-      impl_->fluidSolver_->setViscosity(impl_->fluidViscosity_);
-      impl_->fluidSolver_->setDiffusion(impl_->fluidDiffusion_);
-      impl_->fluidSolver_->setBuoyancy(impl_->fluidBuoyancy_);
-      impl_->fluidSolver_->setVorticity(impl_->fluidVorticity_);
-      impl_->fluidSolver_->setSolverIterations(impl_->fluidSolverIterations_);
-
-      if (impl_->fluidLastFrame_ == std::numeric_limits<int64_t>::min() ||
-          frame < impl_->fluidLastFrame_ ||
-          frame - impl_->fluidLastFrame_ > 10) {
-        impl_->fluidSolver_->reset();
-        impl_->fluidLastFrame_ = frame;
-      } else if (frame > impl_->fluidLastFrame_) {
-        const int stepCount =
-            std::min<int64_t>(frame - impl_->fluidLastFrame_, 8);
-        const float dt = 1.0f / static_cast<float>(fps);
-        for (int step = 0; step < stepCount; ++step) {
-          const int centerX = impl_->fluidGridWidth_ / 2;
-          const int centerY = std::max(1, impl_->fluidGridHeight_ - 3);
-          const float phase = static_cast<float>(impl_->fluidLastFrame_ + step) *
-                              0.07f;
-          const float swirlX = std::sin(phase) * 0.85f;
-          const float injectDensity =
-              1.0f + std::max(0, impl_->particleEmitterCount_) / 24.0f;
-          const float injectVelocity =
-              std::max(40.0f, impl_->particleEmitterSpeed_) * 0.02f;
-          impl_->fluidSolver_->addDensity(centerX, centerY, injectDensity);
-          impl_->fluidSolver_->addVelocity(
-              centerX, centerY, swirlX, -injectVelocity);
-          impl_->fluidSolver_->update(dt);
-        }
-        impl_->fluidLastFrame_ = frame;
-      }
-
-      const QRectF bounds = localBounds();
-      impl_->fluidPreviewParticles_.clear();
-      if (bounds.isValid() && bounds.width() > 0.0 && bounds.height() > 0.0) {
-        const int strideX = std::max(1, impl_->fluidGridWidth_ / 28);
-        const int strideY = std::max(1, impl_->fluidGridHeight_ / 28);
-        for (int gy = 0; gy < impl_->fluidGridHeight_; gy += strideY) {
-          for (int gx = 0; gx < impl_->fluidGridWidth_; gx += strideX) {
-            const float density = impl_->fluidSolver_->getDensity(gx, gy);
-            if (density < 0.025f) {
-              continue;
-            }
-            ArtifactCore::ParticleVertex particle{};
-            const float u = static_cast<float>(gx) /
-                            static_cast<float>(std::max(1, impl_->fluidGridWidth_ - 1));
-            const float v = static_cast<float>(gy) /
-                            static_cast<float>(std::max(1, impl_->fluidGridHeight_ - 1));
-            particle.px = static_cast<float>(bounds.left() + u * bounds.width());
-            particle.py =
-                static_cast<float>(bounds.top() + v * bounds.height());
-            particle.pz = 0.0f;
-            float vx = 0.0f;
-            float vy = 0.0f;
-            impl_->fluidSolver_->getVelocity(gx, gy, vx, vy);
-            particle.vx = vx * 24.0f;
-            particle.vy = vy * 24.0f;
-            particle.vz = 0.0f;
-            particle.r = 0.42f;
-            particle.g = 0.72f;
-            particle.b = 1.0f;
-            particle.a = std::clamp(density * 0.45f, 0.04f, 0.65f);
-            particle.size = 2.0f + density * 9.0f;
-            particle.stretch = 1.0f + std::min(std::sqrt(vx * vx + vy * vy), 2.5f);
-            particle.rotation = std::atan2(vy, vx);
-            particle.age = 0.0f;
-            particle.lifetime = 1.0f;
-            impl_->fluidPreviewParticles_.push_back(particle);
-          }
-        }
-      }
-
-      if (!impl_->fluidPreviewParticles_.empty()) {
-        ArtifactCore::ParticleRenderData renderData;
-        renderData.frameNumber = frame;
-        renderData.options.blend =
-            ArtifactCore::ParticleBlendPolicy::Additive;
-        renderData.options.billboard =
-            ArtifactCore::ParticleBillboardPolicy::VelocityAligned;
-        renderData.particles.reserve(impl_->fluidPreviewParticles_.size());
-        for (const auto& sourceParticle : impl_->fluidPreviewParticles_) {
-          auto particle = sourceParticle;
-          const QVector3D mapped = baseTransform.map(
-              QVector3D(particle.px, particle.py, particle.pz));
-          particle.px = mapped.x();
-          particle.py = mapped.y();
-          particle.pz = mapped.z();
-          particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
-          renderData.particles.push_back(particle);
-        }
-        renderer->drawParticles(renderData);
-      }
-    }
+      renderLayerSmokeRuntime(
+          impl_->fluidRuntime_, renderer, localBounds(), baseTransform,
+          opacityScale, frame, fps,
+          LayerSmokeRuntimeSettings{
+              impl_->fluidGridWidth_, impl_->fluidGridHeight_,
+              impl_->fluidViscosity_, impl_->fluidDiffusion_,
+              impl_->fluidBuoyancy_, impl_->fluidVorticity_,
+              impl_->fluidSolverIterations_, impl_->particleEmitterCount_,
+              impl_->particleEmitterSpeed_});
     }
   } else {
-    impl_->fluidSolver_.reset();
-    impl_->invalidateLiquidSimulation();
+    impl_->fluidRuntime_.invalidateSmokeSimulation();
+    impl_->fluidRuntime_.invalidateLiquidSimulation();
   }
 
   if (impl_->particleEmitterComponentEnabled_ &&
@@ -3424,14 +2625,10 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         particle.vy += impl_->physicsComponent_.settings().gravityY * dt;
       }
       impl_->componentParticlesLastFrame_ = frame;
-      impl_->componentParticles_.erase(
-          std::remove_if(
-              impl_->componentParticles_.begin(),
-              impl_->componentParticles_.end(),
-              [](const ArtifactCore::ParticleVertex& particle) {
-                return particle.age >= particle.lifetime;
-              }),
-          impl_->componentParticles_.end());
+      impl_->componentParticles_.removeIf(
+          [](const ArtifactCore::ParticleVertex& particle) {
+            return particle.age >= particle.lifetime;
+          });
     }
 
     ArtifactCore::ParticleRenderData renderData;
@@ -3467,15 +2664,15 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         static_cast<FracturePreset>(std::clamp(
             impl_->fracturePreset_, 0, static_cast<int>(FracturePreset::Dust))));
     prefractureSettings.shardCount = std::max(1, impl_->fractureShardCount_);
-    const auto& physicsLod = ArtifactCore::PhysicsSystem::instance().physicsLODSettings();
+    const auto physicsLod = LayerPhysics::fractureLodScale();
     prefractureSettings.shardCount = std::max(
         1, static_cast<int>(std::lround(
             static_cast<float>(prefractureSettings.shardCount) *
-            std::clamp(physicsLod.fractureShardScale, 0.125f, 1.0f))));
+            std::clamp(physicsLod.shards, 0.125f, 1.0f))));
     prefractureSettings.debrisCount = std::max(
         0, static_cast<int>(std::lround(
             static_cast<float>(prefractureSettings.debrisCount) *
-            std::clamp(physicsLod.fractureDebrisScale, 0.0f, 1.0f))));
+            std::clamp(physicsLod.debris, 0.0f, 1.0f))));
     FractureEffect prefracture;
     prefracture.setSourceBounds(localBounds());
     prefracture.setImpactPoint(localBounds().center());
@@ -3519,14 +2716,14 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   settings.lifetimeMax = 2.5f;
   settings.edgeJitter = 0.12f;
   settings.shardCount = std::max(1, static_cast<int>(impl_->fractureState_.shards.size()));
-  const auto& physicsLod = ArtifactCore::PhysicsSystem::instance().physicsLODSettings();
+  const auto physicsLod = LayerPhysics::fractureLodScale();
   settings.shardCount = std::max(
       1, static_cast<int>(std::lround(
           static_cast<float>(settings.shardCount) *
-          std::clamp(physicsLod.fractureShardScale, 0.125f, 1.0f))));
+          std::clamp(physicsLod.shards, 0.125f, 1.0f))));
   settings.debrisCount = std::max(
       0, static_cast<int>(std::lround(
-          48.0f * std::clamp(physicsLod.fractureDebrisScale, 0.0f, 1.0f))));
+          48.0f * std::clamp(physicsLod.debris, 0.0f, 1.0f))));
   const float dt = needsReset ? 0.0f : (1.0f / std::max(1.0, effectiveLayerFrameRate(this)));
   for (auto& shard : impl_->fractureState_.shards) {
     ArtifactCore::stepFractureShardMotion(shard, dt, settings);
@@ -3832,10 +3029,11 @@ void ArtifactAbstractLayer::enableSoftBodyPhysics() {
   impl_->softBodyPhysicsEnabled_ = true;
   impl_->physicsComponent_.authoring().solverKind =
       PhysicsSolverKind::SoftBody2D;
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
-  if (!physics.getSoftBody(id())) {
-    physics.createSoftBody(id());
-  }
+  LayerPhysics::ensureSoftBody(id());
+  const auto& settings = impl_->physicsComponent_.settings();
+  LayerPhysics::configureSoftBody(
+      id(), 0.0f, settings.gravityY * settings.gravityScale,
+      settings.linearDamping);
   syncSoftBodyPhysicsColliderToBounds();
 }
 
@@ -3849,12 +3047,11 @@ void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, flo
     return;
   }
 
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
   // The grid starts inside its layer bounds.  Registering those same bounds
   // as a collider would expel every particle on the first solve, so leave
   // collision sources to explicitly registered external colliders.
-  physics.clearSoftBodyColliders(id());
-  physics.createSoftBodyGrid(
+  LayerPhysics::clearSoftBodyColliders(id());
+  LayerPhysics::createSoftBodyGrid(
       id(),
       static_cast<float>(bounds.left()),
       static_cast<float>(bounds.top()),
@@ -3864,10 +3061,14 @@ void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, flo
       rows,
       1.0f,
       stiffness,
-      true);
+      false);
   const auto& settings = impl_->physicsComponent_.settings();
-  physics.setSoftBodyWind(id(), settings.windX, settings.windY,
-                          settings.windEnabled ? settings.windStrength : 0.0f);
+  LayerPhysics::configureSoftBody(
+      id(), 0.0f, settings.gravityY * settings.gravityScale,
+      settings.linearDamping);
+  LayerPhysics::setSoftBodyWind(
+      id(), settings.windX, settings.windY,
+      settings.windEnabled ? settings.windStrength : 0.0f);
 }
 
 void ArtifactAbstractLayer::disableSoftBodyPhysics() {
@@ -3877,17 +3078,14 @@ void ArtifactAbstractLayer::disableSoftBodyPhysics() {
     impl_->physicsComponent_.authoring().solverKind =
         PhysicsSolverKind::Disabled;
   }
-  ArtifactCore::PhysicsSystem::instance().unregisterSoftBody(id());
+  LayerPhysics::removeSoftBody(id());
 }
 
 void ArtifactAbstractLayer::enableCloth3DPhysics() {
   impl_->cloth3DPhysicsEnabled_ = true;
   impl_->physicsComponent_.authoring().solverKind =
       PhysicsSolverKind::Cloth3D;
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
-  if (!physics.getCloth3D(id())) {
-    physics.createCloth3D(id());
-  }
+  LayerPhysics::ensureCloth3D(id());
 }
 
 void ArtifactAbstractLayer::enableCloth3DPhysicsGrid(int columns, int rows, float stiffness) {
@@ -3895,13 +3093,12 @@ void ArtifactAbstractLayer::enableCloth3DPhysicsGrid(int columns, int rows, floa
   impl_->physicsComponent_.authoring().solverKind =
       PhysicsSolverKind::Cloth3D;
   const QRectF bounds = localBounds();
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
     enableCloth3DPhysics();
     return;
   }
   // 2D SoftBodyと同様、bounds自体をcollider化しない。外部colliderのみ使う。
-  physics.createCloth3DGrid(
+  LayerPhysics::createCloth3DGrid(
       id(),
       static_cast<float>(bounds.left()),
       static_cast<float>(bounds.top()),
@@ -3914,8 +3111,9 @@ void ArtifactAbstractLayer::enableCloth3DPhysicsGrid(int columns, int rows, floa
       stiffness,
       true);
   const auto& settings = impl_->physicsComponent_.settings();
-  physics.setCloth3DWind(id(), settings.windX, settings.windY, 0.0f,
-                         settings.windEnabled ? settings.windStrength : 0.0f);
+  LayerPhysics::setCloth3DWind(
+      id(), settings.windX, settings.windY, 0.0f,
+      settings.windEnabled ? settings.windStrength : 0.0f);
 }
 
 void ArtifactAbstractLayer::disableCloth3DPhysics() {
@@ -3925,27 +3123,26 @@ void ArtifactAbstractLayer::disableCloth3DPhysics() {
     impl_->physicsComponent_.authoring().solverKind =
         PhysicsSolverKind::Disabled;
   }
-  ArtifactCore::PhysicsSystem::instance().unregisterCloth3D(id());
+  LayerPhysics::removeCloth3D(id());
 }
 
 void ArtifactAbstractLayer::enableRigidBodyPhysics() {
   impl_->physicsComponent_.authoring().solverKind =
       PhysicsSolverKind::RigidBody2D;
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
-  auto world = physics.getRigidWorld(id());
+  auto world = LayerPhysics::rigidWorld(id());
   bool createdWorld = false;
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
       composition) {
     // A layer attached to a composition must never retain a private solver.
-    physics.unregisterRigidWorld(id());
-    world = physics.getCompositionRigidWorld(composition->id());
+    LayerPhysics::removeRigidWorld(id());
+    world = LayerPhysics::compositionRigidWorld(composition->id());
     if (!world) {
-      world = physics.createCompositionRigidWorld(composition->id());
+      world = LayerPhysics::ensureCompositionRigidWorld(composition->id());
       createdWorld = true;
     }
   } else if (!world) {
-    world = physics.createRigidWorld(id());
+    world = LayerPhysics::ensureRigidWorld(id());
     createdWorld = true;
   }
   if (world && createdWorld) {
@@ -3955,11 +3152,10 @@ void ArtifactAbstractLayer::enableRigidBodyPhysics() {
 }
 
 void ArtifactAbstractLayer::disableRigidBodyPhysics() {
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
       composition) {
-    if (auto world = physics.getCompositionRigidWorld(composition->id())) {
+    if (auto world = LayerPhysics::compositionRigidWorld(composition->id())) {
       world->removeLayerJoint(id());
       for (const auto& body : world->getBodies()) {
         if (body && body->ownerLayerId == id()) {
@@ -3968,7 +3164,7 @@ void ArtifactAbstractLayer::disableRigidBodyPhysics() {
       }
     }
   }
-  physics.unregisterRigidWorld(id());
+  LayerPhysics::removeRigidWorld(id());
   impl_->rigidBodyColliderShape_ = -1;
   impl_->rigidBodyColliderRestitution_ = -1.0f;
   clearRigidBodyContactState();
@@ -3983,10 +3179,10 @@ void ArtifactAbstractLayer::enableMaterialPhysics(int preset) {
   impl_->physicsComponent_.authoring().solverKind =
       PhysicsSolverKind::Mpm2D;
   impl_->materialPhysicsPreset_ = std::clamp(preset, 0, 3);
-  ArtifactCore::PhysicsSystem::instance().createMaterialGrid(
+  LayerPhysics::createMaterialGrid(
       id(), static_cast<float>(bounds.left()), static_cast<float>(bounds.top()),
       static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
-      20, 20, static_cast<ArtifactCore::MpmMaterialPreset>(impl_->materialPhysicsPreset_));
+      20, 20, impl_->materialPhysicsPreset_);
 }
 
 void ArtifactAbstractLayer::disableMaterialPhysics() {
@@ -3996,25 +3192,21 @@ void ArtifactAbstractLayer::disableMaterialPhysics() {
     impl_->physicsComponent_.authoring().solverKind =
         PhysicsSolverKind::Disabled;
   }
-  ArtifactCore::PhysicsSystem::instance().unregisterMaterialSolver(id());
+  LayerPhysics::removeMaterialSolver(id());
 }
 
 void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
-  auto solver = physics.getSoftBody(id());
-  if (!solver) {
-    solver = physics.createSoftBody(id());
-  }
+  const auto solver = LayerPhysics::ensureSoftBody(id());
 
   const QRectF bounds = layerCollisionLocalBounds(this);
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
-    physics.clearSoftBodyColliders(id());
+    LayerPhysics::clearSoftBodyColliders(id());
     return;
   }
 
-  const std::vector<QPointF> polygon =
+  const NamedVector<QPointF> polygon =
       layerCollisionPolygonLocalPoints(this);
-  physics.clearSoftBodyColliders(id());
+  LayerPhysics::clearSoftBodyColliders(id());
   ArtifactCore::SoftBodyCollider collider;
   if (polygon.size() >= 3) {
     collider.type = ArtifactCore::SoftBodyCollider::Type::Polygon;
@@ -4033,23 +3225,22 @@ void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
   collider.restitution = std::clamp(
       impl_->physicsComponent_.settings().restitution, 0.0f, 1.0f);
   collider.friction = 0.15f;
-  physics.registerSoftBodyCollider(id(), collider);
+  LayerPhysics::registerSoftBodyCollider(id(), collider);
   Q_UNUSED(solver);
 }
 
 void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
-  auto world = physics.getRigidWorld(id());
+  auto world = LayerPhysics::rigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
       composition) {
-    world = physics.getCompositionRigidWorld(composition->id());
+    world = LayerPhysics::compositionRigidWorld(composition->id());
     if (!world) {
-      world = physics.createCompositionRigidWorld(composition->id());
+      world = LayerPhysics::ensureCompositionRigidWorld(composition->id());
     }
   }
   if (!world) {
-    world = physics.createRigidWorld(id());
+    world = LayerPhysics::ensureRigidWorld(id());
   }
 
   const QRectF bounds = layerCollisionLocalBounds(this);
@@ -4116,10 +3307,17 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
           cx, cy, std::max(w, h) * 0.5f, 1.0f, 0.3f,
           restitution);
     } else if (shape == 3) {
-      const std::vector<QPointF> polygon =
+      const NamedVector<QPointF> polygon =
           layerCollisionPolygonLocalPoints(this);
       if (polygon.size() >= 3) {
-        std::vector<QPointF> hullSource = polygon;
+        // Physics2D still owns its public std::vector polygon input. Keep the
+        // conversion at that solver boundary rather than exposing it through
+        // the layer collision API.
+        std::vector<QPointF> hullSource;
+        hullSource.reserve(polygon.size());
+        for (const QPointF& point : polygon) {
+          hullSource.push_back(point);
+        }
         // Box2D v3 hulls accept at most 8 vertices; downsample longer
         // outlines so smooth shapes keep a representative polygon proxy.
         constexpr int kMaxRigidPolygonVertices = 8;
@@ -4176,8 +3374,7 @@ void ArtifactAbstractLayer::syncKinematicRigidBodyToAuthoredTransform() {
   auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
       impl_->composition_.data());
   if (!composition) return;
-  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-      composition->id());
+  const auto world = LayerPhysics::compositionRigidWorld(composition->id());
   if (!world) return;
   const QTransform authored = getGlobalTransformAt(currentTimelineFrame(this));
   const QPointF center = authored.map(layerCollisionLocalBounds(this).center());
@@ -4203,8 +3400,7 @@ bool ArtifactAbstractLayer::beginRigidBodyMouseDrag(
       impl_->composition_.data());
   if (!composition || !std::isfinite(canvasPosition.x()) ||
       !std::isfinite(canvasPosition.y())) return false;
-  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-      composition->id());
+  const auto world = LayerPhysics::compositionRigidWorld(composition->id());
   if (!world) return false;
   for (const auto& body : world->getBodies()) {
     if (!body || body->cloneIndex != -1 || body->ownerLayerId != id() ||
@@ -4225,8 +3421,7 @@ bool ArtifactAbstractLayer::updateRigidBodyMouseDrag(
       impl_->composition_.data());
   if (!composition || !std::isfinite(canvasPosition.x()) ||
       !std::isfinite(canvasPosition.y())) return false;
-  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-      composition->id());
+  const auto world = LayerPhysics::compositionRigidWorld(composition->id());
   return world && world->updateMouseDrag(id(),
       QVector2D(static_cast<float>(canvasPosition.x()),
                 static_cast<float>(canvasPosition.y())));
@@ -4236,16 +3431,16 @@ void ArtifactAbstractLayer::endRigidBodyMouseDrag() {
   auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
       impl_->composition_.data());
   if (!composition) return;
-  if (const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-          composition->id())) world->endMouseDrag(id());
+  if (const auto world = LayerPhysics::compositionRigidWorld(composition->id())) {
+    world->endMouseDrag(id());
+  }
 }
 
 bool ArtifactAbstractLayer::hasRigidBodyMouseDrag() const {
   auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
       impl_->composition_.data());
   if (!composition) return false;
-  const auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-      composition->id());
+  const auto world = LayerPhysics::compositionRigidWorld(composition->id());
   return world && world->hasMouseDrag(id());
 }
 
@@ -4296,12 +3491,11 @@ bool ArtifactAbstractLayer::isJointBroken() const { return impl_->jointBroken_; 
 void ArtifactAbstractLayer::setJointBroken(bool broken) { impl_->jointBroken_ = broken; }
 
 void ArtifactAbstractLayer::applyRigidBodyPhysicsSettings() {
-  auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+  auto world = LayerPhysics::rigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
       composition) {
-    world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-        composition->id());
+    world = LayerPhysics::compositionRigidWorld(composition->id());
   }
   if (!world) {
     return;
@@ -4319,19 +3513,18 @@ void ArtifactAbstractLayer::applyRigidBodyPhysicsSettings() {
 }
 
 void ArtifactAbstractLayer::applyRigidBodyWorldGravity() {
-  auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id());
+  auto world = LayerPhysics::rigidWorld(id());
   if (auto* composition = dynamic_cast<ArtifactAbstractComposition*>(
           impl_->composition_.data());
       composition) {
-    world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(
-        composition->id());
+    world = LayerPhysics::compositionRigidWorld(composition->id());
   }
   if (world) {
     world->setGravity(0.0f, impl_->physicsComponent_.settings().gravityY);
   }
 }
 
-std::vector<QPointF> ArtifactAbstractLayer::collisionOutlineLocalPoints()
+NamedVector<QPointF> ArtifactAbstractLayer::collisionOutlineLocalPoints()
     const {
   return {};
 }
@@ -4383,114 +3576,17 @@ bool ArtifactAbstractLayer::setCollision2DEditState(
   return true;
 }
 
-QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
-  QMatrix4x4 local = getLocalTransform4x4();
-  auto parent = parentLayer();
-  if (parent) {
-    return combineLayerTransform3D(local, parent->getGlobalTransform4x4());
-  }
-  return local;
-}
-
-QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4At(
-    const RationalTime& time) const {
-  const auto snapshot = transform3D().snapshotAt(time);
-  QMatrix4x4 result;
-  result.setToIdentity();
-  result.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  result.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
-  result.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
-  result.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
-  result.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
-  result.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
-  return result;
-}
-
-QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4At(
-    const RationalTime& time) const {
-  QMatrix4x4 local = getLocalTransform4x4At(time);
-  auto parent = parentLayer();
-  return parent ? combineLayerTransform3D(
-                      local, parent->getGlobalTransform4x4At(time))
-                : local;
-}
-
-std::vector<TwoPointFiveDRenderPass>
+NamedVector<TwoPointFiveDRenderPass>
 ArtifactAbstractLayer::twoPointFiveDRenderPasses(
     const QMatrix4x4 &baseTransform) const {
-  if (is3D() || !impl_->twoPointFiveDEnabled_) {
-    return {{baseTransform, 1.0f}};
-  }
-
-  const float cameraDistance = std::max(1.0f, impl_->twoPointFiveDCameraDistance_);
-  const float depth = std::clamp(impl_->twoPointFiveDDepth_,
-                                 -cameraDistance * 0.95f,
-                                 cameraDistance * 0.95f);
-  const float perspectiveScale =
-      cameraDistance / std::max(1.0f, cameraDistance - depth);
-  const QPointF center = localBounds().center();
-  QMatrix4x4 projected = baseTransform;
-  projected.translate(static_cast<float>(center.x()), static_cast<float>(center.y()), 0.0f);
-  projected.scale(perspectiveScale, perspectiveScale, 1.0f);
-  projected.translate(static_cast<float>(-center.x()), static_cast<float>(-center.y()), depth);
-
-  const int motionSamples = impl_->twoPointFiveDMotionBlurEnabled_ &&
-          impl_->twoPointFiveDMotionBlurShutterAngle_ > 0.0f
-      ? impl_->twoPointFiveDMotionBlurSamples_ : 1;
-  QPointF previousDelta;
-  if (motionSamples > 1 && currentFrame() > 0) {
-    previousDelta = getGlobalTransformAt(currentFrame() - 1).map(center) -
-                    getGlobalTransformAt(currentFrame()).map(center);
-    previousDelta *= std::clamp(
-        impl_->twoPointFiveDMotionBlurShutterAngle_ / 360.0f, 0.0f, 2.0f);
-  }
-
-  const float focusBlur = impl_->twoPointFiveDDepthOfFieldEnabled_
-      ? std::min(impl_->twoPointFiveDMaxBlur_,
-                 std::abs(depth - impl_->twoPointFiveDFocusDepth_) /
-                     std::max(1.0f, impl_->twoPointFiveDFocusRange_) *
-                     impl_->twoPointFiveDMaxBlur_)
-      : 0.0f;
-  const std::array<QPointF, 5> blurOffsets = {
-      QPointF(0.0, 0.0), QPointF(focusBlur, 0.0), QPointF(-focusBlur, 0.0),
-      QPointF(0.0, focusBlur), QPointF(0.0, -focusBlur)};
-  const int blurSamples = focusBlur > 0.1f ? static_cast<int>(blurOffsets.size()) : 1;
-
-  std::vector<TwoPointFiveDRenderPass> passes;
-  passes.reserve(static_cast<std::size_t>(motionSamples * blurSamples));
-  const float passOpacity = 1.0f / static_cast<float>(motionSamples * blurSamples);
-  for (int motionIndex = 0; motionIndex < motionSamples; ++motionIndex) {
-    const float motionT = motionSamples > 1
-        ? static_cast<float>(motionIndex) / static_cast<float>(motionSamples - 1)
-        : 1.0f;
-    for (int blurIndex = 0; blurIndex < blurSamples; ++blurIndex) {
-      const QPointF offset = previousDelta * (1.0f - motionT) + blurOffsets[blurIndex];
-      QMatrix4x4 screenOffset;
-      screenOffset.translate(static_cast<float>(offset.x()), static_cast<float>(offset.y()), 0.0f);
-      passes.push_back({screenOffset * projected, passOpacity});
-    }
-  }
-  return passes;
-}
-
-float4x4 ArtifactAbstractLayer::getLocalTransformMatrix() const {
-  // Transitional boundary: preserve the established layer evaluation
-  // (physics, modifiers and animated property overrides), then leave Qt math
-  // before entering render/gizmo code.
-  const QMatrix4x4 source = getLocalTransform4x4();
-  return float4x4{
-      source(0, 0), source(0, 1), source(0, 2), source(0, 3),
-      source(1, 0), source(1, 1), source(1, 2), source(1, 3),
-      source(2, 0), source(2, 1), source(2, 2), source(2, 3),
-      source(3, 0), source(3, 1), source(3, 2), source(3, 3)};
-}
-
-float4x4 ArtifactAbstractLayer::getGlobalTransformMatrix() const {
-  const float4x4 local = getLocalTransformMatrix();
-  if (const auto parent = parentLayer()) {
-    return parent->getGlobalTransformMatrix() * local;
-  }
-  return local;
+  return buildTwoPointFiveDRenderPasses(
+      this, baseTransform, impl_->twoPointFiveDEnabled_,
+      impl_->twoPointFiveDDepth_, impl_->twoPointFiveDCameraDistance_,
+      impl_->twoPointFiveDDepthOfFieldEnabled_, impl_->twoPointFiveDFocusDepth_,
+      impl_->twoPointFiveDFocusRange_, impl_->twoPointFiveDMaxBlur_,
+      impl_->twoPointFiveDMotionBlurEnabled_,
+      impl_->twoPointFiveDMotionBlurShutterAngle_,
+      impl_->twoPointFiveDMotionBlurSamples_);
 }
 
 bool ArtifactAbstractLayer::isAdjustmentLayer() const {
@@ -4579,10 +3675,6 @@ bool ArtifactAbstractLayer::hasParent() const {
   return !impl_->parentLayerId_.isNil();
 }
 
-bool ArtifactAbstractLayer::isGroupLayer() const {
-  return false;
-}
-
 bool ArtifactAbstractLayer::is3D() const { return impl_->is3D_; }
 
 void ArtifactAbstractLayer::setIs3D(bool value) {
@@ -4593,424 +3685,170 @@ void ArtifactAbstractLayer::setIs3D(bool value) {
                         LayerDirtyReason::PropertyChanged);
 }
 
-void ArtifactAbstractLayer::setTimeRemapEnabled(bool enabled) {
-    if (!impl_->timeRemapEffect_) {
-        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+QString ArtifactAbstractLayer::projectionSourceLayerId() const {
+  return impl_->projectionSourceLayerId_;
+}
+
+void ArtifactAbstractLayer::setProjectionSourceLayerId(const QString &layerId) {
+    const QString trimmed = layerId.trimmed().left(1024);
+    if (!assignIfChanged(impl_->projectionSourceLayerId_, trimmed)) {
+      return;
     }
-    impl_->timeRemapEffect_->setEnabled(enabled);
-    impl_->timeRemapEffect_->setHasAudio(hasAudio());
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+    notifyLayerMutation(this, LayerDirtyFlag::Property,
+                        LayerDirtyReason::PropertyChanged);
+}
+
+bool ArtifactAbstractLayer::projectionEnabled() const {
+  return impl_->projectionEnabled_;
+}
+
+void ArtifactAbstractLayer::setProjectionEnabled(bool enabled) {
+    if (!assignIfChanged(impl_->projectionEnabled_, enabled)) {
+      return;
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Property,
+                        LayerDirtyReason::PropertyChanged);
+}
+
+void ArtifactAbstractLayer::setTimeRemapEnabled(bool enabled) {
+  if (!impl_->timeRemapEffect_) impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+  impl_->timeRemapEffect_->setEnabled(enabled);
+  impl_->timeRemapEffect_->setHasAudio(hasAudio());
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
 void ArtifactAbstractLayer::clearTimeRemap() {
-    if (!impl_->timeRemapEffect_) {
-        return;
-    }
-    impl_->timeRemapEffect_.reset();
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+  if (!impl_->timeRemapEffect_) return;
+  impl_->timeRemapEffect_.reset();
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
-void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
-                                            double sourceFrame) {
-    setTimeRemapKey(compFrame, sourceFrame,
-                    ArtifactCore::TimeRemapKeyframe::Interpolation::Linear);
+void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame, double sourceFrame) {
+  setTimeRemapKey(compFrame, sourceFrame,
+                  ArtifactCore::TimeRemapKeyframe::Interpolation::Linear);
 }
 
 void ArtifactAbstractLayer::setTimeRemapKey(
-    int64_t compFrame,
-    double sourceFrame,
+    int64_t compFrame, double sourceFrame,
     ArtifactCore::TimeRemapKeyframe::Interpolation interpolation) {
-    if (!impl_->timeRemapEffect_) {
-        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
-    }
-
-    double fps = 30.0;
-    if (impl_->composition_) {
-        auto *composition = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
-        fps = composition->frameRate().framerate();
-        if (fps <= 0.0) {
-            fps = 30.0;
-        }
-    }
-
-    const double outputTime = static_cast<double>(compFrame) / fps;
-    const double sourceTime = sourceFrame / fps;
-
-    ArtifactCore::TimeRemapKeyframe kf;
-    kf.outputTime = outputTime;
-    kf.sourceTime = sourceTime;
-    kf.interpolation = interpolation;
-
-    impl_->timeRemapEffect_->remap().addKeyframe(kf);
-    impl_->timeRemapEffect_->remap().setFrameRate(ArtifactCore::FrameRate(fps));
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+  if (!impl_->timeRemapEffect_) impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+  double fps = 30.0;
+  if (impl_->composition_) {
+    auto* composition = dynamic_cast<ArtifactAbstractComposition*>(impl_->composition_.data());
+    fps = composition->frameRate().framerate();
+    if (fps <= 0.0) fps = 30.0;
+  }
+  ArtifactCore::TimeRemapKeyframe keyframe;
+  keyframe.outputTime = static_cast<double>(compFrame) / fps;
+  keyframe.sourceTime = sourceFrame / fps;
+  keyframe.interpolation = interpolation;
+  impl_->timeRemapEffect_->remap().addKeyframe(keyframe);
+  impl_->timeRemapEffect_->remap().setFrameRate(ArtifactCore::FrameRate(fps));
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
-const QVector<ArtifactCore::TimeRemapKeyframe>&
-ArtifactAbstractLayer::timeRemapKeys() const {
-    static const QVector<ArtifactCore::TimeRemapKeyframe> kEmpty;
-    return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().keyframes()
-                                   : kEmpty;
+const QVector<ArtifactCore::TimeRemapKeyframe>& ArtifactAbstractLayer::timeRemapKeys() const {
+  static const QVector<ArtifactCore::TimeRemapKeyframe> empty;
+  return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().keyframes() : empty;
 }
 
 void ArtifactAbstractLayer::setTimeRemapKeys(
     const QVector<ArtifactCore::TimeRemapKeyframe>& keys) {
-    if (!impl_->timeRemapEffect_) {
-        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
-    }
-    impl_->timeRemapEffect_->remap().setKeyframes(keys);
-    impl_->timeRemapEffect_->setEnabled(true);
-    impl_->timeRemapEffect_->setHasAudio(hasAudio());
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+  if (!impl_->timeRemapEffect_) impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+  impl_->timeRemapEffect_->remap().setKeyframes(keys);
+  impl_->timeRemapEffect_->setEnabled(true);
+  impl_->timeRemapEffect_->setHasAudio(hasAudio());
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
-void ArtifactAbstractLayer::setTimeRemapFrameBlend(
-    ArtifactCore::FrameBlendMode mode, float amount) {
-    if (!impl_->timeRemapEffect_) {
-        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
-    }
-    impl_->timeRemapEffect_->remap().setFrameBlendMode(mode);
-    impl_->timeRemapEffect_->remap().setFrameBlendAmount(amount);
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+void ArtifactAbstractLayer::setTimeRemapFrameBlend(ArtifactCore::FrameBlendMode mode, float amount) {
+  if (!impl_->timeRemapEffect_) impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+  impl_->timeRemapEffect_->remap().setFrameBlendMode(mode);
+  impl_->timeRemapEffect_->remap().setFrameBlendAmount(amount);
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
 ArtifactCore::FrameBlendMode ArtifactAbstractLayer::timeRemapFrameBlendMode() const {
-    return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().frameBlendMode()
-                                   : ArtifactCore::FrameBlendMode::None;
+  return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().frameBlendMode()
+                                 : ArtifactCore::FrameBlendMode::None;
 }
 
 float ArtifactAbstractLayer::timeRemapFrameBlendAmount() const {
-    return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().frameBlendAmount()
-                                   : 0.0f;
+  return impl_->timeRemapEffect_ ? impl_->timeRemapEffect_->remap().frameBlendAmount() : 0.0f;
 }
 
-bool ArtifactAbstractLayer::isStopMotionSamplingEnabled() const {
-    return impl_->stopMotionSamplingEnabled_;
-}
+bool ArtifactAbstractLayer::isStopMotionSamplingEnabled() const { return impl_->stopMotionSamplingEnabled_; }
 
 void ArtifactAbstractLayer::setStopMotionSamplingEnabled(bool enabled) {
-    if (!assignIfChanged(impl_->stopMotionSamplingEnabled_, enabled)) {
-        return;
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+  if (!assignIfChanged(impl_->stopMotionSamplingEnabled_, enabled)) return;
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
-double ArtifactAbstractLayer::stopMotionSamplingFrameRate() const {
-    return impl_->stopMotionSamplingFrameRate_;
-}
+double ArtifactAbstractLayer::stopMotionSamplingFrameRate() const { return impl_->stopMotionSamplingFrameRate_; }
 
 void ArtifactAbstractLayer::setStopMotionSamplingFrameRate(double frameRate) {
-    const double clamped = std::clamp(frameRate, 1.0, 240.0);
-    if (!assignIfChanged(impl_->stopMotionSamplingFrameRate_, clamped)) {
-        return;
-    }
-    notifyLayerMutation(this, LayerDirtyFlag::All,
-                        LayerDirtyReason::TimelineChanged);
+  const double clamped = std::clamp(frameRate, 1.0, 240.0);
+  if (!assignIfChanged(impl_->stopMotionSamplingFrameRate_, clamped)) return;
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
 }
 
 bool ArtifactAbstractLayer::hasSourceTimeMapping() const {
-    return isTimeRemapEnabled() || isStopMotionSamplingEnabled();
+  return isTimeRemapEnabled() || isStopMotionSamplingEnabled();
 }
 
 bool ArtifactAbstractLayer::isTimeRemapEnabled() const {
-    return impl_->timeRemapEffect_ && impl_->timeRemapEffect_->isEnabled();
+  return impl_->timeRemapEffect_ && impl_->timeRemapEffect_->isEnabled();
 }
 
 double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const {
-    if (!hasSourceTimeMapping()) {
-        return static_cast<double>(compFrame);
-    }
-
-    double fps = 30.0;
-    if (impl_->composition_) {
-        auto *composition = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
-        fps = composition->frameRate().framerate();
-        if (fps <= 0.0) {
-            fps = 30.0;
-        }
-    }
-
-    double sourceFrame = static_cast<double>(compFrame - inPoint().framePosition() +
-                                             startTime().framePosition());
-    if (isTimeRemapEnabled()) {
-        const double outputTime = static_cast<double>(compFrame) / fps;
-        float blendFwd = 0.0f, blendBwd = 0.0f;
-        sourceFrame = impl_->timeRemapEffect_->processFrame(outputTime, blendFwd, blendBwd);
-    }
-    if (!isStopMotionSamplingEnabled()) {
-        return sourceFrame;
-    }
-
-    // Quantize source time, rather than the post-effect image. This makes
-    // held frames deterministic and identical for preview, cache, and render.
-    const double heldRate = std::clamp(impl_->stopMotionSamplingFrameRate_, 1.0, 240.0);
-    return std::floor(sourceFrame * heldRate / fps) * fps / heldRate;
+  if (!hasSourceTimeMapping()) return static_cast<double>(compFrame);
+  double fps = 30.0;
+  if (impl_->composition_) {
+    auto* composition = dynamic_cast<ArtifactAbstractComposition*>(impl_->composition_.data());
+    fps = composition->frameRate().framerate();
+    if (fps <= 0.0) fps = 30.0;
+  }
+  double sourceFrame = static_cast<double>(compFrame - inPoint().framePosition() + startTime().framePosition());
+  if (isTimeRemapEnabled()) {
+    const double outputTime = static_cast<double>(compFrame) / fps;
+    float blendFwd = 0.0f, blendBwd = 0.0f;
+    sourceFrame = impl_->timeRemapEffect_->processFrame(outputTime, blendFwd, blendBwd);
+  }
+  if (!isStopMotionSamplingEnabled()) return sourceFrame;
+  const double heldRate = std::clamp(impl_->stopMotionSamplingFrameRate_, 1.0, 240.0);
+  return std::floor(sourceFrame * heldRate / fps) * fps / heldRate;
 }
-
-bool ArtifactAbstractLayer::isNullLayer() const { return false; }
-
-bool ArtifactAbstractLayer::isConstructionLayer() const { return false; }
-
-bool ArtifactAbstractLayer::isCompositionBackgroundLayer() const { return false; }
-
-bool ArtifactAbstractLayer::shouldIncludeInFinalRender() const { return true; }
-
-bool ArtifactAbstractLayer::isCloneLayer() const { return false; }
-
-bool ArtifactAbstractLayer::hasAudio() const { return false; }
-
-bool ArtifactAbstractLayer::hasVideo() const { return false; }
 
 Size_2D ArtifactAbstractLayer::sourceSize() const { return impl_->sourceSize_; }
 
-void ArtifactAbstractLayer::setSourceSize(const Size_2D &size) {
+void ArtifactAbstractLayer::setSourceSize(const Size_2D& size) {
   impl_->sourceSize_ = size;
 }
 
 Size_2D ArtifactAbstractLayer::aabb() const {
   const auto bounds = transformedBoundingBox();
-  if (bounds.width() <= 0 || bounds.height() <= 0) {
-    return Size_2D();
-  }
+  if (bounds.width() <= 0 || bounds.height() <= 0) return Size_2D();
   Size_2D result;
   result.width = static_cast<int>(std::ceil(bounds.width()));
   result.height = static_cast<int>(std::ceil(bounds.height()));
   return result;
 }
 
-QRectF LayerBounds::boundsFor(LayerBoundsKind kind) const {
-  switch (kind) {
-    case LayerBoundsKind::Source:
-      return sourceBounds;
-    case LayerBoundsKind::Visible:
-      return visibleBounds;
-    case LayerBoundsKind::Effect:
-      return effectBounds;
-    case LayerBoundsKind::Mask:
-      return maskBounds;
-    case LayerBoundsKind::Layout:
-      return layoutBounds;
-  }
-  return layoutBounds;
-}
-
-LayerBounds ArtifactAbstractLayer::contentBounds() const {
-  const QRectF source = localBounds();
-  const QRectF visible = transformedBoundingBox();
-  LayerBounds bounds;
-  bounds.sourceBounds = source;
-  bounds.visibleBounds = visible;
-  // Effects may read pixels outside the transformed layer rectangle. Apply
-  // their shared ROI contract in stack order so bounds users (damage tracking,
-  // cache invalidation and a future tiled renderer) get the same expansion.
-  RenderROI effectROI(visible);
-  for (const auto& effect : getEffects()) {
-    if (!effect || !effect->isEnabled()) {
-      continue;
-    }
-    const EffectROIHint hint = effect->roiHint();
-    if (hint.requiresFullFrame) {
-      // A layer cannot determine the composition canvas here. Preserve its
-      // visible rectangle; the composition host promotes this to full-frame.
-      continue;
-    }
-    effectROI = effect->expandedROI(effectROI);
-  }
-  bounds.effectBounds = effectROI.rect;
-  bounds.maskBounds = visible;
-  bounds.layoutBounds = source.isValid() ? source : visible;
-  return bounds;
-}
-
-QJsonObject GuideDefinition::toJson() const {
-  QJsonObject obj;
-  obj.insert(QStringLiteral("guideId"), guideId);
-  obj.insert(QStringLiteral("name"), name);
-  obj.insert(QStringLiteral("purpose"), purpose);
-  obj.insert(QStringLiteral("orientation"), static_cast<int>(orientation));
-  obj.insert(QStringLiteral("position"), position);
-  obj.insert(QStringLiteral("start"), start);
-  obj.insert(QStringLiteral("end"), end);
-  obj.insert(QStringLiteral("enabled"), enabled);
-  obj.insert(QStringLiteral("priority"), static_cast<int>(priority));
-  obj.insert(QStringLiteral("semanticTag"), static_cast<int>(semanticTag));
-  return obj;
-}
-
-GuideDefinition GuideDefinition::fromJson(const QJsonObject &obj) {
-  GuideDefinition guide;
-  guide.guideId = obj.value(QStringLiteral("guideId")).toString();
-  guide.name = obj.value(QStringLiteral("name")).toString();
-  guide.purpose = obj.value(QStringLiteral("purpose")).toString();
-  guide.orientation = static_cast<GuideOrientation>(
-      obj.value(QStringLiteral("orientation")).toInt(static_cast<int>(GuideOrientation::Horizontal)));
-  guide.position = obj.value(QStringLiteral("position")).toDouble(0.0);
-  guide.start = obj.value(QStringLiteral("start")).toDouble(0.0);
-  guide.end = obj.value(QStringLiteral("end")).toDouble(0.0);
-  guide.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
-  guide.priority = static_cast<GuidePriority>(
-      obj.value(QStringLiteral("priority")).toInt(static_cast<int>(GuidePriority::Normal)));
-  guide.semanticTag = static_cast<GuideSemanticTag>(
-      obj.value(QStringLiteral("semanticTag")).toInt(static_cast<int>(GuideSemanticTag::Custom)));
-  return guide;
-}
-
-QJsonObject GuideBinding::toJson() const {
-  QJsonObject obj;
-  obj.insert(QStringLiteral("guideId"), guideId);
-  obj.insert(QStringLiteral("role"), role);
-  obj.insert(QStringLiteral("offset"), offset);
-  obj.insert(QStringLiteral("follow"), follow);
-  obj.insert(QStringLiteral("enabled"), enabled);
-  obj.insert(QStringLiteral("priority"), static_cast<int>(priority));
-  return obj;
-}
-
-GuideBinding GuideBinding::fromJson(const QJsonObject &obj) {
-  GuideBinding binding;
-  binding.guideId = obj.value(QStringLiteral("guideId")).toString();
-  binding.role = obj.value(QStringLiteral("role")).toString();
-  binding.offset = obj.value(QStringLiteral("offset")).toDouble(0.0);
-  binding.follow = obj.value(QStringLiteral("follow")).toBool(false);
-  binding.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
-  binding.priority = static_cast<GuidePriority>(
-      obj.value(QStringLiteral("priority")).toInt(static_cast<int>(GuidePriority::Normal)));
-  return binding;
-}
-
-QJsonObject GuideSet::toJson() const {
-  QJsonObject obj;
-  obj.insert(QStringLiteral("ownerId"), ownerId);
-  QJsonArray guideArray;
-  for (const auto &guide : guides) {
-    guideArray.append(guide.toJson());
-  }
-  obj.insert(QStringLiteral("guides"), guideArray);
-  QJsonArray bindingArray;
-  for (const auto &binding : bindings) {
-    bindingArray.append(binding.toJson());
-  }
-  obj.insert(QStringLiteral("bindings"), bindingArray);
-  return obj;
-}
-
-GuideSet GuideSet::fromJson(const QJsonObject &obj) {
-  GuideSet set;
-  set.ownerId = obj.value(QStringLiteral("ownerId")).toString();
-  for (const auto &value : obj.value(QStringLiteral("guides")).toArray()) {
-    set.guides.append(GuideDefinition::fromJson(value.toObject()));
-  }
-  for (const auto &value : obj.value(QStringLiteral("bindings")).toArray()) {
-    set.bindings.append(GuideBinding::fromJson(value.toObject()));
-  }
-  return set;
-}
-
-QVector<GuideDefinition> GuideSet::guidesForSemanticTag(GuideSemanticTag tag) const {
-  QVector<GuideDefinition> result;
-  for (const auto& g : guides) {
-    if (g.semanticTag == tag) {
-      result.append(g);
-    }
-  }
-  return result;
-}
-
-QVector<GuideDefinition> GuideSet::enabledGuides() const {
-  QVector<GuideDefinition> result;
-  for (const auto& g : guides) {
-    if (g.enabled) {
-      result.append(g);
-    }
-  }
-  return result;
-}
-
-QVector<GuideBinding> GuideSet::enabledBindings() const {
-  QVector<GuideBinding> result;
-  for (const auto& b : bindings) {
-    if (b.enabled) {
-      result.append(b);
-    }
-  }
-  return result;
-}
-
-GuideDefinition* GuideSet::guideById(const QString& guideId) {
-  for (auto& g : guides) {
-    if (g.guideId == guideId) {
-      return &g;
-    }
-  }
-  return nullptr;
-}
-
-void GuideSet::sortByPriority() {
-  std::sort(guides.begin(), guides.end(), [](const GuideDefinition& a, const GuideDefinition& b) {
-    return static_cast<int>(a.priority) > static_cast<int>(b.priority);
-  });
-  std::sort(bindings.begin(), bindings.end(), [](const GuideBinding& a, const GuideBinding& b) {
-    return static_cast<int>(a.priority) > static_cast<int>(b.priority);
-  });
-}
-
-QRectF ArtifactAbstractLayer::contentBounds(LayerBoundsKind kind) const {
-  return contentBounds().boundsFor(kind);
-}
-
-QRectF ArtifactAbstractLayer::sourceBounds() const {
-  return contentBounds(LayerBoundsKind::Source);
-}
-
-QRectF ArtifactAbstractLayer::visibleBounds() const {
-  return contentBounds(LayerBoundsKind::Visible);
-}
-
-QString ArtifactAbstractLayer::contentBoundsSummary() const {
-  const LayerBounds bounds = contentBounds();
-  const auto rectString = [](const QRectF &rect) {
-    return rect.isValid()
-               ? QStringLiteral("%1,%2 %3x%4")
-                     .arg(rect.x(), 0, 'f', 1)
-                     .arg(rect.y(), 0, 'f', 1)
-                     .arg(rect.width(), 0, 'f', 1)
-                     .arg(rect.height(), 0, 'f', 1)
-               : QStringLiteral("invalid");
-  };
-
-  return QStringLiteral("source=%1 visible=%2 effect=%3 mask=%4 layout=%5")
-      .arg(rectString(bounds.sourceBounds),
-           rectString(bounds.visibleBounds),
-           rectString(bounds.effectBounds),
-           rectString(bounds.maskBounds),
-           rectString(bounds.layoutBounds));
-}
-
-QRectF ArtifactAbstractLayer::effectBounds() const {
-  return contentBounds(LayerBoundsKind::Effect);
-}
-
-QRectF ArtifactAbstractLayer::maskBounds() const {
-  return contentBounds(LayerBoundsKind::Mask);
-}
-
-QRectF ArtifactAbstractLayer::layoutBounds() const {
-  return contentBounds(LayerBoundsKind::Layout);
-}
-
 QRectF ArtifactAbstractLayer::localBounds() const {
   const auto size = sourceSize();
-  if (size.width <= 0 || size.height <= 0) {
-    return QRectF();
-  }
+  if (size.width <= 0 || size.height <= 0) return QRectF();
   return QRectF(0.0, 0.0, static_cast<qreal>(size.width),
                 static_cast<qreal>(size.height));
+}
+
+bool ArtifactAbstractLayer::getAudio(AudioSegment& outSegment,
+                                     const FramePosition& start,
+                                     int frameCount, int sampleRate) {
+  Q_UNUSED(outSegment);
+  Q_UNUSED(start);
+  Q_UNUSED(frameCount);
+  Q_UNUSED(sampleRate);
+  return false;
 }
 
 QRectF ArtifactAbstractLayer::visualLocalBounds() const {
@@ -5140,46 +3978,24 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
   return visualBounds;
 }
 
-bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment,
-                                     const FramePosition &start, int frameCount,
-                                     int sampleRate) {
-  // Default implementation: no audio
-  Q_UNUSED(outSegment);
-  Q_UNUSED(start);
-  Q_UNUSED(frameCount);
-  Q_UNUSED(sampleRate);
-  return false;
-}
-
 QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
   auto parent = parentLayer();
   const LayerID parentId = impl_->parentLayerId_;
   const quint64 parentRevision = parent ? parent->impl_->geometryRevision_ : 0;
   const int64_t frame = impl_->currentFrame_;
   const auto layoutEnabledProperty = parent
-                                         ? parent->getProperty(
-                                               QStringLiteral("component.layout.enabled"))
-                                         : nullptr;
-  const auto participationProperty = getProperty(
-      QStringLiteral("component.layout.mode"));
+      ? parent->getProperty(QStringLiteral("component.layout.enabled")) : nullptr;
+  const auto participationProperty = getProperty(QStringLiteral("component.layout.mode"));
   const bool layoutManaged = layoutEnabledProperty &&
-                             layoutEnabledProperty->getValue().toBool() &&
-                             (!participationProperty ||
-                              participationProperty->getValue().toInt() != 2);
-  if (!layoutManaged &&
-      impl_->cachedBoundingBoxRevision_ == impl_->geometryRevision_ &&
+      layoutEnabledProperty->getValue().toBool() &&
+      (!participationProperty || participationProperty->getValue().toInt() != 2);
+  if (!layoutManaged && impl_->cachedBoundingBoxRevision_ == impl_->geometryRevision_ &&
       impl_->cachedBoundingBoxParentRevision_ == parentRevision &&
       impl_->cachedBoundingBoxFrame_ == frame &&
-      impl_->cachedBoundingBoxParentId_ == parentId) {
-    return impl_->cachedBoundingBox_;
-  }
+      impl_->cachedBoundingBoxParentId_ == parentId) return impl_->cachedBoundingBox_;
   const QRectF localRect = localBounds();
-  if (!localRect.isValid() || localRect.width() <= 0.0 ||
-      localRect.height() <= 0.0) {
-    impl_->cachedBoundingBox_ = QRectF();
-  } else {
-    impl_->cachedBoundingBox_ = getGlobalTransform().mapRect(visualLocalBounds());
-  }
+  impl_->cachedBoundingBox_ = (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0)
+      ? QRectF() : getGlobalTransform().mapRect(visualLocalBounds());
   impl_->cachedBoundingBoxRevision_ = impl_->geometryRevision_;
   impl_->cachedBoundingBoxParentRevision_ = parentRevision;
   impl_->cachedBoundingBoxFrame_ = frame;
@@ -5291,7 +4107,8 @@ void ArtifactAbstractLayer::bakeAnimationLayersOverRange(int64_t startFrame,
     if (stack.layerCount() == 0) return;
     ArtifactCore::AnimationLayerState state;
     state.blendMode = ArtifactCore::AnimationLayerBlendMode::Override;
-    std::vector<std::pair<FramePosition, float>> samples;
+    NamedVector<std::pair<FramePosition, float>> samples{
+        ContainerName{"Layer.AnimationBakeSamples"}};
     samples.reserve(static_cast<std::size_t>((endFrame - startFrame) / step + 1));
     for (int64_t frameNumber = startFrame; frameNumber <= endFrame;
          frameNumber += step) {
@@ -5302,7 +4119,7 @@ void ArtifactAbstractLayer::bakeAnimationLayersOverRange(int64_t startFrame,
     stack.clear();
     const std::size_t layerIndex = stack.addLayer(state);
     auto& values = stack.layer(layerIndex).values;
-    values.setCurrent(samples.front().second);
+    values.setCurrent(samples.front()->second);
     for (const auto& sample : samples) {
       values.addKeyFrame(sample.first, sample.second);
     }
@@ -5382,6 +4199,10 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   twoPointFiveD["motionBlurShutterAngle"] = impl_->twoPointFiveDMotionBlurShutterAngle_;
   twoPointFiveD["motionBlurSamples"] = impl_->twoPointFiveDMotionBlurSamples_;
   obj["twoPointFiveD"] = twoPointFiveD;
+  QJsonObject projection;
+  projection["enabled"] = impl_->projectionEnabled_;
+  projection["sourceLayerId"] = impl_->projectionSourceLayerId_;
+  obj["projection"] = projection;
   obj["blendMode"] = static_cast<int>(layerBlendType());
   obj["isLocked"] = impl_->isLocked_;
   obj["isSelectionLocked"] = impl_->isSelectionLocked_;
@@ -5437,63 +4258,12 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
 
   // Mattes
   QJsonArray mattesArr;
-  for (const auto &matte : impl_->mattes_) {
+  for (const auto &matte : impl_->maskMatteState_.mattes()) {
     mattesArr.append(QJsonValue(matte.toJson()));
   }
   obj["mattes"] = mattesArr;
 
-  // Transform
-  QJsonObject trans;
-  const auto &t3 = transform3D();
-  trans["px"] = t3.positionX();
-  trans["py"] = t3.positionY();
-  trans["pz"] = t3.positionZ();
-  // Keep rx as the legacy single-angle (Z) field and persist the full model.
-  trans["rx"] = t3.rotationZ();
-  trans["rotationX"] = t3.rotationX();
-  trans["rotationY"] = t3.rotationY();
-  trans["rotationZ"] = t3.rotationZ();
-  trans["sx"] = t3.scaleX();
-  trans["sy"] = t3.scaleY();
-  trans["ax"] = t3.anchorX();
-  trans["ay"] = t3.anchorY();
-  trans["az"] = t3.anchorZ();
-  // Persist the auto-orient mode so a layer keeps its path-orientation
-  // behavior across project save/load.  The enum values are part of the
-  // public Transform3D contract (Off, AlongPath, AlongPathAtFrameStart).
-  trans["autoOrientMode"] = static_cast<int>(t3.autoOrientMode());
-  trans["channelSchema"] = 1;
-  trans["initialRotation"] = t3.initialRotation();
-  QJsonObject channels;
-  for (int index = 0; index <= static_cast<int>(ArtifactCore::TransformChannel::AnchorZ); ++index) {
-    const auto property = t3.channelProperty(static_cast<ArtifactCore::TransformChannel>(index));
-    const auto serialized = ArtifactCore::PropertySerializationBridge::serializeProperty(property);
-    QJsonObject entry;
-    entry["value"] = serialized.value;
-    entry["keyframes"] = serialized.keyframes;
-    entry["expression"] = serialized.expression;
-    entry["envelopes"] = serialized.envelopes;
-    entry["metadata"] = serialized.metadata;
-    channels[property->getName()] = entry;
-  }
-  trans["channels"] = channels;
-  // Spatial handles are metadata, not a second copy of position key values.
-  QJsonArray spatialTangents;
-  for (const auto& time : t3.getPositionKeyFrameTimes()) {
-    ArtifactCore::PositionSpatialTangents tangent;
-    if (!t3.positionKeyFrameSpatialTangentsAt(time, tangent)) continue;
-    QJsonObject entry;
-    entry["timeValue"] = time.value();
-    entry["timeScale"] = time.scale();
-    entry["inX"] = tangent.inTangent.x;
-    entry["inY"] = tangent.inTangent.y;
-    entry["outX"] = tangent.outTangent.x;
-    entry["outY"] = tangent.outTangent.y;
-    entry["linked"] = tangent.linked;
-    spatialTangents.append(entry);
-  }
-  trans["spatialTangents"] = spatialTangents;
-  obj["transform"] = trans;
+  obj["transform"] = serializeLayerTransform(transform3D());
 
   // Modifiers and effects
   QJsonArray modifiersArr;
@@ -5863,7 +4633,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   if (hasMasks()) {
     QJsonArray masksArr;
     for (int maskIndex = 0; maskIndex < maskCount(); ++maskIndex) {
-      const auto layerMask = impl_->getMask(maskIndex);
+      const auto layerMask = impl_->maskMatteState_.mask(maskIndex);
       QJsonObject mobj;
       mobj["enabled"] = layerMask.isEnabled();
       mobj["locked"] = layerMask.isLocked();
@@ -5973,110 +4743,6 @@ ArtifactAbstractLayer::fromJson(const QJsonObject &obj) {
   return ArtifactAbstractLayerPtr();
 }
 
-void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
-  // Default implementation: apply effect properties if matching effects exist
-  // Subclasses should override to handle layer-specific fields
-  if (!obj.contains("effects") || !obj["effects"].isArray())
-    return;
-  if (obj.contains("isAdjustment")) {
-    setAdjustmentLayer(obj["isAdjustment"].toBool());
-  }
-
-  const auto arr = obj.value("effects").toArray();
-  for (const auto &ev : arr) {
-    if (!ev.isObject())
-      continue;
-    auto eobj = ev.toObject();
-    if (!eobj.contains("id"))
-      continue;
-    UniString eid(eobj["id"].toString().toStdString());
-    auto eff = getEffect(eid);
-    if (!eff) {
-      const QString effectId = eobj.value(QStringLiteral("id")).toString();
-      if (effectId == QStringLiteral("chroma_key") ||
-          effectId == QStringLiteral("Effect.Keying.ChromaKey")) {
-        eff = makeShared<ChromaKeyEffect>();
-      } else if (effectId == QStringLiteral("luma_key") ||
-                 effectId == QStringLiteral("Effect.Keying.LumaKey")) {
-        eff = makeShared<LumaKeyEffect>();
-      } else if (effectId == QStringLiteral("difference_key") ||
-                 effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
-        eff = makeShared<DifferenceKeyEffect>();
-      } else if (effectId == QStringLiteral("difference_matte") ||
-                 effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
-        eff = makeShared<DifferenceMatteEffect>();
-      } else if (effectId == QStringLiteral("posterize_time") ||
-                 effectId == QStringLiteral("Effect.Rasterizer.PosterizeTime")) {
-        eff = makeShared<PosterizeTimeEffect>();
-      } else if (effectId == QStringLiteral("ibk_keyer") ||
-                 effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
-        eff = makeShared<IBKKeyerEffect>();
-      }
-      if (eff) {
-        eff->setEffectID(eid);
-        addEffect(eff);
-      }
-    }
-    if (!eff)
-      continue;
-    if (eobj.contains(QStringLiteral("enabled"))) {
-      eff->setEnabled(eobj.value(QStringLiteral("enabled")).toBool(true));
-    }
-    if (eobj.contains(QStringLiteral("pipelineStage"))) {
-      eff->setPipelineStage(static_cast<EffectPipelineStage>(
-          eobj.value(QStringLiteral("pipelineStage")).toInt(
-              static_cast<int>(EffectPipelineStage::Rasterizer))));
-    }
-    if (!eobj.contains("properties") || !eobj["properties"].isArray())
-      continue;
-    auto props = eobj["properties"].toArray();
-    for (const auto &pv : props) {
-      if (!pv.isObject())
-        continue;
-      auto pobj = pv.toObject();
-      QString name = pobj.value("name").toString();
-      int t = pobj.value("type").toInt(
-          static_cast<int>(ArtifactCore::PropertyType::String));
-      ArtifactCore::PropertyType ptype =
-          static_cast<ArtifactCore::PropertyType>(t);
-      QVariant val;
-      if (pobj.contains("value")) {
-        if (ptype == ArtifactCore::PropertyType::Color &&
-            pobj.value("value").isObject()) {
-          auto col = pobj.value("value").toObject();
-          double r = col.value("r").toDouble(0.0);
-          double g = col.value("g").toDouble(0.0);
-          double b = col.value("b").toDouble(0.0);
-          double a = col.value("a").toDouble(1.0);
-          QColor qc;
-          qc.setRedF(static_cast<float>(r));
-          qc.setGreenF(static_cast<float>(g));
-          qc.setBlueF(static_cast<float>(b));
-          qc.setAlphaF(static_cast<float>(a));
-          val = QVariant(qc);
-        } else {
-          val = pobj.value("value").toVariant();
-        }
-      }
-      eff->setPropertyValue(UniString(name.toStdString()), val);
-      if (pobj.contains("keyframes") || pobj.contains("expression") ||
-          pobj.contains("envelopes")) {
-        auto editable = eff->editableProperty(name);
-        if (editable) {
-          ArtifactCore::SerializedProperty serialized;
-          serialized.name = name;
-          serialized.type = static_cast<int>(ptype);
-          serialized.value = pobj.value("value");
-          serialized.expression = pobj.value("expression").toString().trimmed().left(16384);
-          serialized.keyframes = pobj.value("keyframes").toArray();
-          serialized.envelopes = pobj.value("envelopes").toArray();
-          ArtifactCore::PropertySerializationBridge::deserializeProperty(
-              editable, serialized);
-        }
-      }
-    }
-  }
-}
 
 void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.value(QStringLiteral("modulation")).isObject()) {
@@ -6122,6 +4788,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     impl_->twoPointFiveDMotionBlurEnabled_ = twoPointFiveD.value(QStringLiteral("motionBlurEnabled")).toBool(false);
     impl_->twoPointFiveDMotionBlurShutterAngle_ = std::clamp(static_cast<float>(twoPointFiveD.value(QStringLiteral("motionBlurShutterAngle")).toDouble(180.0)), 0.0f, 720.0f);
     impl_->twoPointFiveDMotionBlurSamples_ = std::clamp(twoPointFiveD.value(QStringLiteral("motionBlurSamples")).toInt(4), 2, 8);
+  if (obj.value(QStringLiteral("projection")).isObject()) {
+    const QJsonObject projection = obj.value(QStringLiteral("projection")).toObject();
+    impl_->projectionEnabled_ = projection.value(QStringLiteral("enabled")).toBool(false);
+    impl_->projectionSourceLayerId_ =
+        projection.value(QStringLiteral("sourceLayerId")).toString().trimmed().left(1024);
+  }
   }
   if (obj.contains("isLocked"))
     setLocked(obj["isLocked"].toBool());
@@ -6194,12 +4866,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   // Mattes
   if (obj.contains("mattes") && obj["mattes"].isArray()) {
     auto mattesArr = obj["mattes"].toArray();
-    impl_->mattes_.clear();
+    impl_->maskMatteState_.clearMatteReferences();
     for (const auto &matteVal : mattesArr) {
       if (matteVal.isObject()) {
         LayerMatteReference matte;
         matte.fromJson(matteVal.toObject());
-        impl_->mattes_.push_back(matte);
+        impl_->maskMatteState_.addMatteReference(matte);
       }
     }
   }
@@ -6213,167 +4885,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   }
 
   if (obj.contains("transform") && obj["transform"].isObject()) {
-    QJsonObject trans = obj["transform"].toObject();
-    auto &t3 = transform3D();
-    const auto finiteTransformValue = [](double value, double fallback) {
-      return std::isfinite(value) ? value : fallback;
-    };
-    if (!trans.value("channels").isObject()) {
-      // Legacy scalar values are defaults, not animation keys. Only the
-      // explicit legacy key arrays below may enable a channel's animation.
-      t3 = ArtifactCore::AnimatableTransform3D{};
-      t3.setKeyframeTimeScale(
-          ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(this)));
-      const auto restoreBase = [&](ArtifactCore::TransformChannel channel,
-                                   const char* name, double fallback) {
-        t3.channelProperty(channel)->setValue(
-            finiteTransformValue(trans.value(QLatin1String(name)).toDouble(fallback), fallback));
-      };
-      using ArtifactCore::TransformChannel;
-      restoreBase(TransformChannel::PositionX, "px", 0.0);
-      restoreBase(TransformChannel::PositionY, "py", 0.0);
-      restoreBase(TransformChannel::PositionZ, "pz", 0.0);
-      restoreBase(TransformChannel::RotationX, "rotationX", 0.0);
-      restoreBase(TransformChannel::RotationY, "rotationY", 0.0);
-      restoreBase(TransformChannel::Rotation,
-                  trans.contains("rotationZ") ? "rotationZ" : "rx", 0.0);
-      restoreBase(TransformChannel::ScaleX, "sx", 1.0);
-      restoreBase(TransformChannel::ScaleY, "sy", 1.0);
-      restoreBase(TransformChannel::AnchorX, "ax", 0.0);
-      restoreBase(TransformChannel::AnchorY, "ay", 0.0);
-      restoreBase(TransformChannel::AnchorZ, "az", 0.0);
-    if (trans.contains("autoOrientMode")) {
-      const int mode = std::clamp(
-          trans["autoOrientMode"].toInt(),
-          static_cast<int>(AutoOrientMode::Off),
-          static_cast<int>(AutoOrientMode::AlongPathAtFrameStart));
-      t3.setAutoOrientMode(static_cast<AutoOrientMode>(mode));
-    }
-    if (trans.contains("rotationKeyframes") &&
-        trans["rotationKeyframes"].isArray()) {
-      t3.clearRotationKeyFrames();
-      for (const auto &value : trans["rotationKeyframes"].toArray()) {
-        if (!value.isObject()) {
-          continue;
-        }
-        const QJsonObject keyframe = value.toObject();
-        const ArtifactCore::RationalTime time(
-            keyframe["frame"].toInteger(), 24);
-        const bool hasAxes = keyframe.contains("x") ||
-                             keyframe.contains("y") || keyframe.contains("z");
-        if (hasAxes) {
-          t3.setRotationX(time, static_cast<float>(finiteTransformValue(
-              keyframe["x"].toDouble(0.0), 0.0)));
-          t3.setRotationY(time, static_cast<float>(finiteTransformValue(
-              keyframe["y"].toDouble(0.0), 0.0)));
-          t3.setRotationZ(time, static_cast<float>(finiteTransformValue(
-              keyframe["z"].toDouble(0.0), 0.0)));
-        } else {
-          t3.setRotationZ(time, static_cast<float>(finiteTransformValue(
-              keyframe["value"].toDouble(), 0.0)));
-        }
-      }
-    }
-    if (trans.contains("scaleKeyframes") &&
-        trans["scaleKeyframes"].isArray()) {
-      t3.clearScaleKeyFrames();
-      for (const auto &value : trans["scaleKeyframes"].toArray()) {
-        if (!value.isObject()) {
-          continue;
-        }
-        const QJsonObject keyframe = value.toObject();
-        const ArtifactCore::RationalTime time(
-            keyframe["frame"].toInteger(), 24);
-        t3.setScale(
-            time,
-            static_cast<float>(finiteTransformValue(
-                keyframe["x"].toDouble(1.0), 1.0)),
-            static_cast<float>(finiteTransformValue(
-                keyframe["y"].toDouble(1.0), 1.0)));
-      }
-    }
-    if (trans.contains("positionKeyframes") &&
-        trans["positionKeyframes"].isArray()) {
-      t3.clearPositionKeyFrames();
-      for (const auto &value : trans["positionKeyframes"].toArray()) {
-        if (!value.isObject()) {
-          continue;
-        }
-        const QJsonObject keyframe = value.toObject();
-        const ArtifactCore::RationalTime time(
-            keyframe["frame"].toInteger(), 24);
-        t3.setPositionKeyFrameValueAt(
-            time,
-            static_cast<float>(finiteTransformValue(
-                keyframe["x"].toDouble(), 0.0)),
-            static_cast<float>(finiteTransformValue(
-                keyframe["y"].toDouble(), 0.0)));
-        t3.setPositionKeyFrameInterpolationAt(
-            time, static_cast<ArtifactCore::InterpolationType>(
-                      std::clamp(keyframe["xInterpolation"].toInt(
-                                     static_cast<int>(ArtifactCore::InterpolationType::Linear)),
-                                 0, 32)),
-            static_cast<ArtifactCore::InterpolationType>(
-                      std::clamp(keyframe["yInterpolation"].toInt(
-                                     static_cast<int>(ArtifactCore::InterpolationType::Linear)),
-                                 0, 32)));
-        if (keyframe.contains("inTangentX") ||
-            keyframe.contains("outTangentX")) {
-          ArtifactCore::PositionSpatialTangents tangents;
-          tangents.inTangent.x = static_cast<float>(
-              finiteTransformValue(keyframe["inTangentX"].toDouble(), 0.0));
-          tangents.inTangent.y = static_cast<float>(
-              finiteTransformValue(keyframe["inTangentY"].toDouble(), 0.0));
-          tangents.outTangent.x = static_cast<float>(
-              finiteTransformValue(keyframe["outTangentX"].toDouble(), 0.0));
-          tangents.outTangent.y = static_cast<float>(
-              finiteTransformValue(keyframe["outTangentY"].toDouble(), 0.0));
-          tangents.linked = keyframe["tangentsLinked"].toBool(true);
-          t3.setPositionKeyFrameSpatialTangentsAt(time, tangents);
-        }
-      }
-    }
-    } else {
-      // New format is authoritative, including empty key arrays. Never merge
-      // legacy keys into a channel that the user explicitly cleared.
-      t3 = ArtifactCore::AnimatableTransform3D{};
-      t3.setKeyframeTimeScale(
-          ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(this)));
-      t3.setInitialRotation(RationalTime(0, 1),
-          finiteTransformValue(trans.value("initialRotation").toDouble(), 0.0));
-      const auto channels = trans.value("channels").toObject();
-      for (int index = 0; index <= static_cast<int>(ArtifactCore::TransformChannel::AnchorZ); ++index) {
-        auto property = t3.channelProperty(static_cast<ArtifactCore::TransformChannel>(index));
-        const auto entryValue = channels.value(property->getName());
-        if (!entryValue.isObject()) continue;
-        const auto entry = entryValue.toObject();
-        ArtifactCore::SerializedProperty serialized;
-        serialized.name = property->getName();
-        serialized.type = static_cast<int>(ArtifactCore::PropertyType::Float);
-        serialized.value = entry.value("value");
-        serialized.keyframes = entry.value("keyframes").toArray();
-        serialized.expression = entry.value("expression").toString();
-        serialized.envelopes = entry.value("envelopes").toArray();
-        serialized.metadata = entry.value("metadata").toObject();
-        ArtifactCore::PropertySerializationBridge::deserializeProperty(property, serialized);
-      }
-      t3.setAutoOrientMode(static_cast<AutoOrientMode>(std::clamp(
-          trans.value("autoOrientMode").toInt(), 0, 2)));
-      for (const auto& value : trans.value("spatialTangents").toArray()) {
-        const auto entry = value.toObject();
-        const auto scale = entry.value("timeScale").toInteger();
-        if (scale <= 0) continue;
-        const RationalTime time(entry.value("timeValue").toInteger(), scale);
-        ArtifactCore::PositionSpatialTangents tangent;
-        tangent.inTangent.x = finiteTransformValue(entry.value("inX").toDouble(), 0.0);
-        tangent.inTangent.y = finiteTransformValue(entry.value("inY").toDouble(), 0.0);
-        tangent.outTangent.x = finiteTransformValue(entry.value("outX").toDouble(), 0.0);
-        tangent.outTangent.y = finiteTransformValue(entry.value("outY").toDouble(), 0.0);
-        tangent.linked = entry.value("linked").toBool(true);
-        t3.setPositionKeyFrameSpatialTangentsAt(time, tangent);
-      }
-    }
-
+    restoreLayerTransform(obj["transform"].toObject(), transform3D(),
+                          effectiveLayerFrameRate(this));
   }
 
   if (obj.contains("modifiers") && obj["modifiers"].isArray()) {
@@ -6792,7 +5305,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->liquidFoamColor_ = restoreLiquidColor(
             QStringLiteral("liquidFoamColor"),
             FloatColor(0.78f, 0.93f, 1.0f, 1.0f));
-        impl_->invalidateLiquidSimulation();
+        impl_->fluidRuntime_.invalidateLiquidSimulation();
         impl_->layoutMode_ = std::clamp(
             componentsObj.value(QStringLiteral("layoutMode")).toInt(0), 0, 2);
         impl_->layoutAnchorMode_ = std::clamp(
@@ -7181,7 +5694,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
 
   // Masks
   if (obj.contains("masks") && obj["masks"].isArray()) {
-    impl_->clearMasks();
+    impl_->maskMatteState_.clearMasks();
     const auto masksArr = obj["masks"].toArray();
     for (const auto &maskVal : masksArr) {
       if (!maskVal.isObject()) continue;
@@ -7290,7 +5803,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         }
       }
 
-      impl_->addMask(layerMask);
+      impl_->maskMatteState_.addMask(layerMask);
     }
     changed();
   }
@@ -7303,7 +5816,7 @@ void ArtifactAbstractLayer::Impl::addEffect(
   if (!effect)
     return;
   const QString currentId = effect->effectID().toQString().trimmed();
-  const QString uniqueId = uniqueEffectIdForLayer(
+  const QString uniqueId = LayerAbstractUtilities::uniqueEffectIdForLayer(
       effects_, effect->displayName().toQString(), currentId);
   if (currentId.isEmpty() || currentId != uniqueId) {
     effect->setEffectID(UniString::fromQString(uniqueId));
@@ -7315,13 +5828,10 @@ void ArtifactAbstractLayer::Impl::addEffect(
 }
 
 void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
-  auto it = std::remove_if(
-      effects_.begin(), effects_.end(),
-      [&effectID](const SharedPtr<ArtifactAbstractEffect> &e) {
-        return e && e->effectID() == effectID;
-      });
-  if (it != effects_.end()) {
-    effects_.erase(it, effects_.end());
+  if (effects_.removeIf(
+          [&effectID](const SharedPtr<ArtifactAbstractEffect>& effect) {
+            return effect && effect->effectID() == effectID;
+          }) != 0) {
     qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Effect removed: %1")
                               .arg(effectID.toQString())));
   }
@@ -7334,7 +5844,7 @@ void ArtifactAbstractLayer::Impl::clearEffects() {
 
 std::vector<SharedPtr<ArtifactAbstractEffect>>
 ArtifactAbstractLayer::Impl::getEffects() const {
-  return effects_;
+  return effects_.toStdVector();
 }
 
 SharedPtr<ArtifactAbstractEffect>
@@ -7358,7 +5868,7 @@ void ArtifactAbstractLayer::Impl::addModifier(
   }
 
   const QString currentId = modifier->modifierId().trimmed();
-  const QString uniqueId = uniqueModifierIdForLayer(
+  const QString uniqueId = LayerAbstractUtilities::uniqueModifierIdForLayer(
       modifiers_.modifiers(), modifier->displayName(), currentId);
   if (currentId.isEmpty() || currentId != uniqueId) {
     modifier->setModifierId(uniqueId);
@@ -7448,24 +5958,25 @@ int ArtifactAbstractLayer::modifierCount() const { return impl_->modifierCount()
 
 bool ArtifactAbstractLayer::hasModifiers() const { return impl_->hasModifiers(); }
 
-std::vector<LayerComponentDescriptor>
+NamedVector<LayerComponentDescriptor>
 ArtifactAbstractLayer::layerComponents() const {
   impl_->syncBuiltinComponentDescriptors();
   return impl_->componentHost_.components();
 }
 
-std::vector<LayerComponentDescriptor>
+NamedVector<LayerComponentDescriptor>
 ArtifactAbstractLayer::enabledLayerComponents(
     const LayerComponentPhase phase) const {
   impl_->syncBuiltinComponentDescriptors();
   return impl_->componentHost_.enabledForPhase(phase);
 }
 
-std::vector<LayerGeneratorDescriptor>
+NamedVector<LayerGeneratorDescriptor>
 ArtifactAbstractLayer::layerGenerators() const {
   impl_->syncBuiltinComponentDescriptors();
 
-  std::vector<LayerGeneratorDescriptor> generators;
+  NamedVector<LayerGeneratorDescriptor> generators{
+      ContainerName{"Layer.GeneratorDescriptors"}};
   const auto* cloner =
       impl_->componentHost_.find(QStringLiteral("builtin.cloner"));
   if (cloner && cloner->enabled) {
@@ -7551,9 +6062,10 @@ ArtifactAbstractLayer::layerGenerators() const {
   return generators;
 }
 
-std::vector<LayerFieldDescriptor>
+NamedVector<LayerFieldDescriptor>
 ArtifactAbstractLayer::layerFields() const {
-  std::vector<LayerFieldDescriptor> fields;
+  NamedVector<LayerFieldDescriptor> fields{
+      ContainerName{"Layer.FieldDescriptors"}};
   fields.reserve(impl_->extraFieldDescriptors_.count());
   for (const auto& extraField : impl_->extraFieldDescriptors_) {
     if (!extraField.enabled) {
@@ -7580,9 +6092,10 @@ ArtifactAbstractLayer::layerFields() const {
   return fields;
 }
 
-std::vector<LayerModifierDescriptor>
+NamedVector<LayerModifierDescriptor>
 ArtifactAbstractLayer::layerCloneModifiers() const {
-  std::vector<LayerModifierDescriptor> modifiers;
+  NamedVector<LayerModifierDescriptor> modifiers{
+      ContainerName{"Layer.CloneModifierDescriptors"}};
 
   LayerModifierDescriptor timeOffsetModifier;
   timeOffsetModifier.modifierId = QStringLiteral("modifier.compat.timeOffset.0");
@@ -7620,8 +6133,8 @@ ArtifactAbstractLayer::layerCloneModifiers() const {
   return modifiers;
 }
 
-std::vector<QString> ArtifactAbstractLayer::clonerTransformNames() const {
-  std::vector<QString> names;
+NamedVector<QString> ArtifactAbstractLayer::clonerTransformNames() const {
+  NamedVector<QString> names{ContainerName{"Layer.ClonerTransformNames"}};
   names.reserve(impl_->clonerTransforms_.size());
   for (std::size_t index = 0; index < impl_->clonerTransforms_.size(); ++index) {
     const auto& operation = impl_->clonerTransforms_[index];
@@ -7660,7 +6173,8 @@ bool ArtifactAbstractLayer::restoreClonerTransformsSnapshot(
     }
     return std::clamp(value, minimum, maximum);
   };
-  std::vector<ClonerTransformOperation> restored;
+  NamedVector<ClonerTransformOperation> restored{
+      ContainerName{"Layer.ClonerTransforms"}};
   restored.reserve(static_cast<size_t>(snapshot.size()));
   for (const auto &entry : snapshot) {
     if (!entry.isObject()) {
@@ -7741,21 +6255,24 @@ bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
       modifiersValue.toArray().size() > kMaxDescriptors) {
     return false;
   }
-  std::vector<LayerGeneratorDescriptor> generators;
+  NamedVector<LayerGeneratorDescriptor> generators{
+      ContainerName{"Layer.RestoredGeneratorDescriptors"}};
   for (const auto &value : generatorsValue.toArray()) {
     if (!value.isObject()) return false;
     const auto descriptor = layerGeneratorDescriptorFromJson(value.toObject());
     if (!descriptor.has_value()) return false;
     generators.push_back(*descriptor);
   }
-  std::vector<LayerFieldDescriptor> fields;
+  NamedVector<LayerFieldDescriptor> fields{
+      ContainerName{"Layer.RestoredFieldDescriptors"}};
   for (const auto &value : fieldsValue.toArray()) {
     if (!value.isObject()) return false;
     const auto descriptor = layerFieldDescriptorFromJson(value.toObject());
     if (!descriptor.has_value()) return false;
     fields.push_back(*descriptor);
   }
-  std::vector<LayerModifierDescriptor> modifiers;
+  NamedVector<LayerModifierDescriptor> modifiers{
+      ContainerName{"Layer.RestoredCloneModifierDescriptors"}};
   for (const auto &value : modifiersValue.toArray()) {
     if (!value.isObject()) return false;
     const auto descriptor = layerModifierDescriptorFromJson(value.toObject());
@@ -7783,7 +6300,7 @@ bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
   return componentDescriptorSnapshot() == snapshot;
 }
 
-std::vector<LayerComponentValidationIssue>
+NamedVector<LayerComponentValidationIssue>
 ArtifactAbstractLayer::validateLayerComponents() const {
   impl_->syncBuiltinComponentDescriptors();
   auto issues = impl_->componentHost_.validate();
@@ -7970,186 +6487,6 @@ bool ArtifactAbstractLayer::restoreComponentRuntimeSnapshot(
   return true;
 }
 
-QJsonObject ArtifactAbstractLayer::serializeComponentRuntimeSnapshot(
-    const LayerComponentRuntimeSnapshot& snapshot) const {
-  if (!snapshot.isValid()) {
-    return {};
-  }
-  const auto data = staticPointerCast<
-      const LayerComponentRuntimeSnapshotData>(snapshot.storage);
-  if (!data) {
-    return {};
-  }
-
-  QJsonObject fracture;
-  fracture.insert(QStringLiteral("kind"),
-                  static_cast<int>(data->fractureState.kind));
-  fracture.insert(QStringLiteral("damage"), data->fractureState.damage);
-  fracture.insert(QStringLiteral("lastImpact"), data->fractureState.lastImpact);
-  fracture.insert(QStringLiteral("crackProgress"),
-                  data->fractureState.crackProgress);
-  QJsonArray shards;
-  for (const auto& shard : data->fractureState.shards) {
-    QJsonObject object;
-    object.insert(QStringLiteral("position"),
-                  componentSnapshotVectorToJson(shard.position));
-    object.insert(QStringLiteral("velocity"),
-                  componentSnapshotVectorToJson(shard.velocity));
-    object.insert(QStringLiteral("angularVelocity"),
-                  componentSnapshotVectorToJson(shard.angularVelocity));
-    object.insert(QStringLiteral("rotation"), shard.rotation);
-    object.insert(QStringLiteral("scale"), shard.scale);
-    object.insert(QStringLiteral("opacity"), shard.opacity);
-    object.insert(QStringLiteral("age"), shard.age);
-    object.insert(QStringLiteral("lifetime"), shard.lifetime);
-    object.insert(QStringLiteral("active"), shard.active);
-    object.insert(QStringLiteral("debris"), shard.debris);
-    shards.append(object);
-  }
-  fracture.insert(QStringLiteral("shards"), shards);
-
-  QJsonArray particles;
-  for (const auto& particle : data->componentParticles) {
-    QJsonObject object;
-    object.insert(QStringLiteral("px"), particle.px);
-    object.insert(QStringLiteral("py"), particle.py);
-    object.insert(QStringLiteral("pz"), particle.pz);
-    object.insert(QStringLiteral("vx"), particle.vx);
-    object.insert(QStringLiteral("vy"), particle.vy);
-    object.insert(QStringLiteral("vz"), particle.vz);
-    object.insert(QStringLiteral("r"), particle.r);
-    object.insert(QStringLiteral("g"), particle.g);
-    object.insert(QStringLiteral("b"), particle.b);
-    object.insert(QStringLiteral("a"), particle.a);
-    object.insert(QStringLiteral("size"), particle.size);
-    object.insert(QStringLiteral("stretch"), particle.stretch);
-    object.insert(QStringLiteral("rotation"), particle.rotation);
-    object.insert(QStringLiteral("age"), particle.age);
-    object.insert(QStringLiteral("lifetime"), particle.lifetime);
-    object.insert(QStringLiteral("spriteFrame"), particle.spriteFrame);
-    object.insert(QStringLiteral("spriteRows"), particle.spriteRows);
-    object.insert(QStringLiteral("spriteCols"), particle.spriteCols);
-    particles.append(object);
-  }
-
-  QJsonObject object;
-  object.insert(QStringLiteral("version"), 1);
-  object.insert(QStringLiteral("fracture"), fracture);
-  object.insert(QStringLiteral("particles"), particles);
-  object.insert(QStringLiteral("fractureMotionLastFrame"),
-                componentSnapshotFrameToJson(data->fractureMotionLastFrame));
-  object.insert(QStringLiteral("componentParticlesLastFrame"),
-                componentSnapshotFrameToJson(
-                    data->componentParticlesLastFrame));
-  object.insert(QStringLiteral("lastCollisionImpactFrame"),
-                componentSnapshotFrameToJson(
-                    data->lastCollisionImpactFrame));
-  return object;
-}
-
-LayerComponentRuntimeSnapshot
-ArtifactAbstractLayer::deserializeComponentRuntimeSnapshot(
-    const QJsonObject& object) const {
-  if (object.value(QStringLiteral("version")).toInt() != 1) {
-    return {};
-  }
-
-  auto data = makeShared<LayerComponentRuntimeSnapshotData>();
-  const QJsonObject fracture =
-      object.value(QStringLiteral("fracture")).toObject();
-  const int kind = fracture.value(QStringLiteral("kind")).toInt();
-  if (kind < static_cast<int>(FractureStateKind::Intact) ||
-      kind > static_cast<int>(FractureStateKind::Shattered)) {
-    return {};
-  }
-  data->fractureState.kind = static_cast<FractureStateKind>(kind);
-  data->fractureState.damage = static_cast<float>(
-      fracture.value(QStringLiteral("damage")).toDouble());
-  data->fractureState.lastImpact = static_cast<float>(
-      fracture.value(QStringLiteral("lastImpact")).toDouble());
-  data->fractureState.crackProgress = static_cast<float>(
-      fracture.value(QStringLiteral("crackProgress")).toDouble());
-  const QJsonArray shards = fracture.value(QStringLiteral("shards")).toArray();
-  constexpr qsizetype kMaxPersistedShards = 65536;
-  if (shards.size() > kMaxPersistedShards) {
-    return {};
-  }
-  data->fractureState.shards.reserve(
-      static_cast<std::size_t>(shards.size()));
-  for (const auto& value : shards) {
-    if (!value.isObject()) {
-      return {};
-    }
-    const QJsonObject object = value.toObject();
-    FractureShardMotion shard;
-    shard.position = componentSnapshotVectorFromJson(
-        object.value(QStringLiteral("position")));
-    shard.velocity = componentSnapshotVectorFromJson(
-        object.value(QStringLiteral("velocity")));
-    shard.angularVelocity = componentSnapshotVectorFromJson(
-        object.value(QStringLiteral("angularVelocity")));
-    shard.rotation = static_cast<float>(
-        object.value(QStringLiteral("rotation")).toDouble());
-    shard.scale = static_cast<float>(
-        object.value(QStringLiteral("scale")).toDouble(1.0));
-    shard.opacity = static_cast<float>(
-        object.value(QStringLiteral("opacity")).toDouble(1.0));
-    shard.age = static_cast<float>(
-        object.value(QStringLiteral("age")).toDouble());
-    shard.lifetime = static_cast<float>(
-        object.value(QStringLiteral("lifetime")).toDouble(1.0));
-    shard.active = object.value(QStringLiteral("active")).toBool(true);
-    shard.debris = object.value(QStringLiteral("debris")).toBool(false);
-    data->fractureState.shards.push_back(shard);
-  }
-
-  const QJsonArray particles =
-      object.value(QStringLiteral("particles")).toArray();
-  constexpr qsizetype kMaxPersistedParticles = 1000000;
-  if (particles.size() > kMaxPersistedParticles) {
-    return {};
-  }
-  data->componentParticles.reserve(
-      static_cast<std::size_t>(particles.size()));
-  for (const auto& value : particles) {
-    if (!value.isObject()) {
-      return {};
-    }
-    const QJsonObject object = value.toObject();
-    ArtifactCore::ParticleVertex particle{};
-    particle.px = static_cast<float>(object.value(QStringLiteral("px")).toDouble());
-    particle.py = static_cast<float>(object.value(QStringLiteral("py")).toDouble());
-    particle.pz = static_cast<float>(object.value(QStringLiteral("pz")).toDouble());
-    particle.vx = static_cast<float>(object.value(QStringLiteral("vx")).toDouble());
-    particle.vy = static_cast<float>(object.value(QStringLiteral("vy")).toDouble());
-    particle.vz = static_cast<float>(object.value(QStringLiteral("vz")).toDouble());
-    particle.r = static_cast<float>(object.value(QStringLiteral("r")).toDouble());
-    particle.g = static_cast<float>(object.value(QStringLiteral("g")).toDouble());
-    particle.b = static_cast<float>(object.value(QStringLiteral("b")).toDouble());
-    particle.a = static_cast<float>(object.value(QStringLiteral("a")).toDouble());
-    particle.size = static_cast<float>(object.value(QStringLiteral("size")).toDouble(1.0));
-    particle.stretch = static_cast<float>(object.value(QStringLiteral("stretch")).toDouble(1.0));
-    particle.rotation = static_cast<float>(object.value(QStringLiteral("rotation")).toDouble());
-    particle.age = static_cast<float>(object.value(QStringLiteral("age")).toDouble());
-    particle.lifetime = static_cast<float>(object.value(QStringLiteral("lifetime")).toDouble(1.0));
-    particle.spriteFrame = object.value(QStringLiteral("spriteFrame")).toInt();
-    particle.spriteRows = object.value(QStringLiteral("spriteRows")).toInt(1);
-    particle.spriteCols = object.value(QStringLiteral("spriteCols")).toInt(1);
-    data->componentParticles.push_back(particle);
-  }
-
-  data->fractureMotionLastFrame = componentSnapshotFrameFromJson(
-      object, QStringLiteral("fractureMotionLastFrame"));
-  data->componentParticlesLastFrame = componentSnapshotFrameFromJson(
-      object, QStringLiteral("componentParticlesLastFrame"));
-  data->lastCollisionImpactFrame = componentSnapshotFrameFromJson(
-      object, QStringLiteral("lastCollisionImpactFrame"));
-  const std::size_t estimatedBytes =
-      sizeof(LayerComponentRuntimeSnapshotData) +
-      data->componentParticles.size() * sizeof(ArtifactCore::ParticleVertex) +
-      data->fractureState.shards.size() * sizeof(FractureShardMotion);
-  return {std::move(data), estimatedBytes};
-}
 
 QJsonObject ArtifactAbstractLayer::scriptBinding() const {
   return impl_->scriptBinding_;
@@ -8172,74 +6509,6 @@ void ArtifactAbstractLayer::clearScriptBinding() {
 
 bool ArtifactAbstractLayer::hasScriptBinding() const {
   return !impl_->scriptBinding_.isEmpty();
-}
-
-void ArtifactAbstractLayer::append3DTransformProperties(
-    ArtifactCore::PropertyGroup &transformGroup,
-    const ArtifactCore::AnimatableTransform3D &transform,
-    double positionRange, double anchorRange) const {
-  using namespace ArtifactCore;
-
-  auto posZProp = persistentLayerProperty(
-      QStringLiteral("transform.position.z"), PropertyType::Float,
-      transform.positionZ(), -293);
-  posZProp->setDisplayLabel(QStringLiteral("Position Z"));
-  posZProp->setUnit(QStringLiteral("px"));
-  posZProp->setStep(1.0);
-  posZProp->setSoftRange(-positionRange, positionRange);
-  posZProp->setAnimatable(true);
-  transformGroup.addProperty(posZProp);
-
-  auto rotXProp = persistentLayerProperty(
-      QStringLiteral("transform.rotation.x"), PropertyType::Float,
-      transform.rotationX(), -292);
-  rotXProp->setDisplayLabel(QStringLiteral("Rotation X"));
-  rotXProp->setUnit(QStringLiteral("deg"));
-  rotXProp->setStep(1.0);
-  rotXProp->setSoftRange(-180.0, 180.0);
-  rotXProp->setAnimatable(true);
-  transformGroup.addProperty(rotXProp);
-
-  auto rotYProp = persistentLayerProperty(
-      QStringLiteral("transform.rotation.y"), PropertyType::Float,
-      transform.rotationY(), -291);
-  rotYProp->setDisplayLabel(QStringLiteral("Rotation Y"));
-  rotYProp->setUnit(QStringLiteral("deg"));
-  rotYProp->setStep(1.0);
-  rotYProp->setSoftRange(-180.0, 180.0);
-  rotYProp->setAnimatable(true);
-  transformGroup.addProperty(rotYProp);
-
-  auto rotZProp = persistentLayerProperty(
-      QStringLiteral("transform.rotation.z"), PropertyType::Float,
-      transform.rotation(), -290);
-  rotZProp->setDisplayLabel(QStringLiteral("Rotation Z (alias)"));
-  rotZProp->setTooltip(QStringLiteral(
-      "Same channel as Rotation; explicit Z path for expressions."));
-  rotZProp->setUnit(QStringLiteral("deg"));
-  rotZProp->setStep(1.0);
-  rotZProp->setSoftRange(-180.0, 180.0);
-  rotZProp->setAnimatable(true);
-  transformGroup.addProperty(rotZProp);
-
-  auto scaleZProp = persistentLayerProperty(
-      QStringLiteral("transform.scale.z"), PropertyType::Float,
-      transform.scaleZ(), -289);
-  scaleZProp->setDisplayLabel(QStringLiteral("Scale Z"));
-  scaleZProp->setAnimatable(true);
-  scaleZProp->setStep(0.01);
-  scaleZProp->setSoftRange(0.0, 2.0);
-  transformGroup.addProperty(scaleZProp);
-
-  auto anchorZProp = persistentLayerProperty(
-      QStringLiteral("transform.anchor.z"), PropertyType::Float,
-      transform.anchorZ(), -288);
-  anchorZProp->setDisplayLabel(QStringLiteral("Anchor Z"));
-  anchorZProp->setUnit(QStringLiteral("px"));
-  anchorZProp->setStep(1.0);
-  anchorZProp->setSoftRange(-anchorRange, anchorRange);
-  anchorZProp->setAnimatable(true);
-  transformGroup.addProperty(anchorZProp);
 }
 
 std::vector<ArtifactCore::PropertyGroup>
@@ -8583,7 +6852,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->physicsComponent_.settings().gravityY), -96);
   gravityYProp->setDisplayLabel(QStringLiteral("World Gravity Y (Advanced)"));
   gravityYProp->setTooltip(
-      QStringLiteral("Shared gravity for all Box2D bodies in this composition."));
+      QStringLiteral("Gravity used by falling rigid and soft-body layers."));
   gravityYProp->setUnit(QStringLiteral("px/s^2"));
   gravityYProp->setHardRange(-5000.0, 5000.0);
   gravityYProp->setSoftRange(-2000.0, 2000.0);
@@ -8595,7 +6864,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->physicsComponent_.settings().linearDamping), -95);
   linearDampingProp->setDisplayLabel(QStringLiteral("Air Drag"));
   linearDampingProp->setTooltip(
-      QStringLiteral("Linear air resistance applied to the Box2D body."));
+      QStringLiteral("Linear air resistance applied to rigid and soft-body layers."));
   linearDampingProp->setHardRange(0.0, 50.0);
   linearDampingProp->setSoftRange(0.0, 10.0);
   linearDampingProp->setStep(0.1);
@@ -9111,153 +7380,6 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   return groups;
 }
 
-void ArtifactAbstractLayer::appendMaskPropertyGroups(
-    std::vector<ArtifactCore::PropertyGroup>& groups) const {
-  using namespace ArtifactCore;
-  auto makeProp = [this](const QString& name, PropertyType type,
-                         const QVariant& value, int priority = 0) {
-    return persistentLayerProperty(name, type, value, priority);
-  };
-  for (int maskIndex = 0; maskIndex < maskCount(); ++maskIndex) {
-    const LayerMask resolvedMask = mask(maskIndex);
-    PropertyGroup maskGroup(QStringLiteral("Mask %1").arg(maskIndex + 1));
-
-    auto maskEnabledProp =
-        makeProp(maskPropertyPrefix(maskIndex) + QStringLiteral(".enabled"),
-                 PropertyType::Boolean, resolvedMask.isEnabled(),
-                 -240 - maskIndex);
-    maskEnabledProp->setAnimatable(true);
-    maskEnabledProp->setDisplayLabel(QStringLiteral("Enabled"));
-    maskGroup.addProperty(maskEnabledProp);
-
-    auto maskLockedProp =
-        makeProp(maskPropertyPrefix(maskIndex) + QStringLiteral(".locked"),
-                 PropertyType::Boolean, resolvedMask.isLocked(),
-                 -239 - maskIndex);
-    maskLockedProp->setDisplayLabel(QStringLiteral("Locked"));
-    maskGroup.addProperty(maskLockedProp);
-
-    for (int pathIndex = 0; pathIndex < resolvedMask.maskPathCount();
-         ++pathIndex) {
-      const MaskPath path = resolvedMask.maskPath(pathIndex);
-      const QString pathPrefix = maskPathPropertyPrefix(maskIndex, pathIndex);
-      const QString pathLabel =
-          QStringLiteral("Path %1").arg(pathIndex + 1);
-
-      auto closedProp = makeProp(pathPrefix + QStringLiteral(".closed"),
-                                 PropertyType::Boolean, path.isClosed(),
-                                 -230 - pathIndex);
-      closedProp->setAnimatable(true);
-      closedProp->setDisplayLabel(pathLabel + QStringLiteral(" Closed"));
-      maskGroup.addProperty(closedProp);
-
-      auto opacityProp = makeProp(pathPrefix + QStringLiteral(".opacity"),
-                                  PropertyType::Float,
-                                  static_cast<double>(path.opacity()),
-                                  -229 - pathIndex);
-      opacityProp->setAnimatable(true);
-      opacityProp->setHardRange(0.0, 1.0);
-      opacityProp->setSoftRange(0.0, 1.0);
-      opacityProp->setStep(0.01);
-      opacityProp->setDisplayLabel(pathLabel + QStringLiteral(" Opacity"));
-      maskGroup.addProperty(opacityProp);
-
-      auto featherProp = makeProp(pathPrefix + QStringLiteral(".feather"),
-                                  PropertyType::Float,
-                                  static_cast<double>(path.feather()),
-                                  -228 - pathIndex);
-      featherProp->setAnimatable(true);
-      featherProp->setSoftRange(0.0, 128.0);
-      featherProp->setStep(0.5);
-      featherProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather"));
-      maskGroup.addProperty(featherProp);
-
-      auto fhProp = makeProp(pathPrefix + QStringLiteral(".featherHorizontal"),
-                             PropertyType::Float,
-                             static_cast<double>(path.featherHorizontal()),
-                             -232 - pathIndex);
-      fhProp->setAnimatable(true);
-      fhProp->setSoftRange(0.0, 128.0);
-      fhProp->setStep(0.5);
-      fhProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather H"));
-      maskGroup.addProperty(fhProp);
-
-      auto fvProp = makeProp(pathPrefix + QStringLiteral(".featherVertical"),
-                             PropertyType::Float,
-                             static_cast<double>(path.featherVertical()),
-                             -233 - pathIndex);
-      fvProp->setAnimatable(true);
-      fvProp->setSoftRange(0.0, 128.0);
-      fvProp->setStep(0.5);
-      fvProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather V"));
-      maskGroup.addProperty(fvProp);
-
-      auto fiProp = makeProp(pathPrefix + QStringLiteral(".featherInner"),
-                             PropertyType::Float,
-                             static_cast<double>(path.featherInner()),
-                             -234 - pathIndex);
-      fiProp->setAnimatable(true);
-      fiProp->setSoftRange(0.0, 128.0);
-      fiProp->setStep(0.5);
-      fiProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather Inner"));
-      maskGroup.addProperty(fiProp);
-
-      auto foProp = makeProp(pathPrefix + QStringLiteral(".featherOuter"),
-                             PropertyType::Float,
-                             static_cast<double>(path.featherOuter()),
-                             -235 - pathIndex);
-      foProp->setAnimatable(true);
-      foProp->setSoftRange(0.0, 128.0);
-      foProp->setStep(0.5);
-      foProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather Outer"));
-      maskGroup.addProperty(foProp);
-
-      auto falloffProp = makeProp(pathPrefix + QStringLiteral(".falloff"),
-                                  PropertyType::Integer,
-                                  static_cast<int>(path.falloff()),
-                                  -236 - pathIndex);
-      falloffProp->setAnimatable(false);
-      falloffProp->setTooltip(
-          QStringLiteral("0=Gaussian,1=Linear,2=Smooth,3=Sharp"));
-      falloffProp->setInlineHelp(QStringLiteral("How the feather fades."));
-      falloffProp->setWhatsThis(QStringLiteral("Shape of the mask feather fade.\nGaussian is the classic soft edge; Linear fades evenly; Smooth eases both ends; Sharp keeps a harder rim.\nTry Sharp when a soft mask looks washed out."));
-      falloffProp->setDisplayLabel(pathLabel + QStringLiteral(" Falloff"));
-      maskGroup.addProperty(falloffProp);
-
-      auto expansionProp = makeProp(pathPrefix + QStringLiteral(".expansion"),
-                                    PropertyType::Float,
-                                    static_cast<double>(path.expansion()),
-                                    -227 - pathIndex);
-      expansionProp->setAnimatable(true);
-      expansionProp->setSoftRange(-256.0, 256.0);
-      expansionProp->setStep(0.5);
-      expansionProp->setDisplayLabel(pathLabel + QStringLiteral(" Expansion"));
-      maskGroup.addProperty(expansionProp);
-
-      auto invertedProp = makeProp(pathPrefix + QStringLiteral(".inverted"),
-                                   PropertyType::Boolean, path.isInverted(),
-                                   -226 - pathIndex);
-      invertedProp->setAnimatable(true);
-      invertedProp->setDisplayLabel(pathLabel + QStringLiteral(" Inverted"));
-      maskGroup.addProperty(invertedProp);
-
-      auto modeProp = makeProp(pathPrefix + QStringLiteral(".mode"),
-                               PropertyType::Integer,
-                               static_cast<int>(path.mode()),
-                               -225 - pathIndex);
-      modeProp->setAnimatable(true);
-      modeProp->setTooltip(
-          QStringLiteral("0=Add,1=Subtract,2=Intersect,3=Difference"));
-      modeProp->setInlineHelp(QStringLiteral("How this mask combines."));
-      modeProp->setWhatsThis(QStringLiteral("How this mask combines with the other masks on the layer.\nAdd shows, Subtract cuts out, Intersect keeps only the overlap, Difference keeps the non-overlap."));
-      modeProp->setDisplayLabel(pathLabel + QStringLiteral(" Mode"));
-      maskGroup.addProperty(modeProp);
-    }
-
-    groups.push_back(std::move(maskGroup));
-  }
-}
-
 std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentPropertyGroups() const {
   std::vector<ArtifactCore::PropertyGroup> groups;
   groups.reserve(16);
@@ -9525,6 +7647,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     setIs3D(value.toBool());
     return true;
   }
+  if (propertyPath == QStringLiteral("projection.enabled")) {
+    setProjectionEnabled(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("projection.sourceLayerId")) {
+    setProjectionSourceLayerId(value.toString());
+    return true;
+  }
   if (propertyPath == QStringLiteral("layer.2_5d.enabled")) {
     impl_->twoPointFiveDEnabled_ = value.toBool();
     return true;
@@ -9577,22 +7707,22 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
 
   if (const auto maskAddress = parseMaskPropertyPath(propertyPath)) {
     if (maskAddress->maskIndex < 0 ||
-        maskAddress->maskIndex >= impl_->maskCount()) {
+        maskAddress->maskIndex >= impl_->maskMatteState_.maskCount()) {
       return false;
     }
 
     if (maskAddress->pathIndex < 0) {
-      LayerMask mask = impl_->getMask(maskAddress->maskIndex);
+      LayerMask mask = impl_->maskMatteState_.mask(maskAddress->maskIndex);
       if (maskAddress->field == QStringLiteral("enabled")) {
         mask.setEnabled(value.toBool());
-        impl_->setMask(maskAddress->maskIndex, mask);
+        impl_->maskMatteState_.setMask(maskAddress->maskIndex, mask);
         notifyLayerMutation(this, LayerDirtyFlag::Mask,
                             LayerDirtyReason::PropertyChanged);
         return true;
       }
       if (maskAddress->field == QStringLiteral("locked")) {
         mask.setLocked(value.toBool());
-        impl_->setMask(maskAddress->maskIndex, mask);
+        impl_->maskMatteState_.setMask(maskAddress->maskIndex, mask);
         notifyLayerMutation(this, LayerDirtyFlag::Mask,
                             LayerDirtyReason::PropertyChanged);
         return true;
@@ -9600,7 +7730,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       return false;
     }
 
-    LayerMask mask = impl_->getMask(maskAddress->maskIndex);
+    LayerMask mask = impl_->maskMatteState_.mask(maskAddress->maskIndex);
     if (maskAddress->pathIndex >= mask.maskPathCount()) {
       return false;
     }
@@ -9634,7 +7764,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       return false;
     }
     mask.setMaskPath(maskAddress->pathIndex, path);
-    impl_->setMask(maskAddress->maskIndex, mask);
+    impl_->maskMatteState_.setMask(maskAddress->maskIndex, mask);
     notifyLayerMutation(this, LayerDirtyFlag::Mask,
                         LayerDirtyReason::PropertyChanged);
     return true;
@@ -9714,6 +7844,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         -5000.0, 5000.0);
     impl_->physicsComponent_.reset();
     applyRigidBodyWorldGravity();
+    if (hasSoftBodyPhysics()) {
+      const auto& settings = impl_->physicsComponent_.settings();
+      LayerPhysics::configureSoftBody(
+          id(), 0.0f, settings.gravityY * settings.gravityScale,
+          settings.linearDamping);
+    }
     return true;
   }
   if (propertyPath == QStringLiteral("physics.fallProfile")) {
@@ -9746,6 +7882,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     impl_->physicsComponent_.reset();
     applyRigidBodyPhysicsSettings();
+    if (hasSoftBodyPhysics()) {
+      LayerPhysics::configureSoftBody(
+          id(), 0.0f, settings.gravityY * settings.gravityScale,
+          settings.linearDamping);
+    }
     persistentLayerProperty(QStringLiteral("physics.gravityScale"),
                             PropertyType::Float,
                             QVariant(static_cast<double>(settings.gravityScale)),
@@ -9767,6 +7908,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().fallProfile = 0;
     impl_->physicsComponent_.reset();
     applyRigidBodyPhysicsSettings();
+    if (hasSoftBodyPhysics()) {
+      const auto& settings = impl_->physicsComponent_.settings();
+      LayerPhysics::configureSoftBody(
+          id(), 0.0f, settings.gravityY * settings.gravityScale,
+          settings.linearDamping);
+    }
     persistentLayerProperty(QStringLiteral("physics.fallProfile"),
                             PropertyType::Integer, QVariant(0), -96);
     return true;
@@ -9788,6 +7935,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().fallProfile = 0;
     impl_->physicsComponent_.reset();
     applyRigidBodyPhysicsSettings();
+    if (hasSoftBodyPhysics()) {
+      const auto& settings = impl_->physicsComponent_.settings();
+      LayerPhysics::configureSoftBody(
+          id(), 0.0f, settings.gravityY * settings.gravityScale,
+          settings.linearDamping);
+    }
     persistentLayerProperty(QStringLiteral("physics.fallProfile"),
                             PropertyType::Integer, QVariant(0), -96);
     return true;
@@ -9796,10 +7949,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().windEnabled = value.toBool();
     impl_->lastRigidWindForceFrame_ = std::numeric_limits<int64_t>::min();
     const auto& settings = impl_->physicsComponent_.settings();
-    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+    LayerPhysics::setSoftBodyWind(
         id(), settings.windX, settings.windY,
         settings.windEnabled ? settings.windStrength : 0.0f);
-    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+    LayerPhysics::setCloth3DWind(
         id(), settings.windX, settings.windY, 0.0f,
         settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
@@ -9808,10 +7961,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().windX = finiteClampedValue(
         value.toDouble(), impl_->physicsComponent_.settings().windX, -1.0, 1.0);
     const auto& settings = impl_->physicsComponent_.settings();
-    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+    LayerPhysics::setSoftBodyWind(
         id(), settings.windX, settings.windY,
         settings.windEnabled ? settings.windStrength : 0.0f);
-    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+    LayerPhysics::setCloth3DWind(
         id(), settings.windX, settings.windY, 0.0f,
         settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
@@ -9820,10 +7973,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().windY = finiteClampedValue(
         value.toDouble(), impl_->physicsComponent_.settings().windY, -1.0, 1.0);
     const auto& settings = impl_->physicsComponent_.settings();
-    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+    LayerPhysics::setSoftBodyWind(
         id(), settings.windX, settings.windY,
         settings.windEnabled ? settings.windStrength : 0.0f);
-    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+    LayerPhysics::setCloth3DWind(
         id(), settings.windX, settings.windY, 0.0f,
         settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
@@ -9832,10 +7985,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().windStrength = finiteClampedValue(
         value.toDouble(), impl_->physicsComponent_.settings().windStrength, 0.0, 100000.0);
     const auto& settings = impl_->physicsComponent_.settings();
-    ArtifactCore::PhysicsSystem::instance().setSoftBodyWind(
+    LayerPhysics::setSoftBodyWind(
         id(), settings.windX, settings.windY,
         settings.windEnabled ? settings.windStrength : 0.0f);
-    ArtifactCore::PhysicsSystem::instance().setCloth3DWind(
+    LayerPhysics::setCloth3DWind(
         id(), settings.windX, settings.windY, 0.0f,
         settings.windEnabled ? settings.windStrength : 0.0f);
     return true;
@@ -10775,8 +8928,7 @@ bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
       const int index = value.toInt();
       if (index >= 0 &&
           index < static_cast<int>(impl_->clonerTransforms_.size())) {
-        impl_->clonerTransforms_.erase(
-            impl_->clonerTransforms_.begin() + index);
+        impl_->clonerTransforms_.removeAt(static_cast<size_t>(index));
         notifyLayerMutation(this, LayerDirtyFlag::Effect,
                             LayerDirtyReason::PropertyChanged);
       }
@@ -10792,7 +8944,7 @@ bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
                               .arg(static_cast<int>(impl_->clonerTransforms_.size()) + 1)
                         : copy.name + QStringLiteral(" Copy");
         impl_->clonerTransforms_.insert(
-            impl_->clonerTransforms_.begin() + index + 1, copy);
+            static_cast<size_t>(index + 1), copy);
         notifyLayerMutation(this, LayerDirtyFlag::Effect,
                             LayerDirtyReason::PropertyChanged);
       }
@@ -10802,8 +8954,8 @@ bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
       const int index = value.toInt();
       if (index > 0 &&
           index < static_cast<int>(impl_->clonerTransforms_.size())) {
-        std::swap(impl_->clonerTransforms_[static_cast<size_t>(index)],
-                  impl_->clonerTransforms_[static_cast<size_t>(index - 1)]);
+        impl_->clonerTransforms_.swapItemsAt(
+            static_cast<size_t>(index), static_cast<size_t>(index - 1));
         notifyLayerMutation(this, LayerDirtyFlag::Effect,
                             LayerDirtyReason::PropertyChanged);
       }
@@ -10813,8 +8965,8 @@ bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
       const int index = value.toInt();
       if (index >= 0 &&
           index + 1 < static_cast<int>(impl_->clonerTransforms_.size())) {
-        std::swap(impl_->clonerTransforms_[static_cast<size_t>(index)],
-                  impl_->clonerTransforms_[static_cast<size_t>(index + 1)]);
+        impl_->clonerTransforms_.swapItemsAt(
+            static_cast<size_t>(index), static_cast<size_t>(index + 1));
         notifyLayerMutation(this, LayerDirtyFlag::Effect,
                             LayerDirtyReason::PropertyChanged);
       }
@@ -10994,7 +9146,7 @@ bool ArtifactAbstractLayer::setComponentPhysicsPropertyValue(
       }
       if (!impl_->jointComponentEnabled_) {
         if (auto* comp = dynamic_cast<ArtifactAbstractComposition*>(impl_->composition_.data())) {
-          if (auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(comp->id())) {
+          if (auto world = LayerPhysics::compositionRigidWorld(comp->id())) {
             world->removeLayerJoint(id());
           }
         }
@@ -11251,8 +9403,8 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
             PhysicsSolverKind::Disabled;
       }
       if (!impl_->fluidComponentEnabled_) {
-        impl_->fluidSolver_.reset();
-        impl_->invalidateLiquidSimulation();
+        impl_->fluidRuntime_.invalidateSmokeSimulation();
+        impl_->fluidRuntime_.invalidateLiquidSimulation();
       }
       impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
@@ -11260,8 +9412,8 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     }
     if (propertyPath == QStringLiteral("component.fluid.mode")) {
       impl_->fluidMode_ = std::clamp(value.toInt(), 0, 1);
-      impl_->fluidSolver_.reset();
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateSmokeSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11284,7 +9436,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     if (propertyPath == QStringLiteral("component.fluid.viscosity")) {
       impl_->fluidViscosity_ = finiteClampedValue(
           value.toDouble(), impl_->fluidViscosity_, 0.0, 1.0);
-      if (impl_->fluidMode_ == 1) impl_->invalidateLiquidSimulation();
+      if (impl_->fluidMode_ == 1) impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11316,7 +9468,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     }
     if (propertyPath == QStringLiteral("component.fluid.solverIterations")) {
       impl_->fluidSolverIterations_ = std::clamp(value.toInt(), 1, 256);
-      if (impl_->fluidMode_ == 1) impl_->invalidateLiquidSimulation();
+      if (impl_->fluidMode_ == 1) impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11325,7 +9477,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     if (propertyPath == QStringLiteral("component.fluid.liquidFillAmount")) {
       impl_->liquidFillAmount_ = finiteClampedValue(
           value.toDouble(), impl_->liquidFillAmount_, 0.0, 1.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11334,7 +9486,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     if (propertyPath == QStringLiteral("component.fluid.liquidInflowRate")) {
       impl_->liquidInflowRate_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowRate_, 0.0, 10000.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11343,7 +9495,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     if (propertyPath == QStringLiteral("component.fluid.liquidInflowWidth")) {
       impl_->liquidInflowWidth_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowWidth_, 0.0, 1.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11352,7 +9504,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     if (propertyPath == QStringLiteral("component.fluid.liquidInflowSpeed")) {
       impl_->liquidInflowSpeed_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowSpeed_, 0.0, 20.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11362,7 +9514,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
         QStringLiteral("component.fluid.liquidInflowPosition")) {
       impl_->liquidInflowPosition_ = finiteClampedValue(
           value.toDouble(), impl_->liquidInflowPosition_, 0.0, 1.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11370,7 +9522,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     }
     if (propertyPath == QStringLiteral("component.fluid.liquidOpeningEdge")) {
       impl_->liquidOpeningEdge_ = std::clamp(value.toInt(), -1, 511);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11380,7 +9532,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
         QStringLiteral("component.fluid.liquidSpillCullMargin")) {
       impl_->liquidSpillCullMargin_ = finiteClampedValue(
           value.toDouble(), impl_->liquidSpillCullMargin_, 0.0, 1000000.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11389,7 +9541,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     if (propertyPath == QStringLiteral("component.fluid.liquidGravity")) {
       impl_->liquidGravity_ = finiteClampedValue(
           value.toDouble(), impl_->liquidGravity_, 0.0, 20.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11399,7 +9551,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
         QStringLiteral("component.fluid.liquidSurfaceTension")) {
       impl_->liquidSurfaceTension_ = finiteClampedValue(
           value.toDouble(), impl_->liquidSurfaceTension_, 0.0, 1.0);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11409,7 +9561,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
         QStringLiteral("component.fluid.liquidParticleSpacing")) {
       impl_->liquidParticleSpacing_ = finiteClampedValue(
           value.toDouble(), impl_->liquidParticleSpacing_, 0.025, 0.2);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11417,7 +9569,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
     }
     if (propertyPath == QStringLiteral("component.fluid.liquidSubsteps")) {
       impl_->liquidSubsteps_ = std::clamp(value.toInt(), 1, 8);
-      impl_->invalidateLiquidSimulation();
+      impl_->fluidRuntime_.invalidateLiquidSimulation();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11445,7 +9597,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
         QStringLiteral("component.fluid.liquidFoamAmount")) {
       impl_->liquidFoamAmount_ = finiteClampedValue(
           value.toDouble(), impl_->liquidFoamAmount_, 0.0, 1.0);
-      impl_->invalidateLiquidSurface();
+      impl_->fluidRuntime_.invalidateLiquidSurface();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
@@ -11781,7 +9933,7 @@ bool ArtifactAbstractLayer::setTransformTimeSourcePropertyValue(
 
   if (impl_->fluidComponentEnabled_ && impl_->fluidMode_ == 1 &&
       propertyPath.startsWith(QStringLiteral("transform."))) {
-    impl_->invalidateLiquidSimulation();
+    impl_->fluidRuntime_.invalidateLiquidSimulation();
   }
 
   if (propertyPath == QStringLiteral("transform.initialRotation")) {
@@ -11879,153 +10031,69 @@ QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {
     return impl_->thumbnailCache_;
   }
 
-  QImage thumbnail(targetSize, QImage::Format_ARGB32_Premultiplied);
-  thumbnail.fill(QColor(27, 31, 39));
-  QPainter painter(&thumbnail);
-  painter.setRenderHint(QPainter::Antialiasing, true);
-  constexpr int cell = 8;
-  for (int y = 0; y < targetSize.height(); y += cell) {
-    for (int x = 0; x < targetSize.width(); x += cell) {
-      if (((x / cell) + (y / cell)) % 2 == 0) {
-        painter.fillRect(QRect(x, y, cell, cell), QColor(42, 47, 57));
-      }
-    }
-  }
-  const QColor accent(116, 169, 255);
-  painter.setPen(Qt::NoPen);
-  painter.setBrush(QColor(14, 18, 25, 210));
-  painter.drawRoundedRect(QRectF(4.0, 4.0,
-                                 std::max(0, targetSize.width() - 8),
-                                 std::max(0, targetSize.height() - 8)),
-                          4.0, 4.0);
-  painter.setBrush(accent);
-  painter.drawRoundedRect(QRectF(6.0, 6.0,
-                                 std::max(0, targetSize.width() - 12), 3.0),
-                          1.5, 1.5);
-  painter.setPen(QPen(QColor(150, 171, 199), 1.0));
-  painter.setBrush(Qt::NoBrush);
-  painter.drawRoundedRect(QRectF(1.0, 1.0,
-                                 std::max(0, targetSize.width() - 2),
-                                 std::max(0, targetSize.height() - 2)),
-                          3.0, 3.0);
-  QFont font;
-  font.setBold(true);
-  font.setPointSizeF(std::max<qreal>(7.0, targetSize.height() * 0.075));
-  painter.setFont(font);
-  painter.setPen(QColor(236, 241, 248));
-  painter.drawText(thumbnail.rect().adjusted(8, 8, -8, -8),
-                   Qt::AlignCenter | Qt::TextWordWrap,
-                   QStringLiteral("%1\n%2 × %3")
-                       .arg(layerName().isEmpty() ? QStringLiteral("Layer") : layerName())
-                       .arg(sourceSize().width)
-                       .arg(sourceSize().height));
-  impl_->thumbnailCache_ = thumbnail;
+  const auto currentSourceSize = sourceSize();
+  impl_->thumbnailCache_ =
+      buildLayerThumbnail(targetSize, layerName(), currentSourceSize.width,
+                          currentSourceSize.height);
   impl_->thumbnailCacheSize_ = targetSize;
 
   return impl_->thumbnailCache_;
 }
 
-// -- Mask Impl methods --
-
-void ArtifactAbstractLayer::Impl::addMask(const LayerMask &mask) {
-  masks_.push_back(mask);
-  ++maskRevision_;
-  qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Mask added, count: %1")
-                            .arg(masks_.size())));
-}
-
-void ArtifactAbstractLayer::Impl::removeMask(int index) {
-  if (index >= 0 && index < static_cast<int>(masks_.size())) {
-    masks_.erase(masks_.begin() + index);
-    ++maskRevision_;
-    qDebug("%s", qPrintable(QStringLiteral("[ArtifactAbstractLayer] Mask removed at index: %1")
-                              .arg(index)));
-  }
-}
-
-bool ArtifactAbstractLayer::Impl::moveMask(int fromIndex, int toIndex) {
-  const int count = static_cast<int>(masks_.size());
-  if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count ||
-      fromIndex == toIndex) {
-    return false;
-  }
-  auto mask = std::move(masks_[static_cast<std::size_t>(fromIndex)]);
-  masks_.erase(masks_.begin() + fromIndex);
-  masks_.insert(masks_.begin() + toIndex, std::move(mask));
-  ++maskRevision_;
-  return true;
-}
-
-void ArtifactAbstractLayer::Impl::setMask(int index, const LayerMask &mask) {
-  if (index >= 0 && index < static_cast<int>(masks_.size())) {
-    masks_[index] = mask;
-    ++maskRevision_;
-  }
-}
-
-LayerMask ArtifactAbstractLayer::Impl::getMask(int index) const {
-  if (index >= 0 && index < static_cast<int>(masks_.size()))
-    return masks_[index];
-  return {};
-}
-
-int ArtifactAbstractLayer::Impl::maskCount() const {
-  return static_cast<int>(masks_.size());
-}
-
-void ArtifactAbstractLayer::Impl::clearMasks() {
-  if (!masks_.empty()) {
-    masks_.clear();
-    ++maskRevision_;
-  }
-}
-
 // -- Mask public methods --
 
 void ArtifactAbstractLayer::addMask(const LayerMask &mask) {
-  impl_->addMask(mask);
+  impl_->maskMatteState_.addMask(mask);
 }
 
-void ArtifactAbstractLayer::removeMask(int index) { impl_->removeMask(index); }
+void ArtifactAbstractLayer::removeMask(int index) {
+  impl_->maskMatteState_.removeMask(index);
+}
 
 bool ArtifactAbstractLayer::moveMask(int fromIndex, int toIndex) {
-  return impl_->moveMask(fromIndex, toIndex);
+  return impl_->maskMatteState_.moveMask(fromIndex, toIndex);
 }
 
 void ArtifactAbstractLayer::setMask(int index, const LayerMask &mask) {
-  impl_->setMask(index, mask);
+  impl_->maskMatteState_.setMask(index, mask);
 }
 
 LayerMask ArtifactAbstractLayer::mask(int index) const {
-  LayerMask resolved = impl_->getMask(index);
+  LayerMask resolved = impl_->maskMatteState_.mask(index);
   applyMaskPropertyState(this, index, resolved);
   return resolved;
 }
 
-int ArtifactAbstractLayer::maskCount() const { return impl_->maskCount(); }
-
-std::uint64_t ArtifactAbstractLayer::maskRevision() const {
-  return impl_->maskRevision_;
+int ArtifactAbstractLayer::maskCount() const {
+  return impl_->maskMatteState_.maskCount();
 }
 
-void ArtifactAbstractLayer::clearMasks() { impl_->clearMasks(); }
+std::uint64_t ArtifactAbstractLayer::maskRevision() const {
+  return impl_->maskMatteState_.maskRevision();
+}
 
-bool ArtifactAbstractLayer::hasMasks() const { return impl_->maskCount() > 0; }
+void ArtifactAbstractLayer::clearMasks() {
+  impl_->maskMatteState_.clearMasks();
+}
+
+bool ArtifactAbstractLayer::hasMasks() const {
+  return impl_->maskMatteState_.maskCount() > 0;
+}
 
 std::vector<LayerMatteReference> ArtifactAbstractLayer::matteReferences() const {
-  return impl_->mattes_;
+  return impl_->maskMatteState_.matteReferences();
 }
 
 void ArtifactAbstractLayer::setMatteReferences(const std::vector<LayerMatteReference>& refs) {
-  impl_->mattes_ = refs;
+  impl_->maskMatteState_.setMatteReferences(refs);
 }
 
 void ArtifactAbstractLayer::addMatteReference(const LayerMatteReference& ref) {
-  impl_->mattes_.push_back(ref);
+  impl_->maskMatteState_.addMatteReference(ref);
 }
 
 void ArtifactAbstractLayer::clearMatteReferences() {
-  impl_->mattes_.clear();
+  impl_->maskMatteState_.clearMatteReferences();
 }
 
 // Opacity
@@ -12045,13 +10113,14 @@ float ArtifactAbstractLayer::opacity() const {
   if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Opacity) && var->opacityOverride.has_value()) {
       baseOpacity = var->opacityOverride.value();
   } else {
-    const auto it =
-        impl_->propertyCache_.constFind(QStringLiteral("layer.opacity"));
-    if (it != impl_->propertyCache_.constEnd() && it.value()) {
-      const auto &property = *it.value();
-      if (property.isAnimatable() && !property.getKeyFrames().empty()) {
+    const SharedPtr<AbstractProperty> property =
+        getProperty(QStringLiteral("layer.opacity"));
+    if (property) {
+      if ((property->isAnimatable() && !property->getKeyFrames().empty()) ||
+          property->hasExpression() || property->hasEnvelopes() ||
+          property->hasExternalOverride()) {
         const RationalTime time = currentTimelineTime(this);
-        const QVariant animatedValue = property.interpolateValue(time);
+        const QVariant animatedValue = evaluateAnimatedPropertyValue(*property, time);
         if (animatedValue.isValid()) {
           baseOpacity = static_cast<float>(animatedValue.toDouble());
         }
@@ -12121,17 +10190,17 @@ void ArtifactAbstractLayer::setOpacity(float value) {
   }
 
   bool changed = false;
-  const auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));
-  if (it != impl_->propertyCache_.end() && it.value()) {
-    auto& prop = *it.value();
-    if (prop.isAnimatable() && !prop.getKeyFrames().empty()) {
+  const SharedPtr<AbstractProperty> property =
+      getProperty(QStringLiteral("layer.opacity"));
+  if (property) {
+    if (property->isAnimatable() && !property->getKeyFrames().empty()) {
         const RationalTime time = currentTimelineTime(this);
-        prop.addKeyFrame(time, clamped);
+        property->addKeyFrame(time, clamped);
         changed = true;
     } else {
         if (impl_->opacity_ != clamped) {
             impl_->opacity_ = clamped;
-            prop.setValue(clamped);
+            property->setValue(clamped);
             changed = true;
         }
     }

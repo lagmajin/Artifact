@@ -1,11 +1,15 @@
 module;
 
 #include <algorithm>
+#include <functional>
+#include <utility>
 #include <limits>
 #include <QHash>
+#include <QSet>
 #include <QByteArray>
 #include <QColor>
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QDebug>
 #include <QDrag>
 #include <QDragEnterEvent>
@@ -30,6 +34,8 @@ module;
 #include <QVariant>
 #include <QPalette>
 #include <QLabel>
+#include <QMenu>
+#include <QAction>
 #include <QSize>
 #include <QSizePolicy>
 #include <QJsonDocument>
@@ -313,6 +319,9 @@ class NativeDockSurface final : public QWidget {
     }
   };
 public:
+  using LayoutMutationCallback =
+      std::function<void(const QByteArray &, const QString &)>;
+
   explicit NativeDockSurface(QWidget *parent = nullptr) : QWidget(parent) {
     setAcceptDrops(true);
     qApp->installEventFilter(this);
@@ -355,6 +364,10 @@ public:
       tabs->tabBar()->setAcceptDrops(true);
       tabs->installEventFilter(this);
       tabs->tabBar()->installEventFilter(this);
+      if (auto *tabListButton = qobject_cast<QToolButton *>(
+              tabs->cornerWidget(Qt::TopRightCorner))) {
+        tabListButton->installEventFilter(this);
+      }
     }
   }
 
@@ -362,7 +375,10 @@ public:
     if (qApp) {
       qApp->removeEventFilter(this);
     }
-    const auto dialogs = floatingDialogs_.values();
+    QSet<QDialog *> dialogs;
+    for (auto *dialog : floatingDialogs_) {
+      dialogs.insert(dialog);
+    }
     for (auto *dialog : dialogs) {
       if (!dialog) {
         continue;
@@ -372,6 +388,11 @@ public:
     }
     floatingDialogs_.clear();
     floatingWidgets_.clear();
+    floatingTabSurfaces_.clear();
+  }
+
+  void setLayoutMutationCallback(LayoutMutationCallback callback) {
+    layoutMutationCallback_ = std::move(callback);
   }
 
   bool addDockWidget(const QString &dockId, const QString &title,
@@ -436,9 +457,10 @@ public:
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(0, 0, 0, 0);
-    installFloatingHeader(dialog, layout, dockId, title);
-    widget->setParent(dialog);
-    layout->addWidget(widget);
+    installFloatingHeader(dialog, layout, title);
+    auto *tabs = createFloatingTabSurface(dialog, layout);
+    widget->setParent(tabs);
+    tabs->addTab(widget, title);
     if (geometry.isValid()) {
       dialog->setGeometry(geometry);
     }
@@ -457,6 +479,7 @@ public:
   // QADS-style detach: a tab released outside a dock surface becomes an owned
   // floating window. The panel object itself is preserved for a later re-dock.
   bool floatDockWidget(const QString &dockId, const QRect &geometry = {}) {
+    const QByteArray beforeState = beginLayoutMutation();
     const QString resolvedId = resolveDockId(dockId);
     auto *widget = docks_.value(resolvedId, nullptr);
     if (!widget || floatingDialogs_.contains(resolvedId)) return false;
@@ -474,35 +497,136 @@ public:
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(0, 0, 0, 0);
-    installFloatingHeader(dialog, layout, resolvedId, title);
-    widget->setParent(dialog);
-    layout->addWidget(widget);
+    installFloatingHeader(dialog, layout, title);
+    auto *floatingTabs = createFloatingTabSurface(dialog, layout);
+    widget->setParent(floatingTabs);
+    floatingTabs->addTab(widget, title);
     const QRect fallback(dialog->mapToGlobal(QPoint(0, 0)), QSize(560, 400));
     dialog->setGeometry(geometry.isValid() ? geometry : fallback);
     floatingDialogs_.insert(resolvedId, dialog);
     floatingWidgets_.insert(resolvedId, widget);
     if (visible) dialog->show();
+    finishLayoutMutation(beforeState, tr("Float panel"));
+    return true;
+  }
+
+  bool floatDockTabGroup(const QString &dockId, const QRect &geometry = {}) {
+    const QString resolvedId = resolveDockId(dockId);
+    auto *source = docks_.value(resolvedId, nullptr);
+    auto *sourceTabs = source ? tabsForWidget(source) : nullptr;
+    if (!source || !sourceTabs || sourceTabs->count() < 2) {
+      return floatDockWidget(resolvedId, geometry);
+    }
+
+    QStringList dockIds;
+    for (int index = 0; index < sourceTabs->count(); ++index) {
+      const QString id = dockIdForWidget(sourceTabs->widget(index));
+      if (!id.isEmpty()) {
+        dockIds.push_back(id);
+      }
+    }
+    if (dockIds.size() < 2) {
+      return floatDockWidget(resolvedId, geometry);
+    }
+
+    const QByteArray beforeState = beginLayoutMutation();
+    auto *dialog = new QDialog(window());
+    dialog->setWindowTitle(titles_.value(resolvedId, resolvedId));
+    dialog->setObjectName(QStringLiteral("ArtifactNativeFloatingDockGroup_%1")
+                              .arg(resolvedId));
+    dialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    installFloatingHeader(dialog, layout, dialog->windowTitle());
+    auto *floatingTabs = createFloatingTabSurface(dialog, layout);
+    const bool visible = sourceTabs->isVisible();
+    for (const QString &id : dockIds) {
+      auto *widget = docks_.take(id);
+      if (!widget) {
+        continue;
+      }
+      const int index = sourceTabs->indexOf(widget);
+      if (index >= 0) {
+        sourceTabs->removeTab(index);
+      }
+      widget->setParent(floatingTabs);
+      floatingTabs->addTab(widget, titles_.value(id, id));
+      floatingDialogs_.insert(id, dialog);
+      floatingWidgets_.insert(id, widget);
+    }
+    if (sourceTabs->count() == 0) {
+      sourceTabs->hide();
+    }
+    const QRect fallback(dialog->mapToGlobal(QPoint(0, 0)), QSize(680, 460));
+    dialog->setGeometry(geometry.isValid() ? geometry : fallback);
+    if (visible) {
+      dialog->show();
+    }
+    const bool floated = floatingTabs->count() > 0;
+    if (floated) {
+      finishLayoutMutation(beforeState, tr("Float tab group"));
+    }
+    return floated;
+  }
+
+  bool floatDockWidgetToGroup(const QString &dockId, QDialog *dialog) {
+    const QString resolvedId = resolveDockId(dockId);
+    auto *widget = docks_.value(resolvedId, nullptr);
+    auto *floatingTabs = floatingTabSurfaces_.value(dialog, nullptr);
+    if (!widget || !floatingTabs || floatingDialogs_.contains(resolvedId)) {
+      return false;
+    }
+    if (auto *sourceTabs = tabsForWidget(widget)) {
+      const int index = sourceTabs->indexOf(widget);
+      if (index >= 0) {
+        sourceTabs->removeTab(index);
+      }
+      if (sourceTabs->count() == 0) {
+        sourceTabs->hide();
+      }
+    }
+    docks_.remove(resolvedId);
+    widget->setParent(floatingTabs);
+    floatingTabs->addTab(widget, titles_.value(resolvedId, resolvedId));
+    floatingDialogs_.insert(resolvedId, dialog);
+    floatingWidgets_.insert(resolvedId, widget);
     return true;
   }
 
   bool dockFloatingWidget(const QString &dockId, DockArea area = DockArea::Center) {
+    const QByteArray beforeState = beginLayoutMutation();
     const QString resolvedId = resolveDockId(dockId);
-    auto *dialog = floatingDialogs_.take(resolvedId);
-    auto *widget = floatingWidgets_.take(resolvedId);
+    auto *dialog = floatingDialogs_.value(resolvedId, nullptr);
+    auto *widget = floatingWidgets_.value(resolvedId, nullptr);
     if (!dialog || !widget) return false;
     const QString title = titles_.value(resolvedId, resolvedId);
     const bool visible = dialog->isVisible();
     const bool pinned = pinned_.value(resolvedId, false);
+    auto *floatingTabs = floatingTabSurfaces_.value(dialog, nullptr);
+    if (floatingTabs) {
+      const int index = floatingTabs->indexOf(widget);
+      if (index >= 0) {
+        floatingTabs->removeTab(index);
+      }
+    }
+    floatingDialogs_.remove(resolvedId);
+    floatingWidgets_.remove(resolvedId);
     widget->setParent(nullptr);
-    dialog->hide();
-    dialog->deleteLater();
+    if (!floatingTabs || floatingTabs->count() == 0) {
+      floatingTabSurfaces_.remove(dialog);
+      dialog->hide();
+      dialog->deleteLater();
+    }
     if (!addDockWidget(resolvedId, title, widget, area)) return false;
     pinned_.insert(resolvedId, pinned);
     setDockVisible(resolvedId, visible);
+    finishLayoutMutation(beforeState, tr("Dock panel"));
     return true;
   }
 
   bool restoreLayout(const QList<DockLayoutEntry> &entries) {
+    const bool wasRestoringLayout = restoringLayout_;
+    restoringLayout_ = true;
     QList<DockLayoutEntry> normalized;
     QHash<QString, bool> seen;
     for (const auto &entry : entries) {
@@ -518,10 +642,15 @@ public:
       normalized.push_back(entry);
     }
     const auto savedTabOrder = [](const DockLayoutEntry &entry) -> qsizetype {
-      if (!entry.tabGroup.startsWith(QStringLiteral("tabs:"))) {
+      QString ids;
+      if (entry.tabGroup.startsWith(QStringLiteral("tabs:"))) {
+        ids = entry.tabGroup.mid(5);
+      } else if (entry.tabGroup.startsWith(QStringLiteral("floating-tabs:"))) {
+        ids = entry.tabGroup.mid(14);
+      } else {
         return std::numeric_limits<qsizetype>::max();
       }
-      return entry.tabGroup.mid(5).split(QLatin1Char('|')).indexOf(entry.dockId);
+      return ids.split(QLatin1Char('|')).indexOf(entry.dockId);
     };
     std::sort(normalized.begin(), normalized.end(),
               [&savedTabOrder](const DockLayoutEntry &left,
@@ -535,14 +664,26 @@ public:
                 return left.dockId < right.dockId;
               });
 
+    QHash<QString, QDialog *> restoredFloatingGroups;
     bool restoredAny = false;
     for (const auto &entry : normalized) {
       if (entry.floating) {
+        QDialog *groupDialog = nullptr;
+        if (entry.tabGroup.startsWith(QStringLiteral("floating-tabs:"))) {
+          groupDialog = restoredFloatingGroups.value(entry.tabGroup, nullptr);
+        }
         if (!floatingDialogs_.contains(entry.dockId) &&
             docks_.contains(entry.dockId)) {
-          floatDockWidget(entry.dockId, entry.floatingGeometry);
+          if (groupDialog) {
+            floatDockWidgetToGroup(entry.dockId, groupDialog);
+          } else {
+            floatDockWidget(entry.dockId, entry.floatingGeometry);
+          }
         }
         if (auto *dialog = floatingDialogs_.value(entry.dockId, nullptr)) {
+          if (entry.tabGroup.startsWith(QStringLiteral("floating-tabs:"))) {
+            restoredFloatingGroups.insert(entry.tabGroup, dialog);
+          }
           if (entry.floatingGeometry.isValid()) {
             dialog->setGeometry(entry.floatingGeometry);
           }
@@ -579,19 +720,30 @@ public:
       pinned_.insert(entry.dockId, entry.pinned);
       restoredAny = true;
     }
+    for (const auto &entry : normalized) {
+      if (entry.active && entry.visible) {
+        activateDock(entry.dockId);
+      }
+    }
+    restoringLayout_ = wasRestoringLayout;
     return restoredAny;
   }
 
   QByteArray saveLayoutState() const {
     DockLayoutDocument document;
     QHash<int, QStringList> areaIds;
-    const auto appendTabOrder = [this, &areaIds](QTabWidget *tabs,
-                                                  DockArea area) {
+    QHash<QDialog *, QStringList> floatingTabIds;
+    QHash<QTabWidget *, QString> activeTabIds;
+    const auto appendTabOrder = [this, &areaIds, &activeTabIds](
+                                    QTabWidget *tabs, DockArea area) {
       if (!tabs) return;
       auto &ids = areaIds[static_cast<int>(area)];
       for (int i = 0; i < tabs->count(); ++i) {
         const QString id = dockIdForWidget(tabs->widget(i));
         if (!id.isEmpty()) ids.push_back(id);
+        if (i == tabs->currentIndex() && !id.isEmpty()) {
+          activeTabIds.insert(tabs, id);
+        }
       }
     };
     appendTabOrder(leftTabs_, DockArea::Left);
@@ -599,11 +751,32 @@ public:
     appendTabOrder(rightTabs_, DockArea::Right);
     appendTabOrder(topTabs_, DockArea::Top);
     appendTabOrder(bottomTabs_, DockArea::Bottom);
+    for (auto it = floatingTabSurfaces_.cbegin();
+         it != floatingTabSurfaces_.cend(); ++it) {
+      auto *tabs = it.value();
+      if (!tabs) {
+        continue;
+      }
+      auto &ids = floatingTabIds[it.key()];
+      for (int index = 0; index < tabs->count(); ++index) {
+        const QString id = dockIdForWidget(tabs->widget(index));
+        if (!id.isEmpty()) {
+          ids.push_back(id);
+        }
+        if (index == tabs->currentIndex() && !id.isEmpty()) {
+          activeTabIds.insert(tabs, id);
+        }
+      }
+    }
     for (auto it = docks_.cbegin(); it != docks_.cend(); ++it) {
       DockLayoutEntry entry;
       entry.dockId = it.key();
       entry.area = areas_.value(it.key(), DockArea::Center);
-      entry.visible = it.value() && it.value()->isVisible();
+      auto *tabs = tabsForWidget(it.value());
+      const int index = tabs ? tabs->indexOf(it.value()) : -1;
+      entry.visible = tabs && index >= 0 ? tabs->isTabVisible(index)
+                                         : it.value() && it.value()->isVisible();
+      entry.active = activeTabIds.value(tabs) == it.key();
       entry.pinned = pinned_.value(it.key(), false);
       document.entries.push_back(entry);
     }
@@ -616,13 +789,22 @@ public:
       entry.pinned = pinned_.value(it.key(), false);
       entry.floating = true;
       if (auto *dialog = floatingDialogs_.value(it.key(), nullptr)) {
+        auto *tabs = floatingTabSurfaces_.value(dialog, nullptr);
+        const int index = tabs ? tabs->indexOf(it.value()) : -1;
+        if (tabs && index >= 0) {
+          entry.visible = tabs->isTabVisible(index);
+        }
         entry.floatingGeometry = dialog->geometry();
+        entry.active = activeTabIds.value(tabs) == it.key();
+        auto ids = floatingTabIds.value(dialog);
+        ids.removeDuplicates();
+        entry.tabGroup = QStringLiteral("floating-tabs:") +
+                         ids.join(QStringLiteral("|"));
       }
       document.entries.push_back(entry);
     }
     for (auto &entry : document.entries) {
       if (entry.floating) {
-        entry.tabGroup.clear();
         continue;
       }
       auto ids = areaIds.value(static_cast<int>(entry.area));
@@ -659,10 +841,22 @@ public:
 
   bool removeDockWidget(const QString &dockId) {
     const QString resolvedId = resolveDockId(dockId);
-    if (auto *dialog = floatingDialogs_.take(resolvedId)) {
+    if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      auto *widget = floatingWidgets_.value(resolvedId, nullptr);
+      if (auto *floatingTabs = floatingTabSurfaces_.value(dialog, nullptr)) {
+        const int index = widget ? floatingTabs->indexOf(widget) : -1;
+        if (index >= 0) {
+          floatingTabs->removeTab(index);
+        }
+      }
+      floatingDialogs_.remove(resolvedId);
       floatingWidgets_.remove(resolvedId);
-      dialog->hide();
-      dialog->deleteLater();
+      if (floatingTabSurfaces_.value(dialog, nullptr) &&
+          floatingTabSurfaces_.value(dialog)->count() == 0) {
+        floatingTabSurfaces_.remove(dialog);
+        dialog->hide();
+        dialog->deleteLater();
+      }
       areas_.remove(resolvedId);
       titles_.remove(resolvedId);
       pinned_.remove(resolvedId);
@@ -689,6 +883,7 @@ public:
   }
 
   bool moveDockWidget(const QString &dockId, DockArea area) {
+    const QByteArray beforeState = beginLayoutMutation();
     const QString resolvedId = resolveDockId(dockId);
     auto *widget = docks_.value(resolvedId);
     if (!widget || areas_.value(resolvedId, DockArea::Center) == area) {
@@ -709,11 +904,13 @@ public:
     }
     pinned_.insert(resolvedId, pinned);
     widget->setVisible(visible);
+    finishLayoutMutation(beforeState, tr("Move panel"));
     return true;
   }
 
   bool moveDockWidgetToTab(const QString &dockId,
                            const QString &targetDockId) {
+    const QByteArray beforeState = beginLayoutMutation();
     const QString resolvedId = resolveDockId(dockId);
     const QString resolvedTargetId = resolveDockId(targetDockId);
     auto *widget = docks_.value(resolvedId, nullptr);
@@ -756,13 +953,76 @@ public:
     if (newTabs->count() == 0) {
       newTabs->hide();
     }
+    finishLayoutMutation(beforeState, tr("Move panel to tab group"));
+    return true;
+  }
+
+  bool moveDockWidgetToTabAt(const QString &dockId, QTabWidget *targetTabs,
+                             int insertionIndex) {
+    const QByteArray beforeState = beginLayoutMutation();
+    const QString resolvedId = resolveDockId(dockId);
+    auto *widget = docks_.value(resolvedId, nullptr);
+    if (!widget || !targetTabs || tabsForWidget(widget) == targetTabs) {
+      return false;
+    }
+    const QString title = titles_.value(resolvedId, resolvedId);
+    auto *sourceTabs = tabsForWidget(widget);
+    const int sourceIndex = sourceTabs ? sourceTabs->indexOf(widget) : -1;
+    const bool visible = sourceTabs && sourceIndex >= 0
+        ? sourceTabs->isTabVisible(sourceIndex)
+        : widget->isVisible();
+    const bool pinned = pinned_.value(resolvedId, false);
+    const DockArea previousArea = areas_.value(resolvedId, DockArea::Center);
+    const DockArea targetArea = areaForTabs(targetTabs);
+    auto *floatingDialog = floatingDialogForTabs(targetTabs);
+    if (!removeDockWidget(resolvedId)) {
+      return false;
+    }
+    widget->setParent(targetTabs);
+    insertionIndex = std::clamp(insertionIndex, 0, targetTabs->count());
+    installCloseButton(targetTabs,
+                       targetTabs->insertTab(insertionIndex, widget, title),
+                       resolvedId);
+    targetTabs->setCurrentWidget(widget);
+    targetTabs->show();
+    if (floatingDialog) {
+      floatingDialogs_.insert(resolvedId, floatingDialog);
+      floatingWidgets_.insert(resolvedId, widget);
+      areas_.insert(resolvedId, previousArea);
+    } else {
+      docks_.insert(resolvedId, widget);
+      areas_.insert(resolvedId, targetArea);
+    }
+    titles_.insert(resolvedId, title);
+    pinned_.insert(resolvedId, pinned);
+    syncPinButton(resolvedId, pinned);
+    widget->setVisible(visible);
+    setActiveTabSurface(targetTabs);
+    finishLayoutMutation(beforeState, tr("Move panel to tab group"));
     return true;
   }
 
   bool setDockVisible(const QString &dockId, bool visible) {
     const QString resolvedId = resolveDockId(dockId);
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
-      dialog->setVisible(visible);
+      auto *widget = floatingWidgets_.value(resolvedId, nullptr);
+      auto *tabs = floatingTabSurfaces_.value(dialog, nullptr);
+      if (tabs && widget) {
+        const int index = tabs->indexOf(widget);
+        if (index >= 0) {
+          tabs->setTabVisible(index, visible);
+          if (visible) {
+            tabs->setCurrentIndex(index);
+          }
+        }
+        bool anyVisible = false;
+        for (int index = 0; index < tabs->count(); ++index) {
+          anyVisible |= tabs->isTabVisible(index);
+        }
+        dialog->setVisible(anyVisible);
+      } else {
+        dialog->setVisible(visible);
+      }
       return true;
     }
     auto *widget = docks_.value(resolvedId);
@@ -856,6 +1116,15 @@ public:
   bool activateDock(const QString &dockId) {
     const QString resolvedId = resolveDockId(dockId);
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      if (auto *tabs = floatingTabSurfaces_.value(dialog, nullptr)) {
+        if (auto *widget = floatingWidgets_.value(resolvedId, nullptr)) {
+          const int index = tabs->indexOf(widget);
+          if (index >= 0) {
+            tabs->setTabVisible(index, true);
+            tabs->setCurrentIndex(index);
+          }
+        }
+      }
       dialog->show();
       dialog->raise();
       dialog->activateWindow();
@@ -920,6 +1189,12 @@ public:
   bool dockVisible(const QString &dockId) const {
     const QString resolvedId = resolveDockId(dockId);
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      if (auto *tabs = floatingTabSurfaces_.value(dialog, nullptr)) {
+        if (auto *widget = floatingWidgets_.value(resolvedId, nullptr)) {
+          const int index = tabs->indexOf(widget);
+          return index >= 0 && tabs->isTabVisible(index) && dialog->isVisible();
+        }
+      }
       return dialog->isVisible();
     }
     const auto *widget = docks_.value(resolvedId,
@@ -977,6 +1252,13 @@ protected:
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
+    if (!dragSourceId_.isEmpty() && event &&
+        event->type() == QEvent::KeyPress &&
+        static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+      // Let QDrag process Escape as usual, but retain the reason so an ignored
+      // drag is not mistaken for an intentional detach-to-floating operation.
+      dockDragCancelled_ = true;
+    }
     if (event && (event->type() == QEvent::FocusIn ||
                   event->type() == QEvent::MouseButtonPress)) {
       if (auto *widget = qobject_cast<QWidget *>(watched)) {
@@ -987,46 +1269,44 @@ protected:
     }
 
     if (auto *button = qobject_cast<QToolButton *>(watched)) {
+      const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
+          static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
+          button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
+      const bool keyRelease = event->type() == QEvent::KeyRelease &&
+          (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space ||
+           static_cast<QKeyEvent *>(event)->key() == Qt::Key_Return ||
+           static_cast<QKeyEvent *>(event)->key() == Qt::Key_Enter) &&
+          !static_cast<QKeyEvent *>(event)->isAutoRepeat();
+      if (button->property("artifactDockTabList").toBool() &&
+          button->isDown() && (mouseRelease || keyRelease)) {
+        button->setDown(false);
+        showTabListMenu(qobject_cast<QTabWidget *>(button->parentWidget()),
+                        button->mapToGlobal(button->rect().bottomLeft()));
+        return true;
+      }
       const QString id = button->property("artifactDockCloseId").toString();
       if (!id.isEmpty()) {
-        const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
-            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
-            button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
-        const bool keyRelease = event->type() == QEvent::KeyRelease &&
-            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space &&
-            !static_cast<QKeyEvent *>(event)->isAutoRepeat();
         if (button->isDown() && (mouseRelease || keyRelease)) {
           button->setDown(false);
           dragSourceId_.clear();
+          const QByteArray beforeState = beginLayoutMutation();
           setDockVisible(id, false);
+          finishLayoutMutation(beforeState, tr("Close panel"));
           return true;
         }
       }
       const QString dockBackId = button->property("artifactDockBackId").toString();
-      if (!dockBackId.isEmpty()) {
-        const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
-            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
-            button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
-        const bool keyRelease = event->type() == QEvent::KeyRelease &&
-            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space &&
-            !static_cast<QKeyEvent *>(event)->isAutoRepeat();
+      if (button->property("artifactDockBackGroup").toBool()) {
         if (button->isDown() && (mouseRelease || keyRelease)) {
           button->setDown(false);
-          dockFloatingWidget(dockBackId, areas_.value(dockBackId, DockArea::Center));
+          dockFloatingGroup(qobject_cast<QDialog *>(button->window()));
           return true;
         }
       }
-      const QString dockPinId = button->property("artifactDockPinId").toString();
-      if (!dockPinId.isEmpty()) {
-        const bool mouseRelease = event->type() == QEvent::MouseButtonRelease &&
-            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
-            button->rect().contains(static_cast<QMouseEvent *>(event)->position().toPoint());
-        const bool keyRelease = event->type() == QEvent::KeyRelease &&
-            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Space &&
-            !static_cast<QKeyEvent *>(event)->isAutoRepeat();
+      if (!dockBackId.isEmpty()) {
         if (button->isDown() && (mouseRelease || keyRelease)) {
           button->setDown(false);
-          setDockPinned(dockPinId, !dockPinned(dockPinId));
+          dockFloatingWidget(dockBackId, areas_.value(dockBackId, DockArea::Center));
           return true;
         }
       }
@@ -1055,6 +1335,16 @@ protected:
           if (floatDockWidget(dockId, geometry)) return true;
         }
       }
+    } else if (event->type() == QEvent::ContextMenu && tabBar) {
+      const auto *contextEvent = static_cast<QContextMenuEvent *>(event);
+      const int index = tabBar->tabAt(contextEvent->pos());
+      const QString dockId = index >= 0
+          ? dockIdForWidget(tabs->widget(index))
+          : QString{};
+      if (!dockId.isEmpty()) {
+        showDockTabContextMenu(dockId, contextEvent->globalPos());
+        return true;
+      }
     } else if (event->type() == QEvent::MouseButtonPress && tabBar) {
       auto *mouseEvent = static_cast<QMouseEvent *>(event);
       if (mouseEvent->button() == Qt::LeftButton) {
@@ -1077,12 +1367,15 @@ protected:
                     dragSourceId_.toUtf8());
       auto *drag = new QDrag(tabBar);
       drag->setMimeData(mime);
+      dockDragCancelled_ = false;
       const Qt::DropAction result = drag->exec(Qt::MoveAction);
       hideDropPreview();
-      if (result == Qt::IgnoreAction && docks_.contains(dragSourceId_)) {
+      if (result == Qt::IgnoreAction && !dockDragCancelled_ &&
+          docks_.contains(dragSourceId_)) {
         const QPoint globalPosition = tabBar->mapToGlobal(mouseEvent->position().toPoint());
         floatDockWidget(dragSourceId_, QRect(globalPosition, QSize(560, 400)));
       }
+      dockDragCancelled_ = false;
       dragSourceId_.clear();
       return true;
     } else if (event->type() == QEvent::DragEnter ||
@@ -1094,12 +1387,13 @@ protected:
         const QPoint tabPosition = tabBar
                                        ? position
                                        : tabs->tabBar()->mapFrom(tabs, position);
-        const int targetIndex = tabs->tabBar()->tabAt(tabPosition);
-        const QRect targetRect = targetIndex >= 0
-            ? QRect(tabs->tabBar()->mapTo(this, tabs->tabBar()->tabRect(targetIndex).topLeft()),
-                    tabs->tabBar()->tabRect(targetIndex).size())
-            : QRect(tabs->mapTo(this, tabs->rect().topLeft()), tabs->size());
-        showDropPreview(targetRect);
+        const int insertionIndex = tabInsertionIndex(tabs, tabPosition);
+        if (tabs->tabBar()->tabAt(tabPosition) >= 0) {
+          showTabInsertionPreview(tabs, insertionIndex);
+        } else {
+          showDropPreview(QRect(tabs->mapTo(this, tabs->rect().topLeft()),
+                               tabs->size()));
+        }
         dragEvent->acceptProposedAction();
         return true;
       }
@@ -1117,29 +1411,34 @@ protected:
                                        ? position
                                        : tabs->tabBar()->mapFrom(tabs, position);
         const int targetIndex = tabs->tabBar()->tabAt(tabPosition);
+        const int insertionIndex = tabInsertionIndex(tabs, tabPosition);
         auto *source = docks_.value(sourceId, nullptr);
         auto *sourceTabs = source ? tabsForWidget(source) : nullptr;
         if (source && sourceTabs == tabs) {
           const int sourceIndex = tabs->indexOf(source);
           if (sourceIndex >= 0) {
-            int insertionIndex = targetIndex < 0 ? tabs->count() : targetIndex;
+            const QByteArray beforeState = beginLayoutMutation();
+            int adjustedInsertionIndex = insertionIndex;
             const QString title = titles_.value(sourceId, sourceId);
             tabs->removeTab(sourceIndex);
-            if (sourceIndex < insertionIndex) --insertionIndex;
-            insertionIndex = std::clamp(insertionIndex, 0, tabs->count());
-            installCloseButton(tabs, tabs->insertTab(insertionIndex, source, title), sourceId);
+            if (sourceIndex < adjustedInsertionIndex) --adjustedInsertionIndex;
+            adjustedInsertionIndex = std::clamp(adjustedInsertionIndex, 0, tabs->count());
+            installCloseButton(tabs, tabs->insertTab(adjustedInsertionIndex, source, title), sourceId);
             tabs->setCurrentWidget(source);
+            finishLayoutMutation(beforeState, tr("Reorder tab"));
             dropEvent->acceptProposedAction();
             return true;
           }
         }
         if (targetIndex >= 0) {
-          const QString targetId = dockIdForWidget(tabs->widget(targetIndex));
-          if (!targetId.isEmpty() && sourceId != targetId &&
-              moveDockWidgetToTab(sourceId, targetId)) {
+          if (moveDockWidgetToTabAt(sourceId, tabs, insertionIndex)) {
             dropEvent->acceptProposedAction();
             return true;
           }
+        } else if (floatingDialogForTabs(tabs) &&
+                   moveDockWidgetToTabAt(sourceId, tabs, tabs->count())) {
+          dropEvent->acceptProposedAction();
+          return true;
         } else if (moveDockWidget(sourceId, areaForTabs(tabs))) {
           // The empty content/tab-strip portion is an area drop, not a
           // request to merge with whichever tab happens to be current.
@@ -1152,6 +1451,40 @@ protected:
   }
 
 private:
+  QByteArray beginLayoutMutation() const {
+    if (!layoutMutationCallback_ || restoringLayout_ ||
+        layoutMutationBatchDepth_ > 0) {
+      return {};
+    }
+    return saveLayoutState();
+  }
+
+  void finishLayoutMutation(const QByteArray &beforeState,
+                            const QString &label) {
+    if (beforeState.isEmpty() || !layoutMutationCallback_ ||
+        restoringLayout_ || layoutMutationBatchDepth_ > 0) {
+      return;
+    }
+    layoutMutationCallback_(beforeState, label);
+  }
+
+  void beginLayoutMutationBatch(const QString &label) {
+    if (layoutMutationBatchDepth_ == 0) {
+      layoutMutationBatchBeforeState_ = beginLayoutMutation();
+      layoutMutationBatchLabel_ = label;
+    }
+    ++layoutMutationBatchDepth_;
+  }
+
+  void endLayoutMutationBatch() {
+    if (layoutMutationBatchDepth_ == 0 || --layoutMutationBatchDepth_ != 0) {
+      return;
+    }
+    const QByteArray beforeState = std::move(layoutMutationBatchBeforeState_);
+    const QString label = std::move(layoutMutationBatchLabel_);
+    finishLayoutMutation(beforeState, label);
+  }
+
   DockArea areaForPosition(const QPoint &position) const {
     if (topTabs_ && topTabs_->isVisible() &&
         topTabs_->rect().contains(topTabs_->mapFrom(this, position))) {
@@ -1161,24 +1494,54 @@ private:
         bottomTabs_->rect().contains(bottomTabs_->mapFrom(this, position))) {
       return DockArea::Bottom;
     }
-    if (splitter_ && splitter_->rect().contains(splitter_->mapFrom(this, position))) {
-      const int center = splitter_->width() / 2;
-      const int localX = splitter_->mapFrom(this, position).x();
-      if (localX < center - splitter_->width() / 6) {
-        return DockArea::Left;
-      }
-      if (localX > center + splitter_->width() / 6) {
-        return DockArea::Right;
-      }
+    const QRect surface = rect();
+    const int verticalEdge = std::min(
+        std::max(24, surface.height() / 5), std::max(1, surface.height() / 2));
+    const int horizontalEdge = std::min(
+        std::max(32, surface.width() / 5), std::max(1, surface.width() / 2));
+    if (position.y() < surface.top() + verticalEdge) {
+      return DockArea::Top;
+    }
+    if (position.y() > surface.bottom() - verticalEdge) {
+      return DockArea::Bottom;
+    }
+    if (position.x() < surface.left() + horizontalEdge) {
+      return DockArea::Left;
+    }
+    if (position.x() > surface.right() - horizontalEdge) {
+      return DockArea::Right;
     }
     return DockArea::Center;
   }
 
   QRect dropPreviewRectForArea(DockArea area) const {
     auto *tabs = tabsForArea(area);
-    if (!tabs) return rect();
-    return QRect(tabs->mapTo(const_cast<NativeDockSurface *>(this), tabs->rect().topLeft()),
-                 tabs->size());
+    if (tabs && tabs->isVisible() && !tabs->size().isEmpty()) {
+      return QRect(tabs->mapTo(const_cast<NativeDockSurface *>(this),
+                               tabs->rect().topLeft()),
+                   tabs->size());
+    }
+    const QRect surface = rect();
+    const int verticalEdge = std::min(
+        std::max(24, surface.height() / 5), std::max(1, surface.height() / 2));
+    const int horizontalEdge = std::min(
+        std::max(32, surface.width() / 5), std::max(1, surface.width() / 2));
+    switch (area) {
+    case DockArea::Top:
+      return QRect(surface.left(), surface.top(), surface.width(), verticalEdge);
+    case DockArea::Bottom:
+      return QRect(surface.left(), surface.bottom() - verticalEdge + 1,
+                   surface.width(), verticalEdge);
+    case DockArea::Left:
+      return QRect(surface.left(), surface.top(), horizontalEdge, surface.height());
+    case DockArea::Right:
+      return QRect(surface.right() - horizontalEdge + 1, surface.top(),
+                   horizontalEdge, surface.height());
+    case DockArea::Center:
+      return surface.adjusted(horizontalEdge, verticalEdge,
+                              -horizontalEdge, -verticalEdge);
+    }
+    return surface;
   }
 
   void showDropPreview(const QRect &targetRect) {
@@ -1192,23 +1555,105 @@ private:
     if (dropPreview_) dropPreview_->hide();
   }
 
+  int tabInsertionIndex(const QTabWidget *tabs,
+                        const QPoint &tabBarPosition) const {
+    if (!tabs || !tabs->tabBar()) {
+      return 0;
+    }
+    const int targetIndex = tabs->tabBar()->tabAt(tabBarPosition);
+    if (targetIndex < 0) {
+      return tabs->count();
+    }
+    return tabBarPosition.x() > tabs->tabBar()->tabRect(targetIndex).center().x()
+        ? targetIndex + 1
+        : targetIndex;
+  }
+
+  void showTabInsertionPreview(QTabWidget *tabs, int insertionIndex) {
+    if (!tabs || !tabs->tabBar() || !dropPreview_) {
+      return;
+    }
+    auto *tabBar = tabs->tabBar();
+    const int boundedIndex = std::clamp(insertionIndex, 0, tabs->count());
+    int x = tabBar->contentsRect().right();
+    if (boundedIndex < tabs->count()) {
+      x = tabBar->tabRect(boundedIndex).left();
+    }
+    const QRect marker(tabBar->mapTo(this, QPoint(x - 2, 1)),
+                       QSize(4, std::max(1, tabBar->height() - 2)));
+    showDropPreview(marker);
+  }
+
+  void showTabListMenu(QTabWidget *tabs, const QPoint &globalPosition) {
+    if (!tabs || tabs->count() == 0) {
+      return;
+    }
+    QMenu menu(tabs);
+    for (int index = 0; index < tabs->count(); ++index) {
+      const QString dockId = dockIdForWidget(tabs->widget(index));
+      if (dockId.isEmpty()) {
+        continue;
+      }
+      QAction *action = menu.addAction(tabs->tabText(index));
+      action->setCheckable(true);
+      action->setChecked(index == tabs->currentIndex());
+      action->setEnabled(tabs->isTabVisible(index));
+      action->setData(dockId);
+    }
+    if (QAction *selected = menu.exec(globalPosition)) {
+      activateDock(selected->data().toString());
+    }
+  }
+
+  void showDockTabContextMenu(const QString &dockId,
+                              const QPoint &globalPosition) {
+    const QString resolvedId = resolveDockId(dockId);
+    const bool docked = docks_.contains(resolvedId);
+    const bool floating = floatingDialogs_.contains(resolvedId);
+    if (resolvedId.isEmpty() || (!docked && !floating)) {
+      return;
+    }
+    QMenu menu(this);
+    QAction *placementAction = nullptr;
+    QAction *floatGroupAction = nullptr;
+    if (docked) {
+      placementAction = menu.addAction(tr("Float panel"));
+      floatGroupAction = menu.addAction(tr("Float tab group"));
+      auto *tabs = tabsForWidget(docks_.value(resolvedId, nullptr));
+      floatGroupAction->setEnabled(tabs && tabs->count() > 1);
+    } else {
+      placementAction = menu.addAction(tr("Dock panel back"));
+    }
+    QAction *pinAction = menu.addAction(
+        dockPinned(resolvedId) ? tr("Unpin panel") : tr("Pin panel"));
+    QAction *closeAction = menu.addAction(tr("Close panel"));
+    closeAction->setEnabled(!dockPinned(resolvedId));
+    QAction *selected = menu.exec(globalPosition);
+    if (selected == placementAction) {
+      if (docked) {
+        floatDockWidget(resolvedId);
+      } else {
+        dockFloatingWidget(resolvedId,
+                           areas_.value(resolvedId, DockArea::Center));
+      }
+    } else if (selected == floatGroupAction) {
+      floatDockTabGroup(resolvedId);
+    } else if (selected == pinAction) {
+      const QByteArray beforeState = beginLayoutMutation();
+      setDockPinned(resolvedId, !dockPinned(resolvedId));
+      finishLayoutMutation(beforeState, tr("Pin panel"));
+    } else if (selected == closeAction) {
+      const QByteArray beforeState = beginLayoutMutation();
+      setDockVisible(resolvedId, false);
+      finishLayoutMutation(beforeState, tr("Close panel"));
+    }
+  }
+
   void installCloseButton(QTabWidget *tabs, int index, const QString &id) {
     auto *buttons = new QWidget(tabs->tabBar());
     auto *buttonLayout = new QHBoxLayout(buttons);
     buttonLayout->setContentsMargins(0, 0, 0, 0);
     buttonLayout->setSpacing(1);
-
-    auto *pinButton = new QToolButton(buttons);
-    pinButton->setAutoRaise(true);
-    pinButton->setCheckable(false);
-    pinButton->setIcon(QIcon(QStringLiteral(":/icons/Studio/dock_pin.svg")));
-    pinButton->setIconSize(QSize(16, 16));
-    pinButton->setToolTip(tr("Pin panel"));
-    pinButton->setAccessibleName(tr("Pin panel"));
-    pinButton->setProperty("artifactDockPinId", id);
-    pinButton->setFixedSize(20, 20);
-    pinButton->installEventFilter(this);
-    buttonLayout->addWidget(pinButton);
 
     auto *closeButton = new QToolButton(buttons);
     closeButton->setAutoRaise(true);
@@ -1221,13 +1666,13 @@ private:
     closeButton->installEventFilter(this);
     buttonLayout->addWidget(closeButton);
 
-    buttons->setFixedSize(41, 20);
+    buttons->setFixedSize(20, 20);
     tabs->tabBar()->setTabButton(index, QTabBar::RightSide, buttons);
     syncPinButton(id, pinned_.value(id, false));
   }
 
   void syncPinButton(const QString &dockId, bool pinned) {
-    auto *widget = docks_.value(dockId, nullptr);
+    auto *widget = dockWidget(dockId);
     if (!widget) return;
     auto *tabs = tabsForWidget(widget);
     if (!tabs) return;
@@ -1235,20 +1680,12 @@ private:
     if (index < 0) return;
     auto *side = tabs->tabBar()->tabButton(index, QTabBar::RightSide);
     if (!side) return;
-    const auto pinButtons = side->findChildren<QToolButton *>();
-    for (auto *button : pinButtons) {
+    const auto buttons = side->findChildren<QToolButton *>();
+    for (auto *button : buttons) {
       if (!button) {
         continue;
       }
-      if (button->property("artifactDockPinId").toString() == dockId) {
-        button->setIcon(QIcon(pinned
-                                  ? QStringLiteral(":/icons/Studio/dock_pin_active.svg")
-                                  : QStringLiteral(":/icons/Studio/dock_pin.svg")));
-        button->setToolTip(pinned ? tr("Unpin panel") : tr("Pin panel"));
-        button->setAccessibleName(pinned ? tr("Unpin panel") : tr("Pin panel"));
-        button->setProperty("artifactDockPinned", pinned);
-        button->update();
-      } else if (button->property("artifactDockCloseId").toString() == dockId) {
+      if (button->property("artifactDockCloseId").toString() == dockId) {
         button->setEnabled(!pinned);
         button->setToolTip(pinned ? tr("Unpin panel before closing")
                                   : tr("Close panel"));
@@ -1256,8 +1693,37 @@ private:
     }
   }
 
+  void dockFloatingGroup(QDialog *dialog) {
+    if (!dialog) {
+      return;
+    }
+    QStringList dockIds;
+    if (auto *tabs = floatingTabSurfaces_.value(dialog, nullptr)) {
+      for (int index = 0; index < tabs->count(); ++index) {
+        const QString dockId = dockIdForWidget(tabs->widget(index));
+        if (!dockId.isEmpty()) {
+          dockIds.push_back(dockId);
+        }
+      }
+    }
+    if (dockIds.isEmpty()) {
+      for (auto it = floatingDialogs_.cbegin(); it != floatingDialogs_.cend();
+           ++it) {
+        if (it.value() == dialog) {
+          dockIds.push_back(it.key());
+        }
+      }
+      dockIds.sort();
+    }
+    beginLayoutMutationBatch(tr("Dock tab group"));
+    for (const QString &dockId : dockIds) {
+      dockFloatingWidget(dockId, areas_.value(dockId, DockArea::Center));
+    }
+    endLayoutMutationBatch();
+  }
+
   void installFloatingHeader(QDialog *dialog, QVBoxLayout *layout,
-                             const QString &dockId, const QString &title) {
+                             const QString &title) {
     if (!dialog || !layout) return;
     auto *header = new QWidget(dialog);
     auto *headerLayout = new QHBoxLayout(header);
@@ -1268,12 +1734,29 @@ private:
     auto *dockBack = new QToolButton(header);
     dockBack->setAutoRaise(true);
     dockBack->setIcon(dockBack->style()->standardIcon(QStyle::SP_ArrowBack));
-    dockBack->setToolTip(tr("Dock panel back to the center"));
-    dockBack->setAccessibleName(tr("Dock panel back"));
-    dockBack->setProperty("artifactDockBackId", dockId);
+    dockBack->setToolTip(tr("Dock tab group back"));
+    dockBack->setAccessibleName(tr("Dock tab group back"));
+    dockBack->setProperty("artifactDockBackGroup", true);
     dockBack->installEventFilter(this);
     headerLayout->addWidget(dockBack);
     layout->addWidget(header);
+  }
+
+  QTabWidget *createFloatingTabSurface(QDialog *dialog,
+                                       QVBoxLayout *layout) {
+    if (!dialog || !layout) {
+      return nullptr;
+    }
+    auto *tabs = createTabSurface(dialog);
+    tabs->installEventFilter(this);
+    tabs->tabBar()->installEventFilter(this);
+    if (auto *tabListButton = qobject_cast<QToolButton *>(
+            tabs->cornerWidget(Qt::TopRightCorner))) {
+      tabListButton->installEventFilter(this);
+    }
+    layout->addWidget(tabs);
+    floatingTabSurfaces_.insert(dialog, tabs);
+    return tabs;
   }
 
   static QTabWidget *createTabSurface(QWidget *parent) {
@@ -1283,6 +1766,14 @@ private:
     tabs->tabBar()->setExpanding(false);
     tabs->tabBar()->setUsesScrollButtons(true);
     tabs->tabBar()->setElideMode(Qt::ElideRight);
+    auto *tabListButton = new QToolButton(tabs);
+    tabListButton->setAutoRaise(true);
+    tabListButton->setArrowType(Qt::DownArrow);
+    tabListButton->setToolTip(tr("Show panel list"));
+    tabListButton->setAccessibleName(tr("Show panel list"));
+    tabListButton->setProperty("artifactDockTabList", true);
+    tabListButton->setFixedSize(22, 22);
+    tabs->setCornerWidget(tabListButton, Qt::TopRightCorner);
     const auto &theme = ArtifactCore::currentDCCTheme();
     QPalette palette = tabs->palette();
     palette.setColor(QPalette::Window,
@@ -1330,6 +1821,22 @@ private:
         return tabs;
       }
     }
+    for (auto it = floatingTabSurfaces_.cbegin();
+         it != floatingTabSurfaces_.cend(); ++it) {
+      if (it.value() && it.value()->indexOf(widget) >= 0) {
+        return it.value();
+      }
+    }
+    return nullptr;
+  }
+
+  QDialog *floatingDialogForTabs(const QTabWidget *tabs) const {
+    for (auto it = floatingTabSurfaces_.cbegin();
+         it != floatingTabSurfaces_.cend(); ++it) {
+      if (it.value() == tabs) {
+        return it.key();
+      }
+    }
     return nullptr;
   }
 
@@ -1341,6 +1848,13 @@ private:
                        bottomTabs_}) {
       if (tabs && (tabs == widget || tabs->isAncestorOf(widget))) {
         return tabs;
+      }
+    }
+    for (auto it = floatingTabSurfaces_.cbegin();
+         it != floatingTabSurfaces_.cend(); ++it) {
+      if (it.value() && (it.value() == widget ||
+                         it.value()->isAncestorOf(widget))) {
+        return it.value();
       }
     }
     return nullptr;
@@ -1374,9 +1888,16 @@ private:
   QPointer<QTabWidget> activeTabs_;
   QPoint dragStartPosition_;
   QString dragSourceId_;
+  bool dockDragCancelled_ = false;
+  LayoutMutationCallback layoutMutationCallback_;
+  QByteArray layoutMutationBatchBeforeState_;
+  QString layoutMutationBatchLabel_;
+  int layoutMutationBatchDepth_ = 0;
+  bool restoringLayout_ = false;
   QHash<QString, QWidget *> docks_;
   QHash<QString, QDialog *> floatingDialogs_;
   QHash<QString, QWidget *> floatingWidgets_;
+  QHash<QDialog *, QTabWidget *> floatingTabSurfaces_;
   QHash<QString, DockArea> areas_;
   QHash<QString, QString> titles_;
   QHash<QString, bool> pinned_;

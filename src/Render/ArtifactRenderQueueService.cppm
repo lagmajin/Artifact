@@ -143,9 +143,13 @@ import Memory.SharedPtr;
 
 namespace Artifact
 {
+    // Frame-level diagnostics stay behind a dedicated category, but the
+    // threshold is debug so a render that never starts or stalls is visible
+    // in the log by default. Silence with
+    // QT_LOGGING_RULES="artifact.render.queue.frames.debug=false".
     Q_LOGGING_CATEGORY(renderQueueFrameLog,
                        "artifact.render.queue.frames",
-                       QtWarningMsg)
+                       QtDebugMsg)
 
     namespace {
         FootageItem* findProjectRenderInput(const ArtifactCore::Id& projectItemId) {
@@ -4125,6 +4129,24 @@ namespace Artifact
                 }, Qt::QueuedConnection);
         }
 
+        // Surfaces a UI-visible log line for otherwise-silent conditions such
+        // as a start request arriving while a render is still running.
+        void publishLogNotice(const QString& message) {
+            if (!owner_) {
+                return;
+            }
+            if (QThread::currentThread() == owner_->thread()) {
+                ArtifactCore::globalEventBus().publish(
+                    RenderQueueLogEvent{message, -1, true});
+                return;
+            }
+            QMetaObject::invokeMethod(
+                owner_, [message]() {
+                    ArtifactCore::globalEventBus().publish(
+                        RenderQueueLogEvent{message, -1, true});
+                }, Qt::QueuedConnection);
+        }
+
         QString persistentQueuePath() const {
             const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
             return QDir(base).filePath(QStringLiteral("render-queue.json"));
@@ -4450,7 +4472,11 @@ namespace Artifact
     }
 
     int ArtifactRenderQueueService::startRenderQueuesAt(const QList<int>& indices) {
-        if (impl_->isRendering_.load(std::memory_order_acquire)) return 0;
+        if (impl_->isRendering_.load(std::memory_order_acquire)) {
+            impl_->publishLogNotice(QStringLiteral(
+                "Render is already in progress; start request ignored."));
+            return 0;
+        }
         std::set<int> uniqueIndices;
         for (const int index : indices) {
             if (index >= 0 && index < impl_->queueManager.jobCount()) {
@@ -5454,7 +5480,11 @@ namespace Artifact
                 compId));
         }
 
-        if (job.startFrame >= job.endFrame) {
+        // SingleFrame derives its [start,end) from the composition at render
+        // time (processFramesForJob), so the queued range is legitimately empty.
+        // Only explicit range modes must supply a non-empty stored range.
+        if (job.frameRangeMode != ArtifactRenderJob::FrameRangeMode::SingleFrame &&
+            job.startFrame >= job.endFrame) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
                 ArtifactCore::DiagnosticCategory::Configuration,
@@ -7111,7 +7141,11 @@ namespace Artifact
     }
 
     void ArtifactRenderQueueService::startAllJobs() {
-        if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
+        if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) {
+            impl_->publishLogNotice(QStringLiteral(
+                "Render is already in progress; start request ignored."));
+            return;
+        }
         impl_->shutdownRequested_.store(false, std::memory_order_release);
 
         if (!impl_->selectiveRun_) {

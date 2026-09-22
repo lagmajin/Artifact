@@ -27,6 +27,41 @@ import Memory.SharedPtr;
 
 namespace Artifact {
 
+namespace {
+// Resident-path variant of WhiteBalanceCPUImpl: P0 temperature in Kelvin,
+// P1 tint, P2 brightness in stops. Layer float textures are canonical RGBA.
+static constexpr const char* kWhiteBalanceResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float3 whiteBalanceKelvinToRgb(float kelvin)
+{
+    const float temperature = kelvin / 100.0f;
+    float r = temperature <= 66.0f ? 1.0f : saturate(1.2929361860603f * pow(temperature - 60.0f, -0.1332047592f));
+    float g = temperature <= 66.0f ? saturate(0.39008157876902f * log(temperature) - 0.63184144378863f) : saturate(1.1298908608953f * pow(temperature - 60.0f, -0.0755148492f));
+    float b = temperature >= 66.0f ? 1.0f : (temperature <= 19.0f ? 0.0f : saturate(0.54320678911019f * log(temperature - 10.0f) - 1.19625408914f));
+    return float3(r, g, b);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+    float4 pixel = g_InputTexture[dtid.xy];
+    const float3 reference = whiteBalanceKelvinToRgb(6500.0f);
+    const float3 target = whiteBalanceKelvinToRgb(g_P0);
+    const float3 correction = target / max(reference, 0.001f);
+    const float tintGreen = 1.0f + g_P1 * 0.5f;
+    const float tintMagenta = 1.0f - g_P1 * 0.5f;
+    const float brightness = exp2(g_P2);
+    pixel.r = saturate(pixel.r * correction.r * tintMagenta * brightness);
+    pixel.g = saturate(pixel.g * correction.g * tintGreen * brightness);
+    pixel.b = saturate(pixel.b * correction.b * tintMagenta * brightness);
+    g_OutputTexture[dtid.xy] = pixel;
+}
+)";
+} // namespace
+
 static void kelvinToRGB(float kelvin, float& r, float& g, float& b) {
     const float temp = kelvin / 100.0f;
 
@@ -125,6 +160,10 @@ WhiteBalanceEffect::WhiteBalanceEffect() {
     setCPUImpl(ArtifactCore::makeShared<WhiteBalanceCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<WhiteBalanceGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        WhiteBalanceEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kWhiteBalanceResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 WhiteBalanceEffect::~WhiteBalanceEffect() = default;

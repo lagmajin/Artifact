@@ -2684,6 +2684,94 @@ public:
     if (!controller_) {
       return;
     }
+
+    QStringList items;
+    QVector<std::function<void()>> actions;
+    QVector<bool> enabledStates;
+    const auto add = [&](const QString &label, std::function<void()> action,
+                         bool enabled = true) {
+      items.push_back(label);
+      actions.push_back(std::move(action));
+      enabledStates.push_back(enabled);
+    };
+    const auto addSeparator = [&]() {
+      items.push_back(QString());
+      actions.push_back([]() {});
+      enabledStates.push_back(false);
+    };
+    const auto toggleLabel = [](const QString &label, bool checked) {
+      return QStringLiteral("%1  %2")
+          .arg(checked ? QStringLiteral("\u2713") : QStringLiteral(" "), label);
+    };
+
+    const LayerID layerId = controller_->layerAtViewportPos(viewportPos);
+    const auto comp = currentComposition();
+    const auto layer = (!layerId.isNil() && comp)
+                           ? comp->layerById(layerId)
+                           : ArtifactAbstractLayerPtr{};
+    add(QStringLiteral("Select Under Cursor"),
+        [this, layer]() {
+          if (!layer) {
+            return;
+          }
+          if (auto *selection = ArtifactLayerSelectionManager::instance()) {
+            selection->selectLayer(layer);
+          }
+          if (controller_) {
+            controller_->setSelectedLayerId(layer->id());
+            controller_->markRenderDirty();
+          }
+        },
+        static_cast<bool>(layer));
+    add(QStringLiteral("Frame Selection"),
+        [this]() { controller_->focusSelectedLayer(); },
+        !controller_->selectedLayerId().isNil());
+    addSeparator();
+    add(QStringLiteral("Fit View"), [this]() { controller_->zoomFit(); });
+    add(QStringLiteral("100%"), [this]() { controller_->zoom100(); });
+    add(QStringLiteral("Reset View"), [this]() { controller_->resetView(); });
+    addSeparator();
+    add(toggleLabel(QStringLiteral("Grid"), controller_->isShowGrid()),
+        [this]() {
+          const bool next = !controller_->isShowGrid();
+          controller_->setShowGrid(next);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowGrid(next);
+          }
+        });
+    add(toggleLabel(QStringLiteral("Guides"), controller_->isShowGuides()),
+        [this]() {
+          const bool next = !controller_->isShowGuides();
+          controller_->setShowGuides(next);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowGuides(next);
+          }
+        });
+    add(toggleLabel(QStringLiteral("Safe Area"),
+                    controller_->isShowSafeMargins()),
+        [this]() {
+          const bool next = !controller_->isShowSafeMargins();
+          controller_->setShowSafeMargins(next);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowSafeMargins(next);
+          }
+        });
+    addSeparator();
+    add(QStringLiteral("Snapshot"),
+        [this]() { saveCurrentFrame(controller_); });
+    add(QStringLiteral("More Viewport Actions\u2026"),
+        [this, viewportPos]() { showViewportDetailedContextMenu(viewportPos); });
+
+    viewportOverlayActions_ = actions;
+    viewportOverlayEnabledStates_ = enabledStates;
+    controller_->showContextMenuOverlay(
+        viewportPos, items, QStringLiteral("VIEWPORT"), QString(), enabledStates);
+  }
+
+  void showViewportDetailedContextMenu(const QPointF &viewportPos) {
+    if (!controller_) {
+      return;
+    }
     QStringList items;
     QVector<std::function<void()>> actions;
     QVector<bool> enabledStates;
@@ -6891,7 +6979,8 @@ protected:
       return;
     }
 
-    if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
+    if (ArtifactCore::ShortcutBindings::instance().matches(
+            event, ArtifactCore::ShortcutId::CompositionViewportPieMenu)) {
       showPieMenu();
       event->accept();
       return;
@@ -7478,7 +7567,7 @@ protected:
       return;
 
     PieMenuModel model;
-    model.title = "View Controls";
+    model.title.clear();
 
     auto *toolManager =
         ArtifactApplicationManager::instance()
@@ -7501,8 +7590,8 @@ protected:
                                toolManager->setActiveTool(ToolType::Hand);
                            }});
 
-    // Mask Tool
-    model.items.push_back({"Mask",
+    // Pen / Mask Tool
+    model.items.push_back({"Pen",
                            loadIconWithFallback("MaterialVS/neutral/draw.svg"),
                            "tool.mask", true, false, [this, toolManager]() {
                              if (toolManager)
@@ -7528,42 +7617,6 @@ protected:
     model.items.push_back(
         {"Reset", loadIconWithFallback("MaterialVS/neutral/reset.svg"),
          "view.reset", true, false, [this]() { controller_->resetView(); }});
-
-    if (auto *gizmo3D = controller_->gizmo3D()) {
-      model.items.push_back({"3D Move", QIcon(), "gizmo3d.move", true,
-                             gizmo3D->mode() == GizmoMode::Move,
-                             [this]() {
-                               controller_->setGizmoMode(TransformGizmo::Mode::Move);
-                             }});
-      model.items.push_back({"3D Rotate", QIcon(), "gizmo3d.rotate", true,
-                             gizmo3D->mode() == GizmoMode::Rotate,
-                             [this]() {
-                               controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
-                             }});
-      model.items.push_back({"3D Scale", QIcon(), "gizmo3d.scale", true,
-                             gizmo3D->mode() == GizmoMode::Scale,
-                             [this]() {
-                               controller_->setGizmoMode(TransformGizmo::Mode::Scale);
-                             }});
-      model.items.push_back({"3D World", QIcon(), "gizmo3d.world", true,
-                             gizmo3D->space() == GizmoSpace::World,
-                             [this, gizmo3D]() {
-                               gizmo3D->setSpace(GizmoSpace::World);
-                               controller_->markRenderDirty();
-                             }});
-      model.items.push_back({"3D Local", QIcon(), "gizmo3d.local", true,
-                              gizmo3D->space() == GizmoSpace::Local,
-                              [this, gizmo3D]() {
-                                gizmo3D->setSpace(GizmoSpace::Local);
-                                controller_->markRenderDirty();
-                              }});
-      model.items.push_back({"3D View", QIcon(), "gizmo3d.view", true,
-                             gizmo3D->space() == GizmoSpace::View,
-                             [this, gizmo3D]() {
-                               gizmo3D->setSpace(GizmoSpace::View);
-                               controller_->markRenderDirty();
-                             }});
-    }
 
     // Grid Toggle
     model.items.push_back(

@@ -21,6 +21,7 @@ import Color.Float;
 import Geometry.Fracture;
 import Graphics.ParticleData;
 import Physics.Fluid;
+import Container.NamedVector;
 
 export namespace Artifact {
 
@@ -41,7 +42,8 @@ struct FractureRenderElement {
 
 struct LayerComponentRuntimeSnapshotData {
   ArtifactCore::FractureState fractureState;
-  std::vector<ArtifactCore::ParticleVertex> componentParticles;
+  ArtifactCore::NamedVector<ArtifactCore::ParticleVertex> componentParticles{
+      ArtifactCore::ContainerName{"Layer.ComponentRuntimeParticles"}};
   std::int64_t fractureMotionLastFrame = std::numeric_limits<std::int64_t>::min();
   std::int64_t componentParticlesLastFrame = std::numeric_limits<std::int64_t>::min();
   std::int64_t lastCollisionImpactFrame = std::numeric_limits<std::int64_t>::min();

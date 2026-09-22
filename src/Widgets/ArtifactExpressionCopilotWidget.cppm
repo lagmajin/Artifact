@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <wobjectimpl.h>
 #include <algorithm>
+#include <cmath>
 #include <QApplication>
 #include <QColor>
 #include <QEvent>
@@ -35,8 +36,10 @@ module;
 #include <QTextCursor>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QSplitter>
 #include <QPointF>
 #include <QVector2D>
 #include <QVector3D>
@@ -49,6 +52,7 @@ import Script.Expression.Evaluator;
 import Script.Expression.Parser;
 import Script.Expression.Value;
 import Core.ArtifactString;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -276,6 +280,11 @@ public:
     QWidget* suggestionPopup = nullptr;
     QListWidget* suggestionList = nullptr;
     QListWidget* referenceList = nullptr;
+    QWidget* promptToolbar = nullptr;
+    QWidget* referencePanel = nullptr;
+    QLabel* editorTabLabel = nullptr;
+    QLabel* propertyContextLabel = nullptr;
+    QLabel* timeContextLabel = nullptr;
     QPushButton* generateBtn = nullptr;
     QPushButton* applyBtn = nullptr;
     QPushButton* revertBtn = nullptr;
@@ -736,70 +745,216 @@ public:
     }
 
     void setupUi(QWidget* parent) {
-        auto* layout = new QVBoxLayout(parent);
-        layout->setContentsMargins(8, 8, 8, 8);
-        layout->setSpacing(6);
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        const QColor windowColor(theme.backgroundColor);
+        const QColor panelColor(theme.secondaryBackgroundColor);
+        const QColor toolbarColor(theme.buttonColor);
+        const QColor editorColor(theme.trackBackgroundColor);
+        const QColor borderColor(theme.borderColor);
+        const QColor textColor(theme.textColor);
+        const QColor mutedColor(theme.textMutedColor);
+        const QColor accentColor(theme.accentColor);
 
-        auto* headerLayout = new QHBoxLayout();
-        auto* iconLabel = new QLabel(QString::fromUtf8("fx"));
-        auto* titleLabel = new QLabel(QStringLiteral("Expression Editor"));
+        QPalette rootPalette = parent->palette();
+        rootPalette.setColor(QPalette::Window, windowColor);
+        rootPalette.setColor(QPalette::WindowText, textColor);
+        rootPalette.setColor(QPalette::Base, editorColor);
+        rootPalette.setColor(QPalette::AlternateBase, panelColor);
+        rootPalette.setColor(QPalette::Text, textColor);
+        rootPalette.setColor(QPalette::Button, toolbarColor);
+        rootPalette.setColor(QPalette::ButtonText, textColor);
+        rootPalette.setColor(QPalette::Highlight, accentColor);
+        rootPalette.setColor(QPalette::HighlightedText, QColor(255, 255, 255));
+        rootPalette.setColor(QPalette::PlaceholderText, mutedColor);
+        rootPalette.setColor(QPalette::Mid, borderColor);
+        parent->setPalette(rootPalette);
+        parent->setAutoFillBackground(true);
+
+        const auto makeBar = [&](const QColor& fill) {
+            auto* frame = new QFrame(parent);
+            frame->setFrameShape(QFrame::StyledPanel);
+            frame->setFrameShadow(QFrame::Plain);
+            QPalette palette = rootPalette;
+            palette.setColor(QPalette::Window, fill);
+            frame->setPalette(palette);
+            frame->setAutoFillBackground(true);
+            return frame;
+        };
+
+        const auto setMuted = [&](QLabel* label) {
+            QPalette palette = label->palette();
+            palette.setColor(QPalette::WindowText, mutedColor);
+            label->setPalette(palette);
+        };
+
+        const auto configureFlatAction = [&](QPushButton* button) {
+            button->setFlat(true);
+            button->setMinimumHeight(28);
+            button->setMaximumHeight(30);
+            button->setFocusPolicy(Qt::StrongFocus);
+        };
+
+        auto* layout = new QVBoxLayout(parent);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        auto* titleBar = makeBar(QColor(20, 26, 33));
+        auto* headerLayout = new QHBoxLayout(titleBar);
+        headerLayout->setContentsMargins(12, 7, 12, 7);
+        headerLayout->setSpacing(8);
+        auto* titleLabel = new QLabel(QStringLiteral("Expression Editor"), titleBar);
         {
             QFont font = titleLabel->font();
             font.setBold(true);
-            font.setPointSize(14);
+            font.setPointSize(11);
             titleLabel->setFont(font);
         }
-        headerLayout->addWidget(iconLabel);
         headerLayout->addWidget(titleLabel);
         headerLayout->addStretch();
-        layout->addLayout(headerLayout);
+        auto* collapseHint = new QLabel(QString::fromUtf8("⌄"), titleBar);
+        setMuted(collapseHint);
+        headerLayout->addWidget(collapseHint);
+        layout->addWidget(titleBar);
 
-        promptInput = new QLineEdit();
+        auto* tabBar = makeBar(QColor(18, 24, 31));
+        auto* tabLayout = new QHBoxLayout(tabBar);
+        tabLayout->setContentsMargins(0, 0, 0, 0);
+        tabLayout->setSpacing(0);
+        auto* editorTab = makeBar(panelColor);
+        editorTab->setParent(tabBar);
+        editorTab->setMinimumWidth(230);
+        editorTab->setMaximumWidth(320);
+        auto* editorTabLayout = new QHBoxLayout(editorTab);
+        editorTabLayout->setContentsMargins(12, 7, 10, 7);
+        editorTabLayout->setSpacing(9);
+        auto* tabIcon = new QLabel(QStringLiteral("ƒx"), editorTab);
+        {
+            QPalette palette = tabIcon->palette();
+            palette.setColor(QPalette::WindowText, accentColor);
+            tabIcon->setPalette(palette);
+        }
+        editorTabLabel = new QLabel(QStringLiteral("Position.expression"), editorTab);
+        auto* tabClose = new QLabel(QString::fromUtf8("×"), editorTab);
+        setMuted(tabClose);
+        editorTabLayout->addWidget(tabIcon);
+        editorTabLayout->addWidget(editorTabLabel, 1);
+        editorTabLayout->addWidget(tabClose);
+        tabLayout->addWidget(editorTab);
+        tabLayout->addStretch();
+        layout->addWidget(tabBar);
+
+        auto* contextBar = makeBar(toolbarColor);
+        auto* contextLayout = new QHBoxLayout(contextBar);
+        contextLayout->setContentsMargins(12, 6, 12, 6);
+        contextLayout->setSpacing(10);
+        propertyContextLabel = new QLabel(QStringLiteral("Title / Position"), contextBar);
+        auto* separator = new QFrame(contextBar);
+        separator->setFrameShape(QFrame::VLine);
+        separator->setFrameShadow(QFrame::Plain);
+        timeContextLabel = new QLabel(QStringLiteral("Comp 1  ·  00:00:03:12"), contextBar);
+        setMuted(timeContextLabel);
+        contextLayout->addWidget(propertyContextLabel);
+        contextLayout->addWidget(separator);
+        contextLayout->addWidget(timeContextLabel);
+        contextLayout->addStretch();
+        layout->addWidget(contextBar);
+
+        promptToolbar = makeBar(toolbarColor);
+        auto* promptLayout = new QHBoxLayout(promptToolbar);
+        promptLayout->setContentsMargins(12, 6, 12, 6);
+        promptLayout->setSpacing(8);
+        promptInput = new QLineEdit(promptToolbar);
         promptInput->setPlaceholderText(QStringLiteral("Describe the motion you want... (e.g. wiggle 3 times a second)"));
-        layout->addWidget(promptInput);
+        promptInput->setMinimumHeight(30);
+        generateBtn = new QPushButton(QStringLiteral("Generate"), promptToolbar);
+        wiggleBtn = new QPushButton(QStringLiteral("Wiggle"), promptToolbar);
+        loopBtn = new QPushButton(QStringLiteral("Loop"), promptToolbar);
+        driftBtn = new QPushButton(QStringLiteral("Drift"), promptToolbar);
+        configureFlatAction(wiggleBtn);
+        configureFlatAction(loopBtn);
+        configureFlatAction(driftBtn);
+        generateBtn->setMinimumHeight(30);
+        {
+            QPalette palette = generateBtn->palette();
+            palette.setColor(QPalette::Button, accentColor);
+            palette.setColor(QPalette::ButtonText, QColor(255, 255, 255));
+            generateBtn->setPalette(palette);
+            generateBtn->setAutoFillBackground(true);
+        }
+        promptLayout->addWidget(promptInput, 1);
+        promptLayout->addWidget(generateBtn);
+        promptLayout->addWidget(wiggleBtn);
+        promptLayout->addWidget(loopBtn);
+        promptLayout->addWidget(driftBtn);
+        layout->addWidget(promptToolbar);
 
-        auto* examplesLayout = new QHBoxLayout();
-        wiggleBtn = new QPushButton(QStringLiteral("Wiggle"));
-        loopBtn = new QPushButton(QStringLiteral("Loop"));
-        driftBtn = new QPushButton(QStringLiteral("Drift"));
-        examplesLayout->addWidget(wiggleBtn);
-        examplesLayout->addWidget(loopBtn);
-        examplesLayout->addWidget(driftBtn);
-        examplesLayout->addStretch();
-        layout->addLayout(examplesLayout);
+        auto* workspaceSplitter = new QSplitter(Qt::Horizontal, parent);
+        workspaceSplitter->setChildrenCollapsible(false);
+        workspaceSplitter->setHandleWidth(1);
 
-        expressionEdit = new QTextEdit();
+        expressionEdit = new QTextEdit(workspaceSplitter);
         expressionEdit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         expressionEdit->setPlaceholderText(QStringLiteral("Enter an expression here..."));
         expressionEdit->setLineWrapMode(QTextEdit::NoWrap);
         expressionEdit->setAcceptDrops(true);
+        expressionEdit->setFrameShape(QFrame::NoFrame);
         expressionEdit->setTabStopDistance(expressionEdit->fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4.0);
-        layout->addWidget(expressionEdit);
+        QPalette editorPalette = rootPalette;
+        editorPalette.setColor(QPalette::Base, editorColor);
+        editorPalette.setColor(QPalette::Text, textColor);
+        expressionEdit->setPalette(editorPalette);
 
-        layout->addWidget(new QLabel(QStringLiteral("Expression Pick Whip (drag a layer into the editor)")));
-        referenceList = new QListWidget();
+        referencePanel = makeBar(panelColor);
+        referencePanel->setParent(workspaceSplitter);
+        referencePanel->setMinimumWidth(180);
+        referencePanel->setMaximumWidth(320);
+        auto* referenceLayout = new QVBoxLayout(referencePanel);
+        referenceLayout->setContentsMargins(0, 0, 0, 0);
+        referenceLayout->setSpacing(0);
+        auto* referenceHeader = new QLabel(QStringLiteral("References"), referencePanel);
+        referenceHeader->setContentsMargins(12, 8, 12, 8);
+        referenceLayout->addWidget(referenceHeader);
+        referenceList = new QListWidget(referencePanel);
         referenceList->setDragEnabled(true);
         referenceList->setSelectionMode(QAbstractItemView::SingleSelection);
-        referenceList->setMaximumHeight(90);
-        layout->addWidget(referenceList);
+        referenceList->setFrameShape(QFrame::NoFrame);
+        referenceList->setAlternatingRowColors(false);
+        referenceList->setSpacing(1);
+        referenceList->setToolTip(QStringLiteral("Drag a reference into the expression editor"));
+        QPalette referencePalette = rootPalette;
+        referencePalette.setColor(QPalette::Base, panelColor);
+        referencePalette.setColor(QPalette::AlternateBase, toolbarColor);
+        referenceList->setPalette(referencePalette);
+        referenceLayout->addWidget(referenceList, 1);
 
-        statusLabel = new QLabel(QStringLiteral("Ready"));
+        workspaceSplitter->addWidget(expressionEdit);
+        workspaceSplitter->addWidget(referencePanel);
+        workspaceSplitter->setStretchFactor(0, 1);
+        workspaceSplitter->setStretchFactor(1, 0);
+        workspaceSplitter->setSizes({720, 240});
+        layout->addWidget(workspaceSplitter, 1);
+
+        auto* statusBar = makeBar(QColor(18, 24, 31));
+        auto* statusLayout = new QHBoxLayout(statusBar);
+        statusLayout->setContentsMargins(12, 5, 12, 5);
+        statusLayout->setSpacing(12);
+        statusLabel = new QLabel(QStringLiteral("Ready"), statusBar);
         statusLabel->setWordWrap(true);
         {
             QPalette pal = statusLabel->palette();
             pal.setColor(QPalette::WindowText, QColor(148, 163, 184));
             statusLabel->setPalette(pal);
         }
-        layout->addWidget(statusLabel);
-
-        hintLabel = new QLabel(QStringLiteral("Hints: thisComp, thisLayer, linear, ease, wiggle"));
+        hintLabel = new QLabel(QStringLiteral("Hints: thisComp, thisLayer, linear, ease, wiggle"), statusBar);
         hintLabel->setWordWrap(true);
         {
             QPalette pal = hintLabel->palette();
             pal.setColor(QPalette::WindowText, QColor(96, 165, 250));
             hintLabel->setPalette(pal);
         }
-        layout->addWidget(hintLabel);
+        statusLayout->addWidget(statusLabel, 1);
+        statusLayout->addWidget(hintLabel);
+        layout->addWidget(statusBar);
 
         suggestionPopup = new QWidget(parent, Qt::Popup | Qt::FramelessWindowHint);
         suggestionPopup->setObjectName(QStringLiteral("ExpressionSuggestionPopup"));
@@ -833,25 +988,38 @@ public:
         }
         popupLayout->addWidget(suggestionList);
 
-        auto* btnLayout = new QHBoxLayout();
-        generateBtn = new QPushButton(QStringLiteral("Generate"));
-        applyBtn = new QPushButton(QStringLiteral("Apply"));
+        auto* actionBar = makeBar(QColor(20, 26, 33));
+        auto* btnLayout = new QHBoxLayout(actionBar);
+        btnLayout->setContentsMargins(12, 7, 12, 7);
+        btnLayout->setSpacing(8);
+        applyBtn = new QPushButton(QStringLiteral("Apply"), actionBar);
         revertBtn = new QPushButton(QStringLiteral("Revert"));
         removeBtn = new QPushButton(QStringLiteral("Remove Expression"));
         copyBtn = new QPushButton(QStringLiteral("Copy"));
         clearBtn = new QPushButton(QStringLiteral("Clear"));
-        btnLayout->addStretch();
-        btnLayout->addWidget(generateBtn);
-        btnLayout->addWidget(applyBtn);
-        btnLayout->addWidget(revertBtn);
-        btnLayout->addWidget(removeBtn);
         saveSnippetBtn = new QPushButton(QStringLiteral("Save Snippet"));
         loadSnippetBtn = new QPushButton(QStringLiteral("Load Snippet"));
+        configureFlatAction(saveSnippetBtn);
+        configureFlatAction(loadSnippetBtn);
+        configureFlatAction(copyBtn);
+        configureFlatAction(clearBtn);
         btnLayout->addWidget(saveSnippetBtn);
         btnLayout->addWidget(loadSnippetBtn);
         btnLayout->addWidget(copyBtn);
         btnLayout->addWidget(clearBtn);
-        layout->addLayout(btnLayout);
+        btnLayout->addStretch();
+        btnLayout->addWidget(revertBtn);
+        btnLayout->addWidget(removeBtn);
+        btnLayout->addWidget(applyBtn);
+        applyBtn->setMinimumWidth(100);
+        {
+            QPalette palette = applyBtn->palette();
+            palette.setColor(QPalette::Button, accentColor);
+            palette.setColor(QPalette::ButtonText, QColor(255, 255, 255));
+            applyBtn->setPalette(palette);
+            applyBtn->setAutoFillBackground(true);
+        }
+        layout->addWidget(actionBar);
 
         validateTimer = new QTimer(parent);
         validateTimer->setSingleShot(true);
@@ -1056,6 +1224,25 @@ void ArtifactExpressionCopilotWidget::setPreviewContext(
     impl_->previewLayerSnapshots = layerSnapshots;
     impl_->previewCompositionMarkers = compositionMarkers;
     impl_->previewTimeSeconds = timeSeconds;
+    if (impl_->timeContextLabel) {
+        const int totalFrames = std::max(0, static_cast<int>(std::round(timeSeconds * 30.0)));
+        const int frames = totalFrames % 30;
+        const int totalSeconds = totalFrames / 30;
+        const int seconds = totalSeconds % 60;
+        const int totalMinutes = totalSeconds / 60;
+        const int minutes = totalMinutes % 60;
+        const int hours = totalMinutes / 60;
+        const QString composition = compositionName.trimmed().isEmpty()
+            ? QStringLiteral("Composition")
+            : compositionName.trimmed();
+        impl_->timeContextLabel->setText(
+            QStringLiteral("%1  ·  %2:%3:%4:%5")
+                .arg(composition)
+                .arg(hours, 2, 10, QLatin1Char('0'))
+                .arg(minutes, 2, 10, QLatin1Char('0'))
+                .arg(seconds, 2, 10, QLatin1Char('0'))
+                .arg(frames, 2, 10, QLatin1Char('0')));
+    }
     impl_->validateExpression();
 }
 
@@ -1154,10 +1341,10 @@ void ArtifactExpressionCopilotWidget::setInlineMode(const bool inlineMode) {
         setWindowFlags(Qt::Widget);
         setAttribute(Qt::WA_DeleteOnClose, false);
         if (impl_->promptInput) {
-            impl_->promptInput->hide();
+            impl_->promptToolbar->hide();
         }
-        if (impl_->referenceList) {
-            impl_->referenceList->hide();
+        if (impl_->referencePanel) {
+            impl_->referencePanel->hide();
         }
         if (impl_->generateBtn) {
             impl_->generateBtn->hide();
@@ -1194,6 +1381,21 @@ void ArtifactExpressionCopilotWidget::setReferenceItems(
     impl_->referenceList->clear();
     const QString normalizedProperty = propertyPath.trimmed();
     if (!normalizedProperty.isEmpty()) {
+        QString propertyName = normalizedProperty.section(QLatin1Char('.'), -1);
+        if (!propertyName.isEmpty()) {
+            propertyName[0] = propertyName.at(0).toUpper();
+        }
+        if (impl_->editorTabLabel) {
+            impl_->editorTabLabel->setText(
+                QStringLiteral("%1.expression").arg(propertyName));
+        }
+        if (impl_->propertyContextLabel) {
+            const QString layerName = impl_->previewLayerName.trimmed().isEmpty()
+                ? QStringLiteral("Layer")
+                : impl_->previewLayerName.trimmed();
+            impl_->propertyContextLabel->setText(
+                QStringLiteral("%1 / %2").arg(layerName, propertyName));
+        }
         auto* propertyItem = new QListWidgetItem(
             QStringLiteral("Property: value (%1)").arg(normalizedProperty),
             impl_->referenceList);
@@ -1207,7 +1409,7 @@ void ArtifactExpressionCopilotWidget::setReferenceItems(
 }
 
 QSize ArtifactExpressionCopilotWidget::sizeHint() const {
-    return { 520, 360 };
+    return { 960, 620 };
 }
 
 } // namespace Artifact

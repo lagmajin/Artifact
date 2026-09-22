@@ -29,6 +29,42 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+namespace {
+// Resident-path variant of the CPU ordered-Bayer branch: P0 algorithm, P1
+// color count, P2 amount, P3 pattern scale. Error diffusion is deliberately
+// excluded because its dependency chain is not a single-pass operation.
+static constexpr const char* kOrderedDitherResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+static const float kBayer2x2[4] = { 0.0f, 2.0f, 3.0f, 1.0f };
+static const float kBayer4x4[16] = {
+     0.0f,  8.0f,  2.0f, 10.0f,
+    12.0f,  4.0f, 14.0f,  6.0f,
+     3.0f, 11.0f,  1.0f,  9.0f,
+    15.0f,  7.0f, 13.0f,  5.0f
+};
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+    const int algorithm = (int)g_P0;
+    const int bayerSize = algorithm == 0 ? 2 : 4;
+    const int bayerEntryCount = bayerSize * bayerSize;
+    const int bx = (int)((dtid.x * g_P3) / max(1.0f, g_Width * 0.01f) * bayerSize) % bayerSize;
+    const int by = (int)((dtid.y * g_P3) / max(1.0f, g_Height * 0.01f) * bayerSize) % bayerSize;
+    const int index = by * bayerSize + bx;
+    const float matrixValue = algorithm == 0 ? kBayer2x2[index] : kBayer4x4[index];
+    const float threshold = (matrixValue / bayerEntryCount + 0.5f / bayerEntryCount - 0.5f) * (1.0f - g_P2) * 2.0f + 0.5f;
+    const float levels = max(2.0f, sqrt(g_P1));
+    float4 pixel = g_InputTexture[dtid.xy];
+    pixel.rgb = saturate(floor(pixel.rgb * levels + threshold) / levels);
+    g_OutputTexture[dtid.xy] = pixel;
+}
+)";
+} // namespace
+
 static const int kNumAlgorithms = 8;
 
 static const float kBayer2x2[4] = {0.0f, 2.0f, 3.0f, 1.0f};
@@ -370,6 +406,11 @@ DitheringEffect::DitheringEffect() {
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<DitheringEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<DitheringEffectGPUImpl>());
+    setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        DitheringEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kOrderedDitherResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 DitheringEffect::~DitheringEffect() = default;

@@ -52,6 +52,12 @@ public:
   void setProjectionMatrix(const QMatrix4x4 &proj);
   void setCameraMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
   void resetMatrices();
+  // Project3D-style camera projection for textured cards. Scoped per draw:
+  // set source + matrices + enabled, draw, then resetProjector().
+  void setProjectorSource(ITextureView *textureView);
+  void setProjectorMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
+  void setProjectorEnabled(bool enabled);
+  void resetProjector();
 
   void drawBillboardQuad(const QVector3D &center, const QVector2D &size,
                          const FloatColor &tint, float opacity = 1.0f,

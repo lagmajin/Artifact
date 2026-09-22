@@ -402,7 +402,10 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
 
   QString variantDisplayName(const ArtifactAbstractLayerPtr& layer, int index)
   {
-    const auto variants = layer ? layer->getVariants() : std::vector<LayerVariant*>{};
+    if (!layer) {
+      return variantNameForIndex(index);
+    }
+    const auto variants = layer->getVariants();
     if (index >= 0 && index < variants.size() && variants[index]) {
       const QString name = QString::fromStdString(ArtifactCore::toStdString(variants[index]->GetName())).trimmed();
       if (!name.isEmpty()) {
@@ -1416,6 +1419,16 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     setPalette(pal);
   }
   setFixedHeight(kLayerHeaderHeight);
+  // Column controls share the header surface; retain standard button input
+  // and hover handling without a separate raised box around every title.
+  for (auto *button : findChildren<QPushButton *>()) {
+    button->setFlat(true);
+    button->setAutoFillBackground(false);
+    QPalette headerPalette = button->palette();
+    headerPalette.setColor(QPalette::Button, QColor(35, 39, 43));
+    headerPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+    button->setPalette(headerPalette);
+  }
 }
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
@@ -7991,23 +8004,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   p.restore();
 
-   // P: ステータスバー（下部に常時表示）
-   {
-    constexpr int kStatusH = 22;
-   auto comp = safeCompositionLookup(impl_->compositionId);
-   const int totalLayers = comp ? static_cast<int>(comp->allLayer().size()) : 0;
-    const QString statusText = QStringLiteral("%1 layers").arg(totalLayers);
-    const QRect sbRect(0, height() - kStatusH, width(), kStatusH);
-    QColor sbBg = mixColor(background, surface, 0.60);
-    sbBg.setAlpha(230);
-    p.fillRect(sbRect, sbBg);
-    p.setPen(text.darker(110));
-    QFont sf = p.font();
-    sf.setPointSizeF(qMax(7.0, sf.pointSizeF() - 2.0));
-    p.setFont(sf);
-    p.drawText(sbRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, statusText);
-    p.drawLine(0, sbRect.top(), width(), sbRect.top());
-   }
+   // Composition/frame status belongs to the timeline footer. Do not paint
+   // a status overlay here: it obscures editable rows without reserving space.
 
  }
 

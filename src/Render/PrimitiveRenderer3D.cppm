@@ -135,6 +135,8 @@ cbuffer CardCB : register(b0)
     float4   g_LocalRect;
     float4   g_TintOpacity;
     float4   g_AlphaControl;
+    float4x4 g_ProjViewProj;
+    float4   g_ProjectorControl;
 };
 
 struct VSOut
@@ -142,6 +144,7 @@ struct VSOut
     float4 Pos   : SV_Position;
     float2 UV    : TEXCOORD0;
     float4 Color : COLOR0;
+    float3 WorldPos : TEXCOORD1;
 };
 
 static const float2 kCorners[4] = {
@@ -161,6 +164,7 @@ VSOut main(uint vertexID : SV_VertexID)
     Out.Pos = mul(viewPos, g_Proj);
     Out.UV = corner;
     Out.Color = g_TintOpacity;
+    Out.WorldPos = worldPos.xyz;
     return Out;
 }
 )";
@@ -174,6 +178,8 @@ cbuffer CardCB : register(b0)
     float4   g_LocalRect;
     float4   g_TintOpacity;
     float4   g_AlphaControl;
+    float4x4 g_ProjViewProj;
+    float4   g_ProjectorControl;
 };
 
 struct PSIn
@@ -181,14 +187,29 @@ struct PSIn
     float4 Pos   : SV_Position;
     float2 UV    : TEXCOORD0;
     float4 Color : COLOR0;
+    float3 WorldPos : TEXCOORD1;
 };
 
 Texture2D g_texture : register(t0);
+Texture2D g_projector : register(t1);
 SamplerState g_sampler : register(s0);
 
 float4 main(PSIn In) : SV_Target
 {
-    const float4 color = g_texture.Sample(g_sampler, In.UV) * In.Color;
+    float4 color = g_texture.Sample(g_sampler, In.UV);
+    // Project3D-style camera projection: replace with the projected image
+    // where the fragment sits inside the projector frustum.
+    if (g_ProjectorControl.x > 0.5) {
+        const float4 projectorPos = mul(float4(In.WorldPos, 1.0), g_ProjViewProj);
+        if (projectorPos.w > 1e-5) {
+            const float2 projectorUV =
+                projectorPos.xy / projectorPos.w * float2(0.5, -0.5) + float2(0.5, 0.5);
+            if (all(projectorUV >= 0.0) && all(projectorUV <= 1.0)) {
+                color = g_projector.Sample(g_sampler, projectorUV);
+            }
+        }
+    }
+    color *= In.Color;
     const float threshold = g_AlphaControl.x;
     const float mode = g_AlphaControl.y;
     if (mode > 1.5 && color.a < threshold) discard;
@@ -218,6 +239,7 @@ struct VSOut
     float4 Pos   : SV_Position;
     float2 UV    : TEXCOORD0;
     float4 Color : COLOR0;
+    float3 WorldPos : TEXCOORD1;
 };
 
 VSOut main(VSInput In)
@@ -228,6 +250,7 @@ VSOut main(VSInput In)
     Out.Pos = mul(viewPos, g_Proj);
     Out.UV = float2(0.5, 0.5);
     Out.Color = g_TintOpacity;
+    Out.WorldPos = worldPos.xyz;
     return Out;
 }
 )";
@@ -249,6 +272,8 @@ struct CardConstants
     float localRect[4];
     float tintOpacity[4];
     float alphaControl[4];
+    float projectorViewProj[16];
+    float projectorControl[4];
 };
 
 struct ShapeCardVertex
@@ -331,6 +356,13 @@ public:
 
     QMatrix4x4 viewMatrix_;
     QMatrix4x4 projMatrix_;
+
+    // Project3D-style camera projection for textured cards. Set per card draw
+    // (scoped); disabled state samples nothing and costs one CB flag.
+    ITextureView* projectorTexture_ = nullptr;
+    QMatrix4x4 projectorView_;
+    QMatrix4x4 projectorProj_;
+    bool projectorEnabled_ = false;
 
     BillboardConstants constants_{};
     CardConstants cardConstants_{};
@@ -616,6 +648,7 @@ public:
                 { SHADER_TYPE_VERTEX, "CardCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC },
                 { SHADER_TYPE_PIXEL, "CardCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC },
                 { SHADER_TYPE_PIXEL, "g_texture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+                { SHADER_TYPE_PIXEL, "g_projector", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
                 { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_STATIC }
             };
             cardCI.PSODesc.ResourceLayout.Variables = cardVars;
@@ -790,6 +823,19 @@ public:
         cardConstants_.alphaControl[1] = alphaMode;
         cardConstants_.alphaControl[2] = 0.0f;
         cardConstants_.alphaControl[3] = 0.0f;
+        // Project3D-style camera projection. Row-vector convention matches the
+        // view/proj/model uploads above: single combined (Proj * View) matrix.
+        const bool projectorActive =
+            projectorEnabled_ && projectorTexture_ != nullptr;
+        const QMatrix4x4 projectorRows =
+            projectorActive ? (projectorProj_ * projectorView_).transposed()
+                            : QMatrix4x4();
+        std::memcpy(cardConstants_.projectorViewProj, projectorRows.constData(),
+                    sizeof(float) * 16);
+        cardConstants_.projectorControl[0] = projectorActive ? 1.0f : 0.0f;
+        cardConstants_.projectorControl[1] = 0.0f;
+        cardConstants_.projectorControl[2] = 0.0f;
+        cardConstants_.projectorControl[3] = 0.0f;
     }
 
     void updateGizmoLineConstants()
@@ -1406,6 +1452,11 @@ public:
                 SHADER_TYPE_PIXEL, "g_texture")) {
             texVar->Set(textureView);
         }
+        if (auto* projVar = cardSRB->GetVariableByName(
+                SHADER_TYPE_PIXEL, "g_projector")) {
+            projVar->Set(projectorTexture_ ? projectorTexture_
+                                           : defaultTextureSRV_.RawPtr());
+        }
         if (auto* cbVar = cardSRB->GetVariableByName(
                 SHADER_TYPE_VERTEX, "CardCB")) {
             cbVar->Set(cardConstantBuffer_);
@@ -1519,6 +1570,10 @@ public:
         if (auto* textureVar = srb->GetVariableByName(
                 SHADER_TYPE_PIXEL, "g_texture")) {
             textureVar->Set(defaultTextureSRV_.RawPtr());
+        }
+        if (auto* projectorVar = srb->GetVariableByName(
+                SHADER_TYPE_PIXEL, "g_projector")) {
+            projectorVar->Set(defaultTextureSRV_.RawPtr());
         }
         ctx_->CommitShaderResources(srb,
                                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1668,6 +1723,28 @@ void PrimitiveRenderer3D::resetMatrices()
 {
     impl_->resetIdentityMatrix(impl_->viewMatrix_.data());
     impl_->resetIdentityMatrix(impl_->projMatrix_.data());
+}
+
+void PrimitiveRenderer3D::setProjectorSource(ITextureView* textureView)
+{
+    impl_->projectorTexture_ = textureView;
+}
+
+void PrimitiveRenderer3D::setProjectorMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
+{
+    impl_->projectorView_ = view;
+    impl_->projectorProj_ = proj;
+}
+
+void PrimitiveRenderer3D::setProjectorEnabled(bool enabled)
+{
+    impl_->projectorEnabled_ = enabled;
+}
+
+void PrimitiveRenderer3D::resetProjector()
+{
+    impl_->projectorTexture_ = nullptr;
+    impl_->projectorEnabled_ = false;
 }
 
 void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVector2D& size,

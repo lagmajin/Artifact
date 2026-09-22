@@ -26,6 +26,72 @@ import Memory.SharedPtr;
 
 namespace Artifact {
 
+namespace {
+// Resident-path variant of PhotoFilterProcessor::applyPixel(). P0..P2 are the
+// filter color, P3 density, P4 brightness, P5 contrast, P6 saturation boost,
+// and P7 the preserve-luma flag.
+static constexpr const char* kPhotoFilterResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float photoFilterLuma(float3 color) { return dot(color, float3(0.2126f, 0.7152f, 0.0722f)); }
+
+float3 photoFilterRgbToHsl(float3 color)
+{
+    const float maxValue = max(color.r, max(color.g, color.b));
+    const float minValue = min(color.r, min(color.g, color.b));
+    const float delta = maxValue - minValue;
+    const float l = (maxValue + minValue) * 0.5f;
+    if (delta < 1.0e-6f) return float3(0.0f, 0.0f, l);
+    const float s = l > 0.5f ? delta / (2.0f - maxValue - minValue) : delta / (maxValue + minValue);
+    float h;
+    if (maxValue == color.r) h = (color.g - color.b) / delta + (color.g < color.b ? 6.0f : 0.0f);
+    else if (maxValue == color.g) h = (color.b - color.r) / delta + 2.0f;
+    else h = (color.r - color.g) / delta + 4.0f;
+    return float3(h * 60.0f, s, l);
+}
+
+float photoFilterHueToRgb(float p, float q, float t)
+{
+    if (t < 0.0f) t += 1.0f;
+    if (t > 1.0f) t -= 1.0f;
+    if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+    if (t < 1.0f / 2.0f) return q;
+    if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+    return p;
+}
+
+float3 photoFilterHslToRgb(float3 hsl)
+{
+    if (hsl.y <= 1.0e-6f) return hsl.zzz;
+    const float q = hsl.z < 0.5f ? hsl.z * (1.0f + hsl.y) : hsl.z + hsl.y - hsl.z * hsl.y;
+    const float p = 2.0f * hsl.z - q;
+    const float hn = hsl.x / 360.0f;
+    return float3(photoFilterHueToRgb(p, q, hn + 1.0f / 3.0f), photoFilterHueToRgb(p, q, hn), photoFilterHueToRgb(p, q, hn - 1.0f / 3.0f));
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+    float4 pixel = g_InputTexture[dtid.xy];
+    const float3 source = pixel.rgb;
+    const float sourceLuma = photoFilterLuma(source);
+    float3 output = lerp(source, source * float3(g_P0, g_P1, g_P2), g_P3);
+    output = (output - 0.5f) * g_P5 + 0.5f + g_P4;
+    float3 outputHsl = photoFilterRgbToHsl(output);
+    outputHsl.y = saturate(outputHsl.y * g_P6);
+    output = photoFilterHslToRgb(outputHsl);
+    if (g_P7 > 0.5f) {
+        const float outputLuma = photoFilterLuma(output);
+        if (outputLuma > 1.0e-6f) output = saturate(output * (sourceLuma / outputLuma));
+    }
+    pixel.rgb = saturate(output);
+    g_OutputTexture[dtid.xy] = pixel;
+}
+)";
+} // namespace
+
 class PhotoFilterEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     PhotoFilterProcessor processor_;
@@ -138,6 +204,10 @@ PhotoFilterEffect::PhotoFilterEffect() {
     setCPUImpl(ArtifactCore::makeShared<PhotoFilterEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<PhotoFilterEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        PhotoFilterEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kPhotoFilterResidentHlsl, "main", GpuGenericResourceKind::Filter});
     applyPreset(preset_);
     syncImpls();
 }

@@ -2065,6 +2065,14 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->nativeDockSurface = new NativeDockSurface(impl_->centralWidgetHost);
   impl_->nativeDockSurface->setObjectName(
       QStringLiteral("ArtifactNativeDockMvpSurface"));
+  const QPointer<ArtifactMainWindow> nativeDockWindowGuard(this);
+  impl_->nativeDockSurface->setLayoutMutationCallback(
+      [nativeDockWindowGuard](const QByteArray &beforeState,
+                              const QString &label) {
+        if (nativeDockWindowGuard) {
+          pushDockLayoutSnapshot(nativeDockWindowGuard, beforeState, label);
+        }
+      });
   impl_->centralWorkspaceLayout->addWidget(impl_->nativeDockSurface);
   impl_->rootLayout->addWidget(impl_->centralWidgetHost, 1);
   if (impl_->dockStyleManager) {
@@ -2202,7 +2210,22 @@ ArtifactMainWindow::~ArtifactMainWindow() {
   if (qApp) {
     qApp->removeEventFilter(this);
   }
+
+  // ArtifactMenuBar is created lazily after the other window children.  If it
+  // is left to QObject's child cleanup, QMenuBar remains installed as a window
+  // event filter while earlier children tear down their native QWidgetWindow
+  // instances.  Destroy it while the owning window is still fully valid.
+  if (impl_ && impl_->menuBar) {
+    ArtifactMenuBar *menuBar = impl_->menuBar;
+    impl_->menuBar = nullptr;
+    if (impl_->rootLayout) {
+      impl_->rootLayout->removeWidget(menuBar);
+    }
+    delete menuBar;
+  }
+
   delete impl_;
+  impl_ = nullptr;
 }
 
 void ArtifactMainWindow::addWidget() {}
@@ -2560,12 +2583,9 @@ void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
       !impl_->nativeDockSurface->containsDock(tabGroupPrefix)) {
     return;
   }
-  const QByteArray beforeState = saveDockManagerState();
   if (!impl_->nativeDockSurface->moveDockWidgetToTab(title, tabGroupPrefix)) {
     return;
   }
-  pushDockLayoutSnapshot(this, beforeState,
-                         QStringLiteral("Move Dock: %1").arg(title));
   return;
 
 
@@ -2630,9 +2650,23 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
     return;
   if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
+    const bool changed = impl_->nativeDockSurface->dockVisible(title) != visible;
+    const bool recordMutation =
+        changed && impl_->recordLayoutMutations && !impl_->startupLayoutFrozen &&
+        !impl_->startupLayoutApplying &&
+        property("artifactWorkspaceVisibilityBatchDepth").toInt() == 0 &&
+        property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+    const QByteArray beforeState =
+        recordMutation ? saveDockManagerState() : QByteArray{};
     impl_->nativeDockSurface->setDockVisible(title, visible);
     if (visible) {
       impl_->nativeDockSurface->activateDock(title);
+    }
+    if (recordMutation) {
+      pushDockLayoutSnapshot(
+          this, beforeState,
+          visible ? QStringLiteral("Show Dock: %1").arg(title)
+                  : QStringLiteral("Hide Dock: %1").arg(title));
     }
     return;
   }
@@ -2724,7 +2758,21 @@ void ArtifactMainWindow::setDockPinned(const QString &title, bool pinned) {
   }
   if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
+    if (impl_->nativeDockSurface->dockPinned(title) == pinned) {
+      return;
+    }
+    const bool recordMutation = impl_->recordLayoutMutations &&
+        !impl_->startupLayoutFrozen && !impl_->startupLayoutApplying &&
+        property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+    const QByteArray beforeState =
+        recordMutation ? saveDockManagerState() : QByteArray{};
     impl_->nativeDockSurface->setDockPinned(title, pinned);
+    if (recordMutation) {
+      pushDockLayoutSnapshot(
+          this, beforeState,
+          pinned ? QStringLiteral("Pin Dock: %1").arg(title)
+                 : QStringLiteral("Unpin Dock: %1").arg(title));
+    }
     return;
   }
   if (impl_->nativeDockSurface) {

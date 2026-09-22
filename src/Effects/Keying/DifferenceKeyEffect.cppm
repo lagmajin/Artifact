@@ -26,6 +26,30 @@ import Memory.SharedPtr;
 namespace Artifact {
 using namespace ArtifactCore;
 
+namespace {
+// Resident path for the standard Difference Key matte. P0..P2 reference RGB,
+// P3 threshold, P4 softness, P5 choke, P6 matte blur, P7 view mode. The
+// header only emits this node while choke and blur are both disabled.
+static constexpr const char* kDifferenceKeyResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+  if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+  float4 foreground = g_InputTexture[dtid.xy];
+  const float distance = length(foreground.rgb - float3(g_P0, g_P1, g_P2));
+  const float matte = saturate((distance - g_P3) / max(g_P4, 0.001f));
+  if ((int)g_P7 == 1) {
+    g_OutputTexture[dtid.xy] = float4(matte, matte, matte, 1.0f);
+  } else {
+    g_OutputTexture[dtid.xy] = float4(foreground.rgb, saturate(foreground.a * matte));
+  }
+}
+)";
+} // namespace
+
 void DifferenceKeyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src,
                                           ImageF32x4RGBAWithCache& dst) {
   const auto& image = src.image();
@@ -289,6 +313,10 @@ DifferenceKeyEffect::DifferenceKeyEffect() : ArtifactAbstractEffect() {
   setEffectID("Effect.Keying.DifferenceKey");
   setPipelineStage(EffectPipelineStage::Rasterizer);
   setComputeMode(ComputeMode::AUTO);
+  registerGpuGenericShader(
+      DifferenceKeyEffect::kGpuGenericKey,
+      GpuGenericShaderRecord{
+          kDifferenceKeyResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 std::vector<AbstractProperty> DifferenceKeyEffect::getProperties() const {

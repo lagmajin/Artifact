@@ -100,7 +100,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   ArtifactRenderQueueService* service = nullptr;
   QList<JobEntry> jobs;
   QVector<int> visibleToSource;
-  ArtifactCore::EventBus eventBus_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   RenderQueueSearchEdit* searchEdit = nullptr;
@@ -2418,9 +2418,26 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   }
 
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
-    if (impl_->service) {
-      impl_->service->addRenderQueue();
+    if (!impl_->service) return;
+    auto* projectService = ArtifactProjectService::instance();
+    if (!projectService || !projectService->currentComposition().lock()) {
+      QMessageBox::information(
+          this, QStringLiteral("Render"),
+          QStringLiteral("アクティブなコンポジションがありません。"));
+      impl_->logUiEvent(
+          QStringLiteral("Add composition skipped: no active composition"), false);
+      return;
     }
+    const int before = impl_->service->jobCount();
+    impl_->service->addRenderQueue();
+    if (impl_->service->jobCount() <= before) {
+      QMessageBox::warning(this, QStringLiteral("Render"),
+                           QStringLiteral("レンダーキューに追加できませんでした。"));
+      impl_->logUiEvent(QStringLiteral("Add composition failed"), false);
+      return;
+    }
+    impl_->logUiEvent(QStringLiteral("Composition added to render queue"));
+    impl_->syncJobsFromService();
   });
 
   // Batch actions via ArtifactBatchRenderer

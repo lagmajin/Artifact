@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -48,6 +49,27 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    static constexpr const char* kGpuGenericKeyString = "solid_fill";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = settings_.color.redF();
+        node.parameters[1] = settings_.color.greenF();
+        node.parameters[2] = settings_.color.blueF();
+        node.parameters[3] = settings_.opacity;
+        node.parameters[4] = settings_.preserveAlpha ? 1.0f : 0.0f;
+        return stack.append(node);
+    }
 
     bool supportsGPU() const override { return true; }
 };

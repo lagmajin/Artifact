@@ -26,6 +26,7 @@ export module Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Component.System;
 import Artifact.Effect.Generator.Cloner;
+import Container.NamedVector;
 import Property.Abstract;
 import Memory.SharedPtr;
 
@@ -185,10 +186,11 @@ inline QRectF collisionLocalBounds(const ArtifactAbstractLayer* layer)
     if (shape == 3) {
         // Clone instances use the outline's bounding box as a conservative
         // proxy; vertex-exact collision stays with the solvers.
-        const std::vector<QPointF> outline = layer->collisionOutlineLocalPoints();
+        const auto outline = layer->collisionOutlineLocalPoints();
         if (outline.size() >= 3) {
-            qreal minX = outline.front().x();
-            qreal minY = outline.front().y();
+            const QPointF& firstPoint = *outline.first();
+            qreal minX = firstPoint.x();
+            qreal minY = firstPoint.y();
             qreal maxX = minX;
             qreal maxY = minY;
             for (const QPointF& point : outline) {
@@ -686,7 +688,7 @@ inline float clonerSequenceWeight(const ArtifactAbstractLayer* layer,
 
 inline float cloneModifierSequenceWeight(
     const ArtifactAbstractLayer* layer,
-    const std::vector<LayerModifierDescriptor>& modifiers,
+    const ArtifactCore::NamedVector<LayerModifierDescriptor>& modifiers,
     const QJsonObject& fallbackSettings,
     int cloneIndex)
 {
@@ -720,7 +722,7 @@ inline float cloneModifierSequenceWeight(
 }
 
 inline float cloneModifierTimeOffset(
-    const std::vector<LayerModifierDescriptor>& modifiers,
+    const ArtifactCore::NamedVector<LayerModifierDescriptor>& modifiers,
     const QJsonObject& fallbackSettings,
     int cloneIndex)
 {
@@ -807,8 +809,10 @@ export std::vector<FragmentRenderInstance> fragmentRenderInstances(
         instance.entityId = fragment.entityId;
         instance.geometryHandle = fragment.geometryHandle;
         instance.materialHandle = geometry->materialHandle;
-        instance.localPolygon = geometry->localPolygon;
-        instance.localUV = geometry->localUV;
+        // CloneRenderInstance remains a render-boundary DTO. Keep the
+        // conversion here instead of leaking std::vector into layer state.
+        instance.localPolygon = geometry->localPolygon.toStdVector();
+        instance.localUV = geometry->localUV.toStdVector();
         instance.transform = baseTransform * fragment.transform;
         instance.weight = std::clamp(fragment.opacity, 0.0f, 1.0f);
         instances.push_back(std::move(instance));
@@ -1061,7 +1065,7 @@ inline void applyGeneratorTransformStack(const QJsonObject& settings,
 
 inline void applyCloneEffectorModifiers(
     const ArtifactAbstractLayer* layer,
-    const std::vector<LayerModifierDescriptor>& modifiers,
+    const ArtifactCore::NamedVector<LayerModifierDescriptor>& modifiers,
     const int cloneIndex,
     QMatrix4x4& cloneTransform)
 {

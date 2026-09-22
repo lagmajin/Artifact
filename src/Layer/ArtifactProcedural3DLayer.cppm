@@ -36,6 +36,7 @@ import Audio.Segment;
 import Color.Float;
 import Material.Material;
 import Mesh;
+import Geometry.MeshDeform;
 import Image.ImageF32x4_RGBA;
 import Procedural3DGenerators;
 import Size;
@@ -971,7 +972,8 @@ QRectF ArtifactProcedural3DLayer::localBounds() const
         for (const QString& line : lines) {
             width = std::max(width, static_cast<qreal>(metrics.horizontalAdvance(line)));
         }
-        const qreal height = std::max(1, lines.size()) * metrics.lineSpacing();
+        const qreal height = static_cast<qreal>(std::max<qsizetype>(1, lines.size())) *
+                             metrics.lineSpacing();
         return QRectF(-width * 0.5, -height * 0.5, width, height);
     }
     const float extent = impl_->pathTube.pathScale + impl_->pathTube.radius;

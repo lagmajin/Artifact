@@ -153,6 +153,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Component.System;
+import Container.NamedVector;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Artifact.Mask.LayerMask;
@@ -488,7 +489,8 @@ struct LayerTabComponentState {
   int fieldCount = 0;
   int cloneModifierCount = 0;
   int extraCloneModifierCount = 0;
-  std::vector<LayerComponentValidationIssue> validationIssues;
+  ArtifactCore::NamedVector<LayerComponentValidationIssue> validationIssues{
+      ArtifactCore::ContainerName{"Inspector.ComponentValidationIssues"}};
 };
 
 bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
@@ -525,7 +527,9 @@ LayerTabComponentState collectLayerTabComponentState(
   state.extraCloneModifierCount = std::max(0, state.cloneModifierCount - 2);
   state.validationIssues =
       state.hasLayer ? layer->validateLayerComponents()
-                     : std::vector<LayerComponentValidationIssue>{};
+                     : ArtifactCore::NamedVector<LayerComponentValidationIssue>{
+                           ArtifactCore::ContainerName{
+                               "Inspector.ComponentValidationIssues"}};
   return state;
 }
 
@@ -5309,6 +5313,12 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->tabWidget = new QTabWidget();
   impl_->tabWidget->setObjectName(QStringLiteral("inspectorTabWidget"));
   applyInspectorPalette(impl_->tabWidget);
+  // QTabWidget uses the Light palette role for its pane bevel.  The shared
+  // inspector palette reserves that role for the accent, which makes this
+  // otherwise structural boundary read as an active cyan outline.
+  QPalette tabPalette = impl_->tabWidget->palette();
+  tabPalette.setColor(QPalette::Light, tabPalette.color(QPalette::Mid));
+  impl_->tabWidget->setPalette(tabPalette);
 
   // ================== Layer Info Tab ==================
   auto layerInfoWidget = new QWidget();

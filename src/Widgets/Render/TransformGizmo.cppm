@@ -2786,6 +2786,17 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
   dragStartPositionAnimated_ = t3d.getPositionKeyFrameCount() > 0;
   dragStartRotationAnimated_ = t3d.getRotationKeyFrameCount() > 0;
   dragStartScaleAnimated_ = t3d.getScaleKeyFrameCount() > 0;
+  {
+   const auto dragAutoKeyApplies = [this](const QString& prefix) {
+    return autoKeyPredicate_ && layer_ ? autoKeyPredicate_(layer_, prefix) : false;
+   };
+   dragStartAutoKeyPosition_ =
+       dragAutoKeyApplies(QStringLiteral("transform.position"));
+   dragStartAutoKeyRotation_ =
+       dragAutoKeyApplies(QStringLiteral("transform.rotation"));
+   dragStartAutoKeyScale_ =
+       dragAutoKeyApplies(QStringLiteral("transform.scale"));
+  }
   dragStartHasTextBoxState_ = false;
   dragStartGlobalTransform_ = layer_->getGlobalTransform();
   if (targets.size() > 1) {
@@ -2902,15 +2913,17 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  ArtifactCore::RationalTime time(dragStartFrame_, multiDragState_->timeScale);
   auto &t3d = layer_->transform3D();
   const auto setDragPosition = [&t3d, &time, this](float x, float y) {
-   if (dragStartHasPositionKey_ || dragStartPositionAnimated_) {
-    setAbsolutePosition(t3d, time, x, y);
+  if (dragStartHasPositionKey_ || dragStartPositionAnimated_ ||
+      dragStartAutoKeyPosition_) {
+   setAbsolutePosition(t3d, time, x, y);
   } else {
    t3d.removePositionKeyFrameAt(time);
    t3d.setInitialPosition(time, x, y);
   }
  };
  const auto setDragRotation = [&t3d, &time, this](float degrees) {
-  if (dragStartHasRotationKey_ || dragStartRotationAnimated_) {
+  if (dragStartHasRotationKey_ || dragStartRotationAnimated_ ||
+      dragStartAutoKeyRotation_) {
    t3d.setRotation(time, degrees - t3d.initialRotation());
   } else {
    t3d.removeRotationKeyFrameAt(time);
@@ -2918,7 +2931,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
   }
  };
  const auto setDragScale = [&t3d, &time, this](float x, float y) {
-  if (dragStartHasScaleKey_ || dragStartScaleAnimated_) {
+  if (dragStartHasScaleKey_ || dragStartScaleAnimated_ ||
+      dragStartAutoKeyScale_) {
    t3d.setScale(time, x, y);
   } else {
    t3d.removeScaleKeyFrameAt(time);
@@ -2999,7 +3013,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
         const ArtifactCore::RationalTime targetTime =
             ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
         const TransformSnapshot &before = multiDragState_->before[i];
-        if (before.hasPositionKey || before.positionAnimated) {
+        if (before.hasPositionKey || before.positionAnimated ||
+            dragStartAutoKeyPosition_) {
          setAbsolutePosition(targetT3d, targetTime, newX, newY);
         } else {
          targetT3d.removePositionKeyFrameAt(targetTime);
@@ -3102,7 +3117,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       syncAnimatedProperty(target, QStringLiteral("transform.anchor.y"),
                            targetTime,
                            static_cast<float>(targetLocalAnchor.y()));
-      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0 || dragStartAutoKeyPosition_) {
        setAbsolutePosition(
            targetT3d, targetTime,
            dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
@@ -3163,13 +3178,15 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      auto &targetT3d = target->transform3D();
      const ArtifactCore::RationalTime targetTime =
          ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
-     if (before.hasRotationKey || before.rotationAnimated) {
+     if (before.hasRotationKey || before.rotationAnimated ||
+         dragStartAutoKeyRotation_) {
       targetT3d.setRotation(targetTime, targetRotation - targetT3d.initialRotation());
      } else {
       targetT3d.removeRotationKeyFrameAt(targetTime);
       targetT3d.setInitialRotation(targetTime, targetRotation);
      }
-     if (before.hasPositionKey || before.positionAnimated) {
+     if (before.hasPositionKey || before.positionAnimated ||
+         dragStartAutoKeyPosition_) {
       setAbsolutePosition(targetT3d, targetTime,
                           static_cast<float>(newLocal.x()),
                           static_cast<float>(newLocal.y()));
@@ -3188,7 +3205,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     }
    } else {
     auto& targetT3d = layer_->transform3D();
-    if (targetT3d.hasRotationKeyFrameAt(time) || targetT3d.getRotationKeyFrameCount() > 0) {
+    if (targetT3d.hasRotationKeyFrameAt(time) || targetT3d.getRotationKeyFrameCount() > 0 || dragStartAutoKeyRotation_) {
      targetT3d.setRotation(time, newRotation - targetT3d.initialRotation());
     } else {
      targetT3d.removeRotationKeyFrameAt(time);
@@ -3261,13 +3278,15 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      auto &targetT3d = target->transform3D();
      const ArtifactCore::RationalTime targetTime =
          ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
-     if (before.hasScaleKey || before.scaleAnimated) {
+     if (before.hasScaleKey || before.scaleAnimated ||
+         dragStartAutoKeyScale_) {
       targetT3d.setScale(targetTime, targetScaleX, targetScaleY);
      } else {
       targetT3d.removeScaleKeyFrameAt(targetTime);
       targetT3d.setInitialScale(targetTime, targetScaleX, targetScaleY);
      }
-     if (before.hasPositionKey || before.positionAnimated) {
+     if (before.hasPositionKey || before.positionAnimated ||
+         dragStartAutoKeyPosition_) {
       setAbsolutePosition(targetT3d, targetTime,
                           static_cast<float>(newLocal.x()),
                           static_cast<float>(newLocal.y()));
@@ -3389,13 +3408,15 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
         auto &targetT3d = target->transform3D();
         const ArtifactCore::RationalTime targetTime =
             ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
-        if (before.hasScaleKey || before.scaleAnimated) {
+        if (before.hasScaleKey || before.scaleAnimated ||
+            dragStartAutoKeyScale_) {
          targetT3d.setScale(targetTime, targetScaleX, targetScaleY);
         } else {
          targetT3d.removeScaleKeyFrameAt(targetTime);
          targetT3d.setInitialScale(targetTime, targetScaleX, targetScaleY);
         }
-        if (before.hasPositionKey || before.positionAnimated) {
+        if (before.hasPositionKey || before.positionAnimated ||
+            dragStartAutoKeyPosition_) {
          setAbsolutePosition(targetT3d, targetTime,
                              static_cast<float>(newLocal.x()),
                              static_cast<float>(newLocal.y()));
@@ -3512,7 +3533,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       auto& targetT3d = target->transform3D();
        const ArtifactCore::RationalTime targetTime =
            ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
-       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0 || dragStartAutoKeyPosition_) {
         setAbsolutePosition(targetT3d, targetTime, static_cast<float>(newPos.x()),
                             static_cast<float>(newPos.y()));
        } else {
@@ -3550,7 +3571,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       auto& targetT3d = target->transform3D();
       const ArtifactCore::RationalTime targetTime =
           ArtifactCore::RationalTime(dragStartFrame_, multiDragState_->timeScale);
-      if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
+      if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0 || dragStartAutoKeyScale_) {
        targetT3d.setScale(targetTime, newScaleX, newScaleY);
        } else {
         targetT3d.removeScaleKeyFrameAt(targetTime);
@@ -3560,7 +3581,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                             targetTime, newScaleX);
        syncAnimatedProperty(target, QStringLiteral("transform.scale.y"),
                             targetTime, newScaleY);
-       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0 || dragStartAutoKeyPosition_) {
         setAbsolutePosition(targetT3d, targetTime, newPosX, newPosY);
        } else {
         targetT3d.removePositionKeyFrameAt(targetTime);

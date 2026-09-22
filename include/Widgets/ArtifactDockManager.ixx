@@ -50,6 +50,7 @@ struct DockLayoutEntry {
   QString tabGroup;
   QRect floatingGeometry;
   bool visible = true;
+  bool active = false;
   bool pinned = false;
   bool floating = false;
 };
@@ -147,6 +148,7 @@ inline QJsonObject dockLayoutEntryToJson(const DockLayoutEntry &entry) {
       {QStringLiteral("width"), entry.floatingGeometry.width()},
       {QStringLiteral("height"), entry.floatingGeometry.height()}};
   json[QStringLiteral("visible")] = entry.visible;
+  json[QStringLiteral("active")] = entry.active;
   json[QStringLiteral("pinned")] = entry.pinned;
   json[QStringLiteral("floating")] = entry.floating;
   return json;
@@ -165,6 +167,7 @@ inline DockLayoutEntry dockLayoutEntryFromJson(const QJsonObject &json) {
       geometry.value(QStringLiteral("width")).toInt(),
       geometry.value(QStringLiteral("height")).toInt());
   entry.visible = json.value(QStringLiteral("visible")).toBool(true);
+  entry.active = json.value(QStringLiteral("active")).toBool(false);
   entry.pinned = json.value(QStringLiteral("pinned")).toBool(false);
   entry.floating = json.value(QStringLiteral("floating")).toBool(false);
   return entry;

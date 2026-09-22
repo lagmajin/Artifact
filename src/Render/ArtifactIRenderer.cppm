@@ -4925,10 +4925,26 @@ void ArtifactIRenderer::draw3DTexturedCard(
   impl_->submitQueuedDraws(ctx.RawPtr());
  }
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
- impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
-     localRect, modelMatrix, texture,
-     FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, opacity);
- impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+  impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
+      localRect, modelMatrix, texture,
+      FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, opacity);
+  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+}
+void ArtifactIRenderer::setProjectorSource(Diligent::ITextureView* textureView)
+{
+  impl_->primitiveRenderer3D_.setProjectorSource(textureView);
+}
+void ArtifactIRenderer::setProjectorMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
+{
+  impl_->primitiveRenderer3D_.setProjectorMatrices(view, proj);
+}
+void ArtifactIRenderer::setProjectorEnabled(bool enabled)
+{
+  impl_->primitiveRenderer3D_.setProjectorEnabled(enabled);
+}
+void ArtifactIRenderer::resetProjector()
+{
+  impl_->primitiveRenderer3D_.resetProjector();
 }
 void ArtifactIRenderer::draw3DShape(
     const std::vector<Detail::float2>& points,

@@ -29,6 +29,7 @@ module;
 #include <QMessageBox>
 #include <QPluginLoader>
 #include <QProgressBar>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QKeySequenceEdit>
@@ -38,6 +39,7 @@ module;
 #include <QDoubleSpinBox>
 #include <QVariant>
 #include <QStackedWidget>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
@@ -83,6 +85,8 @@ import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
 import Settings.Accessibility;
+import EnvironmentVariable;
+import EnvironmentVariable.Expansion;
 
 namespace ArtifactCore {
 
@@ -2272,6 +2276,220 @@ QList<SettingItemInfo> ShortcutSettingPage::searchableItems() const {
   return items;
 }
 
+namespace {
+
+bool isEnvironmentVariableName(const QString &name) {
+  if (name.isEmpty()) return false;
+  const QChar first = name.front();
+  if (!((first >= QChar(u'a') && first <= QChar(u'z')) ||
+        (first >= QChar(u'A') && first <= QChar(u'Z')) ||
+        first == QChar(u'_'))) {
+    return false;
+  }
+  for (const QChar character : name) {
+    const bool isLetter = (character >= QChar(u'a') && character <= QChar(u'z')) ||
+        (character >= QChar(u'A') && character <= QChar(u'Z'));
+    if (!isLetter && !character.isDigit() && character != QChar(u'_')) return false;
+  }
+  return true;
+}
+
+QVariantMap applicationEnvironmentOverrides() {
+  return QSettings().value(QStringLiteral("EnvironmentVariables/ApplicationOverrides")).toMap();
+}
+
+} // namespace
+
+class EnvironmentVariableSettingPage::Impl {
+public:
+  QTableWidget *table_ = nullptr;
+  QLabel *nameValue_ = nullptr;
+  QLabel *sourceValue_ = nullptr;
+  QLineEdit *expandedValue_ = nullptr;
+  QLabel *hint_ = nullptr;
+
+  void updateDetails() {
+    if (!table_ || !nameValue_ || !sourceValue_ || !expandedValue_ || !hint_) return;
+    const int row = table_->currentRow();
+    const auto *nameItem = row >= 0 ? table_->item(row, 0) : nullptr;
+    const auto *valueItem = row >= 0 ? table_->item(row, 1) : nullptr;
+    const auto *sourceItem = row >= 0 ? table_->item(row, 2) : nullptr;
+    const QString name = nameItem ? nameItem->text().trimmed() : QString();
+    const QString value = valueItem ? valueItem->text() : QString();
+    nameValue_->setText(name.isEmpty() ? QStringLiteral("Select a variable") : name);
+    sourceValue_->setText(sourceItem ? sourceItem->text() : QString());
+    expandedValue_->setText(ArtifactCore::expandTokens(value, {}));
+    hint_->setText(name.isEmpty()
+        ? QStringLiteral("Edit the blank application row to add an override.")
+        : QStringLiteral("Use ${NAME} or $NAME to reference another variable."));
+  }
+};
+
+EnvironmentVariableSettingPage::EnvironmentVariableSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Environment variables"));
+  setAccessibleDescription(QStringLiteral("Configure ArtifactStudio-only environment variable overrides"));
+
+  auto *layout = new QVBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(10);
+  auto *note = new QLabel(
+      QStringLiteral("Application overrides are used by ArtifactStudio only. System environment variables are read-only here."), this);
+  note->setWordWrap(true);
+  layout->addWidget(note);
+
+  auto *content = new QHBoxLayout();
+  content->setContentsMargins(0, 0, 0, 0);
+  content->setSpacing(14);
+  impl_->table_ = new QTableWidget(this);
+  impl_->table_->setColumnCount(3);
+  impl_->table_->setHorizontalHeaderLabels(
+      {QStringLiteral("Variable"), QStringLiteral("Value"), QStringLiteral("Source")});
+  impl_->table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  impl_->table_->setSelectionMode(QAbstractItemView::SingleSelection);
+  impl_->table_->setEditTriggers(QAbstractItemView::DoubleClicked |
+                                 QAbstractItemView::EditKeyPressed |
+                                 QAbstractItemView::SelectedClicked);
+  impl_->table_->horizontalHeader()->setStretchLastSection(false);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+  impl_->table_->verticalHeader()->setVisible(false);
+  impl_->table_->setAccessibleName(QStringLiteral("Environment variable list"));
+  impl_->table_->setAccessibleDescription(
+      QStringLiteral("Application overrides are editable. System variables are displayed for reference."));
+  impl_->table_->installEventFilter(this);
+  content->addWidget(impl_->table_, 3);
+
+  auto *details = new QGroupBox(QStringLiteral("Variable details"), this);
+  details->setMinimumWidth(250);
+  auto *detailsLayout = new QVBoxLayout(details);
+  detailsLayout->addWidget(new QLabel(QStringLiteral("Variable"), details));
+  impl_->nameValue_ = new QLabel(details);
+  QFont nameFont = impl_->nameValue_->font();
+  nameFont.setBold(true);
+  impl_->nameValue_->setFont(nameFont);
+  detailsLayout->addWidget(impl_->nameValue_);
+  detailsLayout->addWidget(new QLabel(QStringLiteral("Source"), details));
+  impl_->sourceValue_ = new QLabel(details);
+  detailsLayout->addWidget(impl_->sourceValue_);
+  detailsLayout->addWidget(new QLabel(QStringLiteral("Expanded value"), details));
+  impl_->expandedValue_ = new QLineEdit(details);
+  impl_->expandedValue_->setReadOnly(true);
+  impl_->expandedValue_->setAccessibleName(QStringLiteral("Expanded environment variable value"));
+  detailsLayout->addWidget(impl_->expandedValue_);
+  impl_->hint_ = new QLabel(details);
+  impl_->hint_->setWordWrap(true);
+  detailsLayout->addWidget(impl_->hint_);
+  detailsLayout->addStretch(1);
+  content->addWidget(details, 2);
+  layout->addLayout(content, 1);
+  loadSettings();
+}
+
+EnvironmentVariableSettingPage::~EnvironmentVariableSettingPage() { delete impl_; }
+
+bool EnvironmentVariableSettingPage::eventFilter(QObject *watched, QEvent *event) {
+  if (impl_ && watched == impl_->table_ &&
+      (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::KeyRelease ||
+       event->type() == QEvent::FocusOut)) {
+    impl_->updateDetails();
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void EnvironmentVariableSettingPage::loadSettings() {
+  if (!impl_ || !impl_->table_) return;
+  const QVariantMap overrides = applicationEnvironmentOverrides();
+  const QProcessEnvironment system = QProcessEnvironment::systemEnvironment();
+  QStringList names = system.keys();
+  for (auto it = overrides.cbegin(); it != overrides.cend(); ++it) {
+    if (!names.contains(it.key(), Qt::CaseInsensitive)) names.append(it.key());
+  }
+  names.sort(Qt::CaseInsensitive);
+
+  impl_->table_->setRowCount(0);
+  for (const QString &name : names) {
+    const bool applicationOverride = overrides.contains(name);
+    const int row = impl_->table_->rowCount();
+    impl_->table_->insertRow(row);
+    auto *nameItem = new QTableWidgetItem(name);
+    auto *valueItem = new QTableWidgetItem(
+        applicationOverride ? overrides.value(name).toString() : system.value(name));
+    auto *sourceItem = new QTableWidgetItem(
+        applicationOverride ? QStringLiteral("Application") : QStringLiteral("System"));
+    sourceItem->setData(Qt::UserRole, applicationOverride);
+    if (!applicationOverride) {
+      const Qt::ItemFlags readOnly = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+      nameItem->setFlags(readOnly);
+      valueItem->setFlags(readOnly);
+      sourceItem->setFlags(readOnly);
+    } else {
+      sourceItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    }
+    impl_->table_->setItem(row, 0, nameItem);
+    impl_->table_->setItem(row, 1, valueItem);
+    impl_->table_->setItem(row, 2, sourceItem);
+  }
+  const int newRow = impl_->table_->rowCount();
+  impl_->table_->insertRow(newRow);
+  auto *newName = new QTableWidgetItem();
+  newName->setToolTip(QStringLiteral("Enter a variable name to add an application override"));
+  auto *newValue = new QTableWidgetItem();
+  auto *newSource = new QTableWidgetItem(QStringLiteral("Application"));
+  newSource->setData(Qt::UserRole, true);
+  newSource->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+  impl_->table_->setItem(newRow, 0, newName);
+  impl_->table_->setItem(newRow, 1, newValue);
+  impl_->table_->setItem(newRow, 2, newSource);
+  if (impl_->table_->rowCount() > 0) impl_->table_->selectRow(0);
+  impl_->updateDetails();
+}
+
+void EnvironmentVariableSettingPage::saveSettings() {
+  if (!impl_ || !impl_->table_) return;
+  QVariantMap nextOverrides;
+  for (int row = 0; row < impl_->table_->rowCount(); ++row) {
+    const auto *nameItem = impl_->table_->item(row, 0);
+    const auto *valueItem = impl_->table_->item(row, 1);
+    const auto *sourceItem = impl_->table_->item(row, 2);
+    if (!nameItem || !valueItem || !sourceItem || !sourceItem->data(Qt::UserRole).toBool()) continue;
+    const QString name = nameItem->text().trimmed();
+    if (name.isEmpty()) continue;
+    if (!isEnvironmentVariableName(name)) {
+      QMessageBox::warning(this, QStringLiteral("Invalid environment variable"),
+          QStringLiteral("%1 is not a valid environment variable name.").arg(name));
+      return;
+    }
+    nextOverrides.insert(name, valueItem->text());
+  }
+
+  const QVariantMap previousOverrides = applicationEnvironmentOverrides();
+  QSettings settings;
+  settings.setValue(QStringLiteral("EnvironmentVariables/ApplicationOverrides"), nextOverrides);
+  auto *manager = ArtifactCore::EnvironmentVariableManager::instance();
+  const QProcessEnvironment system = QProcessEnvironment::systemEnvironment();
+  for (auto it = previousOverrides.cbegin(); it != previousOverrides.cend(); ++it) {
+    if (!nextOverrides.contains(it.key())) {
+      if (system.keys().contains(it.key(), Qt::CaseInsensitive)) {
+        manager->setVariable(it.key(), system.value(it.key()));
+      } else {
+        manager->unsetVariable(it.key());
+      }
+    }
+  }
+  for (auto it = nextOverrides.cbegin(); it != nextOverrides.cend(); ++it) {
+    manager->setVariable(it.key(), it.value());
+  }
+}
+
+QList<SettingItemInfo> EnvironmentVariableSettingPage::searchableItems() const {
+  if (!impl_) return {};
+  return {{QStringLiteral("Environment variables"),
+           QStringLiteral("Application-only environment variable overrides and token expansion"),
+           QStringLiteral("Environment Variables"), impl_->table_}};
+}
+
 class ApplicationSettingDialog::Impl {
 private:
 public:
@@ -2295,6 +2513,7 @@ public:
   ShortcutSettingPage *shortcutPage_;
   PluginSettingPage *pluginPage_;
   AudioScrubSettingPage *audioScrubPage_;
+  EnvironmentVariableSettingPage *environmentVariablePage_;
   QVector<ISettingPage *> pages_;
 
   void setupUI(ApplicationSettingDialog *dialog);
@@ -2344,7 +2563,8 @@ ApplicationSettingDialog::Impl::Impl()
       pageTitle_(nullptr), pageDescription_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
       projectPage_(nullptr), compositionPage_(nullptr), memoryPage_(nullptr),
-      shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr) {}
+      shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr),
+      environmentVariablePage_(nullptr) {}
 
 ApplicationSettingDialog::Impl::~Impl() {}
 
@@ -2404,6 +2624,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   categoryList_->addItem("Shortcuts");
   categoryList_->addItem("Audio Scrubbing");
   categoryList_->addItem("Plugins");
+  categoryList_->addItem("Environment Variables");
   categoryList_->setCurrentRow(0);
   navigationLayout->addWidget(categoryList_, 1);
   contentLayout->addLayout(navigationLayout);
@@ -2471,9 +2692,10 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   settingPages_->addWidget(shortcutPage_);
   settingPages_->addWidget(audioScrubPage_ = new AudioScrubSettingPage(dialog));
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
+  settingPages_->addWidget(environmentVariablePage_ = new EnvironmentVariableSettingPage(dialog));
 
   pages_ = {generalPage_, importPage_, previewPage_, projectPage_, compositionPage_,
-            memoryPage_, shortcutPage_, audioScrubPage_, pluginPage_};
+            memoryPage_, shortcutPage_, audioScrubPage_, pluginPage_, environmentVariablePage_};
 
   pageLayout->addWidget(settingPages_, 1);
   contentLayout->addLayout(pageLayout, 1);
@@ -2537,7 +2759,8 @@ void ApplicationSettingDialog::Impl::onCategoryChanged(int index) {
       QStringLiteral("Memory budget, CPU allocation, and background performance."),
       QStringLiteral("Review and customize keyboard commands by workspace context."),
       QStringLiteral("Audio feedback settings used while scrubbing the timeline."),
-      QStringLiteral("Discover and manage installed application plugins.")};
+      QStringLiteral("Discover and manage installed application plugins."),
+      QStringLiteral("Manage environment overrides used by ArtifactStudio and preview token expansion.")};
   pageTitle_->setText(categoryList_->item(index)->text());
   pageDescription_->setText(descriptions.value(index));
 }
@@ -2606,6 +2829,7 @@ void ApplicationSettingDialog::Impl::resetProjectOverrides() {
   if (memoryPage_) memoryPage_->loadSettings();
   if (shortcutPage_) shortcutPage_->loadSettings();
   if (audioScrubPage_) audioScrubPage_->loadSettings();
+  if (environmentVariablePage_) environmentVariablePage_->loadSettings();
 }
 
 ApplicationSettingDialog::ApplicationSettingDialog(
@@ -2634,6 +2858,9 @@ void ApplicationSettingDialog::loadSettings() {
   if (impl_->audioScrubPage_) {
     impl_->audioScrubPage_->loadSettings();
   }
+  if (impl_->environmentVariablePage_) {
+    impl_->environmentVariablePage_->loadSettings();
+  }
   impl_->updateOverrideSummary();
 }
 
@@ -2649,6 +2876,9 @@ void ApplicationSettingDialog::saveSettings() {
   }
   if (impl_->audioScrubPage_) {
     impl_->audioScrubPage_->saveSettings();
+  }
+  if (impl_->environmentVariablePage_) {
+    impl_->environmentVariablePage_->saveSettings();
   }
 
   ArtifactAppSettings::instance()->sync();

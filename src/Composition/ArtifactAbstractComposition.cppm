@@ -826,6 +826,8 @@ QJsonObject serializeModulationRouter(
     object[QStringLiteral("smoothing")] = source.smoothing;
     object[QStringLiteral("seed")] = static_cast<double>(source.seed);
     object[QStringLiteral("macroValue")] = source.macroValue;
+    object[QStringLiteral("constantValue")] = source.constantValue;
+    object[QStringLiteral("stepCount")] = static_cast<double>(source.stepCount);
     object[QStringLiteral("unipolar")] = source.unipolar;
     sources.append(object);
   }
@@ -852,7 +854,7 @@ void restoreModulationRouter(const QJsonObject& object,
     if (!value.isObject()) continue;
     const QJsonObject item = value.toObject();
     const int type = item.value(QStringLiteral("type")).toInt(-1);
-    if (type < 0 || type > 3) continue;
+    if (type < 0 || type > 6) continue;
     Audio::Modulation::ModulationSourceDefinition source;
     source.id = static_cast<std::uint32_t>(item.value(QStringLiteral("id")).toVariant().toUInt());
     source.type = static_cast<Audio::Modulation::ModulatorSourceType>(type);
@@ -869,6 +871,9 @@ void restoreModulationRouter(const QJsonObject& object,
     source.smoothing = static_cast<float>(item.value(QStringLiteral("smoothing")).toDouble(0.005));
     source.seed = static_cast<std::uint32_t>(item.value(QStringLiteral("seed")).toVariant().toUInt());
     source.macroValue = static_cast<float>(item.value(QStringLiteral("macroValue")).toDouble(0.0));
+    source.constantValue = static_cast<float>(item.value(QStringLiteral("constantValue")).toDouble(0.0));
+    source.stepCount = static_cast<std::uint32_t>(
+        std::clamp(item.value(QStringLiteral("stepCount")).toVariant().toUInt(), 1u, 32u));
     source.unipolar = item.value(QStringLiteral("unipolar")).toBool(false);
     sources.push_back(source);
   }
@@ -1997,14 +2002,19 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
 
   struct SimulationLayerEntry {
     ArtifactAbstractLayerPtr layer;
-    std::vector<CloneRenderInstance> instances;
-    std::vector<QVector3D> velocities;
-    std::vector<LayerMotionIntent> intents;
-    std::vector<LayerContactEvent> contacts;
+    ArtifactCore::NamedVector<CloneRenderInstance> instances{
+        ArtifactCore::ContainerName{"Composition.SimulationInstances"}};
+    ArtifactCore::NamedVector<QVector3D> velocities{
+        ArtifactCore::ContainerName{"Composition.SimulationVelocities"}};
+    ArtifactCore::NamedVector<LayerMotionIntent> intents{
+        ArtifactCore::ContainerName{"Composition.SimulationIntents"}};
+    ArtifactCore::NamedVector<LayerContactEvent> contacts{
+        ArtifactCore::ContainerName{"Composition.SimulationContacts"}};
     bool crowdEnabled = false;
     bool collisionEnabled = false;
   };
-  std::vector<SimulationLayerEntry> entries;
+  ArtifactCore::NamedVector<SimulationLayerEntry> entries{
+      ArtifactCore::ContainerName{"Composition.SimulationLayerEntries"}};
 
   for (const auto& layer : layerMultiIndex_) {
     if (discontinuousSeek && layer &&
@@ -2034,13 +2044,16 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
     entry.layer = layer;
     entry.crowdEnabled = crowdEnabled;
     entry.collisionEnabled = collisionEnabled;
-    entry.instances = cloneRenderInstancesForSimulation(
-        layer.get(), layer->getGlobalTransform4x4());
+    entry.instances = ArtifactCore::NamedVector<CloneRenderInstance>::fromStdVector(
+        ArtifactCore::ContainerName{"Composition.SimulationInstances"},
+        cloneRenderInstancesForSimulation(layer.get(),
+                                          layer->getGlobalTransform4x4()));
     if (entry.instances.empty()) {
       layer->clearAuthoritativeComponentEvaluationState();
       continue;
     }
-    entry.velocities.resize(entry.instances.size(), QVector3D());
+    entry.velocities.resize(entry.instances.size());
+    std::fill(entry.velocities.begin(), entry.velocities.end(), QVector3D());
 
     const auto previous = previousStates.constFind(layer->id().toString());
     if (sequential && previous != previousStates.cend() &&

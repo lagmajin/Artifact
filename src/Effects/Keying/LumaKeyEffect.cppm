@@ -25,6 +25,33 @@ import Memory.SharedPtr;
 namespace Artifact {
 using namespace ArtifactCore;
 
+namespace {
+// Resident path for the standard Luma Key range matte. P0 low threshold, P1
+// high threshold, P2 softness, P3 choke, P4 matte blur, P5 view mode. The
+// header only emits this node when the two finishing operations are disabled.
+static constexpr const char* kLumaKeyResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+  if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+  float4 foreground = g_InputTexture[dtid.xy];
+  const float low = min(g_P0, g_P1);
+  const float high = max(g_P0, g_P1);
+  const float luma = dot(foreground.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+  const float softness = max(g_P2, 0.001f);
+  const float matte = saturate(min((luma - low) / softness, (high - luma) / softness));
+  if ((int)g_P5 == 1) {
+    g_OutputTexture[dtid.xy] = float4(matte, matte, matte, 1.0f);
+  } else {
+    g_OutputTexture[dtid.xy] = float4(foreground.rgb, saturate(foreground.a * matte));
+  }
+}
+)";
+} // namespace
+
 void LumaKeyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src,
                                     ImageF32x4RGBAWithCache& dst) {
   const auto& image = src.image();
@@ -281,6 +308,10 @@ LumaKeyEffect::LumaKeyEffect() : ArtifactAbstractEffect() {
   setEffectID("Effect.Keying.LumaKey");
   setPipelineStage(EffectPipelineStage::Rasterizer);
   setComputeMode(ComputeMode::AUTO);
+  registerGpuGenericShader(
+      LumaKeyEffect::kGpuGenericKey,
+      GpuGenericShaderRecord{
+          kLumaKeyResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 std::vector<AbstractProperty> LumaKeyEffect::getProperties() const {

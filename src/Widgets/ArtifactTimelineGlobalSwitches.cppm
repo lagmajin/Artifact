@@ -11,6 +11,10 @@ module;
 #include <QStyle>
 #include <QToolTip>
 #include <QWidget>
+#include <QPainter>
+#include <QPen>
+#include <QColor>
+#include <QPaintEvent>
 
 module Artifact.Widgets.Timeline.GlobalSwitches;
 
@@ -18,9 +22,40 @@ import Utils.Path;
 import Artifact.Event.Types;
 import Event.Bus;
 import Application.AppSettings;
+import Settings.Accessibility;
 
 namespace Artifact {
 namespace {
+class TimelineSwitchButton final : public QPushButton {
+public:
+    using QPushButton::QPushButton;
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        if (isDown() || underMouse()) {
+            painter.fillRect(rect(), QColor(48, 55, 61));
+        } else if (isChecked()) {
+            painter.fillRect(rect(), QColor(32, 49, 60));
+        }
+        const QSize extent = iconSize();
+        const QRect iconRect((width() - extent.width()) / 2,
+                             (height() - extent.height()) / 2,
+                             extent.width(), extent.height());
+        icon().paint(&painter, iconRect, Qt::AlignCenter,
+                     isEnabled() ? QIcon::Normal : QIcon::Disabled,
+                     isChecked() ? QIcon::On : QIcon::Off);
+        if (isChecked()) {
+            painter.fillRect(width() / 2 - 5, height() - 3, 10, 2,
+                             QColor(61, 184, 234));
+        }
+        if (hasFocus()) {
+            painter.setPen(QPen(QColor(168, 218, 241), 1, Qt::DotLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(rect().adjusted(2, 2, -3, -3));
+        }
+    }
+};
+
 QIcon loadIconWithFallback(const QString& resourceRelativePath, const QString& fallbackFileName = {})
 {
     QIcon icon(ArtifactCore::resolveIconResourcePath(resourceRelativePath));
@@ -49,18 +84,19 @@ public:
 
     void setupUi(QWidget* parent) {
         auto layout = new QHBoxLayout(parent);
-        layout->setContentsMargins(4, 0, 4, 0);
-        layout->setSpacing(2);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(Accessibility::scaledSize(4));
 
         auto createBtn = [&](const QString& tooltip, const QIcon& icon) {
-            auto btn = new QPushButton();
+            auto btn = new TimelineSwitchButton(parent);
             btn->setCheckable(true);
-            btn->setFixedSize(28, 28);
+            btn->setFixedSize(Accessibility::scaledSize(32), Accessibility::scaledSize(34));
             btn->setToolTip(tooltip);
             btn->setAccessibleName(tooltip.section(QStringLiteral(" ("), 0, 0));
             btn->setAccessibleDescription(tooltip);
             btn->setIcon(icon);
-            btn->setIconSize(QSize(19, 19));
+            const int iconExtent = Accessibility::scaledSize(20);
+            btn->setIconSize(QSize(iconExtent, iconExtent));
             btn->setFlat(true);
             layout->addWidget(btn);
             return btn;

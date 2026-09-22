@@ -615,15 +615,15 @@ public:
     int tileMargin = 14;
     int tileSpacing = 14;
     int tileWidth = 248;
-    int tileHeight = 252;
-    int tilePreviewHeight = 132;
+    int tileHeight = 232;
+    int tilePreviewHeight = 124;
     int tileContentTop = 14;
     int tileContentBottom = 12;
     int tileTextLines = 3;
     int minTileWidth = 188;
     int maxTileWidth = 332;
-    int minTileHeight = 214;
-    int maxTileHeight = 348;
+    int minTileHeight = 202;
+    int maxTileHeight = 320;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -1555,8 +1555,16 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
         const bool hasChildren = impl_->hasChildren(index0);
 
-        QColor tileFill = selected ? Impl::Colors::rowSelected()
-                                   : (hovered ? Impl::Colors::rowHover() : Impl::Colors::headerBackground());
+        QColor tileFill = hovered ? Impl::Colors::rowHover()
+                                  : Impl::Colors::headerBackground();
+        if (selected) {
+            // Keep selection legible without turning the entire card into a
+            // second accent surface. The border and leading rail carry focus.
+            const QColor selection = Impl::Colors::rowSelected();
+            tileFill.setRed((tileFill.red() * 4 + selection.red()) / 5);
+            tileFill.setGreen((tileFill.green() * 4 + selection.green()) / 5);
+            tileFill.setBlue((tileFill.blue() * 4 + selection.blue()) / 5);
+        }
         if (type == eProjectItemType::Folder) {
             tileFill = tileFill.lighter(selected ? 110 : 104);
         }
@@ -1599,6 +1607,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 previewRect.center() -
                 QPoint(preview.width() / 2, preview.height() / 2);
             painter.drawPixmap(previewTopLeft, preview);
+            painter.fillRect(previewRect, QColor(10, 13, 18, selected ? 18 : 30));
             painter.restore();
             painter.setPen(QPen(QColor(18, 18, 18, 160), 1.0));
             painter.setBrush(Qt::NoBrush);
@@ -1606,13 +1615,13 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         } else {
             QColor placeholder = QColor(70, 74, 84);
             if (type == eProjectItemType::Composition) {
-                placeholder = QColor(74, 128, 191);
+                placeholder = QColor(66, 94, 128);
             } else if (type == eProjectItemType::Folder) {
-                placeholder = QColor(176, 138, 46);
+                placeholder = QColor(132, 108, 55);
             } else if (type == eProjectItemType::Solid) {
-                placeholder = QColor(110, 88, 170);
+                placeholder = QColor(86, 76, 126);
             } else if (type == eProjectItemType::Footage) {
-                placeholder = QColor(66, 148, 98);
+                placeholder = QColor(61, 112, 78);
             }
             const QPixmap placeholderTexture = projectViewIllustration(
                 QStringLiteral("Studio/project_tile_placeholder.png"),
@@ -1626,11 +1635,11 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 const QPoint textureTopLeft =
                     previewRect.center() -
                     QPoint(placeholderTexture.width() / 2, placeholderTexture.height() / 2);
-                painter.setOpacity(selected ? 0.86 : 0.72);
+                painter.setOpacity(selected ? 0.78 : 0.66);
                 painter.drawPixmap(textureTopLeft, placeholderTexture);
                 painter.setOpacity(1.0);
             }
-            painter.fillRect(previewRect, QColor(placeholder.red(), placeholder.green(), placeholder.blue(), 62));
+            painter.fillRect(previewRect, QColor(placeholder.red(), placeholder.green(), placeholder.blue(), 40));
             painter.restore();
             painter.setPen(QPen(QColor(18, 18, 18, 170), 1.0));
             painter.setBrush(Qt::NoBrush);
@@ -1684,7 +1693,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                               tileRect.top() + 8,
                               badgeW,
                               std::max(18, badgeFm.height() + 4));
-        QColor badgeBg = selected ? QColor(255, 255, 255, 26)
+        QColor badgeBg = selected ? QColor(255, 255, 255, 20)
                                   : (hovered ? QColor(0, 0, 0, 46)
                                              : QColor(0, 0, 0, 34));
         QColor badgePen = selected ? QColor(245, 247, 250)
@@ -1701,14 +1710,14 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const QFontMetrics statusFm(painter.font());
         const int statusW = std::min(tileRect.width() - 20,
                                      statusFm.horizontalAdvance(statusText) + 10);
-        const QRect statusRect(tileRect.left() + 10,
-                               badgeRect.bottom() + 4,
+        const QRect statusRect(previewRect.left() + 8,
+                               previewRect.bottom() - std::max(18, statusFm.height() + 4) - 8,
                                statusW,
                                std::max(18, statusFm.height() + 4));
         const QColor statusAccent = projectItemStatusChipColor(statusText);
         QColor statusBg = statusAccent;
-        statusBg.setAlpha(selected ? 70 : 46);
-        QColor statusPen = statusAccent.lighter(selected ? 145 : 128);
+        statusBg.setAlpha(selected ? 58 : 42);
+        QColor statusPen = statusAccent.lighter(selected ? 136 : 124);
         painter.setBrush(statusBg);
         painter.setPen(Qt::NoPen);
         painter.drawRoundedRect(statusRect, 6, 6);
@@ -1728,8 +1737,8 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                     const QFontMetrics layoutFm(painter.font());
                     const int layoutW = std::min(tileRect.width() - 20,
                                                  layoutFm.horizontalAdvance(layoutSummary) + 10);
-                    const QRect layoutRect(tileRect.right() - layoutW - 10,
-                                           statusRect.bottom() + 4,
+                    const QRect layoutRect(previewRect.right() - layoutW - 8,
+                                           previewRect.bottom() - std::max(18, layoutFm.height() + 4) - 8,
                                            layoutW,
                                            std::max(18, layoutFm.height() + 4));
                     painter.setBrush(selected ? QColor(255, 255, 255, 16)
@@ -1764,8 +1773,8 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 const QString proxyBadgeText = isStale ? QStringLiteral("Proxy ⚠") : QStringLiteral("Proxy");
                 const QFontMetrics pf(painter.font());
                 const int pw = std::min(tileRect.width() - 20, pf.horizontalAdvance(proxyBadgeText) + 10);
-                const QRect proxyRect(tileRect.right() - pw - 10,
-                                      badgeRect.bottom() + 4,
+                const QRect proxyRect(previewRect.right() - pw - 8,
+                                      previewRect.bottom() - std::max(18, pf.height() + 4) - 8,
                                       pw, std::max(18, pf.height() + 4));
                 painter.setBrush(isStale ? QColor(255, 200, 50, 50) : QColor(50, 200, 100, 40));
                 painter.setPen(QPen(isStale ? QColor(255, 200, 50) : QColor(100, 220, 140), 1.0));
@@ -5189,7 +5198,7 @@ public:
         const auto* projectService = ArtifactProjectService::instance();
         const bool hasProject = projectService && projectService->hasProject();
         if (detailPanel) {
-            detailPanel->setVisible(hasProject);
+            detailPanel->setVisible(hasProject && owner_ && owner_->width() >= 760);
         }
         if (detailEmptyState) {
             detailEmptyState->setVisible(!hasItem);
@@ -5222,6 +5231,7 @@ public:
             : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
             : isFolder ? QStringLiteral("Folder")
             : isComposition ? QStringLiteral("Composition")
+            : item && item->type() == eProjectItemType::Solid ? QStringLiteral("Solid")
             : QStringLiteral("Item");
         if (selectionDetailLabel) {
             if (!hasItem) {
@@ -6452,7 +6462,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         font.setBold(true);
         impl_->openSelectionButton->setFont(font);
     }
-    auto* itemActionsLabel = new QLabel(QStringLiteral("Item"), selectionChrome);
+    auto* itemActionsLabel = new QLabel(QStringLiteral("Actions"), selectionChrome);
     impl_->itemActionsLabel = itemActionsLabel;
     itemActionsLabel->setObjectName(QStringLiteral("projectManagerActionGroupLabel"));
     auto* proxyActionsLabel = new QLabel(QStringLiteral("Proxy"), selectionChrome);
@@ -6762,6 +6772,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->removeWidget(filterBarHost);
     auto* searchFilterRow = new QWidget(chromePanel);
     searchFilterRow->setObjectName(QStringLiteral("projectManagerSearchFilterRow"));
+    searchFilterRow->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     searchFilterRow->setAutoFillBackground(true);
     searchFilterRow->setPalette(chromePanel->palette());
     auto* searchFilterLayout = new QHBoxLayout(searchFilterRow);
@@ -6845,11 +6856,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     // The detail surface needs a readable lower bound, but it must not be
     // capped: Project View is commonly docked wide enough to inspect metadata
     // beside the hierarchy.
-    detailPanel->setMinimumWidth(280);
-    detailPanel->setMaximumWidth(384);
+    detailPanel->setMinimumWidth(256);
+    detailPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    detailPanel->setMaximumWidth(336);
     auto* detailLayout = new QVBoxLayout(detailPanel);
-    detailLayout->setContentsMargins(18, 18, 18, 18);
-    detailLayout->setSpacing(12);
+    detailLayout->setContentsMargins(16, 14, 16, 14);
+    detailLayout->setSpacing(9);
 
     impl_->detailEmptyState = new QWidget(detailPanel);
     impl_->detailEmptyState->setSizePolicy(QSizePolicy::Expanding,
@@ -6892,7 +6904,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     contentSplit->addWidget(detailPanel);
     contentSplit->setStretchFactor(0, 3);
     contentSplit->setStretchFactor(1, 1);
-    contentSplit->setSizes({1152, 384});
+    contentSplit->setSizes({1200, 336});
     mainLayout->addWidget(contentSplit, 1);
 
     auto* statusBar = new QWidget(this);
@@ -7369,6 +7381,16 @@ void ArtifactProjectManagerWidget::updateRequested() {
 void ArtifactProjectManagerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (impl_ && impl_->detailPanel) {
+        const auto* service = ArtifactProjectService::instance();
+        impl_->detailPanel->setVisible(width() >= 760 && service && service->hasProject());
+    }
+    if (auto* row = findChild<QWidget*>(QStringLiteral("projectManagerSearchFilterRow"))) {
+        if (auto* rowLayout = qobject_cast<QHBoxLayout*>(row->layout())) {
+            rowLayout->setDirection(width() < 640 ? QBoxLayout::TopToBottom
+                                                 : QBoxLayout::LeftToRight);
+        }
+    }
     if (impl_ && impl_->projectView_) {
         scheduleProjectViewRefresh(impl_->projectView_);
         update();

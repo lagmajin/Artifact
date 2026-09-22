@@ -52,8 +52,8 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
   card_->setPalette(cardPalette);
 
   cardLayout_ = new QVBoxLayout(card_);
-  cardLayout_->setContentsMargins(28, 20, 28, 20);
-  cardLayout_->setSpacing(12);
+  cardLayout_->setContentsMargins(28, 16, 28, 16);
+  cardLayout_->setSpacing(10);
 
   layerEmptyRow_ = new QWidget(card_);
   layerEmptyRow_->setAutoFillBackground(false);
@@ -81,16 +81,16 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
   layerEmptyRow_->hide();
 
   compositionIconLabel_ = new QLabel(card_);
-  compositionIconLabel_->setFixedSize(64, 64);
+  compositionIconLabel_->setFixedSize(48, 48);
   compositionIconLabel_->setPixmap(
       QIcon(QStringLiteral(":/icons/Studio/composition_empty_composition.svg"))
-          .pixmap(QSize(52, 52)));
+          .pixmap(QSize(44, 44)));
   compositionIconLabel_->setAlignment(Qt::AlignCenter);
 
-  titleLabel_ = new QLabel(QStringLiteral("まだコンポジションがありません"), card_);
+  titleLabel_ = new QLabel(QStringLiteral("コンポジションがありません"), card_);
   QFont titleFont = titleLabel_->font();
-  titleFont.setPointSizeF(std::max(16.0, titleFont.pointSizeF() + 3.0));
-  titleFont.setBold(true);
+  titleFont.setPointSizeF(std::max(14.0, titleFont.pointSizeF() + 1.0));
+  titleFont.setWeight(QFont::Medium);
   titleFont.setStyleStrategy(QFont::PreferAntialias);
   titleLabel_->setFont(titleFont);
   titleLabel_->setAlignment(Qt::AlignCenter);
@@ -98,13 +98,18 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
   titleLabel_->setWordWrap(true);
 
   bodyLabel_ = new QLabel(
-      QStringLiteral("新規コンポジションを作成して、編集を始めましょう。"),
+      QStringLiteral("サイズとフレームレートを設定して始めます"),
       card_);
   bodyLabel_->setAlignment(Qt::AlignCenter);
   QFont bodyFont = bodyLabel_->font();
   bodyFont.setPointSizeF(std::max(10.0, bodyFont.pointSizeF()));
   bodyFont.setStyleStrategy(QFont::PreferAntialias);
   bodyLabel_->setFont(bodyFont);
+  {
+    QPalette bodyPalette = bodyLabel_->palette();
+    bodyPalette.setColor(QPalette::WindowText, QColor(174, 182, 192));
+    bodyLabel_->setPalette(bodyPalette);
+  }
   bodyLabel_->setMinimumWidth(0);
   bodyLabel_->setWordWrap(true);
 
@@ -144,7 +149,7 @@ EmptyCompositionOverlayWidget::EmptyCompositionOverlayWidget(
   cardLayout_->addWidget(titleLabel_);
   cardLayout_->addWidget(bodyLabel_);
   helperLabel_->hide();
-  cardLayout_->addSpacing(4);
+  cardLayout_->addSpacing(2);
   cardLayout_->addWidget(createButton_, 0, Qt::AlignHCenter);
 
   updateResponsiveLayout();
@@ -182,9 +187,9 @@ void EmptyCompositionOverlayWidget::setCompositionAvailable(bool hasComposition)
   layerEmptyRow_->hide();
   compositionIconLabel_->show();
   titleLabel_->show();
-  titleLabel_->setText(QStringLiteral("まだコンポジションがありません"));
+  titleLabel_->setText(QStringLiteral("コンポジションがありません"));
   bodyLabel_->setText(QStringLiteral(
-      "新規コンポジションを作成して、編集を始めましょう。"));
+      "サイズとフレームレートを設定して始めます"));
   bodyLabel_->show();
   helperLabel_->hide();
   createButton_->show();
@@ -195,7 +200,7 @@ void EmptyCompositionOverlayWidget::setCompositionAvailable(bool hasComposition)
 QSize EmptyCompositionOverlayWidget::preferredOverlaySize(
     const QSize &available) const {
   const int preferredWidth = hasComposition_ ? 340 : 540;
-  const int preferredHeight = hasComposition_ ? 84 : 220;
+  const int preferredHeight = hasComposition_ ? 84 : 190;
   return QSize(std::max(1, std::min(preferredWidth, available.width())),
                std::max(1, std::min(preferredHeight, available.height())));
 }
@@ -262,11 +267,11 @@ void EmptyCompositionOverlayWidget::updateResponsiveLayout() {
   const bool veryCompactHeight = height() < 210;
   const int outerMargin = compactWidth || compactHeight ? 10 : 24;
   const int innerHorizontalMargin = hasComposition_ ? 16 : (compactWidth ? 14 : 28);
-  const int innerVerticalMargin = hasComposition_ ? 12 : (compactHeight ? 10 : 20);
+  const int innerVerticalMargin = hasComposition_ ? 12 : (compactHeight ? 10 : 16);
   rootLayout_->setContentsMargins(0, 0, 0, 0);
   cardLayout_->setContentsMargins(innerHorizontalMargin, innerVerticalMargin,
                                   innerHorizontalMargin, innerVerticalMargin);
-  cardLayout_->setSpacing(compactHeight ? 7 : 12);
+  cardLayout_->setSpacing(compactHeight ? 7 : 10);
   bodyLabel_->setVisible(!hasComposition_ && !veryCompactHeight);
   helperLabel_->hide();
   compositionIconLabel_->setVisible(!hasComposition_ && !veryCompactHeight);

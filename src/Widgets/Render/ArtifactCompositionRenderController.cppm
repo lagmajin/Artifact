@@ -4615,8 +4615,6 @@ void drawMaskSquareMarker(ArtifactIRenderer *renderer,
 
   }
 
-
-
   const auto drawSquareOutline = [&](float squareSize,
 
                                      const FloatColor &outlineColor,
@@ -6426,6 +6424,54 @@ bool projectedLayerFrameCorners(
   }
   if (visibleCornerCount) *visibleCornerCount = visibleCorners;
   return visibleCorners > 0;
+}
+
+// SPEC 3.5 / 13.1 / 13.2: the resize guide needs the handle that follows the
+// pointer and the point that stays fixed. Corner handles keep the diagonally
+// opposite corner, edge handles keep the opposite edge midpoint. Corner order
+// matches projectedLayerFrameCorners (TL, TR, BR, BL).
+bool projectedFrameGuidePoints(const std::array<QPointF, 4> &corners,
+                               TransformGizmo::HandleType handle,
+                               QPointF &movingPoint, QPointF &fixedPoint) {
+  const auto midpoint = [](const QPointF &a, const QPointF &b) {
+    return QPointF((a.x() + b.x()) * 0.5, (a.y() + b.y()) * 0.5);
+  };
+  switch (handle) {
+  case TransformGizmo::HandleType::Scale_TL:
+    movingPoint = corners[0];
+    fixedPoint = corners[2];
+    return true;
+  case TransformGizmo::HandleType::Scale_TR:
+    movingPoint = corners[1];
+    fixedPoint = corners[3];
+    return true;
+  case TransformGizmo::HandleType::Scale_BR:
+    movingPoint = corners[2];
+    fixedPoint = corners[0];
+    return true;
+  case TransformGizmo::HandleType::Scale_BL:
+    movingPoint = corners[3];
+    fixedPoint = corners[1];
+    return true;
+  case TransformGizmo::HandleType::Scale_T:
+    movingPoint = midpoint(corners[0], corners[1]);
+    fixedPoint = midpoint(corners[2], corners[3]);
+    return true;
+  case TransformGizmo::HandleType::Scale_B:
+    movingPoint = midpoint(corners[2], corners[3]);
+    fixedPoint = midpoint(corners[0], corners[1]);
+    return true;
+  case TransformGizmo::HandleType::Scale_L:
+    movingPoint = midpoint(corners[0], corners[3]);
+    fixedPoint = midpoint(corners[1], corners[2]);
+    return true;
+  case TransformGizmo::HandleType::Scale_R:
+    movingPoint = midpoint(corners[1], corners[2]);
+    fixedPoint = midpoint(corners[0], corners[3]);
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool clipProjectedFrameEdge(const QRectF &clipRect, QPointF &start,
@@ -12587,6 +12633,11 @@ public:
   QPointF projectedFrameScaleStartPointer_;
   QPointF projectedFrameScaleFixedPointer_;
   bool projectedFrameScalePointerBasisValid_ = false;
+  // SPEC 13.1: projected handle position captured at drag start. It is only
+  // drawn while the pointer basis stays valid, so release/cancel clears the
+  // mark without an extra reset path.
+  QPointF projectedFrameScaleStartHandlePoint_;
+  bool projectedFrameScaleStartHandlePointValid_ = false;
   bool projectedFrameSnapVerticalValid_ = false;
   bool projectedFrameSnapHorizontalValid_ = false;
   float projectedFrameSnapVertical_ = 0.0f;
@@ -13765,6 +13816,20 @@ public:
   quint64 overlayInvalidationSerial_ = 1;
 
   RenderDamageTracker damageTracker_;
+
+  QHash<QString, QRectF> lastLayerDamageBounds_;
+
+  bool layerDamageBoundsInitialized_ = false;
+
+  QRectF lastConsumedDamageRect_;
+
+  int lastConsumedDamageLayerCount_ = 0;
+
+  int lastConsumedDamageTileCount_ = 0;
+
+  BoundedTileRefinementPlan lastConsumedDamageTilePlan_;
+
+  bool lastConsumedDamageWasFullRedraw_ = false;
 
 
 
@@ -15669,16 +15734,48 @@ public:
 
     }
 
+    recordLayerDamage(layer, LayerInvalidationRegion::Source::Content);
+
+  }
+
+
+
+  void recordLayerDamage(
+
+      const ArtifactAbstractLayerPtr &layer,
+
+      LayerInvalidationRegion::Source source) {
+
+    if (!layer) {
+
+      return;
+
+    }
+
+    const QString ownerId = layer->id().toString();
+
+    const QRectF newBounds = effectExpandedLayerBounds(layer.get());
+
+    const QRectF oldBounds = lastLayerDamageBounds_.value(ownerId);
+
     LayerInvalidationRegion region;
 
-    region.source = LayerInvalidationRegion::Source::Content;
+    region.source = source;
 
     region.layerId = ownerId;
 
-    // Effect bounds include shared Blur/Glow ROI expansion. A full-frame
-    // effect deliberately remains conservative until the composition host can
+    region.frameNumber = layer->currentFrame();
+
+    // Include both placements so transform edits repaint the vacated area as
+    // well as the new one. Effect bounds include shared Blur/Glow expansion.
+
+    region.region = oldBounds.isEmpty() ? newBounds
+                                        : oldBounds.united(newBounds);
+
+    lastLayerDamageBounds_[ownerId] = newBounds;
+
+    // A full-frame effect remains conservative until the composition host can
     // supply its canvas extent to the layer-level bounds query.
-    region.region = layer->effectBounds();
     for (const auto& effect : layer->getEffects()) {
       if (effect && effect->isEnabled() && effect->roiHint().requiresFullFrame) {
         region.requiresFullRedraw = true;
@@ -15692,13 +15789,44 @@ public:
 
 
 
-  void invalidateBaseComposite() {
+  void resetLayerDamageBounds(const ArtifactCompositionPtr& composition) {
+
+    lastLayerDamageBounds_.clear();
+
+    layerDamageBoundsInitialized_ = true;
+
+    if (!composition) {
+
+      return;
+
+    }
+
+    for (const auto& layer : composition->allLayerRef()) {
+
+      if (layer) {
+
+        lastLayerDamageBounds_.insert(
+            layer->id().toString(), effectExpandedLayerBounds(layer.get()));
+
+      }
+
+    }
+
+  }
+
+
+
+  void invalidateBaseComposite(bool preserveLayerDamage = false) {
 
     ++baseInvalidationSerial_;
 
     lastRenderKeyState_ = {};
 
-    damageTracker_.clearAll();
+    if (!preserveLayerDamage) {
+
+      damageTracker_.clearAll();
+
+    }
 
   }
 
@@ -15912,6 +16040,10 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                  QColor(28, 40, 56).blueF(), 1.0f};
 
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
+  impl_->gizmo_->setAutoKeyPredicate(
+      [](const ArtifactAbstractLayerPtr& layer, const QString& propertyPrefix) {
+        return gizmoAutoKeyApplies(layer, propertyPrefix);
+      });
 
   impl_->textGizmo_ = std::make_unique<TextGizmo>();
 
@@ -16072,6 +16204,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
               }
 
               bool invalidatesFinalPreview = false;
+              bool hasScopedLayerDamage = false;
               if (event.changeType == LayerChangedEvent::ChangeType::Created ||
 
                   event.changeType == LayerChangedEvent::ChangeType::Removed) {
@@ -16099,6 +16232,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                 impl_->surfaceGenerations_.clear();
 
+                impl_->resetLayerDamageBounds(comp);
+
                 if (impl_->gpuTextureCacheManager_) {
 
                   impl_->gpuTextureCacheManager_->clear();
@@ -16117,6 +16252,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 // transform だけの更新では重いサーフェス再生成を避ける。
 
                 if (auto layer = comp->layerById(layerId)) {
+
+                  hasScopedLayerDamage = true;
 
                   // Property drags arrive through LayerChanged rather than a
                   // viewport mouse event. Treat effect edits as a short
@@ -16174,6 +16311,13 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   // Source pixels can be reused for transform edits, but the
                   // cached final frames still contain the previous placement.
                   if (skipCacheInvalidation) {
+                    const auto damageSource =
+                        layer->isDirty(LayerDirtyFlag::Transform)
+                            ? LayerInvalidationRegion::Source::Transform
+                            : layer->isDirty(LayerDirtyFlag::Visibility)
+                                  ? LayerInvalidationRegion::Source::Visibility
+                                  : LayerInvalidationRegion::Source::Property;
+                    impl_->recordLayerDamage(layer, damageSource);
                     invalidatesFinalPreview = true;
                   }
 
@@ -16201,7 +16345,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
               }
 
-              impl_->invalidateBaseComposite();
+              impl_->invalidateBaseComposite(hasScopedLayerDamage);
 
               if (invalidatesFinalPreview) {
                 if (auto *playback = ArtifactPlaybackService::instance()) {
@@ -16694,6 +16838,13 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
     impl_->gpuTextureCacheManager_->setBudgetBytes(512ull * 1024ull * 1024ull);
 
     impl_->gpuTextureCacheManager_->setMaxEntries(256);
+
+    // TGFX-inspired frame-age retirement complements the byte/entry LRU.
+    // Visible resources refresh their age through bindingRecord(); hidden
+    // resources retire gradually without a one-frame destruction spike.
+    impl_->gpuTextureCacheManager_->setResourceExpirationFrames(600);
+
+    impl_->gpuTextureCacheManager_->setMaxExpiredEvictionsPerFrame(8);
 
   }
 
@@ -17413,6 +17564,8 @@ void CompositionRenderController::setComposition(
 
       impl_->previewPipeline_.setComposition(composition);
 
+      impl_->resetLayerDamageBounds(composition);
+
       impl_->bindCompositionChanged(this, composition);
 
     }
@@ -17475,6 +17628,8 @@ void CompositionRenderController::setComposition(
 
 
   impl_->previewPipeline_.setComposition(composition);
+
+  impl_->resetLayerDamageBounds(composition);
 
   impl_->bindCompositionChanged(this, composition);
 
@@ -21803,7 +21958,8 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     textureCacheResource.note = QStringLiteral(
         "entries=%1 bytes=%2 hits=%3 misses=%4 pendingUploads=%5 "
-        "pendingBytes=%6 invalidations=%7 lastReason=%8")
+        "pendingBytes=%6 invalidations=%7 lastReason=%8 frame=%9 "
+        "expireAfter=%10 expired=%11")
         .arg(stats.entryCount)
         .arg(static_cast<qulonglong>(stats.memoryBytes))
         .arg(static_cast<qulonglong>(stats.hitCount))
@@ -21811,9 +21967,44 @@ CompositionRenderController::frameDebugSnapshot() const {
         .arg(stats.pendingUploadCount)
         .arg(static_cast<qulonglong>(stats.pendingUploadBytes))
         .arg(static_cast<qulonglong>(stats.invalidationCount))
-        .arg(gpuTextureCacheInvalidationReasonText(stats.lastInvalidationReason));
+        .arg(gpuTextureCacheInvalidationReasonText(stats.lastInvalidationReason))
+        .arg(static_cast<qulonglong>(stats.currentFrameIndex))
+        .arg(static_cast<qulonglong>(stats.resourceExpirationFrames))
+        .arg(static_cast<qulonglong>(stats.expiredEvictionCount));
 
     snapshot.resources.push_back(textureCacheResource);
+
+  }
+
+  {
+
+    ArtifactCore::FrameDebugResourceRecord damageResource;
+
+    damageResource.label = QStringLiteral("Composition Damage");
+
+    damageResource.type = QStringLiteral("dirty-region");
+
+    damageResource.relation = QStringLiteral("recompose");
+
+    damageResource.cacheHit = impl_->lastConsumedDamageLayerCount_ == 0;
+
+    damageResource.stale = impl_->damageTracker_.hasDirtyRegions();
+
+    damageResource.note = QStringLiteral(
+        "layers=%1 tiles=%2 scheduled=%3 deferred=%4 full=%5 "
+        "rect=%6,%7 %8x%9 pending=%10")
+        .arg(impl_->lastConsumedDamageLayerCount_)
+        .arg(impl_->lastConsumedDamageTileCount_)
+        .arg(impl_->lastConsumedDamageTilePlan_.scheduledCount)
+        .arg(impl_->lastConsumedDamageTilePlan_.deferredCount)
+        .arg(impl_->lastConsumedDamageWasFullRedraw_ ? 1 : 0)
+        .arg(impl_->lastConsumedDamageRect_.x(), 0, 'f', 1)
+        .arg(impl_->lastConsumedDamageRect_.y(), 0, 'f', 1)
+        .arg(impl_->lastConsumedDamageRect_.width(), 0, 'f', 1)
+        .arg(impl_->lastConsumedDamageRect_.height(), 0, 'f', 1)
+        .arg(impl_->damageTracker_.dirtyLayerCount());
+
+    snapshot.resources.push_back(damageResource);
 
   }
 
@@ -26475,6 +26666,37 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               impl_->projectedFrameScalePointerBasisValid_ =
                   QLineF(viewportPos,
                          impl_->projectedFrameScaleFixedPointer_).length() > 0.5;
+            }
+          }
+        }
+        // SPEC 13.1: remember the projected handle position at drag start so
+        // the resize guide can leave a reference mark behind. The frame
+        // projection and the hit test use the same matrices, so the mark lands
+        // on the handle the user grabbed.
+        impl_->projectedFrameScaleStartHandlePointValid_ = false;
+        if (combinedProjectedFrame) {
+          const std::array<QPointF, 4> startCorners{
+              combinedFrameBounds.topLeft(), combinedFrameBounds.topRight(),
+              combinedFrameBounds.bottomRight(),
+              combinedFrameBounds.bottomLeft()};
+          QPointF startMoving;
+          QPointF startFixed;
+          if (projectedFrameGuidePoints(startCorners, frameHandle, startMoving,
+                                        startFixed)) {
+            impl_->projectedFrameScaleStartHandlePoint_ = startMoving;
+            impl_->projectedFrameScaleStartHandlePointValid_ = true;
+          }
+        } else {
+          std::array<QPointF, 4> startCorners;
+          if (projectedLayerFrameCorners(selectedLayer, frameView,
+                                         frameProjection, frameViewport,
+                                         startCorners)) {
+            QPointF startMoving;
+            QPointF startFixed;
+            if (projectedFrameGuidePoints(startCorners, frameHandle,
+                                          startMoving, startFixed)) {
+              impl_->projectedFrameScaleStartHandlePoint_ = startMoving;
+              impl_->projectedFrameScaleStartHandlePointValid_ = true;
             }
           }
         }
@@ -36392,6 +36614,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  // Normal composition changes seed this cache in setComposition(). The lazy
+  // path covers a controller that adopted a composition through the fallback
+  // route above without adding an O(layer-count) operation to every frame.
+  if (!layerDamageBoundsInitialized_) {
+
+    resetLayerDamageBounds(comp);
+
+  }
+
 
 
   if (auto *service = ArtifactProjectService::instance()) {
@@ -36477,6 +36708,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   lastCanvasWidth_ = cw;
 
   lastCanvasHeight_ = ch;
+
+  if (gpuTextureCacheManager_) {
+
+    gpuTextureCacheManager_->beginFrame(renderFrameCounter_);
+
+  }
 
 
 
@@ -41931,7 +42168,46 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     lastSubmit2DMs_ = latestTimerMs("Submit2D");
 
+    // Consume damage only after the frame reached presentation. Early-return
+    // and failed frames retain it for the next attempt. Tile enumeration is
+    // bounded by the composition grid and currently feeds diagnostics; the
+    // later refinement stage can use the same lifecycle without changing the
+    // invalidation contract.
+    if (damageTracker_.hasDirtyRegions()) {
 
+      lastConsumedDamageLayerCount_ = damageTracker_.dirtyLayerCount();
+
+      lastConsumedDamageWasFullRedraw_ =
+          damageTracker_.combinedNeedsFullRedraw();
+
+      const RenderROI damageRoi = damageTracker_.combinedDirtyROI();
+
+      lastConsumedDamageRect_ = damageRoi.rect;
+
+      lastConsumedDamageTilePlan_ = {};
+
+      if (!lastConsumedDamageWasFullRedraw_ && !damageRoi.isEmpty()) {
+
+        const TileGrid grid(std::max(1, static_cast<int>(std::ceil(cw))),
+                            std::max(1, static_cast<int>(std::ceil(ch))), 256);
+
+        lastConsumedDamageTileCount_ = damageTracker_.dirtyTileCount(grid);
+
+        lastConsumedDamageTilePlan_ = damageTracker_.makeBoundedDirtyTilePlan(
+            grid, RenderROI(visibleCanvasRect), 8);
+
+      } else {
+
+        lastConsumedDamageTileCount_ = 0;
+
+        lastConsumedDamageTilePlan_.requiresFullRedraw =
+            lastConsumedDamageWasFullRedraw_;
+
+      }
+
+      damageTracker_.clearAll();
+
+    }
 
     ++renderFrameCounter_;
 
@@ -46890,6 +47166,89 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
     renderer_->setPan(previousPanX, previousPanY);
     if (lastCanvasWidth_ > 0.0f && lastCanvasHeight_ > 0.0f) {
       renderer_->setCanvasSize(lastCanvasWidth_, lastCanvasHeight_);
+    }
+  }
+
+  // SPEC 3.5 / 13.1 / 13.2: while a projected-frame resize handle is dragged,
+  // relate the driven handle to the point that stays fixed (the diagonally
+  // opposite corner, or the opposite edge midpoint). The guide uses the same
+  // frame projection as the hit test, so an oblique camera keeps it on the
+  // layer plane. The combined selection frame keeps its envelope-only
+  // presentation and is not guided per layer.
+  if (renderer_ && gizmoDragActive_ && !gizmoGroupTransformActive_ &&
+      projectedFrameScalePointerBasisValid_ &&
+      isScaleHandle(projectedFrameHandle_)) {
+    const auto guideComp = previewPipeline_.composition();
+    const auto guideLayer = guideComp && !selectedLayerId_.isNil()
+                                ? guideComp->layerById(selectedLayerId_)
+                                : ArtifactAbstractLayerPtr{};
+    if (guideLayer && (layerUsesProjectedFrameGizmo(guideLayer) ||
+                       viewportOrientationMatricesValid_)) {
+      const QMatrix4x4 &guideView = viewportOrientationMatricesValid_
+          ? viewportOrientationViewForOverlay_
+          : gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
+                                        : renderer_->getViewMatrix();
+      const QMatrix4x4 &guideProjection = viewportOrientationMatricesValid_
+          ? viewportOrientationProjectionForOverlay_
+          : gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
+                                        : renderer_->getProjectionMatrix();
+      const QRect guideViewport(
+          0, 0, std::max(1, static_cast<int>(hostWidth_)),
+          std::max(1, static_cast<int>(hostHeight_)));
+      std::array<QPointF, 4> guideCorners;
+      QPointF movingPoint;
+      QPointF fixedPoint;
+      if (projectedLayerFrameCorners(guideLayer, guideView, guideProjection,
+                                     guideViewport, guideCorners) &&
+          projectedFrameGuidePoints(guideCorners, projectedFrameHandle_,
+                                    movingPoint, fixedPoint)) {
+        const float previousZoom = renderer_->getZoom();
+        float previousPanX = 0.0f;
+        float previousPanY = 0.0f;
+        renderer_->getPan(previousPanX, previousPanY);
+        renderer_->setUseExternalMatrices(false);
+        renderer_->setCanvasSize(std::max(1.0f, hostWidth_),
+                                 std::max(1.0f, hostHeight_));
+        renderer_->setZoom(1.0f);
+        renderer_->setPan(0.0f, 0.0f);
+        const QRectF visibleGuideArea(
+            0.0, 0.0, std::max(1.0f, hostWidth_) - 1.0f,
+            std::max(1.0f, hostHeight_) - 1.0f);
+        const FloatColor guideColor{0.30f, 0.88f, 1.0f, 0.55f};
+        const FloatColor fixedMarkColor{0.30f, 0.88f, 1.0f, 0.92f};
+        const FloatColor startMarkColor{0.86f, 0.92f, 1.0f, 0.45f};
+        QPointF guideStart = movingPoint;
+        QPointF guideEnd = fixedPoint;
+        if (clipProjectedFrameEdge(visibleGuideArea, guideStart, guideEnd)) {
+          renderer_->drawSolidLine(
+              {static_cast<float>(guideStart.x()),
+               static_cast<float>(guideStart.y())},
+              {static_cast<float>(guideEnd.x()),
+               static_cast<float>(guideEnd.y())},
+              guideColor, 1.2f);
+        }
+        if (visibleGuideArea.contains(fixedPoint)) {
+          renderer_->drawSolidRect(static_cast<float>(fixedPoint.x() - 4.0),
+                                   static_cast<float>(fixedPoint.y() - 4.0),
+                                   8.0f, 8.0f,
+                                   {0.03f, 0.08f, 0.13f, 0.92f}, 1.0f);
+          renderer_->drawSolidRect(static_cast<float>(fixedPoint.x() - 2.5),
+                                   static_cast<float>(fixedPoint.y() - 2.5),
+                                   5.0f, 5.0f, fixedMarkColor, 1.0f);
+        }
+        if (projectedFrameScaleStartHandlePointValid_ &&
+            visibleGuideArea.contains(projectedFrameScaleStartHandlePoint_)) {
+          renderer_->drawSolidRect(
+              static_cast<float>(projectedFrameScaleStartHandlePoint_.x() - 2.0),
+              static_cast<float>(projectedFrameScaleStartHandlePoint_.y() - 2.0),
+              4.0f, 4.0f, startMarkColor, 1.0f);
+        }
+        renderer_->setZoom(previousZoom);
+        renderer_->setPan(previousPanX, previousPanY);
+        if (lastCanvasWidth_ > 0.0f && lastCanvasHeight_ > 0.0f) {
+          renderer_->setCanvasSize(lastCanvasWidth_, lastCanvasHeight_);
+        }
+      }
     }
   }
 

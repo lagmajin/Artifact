@@ -1,8 +1,10 @@
 #include <compare>
+#include <cstddef>
 
 import Artifact.Layer.Abstract;
 import Physics.Fluid;
 import Core.ArtifactMath;
+import Container.NamedVector;
 
 // QString is provided by Artifact.Layer.Abstract's public surface, but
 // preprocessor macros do not cross an IFC boundary.
@@ -10,9 +12,9 @@ import Core.ArtifactMath;
 
 namespace Artifact {
 using namespace ArtifactCore;
-using CollisionIndex = decltype(std::vector<QPointF>{}.size());
+using CollisionIndex = std::size_t;
 
-std::vector<QPointF> layerCollisionPolygonLocalPoints(
+NamedVector<QPointF> layerCollisionPolygonLocalPoints(
     const ArtifactAbstractLayer* layer) {
   if (!layer) {
     return {};
@@ -27,7 +29,7 @@ std::vector<QPointF> layerCollisionPolygonLocalPoints(
     return {};
   }
 
-  std::vector<QPointF> points = layer->collisionOutlineLocalPoints();
+  NamedVector<QPointF> points = layer->collisionOutlineLocalPoints();
   if (points.size() < 3) {
     return {};
   }
@@ -50,7 +52,7 @@ std::vector<QPointF> layerCollisionPolygonLocalPoints(
 bool configureLiquidContainerPolygon(
     const ArtifactAbstractLayer* layer, ArtifactCore::LiquidSolver2D& liquid,
     int requestedOpeningEdge = -1,
-    std::vector<QPointF>* configuredPoints = nullptr,
+    NamedVector<QPointF>* configuredPoints = nullptr,
     CollisionIndex* configuredOpeningEdge = nullptr) {
   if (configuredPoints) configuredPoints->clear();
   if (configuredOpeningEdge) *configuredOpeningEdge = 0;
@@ -76,10 +78,11 @@ bool configureLiquidContainerPolygon(
     return false;
   }
 
-  std::vector<ArtifactCore::LiquidContainerPoint2D> normalized;
+  NamedVector<ArtifactCore::LiquidContainerPoint2D> normalized{
+      ContainerName{"Layer.LiquidContainerPolygon"}};
   normalized.reserve(points.size());
   for (const QPointF& point : points) {
-    normalized.push_back({
+    normalized.add({
         static_cast<float>((point.x() - bounds.left()) / bounds.width()),
         static_cast<float>((point.y() - bounds.top()) / bounds.height())});
   }
@@ -176,7 +179,7 @@ QRectF layerCollisionLocalBounds(const ArtifactAbstractLayer* layer) {
   }
 
   if (shape == 3) {
-    const std::vector<QPointF> polygon =
+  const NamedVector<QPointF> polygon =
         layerCollisionPolygonLocalPoints(layer);
     if (polygon.size() >= 3) {
       auto boundsIt = polygon.begin();
@@ -202,7 +205,7 @@ QRectF layerCollisionLocalBounds(const ArtifactAbstractLayer* layer) {
 namespace {
 
 bool pointInsideCollisionPolygon(const QPointF& point,
-                                 const std::vector<QPointF>& polygon) {
+                                 const NamedVector<QPointF>& polygon) {
   bool inside = false;
   if (polygon.size() < 3) return false;
   for (CollisionIndex i = 0, j = polygon.size() - 1; i < polygon.size();

@@ -25,6 +25,95 @@ import Core.Parallel;
 
 namespace Artifact {
 
+namespace {
+// Resident-path variant of ColoramaProcessor::applyPixel(). P0 source mode,
+// P1 palette, P2 phase, P3 spread, P4 strength, P5 saturation boost, P6
+// contrast, and P7 preserve-luma flag.
+static constexpr const char* kColoramaResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float coloramaLuma(float3 color) { return dot(color, float3(0.2126f, 0.7152f, 0.0722f)); }
+
+float3 coloramaInterpolate(float3 a, float3 b, float t) { return lerp(a, b, saturate(t)); }
+
+float3 coloramaRamp(float3 a, float3 b, float3 c, float3 d, float3 e, float value)
+{
+    const float scaled = saturate(value) * 4.0f;
+    if (scaled < 1.0f) return coloramaInterpolate(a, b, scaled);
+    if (scaled < 2.0f) return coloramaInterpolate(b, c, scaled - 1.0f);
+    if (scaled < 3.0f) return coloramaInterpolate(c, d, scaled - 2.0f);
+    return coloramaInterpolate(d, e, scaled - 3.0f);
+}
+
+float3 coloramaPalette(int palette, float value)
+{
+    if (palette == 1) return coloramaRamp(float3(0.10f, 0.00f, 0.00f), float3(0.55f, 0.10f, 0.00f), float3(0.90f, 0.35f, 0.00f), float3(1.00f, 0.74f, 0.20f), float3(1.00f, 0.95f, 0.75f), value);
+    if (palette == 2) return coloramaRamp(float3(0.03f, 0.05f, 0.18f), float3(0.00f, 0.30f, 0.45f), float3(0.10f, 0.65f, 0.75f), float3(0.30f, 0.85f, 0.95f), float3(0.80f, 0.98f, 1.00f), value);
+    if (palette == 3) return coloramaRamp(float3(0.00f, 0.95f, 0.75f), float3(0.85f, 0.10f, 1.00f), float3(0.10f, 0.90f, 1.00f), float3(1.00f, 0.15f, 0.45f), float3(0.90f, 1.00f, 0.20f), value);
+    if (palette == 4) return coloramaRamp(float3(0.05f, 0.04f, 0.16f), float3(0.35f, 0.09f, 0.40f), float3(0.80f, 0.20f, 0.30f), float3(0.98f, 0.45f, 0.12f), float3(1.00f, 0.86f, 0.58f), value);
+    return coloramaRamp(float3(1.00f, 0.20f, 0.20f), float3(1.00f, 0.80f, 0.20f), float3(0.20f, 1.00f, 0.35f), float3(0.20f, 0.70f, 1.00f), float3(0.85f, 0.20f, 1.00f), value);
+}
+
+float3 coloramaRgbToHsl(float3 color)
+{
+    const float maxValue = max(color.r, max(color.g, color.b));
+    const float minValue = min(color.r, min(color.g, color.b));
+    const float delta = maxValue - minValue;
+    float h = 0.0f;
+    const float l = (maxValue + minValue) * 0.5f;
+    if (delta < 1.0e-6f) return float3(h, 0.0f, l);
+    const float s = l > 0.5f ? delta / (2.0f - maxValue - minValue) : delta / (maxValue + minValue);
+    if (maxValue == color.r) h = (color.g - color.b) / delta + (color.g < color.b ? 6.0f : 0.0f);
+    else if (maxValue == color.g) h = (color.b - color.r) / delta + 2.0f;
+    else h = (color.r - color.g) / delta + 4.0f;
+    return float3(h * 60.0f, s, l);
+}
+
+float coloramaHueToRgb(float p, float q, float t)
+{
+    if (t < 0.0f) t += 1.0f;
+    if (t > 1.0f) t -= 1.0f;
+    if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+    if (t < 1.0f / 2.0f) return q;
+    if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+    return p;
+}
+
+float3 coloramaHslToRgb(float3 hsl)
+{
+    if (hsl.y <= 1.0e-6f) return hsl.zzz;
+    const float q = hsl.z < 0.5f ? hsl.z * (1.0f + hsl.y) : hsl.z + hsl.y - hsl.z * hsl.y;
+    const float p = 2.0f * hsl.z - q;
+    const float hn = hsl.x / 360.0f;
+    return float3(coloramaHueToRgb(p, q, hn + 1.0f / 3.0f), coloramaHueToRgb(p, q, hn), coloramaHueToRgb(p, q, hn - 1.0f / 3.0f));
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+    float4 pixel = g_InputTexture[dtid.xy];
+    const float3 source = pixel.rgb;
+    const float sourceLuma = coloramaLuma(source);
+    const float3 sourceHsl = coloramaRgbToHsl(source);
+    const float key = frac(((int)g_P0 == 1 ? sourceHsl.x / 360.0f : sourceLuma) * g_P3 + g_P2);
+    float3 mapped = coloramaPalette((int)g_P1, key);
+    mapped = saturate((mapped - 0.5f) * g_P6 + 0.5f);
+    float3 mappedHsl = coloramaRgbToHsl(mapped);
+    mappedHsl.y = saturate(mappedHsl.y * g_P5);
+    mapped = coloramaHslToRgb(mappedHsl);
+    float3 output = lerp(source, mapped, g_P4);
+    if (g_P7 > 0.5f) {
+        const float outputLuma = coloramaLuma(output);
+        if (outputLuma > 1.0e-6f) output = saturate(output * (sourceLuma / outputLuma));
+    }
+    pixel.rgb = saturate(output);
+    g_OutputTexture[dtid.xy] = pixel;
+}
+)";
+} // namespace
+
 class ColoramaEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     ColoramaProcessor processor_;
@@ -120,6 +209,10 @@ ColoramaEffect::ColoramaEffect() {
     setCPUImpl(ArtifactCore::makeShared<ColoramaEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<ColoramaEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        ColoramaEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kColoramaResidentHlsl, "main", GpuGenericResourceKind::Filter});
     applyPreset(preset_);
     syncImpls();
 }

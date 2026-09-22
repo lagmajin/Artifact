@@ -5,9 +5,10 @@ module;
 
 #include <cstddef>
 #include <optional>
-#include <vector>
 
 export module Artifact.Layer.RuntimeSupport;
+
+import Container.NamedVector;
 
 export namespace Artifact {
 
@@ -40,7 +41,8 @@ std::optional<ClonerTransformPropertyAddress>
 parseClonerTransformPropertyPath(const QString &propertyPath);
 
 struct MotionTrailRingBuffer {
-  std::vector<QVector3D> samples;
+  ArtifactCore::NamedVector<QVector3D> samples{
+      ArtifactCore::ContainerName{"Layer.MotionTrailSamples"}};
   std::size_t head = 0;
   std::size_t count = 0;
 

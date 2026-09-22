@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <vector>
 #include <chrono>
+#include <functional>
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
@@ -98,6 +99,16 @@ export namespace Artifact {
   void handleMouseRelease();
   bool cancelInteraction();
 
+  // AE-style Auto-Keyframe policy is injected by the host so the 2D gizmo keys
+  // a not-yet-animated transform channel on drag exactly like the 3D gizmo
+  // (enabled + scope + keying set). Null predicate keeps the legacy behavior.
+  using AutoKeyPredicate =
+      std::function<bool(const ArtifactAbstractLayerPtr& layer,
+                         const QString& propertyPrefix)>;
+  void setAutoKeyPredicate(AutoKeyPredicate predicate) {
+   autoKeyPredicate_ = std::move(predicate);
+  }
+
    bool isDragging() const { return isDragging_; }
    HandleType activeHandle() const { return activeHandle_; }
    const std::vector<SnapLine>& activeSnapLines() const { return activeSnapLines_; }
@@ -148,6 +159,10 @@ private:
   bool dragStartPositionAnimated_ = false;
   bool dragStartRotationAnimated_ = false;
   bool dragStartScaleAnimated_ = false;
+  bool dragStartAutoKeyPosition_ = false;
+  bool dragStartAutoKeyRotation_ = false;
+  bool dragStartAutoKeyScale_ = false;
+  AutoKeyPredicate autoKeyPredicate_;
   bool dragStartHasTextBoxState_ = false;
   QTransform dragStartGlobalTransform_;
   QRectF dragStartBoundingBox_;

@@ -51,6 +51,7 @@ import Physics.Mpm2D;
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
 import Time.Rational;
+import Container.NamedVector;
 
 namespace {
 
@@ -4253,7 +4254,8 @@ QRectF ArtifactShapeLayer::localBounds() const
   return impl_->cachedLocalBounds_;
 }
 
-std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
+ArtifactCore::NamedVector<QPointF>
+ArtifactShapeLayer::collisionOutlineLocalPoints() const
 {
   // Multi-content: concatenate per-content outlines (custom path, polygon,
   // or primitive sample points). Operator/merge reshaping falls back to
@@ -4262,7 +4264,8 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
     if (!impl_->shapeOperators_.empty()) {
       return {};
     }
-    std::vector<QPointF> points;
+    ArtifactCore::NamedVector<QPointF> points{
+        ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
     for (const auto& content : impl_->shapeContents_) {
       if (!content.visible) {
         continue;
@@ -4287,7 +4290,9 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
           g.type, std::max(1, g.width), std::max(1, g.height), g.cornerRadius,
           std::max(3, g.starPoints), g.starInnerRadius, std::max(3, g.polygonSides),
           g.polygonPoints, g.polygonClosed);
-      points.insert(points.end(), sampled.begin(), sampled.end());
+      for (const QPointF& point : sampled) {
+        points.add(point);
+      }
     }
     return points;
   }
@@ -4298,7 +4303,8 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
   }
 
   if (impl_->customPathVertices_.size() >= 3) {
-   std::vector<QPointF> points;
+   ArtifactCore::NamedVector<QPointF> points{
+       ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
    points.reserve(impl_->customPathVertices_.size());
    for (const auto& vertex : impl_->customPathVertices_) {
     points.push_back(vertex.pos);
@@ -4307,7 +4313,13 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
   }
 
   if (impl_->customPolygonPoints_.size() >= 3) {
-    return impl_->customPolygonPoints_;
+    ArtifactCore::NamedVector<QPointF> points{
+        ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
+    points.reserve(impl_->customPolygonPoints_.size());
+    for (const QPointF& point : impl_->customPolygonPoints_) {
+      points.add(point);
+    }
+    return points;
   }
 
   if (impl_->shapeType_ == Artifact::ShapeType::Line) {
@@ -4317,11 +4329,17 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
   const ShapeGeomDims dims = resolveShapeGeomDims(
       this, impl_->width_, impl_->height_, impl_->cornerRadius_,
       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
-  return buildRenderablePoints(impl_->shapeType_, dims.width, dims.height,
-                               dims.cornerRadius, dims.starPoints,
-                               dims.starInnerRadius, dims.polygonSides,
-                               impl_->customPolygonPoints_,
-                               impl_->customPolygonClosed_);
+  const auto sampled = buildRenderablePoints(
+      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
+      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
+  ArtifactCore::NamedVector<QPointF> points{
+      ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
+  points.reserve(sampled.size());
+  for (const QPointF& point : sampled) {
+    points.add(point);
+  }
+  return points;
 }
 // ============================================================
 // GPU vector painting (gaps 1 & 3)

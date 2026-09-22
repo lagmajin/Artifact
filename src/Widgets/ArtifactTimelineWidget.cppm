@@ -495,6 +495,23 @@ public:
 
 protected:
   void paintEvent(QPaintEvent *event) override {
+    if (property("timelineTransportButton").toBool()) {
+      QPainter painter(this);
+      if (underMouse() || isDown())
+        painter.fillRect(rect(), QColor(48, 55, 61));
+      const QSize extent = iconSize();
+      icon().paint(&painter,
+                   QRect((width() - extent.width()) / 2,
+                         (height() - extent.height()) / 2,
+                         extent.width(), extent.height()),
+                   Qt::AlignCenter,
+                   isEnabled() ? QIcon::Normal : QIcon::Disabled);
+      if (hasFocus()) {
+        painter.setPen(QPen(QColor(168, 218, 241), 1, Qt::DotLine));
+        painter.drawRect(rect().adjusted(2, 2, -3, -3));
+      }
+      return;
+    }
     if (!property("timelineModeSegment").toBool()) {
       QToolButton::paintEvent(event);
       return;
@@ -6173,8 +6190,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(easingLabButton);
   searchBarLayout->addWidget(keyPatternButton);
   searchBarLayout->addStretch(1);
-  searchBarLayout->addWidget(miniKeyEditorButton);
-  searchBarLayout->addWidget(globalSwitches);
   searchBarLayout->setStretch(0, 0);
   searchBarLayout->setStretch(1, 0);
   searchBarLayout->setStretch(2, 0);
@@ -6194,8 +6209,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineGraphEditorToggledEvent>(
           [this](const TimelineGraphEditorToggledEvent &event) {
-            QMetaObject::invokeMethod(
-                this, [this, active = event.enabled]() {
+            const auto applyMode = [this, active = event.enabled]() {
                   if (!impl_ || !impl_->curveEditor_) {
                     return;
                   }
@@ -6252,8 +6266,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                     }
                     updateCurvePropertyList();
                   }
-                },
-                Qt::QueuedConnection);
+                };
+            if (QThread::currentThread() == thread()) {
+              applyMode();
+            } else {
+              QMetaObject::invokeMethod(this, applyMode, Qt::QueuedConnection);
+            }
           }));
   // Migrated to EventBus — subscribe to TimelineVisibleRowsChangedEvent instead
   // of the Qt visibleRowsChanged signal, so the connection survives widget
@@ -6691,14 +6709,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                 const QString &toolTip,
                                 std::function<void()> callback) {
     auto *button = new TimelineToolCallbackButton(headerWidget);
+    button->setProperty("timelineTransportButton", true);
     styleTimelineToolButton(button);
     button->setIcon(QIcon(ArtifactCore::resolveIconPath(
         QStringLiteral("Studio/%1.svg").arg(iconName))));
-    const int iconSize = Accessibility::scaledSize(18);
+    const int iconSize = Accessibility::scaledSize(22);
     button->setIconSize(QSize(iconSize, iconSize));
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    button->setFixedSize(Accessibility::scaledSize(32),
-                         Accessibility::scaledSize(28));
+    button->setFixedSize(Accessibility::scaledSize(36),
+                         Accessibility::scaledSize(34));
     button->setToolTip(toolTip);
     button->setAccessibleName(toolTip);
     button->setAccessibleDescription(
@@ -6736,6 +6755,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                          playback->goToEndFrame();
                        }
                      });
+
+  searchBarLayout->addSpacing(Accessibility::scaledSize(10));
+  auto *transportDivider = new QWidget(headerWidget);
+  transportDivider->setFixedSize(1, Accessibility::scaledSize(24));
+  transportDivider->setAutoFillBackground(true);
+  QPalette dividerPalette = transportDivider->palette();
+  dividerPalette.setColor(QPalette::Window, QColor(62, 67, 72));
+  transportDivider->setPalette(dividerPalette);
+  searchBarLayout->addWidget(transportDivider);
+  searchBarLayout->addSpacing(Accessibility::scaledSize(10));
+  searchBarLayout->addWidget(globalSwitches);
+  searchBarLayout->addWidget(miniKeyEditorButton);
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
@@ -6827,9 +6858,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->addWidget(leftTopSpacer);
-  leftLayout->addWidget(leftSubHeaderSpacer);
+  // Keep column titles directly below the toolbar, with the time-control
+  // allowance below them so the first layer still aligns with the track pane.
+  if (auto *tableLayout = qobject_cast<QVBoxLayout *>(layerTreeView->layout())) {
+    tableLayout->insertWidget(1, leftSubHeaderSpacer);
+  }
   leftLayout->addWidget(leftSplitter, 1);
   leftLayout->addWidget(curvePropertyPanel, 1);
+  auto *leftNavigatorSpacer = new QWidget();
+  leftNavigatorSpacer->setObjectName(QStringLiteral("timelineLeftNavigatorSpacer"));
+  leftNavigatorSpacer->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
+  leftLayout->addWidget(leftNavigatorSpacer);
 
   auto leftPanel = new QWidget();
   leftPanel->setObjectName(QStringLiteral("timelineLeftPanel"));
@@ -8125,6 +8164,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       impl_->scrubBar_->setVisualFrame(visualFrame);
     }
     syncPlayheadOverlay();
+    // GPU playback needs its own dynamic submission; static geometry is cached.
+    syncGpuTimelineSnapshot();
+    if (impl_->curveEditor_) {
+      impl_->curveEditor_->setCurrentFrame(static_cast<int64_t>(std::llround(visualFrame)));
+    }
+    if (impl_->graphEditorVisible_) syncGpuCurveSnapshot();
   };
   QObject::connect(impl_->playbackVisualTimer_, &QTimer::timeout, this,
                    updateSmoothPlaybackPlayhead);

@@ -171,6 +171,20 @@ public:
   QList<SettingItemInfo> searchableItems() const override;
 };
 
+class EnvironmentVariableSettingPage : public QWidget, public ISettingPage {
+private:
+  class Impl;
+  Impl *impl_;
+
+public:
+  explicit EnvironmentVariableSettingPage(QWidget *parent = nullptr);
+  ~EnvironmentVariableSettingPage();
+  bool eventFilter(QObject *watched, QEvent *event) override;
+  void loadSettings() override;
+  void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
+};
+
 class AISettingPage : public QWidget, public ISettingPage {
   W_OBJECT(AISettingPage)
 public:

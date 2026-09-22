@@ -490,6 +490,12 @@ public:
                           const QMatrix4x4 &modelMatrix,
                           Diligent::ITextureView *texture,
                           float opacity = 1.0f);
+  // Project3D-style camera projection for textured cards. Scoped per draw:
+  // set source + matrices + enabled, draw, then resetProjector().
+  void setProjectorSource(Diligent::ITextureView *textureView);
+  void setProjectorMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
+  void setProjectorEnabled(bool enabled);
+  void resetProjector();
   void draw3DShape(const std::vector<Detail::float2> &points,
                    const QMatrix4x4 &modelMatrix, const FloatColor &color,
                    float opacity = 1.0f, bool writeDepth = true);

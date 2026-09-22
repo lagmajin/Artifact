@@ -42,6 +42,9 @@ module;
 #include <regex>
 #include <random>
 #include <QFile>
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QtGlobal>
 #include <QFileInfo>
 #include <QDir>
 #include <QSaveFile>
@@ -87,6 +90,44 @@ bool maskJsonStructureValid(const QJsonObject& object);
 
 namespace {
 constexpr qint64 kMaxUndoPayloadBytes = 64ll * 1024ll * 1024ll;
+
+struct KeyframeTraceConfig {
+    QString logPath;
+    qint64 maxBytes = 8ll * 1024ll * 1024ll;
+    size_t maxKeysPerRecord = 32;
+};
+
+std::optional<KeyframeTraceConfig> keyframeTraceConfig() {
+    const QDir appDirectory(QCoreApplication::applicationDirPath());
+    QFile configFile(appDirectory.filePath(QStringLiteral("ArtifactKeyframeDebug.json")));
+    if (!configFile.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(configFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return std::nullopt;
+    }
+    const QJsonObject object = document.object();
+    if (!object.value(QStringLiteral("enabled")).toBool(false)) {
+        return std::nullopt;
+    }
+
+    KeyframeTraceConfig config;
+    const QString configuredLog = object.value(QStringLiteral("logFile"))
+                                      .toString(QStringLiteral("ArtifactKeyframeTrace.jsonl"));
+    config.logPath = QFileInfo(configuredLog).isAbsolute()
+                         ? configuredLog
+                         : appDirectory.filePath(configuredLog);
+    const qint64 configuredMaxBytes = static_cast<qint64>(
+        object.value(QStringLiteral("maxBytes")).toDouble(config.maxBytes));
+    config.maxBytes = std::clamp<qint64>(configuredMaxBytes,
+                                         64ll * 1024ll,
+                                         64ll * 1024ll * 1024ll);
+    const int configuredMaxKeys = object.value(QStringLiteral("maxKeysPerRecord")).toInt(32);
+    config.maxKeysPerRecord = static_cast<size_t>(std::clamp(configuredMaxKeys, 1, 256));
+    return config;
+}
 
 bool jsonInteger(const QJsonValue& value, qint64& result);
 
@@ -1357,14 +1398,16 @@ bool modulationSnapshotSerializable(
     for (const auto& source : snapshot.sources) {
         if (source.id == 0 || !sourceIds.insert(source.id).second ||
             static_cast<int>(source.type) < 0 ||
-            static_cast<int>(source.type) > static_cast<int>(Audio::Modulation::ModulatorSourceType::Macro) ||
+            static_cast<int>(source.type) > static_cast<int>(Audio::Modulation::ModulatorSourceType::Steps) ||
             static_cast<int>(source.waveform) < 0 ||
             static_cast<int>(source.waveform) > static_cast<int>(Audio::Modulation::LfoWaveform::SampleAndHold) ||
             !std::isfinite(source.frequency) || !std::isfinite(source.phaseOffset) ||
             !std::isfinite(source.pulseWidth) || !std::isfinite(source.attack) ||
             !std::isfinite(source.decay) || !std::isfinite(source.sustain) ||
             !std::isfinite(source.release) || !std::isfinite(source.rate) ||
-            !std::isfinite(source.smoothing) || !std::isfinite(source.macroValue)) {
+            !std::isfinite(source.smoothing) || !std::isfinite(source.macroValue) ||
+            !std::isfinite(source.constantValue) ||
+            source.stepCount < 1u || source.stepCount > 32u) {
             return false;
         }
     }
@@ -2428,6 +2471,46 @@ bool applyLayerPropertyKeyframeSnapshot(
     }
 
     notifyLayerPropertyChanged(layer, propertyPath);
+    // Opt-in, bounded diagnostics at the key-edit/undo boundary only. Never
+    // perform file I/O or build JSON from playback/property evaluation ticks.
+    if (const auto traceConfig = keyframeTraceConfig()) {
+        QFile trace(traceConfig->logPath);
+        if (trace.size() < traceConfig->maxBytes &&
+            trace.open(QIODevice::WriteOnly | QIODevice::Append)) {
+            QJsonArray keys;
+            QJsonArray samples;
+            const size_t count = std::min(appliedKeyframes.size(), traceConfig->maxKeysPerRecord);
+            for (size_t i = 0; i < count; ++i) {
+                const auto& key = appliedKeyframes[i];
+                keys.append(QJsonObject{
+                    {QStringLiteral("timeValue"), QString::number(key.time.value())},
+                    {QStringLiteral("timeScale"), QString::number(key.time.scale())},
+                    {QStringLiteral("seconds"), key.time.toDouble()},
+                    {QStringLiteral("value"), QJsonValue::fromVariant(key.value)},
+                    {QStringLiteral("interpolation"), static_cast<int>(key.interpolation)},
+                    {QStringLiteral("evaluatedAtKey"), QJsonValue::fromVariant(property->interpolateValue(key.time))}});
+                if (i + 1 < count) {
+                    const double midpoint = (key.time.toDouble() + appliedKeyframes[i + 1].time.toDouble()) * 0.5;
+                    const ArtifactCore::RationalTime sampleTime(
+                        static_cast<int64_t>(std::llround(midpoint * 1000000.0)), 1000000);
+                    samples.append(QJsonObject{
+                        {QStringLiteral("seconds"), sampleTime.toDouble()},
+                        {QStringLiteral("value"), QJsonValue::fromVariant(property->interpolateValue(sampleTime))}});
+                }
+            }
+            const QJsonObject record{
+                {QStringLiteral("timestamp"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+                {QStringLiteral("layerId"), layer->id().toQString()},
+                {QStringLiteral("property"), propertyPath},
+                {QStringLiteral("compositionFps"), layer->compositionFrameRate()},
+                {QStringLiteral("animatable"), property->isAnimatable()},
+                {QStringLiteral("keyCount"), static_cast<double>(appliedKeyframes.size())},
+                {QStringLiteral("keys"), keys},
+                {QStringLiteral("midpointSamples"), samples}};
+            trace.write(QJsonDocument(record).toJson(QJsonDocument::Compact));
+            trace.write("\n");
+        }
+    }
     return true;
 }
 

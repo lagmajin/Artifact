@@ -22,6 +22,7 @@ import Shape.Path;
 import Shape.Layer;
 import Shape.Types;
 import Memory.SharedPtr;
+import Container.NamedVector;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -388,7 +389,7 @@ public:
 
   // Layer interface
   QRectF localBounds() const override;
-  std::vector<QPointF> collisionOutlineLocalPoints() const override;
+  ArtifactCore::NamedVector<QPointF> collisionOutlineLocalPoints() const override;
   std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString &propertyPath,

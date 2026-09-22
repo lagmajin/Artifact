@@ -2714,8 +2714,16 @@ int main(int argc, char *argv[]) {
 
   // Initialize environment variable manager
   auto *envManager = ArtifactCore::EnvironmentVariableManager::instance();
+  const QVariantMap applicationEnvironmentOverrides = QSettings()
+      .value(QStringLiteral("EnvironmentVariables/ApplicationOverrides"))
+      .toMap();
+  for (auto it = applicationEnvironmentOverrides.cbegin();
+       it != applicationEnvironmentOverrides.cend(); ++it) {
+    envManager->setVariable(it.key(), it.value());
+  }
   qDebug() << "[AppMain] Environment variables loaded:"
-           << envManager->variableNames().size();
+           << envManager->variableNames().size()
+           << "application overrides:" << applicationEnvironmentOverrides.size();
 
   const bool verboseVideoLog =
       qEnvironmentVariableIsSet("ARTIFACT_VIDEO_VERBOSE_LOG");
